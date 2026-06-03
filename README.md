@@ -16,7 +16,8 @@ Manages a pool of machines (local or remote), each with one or more **slots** �
 
 ```
 farmslot/
-  scripts/           # Public framework entrypoints plus lib/ and quality/
+  packages/cli/      # `farmslot` CLI for gateway, fleet, slot, dispatch, and RPC control
+  scripts/           # Lower-level lifecycle scripts used by the gateway and CLI
   pool/              # Machine registry — slots, ports, devices
   projects/          # Project configs (separate git repos, user-managed)
     <name>-farm/
@@ -26,52 +27,21 @@ farmslot/
   docs/              # Architecture, protocols, reference
 ```
 
-## Try it
-
-The repo includes a localhost pool config with a fake runner for testing:
+## Try it locally
 
 ```bash
-# Start dev server (gateway + UI)
 bash scripts/dev.sh
-
-# Open http://localhost:7777 — the fleet view shows demo-ff-1 in "ready" state
-# Dispatch a fake run from the UI or see scripts/QA-fake-runner.md for CLI steps
 ```
 
-## Quick start
+Open [http://localhost:7777](http://localhost:7777) to use Command Center with the local fake-runner demo slot. For CLI and agent access, see [Local demo and CLI access](https://farmslot.io/docs/guides/local-demo-and-cli).
 
-```bash
-# See fleet status
-bash scripts/farm-status.sh
+## Learn more
 
-# Deep-check a specific slot
-bash scripts/check-slot.sh demo-ff-1
-
-# Dispatch a task
-# See scripts/QA-fake-runner.md for a runnable local demo
-
-# Monitor progress
-bash scripts/monitor-slot.sh demo-ff-1
-
-# Release slot after completion (cleanup + re-prepare)
-bash scripts/release-slot.sh demo-ff-1 --keep-warm
-```
-
-## Slot lifecycle
-
-```
-ready ──> dispatching ──> working ──> recycling ──> ready
-```
-
-| Script             | Purpose                                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------- |
-| `farm-status.sh`   | Fleet-wide overview (SSH health, device, server, fixtures)                              |
-| `check-slot.sh`    | Read-only deep health check for one slot                                                |
-| `prepare-slot.sh`  | Sync fixtures, checkout branch, run preflight                                           |
-| `dispatch.sh`      | Claim + prepare + copy task + launch agent                                              |
-| `monitor-slot.sh`  | Read task status + agent output                                                         |
-| `release-slot.sh`  | Kill agent, collect artifacts, clean up, teardown (`--keep-warm` to re-prepare instead) |
-| `sync-fixtures.sh` | Push project fixtures to a slot                                                         |
+- [Documentation website](https://farmslot.io)
+- [What is Farmslot?](https://farmslot.io/docs/intro)
+- [Adoption path](https://farmslot.io/docs/guides/adoption-path)
+- [Local demo and CLI access](https://farmslot.io/docs/guides/local-demo-and-cli)
+- [Gateway API capability surface](https://farmslot.io/docs/reference/gateway-api)
 
 ## Adding a project
 
