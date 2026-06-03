@@ -34,6 +34,15 @@ See [Operating loop](./concepts/operating-loop.md) for the source-of-truth model
 
 A key design goal is low-friction project import. Today that means a small amount of pool/project configuration; over time, Farmslot should provide prompt-assisted import flows that inspect a repository, propose hooks, and make a new project dispatchable with minimal manual setup.
 
+## Reference integrations
+
+Farmslot intentionally keeps project-specific behavior outside core. A project integrates by declaring pool slots, project hooks, fixtures, runner commands, and optional Recipe v1 actions.
+
+Current reference examples:
+
+- **AudioLab** — [github.com/deeeed/audiolab](https://github.com/deeeed/audiolab) is a public Expo/React Native monorepo using Recipe Protocol v1 for app navigation, screenshots, and AudioLab-specific native audio probes. It shows how a real app can keep its existing bridge while emitting standard Farmslot recipe artifacts.
+- **Farmslot self-integration** — this repository defines itself as `farmslot-farm` through `projects/farmslot-farm/project.json`, with a local demo slot in `pool/farmslot-demo.json`. That makes Farmslot a dogfood target for dispatch, typecheck health checks, and recipe/evidence work.
+
 ## What to read next
 
 - [Why Farmslot?](./concepts/why-farmslot.md)
