@@ -27,59 +27,21 @@ farmslot/
   docs/              # Architecture, protocols, reference
 ```
 
-## Try it
-
-The repo includes a localhost pool config with a fake runner for testing:
+## Try it locally
 
 ```bash
-# Start gateway + Command Center
 bash scripts/dev.sh
-
-# Open http://localhost:7777 — the fleet view shows demo-ff-1 in "ready" state
-# In another terminal, use the CLI against the local gateway:
-yarn workspace @farmslot/cli farmslot fleet status
 ```
 
-## Quick start
+Open [http://localhost:7777](http://localhost:7777) to use Command Center with the local fake-runner demo slot. For CLI and agent access, see [Local demo and CLI access](https://farmslot.io/docs/guides/local-demo-and-cli).
 
-`farmslot` is the public control entrypoint. It talks to a gateway over WebSocket, so it can be used from the repo, another checkout, or an agent shell as long as the gateway URL is reachable.
+## Learn more
 
-```bash
-# See fleet status
-farmslot fleet status
-
-# Deep-check a specific slot
-farmslot slot check demo-ff-1
-
-# Prepare or recycle a slot
-farmslot slot prepare demo-ff-1
-farmslot slot release demo-ff-1 --keep-warm
-
-# Preview dispatch routing
-farmslot dispatch preview --project my-app-farm --flow-type fix-bug --ticket APP-123
-
-# Call any gateway method directly
-farmslot rpc fleet.status '{}'
-```
-
-Use `--url ws://host:7777` to target a different gateway and `--json` for machine-readable output.
-
-## Slot lifecycle
-
-```
-ready ──> dispatching ──> working ──> recycling ──> ready
-```
-
-| CLI command                  | Purpose                                                                 |
-| ---------------------------- | ----------------------------------------------------------------------- |
-| `farmslot fleet status`      | Fleet-wide overview of machines, slots, health, and current runs.       |
-| `farmslot slot check <id>`   | Read-only deep health check for one slot.                               |
-| `farmslot slot prepare <id>` | Sync fixtures, checkout branch, run preflight.                          |
-| `farmslot dispatch ...`      | Preview or execute task dispatch through gateway policy.                |
-| `farmslot slot release <id>` | Collect artifacts, clean up, and optionally re-prepare with `--keep-warm`. |
-| `farmslot rpc <method>`      | Raw gateway escape hatch for protocol methods and agent integrations.   |
-
-The `scripts/*.sh` lifecycle commands still exist as lower-level building blocks for the gateway, CLI, and local debugging. Prefer the CLI for normal operation.
+- [Documentation website](https://farmslot.io)
+- [What is Farmslot?](https://farmslot.io/docs/intro)
+- [Adoption path](https://farmslot.io/docs/guides/adoption-path)
+- [Local demo and CLI access](https://farmslot.io/docs/guides/local-demo-and-cli)
+- [Gateway API capability surface](https://farmslot.io/docs/reference/gateway-api)
 
 ## Adding a project
 

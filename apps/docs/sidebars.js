@@ -53,6 +53,7 @@ const sidebars = {
       label: 'Guides',
       items: [
         'guides/adoption-path',
+        'guides/local-demo-and-cli',
         'guides/recipe-skills-adoption',
         'guides/import-a-project',
         'guides/project-type-onboarding',
