@@ -1,44 +1,132 @@
-name: Command Center Quality
+name: Project Quality
 
 on:
   pull_request:
     branches:
       - main
-    paths:
-      - 'apps/command-center/**'
-      - 'apps/companion/**'
-      - 'packages/**'
-      - 'services/**'
-      - 'package.json'
-      - 'yarn.lock'
-      - 'scripts/**'
-      - 'eslint.config.mjs'
-      - '.prettierrc.json'
-      - '.github/workflows/command-center-quality.yml'
   push:
     branches:
       - main
-    paths:
-      - 'apps/command-center/**'
-      - 'apps/companion/**'
-      - 'packages/**'
-      - 'services/**'
-      - 'package.json'
-      - 'yarn.lock'
-      - 'scripts/**'
-      - 'eslint.config.mjs'
-      - '.prettierrc.json'
-      - '.github/workflows/command-center-quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
-  quality:
-    name: Command Center quality gates
+  changes:
+    name: Detect changed quality targets
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    outputs:
+      repo: ${{ steps.filter.outputs.repo }}
+      package_readiness: ${{ steps.filter.outputs.package_readiness }}
+      command_center: ${{ steps.filter.outputs.command_center }}
+      companion: ${{ steps.filter.outputs.companion }}
+      docs: ${{ steps.filter.outputs.docs }}
+      cli: ${{ steps.filter.outputs.cli }}
+      expo_recipe: ${{ steps.filter.outputs.expo_recipe }}
+      protocol: ${{ steps.filter.outputs.protocol }}
+      recipe_harness: ${{ steps.filter.outputs.recipe_harness }}
+      skills: ${{ steps.filter.outputs.skills }}
+      theme: ${{ steps.filter.outputs.theme }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      node: ${{ steps.filter.outputs.node }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed quality targets
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            repo:
+              - '.github/workflows/command-center-quality.yml'
+              - '.prettierrc.json'
+              - '.yarnrc.yml'
+              - 'eslint.config.mjs'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'apps/**'
+              - 'packages/**'
+              - 'services/**'
+              - 'scripts/quality/**'
+            package_readiness:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'packages/**'
+              - 'scripts/quality/check-farmslot-package-readiness.mjs'
+            command_center:
+              - '.github/workflows/command-center-quality.yml'
+              - '.prettierrc.json'
+              - 'eslint.config.mjs'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'apps/command-center/**'
+            companion:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'apps/companion/**'
+            docs:
+              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/docs-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'apps/docs/**'
+            cli:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'packages/cli/**'
+            expo_recipe:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'packages/expo-recipe/**'
+            protocol:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'packages/protocol/**'
+            recipe_harness:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'packages/recipe-harness/**'
+            skills:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'packages/skills/**'
+            theme:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'packages/theme/**'
+            gateway:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'services/gateway/**'
+            node:
+              - '.github/workflows/command-center-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'services/node/**'
+
+  repo:
+    name: Repository quality guards
+    needs: changes
+    if: needs.changes.outputs.repo == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         shell: bash
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -54,12 +142,6 @@ jobs:
       - name: Install workspace dependencies
         run: yarn install --immutable
 
-      - name: Format check
-        run: yarn format:check
-
-      - name: ESLint ratchet and stale baseline check
-        run: yarn lint
-
       - name: Workspace structure guard
         run: yarn quality:structure
 
@@ -72,39 +154,64 @@ jobs:
       - name: Large-file warning
         run: yarn quality:large-files
 
-      - name: Type escape ratchet and stale baseline check
-        working-directory: apps/command-center
-        run: yarn lint:type-escapes
+  package-readiness:
+    name: Package publish readiness
+    needs: changes
+    if: needs.changes.outputs.package_readiness == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Package/service workspace quality matrix
-        run: yarn quality:workspaces
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
 
-      - name: Command Center typecheck
-        run: yarn typecheck
+      - name: Enable Corepack
+        run: corepack enable
 
-      - name: Protocol compatibility tests
-        run: yarn test:protocol
-
-      - name: Recipe harness tests
-        run: yarn test:recipe-harness
+      - name: Install workspace dependencies
+        run: yarn install --immutable
 
       - name: Package publish readiness
         run: node scripts/quality/check-farmslot-package-readiness.mjs --pack
 
-      - name: Docs build
-        run: yarn docs:build
+  command-center:
+    name: Command Center quality gates
+    needs: changes
+    if: needs.changes.outputs.command_center == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: UI model tests
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+
+      - name: Command Center quality
         working-directory: apps/command-center
-        run: yarn test:ui
+        run: yarn quality
 
       - name: Recipe operational gate tests
         working-directory: apps/command-center
         run: yarn test:recipe-operational-gates
-
-      - name: Companion model tests
-        working-directory: apps/companion
-        run: yarn test:lib
 
       - name: Fetch Sonar issues evidence
         continue-on-error: true
@@ -126,3 +233,243 @@ jobs:
           name: sonar-issues
           path: temp/quality/sonar-issues.json
           if-no-files-found: ignore
+
+  companion:
+    name: Companion quality gates
+    needs: changes
+    if: needs.changes.outputs.companion == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+
+      - name: Companion quality
+        working-directory: apps/companion
+        run: yarn quality
+
+  docs:
+    name: Docs quality gates
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+
+      - name: Docs quality
+        working-directory: apps/docs
+        run: yarn quality
+
+  cli:
+    name: CLI package quality
+    needs: changes
+    if: needs.changes.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: CLI quality
+        run: yarn workspace @farmslot/cli quality
+
+  expo-recipe:
+    name: Expo recipe package quality
+    needs: changes
+    if: needs.changes.outputs.expo_recipe == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Expo recipe quality
+        run: yarn workspace @farmslot/expo-recipe quality
+
+  protocol:
+    name: Protocol package quality
+    needs: changes
+    if: needs.changes.outputs.protocol == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Protocol quality
+        run: yarn workspace @farmslot/protocol quality
+
+  recipe-harness:
+    name: Recipe harness package quality
+    needs: changes
+    if: needs.changes.outputs.recipe_harness == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Recipe harness quality
+        run: yarn workspace @farmslot/recipe-harness quality
+
+  skills:
+    name: Skills package quality
+    needs: changes
+    if: needs.changes.outputs.skills == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Skills quality
+        run: yarn workspace @farmslot/skills quality
+
+  theme:
+    name: Theme package quality
+    needs: changes
+    if: needs.changes.outputs.theme == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Theme quality
+        run: yarn workspace @farmslot/theme quality
+
+  gateway:
+    name: Gateway service quality
+    needs: changes
+    if: needs.changes.outputs.gateway == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Gateway quality
+        run: yarn workspace @farmslot/gateway quality
+
+  node:
+    name: Node service quality
+    needs: changes
+    if: needs.changes.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Node service quality
+        run: yarn workspace @farmslot/node quality
