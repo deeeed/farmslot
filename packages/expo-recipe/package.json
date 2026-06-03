@@ -1,7 +1,6 @@
 {
   "name": "@farmslot/expo-recipe",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -23,7 +22,8 @@
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\" \"templates/src/farmslot/**/*.{ts,tsx}\"",
     "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" \"templates/src/farmslot/**/*.{ts,tsx}\" && tsc --noEmit --project tsconfig.json && yarn build && yarn test",
-    "prepack": "yarn build"
+    "prepack": "yarn build",
+    "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/expo-recipe"
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*",
@@ -62,5 +62,8 @@
     "dist/**/*.d.ts.map",
     "dist/**/*.js.map",
     "templates/**/*"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
