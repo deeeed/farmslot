@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk_farmslot_docs=self.webpackChunk_farmslot_docs||[]).push([[6613],{6613(s,e,c){c.d(e,{createInfoServices:()=>a.v});var a=c(4355);c(2089)}}]);

@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <rect width="1200" height="720" rx="32" fill="#081411"/>
+  <rect x="28" y="28" width="1144" height="664" rx="24" fill="#10241f" stroke="#2c6b5b"/>
+  <rect x="56" y="60" width="220" height="600" rx="18" fill="#0d1d19"/>
+  <text x="82" y="108" fill="#6ee7c8" font-family="Inter, sans-serif" font-size="28" font-weight="800">Farmslot</text>
+  <text x="82" y="154" fill="#d9fff6" font-family="Inter, sans-serif" font-size="16">Fleet</text>
+  <text x="82" y="192" fill="#8bbcaf" font-family="Inter, sans-serif" font-size="16">Runs</text>
+  <text x="82" y="230" fill="#8bbcaf" font-family="Inter, sans-serif" font-size="16">Backlog</text>
+  <text x="82" y="268" fill="#8bbcaf" font-family="Inter, sans-serif" font-size="16">Evals</text>
+  <rect x="310" y="60" width="820" height="88" rx="18" fill="#14352e"/>
+  <text x="338" y="112" fill="#f7fffc" font-family="Inter, sans-serif" font-size="30" font-weight="800">Command Center</text>
+  <text x="338" y="136" fill="#a7d9cc" font-family="Inter, sans-serif" font-size="15">Gateway-backed operator surface for slots, runs, terminals, decisions, and evidence</text>
+  <g font-family="Inter, sans-serif">
+    <rect x="310" y="176" width="250" height="150" rx="18" fill="#0d1d19" stroke="#245c4e"/>
+    <text x="334" y="215" fill="#6ee7c8" font-size="18" font-weight="700">Slot mm-4</text>
+    <text x="334" y="252" fill="#f7fffc" font-size="34" font-weight="800">working</text>
+    <text x="334" y="292" fill="#a7d9cc" font-size="15">recipe validation</text>
+    <rect x="590" y="176" width="250" height="150" rx="18" fill="#0d1d19" stroke="#245c4e"/>
+    <text x="614" y="215" fill="#6ee7c8" font-size="18" font-weight="700">Slot mme-4</text>
+    <text x="614" y="252" fill="#f7fffc" font-size="34" font-weight="800">ready</text>
+    <text x="614" y="292" fill="#a7d9cc" font-size="15">dispatchable</text>
+    <rect x="870" y="176" width="260" height="150" rx="18" fill="#0d1d19" stroke="#245c4e"/>
+    <text x="894" y="215" fill="#6ee7c8" font-size="18" font-weight="700">Decision inbox</text>
+    <text x="894" y="252" fill="#f7fffc" font-size="34" font-weight="800">3</text>
+    <text x="894" y="292" fill="#a7d9cc" font-size="15">awaiting human gate</text>
+    <rect x="310" y="354" width="390" height="250" rx="18" fill="#0d1d19" stroke="#245c4e"/>
+    <text x="334" y="394" fill="#6ee7c8" font-size="18" font-weight="700">Terminal stream</text>
+    <text x="334" y="438" fill="#d9fff6" font-size="16">$ run recipe validate.workflow</text>
+    <text x="334" y="470" fill="#8bbcaf" font-size="15">✓ setup</text>
+    <text x="334" y="500" fill="#8bbcaf" font-size="15">✓ navigate</text>
+    <text x="334" y="530" fill="#8bbcaf" font-size="15">→ capture evidence</text>
+    <rect x="730" y="354" width="400" height="250" rx="18" fill="#0d1d19" stroke="#245c4e"/>
+    <text x="754" y="394" fill="#6ee7c8" font-size="18" font-weight="700">Evidence workspace</text>
+    <rect x="754" y="420" width="160" height="100" rx="12" fill="#14352e"/>
+    <rect x="938" y="420" width="160" height="100" rx="12" fill="#14352e"/>
+    <text x="754" y="558" fill="#a7d9cc" font-size="15">before → after, trace, logs, artifact manifest</text>
+  </g>
+</svg>

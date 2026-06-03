@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Farmslot FS logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f2a24"/>
+      <stop offset="0.55" stop-color="#19483d"/>
+      <stop offset="1" stop-color="#081411"/>
+    </linearGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#baf8e8"/>
+      <stop offset="1" stop-color="#47d4ad"/>
+    </linearGradient>
+  </defs>
+  <rect x="14" y="14" width="228" height="228" rx="52" fill="url(#bg)"/>
+  <path d="M50 149c32-61 83-86 155-74-49 16-79 47-91 94-18-20-39-26-64-20Z" fill="url(#leaf)" opacity="0.92"/>
+  <circle cx="87" cy="101" r="17" fill="#f7fffc" opacity="0.95"/>
+  <text x="128" y="151" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="74" font-weight="900" fill="#f7fffc" letter-spacing="-7">FS</text>
+</svg>

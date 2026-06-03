@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk_farmslot_docs=self.webpackChunk_farmslot_docs||[]).push([[8741],{8741(e,s,a){a.d(s,{createTreemapServices:()=>c.d});var c=a(546);a(2089)}}]);

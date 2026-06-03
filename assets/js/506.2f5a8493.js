@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk_farmslot_docs=self.webpackChunk_farmslot_docs||[]).push([[506],{506(e,s,c){c.d(s,{createPieServices:()=>a.f});var a=c(9623);c(2089)}}]);

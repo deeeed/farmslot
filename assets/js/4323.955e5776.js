@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk_farmslot_docs=self.webpackChunk_farmslot_docs||[]).push([[4323],{4323(e,s,c){c.d(s,{createArchitectureServices:()=>r.S});var r=c(6883);c(2089)}}]);

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="900" viewBox="0 0 720 900">
+  <rect width="720" height="900" fill="#081411"/>
+  <rect x="210" y="40" width="300" height="820" rx="50" fill="#0d1d19" stroke="#2c6b5b" stroke-width="6"/>
+  <rect x="236" y="84" width="248" height="724" rx="28" fill="#10241f"/>
+  <text x="260" y="140" fill="#6ee7c8" font-family="Inter, sans-serif" font-size="26" font-weight="800">Companion</text>
+  <text x="260" y="170" fill="#a7d9cc" font-family="Inter, sans-serif" font-size="13">Gateway profile: local</text>
+  <rect x="260" y="205" width="200" height="86" rx="16" fill="#14352e"/>
+  <text x="278" y="238" fill="#f7fffc" font-family="Inter, sans-serif" font-size="18" font-weight="700">Active runs</text>
+  <text x="278" y="268" fill="#6ee7c8" font-family="Inter, sans-serif" font-size="32" font-weight="900">7</text>
+  <rect x="260" y="316" width="200" height="118" rx="16" fill="#0d1d19" stroke="#245c4e"/>
+  <text x="278" y="350" fill="#6ee7c8" font-family="Inter, sans-serif" font-size="16" font-weight="700">Decision</text>
+  <text x="278" y="380" fill="#f7fffc" font-family="Inter, sans-serif" font-size="14">Review evidence</text>
+  <text x="278" y="405" fill="#a7d9cc" font-family="Inter, sans-serif" font-size="12">Approve / ask follow-up</text>
+  <rect x="260" y="458" width="200" height="118" rx="16" fill="#0d1d19" stroke="#245c4e"/>
+  <text x="278" y="492" fill="#6ee7c8" font-family="Inter, sans-serif" font-size="16" font-weight="700">Workers</text>
+  <text x="278" y="522" fill="#f7fffc" font-family="Inter, sans-serif" font-size="14">tmux panes</text>
+  <text x="278" y="547" fill="#a7d9cc" font-family="Inter, sans-serif" font-size="12">observe · nudge · control</text>
+  <rect x="260" y="600" width="200" height="118" rx="16" fill="#0d1d19" stroke="#245c4e"/>
+  <text x="278" y="634" fill="#6ee7c8" font-family="Inter, sans-serif" font-size="16" font-weight="700">Voice backlog</text>
+  <text x="278" y="664" fill="#f7fffc" font-family="Inter, sans-serif" font-size="14">capture raw idea</text>
+  <text x="278" y="689" fill="#a7d9cc" font-family="Inter, sans-serif" font-size="12">refine → dispatch queue</text>
+</svg>
