@@ -8,7 +8,6 @@ import {
   Methods,
   type MonitorViolationPayload,
   type PendingDecision,
-  type PRListResult,
   type PRUpdatedPayload,
   type Run,
   type RunDecision,
@@ -51,7 +50,6 @@ import { useRunStore } from './runs';
 const GATEWAY_URL_KEY = '@farmslot:gatewayUrl';
 const GATEWAY_PROFILES_KEY = '@farmslot:gatewayProfiles';
 const ACTIVE_GATEWAY_PROFILE_KEY = '@farmslot:activeGatewayProfileId';
-const PR_LIST_TIMEOUT_MS = 30_000;
 
 type DecisionNewEventPayload = {
   decision?: PendingDecision | RunDecision;
@@ -258,17 +256,9 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             set({ lastSyncError: `Failed to refresh decisions: ${err.message}` }),
           );
 
-        usePRStore.getState().setLoading(true);
-        client
-          .request<PRListResult>(Methods.PR_LIST, {}, PR_LIST_TIMEOUT_MS)
-          .then((result) => {
-            usePRStore.getState().setPRs(result.prs);
-            set({ lastSyncError: null });
-          })
-          .catch((err: Error) => {
-            usePRStore.getState().setError(`Failed to refresh PRs: ${err.message}`);
-            set({ lastSyncError: `Failed to refresh PRs: ${err.message}` });
-          });
+        // PR_LIST fans out through GitHub and can legitimately outlive a cold
+        // connect. Keep it lazy on the PR screen so a slow PR refresh does not
+        // turn the whole app connection banner into a warning.
       }
     });
 
