@@ -16,7 +16,8 @@ Manages a pool of machines (local or remote), each with one or more **slots** �
 
 ```
 farmslot/
-  scripts/           # Public framework entrypoints plus lib/ and quality/
+  packages/cli/      # `farmslot` CLI for gateway, fleet, slot, dispatch, and RPC control
+  scripts/           # Lower-level lifecycle scripts used by the gateway and CLI
   pool/              # Machine registry — slots, ports, devices
   projects/          # Project configs (separate git repos, user-managed)
     <name>-farm/
@@ -31,31 +32,37 @@ farmslot/
 The repo includes a localhost pool config with a fake runner for testing:
 
 ```bash
-# Start dev server (gateway + UI)
+# Start gateway + Command Center
 bash scripts/dev.sh
 
 # Open http://localhost:7777 — the fleet view shows demo-ff-1 in "ready" state
-# Dispatch a fake run from the UI or see scripts/QA-fake-runner.md for CLI steps
+# In another terminal, use the CLI against the local gateway:
+yarn workspace @farmslot/cli farmslot fleet status
 ```
 
 ## Quick start
 
+`farmslot` is the public control entrypoint. It talks to a gateway over WebSocket, so it can be used from the repo, another checkout, or an agent shell as long as the gateway URL is reachable.
+
 ```bash
 # See fleet status
-bash scripts/farm-status.sh
+farmslot fleet status
 
 # Deep-check a specific slot
-bash scripts/check-slot.sh demo-ff-1
+farmslot slot check demo-ff-1
 
-# Dispatch a task
-# See scripts/QA-fake-runner.md for a runnable local demo
+# Prepare or recycle a slot
+farmslot slot prepare demo-ff-1
+farmslot slot release demo-ff-1 --keep-warm
 
-# Monitor progress
-bash scripts/monitor-slot.sh demo-ff-1
+# Preview dispatch routing
+farmslot dispatch preview --project my-app-farm --flow-type fix-bug --ticket APP-123
 
-# Release slot after completion (cleanup + re-prepare)
-bash scripts/release-slot.sh demo-ff-1 --keep-warm
+# Call any gateway method directly
+farmslot rpc fleet.status '{}'
 ```
+
+Use `--url ws://host:7777` to target a different gateway and `--json` for machine-readable output.
 
 ## Slot lifecycle
 
@@ -63,15 +70,16 @@ bash scripts/release-slot.sh demo-ff-1 --keep-warm
 ready ──> dispatching ──> working ──> recycling ──> ready
 ```
 
-| Script             | Purpose                                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------- |
-| `farm-status.sh`   | Fleet-wide overview (SSH health, device, server, fixtures)                              |
-| `check-slot.sh`    | Read-only deep health check for one slot                                                |
-| `prepare-slot.sh`  | Sync fixtures, checkout branch, run preflight                                           |
-| `dispatch.sh`      | Claim + prepare + copy task + launch agent                                              |
-| `monitor-slot.sh`  | Read task status + agent output                                                         |
-| `release-slot.sh`  | Kill agent, collect artifacts, clean up, teardown (`--keep-warm` to re-prepare instead) |
-| `sync-fixtures.sh` | Push project fixtures to a slot                                                         |
+| CLI command                  | Purpose                                                                 |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `farmslot fleet status`      | Fleet-wide overview of machines, slots, health, and current runs.       |
+| `farmslot slot check <id>`   | Read-only deep health check for one slot.                               |
+| `farmslot slot prepare <id>` | Sync fixtures, checkout branch, run preflight.                          |
+| `farmslot dispatch ...`      | Preview or execute task dispatch through gateway policy.                |
+| `farmslot slot release <id>` | Collect artifacts, clean up, and optionally re-prepare with `--keep-warm`. |
+| `farmslot rpc <method>`      | Raw gateway escape hatch for protocol methods and agent integrations.   |
+
+The `scripts/*.sh` lifecycle commands still exist as lower-level building blocks for the gateway, CLI, and local debugging. Prefer the CLI for normal operation.
 
 ## Adding a project
 
