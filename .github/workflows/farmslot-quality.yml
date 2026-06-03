@@ -1,4 +1,4 @@
-name: Project Quality
+name: Farmslot Quality
 
 on:
   pull_request:
@@ -45,13 +45,13 @@ jobs:
             repo:
               - '**'
             package_readiness:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/**'
               - 'scripts/quality/check-farmslot-package-readiness.mjs'
             command_center:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - '.prettierrc.json'
               - 'eslint.config.mjs'
               - 'package.json'
@@ -64,7 +64,7 @@ jobs:
               - 'services/gateway/**'
               - 'services/node/**'
             companion:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'apps/companion/**'
@@ -73,7 +73,7 @@ jobs:
               - 'packages/recipe-harness/**'
               - 'packages/theme/**'
             docs:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - '.github/workflows/docs-quality.yml'
               - 'package.json'
               - 'yarn.lock'
@@ -81,48 +81,48 @@ jobs:
               - 'packages/protocol/**'
               - 'services/gateway/**'
             cli:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/cli/**'
               - 'packages/protocol/**'
               - 'packages/recipe-harness/**'
             expo_recipe:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/expo-recipe/**'
               - 'packages/protocol/**'
               - 'packages/recipe-harness/**'
             protocol:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/protocol/**'
             recipe_harness:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/protocol/**'
               - 'packages/recipe-harness/**'
             skills:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/skills/**'
             theme:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/theme/**'
             gateway:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/protocol/**'
               - 'services/gateway/**'
             node:
-              - '.github/workflows/command-center-quality.yml'
+              - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/protocol/**'
