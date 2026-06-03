@@ -190,4 +190,4 @@ Farmslot separates product surfaces, runtime services, and reusable toolkit pack
 
 ---
 
-Created by Arthur Breton
+Created by [Arthur Breton](https://siteed.net)
