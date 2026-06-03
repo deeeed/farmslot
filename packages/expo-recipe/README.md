@@ -75,7 +75,30 @@ The generated bridge no-ops unless both conditions are true:
 - `__DEV__`
 - `EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE=1`
 
-The bridge and HUD are copied into local source files by design, so each app can customize `bridgeName`, bridge enablement, or HUD rendering without forking the harness.
+The bridge and HUD are copied into local source files by design, so each app can customize `bridgeName`, bridge enablement, HUD text, HUD styles, or full HUD rendering without forking the harness.
+
+Default HUD text is compact and wraps instead of ellipsizing. To tune the generated HUD without replacing it:
+
+```tsx
+<RecipeBridgeProvider
+  hud={{
+    text: {
+      badge: (state) => `${state.status} ${state.currentStep ?? ''}/${state.totalSteps ?? ''}`,
+      intent: (state) => state.intent,
+      error: (state) => state.error,
+    },
+    styles: {
+      container: { bottom: 24, backgroundColor: 'rgba(0, 0, 0, 0.7)' },
+      line: { fontSize: 10, lineHeight: 13 },
+      intent: { color: '#fff' },
+    },
+  }}
+>
+  {/* app */}
+</RecipeBridgeProvider>
+```
+
+For a completely custom overlay, pass `renderHud`.
 
 ## Maintenance rules
 

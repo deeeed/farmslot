@@ -1,5 +1,12 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import {
+  type StyleProp,
+  StyleSheet,
+  Text,
+  type TextStyle,
+  View,
+  type ViewStyle,
+} from 'react-native';
 
 export type FarmslotRecipeHudStatus = 'idle' | 'running' | 'pass' | 'fail';
 
@@ -11,33 +18,74 @@ export interface FarmslotRecipeHudState {
   error?: string;
 }
 
-interface RecipeHudProps {
+export interface FarmslotRecipeHudText {
+  badge?: (state: FarmslotRecipeHudState) => string;
+  intent?: (state: FarmslotRecipeHudState) => string;
+  error?: (state: FarmslotRecipeHudState) => string | undefined;
+}
+
+export interface FarmslotRecipeHudStyles {
+  container?: StyleProp<ViewStyle>;
+  line?: StyleProp<TextStyle>;
+  badgeText?: StyleProp<TextStyle>;
+  badgeTextRunning?: StyleProp<TextStyle>;
+  badgeTextPass?: StyleProp<TextStyle>;
+  badgeTextFail?: StyleProp<TextStyle>;
+  intent?: StyleProp<TextStyle>;
+  error?: StyleProp<TextStyle>;
+}
+
+export interface RecipeHudOptions {
+  text?: FarmslotRecipeHudText;
+  styles?: FarmslotRecipeHudStyles;
+}
+
+export interface RecipeHudProps extends RecipeHudOptions {
   state: FarmslotRecipeHudState | null;
 }
 
-export function RecipeHud({ state }: Readonly<RecipeHudProps>): React.ReactElement | null {
+export function RecipeHud({
+  state,
+  styles: customStyles,
+  text,
+}: Readonly<RecipeHudProps>): React.ReactElement | null {
   if (!state || state.status === 'idle') return null;
-  const progress = formatProgress(state.currentStep, state.totalSteps);
+  const badge = text?.badge?.(state) ?? formatBadge(state);
+  const intent = text?.intent?.(state) ?? state.intent;
+  const error = text?.error?.(state) ?? state.error;
+  const badgeTone = badgeToneForStatus(state.status);
   return (
-    <View pointerEvents="none" style={styles.container}>
-      <View style={[styles.pill, state.status === 'fail' ? styles.fail : styles.active]}>
-        <Text style={styles.pillText}>
-          {state.status.toUpperCase()}
-          {progress ? ` ${progress}` : ''}
+    <View pointerEvents="none" style={[styles.container, customStyles?.container]}>
+      <Text style={[styles.line, customStyles?.line]}>
+        <Text
+          style={[
+            styles.badgeText,
+            badgeTone === 'fail'
+              ? styles.badgeTextFail
+              : badgeTone === 'pass'
+                ? styles.badgeTextPass
+                : styles.badgeTextRunning,
+            customStyles?.badgeText,
+            badgeTone === 'fail'
+              ? customStyles?.badgeTextFail
+              : badgeTone === 'pass'
+                ? customStyles?.badgeTextPass
+                : customStyles?.badgeTextRunning,
+          ]}
+        >
+          {badge}
         </Text>
-      </View>
-      <View style={styles.copy}>
-        <Text numberOfLines={1} style={styles.intent}>
-          {state.intent}
-        </Text>
-        {state.error ? (
-          <Text numberOfLines={1} style={styles.error}>
-            {state.error}
-          </Text>
-        ) : null}
-      </View>
+        {intent ? <Text style={customStyles?.intent}>{`  ${intent}`}</Text> : null}
+      </Text>
+      {error ? <Text style={[styles.error, customStyles?.error]}>{error}</Text> : null}
     </View>
   );
+}
+
+function formatBadge(state: FarmslotRecipeHudState): string {
+  const status = state.status === 'running' ? 'run' : state.status;
+  const progress = formatProgress(state.currentStep, state.totalSteps);
+  return [status, progress].filter(Boolean).join(' ').toUpperCase();
 }
 
 function formatProgress(currentStep?: number, totalSteps?: number): string {
@@ -45,55 +93,46 @@ function formatProgress(currentStep?: number, totalSteps?: number): string {
   return `${currentStep}/${totalSteps}`;
 }
 
+function badgeToneForStatus(status: FarmslotRecipeHudStatus): 'running' | 'pass' | 'fail' {
+  if (status === 'fail') return 'fail';
+  if (status === 'pass') return 'pass';
+  return 'running';
+}
+
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 16,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    borderRadius: 12,
-    padding: 8,
-    backgroundColor: 'rgba(10, 12, 16, 0.78)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 9999,
+    backgroundColor: 'rgba(0, 0, 0, 0.58)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
   },
-  pill: {
-    borderRadius: 999,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginTop: 1,
-  },
-  active: {
-    backgroundColor: 'rgba(16, 185, 129, 0.22)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#10b981',
-  },
-  fail: {
-    backgroundColor: 'rgba(239, 68, 68, 0.22)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#ef4444',
-  },
-  pillText: {
+  line: {
     color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 14,
+  },
+  badgeText: {
     fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.3,
+    fontWeight: '800',
   },
-  copy: {
-    flex: 1,
-    minWidth: 0,
+  badgeTextRunning: {
+    color: '#00ff88',
   },
-  intent: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
+  badgeTextPass: {
+    color: '#00ff88',
+  },
+  badgeTextFail: {
+    color: '#ff4d4f',
   },
   error: {
-    color: '#fca5a5',
-    fontSize: 11,
-    marginTop: 1,
+    color: '#e6e6e6',
+    fontSize: 10,
+    fontWeight: '400',
+    lineHeight: 12,
   },
 });

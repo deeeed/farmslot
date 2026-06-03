@@ -1,7 +1,7 @@
 import React, { createContext, useEffect, useMemo, useState } from 'react';
 import { Platform, View } from 'react-native';
 
-import { type FarmslotRecipeHudState, RecipeHud } from './RecipeHud';
+import { type FarmslotRecipeHudState, RecipeHud, type RecipeHudOptions } from './RecipeHud';
 
 export interface FarmslotRecipeBridgeCommand {
   command: string;
@@ -15,6 +15,7 @@ export interface FarmslotRecipeBridgeApi {
 
 export interface RecipeBridgeProviderOptions {
   bridgeName?: string;
+  hud?: RecipeHudOptions;
   isEnabled?: () => boolean;
   renderHud?: (state: FarmslotRecipeHudState | null) => React.ReactNode;
 }
@@ -32,6 +33,7 @@ interface RecipeBridgeProviderProps extends RecipeBridgeProviderOptions {
 export function RecipeBridgeProvider({
   bridgeName = '@farmslot/expo-recipe',
   children,
+  hud: hudOptions,
   isEnabled = isRecipeBridgeEnabled,
   renderHud,
 }: Readonly<RecipeBridgeProviderProps>): React.ReactElement {
@@ -76,7 +78,7 @@ export function RecipeBridgeProvider({
     <FarmslotRecipeBridgeContext.Provider value={bridge}>
       <View style={{ flex: 1 }}>
         {children}
-        {renderHud ? renderHud(hud) : <RecipeHud state={hud} />}
+        {renderHud ? renderHud(hud) : <RecipeHud state={hud} {...hudOptions} />}
       </View>
     </FarmslotRecipeBridgeContext.Provider>
   );
