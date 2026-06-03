@@ -1,0 +1,424 @@
+import type {
+  EvidenceManifestEntry,
+  IndependentReviewAttempt,
+  IndependentReviewStatus,
+  NoChangeGatePayload,
+  ReadyGatePrPackage,
+  ReviewDepthPolicy,
+  Run,
+  RunDecision,
+  WorkerTerminalDisposition,
+  WorkerTerminalEvidence,
+} from '@farmslot/protocol';
+
+import {
+  effectiveRequiredReviewCount,
+  independentReviewPolicySatisfied,
+} from '../quality/review-policy.js';
+import { EXTRA_REVIEW_SOURCE } from '../quality/review-sources.js';
+import { evidenceKeyVariants } from '../run-completion/evidence-paths.js';
+import { normalizeRunner } from '../runners/registry.js';
+import type { SelfReviewResult } from '../self-review/orchestrator.js';
+import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
+
+import { publicationReviewPolicyForRun } from './publication-policy.js';
+
+export function isOwnPrApprovalError(err: unknown): boolean {
+  const maybeRecord = err as { message?: unknown; stdout?: unknown; stderr?: unknown };
+  const text = [maybeRecord?.message, maybeRecord?.stdout, maybeRecord?.stderr]
+    .filter((part): part is string => typeof part === 'string')
+    .join('\n')
+    .toLowerCase();
+
+  return /\b(can ?not|cannot)\s+approve\s+your\s+own\s+pull\s+request\b/.test(text);
+}
+
+/**
+ * `prNumber` field uses `0` as an invalid sentinel (review-input capture and
+ * other PR-bound paths reject it explicitly). Treat any non-positive value the
+ * same as `null` so chained dispatches and CLI hints don't poison downstream
+ * calls with `owner/repo#0` or pass `0` to PR-aware monitors.
+ */
+export function hasValidPrNumber(run: Pick<Run, 'prNumber'>): boolean {
+  return run.prNumber != null && run.prNumber > 0;
+}
+
+export function shouldForceNoChangeHumanGate(run: Pick<Run, 'metrics' | 'flowType'>): boolean {
+  return run.flowType === 'fix-bug' && isNoCodeTerminalDisposition(run.metrics.disposition);
+}
+
+export function noChangeDispositionLabel(
+  disposition: WorkerTerminalDisposition | null | undefined,
+): string {
+  switch (disposition) {
+    case 'already_fixed':
+      return 'already fixed';
+    case 'not_reproducible':
+      return 'not reproducible';
+    default:
+      return disposition ?? 'unknown';
+  }
+}
+
+export function buildPublishGateReviewStatus({
+  source,
+  priorReviewCount,
+  reviewResult,
+  requestedRunner,
+  workerRunner,
+  model,
+  reviewId,
+  reviewedPackage,
+}: {
+  source: 'dispatch' | 'human-gate';
+  priorReviewCount: number;
+  reviewResult: SelfReviewResult;
+  requestedRunner: string | null;
+  workerRunner?: string | null;
+  model?: string | null;
+  reviewId?: string;
+  reviewedPackage?: Pick<
+    ReadyGatePrPackage,
+    'headSha' | 'packageInputHash' | 'reviewSubjectHash'
+  > | null;
+}): IndependentReviewStatus {
+  const attempts: IndependentReviewAttempt[] =
+    Array.isArray(reviewResult.attempts) && reviewResult.attempts.length
+      ? reviewResult.attempts
+      : [
+          {
+            loopNumber: 1,
+            verdict: reviewResult.skipped
+              ? 'skipped'
+              : reviewResult.verdict === 'pass'
+                ? 'pass'
+                : reviewResult.verdict === 'blocked'
+                  ? 'failed'
+                  : reviewResult.verdict === 'issues'
+                    ? 'issues'
+                    : 'pending',
+            unresolvedCount:
+              reviewResult.verdict === 'pass' ? 0 : (reviewResult.issues?.length ?? 0),
+            ...(reviewResult.issues?.length ? { issues: reviewResult.issues } : {}),
+            reviewSnapshot: reviewResult.reviewSnapshot,
+            fixDelta: reviewResult.fixDelta,
+            validationDepth: reviewResult.validationDepth,
+            ...(reviewResult.usage ? { usage: reviewResult.usage } : {}),
+            ...(reviewResult.taskProgressArtifactPath
+              ? { taskProgressArtifactPath: reviewResult.taskProgressArtifactPath }
+              : {}),
+            ...(reviewResult.timeline?.length ? { timeline: reviewResult.timeline } : {}),
+          },
+        ];
+  const finalAttempt = attempts.at(-1)!;
+  const reviewRunner = reviewResult.runner ?? requestedRunner ?? workerRunner ?? null;
+  const status: IndependentReviewStatus = {
+    id: reviewId ?? EXTRA_REVIEW_SOURCE.artifactRefs(priorReviewCount + 1).id,
+    source,
+    runner: reviewRunner,
+    model: reviewResult.model ?? model ?? null,
+    reviewerSessionId:
+      finalAttempt.usage?.runnerSessionId ?? reviewResult.usage?.runnerSessionId ?? null,
+    crossRunner:
+      reviewResult.crossRunner === true ||
+      (!!requestedRunner && requestedRunner !== normalizeRunner(workerRunner)),
+    loopNumber: priorReviewCount + 1,
+    verdict: finalAttempt.verdict,
+    unresolvedCount: finalAttempt.unresolvedCount,
+    issues:
+      finalAttempt.issues ?? (finalAttempt.unresolvedCount > 0 ? reviewResult.issues : undefined),
+    validationDepth: finalAttempt.validationDepth ?? reviewResult.validationDepth,
+    usage: finalAttempt.usage ?? reviewResult.usage,
+    feedbackSent: reviewResult.feedbackSent === true,
+    attempts,
+    artifactPaths: [...new Set(attempts.flatMap((attempt) => attempt.artifactPaths ?? []))],
+    taskProgressArtifactPath: finalAttempt.taskProgressArtifactPath,
+    timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
+    reviewSnapshot: finalAttempt.reviewSnapshot,
+    reviewedHeadSha: finalAttempt.reviewSnapshot?.headSha ?? undefined,
+    fixDelta: finalAttempt.fixDelta,
+    startedAt: attempts[0]?.startedAt,
+    completedAt: finalAttempt.completedAt ?? new Date().toISOString(),
+  };
+  if (!reviewedPackage) return status;
+  const finalReviewedHeadSha = status.reviewSnapshot?.headSha ?? null;
+  const reviewedPackageHeadSha = reviewedPackage.headSha ?? null;
+  // A review loop can legitimately find issues, let the worker fix them, and
+  // then pass a re-review on a new HEAD. In that case the overall review
+  // certifies the final attempt's HEAD, not the package that was current before
+  // the loop started. Do not stamp the old package over the fresh re-review
+  // snapshot; the post-review package refresh will stamp the freshly prepared
+  // package after confirming the final snapshot HEAD matches.
+  if (
+    finalReviewedHeadSha &&
+    reviewedPackageHeadSha &&
+    finalReviewedHeadSha !== reviewedPackageHeadSha
+  ) {
+    return status;
+  }
+  return stampPublishGateReviewStatusForPackage(status, reviewedPackage);
+}
+
+export function stampPublishGateReviewStatusForPackage(
+  review: IndependentReviewStatus,
+  reviewedPackage: Pick<ReadyGatePrPackage, 'headSha' | 'packageInputHash' | 'reviewSubjectHash'>,
+): IndependentReviewStatus {
+  return {
+    ...review,
+    reviewedHeadSha: reviewedPackage.headSha ?? review.reviewSnapshot?.headSha ?? null,
+    reviewedPackageInputHash: reviewedPackage.packageInputHash ?? null,
+    reviewedReviewSubjectHash: reviewedPackage.reviewSubjectHash ?? null,
+  };
+}
+
+// Pure composition helper for the no-change gate. Splits the markdown
+// description and the NoChangeGatePayload off so they can be unit-tested
+// without standing up a full Run / decision pipeline.
+export function buildNoChangeGateInputs(args: {
+  disposition: 'already_fixed' | 'not_reproducible';
+  ticketOrPr: string;
+  monitorReason?: string;
+  evidence?: WorkerTerminalEvidence;
+  report?: string | null;
+  artifactManifest?: EvidenceManifestEntry[];
+}): { desc: string; payload: NoChangeGatePayload } {
+  const { disposition, ticketOrPr, monitorReason, evidence, report, artifactManifest } = args;
+  const evidenceLines = [
+    evidence?.reportPath ? `- report: \`${evidence.reportPath}\`` : null,
+    ...(evidence?.artifacts?.map((artifact) => `- artifact: \`${artifact}\``) ?? []),
+    evidence?.confidence ? `- confidence: ${evidence.confidence}` : null,
+    evidence?.reproductionAttempted ? '- reproduction attempted: yes' : null,
+  ].filter((line): line is string => Boolean(line));
+  const desc = [
+    `Worker reported **${noChangeDispositionLabel(disposition)}** for ${ticketOrPr}.`,
+    monitorReason ? `Worker reason: ${monitorReason}` : null,
+    evidenceLines.length ? `Evidence:\n${evidenceLines.join('\n')}` : 'Evidence: none reported.',
+    report ? `\nReport excerpt:\n\n${report.slice(0, 600)}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const payload: NoChangeGatePayload = {
+    kind: 'no-change',
+    disposition,
+    reason: monitorReason,
+    evidence,
+    workerReport: report ?? undefined,
+    artifactManifest,
+  };
+  return { desc, payload };
+}
+
+// Pure rejection-message picker. Returns the operator-facing error string
+// the gate writes onto the run when the human picks reject-retry or
+// mark-blocked. Extracted alongside buildNoChangeGateInputs so the two
+// branch outputs can be asserted directly.
+export function noChangeRejectionMessage(
+  actionId: 'reject-retry' | 'mark-blocked',
+  ticketOrPr: string,
+): string {
+  return actionId === 'reject-retry'
+    ? `No-change result rejected; retry reproduction for ${ticketOrPr}`
+    : `No-change result marked blocked; insufficient evidence for ${ticketOrPr}`;
+}
+
+export function validatePackageApprovalSelection(
+  preparedPackage: ReadyGatePrPackage,
+  decision: RunDecision | undefined,
+): void {
+  const selection = decision?.selectionData ?? {};
+  const packageId = typeof selection.packageId === 'string' ? selection.packageId : '';
+  const packageHash = typeof selection.packageHash === 'string' ? selection.packageHash : '';
+  const packageHeadSha =
+    typeof selection.packageHeadSha === 'string' ? selection.packageHeadSha : '';
+  if (packageId !== preparedPackage.id) {
+    throw new Error(
+      `Package changed; refresh package and re-review before publishing (approved package ${packageId || 'missing'} but current package is ${preparedPackage.id})`,
+    );
+  }
+  if (packageHash !== preparedPackage.packageHash) {
+    throw new Error(
+      `Package changed; refresh package and re-review before publishing (approved package hash ${packageHash || 'missing'} but current package is ${preparedPackage.packageHash})`,
+    );
+  }
+  if (!preparedPackage.headSha) {
+    throw new Error(
+      'Package changed; refresh package and re-review before publishing (package HEAD SHA missing)',
+    );
+  }
+  if (packageHeadSha !== preparedPackage.headSha) {
+    throw new Error(
+      `Package changed; refresh package and re-review before publishing (approved HEAD ${packageHeadSha || 'missing'} but current package is ${preparedPackage.headSha})`,
+    );
+  }
+  const selectedEvidenceKeys = selection.selectedEvidenceKeys;
+  if (
+    Array.isArray(selectedEvidenceKeys) &&
+    !selectedEvidenceKeysMatchPackageSelection(preparedPackage, selectedEvidenceKeys)
+  ) {
+    throw new Error(
+      'Package changed; refresh package and re-review before publishing (selected evidence differs from the prepared package)',
+    );
+  }
+}
+
+function canonicalEvidenceSelectionForPackage(
+  preparedPackage: ReadyGatePrPackage,
+  keys: readonly string[] | undefined,
+): string[] {
+  const manifest = preparedPackage.evidenceManifest ?? [];
+  const resolve = (key: string): string => {
+    const exact = manifest.find((artifact) => artifact.path === key);
+    if (exact) return exact.path;
+    const selectedVariants = new Set(evidenceKeyVariants(key));
+    const matches = manifest.filter((artifact) =>
+      evidenceKeyVariants(artifact.path).some((variant) => selectedVariants.has(variant)),
+    );
+    return matches.length === 1 ? matches[0].path : key;
+  };
+  return [
+    ...new Set((keys ?? []).filter((key): key is string => typeof key === 'string').map(resolve)),
+  ].sort();
+}
+
+function selectedEvidenceKeysMatchPackageSelection(
+  preparedPackage: ReadyGatePrPackage,
+  selectedEvidenceKeys: readonly string[] | undefined,
+): boolean {
+  if (!Array.isArray(selectedEvidenceKeys)) return true;
+  const expected = canonicalEvidenceSelectionForPackage(
+    preparedPackage,
+    preparedPackage.selectedEvidenceKeys,
+  );
+  const actual = canonicalEvidenceSelectionForPackage(preparedPackage, selectedEvidenceKeys);
+  return expected.length === actual.length && expected.every((key, index) => key === actual[index]);
+}
+
+export function reviewFinalSnapshotMatchesPreparedPackage(
+  review: IndependentReviewStatus,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha'>,
+): boolean {
+  if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
+  const snapshot = review.reviewSnapshot;
+  if (!snapshot || snapshot.source === 'unavailable') return false;
+  return Boolean(preparedPackage.headSha && snapshot.headSha === preparedPackage.headSha);
+}
+
+export function countStalePublicationReviews(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  options?: { requireCrossRunnerCertification?: boolean },
+): number {
+  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
+  if (!packageReviewSubjectHash) return independentReviews.length;
+  const reviewDepth = {
+    minimumIndependentReviews: preparedPackage.reviewDepth?.minimumIndependentReviews ?? 1,
+    requireCrossRunner: Boolean(
+      preparedPackage.reviewDepth?.requireCrossRunner || options?.requireCrossRunnerCertification,
+    ),
+    extraLoopsRequested: preparedPackage.reviewDepth?.extraLoopsRequested ?? 0,
+    requestedBy: preparedPackage.reviewDepth?.requestedBy ?? 'dispatch',
+  };
+  const freshReviews = independentReviews.filter((review) =>
+    reviewCertifiesPreparedPackage(review, preparedPackage),
+  );
+  if (freshPublicationReviewCountSatisfied(reviewDepth, freshReviews)) return 0;
+  const certifiedByFreshFixLoop = independentReviews.some(
+    (review) =>
+      reviewCertifiesApprovedHeadAfterFix(review, preparedPackage) &&
+      (!options?.requireCrossRunnerCertification || review.crossRunner),
+  );
+  return independentReviews.filter((review) => {
+    const snapshot = review.reviewSnapshot;
+    const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
+    const reviewedSubjectHash = review.reviewedReviewSubjectHash ?? null;
+    const subjectDrift = reviewedSubjectHash !== packageReviewSubjectHash;
+    const stale =
+      !reviewedHeadSha ||
+      reviewedHeadSha !== preparedPackage.headSha ||
+      subjectDrift ||
+      (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable'));
+    return stale && !certifiedByFreshFixLoop;
+  }).length;
+}
+
+function freshPublicationReviewCountSatisfied(
+  reviewDepth: ReviewDepthPolicy,
+  reviews: IndependentReviewStatus[],
+): boolean {
+  const required = effectiveRequiredReviewCount(reviewDepth);
+  if (required === 0) return true;
+  const passing = reviews.filter(
+    (review) => review.verdict === 'pass' && review.unresolvedCount === 0,
+  );
+  if (passing.length < required) return false;
+  if (reviewDepth.requireCrossRunner && !passing.some((review) => review.crossRunner)) return false;
+  return true;
+}
+
+function reviewCertifiesPreparedPackage(
+  review: IndependentReviewStatus,
+  preparedPackage: ReadyGatePrPackage,
+): boolean {
+  if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
+  const snapshot = review.reviewSnapshot;
+  const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
+  if (!reviewedHeadSha || reviewedHeadSha !== preparedPackage.headSha) return false;
+  if (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable')) return false;
+  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
+  if (!packageReviewSubjectHash) return false;
+  return review.reviewedReviewSubjectHash === packageReviewSubjectHash;
+}
+
+export function assertPublicationReviewPolicySatisfied(
+  current: Run,
+  preparedPackage: ReadyGatePrPackage,
+): void {
+  const reviewDepth = preparedPackage.reviewDepth ?? publicationReviewPolicyForRun(current);
+  const independentReviews = current.engineState?.publishGate?.independentReviews ?? [];
+  const requiredReviewCount = effectiveRequiredReviewCount(reviewDepth);
+  const staleReviewCount =
+    requiredReviewCount > 0
+      ? countStalePublicationReviews(independentReviews, preparedPackage, {
+          requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
+        })
+      : 0;
+  if (!independentReviewPolicySatisfied(reviewDepth, independentReviews) || staleReviewCount > 0) {
+    throw new Error(
+      'Publication approval requires passing independent reviews for the approved package; package changed, refresh package and re-review before publishing',
+    );
+  }
+}
+
+function reviewCertifiesApprovedHeadAfterFix(
+  review: IndependentReviewStatus,
+  preparedPackage: ReadyGatePrPackage,
+): boolean {
+  if (!preparedPackage.headSha) return false;
+  if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return false;
+  if ((review.validationDepth ?? 'full-live') !== 'full-live') return false;
+  const snapshot = review.reviewSnapshot;
+  if (
+    !snapshot ||
+    snapshot.source === 'unavailable' ||
+    snapshot.headSha !== preparedPackage.headSha
+  )
+    return false;
+  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
+  if (!packageReviewSubjectHash) return false;
+  if (review.reviewedReviewSubjectHash !== packageReviewSubjectHash) return false;
+  return reviewHasWorkerFixLoop(review);
+}
+
+function reviewHasWorkerFixLoop(review: IndependentReviewStatus): boolean {
+  if (review.feedbackSent) return true;
+  if (review.timeline?.some((segment) => segment.kind === 'worker-fix')) return true;
+  const attempts = review.attempts ?? [];
+  if (attempts.some((attempt) => attempt.fixDelta)) return true;
+  const sawIssues = attempts.some(
+    (attempt) => attempt.verdict === 'issues' && attempt.unresolvedCount > 0,
+  );
+  const sawPass = attempts.some(
+    (attempt) => attempt.verdict === 'pass' && attempt.unresolvedCount === 0,
+  );
+  return sawIssues && sawPass;
+}

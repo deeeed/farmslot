@@ -1,0 +1,12 @@
+{
+  "extends": "../../apps/command-center/tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@farmslot/recipe-harness": ["../recipe-harness/src/index.ts"],
+      "@farmslot/recipe-harness/*": ["../recipe-harness/src/*"],
+      "@farmslot/protocol": ["../protocol/src/index.ts"],
+      "@farmslot/protocol/*": ["../protocol/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

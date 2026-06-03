@@ -1,0 +1,120 @@
+{
+  "name": "@farmslot/recipe-harness",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "farmslot-recipe": "./bin/farmslot-recipe.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js",
+      "default": "./dist/cli/index.js"
+    },
+    "./cli/support": {
+      "types": "./dist/cli/support.d.ts",
+      "import": "./dist/cli/support.js",
+      "default": "./dist/cli/support.js"
+    },
+    "./runner": {
+      "types": "./dist/core/runner.d.ts",
+      "import": "./dist/core/runner.js",
+      "default": "./dist/core/runner.js"
+    },
+    "./types": {
+      "types": "./dist/core/types.d.ts",
+      "import": "./dist/core/types.js",
+      "default": "./dist/core/types.js"
+    },
+    "./writers": {
+      "types": "./dist/node/writers.d.ts",
+      "import": "./dist/node/writers.js",
+      "default": "./dist/node/writers.js"
+    },
+    "./adapters/core": {
+      "types": "./dist/adapters/core.d.ts",
+      "import": "./dist/adapters/core.js",
+      "default": "./dist/adapters/core.js"
+    },
+    "./adapters/ui": {
+      "types": "./dist/adapters/ui.d.ts",
+      "import": "./dist/adapters/ui.js",
+      "default": "./dist/adapters/ui.js"
+    },
+    "./runtime/browser-extension": {
+      "types": "./dist/runtime/browser-extension.d.ts",
+      "import": "./dist/runtime/browser-extension.js",
+      "default": "./dist/runtime/browser-extension.js"
+    },
+    "./runtime/cdp": {
+      "types": "./dist/runtime/cdp.d.ts",
+      "import": "./dist/runtime/cdp.js",
+      "default": "./dist/runtime/cdp.js"
+    },
+    "./runtime/react-native-bridge": {
+      "types": "./dist/runtime/react-native-bridge.d.ts",
+      "import": "./dist/runtime/react-native-bridge.js",
+      "default": "./dist/runtime/react-native-bridge.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json test",
+    "format": "prettier --write --ignore-path ../../.prettierignore .",
+    "format:check": "prettier --check --ignore-path ../../.prettierignore .",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "lint:fix": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --fix",
+    "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" \"test/**/*.ts\" && tsc --noEmit --project tsconfig.json && yarn build && yarn test",
+    "build": "yarn workspace @farmslot/protocol build && rm -rf dist && tsc --project tsconfig.build.json",
+    "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/recipe-harness && yarn workspace @farmslot/recipe-harness build",
+    "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/recipe-harness"
+  },
+  "dependencies": {
+    "@farmslot/protocol": "workspace:*",
+    "commander": "^12.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deeeed/farmslot.git",
+    "directory": "packages/recipe-harness"
+  },
+  "bugs": {
+    "url": "https://github.com/deeeed/farmslot/issues"
+  },
+  "license": "MIT",
+  "homepage": "https://farmslot.io/docs/architecture/recipe-harness",
+  "keywords": [
+    "farmslot",
+    "recipe-harness",
+    "recipe-runner",
+    "validation",
+    "agentic-engineering"
+  ],
+  "files": [
+    "README.md",
+    "bin/**/*.mjs",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
+    "dist/**/*.js.map"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

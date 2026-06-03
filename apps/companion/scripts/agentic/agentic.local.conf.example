@@ -1,0 +1,30 @@
+# Copy to scripts/agentic/agentic.local.conf (gitignored) per worktree.
+# This lets each checkout target a different physical device or simulator.
+
+# Optional variant override for local native builds.
+# APP_VARIANT=development
+
+# METRO_PORT is canonical for Expo/RN. WATCHER_PORT is accepted only as a legacy alias.
+# METRO_PORT=7677
+
+# Android real device serial from `adb devices`, host-only wireless ADB IP,
+# or full wireless ADB host:port. Prefer the stable USB serial: when Wireless
+# Debugging changes host:port, the launcher can reconnect through `adb mdns services`.
+# ADB_SERIAL=YOUR_DEVICE_SERIAL
+# ANDROID_DEVICE=YOUR_DEVICE_SERIAL
+
+# Optional iOS targets for `yarn ios` / `yarn ios:device`.
+# DEVICE_MODE=simulator
+# IOS_SIMULATOR="iPhone 16 Pro"
+# DEVICE_MODE=device
+# IOS_DEVICE_UDID=YOUR_IOS_DEVICE_UDID
+
+# Network mode: auto chooses localhost for simulator/emulator and LAN for devices.
+# Use lan for physical-device Wi-Fi QA; use localhost for simulator/emulator/USB loopback.
+METRO_CONNECTION=auto
+
+# Optional. If omitted in lan mode, scripts auto-detect the Mac's active LAN IP.
+# REACT_NATIVE_PACKAGER_HOSTNAME=<mac-lan-ip>
+
+# Optional. If omitted in lan mode, scripts use ws://<detected-lan-ip>:7777/ws.
+# EXPO_PUBLIC_GATEWAY_URL=ws://<mac-lan-ip>:7777/ws

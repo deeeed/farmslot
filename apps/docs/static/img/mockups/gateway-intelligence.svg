@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <rect width="1200" height="720" rx="32" fill="#081411"/>
+  <text x="72" y="86" fill="#f7fffc" font-family="Inter, sans-serif" font-size="42" font-weight="900">Gateway intelligence loop</text>
+  <text x="72" y="122" fill="#a7d9cc" font-family="Inter, sans-serif" font-size="18">Structured evidence in, operator-visible decisions out</text>
+  <g font-family="Inter, sans-serif" font-size="18" font-weight="700">
+    <rect x="72" y="190" width="220" height="110" rx="18" fill="#10241f" stroke="#2c6b5b"/>
+    <text x="104" y="252" fill="#6ee7c8">Run state</text>
+    <rect x="72" y="336" width="220" height="110" rx="18" fill="#10241f" stroke="#2c6b5b"/>
+    <text x="104" y="398" fill="#6ee7c8">Artifacts</text>
+    <rect x="72" y="482" width="220" height="110" rx="18" fill="#10241f" stroke="#2c6b5b"/>
+    <text x="104" y="544" fill="#6ee7c8">Scoped logs</text>
+    <rect x="460" y="276" width="280" height="190" rx="24" fill="#14352e" stroke="#6ee7c8"/>
+    <text x="510" y="360" fill="#f7fffc" font-size="28" font-weight="900">Intelligence</text>
+    <text x="510" y="396" fill="#a7d9cc" font-size="16" font-weight="400">score · nudge · review · recover</text>
+    <rect x="890" y="190" width="230" height="110" rx="18" fill="#10241f" stroke="#2c6b5b"/>
+    <text x="924" y="252" fill="#6ee7c8">Decision queue</text>
+    <rect x="890" y="336" width="230" height="110" rx="18" fill="#10241f" stroke="#2c6b5b"/>
+    <text x="924" y="398" fill="#6ee7c8">Co-Pilot answer</text>
+    <rect x="890" y="482" width="230" height="110" rx="18" fill="#10241f" stroke="#2c6b5b"/>
+    <text x="924" y="544" fill="#6ee7c8">Improvement diff</text>
+  </g>
+  <g stroke="#6ee7c8" stroke-width="4" fill="none" marker-end="url(#arrow)">
+    <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6ee7c8"/></marker></defs>
+    <path d="M292 245 C360 245 380 330 460 340"/>
+    <path d="M292 391 C360 391 380 378 460 378"/>
+    <path d="M292 537 C360 537 380 430 460 410"/>
+    <path d="M740 350 C810 330 830 260 890 245"/>
+    <path d="M740 372 C805 372 830 391 890 391"/>
+    <path d="M740 410 C810 430 830 520 890 537"/>
+  </g>
+</svg>

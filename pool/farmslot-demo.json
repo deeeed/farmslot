@@ -1,0 +1,18 @@
+{
+  "$schema": "../schemas/pool.schema.json",
+  "machine": "farmslot-demo",
+  "project": "farmslot-farm",
+  "platform": "cli",
+  "host": "localhost",
+  "ssh_user": "dev",
+  "slots": [
+    {
+      "id": "demo-ff-1",
+      "repo": ".",
+      "session": "demo-1",
+      "resources": {
+        "dev-server": { "port": 7777 }
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "extends": "../../apps/command-center/tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@farmslot/protocol": ["../../packages/protocol/src/index.ts"],
+      "@farmslot/protocol/*": ["../../packages/protocol/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

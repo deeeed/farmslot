@@ -1,0 +1,831 @@
+// methods/recipe.ts — recipe.rerun and recipe.cancel handlers
+// Re-execute a recipe on a warm slot during review-gate.
+
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+
+import {
+  DEFAULT_TASK_DIR,
+  Events,
+  isRecord,
+  type LiveRecipeContext,
+  type RecipeCancelParams,
+  type RecipeCancelResult,
+  type RecipeCommandParams,
+  type RecipeCommandResult,
+  type RecipeProjectHookCommandParams,
+  type RecipeProjectHookCommandResult,
+  type RecipeProjectHookName,
+  type RecipeProjectHookRunParams,
+  type RecipeProjectHookRunResult,
+  type RecipeProjectHookValidationCheck,
+  type RecipeProjectHookValidationResult,
+  type RecipeRerunParams,
+  type ScriptActionResult,
+  validateRecipeActionManifestDocument,
+} from '@farmslot/protocol';
+
+import {
+  getOrchestratorTaskRoot,
+  getProjectField,
+  getProjectFieldRaw,
+  loadProjectVars,
+  loadSlotVars,
+  type ProjectVars,
+  type RawProjectJson,
+  resolveTaskRelDir,
+  type SlotVars,
+} from '../core/config.js';
+import { execOnSlot, isLocal } from '../core/exec.js';
+import { expandTemplate } from '../core/hooks.js';
+import {
+  isShellHomePath,
+  normalizeRemotePath,
+  resolvePathWithinRemoteBase,
+  shellExpressionForRemotePath,
+} from '../core/remote-paths.js';
+import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
+import { loadFleetStatus } from '../fleet/state.js';
+import {
+  attachLiveRecipeContext,
+  listRecipeRunArtifactGroupsForRun,
+} from '../live-recipe/context.js';
+import { getRun, updateRun } from '../runs/store.js';
+
+type EmitFn = (event: string, payload: unknown) => void;
+
+interface WarmthCheck {
+  check: 'tmux' | 'devserver' | 'branch';
+  severity: 'hard' | 'soft';
+  message: string;
+}
+
+interface WarmthResult {
+  warm: boolean;
+  warnings: WarmthCheck[];
+}
+
+interface ActiveRerun {
+  requestId: string;
+  abortController: AbortController;
+}
+
+const activeReruns = new Map<string, ActiveRerun>();
+
+const DEFAULT_TIMEOUT_MS = 300_000;
+const ARTIFACT_RUN_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+const MIN_PLAYBACK_SLOW_MS = 100;
+const MAX_PLAYBACK_SLOW_MS = 60_000;
+const RECIPE_PROJECT_HOOKS = new Set<RecipeProjectHookName>([
+  'recipe_action_manifest',
+  'recipe_doctor',
+  'recipe_run',
+]);
+
+function addHookValidationCheck(
+  checks: RecipeProjectHookValidationCheck[],
+  id: string,
+  status: RecipeProjectHookValidationCheck['status'],
+  message: string,
+): void {
+  checks.push({ id, status, message });
+}
+
+function assertRecipeProjectHookName(hook: string): asserts hook is RecipeProjectHookName {
+  if (!RECIPE_PROJECT_HOOKS.has(hook as RecipeProjectHookName)) {
+    throw new Error(
+      `Unsupported Recipe v1 project hook ${hook}. Expected recipe_action_manifest, recipe_doctor, or recipe_run.`,
+    );
+  }
+}
+
+function parseProjectHookJson(hook: RecipeProjectHookName, stdout: string): unknown {
+  try {
+    return JSON.parse(stdout);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`hooks.${hook} must print valid JSON: ${message}`);
+  }
+}
+
+function validateRecipeDoctorJson(document: unknown): RecipeProjectHookValidationResult {
+  const checks: RecipeProjectHookValidationCheck[] = [];
+  addHookValidationCheck(
+    checks,
+    'doctor.document',
+    isRecord(document) ? 'pass' : 'fail',
+    'recipe_doctor output must be a JSON object.',
+  );
+  if (!isRecord(document)) return { status: 'fail', checks };
+
+  addHookValidationCheck(
+    checks,
+    'doctor.runner_protocol_version',
+    document.runner_protocol_version === 1 ? 'pass' : 'fail',
+    'recipe_doctor must report runner_protocol_version: 1.',
+  );
+  addHookValidationCheck(
+    checks,
+    'doctor.status',
+    document.status === 'pass' ? 'pass' : 'fail',
+    'recipe_doctor must report top-level status: pass.',
+  );
+
+  const doctorChecks = document.checks;
+  if (doctorChecks !== undefined && !Array.isArray(doctorChecks)) {
+    addHookValidationCheck(
+      checks,
+      'doctor.checks_shape',
+      'fail',
+      'recipe_doctor checks must be an array when present.',
+    );
+  } else {
+    const malformedChecks = (doctorChecks ?? []).filter(
+      (check) => !isRecord(check) || typeof check.status !== 'string',
+    );
+    const failedChecks = (doctorChecks ?? []).filter(
+      (check) => isRecord(check) && typeof check.status === 'string' && check.status !== 'pass',
+    );
+    addHookValidationCheck(
+      checks,
+      'doctor.checks_entries',
+      malformedChecks.length === 0 ? 'pass' : 'fail',
+      'recipe_doctor checks[] entries must be objects with a string status.',
+    );
+    addHookValidationCheck(
+      checks,
+      'doctor.checks_pass',
+      malformedChecks.length === 0 && failedChecks.length === 0 ? 'pass' : 'fail',
+      'recipe_doctor checks[] must not contain failed readiness checks.',
+    );
+  }
+
+  return {
+    status: checks.some((check) => check.status === 'fail') ? 'fail' : 'pass',
+    checks,
+  };
+}
+
+export function validateRecipeProjectHookOutput(
+  hook: RecipeProjectHookName,
+  stdout: string,
+): RecipeProjectHookValidationResult {
+  if (hook === 'recipe_run') {
+    return {
+      status: 'pass',
+      checks: [
+        {
+          id: 'recipe_run.process_exit',
+          status: 'pass',
+          message:
+            'hooks.recipe_run process exited successfully. Validate summary, trace, and artifacts separately with recipe artifacts validate.',
+        },
+      ],
+    };
+  }
+
+  const document = parseProjectHookJson(hook, stdout);
+  if (hook === 'recipe_doctor') return validateRecipeDoctorJson(document);
+
+  const recipe = validateRecipeActionManifestDocument(document);
+  const checks: RecipeProjectHookValidationCheck[] = [
+    {
+      id: 'action_manifest.validation',
+      status: recipe.status === 'valid' ? 'pass' : 'fail',
+      message: 'recipe_action_manifest must print a valid Recipe v1 action manifest.',
+    },
+  ];
+  return {
+    status: checks.some((check) => check.status === 'fail') ? 'fail' : 'pass',
+    checks,
+    recipe,
+  };
+}
+
+export function expandRecipeProjectHookTemplate(
+  hook: RecipeProjectHookName,
+  projectVars: ProjectVars,
+  slotVars: SlotVars,
+  params: { recipePath?: string; artifactsDir?: string } = {},
+): RecipeProjectHookCommandResult {
+  const template = projectVars.projectJson.hooks?.[hook];
+  if (!template || typeof template !== 'string') {
+    throw new Error(`No ${hook} hook configured in project.json for ${projectVars.projectName}.`);
+  }
+  if (hook === 'recipe_run') {
+    if (!params.recipePath) {
+      throw new Error('hooks.recipe_run execution requires recipePath.');
+    }
+    if (!params.artifactsDir) {
+      throw new Error('hooks.recipe_run execution requires artifactsDir.');
+    }
+    return {
+      hook,
+      command: expandRecipeRunHookTemplate(
+        template,
+        slotVars,
+        projectVars,
+        shellExpressionForRemotePath(params.recipePath),
+        shellExpressionForRemotePath(params.artifactsDir),
+      ),
+    };
+  }
+  return { hook, command: expandTemplate(template, slotVars, projectVars) };
+}
+
+export function assertSlotProjectMatchesRequestedProject(
+  slotVars: SlotVars,
+  requestedProject: string,
+): void {
+  if (slotVars.projectName !== requestedProject) {
+    throw new Error(
+      `Slot ${slotVars.slotId} belongs to project ${slotVars.projectName}; refusing to run Recipe v1 hook for requested project ${requestedProject}.`,
+    );
+  }
+}
+
+export function validateRecipeRunHookTemplate(template: string): void {
+  const missing = ['{{recipe_path}}', '{{artifacts_dir}}'].filter(
+    (placeholder) => !template.includes(placeholder),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `hooks.recipe_run must explicitly include ${missing.join(' and ')} so Recipe v1 runner input/output paths are visible in project config.`,
+    );
+  }
+}
+
+export function expandRecipeRunHookTemplate(
+  template: string,
+  slotVars: SlotVars,
+  projectVars: ProjectVars,
+  recipePath: string,
+  artifactsDir: string,
+): string {
+  validateRecipeRunHookTemplate(template);
+  return expandTemplate(template, slotVars, projectVars)
+    .replaceAll('{{recipe_path}}', recipePath)
+    .replaceAll('{{artifacts_dir}}', artifactsDir);
+}
+
+export function canRecipeRerunOnSlot(
+  slotStatus: {
+    slot?: string | null;
+    currentRunId?: string | null;
+    phase?: string | null;
+    lifecycle?: string | null;
+  },
+  runId: string,
+  runSlotId?: string | null,
+): boolean {
+  if (slotStatus.currentRunId && slotStatus.currentRunId !== runId) return false;
+  if (slotStatus.currentRunId === runId) {
+    return slotStatus.phase === 'review-gate' || slotStatus.lifecycle === 'held';
+  }
+  // Some review-gate slots do not persist currentRunId after handoff; keep that
+  // recovery path narrow so arbitrary held slots cannot be claimed by stale runs.
+  return Boolean(slotStatus.phase === 'review-gate' && runSlotId && slotStatus.slot === runSlotId);
+}
+
+async function checkSlotWarmth(
+  slotVars: SlotVars,
+  expectedBranch: string | null,
+): Promise<WarmthResult> {
+  const warnings: WarmthCheck[] = [];
+  const session = await resolveTmuxSession(slotVars.slotId, slotVars);
+
+  // Run all checks in parallel — they're independent
+  await Promise.allSettled([
+    execOnSlot(
+      slotVars,
+      `tmux has-session -t ${shellQuote(session)} 2>/dev/null && echo ok || echo no`,
+    )
+      .then((r) => {
+        if (r.stdout.trim() !== 'ok')
+          warnings.push({
+            check: 'tmux',
+            severity: 'hard',
+            message: `tmux session '${session}' not found`,
+          });
+      })
+      .catch(() => {
+        warnings.push({ check: 'tmux', severity: 'hard', message: 'tmux session check failed' });
+      }),
+    ...(slotVars.resourceVars.port && /^\d+$/.test(slotVars.resourceVars.port)
+      ? [
+          execOnSlot(
+            slotVars,
+            `bash -c 'echo > /dev/tcp/localhost/${slotVars.resourceVars.port}' 2>/dev/null && echo ok || echo no`,
+            { timeout: 5000 },
+          )
+            .then((r) => {
+              if (r.stdout.trim() !== 'ok')
+                warnings.push({
+                  check: 'devserver',
+                  severity: 'soft',
+                  message: `devserver port ${slotVars.resourceVars.port} not listening`,
+                });
+            })
+            .catch(() => {
+              warnings.push({
+                check: 'devserver',
+                severity: 'soft',
+                message: `devserver port ${slotVars.resourceVars.port} check failed`,
+              });
+            }),
+        ]
+      : []),
+    ...(expectedBranch
+      ? [
+          execOnSlot(
+            slotVars,
+            `git -C ${shellQuote(slotVars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
+          )
+            .then((r) => {
+              if (r.stdout.trim() !== expectedBranch)
+                warnings.push({
+                  check: 'branch',
+                  severity: 'hard',
+                  message: `branch mismatch: expected '${expectedBranch}', got '${r.stdout.trim()}'`,
+                });
+            })
+            .catch(() => {
+              warnings.push({ check: 'branch', severity: 'hard', message: 'branch check failed' });
+            }),
+        ]
+      : []),
+  ]);
+
+  return { warm: warnings.length === 0, warnings };
+}
+
+/**
+ * Resolve a recipe artifact path on the SLOT filesystem (not orchestrator).
+ * Defaults to artifacts/recipe.json but can also target bundled task-local subflows.
+ */
+function resolveWorkerTaskDir(
+  run: { taskFile: string | null; project: string },
+  slotVars: SlotVars,
+  projectJson: RawProjectJson,
+): string | null {
+  if (!run.taskFile) return null;
+  const orchRoot = getOrchestratorTaskRoot(run.project, projectJson);
+  const relPath = resolveTaskRelDir(run.taskFile, orchRoot);
+  if (relPath === null) return null;
+  const taskDirName =
+    (getProjectField(projectJson, 'task_dir') as string | undefined) || DEFAULT_TASK_DIR;
+  return path.join(slotVars.remoteRepo, taskDirName, relPath);
+}
+
+export function resolveRecipeArtifactRootForSlot(
+  runTaskFile: string | null,
+  workerTaskDir: string,
+  selectedArtifactRoot?: string | null,
+): string {
+  if (!selectedArtifactRoot || !runTaskFile) return workerTaskDir;
+  const localTaskArtifactsRoot = path.join(path.dirname(runTaskFile), 'artifacts');
+  const relativeArtifactRoot = path.relative(localTaskArtifactsRoot, selectedArtifactRoot);
+  if (
+    relativeArtifactRoot === '' ||
+    (!relativeArtifactRoot.startsWith('..') && !path.isAbsolute(relativeArtifactRoot))
+  ) {
+    return path.join(workerTaskDir, 'artifacts', relativeArtifactRoot);
+  }
+  return selectedArtifactRoot;
+}
+
+export function resolveSlotRecipePath(
+  recipeArtifactRoot: string,
+  recipeArtifactPath?: string,
+): string | null {
+  const normalizedArtifactRoot = isShellHomePath(recipeArtifactRoot)
+    ? normalizeRemotePath(recipeArtifactRoot)
+    : path.resolve(recipeArtifactRoot);
+  const artifactRootLooksLikeArtifactsDir =
+    normalizedArtifactRoot.endsWith(`${path.sep}artifacts`) ||
+    normalizedArtifactRoot.includes(`${path.sep}artifacts${path.sep}recipe-runs${path.sep}`);
+  const rawRelativeArtifactPath =
+    recipeArtifactPath ??
+    (artifactRootLooksLikeArtifactsDir ? 'recipe.json' : 'artifacts/recipe.json');
+  const relativeArtifactPath =
+    artifactRootLooksLikeArtifactsDir && rawRelativeArtifactPath.startsWith('artifacts/')
+      ? rawRelativeArtifactPath.slice('artifacts/'.length)
+      : rawRelativeArtifactPath;
+  if (path.isAbsolute(relativeArtifactPath) || relativeArtifactPath.split(/[\\/]+/).includes('..'))
+    return null;
+  return isShellHomePath(recipeArtifactRoot)
+    ? resolvePathWithinRemoteBase(normalizedArtifactRoot, relativeArtifactPath)
+    : (() => {
+        const targetPath = path.resolve(normalizedArtifactRoot, relativeArtifactPath);
+        const relativeTargetPath = path.relative(normalizedArtifactRoot, targetPath);
+        if (relativeTargetPath.startsWith('..') || path.isAbsolute(relativeTargetPath)) return null;
+        return targetPath;
+      })();
+}
+
+export interface SlotRecipePathCandidate {
+  recipePath: string;
+  artifactRoot: string;
+  source: 'selected-run' | 'current-package';
+}
+
+export function resolveSlotRecipePathCandidates(
+  runTaskFile: string | null,
+  workerTaskDir: string,
+  selectedArtifactRoot: string | null | undefined,
+  recipeArtifactPath?: string,
+): SlotRecipePathCandidate[] {
+  const candidates: SlotRecipePathCandidate[] = [];
+  const seen = new Set<string>();
+  const addCandidate = (artifactRoot: string, source: SlotRecipePathCandidate['source']) => {
+    const recipePath = resolveSlotRecipePath(artifactRoot, recipeArtifactPath);
+    if (!recipePath || seen.has(recipePath)) return;
+    seen.add(recipePath);
+    candidates.push({ recipePath, artifactRoot, source });
+  };
+
+  if (selectedArtifactRoot) {
+    addCandidate(
+      resolveRecipeArtifactRootForSlot(runTaskFile, workerTaskDir, selectedArtifactRoot),
+      'selected-run',
+    );
+  }
+  addCandidate(workerTaskDir, 'current-package');
+  return candidates;
+}
+
+export async function selectExistingRecipePathCandidate(
+  candidates: SlotRecipePathCandidate[],
+  fileExists: (recipePath: string) => Promise<boolean>,
+): Promise<SlotRecipePathCandidate | null> {
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!;
+  for (const candidate of candidates) {
+    if (await fileExists(candidate.recipePath)) return candidate;
+  }
+  return candidates[0]!;
+}
+
+function assertValidArtifactRunId(artifactRunId: string): void {
+  if (!ARTIFACT_RUN_ID_RE.test(artifactRunId)) {
+    throw new Error(`Invalid artifact run id: ${artifactRunId}`);
+  }
+}
+
+function normalizePlaybackSlowMs(playbackSlowMs: number | undefined): number | undefined {
+  if (playbackSlowMs === undefined) return undefined;
+  if (
+    !Number.isInteger(playbackSlowMs) ||
+    playbackSlowMs < MIN_PLAYBACK_SLOW_MS ||
+    playbackSlowMs > MAX_PLAYBACK_SLOW_MS
+  ) {
+    throw new Error(
+      `Invalid playback slow-down: expected ${MIN_PLAYBACK_SLOW_MS}-${MAX_PLAYBACK_SLOW_MS}ms`,
+    );
+  }
+  return playbackSlowMs;
+}
+
+export function appendRecipePlaybackOptions(
+  command: string,
+  args: { playbackSlowMs?: number },
+): string {
+  const playbackSlowMs = normalizePlaybackSlowMs(args.playbackSlowMs);
+  if (playbackSlowMs === undefined) return command;
+  return `${command} --slow ${playbackSlowMs}`;
+}
+
+async function resolveSelectedRecipeArtifactRoot(
+  run: { taskFile: string | null; project: string } & { id: string },
+  recipeRunId: string | undefined,
+): Promise<string | null> {
+  if (!recipeRunId) return null;
+  const groups = await listRecipeRunArtifactGroupsForRun(
+    await attachLiveRecipeContext(getRun(run.id)!),
+  );
+  return groups.find((group) => group.id === recipeRunId)?.artifactRoot ?? null;
+}
+
+async function slotFileExists(slotVars: SlotVars, filePath: string): Promise<boolean> {
+  const result = await execOnSlot(
+    slotVars,
+    `test -f ${shellExpressionForRemotePath(filePath)} && echo ok || echo missing`,
+  );
+  return result.stdout.trim() === 'ok';
+}
+
+async function buildRecipeExecutionCommand(
+  run: { taskFile: string | null; project: string; branch: string | null; id: string },
+  slotVars: SlotVars,
+  projectVars: ProjectVars,
+  recipeArtifactPath: string | undefined,
+  recipeRunId: string | undefined,
+  artifactRunId: string,
+  playbackSlowMs: number | undefined,
+): Promise<{ recipePath: string; artifactRoot: string; command: string }> {
+  assertValidArtifactRunId(artifactRunId);
+  const workerTaskDir = resolveWorkerTaskDir(run, slotVars, projectVars.projectJson);
+  if (!workerTaskDir) {
+    throw new Error('Cannot resolve worker task dir from orchestrator task file');
+  }
+  const selectedRecipeArtifactRoot = await resolveSelectedRecipeArtifactRoot(run, recipeRunId);
+  if (recipeRunId && !selectedRecipeArtifactRoot) {
+    throw new Error(`Cannot resolve recipe run artifact root for ${recipeRunId}`);
+  }
+  const recipePathCandidate = await selectExistingRecipePathCandidate(
+    resolveSlotRecipePathCandidates(
+      run.taskFile,
+      workerTaskDir,
+      selectedRecipeArtifactRoot,
+      recipeArtifactPath,
+    ),
+    (recipePath) => slotFileExists(slotVars, recipePath),
+  );
+  if (!recipePathCandidate) {
+    throw new Error('Cannot resolve recipe path from task file or requested recipe artifact path');
+  }
+  const slotRecipePath = recipePathCandidate.recipePath;
+  const slotArtifactsDir = path.join(workerTaskDir, 'artifacts');
+  const slotRecipeRunArtifactsDir = path.join(slotArtifactsDir, 'recipe-runs', artifactRunId);
+  const recipeHook = projectVars.projectJson.hooks?.recipe_run;
+  if (!recipeHook || typeof recipeHook !== 'string') {
+    throw new Error(
+      `No recipe_run hook configured in project.json for ${run.project}. Add hooks.recipe_run to enable recipe re-execution.`,
+    );
+  }
+  let recipeCmd = expandRecipeRunHookTemplate(
+    recipeHook,
+    slotVars,
+    projectVars,
+    shellExpressionForRemotePath(slotRecipePath),
+    shellExpressionForRemotePath(slotRecipeRunArtifactsDir),
+  );
+  const supportsPlaybackSlow =
+    getProjectFieldRaw(projectVars.projectJson, 'recipe_run_supports_playback_slow') === true;
+  recipeCmd = appendRecipePlaybackOptions(recipeCmd, {
+    playbackSlowMs: supportsPlaybackSlow ? playbackSlowMs : undefined,
+  });
+  return {
+    recipePath: slotRecipePath,
+    artifactRoot: slotRecipeRunArtifactsDir,
+    command: recipeCmd,
+  };
+}
+
+export async function recipeCommand(params: RecipeCommandParams): Promise<RecipeCommandResult> {
+  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs } = params;
+  const run = getRun(runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+  const slotVars = await loadSlotVars(slotId);
+  const projectVars = await loadProjectVars(run.project);
+  const built = await buildRecipeExecutionCommand(
+    run,
+    slotVars,
+    projectVars,
+    recipeArtifactPath,
+    recipeRunId,
+    `manual-${randomUUID().slice(0, 8)}`,
+    playbackSlowMs,
+  );
+  return { command: built.command, artifactRoot: built.artifactRoot, recipePath: built.recipePath };
+}
+
+export async function recipeProjectHookCommand(
+  params: RecipeProjectHookCommandParams,
+): Promise<RecipeProjectHookCommandResult> {
+  return (await buildRecipeProjectHookCommand(params)).built;
+}
+
+async function buildRecipeProjectHookCommand(
+  params: RecipeProjectHookCommandParams,
+): Promise<{ built: RecipeProjectHookCommandResult; slotVars: SlotVars }> {
+  assertRecipeProjectHookName(params.hook);
+  const slotVars = await loadSlotVars(params.slotId);
+  assertSlotProjectMatchesRequestedProject(slotVars, params.project);
+  const projectVars = await loadProjectVars(params.project);
+  return {
+    built: expandRecipeProjectHookTemplate(params.hook, projectVars, slotVars, {
+      recipePath: params.recipePath,
+      artifactsDir: params.artifactsDir,
+    }),
+    slotVars,
+  };
+}
+
+export async function recipeProjectHookRun(
+  params: RecipeProjectHookRunParams,
+): Promise<RecipeProjectHookRunResult> {
+  const { built, slotVars } = await buildRecipeProjectHookCommand(params);
+  const result = await execOnSlot(slotVars, built.command, {
+    timeout: params.timeoutMs ?? 60_000,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `hooks.${params.hook} failed with exit code ${result.exitCode}: ${result.stderr || result.stdout}`,
+    );
+  }
+  const validation = validateRecipeProjectHookOutput(params.hook, result.stdout);
+  if (validation.status !== 'pass') {
+    throw new Error(
+      `hooks.${params.hook} produced invalid Recipe v1 output: ${validation.checks
+        .filter((check) => check.status === 'fail')
+        .map((check) => `${check.id}: ${check.message}`)
+        .join('; ')}`,
+    );
+  }
+  return {
+    ...built,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    validation,
+  };
+}
+
+export async function recipeRerun(
+  params: RecipeRerunParams,
+  emit: EmitFn,
+): Promise<ScriptActionResult> {
+  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs } = params;
+
+  // Validate run
+  const run = getRun(runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+
+  // Validate the slot still belongs to this run and is parked in review-gate.
+  const fleet = await loadFleetStatus();
+  const slotStatus = fleet.slots.find((s) => s.slot === slotId);
+  if (!slotStatus) {
+    throw new Error(`Slot ${slotId} not found`);
+  }
+  if (!canRecipeRerunOnSlot(slotStatus, runId, run.slotId)) {
+    throw new Error(
+      `Slot ${slotId} is not in review-gate for this run ` +
+        `(phase=${slotStatus.phase ?? '-'}, current run=${slotStatus.currentRunId?.slice(0, 8) ?? '-'})`,
+    );
+  }
+
+  // Concurrency guard
+  if (activeReruns.has(slotId)) {
+    throw new Error(
+      `Recipe rerun already active on ${slotId} (requestId: ${activeReruns.get(slotId)!.requestId})`,
+    );
+  }
+
+  const requestId = `recipe-${randomUUID().slice(0, 8)}`;
+  const abortController = new AbortController();
+  activeReruns.set(slotId, { requestId, abortController });
+
+  // Everything below is wrapped in try/catch to ensure activeReruns cleanup
+  try {
+    // Load slot + project vars
+    const slotVars = await loadSlotVars(slotId);
+    const projectVars = await loadProjectVars(run.project);
+    const projectJson = projectVars.projectJson;
+
+    // Resolve recipe path on the SLOT (not orchestrator)
+    const built = await buildRecipeExecutionCommand(
+      run,
+      slotVars,
+      projectVars,
+      recipeArtifactPath,
+      recipeRunId,
+      requestId,
+      playbackSlowMs,
+    );
+    const slotRecipePath = built.recipePath;
+    if (!slotRecipePath) {
+      throw new Error(
+        'Cannot resolve recipe path from task file or requested recipe artifact path',
+      );
+    }
+
+    // Check recipe file exists on the slot
+    const fileCheck = await execOnSlot(
+      slotVars,
+      `test -f ${shellExpressionForRemotePath(slotRecipePath)} && echo ok || echo missing`,
+    );
+    if (fileCheck.stdout.trim() !== 'ok') {
+      throw new Error(`recipe.json not found on slot at ${slotRecipePath}`);
+    }
+
+    const slotRecipeRunArtifactsDir = built.artifactRoot;
+
+    // Warmth check — tmux + branch are hard blocks, devserver is a soft warning
+    const warmth = await checkSlotWarmth(slotVars, run.branch);
+    const hardFailures = warmth.warnings.filter((w) => w.severity === 'hard');
+    if (hardFailures.length > 0) {
+      throw new Error(
+        `Slot ${slotId} is not warm: ${hardFailures.map((w) => w.message).join('; ')}`,
+      );
+    }
+    if (warmth.warnings.length > 0) {
+      console.warn(
+        `[recipe] warmth warnings for ${slotId}: ${warmth.warnings.map((w) => w.message).join('; ')}`,
+      );
+      for (const w of warmth.warnings) {
+        emit(Events.SCRIPT_OUTPUT, {
+          requestId,
+          stream: 'stderr',
+          data: `⚠ warmth [${w.check}]: ${w.message}\n`,
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    // Build recipe command from project hook
+    const rawTimeout = getProjectField(projectJson, 'recipe_timeout');
+    const timeoutMs = typeof rawTimeout === 'number' ? rawTimeout : DEFAULT_TIMEOUT_MS;
+
+    const recipeCmd = built.command;
+    const startTime = Date.now();
+    let liveContextPublished = false;
+    const publishLiveRecipeContext = () => {
+      if (liveContextPublished) return;
+      liveContextPublished = true;
+      const liveRecipeContext: LiveRecipeContext = {
+        source: 'recipe-run-live',
+        recipeRunId: requestId,
+        artifactRoot: slotRecipeRunArtifactsDir,
+        artifactManifest: null,
+        recipeJson: null,
+        recipeQualityArtifact: null,
+        qualityReport: null,
+        workerLearnings: null,
+        isStale: false,
+        selectionReason: 'latest-run',
+      };
+      const updatedRun = updateRun(runId, { liveRecipeContext });
+      emit(Events.RUN_UPDATED, { run: updatedRun });
+    };
+    console.log(`[recipe] rerun ${requestId} on ${slotId}: ${recipeCmd.slice(0, 100)}`);
+
+    // Fire-and-forget execution (streams via events)
+    (async () => {
+      try {
+        publishLiveRecipeContext();
+        const result = await execOnSlot(slotVars, recipeCmd, {
+          timeout: timeoutMs,
+          signal: abortController.signal,
+          onOutput: (stream, data) => {
+            publishLiveRecipeContext();
+            emit(Events.SCRIPT_OUTPUT, { requestId, stream, data, timestamp: Date.now() });
+          },
+        });
+        publishLiveRecipeContext();
+        emit(Events.SCRIPT_COMPLETE, {
+          requestId,
+          exitCode: result.exitCode,
+          duration: Date.now() - startTime,
+          artifactRoot: slotRecipeRunArtifactsDir,
+        });
+        console.log(
+          `[recipe] rerun ${requestId} complete: exit=${result.exitCode} (${Date.now() - startTime}ms)`,
+        );
+      } catch (err) {
+        emit(Events.SCRIPT_COMPLETE, {
+          requestId,
+          exitCode: 1,
+          duration: Date.now() - startTime,
+          error: (err as Error).message,
+          artifactRoot: slotRecipeRunArtifactsDir,
+        });
+        console.warn(`[recipe] rerun ${requestId} failed: ${(err as Error).message}`);
+      } finally {
+        activeReruns.delete(slotId);
+      }
+    })();
+
+    return { requestId, artifactRoot: slotRecipeRunArtifactsDir };
+  } catch (err) {
+    // Ensure lock is always released on any failure during setup
+    activeReruns.delete(slotId);
+    throw err;
+  }
+}
+
+export async function recipeCancel(params: RecipeCancelParams): Promise<RecipeCancelResult> {
+  const active = activeReruns.get(params.slotId);
+  if (!active || active.requestId !== params.requestId) {
+    return { cancelled: false };
+  }
+
+  // Check if slot is local — remote slots don't support signal-based cancellation
+  const slotVars = await loadSlotVars(params.slotId);
+  const local = isLocal(slotVars.host, slotVars.machine);
+  if (!local) {
+    console.warn(
+      `[recipe] cancel not supported on remote slot ${params.slotId} — process will run until timeout`,
+    );
+    return {
+      cancelled: false,
+      reason: 'Cancel not supported on remote slots — recipe will run until timeout',
+    };
+  }
+
+  active.abortController.abort();
+  // Don't delete here — the finally block in recipeRerun owns cleanup
+  console.log(`[recipe] cancelled rerun ${params.requestId} on ${params.slotId}`);
+  return { cancelled: true };
+}

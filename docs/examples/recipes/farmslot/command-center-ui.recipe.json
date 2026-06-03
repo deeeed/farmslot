@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "title": "Farmslot Command Center recipe workspace smoke",
+  "description": "Validates the Command Center recipe tab, artifact viewer, replay controls, and ready/review workspace basics with reviewer-visible evidence.",
+  "inputs": {
+    "ui_url": "http://localhost:5174",
+    "gateway_url": "ws://localhost:7777/ws",
+    "cdp_port": 9323,
+    "slot_id": "<slot-id>",
+    "run_id": "<run-id>"
+  },
+  "validate": {
+    "workflow": {
+      "pre_conditions": [
+        {
+          "id": "command_center.dev_server.ready",
+          "description": "Command Center dev server is serving the target route.",
+          "required": true
+        },
+        {
+          "id": "gateway.recipe_run_artifacts.available",
+          "description": "Gateway has a run with recipe-run artifacts available.",
+          "required": true
+        }
+      ],
+      "setup": [],
+      "entry": "open-ready-workspace-recipe",
+      "nodes": {
+        "open-ready-workspace-recipe": {
+          "action": "ui.navigate",
+          "next": "assert-replay-controls",
+          "target": "#slot/{{slot_id}}?runId={{run_id}}&reviewDrawer=recipe&recipeRun=current-artifacts",
+          "intent": "Open a ready workspace on the Recipe drawer so the stream remains visible while recipe controls render."
+        },
+        "assert-replay-controls": {
+          "action": "ui.wait_for",
+          "next": "assert-artifact-viewer",
+          "selector": "recipe-runner-controls",
+          "text_contains": ["Replay", "2s"],
+          "intent": "Verify replay controls are present in the Recipe panel and default to human-readable 2 second playback."
+        },
+        "assert-artifact-viewer": {
+          "action": "ui.wait_for",
+          "next": "assert-recipe-graph",
+          "selector": "[data-testid=\"slot-recipe-refresh-mirror\"]",
+          "text_contains": ["Refresh mirror"],
+          "intent": "Verify the selected-run evidence section exposes refreshable typed artifacts separately from PR feedback."
+        },
+        "assert-recipe-graph": {
+          "action": "ui.wait_for",
+          "next": "open-ready-workspace-dev-harness",
+          "selector": "recipe-graph",
+          "text_contains": ["VALIDATE"],
+          "intent": "Verify the recipe graph renders validate.workflow nodes from the selected run package."
+        },
+        "open-ready-workspace-dev-harness": {
+          "action": "ui.navigate",
+          "next": "assert-ready-workspace-recipe-controls",
+          "target": "#dev/ready-workspace",
+          "intent": "Open the ready-workspace dev harness to validate the reusable Ready tab recipe panel in isolation."
+        },
+        "assert-ready-workspace-recipe-controls": {
+          "action": "ui.wait_for",
+          "next": "open-review-workspace-dev-harness",
+          "selector": "ready-workspace recipe-runner-controls",
+          "text_contains": ["Run live"],
+          "intent": "Verify the Ready workspace exposes the shared recipe runner controls and graph without hiding the stream."
+        },
+        "open-review-workspace-dev-harness": {
+          "action": "ui.navigate",
+          "next": "assert-review-workspace-basics",
+          "target": "#dev/review-workspace",
+          "intent": "Open the review-workspace dev harness to validate review workspace basics alongside the recipe fixtures."
+        },
+        "assert-review-workspace-basics": {
+          "action": "ui.wait_for",
+          "next": "capture-recipe-workspace",
+          "selector": "review-workspace",
+          "text_contains": ["Review"],
+          "intent": "Verify the Review workspace renders the reviewer context used beside recipe evidence during ready/review flows."
+        },
+        "capture-recipe-workspace": {
+          "action": "ui.screenshot",
+          "path": "screenshots/command-center-recipe-workspace.svg",
+          "next": "index-artifacts",
+          "intent": "Capture the Command Center recipe workspace with replay controls, graph, and artifacts visible."
+        },
+        "index-artifacts": {
+          "action": "index_artifacts",
+          "next": "done",
+          "artifacts": [
+            "screenshots/command-center-recipe-workspace.svg",
+            "reports/dom-assertions.json",
+            "logs/cdp-session.log"
+          ],
+          "intent": "Publish the Command Center UI screenshot, DOM report, trace, summary, and resolved recipe for review."
+        },
+        "done": {
+          "action": "end",
+          "status": "pass"
+        }
+      },
+      "teardown": [],
+      "playback": {
+        "mode": "auto",
+        "slow_ms": 2000
+      }
+    }
+  }
+}

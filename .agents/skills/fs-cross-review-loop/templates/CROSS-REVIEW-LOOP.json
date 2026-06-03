@@ -1,0 +1,23 @@
+{
+  "$schema": "./CROSS-REVIEW-LOOP.schema.json",
+  "status": "running",
+  "startedAt": null,
+  "updatedAt": null,
+  "task": null,
+  "artifactDir": null,
+  "maxCycles": 3,
+  "cycles": 0,
+  "requiredReviewers": [
+    {
+      "id": "same-runner",
+      "label": "Same/similar-runner reviewer",
+      "runnerType": null,
+      "paneId": null
+    }
+  ],
+  "optionalReviewers": [],
+  "blockingFindingsOpen": 0,
+  "finalVerdict": "pending",
+  "stopReason": null,
+  "cycleRecords": []
+}

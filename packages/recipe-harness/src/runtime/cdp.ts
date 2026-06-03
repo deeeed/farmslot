@@ -1,0 +1,669 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import WebSocket from 'ws';
+
+import type { StandardUiAction, UiActionTransport, UiTransportResult } from '../adapters/ui.js';
+import { asNumber, asOptionalString, asString, isRecord } from '../core/json.js';
+import type { ActionExecutionContext } from '../core/types.js';
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function dataTestId(testId: string): string {
+  return `[data-testid="${escapeCssAttrValue(testId)}"]`;
+}
+
+export interface CdpTargetInfo {
+  id: string;
+  type: string;
+  title?: string;
+  url?: string;
+  webSocketDebuggerUrl?: string;
+  devtoolsFrontendUrl?: string;
+  description?: string;
+}
+
+export interface RetryJsonGetOptions {
+  timeoutMs?: number;
+  intervalMs?: number;
+}
+
+export interface SelectCdpTargetOptions {
+  host?: string;
+  port: number;
+  type?: string;
+  urlIncludes?: string;
+  titleIncludes?: string;
+  predicate?: (target: CdpTargetInfo) => boolean;
+}
+
+interface PendingCall {
+  resolve(value: unknown): void;
+  reject(error: Error): void;
+}
+
+export async function jsonGet<T = unknown>(url: string): Promise<T> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`GET ${url} failed with HTTP ${response.status}.`);
+  return (await response.json()) as T;
+}
+
+export async function retryJsonGet<T = unknown>(
+  url: string,
+  options: RetryJsonGetOptions = {},
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  const intervalMs = options.intervalMs ?? 100;
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() <= deadline) {
+    try {
+      return await jsonGet<T>(url);
+    } catch (error) {
+      // Expected while a browser/debug target is still starting; retry until the caller's deadline.
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`GET ${url} did not succeed within ${timeoutMs}ms: ${message}`);
+}
+
+export async function listCdpTargets(host: string, port: number): Promise<CdpTargetInfo[]> {
+  return retryJsonGet<CdpTargetInfo[]>(`http://${host}:${port}/json`);
+}
+
+export async function selectCdpTarget(options: SelectCdpTargetOptions): Promise<CdpTargetInfo> {
+  const host = options.host ?? '127.0.0.1';
+  const targets = await listCdpTargets(host, options.port);
+  const selected = targets.find((target) => {
+    if (options.type && target.type !== options.type) return false;
+    if (options.urlIncludes && !target.url?.includes(options.urlIncludes)) return false;
+    if (options.titleIncludes && !target.title?.includes(options.titleIncludes)) return false;
+    if (options.predicate && !options.predicate(target)) return false;
+    return true;
+  });
+  if (!selected) {
+    throw new Error(
+      `No CDP target matched ${JSON.stringify({
+        host,
+        port: options.port,
+        type: options.type,
+        urlIncludes: options.urlIncludes,
+        titleIncludes: options.titleIncludes,
+      })}.`,
+    );
+  }
+  return selected;
+}
+
+export class CdpSession {
+  readonly #ws: WebSocket;
+  readonly #pending = new Map<number, PendingCall>();
+  #nextId = 0;
+
+  private constructor(ws: WebSocket) {
+    this.#ws = ws;
+    ws.on('message', (buffer) => this.#handleMessage(buffer.toString()));
+    ws.on('error', (error) => this.#rejectAll(error));
+    ws.on('close', () => this.#rejectAll(new Error('CDP websocket closed.')));
+  }
+
+  static async connect(webSocketDebuggerUrl: string): Promise<CdpSession> {
+    const ws = new WebSocket(webSocketDebuggerUrl);
+    await new Promise<void>((resolve, reject) => {
+      ws.once('open', resolve);
+      ws.once('error', reject);
+    });
+    return new CdpSession(ws);
+  }
+
+  async call<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    const id = ++this.#nextId;
+    const response = new Promise<T>((resolve, reject) => {
+      this.#pending.set(id, {
+        resolve(value) {
+          resolve(value as T);
+        },
+        reject,
+      });
+    });
+    this.#ws.send(JSON.stringify({ id, method, params }));
+    return response;
+  }
+
+  close(): void {
+    this.#ws.close();
+  }
+
+  #handleMessage(text: string): void {
+    const message = JSON.parse(text) as {
+      id?: number;
+      result?: unknown;
+      error?: { message?: string };
+    };
+    if (message.id == null) return;
+    const pending = this.#pending.get(message.id);
+    if (!pending) return;
+    this.#pending.delete(message.id);
+    if (message.error) {
+      pending.reject(new Error(message.error.message ?? 'CDP call failed.'));
+      return;
+    }
+    pending.resolve(message.result);
+  }
+
+  #rejectAll(error: Error): void {
+    for (const pending of this.#pending.values()) pending.reject(error);
+    this.#pending.clear();
+  }
+}
+
+export class CdpWebPage {
+  readonly session: CdpSession;
+
+  constructor(session: CdpSession) {
+    this.session = session;
+  }
+
+  static async connectToTarget(target: CdpTargetInfo): Promise<CdpWebPage> {
+    if (!target.webSocketDebuggerUrl)
+      throw new Error(`CDP target ${target.id} has no websocket URL.`);
+    const session = await CdpSession.connect(target.webSocketDebuggerUrl);
+    await session.call('Runtime.enable');
+    await session.call('Page.enable');
+    return new CdpWebPage(session);
+  }
+
+  async navigate(url: string): Promise<unknown> {
+    return this.session.call('Page.navigate', { url });
+  }
+
+  async evaluate<T = unknown>(expression: string): Promise<T> {
+    const result = await this.session.call<{
+      result?: { value?: T };
+      exceptionDetails?: { text?: string; exception?: { description?: string } };
+    }>('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    if (result.exceptionDetails) {
+      throw new Error(
+        result.exceptionDetails.exception?.description ??
+          result.exceptionDetails.text ??
+          'CDP evaluation failed.',
+      );
+    }
+    return result.result?.value as T;
+  }
+
+  async click(selector: string): Promise<unknown> {
+    return this.evaluate(
+      `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.click(); return { clicked: true }; })()`,
+    );
+  }
+
+  async clickText(text: string): Promise<unknown> {
+    return this.evaluate(
+      `(() => { const expected = ${JSON.stringify(text)}; const el = Array.from(document.querySelectorAll('button, [role=button], a, input, textarea, [tabindex], *')).find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.click(); return { clicked: true, text: expected }; })()`,
+    );
+  }
+
+  async setInput(selector: string, value: string): Promise<unknown> {
+    return this.evaluate(
+      `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.focus(); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(value)} })); el.dispatchEvent(new Event('change', { bubbles: true })); return { set: true }; })()`,
+    );
+  }
+
+  async keyPress(key: string): Promise<unknown> {
+    await this.session.call('Input.dispatchKeyEvent', { type: 'keyDown', key });
+    await this.session.call('Input.dispatchKeyEvent', { type: 'keyUp', key });
+    return { key };
+  }
+
+  async scroll(options: {
+    selector?: string;
+    deltaX?: number;
+    deltaY?: number;
+    intoView?: boolean;
+  }): Promise<unknown> {
+    const deltaX = options.deltaX ?? 0;
+    const deltaY = options.deltaY ?? 600;
+    if (options.selector) {
+      if (options.intoView) {
+        return this.evaluate(
+          `(() => { const el = document.querySelector(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); return { scrolled: true, selector: ${JSON.stringify(options.selector)}, intoView: true }; })()`,
+        );
+      }
+      return this.evaluate(
+        `(() => { const el = document.querySelector(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
+      );
+    }
+    return this.evaluate(
+      `(() => { window.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
+    );
+  }
+
+  async waitFor(options: {
+    selector?: string;
+    text?: string;
+    expected?: string;
+    timeoutMs?: number;
+  }): Promise<unknown> {
+    const timeoutMs = options.timeoutMs ?? 5_000;
+    return this.evaluate(
+      `(async () => { const deadline = Date.now() + ${JSON.stringify(timeoutMs)}; while (Date.now() <= deadline) { const ok = ${waitForPredicateExpression(options)}; if (ok) return { matched: true }; await new Promise((resolve) => setTimeout(resolve, 100)); } throw new Error('ui.wait_for timed out'); })()`,
+    );
+  }
+
+  async waitForSelector(selector: string, options: { timeoutMs?: number } = {}): Promise<unknown> {
+    return this.waitFor({ selector, timeoutMs: options.timeoutMs });
+  }
+
+  async waitForExpression(
+    expression: string,
+    options: { timeoutMs?: number } = {},
+  ): Promise<unknown> {
+    const timeoutMs = options.timeoutMs ?? 5_000;
+    return this.evaluate(
+      `(async () => { const deadline = Date.now() + ${JSON.stringify(timeoutMs)}; while (Date.now() <= deadline) { if (await (${expression})) return { matched: true }; await new Promise((resolve) => setTimeout(resolve, 100)); } throw new Error('waitForExpression timed out'); })()`,
+    );
+  }
+
+  async screenshot(
+    context?: ActionExecutionContext,
+    relPath?: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<
+    | string
+    | {
+        path: string;
+        type: string;
+        nodeId: string;
+        label?: string;
+        category?: string;
+        mimeType: string;
+      }
+  > {
+    const timeoutMs = typeof metadata.timeoutMs === 'number' ? metadata.timeoutMs : 30_000;
+    const result = await withTimeout(
+      this.session.call<{ data?: string }>('Page.captureScreenshot', {
+        format: 'png',
+      }),
+      timeoutMs,
+      `Page.captureScreenshot timed out after ${timeoutMs}ms`,
+    );
+    if (!result.data) throw new Error('CDP screenshot did not return data.');
+    if (!context) return result.data;
+    const relativePath = relPath ?? `screenshots/${context.nodeId}.png`;
+    const outputPath = context.resolveArtifactPath(relativePath);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, Buffer.from(result.data, 'base64'));
+    return {
+      path: relativePath,
+      type: 'screenshot',
+      nodeId: context.nodeId,
+      label: typeof metadata.label === 'string' ? metadata.label : undefined,
+      category: typeof metadata.category === 'string' ? metadata.category : 'evidence',
+      mimeType: 'image/png',
+    };
+  }
+
+  close(): void {
+    this.session.close();
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+export interface CdpWebUiTransportInput {
+  action: StandardUiAction;
+  node: Record<string, unknown>;
+  context: ActionExecutionContext;
+}
+
+export interface CreateCdpWebUiTransportOptions {
+  getPage?(input: CdpWebUiTransportInput): Promise<CdpWebPage>;
+  withPage?<T>(
+    input: CdpWebUiTransportInput,
+    callback: (page: CdpWebPage) => Promise<T>,
+  ): Promise<T>;
+}
+
+export function createCdpWebUiTransport(
+  options: CreateCdpWebUiTransportOptions,
+): UiActionTransport {
+  return {
+    async execute(action, node, context) {
+      const input = { action, node, context };
+      return withCdpWebPage(options, input, async (page) => {
+        switch (action) {
+          case 'ui.navigate': {
+            const url = asString(node.url ?? node.target, 'ui.navigate.url');
+            return page.navigate(url);
+          }
+          case 'ui.press': {
+            const selector = selectorForUiInput(node);
+            if (selector) return page.click(selector);
+            return page.clickText(asString(node.text ?? node.label, 'ui.press.text'));
+          }
+          case 'ui.key_press':
+            return page.keyPress(asString(node.key, 'ui.key_press.key'));
+          case 'ui.set_input':
+            return page.setInput(
+              asString(selectorForUiInput(node), 'ui.set_input.selector'),
+              asString(node.value ?? node.text, 'ui.set_input.value'),
+            );
+          case 'ui.scroll':
+            return page.scroll({
+              selector: asOptionalString(selectorForUiInput(node), 'ui.scroll.selector'),
+              intoView: node.scroll_into_view === true || node.into_view === true,
+              deltaX:
+                node.delta_x == null ? undefined : asNumber(node.delta_x, 'ui.scroll.delta_x'),
+              deltaY:
+                node.delta_y == null ? undefined : asNumber(node.delta_y, 'ui.scroll.delta_y'),
+            });
+          case 'ui.wait_for':
+            return page.waitFor({
+              selector: asOptionalString(selectorForUiInput(node), 'ui.wait_for.selector'),
+              text: asOptionalString(node.text, 'ui.wait_for.text'),
+              expected: asOptionalString(node.expected, 'ui.wait_for.expected'),
+              timeoutMs:
+                node.timeout_ms == null
+                  ? undefined
+                  : asNumber(node.timeout_ms, 'ui.wait_for.timeout_ms'),
+            });
+          case 'ui.screenshot':
+            return captureCdpScreenshot(page, node, context);
+          case 'app.status':
+            return page.evaluate('(() => ({ url: location.href, title: document.title }))()');
+          case 'app.lifecycle':
+            return runCdpLifecycle(page, node);
+          case 'app.hud':
+            return renderCdpHud(page, node, context);
+          case 'app.trace':
+            return page.evaluate(
+              '(() => ({ entries: performance.getEntries().slice(-20).map((entry) => ({ name: entry.name, type: entry.entryType, startTime: entry.startTime, duration: entry.duration })) }))()',
+            );
+          case 'ui.gesture':
+            throw new Error('ui.gesture is not implemented by the CDP web transport yet.');
+        }
+      });
+    },
+  };
+}
+
+async function withCdpWebPage<T>(
+  options: CreateCdpWebUiTransportOptions,
+  input: CdpWebUiTransportInput,
+  callback: (page: CdpWebPage) => Promise<T>,
+): Promise<T> {
+  if (options.withPage) return options.withPage(input, callback);
+  if (!options.getPage) throw new Error('CDP web UI transport requires getPage or withPage.');
+  const page = await options.getPage(input);
+  try {
+    return await callback(page);
+  } finally {
+    page.close();
+  }
+}
+
+export function selectorForUiInput(node: Record<string, unknown>): string | undefined {
+  const selector = asOptionalString(node.selector, 'ui.selector');
+  if (selector) return selector;
+  const testId = asOptionalString(node.test_id ?? node.testID, 'ui.test_id');
+  if (testId) {
+    const escaped = escapeCssAttrValue(testId);
+    return `[data-testid="${escaped}"], [data-test-id="${escaped}"], [data-test="${escaped}"]`;
+  }
+  return undefined;
+}
+
+async function captureCdpScreenshot(
+  page: CdpWebPage,
+  node: Record<string, unknown>,
+  context: ActionExecutionContext,
+): Promise<UiTransportResult> {
+  const artifactPath = asOptionalString(node.path, 'ui.screenshot.path') ?? `${context.nodeId}.png`;
+  const normalizedPath = artifactPath.split(path.sep).join('/');
+  const label = asOptionalString(node.label, 'ui.screenshot.label') ?? 'UI screenshot';
+  const captured = await page.screenshot(context, normalizedPath, {
+    label,
+    category: asOptionalString(node.category, 'ui.screenshot.category') ?? 'evidence',
+    timeoutMs:
+      node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, 'ui.screenshot.timeout_ms'),
+  });
+  const artifact =
+    typeof captured === 'object' && captured !== null
+      ? captured
+      : {
+          path: normalizedPath,
+          type: 'screenshot',
+          nodeId: context.nodeId,
+          mimeType: 'image/png',
+          label,
+        };
+  context.registerArtifact(artifact);
+  return {
+    output: { captured: true, path: normalizedPath, artifact },
+    control: { artifacts: [artifact] },
+  };
+}
+
+async function runCdpLifecycle(page: CdpWebPage, node: Record<string, unknown>): Promise<unknown> {
+  const command = asString(node.command ?? node.event, 'app.lifecycle.command');
+  if (command === 'reload') {
+    return page.evaluate('(() => { location.reload(); return { command: "reload" }; })()');
+  }
+  if (command === 'back') {
+    return page.evaluate('(() => { history.back(); return { command: "back" }; })()');
+  }
+  throw new Error(`Unsupported CDP lifecycle command: ${command}.`);
+}
+
+async function renderCdpHud(
+  page: CdpWebPage,
+  node: Record<string, unknown>,
+  context: ActionExecutionContext,
+): Promise<unknown> {
+  if (node.clear === true) {
+    return page.evaluate(
+      "(() => { document.getElementById('farmslot-recipe-hud')?.remove(); document.getElementById('farmslot-recipe-hud-reserved-space')?.remove(); document.documentElement.style.removeProperty('--farmslot-recipe-hud-height'); document.body?.style.removeProperty('padding-bottom'); return { hud: false, cleared: true }; })()",
+    );
+  }
+  const title = asOptionalString(node.title, 'app.hud.title') ?? 'Recipe run';
+  const status = asOptionalString(node.status, 'app.hud.status') ?? 'running';
+  const nodeId = asOptionalString(node.node_id ?? node.nodeId, 'app.hud.node_id') ?? context.nodeId;
+  const phase = asOptionalString(node.phase, 'app.hud.phase') ?? '';
+  const flow = asOptionalString(node.flow, 'app.hud.flow') ?? '';
+  const action =
+    asOptionalString(node.action_name ?? node.recipe_action, 'app.hud.action_name') ?? '';
+  const proofTarget =
+    asOptionalString(node.proofTarget ?? node.proof_target, 'app.hud.proofTarget') ?? '';
+  const record = asOptionalString(node.record, 'app.hud.record') ?? '';
+  const text = asOptionalString(node.intent ?? node.text, 'app.hud.text') ?? context.nodeId;
+  const rawDetail = asOptionalString(node.detail, 'app.hud.detail') ?? '';
+  const detail = rawDetail && rawDetail !== text && rawDetail !== flow ? rawDetail : '';
+  const error = asOptionalString(node.error, 'app.hud.error');
+  const display = isRecord(node.display) ? node.display : {};
+  const layout = asOptionalString(display.layout, 'app.hud.display.layout') ?? 'bottom-bar';
+  const position = asOptionalString(display.position, 'app.hud.display.position') ?? 'bottom';
+  const showTitle = display.showTitle === true;
+  const showDebug = display.showDebug === true;
+  const showDetail = display.showDetail === true;
+  const width = asOptionalString(display.width, 'app.hud.display.width') ?? '360px';
+  const maxDetailLines = typeof display.maxDetailLines === 'number' ? display.maxDetailLines : 2;
+  const progress = isRecord(node.progress) ? node.progress : {};
+  const current = typeof progress.current === 'number' ? progress.current : undefined;
+  const total = typeof progress.total === 'number' ? progress.total : undefined;
+  return page.evaluate(
+    `(() => {
+      const payload = ${JSON.stringify({ title, status, nodeId, phase, flow, action, proofTarget, record, text, detail, error, current, total, layout, position, showTitle, showDebug, showDetail, width, maxDetailLines })};
+      const id = 'farmslot-recipe-hud';
+      let el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement('div');
+        el.id = id;
+        Object.assign(el.style, {
+          position: 'fixed',
+          zIndex: '2147483647',
+          left: '8px',
+          right: '8px',
+          bottom: '8px',
+          minHeight: '30px',
+          padding: '5px 8px',
+          borderRadius: '8px',
+          background: 'rgba(8, 10, 14, 0.66)',
+          color: 'white',
+          font: '10px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          pointerEvents: 'none',
+          boxShadow: '0 6px 22px rgba(0,0,0,0.30)',
+          border: '1px solid rgba(255,255,255,0.14)',
+          backdropFilter: 'blur(4px)',
+        });
+        document.body.appendChild(el);
+      }
+      const isCard = payload.layout === 'card';
+      const isDocked = payload.layout === 'docked-bottom';
+      Object.assign(el.style, {
+        left: '',
+        right: '',
+        top: '',
+        bottom: '',
+        width: '',
+        maxWidth: '',
+        borderRadius: isDocked ? '0' : '9px',
+      });
+      if (isCard) {
+        el.style.width = payload.width || '360px';
+        el.style.maxWidth = 'calc(100vw - 16px)';
+        if (payload.position.includes('top')) el.style.top = '8px';
+        else el.style.bottom = '8px';
+        if (payload.position.includes('left')) el.style.left = '8px';
+        else el.style.right = '8px';
+      } else {
+        if (payload.position === 'top') el.style.top = '8px';
+        else el.style.bottom = isDocked ? '0' : '8px';
+        el.style.left = isDocked ? '0' : '8px';
+        el.style.right = isDocked ? '0' : '8px';
+      }
+      const accent = payload.status === 'fail' ? '#ff5c5c' : payload.status === 'pass' ? '#48d17a' : '#8ab4ff';
+      const progressText = Number.isFinite(payload.current) && Number.isFinite(payload.total)
+        ? payload.current + '/' + payload.total
+        : '';
+      el.innerHTML = '';
+      const row = document.createElement('div');
+      Object.assign(row.style, { display: 'flex', gap: '7px', alignItems: 'flex-start' });
+      const badge = document.createElement('div');
+      Object.assign(badge.style, {
+        color: accent,
+        border: '1px solid rgba(255,255,255,0.16)',
+        borderRadius: '7px',
+        padding: '1px 5px',
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        fontSize: '9px',
+        lineHeight: '14px',
+        whiteSpace: 'nowrap',
+      });
+      badge.textContent = [payload.status === 'fail' ? 'FAIL' : payload.status === 'pass' ? 'OK' : 'RUN', progressText].filter(Boolean).join(' ');
+      const body = document.createElement('div');
+      Object.assign(body.style, { minWidth: '0', flex: '1' });
+      const line1 = document.createElement('div');
+      Object.assign(line1.style, { color: '#fff', fontWeight: '750', lineHeight: '1.25', whiteSpace: 'normal' });
+      line1.textContent = payload.text || payload.nodeId;
+      const line2 = document.createElement('div');
+      Object.assign(line2.style, {
+        color: '#d6d9df',
+        lineHeight: '1.25',
+        whiteSpace: 'normal',
+      });
+      const secondaryParts = [];
+      if (payload.showDetail && payload.detail) secondaryParts.push(payload.detail);
+      const secondary = secondaryParts.filter((part, index) => part && secondaryParts.indexOf(part) === index).join(' · ');
+      line2.textContent = payload.error ? 'error: ' + payload.error : secondary;
+      const line3 = document.createElement('div');
+      Object.assign(line3.style, { color: '#8f98a8', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '9px', whiteSpace: 'normal' });
+      line3.textContent = [payload.nodeId, payload.action].filter(Boolean).join(' · ');
+      if (payload.showTitle) {
+        const title = document.createElement('div');
+        Object.assign(title.style, { color: '#d6d9df', fontWeight: '700', marginBottom: '2px', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        title.textContent = payload.title;
+        body.append(title);
+      }
+      body.append(line1);
+      if (line2.textContent) body.append(line2);
+      if (payload.showDebug) body.append(line3);
+      row.append(badge, body);
+      el.append(row);
+      if (payload.error) {
+        line2.style.color = '#ffb3b3';
+      }
+      let reserve = document.getElementById('farmslot-recipe-hud-reserved-space');
+      if (isDocked) {
+        if (!reserve) {
+          reserve = document.createElement('div');
+          reserve.id = 'farmslot-recipe-hud-reserved-space';
+          reserve.setAttribute('aria-hidden', 'true');
+          document.body.appendChild(reserve);
+        }
+        const height = Math.ceil(el.getBoundingClientRect().height);
+        document.documentElement.style.setProperty('--farmslot-recipe-hud-height', height + 'px');
+        Object.assign(reserve.style, {
+          display: 'block',
+          height: 'var(--farmslot-recipe-hud-height)',
+          minHeight: 'var(--farmslot-recipe-hud-height)',
+          pointerEvents: 'none',
+        });
+        if (document.body) {
+          document.body.style.paddingBottom = 'var(--farmslot-recipe-hud-height)';
+        }
+      } else if (reserve) {
+        reserve.remove();
+        document.documentElement.style.removeProperty('--farmslot-recipe-hud-height');
+        document.body?.style.removeProperty('padding-bottom');
+      }
+      return { hud: true, status: payload.status, nodeId: payload.nodeId, flow: payload.flow };
+    })()`,
+  );
+}
+
+function waitForPredicateExpression(options: {
+  selector?: string;
+  text?: string;
+  expected?: string;
+}): string {
+  let presentExpression: string;
+  if (options.selector && options.text) {
+    presentExpression = `Boolean(document.querySelector(${JSON.stringify(options.selector)})) && document.body.innerText.includes(${JSON.stringify(options.text)})`;
+  } else if (options.selector) {
+    presentExpression = `Boolean(document.querySelector(${JSON.stringify(options.selector)}))`;
+  } else if (options.text) {
+    presentExpression = `document.body.innerText.includes(${JSON.stringify(options.text)})`;
+  } else {
+    throw new Error('ui.wait_for requires selector or text.');
+  }
+  const expected = String(options.expected ?? 'present').toLowerCase();
+  if (expected === 'absent' || expected === 'hidden' || expected === 'not_present') {
+    return `!(${presentExpression})`;
+  }
+  if (expected !== 'present' && expected !== 'visible') {
+    throw new Error(`ui.wait_for expected must be present or absent, got ${expected}.`);
+  }
+  return presentExpression;
+}
+
+function escapeForJsMessage(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+}
+
+function escapeCssAttrValue(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+}

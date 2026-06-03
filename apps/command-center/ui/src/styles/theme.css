@@ -1,0 +1,69 @@
+/* Farmslot Command Center — Design Tokens */
+
+:root {
+  /* Backgrounds */
+  --bg-base: #0a0a0f;
+  --bg-surface: #12121a;
+  --bg-card: #1a1a2e;
+  --bg-card-hover: #222240;
+  --bg-sidebar: #0d0d14;
+  --bg-input: #16162a;
+
+  /* Text */
+  --text-primary: #e0e0e8;
+  --text-secondary: #8888a0;
+  --text-muted: #555570;
+  --text-accent: #6366f1;
+
+  /* Accent */
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-dim: #4f46e5;
+
+  /* Health status */
+  --status-ok: #00ff88;
+  --status-warn: #ffcc00;
+  --status-fail: #ff4444;
+  --status-unknown: #666680;
+
+  /* Lifecycle */
+  --lifecycle-ready: #00ff88;
+  --lifecycle-dispatching: #6366f1;
+  --lifecycle-working: #f59e0b;
+  --lifecycle-releasing: #8b5cf6;
+  --lifecycle-released: #666680;
+  --lifecycle-custom: #06b6d4;
+  --lifecycle-disabled: #333344;
+
+  /* Typography */
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  --font-size-xs: 0.65rem;
+  --font-size-sm: 0.75rem;
+  --font-size-md: 0.85rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.25rem;
+
+  /* Spacing */
+  --space-xs: 2px;
+  --space-sm: 4px;
+  --space-md: 8px;
+  --space-lg: 12px;
+  --space-xl: 16px;
+  --space-2xl: 24px;
+  --space-3xl: 32px;
+
+  /* Borders & Radius */
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --border-dim: 1px solid #1e1e36;
+  --border-accent: 1px solid #6366f1;
+
+  /* Shadows */
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.6);
+
+  /* Sidebar */
+  --sidebar-width: 48px;
+  --summary-height: 36px;
+}

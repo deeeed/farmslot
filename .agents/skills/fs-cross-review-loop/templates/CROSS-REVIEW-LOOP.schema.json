@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Farmslot cross-review loop artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "startedAt",
+    "updatedAt",
+    "task",
+    "artifactDir",
+    "maxCycles",
+    "cycles",
+    "requiredReviewers",
+    "optionalReviewers",
+    "blockingFindingsOpen",
+    "finalVerdict",
+    "stopReason",
+    "cycleRecords"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "status": {
+      "enum": ["running", "clean", "escalated"]
+    },
+    "startedAt": {
+      "type": ["string", "null"]
+    },
+    "updatedAt": {
+      "type": ["string", "null"]
+    },
+    "task": {
+      "type": ["string", "null"]
+    },
+    "artifactDir": {
+      "type": ["string", "null"]
+    },
+    "maxCycles": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "cycles": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "requiredReviewers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/reviewer"
+      }
+    },
+    "optionalReviewers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reviewer"
+      }
+    },
+    "blockingFindingsOpen": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "finalVerdict": {
+      "enum": ["pending", "clean", "escalated"]
+    },
+    "stopReason": {
+      "type": ["string", "null"]
+    },
+    "cycleRecords": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/cycleRecord"
+      }
+    }
+  },
+  "$defs": {
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "runnerType", "paneId"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runnerType": {
+          "type": ["string", "null"]
+        },
+        "paneId": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "cycleRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cycle",
+        "startedAt",
+        "workerReadySignal",
+        "reviewerVerdicts",
+        "findingsSentToWorker",
+        "workerFixSummary",
+        "validationSummary",
+        "completedAt"
+      ],
+      "properties": {
+        "cycle": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "startedAt": {
+          "type": ["string", "null"]
+        },
+        "workerReadySignal": {
+          "type": ["string", "null"]
+        },
+        "reviewerVerdicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reviewerVerdict"
+          }
+        },
+        "findingsSentToWorker": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        },
+        "workerFixSummary": {
+          "type": ["string", "null"]
+        },
+        "validationSummary": {
+          "type": ["string", "null"]
+        },
+        "completedAt": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "reviewerVerdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reviewerId",
+        "verdict",
+        "blockingCount",
+        "evidenceReview",
+        "validationReview",
+        "outputArtifact"
+      ],
+      "properties": {
+        "reviewerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verdict": {
+          "enum": ["PASS", "ISSUES"]
+        },
+        "blockingCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidenceReview": {
+          "type": ["string", "null"]
+        },
+        "validationReview": {
+          "type": ["string", "null"]
+        },
+        "outputArtifact": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewerId", "severity", "reference", "finding"],
+      "properties": {
+        "reviewerId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "enum": ["P0", "P1", "P2", "P3", "nit", "style-only"]
+        },
+        "reference": {
+          "type": ["string", "null"]
+        },
+        "finding": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

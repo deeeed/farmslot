@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scoring.schema.json",
+  "title": "Bug Scoring (Combined)",
+  "description": "Combined heuristic + LLM bug difficulty scoring. Produced by Phase 1.5 of the fix-bug orchestrator.",
+  "type": "object",
+  "required": ["final"],
+  "properties": {
+    "heuristic": {
+      "$ref": "#/$defs/heuristic_scoring"
+    },
+    "llm": {
+      "$ref": "#/$defs/llm_scoring"
+    },
+    "final": {
+      "$ref": "#/$defs/final_scoring"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "difficulty_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "extreme"]
+    },
+    "probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "heuristic_scoring": {
+      "type": "object",
+      "description": "Output from the deterministic heuristic scorer (score-bug.sh).",
+      "required": [
+        "difficulty",
+        "difficulty_score",
+        "one_shot_probability",
+        "recommended_model",
+        "category",
+        "category_confidence",
+        "scoring_details"
+      ],
+      "properties": {
+        "difficulty": {
+          "$ref": "#/$defs/difficulty_level"
+        },
+        "difficulty_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Raw numeric score. Higher = harder."
+        },
+        "one_shot_probability": {
+          "$ref": "#/$defs/probability"
+        },
+        "recommended_model": {
+          "type": "string",
+          "description": "Model recommended by heuristic thresholds.",
+          "examples": ["sonnet", "opus"]
+        },
+        "category": {
+          "type": "string",
+          "description": "Bug category from categories.json.",
+          "examples": ["ui-regression", "data-display", "navigation"]
+        },
+        "category_confidence": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "scoring_details": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Human-readable breakdown of score adjustments.",
+          "examples": [["-20: style/theme/color", "-15: UI component"]]
+        }
+      },
+      "additionalProperties": false
+    },
+    "llm_scoring": {
+      "type": "object",
+      "description": "LLM-produced judgment from the orchestrator (farm-grade-bug skill).",
+      "required": [
+        "difficulty",
+        "confidence",
+        "one_shot_probability",
+        "reasoning",
+        "estimated_complexity"
+      ],
+      "properties": {
+        "difficulty": {
+          "$ref": "#/$defs/difficulty_level"
+        },
+        "confidence": {
+          "$ref": "#/$defs/probability",
+          "description": "LLM's confidence in its own difficulty assessment."
+        },
+        "one_shot_probability": {
+          "$ref": "#/$defs/probability"
+        },
+        "reasoning": {
+          "type": "string",
+          "description": "Free-text explanation of the LLM's assessment."
+        },
+        "similar_past_bugs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "References to similar past bugs found in task history.",
+          "default": []
+        },
+        "risk_factors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Risk factors a heuristic cannot catch.",
+          "default": []
+        },
+        "estimated_complexity": {
+          "type": "string",
+          "enum": ["single-file change", "multi-file change", "architectural change", "unknown"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "final_scoring": {
+      "type": "object",
+      "description": "Resolved scoring from both methods. Used for model selection and TASK.md headers.",
+      "required": ["difficulty", "one_shot_probability", "recommended_model", "source"],
+      "properties": {
+        "difficulty": {
+          "$ref": "#/$defs/difficulty_level"
+        },
+        "one_shot_probability": {
+          "$ref": "#/$defs/probability",
+          "description": "Average of heuristic and LLM probabilities."
+        },
+        "recommended_model": {
+          "type": "string",
+          "examples": ["sonnet", "opus"]
+        },
+        "source": {
+          "type": "string",
+          "enum": ["agreement", "conservative", "heuristic-only", "llm-only", "none"],
+          "description": "'agreement' when both methods agree on difficulty, 'conservative' when they disagree (harder estimate wins), 'heuristic-only' when LLM grading was skipped, 'llm-only' when heuristic was skipped, 'none' when no scoring configured."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

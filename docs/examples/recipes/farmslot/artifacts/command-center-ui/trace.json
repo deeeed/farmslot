@@ -1,0 +1,94 @@
+[
+  {
+    "id": "open-ready-workspace-recipe",
+    "action": "ui.navigate",
+    "ok": true,
+    "durationMs": 450,
+    "artifacts": [],
+    "intent": "Open a ready workspace on the Recipe drawer so the stream remains visible while recipe controls render."
+  },
+  {
+    "id": "assert-replay-controls",
+    "action": "ui.wait_for",
+    "ok": true,
+    "durationMs": 575,
+    "artifacts": [],
+    "intent": "Verify replay controls are present in the Recipe panel and default to human-readable 2 second playback."
+  },
+  {
+    "id": "assert-artifact-viewer",
+    "action": "ui.wait_for",
+    "ok": true,
+    "durationMs": 700,
+    "artifacts": [],
+    "intent": "Verify the selected-run evidence section exposes refreshable typed artifacts separately from PR feedback."
+  },
+  {
+    "id": "assert-recipe-graph",
+    "action": "ui.wait_for",
+    "ok": true,
+    "durationMs": 825,
+    "artifacts": [],
+    "intent": "Verify the recipe graph renders validate.workflow nodes from the selected run package."
+  },
+  {
+    "id": "open-ready-workspace-dev-harness",
+    "action": "ui.navigate",
+    "ok": true,
+    "durationMs": 950,
+    "artifacts": [],
+    "intent": "Open the ready-workspace dev harness to validate the reusable Ready tab recipe panel in isolation."
+  },
+  {
+    "id": "assert-ready-workspace-recipe-controls",
+    "action": "ui.wait_for",
+    "ok": true,
+    "durationMs": 1075,
+    "artifacts": [],
+    "intent": "Verify the Ready workspace exposes the shared recipe runner controls and graph without hiding the stream."
+  },
+  {
+    "id": "open-review-workspace-dev-harness",
+    "action": "ui.navigate",
+    "ok": true,
+    "durationMs": 1200,
+    "artifacts": [],
+    "intent": "Open the review-workspace dev harness to validate review workspace basics alongside the recipe fixtures."
+  },
+  {
+    "id": "assert-review-workspace-basics",
+    "action": "ui.wait_for",
+    "ok": true,
+    "durationMs": 1325,
+    "artifacts": [],
+    "intent": "Verify the Review workspace renders the reviewer context used beside recipe evidence during ready/review flows."
+  },
+  {
+    "id": "capture-recipe-workspace",
+    "action": "ui.screenshot",
+    "ok": true,
+    "durationMs": 1450,
+    "artifacts": ["screenshots/command-center-recipe-workspace.svg"],
+    "intent": "Capture the Command Center recipe workspace with replay controls, graph, and artifacts visible."
+  },
+  {
+    "id": "index-artifacts",
+    "action": "index_artifacts",
+    "ok": true,
+    "durationMs": 1575,
+    "artifacts": [
+      "screenshots/command-center-recipe-workspace.svg",
+      "reports/dom-assertions.json",
+      "logs/cdp-session.log"
+    ],
+    "intent": "Publish the Command Center UI screenshot, DOM report, trace, summary, and resolved recipe for review."
+  },
+  {
+    "id": "done",
+    "action": "end",
+    "ok": true,
+    "durationMs": 1700,
+    "artifacts": [],
+    "intent": "Complete recipe node"
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "status": "pass",
+  "startedAt": "2026-05-16T10:01:00Z",
+  "completedAt": "2026-05-16T10:01:09Z",
+  "durationMs": 9000,
+  "passed": 11,
+  "failed": 0,
+  "error": null
+}

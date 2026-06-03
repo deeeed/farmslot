@@ -1,0 +1,20 @@
+{
+  "runner_protocol_version": 1,
+  "action_registry_version": 1,
+  "supported_official_actions": ["command", "assert_output", "wait", "end"],
+  "action_metadata": {
+    "command": {
+      "description": "Run a project-local command during setup, diagnostics, or headless proof. Prefer UI actions only when the recipe must prove visible interaction."
+    },
+    "assert_output": {
+      "description": "Assert stdout or stderr from a previous command node."
+    },
+    "wait": {
+      "description": "Pause briefly for asynchronous setup work. Keep waits short and prefer deterministic assertions."
+    },
+    "end": {
+      "description": "Terminate the recipe graph with pass, fail, or unknown."
+    }
+  },
+  "custom_actions": []
+}

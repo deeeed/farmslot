@@ -1,0 +1,42 @@
+{
+  "app": "Farmslot",
+  "bundleId": "net.siteed.farmslot",
+  "draftedAt": "2026-05-30",
+  "basis": "Code audit of apps/companion and current product decision: no developer-operated collection, no analytics SDK, no advertising SDK, no server-side storage by the app developer.",
+  "appStoreConnectRecommendation": {
+    "dataCollectionAnswer": "No, we do not collect data from this app",
+    "tracking": false,
+    "rationale": "The app stores data locally and connects to gateway URLs configured by the user. The current mobile app does not send analytics, advertising identifiers, crash analytics, or user content to developer-controlled storage. User-configured gateways may process data under that gateway operator's control, which should be described in the privacy policy but is not developer collection when Farmslot does not control or retain it."
+  },
+  "permissions": {
+    "camera": "Used only to scan gateway pairing QR codes.",
+    "microphone": "Used only after the user starts a voice instruction flow.",
+    "notifications": "Used for local run, decision, and worker event notifications when enabled."
+  },
+  "localOnlyData": [
+    "gateway profiles and display preferences",
+    "filters and selected model settings",
+    "voice draft state",
+    "update restart state",
+    "gateway secrets stored using platform secure storage when available"
+  ],
+  "gatewayDataHandledButNotCollectedByDeveloper": [
+    "agent run status",
+    "task and prompt text",
+    "terminal output",
+    "pull request metadata",
+    "artifact links",
+    "recipe evidence"
+  ],
+  "notIncluded": {
+    "thirdPartyAdvertisingSdk": false,
+    "thirdPartyAnalyticsSdk": false,
+    "developerServerStorage": false,
+    "trackingAcrossAppsOrWebsites": false
+  },
+  "manualReviewRequired": [
+    "If a Siteed-hosted/public gateway is later enabled and stores prompts, logs, terminal output, account identifiers, device identifiers, crash reports, or usage analytics beyond transient request handling, update App Store Connect privacy labels before release.",
+    "If Sentry, Firebase, Expo analytics, PostHog, or similar telemetry is added, update this file and App Store Connect privacy labels before release.",
+    "Publish a reachable privacy policy URL before App Review/TestFlight external review."
+  ]
+}

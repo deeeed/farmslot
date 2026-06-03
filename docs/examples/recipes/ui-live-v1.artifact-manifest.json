@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "runStatus": "pass",
+  "artifacts": [
+    {
+      "path": "summary.json",
+      "type": "summary",
+      "label": "Run summary",
+      "mimeType": "application/json"
+    },
+    {
+      "path": "trace.json",
+      "type": "trace",
+      "label": "Execution trace",
+      "mimeType": "application/json"
+    },
+    {
+      "path": "screenshots/checkout-confirmation.png",
+      "type": "screenshot",
+      "label": "Checkout confirmation",
+      "nodeId": "capture-confirmation",
+      "mimeType": "image/png"
+    },
+    {
+      "path": "logs/browser-console.log",
+      "type": "log",
+      "label": "Browser console log",
+      "nodeId": "open-checkout",
+      "mimeType": "text/plain"
+    }
+  ]
+}

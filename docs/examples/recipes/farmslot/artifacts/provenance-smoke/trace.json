@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "runner": {
+      "name": "farmslot-provenance-fixture",
+      "source": "docs/examples/recipes/farmslot/artifacts/provenance-smoke",
+      "git_ref": "fixture"
+    }
+  },
+  "entries": [
+    {
+      "nodeId": "done",
+      "action": "end",
+      "startedAt": "2026-05-30T15:00:00Z",
+      "endedAt": "2026-05-30T15:00:01Z",
+      "durationMs": 1000,
+      "ok": true,
+      "status": "pass"
+    }
+  ]
+}

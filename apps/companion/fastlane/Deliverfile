@@ -1,0 +1,13 @@
+username(ENV.fetch("APP_STORE_CONNECT_USERNAME"))
+app_identifier("net.siteed.farmslot")
+app(ENV.fetch("APP_STORE_APP_ID").to_i)
+team_id(ENV.fetch("APP_STORE_TEAM_ID"))
+
+metadata_path("./fastlane/metadata")
+screenshots_path("./fastlane/screenshots")
+
+languages(["en-US"])
+automatic_release(false)
+skip_binary_upload(true)
+skip_app_version_update(true)
+force(true)

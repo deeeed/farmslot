@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pool.schema.json",
+  "title": "Pool Machine Config",
+  "description": "Defines a machine in the agent farm pool: its SSH connection, default project, and available slots.",
+  "type": "object",
+  "required": ["machine", "host", "ssh_user", "slots"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for editor validation."
+    },
+    "machine": {
+      "type": "string",
+      "description": "Unique machine identifier. Used as prefix for slot IDs.",
+      "examples": ["runner-a", "runner-b"]
+    },
+    "project": {
+      "type": "string",
+      "description": "Default project for all slots on this machine. Slots can override with their own 'project' field.",
+      "examples": ["example-mobile-farm", "example-web-farm"]
+    },
+    "platform": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Default platform for all slots. Slots can override. Common values: ios, android, chrome-extension, web, cli, backend.",
+      "examples": ["ios", "android", "chrome-extension", "web", "cli"]
+    },
+    "os": {
+      "type": "string",
+      "enum": ["darwin", "linux"],
+      "description": "Operating system of the machine."
+    },
+    "host": {
+      "type": "string",
+      "description": "Hostname or IP for SSH connections. Use 'localhost' or '<machine>.local' for local machines.",
+      "examples": ["runner-a.local", "localhost"]
+    },
+    "ssh_user": {
+      "type": "string",
+      "description": "SSH username for remote connections."
+    },
+    "claude_path": {
+      "type": "string",
+      "description": "Absolute path to the Claude CLI binary on this machine.",
+      "examples": ["/usr/local/bin/claude", "/home/example/.npm-global/bin/claude"]
+    },
+    "codex_path": {
+      "type": "string",
+      "description": "Absolute path to the Codex CLI binary on this machine.",
+      "examples": ["/usr/local/bin/codex", "/home/example/.npm-global/bin/codex"]
+    },
+    "opencode_path": {
+      "type": "string",
+      "description": "Absolute path to the OpenCode CLI binary on this machine.",
+      "examples": ["/usr/local/bin/opencode"]
+    },
+    "cursor_path": {
+      "type": "string",
+      "description": "Absolute path to the Cursor Agent CLI binary on this machine.",
+      "examples": ["/usr/local/bin/cursor-agent", "~/.local/bin/cursor-agent"]
+    },
+    "android_home": {
+      "type": "string",
+      "description": "Path to Android SDK. Required for Android platform machines.",
+      "examples": ["~/Android/Sdk"]
+    },
+    "dispatch_cmd": {
+      "type": "string",
+      "description": "Shell command template to launch an agent in a slot. Supports {repo}, {runner}, {runner_path}, {claude_path}, {codex_path}, {opencode_path}, {cursor_path}, {model}, {task_file}, {task_prompt}, {effort}, and {adb_serial} placeholders.",
+      "examples": [
+        "cd {repo} && {runner_path} --model {model}",
+        "cd {repo} && {claude_path} --dangerously-skip-permissions"
+      ]
+    },
+    "recycle_cmd": {
+      "type": "string",
+      "description": "Shell command to recycle app state (e.g., clear app data). Overrides project hooks.recycle when set.",
+      "examples": ["bash scripts/reset-app.sh --device {adb_serial}"]
+    },
+    "repo_url": {
+      "type": "string",
+      "description": "Git remote URL for cloning repos on this machine.",
+      "examples": ["git@github.com:you/example-app.git"]
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form notes about this machine's setup or quirks."
+    },
+    "tmux_workers": {
+      "$ref": "#/$defs/tmuxWorkers",
+      "description": "Optional inventory/control policy for general tmux worker panes on this machine. Omit to expose every tmux pane."
+    },
+    "slots": {
+      "type": "array",
+      "description": "Available work slots on this machine. Each slot = one repo clone + one device + one agent.",
+      "items": {
+        "$ref": "#/$defs/slot"
+      },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "tmuxWorkers": {
+      "type": "object",
+      "properties": {
+        "include": {
+          "type": "array",
+          "description": "Optional allowlist. When present, only matching panes are listed/controllable unless excluded.",
+          "items": {
+            "$ref": "#/$defs/tmuxWorkerRule"
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "description": "Optional blocklist. Exclude wins over include.",
+          "items": {
+            "$ref": "#/$defs/tmuxWorkerRule"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "tmuxWorkerRule": {
+      "type": "object",
+      "description": "All fields in one rule must match. String values are glob patterns supporting * and ?.",
+      "minProperties": 1,
+      "properties": {
+        "nodeId": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "windowName": {
+          "type": "string"
+        },
+        "pane": {
+          "type": "string"
+        },
+        "paneId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "linkedSlotId": {
+          "type": "string"
+        },
+        "linkedRunId": {
+          "type": "string"
+        },
+        "linkedFamilyId": {
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "window_name": {
+          "type": "string"
+        },
+        "pane_id": {
+          "type": "string"
+        },
+        "linked_slot_id": {
+          "type": "string"
+        },
+        "linked_run_id": {
+          "type": "string"
+        },
+        "linked_family_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "slot": {
+      "type": "object",
+      "description": "A single work slot: one repo clone, one device/simulator, one tmux session.",
+      "required": ["id", "repo", "session"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Globally unique slot identifier. Pattern: {machine}-{device-name}.",
+          "examples": ["runner-a-mobile-1", "local-web-1"]
+        },
+        "project": {
+          "type": "string",
+          "description": "Project this slot belongs to. Overrides machine-level 'project'.",
+          "examples": ["example-mobile-farm", "example-browser-farm"]
+        },
+        "platform": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Platform for this slot. Overrides machine-level 'platform'.",
+          "examples": ["ios", "android", "chrome-extension"]
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this slot is available for dispatch. Default: true.",
+          "default": true
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["dispatch", "custom"],
+          "description": "Slot mode. 'dispatch' = available for automated dispatch. 'custom' = reserved for manual use.",
+          "default": "dispatch"
+        },
+        "repo": {
+          "type": "string",
+          "description": "Absolute path to the repo clone for this slot.",
+          "examples": ["~/dev/example-app/example-mobile-1", "/Users/example/dev/example-app"]
+        },
+        "session": {
+          "type": "string",
+          "description": "tmux session name. Pattern: {project}-{n} or {device-name}.",
+          "examples": ["example-mobile-1", "example-browser-1"]
+        },
+        "branch": {
+          "type": "string",
+          "description": "Default git branch for this slot. Used by prepare-slot.sh.",
+          "examples": ["main"]
+        },
+        "app": {
+          "type": "string",
+          "description": "App name within a monorepo project.",
+          "examples": ["example-api", "example-mobile"]
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "dispatching",
+            "dispatched",
+            "working",
+            "recycling",
+            "releasing",
+            "released"
+          ],
+          "description": "Current lifecycle state. Managed by scripts, not manually edited.",
+          "default": "released"
+        },
+        "agent": {
+          "type": "string",
+          "enum": ["working", "idle"],
+          "description": "Agent status. Managed by scripts."
+        },
+        "task": {
+          "type": ["string", "null"],
+          "description": "Current task file name, or null if idle.",
+          "examples": ["TASK-review-27409-0321-1007.md"]
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resource instances for this slot. Keys match resource IDs in project.json resources.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

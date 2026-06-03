@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "title": "Backend API smoke contract",
+  "description": "Runs a project-native backend API smoke test and indexes the machine-readable report.",
+  "inputs": {
+    "base_url": "http://localhost:3000"
+  },
+  "validate": {
+    "workflow": {
+      "pre_conditions": [
+        {
+          "id": "service.listening",
+          "description": "Service is listening on the configured base_url.",
+          "params": {
+            "input": "base_url"
+          },
+          "required": true
+        }
+      ],
+      "setup": [],
+      "entry": "run-api-smoke",
+      "nodes": {
+        "run-api-smoke": {
+          "action": "command",
+          "cmd": "npm run test:api -- --json --output reports/api-smoke.json",
+          "next": "assert-api-report",
+          "intent": "Run API smoke tests and write a JSON report"
+        },
+        "assert-api-report": {
+          "action": "assert_json",
+          "path": "reports/api-smoke.json",
+          "assert": {
+            "operator": "eq",
+            "value": 0,
+            "path": "$.failed"
+          },
+          "next": "index-artifacts",
+          "intent": "Verify the smoke report has zero failed tests"
+        },
+        "index-artifacts": {
+          "action": "index_artifacts",
+          "next": "done",
+          "artifacts": ["reports/api-smoke.json", "logs/api-smoke.log"],
+          "intent": "Publish backend report and logs for review"
+        },
+        "done": {
+          "action": "end",
+          "status": "pass"
+        }
+      },
+      "teardown": [],
+      "playback": {
+        "mode": "off",
+        "slow_ms": 2000
+      }
+    }
+  }
+}

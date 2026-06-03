@@ -1,0 +1,49 @@
+{
+  "$schema": "../schemas/pool.schema.json",
+  "machine": "my-server",
+  "project": "my-app-farm",
+  "platform": "android",
+  "os": "linux",
+  "host": "my-server.local",
+  "ssh_user": "deploy",
+  "android_home": "~/Android/Sdk",
+  "claude_path": "/usr/local/bin/claude",
+  "cursor_path": "/usr/local/bin/cursor-agent",
+  "dispatch_cmd": "cd {repo} && {claude_path} {safety_flags}",
+  "recycle_cmd": "adb -s {adb_serial} shell pm clear com.example.app",
+  "tmux_workers": {
+    "include": [
+      {
+        "session": "omx-*"
+      },
+      {
+        "session": "omc-*"
+      }
+    ],
+    "exclude": [
+      {
+        "cwd": "~/dev/example-app/*"
+      },
+      {
+        "command": "node"
+      }
+    ]
+  },
+  "slots": [
+    {
+      "id": "my-server-1",
+      "enabled": true,
+      "repo": "~/dev/my-app-1",
+      "session": "my-server-1",
+      "resources": {
+        "android-emu": {
+          "avd": "my-avd-1",
+          "adb_serial": "emulator-5554"
+        },
+        "dev-server": {
+          "port": 8085
+        }
+      }
+    }
+  ]
+}

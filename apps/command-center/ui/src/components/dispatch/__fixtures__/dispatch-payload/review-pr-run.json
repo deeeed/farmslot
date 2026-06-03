@@ -1,0 +1,11 @@
+{
+  "flowType": "review-pr",
+  "project": "example-mobile",
+  "ticketOrPr": "example-org/example-mobile#123",
+  "branch": "fix/proj-123",
+  "model": "gpt-5.4",
+  "runner": "codex",
+  "mode": "interactive",
+  "reviewTier": "standard",
+  "app": "apps/mobile"
+}

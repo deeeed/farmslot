@@ -1,0 +1,862 @@
+import { customElement } from 'lit/decorators.js';
+
+import type {
+  CiCheckUpdatedPayload,
+  DevInteractiveCompletionAction,
+  FamilyObservabilityArtifact,
+  PRStatus,
+  RecipeRunArtifactGroup,
+  Run,
+  RunDecision,
+  TaskProgressResult,
+  TaskProgressUpdatedPayload,
+} from '@farmslot/protocol';
+import { Events, Methods } from '@farmslot/protocol';
+
+import './step-inspector.js';
+import './run-pipeline-mini.js';
+import '../shared/media-lightbox.js';
+import '../shared/step-artifacts.js';
+import '../workspace/review-workspace.js';
+import '../workspace/ready-workspace.js';
+import '../terminal/terminal-view.js';
+import '../shared/hydrating-placeholder.js';
+
+import { gateway } from '../../gateway-client.js';
+import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
+import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import type { LightboxItem } from '../shared/media-lightbox-types.js';
+import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
+import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
+import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
+
+import {
+  confirmForceComplete,
+  confirmRunDecision,
+  jumpToSuccessorWhenAvailable,
+  rescueRunLinkage,
+  resolveBranchNudgePick,
+  resolveInteractiveDevAction,
+  resolveSlotPick,
+} from './run-detail-actions.js';
+import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
+import { renderRunGateSection } from './run-detail-decision-renderers.js';
+import {
+  buildRerunAlongsideHref,
+  buildRunDiagnosisPrompt,
+  currentRunCiStatus,
+  hasActiveInlineCiFix,
+  isLiveTimeoutPrStatusAllGreen,
+  isTaskProgressRunActive,
+  pendingCITimeoutDecision,
+  runDetailDesiredRecipeRunId,
+  runEvidenceLightboxItems,
+  runFamilyPrStatus,
+  shouldAcceptTaskProgressUpdate,
+  shouldShowRunCiStatus,
+} from './run-detail-model.js';
+import {
+  renderInteractiveDevGate,
+  renderRunDetailView,
+  renderRunEvidence,
+  renderRunGrade,
+} from './run-detail-renderers.js';
+import { RunDetailState } from './run-detail-state.js';
+import { runDetailStyles } from './run-detail-styles.js';
+import {
+  artifactSelectionFromRunDetailHash,
+  isRunDetailHashForRun,
+  runDetailEvidenceArtifactHash,
+  runDetailStepHash,
+  selectedStepNameFromRunDetailHash,
+} from './run-detail-url-state.js';
+import { publicationReviewStepForName } from './run-pipeline-model.js';
+import { collectRunEvidenceArtifacts, sortRunsForFamilyView } from './run-utils.js';
+
+const GATEWAY_BASE = gatewayHttpOrigin();
+
+@customElement('run-detail')
+export class RunDetail extends RunDetailState {
+  static styles = runDetailStyles;
+
+  connectedCallback() {
+    super.connectedCallback();
+    this.syncRun(getState());
+    window.addEventListener('hashchange', this._onHashChange);
+    this.unsub = subscribe((s) => this.syncRun(s));
+    this.unsubProgress = gateway.subscribe<TaskProgressUpdatedPayload>(
+      Events.TASK_PROGRESS_UPDATED,
+      (p) => {
+        if (
+          p.progress?.structured &&
+          this.run?.slotId === p.slotId &&
+          p.runId === this.runId &&
+          shouldAcceptTaskProgressUpdate(this.run, p)
+        ) {
+          this.taskProgress = p.progress.structured;
+        }
+      },
+    );
+    this.unsubCI = gateway.subscribe<CiCheckUpdatedPayload>(Events.CI_CHECK_UPDATED, (p) => {
+      if (p.runId === this.runId) {
+        this.ciStatus = p;
+      }
+    });
+    this._clock = setInterval(() => {
+      this._now = Date.now();
+      this._maybeRefreshLiveTimeoutPrStatus();
+      this._maybeRefreshTaskProgress();
+    }, 1000);
+  }
+
+  protected override updated(changed: Map<string, unknown>): void {
+    if (changed.has('runId') || changed.has('mockData') || changed.has('mockRun')) {
+      this.syncRun(getState());
+    }
+  }
+
+  private _maybeRefreshTaskProgress(): void {
+    if (!this.run?.slotId) return;
+    if (!isTaskProgressRunActive(this.run, { includeCompleting: true })) return;
+    if (Date.now() - this._lastTaskProgressFetchAt < 10_000) return;
+    void this.fetchTaskProgress(this.run.slotId);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    window.removeEventListener('hashchange', this._onHashChange);
+    this.unsub?.();
+    this.unsubProgress?.();
+    this.unsubCI?.();
+    if (this._clock) clearInterval(this._clock);
+    if (this._jumpTimer) clearTimeout(this._jumpTimer);
+    if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
+  }
+
+  private syncRun(s: AppState) {
+    if (this.mockData && this.mockRun) {
+      const prev = this.run;
+      this._hydrating = false;
+      this._bootstrapFailed = false;
+      this._connectionStale = false;
+      this._directRunUnavailable = false;
+      this._directRunRefreshFailed = false;
+      this._directRunRefreshing = false;
+      this._missingRunFetchAttempted = false;
+      this.run = this.mockRun;
+      this.prStatus = runFamilyPrStatus(this.run, [this.run, ...s.runs], s.prs ?? []);
+      if (prev?.id !== this.run.id) this._applySelectedStepFromHash();
+      return;
+    }
+    const prev = this.run;
+    const wasHydrating = this._hydrating;
+    if (this.runId !== this._lastRequestedRunId) {
+      this._lastRequestedRunId = this.runId;
+      this._missingRunFetchAttempted = false;
+      this._directRunRefreshFailed = false;
+      this._directRunUnavailable = false;
+      this._directRun = null;
+      this._directRunRefreshing = false;
+      this._directRunRequestSeq++;
+      this._resetRecipeRuns();
+    }
+    this._hydrating = isHydrating(s, 'runs');
+    this._bootstrapFailed = s.bootstrapFailed.runs;
+    this._connectionStale = s.connection !== 'connected';
+    if (wasHydrating && !this._hydrating) this._missingRunFetchAttempted = false;
+    const sharedRun = s.runs.find((r) => r.id === this.runId) ?? null;
+    if (sharedRun) {
+      if (
+        this._directRun ||
+        this._directRunRefreshing ||
+        this._directRunRefreshFailed ||
+        this._directRunUnavailable
+      ) {
+        this._directRunRequestSeq++;
+        this._directRunRefreshing = false;
+      }
+      this._directRun = null;
+      this._directRunRefreshFailed = false;
+      this._directRunUnavailable = false;
+    }
+    this.run = sharedRun ?? (this._directRun?.id === this.runId ? this._directRun : null);
+    // Reset transient nudge-decision-card state when the bound run changes or when the
+    // current `branch_affinity_nudge` decision has been resolved server-side. Without this,
+    // _branchNudgeShowPicker / _selectedSlotId leak into the next decision render and the
+    // operator clicks "Use <slot>" against a stale selection.
+    const prevPendingNudge =
+      prev?.decisions.find(
+        (d) =>
+          !d.resolvedAt &&
+          (d.payload as { kind?: string } | undefined)?.kind === 'branch_affinity_nudge',
+      ) ?? null;
+    const currPendingNudge =
+      this.run?.decisions.find(
+        (d) =>
+          !d.resolvedAt &&
+          (d.payload as { kind?: string } | undefined)?.kind === 'branch_affinity_nudge',
+      ) ?? null;
+    const runChanged = prev?.id !== this.run?.id;
+    const nudgeDecisionResolved =
+      !!prevPendingNudge && (!currPendingNudge || currPendingNudge.id !== prevPendingNudge.id);
+    if (runChanged || nudgeDecisionResolved) {
+      this._branchNudgeShowPicker = false;
+      this._selectedSlotId = null;
+    }
+    const runsForMeta = this.run && !sharedRun ? [this.run, ...s.runs] : s.runs;
+    this.prStatus = this.run ? runFamilyPrStatus(this.run, runsForMeta, s.prs ?? []) : null;
+    if (this.run) {
+      this._missingRunFetchAttempted = false;
+    }
+    if (this.run && this.selectedStep) {
+      this.selectedStep =
+        this.run.steps.find((step) => step.name === this.selectedStep?.name) ??
+        publicationReviewStepForName(this.run, this.selectedStep.name) ??
+        this.selectedStep;
+      void this._loadSelectedStepProgress();
+    }
+    // The shared RUN_LIST is capped and can omit deep-linked historical runs.
+    // Retry the route target directly once the slice is no longer hydrating so
+    // reconnects do not fall through to "not found" prematurely.
+    if (!this.run && this.runId && !this._hydrating && !this._missingRunFetchAttempted) {
+      this._missingRunFetchAttempted = true;
+      void this.fetchRun(this.runId);
+    }
+    if (wasHydrating && !this._hydrating && !sharedRun && this._directRun?.id === this.runId) {
+      void this.fetchRun(this.runId);
+    }
+    // Fetch initial task progress when entering monitoring (or on mount if already monitoring)
+    const isWorkerActive = this.run ? isTaskProgressRunActive(this.run) : false;
+    const inlineCIFixActive = this.run ? hasActiveInlineCiFix(this.run) : false;
+    const shouldRefreshTaskProgress =
+      !this.taskProgress ||
+      (inlineCIFixActive && Date.now() - this._lastTaskProgressFetchAt > 5_000);
+    if (isWorkerActive && this.run?.slotId && shouldRefreshTaskProgress) {
+      this.fetchTaskProgress(this.run!.slotId);
+    }
+    if (this.run && prev?.id !== this.run.id) {
+      void this.fetchSiblings(this.run);
+      void this._refreshRecipeRunsForRun(this.run);
+      this._applySelectedStepFromHash();
+    }
+    if (this.run) this._applyEvidenceArtifactFromHash();
+    this._maybeRefreshLiveTimeoutPrStatus();
+  }
+
+  private _shouldShowCiStatus(run: Run): boolean {
+    return shouldShowRunCiStatus(run);
+  }
+
+  private _maybeRefreshLiveTimeoutPrStatus(): void {
+    const run = this.run;
+    if (!run?.prNumber || !pendingCITimeoutDecision(run)) {
+      if (
+        this.liveTimeoutPrStatus ||
+        this.liveTimeoutPrStatusFailed ||
+        this.liveTimeoutPrStatusRefreshing
+      ) {
+        this._liveTimeoutRequestSeq++;
+      }
+      this.liveTimeoutPrStatus = null;
+      this.liveTimeoutPrStatusFailed = false;
+      this.liveTimeoutPrStatusRefreshing = false;
+      this._liveTimeoutKey = '';
+      return;
+    }
+
+    const key = `${run.id}:${run.project}:${run.prNumber}`;
+    if (key !== this._liveTimeoutKey) {
+      this._liveTimeoutKey = key;
+      this.liveTimeoutPrStatus = null;
+      this.liveTimeoutPrStatusFailed = false;
+      this._lastLiveTimeoutFetchAt = 0;
+      this._liveTimeoutRequestSeq++;
+    }
+
+    if (this.liveTimeoutPrStatusRefreshing || this._connectionStale) return;
+    if (Date.now() - this._lastLiveTimeoutFetchAt < 30_000) return;
+    void this._fetchLiveTimeoutPrStatus(run);
+  }
+
+  private async _fetchLiveTimeoutPrStatus(run: Run): Promise<void> {
+    if (!run.prNumber) return;
+    const requestSeq = ++this._liveTimeoutRequestSeq;
+    const key = `${run.id}:${run.project}:${run.prNumber}`;
+    this.liveTimeoutPrStatusRefreshing = true;
+    this.liveTimeoutPrStatusFailed = false;
+    this._lastLiveTimeoutFetchAt = Date.now();
+    try {
+      const res = await gateway.request<{ pr: PRStatus }>(
+        Methods.PR_STATUS,
+        { pr: run.prNumber, project: run.project, force: true },
+        30_000,
+      );
+      if (requestSeq !== this._liveTimeoutRequestSeq || key !== this._liveTimeoutKey) return;
+      this.liveTimeoutPrStatus = res.pr;
+      void this._autoResolveRecoveredCITimeout(run, res.pr);
+    } catch (err) {
+      if (requestSeq !== this._liveTimeoutRequestSeq || key !== this._liveTimeoutKey) return;
+      console.warn('Failed to refresh live CI status:', err);
+      this.liveTimeoutPrStatusFailed = true;
+    } finally {
+      if (requestSeq === this._liveTimeoutRequestSeq && key === this._liveTimeoutKey) {
+        this.liveTimeoutPrStatusRefreshing = false;
+      }
+    }
+  }
+
+  private async _autoResolveRecoveredCITimeout(run: Run, pr: PRStatus): Promise<void> {
+    const decision = pendingCITimeoutDecision(run);
+    if (!decision) return;
+    if (this._autoResolvedTimeoutDecisionIds.has(decision.id)) return;
+    const summary = pr.checkSummary;
+    if (
+      !(
+        summary.total > 0 &&
+        summary.passed === summary.total &&
+        summary.failed === 0 &&
+        summary.pending === 0
+      )
+    )
+      return;
+
+    this._autoResolvedTimeoutDecisionIds.add(decision.id);
+    try {
+      await gateway.request(
+        Methods.RUN_RESOLVE_DECISION,
+        {
+          runId: run.id,
+          decisionId: decision.id,
+          actionId: 'continue',
+        },
+        30_000,
+      );
+    } catch (err) {
+      this._autoResolvedTimeoutDecisionIds.delete(decision.id);
+      console.warn('Failed to auto-resolve recovered CI timeout:', err);
+    }
+  }
+
+  private async fetchRun(runId: string) {
+    const requestSeq = ++this._directRunRequestSeq;
+    const requestStillCurrent = () =>
+      requestSeq === this._directRunRequestSeq && this.runId === runId;
+    this._directRunRefreshing = true;
+    this._directRunRefreshFailed = false;
+    this._directRunUnavailable = false;
+    try {
+      const res = await gateway.request<{ run: Run }>(Methods.RUN_GET, { runId });
+      if (!requestStillCurrent()) return;
+      if (res.run) {
+        this._directRun = res.run;
+        this.run = res.run;
+        this._directRunRefreshFailed = false;
+        this._directRunUnavailable = false;
+        void this.fetchSiblings(res.run);
+        void this._refreshRecipeRunsForRun(res.run);
+        this._applySelectedStepFromHash();
+      } else {
+        this._markDirectRunUnavailable(runId);
+      }
+    } catch (err) {
+      if (!requestStillCurrent()) return;
+      if (this._isRunNotFoundError(err)) {
+        this._markDirectRunUnavailable(runId);
+      } else {
+        this._directRunRefreshFailed = true;
+      }
+    } finally {
+      if (requestStillCurrent()) this._directRunRefreshing = false;
+    }
+  }
+
+  private _markDirectRunUnavailable(runId: string): void {
+    if (this._directRun?.id === runId) {
+      this._directRun = null;
+      this.run = null;
+    }
+    this._directRunRefreshFailed = false;
+    this._directRunUnavailable = true;
+  }
+
+  private _isRunNotFoundError(err: unknown): boolean {
+    return err instanceof Error && /^Run not found(?::|$)/.test(err.message);
+  }
+
+  private _resetRecipeRuns(): void {
+    this._recipeRunsRefreshToken = Symbol('run-detail-recipe-runs');
+    this._recipeRunsRefreshInFlight = null;
+    this._recipeRunsRefreshInFlightRunId = '';
+    this._pendingRecipeRunSelectionId = '';
+    if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
+    this._recipeRunsDelayedRefreshTimer = undefined;
+    this._recipeRuns = [];
+    this._selectedRecipeRunId = '';
+  }
+
+  private _selectedRecipeRun(): RecipeRunArtifactGroup | null {
+    return selectedRecipeRun(this._recipeRuns, this._selectedRecipeRunId);
+  }
+
+  private async _refreshRecipeRunsForRun(
+    run: Run,
+    options: { force?: boolean } = {},
+  ): Promise<void> {
+    if (
+      !options.force &&
+      this._recipeRunsRefreshInFlight &&
+      this._recipeRunsRefreshInFlightRunId === run.id
+    ) {
+      return this._recipeRunsRefreshInFlight;
+    }
+    const refreshPromise = this._refreshRecipeRunsForRunUncoalesced(run);
+    this._recipeRunsRefreshInFlight = refreshPromise;
+    this._recipeRunsRefreshInFlightRunId = run.id;
+    try {
+      await refreshPromise;
+    } finally {
+      if (this._recipeRunsRefreshInFlight === refreshPromise) {
+        this._recipeRunsRefreshInFlight = null;
+        this._recipeRunsRefreshInFlightRunId = '';
+      }
+    }
+  }
+
+  private async _refreshRecipeRunsForRunUncoalesced(run: Run): Promise<void> {
+    const refreshToken = Symbol('run-detail-recipe-runs');
+    this._recipeRunsRefreshToken = refreshToken;
+    try {
+      const result = await gateway.request<{
+        recipeRuns: RecipeRunArtifactGroup[];
+        selectedRecipeRunId: string | null;
+      }>(Methods.RUN_RECIPE_RUNS_FOR_RUN, { runId: run.id });
+      if (refreshToken !== this._recipeRunsRefreshToken || this.run?.id !== run.id) return;
+      this._recipeRuns = result.recipeRuns;
+      const pendingRecipeRunId = this._pendingRecipeRunSelectionId;
+      const desiredId = runDetailDesiredRecipeRunId({
+        recipeRuns: result.recipeRuns,
+        pendingRecipeRunId,
+        currentRecipeRunId: this._selectedRecipeRunId,
+        gatewaySelectedRecipeRunId: result.selectedRecipeRunId,
+      });
+      this._selectedRecipeRunId = desiredId;
+      if (pendingRecipeRunId && desiredId === pendingRecipeRunId) {
+        this._pendingRecipeRunSelectionId = '';
+      }
+    } catch (err) {
+      if (refreshToken !== this._recipeRunsRefreshToken || this.run?.id !== run.id) return;
+      // Recipe-run evidence is optional in run-detail. Keep the gate usable if
+      // an older run has no recipe artifact index or the mirror is temporarily unavailable.
+      this._recipeRuns = [];
+      this._selectedRecipeRunId = '';
+      console.warn('Failed to load run recipe evidence:', err);
+    }
+  }
+
+  private _handleRecipeRunArtifacts(
+    run: Run,
+    detail: RecipeCompleteDetail,
+    delayed: boolean,
+  ): void {
+    if (detail.requestId) {
+      this._pendingRecipeRunSelectionId = `live-run:${detail.requestId}`;
+    }
+    void this._refreshRecipeRunsForRun(run, { force: true });
+    if (!delayed || !detail.requestId) return;
+    const pendingId = `live-run:${detail.requestId}`;
+    if (this._recipeRunsDelayedRefreshTimer) clearTimeout(this._recipeRunsDelayedRefreshTimer);
+    this._recipeRunsDelayedRefreshTimer = setTimeout(() => {
+      this._recipeRunsDelayedRefreshTimer = undefined;
+      if (this.run?.id === run.id && this._pendingRecipeRunSelectionId === pendingId) {
+        void this._refreshRecipeRunsForRun(run, { force: true });
+      }
+    }, 1500);
+  }
+
+  private _actionsBlocked(): boolean {
+    return (
+      this._connectionStale ||
+      this._hydrating ||
+      this._bootstrapFailed ||
+      this._directRunRefreshing ||
+      this._directRunRefreshFailed
+    );
+  }
+
+  private async fetchSiblings(run: Run) {
+    try {
+      const res = await gateway.request<{ runs: Run[] }>(Methods.RUN_LIST, {
+        familyId: run.familyId,
+      });
+      this.siblings = sortRunsForFamilyView((res.runs ?? []).filter((r) => r.id !== run.id));
+    } catch {
+      this.siblings = [];
+    }
+  }
+
+  private _onHashChange = () => {
+    if (isRunDetailHashForRun(this.runId)) {
+      this._applySelectedStepFromHash();
+      this._applyEvidenceArtifactFromHash();
+    }
+  };
+
+  private _applySelectedStepFromHash() {
+    if (!this.run) return;
+    const stepName = selectedStepNameFromRunDetailHash();
+    if (!stepName) {
+      this.selectedStep = null;
+      this.selectedStepProgress = null;
+      this._selectedStepProgressKey = '';
+      return;
+    }
+    this.selectedStep =
+      this.run.steps.find((s) => s.name === stepName) ??
+      publicationReviewStepForName(this.run, stepName);
+    void this._loadSelectedStepProgress();
+  }
+
+  private _lightboxItemsForArtifacts(artifacts: FamilyObservabilityArtifact[]): LightboxItem[] {
+    return runEvidenceLightboxItems(artifacts, this._artifactUrl);
+  }
+
+  private _applyEvidenceArtifactFromHash(): void {
+    if (!this.run) return;
+    const { artifactRun, artifact } = artifactSelectionFromRunDetailHash();
+    if (!artifact) {
+      if (this._evidenceLightboxOpen) {
+        this._evidenceLightboxOpen = false;
+        this._evidenceLightboxItems = [];
+        this._evidenceLightboxIndex = 0;
+      }
+      return;
+    }
+    if (artifactRun && artifactRun !== this.runId) return;
+    const artifacts = collectRunEvidenceArtifacts(this.run);
+    const index = artifacts.findIndex((candidate) => candidate.path === artifact);
+    if (index < 0) return;
+    this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);
+    this._evidenceLightboxIndex = index;
+    this._evidenceLightboxOpen = true;
+  }
+
+  private _syncSelectedStepToHash() {
+    if (this._suppressHashSync) return;
+    const stepName = this.selectedStep?.name;
+    const next = runDetailStepHash(this.runId, stepName ?? null);
+    if (location.hash !== next) {
+      this._suppressHashSync = true;
+      location.hash = next;
+      queueMicrotask(() => {
+        this._suppressHashSync = false;
+      });
+    }
+  }
+
+  private _requestCopilotRunDiagnosis(run: Run) {
+    this.dispatchEvent(
+      new CustomEvent('copilot-prompt-request', {
+        detail: {
+          prompt: buildRunDiagnosisPrompt(run),
+          intent: 'diagnostic-readonly',
+          runId: run.id,
+          sourceSurface: 'run-detail',
+          contextOverride: {
+            selectedRunId: run.id,
+            surfaceId: 'run-detail',
+            affordances: ['failed-run-diagnosis', 'recovery-proposal'],
+          },
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private async fetchTaskProgress(slotId: string) {
+    this._lastTaskProgressFetchAt = Date.now();
+    try {
+      const res = await gateway.request<TaskProgressResult>(Methods.TASK_PROGRESS, {
+        slotId,
+        runId: this.runId,
+      });
+      if (res.structured) {
+        this.taskProgress = res.structured;
+      }
+    } catch (err) {
+      // During slot release/replay the slot can briefly have no task file; keep
+      // the existing UI snapshot instead of failing the whole run detail render.
+      console.debug(`Task progress unavailable for ${slotId}: ${(err as Error).message}`);
+    }
+  }
+
+  private async _loadSelectedStepProgress(): Promise<void> {
+    const step = this.selectedStep;
+    const run = this.run;
+    const artifactPath = (step?.outputs as Record<string, unknown> | undefined)
+      ?.taskProgressArtifactPath;
+    const key = `${run?.id ?? ''}:${step?.name ?? ''}:${typeof artifactPath === 'string' ? artifactPath : ''}`;
+    if (key === this._selectedStepProgressKey) return;
+    this._selectedStepProgressKey = key;
+    this.selectedStepProgress = null;
+    if (!run?.slotId || !step || typeof artifactPath !== 'string' || !artifactPath.trim()) return;
+    try {
+      const res = await gateway.request<TaskProgressResult>(
+        Methods.TASK_PROGRESS,
+        { slotId: run.slotId, runId: run.id, taskFile: artifactPath },
+        15_000,
+      );
+      if (key !== this._selectedStepProgressKey) return;
+      this.selectedStepProgress = res.structured ?? null;
+    } catch (err) {
+      console.warn(
+        `Task progress artifact unavailable for ${step.name}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private _artifactUrl = (artifact: FamilyObservabilityArtifact): string => {
+    return runArtifactUrl(GATEWAY_BASE, artifact.runId, artifact);
+  };
+
+  private _updateEvidenceArtifactHash(item: LightboxItem | null): void {
+    const next = runDetailEvidenceArtifactHash(this.runId, item);
+    if (location.hash !== next) history.replaceState(null, '', next);
+  }
+
+  private _closeEvidenceLightbox(): void {
+    this._evidenceLightboxOpen = false;
+    this._updateEvidenceArtifactHash(null);
+  }
+
+  private _navigateEvidenceLightbox(index: number): void {
+    this._evidenceLightboxIndex = index;
+    this._updateEvidenceArtifactHash(this._evidenceLightboxItems[index] ?? null);
+  }
+
+  private _onEvidenceArtifactClick(
+    e: CustomEvent<{ artifacts: FamilyObservabilityArtifact[]; index: number }>,
+  ): void {
+    const { artifacts, index } = e.detail;
+    this._evidenceLightboxItems = this._lightboxItemsForArtifacts(artifacts);
+    this._evidenceLightboxIndex = index;
+    this._evidenceLightboxOpen = true;
+    this._updateEvidenceArtifactHash(this._evidenceLightboxItems[index] ?? null);
+  }
+
+  private _renderRunEvidence(run: Run) {
+    return renderRunEvidence(run, {
+      evidenceLightboxItems: this._evidenceLightboxItems,
+      evidenceLightboxOpen: this._evidenceLightboxOpen,
+      evidenceLightboxIndex: this._evidenceLightboxIndex,
+      artifactUrl: this._artifactUrl,
+      onEvidenceArtifactClick: (event) => this._onEvidenceArtifactClick(event),
+      closeEvidenceLightbox: () => this._closeEvidenceLightbox(),
+      navigateEvidenceLightbox: (index) => this._navigateEvidenceLightbox(index),
+    });
+  }
+
+  render() {
+    return renderRunDetailView({
+      run: this.run,
+      prStatus: this.prStatus,
+      siblings: this.siblings,
+      taskProgress: this.taskProgress,
+      selectedStep: this.selectedStep,
+      selectedStepProgress: this.selectedStepProgress,
+      _hydrating: this._hydrating,
+      _bootstrapFailed: this._bootstrapFailed,
+      _connectionStale: this._connectionStale,
+      _directRunRefreshing: this._directRunRefreshing,
+      _directRunRefreshFailed: this._directRunRefreshFailed,
+      _directRunUnavailable: this._directRunUnavailable,
+      _rescueInProgress: this._rescueInProgress,
+      _pendingConfirm: this._pendingConfirm,
+      _showTerminal: this._showTerminal,
+      _actionsBlocked: () => this._actionsBlocked(),
+      _rescueLinkage: (runId) => this._rescueLinkage(runId),
+      _confirmForceComplete: (runId) => this._confirmForceComplete(runId),
+      _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
+      _buildRerunAlongsideHref: buildRerunAlongsideHref,
+      _renderInteractiveDevGate: (run) =>
+        renderInteractiveDevGate(run, {
+          busyAction: this._interactiveDevActionInProgress,
+          actionsBlocked: this._actionsBlocked(),
+          resolveInteractiveDev: (targetRun, action) =>
+            this._resolveInteractiveDev(targetRun, action),
+        }),
+      _currentCiStatus: (run) => currentRunCiStatus(run, this.ciStatus),
+      _shouldShowCiStatus: (run) => this._shouldShowCiStatus(run),
+      _renderCiStatus: (run) =>
+        renderRunCiStatus(run, {
+          ci: currentRunCiStatus(run, this.ciStatus),
+          timeoutDecision: pendingCITimeoutDecision(run),
+          liveTimeoutPrStatus: this.liveTimeoutPrStatus,
+          prStatus: this.prStatus,
+          liveTimeoutPrStatusRefreshing: this.liveTimeoutPrStatusRefreshing,
+          liveTimeoutPrStatusFailed: this.liveTimeoutPrStatusFailed,
+          now: this._now,
+        }),
+      _renderRunEvidence: (run) => this._renderRunEvidence(run),
+      _onReplayStep: (stepName, skipPrepare) => this._onReplayStep(stepName, skipPrepare),
+      renderGateSection: (run) => this.renderGateSection(run),
+      renderGrade: renderRunGrade,
+      onStepSelect: (step) => {
+        this.selectedStep = step;
+        this._syncSelectedStepToHash();
+        void this._loadSelectedStepProgress();
+      },
+      onStepInspectorClose: () => {
+        this.selectedStep = null;
+        this._syncSelectedStepToHash();
+      },
+      toggleTerminal: () => {
+        this._showTerminal = !this._showTerminal;
+      },
+    });
+  }
+
+  private renderGateSection(run: Run) {
+    return renderRunGateSection(run, {
+      allRuns: getState().runs,
+      bootstrapFailed: this._bootstrapFailed,
+      directRunRefreshFailed: this._directRunRefreshFailed,
+      actionsBlocked: this._actionsBlocked(),
+      pendingConfirm: this._pendingConfirm,
+      recipeRuns: this._recipeRuns,
+      selectedRecipeRunId: this._selectedRecipeRunId,
+      selectedSlotId: this._selectedSlotId,
+      resetBranch: this._resetBranch,
+      branchNudgeShowPicker: this._branchNudgeShowPicker,
+      liveTimeoutPrStatus: this.liveTimeoutPrStatus,
+      liveTimeoutPrStatusRefreshing: this.liveTimeoutPrStatusRefreshing,
+      liveTimeoutPrStatusFailed: this.liveTimeoutPrStatusFailed,
+      isLiveTimeoutAllGreen: () => isLiveTimeoutPrStatusAllGreen(this.liveTimeoutPrStatus),
+      setSelectedSlot: (slotId, resetBranch) => {
+        this._selectedSlotId = slotId;
+        if (resetBranch !== undefined) this._resetBranch = resetBranch;
+      },
+      setResetBranch: (resetBranch) => {
+        this._resetBranch = resetBranch;
+      },
+      setBranchNudgeShowPicker: (show) => {
+        this._branchNudgeShowPicker = show;
+      },
+      confirmResolve: (runId, decision, actionId) =>
+        this._confirmResolve(runId, decision, actionId),
+      resolveSlotPick: (runId, decisionId) => this._resolveSlotPick(runId, decisionId),
+      resolveBranchNudgePick: (runId, decisionId) =>
+        this._resolveBranchNudgePick(runId, decisionId),
+      handleRecipeRunArtifacts: (targetRun, detail, preferSelectedArtifacts) =>
+        this._handleRecipeRunArtifacts(targetRun, detail, preferSelectedArtifacts),
+    });
+  }
+
+  private async _rescueLinkage(runId: string) {
+    await rescueRunLinkage(runId, {
+      actionsBlocked: () => this._actionsBlocked(),
+      rescueInProgress: () => this._rescueInProgress,
+      setRescueInProgress: (inProgress) => {
+        this._rescueInProgress = inProgress;
+      },
+    });
+  }
+
+  private async _resolveInteractiveDev(run: Run, action: DevInteractiveCompletionAction) {
+    await resolveInteractiveDevAction(run, action, {
+      actionsBlocked: () => this._actionsBlocked(),
+      busyAction: () => this._interactiveDevActionInProgress,
+      setBusyAction: (busyAction) => {
+        this._interactiveDevActionInProgress = busyAction as DevInteractiveCompletionAction | null;
+      },
+    });
+  }
+
+  private _confirmForceComplete(runId: string) {
+    confirmForceComplete(runId, this._confirmTimerContext());
+  }
+
+  private _confirmResolve(runId: string, decision: RunDecision, actionId: string) {
+    confirmRunDecision(runId, decision, actionId, {
+      ...this._confirmTimerContext(),
+      jumpToSuccessorWhenAvailable: (originRunId) =>
+        this._jumpToSuccessorWhenAvailable(originRunId),
+    });
+  }
+
+  private _jumpToSuccessorWhenAvailable(originRunId: string): void {
+    jumpToSuccessorWhenAvailable(originRunId, {
+      jumpTimer: () => this._jumpTimer,
+      setJumpTimer: (timer) => {
+        this._jumpTimer = timer;
+      },
+      isConnected: () => this.isConnected,
+      allRuns: () => getState().runs ?? [],
+      navigateToRun: (runId) => {
+        location.hash = `run/${runId}`;
+      },
+    });
+  }
+
+  private _confirmTimerContext() {
+    return {
+      actionsBlocked: () => this._actionsBlocked(),
+      pendingConfirm: () => this._pendingConfirm,
+      setPendingConfirm: (pending: string | null) => {
+        this._pendingConfirm = pending;
+      },
+      confirmTimer: () => this._confirmTimer,
+      setConfirmTimer: (timer: ReturnType<typeof setTimeout> | undefined) => {
+        this._confirmTimer = timer;
+      },
+    };
+  }
+
+  private _resolveBranchNudgePick(runId: string, decisionId: string) {
+    resolveBranchNudgePick(runId, decisionId, this._slotDecisionContext());
+  }
+
+  private _resolveSlotPick(runId: string, decisionId: string) {
+    resolveSlotPick(runId, decisionId, this._slotDecisionContext());
+  }
+
+  private _slotDecisionContext() {
+    return {
+      actionsBlocked: () => this._actionsBlocked(),
+      selectedSlotId: () => this._selectedSlotId,
+      resetBranch: () => this._resetBranch,
+      setSelectedSlotId: (slotId: string | null) => {
+        this._selectedSlotId = slotId;
+      },
+      setResetBranch: (resetBranch: boolean) => {
+        this._resetBranch = resetBranch;
+      },
+      setBranchNudgeShowPicker: (show: boolean) => {
+        this._branchNudgeShowPicker = show;
+      },
+    };
+  }
+
+  private async _onReplayStep(stepName: string, skipPrepare?: boolean) {
+    if (this._actionsBlocked()) return;
+    if (!this.run) return;
+    try {
+      await gateway.request(Methods.RUN_REPLAY_STEP, {
+        runId: this.run.id,
+        stepName,
+        skipPrepare: skipPrepare || undefined,
+      });
+      this.selectedStep = null;
+    } catch (err) {
+      const msg = (err as Error)?.message ?? String(err);
+      console.error('Replay step failed:', err);
+      alert(`Retry from "${stepName}" failed: ${msg}`);
+    }
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'run-detail': RunDetail;
+  }
+}

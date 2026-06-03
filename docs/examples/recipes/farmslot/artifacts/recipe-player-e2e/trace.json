@@ -1,0 +1,62 @@
+[
+  {
+    "id": "open-slot-recipe-panel",
+    "action": "ui.navigate",
+    "ok": true,
+    "durationMs": 450,
+    "artifacts": [],
+    "intent": "Open the slot Recipe panel for a warm slot without placing a modal over the live stream."
+  },
+  {
+    "id": "start-live-replay",
+    "action": "ui.press",
+    "ok": true,
+    "durationMs": 575,
+    "artifacts": [],
+    "intent": "Press replay live recipe with the default 2 second visualization delay."
+  },
+  {
+    "id": "watch-stream-and-logs",
+    "action": "ui.wait_for",
+    "ok": true,
+    "durationMs": 700,
+    "artifacts": [],
+    "intent": "Watch the streaming panel and recipe runner logs until the replay completes or fails."
+  },
+  {
+    "id": "open-new-artifacts",
+    "action": "ui.press",
+    "ok": true,
+    "durationMs": 825,
+    "artifacts": [],
+    "intent": "Open the newly generated attempted-run artifacts from the same Recipe panel."
+  },
+  {
+    "id": "capture-replay-result",
+    "action": "ui.screenshot",
+    "ok": true,
+    "durationMs": 950,
+    "artifacts": ["screenshots/live-replay-result.svg"],
+    "intent": "Capture the live replay result with stream, logs, and generated artifacts visible."
+  },
+  {
+    "id": "index-artifacts",
+    "action": "index_artifacts",
+    "ok": true,
+    "durationMs": 1075,
+    "artifacts": [
+      "screenshots/live-replay-result.svg",
+      "reports/replay-session.json",
+      "logs/recipe-player.log"
+    ],
+    "intent": "Publish replay screenshot, runner log, replay report, trace, summary, and resolved recipe."
+  },
+  {
+    "id": "done",
+    "action": "end",
+    "ok": true,
+    "durationMs": 1200,
+    "artifacts": [],
+    "intent": "Complete recipe node"
+  }
+]

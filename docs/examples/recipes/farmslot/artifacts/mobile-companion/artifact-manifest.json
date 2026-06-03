@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "runStatus": "pass",
+  "artifacts": [
+    {
+      "path": "summary.json",
+      "type": "summary",
+      "label": "Run summary",
+      "mimeType": "application/json",
+      "proofTarget": "PT-1",
+      "covers": ["run-summary"]
+    },
+    {
+      "path": "trace.json",
+      "type": "trace",
+      "label": "Execution trace",
+      "mimeType": "application/json",
+      "proofTarget": "PT-2",
+      "covers": ["execution-trace"]
+    },
+    {
+      "path": "recipe.json",
+      "type": "recipe",
+      "label": "Resolved recipe",
+      "mimeType": "application/json",
+      "proofTarget": "PT-3",
+      "covers": ["resolved-recipe"]
+    },
+    {
+      "path": "screenshots/mobile-companion-artifacts.svg",
+      "type": "screenshot",
+      "label": "Reviewer-visible screenshot",
+      "nodeId": "capture-mobile-artifacts",
+      "mimeType": "image/svg+xml",
+      "proofTarget": "PT-4",
+      "covers": ["capture-mobile-artifacts"]
+    },
+    {
+      "path": "reports/mobile-navigation.json",
+      "type": "report",
+      "label": "Machine-readable report",
+      "nodeId": "index-artifacts",
+      "mimeType": "application/json",
+      "proofTarget": "PT-5",
+      "covers": ["index-artifacts"]
+    },
+    {
+      "path": "logs/mobile-companion.log",
+      "type": "log",
+      "label": "Execution log",
+      "nodeId": "index-artifacts",
+      "mimeType": "text/plain",
+      "proofTarget": "PT-6",
+      "covers": ["index-artifacts"]
+    }
+  ]
+}

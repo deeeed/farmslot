@@ -1,0 +1,97 @@
+{
+  "$schema": "../../schemas/project.schema.json",
+  "name": "farmslot-farm",
+  "type": "monorepo",
+  "default_branch": "main",
+  "default_safety_tier": "dangerous",
+  "primary_repo": "/Users/deeeed/dev/farmslot",
+  "worktree_base": "/Users/deeeed/dev/farmslot-wt",
+  "paths": {
+    "runtime_dir": ".sandbox/farmslot-farm/agent",
+    "artifact_dir": ".sandbox/farmslot-farm/task"
+  },
+  "defaults": {
+    "fix": {
+      "runner": "claude",
+      "model": "sonnet"
+    },
+    "feature": {
+      "runner": "claude",
+      "model": "sonnet"
+    },
+    "review": {
+      "runner": "claude",
+      "model": "opus"
+    }
+  },
+  "hooks": {
+    "post_merge_install": "cd apps/command-center && yarn install",
+    "preflight": "cd apps/command-center && yarn typecheck",
+    "health_check": "cd apps/command-center && yarn typecheck",
+    "teardown": "true"
+  },
+  "health": {
+    "dev_server_name": "Gateway"
+  },
+  "fixtures": {
+    "templates": [
+      {
+        "dst": ".sandbox/farmslot-farm/claude/CLAUDE.local.md",
+        "compose": {
+          "var": "FLOW_TYPE",
+          "variants": {
+            "": {
+              "file": "CLAUDE.local.base.md"
+            },
+            "fix-bug": {
+              "includes": ["CLAUDE.local.agent.fix-bug.md", "CLAUDE.local.base.md"]
+            },
+            "new-feature": {
+              "includes": ["CLAUDE.local.agent.feature.md", "CLAUDE.local.base.md"]
+            },
+            "review-pr": {
+              "includes": ["CLAUDE.local.agent.review-pr.md", "CLAUDE.local.base.md"]
+            }
+          }
+        }
+      }
+    ]
+  },
+  "external": {
+    "mock_mode": true,
+    "fixtures_dir": "test-data"
+  },
+  "self_review": {
+    "enabled": false
+  },
+  "publication_review": {
+    "fix-bug": {
+      "minimum_independent_reviews": 1
+    },
+    "dev": {
+      "minimum_independent_reviews": 0
+    }
+  },
+  "platforms": {
+    "cli": {
+      "device_check": "true"
+    }
+  },
+  "resources": {
+    "dev-server": {
+      "type": "dev-server",
+      "label": "Gateway",
+      "streamable": false,
+      "controllable": false,
+      "watch": {
+        "type": "port-listen",
+        "port": "{{port}}"
+      },
+      "hooks": {
+        "health": "cd apps/command-center && yarn typecheck",
+        "shutdown": "true"
+      }
+    }
+  },
+  "task_dir": ".sandbox/farmslot-farm/worker-task"
+}

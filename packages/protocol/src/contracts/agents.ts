@@ -1,0 +1,79 @@
+export type SlotAgent = 'idle' | 'working' | 'no-tmux';
+
+export const AGENT_ROLES = [
+  'primary',
+  'dev',
+  'fix-bug',
+  'review',
+  'self-review',
+  'self-review-fix',
+  'ci-fix',
+] as const;
+export type AgentRole = (typeof AGENT_ROLES)[number];
+export type AgentContextStatus =
+  | 'launching'
+  | 'working'
+  | 'waiting'
+  | 'complete'
+  | 'failed'
+  | 'blocked'
+  | 'idle';
+
+export interface AgentContextTarget {
+  session: string;
+  window?: string | null;
+  pane?: string | null;
+  target: string;
+}
+
+export interface AgentContext {
+  id: string;
+  role: AgentRole;
+  label: string;
+  status: AgentContextStatus;
+  slotId: string;
+  runId: string;
+  taskFile?: string | null;
+  signalFile?: string | null;
+  runner?: string | null;
+  model?: string | null;
+  target?: AgentContextTarget | null;
+  runnerSessionId?: string | null;
+  runnerSessionPath?: string | null;
+  nudgeCount?: number;
+  /** Runner context-window usage percentage (0-100). See {@link AgentContextSummary.ctxPct}. */
+  ctxPct?: number | null;
+  startedAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
+  lastSignalAt?: string;
+}
+
+export interface AgentContextSummary {
+  id: string;
+  role: AgentRole;
+  label: string;
+  status: AgentContextStatus;
+  runId?: string | null;
+  taskFile?: string | null;
+  signalFile?: string | null;
+  runner?: string | null;
+  model?: string | null;
+  target?: AgentContextTarget | null;
+  nudgeCount?: number;
+  lastSignalAt?: string;
+  /** Runner context-window usage percentage (0-100). Runner-agnostic — each runner's node-side
+   * adapter is responsible for parsing its own status surface (Claude's `ctx:N%` status line,
+   * codex's session metadata, etc.). Null when the runner has not exposed a value or the parse
+   * failed. Surfaced for branch-affinity nudge decisions so operators see whether a nudge will
+   * trigger a context compact mid-task. */
+  ctxPct?: number | null;
+}
+
+export interface AgentContextSelector {
+  role?: AgentRole;
+  contextId?: string;
+  target?: string;
+}
+
+export type SafetyTier = 'sandboxed' | 'full-auto' | 'dangerous';

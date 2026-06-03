@@ -1,0 +1,12 @@
+{
+  "flowType": "fix-bug",
+  "project": "example-mobile",
+  "ticketOrPr": "PROJ-2368",
+  "model": "sonnet",
+  "runner": "claude",
+  "mode": "autonomous",
+  "lane": "comparison",
+  "familyId": "family-1",
+  "variant": "claude-sonnet-v2",
+  "parentRunId": "run-parent"
+}

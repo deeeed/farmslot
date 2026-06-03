@@ -1,0 +1,15 @@
+Farmslot is a mobile operator console for supervised agentic engineering.
+
+Pair the app with your own Farmslot gateway and keep a live view of agent slots, workers, recipe runs, decisions, pull requests, terminals, and evidence artifacts from your phone or tablet.
+
+Use Farmslot to:
+
+• Monitor active agent slots and run health
+• Review recipe evidence, artifacts, diffs, and decisions
+• Follow pull requests and validation status
+• Open worker terminals when you need to steer a task
+• Switch between local, remote, and paired gateway profiles
+• Draft instructions with optional on-device voice workflows
+• Receive local notifications for important run and decision events
+
+Farmslot is built for developers who run multiple coding agents in parallel and want a compact, observable control surface without giving up local-first workflows. The app does not provide a hosted Farmslot service by default; it connects to gateway profiles you pair or configure.

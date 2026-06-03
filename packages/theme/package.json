@@ -1,0 +1,25 @@
+{
+  "name": "@farmslot/theme",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint \"src/**/*.ts\"",
+    "lint:fix": "eslint \"src/**/*.ts\" --fix",
+    "quality": "prettier --check . && eslint \"src/**/*.ts\" && tsc --noEmit --project tsconfig.json"
+  },
+  "devDependencies": {
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "typescript": "^5.6.0"
+  }
+}

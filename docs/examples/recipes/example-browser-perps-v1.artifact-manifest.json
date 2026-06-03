@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "runStatus": "pass",
+  "artifacts": [
+    {
+      "path": "screenshots/extension-perps-market.png",
+      "type": "screenshot",
+      "label": "Extension Perps ETH market row visible",
+      "nodeId": "capture-proof",
+      "mimeType": "image/png",
+      "proofTarget": "AC-1",
+      "covers": ["perps-market-visible"]
+    },
+    {
+      "path": "recipe-issues.json",
+      "type": "json",
+      "category": "runtime-issues",
+      "label": "Normalized runtime issues",
+      "nodeId": "done",
+      "mimeType": "application/json",
+      "proofTarget": "AC-1",
+      "covers": ["no-unexpected-runtime-errors"]
+    }
+  ]
+}

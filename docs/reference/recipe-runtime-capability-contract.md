@@ -1,0 +1,218 @@
+# Recipe Runtime Capability Contract v1
+
+> This document is capability/manifest guidance for Recipe Protocol v1 runners. The canonical protocol source of truth is [Recipe Protocol v1](recipe-protocol-v1.md).
+> This document defines the runtime seam between Farmslot, project runners, and
+> skills. It is the contract that keeps the base harness portable while still
+> allowing projects such as Example App to expose high-leverage custom actions.
+
+## Boundary summary
+
+| Layer                      | Owns                                                                                                | Must not own                                                                     |
+| -------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Farmslot protocol          | Recipe schema, action manifest schema, official action names, trace/summary/artifact package shape. | Product concepts such as wallets, Perps, app routes, fixture secrets, selectors. |
+| `@farmslot/recipe-harness` | Graph execution, core adapters, official `ui.*` adapter host, generic runtime capability helpers.   | Project-specific target discovery, account setup, domain assertions.             |
+| Base runtime helpers       | CDP sessions, web page UI driver, browser-extension target helpers, React Native bridge contract.   | Example App extension IDs, Example App profile seeding, Perps controller calls.  |
+| Project runner             | Composes base helpers with app-specific target providers and custom actions.                        | A second recipe schema or graph executor.                                        |
+| Skill                      | Resolves/installs/runs the runner and reads manifests.                                              | Harness runtime implementation.                                                  |
+
+## Capability families
+
+### Core/headless
+
+Base package: `createStandardCoreAdapters()`
+
+Actions: `command`, `wait`, `assert_file`, `assert_json`, `assert_exit_code`,
+`assert_output`, `state_read`, `watch_logs`, `index_artifacts`, `call`, `switch`, `manual`, `end`.
+
+Use for backend services, CLI projects, static checks, and artifact-only proof.
+
+### UI
+
+Base package: `createStandardUiAdapters({ transport })`
+
+Actions: `ui.navigate`, `ui.press`, `ui.key_press`, `ui.set_input`,
+`ui.scroll`, `ui.gesture`, `ui.wait_for`, `ui.screenshot`, plus app-level
+helpers such as `app.status`, `app.lifecycle`, `app.hud`, and `app.trace` when
+the platform can expose them.
+
+Farmslot owns the action semantics and, for common platform families, the
+transport implementation. A runner should first compose a base Farmslot transport
+(`createCdpWebUiTransport`, `createReactNativeCdpBridgeUiTransport`, etc.) and
+supply only the runtime binding: page/target selection, CDP port, bridge
+command/eval hooks, screenshot destination, and launch policy. A runner should
+implement custom `ui.*` transport methods only when the platform family is not
+yet covered by Farmslot. Transport results are treated as node output by default;
+graph control requires an explicit `{ control: ... }` wrapper.
+
+### HUD / overlay visual proof
+
+`app.hud` is the UI-class capability for reviewer-facing overlays during live
+playback and proof-window recording. For UI-capable runners it is a first-class
+progress loop, not a task-local convenience action. Farmslot defines the
+semantics: display run status/progress plus one human intent by default, without
+changing app state. Flow/domain, phase, node id, action name, proof target, and
+record policy are trace/debug metadata, not default HUD copy. Platform transports
+decide only how to render it: DOM overlay for web/extension, React Native
+injected overlay/bridge command for RN, native test-host overlay for native apps,
+or unsupported for headless projects.
+
+HUD rendering is project-configurable. The base harness may provide defaults,
+but each runner owns its display policy: overlay bar, docked bottom bar with
+reserved app space, card, top/bottom/corner placement, title visibility, debug
+metadata visibility, width, and detail-line budget. The project must not fork the action semantics to change presentation.
+
+HUD intent contract:
+
+- `intent` is the agent-to-human explanation of the current goal. Write it as a short verb phrase or sentence a reviewer can understand without knowing the recipe schema.
+- `intent` must not be an action name, domain name, node id, selector, test id, implementation primitive, or generic label such as `ui`, `wallet`, `perps`, `setup`, or `run`.
+- `flow`/`domain` describe organization for trace/debug only; they are hidden by default.
+- `detail` is optional supporting context for trace/review metadata; runners hide it from the default HUD unless `display.showDetail: true` is explicitly configured.
+
+Default display rules:
+
+- show one intent: `RUN 12/19 Open a small ETH long position`;
+- keep the default HUD to one current-intent line; runners may internally retain parent/child flow context for trace/debug views;
+- show a secondary HUD line only for explicit detail/debug display or failure/error information;
+- hide `flow`, `domain`, node id, action name, and proof target unless
+  `display.showDebug` is enabled.
+
+A runner that advertises HUD/overlay must:
+
+- include `app.hud` in the action manifest and register the official UI adapter;
+- let the base harness publish automatic `running`, `pass`, `fail`, and
+  `complete` HUD updates for graph nodes;
+- reserve explicit recipe `app.hud` nodes for extra reviewer annotations;
+- fail validation if the advertised HUD transport cannot render, rather than
+  silently dropping reviewer feedback;
+- ensure overlays do not cover the visual claim, or emit a paired raw artifact;
+- keep overlay injection in the runner/harness layer, not in skill docs or
+  product-domain actions.
+
+### CDP / web
+
+Base package exports:
+
+- `CdpSession`
+- `CdpWebPage`
+- `jsonGet`
+- `retryJsonGet`
+- `selectCdpTarget`
+- `selectorForUiInput`
+- `createCdpWebUiTransport`
+
+Use for any browser or WebView-like surface that can be controlled through
+Chrome DevTools Protocol. The base driver covers generic page operations:
+navigate, evaluate, click, fill, scroll, wait, screenshot, and safe artifact
+paths.
+
+A web project should only implement target selection and launch policy, then
+compose the base transport:
+
+```ts
+createStandardUiAdapters({
+  transport: createCdpWebUiTransport({
+    async getPage(context) {
+      return connectToTheProjectPage(context);
+    },
+  }),
+});
+```
+
+### Browser extension
+
+Base package exports:
+
+- `selectBrowserExtensionPageTarget`
+- `extensionIdFromTarget`
+- `openBrowserExtensionPage`
+
+Use for Chrome extension style projects. Farmslot provides generic target
+selection and extension-origin derivation. The project runner owns build/profile
+launch policy and domain actions.
+
+For Example App this means generic browser-extension mechanics stay in Farmslot,
+while wallet fixture seeding, unlock semantics, background API calls, Perps
+state, and Example App selectors stay in the Example App runner.
+
+### React Native / cross-platform app bridge
+
+Base package exports:
+
+- `ReactNativeBridge`
+- `ReactNativeBridgeCommand`
+- `createReactNativeBridgeUiTransport`
+
+Use for React Native apps on iOS and Android. Farmslot defines the command
+contract and maps official `ui.*` actions to bridge commands. A project supplies
+the bridge transport: Hermes/CDP, Metro debugger, Detox, Maestro, native test
+host, or a project-local app-control service.
+
+The generic bridge commands are:
+
+| Command      | Purpose                                                                                           |
+| ------------ | ------------------------------------------------------------------------------------------------- |
+| `navigate`   | Move to route/screen/view.                                                                        |
+| `press`      | Press visible selector/testID/text.                                                               |
+| `setInput`   | Set text through a supported input path.                                                          |
+| `scroll`     | Scroll a view/window, or bring a selector/test id into view when `scroll_into_view` is requested. |
+| `waitFor`    | Wait for visible selector/text/condition.                                                         |
+| `screenshot` | Capture device/simulator evidence when implemented.                                               |
+
+The bridge must drive supported app/user or test-host paths. It must not mutate
+React/Redux/MobX state to fabricate proof.
+
+## Project runner composition rule
+
+A runner should be mostly composition:
+
+```text
+Base core adapters
++ Base UI adapters
++ Base runtime helper transport (CDP/web/RN/extension)
++ Project custom action adapters
+= Project runner
+```
+
+Custom action namespaces are for domain semantics, not for reimplementing base
+controls. For Example App, `example.wallet.*` and `example.trade.*` are valid
+custom namespaces; generic names such as `extension.click`, `mobile.scroll`, or
+`browser.screenshot` are not.
+
+### Task-specific proof
+
+Acceptance-criteria checks that exist for one ticket or demo do not become base or project capabilities just because a recipe needs them. The reusable layers should expose primitives such as `ui.wait_for`, `ui.screenshot`, `cdp.*`, and domain actions such as `example.trade.assert_positions({ state, market })`. A one-off claim like a specific banner color, copy string, or visual placement belongs in that recipe's task-local validation artifact or evidence narrative unless it is promoted into a broadly reusable action with a neutral schema.
+
+## Shared capability profiles
+
+For multi-platform projects, publish a shared domain interface matrix in addition to executable action manifests. The executable manifest must list only actions the runner can run. The capability profile may also list `partial`, `unsupported`, or `planned` capabilities so agents can understand platform parity and avoid inventing different Mobile/Extension vocabularies.
+
+Use this for domains such as wallet/perps: define the common interface once, then record Mobile and Extension support status per capability. Unsupported capabilities are not callable; they are review/planning signals.
+
+## Flow catalog discoverability
+
+Action manifests describe what a runner can do. Flow catalogs describe reusable recipes that a runner/domain publishes on top of those actions. Recipe v1 supports optional `uses` references to flow catalogs so agents can discover domain start states without copying setup into every task recipe.
+
+A flow catalog entry should include id/ref, owner, version, params schema, output schema, required actions/capabilities, default phase/record policy, examples, workflow body, and a machine-checkable postcondition for `ensure_*` flows.
+
+Farmslot owns catalog resolution, `call` execution semantics, validation, nested trace, and artifact mapping. Project runners own domain flow definitions such as `example.trade.start_state`.
+
+## Manifest discoverability
+
+Every runner manifest should declare:
+
+- supported official actions;
+- custom actions with descriptions, schemas, and examples;
+- native bindings that show which base capability implements an action;
+- capability notes for CDP, web, RN, browser extension, backend, or CLI support.
+
+Agents should read the manifest instead of guessing actions.
+
+## Injection rule
+
+Injection installs a runner and its target-specific provider code into ignored
+checkout paths so the same capability is available on fresh checkouts and
+historical commits. Injection does not change ownership boundaries:
+
+- Farmslot runtime helpers remain Farmslot-owned;
+- project runners remain project-owned;
+- skills remain resolver/install/run UX.

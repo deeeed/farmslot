@@ -1,0 +1,50 @@
+[
+  {
+    "id": "list-recipe-runs",
+    "action": "command",
+    "ok": true,
+    "durationMs": 450,
+    "artifacts": [],
+    "intent": "Request run.recipeRunsForRun and verify the gateway returns current, attempted, and promoted recipe-run groups when available."
+  },
+  {
+    "id": "open-artifact-index",
+    "action": "command",
+    "ok": true,
+    "durationMs": 575,
+    "artifacts": [],
+    "intent": "Open a typed recipe-run artifact through the /api/run-artifact route with the selected recipeRunId preserved."
+  },
+  {
+    "id": "validate-manifest-package",
+    "action": "command",
+    "ok": true,
+    "durationMs": 700,
+    "artifacts": [],
+    "intent": "Run the shared v1 contract validator against the recipe and artifact package returned by the gateway."
+  },
+  {
+    "id": "assert-family-projection",
+    "action": "command",
+    "ok": true,
+    "durationMs": 825,
+    "artifacts": [],
+    "intent": "Verify run/family observability can project recipe-run artifact groups without mixing PR feedback artifacts into recipe evidence."
+  },
+  {
+    "id": "index-artifacts",
+    "action": "index_artifacts",
+    "ok": true,
+    "durationMs": 950,
+    "artifacts": ["reports/gateway-rpc.json", "logs/gateway-rpc.log"],
+    "intent": "Publish gateway RPC transcript, manifest validation output, summary, trace, and resolved recipe."
+  },
+  {
+    "id": "done",
+    "action": "end",
+    "ok": true,
+    "durationMs": 1075,
+    "artifacts": [],
+    "intent": "Complete recipe node"
+  }
+]

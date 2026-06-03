@@ -1,0 +1,84 @@
+# Farmslot Roadmap
+
+This is the canonical high-level product roadmap for Farmslot in pass one. Use it with [DOCS-GOVERNANCE.md](DOCS-GOVERNANCE.md), [PRD-product.md](PRD-product.md), [ROADMAP-next.md](ROADMAP-next.md), and [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md) to understand whole-product sequencing without mixing in detailed subsystem history.
+
+## Purpose and Scope
+
+This roadmap tracks Farmslot at the product-chunk level only:
+
+- current whole-product status
+- the sequence of major product capabilities
+- which chunks are shipped, active, or still strategic/open
+
+Detailed shipped history stays in [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md), the ADRs, and sanitized archive files.
+
+## Canonical Current-State Summary
+
+| Product chunk                             | Canonical PRD                                                                        | Current status                                                                     | Supporting evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core Farmslot                             | [PRD-core-farmslot-canonical.md](PRD-core-farmslot-canonical.md)                     | Shipped foundation                                                                 | Framework, scoring, and lifecycle phases are already complete in the earlier roadmap history and architecture docs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Command Center                            | [PRD-command-center-canonical.md](PRD-command-center-canonical.md)                   | Shipped platform with active stabilization, replay-closure, and operator-hardening | [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md) and archived milestone records capture the shipped Command Center history; dispatch comparison, the bugfix local-first publication gate, eval replay cockpit, deterministic auto-recovery, flexible interactive dev intake, shared dispatch/eval queue caps, worker-template selection, backlog intake, and dev publication gating are now shipped. Current work should first stabilize/polish the recently changed operator surfaces, then continue replay closure, corpus/reporting surfaces, and evidence-driven operator hardening. |
+| Automation / Intelligence / Orchestration | [PRD-automation-intelligence-canonical.md](PRD-automation-intelligence-canonical.md) | Shipped and expanding from eval packages into regression evidence                  | Queueing, webhooks, self-review, co-pilot, run-family observability, recipe quality, first-class diff artifacts, self-improvement work, the bugfix local-first publication gate, artifact-only eval packages, deterministic auto-recovery, backlog queue handoff, and dev publication gating are shipped. The next strategic expansion is using eval packages as the validation loop for harness, model, prompt/template, and interactive-dev workflow changes once the high-churn UI surfaces have had a short stabilization pass.                                                      |
+| Mobile Companion                          | [PRD-mobile-companion-canonical.md](PRD-mobile-companion-canonical.md)               | Shipped oversight and operator-control chunk with active polish                    | [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md) records M1a-M4 complete, global filters complete, and M5/operator-gate hardening. The 2026-05-22 mobile sprint added authenticated LAN/remote gateway profiles and pairing, Android device selection, PR/workspace/evidence navigation polish, before→after comparison affordances, fullscreen/safe-area artifact and terminal handling, foreground voice co-pilot groundwork, and general tmux worker control through ADR-033. Remaining work is product/UX polish, deeper iOS QA, and deferred hands-free/provisioning scope.         |
+| Runner-Agnostic Execution                 | [PRD-runner-execution-canonical.md](PRD-runner-execution-canonical.md)               | Shipped contract with deferred expansion                                           | Unified launch, safety tiers, runner capability checks, and Codex validation are already shipped. OpenCode/rules-shim expansion remains lower priority until a real second non-Claude production need appears.                                                                                                                                                                                                                                                                                                                                                                           |
+
+## Sequencing
+
+### Phase 1 — Core platform foundations (shipped)
+
+Farmslot first became a reusable product by shipping the project-agnostic framework, slot lifecycle, source-agnostic issue ingestion, and standalone scoring flow. This phase established the shared execution substrate that every later chunk depends on.
+
+### Phase 2 — Desktop command surface and persistent automation (shipped)
+
+Farmslot then shipped the desktop Command Center, the persistent gateway/CLI control plane, queueing and webhook flows, and the first intelligence-assisted orchestration layers. The product is already beyond prototype stage here: the command center, automation, and observability stack are active product capabilities, not speculative docs.
+
+### Phase 3 — Mobile oversight and operator control as a shipped companion chunk
+
+Mobile Companion is no longer future-only roadmap intent. [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md), the mobile canonical PRD, and ADR-033 retain the shipped M1a-M4/global-filters/M5 context after removal of the raw mobile roadmap. The 2026-05-22 mobile sprint expanded the phone from read-heavy oversight into a practical authenticated operator console: gateway profiles/pairing, Android device targeting, active-run/workspace/PR/evidence navigation, before→after review, fullscreen/safe-area viewers, foreground voice nudges, and all-node tmux worker discovery/control. Mobile remains scoped to phone-native supervision and intervention rather than full desktop parity.
+
+### Phase 4 — Eval experiments, result packages, and replay provenance (shipped foundation, active hardening)
+
+The active near-term product lane is now hardening the desktop evaluation and operator loop from the evidence and family artifacts that already exist. Dispatch-wizard comparison entry, the bugfix local-first publication gate, the eval replay suite cockpit, shared dispatch/eval queue caps, worker-template selection, backlog intake, and dev publication gating are now shipped: operators can fork comparison lanes from prior runs, review local PR/dev packages before public publication, shape backlog work before slot assignment, and create artifact-only eval families with Reference and Candidate result packages.
+
+The shipped eval implementation keeps the model on top of ADR-024's run-family/lane/run model. A merged GitHub PR, prior run, package, or git ref can seed a Reference; Farmslot can produce Candidate packages from artifact-only trials and compare packages with diffs, visual evidence, validation evidence, review signals, time/cost, and captured template provenance. Dataset and suite concepts remain catalog/draft seams over many single-case experiments, not a new multi-case experiment type.
+
+PRs #74-#78 shipped the foundation-to-cockpit slice, not the final corpus replay product. PRs #86-#87 added shared queue/eval slot caps and project-owned worker-template version selection. Shipped capabilities include manifest-first semantics, artifact-only completion policy, no-PR mutation guards, experiment/result-package artifacts, family-observability projection, startRef replay policy, template provenance capture, and a local `#evals` Reference/Candidate suite builder that fans out through existing single-case experiment/trial APIs. Follow-up slices should add replay closure, a gateway-owned suite runner/history, and corpus/reporting surfaces after short post-refactor UI stabilization.
+
+For this cockpit slice, `datasetId` is grouping metadata only and is excluded from single-case `experimentKey`; pre-release local experiments keyed by dataset membership should be recreated instead of reconciled as durable history.
+
+Eval packages are now usable enough to become the validation substrate for prompt/template/harness changes, but they still need replay closure before becoming a durable regression program. The dev lane advanced with flexible interactive intake and operator-owned completion actions in PR #83, and PR #96 resolved the publication model by adopting local-first dev publication gating. Future dev-flow work should be evidence-driven tuning and UI/UX polish, not a fresh gate-vs-no-gate decision.
+
+No-change terminal outcomes, runs/family readiness analytics, `#runs` shareable state/family-row summaries, the fleet refresh modal, slot history viewer, Co-Pilot session-owned confirmed actions, dispatch comparison, the bugfix local-first publication gate, eval replay cockpit, deterministic auto-recovery, fixture-sync multiplexing, flexible interactive dev intake, task-dir collision redirect, shared dispatch/eval queue caps, worker-template selection, Command Center quality/refactor hardening, backlog intake, and dev publication gating have now moved to implemented history. The remaining operator-hardening lanes are narrower: short UI/UX stabilization of recently changed operator surfaces, replay closure, corpus/reporting surfaces, auto-recovery policy tuning from audit evidence, Co-Pilot consumption of stable gate/eval evidence, and runner/mobile follow-through when they become direct blockers. Recipe proof/review-quality work should stay opportunistic unless eval-package or normal PR work exposes a concrete regression; the newly proposed [Generic Recipe Protocol v1](plans/generic-recipe-protocol.md) is the exception for standardizing the existing `validate.workflow` graph envelope, typed artifact manifests, and Farmslot self-validation recipes as a prerequisite for trustworthy replay evidence.
+
+### Phase 5 — Runner-neutral expansion and mobile follow-through (deferred strategic follow-up)
+
+The shared runner contract is already in production for Claude/Codex. Additional runner expansion, rules shims, and remaining mobile companion follow-through remain valid strategic work, but they follow the active evaluation and operator-hardening lane unless they become a direct blocker.
+
+## Near-Term Priority Order
+
+1. **Run a short operator UI/UX stabilization pass** across the recently changed Command Center surfaces (`#evals`, `#backlog`, dispatch, run detail/family observability, slot view, ready/review workspace, and dev publication gate) plus the newly shipped Mobile Companion operator surfaces (active runs, artifacts/diff/recipe workspaces, PRs, terminal, and Workers). This is the immediate safety pass after PRs #88-#96 and the 2026-05-22 mobile operator-control sprint, not a new product lane.
+2. **Start Generic Recipe Protocol v1 planning/execution after approval** so the existing `validate.workflow` graph envelope, typed artifact manifest, project adapter boundary, and Farmslot self-validation recipes become the shared substrate for replay evidence. See [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md).
+3. **Plan the `@farmslot/skills` recipe-first adoption kit** so external projects can start with skills-only recipe authoring/review before adopting the harness, project hooks, or Command Center. This should live under `packages/skills` and be npm-distributable.
+4. **Close remaining eval replay provenance and real-run capture gaps** so reference/candidate packages consistently capture actual baseline SHA, head/diff identity, task-profile metadata, complete manifests, typed recipe artifacts, and missing-vs-not-yet-captured evidence semantics. Project-owned template selection/provenance is shipped; now prove it with real replay evidence.
+5. **Use shipped eval packages to validate prompt/template/harness/protocol changes** against previous PR outcomes. Candidate template versions should continue to come from project-owned worker templates and rendered artifact-only tasks with provenance, not fixture sync or slot-side overwrites of the default template.
+6. **Keep replay/reference work inside the existing family/lane/run model**. Evals should compare result packages inside a family; they should not add a new top-level flow or duplicate `lane` with a separate line taxonomy.
+7. **Productize the operator workflow after replay closure** with entry points from PR/family surfaces, rubric/evidence review UX, a gateway-owned suite runner/history, and corpus/history views for previous merged PR evals.
+8. **Treat dev publication and backlog intake as shipped surfaces**. Future work should be UI/UX polish and evidence-driven policy tuning, not rescheduling the original decision/captured implementation lanes.
+9. **Tune deterministic auto-recovery from audit evidence** after PR #82's ADR-031 implementation, especially allowlisted recovery categories, project defaults, degraded/dead-letter states, and Co-Pilot/intelligence consumption of recovery evidence.
+10. **Continue runner/process reliability and mobile follow-up** only when they directly block eval experiments, gate operation, or operator-hardening work. Mobile follow-up should be framed as polish on shipped worker/evidence/operator-control surfaces unless it explicitly targets deferred scope such as background wake-word, auto-send, or remote node provisioning. Broader runner expansion remains deferred.
+
+See [ROADMAP-next.md](ROADMAP-next.md) for the canonical near-term execution surface.
+
+## Supporting Deep Dives
+
+Use these docs when you need subsystem-level detail rather than whole-product sequencing:
+
+- [ADR index](adr/README.md)
+- [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md)
+- supporting references under `docs/reference/` and `docs/operations/`
+
+## Pass-One Normalization Notes
+
+- Mobile status is intentionally reconciled here against the retained mobile history in [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md), [PRD-mobile-companion-canonical.md](PRD-mobile-companion-canonical.md), and ADR-033: shipped through M4/global filters, with M5/operator-control hardening in active use, but lower priority than current desktop evaluation and operator-hardening work.
+- `docs/PRD-command-center-canonical.md` is not the whole-product PRD and is not authoritative for mobile scope.
+- ADR inventory and architecture trajectory checks must include ADR-026, ADR-027, and ADR-028 directly from `docs/adr/` even though `docs/adr/README.md` may lag the newest ADR files.

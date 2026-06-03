@@ -1,0 +1,42 @@
+[
+  {
+    "id": "validate-backend-example",
+    "action": "command",
+    "ok": true,
+    "durationMs": 450,
+    "artifacts": [],
+    "intent": "Validate the backend/API sample recipe with the shared Farmslot v1 contract validator."
+  },
+  {
+    "id": "validate-ui-example",
+    "action": "command",
+    "ok": true,
+    "durationMs": 575,
+    "artifacts": [],
+    "intent": "Validate the UI live replay sample recipe with the shared Farmslot v1 contract validator."
+  },
+  {
+    "id": "validate-self-fixtures",
+    "action": "command",
+    "ok": true,
+    "durationMs": 700,
+    "artifacts": [],
+    "intent": "Validate every Farmslot self-validation recipe package and ensure it emits summary, trace, manifest, and resolved recipe artifacts."
+  },
+  {
+    "id": "index-artifacts",
+    "action": "index_artifacts",
+    "ok": true,
+    "durationMs": 825,
+    "artifacts": ["reports/contract-validation.json", "logs/onboarding-validation.log"],
+    "intent": "Publish validator report, onboarding command log, summary, trace, and resolved recipe."
+  },
+  {
+    "id": "done",
+    "action": "end",
+    "ok": true,
+    "durationMs": 950,
+    "artifacts": [],
+    "intent": "Complete recipe node"
+  }
+]

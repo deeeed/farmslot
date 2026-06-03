@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "title": "Farmslot self-validation recipe suite",
+  "description": "Repo-local dogfood recipes that validate Command Center, Gateway, Mobile Companion, live replay, artifact viewing, and onboarding surfaces using the Generic Recipe Protocol v1 package shape.",
+  "recipes": [
+    {
+      "id": "command-center-ui",
+      "surface": "command-center-web-ui",
+      "recipe": "command-center-ui.recipe.json",
+      "artifactDir": "artifacts/command-center-ui",
+      "proves": "Validates the Command Center recipe tab, artifact viewer, replay controls, and ready/review workspace basics with reviewer-visible evidence."
+    },
+    {
+      "id": "gateway-rpc-api",
+      "surface": "gateway-rpc-api",
+      "recipe": "gateway-rpc-api.recipe.json",
+      "artifactDir": "artifacts/gateway-rpc-api",
+      "proves": "Validates recipe-run RPCs, artifact index ingestion, run/family projection, and manifest contract without requiring visual replay."
+    },
+    {
+      "id": "provenance-smoke",
+      "surface": "runner-provenance",
+      "recipe": "provenance-smoke.recipe.json",
+      "artifactDir": "artifacts/provenance-smoke",
+      "proves": "Validates the v1 runner provenance envelope across summary, trace metadata, and typed artifact manifest metadata."
+    },
+    {
+      "id": "mobile-companion",
+      "surface": "mobile-companion",
+      "recipe": "mobile-companion.recipe.json",
+      "artifactDir": "artifacts/mobile-companion",
+      "proves": "Validates the Mobile Companion run detail, decision/evidence review, recipe-run selector, artifact cards, and media viewer surfaces."
+    },
+    {
+      "id": "recipe-player-e2e",
+      "surface": "recipe-player-e2e",
+      "recipe": "recipe-player-e2e.recipe.json",
+      "artifactDir": "artifacts/recipe-player-e2e",
+      "proves": "Replays a UI-class recipe on a warm slot, watches the stream stay visible, follows runner logs, and inspects newly created artifacts."
+    },
+    {
+      "id": "documentation-onboarding",
+      "surface": "documentation-onboarding",
+      "recipe": "documentation-onboarding.recipe.json",
+      "artifactDir": "artifacts/documentation-onboarding",
+      "proves": "Validates protocol examples, self-validation fixtures, and onboarding commands with the shared v1 contract validator."
+    }
+  ]
+}

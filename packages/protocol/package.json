@@ -1,0 +1,325 @@
+{
+  "name": "@farmslot/protocol",
+  "version": "0.6.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./agents/roles": {
+      "types": "./dist/agents/roles.d.ts",
+      "import": "./dist/agents/roles.js",
+      "default": "./dist/agents/roles.js"
+    },
+    "./surfaces/command-center": {
+      "types": "./dist/surfaces/command-center.d.ts",
+      "import": "./dist/surfaces/command-center.js",
+      "default": "./dist/surfaces/command-center.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "import": "./dist/contracts/index.js",
+      "default": "./dist/contracts/index.js"
+    },
+    "./integrations/github": {
+      "types": "./dist/integrations/github-ref.d.ts",
+      "import": "./dist/integrations/github-ref.js",
+      "default": "./dist/integrations/github-ref.js"
+    },
+    "./recipe": {
+      "types": "./dist/recipe/index.d.ts",
+      "import": "./dist/recipe/index.js",
+      "default": "./dist/recipe/index.js"
+    },
+    "./recipes/step-io": {
+      "types": "./dist/recipes/step-io.d.ts",
+      "import": "./dist/recipes/step-io.js",
+      "default": "./dist/recipes/step-io.js"
+    },
+    "./rpc": {
+      "types": "./dist/rpc/index.d.ts",
+      "import": "./dist/rpc/index.js",
+      "default": "./dist/rpc/index.js"
+    },
+    "./runs/family-readiness": {
+      "types": "./dist/runs/family-readiness.d.ts",
+      "import": "./dist/runs/family-readiness.js",
+      "default": "./dist/runs/family-readiness.js"
+    },
+    "./transport/events": {
+      "types": "./dist/transport/events.d.ts",
+      "import": "./dist/transport/events.js",
+      "default": "./dist/transport/events.js"
+    },
+    "./transport/frames": {
+      "types": "./dist/transport/frames.d.ts",
+      "import": "./dist/transport/frames.js",
+      "default": "./dist/transport/frames.js"
+    },
+    "./transport/signal": {
+      "types": "./dist/transport/signal.d.ts",
+      "import": "./dist/transport/signal.js",
+      "default": "./dist/transport/signal.js"
+    },
+    "./version": {
+      "types": "./dist/version.d.ts",
+      "import": "./dist/version.js",
+      "default": "./dist/version.js"
+    },
+    "./workers/tmux-worker-watchlist": {
+      "types": "./dist/workers/tmux-worker-watchlist.d.ts",
+      "import": "./dist/workers/tmux-worker-watchlist.js",
+      "default": "./dist/workers/tmux-worker-watchlist.js"
+    },
+    "./contracts/agents": {
+      "types": "./dist/contracts/agents.d.ts",
+      "import": "./dist/contracts/agents.js",
+      "default": "./dist/contracts/agents.js"
+    },
+    "./contracts/backlog": {
+      "types": "./dist/contracts/backlog.d.ts",
+      "import": "./dist/contracts/backlog.js",
+      "default": "./dist/contracts/backlog.js"
+    },
+    "./contracts/chat": {
+      "types": "./dist/contracts/chat.d.ts",
+      "import": "./dist/contracts/chat.js",
+      "default": "./dist/contracts/chat.js"
+    },
+    "./contracts/common": {
+      "types": "./dist/contracts/common.d.ts",
+      "import": "./dist/contracts/common.js",
+      "default": "./dist/contracts/common.js"
+    },
+    "./contracts/config": {
+      "types": "./dist/contracts/config.d.ts",
+      "import": "./dist/contracts/config.js",
+      "default": "./dist/contracts/config.js"
+    },
+    "./contracts/dispatch": {
+      "types": "./dist/contracts/dispatch.d.ts",
+      "import": "./dist/contracts/dispatch.js",
+      "default": "./dist/contracts/dispatch.js"
+    },
+    "./contracts/evals": {
+      "types": "./dist/contracts/evals.d.ts",
+      "import": "./dist/contracts/evals.js",
+      "default": "./dist/contracts/evals.js"
+    },
+    "./contracts/family": {
+      "types": "./dist/contracts/family.d.ts",
+      "import": "./dist/contracts/family.js",
+      "default": "./dist/contracts/family.js"
+    },
+    "./contracts/recipes": {
+      "types": "./dist/contracts/recipes.d.ts",
+      "import": "./dist/contracts/recipes.js",
+      "default": "./dist/contracts/recipes.js"
+    },
+    "./contracts/resources": {
+      "types": "./dist/contracts/resources.d.ts",
+      "import": "./dist/contracts/resources.js",
+      "default": "./dist/contracts/resources.js"
+    },
+    "./contracts/reviews": {
+      "types": "./dist/contracts/reviews.d.ts",
+      "import": "./dist/contracts/reviews.js",
+      "default": "./dist/contracts/reviews.js"
+    },
+    "./contracts/runs": {
+      "types": "./dist/contracts/runs.d.ts",
+      "import": "./dist/contracts/runs.js",
+      "default": "./dist/contracts/runs.js"
+    },
+    "./contracts/slots": {
+      "types": "./dist/contracts/slots.d.ts",
+      "import": "./dist/contracts/slots.js",
+      "default": "./dist/contracts/slots.js"
+    },
+    "./contracts/task": {
+      "types": "./dist/contracts/task.d.ts",
+      "import": "./dist/contracts/task.js",
+      "default": "./dist/contracts/task.js"
+    },
+    "./contracts/terminal": {
+      "types": "./dist/contracts/terminal.d.ts",
+      "import": "./dist/contracts/terminal.js",
+      "default": "./dist/contracts/terminal.js"
+    },
+    "./contracts/workspace": {
+      "types": "./dist/contracts/workspace.d.ts",
+      "import": "./dist/contracts/workspace.js",
+      "default": "./dist/contracts/workspace.js"
+    },
+    "./rpc/auth": {
+      "types": "./dist/rpc/auth.d.ts",
+      "import": "./dist/rpc/auth.js",
+      "default": "./dist/rpc/auth.js"
+    },
+    "./rpc/backlog": {
+      "types": "./dist/rpc/backlog.d.ts",
+      "import": "./dist/rpc/backlog.js",
+      "default": "./dist/rpc/backlog.js"
+    },
+    "./rpc/chat": {
+      "types": "./dist/rpc/chat.d.ts",
+      "import": "./dist/rpc/chat.js",
+      "default": "./dist/rpc/chat.js"
+    },
+    "./rpc/config": {
+      "types": "./dist/rpc/config.d.ts",
+      "import": "./dist/rpc/config.js",
+      "default": "./dist/rpc/config.js"
+    },
+    "./rpc/copilot": {
+      "types": "./dist/rpc/copilot.d.ts",
+      "import": "./dist/rpc/copilot.js",
+      "default": "./dist/rpc/copilot.js"
+    },
+    "./rpc/decisions": {
+      "types": "./dist/rpc/decisions.d.ts",
+      "import": "./dist/rpc/decisions.js",
+      "default": "./dist/rpc/decisions.js"
+    },
+    "./rpc/diagnostics": {
+      "types": "./dist/rpc/diagnostics.d.ts",
+      "import": "./dist/rpc/diagnostics.js",
+      "default": "./dist/rpc/diagnostics.js"
+    },
+    "./rpc/dispatch": {
+      "types": "./dist/rpc/dispatch.d.ts",
+      "import": "./dist/rpc/dispatch.js",
+      "default": "./dist/rpc/dispatch.js"
+    },
+    "./rpc/eval": {
+      "types": "./dist/rpc/eval.d.ts",
+      "import": "./dist/rpc/eval.js",
+      "default": "./dist/rpc/eval.js"
+    },
+    "./rpc/fleet": {
+      "types": "./dist/rpc/fleet.d.ts",
+      "import": "./dist/rpc/fleet.js",
+      "default": "./dist/rpc/fleet.js"
+    },
+    "./rpc/fs": {
+      "types": "./dist/rpc/fs.d.ts",
+      "import": "./dist/rpc/fs.js",
+      "default": "./dist/rpc/fs.js"
+    },
+    "./rpc/git": {
+      "types": "./dist/rpc/git.d.ts",
+      "import": "./dist/rpc/git.js",
+      "default": "./dist/rpc/git.js"
+    },
+    "./rpc/intelligence": {
+      "types": "./dist/rpc/intelligence.d.ts",
+      "import": "./dist/rpc/intelligence.js",
+      "default": "./dist/rpc/intelligence.js"
+    },
+    "./rpc/nodes": {
+      "types": "./dist/rpc/nodes.d.ts",
+      "import": "./dist/rpc/nodes.js",
+      "default": "./dist/rpc/nodes.js"
+    },
+    "./rpc/pr": {
+      "types": "./dist/rpc/pr.d.ts",
+      "import": "./dist/rpc/pr.js",
+      "default": "./dist/rpc/pr.js"
+    },
+    "./rpc/registry": {
+      "types": "./dist/rpc/registry.d.ts",
+      "import": "./dist/rpc/registry.js",
+      "default": "./dist/rpc/registry.js"
+    },
+    "./rpc/resources": {
+      "types": "./dist/rpc/resources.d.ts",
+      "import": "./dist/rpc/resources.js",
+      "default": "./dist/rpc/resources.js"
+    },
+    "./rpc/run": {
+      "types": "./dist/rpc/run.d.ts",
+      "import": "./dist/rpc/run.js",
+      "default": "./dist/rpc/run.js"
+    },
+    "./rpc/search": {
+      "types": "./dist/rpc/search.d.ts",
+      "import": "./dist/rpc/search.js",
+      "default": "./dist/rpc/search.js"
+    },
+    "./rpc/slot": {
+      "types": "./dist/rpc/slot.d.ts",
+      "import": "./dist/rpc/slot.js",
+      "default": "./dist/rpc/slot.js"
+    },
+    "./rpc/task": {
+      "types": "./dist/rpc/task.d.ts",
+      "import": "./dist/rpc/task.js",
+      "default": "./dist/rpc/task.js"
+    },
+    "./rpc/terminal": {
+      "types": "./dist/rpc/terminal.d.ts",
+      "import": "./dist/rpc/terminal.js",
+      "default": "./dist/rpc/terminal.js"
+    },
+    "./rpc/tmux": {
+      "types": "./dist/rpc/tmux.d.ts",
+      "import": "./dist/rpc/tmux.js",
+      "default": "./dist/rpc/tmux.js"
+    },
+    "./rpc/workspace": {
+      "types": "./dist/rpc/workspace.d.ts",
+      "import": "./dist/rpc/workspace.js",
+      "default": "./dist/rpc/workspace.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "format": "prettier --write --ignore-path ../../.prettierignore .",
+    "format:check": "prettier --check --ignore-path ../../.prettierignore .",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "lint:fix": "eslint \"src/**/*.ts\" \"test/**/*.ts\" --fix",
+    "test": "yarn build && node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json test",
+    "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" \"test/**/*.ts\" && tsc --noEmit --project tsconfig.json && yarn test",
+    "build": "rm -rf dist && tsc --project tsconfig.json",
+    "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/protocol && yarn workspace @farmslot/protocol build",
+    "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/protocol"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deeeed/farmslot.git",
+    "directory": "packages/protocol"
+  },
+  "bugs": {
+    "url": "https://github.com/deeeed/farmslot/issues"
+  },
+  "license": "MIT",
+  "homepage": "https://farmslot.io/docs/reference/recipe-protocol-v1",
+  "keywords": [
+    "farmslot",
+    "protocol",
+    "recipe",
+    "validation",
+    "agentic-engineering"
+  ],
+  "files": [
+    "README.md",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
+    "dist/**/*.js.map"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

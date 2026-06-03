@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "title": "Farmslot Mobile Companion recipe evidence review smoke",
+  "description": "Validates the Mobile Companion run detail, decision/evidence review, recipe-run selector, artifact cards, and media viewer surfaces.",
+  "inputs": {
+    "gateway_url": "ws://localhost:7777/ws",
+    "platform": "ios-simulator",
+    "run_id": "<run-id>"
+  },
+  "validate": {
+    "workflow": {
+      "pre_conditions": [
+        {
+          "id": "mobile_companion.dev_build.installed",
+          "description": "Mobile Companion dev build is installed.",
+          "required": true
+        },
+        {
+          "id": "gateway.configured",
+          "description": "Gateway URL is configured.",
+          "required": true
+        },
+        {
+          "id": "mobile_companion.artifacts.reachable",
+          "description": "Run artifacts are reachable from the device or simulator.",
+          "required": true
+        }
+      ],
+      "setup": [],
+      "entry": "open-run-detail",
+      "nodes": {
+        "open-run-detail": {
+          "action": "ui.navigate",
+          "next": "select-recipe-run",
+          "target": "mobile/run-detail/open",
+          "intent": "Open the selected run detail screen in the Mobile Companion app."
+        },
+        "select-recipe-run": {
+          "action": "ui.press",
+          "next": "open-recipe-artifacts",
+          "intent": "Select a recipe-run chip so artifacts are scoped to the attempted or promoted recipe run."
+        },
+        "open-recipe-artifacts": {
+          "action": "ui.press",
+          "next": "assert-evidence-review",
+          "text": "Open recipe artifacts",
+          "intent": "Open recipe artifacts from the run detail screen and verify recipe-run scoped URLs are used."
+        },
+        "assert-evidence-review": {
+          "action": "ui.wait_for",
+          "next": "capture-mobile-artifacts",
+          "target": "artifacts/[runId]",
+          "text_contains": ["Recipe runs", "Artifacts"],
+          "intent": "Verify decision/evidence review cards show screenshots, reports, logs, and recipe artifacts with consistent labels."
+        },
+        "capture-mobile-artifacts": {
+          "action": "ui.screenshot",
+          "path": "screenshots/mobile-companion-artifacts.svg",
+          "next": "index-artifacts",
+          "intent": "Capture the Mobile Companion artifact viewer with the selected recipe-run evidence visible."
+        },
+        "index-artifacts": {
+          "action": "index_artifacts",
+          "next": "done",
+          "artifacts": [
+            "screenshots/mobile-companion-artifacts.svg",
+            "reports/mobile-navigation.json",
+            "logs/mobile-companion.log"
+          ],
+          "intent": "Publish mobile screenshot, navigation report, trace, summary, and resolved recipe for review."
+        },
+        "done": {
+          "action": "end",
+          "status": "pass"
+        }
+      },
+      "teardown": [],
+      "playback": {
+        "mode": "auto",
+        "slow_ms": 2000
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "flowType": "fix-bug",
+  "project": "example-mobile",
+  "ticketOrPr": "PROJ-2368",
+  "slotId": "runner-a-example-mobile-1",
+  "allowedSlots": ["runner-a-example-mobile-1", "runner-a-example-mobile-2"],
+  "model": "sonnet",
+  "runner": "claude",
+  "mode": "autonomous",
+  "reviewDepth": {
+    "minimumIndependentReviews": 1,
+    "extraLoopsRequested": 1,
+    "requireCrossRunner": true,
+    "requestedBy": "dispatch"
+  },
+  "pendingReviewPlan": [
+    {
+      "order": 1,
+      "runner": "codex",
+      "validationDepth": "static-code"
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+import {
+  type ProjectVars,
+  type RawProjectJson,
+  readSlotField,
+  type SlotVars,
+} from '../../core/index.js';
+import type { StartRefResolution } from '../../projects/start-ref-resolution.js';
+
+export type EventEmitter = (event: string, payload: unknown) => void;
+export type SlotPrepareResult = { prepared: boolean; startRef?: StartRefResolution };
+export interface SlotPrepareInternalOptions {
+  stripClean?: boolean;
+  startRef?: { requestedRef: string };
+}
+
+export interface PrepareCommandError extends Error {
+  failedCommand?: string;
+  failedLogPath?: string;
+  failedPhase?: string;
+  relatedLogs?: string[];
+}
+
+export interface CheckStep {
+  name: string;
+  status: 'pass' | 'fail' | 'warn' | 'skip';
+  detail: string;
+}
+
+export const activePrepareSlots = new Set<string>();
+export const DEFAULT_GATEWAY_PORT = 7777;
+
+function normalizeSelectedApp(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export async function applySelectedApp(slotVars: SlotVars, appOverride?: string): Promise<string> {
+  const explicitApp = normalizeSelectedApp(appOverride);
+  const persistedApp = explicitApp
+    ? ''
+    : normalizeSelectedApp(await readSlotField(slotVars.slotId, 'app'));
+  const selectedApp =
+    explicitApp || persistedApp || normalizeSelectedApp(slotVars.resourceVars.app);
+  if (selectedApp) {
+    slotVars.resourceVars.app = selectedApp;
+  } else {
+    delete slotVars.resourceVars.app;
+  }
+  return selectedApp;
+}
+
+export function sanitizePhaseName(name: string): string {
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'phase'
+  );
+}
+
+export type { ProjectVars, RawProjectJson, SlotVars };

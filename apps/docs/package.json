@@ -1,0 +1,32 @@
+{
+  "name": "@farmslot/docs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "generate:api": "tsx scripts/generate-gateway-api-docs.ts && yarn --cwd ../command-center prettier --write ../docs/docs/reference/gateway-api.generated.md",
+    "start": "yarn generate:api && node scripts/start-docs-dev.mjs",
+    "build": "yarn generate:api && docusaurus build",
+    "serve": "docusaurus serve --host 0.0.0.0",
+    "clear": "docusaurus clear",
+    "deploy": "docusaurus deploy"
+  },
+  "dependencies": {
+    "@docusaurus/core": "3.10.1",
+    "@docusaurus/preset-classic": "3.10.1",
+    "@docusaurus/theme-mermaid": "3.10.1",
+    "@farmslot/protocol": "workspace:*",
+    "@mdx-js/react": "^3.1.1",
+    "@mermaid-js/layout-elk": "0.1.9",
+    "clsx": "^2.1.1",
+    "mermaid": "11.15.0",
+    "prism-react-renderer": "^2.4.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.17",
+    "@types/react-dom": "^19.1.9",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

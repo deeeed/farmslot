@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import test from 'node:test';
+
+import { farmslotRoot } from './repo-root.js';
+
+type JsonSchema = {
+  properties?: Record<string, JsonSchema>;
+  additionalProperties?: boolean;
+  type?: string | string[];
+};
+
+async function readProjectSchema(): Promise<JsonSchema> {
+  return JSON.parse(
+    await readFile(path.join(farmslotRoot, 'schemas', 'project.schema.json'), 'utf-8'),
+  ) as JsonSchema;
+}
+
+function hookSchema(schema: JsonSchema, hookName: string): JsonSchema {
+  const hook = schema.properties?.hooks?.properties?.[hookName];
+  assert.ok(hook, `schemas/project.schema.json should define hooks.${hookName}`);
+  return hook;
+}
+
+function validateHooksAgainstSchema(schema: JsonSchema, hooks: Record<string, unknown>): string[] {
+  const hooksSchema = schema.properties?.hooks;
+  const allowedHooks = hooksSchema?.properties ?? {};
+  const errors: string[] = [];
+  for (const [hookName, hookValue] of Object.entries(hooks)) {
+    const hook = allowedHooks[hookName];
+    if (!hook) {
+      if (hooksSchema?.additionalProperties === false) {
+        errors.push(`hooks.${hookName} is not declared by project.schema.json`);
+      }
+      continue;
+    }
+    if (hook.type === 'string' && typeof hookValue !== 'string') {
+      errors.push(`hooks.${hookName} must be a string command`);
+    }
+  }
+  return errors;
+}
+
+test('project schema declares Recipe v1 hooks as string commands', async () => {
+  const schema = await readProjectSchema();
+  for (const hookName of ['recipe_action_manifest', 'recipe_doctor', 'recipe_run']) {
+    assert.equal(hookSchema(schema, hookName).type, 'string');
+  }
+  assert.equal(schema.properties?.hooks?.additionalProperties, false);
+});
+
+test('project schema rejects invalid Recipe v1 hook shapes', async () => {
+  const schema = await readProjectSchema();
+  assert.deepEqual(
+    validateHooksAgainstSchema(schema, {
+      recipe_action_manifest: 'node runner.js manifest',
+      recipe_doctor: 'node runner.js doctor --json',
+      recipe_run: 'node runner.js --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}}',
+    }),
+    [],
+  );
+  assert.deepEqual(validateHooksAgainstSchema(schema, { recipe_run: { cmd: 'node runner.js' } }), [
+    'hooks.recipe_run must be a string command',
+  ]);
+  assert.deepEqual(validateHooksAgainstSchema(schema, { recipe_unknown: 'node runner.js' }), [
+    'hooks.recipe_unknown is not declared by project.schema.json',
+  ]);
+});

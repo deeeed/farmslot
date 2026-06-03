@@ -1,0 +1,12 @@
+{
+  // Cursor's Git extension defaults git.autoRepositoryDetection to "openEditors", so nested
+  // repos under projects/ are not picked up unless you open a file from each. Force normal scan.
+  "git.autoRepositoryDetection": true,
+  "git.repositoryScanMaxDepth": 2,
+  "git.scanRepositories": [".", "projects"],
+
+  // Keep the ESLint extension on the repo flat config instead of auto-inferring a second
+  // TS config root from command-center/ when files are opened from nested packages.
+  "eslint.useFlatConfig": true,
+  "eslint.workingDirectories": [{ "directory": ".", "changeProcessCWD": true }]
+}

@@ -1,0 +1,714 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import type { ArtifactRef, Run } from '@farmslot/protocol';
+
+import { getProjectField, loadProjectVars } from '../core/config.js';
+import {
+  execLocal,
+  farmslotRoot,
+  inferArtifactPurpose,
+  sanitizeLatestValidRecipeRunPointer,
+} from '../core/index.js';
+import { ghRequest } from '../integrations/github-client.js';
+
+import {
+  autoDetectEvidenceManifest,
+  buildEvidenceSection,
+  type EvidenceManifest,
+  validateEvidenceManifest,
+} from './evidence-manifest.js';
+import { evidenceKeyVariants } from './evidence-paths.js';
+
+// ─── LLM PR body rewrite ───
+
+const REWRITE_SYSTEM_FALLBACK = `You rewrite GitHub PR descriptions. Output ONLY the rewritten markdown — no explanation, no fences, no preamble.`;
+
+const REWRITE_RULES_FALLBACK = `Rules:
+1. Replace ALL local path references to these files with proper markdown image/link embeds using the URLs above.
+2. Images (.png, .jpg, .jpeg, .gif): use \`![descriptive alt](url)\`
+3. Videos (.mp4, .mov): use \`[filename](url)\` (GitHub doesn't render video embeds)
+4. Place images in the **Screenshots/Recordings** section. If it has a table format, put images in the table cells. If not, create a simple list.
+5. Remove any remaining local file paths (starting with \`.task/\`, \`/Users/\`, \`/home/\`, \`/tmp/\`, \`file://\`) that don't have uploaded URLs.
+6. Remove placeholder text like "_Evidence available in task artifacts — will be added by reviewer if needed._"
+7. Do NOT change any other part of the PR description — keep all headings, text, checklists, code blocks exactly as-is.`;
+
+async function rewritePRBodyWithLLM(
+  project: string,
+  body: string,
+  artifactUrls: Map<string, string>,
+): Promise<string> {
+  const { callLLM } = await import('../llm/index.js');
+  const { loadPromptTemplate } = await import('../core/prompt-templates.js');
+
+  const urlMapStr = [...artifactUrls.entries()]
+    .map(([name, url]) => `- ${name} → ${url}`)
+    .join('\n');
+
+  // Try project-specific template first
+  const template = await loadPromptTemplate(project, 'pr-body-rewrite.md', {
+    ARTIFACT_URL_MAP: urlMapStr,
+  });
+
+  const systemPrompt = template ?? REWRITE_SYSTEM_FALLBACK;
+  const userPrompt = template
+    ? `PR description:\n\n${body}`
+    : `Here is a PR description that contains references to local artifact files (paths like \`.task/...\`, \`temp/...\`, or bare filenames like \`evidence-*.png\`, \`before.mp4\`, \`after.mp4\`).
+
+These artifacts have been uploaded. Here is the filename → URL mapping:
+
+${urlMapStr}
+
+${REWRITE_RULES_FALLBACK}
+
+PR description:
+
+${body}`;
+
+  const { getLLMConfig } = await import('../llm/config.js');
+  const cfgLLM = getLLMConfig();
+  const result = await callLLM({
+    model: cfgLLM.intelligenceModel,
+    provider: cfgLLM.defaultProvider,
+    maxTokens: 8192,
+    systemPrompt,
+    userPrompt,
+  });
+
+  const rewritten = result.text.trim();
+  if (rewritten.length < body.length * 0.3) {
+    console.warn(
+      `[run-completion] LLM rewrite suspiciously short (${rewritten.length} vs ${body.length}), rejecting`,
+    );
+    throw new Error('LLM output too short — likely truncated');
+  }
+
+  console.log(
+    `[run-completion] LLM rewrote PR body (${result.usage.inputTokens ?? '?'}in/${result.usage.outputTokens ?? '?'}out)`,
+  );
+  return rewritten;
+}
+
+// ─── Artifact upload ───
+
+const MEDIA_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.mp4', '.mov', '.webm']);
+
+async function fileDigestPrefix(filePath: string): Promise<string> {
+  return createHash('sha256')
+    .update(await readFile(filePath))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function evidenceSelectionSet(selectedEvidenceKeys?: string[]): Set<string> | null {
+  if (!selectedEvidenceKeys) return null;
+  const keys = new Set<string>();
+  for (const key of selectedEvidenceKeys) {
+    if (typeof key !== 'string' || !key.trim()) continue;
+    for (const variant of evidenceKeyVariants(key.trim())) keys.add(variant);
+  }
+  return keys;
+}
+
+function evidencePathSelected(file: string | undefined, selection: Set<string> | null): boolean {
+  if (!selection) return true;
+  if (!file) return false;
+  return evidenceKeyVariants(file).some((variant) => selection.has(variant));
+}
+
+export function filterArtifactUrlsByEvidenceSelection(
+  artifactUrls: Map<string, string>,
+  selectedEvidenceKeys?: string[],
+): Map<string, string> {
+  const selection = evidenceSelectionSet(selectedEvidenceKeys);
+  if (!selection) return artifactUrls;
+  const filtered = new Map<string, string>();
+  for (const [file, url] of artifactUrls.entries()) {
+    if (evidencePathSelected(file, selection)) filtered.set(file, url);
+  }
+  return filtered;
+}
+
+export function expandEvidenceSelectionForManifest(
+  manifest: EvidenceManifest | null | undefined,
+  selectedEvidenceKeys?: string[],
+): string[] | undefined {
+  if (!selectedEvidenceKeys) return undefined;
+  const selection = evidenceSelectionSet(selectedEvidenceKeys);
+  if (!selection || !manifest) return selectedEvidenceKeys;
+
+  const expanded = new Set(selectedEvidenceKeys);
+  const addIfPairSelected = (left?: string, right?: string) => {
+    const leftSelected = left ? evidencePathSelected(left, selection) : false;
+    const rightSelected = right ? evidencePathSelected(right, selection) : false;
+    if (!leftSelected && !rightSelected) return;
+    if (left) expanded.add(left);
+    if (right) expanded.add(right);
+  };
+
+  for (const pair of manifest.before_after_pairs ?? []) {
+    addIfPairSelected(pair.before, pair.after);
+  }
+  if (manifest.videos) {
+    addIfPairSelected(manifest.videos.before, manifest.videos.after);
+  }
+
+  return [...expanded];
+}
+
+export function filterEvidenceManifestBySelection(
+  manifest: EvidenceManifest,
+  selectedEvidenceKeys?: string[],
+): EvidenceManifest {
+  const selection = evidenceSelectionSet(selectedEvidenceKeys);
+  if (!selection) return manifest;
+
+  const beforeAfterPairs = (manifest.before_after_pairs ?? [])
+    .map((pair) => ({
+      ...pair,
+      before: evidencePathSelected(pair.before, selection) ? pair.before : undefined,
+      after: evidencePathSelected(pair.after, selection) ? pair.after : undefined,
+    }))
+    .filter((pair) => pair.before || pair.after);
+  const standalone = (manifest.standalone ?? []).filter((entry) =>
+    evidencePathSelected(entry.file, selection),
+  );
+  const videos = manifest.videos
+    ? {
+        ...manifest.videos,
+        before: evidencePathSelected(manifest.videos.before, selection)
+          ? manifest.videos.before
+          : undefined,
+        after: evidencePathSelected(manifest.videos.after, selection)
+          ? manifest.videos.after
+          : undefined,
+      }
+    : undefined;
+
+  return {
+    ...manifest,
+    before_after_pairs: beforeAfterPairs,
+    standalone,
+    videos: videos?.before || videos?.after ? videos : undefined,
+  };
+}
+
+/** Recursively collect media files under a directory, returning paths relative to baseDir. */
+async function collectMediaFiles(baseDir: string): Promise<string[]> {
+  const results: string[] = [];
+  async function walk(dir: string, prefix: string) {
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      const full = path.join(dir, name);
+      try {
+        const s = await stat(full);
+        if (s.isDirectory()) {
+          await walk(full, prefix ? `${prefix}/${name}` : name);
+        } else if (s.isFile() && MEDIA_EXTENSIONS.has(path.extname(name).toLowerCase())) {
+          results.push(prefix ? `${prefix}/${name}` : name);
+        }
+      } catch {
+        /* skip unreadable */
+      }
+    }
+  }
+  await walk(baseDir, '');
+  return results;
+}
+
+export async function uploadArtifacts(
+  run: Run,
+  prNumber: number,
+  selectedEvidenceKeys?: string[],
+  options: { failOnError?: boolean } = {},
+): Promise<Map<string, string>> {
+  const urlMap = new Map<string, string>();
+  const failOrReturnEmpty = (message: string): Map<string, string> => {
+    if (options.failOnError) throw new Error(message);
+    console.warn(`[run-completion] ${message}`);
+    return urlMap;
+  };
+  const hasSelectedEvidence = Boolean(selectedEvidenceKeys?.length);
+  if (!run.taskFile) {
+    return hasSelectedEvidence
+      ? failOrReturnEmpty('artifact upload failed: run has no task file')
+      : urlMap;
+  }
+
+  let pv: Awaited<ReturnType<typeof loadProjectVars>> | null = null;
+  try {
+    pv = await loadProjectVars(run.project);
+  } catch (err) {
+    return failOrReturnEmpty(
+      `artifact upload failed: project config unavailable (${(err as Error).message})`,
+    );
+  }
+  const artifactsRepo = pv ? getProjectField(pv.projectJson, 'artifacts_repo') : '';
+  if (!artifactsRepo) {
+    return hasSelectedEvidence
+      ? failOrReturnEmpty('artifact upload failed: project has no artifacts_repo configured')
+      : urlMap;
+  }
+
+  const taskDir = path.dirname(run.taskFile);
+  const artifactsDir = path.join(taskDir, 'artifacts');
+  if (!existsSync(artifactsDir)) {
+    return hasSelectedEvidence
+      ? failOrReturnEmpty('artifact upload failed: artifacts directory is missing')
+      : urlMap;
+  }
+
+  let files: string[];
+  try {
+    files = await collectMediaFiles(artifactsDir);
+  } catch (err) {
+    return failOrReturnEmpty(
+      `artifact upload failed while scanning media: ${(err as Error).message}`,
+    );
+  }
+  const selection = evidenceSelectionSet(selectedEvidenceKeys);
+  if (selection) files = files.filter((file) => evidencePathSelected(file, selection));
+  if (files.length === 0) {
+    return hasSelectedEvidence
+      ? failOrReturnEmpty('artifact upload failed: selected evidence files were not found')
+      : urlMap;
+  }
+
+  const flow = run.flowType === 'review-pr' ? 'review' : run.flowType === 'dev' ? 'feature' : 'fix';
+  const flowDir = flow === 'fix' ? 'fixes' : `${flow}s`;
+  const uploadScript = path.join(farmslotRoot, 'scripts', 'gh-upload-asset.sh');
+
+  let uploadDir = artifactsDir;
+  let tempUploadDir: string | null = null;
+  try {
+    if (selection) {
+      tempUploadDir = path.join(
+        '/tmp',
+        `farmslot-selected-artifacts-${run.id.slice(0, 8)}-${randomUUID()}`,
+      );
+      await mkdir(tempUploadDir, { recursive: true });
+      for (const file of files) {
+        const source = path.join(artifactsDir, file);
+        const dest = path.join(tempUploadDir, file);
+        await mkdir(path.dirname(dest), { recursive: true });
+        await writeFile(dest, await readFile(source));
+      }
+      uploadDir = tempUploadDir;
+    }
+    console.log(
+      `[run-completion] uploading ${files.length} artifact(s) to ${artifactsRepo} (${flowDir}/${prNumber})`,
+    );
+    await execLocal(
+      `bash '${uploadScript}' --dir '${uploadDir}' --artifacts-repo '${artifactsRepo}' --flow '${flow}' --id '${prNumber}'`,
+    );
+    const baseUrl = `https://raw.githubusercontent.com/${artifactsRepo}/main/${flowDir}/${prNumber}`;
+    for (const f of files) {
+      const digest = await fileDigestPrefix(path.join(artifactsDir, f));
+      urlMap.set(f, `${baseUrl}/${f}?sha=${digest}`);
+    }
+    console.log(`[run-completion] uploaded ${files.length} artifact(s): ${files.join(', ')}`);
+  } catch (err) {
+    return failOrReturnEmpty(`artifact upload failed: ${(err as Error).message}`);
+  } finally {
+    if (tempUploadDir) {
+      try {
+        await rm(tempUploadDir, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(
+          `[run-completion] selected artifact staging cleanup failed: ${(err as Error).message.slice(0, 200)}`,
+        );
+      }
+    }
+  }
+  return urlMap;
+}
+
+function selectedEvidenceKeyUploaded(key: string, artifactUrls: Map<string, string>): boolean {
+  const uploaded = new Set(
+    [...artifactUrls.keys()].flatMap((urlKey) => evidenceKeyVariants(urlKey)),
+  );
+  return evidenceKeyVariants(key).some((variant) => uploaded.has(variant));
+}
+
+export function assertSelectedEvidencePublished(
+  selectedEvidenceKeys: readonly string[] | undefined,
+  artifactUrls: Map<string, string>,
+): void {
+  const selected = (selectedEvidenceKeys ?? []).filter((key) =>
+    typeof key === 'string' ? Boolean(key.trim()) : false,
+  );
+  if (selected.length === 0) return;
+
+  const missing = selected.filter((key) => !selectedEvidenceKeyUploaded(key.trim(), artifactUrls));
+  if (missing.length === 0) return;
+
+  throw new Error(
+    `Selected evidence was not published (${missing.length}/${selected.length} missing: ${missing.join(', ')}); refresh/fix artifact upload before publishing`,
+  );
+}
+
+// ─── PR body post-processing (sanitize + author checklist) ───
+
+const LOCAL_PR_BODY_PATH_PATTERNS: RegExp[] = [
+  /file:\/\/\/[^\s)>'"]+/gi,
+  /(^|[\s(='"])(?:\/Users|\/home|\/tmp)\/[^\s)>'"]+/g,
+  /(^|[\s(='"])(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"]+/gi,
+  /(^|[\s(='"])(?:\.\/)?(?:before|after|evidence)[^/\s)>'"]*\.(?:png|jpe?g|gif|mp4|mov|webm)/gi,
+];
+
+function stripCodeBlocks(body: string): string {
+  return body
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/~~~[\s\S]*?~~~/g, '')
+    .replace(/`[^`\n]*`/g, '');
+}
+
+export function localPrBodyPathResidues(body: string): string[] {
+  const scanned = stripCodeBlocks(body);
+  const residues: string[] = [];
+  for (const pattern of LOCAL_PR_BODY_PATH_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of scanned.matchAll(pattern)) {
+      const value = match[0].trim().replace(/^[('\"=]+/, '');
+      if (value) residues.push(value);
+    }
+  }
+  return [...new Set(residues)].slice(0, 10);
+}
+
+function assertNoLocalPrBodyPathResidues(body: string): void {
+  const residues = localPrBodyPathResidues(body);
+  if (residues.length === 0) return;
+  throw new Error(`PR body still contains local artifact path(s): ${residues.join(', ')}`);
+}
+
+function sanitizePRBody(body: string): string {
+  let result = body;
+  // Strip markdown image/link refs pointing to local paths
+  result = result.replace(
+    /!?\[[^\]]*\]\([^)]*(?:\.task\/|temp\/|\/Users\/|\/home\/|\/tmp\/|file:\/\/)[^)]*\)/g,
+    '',
+  );
+  // Strip bare local file paths to media on their own line
+  result = result.replace(
+    /^\s*(?:\/Users\/|\/home\/|\/tmp\/|~\/)\S+\.(?:mp4|mov|png|jpg|jpeg|gif)\s*$/gm,
+    '',
+  );
+  // Strip markdown image refs with just artifact filenames (before.mp4, after.mp4, evidence-*.png)
+  result = result.replace(
+    /!\[[^\]]*\]\((?:before|after|evidence)[^)]*\.(?:mp4|mov|png|jpg|jpeg)\)/g,
+    '',
+  );
+  // Collapse multiple blank lines left by stripping
+  result = result.replace(/\n{3,}/g, '\n\n');
+  return result;
+}
+
+function prefixPromotedEvidenceManifestPath(
+  value: string | undefined,
+  artifactRoot: string | null,
+): string | undefined {
+  if (!artifactRoot || typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed || /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(trimmed)) return value;
+  const normalized = trimmed.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  const withoutArtifacts = normalized.startsWith('artifacts/')
+    ? normalized.slice('artifacts/'.length)
+    : normalized;
+  if (withoutArtifacts === artifactRoot || withoutArtifacts.startsWith(`${artifactRoot}/`)) {
+    return `artifacts/${withoutArtifacts}`;
+  }
+  return `artifacts/${artifactRoot}/${withoutArtifacts}`;
+}
+
+function prefixPromotedEvidenceManifest(
+  manifest: EvidenceManifest,
+  artifactRoot: string | null,
+): EvidenceManifest {
+  if (!artifactRoot) return manifest;
+  return {
+    ...manifest,
+    before_after_pairs: manifest.before_after_pairs?.map((pair) => ({
+      ...pair,
+      before: prefixPromotedEvidenceManifestPath(pair.before, artifactRoot),
+      after: prefixPromotedEvidenceManifestPath(pair.after, artifactRoot),
+    })),
+    standalone: manifest.standalone?.map((entry) => ({
+      ...entry,
+      file: prefixPromotedEvidenceManifestPath(entry.file, artifactRoot) ?? entry.file,
+    })),
+    videos: manifest.videos
+      ? {
+          ...manifest.videos,
+          before: prefixPromotedEvidenceManifestPath(manifest.videos.before, artifactRoot),
+          after: prefixPromotedEvidenceManifestPath(manifest.videos.after, artifactRoot),
+        }
+      : undefined,
+  };
+}
+
+async function readEvidenceManifestFile(
+  manifestPath: string,
+  artifactRoot: string | null,
+): Promise<EvidenceManifest | null> {
+  try {
+    const parsed = JSON.parse(await readFile(manifestPath, 'utf-8'));
+    const issues = validateEvidenceManifest(parsed);
+    if (issues.length > 0) {
+      console.warn(
+        `[run-completion] invalid evidence manifest ${manifestPath}: ${issues.join('; ')}`,
+      );
+      return null;
+    }
+    return prefixPromotedEvidenceManifest(parsed as EvidenceManifest, artifactRoot);
+  } catch (err) {
+    console.warn(
+      `[run-completion] invalid evidence manifest ${manifestPath}: ${(err as Error).message}`,
+    );
+    return null;
+  }
+}
+
+interface EvidenceManifestCandidatePath {
+  manifestPath: string;
+  artifactRoot: string | null;
+}
+
+async function evidenceManifestCandidatePaths(
+  taskDir: string,
+): Promise<EvidenceManifestCandidatePath[]> {
+  let promotedArtifactRoot: string | null = null;
+  const pointerPath = path.join(taskDir, 'artifacts', 'latest-valid-recipe-run.json');
+  if (existsSync(pointerPath)) {
+    try {
+      const pointer = sanitizeLatestValidRecipeRunPointer(
+        JSON.parse(await readFile(pointerPath, 'utf-8')),
+      );
+      promotedArtifactRoot = pointer?.relativeArtifactRoot ?? null;
+    } catch (err) {
+      console.warn(
+        `[run-completion] invalid latest-valid-recipe-run pointer ${pointerPath}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  const candidates: EvidenceManifestCandidatePath[] = [
+    { manifestPath: path.join(taskDir, 'artifacts', 'evidence-manifest.json'), artifactRoot: null },
+  ];
+  if (promotedArtifactRoot) {
+    candidates.push({
+      manifestPath: path.join(taskDir, 'artifacts', promotedArtifactRoot, 'evidence-manifest.json'),
+      artifactRoot: promotedArtifactRoot,
+    });
+  }
+  candidates.push({
+    manifestPath: path.join(taskDir, 'inputs', 'inherited', 'evidence-manifest.json'),
+    artifactRoot: promotedArtifactRoot,
+  });
+
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.manifestPath}::${candidate.artifactRoot ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export async function readEvidenceManifest(run: Run): Promise<EvidenceManifest | null> {
+  if (!run.taskFile) return null;
+  const taskDir = path.dirname(run.taskFile);
+  for (const { manifestPath, artifactRoot } of await evidenceManifestCandidatePaths(taskDir)) {
+    if (existsSync(manifestPath)) return readEvidenceManifestFile(manifestPath, artifactRoot);
+  }
+  return null;
+}
+
+export function replaceMarkdownSection(body: string, heading: string, content: string): string {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(^${escapedHeading}\\s*\\n)([\\s\\S]*?)(?=^##\\s|$(?![\\s\\S]))`, 'm');
+  if (re.test(body)) {
+    const replacement = `${content.trim()}\n\n`;
+    return body.replace(re, (_match, headingMatch: string) => `${headingMatch}${replacement}`);
+  }
+  const trimmed = body.replace(/\s+$/, '');
+  return `${trimmed}\n\n${heading}\n\n${content.trim()}\n`;
+}
+
+export async function postProcessPRBody(
+  run: Run,
+  ciRepo: string,
+  prNumber: number,
+  artifactUrls?: Map<string, string>,
+  selectedEvidenceKeys?: string[],
+  options: {
+    failOnError?: boolean;
+    baseBody?: string;
+    evidenceManifest?: EvidenceManifest | null;
+  } = {},
+): Promise<void> {
+  try {
+    let body: string;
+    if (options.baseBody !== undefined) {
+      body = options.baseBody;
+    } else {
+      const result = await ghRequest([
+        'pr',
+        'view',
+        String(prNumber),
+        '--repo',
+        ciRepo,
+        '--json',
+        'body',
+        '--jq',
+        '.body',
+      ]);
+      body = result.stdout;
+    }
+
+    const selectedArtifactUrls = artifactUrls
+      ? filterArtifactUrlsByEvidenceSelection(artifactUrls, selectedEvidenceKeys)
+      : artifactUrls;
+    const rawManifest =
+      options.evidenceManifest !== undefined
+        ? options.evidenceManifest
+        : await readEvidenceManifest(run);
+    const manifest = rawManifest
+      ? filterEvidenceManifestBySelection(rawManifest, selectedEvidenceKeys)
+      : autoDetectEvidenceManifest(selectedArtifactUrls);
+
+    body = sanitizePRBody(body);
+
+    if (selectedEvidenceKeys?.length && selectedArtifactUrls && selectedArtifactUrls.size === 0) {
+      if (options.failOnError) {
+        throw new Error(
+          `selected evidence has no uploaded artifact URLs (${selectedEvidenceKeys.length} selected artifact(s))`,
+        );
+      }
+      body = replaceMarkdownSection(
+        body,
+        '## **Screenshots/Recordings**',
+        'No visual evidence selected for publication.',
+      );
+    } else if (selectedArtifactUrls && selectedArtifactUrls.size > 0 && manifest) {
+      const evidenceSection = buildEvidenceSection(manifest, selectedArtifactUrls);
+      if (evidenceSection) {
+        body = replaceMarkdownSection(body, '## **Screenshots/Recordings**', evidenceSection);
+      }
+    }
+
+    // LLM pass remains as a fallback when we do not have a structured evidence
+    // manifest/auto-detected evidence set to drive deterministic section updates.
+    if (selectedArtifactUrls && selectedArtifactUrls.size > 0 && !manifest) {
+      try {
+        body = await rewritePRBodyWithLLM(run.project, body, selectedArtifactUrls);
+      } catch (err) {
+        console.warn(
+          `[run-completion] LLM rewrite failed, falling back to sanitize: ${(err as Error).message}`,
+        );
+        body = sanitizePRBody(body);
+      }
+    }
+
+    if (options.failOnError) assertNoLocalPrBodyPathResidues(body);
+
+    // Auto-check author checklist boxes (CI may be gated on these)
+    if (body.includes('- [ ]')) {
+      const reviewerMarker = 'reviewer checklist';
+      const markerIdx = body.toLowerCase().indexOf(reviewerMarker);
+      if (markerIdx > 0) {
+        const headingStart = body.lastIndexOf('\n', markerIdx);
+        const authorPart = body.substring(0, headingStart).replace(/- \[ \]/g, '- [x]');
+        body = authorPart + body.substring(headingStart);
+      } else {
+        body = body.replace(/- \[ \]/g, '- [x]');
+      }
+    }
+
+    const tmpFile = `/tmp/farmslot-pr-body-${prNumber}.md`;
+    const { writeFile: writeF } = await import('node:fs/promises');
+    await writeF(tmpFile, body, 'utf-8');
+    let editError: unknown = null;
+    let cleanupError: unknown = null;
+    try {
+      await ghRequest(['pr', 'edit', String(prNumber), '--repo', ciRepo, '--body-file', tmpFile], {
+        force: true,
+      });
+    } catch (err) {
+      editError = err;
+    }
+    try {
+      await rm(tmpFile, { force: true });
+    } catch (err) {
+      cleanupError = err;
+    }
+    if (editError) {
+      if (cleanupError) {
+        console.warn(
+          `[run-completion] failed to remove temporary PR body after edit failure: ${(cleanupError as Error).message}`,
+        );
+      }
+      throw editError;
+    }
+    if (cleanupError) throw cleanupError;
+    console.log(`[run-completion] post-processed PR #${prNumber} body (sanitized + checklist)`);
+  } catch (err) {
+    if (options.failOnError) throw err;
+    console.warn(`[run-completion] PR body post-processing failed: ${(err as Error).message}`);
+  }
+}
+
+// ─── Artifact scanning ───
+
+export async function scanArtifacts(taskDir: string): Promise<ArtifactRef[]> {
+  const artifactsDir = path.join(taskDir, 'artifacts');
+  if (!existsSync(artifactsDir)) return [];
+
+  const refs: ArtifactRef[] = [];
+  async function walk(dir: string, prefix: string) {
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      const full = path.join(dir, name);
+      try {
+        const s = await stat(full);
+        if (s.isDirectory()) {
+          await walk(full, `${prefix}${name}/`);
+        } else if (s.isFile()) {
+          let sha256: string | undefined;
+          try {
+            const buf = await readFile(full);
+            sha256 = createHash('sha256').update(buf).digest('hex');
+          } catch (err) {
+            console.debug('[artifacts] sha256 failed for', full, err);
+          }
+          refs.push({
+            path: `artifacts/${prefix}${name}`,
+            purpose: inferArtifactPurpose(`${prefix}${name}`),
+            sizeBytes: s.size,
+            sha256,
+          });
+        }
+      } catch {
+        /* skip unreadable files */
+      }
+    }
+  }
+  try {
+    await walk(artifactsDir, '');
+  } catch {
+    /* non-fatal */
+  }
+  return refs;
+}

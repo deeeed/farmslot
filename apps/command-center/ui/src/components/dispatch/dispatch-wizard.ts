@@ -1,0 +1,877 @@
+import { customElement } from 'lit/decorators.js';
+
+import type {
+  DispatchCandidatesResult,
+  FlowType,
+  PRStatus,
+  ReviewRunnerId,
+  ReviewValidationDepth,
+  Run,
+} from '@farmslot/protocol';
+import { Methods } from '@farmslot/protocol';
+
+import { gateway } from '../../gateway-client.js';
+import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
+import {
+  COMPARISON_LANE_RUNNERS,
+  DEFAULT_MODEL,
+  RUNNER_OPTIONS,
+} from '../../utils/runner-options.js';
+
+import {
+  addDispatchQueueItemFromDraft,
+  buildDispatchWizardPayloadDraft,
+  dispatchRunCreateFromDraft,
+} from './dispatch-wizard-actions.js';
+import { deriveDispatchWizardBlockingState } from './dispatch-wizard-blockers.js';
+import {
+  buildComparisonRunParams,
+  comparisonVariantInputBlocked,
+  deriveComparisonVariantState,
+  exitedComparisonModeState,
+  forkComparisonStateFromRun,
+  resolveComparisonVariant,
+} from './dispatch-wizard-comparison-state.js';
+import {
+  appLabel,
+  buildPublicationReviewGateParams,
+  buildPublicationReviewPlan,
+  defaultExtraReviewRunner,
+  modeForFlow,
+  projectApps,
+  publicationReviewsEnabled,
+  selectedDispatchApp,
+  selectedTaskTemplate,
+  syncSelectedAppForProject,
+} from './dispatch-wizard-draft.js';
+import {
+  lookupPriorRunsForDispatchWizard,
+  requestDispatchProjectMatch,
+  requestDispatchWizardCandidates,
+  requestProjectConfigs,
+  requestTemplateOptions,
+} from './dispatch-wizard-loaders.js';
+import {
+  parseDispatchWizardHash,
+  shouldUsePrefillSlot,
+  syncPublicationReviewsHash,
+} from './dispatch-wizard-prefill.js';
+import {
+  candidateDispatchable,
+  dispatchableCandidates,
+  findSameTaskSlot,
+  resolveTargetBranch,
+  selectedNudgeIntent,
+  slotSummaryLabel,
+} from './dispatch-wizard-selectors.js';
+import { DispatchWizardState } from './dispatch-wizard-state.js';
+import {
+  deriveCandidateResultState,
+  deriveDispatchFleetViewState,
+  deriveIssueTypeFlowState,
+  findActiveRunConflict,
+} from './dispatch-wizard-state-model.js';
+import { dispatchWizardStyles } from './dispatch-wizard-styles.js';
+import {
+  clearTemplateOptionsState,
+  deriveTemplateOptionsState,
+  templateOptionsRequestKey,
+} from './dispatch-wizard-template-options.js';
+import { renderDispatchWizardView } from './dispatch-wizard-view-renderer.js';
+
+@customElement('dispatch-wizard')
+export class DispatchWizard extends DispatchWizardState {
+  updated(changed: Map<string, unknown>) {
+    super.updated(changed);
+    if (this.mockMode && changed.has('mockInitial')) {
+      this._applyMockInitial();
+      this._syncFleet(getState());
+    }
+    if (this.mockMode && changed.has('mockProjectConfigs') && this.mockProjectConfigs) {
+      this._projectConfigs = this.mockProjectConfigs;
+      this._syncSelectedAppForProject(this._project);
+    }
+    if (this.mockMode && changed.has('mockCandidates') && this._project) {
+      void this._fetchCandidates(this._project);
+      void this._fetchTemplateOptions();
+    }
+    // Any change that might flip `_resolveTargetBranch`'s output must re-score
+    // candidates — otherwise the wizard keeps the stale ranking (and the
+    // pinned _slotOverride) until some unrelated state change triggers
+    // _syncFleet's re-fetch path. Covers:
+    //   - flow flip (pr-complete ↔ fix-bug, etc.) — targetBranch toggles on/off
+    //   - ticket edit — PR number change swaps the target branch
+    //   - normalized ticket landing — `123` → `owner/repo#123` resolves a new PR
+    const tickers = ['_flowType', '_ticketId', '_normalizedTicket'];
+    if (tickers.some((k) => changed.has(k)) && this._project) {
+      void this._fetchCandidates(this._project);
+    }
+    if ((changed.has('_flowType') || changed.has('_project')) && this._project && this._flowType) {
+      void this._fetchTemplateOptions();
+    }
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this._parseHashParams();
+    this._applyMockInitial();
+    this._syncFleet(getState());
+    if (this.mockMode && this.mockProjectConfigs) {
+      this._projectConfigs = this.mockProjectConfigs;
+      this._syncSelectedAppForProject(this._project);
+    } else {
+      void this._loadProjectConfigs();
+    }
+    this._unsubConn = gateway.onConnectionChange((st) => {
+      if (this.mockMode) return;
+      if (st === 'connected') {
+        if (this._projectConfigs.length === 0) {
+          void this._loadProjectConfigs();
+        }
+        if (this._project && this._flowType) {
+          void this._fetchTemplateOptions();
+        }
+      }
+    });
+    this._unsubState = subscribe((s) => this._syncFleet(s));
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._unsubConn?.();
+    this._unsubState?.();
+    if (this._matchTimer) clearTimeout(this._matchTimer);
+    if (this._priorRunsTimer) clearTimeout(this._priorRunsTimer);
+  }
+
+  private _syncFleet(s: AppState) {
+    const wasHydrating = this._hydrating;
+    this._hydrating = this.mockMode ? false : isHydrating(s, 'fleet');
+    this._bootstrapFailed = this.mockMode ? false : s.bootstrapFailed.fleet;
+    this._connectionStale = this.mockMode ? false : s.connection !== 'connected';
+    const { projects: fp, machines: fm } = s.globalFilters;
+    const fleetView = deriveDispatchFleetViewState({
+      slots: s.fleet?.slots ?? [],
+      currentProject: this._project,
+      globalProjectFilters: fp,
+      globalMachineFilters: fm,
+    });
+    this._availableProjects = fleetView.availableProjects;
+
+    // Auto-select project if exactly 1 available (from filter or fleet)
+    if (fleetView.projectAutoSelected) {
+      this._project = fleetView.project;
+      this._slotOverride = '';
+      this._syncSelectedAppForProject(this._project);
+      void this._fetchCandidates(this._project);
+    }
+    // Clear project if it's no longer in the filtered list. Skip when the
+    // fleet hasn't produced any projects yet (initial mount before fleet
+    // state arrives) — otherwise a hash-prefilled project from an upstream
+    // link (e.g. PR dashboard "Complete PR") gets clobbered on first sync.
+    if (fleetView.projectCleared) {
+      this._project = fleetView.project;
+      this._app = '';
+      this._candidates = [];
+      this._allProjectSlots = [];
+    }
+
+    this._allProjectSlots = fleetView.allProjectSlots;
+    this._queueItems = s.queueItems ?? [];
+
+    const machineSig = fleetView.machineFilterSignature;
+    const hydrationJustFinished = wasHydrating && !this._hydrating && !this._bootstrapFailed;
+    const machineFilterChanged = machineSig !== this._lastFetchMachines;
+    const targetBranchNow = this._resolveTargetBranch(s.prs);
+    const targetBranchChanged = targetBranchNow !== this._lastFetchTargetBranch;
+    if (this._project && (hydrationJustFinished || machineFilterChanged || targetBranchChanged)) {
+      void this._fetchCandidates(this._project);
+    }
+  }
+
+  private async _loadProjectConfigs(): Promise<void> {
+    if (this.mockMode && this.mockProjectConfigs) {
+      this._projectConfigs = this.mockProjectConfigs;
+      this._syncSelectedAppForProject(this._project);
+      return;
+    }
+    if (this._loadingProjectConfigs) return;
+    this._loadingProjectConfigs = true;
+    try {
+      this._projectConfigs = await requestProjectConfigs();
+      this._syncSelectedAppForProject(this._project);
+    } catch (err) {
+      // Config loading is optional for single-app projects; keep the wizard usable
+      // and retry on the next reconnect/manual project selection.
+      console.warn('[dispatch-wizard] config projects failed:', err);
+      this._projectConfigs = [];
+    } finally {
+      this._loadingProjectConfigs = false;
+    }
+  }
+
+  private _syncSelectedAppForProject(projectName: string): void {
+    this._app = syncSelectedAppForProject(
+      projectApps(this._projectConfigs, projectName),
+      this._app,
+    );
+  }
+
+  private async _fetchTemplateOptions(): Promise<void> {
+    if (!this._project || !this._flowType || this.mockMode) {
+      const cleared = clearTemplateOptionsState();
+      this._templateOptions = cleared.options;
+      this._templateOptionsError = cleared.error;
+      this._selectedTaskTemplateFileName = cleared.selectedFileName;
+      return;
+    }
+    const key = templateOptionsRequestKey(this._project, this._flowType);
+    this._templateOptionsKey = key;
+    this._templateOptionsLoading = true;
+    this._templateOptionsError = '';
+    try {
+      const options = await requestTemplateOptions(this._project, this._flowType);
+      if (this._templateOptionsKey !== key) return;
+      const next = deriveTemplateOptionsState(options, this._selectedTaskTemplateFileName);
+      this._templateOptions = next.options;
+      this._templateOptionsError = next.error;
+      this._selectedTaskTemplateFileName = next.selectedFileName;
+    } catch (err: unknown) {
+      if (this._templateOptionsKey !== key) return;
+      this._templateOptions = [];
+      this._templateOptionsError =
+        err instanceof Error ? err.message : 'Template options failed to load';
+      this._selectedTaskTemplateFileName = '';
+    } finally {
+      if (this._templateOptionsKey === key) this._templateOptionsLoading = false;
+    }
+  }
+  private _selectProject(project: string, autoProject = ''): void {
+    this._project = project;
+    this._autoProject = autoProject;
+    this._slotOverride = '';
+    this._syncSelectedAppForProject(project);
+    this._syncFleet(getState());
+    void this._fetchCandidates(project);
+    void this._fetchTemplateOptions();
+    this._checkActiveRunConflict();
+    if (this._projectConfigs.length === 0) {
+      void this._loadProjectConfigs();
+    }
+  }
+
+  private _applyMockInitial(): void {
+    if (!this.mockMode || !this.mockInitial) return;
+    if (this.mockInitial.flowType) this._flowType = this.mockInitial.flowType;
+    if (this.mockInitial.ticketId !== undefined) this._ticketId = this.mockInitial.ticketId;
+    if (this.mockInitial.normalizedTicket !== undefined)
+      this._normalizedTicket = this.mockInitial.normalizedTicket;
+    if (this.mockInitial.runner) this._runner = this.mockInitial.runner;
+    if (this.mockInitial.model) this._model = this.mockInitial.model;
+    if (this.mockInitial.project && this._project !== this.mockInitial.project) {
+      this._project = this.mockInitial.project;
+      this._syncSelectedAppForProject(this._project);
+      void this._fetchCandidates(this._project);
+    }
+    // Trigger the prior-runs banner against the seeded ticket without waiting for
+    // a keystroke — the dev harness seeds state.runs synchronously, so this just
+    // populates _priorRuns with the matching mock entries.
+    if (this._ticketId) {
+      this._schedulePriorRunsLookup(this._ticketId);
+    }
+  }
+
+  private _setTicket(ticketId: string): void {
+    this._ticketId = ticketId;
+    this._normalizedTicket = '';
+    this._error = '';
+    this._activeRunConflict = null;
+    this._scheduleMatchProject(this._ticketId);
+    this._schedulePriorRunsLookup(this._ticketId);
+  }
+
+  private _resolveTargetBranch(prs: ReadonlyArray<PRStatus>): string | undefined {
+    return resolveTargetBranch({
+      prs,
+      flowType: this._flowType,
+      ticketId: this._ticketId,
+      normalizedTicket: this._normalizedTicket,
+      project: this._project,
+    });
+  }
+
+  private async _fetchCandidates(project: string): Promise<void> {
+    if (!project) {
+      this._candidates = [];
+      this._slotOverride = '';
+      this._lastFetchMachines = '';
+      this._fetchGen++;
+      return;
+    }
+    const st = getState();
+    const machines = [...st.globalFilters.machines].sort();
+    this._lastFetchMachines = machines.join(',');
+    // For PR-bound flows, hand the server the PR's head branch so the slot
+    // already sitting on that branch wins auto-select instead of losing to
+    // the +50 stale penalty. PR metadata is already in state from pr.list —
+    // no extra gh round trip.
+    const targetBranch = this._resolveTargetBranch(st.prs);
+    this._lastFetchTargetBranch = targetBranch;
+    const gen = ++this._fetchGen;
+    this._loadingCandidates = true;
+    this._candidateRefreshFailed = false;
+    const prevOverride = this._slotOverride;
+    try {
+      const res = await requestDispatchWizardCandidates({
+        project,
+        flowType: this._flowType || undefined,
+        machines,
+        targetBranch,
+        ticketOrPr: this._ticketId || undefined,
+        comparison:
+          this._comparisonLane && this._comparisonFamilyId
+            ? {
+                familyId: this._comparisonFamilyId,
+                variant: this._resolveVariantForDispatch(),
+              }
+            : undefined,
+        candidatesEverLoaded: this._candidatesEverLoaded,
+        mockMode: this.mockMode,
+        mockCandidates: this.mockCandidates,
+      });
+      if (!this.mockMode) this._candidatesEverLoaded = true;
+      if (gen !== this._fetchGen) return; // superseded by newer filter/project change
+      this._applyCandidateResult(res, prevOverride);
+    } catch (err) {
+      if (gen !== this._fetchGen) return;
+      console.warn('[dispatch-wizard] dispatch.candidates failed:', err);
+      this._candidates = [];
+      this._slotOverride = '';
+      this._candidateRefreshFailed = true;
+    } finally {
+      if (gen === this._fetchGen) this._loadingCandidates = false;
+    }
+  }
+
+  private _applyCandidateResult(res: DispatchCandidatesResult, prevOverride: string): void {
+    const next = deriveCandidateResultState({
+      candidates: res.candidates,
+      previousOverride: prevOverride,
+      nudgeIntents: this._nudgeIntents,
+      flowType: this._flowType,
+      normalizedTicket: this._normalizedTicket,
+      ticketId: this._ticketId,
+      comparisonLane: this._comparisonLane,
+      comparisonFamilyId: this._comparisonFamilyId,
+      lastFetchScoringKey: this._lastFetchScoringKey,
+    });
+    this._candidates = next.candidates;
+    this._nudgeIntents = next.nudgeIntents;
+    if (next.nudgeIntentsChanged) this._nudgeIntentVersion++;
+    this._lastFetchScoringKey = next.scoringKey;
+    this._slotOverride = next.slotOverride;
+  }
+
+  // Debounced server-side project resolution
+  private _scheduleMatchProject(ticket: string): void {
+    if (this._matchTimer) clearTimeout(this._matchTimer);
+    if (!ticket.trim()) {
+      this._autoProject = '';
+      this._issueType = '';
+      this._matchingProject = false;
+      return;
+    }
+    // Jira key or URL: match immediately
+    // PR number: debounce 400ms (needs GitHub API call)
+    const isJira = /^[A-Z]+-\d/i.test(ticket) || /atlassian\.net\/browse\//i.test(ticket);
+    const delay = isJira ? 0 : 400;
+    this._matchingProject = true;
+    this._matchTimer = setTimeout(() => this._doMatchProject(ticket), delay);
+  }
+
+  private async _doMatchProject(ticket: string): Promise<void> {
+    try {
+      const res = await requestDispatchProjectMatch(ticket, this._flowType);
+      // Don't overwrite the user's input — server normalizes at dispatch time.
+      // Store normalized form only for internal matching (active-run conflict check).
+      if (res.normalizedTicket) {
+        this._normalizedTicket = res.normalizedTicket;
+      }
+      // Auto-detect flow type from issue type
+      if (res.issueType) {
+        this._issueType = res.issueType;
+        const flowState = deriveIssueTypeFlowState(
+          res.issueType,
+          this._flowType,
+          this._autoFlowType,
+        );
+        if (flowState) {
+          this._flowType = flowState.flowType;
+          this._autoFlowType = flowState.autoFlowType;
+          this._mode = flowState.mode;
+        }
+      }
+      if (res.project) {
+        this._selectProject(res.project, res.project);
+      } else {
+        this._autoProject = '';
+      }
+    } catch (err) {
+      // Ticket matching is an advisory wizard convenience. Dispatch itself still validates
+      // normalized refs server-side, so the safe recovery is to keep manual project selection.
+      console.warn('[dispatch-wizard] project match failed', err);
+      this._autoProject = '';
+    } finally {
+      this._matchingProject = false;
+      this._checkActiveRunConflict();
+    }
+  }
+
+  // Debounced lookup of prior runs sharing the typed ticket. Skips when the wizard is
+  // already in URL-prefilled comparison-lane mode (the operator came in via "Re-run
+  // alongside →" and the parent run is already locked in). Cleared on empty input.
+  private _schedulePriorRunsLookup(ticket: string): void {
+    if (this._priorRunsTimer) clearTimeout(this._priorRunsTimer);
+    if (!ticket.trim() || this._comparisonLane) {
+      this._priorRuns = [];
+      return;
+    }
+    // 350ms — slightly slower than _scheduleMatchProject's 0/400ms so the lookup
+    // fires after the project resolves and run.list response carries the canonical
+    // ticket form. Same-tab keystroke cadence makes 250-400ms feel snappy without
+    // hammering the gateway.
+    this._priorRunsTimer = setTimeout(() => this._doPriorRunsLookup(ticket), 350);
+  }
+
+  private async _doPriorRunsLookup(ticket: string): Promise<void> {
+    const gen = ++this._priorRunsGen;
+    const candidate = ticket.trim();
+    try {
+      // Dev harness seeds prior runs into shared state instead of a live gateway.
+      const runs = await lookupPriorRunsForDispatchWizard({
+        mockMode: this.mockMode,
+        stateRuns: getState().runs ?? [],
+        search: candidate,
+        normalizedTicket: this._normalizedTicket,
+      });
+      if (gen !== this._priorRunsGen) return; // superseded by newer keystroke
+      this._priorRuns = runs;
+    } catch (err) {
+      // Banner is advisory; failed lookup just hides it (dispatch still works).
+      console.warn('[dispatch-wizard] prior-runs lookup failed', err);
+      if (gen === this._priorRunsGen) this._priorRuns = [];
+    }
+  }
+
+  private _exitComparisonMode(): void {
+    const next = exitedComparisonModeState();
+    this._comparisonLane = next.comparisonLane;
+    this._comparisonFamilyId = next.comparisonFamilyId;
+    this._comparisonParentRunId = next.comparisonParentRunId;
+    this._comparisonVariant = next.comparisonVariant;
+    this._variantCollision = next.variantCollision;
+    this._variantInput = next.variantInput;
+    this._checkActiveRunConflict();
+    // Re-trigger prior-runs lookup so the banner re-appears for the same ticket.
+    if (this._ticketId) this._schedulePriorRunsLookup(this._ticketId);
+  }
+
+  private _forkFromPriorRun(run: Run): void {
+    const next = forkComparisonStateFromRun(
+      run,
+      { runner: this._runner, model: this._model },
+      COMPARISON_LANE_RUNNERS,
+    );
+    this._comparisonLane = next.comparisonLane;
+    this._comparisonFamilyId = next.comparisonFamilyId;
+    this._comparisonParentRunId = next.comparisonParentRunId;
+    this._comparisonVariant = next.comparisonVariant;
+    this._runner = next.runner;
+    this._model = next.model;
+    // Banner shouldn't keep showing once we've forked — suppress until ticket changes.
+    this._priorRuns = [];
+    this._recomputeVariantCollision();
+    this._checkActiveRunConflict();
+  }
+
+  private _recomputeVariantCollision(): void {
+    const next = deriveComparisonVariantState({
+      comparisonLane: this._comparisonLane,
+      comparisonFamilyId: this._comparisonFamilyId,
+      runs: getState().runs ?? [],
+      runner: this._runner,
+      model: this._model,
+      variantInput: this._variantInput,
+    });
+    this._variantCollision = next.variantCollision;
+    this._variantInput = next.variantInput;
+  }
+
+  private _variantInputBlocked(): boolean {
+    return comparisonVariantInputBlocked({
+      comparisonLane: this._comparisonLane,
+      comparisonFamilyId: this._comparisonFamilyId,
+      runs: getState().runs ?? [],
+      variantInput: this._variantInput,
+      variantCollision: this._variantCollision,
+    });
+  }
+
+  private _resolveVariantForDispatch(): string {
+    return resolveComparisonVariant(this._variantInput, this._runner, this._model);
+  }
+
+  private async _cancelConflictingRun(): Promise<void> {
+    if (!this._activeRunConflict) return;
+    try {
+      await gateway.request(Methods.RUN_CANCEL, { runId: this._activeRunConflict.id });
+      this._activeRunConflict = null;
+    } catch (err) {
+      this._error = err instanceof Error ? err.message : 'Cancel failed';
+    }
+  }
+
+  private _checkActiveRunConflict(): void {
+    this._activeRunConflict = findActiveRunConflict(getState().runs ?? [], {
+      ticket: this._ticketId,
+      normalizedTicket: this._normalizedTicket,
+      project: this._project,
+    });
+  }
+
+  private _parseHashParams() {
+    const prefill = parseDispatchWizardHash(location.hash, RUNNER_OPTIONS);
+    if (!prefill) return;
+    if (prefill.flowType) {
+      this._flowType = prefill.flowType;
+      if (prefill.ticketId) this._ticketId = prefill.ticketId;
+    }
+    if (prefill.publicationReviewLoops.length > 0) {
+      this._publicationReviewLoops = prefill.publicationReviewLoops;
+      this._nextPublicationReviewLoopId = prefill.publicationReviewLoops.length + 1;
+    }
+    if (prefill.startRefRedirectHash) {
+      this._error =
+        'Direct startRef dispatch moved to #evals so replay creates Reference/Candidate packages instead of a plain run.';
+      history.replaceState(null, '', prefill.startRefRedirectHash);
+    }
+    if (prefill.comparison) {
+      this._comparisonLane = true;
+      this._comparisonFamilyId = prefill.comparison.familyId;
+      this._comparisonVariant = prefill.comparison.variant;
+      this._comparisonParentRunId = prefill.comparison.parentRunId;
+      const runner = prefill.comparison.runner;
+      const model = prefill.comparison.model;
+      if (runner && COMPARISON_LANE_RUNNERS.has(runner)) {
+        this._runner = runner;
+        this._model = model || DEFAULT_MODEL[runner];
+      }
+      this._recomputeVariantCollision();
+    }
+    if (prefill.project) {
+      this._project = prefill.project;
+      const machinesActive = getState().globalFilters.machines;
+      if (shouldUsePrefillSlot(prefill.slot, machinesActive)) {
+        this._slotOverride = prefill.slot ?? '';
+      }
+      void this._fetchCandidates(prefill.project);
+      this._syncSelectedAppForProject(prefill.project);
+    }
+  }
+
+  private _syncPublicationReviewsToHash(): void {
+    const nextHash = syncPublicationReviewsHash(location.hash, this._publicationReviewLoops);
+    if (nextHash && location.hash !== nextHash) history.replaceState(null, '', nextHash);
+  }
+
+  private _setNudgeIntent(slotId: string, intent: 'nudge' | 'fresh'): void {
+    // Defensive: the click handler closes over the candidate list at render time, but
+    // `_fetchCandidates` can replace the array (machine filter flip, WS reconnect) before
+    // the click fires. A non-null assertion would crash with "Cannot read properties of
+    // undefined" — guard with a lookup + nullish check that mirrors `_selectedCandidate`.
+    const candidate = this._candidates.find((c) => c.slotId === slotId);
+    if (!candidate || !candidateDispatchable(candidate)) return;
+    this._nudgeIntents.set(slotId, intent);
+    this._nudgeIntentVersion++;
+    // Selecting an action implies selecting the row — the operator's click on Nudge/Fresh is
+    // also their pick of the slot. Without this, the intent flips on a row that's not the
+    // active one and the next Dispatch click ignores it.
+    this._slotOverride = slotId;
+  }
+
+  private _blockingState() {
+    const state = getState();
+    return deriveDispatchWizardBlockingState({
+      flowType: this._flowType,
+      ticketId: this._ticketId,
+      project: this._project,
+      matchingProject: this._matchingProject,
+      slotOverride: this._slotOverride,
+      candidates: this._candidates,
+      machineFilters: state.globalFilters.machines,
+      fleetSlots: state.fleet?.slots ?? [],
+      dispatching: this._dispatching,
+      connectionStale: this._connectionStale,
+      hydrating: this._hydrating,
+      bootstrapFailed: this._bootstrapFailed,
+      loadingCandidates: this._loadingCandidates,
+      candidateRefreshFailed: this._candidateRefreshFailed,
+      activeRunConflict: !!this._activeRunConflict,
+      variantInputBlocked: this._variantInputBlocked(),
+    });
+  }
+
+  private _dispatchPayloadDraft() {
+    return buildDispatchWizardPayloadDraft({
+      flowType: this._flowType,
+      project: this._project,
+      ticketId: this._ticketId,
+      slotOverride: this._slotOverride,
+      allowedSlots: this._blockingState().allowedSlots,
+      branch: this._resolveTargetBranch(getState().prs),
+      model: this._model,
+      runner: this._runner,
+      effort: this._effort,
+      app: selectedDispatchApp(projectApps(this._projectConfigs, this._project), this._app),
+      taskTemplate: selectedTaskTemplate(this._templateOptions, this._selectedTaskTemplateFileName),
+      skipPrepare: this._skipPrepare,
+      nudgeIntent: selectedNudgeIntent({
+        candidates: this._candidates,
+        slotOverride: this._slotOverride,
+        intents: this._nudgeIntents,
+      }),
+      mode: this._mode,
+      devInteractiveProfile: this._devInteractiveProfile,
+      reviewTier: this._reviewTier,
+      ...buildPublicationReviewGateParams(
+        this._flowType,
+        this._runner,
+        this._publicationReviewLoops,
+        RUNNER_OPTIONS,
+        this._mode,
+      ),
+      comparison: buildComparisonRunParams({
+        comparisonLane: this._comparisonLane,
+        comparisonFamilyId: this._comparisonFamilyId,
+        comparisonParentRunId: this._comparisonParentRunId,
+        variant: this._resolveVariantForDispatch(),
+      }),
+    });
+  }
+
+  private async _dispatch() {
+    if (this._blockingState().dispatchBlocked) return;
+    this._dispatching = true;
+    this._error = '';
+
+    try {
+      const payloadDraft = this._dispatchPayloadDraft();
+      if (!payloadDraft) return;
+      const runId = await dispatchRunCreateFromDraft(payloadDraft);
+      location.hash = `run/${runId}`;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Dispatch failed';
+      this._error = msg;
+    } finally {
+      this._dispatching = false;
+    }
+  }
+
+  private async _addToQueue() {
+    if (this._blockingState().queueBlocked) return;
+    try {
+      const payloadDraft = this._dispatchPayloadDraft();
+      if (!payloadDraft) return;
+      await addDispatchQueueItemFromDraft(payloadDraft);
+      this._ticketId = '';
+      this._normalizedTicket = '';
+      this._error = '';
+    } catch (err: unknown) {
+      this._error = err instanceof Error ? err.message : 'Queue add failed';
+    }
+  }
+
+  private _selectFlowType(flowType: FlowType): void {
+    this._flowType = flowType;
+    this._autoFlowType = false;
+    this._mode = modeForFlow(flowType);
+    void this._fetchTemplateOptions();
+  }
+
+  private _setRunner(runner: string) {
+    if (runner === this._runner) return;
+    this._runner = runner;
+    this._model = DEFAULT_MODEL[runner] ?? '';
+    this._effort = '';
+    this._recomputeVariantCollision();
+  }
+
+  private _setModel(model: string) {
+    if (model === this._model) return;
+    this._model = model;
+    this._recomputeVariantCollision();
+  }
+
+  private _addPublicationReviewLoop(
+    runner: ReviewRunnerId = defaultExtraReviewRunner(this._runner, RUNNER_OPTIONS),
+  ): void {
+    if (this._publicationReviewLoops.length >= 5) return;
+    this._publicationReviewLoops = [
+      ...this._publicationReviewLoops,
+      { id: this._nextPublicationReviewLoopId++, runner },
+    ];
+    this._syncPublicationReviewsToHash();
+  }
+
+  private _removePublicationReviewLoop(id: number): void {
+    this._publicationReviewLoops = this._publicationReviewLoops.filter((loop) => loop.id !== id);
+    this._syncPublicationReviewsToHash();
+  }
+
+  private _setPublicationReviewRunner(id: number, runner: ReviewRunnerId): void {
+    this._publicationReviewLoops = this._publicationReviewLoops.map((loop) =>
+      loop.id === id ? { ...loop, runner } : loop,
+    );
+    this._syncPublicationReviewsToHash();
+  }
+
+  private _setPublicationReviewDepth(id: number, validationDepth: ReviewValidationDepth): void {
+    this._publicationReviewLoops = this._publicationReviewLoops.map((loop) =>
+      loop.id === id ? { ...loop, validationDepth } : loop,
+    );
+    this._syncPublicationReviewsToHash();
+  }
+
+  static styles = dispatchWizardStyles;
+
+  render() {
+    const blockers = this._blockingState();
+    return renderDispatchWizardView({
+      hydrating: this._hydrating,
+      bootstrapFailed: this._bootstrapFailed,
+      connectionStale: this._connectionStale,
+      availableProjects: this._availableProjects,
+      ticketId: this._ticketId,
+      matchingProject: this._matchingProject,
+      issueType: this._issueType,
+      autoFlowType: this._autoFlowType,
+      flowType: this._flowType,
+      autoProject: this._autoProject,
+      project: this._project,
+      selectedSlotOverride: this._slotOverride,
+      projectApps: projectApps(this._projectConfigs, this._project),
+      selectedDispatchApp: selectedDispatchApp(
+        projectApps(this._projectConfigs, this._project),
+        this._app,
+      ),
+      templateOptions: this._templateOptions,
+      templateOptionsLoading: this._templateOptionsLoading,
+      templateOptionsError: this._templateOptionsError,
+      selectedTaskTemplateFileName: this._selectedTaskTemplateFileName,
+      runner: this._runner,
+      model: this._model,
+      effort: this._effort,
+      reviewTier: this._reviewTier,
+      skipPrepare: this._skipPrepare,
+      mode: this._mode,
+      devInteractiveProfile: this._devInteractiveProfile,
+      comparisonLane: this._comparisonLane,
+      comparisonFamilyId: this._comparisonFamilyId,
+      comparisonParentRunId: this._comparisonParentRunId,
+      variantPreview: this._resolveVariantForDispatch(),
+      priorRuns: this._priorRuns,
+      variantCollision: this._variantCollision,
+      variantInput: this._variantInput,
+      publicationReviewsEnabled: publicationReviewsEnabled(this._flowType, this._mode),
+      publicationReviewLoops: this._publicationReviewLoops,
+      publicationReviewPlan: buildPublicationReviewPlan(
+        this._flowType,
+        this._runner,
+        this._publicationReviewLoops,
+        RUNNER_OPTIONS,
+        this._mode,
+      ),
+      runnerOptions: RUNNER_OPTIONS,
+      loadingCandidates: this._loadingCandidates,
+      candidates: this._candidates,
+      dispatchableCandidates: dispatchableCandidates(this._candidates),
+      nudgeIntents: this._nudgeIntents,
+      nudgeIntentVersion: this._nudgeIntentVersion,
+      sameTaskSlot: findSameTaskSlot(this._allProjectSlots, this._ticketId),
+      dispatching: this._dispatching,
+      activeRunConflict: this._activeRunConflict,
+      error: this._error,
+      candidateRefreshFailed: this._candidateRefreshFailed,
+      queueItems: this._queueItems,
+      appLabel: (app) => appLabel(app),
+      setTicket: (ticketId) => this._setTicket(ticketId),
+      submitTicket: () => this._dispatch(),
+      selectFlowType: (flowType) => this._selectFlowType(flowType),
+      selectProject: (project) => this._selectProject(project),
+      setApp: (app) => {
+        this._app = app;
+      },
+      setTaskTemplateFileName: (fileName) => {
+        this._selectedTaskTemplateFileName = fileName;
+      },
+      setRunner: (runner) => this._setRunner(runner),
+      setModel: (model) => this._setModel(model),
+      setEffort: (effort) => {
+        this._effort = effort;
+      },
+      setReviewTier: (reviewTier) => {
+        this._reviewTier = reviewTier;
+      },
+      setSkipPrepare: (skipPrepare) => {
+        this._skipPrepare = skipPrepare;
+      },
+      setMode: (mode) => {
+        this._mode = mode;
+      },
+      setDevInteractiveProfile: (profile) => {
+        this._devInteractiveProfile = profile;
+      },
+      openEvals: () => {
+        location.hash = 'evals';
+      },
+      forkFromPriorRun: (run) => this._forkFromPriorRun(run),
+      exitComparisonMode: () => this._exitComparisonMode(),
+      setVariantInput: (variantInput) => {
+        this._variantInput = variantInput;
+      },
+      setPublicationReviewRunner: (id, runner) => this._setPublicationReviewRunner(id, runner),
+      setPublicationReviewDepth: (id, validationDepth) =>
+        this._setPublicationReviewDepth(id, validationDepth),
+      removePublicationReviewLoop: (id) => this._removePublicationReviewLoop(id),
+      addWorkerReviewLoop: () =>
+        this._addPublicationReviewLoop(
+          (RUNNER_OPTIONS.includes(this._runner as ReviewRunnerId)
+            ? this._runner
+            : 'claude') as ReviewRunnerId,
+        ),
+      addExternalReviewLoop: () => this._addPublicationReviewLoop(),
+      candidateDispatchable,
+      slotSummaryLabel: (slotId) =>
+        slotSummaryLabel({ slotId, slots: this._allProjectSlots, runs: getState().runs ?? [] }),
+      selectSlot: (slotId) => {
+        this._slotOverride = slotId;
+      },
+      setNudgeIntent: (slotId, intent) => this._setNudgeIntent(slotId, intent),
+      dispatchBlocked: () => blockers.dispatchBlocked,
+      dispatchBlockedReason: () => blockers.dispatchBlockedReason,
+      queueBlocked: () => blockers.queueBlocked,
+      queueBlockedReason: () => blockers.queueBlockedReason,
+      canDispatch: () => blockers.canDispatch,
+      validationHint: () => blockers.validationHint,
+      dispatch: () => this._dispatch(),
+      addToQueue: () => this._addToQueue(),
+      cancelConflictingRun: () => this._cancelConflictingRun(),
+    });
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'dispatch-wizard': DispatchWizard;
+  }
+}

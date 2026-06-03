@@ -1,0 +1,50 @@
+{
+  "name": "farmslot",
+  "version": "0.1.0",
+  "author": "Arthur Breton",
+  "homepage": "https://farmslot.io",
+  "private": true,
+  "packageManager": "yarn@4.5.3",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/*",
+    "apps/command-center/ui"
+  ],
+  "scripts": {
+    "format": "yarn --cwd apps/command-center format",
+    "format:check": "yarn --cwd apps/command-center format:check",
+    "lint": "node scripts/quality/check-eslint-ratchet.mjs --strict-stale",
+    "lint:fix": "node scripts/quality/check-eslint-ratchet.mjs --fix --strict-stale",
+    "typecheck": "yarn typecheck:command-center && yarn typecheck:companion",
+    "test:protocol": "yarn --cwd apps/command-center test:protocol",
+    "test:recipe-harness": "yarn --cwd apps/command-center test:recipe-harness && yarn test:gateway-root",
+    "test:gateway-root": "yarn --cwd apps/command-center test:gateway-root",
+    "quality": "node scripts/quality/run-quality.mjs",
+    "quality:large-files": "node scripts/quality/check-large-files.mjs",
+    "typecheck:command-center": "yarn --cwd apps/command-center typecheck",
+    "typecheck:companion": "yarn --cwd apps/companion typecheck",
+    "lint:type-escapes": "yarn --cwd apps/command-center lint:type-escapes",
+    "test:slot-view": "yarn --cwd apps/command-center test:slot-view",
+    "test:ui": "yarn --cwd apps/command-center test:ui",
+    "docs:dev": "yarn workspace @farmslot/docs start",
+    "docs:build": "yarn workspace @farmslot/docs build",
+    "test:recipe-operational-gates": "yarn --cwd apps/command-center test:recipe-operational-gates",
+    "docs:deploy": "yarn workspace @farmslot/docs deploy",
+    "packages:publish:check": "node scripts/quality/check-farmslot-package-readiness.mjs --pack",
+    "packages:publish:check:strict": "node scripts/quality/check-farmslot-package-readiness.mjs --pack --publish",
+    "sonar:issues": "node scripts/quality/fetch-sonar-issues.mjs --format both",
+    "sonar:issues:json": "node scripts/quality/fetch-sonar-issues.mjs --format json",
+    "sonar:scan": "node scripts/quality/run-sonar-scan.mjs",
+    "quality:structure": "node scripts/quality/check-workspace-structure.mjs",
+    "quality:imports": "node scripts/quality/check-import-boundaries.mjs",
+    "quality:workspaces": "node scripts/quality/run-workspace-quality.mjs",
+    "quality:changelogs": "node scripts/quality/check-workspace-changelogs.mjs"
+  },
+  "license": "MIT",
+  "resolutions": {
+    "dompurify": "3.4.7",
+    "serialize-javascript": "7.0.5",
+    "uuid": "11.1.1"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "runStatus": "pass",
+  "provenance": {
+    "runner": {
+      "name": "farmslot-provenance-fixture",
+      "source": "docs/examples/recipes/farmslot/artifacts/provenance-smoke",
+      "git_ref": "fixture"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "summary.json",
+      "type": "summary",
+      "label": "Run summary",
+      "mimeType": "application/json"
+    },
+    {
+      "path": "trace.json",
+      "type": "trace",
+      "label": "Execution trace",
+      "mimeType": "application/json"
+    },
+    {
+      "path": "recipe.json",
+      "type": "recipe",
+      "label": "Resolved recipe",
+      "mimeType": "application/json"
+    }
+  ]
+}

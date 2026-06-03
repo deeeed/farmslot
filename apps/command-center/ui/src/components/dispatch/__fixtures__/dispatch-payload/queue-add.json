@@ -1,0 +1,15 @@
+{
+  "flowType": "review-pr",
+  "project": "example-browser",
+  "ticketOrPr": "example-org/example-browser#456",
+  "slotId": "runner-a-example-browser-2",
+  "allowedSlots": ["runner-a-example-browser-2"],
+  "branch": "feature/pr-456",
+  "model": "sonnet",
+  "runner": "claude",
+  "mode": "interactive",
+  "lane": "comparison",
+  "familyId": "family-456",
+  "variant": "claude-sonnet",
+  "parentRunId": "run-456"
+}

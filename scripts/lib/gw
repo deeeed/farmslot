@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# gw — delegates to farmslot rpc (backward compat shim)
+# Usage: gw <method> [json-params]
+#        gw --stream <method> [json-params]
+FARMSLOT="$(cd "$(dirname "$0")/../../packages/cli" && pwd)/bin/farmslot.mjs"
+exec "$FARMSLOT" rpc "$@"

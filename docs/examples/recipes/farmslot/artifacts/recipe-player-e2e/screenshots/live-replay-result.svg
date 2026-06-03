@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <rect width="1280" height="720" fill="#0a0a0f"/>
+  <rect x="24" y="24" width="1232" height="672" rx="18" fill="#11111a" stroke="#f59e0b" stroke-width="3"/>
+  <text x="48" y="64" fill="#f8fafc" font-family="SFMono-Regular, Menlo, monospace" font-size="22" font-weight="700">Live recipe player replay result</text>
+
+  <rect x="48" y="96" width="410" height="548" rx="14" fill="#05050a" stroke="#3f3f46"/>
+  <text x="74" y="132" fill="#fbbf24" font-family="SFMono-Regular, Menlo, monospace" font-size="15" font-weight="700">Streaming panel · live</text>
+  <rect x="74" y="160" width="358" height="392" rx="10" fill="#18181b" stroke="#52525b"/>
+  <text x="104" y="222" fill="#f8fafc" font-family="SFMono-Regular, Menlo, monospace" font-size="22">Warm slot UI</text>
+  <text x="104" y="262" fill="#d4d4d8" font-family="SFMono-Regular, Menlo, monospace" font-size="14">human-readable 2s replay steps</text>
+  <rect x="104" y="318" width="120" height="42" rx="10" fill="#4f46e5"/>
+  <text x="132" y="345" fill="#fff" font-family="SFMono-Regular, Menlo, monospace" font-size="14">Press</text>
+  <rect x="242" y="318" width="150" height="42" rx="10" fill="#0369a1"/>
+  <text x="270" y="345" fill="#e0f2fe" font-family="SFMono-Regular, Menlo, monospace" font-size="14">Wait for UI</text>
+  <text x="74" y="590" fill="#a1a1aa" font-family="SFMono-Regular, Menlo, monospace" font-size="12">No modal covers the stream</text>
+
+  <rect x="486" y="96" width="350" height="548" rx="14" fill="#171717" stroke="#3f3f46"/>
+  <text x="512" y="132" fill="#f8fafc" font-family="SFMono-Regular, Menlo, monospace" font-size="15" font-weight="700">Runner logs</text>
+  <text x="512" y="176" fill="#86efac" font-family="SFMono-Regular, Menlo, monospace" font-size="13">PASS open-slot-recipe-panel</text>
+  <text x="512" y="208" fill="#86efac" font-family="SFMono-Regular, Menlo, monospace" font-size="13">PASS start-live-replay</text>
+  <text x="512" y="240" fill="#86efac" font-family="SFMono-Regular, Menlo, monospace" font-size="13">PASS watch-stream-and-logs</text>
+  <text x="512" y="272" fill="#86efac" font-family="SFMono-Regular, Menlo, monospace" font-size="13">PASS open-new-artifacts</text>
+  <rect x="512" y="316" width="280" height="48" rx="10" fill="#052e16" stroke="#22c55e"/>
+  <text x="536" y="346" fill="#bbf7d0" font-family="SFMono-Regular, Menlo, monospace" font-size="14">recipe-complete · pass</text>
+
+  <rect x="864" y="96" width="344" height="548" rx="14" fill="#111827" stroke="#374151"/>
+  <text x="890" y="132" fill="#f8fafc" font-family="SFMono-Regular, Menlo, monospace" font-size="15" font-weight="700">Generated artifacts</text>
+  <rect x="890" y="166" width="270" height="52" rx="10" fill="#1f2937" stroke="#64748b"/>
+  <text x="910" y="199" fill="#e5e7eb" font-family="SFMono-Regular, Menlo, monospace" font-size="13">summary.json · pass</text>
+  <rect x="890" y="238" width="270" height="52" rx="10" fill="#1f2937" stroke="#64748b"/>
+  <text x="910" y="271" fill="#e5e7eb" font-family="SFMono-Regular, Menlo, monospace" font-size="13">trace.json · node timings</text>
+  <rect x="890" y="310" width="270" height="52" rx="10" fill="#1f2937" stroke="#64748b"/>
+  <text x="910" y="343" fill="#e5e7eb" font-family="SFMono-Regular, Menlo, monospace" font-size="13">artifact-manifest.json</text>
+  <rect x="890" y="390" width="270" height="140" rx="12" fill="#172554" stroke="#3b82f6"/>
+  <text x="912" y="456" fill="#bfdbfe" font-family="SFMono-Regular, Menlo, monospace" font-size="15">Screenshot preview</text>
+  <rect x="890" y="556" width="120" height="34" rx="8" fill="#f59e0b"/>
+  <text x="920" y="578" fill="#1f1300" font-family="SFMono-Regular, Menlo, monospace" font-size="13">Open</text>
+</svg>

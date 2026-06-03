@@ -1,0 +1,1 @@
+Initial Farmslot mobile beta with gateway profiles, fleet monitoring, recipe evidence, worker terminals, pull request dashboards, and Expo Updates support.

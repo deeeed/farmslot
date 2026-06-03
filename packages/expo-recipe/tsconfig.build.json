@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "paths": {
+      "@farmslot/protocol": ["../protocol/dist/index.d.ts"],
+      "@farmslot/protocol/*": ["../protocol/dist/*"],
+      "@farmslot/recipe-harness": ["../recipe-harness/dist/index.d.ts"],
+      "@farmslot/recipe-harness/*": ["../recipe-harness/dist/*"]
+    }
+  },
+  "exclude": ["src/**/*.test.ts"]
+}

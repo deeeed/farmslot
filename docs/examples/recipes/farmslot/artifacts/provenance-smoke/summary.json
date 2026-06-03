@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "startedAt": "2026-05-30T15:00:00Z",
+  "completedAt": "2026-05-30T15:00:01Z",
+  "durationMs": 1000,
+  "passed": 1,
+  "failed": 0,
+  "runner": {
+    "name": "farmslot-provenance-fixture",
+    "source": "docs/examples/recipes/farmslot/artifacts/provenance-smoke",
+    "git_ref": "fixture"
+  }
+}

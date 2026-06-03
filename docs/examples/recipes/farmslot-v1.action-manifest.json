@@ -1,0 +1,175 @@
+{
+  "runner_protocol_version": 1,
+  "action_registry_version": 1,
+  "supported_official_actions": [
+    "command",
+    "assert_json",
+    "assert_output",
+    "state_read",
+    "watch_logs",
+    "index_artifacts",
+    "ui.navigate",
+    "ui.press",
+    "ui.set_input",
+    "ui.wait_for",
+    "ui.screenshot",
+    "cdp.target",
+    "end"
+  ],
+  "action_metadata": {
+    "ui.navigate": {
+      "description": "Navigate Command Center, Mobile Companion, or browser surfaces by route/hash/URL.",
+      "examples": [
+        {
+          "node": {
+            "action": "ui.navigate",
+            "target": "#slot/{{slot_id}}?reviewDrawer=recipe",
+            "next": "wait-for-panel",
+            "intent": "Navigate Command Center, Mobile Companion, or browser surfaces by route/hash/URL"
+          }
+        }
+      ]
+    },
+    "ui.wait_for": {
+      "description": "Wait for selector, text, event, or UI state in Farmslot review surfaces.",
+      "examples": [
+        {
+          "node": {
+            "action": "ui.wait_for",
+            "selector": "recipe-graph",
+            "text_contains": [
+              "VALIDATE"
+            ],
+            "timeout_ms": 10000,
+            "next": "capture",
+            "intent": "Wait for selector, text, event, or UI state in Farmslot review surfaces"
+          }
+        }
+      ]
+    },
+    "ui.set_input": {
+      "description": "Set text through the real UI input path for Farmslot UI fixture surfaces.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "next": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "description": "Fill a test-id backed field in a UI fixture.",
+          "node": {
+            "action": "ui.set_input",
+            "test_id": "shipping-address",
+            "value": "1 Recipe Protocol Way",
+            "next": "submit-order",
+            "intent": "Fill a test-id backed field in a UI fixture"
+          }
+        }
+      ]
+    }
+  },
+  "pre_conditions": [
+    {
+      "id": "service.listening",
+      "description": "Configured service is listening.",
+      "failure_kind": "environment"
+    },
+    {
+      "id": "runtime.browser.open",
+      "description": "Browser session is open.",
+      "failure_kind": "setup"
+    },
+    {
+      "id": "fixture.user.signed_in",
+      "description": "Test user is signed in.",
+      "failure_kind": "fixture"
+    },
+    {
+      "id": "command_center.dev_server.ready",
+      "description": "Command Center dev server is ready.",
+      "failure_kind": "environment"
+    },
+    {
+      "id": "gateway.recipe_run_artifacts.available",
+      "description": "Gateway has recipe-run artifacts available.",
+      "failure_kind": "fixture"
+    },
+    {
+      "id": "repo.farmslot.ready",
+      "description": "Farmslot repo dependencies are installed.",
+      "failure_kind": "environment"
+    },
+    {
+      "id": "gateway.reachable",
+      "description": "Gateway is reachable.",
+      "failure_kind": "environment"
+    },
+    {
+      "id": "mobile_companion.dev_build.installed",
+      "description": "Mobile Companion dev build is installed.",
+      "failure_kind": "setup"
+    },
+    {
+      "id": "gateway.configured",
+      "description": "Gateway URL is configured.",
+      "failure_kind": "setup"
+    },
+    {
+      "id": "mobile_companion.artifacts.reachable",
+      "description": "Run artifacts are reachable from the device or simulator.",
+      "failure_kind": "environment"
+    },
+    {
+      "id": "slot.warm.available",
+      "description": "A warm Farmslot slot is available.",
+      "failure_kind": "environment"
+    },
+    {
+      "id": "project.recipe_run.ui_supported",
+      "description": "Project recipe_run hook supports UI recipe replay.",
+      "failure_kind": "setup"
+    },
+    {
+      "id": "stream_panel.visible",
+      "description": "The stream panel is visible.",
+      "failure_kind": "setup"
+    }
+  ],
+  "native_bindings": [
+    {
+      "action": "command",
+      "implementation": "farmslot/local-command-runner"
+    },
+    {
+      "action": "ui.navigate",
+      "implementation": "farmslot/apps/command-center/cdp-navigate"
+    },
+    {
+      "action": "ui.wait_for",
+      "implementation": "farmslot/apps/command-center/ui-wait"
+    },
+    {
+      "action": "ui.set_input",
+      "implementation": "farmslot/apps/command-center/ui-set-input"
+    }
+  ]
+}

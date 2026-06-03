@@ -1,0 +1,172 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import type { Run, SlotStatus } from '@farmslot/protocol';
+
+import {
+  adjacentSlotId,
+  slotSwitcherEntries,
+  slotSwitcherSignature,
+  slotViewReadyGateDecision,
+} from './slot-view-model.js';
+
+function makeSlot(slot: string, overrides: Partial<SlotStatus> = {}): SlotStatus {
+  return {
+    slot,
+    machine: 'runner-local',
+    platform: 'darwin',
+    project: 'farmslot',
+    health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: 'OK' },
+    branch: 'main',
+    agent: 'idle',
+    enabled: true,
+    dispatchable: true,
+    lifecycle: 'ready',
+    phase: null,
+    warm: true,
+    taskId: null,
+    taskFile: null,
+    dispatchedAt: null,
+    completedAt: null,
+    runner: null,
+    model: null,
+    deviceName: null,
+    taskPhase: null,
+    taskStepProgress: null,
+    ...overrides,
+  };
+}
+
+test('slotSwitcherEntries keeps fleet order and includes operator context in labels', () => {
+  const entries = slotSwitcherEntries(
+    [
+      makeSlot('runner-local-1', {
+        lifecycle: 'busy',
+        project: 'mobile',
+        currentRunId: 'runabcdef123',
+      }),
+      makeSlot('runner-local-2', {
+        lifecycle: 'manual',
+        project: 'extension',
+        branch: 'feature/x',
+      }),
+    ],
+    'runner-local-1',
+  );
+
+  assert.deepEqual(
+    entries.map((entry) => entry.slot),
+    ['runner-local-1', 'runner-local-2'],
+  );
+  assert.equal(entries[0]?.label, 'runner-local-1 · busy · mobile · runabcde');
+  assert.equal(entries[1]?.title, 'runner-local · darwin · feature/x');
+});
+
+test('slotSwitcherEntries includes phase when present', () => {
+  const entries = slotSwitcherEntries(
+    [makeSlot('runner-local-1', { lifecycle: 'busy', phase: 'preparing' })],
+    'runner-local-1',
+  );
+
+  assert.equal(entries[0]?.label, 'runner-local-1 · busy (preparing) · farmslot');
+});
+
+test('slotSwitcherSignature changes only for switcher-visible slot fields', () => {
+  const base = [makeSlot('runner-local-1', { lifecycle: 'busy', phase: 'preparing' })];
+  const changedBranch = [
+    makeSlot('runner-local-1', { lifecycle: 'busy', phase: 'preparing', branch: 'x' }),
+  ];
+  const changedPhase = [makeSlot('runner-local-1', { lifecycle: 'busy', phase: 'working' })];
+  const changedProject = [
+    makeSlot('runner-local-1', { lifecycle: 'busy', phase: 'preparing', project: 'mobile' }),
+  ];
+  const changedRun = [
+    makeSlot('runner-local-1', {
+      lifecycle: 'busy',
+      phase: 'preparing',
+      currentRunId: 'runabcdef123',
+    }),
+  ];
+  const ignoredHealthChange = [
+    makeSlot('runner-local-1', {
+      lifecycle: 'busy',
+      phase: 'preparing',
+      health: { ssh: 'LOCAL', device: '-', devserver: 'OFF', cdp: '-', fixtures: 'OK' },
+    }),
+  ];
+
+  assert.notEqual(slotSwitcherSignature(base), slotSwitcherSignature(changedBranch));
+  assert.notEqual(slotSwitcherSignature(base), slotSwitcherSignature(changedPhase));
+  assert.notEqual(slotSwitcherSignature(base), slotSwitcherSignature(changedProject));
+  assert.notEqual(slotSwitcherSignature(base), slotSwitcherSignature(changedRun));
+  assert.equal(slotSwitcherSignature(base), slotSwitcherSignature(ignoredHealthChange));
+});
+
+test('slotSwitcherEntries preserves direct navigation to a slot missing from cached fleet', () => {
+  const entries = slotSwitcherEntries([makeSlot('known-slot')], 'new-slot');
+
+  assert.deepEqual(
+    entries.map((entry) => entry.slot),
+    ['new-slot', 'known-slot'],
+  );
+  assert.equal(entries[0]?.label, 'new-slot · current');
+});
+
+test('adjacentSlotId wraps around and tolerates a missing current slot', () => {
+  const entries = [{ slot: 'a' }, { slot: 'b' }, { slot: 'c' }];
+
+  assert.equal(adjacentSlotId(entries, 'b', 1), 'c');
+  assert.equal(adjacentSlotId(entries, 'b', -1), 'a');
+  assert.equal(adjacentSlotId(entries, 'c', 1), 'a');
+  assert.equal(adjacentSlotId(entries, 'missing', 1), 'a');
+  assert.equal(adjacentSlotId(entries, 'missing', -1), 'c');
+  assert.equal(adjacentSlotId([{ slot: 'a' }], 'a', 1), 'a');
+  assert.equal(adjacentSlotId([], 'missing', 1), '');
+});
+
+test('slotViewReadyGateDecision prefers pending ready decisions then newest resolved ready decision', () => {
+  const readyPayload: Run['decisions'][number]['payload'] = {
+    kind: 'ready',
+    prNumber: null,
+    repo: null,
+    diffStat: { files: 0, additions: 0, deletions: 0 },
+    workerReport: '',
+    branch: 'main',
+  };
+  const oldResolved: Run['decisions'][number] = {
+    id: 'old-ready',
+    type: 'engine_ready',
+    title: 'Ready',
+    description: 'Old ready gate',
+    actions: [],
+    createdAt: '2026-05-14T00:00:00.000Z',
+    resolvedAt: '2026-05-14T00:01:00.000Z',
+    payload: readyPayload,
+  };
+  const newestResolved: Run['decisions'][number] = {
+    ...oldResolved,
+    id: 'new-ready',
+    resolvedAt: '2026-05-14T00:02:00.000Z',
+  };
+  const pending: Run['decisions'][number] = {
+    ...oldResolved,
+    id: 'pending-ready',
+    resolvedAt: undefined,
+  };
+
+  assert.equal(
+    slotViewReadyGateDecision({ decisions: [oldResolved, newestResolved] }),
+    newestResolved,
+  );
+  assert.equal(
+    slotViewReadyGateDecision({ decisions: [oldResolved, pending, newestResolved] }),
+    pending,
+  );
+  assert.equal(
+    slotViewReadyGateDecision({
+      decisions: [{ ...oldResolved, id: 'other', payload: undefined }],
+    }),
+    null,
+  );
+  assert.equal(slotViewReadyGateDecision(null), null);
+});

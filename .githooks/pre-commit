@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -eu
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+[ -f "$repo_root/.git/MERGE_HEAD" ] && exit 0
+node scripts/quality/precommit-quality.mjs

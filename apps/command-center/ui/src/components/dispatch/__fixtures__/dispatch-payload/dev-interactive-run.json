@@ -1,0 +1,15 @@
+{
+  "flowType": "dev",
+  "project": "extension",
+  "ticketOrPr": "Investigate flaky onboarding spec",
+  "model": "gpt-5.5",
+  "runner": "codex",
+  "effort": "high",
+  "mode": "interactive",
+  "devInteractiveProfile": "reviewed",
+  "initialContext": "Investigate flaky onboarding spec",
+  "taskTemplate": {
+    "fileName": "dev-interactive.md",
+    "variant": "deep-dive"
+  }
+}

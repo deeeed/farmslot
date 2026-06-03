@@ -1,0 +1,80 @@
+{
+  "cli": {
+    "version": ">= 18.13.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "development",
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "buildConfiguration": "Debug"
+      },
+      "env": {
+        "APP_VARIANT": "development"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "env": {
+        "APP_VARIANT": "preview",
+        "YARN_ENABLE_GLOBAL_CACHE": "false",
+        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false"
+      }
+    },
+    "preview_apk": {
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_VARIANT": "preview",
+        "YARN_ENABLE_GLOBAL_CACHE": "false",
+        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true,
+      "env": {
+        "APP_VARIANT": "production",
+        "YARN_ENABLE_GLOBAL_CACHE": "false",
+        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false"
+      }
+    },
+    "production_apk": {
+      "channel": "production",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_VARIANT": "production",
+        "YARN_ENABLE_GLOBAL_CACHE": "false",
+        "YARN_ENABLE_IMMUTABLE_INSTALLS": "false"
+      }
+    }
+  },
+  "submit": {
+    "preview": {
+      "ios": {},
+      "android": {
+        "track": "internal"
+      }
+    },
+    "production": {
+      "ios": {
+        "ascAppId": "6774911412"
+      },
+      "android": {
+        "track": "production"
+      }
+    }
+  }
+}

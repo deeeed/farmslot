@@ -1,0 +1,117 @@
+import type {
+  ConfigProjectsResult,
+  DispatchCandidatesResult,
+  FlowType,
+  ProjectConfig,
+  Run,
+  RunListParams,
+  RunListResult,
+  WorkerTemplateOption,
+} from '@farmslot/protocol';
+import { Methods } from '@farmslot/protocol';
+
+import { gateway } from '../../gateway-client.js';
+
+import { filterRunsByExactTicket } from './dispatch-wizard-helpers.js';
+
+export async function requestProjectConfigs(): Promise<ProjectConfig[]> {
+  const res = await gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
+  return res.projects;
+}
+
+export async function requestTemplateOptions(
+  project: string,
+  flowType: FlowType,
+): Promise<WorkerTemplateOption[]> {
+  const res = await gateway.request<{ options: WorkerTemplateOption[] }>(
+    Methods.CONFIG_TEMPLATE_OPTIONS,
+    { project, flowType },
+  );
+  return res.options;
+}
+
+export interface DispatchWizardCandidatesRequest {
+  project: string;
+  flowType: FlowType | undefined;
+  machines: readonly string[];
+  targetBranch: string | undefined;
+  ticketOrPr: string | undefined;
+  comparison:
+    | {
+        familyId: string;
+        variant: string;
+      }
+    | undefined;
+  candidatesEverLoaded: boolean;
+  mockMode: boolean;
+  mockCandidates: DispatchCandidatesResult['candidates'] | null;
+}
+
+export async function requestDispatchWizardCandidates(
+  input: DispatchWizardCandidatesRequest,
+): Promise<DispatchCandidatesResult> {
+  if (input.mockMode) {
+    return { candidates: input.mockCandidates ?? [] };
+  }
+  return gateway.request<DispatchCandidatesResult>(
+    Methods.DISPATCH_CANDIDATES,
+    {
+      project: input.project,
+      flowType: input.flowType,
+      machines: input.machines.length > 0 ? [...input.machines] : undefined,
+      targetBranch: input.targetBranch,
+      // Forward PR / lane context so the gateway can populate `nudgeEligible` + `nudgeMeta`
+      // on busy slots already loaded on this PR's branch. Without ticketOrPr the server
+      // can't run the branch/PR-number match in collectBranchAffinityNudgeCandidates and
+      // the wizard sees free-slot rows only — no REUSE WORKER affordance.
+      ticketOrPr: input.ticketOrPr,
+      ...(input.comparison
+        ? {
+            lane: 'comparison' as const,
+            familyId: input.comparison.familyId,
+            variant: input.comparison.variant,
+          }
+        : {}),
+    },
+    input.candidatesEverLoaded ? undefined : 60_000,
+  );
+}
+
+export interface DispatchProjectMatchResult {
+  project: string | null;
+  repo: string | null;
+  normalizedTicket?: string;
+  issueType?: string;
+}
+
+export function requestDispatchProjectMatch(
+  ticket: string,
+  flowType: FlowType | null,
+): Promise<DispatchProjectMatchResult> {
+  return gateway.request<DispatchProjectMatchResult>(Methods.DISPATCH_MATCH_PROJECT, {
+    ticketOrPr: ticket,
+    flowType,
+  });
+}
+
+export interface PriorRunsLookupRequest {
+  mockMode: boolean;
+  stateRuns: readonly Run[];
+  search: string;
+  normalizedTicket: string;
+}
+
+export async function lookupPriorRunsForDispatchWizard(
+  input: PriorRunsLookupRequest,
+): Promise<Run[]> {
+  if (input.mockMode) {
+    return filterRunsByExactTicket(input.stateRuns, input.search, input.normalizedTicket);
+  }
+  const res = await gateway.request<RunListResult>(Methods.RUN_LIST, {
+    search: input.search,
+    limit: 50,
+  } satisfies RunListParams);
+  // run.list `search` is substring match against ticketOrPr OR summary — narrow
+  // to exact ticketOrPr matches so the banner doesn't surface unrelated families.
+  return filterRunsByExactTicket(res.runs, input.search, input.normalizedTicket);
+}

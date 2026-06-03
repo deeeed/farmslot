@@ -1,0 +1,1230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "project.schema.json",
+  "title": "Project Config",
+  "description": "Project-specific configuration: hooks, health checks, fixtures, and platform commands. Referenced by pool slots via the 'project' field.",
+  "type": "object",
+  "required": ["name"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for editor validation."
+    },
+    "name": {
+      "type": "string",
+      "description": "Project identifier. Must match the directory name under projects/.",
+      "examples": ["example-mobile-farm", "example-web-farm"]
+    },
+    "type": {
+      "type": "string",
+      "enum": ["monorepo", "standalone"],
+      "description": "Project type. 'monorepo' projects have multiple apps, 'standalone' is a single app."
+    },
+    "default_branch": {
+      "type": "string",
+      "description": "Default git branch for checkouts.",
+      "default": "main"
+    },
+    "skip_prepare_requires_health": {
+      "type": "boolean",
+      "description": "When true, a warm-slot/skip-prepare dispatch first runs the project's health_check. If health is not ready, Farmslot ignores the skip and runs full prepare.",
+      "default": false
+    },
+    "default_safety_tier": {
+      "type": "string",
+      "enum": ["sandboxed", "full-auto", "dangerous"],
+      "description": "Project-level safety-tier policy (ADR-023 \u00a73). Applied at run create time when neither dispatch params nor a parent run supplies an explicit tier. Runners intrinsically default to 'sandboxed'; set this to 'full-auto' or 'dangerous' to opt the project into a more permissive posture."
+    },
+    "recipe_run_supports_playback_slow": {
+      "type": "boolean",
+      "description": "Opt in when hooks.recipe_run supports the gateway-appended --slow <ms> playback flag. Projects that omit this keep replay commands backwards-compatible even if the UI exposes playback controls.",
+      "default": false
+    },
+    "branch_namespace": {
+      "type": "string",
+      "description": "Short namespace prepended to branch names (e.g. 'perps', 'mm'). Produces fix/perps/123-slug.",
+      "examples": ["perps", "mm", "echo"]
+    },
+    "branch_format": {
+      "type": "string",
+      "description": "Template for branch names. Supports {{type}}, {{ticket}}, {{slug}}, {{namespace}}, {{variant_suffix}} placeholders. Overrides default branch naming (including branch_namespace) when set.",
+      "examples": [
+        "{{type}}/{{namespace}}/{{ticket}}-{{slug}}",
+        "feat/{{ticket}}/{{slug}}{{variant_suffix}}"
+      ]
+    },
+    "repo_url": {
+      "type": "string",
+      "description": "Git remote URL for the project.",
+      "examples": ["git@github.com:you/example-app.git"]
+    },
+    "artifacts_repo": {
+      "type": "string",
+      "description": "GitHub repo (owner/name) for uploading review/fix/feature artifacts (videos, reports). Files are pushed via git to <flow>/<id>/ paths.",
+      "examples": ["you/example-farm-artifacts"]
+    },
+    "primary_repo": {
+      "type": "string",
+      "description": "Absolute path to the primary (non-worktree) repo clone. Used for monorepo setups.",
+      "examples": ["/Users/example/dev/example-app"]
+    },
+    "worktree_base": {
+      "type": "string",
+      "description": "Base directory for git worktrees. Slots may use worktrees under this path.",
+      "examples": ["/Users/example/dev/example-app-wt"]
+    },
+    "owner_agent": {
+      "type": "string",
+      "description": "Name of the agent that owns this project, for routing purposes."
+    },
+    "reference_repos": {
+      "type": "object",
+      "description": "Related repos cloned alongside the main repo for cross-codebase comparison.",
+      "patternProperties": {
+        "^[a-z][a-z0-9-]*$": {
+          "type": "object",
+          "required": ["repo_url", "local_name"],
+          "properties": {
+            "repo_url": {
+              "type": "string",
+              "description": "Git remote URL."
+            },
+            "local_name": {
+              "type": "string",
+              "description": "Directory name for the clone."
+            },
+            "branch": {
+              "type": "string",
+              "description": "Branch to track.",
+              "default": "main"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "task_dir": {
+      "type": "string",
+      "description": "Task file directory relative to worker repo root. Overrides the default '.task'.",
+      "examples": ["temp/.task", ".task"]
+    },
+    "apps": {
+      "type": "array",
+      "description": "Optional list of canonical app selector values for multi-app projects. These values are passed through Farmslot CLI/UI and injected into hooks/templates via {{app}}. Omit for single-app projects.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [["apps/web", "apps/mobile", "apps/api"], ["example-mobile"]]
+    },
+    "paths": {
+      "type": "object",
+      "description": "Directory paths within each worker's repo clone.",
+      "properties": {
+        "runtime_dir": {
+          "type": "string",
+          "description": "Transient process state (logs, PIDs, fixtures). Always gitignored.",
+          "default": ".agent",
+          "examples": [".agent", "apps/playground/.agent"]
+        },
+        "artifact_dir": {
+          "type": "string",
+          "description": "Base directory for task files and artifacts on the worker. Each task gets .task/<flow>/<id>/ with artifacts/ inside.",
+          "default": ".task",
+          "examples": [".task"]
+        },
+        "recipe_dir": {
+          "type": "string",
+          "description": "Directory for executable recipe harness files synced into the worker repo. Defaults to <runtime_dir>/recipes.",
+          "default": "{{runtime_dir}}/recipes",
+          "examples": ["temp/agentic/recipes", ".agent/recipes"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "command_env": {
+      "type": "object",
+      "description": "Project-declared environment mutations applied generically before project lifecycle commands and worker runner launches.",
+      "properties": {
+        "unset": {
+          "type": "array",
+          "description": "Environment variable names to unset before running project commands.",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "uniqueItems": true
+        },
+        "set": {
+          "type": "object",
+          "description": "Environment variables to export before running project commands.",
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "eval_harnesses": {
+      "type": "object",
+      "description": "Named external harness sources that eval replay can materialize through existing recipe_harness_* hooks. Keeps Farmslot generic; projects decide which git repo/path or local path backs each harness name.",
+      "patternProperties": {
+        "^[a-z][a-z0-9-]*$": {
+          "type": "object",
+          "properties": {
+            "repo_url": {
+              "type": "string",
+              "description": "Git URL for the harness source repository."
+            },
+            "path": {
+              "type": "string",
+              "description": "Path to the harness directory inside repo_url."
+            },
+            "local_path": {
+              "type": "string",
+              "description": "Absolute or worker-local path to an already checked out harness directory."
+            },
+            "default_ref": {
+              "type": "string",
+              "description": "Default git ref when the eval axis does not request one."
+            },
+            "source": {
+              "type": "string",
+              "description": "Human-readable provenance label stored in result package manifests."
+            }
+          },
+          "anyOf": [
+            {
+              "required": ["repo_url", "path"]
+            },
+            {
+              "required": ["local_path"]
+            }
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "preflight_logs": {
+      "type": "array",
+      "description": "Log file paths written by preflight scripts (e.g. xcodebuild, expo). The gateway tails these during prepare and streams output to the UI. Supports {{var}} placeholders. Paths are relative to the worker repo root.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [["{{runtime_dir}}/ios-expo-build.log", "{{runtime_dir}}/android-build.log"]]
+    },
+    "cleanup_patterns": {
+      "type": "array",
+      "description": "Process patterns for pkill -f when cleaning up stale preflight processes after cancel or gateway restart. Supports {{var}} placeholders (patterns with empty vars are skipped). Applied in addition to generic farmslot patterns (preflight.sh, PID files).",
+      "items": {
+        "type": "string"
+      },
+      "examples": [["expo run:ios --no-install --port {{port}}", "ios/Example App.xcworkspace"]]
+    },
+    "diff_analysis": {
+      "type": "object",
+      "description": "Project-specific diff capture/filter settings used when building review inputs and source snapshots.",
+      "properties": {
+        "source_filter": {
+          "type": "object",
+          "description": "Allow/block filters for source diff pathspecs. Omit to use Farmslot defaults.",
+          "properties": {
+            "use_defaults": {
+              "type": "boolean",
+              "description": "When false, disables built-in source allowlist defaults before applying project filters."
+            },
+            "useDefaults": {
+              "type": "boolean",
+              "description": "CamelCase alias for use_defaults."
+            },
+            "allowlist": {
+              "$ref": "#/$defs/source_diff_filter_rule"
+            },
+            "blocklist": {
+              "$ref": "#/$defs/source_diff_filter_rule"
+            }
+          },
+          "additionalProperties": false
+        },
+        "review_input_timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Timeout in milliseconds for capturing review-input diff artifacts."
+        }
+      },
+      "additionalProperties": false
+    },
+    "hooks": {
+      "type": "object",
+      "description": "Shell commands executed by farmslot lifecycle scripts (orchestrator-side) on the worker machine, inside the slot's repo directory. Use {{var}} placeholders for resource variable substitution.",
+      "properties": {
+        "setup": {
+          "type": "string",
+          "description": "One-time project setup (install deps, build). Run by setup-slot.sh on the worker.",
+          "examples": ["yarn install && cd apps/playground && yarn build:deps"]
+        },
+        "post_merge_install": {
+          "type": "string",
+          "description": "Install dependencies after merging/checking out a branch. Run by prepare-slot.sh on the worker. Default: 'yarn install --frozen-lockfile'.",
+          "default": "yarn install --frozen-lockfile",
+          "examples": ["yarn setup"]
+        },
+        "preflight": {
+          "type": "string",
+          "description": "Pre-dispatch checks and setup (build, start dev server, boot device). Run by prepare-slot.sh on the worker.",
+          "examples": [
+            "bash scripts/perps/agentic/preflight.sh --platform {{platform}} --skip-build"
+          ]
+        },
+        "health_check": {
+          "type": "string",
+          "description": "Verify the app is running and ready on the worker. Should exit 0 if healthy. Run by prepare-slot.sh and check-slot.sh.",
+          "examples": ["WATCHER_PORT={{port}} bash scripts/perps/agentic/app-state.sh status"]
+        },
+        "unlock": {
+          "type": "string",
+          "description": "Unlock the app on the worker (e.g., enter wallet password). Run by prepare-slot.sh after health_check passes."
+        },
+        "dev_server_check": {
+          "type": "string",
+          "description": "Quick check if the dev server (Metro) is listening on the worker.",
+          "examples": ["lsof -i :{{port}} >/dev/null 2>&1"]
+        },
+        "recycle": {
+          "type": "string",
+          "description": "Reset app state between tasks on the worker (e.g., clear app data). Run by release-slot.sh. Overridden by pool recycle_cmd.",
+          "examples": ["adb -s {{adb_serial}} shell pm clear io.example-app"]
+        },
+        "teardown": {
+          "type": "string",
+          "description": "Stop all slot infrastructure on the worker (dev server, simulator/emulator). Run by release-slot.sh."
+        },
+        "diagnostics": {
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Single diagnostic command (e.g., tsc --noEmit)."
+            },
+            {
+              "type": "object",
+              "description": "Named diagnostic sources.",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "Lint/type-check commands. String for single source, object for multi-source (keys = source names)."
+        },
+        "recipe_action_manifest": {
+          "type": "string",
+          "description": "Command that prints the runner Recipe v1 action manifest JSON for this project/slot. Receives normal slot/project variables such as {{repo}}, {{platform}}, {{cdp_port}}, {{runtime_dir}}, and {{slot_id}}."
+        },
+        "recipe_doctor": {
+          "type": "string",
+          "description": "Command that prints a machine-readable Recipe v1 readiness report as JSON. Receives normal slot/project variables such as {{repo}}, {{platform}}, {{cdp_port}}, {{runtime_dir}}, and {{slot_id}}."
+        },
+        "recipe_run": {
+          "type": "string",
+          "description": "Command used by the gateway to re-run a selected recipe against a slot. Must explicitly include {{recipe_path}} and {{artifacts_dir}}. Receives {{repo}}, {{cdp_port}}, and other slot/project variables. Set top-level recipe_run_supports_playback_slow=true to opt into gateway-appended --slow <ms> playback flags."
+        },
+        "recipe_harness_install": {
+          "type": "string",
+          "description": "Command used by eval replay to install a pinned external recipe harness into a prepared checkout. Receives FARMSLOT_EVAL_HARNESS_* and FARMSLOT_*_DIR environment variables."
+        },
+        "recipe_harness_verify": {
+          "type": "string",
+          "description": "Command used by eval replay to verify the injected recipe harness before worker execution."
+        },
+        "recipe_harness_cleanup": {
+          "type": "string",
+          "description": "Command used by eval replay to remove the injected recipe harness before product diff capture."
+        }
+      },
+      "additionalProperties": false
+    },
+    "health": {
+      "type": "object",
+      "description": "Health check parsing configuration.",
+      "properties": {
+        "ready_indicator": {
+          "type": "string",
+          "description": "String that the health_check output must contain to indicate readiness.",
+          "examples": ["Wallet"]
+        },
+        "parse_health": {
+          "type": "string",
+          "description": "Shell command (piped from health_check stdout) to extract the health status string."
+        },
+        "dev_server_log": {
+          "type": "string",
+          "description": "Path to the dev server log file. Supports {{runtime_dir}} placeholder.",
+          "examples": ["{{runtime_dir}}/metro.log", "apps/playground/.agent/metro.log"]
+        },
+        "dev_server_name": {
+          "type": "string",
+          "description": "Display name of the dev server for status messages.",
+          "default": "Metro",
+          "examples": ["Metro"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "timeouts": {
+      "type": "object",
+      "description": "Per-project preflight/runtime timeouts (seconds). Keys are project-specific and read by that project's setup scripts via get_project_field.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Timeout in seconds."
+      }
+    },
+    "fixtures": {
+      "type": "object",
+      "description": "Files to sync from project fixtures/ to each worker repo.",
+      "properties": {
+        "templates": {
+          "type": "array",
+          "description": "Files with {{var}} placeholder substitution.",
+          "items": {
+            "$ref": "#/$defs/fixture_template"
+          }
+        },
+        "directories": {
+          "type": "array",
+          "description": "Directories synced via rsync. Useful for injecting entire test/recipe trees.",
+          "items": {
+            "$ref": "#/$defs/fixture_directory"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "platforms": {
+      "type": "object",
+      "description": "Platform-specific commands. Keys are platform names (ios, android).",
+      "patternProperties": {
+        "^[a-z][a-z0-9-]*$": {
+          "type": "object",
+          "properties": {
+            "device_check": {
+              "type": "string",
+              "description": "Shell command to check if the device/simulator is running. Exit 0 if present.",
+              "examples": ["adb devices 2>/dev/null | grep -q '{{adb_serial}}'"]
+            },
+            "recycle": {
+              "type": ["string", "null"],
+              "description": "Platform-specific recycle command. null if not applicable."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "defaults": {
+      "type": "object",
+      "description": "Default runner/model/effort settings per flow type. Overridden by: task file > CLI args > slot config > these defaults.",
+      "patternProperties": {
+        "^(review|fix|feature|custom|dev|fix-bug|review-pr|pr-complete)$": {
+          "type": "object",
+          "properties": {
+            "runner": {
+              "type": "string",
+              "enum": ["claude", "codex", "opencode", "none"],
+              "description": "Default runner for this flow type."
+            },
+            "model": {
+              "type": "string",
+              "description": "Default model for this flow type.",
+              "examples": ["sonnet", "opus", "o3"]
+            },
+            "effort": {
+              "type": "string",
+              "enum": ["low", "medium", "auto", "high", "xhigh"],
+              "description": "Default effort level for this flow type.",
+              "default": "auto"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "jira": {
+      "type": "object",
+      "description": "Jira integration for issue fetching and batch triage.",
+      "properties": {
+        "project": {
+          "type": "string",
+          "description": "Jira project key.",
+          "examples": ["TAT"]
+        },
+        "base_url": {
+          "type": "string",
+          "description": "Jira instance URL.",
+          "examples": ["https://example-app.atlassian.net"]
+        },
+        "email_env": {
+          "type": "string",
+          "description": "Env var name for Jira email authentication.",
+          "examples": ["JIRA_EMAIL"]
+        },
+        "api_token_env": {
+          "type": "string",
+          "description": "Env var name for Jira API token authentication.",
+          "examples": ["JIRA_API_TOKEN"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "self_review": {
+      "type": "object",
+      "description": "Automated self-review configuration. Spawns a review agent after worker completes to check code quality before human gate.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether self-review is active for this project.",
+          "default": false
+        },
+        "runner": {
+          "type": "string",
+          "description": "Runner for the review agent.",
+          "enum": ["claude", "codex", "opencode", "none"],
+          "examples": ["claude", "codex"]
+        },
+        "model": {
+          "type": "string",
+          "description": "LLM model for the review agent.",
+          "default": "sonnet",
+          "examples": ["sonnet", "haiku", "opus"]
+        },
+        "max_retries": {
+          "type": "integer",
+          "description": "Maximum feedback-fix-review cycles before proceeding to human gate.",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 7
+        },
+        "review_timeout_min": {
+          "type": "integer",
+          "description": "Per-pass review-agent timeout in minutes (covers reading the diff + rerunning recipes). Bump if reviews repeatedly time out.",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 60
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_prefilter": {
+      "type": "object",
+      "description": "Controls whether historical recipe/evidence matching only suggests prior evidence or may enable autonomous evidence reuse.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["suggest", "autonomous"],
+          "default": "suggest"
+        },
+        "min_runs_for_autonomous": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum historical successful runs before autonomous evidence reuse can be enabled."
+        }
+      },
+      "additionalProperties": false
+    },
+    "models": {
+      "type": "object",
+      "description": "LLM model configuration for gateway intelligence calls.",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "Default LLM provider.",
+          "examples": ["anthropic", "openai"]
+        },
+        "default_model": {
+          "type": "string",
+          "description": "Default model name.",
+          "examples": ["haiku", "gpt-4o-mini"]
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Env var override for API key.",
+          "examples": ["ANTHROPIC_API_KEY"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "webhooks": {
+      "type": "object",
+      "description": "Webhook integration configuration.",
+      "properties": {
+        "github_secret": {
+          "type": "string",
+          "description": "HMAC secret for GitHub webhook validation."
+        },
+        "jira_secret": {
+          "type": "string",
+          "description": "Token for Jira webhook validation."
+        },
+        "auto_dispatch": {
+          "type": "boolean",
+          "description": "Auto-dispatch runs from webhooks.",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "auto_recycle": {
+      "type": "object",
+      "description": "Automatic health recovery for idle slots.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "interval_min": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 1
+        },
+        "max_failures": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "human_gates": {
+      "type": "object",
+      "description": "Enable/disable human review gates per flow type.",
+      "patternProperties": {
+        "^(fix-bug|review-pr|feature|dev|pr-complete)$": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "publication_review": {
+      "type": "object",
+      "description": "Local-first publication review policy by flow. Fix-bug defaults to one independent review; autonomous dev defaults to zero unless configured.",
+      "patternProperties": {
+        "^(fix-bug|dev)$": {
+          "type": "object",
+          "properties": {
+            "minimum_independent_reviews": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Minimum passing independent reviews before human package approval may publish."
+            },
+            "require_cross_runner": {
+              "type": "boolean",
+              "description": "Require at least one passing review from a different runner; implies at least one required review."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "monitoring": {
+      "type": "object",
+      "description": "Worker monitoring thresholds.",
+      "properties": {
+        "poll_interval_min": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 1
+        },
+        "stuck_timeout_min": {
+          "type": "integer",
+          "default": 20,
+          "minimum": 1
+        },
+        "idle_timeout_min": {
+          "type": "integer",
+          "default": 15,
+          "minimum": 1
+        },
+        "total_timeout_min": {
+          "type": "integer",
+          "default": 90,
+          "minimum": 1
+        },
+        "max_nudges": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "slot_actions": {
+      "$ref": "#/$defs/slot_action_map",
+      "description": "Project-level slot actions shown in slot UI surfaces. Commands support {{var}} placeholders."
+    },
+    "resources": {
+      "type": "object",
+      "description": "Streamable resources (simulators, emulators, browsers) for this project. Keys are resource IDs.",
+      "patternProperties": {
+        "^[a-z][a-z0-9-]*$": {
+          "type": "object",
+          "required": ["type", "label", "streamable", "controllable"],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["device", "browser", "dev-server", "service"],
+              "description": "Semantic resource category: device (simulators/emulators), browser (Chrome instances), dev-server (Metro/Webpack), service (generic daemon)."
+            },
+            "platform": {
+              "type": "string",
+              "description": "Links to platforms[key] for existing hooks.",
+              "examples": ["ios", "android"]
+            },
+            "label": {
+              "type": "string",
+              "description": "Display label for the UI.",
+              "examples": ["iOS Sim", "Android Emu"]
+            },
+            "streamable": {
+              "type": "boolean",
+              "description": "Whether this resource supports live screen streaming."
+            },
+            "controllable": {
+              "type": "boolean",
+              "description": "Whether this resource supports boot/shutdown/relaunch controls."
+            },
+            "watch": {
+              "type": "object",
+              "description": "How the gateway monitors this resource's liveness.",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["pid-file", "port-listen", "process-poll"],
+                  "description": "Watch strategy."
+                },
+                "path": {
+                  "type": "string",
+                  "description": "PID file path (for pid-file type)."
+                },
+                "port": {
+                  "type": "string",
+                  "description": "Port to check (for port-listen type)."
+                },
+                "cmd": {
+                  "type": "string",
+                  "description": "Shell command returning 0 if alive (for process-poll type)."
+                },
+                "intervalMs": {
+                  "type": "integer",
+                  "description": "Poll interval in milliseconds.",
+                  "default": 10000
+                }
+              },
+              "additionalProperties": false
+            },
+            "hooks": {
+              "type": "object",
+              "description": "Lifecycle hooks for the resource. Use {{var}} placeholders.",
+              "properties": {
+                "boot": {
+                  "type": "string"
+                },
+                "shutdown": {
+                  "type": "string"
+                },
+                "relaunch": {
+                  "type": "string"
+                },
+                "health": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "actions": {
+              "$ref": "#/$defs/slot_action_map",
+              "description": "Resource-scoped actions shown for this resource."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "scoring": {
+      "type": "object",
+      "description": "Bug difficulty scoring configuration. The generic scripts/score-bug.sh delegates to the project-specific script defined here.",
+      "properties": {
+        "script": {
+          "type": "string",
+          "description": "Shell command to run the project's scoring script. Use {{INPUT_FILE}} placeholder for the bug-input.json path.",
+          "examples": ["python3 scoring/score.py --input {{INPUT_FILE}}"]
+        },
+        "categories": {
+          "type": "string",
+          "description": "Path (relative to project dir) to the categories/weights JSON config.",
+          "examples": ["scoring/categories.json"]
+        },
+        "grade_prompt": {
+          "type": "string",
+          "description": "Path (relative to project dir) to the LLM grading prompt template. Uses ${VAR} placeholders via envsubst.",
+          "examples": ["scoring/grade-prompt.txt"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ci": {
+      "type": "object",
+      "description": "CI/CD monitoring configuration for watching PR checks and bot comments.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether CI monitoring is active.",
+          "default": false
+        },
+        "poll_interval_min": {
+          "type": "integer",
+          "description": "Minutes between CI status polls.",
+          "default": 10,
+          "minimum": 1
+        },
+        "timeout_min": {
+          "type": "integer",
+          "description": "Maximum minutes to wait for CI before timing out.",
+          "default": 60,
+          "minimum": 1
+        },
+        "repo": {
+          "type": "string",
+          "description": "GitHub repo in owner/name format for CI checks.",
+          "examples": ["example-org/example-mobile"]
+        },
+        "pr_labels": {
+          "type": "array",
+          "description": "Labels to add to PRs created by workers (injected as {{PR_LABELS}} in templates).",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["agentic"], ["DO-NOT-MERGE", "team-perps"]]
+        },
+        "pr_title_suffix": {
+          "type": "string",
+          "description": "Optional human-gate suffix appended to PR titles created by workers (injected as {{PR_TITLE_SUFFIX}} in templates). Whitespace is normalized to one leading separator so Conventional Commit title linters still see the commit type first.",
+          "examples": ["[NOT-READY]"]
+        },
+        "watch_checks": {
+          "type": "array",
+          "description": "Legacy CI check names to monitor for pass/fail. Prefer check_groups for deterministic matching and shard aggregation.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["scripts (lint)", "unit-tests", "All jobs pass"]]
+        },
+        "check_groups": {
+          "type": "array",
+          "description": "Explicit CI check groups with deterministic match and aggregation semantics.",
+          "items": {
+            "$ref": "#/$defs/ci_check_group"
+          }
+        },
+        "bot_patterns": {
+          "type": "array",
+          "description": "Patterns for bot comments that trigger actions.",
+          "items": {
+            "$ref": "#/$defs/bot_pattern"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ci_watch": {
+      "type": "object",
+      "description": "CI-watch automation and slot-hold strategy for chained follow-up runs.",
+      "properties": {
+        "poll_interval_s": {
+          "type": "integer",
+          "description": "Seconds between CI-watch polls.",
+          "default": 60,
+          "minimum": 1
+        },
+        "max_hold_min": {
+          "type": "integer",
+          "description": "Maximum minutes to keep a slot in short CI-watch hold before timing out.",
+          "default": 120,
+          "minimum": 1
+        },
+        "max_total_hold_min": {
+          "type": "integer",
+          "description": "Absolute maximum minutes to keep a slot in CI-watch across progress resets.",
+          "minimum": 1
+        },
+        "auto_dispatch": {
+          "type": "object",
+          "description": "Per-category auto-dispatch toggles for CI-watch follow-up runs.",
+          "properties": {
+            "test_failures": {
+              "type": "boolean",
+              "default": true
+            },
+            "merge_conflicts": {
+              "type": "boolean",
+              "default": true
+            },
+            "bot_comments": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "auto_recovery": {
+      "type": "object",
+      "description": "Per-project autonomous recovery policy. Gateway-level LLM settings choose provider/model/auth; this block controls whether this project may use recovery and LLM refinement.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether failed terminal runs for this project may be auto-recovered.",
+          "default": false
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "description": "Maximum automatic replay attempts per failed step.",
+          "minimum": 0,
+          "default": 1
+        },
+        "allowedSteps": {
+          "type": "array",
+          "description": "Pipeline steps where automatic replay may run. An explicit empty list means no auto-replay steps.",
+          "items": {
+            "type": "string"
+          },
+          "default": ["prepare", "monitor", "ci-watch"]
+        },
+        "allowedCategories": {
+          "type": "array",
+          "description": "Recoverable failure policy buckets allowed for this project.",
+          "items": {
+            "type": "string",
+            "enum": ["infra", "timeout", "env-drift", "flake"]
+          },
+          "default": ["infra", "timeout", "env-drift", "flake"]
+        },
+        "disabled_patterns": {
+          "type": "array",
+          "description": "Deterministic failure pattern IDs to suppress for this project.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "llm": {
+          "type": "object",
+          "description": "Optional bounded LLM refinement for failures not covered by deterministic patterns.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "dailyUsdCap": {
+              "type": "number",
+              "minimum": 0,
+              "default": 0
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 20000
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "source_diff_filter_rule": {
+      "type": "object",
+      "description": "Source diff filter rule lists.",
+      "properties": {
+        "extensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "basenames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "fixture_template": {
+      "type": "object",
+      "description": "A fixture file with {{var}} placeholder substitution, or a plain copy/compose entry.",
+      "required": ["dst"],
+      "properties": {
+        "src": {
+          "type": "string",
+          "description": "Source filename in the project fixtures/ directory.",
+          "examples": [".js.env.template"]
+        },
+        "dst": {
+          "type": "string",
+          "description": "Destination path relative to the worker repo root.",
+          "examples": [".js.env"]
+        },
+        "vars": {
+          "type": "array",
+          "description": "Which resource variables to substitute in this template. If omitted, all variables are available.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["port", "avd", "adb_serial"]]
+        },
+        "compose": {
+          "type": "object",
+          "description": "Compose the destination file from different variants based on a variable.",
+          "required": ["var", "variants"],
+          "properties": {
+            "var": {
+              "type": "string",
+              "description": "Variable name that selects the variant (e.g., FLOW_TYPE).",
+              "examples": ["FLOW_TYPE"]
+            },
+            "variants": {
+              "type": "object",
+              "description": "Map of variable value to variant config. Empty string key is the default.",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "description": "Source fixture file for this variant."
+                  },
+                  "includes": {
+                    "type": "array",
+                    "description": "List of files to concatenate.",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "fixture_directory": {
+      "type": "object",
+      "description": "A directory synced via rsync from project fixtures/ to worker repo.",
+      "required": ["src", "dst"],
+      "properties": {
+        "src": {
+          "type": "string",
+          "description": "Source path relative to project fixtures/ directory.",
+          "examples": ["test/e2e/playwright/llm-workflow/recipes"]
+        },
+        "dst": {
+          "type": "string",
+          "description": "Destination path relative to the worker repo root.",
+          "examples": ["test/e2e/playwright/llm-workflow/recipes"]
+        },
+        "exclude": {
+          "type": "array",
+          "description": "Patterns to exclude from rsync (e.g., runtime artifacts).",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["test-artifacts/"]]
+        },
+        "sentinel": {
+          "type": "string",
+          "description": "A file inside the directory used for quick hash-based sync check.",
+          "examples": ["validate-recipe.ts"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ci_check_group": {
+      "type": "object",
+      "description": "A named CI check group. Supports exact, regex, or substring matching plus aggregation across shards.",
+      "required": ["name", "match"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name for the group in Farmslot."
+        },
+        "match": {
+          "type": "string",
+          "description": "Exact string, substring, or regex pattern depending on match_mode."
+        },
+        "match_mode": {
+          "type": "string",
+          "enum": ["exact", "includes", "regex"],
+          "default": "exact"
+        },
+        "aggregate": {
+          "type": "string",
+          "enum": ["all", "any", "latest"],
+          "default": "all"
+        }
+      },
+      "additionalProperties": false
+    },
+    "slot_action_map": {
+      "type": "object",
+      "description": "Map of action IDs to slot action definitions.",
+      "patternProperties": {
+        "^[a-z][a-z0-9-]*$": {
+          "$ref": "#/$defs/slot_action"
+        }
+      },
+      "additionalProperties": false
+    },
+    "slot_action": {
+      "type": "object",
+      "description": "Operator-triggered command for a slot or resource.",
+      "required": ["label", "command"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Short UI label."
+        },
+        "command": {
+          "type": "string",
+          "description": "Shell command. Supports {{var}} placeholders."
+        },
+        "description": {
+          "type": "string",
+          "description": "Longer UI help text."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["run", "copy"],
+          "default": "run"
+        },
+        "style": {
+          "type": "string",
+          "enum": ["primary", "secondary", "danger"],
+          "default": "secondary"
+        },
+        "placement": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["slot-header", "resource-panel"]
+          },
+          "uniqueItems": true
+        },
+        "confirm": {
+          "type": "string",
+          "description": "Confirmation prompt before running."
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Timeout in milliseconds."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Timeout in milliseconds (snake_case alias)."
+        },
+        "refresh": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["resources", "fleet", "slot", "none"]
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "bot_pattern": {
+      "type": "object",
+      "description": "Pattern for matching bot comments on PRs.",
+      "required": ["author", "label"],
+      "anyOf": [
+        {
+          "required": ["action"]
+        },
+        {
+          "required": ["default_action"]
+        }
+      ],
+      "properties": {
+        "author": {
+          "type": "string",
+          "description": "Regex pattern matching the comment author username.",
+          "examples": ["examplebot", "sonar(cloud|qubecloud)\\[bot\\]"]
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable label for this bot type.",
+          "examples": ["bugbot", "sonarcloud"]
+        },
+        "action": {
+          "type": "string",
+          "enum": ["nudge_worker", "alert_only"],
+          "description": "'nudge_worker' sends the comment to the active agent. 'alert_only' just logs it."
+        },
+        "default_action": {
+          "type": "string",
+          "enum": ["nudge_worker", "alert_only"],
+          "description": "Default action for matching comments when no body-specific action applies."
+        },
+        "actions": {
+          "type": "array",
+          "description": "Body-specific overrides for a matched bot author.",
+          "items": {
+            "type": "object",
+            "required": ["body_match", "action"],
+            "properties": {
+              "body_match": {
+                "type": "string",
+                "description": "Regex matched against the comment body."
+              },
+              "action": {
+                "type": "string",
+                "enum": ["nudge_worker", "alert_only"]
+              },
+              "label": {
+                "type": "string",
+                "description": "Optional label for this body-specific action."
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

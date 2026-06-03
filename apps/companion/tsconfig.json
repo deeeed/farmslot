@@ -1,0 +1,15 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "types": ["node"],
+    "paths": {
+      "@/*": ["./src/*"],
+      "@farmslot/theme": ["../../packages/theme/src/index.ts"],
+      "@farmslot/theme/*": ["../../packages/theme/src/*"],
+      "@farmslot/protocol": ["../../packages/protocol/src/index.ts"],
+      "@farmslot/protocol/*": ["../../packages/protocol/src/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

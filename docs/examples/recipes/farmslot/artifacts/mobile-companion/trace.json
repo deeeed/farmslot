@@ -1,0 +1,62 @@
+[
+  {
+    "id": "open-run-detail",
+    "action": "ui.navigate",
+    "ok": true,
+    "durationMs": 450,
+    "artifacts": [],
+    "intent": "Open the selected run detail screen in the Mobile Companion app."
+  },
+  {
+    "id": "select-recipe-run",
+    "action": "ui.press",
+    "ok": true,
+    "durationMs": 575,
+    "artifacts": [],
+    "intent": "Select a recipe-run chip so artifacts are scoped to the attempted or promoted recipe run."
+  },
+  {
+    "id": "open-recipe-artifacts",
+    "action": "ui.press",
+    "ok": true,
+    "durationMs": 700,
+    "artifacts": [],
+    "intent": "Open recipe artifacts from the run detail screen and verify recipe-run scoped URLs are used."
+  },
+  {
+    "id": "assert-evidence-review",
+    "action": "ui.wait_for",
+    "ok": true,
+    "durationMs": 825,
+    "artifacts": [],
+    "intent": "Verify decision/evidence review cards show screenshots, reports, logs, and recipe artifacts with consistent labels."
+  },
+  {
+    "id": "capture-mobile-artifacts",
+    "action": "ui.screenshot",
+    "ok": true,
+    "durationMs": 950,
+    "artifacts": ["screenshots/mobile-companion-artifacts.svg"],
+    "intent": "Capture the Mobile Companion artifact viewer with the selected recipe-run evidence visible."
+  },
+  {
+    "id": "index-artifacts",
+    "action": "index_artifacts",
+    "ok": true,
+    "durationMs": 1075,
+    "artifacts": [
+      "screenshots/mobile-companion-artifacts.svg",
+      "reports/mobile-navigation.json",
+      "logs/mobile-companion.log"
+    ],
+    "intent": "Publish mobile screenshot, navigation report, trace, summary, and resolved recipe for review."
+  },
+  {
+    "id": "done",
+    "action": "end",
+    "ok": true,
+    "durationMs": 1200,
+    "artifacts": [],
+    "intent": "Complete recipe node"
+  }
+]

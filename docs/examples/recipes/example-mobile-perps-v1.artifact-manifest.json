@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "runStatus": "pass",
+  "artifacts": [
+    {
+      "path": "screenshots/mobile-perps-market.png",
+      "type": "screenshot",
+      "label": "Mobile Perps ETH market row visible",
+      "nodeId": "capture-proof",
+      "mimeType": "image/png",
+      "proofTarget": "AC-1",
+      "covers": ["perps-market-visible"]
+    },
+    {
+      "path": "recipe-issues-review.md",
+      "type": "report",
+      "category": "issue-review",
+      "label": "Runtime issue review",
+      "nodeId": "done",
+      "mimeType": "text/markdown",
+      "proofTarget": "AC-1",
+      "covers": ["no-unexpected-runtime-errors"]
+    }
+  ]
+}

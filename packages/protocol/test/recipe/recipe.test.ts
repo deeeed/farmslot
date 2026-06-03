@@ -1,0 +1,790 @@
+import assert from 'node:assert/strict';
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import {
+  mergeRecipeValidationResults,
+  type RecipeArtifactManifestDocument,
+  validateArtifactManifestDocument,
+  validateRecipeActionManifestDocument,
+  validateRecipeArtifactPackage,
+  validateRecipeDocument,
+  validateRecipeWithManifest,
+} from '../../src/index.js';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+
+async function readJson(relativePath: string): Promise<unknown> {
+  return JSON.parse(await readFile(path.join(repoRoot, relativePath), 'utf-8')) as unknown;
+}
+
+async function listRelativeFiles(root: string): Promise<string[]> {
+  const absoluteRoot = path.join(repoRoot, root);
+  const output: string[] = [];
+
+  async function visit(relativeDir: string): Promise<void> {
+    const entries = await readdir(path.join(absoluteRoot, relativeDir), { withFileTypes: true });
+    for (const entry of entries) {
+      const relativePath = path.join(relativeDir, entry.name);
+      if (entry.isDirectory()) {
+        await visit(relativePath);
+      } else if (entry.isFile()) {
+        output.push(relativePath.split(path.sep).join('/'));
+      }
+    }
+  }
+
+  await visit('');
+  return output.sort();
+}
+
+function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
+  assert.ok(value !== null && typeof value === 'object' && !Array.isArray(value), label);
+}
+
+function readTraceEntries(trace: unknown, label: string): Record<string, unknown>[] {
+  const entries = Array.isArray(trace)
+    ? trace
+    : (() => {
+        assertRecord(trace, `${label} trace should be an array or an envelope object`);
+        assert.ok(Array.isArray(trace.entries), `${label} trace envelope should include entries`);
+        return trace.entries;
+      })();
+
+  return entries.map((traceEntry, index) => {
+    assertRecord(traceEntry, `${label} trace entry ${index} should be an object`);
+    return traceEntry;
+  });
+}
+
+test('validates portable backend and UI v1 example recipes', async () => {
+  for (const recipePath of [
+    'docs/examples/recipes/backend-command-v1.recipe.json',
+    'docs/examples/recipes/ui-live-v1.recipe.json',
+  ]) {
+    const result = validateRecipeDocument(await readJson(recipePath));
+    assert.equal(result.status, 'valid', recipePath);
+    assert.deepEqual(result.findings, []);
+  }
+});
+
+test('validates runner action manifests and rejects undeclared recipe actions', async () => {
+  const recipe = await readJson('docs/examples/recipes/backend-command-v1.recipe.json');
+  const manifest = await readJson('docs/examples/recipes/farmslot-v1.action-manifest.json');
+  const manifestResult = validateRecipeActionManifestDocument(manifest);
+  const recipeResult = validateRecipeWithManifest(recipe, manifest);
+
+  assert.equal(manifestResult.status, 'valid');
+  assert.deepEqual(manifestResult.findings, []);
+  assert.equal(recipeResult.status, 'valid');
+  assert.deepEqual(recipeResult.findings, []);
+
+  const restrictedManifest = {
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+  };
+  const restrictedResult = validateRecipeWithManifest(recipe, restrictedManifest);
+  assert.equal(restrictedResult.status, 'invalid');
+  assert.ok(
+    restrictedResult.findings.some(
+      (finding) => finding.code === 'recipe.action_not_declared_by_manifest',
+    ),
+  );
+});
+
+test('validates lifecycle actions against the runner manifest', () => {
+  const recipe = {
+    schema_version: 1,
+    title: 'Lifecycle action validation',
+    description: 'Setup/startState/teardown actions must be declared by the runner manifest.',
+    startState: { action: 'missing.start_state' },
+    validate: {
+      workflow: {
+        setup: [{ id: 'setup', action: 'missing.setup' }],
+        entry: 'done',
+        nodes: { done: { action: 'end', status: 'pass' } },
+        teardown: [{ id: 'teardown', action: 'missing.teardown' }],
+      },
+    },
+  };
+
+  const result = validateRecipeWithManifest(recipe, {
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.equal(
+    result.findings.filter((finding) => finding.code === 'recipe.action_not_declared_by_manifest')
+      .length,
+    3,
+  );
+});
+
+test('validates workflow preconditions against the runner manifest', () => {
+  const recipe = {
+    schema_version: 1,
+    title: 'Precondition validation',
+    description: 'Recipe-level preconditions must be manifest-declared gates.',
+    validate: {
+      workflow: {
+        pre_conditions: [
+          'wallet.unlocked',
+          { id: 'perps.ready', params: { market: 'BTC' }, required: true },
+        ],
+        entry: 'done',
+        nodes: { done: { action: 'end', status: 'pass' } },
+      },
+    },
+  };
+
+  const validResult = validateRecipeWithManifest(recipe, {
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+    pre_conditions: [
+      { id: 'wallet.unlocked', description: 'Wallet is unlocked.' },
+      { id: 'perps.ready', description: 'Perps is ready.' },
+    ],
+  });
+  assert.equal(validResult.status, 'valid');
+  assert.deepEqual(validResult.findings, []);
+
+  const invalidResult = validateRecipeWithManifest(recipe, {
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+    pre_conditions: [{ id: 'wallet.unlocked', description: 'Wallet is unlocked.' }],
+  });
+  assert.equal(invalidResult.status, 'invalid');
+  assert.ok(
+    invalidResult.findings.some(
+      (finding) => finding.code === 'recipe.precondition_not_declared_by_manifest',
+    ),
+  );
+
+  const malformedResult = validateRecipeDocument({
+    ...recipe,
+    validate: {
+      workflow: {
+        pre_conditions: [{ params: [] }],
+        entry: 'done',
+        nodes: { done: { action: 'end', status: 'pass' } },
+      },
+    },
+  });
+  assert.equal(malformedResult.status, 'invalid');
+  assert.ok(
+    malformedResult.findings.some(
+      (finding) => finding.code === 'workflow.invalid_pre_condition_id',
+    ),
+  );
+});
+
+test('validates typed artifact manifests against recipe node ids and available paths', async () => {
+  const recipe = await readJson('docs/examples/recipes/ui-live-v1.recipe.json');
+  const manifest = await readJson('docs/examples/recipes/ui-live-v1.artifact-manifest.json');
+
+  const result = validateArtifactManifestDocument(manifest, {
+    recipe,
+    artifactPaths: [
+      'summary.json',
+      'trace.json',
+      'screenshots/checkout-confirmation.png',
+      'logs/browser-console.log',
+    ],
+  });
+
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+});
+
+test('validates optional runner provenance in typed artifact manifests', async () => {
+  const recipe = await readJson('docs/examples/recipes/farmslot/provenance-smoke.recipe.json');
+  const manifest = await readJson(
+    'docs/examples/recipes/farmslot/artifacts/provenance-smoke/artifact-manifest.json',
+  );
+
+  const result = validateArtifactManifestDocument(manifest, {
+    recipe,
+    artifactPaths: ['summary.json', 'trace.json', 'recipe.json'],
+  });
+
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+
+  for (const { manifest: invalidManifest, expectedPaths } of [
+    {
+      manifest: { version: 1, provenance: 'runner-a', artifacts: [] },
+      expectedPaths: ['provenance'],
+    },
+    {
+      manifest: { version: 1, provenance: { runner: 'runner-a' }, artifacts: [] },
+      expectedPaths: ['provenance.runner'],
+    },
+    {
+      manifest: { version: 1, provenance: { runner: { source: '' } }, artifacts: [] },
+      expectedPaths: ['provenance.runner.source', 'provenance.runner.git_ref'],
+    },
+    {
+      manifest: {
+        version: 1,
+        provenance: { runner: { source: 'runner-a', git_ref: 'abc123', name: 1 } },
+        artifacts: [],
+      },
+      expectedPaths: ['provenance.runner.name'],
+    },
+    {
+      manifest: {
+        version: 1,
+        provenance: { runner: { source: 'runner-a', git_ref: 'abc123', version: 1 } },
+        artifacts: [],
+      },
+      expectedPaths: ['provenance.runner.version'],
+    },
+  ]) {
+    const invalidResult = validateArtifactManifestDocument(invalidManifest, { recipe });
+
+    assert.equal(invalidResult.status, 'invalid');
+    for (const expectedPath of expectedPaths) {
+      assert.ok(
+        invalidResult.findings.some((finding) => finding.path === expectedPath),
+        `expected finding for ${expectedPath}`,
+      );
+    }
+  }
+});
+
+test('validates Example App v1 example recipes and artifact manifests', async () => {
+  for (const { recipePath, manifestPath, artifactPaths } of [
+    {
+      recipePath: 'docs/examples/recipes/example-mobile-perps-v1.recipe.json',
+      manifestPath: 'docs/examples/recipes/example-mobile-perps-v1.artifact-manifest.json',
+      artifactPaths: [
+        'screenshots/mobile-perps-market.png',
+        'recipe-issues-review.md',
+        'reports/mobile-state.json',
+      ],
+    },
+    {
+      recipePath: 'docs/examples/recipes/example-browser-perps-v1.recipe.json',
+      manifestPath: 'docs/examples/recipes/example-browser-perps-v1.artifact-manifest.json',
+      artifactPaths: ['screenshots/extension-perps-market.png', 'recipe-issues.json'],
+    },
+  ]) {
+    const recipe = await readJson(recipePath);
+    const manifest = await readJson(manifestPath);
+    const recipeResult = validateRecipeDocument(recipe);
+    const manifestResult = validateArtifactManifestDocument(manifest, {
+      recipe,
+      artifactPaths,
+    });
+
+    assert.equal(recipeResult.status, 'valid', recipePath);
+    assert.deepEqual(recipeResult.findings, []);
+    assert.equal(manifestResult.status, 'valid', manifestPath);
+    assert.deepEqual(manifestResult.findings, []);
+  }
+});
+
+test('validates Farmslot self-validation recipe packages', async () => {
+  const suite = await readJson('docs/examples/recipes/farmslot/self-validation-suite.json');
+  assertRecord(suite, 'self-validation suite should be an object');
+  assert.equal(suite.schema_version, 1);
+  const suiteDescription = suite.description;
+  assert.ok(typeof suiteDescription === 'string');
+  assert.match(suiteDescription, /Generic Recipe Protocol v1/);
+  assert.ok(Array.isArray(suite.recipes));
+
+  const recipes = suite.recipes as unknown[];
+  assert.deepEqual(
+    recipes.map((entry) => {
+      assertRecord(entry, 'suite recipe entry should be an object');
+      return entry.id;
+    }),
+    [
+      'command-center-ui',
+      'gateway-rpc-api',
+      'provenance-smoke',
+      'mobile-companion',
+      'recipe-player-e2e',
+      'documentation-onboarding',
+    ],
+  );
+  assert.deepEqual(
+    recipes.map((entry) => {
+      assertRecord(entry, 'suite recipe entry should be an object');
+      return entry.surface;
+    }),
+    [
+      'command-center-web-ui',
+      'gateway-rpc-api',
+      'runner-provenance',
+      'mobile-companion',
+      'recipe-player-e2e',
+      'documentation-onboarding',
+    ],
+  );
+
+  for (const entry of recipes) {
+    assertRecord(entry, 'suite recipe entry should be an object');
+    assert.equal(typeof entry.recipe, 'string');
+    assert.equal(typeof entry.artifactDir, 'string');
+
+    const recipePath = `docs/examples/recipes/farmslot/${entry.recipe}`;
+    const artifactDir = `docs/examples/recipes/farmslot/${entry.artifactDir}`;
+    const recipe = await readJson(recipePath);
+    const resolvedRecipe = await readJson(`${artifactDir}/recipe.json`);
+    const manifest = await readJson(`${artifactDir}/artifact-manifest.json`);
+    const summary = await readJson(`${artifactDir}/summary.json`);
+    const trace = await readJson(`${artifactDir}/trace.json`);
+    const artifactPaths = await listRelativeFiles(artifactDir);
+    assertRecord(manifest, `${entry.id} artifact manifest should be an object`);
+    assert.ok(Array.isArray(manifest.artifacts));
+    assertRecord(summary, `${entry.id} summary should be an object`);
+    const traceRecords = readTraceEntries(trace, String(entry.id));
+    const artifactTypes = new Set(
+      (manifest.artifacts as unknown[]).map((artifact) => {
+        assertRecord(artifact, `${entry.id} manifest artifact should be an object`);
+        return artifact.type;
+      }),
+    );
+
+    assert.deepEqual(resolvedRecipe, recipe, `${entry.id} should copy the executed recipe`);
+    for (const requiredPath of [
+      'summary.json',
+      'trace.json',
+      'artifact-manifest.json',
+      'recipe.json',
+    ]) {
+      assert.ok(artifactPaths.includes(requiredPath), `${entry.id} should include ${requiredPath}`);
+    }
+    if (
+      entry.surface === 'command-center-web-ui' ||
+      entry.surface === 'mobile-companion' ||
+      entry.surface === 'recipe-player-e2e'
+    ) {
+      assert.ok(artifactTypes.has('screenshot'), `${entry.id} should include visual evidence`);
+    }
+    assert.equal(
+      summary.status,
+      manifest.runStatus,
+      `${entry.id} summary status should match manifest`,
+    );
+    assert.equal(
+      summary.passed,
+      traceRecords.filter((traceEntry) => traceEntry.ok === true).length,
+      `${entry.id} summary passed count should match trace`,
+    );
+    assert.equal(
+      summary.failed,
+      traceRecords.filter((traceEntry) => traceEntry.ok === false).length,
+      `${entry.id} summary failed count should match trace`,
+    );
+
+    if (entry.id === 'provenance-smoke') {
+      assertRecord(trace, 'provenance-smoke trace should use the provenance envelope');
+      const typedManifest = manifest as RecipeArtifactManifestDocument;
+      assert.deepEqual(
+        (trace.metadata as { runner?: unknown } | undefined)?.runner,
+        summary.runner,
+        'provenance-smoke trace metadata should match summary runner provenance',
+      );
+      assert.deepEqual(
+        typedManifest.provenance?.runner,
+        summary.runner,
+        'provenance-smoke manifest provenance should match summary runner provenance',
+      );
+    }
+
+    const result = mergeRecipeValidationResults([
+      validateRecipeDocument(recipe),
+      validateRecipeArtifactPackage({ recipe, manifest, artifactPaths }),
+    ]);
+
+    assert.equal(result.status, 'valid', `${entry.id}: ${JSON.stringify(result.findings)}`);
+    assert.deepEqual(result.findings, []);
+  }
+});
+
+test('rejects recipe documents without the v1 schema marker', () => {
+  const result = validateRecipeDocument({
+    title: 'Legacy graph without schema marker',
+    validate: {
+      workflow: {
+        entry: 'run',
+        nodes: {
+          run: {
+            action: 'command',
+            intent: 'Run the legacy command before completion',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.equal(result.summary.errors, 1);
+  assert.ok(result.findings.some((finding) => finding.code === 'recipe.missing_schema_version'));
+});
+
+test('accepts v1 recipes without top-level title or description when nodes declare intent', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'run',
+        nodes: {
+          run: {
+            action: 'command',
+            intent: 'Run the smoke command before completing the recipe',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+});
+
+test('rejects missing and generic non-terminal node intent', () => {
+  const missing = validateRecipeDocument({
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'run',
+        nodes: {
+          run: { action: 'command', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+  const generic = validateRecipeDocument({
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'run',
+        nodes: {
+          run: { action: 'command', intent: 'run', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(missing.status, 'invalid');
+  assert.ok(missing.findings.some((finding) => finding.code === 'workflow.invalid_intent'));
+  assert.equal(generic.status, 'invalid');
+  assert.ok(generic.findings.some((finding) => finding.code === 'workflow.invalid_intent'));
+});
+
+test('rejects missing transition targets and malformed playback metadata', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Broken graph',
+    description: 'Demonstrates structural failures.',
+    validate: {
+      workflow: {
+        entry: 'run',
+        nodes: {
+          run: { action: 'command', next: 'missing' },
+          done: { action: 'end', status: 'pass' },
+        },
+        playback: { mode: 'auto', slow_ms: 99 },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(result.findings.some((finding) => finding.code === 'workflow.missing_target'));
+  assert.ok(result.findings.some((finding) => finding.code === 'workflow.no_reachable_terminal'));
+  assert.ok(
+    result.findings.some((finding) => finding.code === 'workflow.invalid_playback_slow_ms'),
+  );
+  assert.ok(result.findings.some((finding) => finding.code === 'workflow.unreachable_node'));
+});
+
+test('rejects unresolved call refs and lifecycle transitions', () => {
+  const unresolvedCall = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Unresolved call',
+    description: 'Call refs need inline flows or uses catalogs.',
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': { action: 'call', ref: 'missing.flow', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+  const lifecycleTransition = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Lifecycle transition',
+    description: 'Lifecycle arrays cannot declare graph transitions.',
+    validate: {
+      workflow: {
+        setup: [{ action: 'wait', ms: 1, next: 'done' }],
+        entry: 'done',
+        nodes: { done: { action: 'end', status: 'pass' } },
+      },
+    },
+  });
+
+  assert.equal(unresolvedCall.status, 'invalid');
+  assert.ok(
+    unresolvedCall.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+  );
+  assert.equal(lifecycleTransition.status, 'invalid');
+  assert.ok(
+    lifecycleTransition.findings.some(
+      (finding) => finding.code === 'workflow.lifecycle_has_transition',
+    ),
+  );
+});
+
+test('validates inline flow actions, transitions, and cycles', () => {
+  const recipe = {
+    schema_version: 1,
+    title: 'Inline flow validation',
+    description: 'Inline flow actions must obey Recipe v1 validation.',
+    flows: {
+      'example.bad-action': {
+        entry: 'run',
+        nodes: {
+          run: { action: 'custom.missing', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+      'example.bad-transition': {
+        entry: 'run',
+        nodes: {
+          run: { action: 'wait', ms: 1, next: 'missing' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+      'example.cycle-a': {
+        entry: 'call-b',
+        nodes: {
+          'call-b': { action: 'call', ref: 'example.cycle-b', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+      'example.cycle-b': {
+        entry: 'call-a',
+        nodes: {
+          'call-a': { action: 'call', ref: 'example.cycle-a', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': { action: 'call', ref: 'example.bad-action', next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+
+  const result = validateRecipeWithManifest(recipe, {
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['call', 'end', 'wait'],
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(
+    result.findings.some(
+      (finding) =>
+        finding.code === 'recipe.action_not_declared_by_manifest' &&
+        finding.path === 'flows.example.bad-action.workflow.nodes.run.action',
+    ),
+  );
+  assert.ok(result.findings.some((finding) => finding.code === 'flow.missing_target'));
+  assert.ok(result.findings.some((finding) => finding.code === 'flow.no_reachable_terminal'));
+  assert.ok(result.findings.some((finding) => finding.code === 'flow.call_cycle'));
+});
+
+test('rejects artifact packages without typed manifests', () => {
+  const result = validateRecipeArtifactPackage({ artifactPaths: ['summary.json', 'trace.json'] });
+
+  assert.equal(result.status, 'invalid');
+  assert.equal(result.summary.errors, 1);
+  assert.ok(
+    result.findings.some((finding) => finding.code === 'artifact_package.missing_manifest'),
+  );
+});
+
+test('rejects unsafe artifact manifest paths and unknown node ids', () => {
+  const result = validateArtifactManifestDocument(
+    {
+      version: 1,
+      runStatus: 'pass',
+      artifacts: [
+        { path: '../../src/secret.txt', type: 'log', nodeId: 'not-a-node' },
+        { path: '/tmp/screenshot.png', type: 'screenshot' },
+      ],
+    },
+    {
+      recipe: {
+        schema_version: 1,
+        title: 'Recipe',
+        description: 'Recipe',
+        validate: {
+          workflow: {
+            entry: 'done',
+            nodes: { done: { action: 'end', status: 'pass' } },
+          },
+        },
+      },
+    },
+  );
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(result.findings.some((finding) => finding.code === 'artifact_manifest.unsafe_path'));
+  assert.ok(result.findings.some((finding) => finding.code === 'artifact_manifest.unknown_node'));
+});
+
+test('rejects enum-shaped arrays instead of stringifying them into valid enum tokens', () => {
+  const recipeResult = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Malformed enums',
+    description: 'Enum values must be strings, not arrays that stringify to valid values.',
+    validate: {
+      workflow: {
+        entry: 'done',
+        nodes: { done: { action: 'end', status: ['pass'] } },
+        playback: { mode: ['auto'], slow_ms: 2000 },
+      },
+    },
+  });
+  const manifestResult = validateArtifactManifestDocument({
+    version: 1,
+    runStatus: ['pass'],
+    artifacts: [],
+  });
+
+  assert.equal(recipeResult.status, 'invalid');
+  assert.ok(
+    recipeResult.findings.some((finding) => finding.code === 'workflow.invalid_terminal_status'),
+  );
+  assert.ok(
+    recipeResult.findings.some((finding) => finding.code === 'workflow.invalid_playback_mode'),
+  );
+  assert.equal(manifestResult.status, 'invalid');
+  assert.ok(
+    manifestResult.findings.some(
+      (finding) => finding.code === 'artifact_manifest.invalid_run_status',
+    ),
+  );
+});
+
+test('uses own-property checks for entry and transition node existence', () => {
+  const inheritedEntryResult = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Inherited entry',
+    description: 'Entry must be an own node key.',
+    validate: {
+      workflow: {
+        entry: '__proto__',
+        nodes: { done: { action: 'end', status: 'pass' } },
+      },
+    },
+  });
+  const inheritedTargetResult = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Inherited target',
+    description: 'Transition targets must be own node keys.',
+    validate: {
+      workflow: {
+        entry: 'run',
+        nodes: {
+          run: { action: 'command', next: 'constructor' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(inheritedEntryResult.status, 'invalid');
+  assert.ok(
+    inheritedEntryResult.findings.some((finding) => finding.code === 'workflow.missing_entry_node'),
+  );
+  assert.equal(inheritedTargetResult.status, 'invalid');
+  assert.ok(
+    inheritedTargetResult.findings.some((finding) => finding.code === 'workflow.missing_target'),
+  );
+});
+
+test('preserves own prototype-named node ids when normalizing workflow nodes', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Prototype-named node',
+    description: 'Node ids are graph ids, including names that overlap object prototype fields.',
+    validate: {
+      workflow: {
+        entry: '__proto__',
+        nodes: { ['__proto__']: { action: 'end', status: 'pass' } },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+});
+
+test('rejects Windows drive-rooted artifact paths as non-relative', () => {
+  const result = validateArtifactManifestDocument({
+    version: 1,
+    runStatus: 'pass',
+    artifacts: [
+      { path: 'C:/tmp/file.log', type: 'log' },
+      { path: 'D:\\tmp\\file.log', type: 'log' },
+    ],
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.equal(
+    result.findings.filter((finding) => finding.code === 'artifact_manifest.unsafe_path').length,
+    2,
+  );
+});
+
+test('merges recipe and artifact package validation results', async () => {
+  const recipe = await readJson('docs/examples/recipes/backend-command-v1.recipe.json');
+  const manifest = await readJson(
+    'docs/examples/recipes/backend-command-v1.artifact-manifest.json',
+  );
+  const result = mergeRecipeValidationResults([
+    validateRecipeDocument(recipe),
+    validateRecipeArtifactPackage({
+      recipe,
+      manifest,
+      artifactPaths: [
+        'recipe.json',
+        'summary.json',
+        'trace.json',
+        'artifact-manifest.json',
+        'reports/api-smoke.json',
+        'logs/api-smoke.log',
+      ],
+    }),
+  ]);
+
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+});

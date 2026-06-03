@@ -1,0 +1,291 @@
+import { css, html, LitElement, unsafeCSS } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
+
+import type { FlowType, Run, RunStep } from '@farmslot/protocol';
+
+import { colors } from '../../styles/theme-tokens.js';
+import { reviewSegmentLabel } from '../../utils/review-gate-display.js';
+
+import { effectiveStepStatus, formatDuration, stepStatusColor } from './run-utils.js';
+
+interface MiniSegment {
+  name: string;
+  status: RunStep['status'];
+  title: string;
+}
+
+@customElement('run-pipeline-mini')
+export class RunPipelineMini extends LitElement {
+  @property({ attribute: false }) run?: Run;
+  @property({ attribute: false }) steps: RunStep[] = [];
+  @property() flowType: FlowType = 'fix-bug';
+
+  static styles = css`
+    :host {
+      display: inline-flex;
+      gap: 2px;
+      align-items: center;
+      min-width: 0;
+      width: fit-content;
+      max-width: 100%;
+    }
+    .bars {
+      display: flex;
+      gap: 2px;
+      align-items: center;
+      flex: 0 1 auto;
+      min-width: 0;
+    }
+    .seg {
+      height: 4px;
+      min-width: 8px;
+      max-width: 24px;
+      width: clamp(8px, 1.4vw, 18px);
+      flex: 0 1 clamp(8px, 1.4vw, 18px);
+      border-radius: 2px;
+    }
+    @keyframes mini-pulse {
+      0%,
+      100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.4;
+      }
+    }
+    .seg.running {
+      animation: mini-pulse 1.5s ease-in-out infinite;
+    }
+    .seg.pending {
+      opacity: 0.32;
+      outline: 1px solid rgba(156, 163, 175, 0.18);
+    }
+    .seg.done {
+      opacity: 0.86;
+    }
+    .seg.failed {
+      opacity: 1;
+    }
+    .active-label {
+      color: ${unsafeCSS('#9ca3af')};
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 140px;
+      margin-left: 4px;
+      flex: 0 1 auto;
+    }
+  `;
+
+  render() {
+    const isCancelled = this.run?.status === 'cancelled';
+    const segments = this.buildSegments();
+    if (isCancelled) {
+      for (const seg of segments) {
+        seg.status = effectiveStepStatus(seg.status, 'cancelled');
+      }
+    }
+    const runningIndex = segments.findIndex((segment) => segment.status === 'running');
+    const nextIndex = segments.findIndex((segment) => segment.status === 'pending');
+    const labelIndex =
+      runningIndex >= 0 ? runningIndex : nextIndex >= 0 ? nextIndex : segments.length - 1;
+    const active = segments[labelIndex];
+    const remaining = active
+      ? segments.slice(labelIndex + 1).filter((segment) => segment.status === 'pending').length
+      : 0;
+    return html`
+      <div class="bars">
+        ${segments.map(
+          (segment) => html`
+            <span
+              class="seg ${segment.status}"
+              style="background:${unsafeCSS(stepStatusColor(segment.status))}"
+              title=${segment.title}
+            ></span>
+          `,
+        )}
+      </div>
+      ${isCancelled
+        ? html`<span class="active-label" style="color:${unsafeCSS(colors.statusWarn)}"
+            >cancelled</span
+          >`
+        : active
+          ? html`<span class="active-label" title=${active.title}
+              >${this.shortName(active.name)}${remaining ? ` +${remaining}` : ''}</span
+            >`
+          : null}
+    `;
+  }
+
+  private buildSegments(): MiniSegment[] {
+    const run = this.run;
+    const sourceSteps = (run?.steps ?? this.steps).filter((step) => step.status !== 'skipped');
+    const preGateReviews = this.reviewSegments('dispatch', 'pre-gate review');
+    const waitingForPreGateReviews = preGateReviews.some(
+      (segment) => segment.status === 'running' || segment.status === 'pending',
+    );
+    const segments: MiniSegment[] = [];
+    for (const step of sourceSteps) {
+      const displayStep = this.pipelineDisplayStep(step, waitingForPreGateReviews);
+      segments.push({
+        name: displayStep.name,
+        status: displayStep.status,
+        title: this.segmentTitle(displayStep),
+      });
+      if (step.name === 'self-review') {
+        segments.push(...preGateReviews);
+      }
+      if (step.name === 'human-gate') {
+        const extraReviews = this.reviewSegments('human-gate', 'extra review');
+        segments.push(...extraReviews);
+        if (extraReviews.length > 0) {
+          segments.push({
+            name: 'package refresh',
+            status: 'pending',
+            title: 'package refresh: rebuild package after extra review',
+          });
+        }
+      }
+    }
+    return segments;
+  }
+
+  private pipelineDisplayStep(step: RunStep, waitingForPreGateReviews: boolean): RunStep {
+    if (!waitingForPreGateReviews) return step;
+    if (step.name !== 'complete' && step.name !== 'human-gate') return step;
+    return {
+      ...step,
+      status: 'pending',
+      detail: step.name === 'complete' ? 'waiting for reviews' : 'waiting for package',
+      startedAt: undefined,
+      completedAt: undefined,
+      durationMs: undefined,
+    };
+  }
+
+  private reviewSegments(source: 'dispatch' | 'human-gate', label: string): MiniSegment[] {
+    const publishGate = (this.run?.engineState as any)?.publishGate as
+      | Record<string, any>
+      | undefined;
+    if (!publishGate) return [];
+    const requestedBy =
+      publishGate.reviewDepth?.requestedBy === 'human-gate' ? 'human-gate' : 'dispatch';
+    const pendingPlan = Array.isArray(publishGate.pendingReviewPlan)
+      ? (publishGate.pendingReviewPlan as Array<Record<string, unknown>>)
+      : [];
+    const segments: MiniSegment[] = [];
+    if (pendingPlan.length > 0 && requestedBy === source) {
+      segments.push(...this.planSegments(pendingPlan, label));
+    }
+    const reviews = Array.isArray(publishGate.independentReviews)
+      ? (publishGate.independentReviews as Array<Record<string, unknown>>)
+      : [];
+    const minimum = Number(publishGate.reviewDepth?.minimumIndependentReviews ?? 1);
+    for (const review of reviews) {
+      const reviewLaneSource = review.source === 'human-gate' ? 'human-gate' : 'dispatch';
+      const loopNumber = Number(review.loopNumber ?? 0);
+      if (reviewLaneSource !== source) continue;
+      if (source === 'dispatch' && loopNumber <= minimum && review.crossRunner !== true) continue;
+      const runner =
+        typeof review.runner === 'string' && review.runner.trim()
+          ? review.runner.trim()
+          : 'reviewer';
+      const verdict = typeof review.verdict === 'string' ? review.verdict : '';
+      const status: RunStep['status'] =
+        verdict === 'failed' ? 'failed' : verdict === 'pending' ? 'running' : 'done';
+      const order = Math.max(1, source === 'dispatch' ? loopNumber - minimum : segments.length + 1);
+      const reviewSource =
+        review.source === 'human-gate'
+          ? 'human-gate'
+          : review.source === 'self-review'
+            ? 'self-review'
+            : 'dispatch';
+      const segmentName = reviewSegmentLabel(
+        {
+          source: reviewSource,
+          crossRunner: review.crossRunner === true,
+        },
+        order,
+      );
+      segments.push({
+        name: segmentName,
+        status,
+        title: `${segmentName}: ${runner}${verdict ? ` / ${verdict}` : ''}`,
+      });
+    }
+    const active = this.activeReviewSegment(source, label);
+    if (active && !segments.some((segment) => segment.name === active.name)) segments.push(active);
+    return segments.slice(0, 5);
+  }
+
+  private planSegments(plan: Array<Record<string, unknown>>, label: string): MiniSegment[] {
+    return plan.slice(0, 5).map((item, index) => {
+      const runner =
+        typeof item.runner === 'string' && item.runner.trim() ? item.runner.trim() : 'same';
+      const model = typeof item.model === 'string' && item.model.trim() ? item.model.trim() : '';
+      return {
+        name: `${label} ${index + 1}`,
+        status: 'pending' as const,
+        title: `${label} ${index + 1}: ${runner}${model ? ` / ${model}` : ''}`,
+      };
+    });
+  }
+
+  private activeReviewSegment(
+    source: 'dispatch' | 'human-gate',
+    label: string,
+  ): MiniSegment | null {
+    const carrier = this.run?.steps.find((step) => {
+      if (step.status !== 'running' || typeof step.detail !== 'string') return false;
+      return /Running (dispatch|human-gate) ([\w.-]+) review \((\d+)\/(\d+)\)/i.test(step.detail);
+    });
+    if (!carrier?.detail) return null;
+    const match = carrier.detail.match(
+      /Running (dispatch|human-gate) ([\w.-]+) review \((\d+)\/(\d+)\)/i,
+    );
+    if (!match) return null;
+    const activeSource = match[1].toLowerCase() === 'human-gate' ? 'human-gate' : 'dispatch';
+    if (activeSource !== source) return null;
+    const runner = match[2];
+    const order = Math.max(1, Number(match[3]) || 1);
+    return {
+      name: `${label} ${order}`,
+      status: 'running',
+      title: `${label} ${order}: ${runner} / running`,
+    };
+  }
+
+  private segmentTitle(step: RunStep): string {
+    const outputs = step.outputs as Record<string, unknown> | undefined;
+    const parts = [`${step.name}: ${step.status}`];
+    if (step.durationMs) parts.push(formatDuration(step.durationMs));
+    if (step.detail) parts.push(step.detail);
+    if (step.name === 'complete' && outputs?.packageHash) {
+      parts.push(`package ${String(outputs.packageHash).slice(0, 12)}`);
+      parts.push(`review ${outputs.reviewSatisfied ? 'satisfied' : 'pending'}`);
+    }
+    if (step.name === 'human-gate' && outputs?.resolvedAction) {
+      parts.push(`resolved ${outputs.resolvedAction}`);
+    }
+    if (step.name === 'finalize' && outputs?.publicationStatus) {
+      parts.push(`publish ${outputs.publicationStatus}`);
+    }
+    return parts.join(' · ');
+  }
+
+  private shortName(name: string): string {
+    return name
+      .replace('self-review', 'self review')
+      .replace('human-gate', 'publish gate')
+      .replace('ci-watch', 'CI')
+      .replace('find-slot', 'slot')
+      .replace('write-task', 'task');
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'run-pipeline-mini': RunPipelineMini;
+  }
+}

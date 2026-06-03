@@ -1,0 +1,114 @@
+# Project configs are nested git repos — ignored by parent, detected by VS Code
+projects/*/
+!projects/README.md
+
+# Pool configs contain machine hostnames, SSH users, paths — keep private
+pool/*.json
+!pool/example.json
+!pool/farmslot-demo.json
+
+# Recipe runner validation artifacts — created in cwd/temp during runtime-health/
+# live runs; contain throwaway wallet fixtures that must never be committed.
+# Scoped to temp/ so it can't block a legitimately-named fixture elsewhere.
+temp/.recipe-validation-*/
+temp/**/wallet-fixture.json
+
+# Local quality tool artifacts
+temp/quality/
+
+# Generated agent/runtime overlays; never commit transient agentic state.
+temp/agentic/**
+
+# Co-pilot session history (raw JSON, transient)
+copilot/sessions/
+copilot/memory/
+copilot/notified-decisions.json
+
+# Runtime state
+.farm-status.json
+.monitor_state.json
+.dispatch-queue.json
+.farm-cache/
+
+# Run archives (per-run folders with artifacts, tasks, run records)
+projects/*/runs/
+
+# Root workspace artifacts (yarn 4 monorepo)
+/node_modules/
+**/node_modules/
+/.yarn/
+
+**.DS_Store
+.claude/scheduled_tasks.lock
+
+# Python cache
+__pycache__/
+
+# Local reference clones for LLM scoring (shallow clones of repo_url)
+projects/*/.src/
+
+# Scoring results (contain ticket titles/descriptions from private trackers)
+projects/*/scores/
+
+# Compiled binaries
+tools/capture-helper/capture-helper
+
+# Secrets
+.env.sonar.local
+.env
+.env.ports
+.env.local-auth
+**/.chrome-farmslot/
+.runs/
+.backups/
+
+# Session work tracker (local only)
+WORK.md
+
+# Keep the fake-runner demo project in-repo for E2E validation
+!projects/farmslot-farm/
+projects/farmslot-farm/*
+!projects/farmslot-farm/project.json
+!projects/farmslot-farm/templates/
+projects/farmslot-farm/templates/*
+!projects/farmslot-farm/templates/worker/
+projects/farmslot-farm/templates/worker/*
+!projects/farmslot-farm/fixtures/
+projects/farmslot-farm/fixtures/*
+!projects/farmslot-farm/templates/worker/dev.md
+!projects/farmslot-farm/templates/worker/fix-bug.md
+!projects/farmslot-farm/templates/worker/review-pr.md
+!projects/farmslot-farm/templates/worker/merge-main.md
+!projects/farmslot-farm/templates/worker/pr-complete.md
+!projects/farmslot-farm/fixtures/CLAUDE.local.base.md
+!projects/farmslot-farm/fixtures/CLAUDE.local.agent.fix-bug.md
+!projects/farmslot-farm/fixtures/CLAUDE.local.agent.feature.md
+!projects/farmslot-farm/fixtures/CLAUDE.local.agent.review-pr.md
+projects/farmslot-farm/tasks/
+projects/farmslot-farm/.agent/
+projects/farmslot-farm/.task/
+
+# Keep first-party Farmslot companion config in-repo so the mobile app can be
+# dispatched and recipe-validated like external app projects.
+!projects/farmslot-companion/
+projects/farmslot-companion/*
+!projects/farmslot-companion/project.json
+
+# Central sandbox root for fake/demo runner isolation
+.sandbox/
+.omx/
+**/.omx/
+**/.omc/
+
+# Docs and slides generated output
+apps/docs/.docusaurus
+apps/docs/.docusaurus/
+apps/docs/build/
+
+# Private promotion/presentation material lives outside this publicable repo.
+presentation/
+
+# Package build output
+packages/*/dist/
+services/*/dist/
+pool/*.bak.*

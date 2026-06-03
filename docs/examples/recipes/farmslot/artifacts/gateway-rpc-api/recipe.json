@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "title": "Farmslot Gateway recipe RPC and artifact package smoke",
+  "description": "Validates recipe-run RPCs, artifact index ingestion, run/family projection, and manifest contract without requiring visual replay.",
+  "inputs": {
+    "gateway_url": "ws://localhost:7777/ws",
+    "run_id": "<run-id>",
+    "slot_id": "<slot-id>",
+    "recipe_run_id": "<recipe-run-id>"
+  },
+  "validate": {
+    "workflow": {
+      "pre_conditions": [
+        {
+          "id": "gateway.reachable",
+          "description": "Gateway is reachable.",
+          "required": true
+        },
+        {
+          "id": "gateway.recipe_run_artifacts.available",
+          "description": "A run with recipe-run artifacts exists or the fixture run store is loaded.",
+          "required": true
+        }
+      ],
+      "setup": [],
+      "entry": "list-recipe-runs",
+      "nodes": {
+        "list-recipe-runs": {
+          "action": "command",
+          "next": "open-artifact-index",
+          "cmd": "node apps/command-center/scripts/gateway-smoke.mjs --method run.recipeRunsForRun --gateway-url {{gateway_url}} --run-id {{run_id}} --slot-id {{slot_id}}",
+          "save_as": "list_recipe_runs",
+          "intent": "Request run.recipeRunsForRun and verify the gateway returns current, attempted, and promoted recipe-run groups when available."
+        },
+        "open-artifact-index": {
+          "action": "command",
+          "next": "validate-manifest-package",
+          "cmd": "curl -fsS \"{{gateway_url}}/api/run-artifact?runId={{run_id}}&recipeRunId={{recipe_run_id}}\" > reports/artifact-index-response.json",
+          "save_as": "artifact_response",
+          "intent": "Open a typed recipe-run artifact through the /api/run-artifact route with the selected recipeRunId preserved."
+        },
+        "validate-manifest-package": {
+          "action": "command",
+          "cmd": "cd apps/command-center && yarn farmslot recipe validate ../../../docs/examples/recipes/farmslot/gateway-rpc-api.recipe.json --artifact-dir ../../docs/examples/recipes/farmslot/artifacts/gateway-rpc-api",
+          "next": "assert-family-projection",
+          "intent": "Run the shared v1 contract validator against the recipe and artifact package returned by the gateway."
+        },
+        "assert-family-projection": {
+          "action": "command",
+          "next": "index-artifacts",
+          "cmd": "node apps/command-center/scripts/gateway-smoke.mjs --method run.familyObservability --gateway-url {{gateway_url}} --run-id {{run_id}} --slot-id {{slot_id}}",
+          "save_as": "assert_family_projection",
+          "intent": "Verify run/family observability can project recipe-run artifact groups without mixing PR feedback artifacts into recipe evidence."
+        },
+        "index-artifacts": {
+          "action": "index_artifacts",
+          "next": "done",
+          "artifacts": ["reports/gateway-rpc.json", "logs/gateway-rpc.log"],
+          "intent": "Publish gateway RPC transcript, manifest validation output, summary, trace, and resolved recipe."
+        },
+        "done": {
+          "action": "end",
+          "status": "pass"
+        }
+      },
+      "teardown": [],
+      "playback": {
+        "mode": "off",
+        "slow_ms": 2000
+      }
+    }
+  }
+}

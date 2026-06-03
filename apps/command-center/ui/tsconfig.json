@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@farmslot/protocol": ["../../../packages/protocol/src/index.ts"],
+      "@farmslot/protocol/*": ["../../../packages/protocol/src/*"],
+      "@farmslot/theme": ["../../../packages/theme/src/index.ts"],
+      "@farmslot/theme/*": ["../../../packages/theme/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

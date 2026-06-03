@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "runStatus": "pass",
+  "artifacts": [
+    {
+      "path": "summary.json",
+      "type": "summary",
+      "label": "Run summary",
+      "mimeType": "application/json"
+    },
+    {
+      "path": "trace.json",
+      "type": "trace",
+      "label": "Execution trace",
+      "mimeType": "application/json"
+    },
+    {
+      "path": "reports/api-smoke.json",
+      "type": "report",
+      "label": "API smoke JSON report",
+      "nodeId": "run-api-smoke",
+      "mimeType": "application/json"
+    },
+    {
+      "path": "logs/api-smoke.log",
+      "type": "log",
+      "label": "API smoke stdout/stderr",
+      "nodeId": "run-api-smoke",
+      "mimeType": "text/plain"
+    }
+  ]
+}

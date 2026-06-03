@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Recipe evidence product mockup</title>
+  <desc id="desc">Docs-safe illustration of a recipe graph producing trace, screenshots, assertions, and an artifact manifest.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6ee7c8"/>
+    </marker>
+    <linearGradient id="panel" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#14352e"/>
+      <stop offset="1" stop-color="#0d1d19"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="720" rx="32" fill="#081411"/>
+  <rect x="30" y="30" width="1140" height="660" rx="26" fill="#10241f" stroke="#2c6b5b"/>
+  <text x="70" y="92" fill="#6ee7c8" font-family="Inter, sans-serif" font-size="28" font-weight="800">Recipe evidence loop</text>
+  <text x="70" y="124" fill="#a7d9cc" font-family="Inter, sans-serif" font-size="16">Acceptance criteria become executable actions, assertions, and reviewable proof artifacts.</text>
+
+  <g font-family="Inter, sans-serif">
+    <rect x="70" y="172" width="250" height="410" rx="20" fill="#0d1d19" stroke="#245c4e"/>
+    <text x="96" y="214" fill="#6ee7c8" font-size="18" font-weight="700">Recipe graph</text>
+    <rect x="98" y="246" width="194" height="58" rx="14" fill="#14352e"/>
+    <text x="122" y="281" fill="#f7fffc" font-size="16" font-weight="700">setup</text>
+    <rect x="98" y="330" width="194" height="58" rx="14" fill="#14352e"/>
+    <text x="122" y="365" fill="#f7fffc" font-size="16" font-weight="700">act</text>
+    <rect x="98" y="414" width="194" height="58" rx="14" fill="#14352e"/>
+    <text x="122" y="449" fill="#f7fffc" font-size="16" font-weight="700">assert</text>
+    <rect x="98" y="498" width="194" height="58" rx="14" fill="#1e6b59"/>
+    <text x="122" y="533" fill="#f7fffc" font-size="16" font-weight="800">evidence</text>
+    <path d="M195 304 V330" stroke="#6ee7c8" stroke-width="4" marker-end="url(#arrow)"/>
+    <path d="M195 388 V414" stroke="#6ee7c8" stroke-width="4" marker-end="url(#arrow)"/>
+    <path d="M195 472 V498" stroke="#6ee7c8" stroke-width="4" marker-end="url(#arrow)"/>
+
+    <path d="M320 375 H408" stroke="#6ee7c8" stroke-width="4" marker-end="url(#arrow)"/>
+
+    <rect x="420" y="172" width="330" height="410" rx="20" fill="url(#panel)" stroke="#245c4e"/>
+    <text x="450" y="214" fill="#6ee7c8" font-size="18" font-weight="700">Runtime trace</text>
+    <text x="450" y="256" fill="#d9fff6" font-size="16">✓ launch isolated slot</text>
+    <text x="450" y="292" fill="#d9fff6" font-size="16">✓ execute real action</text>
+    <text x="450" y="328" fill="#d9fff6" font-size="16">✓ capture screenshot</text>
+    <text x="450" y="364" fill="#d9fff6" font-size="16">✓ evaluate assertion</text>
+    <text x="450" y="400" fill="#d9fff6" font-size="16">✓ record provenance</text>
+    <rect x="450" y="444" width="250" height="80" rx="16" fill="#0d1d19" stroke="#2c6b5b"/>
+    <text x="474" y="490" fill="#f7fffc" font-size="22" font-weight="800">verdict: pass</text>
+
+    <path d="M750 375 H818" stroke="#6ee7c8" stroke-width="4" marker-end="url(#arrow)"/>
+
+    <rect x="830" y="172" width="300" height="410" rx="20" fill="#0d1d19" stroke="#245c4e"/>
+    <text x="860" y="214" fill="#6ee7c8" font-size="18" font-weight="700">Artifact manifest</text>
+    <rect x="860" y="246" width="105" height="76" rx="12" fill="#14352e"/>
+    <rect x="988" y="246" width="105" height="76" rx="12" fill="#14352e"/>
+    <text x="860" y="350" fill="#a7d9cc" font-size="14">before / after screenshots</text>
+    <rect x="860" y="382" width="232" height="52" rx="12" fill="#14352e"/>
+    <text x="882" y="416" fill="#d9fff6" font-size="15">trace.json</text>
+    <rect x="860" y="454" width="232" height="52" rx="12" fill="#14352e"/>
+    <text x="882" y="488" fill="#d9fff6" font-size="15">assertions.json</text>
+    <rect x="860" y="526" width="232" height="52" rx="12" fill="#1e6b59"/>
+    <text x="882" y="560" fill="#f7fffc" font-size="15" font-weight="800">review-ready proof</text>
+  </g>
+</svg>

@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+node scripts/quality/check-conventional-commits.mjs --message-file "$1"

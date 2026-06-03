@@ -1,0 +1,344 @@
+{
+  "runner_protocol_version": 1,
+  "action_registry_version": 1,
+  "supported_official_actions": [
+    "ui.navigate",
+    "ui.press",
+    "ui.key_press",
+    "ui.set_input",
+    "ui.scroll",
+    "ui.gesture",
+    "ui.wait_for",
+    "ui.screenshot",
+    "app.lifecycle",
+    "app.hud",
+    "app.trace",
+    "state_read",
+    "watch_logs",
+    "index_artifacts",
+    "call",
+    "switch",
+    "end"
+  ],
+  "action_metadata": {
+    "ui.navigate": {
+      "description": "Navigate by React Native route name through the injected app control bridge.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          },
+          "next": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "description": "Open the Perps markets route.",
+          "node": {
+            "action": "ui.navigate",
+            "target": "PerpsMarkets",
+            "next": "wait-for-markets",
+            "intent": "Open the Perps markets route"
+          }
+        }
+      ]
+    },
+    "ui.wait_for": {
+      "description": "Wait for text, test_id, route, or visibility from the Mobile app control bridge.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "test_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "text_contains": {
+            "type": [
+              "string",
+              "array"
+            ]
+          },
+          "visible": {
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "type": "number"
+          },
+          "next": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "examples": [
+        {
+          "description": "Wait for a visible Perps market row.",
+          "node": {
+            "action": "ui.wait_for",
+            "test_id": "perps-market-row-ETH",
+            "visible": true,
+            "timeout_ms": 10000,
+            "next": "capture-proof",
+            "intent": "Wait for a visible Perps market row"
+          }
+        }
+      ]
+    },
+    "ui.screenshot": {
+      "description": "Capture a simulator screenshot and attach reviewer claims.",
+      "examples": [
+        {
+          "node": {
+            "action": "ui.screenshot",
+            "path": "screenshots/perps-market.png",
+            "claims": {
+              "must_show": [
+                "ETH",
+                "Perps"
+              ],
+              "must_not_show": [
+                "Error"
+              ]
+            },
+            "next": "index-artifacts",
+            "intent": "Capture a simulator screenshot and attach reviewer claims"
+          }
+        }
+      ]
+    },
+    "app.lifecycle": {
+      "description": "Control the React Native app runtime through launch, terminate, background, foreground, reload, reset, or restart.",
+      "examples": [
+        {
+          "node": {
+            "action": "app.lifecycle",
+            "mode": "restart",
+            "wait_for": "example.mobile.bridge_ready",
+            "next": "unlock-wallet",
+            "intent": "Control the React Native app runtime through launch, terminate, background, foreground, reload, reset, or restart"
+          }
+        }
+      ]
+    },
+    "app.hud": {
+      "description": "Show an optional reviewer HUD annotation; normal step progress comes from node intent.",
+      "examples": [
+        {
+          "node": {
+            "action": "app.hud",
+            "next": "open-perps",
+            "intent": "Verify the Perps ETH market row is visible"
+          }
+        }
+      ]
+    },
+    "ui.set_input": {
+      "description": "Set text through the real UI input path.",
+      "examples": [
+        {
+          "node": {
+            "action": "ui.set_input",
+            "test_id": "network-selector-network-search-input",
+            "value": "Sepolia",
+            "intent": "Set text through the real UI input path"
+          }
+        }
+      ]
+    }
+  },
+  "state_refs": [
+    {
+      "ref": "example.mobile.route",
+      "description": "Current React Navigation route.",
+      "schema": {
+        "type": "object"
+      }
+    },
+    {
+      "ref": "example.mobile.wallet_status",
+      "description": "Debug wallet lock/account/network status.",
+      "schema": {
+        "type": "object"
+      }
+    },
+    {
+      "ref": "example.mobile.perps.status",
+      "description": "Perps feature readiness and selected provider status.",
+      "schema": {
+        "type": "object"
+      }
+    }
+  ],
+  "pre_conditions": [
+    {
+      "id": "example.mobile.bridge_ready",
+      "description": "Injected Mobile app control bridge is reachable.",
+      "failure_kind": "setup"
+    },
+    {
+      "id": "example.wallet.fixture_ready",
+      "description": "Debug wallet fixture/profile exists and is safe to use.",
+      "failure_kind": "fixture"
+    }
+  ],
+  "custom_actions": [
+    {
+      "name": "example.wallet.setup",
+      "owner": "example",
+      "description": "Seed/import a declared throwaway Example App wallet fixture.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "fixture": {
+            "type": "string"
+          },
+          "next": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fixture"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "node": {
+            "action": "example.wallet.setup",
+            "fixture": "primary-dev-wallet",
+            "next": "unlock-wallet"
+          }
+        }
+      ],
+      "safety_notes": "Fixture-only; never use production secrets."
+    },
+    {
+      "name": "example.wallet.unlock",
+      "owner": "example",
+      "description": "Unlock a debug Example App wallet through the real unlock path.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "next": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "node": {
+            "action": "example.wallet.unlock",
+            "account": "primary",
+            "next": "open-perps"
+          }
+        }
+      ]
+    },
+    {
+      "name": "example.trade.enter_amount_keypad",
+      "owner": "example",
+      "description": "Enter a Perps amount through the product keypad flow when raw text input would bypass product behavior.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          },
+          "next": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "node": {
+            "action": "example.trade.enter_amount_keypad",
+            "value": "10",
+            "next": "review-order"
+          }
+        }
+      ]
+    },
+    {
+      "name": "example.debug.eval",
+      "owner": "example",
+      "description": "Debug-only eval escape hatch for setup diagnostics, not primary proof.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "expression": {
+            "type": "string"
+          },
+          "save_as": {
+            "type": "string"
+          },
+          "next": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "expression"
+        ],
+        "additionalProperties": false
+      },
+      "examples": [
+        {
+          "node": {
+            "action": "example.debug.eval",
+            "expression": "Engine.context.NetworkController.state.providerConfig.chainId",
+            "save_as": "chain_id",
+            "next": "assert-chain"
+          }
+        }
+      ],
+      "safety_notes": "Use state_read refs for proof. This action is debug-only."
+    }
+  ],
+  "native_bindings": [
+    {
+      "action": "ui.navigate",
+      "implementation": "example-mobile/app-control/navigate"
+    },
+    {
+      "action": "ui.wait_for",
+      "implementation": "example-mobile/app-control/query-ui"
+    },
+    {
+      "action": "app.hud",
+      "implementation": "example-mobile/agent-step-hud"
+    },
+    {
+      "action": "ui.set_input",
+      "implementation": "example-mobile/app-control/set-input"
+    }
+  ]
+}

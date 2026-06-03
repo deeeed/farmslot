@@ -1,0 +1,975 @@
+// self-review.ts — Automated self-review step (D7)
+// Spawns a second runner session in a new tmux window on the same slot.
+// The review agent has full codebase access — can read files, run tsc, execute recipe.
+// Writes review-feedback.md; if issues found, feeds back to worker for a fix pass.
+
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import {
+  type IndependentReviewAttempt,
+  primaryRoleForFlow,
+  type ReviewDiffSnapshot,
+  type ReviewFixDeltaSnapshot,
+  type ReviewLoopTimelineSegment,
+  type ReviewValidationDepth,
+  type RunnerSessionUsage,
+  type SelfReviewIssue,
+  type WorkerSignal,
+} from '@farmslot/protocol';
+
+import {
+  markAgentContextStatus,
+  resolveAgentTarget,
+  upsertAgentContext,
+} from '../agents/contexts.js';
+import { loadProjectVars, loadSlotVars } from '../core/config.js';
+import { execOnSlot } from '../core/exec.js';
+import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
+import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
+import { buildLaunchCommand } from '../runners/launch-command.js';
+import {
+  normalizeRunner,
+  runnerDefaultModel,
+  runnerLineLooksWaiting,
+  runnerNeedsPostLaunchPrompt,
+  sendRunnerInstructionSafely,
+  WORKER_ENV_PREFIX,
+} from '../runners/registry.js';
+import { getRun, updateRun } from '../runs/store.js';
+import { unwatchContext, watchContext } from '../tasks/watcher.js';
+import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
+
+import { parseSelfReviewIssueBullets } from './issues.js';
+import { initSelfReviewProgress, startProgressWatcher } from './progress.js';
+import { type ReviewAgentResult, runReviewAgent } from './review-agent.js';
+import {
+  captureCurrentHeadSha,
+  captureFixDeltaSnapshot,
+  debugSelfReviewLog,
+  durationBetween,
+  readOptionalSlotFile,
+  removeSlotFiles,
+  reviewAttemptFromResult,
+} from './snapshots.js';
+import { getSelfReviewConfig, resolveWorkerTaskDir } from './templates.js';
+import { ensureTmuxTargetReadyForRelaunch, isWorkerAlive } from './worker-lifecycle.js';
+export { handleSelfReviewFsChanged } from './progress.js';
+
+export interface SelfReviewResult {
+  skipped?: boolean;
+  reason?: string;
+  verdict?: 'pass' | 'issues' | 'blocked';
+  issues?: SelfReviewIssue[];
+  reviewSnapshot?: ReviewDiffSnapshot;
+  fixDelta?: ReviewFixDeltaSnapshot;
+  attempts?: IndependentReviewAttempt[];
+  validationDepth?: ReviewValidationDepth;
+  usage?: RunnerSessionUsage;
+  taskProgressArtifactPath?: string;
+  timeline?: ReviewLoopTimelineSegment[];
+  runner?: string;
+  model?: string;
+  crossRunner?: boolean;
+  retryCount: number;
+  maxRetries?: number;
+  feedbackSent?: boolean;
+  durationMs?: number;
+}
+
+export interface SelfReviewOptions {
+  reviewRunner?: string | null;
+  model?: string | null;
+  maxRetries?: number | null;
+  validationDepth?: ReviewValidationDepth | null;
+  artifactScope?: string | null;
+}
+
+const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
+const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min for worker to fix
+
+type BroadcastFn = (event: string, payload: unknown) => void;
+
+export function initSelfReview(broadcast: BroadcastFn): void {
+  initSelfReviewProgress(broadcast);
+}
+
+export async function executeSelfReview(
+  runId: string,
+  slotId: string,
+  options: SelfReviewOptions = {},
+): Promise<SelfReviewResult> {
+  const run = getRun(runId);
+  if (!run) throw new Error('Run not found');
+
+  const config = await getSelfReviewConfig(run.project);
+  if (!config.enabled) {
+    debugSelfReviewLog(
+      `[self-review] run ${runId.slice(0, 8)} — disabled for project ${run.project}`,
+    );
+    return { skipped: true, reason: 'disabled', retryCount: 0 };
+  }
+
+  const vars = await loadSlotVars(slotId);
+  const workerRunner = normalizeRunner(run.metrics.runner);
+  const overrideRunner =
+    options.reviewRunner && options.reviewRunner !== 'same'
+      ? normalizeRunner(options.reviewRunner)
+      : null;
+  const reviewRunner = normalizeRunner(overrideRunner ?? config.runner ?? workerRunner);
+  const model =
+    options.model?.trim() ||
+    (overrideRunner ? runnerDefaultModel(reviewRunner) : null) ||
+    (config.runner
+      ? (config.model ?? run.metrics.model ?? 'unknown')
+      : (run.metrics.model ?? config.model ?? 'unknown'));
+  const maxRetries = Math.max(0, Math.min(5, options.maxRetries ?? config.max_retries ?? 1));
+  const validationDepth = options.validationDepth ?? 'full-live';
+  const artifactScope = options.artifactScope ?? null;
+  const reviewTimeoutMs = (config.review_timeout_min ?? DEFAULT_REVIEW_TIMEOUT_MIN) * 60_000;
+  const start = Date.now();
+
+  // Resolve task dir on the worker repo
+  const taskDir = await resolveWorkerTaskDir(vars, run.project, run.taskFile);
+  if (!taskDir) {
+    debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — no task dir found`);
+    return { skipped: true, reason: 'no-task-dir', retryCount: 0 };
+  }
+
+  const recoveredFixResult = await recoverSelfReviewFixPass({
+    vars,
+    taskDir,
+    slotId,
+    runId,
+    start,
+    reviewRunner,
+    model,
+    workerRunner,
+    maxRetries,
+    reviewTimeoutMs,
+    validationDepth,
+    artifactScope,
+  });
+  if (recoveredFixResult)
+    return {
+      ...recoveredFixResult,
+      usage: recoveredFixResult.attempts?.at(-1)?.usage,
+      runner: reviewRunner,
+      model,
+      crossRunner: reviewRunner !== workerRunner,
+    };
+
+  // First review pass
+  debugSelfReviewLog(
+    `[self-review] run ${runId.slice(0, 8)} — spawning review agent (${reviewRunner}/${model}, timeout ${reviewTimeoutMs / 60_000}min)`,
+  );
+  const result = await runReviewAgent(
+    vars,
+    reviewRunner,
+    model,
+    taskDir,
+    slotId,
+    runId,
+    reviewTimeoutMs,
+    1,
+    validationDepth,
+    artifactScope,
+  );
+
+  if (result.incomplete) {
+    console.warn(
+      `[self-review] run ${runId.slice(0, 8)} — INCOMPLETE: agent exited without writing feedback`,
+    );
+    const attempts = [reviewAttemptFromResult(result, 1)];
+    return {
+      skipped: true,
+      reason: 'no-feedback-file',
+      retryCount: 0,
+      validationDepth,
+      usage: result.usage,
+      reviewSnapshot: result.reviewSnapshot,
+      attempts,
+      timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
+      durationMs: Date.now() - start,
+    };
+  }
+
+  if (result.verdict === 'pass') {
+    debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — PASS (${Date.now() - start}ms)`);
+    return {
+      verdict: 'pass',
+      issues: [],
+      validationDepth,
+      usage: result.usage,
+      reviewSnapshot: result.reviewSnapshot,
+      attempts: [reviewAttemptFromResult(result, 1)],
+      timeline: result.timeline,
+      runner: reviewRunner,
+      model,
+      crossRunner: reviewRunner !== workerRunner,
+      retryCount: 0,
+      durationMs: Date.now() - start,
+    };
+  }
+
+  const retryResult = await runSelfReviewRetryLoop({
+    vars,
+    taskDir,
+    slotId,
+    runId,
+    start,
+    workerRunner,
+    reviewRunner,
+    model,
+    maxRetries,
+    reviewTimeoutMs,
+    reviewResult: result,
+    retryCount: 0,
+    validationDepth,
+    artifactScope,
+  });
+  return {
+    ...retryResult,
+    usage: retryResult.attempts?.at(-1)?.usage,
+    runner: reviewRunner,
+    model,
+    crossRunner: reviewRunner !== workerRunner,
+  };
+}
+
+// Dep surface for runSelfReviewRetryLoop. Real production wiring lives in
+// defaultSelfReviewRetryDeps below; tests pass a struct of mocks to exercise the
+// retry boundary without standing up tmux/worker infrastructure.
+export interface SelfReviewRetryDeps {
+  isWorkerAlive: (
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    runner: string,
+  ) => Promise<boolean>;
+  relaunchWorkerForFix: (
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    runner: string,
+    model: string,
+    runId: string,
+  ) => Promise<boolean>;
+  sendFeedbackToWorker: (
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    issues: SelfReviewIssue[],
+    taskDir: string,
+    runId: string,
+  ) => Promise<string>;
+  startProgressWatcher: (
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    filePath: string,
+    runId: string,
+    label?: string,
+  ) => { stop(): void };
+  waitForWorkerSignal: (
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    taskDir: string,
+    timeoutMs: number,
+    baseline: string,
+  ) => Promise<WorkerSignal | undefined>;
+  // Loop never reads the return values — narrow to Promise<void> so test mocks don't have to
+  // synthesize the production AgentContext shape just to satisfy the type checker.
+  markAgentContextStatus: (...args: Parameters<typeof markAgentContextStatus>) => Promise<void>;
+  unwatchContext: (slotId: string, role: 'self-review-fix') => Promise<void>;
+  runReviewAgent: (
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    runner: string,
+    model: string,
+    taskDir: string,
+    slotId: string,
+    runId: string,
+    reviewTimeoutMs: number,
+    loopNumber?: number,
+    validationDepth?: ReviewValidationDepth,
+    artifactScope?: string | null,
+  ) => Promise<ReviewAgentResult>;
+  captureFixDelta: (
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    taskDir: string,
+    loopNumber: number,
+    fixBaseSha: string | null,
+    artifactScope?: string | null,
+  ) => Promise<{ snapshot: ReviewFixDeltaSnapshot; artifactPaths: string[] }>;
+  captureHeadSha: (vars: Awaited<ReturnType<typeof loadSlotVars>>) => Promise<string | null>;
+  getRun: typeof getRun;
+}
+
+// Module-level constant — wiring is fixed at module load. Tests pass their own deps struct
+// instead of reassigning here. Function declarations referenced inside the literal are
+// hoisted, so the const initializer captures live function refs even though they appear
+// later in the file.
+const PRODUCTION_DEPS: SelfReviewRetryDeps = {
+  isWorkerAlive,
+  relaunchWorkerForFix,
+  sendFeedbackToWorker,
+  startProgressWatcher,
+  waitForWorkerSignal,
+  markAgentContextStatus,
+  unwatchContext,
+  runReviewAgent,
+  captureFixDelta: captureFixDeltaSnapshot,
+  captureHeadSha: captureCurrentHeadSha,
+  getRun,
+};
+
+export async function runSelfReviewRetryLoop({
+  vars,
+  taskDir,
+  slotId,
+  runId,
+  start,
+  workerRunner,
+  reviewRunner,
+  model,
+  maxRetries,
+  reviewTimeoutMs,
+  reviewResult,
+  retryCount,
+  validationDepth = 'full-live',
+  artifactScope = null,
+  deps = PRODUCTION_DEPS,
+}: {
+  vars: Awaited<ReturnType<typeof loadSlotVars>>;
+  taskDir: string;
+  slotId: string;
+  runId: string;
+  start: number;
+  workerRunner: string;
+  reviewRunner: string;
+  model: string;
+  maxRetries: number;
+  reviewTimeoutMs: number;
+  reviewResult: ReviewAgentResult;
+  retryCount: number;
+  validationDepth?: ReviewValidationDepth;
+  artifactScope?: string | null;
+  deps?: SelfReviewRetryDeps;
+}): Promise<SelfReviewResult> {
+  let result = reviewResult;
+  let feedbackSent = retryCount > 0;
+  const attempts: IndependentReviewAttempt[] = [reviewAttemptFromResult(result, retryCount + 1)];
+
+  while (result.verdict === 'issues' && result.issues.length > 0 && retryCount < maxRetries) {
+    debugSelfReviewLog(
+      `[self-review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
+    );
+    let workerAlive = await deps.isWorkerAlive(vars, workerRunner);
+    if (!workerAlive) {
+      debugSelfReviewLog(
+        `[self-review] run ${runId.slice(0, 8)} — worker exited, re-launching in window 0`,
+      );
+      const run = deps.getRun(runId);
+      workerAlive = await deps.relaunchWorkerForFix(
+        vars,
+        workerRunner,
+        run?.metrics.model ?? model,
+        runId,
+      );
+      if (!workerAlive) {
+        debugSelfReviewLog(
+          `[self-review] run ${runId.slice(0, 8)} — failed to re-launch worker, skipping feedback`,
+        );
+        return {
+          verdict: 'issues',
+          issues: result.issues,
+          validationDepth,
+          usage: result.usage,
+          reviewSnapshot: result.reviewSnapshot,
+          attempts,
+          retryCount,
+          maxRetries,
+          feedbackSent,
+          durationMs: Date.now() - start,
+        };
+      }
+    }
+
+    // Send feedback to the primary worker. Each pass clears the previous fix
+    // signal and waits on a fresh baseline, so every retry gets its own timeout.
+    let fixBaseSha: string | null = null;
+    try {
+      fixBaseSha = await deps.captureHeadSha(vars);
+    } catch (err) {
+      debugSelfReviewLog(
+        `[self-review] run ${runId.slice(0, 8)} — failed to capture fix base SHA: ${(err as Error).message}`,
+      );
+    }
+    const fixSignalBaseline = await deps.sendFeedbackToWorker(vars, result.issues, taskDir, runId);
+    const fixStartedAt = new Date().toISOString();
+    retryCount += 1;
+    feedbackSent = true;
+    const nextLoopNumber = retryCount + 1;
+    debugSelfReviewLog(
+      `[self-review] run ${runId.slice(0, 8)} — feedback sent to worker, waiting for fix`,
+    );
+
+    // Watch the fix task for progress
+    const fixTaskPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX.md`;
+    const fixWatcher = deps.startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
+
+    // Wait for worker to finish fixing
+    const fixSignal = await deps.waitForWorkerSignal(
+      vars,
+      taskDir,
+      FEEDBACK_TIMEOUT_MS,
+      fixSignalBaseline,
+    );
+    const fixCompletedAt = new Date().toISOString();
+    fixWatcher.stop();
+    if (!fixSignal) {
+      debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`);
+      await deps.markAgentContextStatus(runId, 'self-review-fix', 'failed');
+      await deps.unwatchContext(slotId, 'self-review-fix');
+      if (retryCount >= maxRetries) {
+        return {
+          verdict: 'issues',
+          issues: result.issues,
+          validationDepth,
+          usage: result.usage,
+          reviewSnapshot: result.reviewSnapshot,
+          attempts,
+          retryCount,
+          maxRetries,
+          feedbackSent,
+          durationMs: Date.now() - start,
+        };
+      }
+      continue;
+    }
+    if (fixSignal.status === 'blocked') {
+      const fixDelta = await deps.captureFixDelta(
+        vars,
+        taskDir,
+        nextLoopNumber,
+        fixBaseSha,
+        artifactScope,
+      );
+      const fixArtifacts = fixDelta.artifactPaths;
+      attempts.push({
+        loopNumber: nextLoopNumber,
+        verdict: 'failed',
+        unresolvedCount: result.issues.length,
+        fixDelta: fixDelta.snapshot,
+        artifactPaths: fixArtifacts,
+        timeline: [
+          {
+            kind: 'worker-fix',
+            loopNumber: nextLoopNumber,
+            runner: workerRunner,
+            model,
+            startedAt: fixStartedAt,
+            completedAt: fixCompletedAt,
+            durationMs: durationBetween(fixStartedAt, fixCompletedAt),
+            verdict: 'failed',
+            unresolvedCount: result.issues.length,
+            artifactPaths: fixArtifacts,
+          },
+        ],
+        completedAt: new Date().toISOString(),
+      });
+      debugSelfReviewLog(
+        `[self-review] run ${runId.slice(0, 8)} — worker blocked during self-review fix: ${fixSignal.reason ?? 'no reason provided'}`,
+      );
+      await deps.markAgentContextStatus(runId, 'self-review-fix', 'blocked', {
+        lastSignalAt: new Date().toISOString(),
+      });
+      await deps.unwatchContext(slotId, 'self-review-fix');
+      return {
+        verdict: 'blocked',
+        reason: fixSignal.reason ?? 'worker blocked during self-review fix',
+        issues: result.issues,
+        validationDepth,
+        usage: result.usage,
+        reviewSnapshot: result.reviewSnapshot,
+        fixDelta: fixDelta.snapshot,
+        attempts,
+        retryCount,
+        maxRetries,
+        feedbackSent,
+        durationMs: Date.now() - start,
+      };
+    }
+
+    // Re-review
+    await deps.markAgentContextStatus(
+      runId,
+      'self-review-fix',
+      fixSignal.status === 'failed' ? 'failed' : 'complete',
+      { lastSignalAt: new Date().toISOString() },
+    );
+    await deps.unwatchContext(slotId, 'self-review-fix');
+    const fixDelta = await deps.captureFixDelta(
+      vars,
+      taskDir,
+      nextLoopNumber,
+      fixBaseSha,
+      artifactScope,
+    );
+    const fixSegment: ReviewLoopTimelineSegment = {
+      kind: 'worker-fix',
+      loopNumber: nextLoopNumber,
+      runner: workerRunner,
+      model,
+      startedAt: fixStartedAt,
+      completedAt: fixCompletedAt,
+      durationMs: durationBetween(fixStartedAt, fixCompletedAt),
+      verdict: fixSignal.status === 'failed' ? 'failed' : 'pass',
+      unresolvedCount: 0,
+      artifactPaths: fixDelta.artifactPaths,
+    };
+    debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — re-reviewing after worker fix`);
+    result = await deps.runReviewAgent(
+      vars,
+      reviewRunner,
+      model,
+      taskDir,
+      slotId,
+      runId,
+      reviewTimeoutMs,
+      nextLoopNumber,
+      validationDepth,
+      artifactScope,
+    );
+    attempts.push({
+      ...reviewAttemptFromResult(result, nextLoopNumber, fixDelta.snapshot, fixDelta.artifactPaths),
+      timeline: [fixSegment, ...(result.timeline ?? [])],
+    });
+    debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — retry verdict: ${result.verdict}`);
+  }
+
+  return {
+    verdict: result.verdict,
+    issues: result.issues,
+    validationDepth,
+    usage: result.usage,
+    reviewSnapshot: result.reviewSnapshot,
+    fixDelta: attempts.at(-1)?.fixDelta,
+    attempts,
+    timeline: attempts.flatMap((attempt) => attempt.timeline ?? []),
+    retryCount,
+    maxRetries,
+    feedbackSent,
+    durationMs: Date.now() - start,
+  };
+}
+
+// ─── Review Agent ───
+
+async function readSelfReviewFixIssues(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+): Promise<SelfReviewIssue[]> {
+  const content = await readOptionalSlotFile(
+    vars,
+    `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX.md`,
+  );
+  return parseSelfReviewIssueBullets(content);
+}
+
+async function recoverSelfReviewFixPass({
+  vars,
+  taskDir,
+  slotId,
+  runId,
+  start,
+  reviewRunner,
+  model,
+  workerRunner,
+  maxRetries,
+  reviewTimeoutMs,
+  validationDepth,
+  artifactScope,
+}: {
+  vars: Awaited<ReturnType<typeof loadSlotVars>>;
+  taskDir: string;
+  slotId: string;
+  runId: string;
+  start: number;
+  reviewRunner: string;
+  model: string;
+  workerRunner: string;
+  maxRetries: number;
+  reviewTimeoutMs: number;
+  validationDepth: ReviewValidationDepth;
+  artifactScope?: string | null;
+}): Promise<SelfReviewResult | null> {
+  const run = getRun(runId);
+  const fixContext = run?.agentContexts?.find(
+    (ctx) => ctx.role === 'self-review-fix' && ctx.status === 'working',
+  );
+  const fixSignalPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`;
+  const rawSignal = await readOptionalSlotFile(vars, fixSignalPath);
+  let fixSignal: WorkerSignal | undefined;
+  try {
+    fixSignal = terminalWorkerSignalFromRaw(rawSignal);
+  } catch (err) {
+    // A corrupt/half-written signal blob is treated as "no signal yet" — recovering as if it
+    // never existed lets the watch path below wait for a fresh, parseable write. Treating it
+    // as 'failed' or 'blocked' would force a misleading run-level outcome from a parse glitch.
+    console.warn(
+      `[self-review] ignoring invalid recovered self-review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
+  }
+
+  if (fixSignal && !signalFreshSince(fixSignal, fixContext?.startedAt)) {
+    fixSignal = undefined;
+  }
+
+  if (!fixContext && !fixSignal) return null;
+
+  const issues = await readSelfReviewFixIssues(vars, taskDir);
+  debugSelfReviewLog(
+    `[self-review] run ${runId.slice(0, 8)} — recovering self-review fix pass (${fixSignal ? 'signal-present' : 'waiting'})`,
+  );
+
+  if (!fixSignal) {
+    const fixTaskPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX.md`;
+    const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
+    try {
+      fixSignal = await waitForWorkerSignal(vars, taskDir, FEEDBACK_TIMEOUT_MS, rawSignal);
+    } finally {
+      fixWatcher.stop();
+    }
+  }
+
+  if (!fixSignal) {
+    debugSelfReviewLog(
+      `[self-review] run ${runId.slice(0, 8)} — timeout waiting for recovered worker fix`,
+    );
+    await markAgentContextStatus(runId, 'self-review-fix', 'failed');
+    await unwatchContext(slotId, 'self-review-fix');
+    // feedbackSent: true is sound here — fixContext only exists if sendFeedbackToWorker
+    // ran past writeTextFileOnSlot (file write happens before upsertAgentContext, so a
+    // crash between them leaves no fixContext entry and we'd have already returned null).
+    if (maxRetries <= 1)
+      return {
+        verdict: 'issues',
+        issues,
+        validationDepth,
+        retryCount: 1,
+        maxRetries,
+        feedbackSent: true,
+        attempts: [
+          { loopNumber: 1, verdict: 'issues', unresolvedCount: issues.length, validationDepth },
+        ],
+        durationMs: Date.now() - start,
+      };
+    return await runSelfReviewRetryLoop({
+      vars,
+      taskDir,
+      slotId,
+      runId,
+      start,
+      workerRunner,
+      reviewRunner,
+      model,
+      maxRetries,
+      reviewTimeoutMs,
+      reviewResult: { verdict: 'issues', issues, validationDepth },
+      retryCount: 1,
+      validationDepth,
+      artifactScope,
+    });
+  }
+
+  if (fixSignal.status === 'blocked') {
+    const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
+    await markAgentContextStatus(runId, 'self-review-fix', 'blocked', {
+      lastSignalAt: new Date().toISOString(),
+    });
+    await unwatchContext(slotId, 'self-review-fix');
+    return {
+      verdict: 'blocked',
+      reason: fixSignal.reason ?? 'worker blocked during self-review fix',
+      issues,
+      validationDepth,
+      retryCount: 1,
+      fixDelta: fixDelta.snapshot,
+      attempts: [
+        { loopNumber: 1, verdict: 'issues', unresolvedCount: issues.length, validationDepth },
+        {
+          loopNumber: 2,
+          verdict: 'failed',
+          unresolvedCount: issues.length,
+          validationDepth,
+          fixDelta: fixDelta.snapshot,
+          artifactPaths: fixDelta.artifactPaths,
+        },
+      ],
+      feedbackSent: true,
+      durationMs: Date.now() - start,
+    };
+  }
+
+  await markAgentContextStatus(
+    runId,
+    'self-review-fix',
+    fixSignal.status === 'failed' ? 'failed' : 'complete',
+    { lastSignalAt: new Date().toISOString() },
+  );
+  await unwatchContext(slotId, 'self-review-fix');
+  const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
+  const retryResult = await runReviewAgent(
+    vars,
+    reviewRunner,
+    model,
+    taskDir,
+    slotId,
+    runId,
+    reviewTimeoutMs,
+    2,
+    validationDepth,
+    artifactScope,
+  );
+  const seededReviewResult = {
+    ...retryResult,
+    fixDelta: fixDelta.snapshot,
+    artifactPaths: [...(retryResult.artifactPaths ?? []), ...fixDelta.artifactPaths],
+  };
+  // The recovered fix pass already consumed retry slot 1, so seed the loop with retryCount=1.
+  // If retryResult is `pass`, the loop's while-condition fails immediately and we return
+  // retryCount=1 (correct: one fix attempt was applied). Subsequent iterations bump from there.
+  return await runSelfReviewRetryLoop({
+    vars,
+    taskDir,
+    slotId,
+    runId,
+    start,
+    workerRunner,
+    reviewRunner,
+    model,
+    maxRetries,
+    reviewTimeoutMs,
+    reviewResult: seededReviewResult,
+    retryCount: 1,
+    validationDepth,
+    artifactScope,
+  });
+}
+
+// ─── Feedback to worker ───
+
+async function sendFeedbackToWorker(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  issues: SelfReviewIssue[],
+  taskDir: string,
+  runId: string,
+): Promise<string> {
+  const run = getRun(runId);
+  const project = run?.project;
+  if (!project)
+    throw new Error(`Cannot send self-review feedback without a project for run ${runId}`);
+
+  // Format issues as bullet list for template insertion
+  const issueLines = issues
+    .map((i) => {
+      const loc = i.line ? `${i.file}:${i.line}` : i.file;
+      return `- **${loc}** — ${i.description}`;
+    })
+    .join('\n');
+
+  // Read and expand the self-review-fix template
+  let template: string;
+  try {
+    const { farmslotRoot } = await import('../fleet/state.js');
+    const templatePath = path.join(
+      farmslotRoot,
+      'projects',
+      project,
+      'templates',
+      'worker',
+      'self-review-fix.md',
+    );
+    template = await readFile(templatePath, 'utf-8');
+  } catch (err) {
+    throw new Error(
+      `Self-review fix template not found for project ${project}: ${(err as Error).message}`,
+    );
+  }
+
+  // Resolve runtimeDir
+  let runtimeDir = '.agent';
+  try {
+    const pv = await loadProjectVars(project);
+    runtimeDir = pv.runtimeDir || '.agent';
+  } catch (err) {
+    // Recoverable: runtimeDir defaults to '.agent' above.
+    console.warn(`[self-review] runtime dir fallback for ${project}: ${(err as Error).message}`);
+  }
+
+  const replacements: Record<string, string> = {
+    TASK_DIR: taskDir,
+    REPO: vars.remoteRepo,
+    TICKET: run?.ticketOrPr ?? '',
+    ISSUES: issueLines,
+    RUNTIME_DIR: runtimeDir,
+  };
+
+  let expanded = template;
+  for (const [key, val] of Object.entries(replacements)) {
+    expanded = expanded.replaceAll(`{{${key}}}`, val);
+  }
+
+  // Clear any stale fix-pass signal before sending new feedback.
+  const fixSignalPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`;
+  await removeSlotFiles(vars, [fixSignalPath]);
+  const fixSignalBaseline = await readOptionalSlotFile(vars, fixSignalPath);
+
+  // Write the fix task to a file on the slot
+  await writeTextFileOnSlot(vars, `${taskDir}/SELF-REVIEW-FIX.md`, expanded);
+
+  // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
+  updateRun(runId, { activeTaskFile: `${taskDir}/SELF-REVIEW-FIX.md` });
+  const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
+  const workerTarget = primaryTarget.target;
+  const session = primaryTarget.session;
+  // Derive the window name from the primary worker's target so resolveAgentTarget
+  // can route back to the correct pane if the stored context is used.
+  const workerWindowSep = workerTarget.indexOf(':');
+  const workerWindow =
+    workerWindowSep === -1
+      ? null
+      : workerTarget.slice(workerWindowSep + 1).split('.', 1)[0] || null;
+  const fixContext = await upsertAgentContext(runId, 'self-review-fix', {
+    status: 'working',
+    taskFile: `${taskDir}/SELF-REVIEW-FIX.md`,
+    signalFile: `${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`,
+    runner: run?.metrics.runner ?? null,
+    model: run?.metrics.model ?? null,
+    target: { session, window: workerWindow, pane: null, target: workerTarget },
+  });
+  if (fixContext) await watchContext(vars.slotId, fixContext);
+
+  // Send single-line command to the worker's original pane
+  const cmd = `Read ${taskDir}/SELF-REVIEW-FIX.md and execute all steps. Mark each checkbox as you complete it.`;
+  const sent = await sendRunnerInstructionSafely(
+    vars,
+    workerTarget,
+    normalizeRunner(run?.metrics.runner),
+    cmd,
+    'self-review',
+  );
+  debugSelfReviewLog(
+    `[self-review] fix task ${sent ? 'sent' : 'deferred'} to worker: ${taskDir}/SELF-REVIEW-FIX.md`,
+  );
+  return fixSignalBaseline;
+}
+
+// ─── Helpers ───
+
+async function relaunchWorkerForFix(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  model: string,
+  runId: string,
+): Promise<boolean> {
+  const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
+  const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+    vars,
+    resolved.session,
+    resolved.target,
+  );
+  const prompt = 'Continue working on the current TASK.md and self-review fix feedback.';
+  // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
+  const parentSafetyTier = getRun(runId)?.safetyTier;
+  let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
+    effort: getRun(runId)?.effort,
+    safetyTier: parentSafetyTier,
+  });
+  launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
+  const sendResult = await execOnSlot(
+    vars,
+    tmuxSendTextCommand(workerTarget, launchCmd, { enter: true }),
+  );
+  if (sendResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to relaunch worker in ${workerTarget}: ${sendResult.stderr || sendResult.stdout || `exit ${sendResult.exitCode}`}`,
+    );
+  }
+  const run = getRun(runId);
+  const workerRole = resolved.role ?? primaryRoleForFlow(run?.flowType);
+  const windowSeparator = workerTarget.indexOf(':');
+  const window =
+    windowSeparator === -1
+      ? null
+      : workerTarget.slice(windowSeparator + 1).split('.', 1)[0] || null;
+  await upsertAgentContext(runId, workerRole, {
+    status: 'working',
+    runner,
+    model,
+    target: {
+      session: resolved.session,
+      window,
+      pane: null,
+      target: workerTarget,
+    },
+  });
+
+  if (!runnerNeedsPostLaunchPrompt(runner)) {
+    debugSelfReviewLog(`[self-review] worker re-launched (${runner})`);
+    return true;
+  }
+
+  const readyTimeout = 60_000;
+  const readyStart = Date.now();
+  while (Date.now() - readyStart < readyTimeout) {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (await isWorkerAlive(vars, runner, runId)) {
+      debugSelfReviewLog(
+        `[self-review] worker re-launched (${runner}) in ${Math.round((Date.now() - readyStart) / 1000)}s`,
+      );
+      return true;
+    }
+    const pane = (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(workerTarget)} 2>/dev/null | tail -8`),
+      )
+    ).stdout;
+    const tailLines = pane
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-5);
+    if (tailLines.some((line) => runnerLineLooksWaiting(line, runner))) {
+      debugSelfReviewLog(
+        `[self-review] worker re-launched in ${Math.round((Date.now() - readyStart) / 1000)}s`,
+      );
+      return true;
+    }
+  }
+  console.warn(`[self-review] worker re-launch timed out after ${readyTimeout}ms`);
+  return false;
+}
+
+async function waitForWorkerSignal(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+  timeoutMs: number,
+  baseline: string,
+): Promise<WorkerSignal | undefined> {
+  const signalPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`;
+
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const raw = await readOptionalSlotFile(vars, signalPath);
+      if (!raw || raw === baseline) continue;
+      const signal = JSON.parse(raw) as WorkerSignal;
+      if (
+        signal.status === 'complete' ||
+        signal.status === 'failed' ||
+        signal.status === 'done' ||
+        signal.status === 'blocked'
+      ) {
+        return signal;
+      }
+    } catch (err) {
+      console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
+    }
+  }
+  return undefined;
+}
