@@ -1,26 +1,10 @@
 name: Docs Quality
 
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'apps/docs/**'
-      - 'packages/protocol/**'
-      - 'services/gateway/**'
-      - 'package.json'
-      - 'yarn.lock'
-      - '.github/workflows/docs-quality.yml'
-  push:
-    branches:
-      - main
-    paths:
-      - 'apps/docs/**'
-      - 'packages/protocol/**'
-      - 'services/gateway/**'
-      - 'package.json'
-      - 'yarn.lock'
-      - '.github/workflows/docs-quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   quality:
@@ -46,8 +30,6 @@ jobs:
       - name: Install workspace dependencies
         run: yarn install --immutable
 
-      - name: Build protocol package
-        run: yarn workspace @farmslot/protocol build
-
-      - name: Docs build
-        run: yarn docs:build
+      - name: Docs quality
+        working-directory: apps/docs
+        run: yarn quality
