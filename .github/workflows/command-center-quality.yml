@@ -43,16 +43,7 @@ jobs:
         with:
           filters: |
             repo:
-              - '.github/workflows/command-center-quality.yml'
-              - '.prettierrc.json'
-              - '.yarnrc.yml'
-              - 'eslint.config.mjs'
-              - 'package.json'
-              - 'yarn.lock'
-              - 'apps/**'
-              - 'packages/**'
-              - 'services/**'
-              - 'scripts/quality/**'
+              - '**'
             package_readiness:
               - '.github/workflows/command-center-quality.yml'
               - 'package.json'
@@ -66,27 +57,43 @@ jobs:
               - 'package.json'
               - 'yarn.lock'
               - 'apps/command-center/**'
+              - 'packages/cli/**'
+              - 'packages/protocol/**'
+              - 'packages/recipe-harness/**'
+              - 'packages/theme/**'
+              - 'services/gateway/**'
+              - 'services/node/**'
             companion:
               - '.github/workflows/command-center-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'apps/companion/**'
+              - 'packages/expo-recipe/**'
+              - 'packages/protocol/**'
+              - 'packages/recipe-harness/**'
+              - 'packages/theme/**'
             docs:
               - '.github/workflows/command-center-quality.yml'
               - '.github/workflows/docs-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'apps/docs/**'
+              - 'packages/protocol/**'
+              - 'services/gateway/**'
             cli:
               - '.github/workflows/command-center-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/cli/**'
+              - 'packages/protocol/**'
+              - 'packages/recipe-harness/**'
             expo_recipe:
               - '.github/workflows/command-center-quality.yml'
               - 'package.json'
               - 'yarn.lock'
               - 'packages/expo-recipe/**'
+              - 'packages/protocol/**'
+              - 'packages/recipe-harness/**'
             protocol:
               - '.github/workflows/command-center-quality.yml'
               - 'package.json'
@@ -96,6 +103,7 @@ jobs:
               - '.github/workflows/command-center-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - 'packages/protocol/**'
               - 'packages/recipe-harness/**'
             skills:
               - '.github/workflows/command-center-quality.yml'
@@ -111,11 +119,13 @@ jobs:
               - '.github/workflows/command-center-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - 'packages/protocol/**'
               - 'services/gateway/**'
             node:
               - '.github/workflows/command-center-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - 'packages/protocol/**'
               - 'services/node/**'
 
   repo:
@@ -141,6 +151,12 @@ jobs:
 
       - name: Install workspace dependencies
         run: yarn install --immutable
+
+      - name: Format check
+        run: yarn format:check
+
+      - name: ESLint ratchet and stale baseline check
+        run: yarn lint
 
       - name: Workspace structure guard
         run: yarn quality:structure
@@ -204,6 +220,9 @@ jobs:
 
       - name: Install workspace dependencies
         run: yarn install --immutable
+
+      - name: Build recipe harness package
+        run: yarn workspace @farmslot/recipe-harness build
 
       - name: Command Center quality
         working-directory: apps/command-center
