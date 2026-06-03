@@ -68,6 +68,13 @@ test('installs optional bridge files and validates the dev guard contract', asyn
     );
     assert.match(provider, /__DEV__/u);
     assert.match(provider, /EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE/u);
+    assert.match(provider, /hud\?: RecipeHudOptions/u);
+    assert.match(provider, /<RecipeHud state=\{hud\} \{...hudOptions\}/u);
+
+    const hud = await readFile(path.join(root, 'src/farmslot/RecipeHud.tsx'), 'utf-8');
+    assert.doesNotMatch(hud, /numberOfLines/u);
+    assert.match(hud, /StyleProp/u);
+    assert.match(hud, /formatBadge/u);
 
     const doctor = await runExpoRecipeDoctor({ projectRoot: root });
     assert.equal(doctor.status, 'pass');
