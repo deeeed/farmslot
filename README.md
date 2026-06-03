@@ -1,8 +1,8 @@
 # farmslot
 
-Built by Arthur Breton as an open-source local operating system for supervised agentic engineering.
-
 Project-agnostic orchestration for dispatching autonomous coding agents to a fleet of machines.
+
+> Why the name? I know. It stuck: agentic dev farming across many isolated slots. Naming is harder than scheduling the agents.
 
 > [!WARNING]
 > **Active development preview.** Farmslot is moving quickly while the product is finalized in
@@ -187,3 +187,7 @@ Farmslot separates product surfaces, runtime services, and reusable toolkit pack
 - Other `packages/*` entries are shared libraries or CLIs: protocol contracts, recipe tooling, theming, Expo recipe support, and the Farmslot CLI.
 - Keep code with its owner. UI-only code belongs under the app that renders it; reusable protocol/toolkit code belongs under a package; service/runtime policy belongs in Gateway; machine-local execution belongs in Node.
 - Keep package names stable when moving implementation roots. Workspace location communicates repository ownership; the `@farmslot/*` package name communicates import/runtime identity.
+
+---
+
+Created by Arthur Breton
