@@ -2,6 +2,6 @@
 
 All notable changes to `@farmslot/expo-recipe` are tracked here.
 
-## Unreleased
+## 0.1.0
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Initial public release of the Expo recipe adapter, CLI, and template assets.
