@@ -95,6 +95,25 @@ test('parseTaskPath uses generated task provenance over folder naming', () => {
   });
 });
 
+test('parseTaskPath uses generated Jira key metadata over folder naming', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-task-'));
+  const taskDir = path.join(root, 'projects/metamask-mobile/tasks/fix/3215-0604-141246');
+  mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  const taskFile = path.join(taskDir, 'TASK.md');
+  writeFileSync(taskFile, '# Task\n');
+  writeFileSync(
+    path.join(taskDir, 'inputs/bug-input.json'),
+    JSON.stringify({ jiraKey: 'TAT-3215' }),
+  );
+
+  assert.deepEqual(parseTaskPath(taskFile), {
+    project: 'metamask-mobile',
+    flowType: 'fix-bug',
+    ticketOrPr: 'TAT-3215',
+    relativePath: 'projects/metamask-mobile/tasks/fix/3215-0604-141246/TASK.md',
+  });
+});
+
 test('parseTaskPath reports malformed task metadata with file context', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-task-'));
   const taskDir = path.join(root, 'projects/audiolab-farm/tasks/feat/414-0604-141246');

@@ -66,6 +66,8 @@ export function parseTaskPath(taskFile: string): {
   const ticketOrPr =
     typeof ticketData?.githubIssue === 'string'
       ? ticketData.githubIssue
+      : typeof ticketData?.jiraKey === 'string'
+        ? ticketData.jiraKey
       : ticketFolder.split('-').slice(0, 2).join('-').toUpperCase();
 
   return { project, flowType, ticketOrPr, relativePath: relative };

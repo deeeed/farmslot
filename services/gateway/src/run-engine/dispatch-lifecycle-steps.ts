@@ -355,7 +355,20 @@ export async function executeDispatchStep(
 
   // Build cliCommand early so it's available on failure too. Public run dispatch goes
   // through run.create; task files are a first-class source for that entry point.
-  const cliCommand = `farmslot run create --slot ${current.slotId} --task ${current.taskFile} --skip-prepare${current.metrics.runner ? ` --runner ${current.metrics.runner}` : ''}${current.metrics.model ? ` --model ${current.metrics.model}` : ''}${current.app ? ` --app ${current.app}` : ''}`;
+  const cliCommandParts = [
+    'farmslot',
+    'run',
+    'create',
+    '--slot',
+    shellQuote(current.slotId),
+    '--task',
+    shellQuote(current.taskFile),
+    '--skip-prepare',
+  ];
+  if (current.metrics.runner) cliCommandParts.push('--runner', shellQuote(current.metrics.runner));
+  if (current.metrics.model) cliCommandParts.push('--model', shellQuote(current.metrics.model));
+  if (current.app) cliCommandParts.push('--app', shellQuote(current.app));
+  const cliCommand = cliCommandParts.join(' ');
 
   // Stash partial I/O before the potentially-failing call
   stepPartialIO.set(runId, { inputs, outputs: { cliCommand } });
