@@ -209,3 +209,7 @@ yarn test:protocol
 
 Do not publish a protocol version unless these pass and the canonical docs match
 the exported API.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

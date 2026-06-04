@@ -114,3 +114,7 @@ For a completely custom overlay, pass `renderHud`.
 ```bash
 yarn workspace @farmslot/expo-recipe quality
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

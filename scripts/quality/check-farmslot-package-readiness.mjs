@@ -14,13 +14,15 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 
 process.chdir(repoRoot);
 
+const rootLicense = readFileSync('LICENSE', 'utf8');
+
 const packages = [
   {
     name: '@farmslot/protocol',
     dir: 'packages/protocol',
     publicDoc: 'https://farmslot.io/docs/reference/recipe-protocol-v1',
-    requiredFiles: ['README.md', 'src/index.ts', 'src/recipe/index.ts'],
-    packRequiredFiles: ['README.md', 'dist/index.js', 'dist/index.d.ts'],
+    requiredFiles: ['README.md', 'LICENSE', 'src/index.ts', 'src/recipe/index.ts'],
+    packRequiredFiles: ['README.md', 'LICENSE', 'dist/index.js', 'dist/index.d.ts'],
     importCheck:
       "const m = await import('./packages/protocol/dist/index.js'); if (!m.PROTOCOL_VERSION) throw new Error('missing PROTOCOL_VERSION export');",
   },
@@ -28,9 +30,10 @@ const packages = [
     name: '@farmslot/recipe-harness',
     dir: 'packages/recipe-harness',
     publicDoc: 'https://farmslot.io/docs/architecture/recipe-harness',
-    requiredFiles: ['README.md', 'bin/farmslot-recipe.mjs', 'src/index.ts', 'src/core/runner.ts'],
+    requiredFiles: ['README.md', 'LICENSE', 'bin/farmslot-recipe.mjs', 'src/index.ts', 'src/core/runner.ts'],
     packRequiredFiles: [
       'README.md',
+      'LICENSE',
       'bin/farmslot-recipe.mjs',
       'dist/index.js',
       'dist/index.d.ts',
@@ -45,12 +48,14 @@ const packages = [
     publicDoc: 'https://farmslot.io/docs/guides/expo-recipe',
     requiredFiles: [
       'README.md',
+      'LICENSE',
       'bin/farmslot-expo-recipe.mjs',
       'src/index.ts',
       'templates/scripts/agentic/recipe/recipes/expo.config.recipe.json',
     ],
     packRequiredFiles: [
       'README.md',
+      'LICENSE',
       'bin/farmslot-expo-recipe.mjs',
       'dist/index.js',
       'dist/index.d.ts',
@@ -66,6 +71,7 @@ const packages = [
     publicDoc: 'https://farmslot.io/docs/guides/recipe-skills-adoption',
     requiredFiles: [
       'README.md',
+      'LICENSE',
       'bin/farmslot-skills.mjs',
       'src/index.ts',
       'skills/recipe-cook/SKILL.md',
@@ -81,6 +87,7 @@ const packages = [
     ],
     packRequiredFiles: [
       'README.md',
+      'LICENSE',
       'bin/farmslot-skills.mjs',
       'dist/index.js',
       'dist/index.d.ts',
@@ -173,6 +180,13 @@ function checkPackage(pkgSpec) {
   if (!Array.isArray(pkg.files) || pkg.files.length === 0)
     fail(`${pkg.name} must declare package files.`);
   if (!pkg.exports) fail(`${pkg.name} must declare exports.`);
+  if (pkg.license !== 'MIT') fail(`${pkg.name} license metadata must be MIT.`);
+  const packageLicensePath = path.join(pkgSpec.dir, 'LICENSE');
+  if (!existsSync(packageLicensePath)) {
+    fail(`${pkg.name} must include a package LICENSE file.`);
+  } else if (readFileSync(packageLicensePath, 'utf8') !== rootLicense) {
+    fail(`${pkg.name} package LICENSE must match the repository LICENSE.`);
+  }
   for (const file of pkgSpec.requiredFiles) {
     if (!existsSync(path.join(pkgSpec.dir, file)))
       fail(`${pkg.name} required file missing from checkout: ${file}.`);
@@ -189,9 +203,6 @@ function checkPackage(pkgSpec) {
       fail(`${pkg.name} is still private; keep this until final publish approval.`);
     if (!pkg.publishConfig || pkg.publishConfig.access !== 'public') {
       fail(`${pkg.name} strict publish requires publishConfig.access=public.`);
-    }
-    if (!pkg.license || pkg.license === 'UNLICENSED') {
-      fail(`${pkg.name} strict publish requires an approved public license.`);
     }
   }
   if (requireChangelog) checkPublishChangelog(pkg, changelogPath);

@@ -9,6 +9,7 @@ ready for review, but the packages remain private until final publish approval. 
 | -------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
 | `@farmslot/protocol`       | Recipe/gateway/node protocol types and validators.                  | <https://farmslot.io/docs/reference/recipe-protocol-v1> |
 | `@farmslot/recipe-harness` | Reusable Recipe Protocol v1 runner, adapters, and artifact writers. | <https://farmslot.io/docs/architecture/recipe-harness>  |
+| `@farmslot/expo-recipe`    | Expo/React Native recipe scaffold and validation helper.            | <https://farmslot.io/docs/guides/expo-recipe>           |
 | `@farmslot/skills`         | Recipe-first adoption skills, CLI installer, and cooking utilities. | `packages/skills/README.md`                             |
 
 ## Token
@@ -41,7 +42,7 @@ Before strict mode can pass, each package must have:
 
 1. `private` removed or set to `false`;
 2. `publishConfig.access: "public"`;
-3. MIT license metadata and matching repository `LICENSE`;
+3. MIT license metadata and matching package/repository `LICENSE` files;
 4. public docs deployed at `https://farmslot.io`;
 5. a live public GitHub repository matching the package `repository.url`
    metadata, or an intentional metadata/checker update before strict mode is

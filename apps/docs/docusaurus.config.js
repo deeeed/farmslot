@@ -81,7 +81,7 @@ const config = {
             items: [{ label: 'GitHub', href: 'https://github.com/deeeed/farmslot' }],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} Farmslot contributors.`,
+        copyright: `Created by Arthur Breton. MIT License.`,
       },
       prism: {
         theme: lightCodeTheme,

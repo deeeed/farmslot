@@ -224,3 +224,7 @@ yarn test:recipe-harness
 Before publishing, also run package dry-run checks once publish metadata is in
 place. Do not publish unless package docs, canonical docs, exports, and tests all
 match the same Recipe Protocol v1 contract.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
