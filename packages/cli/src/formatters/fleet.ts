@@ -167,7 +167,10 @@ function buildHints(slots: SlotStatus[]): string {
   if (dispatchable.length) {
     hints.push(`\n${green('Ready to dispatch:')}  ${dim(`${dispatchable.length} slot(s)`)}`);
     for (const sid of dispatchable) {
-      hints.push(`  farmslot dispatch execute ${sid} <task-file>`);
+      hints.push(
+        `  farmslot run create --slot ${sid} --project <project> --flow-type <flow> --ticket <jira-or-github-ref>`,
+      );
+      hints.push(`  farmslot run create --slot ${sid} --task <TASK.md>`);
     }
   }
 

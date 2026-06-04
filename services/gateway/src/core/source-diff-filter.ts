@@ -299,7 +299,14 @@ export function buildSourceDiffFilter(config: SourceDiffFilterConfig = {}): Sour
   const compiledBlock = capCustomEntries(
     // Always block the configured harness injection root (default temp/agentic/recipe-harness),
     // so harness overlay files are excluded from diff analysis even under a custom root.
-    [`${harnessRoot()}/**`, ...cleanList(config.blocklist?.patterns)],
+    [
+      `${harnessRoot()}/**`,
+      '.task/**',
+      '**/.task/**',
+      '.task.md',
+      '**/.task.md',
+      ...cleanList(config.blocklist?.patterns),
+    ],
     'blocklist.patterns',
   ).map(compileGlob);
   // Drop invalid patterns from the emitted pattern lists so they cannot leak

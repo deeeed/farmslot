@@ -16,8 +16,10 @@ import { DEFAULT_HARNESS_ROOT } from '../projects/harness-root.js';
 
 import {
   cappedGitDiffCommand,
+  cappedRunSourceDiffCommand,
   contributionDiffBaseSpec,
   quotedPathspecArgs,
+  runSourceDiffNumstatCommand,
 } from './diff-artifacts.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -31,6 +33,9 @@ test('isSourceCodePath accepts source/config files and rejects binary assets', (
   assert.equal(isSourceCodePath('assets/logo.png'), false);
   assert.equal(isSourceCodePath('recordings/demo.mp4'), false);
   assert.equal(isSourceCodePath('build/generated.bin'), false);
+  assert.equal(isSourceCodePath('.task/feat/123/TASK.md'), false);
+  assert.equal(isSourceCodePath('nested/.task/feat/123/TASK.md'), false);
+  assert.equal(isSourceCodePath('.task.md'), false);
 });
 
 test('source diff filter supports per-project allowlist and blocklist overrides', () => {
@@ -110,6 +115,36 @@ test('cappedGitDiffCommand and quotedPathspecArgs work against a real git binary
   assert.equal(diff.exitCode, 0, diff.stderr);
   assert.match(diff.stdout, /^diff --git a\/src\/a\.ts b\/src\/a\.ts$/m);
   assert.equal(/asset\.png/.test(diff.stdout), false);
+});
+
+test('run source diff commands include dirty worktree source and exclude task artifacts', async (t) => {
+  const repo = await mkdtemp(path.join(os.tmpdir(), 'farmslot-dirty-source-diff-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const run = (cmd: string) => execLocal(cmd, { cwd: repo, timeout: 10000 });
+  await run('git init -q && git config user.email t@t && git config user.name t');
+  await mkdir(path.join(repo, 'src'), { recursive: true });
+  await writeFile(path.join(repo, 'src', 'a.ts'), 'export const a = 1;\n', 'utf-8');
+  const initial = await run('git add -A && git commit -qm initial && git rev-parse HEAD');
+  assert.equal(initial.exitCode, 0, initial.stderr);
+  const baseSha = initial.stdout.trim();
+
+  await writeFile(path.join(repo, 'src', 'a.ts'), 'export const a = 2;\n', 'utf-8');
+  await writeFile(path.join(repo, 'src', 'new.ts'), 'export const b = 1;\n', 'utf-8');
+  await mkdir(path.join(repo, '.task', 'feat', '123'), { recursive: true });
+  await writeFile(path.join(repo, '.task', 'feat', '123', 'TASK.md'), 'demo task\n', 'utf-8');
+
+  const pathspecs = sourceCodeGitPathspecs(buildSourceDiffFilter());
+  const numstat = await run(runSourceDiffNumstatCommand(baseSha, pathspecs));
+  assert.equal(numstat.exitCode, 0, numstat.stderr);
+  assert.match(numstat.stdout, /^1\t1\tsrc\/a\.ts$/m);
+  assert.match(numstat.stdout, /^1\t0\tsrc\/new\.ts$/m);
+  assert.doesNotMatch(numstat.stdout, /\.task\/feat\/123\/TASK\.md/);
+
+  const diff = await run(cappedRunSourceDiffCommand(baseSha, pathspecs));
+  assert.equal(diff.exitCode, 0, diff.stderr);
+  assert.match(diff.stdout, /^diff --git a\/src\/a\.ts b\/src\/a\.ts$/m);
+  assert.match(diff.stdout, /^diff --git a\/src\/new\.ts b\/src\/new\.ts$/m);
+  assert.doesNotMatch(diff.stdout, /\.task\/feat\/123\/TASK\.md/);
 });
 
 test('contributionDiffBaseSpec uses replay startRef instead of default branch', () => {
@@ -199,6 +234,10 @@ test('source diff filter treats empty allowlist with defaults disabled as allow-
     assert.equal(isSourceCodePath('src/App.ts', filter), true);
     assert.deepEqual(sourceCodeGitPathspecs(filter), [
       `:(exclude,icase,glob)${DEFAULT_HARNESS_ROOT}/**`,
+      ':(exclude,icase,glob).task/**',
+      ':(exclude,icase,glob)**/.task/**',
+      ':(exclude,icase,glob).task.md',
+      ':(exclude,icase,glob)**/.task.md',
       ':(glob)**',
     ]);
   } finally {
