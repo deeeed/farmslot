@@ -1,7 +1,8 @@
-import type { Command } from 'commander';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import type { Command } from 'commander';
 
 import type { EventFrame, Run } from '@farmslot/protocol';
 
