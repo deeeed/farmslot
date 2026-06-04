@@ -46,6 +46,7 @@ _farmslot() {
         config) _farmslot_config ;;
         rpc) _arguments '1:method:' '2:params:' '(--stream)--stream[Show streaming events]' ;;
         recipe) _farmslot_recipe ;;
+        run) _farmslot_run ;;
         completion) _describe 'shell' '(zsh bash fish)' ;;
       esac ;;
   esac
@@ -56,11 +57,12 @@ _farmslot_commands() {
   commands=(
     'fleet:Fleet management'
     'slot:Slot lifecycle operations'
-    'dispatch:Task dispatch'
+    'dispatch:Dispatch planning'
     'pr:PR status and monitoring'
     'config:View configuration'
     'rpc:Raw gateway RPC call'
     'recipe:Recipe protocol helpers'
+    'run:Run lifecycle operations'
     'completion:Generate shell completions'
   )
   _describe 'command' commands
@@ -80,7 +82,13 @@ _farmslot_slot() {
 
 _farmslot_dispatch() {
   local -a commands
-  commands=('preview:Preview dispatch plan' 'execute:Execute dispatch')
+  commands=('preview:Preview dispatch plan')
+  _describe 'subcommand' commands
+}
+
+_farmslot_run() {
+  local -a commands
+  commands=('create:Create a supervised run')
   _describe 'subcommand' commands
 }
 
@@ -113,15 +121,16 @@ const BASH_COMPLETION = `_farmslot_completions() {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
   case \${COMP_CWORD} in
-    1) COMPREPLY=($(compgen -W "fleet slot dispatch pr config rpc recipe completion" -- "$cur")) ;;
+    1) COMPREPLY=($(compgen -W "fleet slot dispatch pr config rpc recipe run completion" -- "$cur")) ;;
     2)
       case \${COMP_WORDS[1]} in
         fleet) COMPREPLY=($(compgen -W "status refresh" -- "$cur")) ;;
         slot) COMPREPLY=($(compgen -W "check prepare release recycle" -- "$cur")) ;;
-        dispatch) COMPREPLY=($(compgen -W "preview execute" -- "$cur")) ;;
+        dispatch) COMPREPLY=($(compgen -W "preview" -- "$cur")) ;;
         pr) COMPREPLY=($(compgen -W "status list" -- "$cur")) ;;
         config) COMPREPLY=($(compgen -W "pools projects" -- "$cur")) ;;
         recipe) COMPREPLY=($(compgen -W "validate run" -- "$cur")) ;;
+        run) COMPREPLY=($(compgen -W "create" -- "$cur")) ;;
         completion) COMPREPLY=($(compgen -W "zsh bash fish" -- "$cur")) ;;
       esac ;;
   esac
@@ -133,19 +142,21 @@ complete -F _farmslot_completions farmslot
 const FISH_COMPLETION = `# farmslot completions for fish
 complete -c farmslot -n '__fish_use_subcommand' -a fleet -d 'Fleet management'
 complete -c farmslot -n '__fish_use_subcommand' -a slot -d 'Slot lifecycle'
-complete -c farmslot -n '__fish_use_subcommand' -a dispatch -d 'Task dispatch'
+complete -c farmslot -n '__fish_use_subcommand' -a dispatch -d 'Dispatch planning'
 complete -c farmslot -n '__fish_use_subcommand' -a pr -d 'PR status'
 complete -c farmslot -n '__fish_use_subcommand' -a config -d 'Configuration'
 complete -c farmslot -n '__fish_use_subcommand' -a rpc -d 'Raw RPC call'
 complete -c farmslot -n '__fish_use_subcommand' -a recipe -d 'Recipe protocol helpers'
+complete -c farmslot -n '__fish_use_subcommand' -a run -d 'Run lifecycle operations'
 complete -c farmslot -n '__fish_use_subcommand' -a completion -d 'Shell completions'
 
 complete -c farmslot -n '__fish_seen_subcommand_from fleet' -a 'status refresh'
 complete -c farmslot -n '__fish_seen_subcommand_from slot' -a 'check prepare release recycle'
-complete -c farmslot -n '__fish_seen_subcommand_from dispatch' -a 'preview execute'
+complete -c farmslot -n '__fish_seen_subcommand_from dispatch' -a 'preview'
 complete -c farmslot -n '__fish_seen_subcommand_from pr' -a 'status list'
 complete -c farmslot -n '__fish_seen_subcommand_from config' -a 'pools projects'
 complete -c farmslot -n '__fish_seen_subcommand_from recipe' -a 'validate run'
+complete -c farmslot -n '__fish_seen_subcommand_from run' -a 'create'
 complete -c farmslot -n '__fish_seen_subcommand_from completion' -a 'zsh bash fish'
 
 complete -c farmslot -l url -d 'Gateway WebSocket URL'

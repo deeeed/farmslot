@@ -10,7 +10,7 @@ It does **not** own Gateway behavior, protocol definitions, recipe execution sem
 | ----------------------- | --------------------------------------------------------------------- |
 | `bin/`                  | Published `farmslot` executable shim.                                 |
 | `src/entry.ts`          | Commander root command and subcommand registration.                   |
-| `src/commands/`         | CLI subcommands for fleet, slots, dispatch, PRs, nodes, recipes, RPC. |
+| `src/commands/`         | CLI subcommands for fleet, slots, dispatch preview, runs, PRs, nodes, recipes, RPC. |
 | `src/formatters/`       | Human-readable table/detail rendering for CLI output.                 |
 | `src/gateway-client.ts` | Auth-aware Gateway WebSocket request/event client.                    |
 | `src/output.ts`         | JSON/text output mode helpers.                                        |
@@ -19,7 +19,8 @@ It does **not** own Gateway behavior, protocol definitions, recipe execution sem
 
 - `farmslot fleet ...` — fleet status and refresh.
 - `farmslot slot ...` — slot checks, prepare, recycle, release.
-- `farmslot dispatch ...` — dispatch preview and task handoff helpers.
+- `farmslot dispatch ...` — dispatch preview helpers.
+- `farmslot run create ...` — create supervised runs from Jira/GitHub refs or existing task files.
 - `farmslot pr ...` — PR status/list views.
 - `farmslot node ...` — connected Node daemon visibility and deployment helpers.
 - `farmslot recipe ...` — recipe validation, local dry-runs, project-hook runs, artifact validation.

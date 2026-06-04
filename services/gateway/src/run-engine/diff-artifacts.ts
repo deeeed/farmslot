@@ -110,7 +110,7 @@ const GIT_DIFF_TOO_LARGE_EXIT_CODE = 42;
 const DIFF_ARTIFACT_EXEC_MAX_BUFFER = MAX_DIFF_ARTIFACT_BYTES + 5 * 1024 * 1024;
 const UNAVAILABLE_DIFF_RECAPTURE_COOLDOWN_MS = 60_000;
 const REVIEW_INPUT_CAPTURE_REUSE_WINDOW_MS = 60_000;
-const REUSABLE_UNAVAILABLE_DIFF_REASONS = new Set(['diff-artifact-too-large', 'no-source-diff']);
+const REUSABLE_UNAVAILABLE_DIFF_REASONS = new Set(['diff-artifact-too-large']);
 const runArtifactMutationTails = new Map<string, Promise<void>>();
 
 function withRunArtifactMutation<T>(runId: string, fn: () => Promise<T>): Promise<T> {
@@ -330,6 +330,63 @@ export function cappedGitDiffCommand(range: string, pathspecs: readonly string[]
   return `bash -c ${shellQuote(script)}`;
 }
 
+function gitPathspecClause(pathspecs: readonly string[]): string {
+  return pathspecs.length > 0 ? `-- ${quotedPathspecArgs(pathspecs)}` : '';
+}
+
+export function runSourceDiffNumstatCommand(
+  trackedDiffBase: string,
+  pathspecs: readonly string[],
+): string {
+  const pathspecClause = gitPathspecClause(pathspecs);
+  const script = [
+    'set -euo pipefail',
+    'export LC_ALL=C',
+    `tracked_base=${shellQuote(trackedDiffBase)}`,
+    `${GIT_DIFF_NO_QUOTE_PATH} --numstat "$tracked_base" ${pathspecClause}`,
+    'untracked=$(mktemp "${TMPDIR:-/tmp}/farmslot-untracked.XXXXXX")',
+    'trap \'rm -f "$untracked"\' EXIT',
+    `git -c core.quotePath=false ls-files --others --exclude-standard -z ${pathspecClause} > "$untracked"`,
+    'while IFS= read -r -d \'\' file; do',
+    '  [ -f "$file" ] || continue',
+    '  lines=$(wc -l < "$file" | tr -d \'[:space:]\')',
+    '  printf \'%s\\t0\\t%s\\n\' "${lines:-0}" "$file"',
+    'done < "$untracked"',
+  ].join('\n');
+  return `bash -c ${shellQuote(script)}`;
+}
+
+export function cappedRunSourceDiffCommand(
+  trackedDiffBase: string,
+  pathspecs: readonly string[],
+): string {
+  const pathspecClause = gitPathspecClause(pathspecs);
+  const script = [
+    'set -euo pipefail',
+    'export LC_ALL=C',
+    'tmp=$(mktemp "${TMPDIR:-/tmp}/farmslot-diff.XXXXXX")',
+    'untracked=$(mktemp "${TMPDIR:-/tmp}/farmslot-untracked.XXXXXX")',
+    'trap \'rm -f "$tmp" "$untracked"\' EXIT',
+    `tracked_base=${shellQuote(trackedDiffBase)}`,
+    `git -c core.quotePath=false ls-files --others --exclude-standard -z ${pathspecClause} > "$untracked"`,
+    '{',
+    `  ${GIT_DIFF_NO_QUOTE_PATH} "$tracked_base" ${pathspecClause}`,
+    '  while IFS= read -r -d \'\' file; do',
+    '    [ -f "$file" ] || continue',
+    '    set +e',
+    '    git -c core.quotePath=false diff --no-index -- /dev/null "$file"',
+    '    code=$?',
+    '    set -e',
+    '    if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then exit "$code"; fi',
+    '  done < "$untracked"',
+    '} > "$tmp"',
+    'bytes=$(stat -f%z "$tmp" 2>/dev/null || stat -c%s "$tmp")',
+    `if [ "$bytes" -gt ${MAX_DIFF_ARTIFACT_BYTES} ]; then printf 'farmslot-diff-bytes=%s\\n' "$bytes" >&2; exit ${GIT_DIFF_TOO_LARGE_EXIT_CODE}; fi`,
+    'cat "$tmp"',
+  ].join('\n');
+  return `bash -c ${shellQuote(script)}`;
+}
+
 export function contributionDiffBaseSpec(
   run: Pick<Run, 'startRef'>,
   defaultBranch: string,
@@ -383,8 +440,20 @@ export async function captureRunDiffSnapshot(
       );
     }
     const baseSha = baseRefResult.stdout.trim();
-    const range = `${shellQuote(baseSha)}...HEAD`;
     const headSha = headRefResult.stdout.trim();
+    const mergeBaseResult = await execOnSlot(
+      vars,
+      `git merge-base ${shellQuote(baseSha)} HEAD`,
+      { timeout: 10000 },
+    );
+    if (mergeBaseResult.exitCode !== 0) {
+      return unavailableDiff(
+        'base-ref-unavailable',
+        diffKind,
+        mergeBaseResult.stderr.trim() || mergeBaseResult.stdout.trim(),
+      );
+    }
+    const trackedDiffBase = mergeBaseResult.stdout.trim();
     const noSourceDiffSnapshot = (): FamilyDiffProvenance & { diffText: string } => ({
       source: 'artifact',
       available: false,
@@ -407,10 +476,9 @@ export async function captureRunDiffSnapshot(
     if (sourcePathspecList.length === 0) {
       return noSourceDiffSnapshot();
     }
-    const pathspecArgs = quotedPathspecArgs(sourcePathspecList);
     const numstatResult = await execOnSlot(
       vars,
-      `${GIT_DIFF_NO_QUOTE_PATH} --numstat ${range} -- ${pathspecArgs}`,
+      runSourceDiffNumstatCommand(trackedDiffBase, sourcePathspecList),
       { timeout: 10000 },
     );
     if (numstatResult.exitCode !== 0) {
@@ -424,10 +492,14 @@ export async function captureRunDiffSnapshot(
     if (stat.files === 0) {
       return noSourceDiffSnapshot();
     }
-    const diffResult = await execOnSlot(vars, cappedGitDiffCommand(range, sourcePathspecList), {
-      timeout: 30000,
-      maxBuffer: DIFF_ARTIFACT_EXEC_MAX_BUFFER,
-    });
+    const diffResult = await execOnSlot(
+      vars,
+      cappedRunSourceDiffCommand(trackedDiffBase, sourcePathspecList),
+      {
+        timeout: 30000,
+        maxBuffer: DIFF_ARTIFACT_EXEC_MAX_BUFFER,
+      },
+    );
     const diffText = diffResult.stdout;
     if (diffResult.exitCode === GIT_DIFF_TOO_LARGE_EXIT_CODE) {
       const diffBytes = parseDiffTooLargeBytes(diffResult.stderr);

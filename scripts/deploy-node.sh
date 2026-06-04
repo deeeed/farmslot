@@ -226,6 +226,7 @@ fi
 echo "[deploy] syncing protocol..."
 run "mkdir -p $REMOTE_DIR/node_modules/@farmslot/protocol"
 rsync -a --delete "$PROTOCOL_SRC/src/" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/src/"
+rsync -a --delete "$PROTOCOL_SRC/dist/" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/dist/"
 rsync -a "$PROTOCOL_SRC/package.json" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/package.json"
 
 # --- Install service (platform-specific) ---

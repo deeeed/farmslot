@@ -8,6 +8,7 @@ import { registerNodeCommand } from './commands/node.js';
 import { registerPRCommand } from './commands/pr.js';
 import { registerRecipeCommand } from './commands/recipe.js';
 import { registerRpcCommand } from './commands/rpc.js';
+import { registerRunCommand } from './commands/run.js';
 import { registerSlotCommand } from './commands/slot.js';
 
 const program = new Command();
@@ -27,6 +28,7 @@ registerPRCommand(program);
 registerRecipeCommand(program);
 registerConfigCommand(program);
 registerRpcCommand(program);
+registerRunCommand(program);
 registerCompletionCommand(program);
 registerNodeCommand(program);
 
