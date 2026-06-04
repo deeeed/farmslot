@@ -53,6 +53,7 @@
   ],
   "files": [
     "README.md",
+    "LICENSE",
     "CHANGELOG.md",
     "bin/**/*.mjs",
     "dist/**/*.js",

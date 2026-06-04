@@ -72,3 +72,7 @@ yarn workspace @farmslot/skills build
 yarn workspace @farmslot/skills test
 node scripts/quality/check-farmslot-package-readiness.mjs --packages @farmslot/skills
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
