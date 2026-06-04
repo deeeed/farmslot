@@ -13,7 +13,7 @@ Orchestration currently lives in ephemeral Claude Code skills (`/farm-fix`, `/fa
 - **No persistent monitoring.** `farm-monitor` skill spawns a background loop, but it's tied to the Claude Code session. Gateway restarts don't affect it; session restarts kill it.
 - **Invisible orchestrator.** Workers are observable (terminal, TASK.md progress, device feed) but the orchestrator is invisible — it's a Claude conversation with no UI presence.
 
-The gateway already has the plumbing: `dispatch.execute`, `slot.prepare`, `slot.release`, task watching (M10). But it doesn't own the workflow — it executes individual steps on demand from the CLI/UI.
+The gateway already has the plumbing: `run.create`, `slot.prepare`, `slot.release`, task watching (M10). But it doesn't own the workflow — it executes individual steps on demand from the CLI/UI.
 
 The PRD describes this vision (B1 Dispatch Wizard, F3 Server-Side Monitoring) but lacks a unified orchestration model.
 

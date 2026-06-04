@@ -94,3 +94,17 @@ test('parseTaskPath uses generated task provenance over folder naming', () => {
     relativePath: 'projects/audiolab-farm/tasks/feat/414-0604-141246/TASK.md',
   });
 });
+
+test('parseTaskPath reports malformed task metadata with file context', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-task-'));
+  const taskDir = path.join(root, 'projects/audiolab-farm/tasks/feat/414-0604-141246');
+  mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  const taskFile = path.join(taskDir, 'TASK.md');
+  writeFileSync(taskFile, '# Task\n');
+  writeFileSync(path.join(taskDir, 'inputs/template-provenance.json'), '{bad json');
+
+  assert.throws(
+    () => parseTaskPath(taskFile),
+    /Invalid task metadata .*template-provenance\.json/,
+  );
+});

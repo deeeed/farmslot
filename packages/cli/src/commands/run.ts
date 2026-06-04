@@ -20,7 +20,12 @@ const SUBDIR_TO_FLOW: Record<string, string> = {
 function readTaskJson(taskFile: string, relativePath: string): Record<string, unknown> | null {
   const jsonPath = path.join(path.dirname(taskFile), relativePath);
   if (!existsSync(jsonPath)) return null;
-  return JSON.parse(readFileSync(jsonPath, 'utf-8')) as Record<string, unknown>;
+  try {
+    return JSON.parse(readFileSync(jsonPath, 'utf-8')) as Record<string, unknown>;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Invalid task metadata ${jsonPath}: ${detail}`);
+  }
 }
 
 /**
@@ -102,7 +107,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
       ...base,
       flowType: opts.flowType || parsed.flowType,
       project: opts.project || parsed.project,
-      ticketOrPr: opts.ticket || parsed.ticketOrPr,
+      ticketOrPr: parsed.ticketOrPr,
       taskFile: opts.task,
     };
   }

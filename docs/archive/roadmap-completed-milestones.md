@@ -28,7 +28,7 @@
 - [x] `fleet.status` / `fleet.refresh` methods
 - [x] chokidar watch on `.farm-status.json` — push `fleet.updated` events on change
 - [x] Slot lifecycle: `slot.check`, `slot.prepare`, `slot.release`, `slot.recycle`
-- [x] Dispatch: `dispatch.preview`, `dispatch.execute`
+- [x] Dispatch: `dispatch.preview`, `run.create`
 - [x] Terminal: `terminal.subscribe`, `terminal.unsubscribe`, `terminal.send`, `terminal.snapshot`
 - [x] PR: `pr.status`, `pr.list`, `pr.monitor`
 - [x] Decisions: `decision.list`, `decision.resolve`
