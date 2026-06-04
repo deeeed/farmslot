@@ -170,8 +170,11 @@ export function registerRunCommand(program: Command): void {
           'run.create',
           params,
           (event: EventFrame) => {
-            const payload = event.payload as any;
-            if (payload?.data) process.stderr.write(payload.data);
+            const payload = event.payload;
+            if (payload && typeof payload === 'object' && 'data' in payload) {
+              const data = payload.data;
+              if (typeof data === 'string') process.stderr.write(data);
+            }
           },
         );
         if (output.json) {

@@ -38,12 +38,8 @@
       "count": 2
     },
     {
-      "key": "packages/cli/src/commands/dispatch.ts:as-any:as any",
-      "count": 1
-    },
-    {
       "key": "packages/cli/src/commands/dispatch.ts:type-any:: any",
-      "count": 2
+      "count": 1
     },
     {
       "key": "packages/cli/src/commands/fleet.ts:type-any:: any",

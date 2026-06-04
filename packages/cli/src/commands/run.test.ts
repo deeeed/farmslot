@@ -202,8 +202,5 @@ test('parseTaskPath reports malformed task metadata with file context', () => {
   writeFileSync(taskFile, '# Task\n');
   writeFileSync(path.join(taskDir, 'inputs/template-provenance.json'), '{bad json');
 
-  assert.throws(
-    () => parseTaskPath(taskFile),
-    /Invalid task metadata .*template-provenance\.json/,
-  );
+  assert.throws(() => parseTaskPath(taskFile), /Invalid task metadata .*template-provenance\.json/);
 });
