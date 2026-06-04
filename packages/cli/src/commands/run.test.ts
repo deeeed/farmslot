@@ -95,6 +95,27 @@ test('parseTaskPath uses generated task provenance over folder naming', () => {
   });
 });
 
+test('run create canonicalizes an absolute task file to the gateway-relative path', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-task-'));
+  const taskDir = path.join(root, 'projects/audiolab-farm/tasks/feat/414-0604-141246');
+  mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  const taskFile = path.join(taskDir, 'TASK.md');
+  writeFileSync(taskFile, '# Task\n');
+  writeFileSync(
+    path.join(taskDir, 'inputs/template-provenance.json'),
+    JSON.stringify({ flowType: 'dev' }),
+  );
+  writeFileSync(
+    path.join(taskDir, 'inputs/bug-input.json'),
+    JSON.stringify({ githubIssue: 'deeeed/audiolab#414' }),
+  );
+
+  assert.equal(
+    buildRunCreateParams({ task: taskFile }).taskFile,
+    'projects/audiolab-farm/tasks/feat/414-0604-141246/TASK.md',
+  );
+});
+
 test('parseTaskPath uses generated Jira key metadata over folder naming', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-task-'));
   const taskDir = path.join(root, 'projects/metamask-mobile/tasks/fix/3215-0604-141246');

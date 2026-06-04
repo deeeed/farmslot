@@ -1,6 +1,7 @@
 import type { Command } from 'commander';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { EventFrame, Run } from '@farmslot/protocol';
 
@@ -16,6 +17,17 @@ const SUBDIR_TO_FLOW: Record<string, string> = {
   'pr-complete': 'pr-complete',
   'merge-main': 'merge-main',
 };
+
+const FARMSLOT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+
+function resolveReadableTaskFile(taskFile: string): string {
+  if (path.isAbsolute(taskFile)) return taskFile;
+  const cwdPath = path.resolve(taskFile);
+  if (existsSync(cwdPath)) return cwdPath;
+  const rootPath = path.join(FARMSLOT_ROOT, taskFile);
+  if (existsSync(rootPath)) return rootPath;
+  return taskFile;
+}
 
 function readTaskJson(taskFile: string, relativePath: string): Record<string, unknown> | null {
   const jsonPath = path.join(path.dirname(taskFile), relativePath);
@@ -38,7 +50,8 @@ export function parseTaskPath(taskFile: string): {
   ticketOrPr: string;
   relativePath: string;
 } {
-  const normalized = taskFile.replace(/\\/g, '/');
+  const resolvedTaskFile = resolveReadableTaskFile(taskFile);
+  const normalized = resolvedTaskFile.replace(/\\/g, '/');
   const projIdx = normalized.indexOf('projects/');
   if (projIdx === -1) {
     throw new Error(
@@ -57,8 +70,8 @@ export function parseTaskPath(taskFile: string): {
   const project = parts[1];
   const flowSubdir = parts[3];
   const ticketFolder = parts[4];
-  const provenance = readTaskJson(taskFile, 'inputs/template-provenance.json');
-  const ticketData = readTaskJson(taskFile, 'inputs/bug-input.json');
+  const provenance = readTaskJson(resolvedTaskFile, 'inputs/template-provenance.json');
+  const ticketData = readTaskJson(resolvedTaskFile, 'inputs/bug-input.json');
   const flowType =
     typeof provenance?.flowType === 'string'
       ? provenance.flowType
@@ -68,7 +81,7 @@ export function parseTaskPath(taskFile: string): {
       ? ticketData.githubIssue
       : typeof ticketData?.jiraKey === 'string'
         ? ticketData.jiraKey
-      : ticketFolder.split('-').slice(0, 2).join('-').toUpperCase();
+        : ticketFolder.split('-').slice(0, 2).join('-').toUpperCase();
 
   return { project, flowType, ticketOrPr, relativePath: relative };
 }
@@ -110,7 +123,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
       flowType: opts.flowType || parsed.flowType,
       project: opts.project || parsed.project,
       ticketOrPr: parsed.ticketOrPr,
-      taskFile: opts.task,
+      taskFile: parsed.relativePath,
     };
   }
 
