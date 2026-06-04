@@ -40,6 +40,18 @@ function readTaskJson(taskFile: string, relativePath: string): Record<string, un
   }
 }
 
+function taskRelativePathFromSegments(taskFile: string, normalized: string): string {
+  const parts = normalized.split('/').filter(Boolean);
+  for (let i = 0; i <= parts.length - 6; i += 1) {
+    if (parts[i] === 'projects' && parts[i + 2] === 'tasks') {
+      return parts.slice(i).join('/');
+    }
+  }
+  throw new Error(
+    `Cannot parse task path — expected "projects/<name>/tasks/<flow>/<id>/TASK.md": ${taskFile}`,
+  );
+}
+
 /**
  * Parse a task file path to extract project, flowType, and ticketOrPr.
  * Expected path structure: projects/<project>/tasks/<flow>/<ticket-folder>/TASK.md
@@ -52,14 +64,7 @@ export function parseTaskPath(taskFile: string): {
 } {
   const resolvedTaskFile = resolveReadableTaskFile(taskFile);
   const normalized = resolvedTaskFile.replace(/\\/g, '/');
-  const projIdx = normalized.indexOf('projects/');
-  if (projIdx === -1) {
-    throw new Error(
-      `Cannot parse task path — expected "projects/<name>/tasks/<flow>/<id>/TASK.md": ${taskFile}`,
-    );
-  }
-
-  const relative = normalized.slice(projIdx);
+  const relative = taskRelativePathFromSegments(taskFile, normalized);
   const parts = relative.split('/');
   if (parts.length < 6 || parts[0] !== 'projects' || parts[2] !== 'tasks') {
     throw new Error(
