@@ -144,6 +144,37 @@ test('parseTaskPath ignores unrelated parent directories named projects', () => 
   });
 });
 
+test('parseTaskPath ignores earlier parent projects tasks sequences', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-parent-projects-tasks-'));
+  const taskDir = path.join(
+    root,
+    'projects',
+    'parent',
+    'tasks',
+    'not-a-flow',
+    'not-a-task',
+    'projects/audiolab-farm/tasks/feat/414-0604-141246',
+  );
+  mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  const taskFile = path.join(taskDir, 'TASK.md');
+  writeFileSync(taskFile, '# Task\n');
+  writeFileSync(
+    path.join(taskDir, 'inputs/template-provenance.json'),
+    JSON.stringify({ flowType: 'dev' }),
+  );
+  writeFileSync(
+    path.join(taskDir, 'inputs/bug-input.json'),
+    JSON.stringify({ githubIssue: 'deeeed/audiolab#414' }),
+  );
+
+  assert.deepEqual(parseTaskPath(taskFile), {
+    project: 'audiolab-farm',
+    flowType: 'dev',
+    ticketOrPr: 'deeeed/audiolab#414',
+    relativePath: 'projects/audiolab-farm/tasks/feat/414-0604-141246/TASK.md',
+  });
+});
+
 test('parseTaskPath uses generated Jira key metadata over folder naming', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-task-'));
   const taskDir = path.join(root, 'projects/metamask-mobile/tasks/fix/3215-0604-141246');

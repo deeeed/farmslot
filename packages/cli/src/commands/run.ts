@@ -43,10 +43,9 @@ function readTaskJson(taskFile: string, relativePath: string): Record<string, un
 
 function taskRelativePathFromSegments(taskFile: string, normalized: string): string {
   const parts = normalized.split('/').filter(Boolean);
-  for (let i = 0; i <= parts.length - 6; i += 1) {
-    if (parts[i] === 'projects' && parts[i + 2] === 'tasks') {
-      return parts.slice(i).join('/');
-    }
+  const start = parts.length - 6;
+  if (start >= 0 && parts[start] === 'projects' && parts[start + 2] === 'tasks') {
+    return parts.slice(start).join('/');
   }
   throw new Error(
     `Cannot parse task path — expected "projects/<name>/tasks/<flow>/<id>/TASK.md": ${taskFile}`,
