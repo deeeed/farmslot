@@ -413,6 +413,56 @@ test('record-video stop failure removes partial MP4 and writes a failed artifact
   }
 });
 
+test('record-video stop success still requires a non-empty MP4 artifact', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'ready' };
+      },
+      async start() {
+        return {
+          async stop() {
+            return {};
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'pid', pid: 123 };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: createSmokeRecipe(),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
+    assert.equal(files.includes('videos/recipe-run.mp4'), false);
+
+    const trace = await readJsonFile(result.tracePath);
+    const videoFailure = (trace as Array<{ nodeId: string; error?: string }>).find(
+      (entry) => entry.nodeId === 'recipe-run:video',
+    );
+    assert.match(videoFailure?.error ?? '', /Recording output is missing/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('aborted video cleanup removes partial MP4 written during recorder stop', async () => {
   const tempRoot = await createTempRoot();
   try {

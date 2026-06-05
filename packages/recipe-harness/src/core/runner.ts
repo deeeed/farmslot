@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -709,6 +709,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     outputPath: string;
   }): Promise<RecipeArtifactManifestEntry> {
     const result = await runRecording.recording.stop();
+    await assertVideoOutputReady(runRecording.outputPath);
     return result.recorder
       ? {
           ...runRecording.entry,
@@ -854,4 +855,14 @@ function normalizeVideoRecordingMode(mode: unknown): { mode: 'off' | 'full-run' 
     );
   }
   throw new Error(`recordVideo mode must be full-run or off, got ${JSON.stringify(mode)}.`);
+}
+
+async function assertVideoOutputReady(outputPath: string): Promise<void> {
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(outputPath);
+  } catch {
+    throw new Error(`Recording output is missing: ${outputPath}`);
+  }
+  if (stats.size <= 0) throw new Error(`Recording output is empty: ${outputPath}`);
 }
