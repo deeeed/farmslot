@@ -819,7 +819,6 @@ function normalizeVideoRecordingOptions(
   if (!input || input === 'off') return { mode: 'off' };
   if (input === true) return { mode: 'full-run' };
   if (input === 'full-run') return { mode: 'full-run' };
-  if (input === 'proof-window') return { mode: 'full-run' };
   return { ...input, mode: input.mode === 'off' ? 'off' : 'full-run' };
 }
 

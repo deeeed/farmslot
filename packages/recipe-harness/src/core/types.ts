@@ -5,7 +5,7 @@ import type {
 } from '@farmslot/protocol';
 
 export type RecipeRunStatus = 'pass' | 'fail' | 'unknown';
-export type RecipeVideoRecordingMode = 'off' | 'full-run' | 'proof-window';
+export type RecipeVideoRecordingMode = 'off' | 'full-run';
 export type RecipeRecordPolicy = 'none' | 'trace_only' | 'proof_window' | 'failure_only';
 
 export interface RecipeRunRequest {

@@ -1265,6 +1265,33 @@ test('runs and validates recipes through the harness CLI entrypoint', async () =
   }
 });
 
+test('CLI rejects proof-window video mode until focused clips are implemented', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    const manifestPath = path.join(tempRoot, 'action-manifest.json');
+    await writeJsonFile(recipePath, createSmokeRecipe());
+    await writeJsonFile(manifestPath, coreActionManifest);
+
+    await assert.rejects(
+      () =>
+        runRecipeHarnessCli([
+          'run',
+          recipePath,
+          '--artifacts-dir',
+          path.join(tempRoot, 'artifacts'),
+          '--action-manifest',
+          manifestPath,
+          '--record-video',
+          'proof-window',
+        ]),
+      /proof-window is reserved for future focused clips/,
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('reports missing artifact manifests as validation findings instead of file errors', async () => {
   const tempRoot = await createTempRoot();
   try {

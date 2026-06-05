@@ -74,8 +74,13 @@ function parseRecordVideoOptions(options: RunCommandOptions): false | RecipeVide
     typeof options.recordVideo === 'string' && options.recordVideo !== 'true'
       ? options.recordVideo
       : 'full-run';
-  if (mode !== 'full-run' && mode !== 'proof-window' && mode !== 'off') {
-    throw new Error('--record-video must be full-run, proof-window, or off.');
+  if (mode === 'proof-window') {
+    throw new Error(
+      '--record-video=proof-window is reserved for future focused clips; use --record-video=full-run for phase 1.',
+    );
+  }
+  if (mode !== 'full-run' && mode !== 'off') {
+    throw new Error('--record-video must be full-run or off.');
   }
   const target = parseRecordingTarget(options);
   return {

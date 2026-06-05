@@ -321,13 +321,10 @@ export class MediaLightbox extends MediaLightboxState {
   }
 
   private _activeVideoFrameRate(): number {
-    const item =
-      this.mode === 'compare'
-        ? (this.pairs[this.pairIndex]?.after ?? this.pairs[this.pairIndex]?.before)
-        : this.items[this.selectedIndex];
+    const item = this.mode === 'single' ? this.items[this.selectedIndex] : undefined;
     return mediaLightboxFrameRateForSelection({
       mode: this.mode,
-      item: this.mode === 'single' ? item : undefined,
+      item,
       pair: this.mode === 'compare' ? this.pairs[this.pairIndex] : undefined,
     });
   }

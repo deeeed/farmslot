@@ -62,7 +62,7 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
       status: 'supported' as const,
       provider: this.name,
       platforms: ['macos'],
-      modes: ['full_run', 'proof_window'],
+      modes: ['full_run'],
       artifactTypes: ['video/mp4'],
     };
   }

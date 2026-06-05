@@ -82,7 +82,7 @@ recipe-runner run recipe.json \
 Optional advanced flags:
 
 ```bash
---record-video=full-run|proof-window|off
+--record-video=full-run|off
 --record-max-fps 15
 --record-max-size 720
 --record-app-name <name>
@@ -94,7 +94,7 @@ Optional advanced flags:
 Defaults:
 
 - `--record-video` means `full-run`;
-- `proof-window` is explicit and can be implemented by runners that need focused clips;
+- `proof-window` is reserved for future focused clips and intentionally rejected by the phase 1 harness so users are not misled;
 - no video is captured unless the flag is present or project policy enables it.
 
 ## Harness recording lifecycle
@@ -111,7 +111,7 @@ Phase 1 records one whole-recipe video when requested:
    - verify the MP4 exists and is non-empty;
    - register the video in `artifact-manifest.json`.
 
-Future proof-window mode may use the same provider to clip only selected nodes/flows, but it is not required for phase 1.
+Future proof-window mode may use the same provider to clip only selected nodes/flows, but it is not exposed by the phase 1 harness.
 
 Failure behavior:
 
@@ -179,7 +179,7 @@ Machine nodes should surface the capture stack status as node capabilities becau
     "status": "supported",
     "provider": "capture-helper",
     "platforms": ["macos"],
-    "modes": ["full_run", "proof_window"],
+    "modes": ["full_run"],
     "artifactTypes": ["video/mp4"]
   }
 ]
@@ -208,7 +208,7 @@ Runners that support video must expose a runtime capability:
   "status": "supported",
   "provider": "capture-helper",
   "platforms": ["macos"],
-  "modes": ["full_run", "proof_window"],
+  "modes": ["full_run"],
   "artifactTypes": ["video/mp4"]
 }
 ```
