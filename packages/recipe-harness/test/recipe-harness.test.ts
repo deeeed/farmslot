@@ -260,6 +260,58 @@ test('records one opt-in whole-recipe video and registers it in the artifact man
   }
 });
 
+test('record-video doctor failure writes a failed artifact package', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = createSmokeRecipe();
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return {
+          ok: false,
+          code: 'missing-permission',
+          message: 'Screen Recording is disabled.',
+          suggestedFix: 'Open permissions.',
+        };
+      },
+      async start() {
+        throw new Error('start should not run after doctor failure');
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: { videoRecorder: recorder },
+    });
+    const result = await runner.run({
+      recipeDocument: recipe,
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
+    assert.ok(files.includes('recipe.json'));
+    assert.ok(files.includes('summary.json'));
+    assert.ok(files.includes('trace.json'));
+    assert.ok(files.includes('artifact-manifest.json'));
+    assert.equal(files.includes('videos/recipe-run.mp4'), false);
+
+    const summary = await readJsonFile(result.summaryPath);
+    const trace = await readJsonFile(result.tracePath);
+    const videoFailure = (trace as Array<{ nodeId: string; error?: string }>).find(
+      (entry) => entry.nodeId === 'recipe-run:video',
+    );
+    assert.equal((summary as { status?: string }).status, 'fail');
+    assert.match(videoFailure?.error ?? '', /fake-recorder doctor missing-permission/);
+    assert.match(videoFailure?.error ?? '', /Open permissions/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('writes runner provenance into strict v1 runtime artifacts when configured', async () => {
   const tempRoot = await createTempRoot();
   try {

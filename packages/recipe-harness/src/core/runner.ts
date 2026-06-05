@@ -154,19 +154,6 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     const outputs = new Map<string, unknown>();
     const recipePath = await artifactWriter.copyRecipe(recipe);
-    const videoOptions = normalizeVideoRecordingOptions(request.recordVideo);
-    const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
-    const runRecording = videoRecorder
-      ? await this.#startRunVideoRecording({
-          recorder: videoRecorder,
-          videoOptions,
-          recipe,
-          projectRoot,
-          artifactsDir,
-          env: request.env ?? {},
-        })
-      : undefined;
-
     let status: RecipeRunStatus = 'unknown';
     let currentNodeId: string | undefined = graph.entry;
     let mainStatus: RecipeRunStatus = 'unknown';
@@ -174,20 +161,53 @@ class DefaultRecipeRunner implements RecipeRunner {
     const visited = new Set<string>();
     let transitionCount = 0;
     const maxTransitions = Object.keys(graph.nodes).length * 3;
+    const videoOptions = normalizeVideoRecordingOptions(request.recordVideo);
+    const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
+    let runRecording:
+      | { recording: ActiveVideoRecording; entry: RecipeArtifactManifestEntry; outputPath: string }
+      | undefined;
+    if (videoRecorder) {
+      try {
+        runRecording = await this.#startRunVideoRecording({
+          recorder: videoRecorder,
+          videoOptions,
+          recipe,
+          projectRoot,
+          artifactsDir,
+          env: request.env ?? {},
+        });
+      } catch (error) {
+        const message = errorMessage(error);
+        traceWriter.record({
+          nodeId: 'recipe-run:video',
+          action: 'record.video',
+          startedAt: startedAt.toISOString(),
+          endedAt: new Date().toISOString(),
+          durationMs: Date.now() - startedAt.getTime(),
+          ok: false,
+          error: message,
+        });
+        this.#logger.error(`record.video start failed: ${message}`);
+        status = 'fail';
+        currentNodeId = undefined;
+      }
+    }
 
-    const preconditionStatus = await this.#runPreconditions({
-      graph,
-      recipe,
-      projectRoot,
-      artifactsDir,
-      request,
-      outputs,
-      artifactWriter,
-      traceWriter,
-    });
-    if (preconditionStatus === 'fail') {
-      status = 'fail';
-      currentNodeId = undefined;
+    if (currentNodeId) {
+      const preconditionStatus = await this.#runPreconditions({
+        graph,
+        recipe,
+        projectRoot,
+        artifactsDir,
+        request,
+        outputs,
+        artifactWriter,
+        traceWriter,
+      });
+      if (preconditionStatus === 'fail') {
+        status = 'fail';
+        currentNodeId = undefined;
+      }
     }
 
     while (currentNodeId) {

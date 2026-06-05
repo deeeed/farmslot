@@ -143,10 +143,7 @@ export class MediaLightbox extends MediaLightboxState {
         const pair = this.pairs[this.pairIndex];
         if (!pair || pair.kind !== 'video') return;
         e.preventDefault();
-        const a = this.renderRoot.querySelector<HTMLVideoElement>('.ml-cmp-video.a');
-        if (!a) return;
-        if (a.paused) void a.play();
-        else a.pause();
+        this._toggleVideoPlayback();
       } else {
         const item = this.items[this.selectedIndex];
         if (!item || !isVideoLightboxItem(item)) return;
@@ -262,6 +259,10 @@ export class MediaLightbox extends MediaLightboxState {
       run(() => {
         if (Math.abs(a.currentTime - b.currentTime) > 0.1) a.currentTime = b.currentTime;
       });
+    b.ontimeupdate = () =>
+      run(() => {
+        if (Math.abs(a.currentTime - b.currentTime) > 0.25) a.currentTime = b.currentTime;
+      });
   }
 
   private _primaryVideo(): HTMLVideoElement | null {
@@ -293,13 +294,19 @@ export class MediaLightbox extends MediaLightboxState {
   private _toggleVideoPlayback(): void {
     const video = this._primaryVideo();
     if (!video) return;
+    const videos = this._videoSet();
     if (video.paused) {
-      for (const candidate of this._videoSet()) {
+      for (const candidate of videos) {
         candidate.playbackRate = this._videoRate;
+        if (candidate !== video && Math.abs(candidate.currentTime - video.currentTime) > 0.1) {
+          candidate.currentTime = video.currentTime;
+        }
       }
-      void video.play();
+      for (const candidate of videos) {
+        void candidate.play();
+      }
     } else {
-      for (const candidate of this._videoSet()) candidate.pause();
+      for (const candidate of videos) candidate.pause();
     }
     this._syncVideoState(video);
   }
