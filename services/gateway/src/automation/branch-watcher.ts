@@ -168,13 +168,14 @@ export function handleBranchFsChanged(payload: {
   machine: string;
   path: string;
   content: string;
-}): void {
+}): boolean {
   for (const [slotId, bw] of activeWatches) {
     if (!bw.isLocal && bw.machine === payload.machine && bw.gitHeadPath === payload.path) {
       debouncedUpdate(slotId, payload.content);
-      return;
+      return true;
     }
   }
+  return false;
 }
 
 // ─── Debounced branch update ───

@@ -203,6 +203,7 @@ import {
   dispatchQueueRemove,
   dispatchQueueReorder,
   dispatchQueueUpdate,
+  refreshBranches,
 } from '../methods/dispatch.js';
 import {
   fsDelete,
@@ -324,6 +325,29 @@ const ENABLE_RESOURCE_WATCHES =
   process.env.FARMSLOT_RESOURCE_WATCHES === '1' || process.env.FARMSLOT_RESOURCE_WATCHES === 'true';
 const ENABLE_BRANCH_WATCHERS =
   process.env.FARMSLOT_BRANCH_WATCHERS === '1' || process.env.FARMSLOT_BRANCH_WATCHERS === 'true';
+
+async function refreshConnectedNodeBranches(
+  machine: string,
+  broadcast: (frame: EventFrame) => void,
+  nextEventSeq: () => number,
+): Promise<void> {
+  const fleet = await loadFleetStatus(true);
+  const machineSlots = fleet.slots.filter((slot) => slot.machine === machine && slot.enabled);
+  let refreshError: unknown;
+  try {
+    if (machineSlots.length > 0) await refreshBranches(machineSlots);
+  } catch (err) {
+    refreshError = err;
+  }
+  const refreshedFleet = await loadFleetStatus(true);
+  broadcast({
+    type: 'event',
+    event: Events.FLEET_UPDATED,
+    payload: { fleet: refreshedFleet },
+    seq: nextEventSeq(),
+  });
+  if (refreshError) throw refreshError;
+}
 
 export interface RouteMethodContext {
   state: ClientState;
@@ -607,19 +631,12 @@ export async function routeMethod(
         payload: { machine, pid, protocolVersion, versionMatch },
         seq: nextEventSeq(),
       });
-      // Broadcast fleet update so UI reflects online status immediately
-      loadFleetStatus(true)
-        .then((fleet) => {
-          broadcast({
-            type: 'event',
-            event: Events.FLEET_UPDATED,
-            payload: { fleet },
-            seq: nextEventSeq(),
-          });
-        })
-        .catch((err) => {
-          console.warn(`[server] fleet refresh on node connect failed: ${(err as Error).message}`);
-        });
+      // Refresh this machine's slot branches now that node exec is available.
+      // A plain loadFleetStatus(true) only rebroadcasts .farm-status.json, which can be stale
+      // when the worker changed branches while the node/gateway was disconnected.
+      refreshConnectedNodeBranches(machine, broadcast, nextEventSeq).catch((err) => {
+        console.warn(`[server] branch refresh on node connect failed: ${(err as Error).message}`);
+      });
       // Auto-subscribe agent to push metrics every 30s
       const subscribeFrame = {
         type: 'req' as const,

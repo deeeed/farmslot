@@ -156,9 +156,10 @@ export function createWebSocketServer(
             ws.close(1008, 'node authentication required');
             return;
           }
-          if (peek.payload.path?.endsWith('.git/HEAD')) {
-            handleBranchFsChanged(peek.payload);
-          } else if (!handleSelfReviewFsChanged(peek.payload)) {
+          if (handleBranchFsChanged(peek.payload)) {
+            return;
+          }
+          if (!handleSelfReviewFsChanged(peek.payload)) {
             handleAgentFsChanged(peek.payload);
           }
           return;
