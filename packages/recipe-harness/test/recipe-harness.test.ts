@@ -228,13 +228,14 @@ test('records one opt-in whole-recipe video and registers it in the artifact man
       recipeDocument: recipe,
       artifactsDir: path.join(tempRoot, 'artifacts'),
       projectRoot: tempRoot,
-      recordVideo: true,
+      recordVideo: { mode: 'full-run', maxFps: 24 },
     });
 
     assert.equal(result.status, 'pass');
     assert.equal(starts.length, 1);
     assert.equal(starts[0]?.nodeId, 'recipe-run');
     assert.equal(starts[0]?.record, 'full_run');
+    assert.equal(starts[0]?.maxFps, 24);
     const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
     assert.ok(files.includes('videos/recipe-run.mp4'));
 
@@ -254,6 +255,7 @@ test('records one opt-in whole-recipe video and registers it in the artifact man
         platform: 'test',
         target: { selector: 'pid', value: '123' },
       },
+      maxFps: 24,
     });
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
@@ -315,24 +317,17 @@ test('record-video doctor failure writes a failed artifact package', async () =>
 test('capture-helper recorder stop sends SIGINT and returns recorder metadata', async () => {
   const tempRoot = await createTempRoot();
   try {
-    const helperPath = path.join(tempRoot, 'fake-capture-helper.mjs');
+    const helperPath = path.join(tempRoot, 'fake-capture-helper.cjs');
     await writeFile(
       helperPath,
-      `#!/usr/bin/env python3
-import pathlib
-import signal
-import sys
-import time
-
-output = pathlib.Path(sys.argv[sys.argv.index("--output") + 1])
-
-def stop(_signum, _frame):
-    output.write_text("fake mp4")
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, stop)
-while True:
-    time.sleep(1)
+      `#!/usr/bin/env node
+const { writeFileSync } = require('node:fs');
+const output = process.argv[process.argv.indexOf('--output') + 1];
+process.on('SIGINT', () => {
+  writeFileSync(output, 'fake mp4');
+  process.exit(0);
+});
+setInterval(() => {}, 1000);
 `,
     );
     await chmod(helperPath, 0o755);
@@ -345,6 +340,7 @@ while True:
       nodeId: 'recipe-run',
       record: 'full_run',
     });
+    await new Promise((resolve) => setTimeout(resolve, 500));
     const result = await active.stop();
 
     assert.match(await readFile(outputPath, 'utf-8'), /fake mp4/);
@@ -353,6 +349,38 @@ while True:
       platform: 'macos',
       target: { selector: 'pid', value: '123' },
     });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('capture-helper recorder stop times out when the helper ignores SIGINT', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const helperPath = path.join(tempRoot, 'stuck-capture-helper.cjs');
+    await writeFile(
+      helperPath,
+      `#!/usr/bin/env node
+process.on('SIGINT', () => {
+  setTimeout(() => process.exit(0), 1000);
+});
+setInterval(() => {}, 1000);
+`,
+    );
+    await chmod(helperPath, 0o755);
+
+    const recorder = createCaptureHelperVideoRecorder({
+      captureHelperPath: helperPath,
+      stopTimeoutMs: 50,
+    });
+    const active = await recorder.start({
+      outputPath: path.join(tempRoot, 'recording.mp4'),
+      target: { kind: 'pid', pid: 123 },
+      nodeId: 'recipe-run',
+      record: 'full_run',
+    });
+
+    await assert.rejects(() => active.stop(), /did not stop within 50ms after SIGINT/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

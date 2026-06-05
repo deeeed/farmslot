@@ -201,6 +201,79 @@ export function validateArtifactManifestDocument(
       }
     }
 
+    if (artifact.record != null && typeof artifact.record !== 'string') {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_manifest.invalid_record',
+        `${path}.record`,
+        'record must be a string when present.',
+      );
+    }
+
+    if (
+      artifact.maxFps != null &&
+      (typeof artifact.maxFps !== 'number' ||
+        !Number.isFinite(artifact.maxFps) ||
+        artifact.maxFps <= 0)
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'artifact_manifest.invalid_max_fps',
+        `${path}.maxFps`,
+        'maxFps must be a positive number when present.',
+      );
+    }
+
+    if (artifact.recorder != null) {
+      if (!isRecord(artifact.recorder)) {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_manifest.invalid_recorder',
+          `${path}.recorder`,
+          'recorder must be an object when present.',
+        );
+      } else {
+        for (const recorderField of ['name', 'version', 'platform']) {
+          const value = artifact.recorder[recorderField];
+          if (value != null && typeof value !== 'string') {
+            addFinding(
+              ctx,
+              'error',
+              'artifact_manifest.invalid_recorder_field',
+              `${path}.recorder.${recorderField}`,
+              `${recorderField} must be a string when present.`,
+            );
+          }
+        }
+        if (artifact.recorder.target != null) {
+          if (!isRecord(artifact.recorder.target)) {
+            addFinding(
+              ctx,
+              'error',
+              'artifact_manifest.invalid_recorder_target',
+              `${path}.recorder.target`,
+              'recorder.target must be an object when present.',
+            );
+          } else {
+            for (const targetField of ['selector', 'value']) {
+              if (!isNonEmptyString(artifact.recorder.target[targetField])) {
+                addFinding(
+                  ctx,
+                  'error',
+                  'artifact_manifest.invalid_recorder_target_field',
+                  `${path}.recorder.target.${targetField}`,
+                  `recorder.target.${targetField} must be a non-empty string when present.`,
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+
     if (typeof artifact.nodeId === 'string' && nodeIds.size > 0 && !nodeIds.has(artifact.nodeId)) {
       addFinding(
         ctx,

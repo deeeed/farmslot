@@ -27,6 +27,8 @@ import { MD_CACHE_LIMIT, MediaLightboxState } from './media-lightbox-state.js';
 import { mediaLightboxStyles } from './media-lightbox-styles.js';
 import type { LightboxItem, LightboxPair } from './media-lightbox-types.js';
 
+const DEFAULT_VIDEO_FRAME_RATE = 30;
+
 @customElement('media-lightbox')
 export class MediaLightbox extends MediaLightboxState {
   connectedCallback(): void {
@@ -142,18 +144,12 @@ export class MediaLightbox extends MediaLightboxState {
       if (this.mode === 'compare') {
         const pair = this.pairs[this.pairIndex];
         if (!pair || pair.kind !== 'video') return;
-        e.preventDefault();
-        this._toggleVideoPlayback();
       } else {
         const item = this.items[this.selectedIndex];
         if (!item || !isVideoLightboxItem(item)) return;
-        e.preventDefault();
-        const video = this.renderRoot.querySelector<HTMLVideoElement>('.ml-video');
-        if (video) {
-          if (video.paused) void video.play();
-          else video.pause();
-        }
       }
+      e.preventDefault();
+      this._toggleVideoPlayback();
     }
   };
 
@@ -322,9 +318,20 @@ export class MediaLightbox extends MediaLightboxState {
     this._syncVideoState(video);
   }
 
+  private _activeVideoFrameRate(): number {
+    const item =
+      this.mode === 'compare'
+        ? (this.pairs[this.pairIndex]?.after ?? this.pairs[this.pairIndex]?.before)
+        : this.items[this.selectedIndex];
+    const frameRate = item?.frameRate;
+    return typeof frameRate === 'number' && Number.isFinite(frameRate) && frameRate > 0
+      ? frameRate
+      : DEFAULT_VIDEO_FRAME_RATE;
+  }
+
   private _stepVideo(frames: -1 | 1): void {
     for (const candidate of this._videoSet()) candidate.pause();
-    this._seekVideo(frames / 30);
+    this._seekVideo(frames / this._activeVideoFrameRate());
   }
 
   private _scrubVideo(value: string): void {
@@ -357,6 +364,7 @@ export class MediaLightbox extends MediaLightboxState {
     const duration = this._videoDuration || 0;
     const time = duration ? Math.min(this._videoTime, duration) : this._videoTime;
     const RATES = [0.25, 0.5, 1, 2];
+    const frameRate = this._activeVideoFrameRate();
     return html`
       <div class="ml-video-controls" data-testid="media-lightbox-video-controls">
         <div class="ml-video-control-row">
@@ -365,8 +373,20 @@ export class MediaLightbox extends MediaLightboxState {
           </button>
           <button class="ml-btn" @click=${() => this._seekVideo(-1)}>−1s</button>
           <button class="ml-btn" @click=${() => this._seekVideo(-0.1)}>−0.1s</button>
-          <button class="ml-btn" @click=${() => this._stepVideo(-1)}>−1 frame</button>
-          <button class="ml-btn" @click=${() => this._stepVideo(1)}>+1 frame</button>
+          <button
+            class="ml-btn"
+            title=${`Step ${this._formatVideoTime(1 / frameRate)} at ${frameRate}fps`}
+            @click=${() => this._stepVideo(-1)}
+          >
+            −1 frame
+          </button>
+          <button
+            class="ml-btn"
+            title=${`Step ${this._formatVideoTime(1 / frameRate)} at ${frameRate}fps`}
+            @click=${() => this._stepVideo(1)}
+          >
+            +1 frame
+          </button>
           <button class="ml-btn" @click=${() => this._seekVideo(0.1)}>+0.1s</button>
           <button class="ml-btn" @click=${() => this._seekVideo(1)}>+1s</button>
           ${RATES.map(

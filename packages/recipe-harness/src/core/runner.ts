@@ -5,6 +5,7 @@ import {
   getRecipeActionManifestActionNames,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
+  type RecipeArtifactRecorderTarget,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 
@@ -660,7 +661,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       nodeId: 'recipe-run',
       record: 'full_run',
     });
-    const entry = {
+    const entry: RecipeArtifactManifestEntry = {
       path: relativePath,
       type: 'video',
       mimeType: 'video/mp4',
@@ -673,7 +674,8 @@ class DefaultRecipeRunner implements RecipeRunner {
         ...(recorder.platform ? { platform: recorder.platform } : {}),
         target: manifestTarget(target),
       },
-    } as RecipeArtifactManifestEntry;
+      ...(videoOptions.maxFps != null ? { maxFps: videoOptions.maxFps } : {}),
+    };
     return { recording, entry, outputPath };
   }
 
@@ -686,10 +688,10 @@ class DefaultRecipeRunner implements RecipeRunner {
     const stats = await stat(runRecording.outputPath);
     if (stats.size <= 0) throw new Error(`Recording output is empty: ${runRecording.outputPath}`);
     return result.recorder
-      ? ({
+      ? {
           ...runRecording.entry,
           recorder: result.recorder,
-        } as RecipeArtifactManifestEntry)
+        }
       : runRecording.entry;
   }
 
@@ -823,7 +825,7 @@ function normalizeVideoRecordingOptions(
 
 function manifestTarget(
   target: NonNullable<RecipeVideoRecordingOptions['target']>,
-): Record<string, string> {
+): RecipeArtifactRecorderTarget {
   if (target.kind === 'pid') return { selector: 'pid', value: String(target.pid) };
   if (target.kind === 'app-window') {
     return { selector: 'app-window', value: `${target.appName}:${target.windowName}` };

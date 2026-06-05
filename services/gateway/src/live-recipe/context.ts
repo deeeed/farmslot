@@ -443,6 +443,9 @@ function parseTypedArtifactManifestRefs(raw: string | null, manifestPath: string
       ...(typeof entry.label === 'string' ? { label: entry.label } : {}),
       ...(typeof entry.nodeId === 'string' ? { nodeId: entry.nodeId } : {}),
       ...(typeof entry.mimeType === 'string' ? { mimeType: entry.mimeType } : {}),
+      ...(typeof entry.maxFps === 'number' && Number.isFinite(entry.maxFps) && entry.maxFps > 0
+        ? { maxFps: entry.maxFps }
+        : {}),
     });
   });
   return refs;

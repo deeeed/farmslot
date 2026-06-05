@@ -59,6 +59,53 @@ function readTraceEntries(trace: unknown, label: string): Record<string, unknown
   });
 }
 
+test('validates video artifact recording metadata', () => {
+  const result = validateArtifactManifestDocument({
+    version: 1,
+    artifacts: [
+      {
+        path: 'videos/recipe-run.mp4',
+        type: 'video',
+        record: 'full_run',
+        maxFps: 24,
+        recorder: {
+          name: 'capture-helper',
+          version: '0.1.8',
+          platform: 'macos',
+          target: { selector: 'pid', value: '123' },
+        },
+      },
+    ],
+  });
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+
+  const invalidResult = validateArtifactManifestDocument({
+    version: 1,
+    artifacts: [
+      {
+        path: 'videos/recipe-run.mp4',
+        type: 'video',
+        record: 42,
+        maxFps: 0,
+        recorder: { target: { selector: '', value: '' } },
+      },
+    ],
+  });
+  assert.equal(invalidResult.status, 'invalid');
+  assert.ok(
+    invalidResult.findings.some((finding) => finding.code === 'artifact_manifest.invalid_record'),
+  );
+  assert.ok(
+    invalidResult.findings.some((finding) => finding.code === 'artifact_manifest.invalid_max_fps'),
+  );
+  assert.ok(
+    invalidResult.findings.some(
+      (finding) => finding.code === 'artifact_manifest.invalid_recorder_target_field',
+    ),
+  );
+});
+
 test('validates portable backend and UI v1 example recipes', async () => {
   for (const recipePath of [
     'docs/examples/recipes/backend-command-v1.recipe.json',

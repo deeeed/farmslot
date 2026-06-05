@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 
+import type { RecipeArtifactRecorderTarget } from '@farmslot/protocol';
+
 import type {
   ActiveVideoRecording,
   RecordingTarget,
@@ -11,7 +13,10 @@ import type {
 
 export interface CaptureHelperVideoRecorderOptions {
   captureHelperPath?: string;
+  stopTimeoutMs?: number;
 }
+
+const DEFAULT_STOP_TIMEOUT_MS = 10_000;
 
 interface CaptureHelperDoctorDocument {
   ok?: boolean;
@@ -30,11 +35,13 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
   readonly name = 'capture-helper';
   readonly platform = 'macos';
   readonly #captureHelperPath: string;
+  readonly #stopTimeoutMs: number;
   #version: string | undefined;
 
   constructor(options: CaptureHelperVideoRecorderOptions) {
     this.#captureHelperPath =
       options.captureHelperPath ?? process.env.CAPTURE_HELPER_PATH ?? 'capture-helper';
+    this.#stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
 
   get version(): string | undefined {
@@ -145,10 +152,15 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     });
 
     const getVersion = () => this.version;
+    const stopTimeoutMs = this.#stopTimeoutMs;
     return {
       async stop() {
         if (child.exitCode == null && child.signalCode == null) child.kill('SIGINT');
-        const result = await exit;
+        const result = await waitForExit(exit, {
+          timeoutMs: stopTimeoutMs,
+          onTimeout: () => child.kill('SIGKILL'),
+          message: `capture-helper record did not stop within ${stopTimeoutMs}ms after SIGINT.`,
+        });
         const expectedInterrupt = result.signal === 'SIGINT';
         if (result.code !== 0 && !expectedInterrupt) {
           throw new Error(
@@ -212,13 +224,35 @@ function parseDoctor(stdout: string): CaptureHelperDoctorDocument {
   }
 }
 
+function waitForExit<T>(
+  exit: Promise<T>,
+  options: { timeoutMs: number; onTimeout: () => void; message: string },
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      options.onTimeout();
+      reject(new Error(options.message));
+    }, options.timeoutMs);
+    exit.then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 function targetArgs(target: RecordingTarget): string[] {
   if (target.kind === 'pid') return ['--pid', String(target.pid)];
   if (target.kind === 'window-id') return ['--window-id', target.windowId];
   return ['--app-name', target.appName, '--window-name', target.windowName];
 }
 
-function manifestTarget(target: RecordingTarget): Record<string, string> {
+function manifestTarget(target: RecordingTarget): RecipeArtifactRecorderTarget {
   if (target.kind === 'pid') return { selector: 'pid', value: String(target.pid) };
   if (target.kind === 'app-window') {
     return { selector: 'app-window', value: `${target.appName}:${target.windowName}` };

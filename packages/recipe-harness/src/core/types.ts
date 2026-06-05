@@ -97,7 +97,7 @@ export interface ActiveVideoRecording {
 }
 
 export interface VideoRecordingResult {
-  recorder?: Record<string, unknown>;
+  recorder?: RecipeArtifactManifestEntry['recorder'];
 }
 
 export interface VideoRecorder {
