@@ -8,6 +8,8 @@ import {
   createRecipeRunner,
   createStandardUiAdapters,
   type RecipeVideoRecordingOptions,
+  type RecordingTarget,
+  type RecordingTargetProvider,
   type UiActionTransport,
 } from '@farmslot/recipe-harness';
 import { resolveRecipeCliPath, validateRecipeCliInput } from '@farmslot/recipe-harness/cli/support';
@@ -70,6 +72,9 @@ export async function runExpoRecipeDocument(
       name: '@farmslot/expo-recipe',
     },
     logger: console,
+    recording: {
+      targetProvider: createExpoRecordingTargetProvider(),
+    },
   });
 
   return runner.run({
@@ -81,6 +86,35 @@ export async function runExpoRecipeDocument(
     },
     recordVideo: options.recordVideo,
   });
+}
+
+function createExpoRecordingTargetProvider(): RecordingTargetProvider {
+  return {
+    async resolveRecordingTarget() {
+      return resolveExpoRecordingTarget(process.env);
+    },
+  };
+}
+
+export function resolveExpoRecordingTarget(
+  env: Record<string, string | undefined>,
+): RecordingTarget {
+  if (env.FARMSLOT_RECORD_PID)
+    return { kind: 'pid', pid: positiveInteger(env.FARMSLOT_RECORD_PID) };
+  if (env.FARMSLOT_RECORD_WINDOW_ID) {
+    return { kind: 'window-id', windowId: env.FARMSLOT_RECORD_WINDOW_ID };
+  }
+  const appName = env.FARMSLOT_RECORD_APP_NAME ?? 'Simulator';
+  const windowName = env.FARMSLOT_RECORD_WINDOW_NAME ?? 'Simulator';
+  return { kind: 'app-window', appName, windowName };
+}
+
+function positiveInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Expected a positive integer, got ${JSON.stringify(value)}.`);
+  }
+  return parsed;
 }
 
 function dryRunUiTransport(isDryRun: boolean): UiActionTransport {

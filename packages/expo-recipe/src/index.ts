@@ -8,5 +8,9 @@ export {
 } from './constants.js';
 export { runExpoRecipeDoctor } from './doctor.js';
 export { createRedactingCoreAdapters } from './redaction.js';
-export { runExpoRecipeDocument, validateExpoRecipeDocument } from './runner.js';
+export {
+  resolveExpoRecordingTarget,
+  runExpoRecipeDocument,
+  validateExpoRecipeDocument,
+} from './runner.js';
 export { installExpoRecipeScaffold, packageScripts } from './scaffold.js';

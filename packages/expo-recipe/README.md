@@ -24,7 +24,7 @@ Public docs: <https://farmslot.io/docs/guides/expo-recipe>
 - `@farmslot/recipe-harness` owns the generic runner, official core actions, UI actions, and CDP/React Native transports.
 - `@farmslot/expo-recipe` only adds Expo-friendly scaffolding: package scripts, a default recipe, optional dev-only React Native bridge/HUD files, and integration checks.
 
-Do not add project-specific actions such as wallet, perps, meetings, or recordings to this package. Those belong in the app or a project-specific runner/manifest that extends the official harness actions.
+Do not add project-specific actions such as wallet, perps, or meetings to this package. Those belong in the app or a project-specific runner/manifest that extends the official harness actions. Generic whole-run video proof stays in the shared harness capability surface.
 
 ## What it installs
 
@@ -53,6 +53,11 @@ and app bridge actions. Command output is sanitized before recipe artifacts are
 written so public Expo config secrets do not leak into `trace.json`.
 
 When asserting command output that may be redacted, prefer stable substrings or structured fields over exact pretty-printed JSON whitespace.
+
+For motion-sensitive visual proof, `farmslot-expo-recipe run --record-video`
+records one whole-recipe MP4 through `capture-helper`. By default it targets the
+macOS Simulator window; override with `--record-pid`, `--record-window-id`, or
+`--record-app-name` plus `--record-window-name`.
 
 For a UI/HUD-capable app scaffold:
 

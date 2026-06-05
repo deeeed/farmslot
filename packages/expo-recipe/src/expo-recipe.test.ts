@@ -8,6 +8,7 @@ import {
   DEFAULT_EXPO_RECIPE_MANIFEST_PATH,
   DEFAULT_EXPO_RECIPE_PATH,
   installExpoRecipeScaffold,
+  resolveExpoRecordingTarget,
   runExpoRecipeCli,
   runExpoRecipeDoctor,
   runExpoRecipeDocument,
@@ -46,6 +47,10 @@ test('installs the Expo recipe scaffold idempotently', async () => {
     const forced = await installExpoRecipeScaffold({ projectRoot: root, force: true });
     assert.equal(forced.packageJsonUpdated, true);
     assert.equal((await runExpoRecipeDoctor({ projectRoot: root })).status, 'pass');
+
+    const manifest = await readFile(path.join(root, DEFAULT_EXPO_RECIPE_MANIFEST_PATH), 'utf-8');
+    assert.match(manifest, /"capability": "record\.video"/u);
+    assert.match(manifest, /"modes": \["full_run"\]/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -61,6 +66,7 @@ test('installs optional bridge files and validates the dev guard contract', asyn
 
     const manifest = await readFile(path.join(root, DEFAULT_EXPO_RECIPE_MANIFEST_PATH), 'utf-8');
     assert.match(manifest, /"app\.hud"/u);
+    assert.match(manifest, /"capability": "record\.video"/u);
 
     const provider = await readFile(
       path.join(root, 'src/farmslot/RecipeBridgeProvider.tsx'),
@@ -171,6 +177,30 @@ test('CLI rejects missing option values before treating the next flag as a path'
     () => runExpoRecipeCli(['validate', '--manifest', '--json']),
     /--manifest requires a value/u,
   );
+  await assert.rejects(
+    () => runExpoRecipeCli(['run', '--record-video=proof-window']),
+    /proof-window is reserved for future focused clips/u,
+  );
+  await assert.rejects(
+    () => runExpoRecipeCli(['run', '--record-video', '--record-pid', 'abc']),
+    /Expected a positive integer/u,
+  );
+});
+
+test('resolves Expo recipe recording targets from flags or simulator defaults', () => {
+  assert.deepEqual(resolveExpoRecordingTarget({ FARMSLOT_RECORD_PID: '123' }), {
+    kind: 'pid',
+    pid: 123,
+  });
+  assert.deepEqual(resolveExpoRecordingTarget({ FARMSLOT_RECORD_WINDOW_ID: '42' }), {
+    kind: 'window-id',
+    windowId: '42',
+  });
+  assert.deepEqual(resolveExpoRecordingTarget({}), {
+    kind: 'app-window',
+    appName: 'Simulator',
+    windowName: 'Simulator',
+  });
 });
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {

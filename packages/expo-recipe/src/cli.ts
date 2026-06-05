@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import type { RecipeVideoRecordingOptions, RecordingTarget } from '@farmslot/recipe-harness';
+
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { printDoctorResult, runExpoRecipeDoctor } from './doctor.js';
 import {
@@ -13,6 +15,14 @@ import { installExpoRecipeScaffold } from './scaffold.js';
 interface ParsedCliOptions extends ExpoRecipeRunOptions {
   force?: boolean;
   withBridge?: boolean;
+  recordVideo?: boolean | RecipeVideoRecordingOptions;
+  recordVideoMode?: string;
+  recordMaxFps?: string;
+  recordMaxSize?: string;
+  recordAppName?: string;
+  recordWindowName?: string;
+  recordWindowId?: string;
+  recordPid?: string;
 }
 
 export async function runExpoRecipeCli(argv: string[]): Promise<void> {
@@ -92,9 +102,81 @@ function parseOptions(args: string[]): ParsedCliOptions {
       options.artifactsDir = requiredValue(args, (index += 1), arg);
     else if (arg.startsWith('--artifacts-dir='))
       options.artifactsDir = arg.slice('--artifacts-dir='.length);
+    else if (arg === '--record-video') options.recordVideoMode = 'full-run';
+    else if (arg.startsWith('--record-video=')) {
+      options.recordVideoMode = arg.slice('--record-video='.length);
+    } else if (arg === '--record-max-fps')
+      options.recordMaxFps = requiredValue(args, (index += 1), arg);
+    else if (arg.startsWith('--record-max-fps='))
+      options.recordMaxFps = arg.slice('--record-max-fps='.length);
+    else if (arg === '--record-max-size')
+      options.recordMaxSize = requiredValue(args, (index += 1), arg);
+    else if (arg.startsWith('--record-max-size='))
+      options.recordMaxSize = arg.slice('--record-max-size='.length);
+    else if (arg === '--record-app-name')
+      options.recordAppName = requiredValue(args, (index += 1), arg);
+    else if (arg.startsWith('--record-app-name='))
+      options.recordAppName = arg.slice('--record-app-name='.length);
+    else if (arg === '--record-window-name')
+      options.recordWindowName = requiredValue(args, (index += 1), arg);
+    else if (arg.startsWith('--record-window-name='))
+      options.recordWindowName = arg.slice('--record-window-name='.length);
+    else if (arg === '--record-window-id')
+      options.recordWindowId = requiredValue(args, (index += 1), arg);
+    else if (arg.startsWith('--record-window-id='))
+      options.recordWindowId = arg.slice('--record-window-id='.length);
+    else if (arg === '--record-pid') options.recordPid = requiredValue(args, (index += 1), arg);
+    else if (arg.startsWith('--record-pid=')) options.recordPid = arg.slice('--record-pid='.length);
     else throw new Error(`Unknown option: ${arg}`);
   }
+  if (options.recordVideoMode) options.recordVideo = parseRecordVideoOptions(options);
   return options;
+}
+
+function parseRecordVideoOptions(
+  options: ParsedCliOptions,
+  requestedMode?: string,
+): RecipeVideoRecordingOptions {
+  const mode = requestedMode ?? options.recordVideoMode ?? 'full-run';
+  if (mode === 'proof-window') {
+    throw new Error(
+      '--record-video=proof-window is reserved for future focused clips; use --record-video=full-run for phase 1.',
+    );
+  }
+  if (mode !== 'full-run' && mode !== 'off') {
+    throw new Error('--record-video must be full-run or off.');
+  }
+  const target = parseRecordingTarget(options);
+  return {
+    mode,
+    ...(options.recordMaxFps ? { maxFps: positiveInteger(options.recordMaxFps) } : {}),
+    ...(options.recordMaxSize ? { maxSize: positiveInteger(options.recordMaxSize) } : {}),
+    ...(target ? { target } : {}),
+  };
+}
+
+function parseRecordingTarget(options: ParsedCliOptions): RecordingTarget | undefined {
+  if (options.recordPid) return { kind: 'pid', pid: positiveInteger(options.recordPid) };
+  if (options.recordWindowId) return { kind: 'window-id', windowId: options.recordWindowId };
+  if (options.recordAppName || options.recordWindowName) {
+    if (!options.recordAppName || !options.recordWindowName) {
+      throw new Error('--record-app-name and --record-window-name must be provided together.');
+    }
+    return {
+      kind: 'app-window',
+      appName: options.recordAppName,
+      windowName: options.recordWindowName,
+    };
+  }
+  return undefined;
+}
+
+function positiveInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Expected a positive integer, got ${JSON.stringify(value)}.`);
+  }
+  return parsed;
 }
 
 function requiredValue(args: string[], index: number, option: string): string {
@@ -125,6 +207,6 @@ function printRunResult(result: Awaited<ReturnType<typeof runExpoRecipeDocument>
 
 function printUsage(): void {
   console.log(
-    `Farmslot Expo Recipe\n\nUsage:\n  farmslot-expo-recipe init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-expo-recipe manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-expo-recipe doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe validate [recipe] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe run [recipe] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json]\n`,
+    `Farmslot Expo Recipe\n\nUsage:\n  farmslot-expo-recipe init [--project-root <dir>] [--force] [--with-bridge]\n  farmslot-expo-recipe manifest [--project-root <dir>] [--manifest <path>]\n  farmslot-expo-recipe doctor [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe validate [recipe] [--project-root <dir>] [--manifest <path>] [--json]\n  farmslot-expo-recipe run [recipe] [--project-root <dir>] [--manifest <path>] [--artifacts-dir <dir>] [--dry-run] [--json] [--record-video[=full-run]] [--record-pid <pid>|--record-window-id <id>|--record-app-name <name> --record-window-name <title>]\n`,
   );
 }

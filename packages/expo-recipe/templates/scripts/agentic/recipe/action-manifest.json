@@ -16,5 +16,15 @@
       "description": "Terminate the recipe graph with pass, fail, or unknown."
     }
   },
+  "capabilities": [
+    {
+      "capability": "record.video",
+      "status": "supported",
+      "provider": "capture-helper",
+      "platforms": ["macos"],
+      "modes": ["full_run"],
+      "artifactTypes": ["video/mp4"]
+    }
+  ],
   "custom_actions": []
 }
