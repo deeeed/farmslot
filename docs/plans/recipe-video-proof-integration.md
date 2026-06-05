@@ -48,16 +48,16 @@ Farmslot must not rely on the repo-embedded development binary as the integratio
 
 ## Protocol contract
 
-Existing `record` values remain valid:
+Existing `record` values remain schema-valid recipe intent, but they are not a phase 1 clipping contract:
 
-| Value          | Video behavior                                                                                                           |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `none`         | Never record.                                                                                                            |
-| `trace_only`   | Do not record media; trace only.                                                                                         |
-| `proof_window` | Marks reviewer-visible proof. Phase 1 may satisfy this with the single run-level video when `--record-video` is enabled. |
-| `failure_only` | Record failure evidence, or preserve recent buffered proof if supported.                                                 |
+| Value          | Phase 1 behavior                                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `none`         | Never requests video.                                                                                                                 |
+| `trace_only`   | Trace only.                                                                                                                           |
+| `proof_window` | Metadata marker for reviewer-visible proof only. Phase 1 does not start/stop recording around this node and rejects focused clipping. |
+| `failure_only` | Reserved for future failure-buffer behavior; phase 1 has no rolling failure buffer.                                                   |
 
-Default phase policy remains:
+Default phase markers remain metadata only:
 
 | Phase         | Default        |
 | ------------- | -------------- |
@@ -67,7 +67,7 @@ Default phase policy remains:
 | `assert`      | `trace_only`   |
 | `teardown`    | `trace_only`   |
 
-A setup node may use `record: "proof_window"` only when setup itself is the reviewer-visible claim.
+A setup node may use `record: "proof_window"` only when setup itself is the reviewer-visible claim, but phase 1 still captures video only as an explicit whole-recipe `--record-video` run.
 
 ## Runner CLI
 
