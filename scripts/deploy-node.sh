@@ -191,7 +191,8 @@ done
 
 # --- Install deps (before protocol rsync — yarn wipes unmanaged packages) ---
 echo "[deploy] writing standalone package.json..."
-run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
+if [[ "$REMOTE_OS" == "Darwin" ]]; then
+  run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
 {
   "name": "@farmslot/node-standalone",
   "version": "0.1.0",
@@ -204,6 +205,20 @@ run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
   }
 }
 PKGJSON
+else
+  run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
+{
+  "name": "@farmslot/node-standalone",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ws": "^8.18.0",
+    "tsx": "^4.19.0"
+  }
+}
+PKGJSON
+fi
 
 echo "[deploy] installing dependencies..."
 # Use yarn if available (with node-modules linker), otherwise npm
