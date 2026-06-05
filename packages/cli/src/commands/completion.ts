@@ -6,8 +6,8 @@ import type { Command } from 'commander';
 
 type CompletionShell = 'zsh' | 'bash' | 'fish';
 
-function shellQuoteForZsh(value: string): string {
-  return `'${value.replace(/'/gu, `'\''`)}'`;
+export function shellQuoteForZsh(value: string): string {
+  return `'${value.replace(/'/gu, `'\\''`)}'`;
 }
 
 function isCompletionShell(value: string): value is CompletionShell {

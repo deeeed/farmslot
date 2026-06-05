@@ -91,6 +91,7 @@ function formatGatewayStatus(result: GatewayStatusResult): string {
       );
     }
   }
+  if (result.error) lines.push(`${dim('RPC:')} ${red(result.error)}`);
   return lines.join('\n');
 }
 
@@ -108,15 +109,25 @@ export function registerGatewayCommand(program: Command): void {
       const healthUrl = gatewayHealthUrl(url);
       try {
         const health = await readHealth(healthUrl, timeoutMs);
-        let nodes: NodesListResult | undefined;
         try {
-          nodes = await client.call<NodesListResult>('nodes.list');
-        } catch {
-          nodes = undefined;
+          const nodes = await client.call<NodesListResult>('nodes.list');
+          const result: GatewayStatusResult = { url, healthUrl, reachable: true, health, nodes };
+          if (output.json) output.writeJson(result);
+          else output.write(`${formatGatewayStatus(result)}\n`);
+        } catch (rpcErr) {
+          const result: GatewayStatusResult = {
+            url,
+            healthUrl,
+            reachable: true,
+            health,
+            error: `nodes.list failed: ${
+              rpcErr instanceof Error ? rpcErr.message : String(rpcErr)
+            }`,
+          };
+          if (output.json) output.writeJson(result);
+          else output.error(formatGatewayStatus(result));
+          process.exit(1);
         }
-        const result: GatewayStatusResult = { url, healthUrl, reachable: true, health, nodes };
-        if (output.json) output.writeJson(result);
-        else output.write(`${formatGatewayStatus(result)}\n`);
       } catch (err) {
         const result: GatewayStatusResult = {
           url,
