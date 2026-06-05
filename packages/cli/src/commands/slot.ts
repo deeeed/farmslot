@@ -68,6 +68,10 @@ function actionParams(id: string, opts: Record<string, unknown>): Record<string,
   return params;
 }
 
+function refreshFailureMessage(slotId: string, result: SlotRefreshResult): string {
+  return `Refresh skipped for ${slotId}: ${result.reason ?? 'not refreshed'}`;
+}
+
 export function registerSlotCommand(program: Command): void {
   const slot = program.command('slot').description('Slot lifecycle operations');
 
@@ -211,12 +215,17 @@ export function registerSlotCommand(program: Command): void {
         if (output.json) {
           const result = await client.call<SlotRefreshResult>('slot.refresh', params);
           output.writeJson(result);
+          if (!result.refreshed) process.exit(1);
         } else {
-          await client.callWithEvents<SlotRefreshResult>(
+          const result = await client.callWithEvents<SlotRefreshResult>(
             'slot.refresh',
             params,
             handleStreamEvents,
           );
+          if (!result.refreshed) {
+            output.error(refreshFailureMessage(slotId, result));
+            process.exit(1);
+          }
           output.write(`Refresh complete for ${slotId}\n`);
         }
       } catch (err) {
@@ -330,11 +339,13 @@ export function registerSlotCommand(program: Command): void {
         });
         if (output.json) {
           output.writeJson(result);
+          if (!result.ok) process.exit(1);
         } else {
           if (result.stdout) output.write(result.stdout);
           if (result.stderr) process.stderr.write(result.stderr);
           output.write(`${result.ok ? 'Action complete' : 'Action failed'} for ${slotId}\n`);
           if (result.detail) output.write(`${result.detail}\n`);
+          if (!result.ok) process.exit(1);
         }
       } catch (err) {
         output.error(err instanceof Error ? err.message : String(err));
