@@ -70,5 +70,6 @@ export function familyLightboxItem(
     purpose: artifact.purpose,
     caption: familyArtifactCaption(artifact),
     provenance: familyArtifactProvenance(artifact, run),
+    ...(artifact.maxFps != null ? { frameRate: artifact.maxFps } : {}),
   };
 }

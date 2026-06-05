@@ -24,5 +24,16 @@
       "description": "Emit a lightweight bridge trace event for recipe timeline observability."
     }
   },
+  "capabilities": [
+    {
+      "capability": "record.video",
+      "status": "partial",
+      "provider": "capture-helper",
+      "reason": "Supported on macOS when capture-helper is installed; node health reports runtime availability per machine.",
+      "platforms": ["macos"],
+      "modes": ["full_run"],
+      "artifactTypes": ["video/mp4"]
+    }
+  ],
   "custom_actions": []
 }

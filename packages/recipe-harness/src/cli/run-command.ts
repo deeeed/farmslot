@@ -7,14 +7,27 @@ import {
 
 import { createStandardCoreAdapters } from '../adapters/core.js';
 import { createRecipeRunner } from '../core/runner.js';
+import type { RecipeVideoRecordingOptions } from '../core/types.js';
 
-import { readRecipeCliJsonFile, resolveRecipeCliPath } from './support.js';
+import {
+  parsePositiveInteger,
+  parseRecordingTarget,
+  readRecipeCliJsonFile,
+  resolveRecipeCliPath,
+} from './support.js';
 
 interface RunCommandOptions {
   artifactsDir: string;
   actionManifest: string;
   projectRoot?: string;
   json?: boolean;
+  recordVideo?: boolean | string;
+  recordMaxFps?: string;
+  recordMaxSize?: string;
+  recordAppName?: string;
+  recordWindowName?: string;
+  recordWindowId?: string;
+  recordPid?: string;
 }
 
 export function registerRunCommand(program: Command): void {
@@ -25,6 +38,13 @@ export function registerRunCommand(program: Command): void {
     .requiredOption('--artifacts-dir <dir>', 'Directory where artifacts are written')
     .requiredOption('--action-manifest <manifest>', 'Runner action manifest JSON')
     .option('--project-root <dir>', 'Project root used by command/artifact adapters')
+    .option('--record-video [mode]', 'Record one whole-recipe MP4 when visual motion proof helps')
+    .option('--record-max-fps <fps>', 'Maximum video frame rate')
+    .option('--record-max-size <px>', 'Maximum recorded video dimension')
+    .option('--record-app-name <name>', 'macOS app name for recording target')
+    .option('--record-window-name <substring>', 'macOS window title substring for recording target')
+    .option('--record-window-id <id>', 'macOS window id from `capture-helper list --json`')
+    .option('--record-pid <pid>', 'macOS process id for recording target')
     .option('--json', 'Print run result as JSON')
     .action(async (recipePath: string, options: RunCommandOptions) => {
       const manifest = await readRecipeCliJsonFile(options.actionManifest);
@@ -41,6 +61,7 @@ export function registerRunCommand(program: Command): void {
         projectRoot: options.projectRoot
           ? resolveRecipeCliPath(options.projectRoot)
           : resolveRecipeCliPath('.'),
+        recordVideo: parseRecordVideoOptions(options),
       });
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -50,4 +71,27 @@ export function registerRunCommand(program: Command): void {
       }
       if (result.status !== 'pass') process.exit(1);
     });
+}
+
+function parseRecordVideoOptions(options: RunCommandOptions): false | RecipeVideoRecordingOptions {
+  if (!options.recordVideo) return false;
+  const mode =
+    typeof options.recordVideo === 'string' && options.recordVideo !== 'true'
+      ? options.recordVideo
+      : 'full-run';
+  if (mode === 'proof-window' || mode === 'proof_window') {
+    throw new Error(
+      '--record-video=proof-window is reserved for future focused clips; use --record-video=full-run for phase 1.',
+    );
+  }
+  if (mode !== 'full-run' && mode !== 'off') {
+    throw new Error('--record-video must be full-run or off.');
+  }
+  const target = parseRecordingTarget(options);
+  return {
+    mode,
+    ...(options.recordMaxFps ? { maxFps: parsePositiveInteger(options.recordMaxFps) } : {}),
+    ...(options.recordMaxSize ? { maxSize: parsePositiveInteger(options.recordMaxSize) } : {}),
+    ...(target ? { target } : {}),
+  };
 }

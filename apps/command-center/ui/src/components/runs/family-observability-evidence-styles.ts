@@ -123,6 +123,30 @@ export const familyObservabilityEvidenceStyles = css`
     justify-content: center;
     background: ${unsafeCSS(colors.bgBase)};
   }
+  .artifact-video-preview {
+    position: relative;
+    width: 100%;
+    height: 120px;
+    background: ${unsafeCSS(colors.bgBase)};
+  }
+  .artifact-video-preview .artifact-preview {
+    height: 100%;
+    pointer-events: none;
+  }
+  .artifact-video-review-badge {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    border-radius: 999px;
+    padding: 3px 8px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
   .artifact-meta {
     padding: 8px;
   }

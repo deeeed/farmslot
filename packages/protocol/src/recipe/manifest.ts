@@ -428,6 +428,83 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
     }
   }
 
+  const capabilities = manifest.capabilities;
+  if (capabilities != null) {
+    if (!Array.isArray(capabilities)) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.invalid_capabilities',
+        'capabilities',
+        'capabilities must be an array when present.',
+      );
+    } else {
+      capabilities.forEach((capability, index) => {
+        const path = `capabilities[${index}]`;
+        if (!isRecord(capability)) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.invalid_capability',
+            path,
+            `${path} must be an object.`,
+          );
+          return;
+        }
+        if (!isNonEmptyString(capability.capability)) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.invalid_capability_name',
+            `${path}.capability`,
+            `${path}.capability must be a non-empty string.`,
+          );
+        }
+        if (
+          capability.status !== 'supported' &&
+          capability.status !== 'unsupported' &&
+          capability.status !== 'partial' &&
+          capability.status !== 'planned'
+        ) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.invalid_capability_status',
+            `${path}.status`,
+            `${path}.status must be supported, unsupported, partial, or planned.`,
+          );
+        }
+        for (const stringField of ['provider', 'reason']) {
+          const value = capability[stringField];
+          if (value != null && typeof value !== 'string') {
+            addFinding(
+              ctx,
+              'error',
+              'action_manifest.invalid_capability_field',
+              `${path}.${stringField}`,
+              `${path}.${stringField} must be a string when present.`,
+            );
+          }
+        }
+        for (const arrayField of ['platforms', 'modes', 'artifactTypes']) {
+          const value = capability[arrayField];
+          if (
+            value != null &&
+            (!Array.isArray(value) || value.some((entry) => !isNonEmptyString(entry)))
+          ) {
+            addFinding(
+              ctx,
+              'error',
+              'action_manifest.invalid_capability_field',
+              `${path}.${arrayField}`,
+              `${path}.${arrayField} must be an array of non-empty strings when present.`,
+            );
+          }
+        }
+      });
+    }
+  }
+
   return finishResult(ctx);
 }
 

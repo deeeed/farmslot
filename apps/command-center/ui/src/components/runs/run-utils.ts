@@ -344,6 +344,7 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
         purpose?: unknown;
         sizeBytes?: unknown;
         sha256?: unknown;
+        maxFps?: unknown;
       };
       if (typeof row.path !== 'string' || !row.path.trim()) continue;
       const key = `${step.name}:${row.path}`;
@@ -360,6 +361,8 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
             : purposeForArtifactPath(row.path),
         sizeBytes: typeof row.sizeBytes === 'number' ? row.sizeBytes : undefined,
         sha256: typeof row.sha256 === 'string' ? row.sha256 : undefined,
+        maxFps:
+          typeof row.maxFps === 'number' && Number.isFinite(row.maxFps) ? row.maxFps : undefined,
         source: 'step-output',
       });
     }

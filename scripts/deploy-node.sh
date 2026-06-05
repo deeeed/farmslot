@@ -22,7 +22,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NODE_SRC="$REPO_ROOT/services/node"
 PROTOCOL_SRC="$REPO_ROOT/packages/protocol"
-CAPTURE_HELPER="$REPO_ROOT/tools/capture-helper/capture-helper"
 AUTH_ENV_FILE="$REPO_ROOT/.env.local-auth"
 
 if [[ -f "$AUTH_ENV_FILE" ]]; then
@@ -157,14 +156,6 @@ run "mkdir -p $REMOTE_DIR/src"
 rsync -a --delete "$NODE_SRC/src/" "${RSYNC_PREFIX}$REMOTE_DIR/src/"
 rsync -a "$NODE_SRC/tsconfig.json" "${RSYNC_PREFIX}$REMOTE_DIR/tsconfig.json"
 
-# capture-helper is macOS-only (Swift/ScreenCaptureKit)
-# Deploy to tools/capture-helper/ to match source repo layout (record-window.sh expects this)
-if [[ "$REMOTE_OS" == "Darwin" && -f "$CAPTURE_HELPER" ]]; then
-  echo "[deploy] syncing capture-helper..."
-  run "mkdir -p $REMOTE_DIR/tools/capture-helper"
-  rsync -a "$CAPTURE_HELPER" "${RSYNC_PREFIX}$REMOTE_DIR/tools/capture-helper/capture-helper"
-fi
-
 # Framework scripts used by preflight/setup hooks via {{farmslot_dir}}/scripts/
 echo "[deploy] syncing framework scripts..."
 run "mkdir -p $REMOTE_DIR/scripts"
@@ -200,7 +191,22 @@ done
 
 # --- Install deps (before protocol rsync — yarn wipes unmanaged packages) ---
 echo "[deploy] writing standalone package.json..."
-run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
+if [[ "$REMOTE_OS" == "Darwin" ]]; then
+  run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
+{
+  "name": "@farmslot/node-standalone",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ws": "^8.18.0",
+    "tsx": "^4.19.0",
+    "@siteed/capture-helper": "^0.1.8"
+  }
+}
+PKGJSON
+else
+  run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
 {
   "name": "@farmslot/node-standalone",
   "version": "0.1.0",
@@ -212,6 +218,7 @@ run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
   }
 }
 PKGJSON
+fi
 
 echo "[deploy] installing dependencies..."
 # Use yarn if available (with node-modules linker), otherwise npm
@@ -220,6 +227,9 @@ if [[ "$HAS_YARN" == *"yes" ]]; then
   run "cd $REMOTE_DIR && echo 'nodeLinker: node-modules' > .yarnrc.yml && PATH=$NODE_DIR:\$PATH yarn install 2>&1 | tail -5"
 else
   run "cd $REMOTE_DIR && PATH=$NODE_DIR:\$PATH npm install 2>&1 | tail -5"
+fi
+if [[ "$REMOTE_OS" == "Darwin" ]]; then
+  run "test -x $REMOTE_DIR/node_modules/.bin/capture-helper"
 fi
 
 # --- rsync protocol AFTER yarn install (yarn wipes unmanaged node_modules) ---
@@ -230,7 +240,7 @@ rsync -a --delete "$PROTOCOL_SRC/dist/" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules
 rsync -a "$PROTOCOL_SRC/package.json" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/package.json"
 
 # --- Install service (platform-specific) ---
-CAPTURE_HELPER_REMOTE="$REMOTE_DIR/tools/capture-helper/capture-helper"
+CAPTURE_HELPER_REMOTE="$REMOTE_DIR/node_modules/.bin/capture-helper"
 
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
   PLIST_NAME="com.farmslot.node"
@@ -262,7 +272,7 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
         <key>CAPTURE_HELPER_PATH</key>
         <string>${CAPTURE_HELPER_REMOTE}</string>
 $(launchd_auth_env_xml)        <key>PATH</key>
-        <string>${NODE_DIR}:/usr/local/bin:/usr/bin:/usr/sbin:/bin</string>
+        <string>${REMOTE_DIR}/node_modules/.bin:${NODE_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin</string>
     </dict>
     <key>WorkingDirectory</key>
     <string>${REMOTE_DIR}</string>
@@ -294,8 +304,8 @@ PLIST
   echo "  Start:  launchctl start $PLIST_NAME"
   echo ""
   echo "  NOTE: Screen Recording TCC permission required for capture-helper."
-  echo "  If streaming fails with -3801, add this binary in System Settings:"
-  echo "    Privacy & Security → Screen & System Audio Recording → + → $REMOTE_DIR/tools/capture-helper/capture-helper"
+  echo "  If streaming fails with -3801, run:"
+  echo "    $CAPTURE_HELPER_REMOTE doctor --open-permissions"
 
 elif [[ "$REMOTE_OS" == "Linux" ]]; then
   UNIT_NAME="farmslot-node"

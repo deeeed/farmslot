@@ -19,6 +19,7 @@ export function dedupeArtifacts(
       purpose: preferred.purpose ?? existing.purpose ?? item.purpose,
       sizeBytes: preferred.sizeBytes ?? existing.sizeBytes ?? item.sizeBytes,
       sha256: preferred.sha256 ?? existing.sha256 ?? item.sha256,
+      maxFps: preferred.maxFps ?? existing.maxFps ?? item.maxFps,
     });
   }
   return [...byPath.values()];
@@ -74,6 +75,10 @@ export function stepArtifacts(
         purpose: typeof artifact.purpose === 'string' ? artifact.purpose : inferPurpose(pathValue),
         sizeBytes: typeof artifact.sizeBytes === 'number' ? artifact.sizeBytes : undefined,
         sha256: typeof artifact.sha256 === 'string' ? artifact.sha256 : undefined,
+        maxFps:
+          typeof artifact.maxFps === 'number' && Number.isFinite(artifact.maxFps)
+            ? artifact.maxFps
+            : undefined,
         source: 'step-output' as const,
       };
     })

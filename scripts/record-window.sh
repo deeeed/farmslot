@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# record-window.sh — Record a macOS window to MP4 via capture-helper + ffmpeg
-# Uses a FIFO to decouple capture-helper from ffmpeg for clean signal handling.
+# record-window.sh — Record a macOS window to MP4 via external capture-helper + ffmpeg.
+# Uses a FIFO to decouple capture-helper capture output from ffmpeg for clean signal handling.
 #
 # Usage:
 #   bash record-window.sh --pid 12345 --output artifacts/review.mp4 &
@@ -14,7 +14,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CAPTURE_HELPER="${CAPTURE_HELPER_PATH:-$SCRIPT_DIR/../tools/capture-helper/capture-helper}"
+if [[ -n "${CAPTURE_HELPER_PATH:-}" ]]; then
+  CAPTURE_HELPER="$CAPTURE_HELPER_PATH"
+elif command -v capture-helper >/dev/null 2>&1; then
+  CAPTURE_HELPER="$(command -v capture-helper)"
+elif [[ -x "$SCRIPT_DIR/../node_modules/.bin/capture-helper" ]]; then
+  CAPTURE_HELPER="$SCRIPT_DIR/../node_modules/.bin/capture-helper"
+else
+  CAPTURE_HELPER="capture-helper"
+fi
 FFMPEG="${FFMPEG:-/opt/homebrew/bin/ffmpeg}"
 SCREEN_CONTROL_SOCKET="${SCREEN_CONTROL_SOCKET:-/tmp/farmslot-screen-control-$(id -u).sock}"
 
@@ -52,7 +60,10 @@ done
 [[ -z "$PID_ARG" && -z "$WINDOW_NAME" ]] && { echo "Error: --pid or --window-name is required" >&2; usage; }
 
 # Verify prerequisites
-[[ ! -x "$CAPTURE_HELPER" ]] && { echo "Error: capture-helper not found at $CAPTURE_HELPER" >&2; exit 1; }
+if ! command -v "$CAPTURE_HELPER" >/dev/null 2>&1; then
+  echo "Error: capture-helper not found. Install @siteed/capture-helper or set CAPTURE_HELPER_PATH." >&2
+  exit 1
+fi
 command -v "$FFMPEG" &>/dev/null || { echo "Error: ffmpeg not found at $FFMPEG" >&2; exit 1; }
 
 # Resolve PID to window-owning process (e.g., launcher PID → Chromium PID).
@@ -257,7 +268,7 @@ if screen_control_start 2>>"$LOG_FILE"; then
   echo "[record-window] attached to shared screen owner socket=$SCREEN_CONTROL_SOCKET response=$CONTROL_RESPONSE"
 else
   # Start capture-helper writing to FIFO
-  "$CAPTURE_HELPER" "${CAPTURE_ARGS[@]}" > "$FIFO" 2>"$LOG_FILE" &
+  "$CAPTURE_HELPER" capture "${CAPTURE_ARGS[@]}" > "$FIFO" 2>"$LOG_FILE" &
   CAPTURE_PID=$!
 fi
 

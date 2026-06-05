@@ -109,6 +109,7 @@ export interface RunEvidenceLightboxItem {
   path: string;
   purpose: string;
   caption: string;
+  frameRate?: number;
 }
 
 export function runEvidenceLightboxItems(
@@ -125,6 +126,7 @@ export function runEvidenceLightboxItems(
     ]
       .filter(Boolean)
       .join(' · '),
+    ...(artifact.maxFps != null ? { frameRate: artifact.maxFps } : {}),
   }));
 }
 

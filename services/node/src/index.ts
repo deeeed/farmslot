@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import WebSocket from 'ws';
 
@@ -10,6 +12,7 @@ import {
   type GatewayAuthConnectResult,
   Methods,
   PROTOCOL_VERSION,
+  type RecipeRuntimeCapabilityDeclaration,
   type RequestFrame,
   type ResponseFrame,
 } from '@farmslot/protocol';
@@ -59,6 +62,7 @@ const GATEWAY_CREDENTIAL = resolveGatewayCredential();
 const GATEWAY_TOKEN = GATEWAY_CREDENTIAL?.token;
 const GATEWAY_PASSWORD = GATEWAY_CREDENTIAL?.password;
 const MAX_BACKOFF = 30_000;
+const execFileAsync = promisify(execFile);
 
 let ws: WebSocket | null = null;
 let backoff = 500;
@@ -144,13 +148,87 @@ async function authenticateThenRegister(): Promise<void> {
       type: 'req',
       id: 'connect-0',
       method: 'node.connect',
-      params: { machine: MACHINE_NAME, pid: process.pid, protocolVersion: PROTOCOL_VERSION },
+      params: {
+        machine: MACHINE_NAME,
+        pid: process.pid,
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: await collectCaptureCapabilities(),
+      },
     };
     ws?.send(JSON.stringify(connectFrame));
   } catch (err) {
     console.error(`Gateway authentication failed: ${(err as Error).message}`);
     ws?.close();
   }
+}
+
+interface CaptureHelperDoctorDocument {
+  ok?: boolean;
+  checks?: Array<{ ok?: boolean; required?: boolean; code?: string; message?: string }>;
+}
+
+async function collectCaptureCapabilities(): Promise<RecipeRuntimeCapabilityDeclaration[]> {
+  if (process.platform !== 'darwin') {
+    return captureCapabilities('unsupported', 'capture-helper capture is macOS-only');
+  }
+  try {
+    const { stdout } = await execFileAsync(
+      process.env.CAPTURE_HELPER_PATH ?? 'capture-helper',
+      ['doctor', '--json'],
+      { timeout: 10_000 },
+    );
+    const doctor = JSON.parse(stdout) as CaptureHelperDoctorDocument;
+    if (doctor.ok === false) {
+      const failed = (doctor.checks ?? []).filter((check) => check.required && !check.ok);
+      const reason =
+        failed
+          .map((check) => check.message ?? check.code)
+          .filter(Boolean)
+          .join('; ') || 'capture-helper doctor reported required failures';
+      return captureCapabilities('unsupported', reason);
+    }
+    return captureCapabilities('supported');
+  } catch (error) {
+    // Capability discovery is recoverable: report unsupported status so the gateway can show
+    // the install/permission problem instead of hiding the node.
+    return captureCapabilities(
+      'unsupported',
+      `capture-helper doctor failed: ${errorMessage(error)}`,
+    );
+  }
+}
+
+function captureCapabilities(
+  status: RecipeRuntimeCapabilityDeclaration['status'],
+  reason?: string,
+): RecipeRuntimeCapabilityDeclaration[] {
+  const unsupported = status === 'unsupported';
+  return [
+    {
+      capability: 'capture.screenshot',
+      status,
+      provider: 'capture-helper',
+      ...(unsupported ? { reason } : { platforms: ['macos'], artifactTypes: ['image/png'] }),
+    },
+    {
+      capability: 'capture.stream',
+      status,
+      provider: 'capture-helper',
+      ...(unsupported ? { reason } : { platforms: ['macos'], modes: ['framed-h264'] }),
+    },
+    {
+      capability: 'record.video',
+      status,
+      provider: 'capture-helper',
+      ...(unsupported
+        ? { reason }
+        : { platforms: ['macos'], modes: ['full_run'], artifactTypes: ['video/mp4'] }),
+    },
+  ];
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function sendResponse(id: string, ok: boolean, payload?: unknown, error?: string): void {

@@ -7,9 +7,16 @@ import {
 import {
   createRecipeRunner,
   createStandardUiAdapters,
+  type RecipeVideoRecordingOptions,
+  type RecordingTarget,
+  type RecordingTargetProvider,
   type UiActionTransport,
 } from '@farmslot/recipe-harness';
-import { resolveRecipeCliPath, validateRecipeCliInput } from '@farmslot/recipe-harness/cli/support';
+import {
+  parsePositiveInteger,
+  resolveRecipeCliPath,
+  validateRecipeCliInput,
+} from '@farmslot/recipe-harness/cli/support';
 
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { readJsonFile } from './json.js';
@@ -21,6 +28,7 @@ export interface ExpoRecipeRunOptions {
   artifactsDir?: string;
   dryRun?: boolean;
   json?: boolean;
+  recordVideo?: boolean | RecipeVideoRecordingOptions;
 }
 
 export function validateExpoRecipeDocument(
@@ -68,6 +76,9 @@ export async function runExpoRecipeDocument(
       name: '@farmslot/expo-recipe',
     },
     logger: console,
+    recording: {
+      targetProvider: createExpoRecordingTargetProvider(),
+    },
   });
 
   return runner.run({
@@ -77,7 +88,29 @@ export async function runExpoRecipeDocument(
     env: {
       FARMSLOT_RECIPE_ARTIFACTS_DIR: artifactsDir,
     },
+    recordVideo: options.recordVideo,
   });
+}
+
+function createExpoRecordingTargetProvider(): RecordingTargetProvider {
+  return {
+    async resolveRecordingTarget() {
+      return resolveExpoRecordingTarget(process.env);
+    },
+  };
+}
+
+export function resolveExpoRecordingTarget(
+  env: Record<string, string | undefined>,
+): RecordingTarget {
+  if (env.FARMSLOT_RECORD_PID)
+    return { kind: 'pid', pid: parsePositiveInteger(env.FARMSLOT_RECORD_PID) };
+  if (env.FARMSLOT_RECORD_WINDOW_ID) {
+    return { kind: 'window-id', windowId: env.FARMSLOT_RECORD_WINDOW_ID };
+  }
+  const appName = env.FARMSLOT_RECORD_APP_NAME ?? 'Simulator';
+  const windowName = env.FARMSLOT_RECORD_WINDOW_NAME ?? 'Simulator';
+  return { kind: 'app-window', appName, windowName };
 }
 
 function dryRunUiTransport(isDryRun: boolean): UiActionTransport {

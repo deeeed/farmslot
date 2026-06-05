@@ -11,4 +11,5 @@ The files use Recipe Protocol v1, but the project-facing path and scripts are in
 - Do not add task, ticket, or one-off debug actions to reusable manifests.
 - Use UI actions only when the proof must show real user-visible interaction.
 - Use commands/controllers for setup, diagnostics, and non-visual checks.
+- Use `yarn recipe:run --record-video` only when visual motion proof is useful; it records one whole-recipe MP4 through `capture-helper`.
 - If you declare app/HUD bridge actions, wire the dev-only bridge and run `yarn recipe:doctor`.

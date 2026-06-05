@@ -10,6 +10,8 @@ import {
   validateRecipeWithManifest,
 } from '@farmslot/protocol';
 
+import type { RecordingTarget } from '../core/types.js';
+
 interface RecipeValidationInputOptions {
   recipePath: string;
   actionManifestPath?: string;
@@ -18,12 +20,45 @@ interface RecipeValidationInputOptions {
   baseDir?: string;
 }
 
+interface RecipeCliRecordingTargetOptions {
+  recordAppName?: string;
+  recordWindowName?: string;
+  recordWindowId?: string;
+  recordPid?: string;
+}
+
 export function recipeCliBaseDir(): string {
   return process.env.INIT_CWD ?? process.cwd();
 }
 
 export function resolveRecipeCliPath(filePath: string, baseDir = recipeCliBaseDir()): string {
   return path.resolve(baseDir, filePath);
+}
+
+export function parsePositiveInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Expected a positive integer, got ${JSON.stringify(value)}.`);
+  }
+  return parsed;
+}
+
+export function parseRecordingTarget(
+  options: RecipeCliRecordingTargetOptions,
+): RecordingTarget | undefined {
+  if (options.recordPid) return { kind: 'pid', pid: parsePositiveInteger(options.recordPid) };
+  if (options.recordWindowId) return { kind: 'window-id', windowId: options.recordWindowId };
+  if (options.recordAppName || options.recordWindowName) {
+    if (!options.recordAppName || !options.recordWindowName) {
+      throw new Error('--record-app-name and --record-window-name must be provided together.');
+    }
+    return {
+      kind: 'app-window',
+      appName: options.recordAppName,
+      windowName: options.recordWindowName,
+    };
+  }
+  return undefined;
 }
 
 export async function readRecipeCliJsonFile(

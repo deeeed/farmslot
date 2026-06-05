@@ -84,6 +84,16 @@ export interface RecipeNativeBindingDeclaration {
   implementation: string;
 }
 
+export interface RecipeRuntimeCapabilityDeclaration {
+  capability: string;
+  status: 'supported' | 'unsupported' | 'partial' | 'planned';
+  provider?: string;
+  reason?: string;
+  platforms?: string[];
+  modes?: string[];
+  artifactTypes?: string[];
+}
+
 export interface RecipeActionManifestDocument {
   runner_protocol_version: 1;
   action_registry_version: 1;
@@ -94,6 +104,7 @@ export interface RecipeActionManifestDocument {
   state_refs?: RecipeStateRefDeclaration[];
   pre_conditions?: RecipePreconditionDeclaration[];
   native_bindings?: RecipeNativeBindingDeclaration[];
+  capabilities?: RecipeRuntimeCapabilityDeclaration[];
 }
 
 export const PLAYBACK_MODES = new Set(['off', 'auto', 'step']);

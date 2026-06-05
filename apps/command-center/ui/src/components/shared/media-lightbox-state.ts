@@ -26,6 +26,10 @@ export abstract class MediaLightboxState extends LitElement {
   @state() protected _imageCompareLayout: 'slider' | 'side-by-side' = 'slider';
   @state() protected _kindFilter: ArtifactKind | 'all' = 'all';
   @state() protected _mdCacheVersion = 0; // bumped to trigger re-render when _mdCache updates
+  @state() protected _videoTime = 0;
+  @state() protected _videoDuration = 0;
+  @state() protected _videoPaused = true;
+  @state() protected _videoRate = 1;
   // Shared text-fetch cache: stores rendered Markdown HTML for .md/.markdown
   // entries AND pretty-printed JSON for .json entries (entries are keyed by
   // URL so collisions don't happen). Naming kept as `_mdCache` for history

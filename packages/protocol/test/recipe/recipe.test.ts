@@ -59,6 +59,76 @@ function readTraceEntries(trace: unknown, label: string): Record<string, unknown
   });
 }
 
+test('validates video artifact recording metadata', () => {
+  const result = validateArtifactManifestDocument({
+    version: 1,
+    artifacts: [
+      {
+        path: 'videos/recipe-run.mp4',
+        type: 'video',
+        record: 'full_run',
+        maxFps: 24,
+        recorder: {
+          name: 'capture-helper',
+          version: '0.1.8',
+          platform: 'macos',
+          target: { selector: 'pid', value: '123' },
+        },
+      },
+    ],
+  });
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+
+  const invalidResult = validateArtifactManifestDocument({
+    version: 1,
+    artifacts: [
+      {
+        path: 'videos/recipe-run.mp4',
+        type: 'video',
+        record: 42,
+        maxFps: 0,
+        recorder: { target: { selector: '', value: '' } },
+      },
+    ],
+  });
+  assert.equal(invalidResult.status, 'invalid');
+  assert.ok(
+    invalidResult.findings.some((finding) => finding.code === 'artifact_manifest.invalid_record'),
+  );
+  assert.ok(
+    invalidResult.findings.some((finding) => finding.code === 'artifact_manifest.invalid_max_fps'),
+  );
+  assert.ok(
+    invalidResult.findings.some(
+      (finding) => finding.code === 'artifact_manifest.invalid_recorder_target_field',
+    ),
+  );
+
+  const proofWindowResult = validateArtifactManifestDocument({
+    version: 1,
+    artifacts: [
+      {
+        path: 'videos/proof-window.mp4',
+        type: 'video',
+        record: 'proof_window',
+      },
+      {
+        path: 'videos/proof-window-dash.mp4',
+        type: 'video',
+        record: 'proof-window',
+      },
+    ],
+  });
+  assert.equal(proofWindowResult.status, 'invalid');
+  assert.equal(
+    proofWindowResult.findings.filter(
+      (finding) => finding.code === 'artifact_manifest.invalid_record',
+    ).length,
+    2,
+  );
+});
+
 test('validates portable backend and UI v1 example recipes', async () => {
   for (const recipePath of [
     'docs/examples/recipes/backend-command-v1.recipe.json',
@@ -91,6 +161,49 @@ test('validates runner action manifests and rejects undeclared recipe actions', 
   assert.ok(
     restrictedResult.findings.some(
       (finding) => finding.code === 'recipe.action_not_declared_by_manifest',
+    ),
+  );
+});
+
+test('validates runtime capability declarations in runner action manifests', () => {
+  const supportedResult = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+    capabilities: [
+      {
+        capability: 'record.video',
+        status: 'supported',
+        provider: 'capture-helper',
+        platforms: ['macos'],
+        modes: ['full_run'],
+        artifactTypes: ['video/mp4'],
+      },
+    ],
+  });
+  assert.equal(supportedResult.status, 'valid');
+  assert.deepEqual(supportedResult.findings, []);
+
+  const invalidResult = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+    capabilities: [{ capability: '', status: 'maybe', modes: ['full_run', 42] }],
+  });
+  assert.equal(invalidResult.status, 'invalid');
+  assert.ok(
+    invalidResult.findings.some(
+      (finding) => finding.code === 'action_manifest.invalid_capability_name',
+    ),
+  );
+  assert.ok(
+    invalidResult.findings.some(
+      (finding) => finding.code === 'action_manifest.invalid_capability_status',
+    ),
+  );
+  assert.ok(
+    invalidResult.findings.some(
+      (finding) => finding.code === 'action_manifest.invalid_capability_field',
     ),
   );
 });

@@ -19,6 +19,7 @@ export {
   type RecipeNamedDeclaration,
   type RecipeNativeBindingDeclaration,
   type RecipePreconditionDeclaration,
+  type RecipeRuntimeCapabilityDeclaration,
   type RecipeStateRefDeclaration,
   type RecipeValidationFinding,
   type RecipeValidationResult,

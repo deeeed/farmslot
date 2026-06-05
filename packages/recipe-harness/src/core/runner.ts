@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -9,6 +9,11 @@ import {
 } from '@farmslot/protocol';
 
 import { JsonArtifactWriter, JsonSummaryWriter, JsonTraceWriter } from '../node/writers.js';
+import {
+  createCaptureHelperVideoRecorder,
+  errorMessage,
+  manifestTarget,
+} from '../recording/capture-helper.js';
 
 import { collectFlows, executeInlineFlowCall } from './flows.js';
 import {
@@ -20,18 +25,26 @@ import {
 import { buildHudNode } from './hud.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import { evaluateNodeGate } from './predicates.js';
+import {
+  cleanupAbortedRunVideoRecording,
+  removePartialRunVideoOutput,
+} from './recording-cleanup.js';
 import { recordSyntheticFailure, traceNodeMetadata } from './trace.js';
 import type {
   ActionAdapter,
+  ActiveVideoRecording,
   CreateRecipeRunnerOptions,
   PreconditionChecker,
   RecipeHudOptions,
   RecipeLogger,
+  RecipeRecordingOptions,
   RecipeRunner,
   RecipeRunRequest,
   RecipeRunResult,
   RecipeRunStatus,
+  RecipeVideoRecordingOptions,
   SummaryDocument,
+  VideoRecorder,
 } from './types.js';
 import { assertManifestIsValid, assertRecipeMatchesManifest } from './validation.js';
 
@@ -95,6 +108,7 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
     options.logger ?? noopLogger,
     options.hud,
     options.runner,
+    options.recording,
   );
 }
 
@@ -105,6 +119,7 @@ class DefaultRecipeRunner implements RecipeRunner {
   readonly #logger: RecipeLogger;
   readonly #hud: RecipeHudOptions | false | undefined;
   readonly #runnerProvenance: CreateRecipeRunnerOptions['runner'];
+  readonly #recording: RecipeRecordingOptions | undefined;
 
   constructor(
     actionManifest: RecipeActionManifestDocument,
@@ -113,6 +128,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     logger: RecipeLogger,
     hud: RecipeHudOptions | false | undefined,
     runnerProvenance: CreateRecipeRunnerOptions['runner'],
+    recording: RecipeRecordingOptions | undefined,
   ) {
     this.#actionManifest = actionManifest;
     this.#adapters = adapters;
@@ -120,6 +136,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     this.#logger = logger;
     this.#hud = hud;
     this.#runnerProvenance = runnerProvenance;
+    this.#recording = recording;
   }
 
   async run(request: RecipeRunRequest): Promise<RecipeRunResult> {
@@ -145,7 +162,6 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     const outputs = new Map<string, unknown>();
     const recipePath = await artifactWriter.copyRecipe(recipe);
-
     let status: RecipeRunStatus = 'unknown';
     let currentNodeId: string | undefined = graph.entry;
     let mainStatus: RecipeRunStatus = 'unknown';
@@ -153,139 +169,111 @@ class DefaultRecipeRunner implements RecipeRunner {
     const visited = new Set<string>();
     let transitionCount = 0;
     const maxTransitions = Object.keys(graph.nodes).length * 3;
-
-    const preconditionStatus = await this.#runPreconditions({
-      graph,
-      recipe,
-      projectRoot,
-      artifactsDir,
-      request,
-      outputs,
-      artifactWriter,
-      traceWriter,
-    });
-    if (preconditionStatus === 'fail') {
-      status = 'fail';
-      currentNodeId = undefined;
+    const videoOptions = normalizeVideoRecordingOptions(request.recordVideo);
+    const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
+    let runRecording:
+      | { recording: ActiveVideoRecording; entry: RecipeArtifactManifestEntry; outputPath: string }
+      | undefined;
+    if (videoRecorder) {
+      try {
+        runRecording = await this.#startRunVideoRecording({
+          recorder: videoRecorder,
+          videoOptions,
+          recipe,
+          projectRoot,
+          artifactsDir,
+          env: request.env ?? {},
+        });
+      } catch (error) {
+        const message = errorMessage(error);
+        traceWriter.record({
+          nodeId: 'recipe-run:video',
+          action: 'record.video',
+          startedAt: startedAt.toISOString(),
+          endedAt: new Date().toISOString(),
+          durationMs: Date.now() - startedAt.getTime(),
+          ok: false,
+          error: message,
+        });
+        this.#logger.error(`record.video start failed: ${message}`);
+        status = 'fail';
+        currentNodeId = undefined;
+      }
     }
 
-    while (currentNodeId) {
-      const activeNodeId = currentNodeId;
-      transitionCount += 1;
-      if (transitionCount > maxTransitions) {
-        const error = new Error('Recipe graph exceeded its maximum transition count.');
-        recordSyntheticFailure(traceWriter, activeNodeId, error);
-        status = 'fail';
-        break;
-      }
-      visited.add(activeNodeId);
-      const node = graph.nodes[activeNodeId];
-      if (!node) {
-        const error = new Error(`Recipe node ${activeNodeId} does not exist.`);
-        recordSyntheticFailure(traceWriter, activeNodeId, error);
-        status = 'fail';
-        break;
-      }
-      const action = String(node.action);
-      const adapter = action === 'call' ? undefined : this.#adapters.get(action);
-      if (action !== 'call' && !adapter) {
-        const error = new Error(`No adapter registered for action ${action}.`);
-        recordSyntheticFailure(traceWriter, activeNodeId, error, action);
-        status = 'fail';
-        break;
+    try {
+      if (currentNodeId) {
+        const preconditionStatus = await this.#runPreconditions({
+          graph,
+          recipe,
+          projectRoot,
+          artifactsDir,
+          request,
+          outputs,
+          artifactWriter,
+          traceWriter,
+        });
+        if (preconditionStatus === 'fail') {
+          status = 'fail';
+          currentNodeId = undefined;
+        }
       }
 
-      const nodeStartedAt = new Date();
-      const context = {
-        nodeId: activeNodeId,
-        recipe,
-        projectRoot,
-        artifactsDir,
-        env: request.env ?? {},
-        outputs,
-        getOutput(nodeId: string) {
-          if (!outputs.has(nodeId)) throw new Error(`No output recorded for node ${nodeId}.`);
-          return outputs.get(nodeId);
-        },
-        resolveProjectPath(relativePath: string) {
-          return path.join(projectRoot, normalizeRelativePath(relativePath));
-        },
-        resolveArtifactPath(relativePath: string) {
-          return path.join(artifactsDir, normalizeRelativePath(relativePath));
-        },
-        registerArtifact(entry: RecipeArtifactManifestEntry) {
-          artifactWriter.register(entry);
-        },
-        logger: this.#logger,
-      };
-      try {
-        const gate = evaluateNodeGate(node, context.outputs);
-        if (!gate.run) {
-          const next = resolveNextNode(node, {});
-          traceWriter.record({
-            nodeId: activeNodeId,
-            action,
-            ...traceNodeMetadata(node),
-            startedAt: nodeStartedAt.toISOString(),
-            endedAt: new Date().toISOString(),
-            durationMs: Date.now() - nodeStartedAt.getTime(),
-            ok: true,
-            next,
-            output: { skipped: true, reason: gate.reason },
-          });
-          currentNodeId = next;
-          continue;
-        }
-        const hudStarted = await this.#publishHudProgressOrRecord(traceWriter, 'running', {
-          nodeId: activeNodeId,
-          action,
-          node,
-          recipe,
-          index: transitionCount,
-          total: Object.keys(graph.nodes).length,
-          context,
-        });
-        if (!hudStarted) {
+      while (currentNodeId) {
+        const activeNodeId = currentNodeId;
+        transitionCount += 1;
+        if (transitionCount > maxTransitions) {
+          const error = new Error('Recipe graph exceeded its maximum transition count.');
+          recordSyntheticFailure(traceWriter, activeNodeId, error);
           status = 'fail';
           break;
         }
-        const result =
-          action === 'call'
-            ? await executeInlineFlowCall({
-                callNodeId: activeNodeId,
-                node,
-                context,
-                flowCatalog,
-                adapters: this.#adapters,
-                traceWriter,
-                callStack: [],
-                maxCallDepth: DEFAULT_MAX_FLOW_CALL_DEPTH,
-                publishHudProgress: (hudStatus, flowEvent) =>
-                  this.#publishHudProgressOrRecord(traceWriter, hudStatus, {
-                    ...flowEvent,
-                    recipe,
-                  }),
-              })
-            : await adapter!.execute(node, context);
-        if (result.output !== undefined) outputs.set(activeNodeId, result.output);
-        for (const artifact of result.artifacts ?? []) artifactWriter.register(artifact);
-        const next = resolveNextNode(node, result);
-        traceWriter.record({
+        visited.add(activeNodeId);
+        const node = graph.nodes[activeNodeId];
+        if (!node) {
+          const error = new Error(`Recipe node ${activeNodeId} does not exist.`);
+          recordSyntheticFailure(traceWriter, activeNodeId, error);
+          status = 'fail';
+          break;
+        }
+        const action = String(node.action);
+        const adapter = action === 'call' ? undefined : this.#adapters.get(action);
+        if (action !== 'call' && !adapter) {
+          const error = new Error(`No adapter registered for action ${action}.`);
+          recordSyntheticFailure(traceWriter, activeNodeId, error, action);
+          status = 'fail';
+          break;
+        }
+
+        const nodeStartedAt = new Date();
+        const context = this.#createExecutionContext({
           nodeId: activeNodeId,
-          action,
-          ...traceNodeMetadata(node, result),
-          startedAt: nodeStartedAt.toISOString(),
-          endedAt: new Date().toISOString(),
-          durationMs: Date.now() - nodeStartedAt.getTime(),
-          ok: true,
-          next,
-          status: result.status,
-          output: result.output,
+          recipe,
+          projectRoot,
+          artifactsDir,
+          env: request.env ?? {},
+          outputs,
+          artifactWriter,
         });
-        const hudCompleted = await this.#publishHudProgressOrRecord(
-          traceWriter,
-          result.status === 'fail' ? 'fail' : 'pass',
-          {
+        try {
+          const gate = evaluateNodeGate(node, context.outputs);
+          if (!gate.run) {
+            const next = resolveNextNode(node, {});
+            traceWriter.record({
+              nodeId: activeNodeId,
+              action,
+              ...traceNodeMetadata(node),
+              startedAt: nodeStartedAt.toISOString(),
+              endedAt: new Date().toISOString(),
+              durationMs: Date.now() - nodeStartedAt.getTime(),
+              ok: true,
+              next,
+              output: { skipped: true, reason: gate.reason },
+            });
+            currentNodeId = next;
+            continue;
+          }
+          const hudStarted = await this.#publishHudProgressOrRecord(traceWriter, 'running', {
             nodeId: activeNodeId,
             action,
             node,
@@ -293,96 +281,174 @@ class DefaultRecipeRunner implements RecipeRunner {
             index: transitionCount,
             total: Object.keys(graph.nodes).length,
             context,
-          },
-        );
-        if (!hudCompleted) {
-          status = 'fail';
-          break;
-        }
-        if (result.status) {
-          if (runningTeardown) {
-            status = mainStatus === 'fail' ? 'fail' : result.status;
+          });
+          if (!hudStarted) {
+            status = 'fail';
             break;
           }
-          mainStatus = result.status;
-          if (graph.teardownEntry) {
+          const result =
+            action === 'call'
+              ? await executeInlineFlowCall({
+                  callNodeId: activeNodeId,
+                  node,
+                  context,
+                  flowCatalog,
+                  adapters: this.#adapters,
+                  traceWriter,
+                  callStack: [],
+                  maxCallDepth: DEFAULT_MAX_FLOW_CALL_DEPTH,
+                  publishHudProgress: (hudStatus, flowEvent) =>
+                    this.#publishHudProgressOrRecord(traceWriter, hudStatus, {
+                      ...flowEvent,
+                      recipe,
+                    }),
+                })
+              : await adapter!.execute(node, context);
+          if (result.output !== undefined) outputs.set(activeNodeId, result.output);
+          for (const artifact of result.artifacts ?? []) artifactWriter.register(artifact);
+          const next = resolveNextNode(node, result);
+          traceWriter.record({
+            nodeId: activeNodeId,
+            action,
+            ...traceNodeMetadata(node, result),
+            startedAt: nodeStartedAt.toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: Date.now() - nodeStartedAt.getTime(),
+            ok: true,
+            next,
+            status: result.status,
+            output: result.output,
+          });
+          const hudCompleted = await this.#publishHudProgressOrRecord(
+            traceWriter,
+            result.status === 'fail' ? 'fail' : 'pass',
+            {
+              nodeId: activeNodeId,
+              action,
+              node,
+              recipe,
+              index: transitionCount,
+              total: Object.keys(graph.nodes).length,
+              context,
+            },
+          );
+          if (!hudCompleted) {
+            status = 'fail';
+            break;
+          }
+          if (result.status) {
+            if (runningTeardown) {
+              status = mainStatus === 'fail' ? 'fail' : result.status;
+              break;
+            }
+            mainStatus = result.status;
+            if (graph.teardownEntry) {
+              runningTeardown = true;
+              currentNodeId = graph.teardownEntry;
+              continue;
+            }
+            status = result.status;
+            break;
+          }
+          currentNodeId = next;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          traceWriter.record({
+            nodeId: activeNodeId,
+            action,
+            ...traceNodeMetadata(node),
+            startedAt: nodeStartedAt.toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: Date.now() - nodeStartedAt.getTime(),
+            ok: false,
+            error: message,
+          });
+          this.#logger.error(message);
+          await this.#publishHudProgressOrRecord(traceWriter, 'fail', {
+            nodeId: activeNodeId,
+            action,
+            node,
+            recipe,
+            index: transitionCount,
+            total: Object.keys(graph.nodes).length,
+            context,
+            error: message,
+          });
+          status = 'fail';
+          if (!runningTeardown && graph.teardownEntry) {
+            mainStatus = 'fail';
             runningTeardown = true;
             currentNodeId = graph.teardownEntry;
             continue;
           }
-          status = result.status;
           break;
         }
-        currentNodeId = next;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        traceWriter.record({
-          nodeId: activeNodeId,
-          action,
-          ...traceNodeMetadata(node),
-          startedAt: nodeStartedAt.toISOString(),
-          endedAt: new Date().toISOString(),
-          durationMs: Date.now() - nodeStartedAt.getTime(),
-          ok: false,
-          error: message,
-        });
-        this.#logger.error(message);
-        await this.#publishHudProgressOrRecord(traceWriter, 'fail', {
-          nodeId: activeNodeId,
-          action,
-          node,
-          recipe,
-          index: transitionCount,
-          total: Object.keys(graph.nodes).length,
-          context,
-          error: message,
-        });
-        status = 'fail';
-        if (!runningTeardown && graph.teardownEntry) {
-          mainStatus = 'fail';
-          runningTeardown = true;
-          currentNodeId = graph.teardownEntry;
-          continue;
-        }
-        break;
       }
-    }
 
-    artifactWriter.register({
-      path: 'summary.json',
-      type: 'summary',
-      label: 'Run summary',
-      category: 'system',
-    });
-    artifactWriter.register({
-      path: 'trace.json',
-      type: 'trace',
-      label: 'Execution trace',
-      category: 'system',
-    });
-    if (status === 'pass') {
-      const runHudStartedAt = new Date();
-      try {
-        await this.#publishRunHud(status, {
-          recipe,
-          projectRoot,
-          artifactsDir,
-          env: request.env ?? {},
-          outputs,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        traceWriter.record({
-          nodeId: 'recipe-complete:hud',
-          action: 'app.hud',
-          startedAt: runHudStartedAt.toISOString(),
-          endedAt: new Date().toISOString(),
-          durationMs: Date.now() - runHudStartedAt.getTime(),
-          ok: false,
-          error: message,
-        });
-        this.#logger.error(`app.hud complete update failed: ${message}`);
-        status = 'fail';
+      artifactWriter.register({
+        path: 'summary.json',
+        type: 'summary',
+        label: 'Run summary',
+        category: 'system',
+      });
+      artifactWriter.register({
+        path: 'trace.json',
+        type: 'trace',
+        label: 'Execution trace',
+        category: 'system',
+      });
+      if (status === 'pass') {
+        const runHudStartedAt = new Date();
+        try {
+          await this.#publishRunHud(status, {
+            recipe,
+            projectRoot,
+            artifactsDir,
+            env: request.env ?? {},
+            outputs,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          traceWriter.record({
+            nodeId: 'recipe-complete:hud',
+            action: 'app.hud',
+            startedAt: runHudStartedAt.toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: Date.now() - runHudStartedAt.getTime(),
+            ok: false,
+            error: message,
+          });
+          this.#logger.error(`app.hud complete update failed: ${message}`);
+          status = 'fail';
+        }
+      }
+      if (runRecording) {
+        const recordingToStop = runRecording;
+        runRecording = undefined;
+        try {
+          const videoArtifact = await this.#stopRunVideoRecording(recordingToStop);
+          artifactWriter.register(videoArtifact);
+        } catch (error) {
+          const message = errorMessage(error);
+          await removePartialRunVideoOutput(recordingToStop.outputPath, this.#logger);
+          traceWriter.record({
+            nodeId: 'recipe-run:video',
+            action: 'record.video',
+            startedAt: startedAt.toISOString(),
+            endedAt: new Date().toISOString(),
+            durationMs: Date.now() - startedAt.getTime(),
+            ok: false,
+            error: message,
+          });
+          this.#logger.error(`record.video failed: ${message}`);
+          status = 'fail';
+        }
+      }
+    } finally {
+      if (runRecording) {
+        const recordingToCleanup = runRecording;
+        runRecording = undefined;
+        await cleanupAbortedRunVideoRecording(recordingToCleanup, this.#logger);
       }
     }
     const endedAt = new Date();
@@ -551,6 +617,107 @@ class DefaultRecipeRunner implements RecipeRunner {
     };
   }
 
+  #videoRecorder(): VideoRecorder {
+    return this.#recording?.videoRecorder ?? createCaptureHelperVideoRecorder();
+  }
+
+  async #startRunVideoRecording({
+    recorder,
+    videoOptions,
+    recipe,
+    projectRoot,
+    artifactsDir,
+    env,
+  }: {
+    recorder: VideoRecorder;
+    videoOptions: RecipeVideoRecordingOptions;
+    recipe: unknown;
+    projectRoot: string;
+    artifactsDir: string;
+    env: Record<string, string | undefined>;
+  }): Promise<{
+    recording: ActiveVideoRecording;
+    entry: RecipeArtifactManifestEntry;
+    outputPath: string;
+  }> {
+    const doctor = await recorder.doctor?.();
+    if (doctor && !doctor.ok) {
+      throw new Error(
+        `${recorder.name} doctor ${doctor.code}: ${doctor.message}${
+          doctor.suggestedFix ? ` Suggested fix: ${doctor.suggestedFix}` : ''
+        }`,
+      );
+    }
+    const node = {
+      action: 'record.video',
+      intent: 'Record the recipe run when motion proof is useful',
+    };
+    const target =
+      videoOptions.target ??
+      (await this.#recording?.targetProvider?.resolveRecordingTarget({
+        nodeId: 'recipe-run',
+        node,
+        recipe,
+        projectRoot,
+        artifactsDir,
+        env,
+        scope: 'run',
+      }));
+    if (!target) {
+      throw new Error(
+        '--record-video requires a recording target. Provide a project RecordingTargetProvider or CLI target flags.',
+      );
+    }
+    const relativePath = 'videos/recipe-run.mp4';
+    const outputPath = path.join(artifactsDir, relativePath);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    let recording: ActiveVideoRecording;
+    try {
+      recording = await recorder.start({
+        outputPath,
+        target,
+        maxFps: videoOptions.maxFps,
+        maxSize: videoOptions.maxSize,
+        nodeId: 'recipe-run',
+        record: 'full_run',
+      });
+    } catch (error) {
+      await removePartialRunVideoOutput(outputPath, this.#logger);
+      throw error;
+    }
+    const entry: RecipeArtifactManifestEntry = {
+      path: relativePath,
+      type: 'video',
+      mimeType: 'video/mp4',
+      category: 'proof',
+      label: 'Recipe run video',
+      record: 'full_run',
+      recorder: {
+        name: recorder.name,
+        ...(recorder.version ? { version: recorder.version } : {}),
+        ...(recorder.platform ? { platform: recorder.platform } : {}),
+        target: manifestTarget(target),
+      },
+      ...(videoOptions.maxFps != null ? { maxFps: videoOptions.maxFps } : {}),
+    };
+    return { recording, entry, outputPath };
+  }
+
+  async #stopRunVideoRecording(runRecording: {
+    recording: ActiveVideoRecording;
+    entry: RecipeArtifactManifestEntry;
+    outputPath: string;
+  }): Promise<RecipeArtifactManifestEntry> {
+    const result = await runRecording.recording.stop();
+    await assertVideoOutputReady(runRecording.outputPath);
+    return result.recorder
+      ? {
+          ...runRecording.entry,
+          recorder: result.recorder,
+        }
+      : runRecording.entry;
+  }
+
   #hudAction(): string | undefined {
     if (this.#hud === false || this.#hud?.enabled === false) return undefined;
     return this.#adapters.has('app.hud') ? 'app.hud' : undefined;
@@ -667,4 +834,35 @@ class DefaultRecipeRunner implements RecipeRunner {
     if (isRecord(recipe) && typeof recipe.title === 'string') return recipe.title;
     return 'Recipe run';
   }
+}
+
+function normalizeVideoRecordingOptions(
+  input: RecipeRunRequest['recordVideo'],
+): RecipeVideoRecordingOptions & { mode: 'off' | 'full-run' } {
+  if (!input) return { mode: 'off' };
+  if (input === true) return { mode: 'full-run' };
+  if (typeof input === 'string') return normalizeVideoRecordingMode(input);
+  const mode = input.mode ?? 'full-run';
+  return { ...input, mode: normalizeVideoRecordingMode(mode).mode };
+}
+
+function normalizeVideoRecordingMode(mode: unknown): { mode: 'off' | 'full-run' } {
+  if (mode === 'off') return { mode: 'off' };
+  if (mode === 'full-run') return { mode: 'full-run' };
+  if (mode === 'proof-window' || mode === 'proof_window') {
+    throw new Error(
+      'recordVideo proof-window mode is reserved for future focused clips; use full-run for phase 1.',
+    );
+  }
+  throw new Error(`recordVideo mode must be full-run or off, got ${JSON.stringify(mode)}.`);
+}
+
+async function assertVideoOutputReady(outputPath: string): Promise<void> {
+  let stats: Awaited<ReturnType<typeof stat>>;
+  try {
+    stats = await stat(outputPath);
+  } catch {
+    throw new Error(`Recording output is missing: ${outputPath}`);
+  }
+  if (stats.size <= 0) throw new Error(`Recording output is empty: ${outputPath}`);
 }

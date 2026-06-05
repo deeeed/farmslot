@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -14,7 +14,10 @@ import { createStandardUiAdapters, type UiActionTransport } from '../src/adapter
 import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
+import { cleanupAbortedRunVideoRecording } from '../src/core/recording-cleanup.js';
 import { createRecipeRunner, defineActionAdapter } from '../src/core/runner.js';
+import type { VideoRecorder, VideoRecorderStartRequest } from '../src/core/types.js';
+import { createCaptureHelperVideoRecorder } from '../src/recording/capture-helper.js';
 import { extensionIdFromTarget } from '../src/runtime/browser-extension.js';
 import { createCdpWebUiTransport } from '../src/runtime/cdp.js';
 import {
@@ -156,6 +159,12 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     const summary = await readJsonFile(path.join(artifactsDir, 'summary.json'));
     const trace = await readJsonFile(path.join(artifactsDir, 'trace.json'));
     const manifest = await readJsonFile(path.join(artifactsDir, 'artifact-manifest.json'));
+    assert.equal(
+      (manifest as { artifacts?: Array<{ type?: string }> }).artifacts?.some(
+        (artifact) => artifact.type === 'video',
+      ),
+      false,
+    );
     assert.deepEqual(copiedRecipe, recipe);
     assert.match(await readFile(path.join(artifactsDir, 'logs/api-smoke.log'), 'utf-8'), /ok log/);
     assert.ok(Array.isArray(trace));
@@ -172,6 +181,428 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     });
     assert.equal(packageResult.status, 'valid', JSON.stringify(packageResult.findings));
     assert.deepEqual(packageResult.findings, []);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('records one opt-in whole-recipe video and registers it in the artifact manifest', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = createSmokeRecipe();
+    const starts: VideoRecorderStartRequest[] = [];
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'ready' };
+      },
+      async start(request) {
+        starts.push(request);
+        return {
+          async stop() {
+            await writeFile(request.outputPath, 'fake mp4');
+            return {
+              recorder: {
+                name: 'fake-recorder',
+                platform: 'test',
+                target: { selector: 'pid', value: '123' },
+              },
+            };
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'pid', pid: 123 };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: recipe,
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: { mode: 'full-run', maxFps: 24 },
+    });
+
+    assert.equal(result.status, 'pass');
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0]?.nodeId, 'recipe-run');
+    assert.equal(starts[0]?.record, 'full_run');
+    assert.equal(starts[0]?.maxFps, 24);
+    const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
+    assert.ok(files.includes('videos/recipe-run.mp4'));
+
+    const manifest = await readJsonFile(result.artifactManifestPath);
+    const video = (manifest as { artifacts: Array<Record<string, unknown>> }).artifacts.find(
+      (artifact) => artifact.path === 'videos/recipe-run.mp4',
+    );
+    assert.deepEqual(video, {
+      path: 'videos/recipe-run.mp4',
+      type: 'video',
+      mimeType: 'video/mp4',
+      category: 'proof',
+      label: 'Recipe run video',
+      record: 'full_run',
+      recorder: {
+        name: 'fake-recorder',
+        platform: 'test',
+        target: { selector: 'pid', value: '123' },
+      },
+      maxFps: 24,
+    });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('record-video doctor failure writes a failed artifact package', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = createSmokeRecipe();
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return {
+          ok: false,
+          code: 'missing-permission',
+          message: 'Screen Recording is disabled.',
+          suggestedFix: 'Open permissions.',
+        };
+      },
+      async start() {
+        throw new Error('start should not run after doctor failure');
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: { videoRecorder: recorder },
+    });
+    const result = await runner.run({
+      recipeDocument: recipe,
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
+    assert.ok(files.includes('recipe.json'));
+    assert.ok(files.includes('summary.json'));
+    assert.ok(files.includes('trace.json'));
+    assert.ok(files.includes('artifact-manifest.json'));
+    assert.equal(files.includes('videos/recipe-run.mp4'), false);
+
+    const summary = await readJsonFile(result.summaryPath);
+    const trace = await readJsonFile(result.tracePath);
+    const videoFailure = (trace as Array<{ nodeId: string; error?: string }>).find(
+      (entry) => entry.nodeId === 'recipe-run:video',
+    );
+    assert.equal((summary as { status?: string }).status, 'fail');
+    assert.match(videoFailure?.error ?? '', /fake-recorder doctor missing-permission/);
+    assert.match(videoFailure?.error ?? '', /Open permissions/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('record-video start failure removes partial MP4 and writes a failed artifact package', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'ready' };
+      },
+      async start(request) {
+        await writeFile(request.outputPath, 'partial mp4');
+        throw new Error('start failed after partial write');
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'pid', pid: 123 };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: createSmokeRecipe(),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
+    assert.equal(files.includes('videos/recipe-run.mp4'), false);
+
+    const trace = await readJsonFile(result.tracePath);
+    const videoFailure = (trace as Array<{ nodeId: string; error?: string }>).find(
+      (entry) => entry.nodeId === 'recipe-run:video',
+    );
+    assert.match(videoFailure?.error ?? '', /start failed after partial write/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('record-video stop failure removes partial MP4 and writes a failed artifact package', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'ready' };
+      },
+      async start(request) {
+        return {
+          async stop() {
+            await writeFile(request.outputPath, 'partial mp4');
+            throw new Error('stop failed after partial write');
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'pid', pid: 123 };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: createSmokeRecipe(),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
+    assert.equal(files.includes('videos/recipe-run.mp4'), false);
+
+    const trace = await readJsonFile(result.tracePath);
+    const videoFailure = (trace as Array<{ nodeId: string; error?: string }>).find(
+      (entry) => entry.nodeId === 'recipe-run:video',
+    );
+    assert.match(videoFailure?.error ?? '', /stop failed after partial write/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('record-video stop success still requires a non-empty MP4 artifact', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'ready' };
+      },
+      async start() {
+        return {
+          async stop() {
+            return {};
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'pid', pid: 123 };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: createSmokeRecipe(),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
+    assert.equal(files.includes('videos/recipe-run.mp4'), false);
+
+    const trace = await readJsonFile(result.tracePath);
+    const videoFailure = (trace as Array<{ nodeId: string; error?: string }>).find(
+      (entry) => entry.nodeId === 'recipe-run:video',
+    );
+    assert.match(videoFailure?.error ?? '', /Recording output is missing/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('aborted video cleanup removes partial MP4 written during recorder stop', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    const outputPath = path.join(artifactsDir, 'videos/recipe-run.mp4');
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    const errors: string[] = [];
+
+    await cleanupAbortedRunVideoRecording(
+      {
+        outputPath,
+        recording: {
+          async stop() {
+            await writeFile(outputPath, 'partial mp4');
+            return {};
+          },
+        },
+      },
+      {
+        info() {},
+        warn() {},
+        error(message) {
+          errors.push(message);
+        },
+      },
+    );
+
+    assert.equal((await listRelativeFiles(artifactsDir)).includes('videos/recipe-run.mp4'), false);
+    assert.deepEqual(errors, []);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('runner rejects proof-window video mode until focused clips are implemented', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const unsupportedRecordVideo = { mode: 'proof-window' } as unknown as Parameters<
+      typeof runner.run
+    >[0]['recordVideo'];
+
+    await assert.rejects(
+      () =>
+        runner.run({
+          recipeDocument: createSmokeRecipe(),
+          artifactsDir: path.join(tempRoot, 'artifacts'),
+          projectRoot: tempRoot,
+          recordVideo: unsupportedRecordVideo,
+        }),
+      /proof-window mode is reserved for future focused clips/,
+    );
+
+    const unknownRecordVideo = { mode: 'focused-clip' } as unknown as Parameters<
+      typeof runner.run
+    >[0]['recordVideo'];
+    await assert.rejects(
+      () =>
+        runner.run({
+          recipeDocument: createSmokeRecipe(),
+          artifactsDir: path.join(tempRoot, 'unknown-artifacts'),
+          projectRoot: tempRoot,
+          recordVideo: unknownRecordVideo,
+        }),
+      /recordVideo mode must be full-run or off/,
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('capture-helper recorder stop sends SIGINT and returns recorder metadata', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const helperPath = path.join(tempRoot, 'fake-capture-helper.cjs');
+    await writeFile(
+      helperPath,
+      `#!/usr/bin/env node
+const { writeFileSync } = require('node:fs');
+const output = process.argv[process.argv.indexOf('--output') + 1];
+process.on('SIGINT', () => {
+  writeFileSync(output, 'fake mp4');
+  process.exit(0);
+});
+setInterval(() => {}, 1000);
+`,
+    );
+    await chmod(helperPath, 0o755);
+
+    const outputPath = path.join(tempRoot, 'recording.mp4');
+    const recorder = createCaptureHelperVideoRecorder({ captureHelperPath: helperPath });
+    const active = await recorder.start({
+      outputPath,
+      target: { kind: 'pid', pid: 123 },
+      nodeId: 'recipe-run',
+      record: 'full_run',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const result = await active.stop();
+
+    assert.match(await readFile(outputPath, 'utf-8'), /fake mp4/);
+    assert.deepEqual(result.recorder, {
+      name: 'capture-helper',
+      platform: 'macos',
+      target: { selector: 'pid', value: '123' },
+    });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('capture-helper recorder stop times out when the helper ignores SIGINT', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const helperPath = path.join(tempRoot, 'stuck-capture-helper.cjs');
+    await writeFile(
+      helperPath,
+      `#!/usr/bin/env node
+process.on('SIGINT', () => {});
+setInterval(() => {}, 1000);
+`,
+    );
+    await chmod(helperPath, 0o755);
+
+    const recorder = createCaptureHelperVideoRecorder({
+      captureHelperPath: helperPath,
+      stopTimeoutMs: 50,
+    });
+    const active = await recorder.start({
+      outputPath: path.join(tempRoot, 'recording.mp4'),
+      target: { kind: 'pid', pid: 123 },
+      nodeId: 'recipe-run',
+      record: 'full_run',
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await assert.rejects(() => active.stop(), /did not stop within 50ms after SIGINT/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -1052,6 +1483,47 @@ test('runs and validates recipes through the harness CLI entrypoint', async () =
       ]),
     );
     assert.match(validateOutput, /"status": "valid"/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('CLI rejects proof-window video mode until focused clips are implemented', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    const manifestPath = path.join(tempRoot, 'action-manifest.json');
+    await writeJsonFile(recipePath, createSmokeRecipe());
+    await writeJsonFile(manifestPath, coreActionManifest);
+
+    await assert.rejects(
+      () =>
+        runRecipeHarnessCli([
+          'run',
+          recipePath,
+          '--artifacts-dir',
+          path.join(tempRoot, 'artifacts'),
+          '--action-manifest',
+          manifestPath,
+          '--record-video',
+          'proof-window',
+        ]),
+      /proof-window is reserved for future focused clips/,
+    );
+    await assert.rejects(
+      () =>
+        runRecipeHarnessCli([
+          'run',
+          recipePath,
+          '--artifacts-dir',
+          path.join(tempRoot, 'artifacts'),
+          '--action-manifest',
+          manifestPath,
+          '--record-video',
+          'proof_window',
+        ]),
+      /proof-window is reserved for future focused clips/,
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

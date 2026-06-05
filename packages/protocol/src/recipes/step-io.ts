@@ -32,6 +32,18 @@ export type RecipeArtifactType = (typeof RECIPE_ARTIFACT_TYPES)[number];
 // Keeps the known vocabulary autocomplete-friendly while allowing project-specific extensions.
 export type RecipeArtifactTypeName = RecipeArtifactType | (string & {});
 
+export interface RecipeArtifactRecorderTarget {
+  selector: string;
+  value: string;
+}
+
+export interface RecipeArtifactRecorderMetadata {
+  name?: string;
+  version?: string;
+  platform?: string;
+  target?: RecipeArtifactRecorderTarget;
+}
+
 export interface RecipeArtifactManifestEntry {
   path: string;
   type: RecipeArtifactTypeName;
@@ -41,6 +53,9 @@ export interface RecipeArtifactManifestEntry {
   category?: 'proof' | 'debug' | 'diagnostic' | 'system' | (string & {});
   proofTarget?: string;
   covers?: string[];
+  record?: 'full_run';
+  recorder?: RecipeArtifactRecorderMetadata;
+  maxFps?: number;
 }
 
 export interface RecipeRunnerProvenance {
@@ -69,6 +84,7 @@ export interface ArtifactRef {
   label?: string;
   nodeId?: string;
   mimeType?: string;
+  maxFps?: number;
 }
 
 const PUBLISH_EVIDENCE_MEDIA_EXTS = /\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i;

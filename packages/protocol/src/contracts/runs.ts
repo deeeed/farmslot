@@ -1243,6 +1243,7 @@ export interface FamilyObservabilityArtifact {
   purpose: string;
   sha256?: string;
   sizeBytes?: number;
+  maxFps?: number;
   source:
     | 'artifact-manifest'
     | 'step-output'

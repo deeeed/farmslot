@@ -161,14 +161,16 @@ function renderFamilyEvidenceArtifact(
                 @error=${() => context.markArtifactBroken(artifact)}
               />`
             : VIDEO_EXTS.test(artifact.path)
-              ? html`<video
-                  class="artifact-preview"
-                  src=${url}
-                  controls
-                  muted
-                  preload="metadata"
-                  @error=${() => context.markArtifactBroken(artifact)}
-                ></video>`
+              ? html`<div class="artifact-video-preview">
+                  <video
+                    class="artifact-preview"
+                    src=${url}
+                    muted
+                    preload="metadata"
+                    @error=${() => context.markArtifactBroken(artifact)}
+                  ></video>
+                  <span class="artifact-video-review-badge">Open for frame review</span>
+                </div>`
               : MARKDOWN_EXTS.test(artifact.path)
                 ? context.renderMarkdownPreview(artifact, url)
                 : html`<div class="artifact-fallback">${artifact.purpose}</div>`}
