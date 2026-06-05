@@ -153,7 +153,7 @@ test('validates runtime capability declarations in runner action manifests', () 
         status: 'supported',
         provider: 'capture-helper',
         platforms: ['macos'],
-        modes: ['full_run', 'proof_window'],
+        modes: ['full_run'],
         artifactTypes: ['video/mp4'],
       },
     ],
