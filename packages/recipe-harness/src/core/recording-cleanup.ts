@@ -21,8 +21,15 @@ export async function cleanupAbortedRunVideoRecording(
     // Preserve the original run error while still surfacing cleanup failure evidence.
     logger.error(`record.video cleanup failed after run abort: ${cleanupErrorMessage(error)}`);
   }
+  await removePartialRunVideoOutput(runRecording.outputPath, logger);
+}
+
+export async function removePartialRunVideoOutput(
+  outputPath: string,
+  logger: RecipeLogger,
+): Promise<void> {
   try {
-    await rm(runRecording.outputPath, { force: true });
+    await rm(outputPath, { force: true });
   } catch (error) {
     // Preserve the original run error while still surfacing cleanup failure evidence.
     logger.error(

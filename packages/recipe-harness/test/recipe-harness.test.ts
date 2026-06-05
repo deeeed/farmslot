@@ -315,6 +315,57 @@ test('record-video doctor failure writes a failed artifact package', async () =>
   }
 });
 
+test('record-video stop failure removes partial MP4 and writes a failed artifact package', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'ready' };
+      },
+      async start(request) {
+        return {
+          async stop() {
+            await writeFile(request.outputPath, 'partial mp4');
+            throw new Error('stop failed after partial write');
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'pid', pid: 123 };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: createSmokeRecipe(),
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'fail');
+    const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
+    assert.equal(files.includes('videos/recipe-run.mp4'), false);
+
+    const trace = await readJsonFile(result.tracePath);
+    const videoFailure = (trace as Array<{ nodeId: string; error?: string }>).find(
+      (entry) => entry.nodeId === 'recipe-run:video',
+    );
+    assert.match(videoFailure?.error ?? '', /stop failed after partial write/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('aborted video cleanup removes partial MP4 written during recorder stop', async () => {
   const tempRoot = await createTempRoot();
   try {

@@ -25,7 +25,10 @@ import {
 import { buildHudNode } from './hud.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import { evaluateNodeGate } from './predicates.js';
-import { cleanupAbortedRunVideoRecording } from './recording-cleanup.js';
+import {
+  cleanupAbortedRunVideoRecording,
+  removePartialRunVideoOutput,
+} from './recording-cleanup.js';
 import { recordSyntheticFailure, traceNodeMetadata } from './trace.js';
 import type {
   ActionAdapter,
@@ -427,6 +430,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           artifactWriter.register(videoArtifact);
         } catch (error) {
           const message = errorMessage(error);
+          await removePartialRunVideoOutput(recordingToStop.outputPath, this.#logger);
           traceWriter.record({
             nodeId: 'recipe-run:video',
             action: 'record.video',
