@@ -53,7 +53,7 @@ export interface RecipeArtifactManifestEntry {
   category?: 'proof' | 'debug' | 'diagnostic' | 'system' | (string & {});
   proofTarget?: string;
   covers?: string[];
-  record?: 'full_run' | 'proof_window' | (string & {});
+  record?: 'full_run';
   recorder?: RecipeArtifactRecorderMetadata;
   maxFps?: number;
 }

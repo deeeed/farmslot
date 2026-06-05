@@ -201,14 +201,24 @@ export function validateArtifactManifestDocument(
       }
     }
 
-    if (artifact.record != null && typeof artifact.record !== 'string') {
-      addFinding(
-        ctx,
-        'error',
-        'artifact_manifest.invalid_record',
-        `${path}.record`,
-        'record must be a string when present.',
-      );
+    if (artifact.record != null) {
+      if (typeof artifact.record !== 'string') {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_manifest.invalid_record',
+          `${path}.record`,
+          'record must be a string when present.',
+        );
+      } else if (artifact.record !== 'full_run') {
+        addFinding(
+          ctx,
+          'error',
+          'artifact_manifest.invalid_record',
+          `${path}.record`,
+          'record must be full_run when present; focused proof-window recording is reserved.',
+        );
+      }
     }
 
     if (

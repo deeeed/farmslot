@@ -104,6 +104,29 @@ test('validates video artifact recording metadata', () => {
       (finding) => finding.code === 'artifact_manifest.invalid_recorder_target_field',
     ),
   );
+
+  const proofWindowResult = validateArtifactManifestDocument({
+    version: 1,
+    artifacts: [
+      {
+        path: 'videos/proof-window.mp4',
+        type: 'video',
+        record: 'proof_window',
+      },
+      {
+        path: 'videos/proof-window-dash.mp4',
+        type: 'video',
+        record: 'proof-window',
+      },
+    ],
+  });
+  assert.equal(proofWindowResult.status, 'invalid');
+  assert.equal(
+    proofWindowResult.findings.filter(
+      (finding) => finding.code === 'artifact_manifest.invalid_record',
+    ).length,
+    2,
+  );
 });
 
 test('validates portable backend and UI v1 example recipes', async () => {
