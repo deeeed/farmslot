@@ -37,6 +37,14 @@ test('resolveCurrentSlot resolves relative repos against the farmslot root', () 
   assert.equal(resolveCurrentSlot(outside, root), null);
 });
 
+test('resolveCurrentSlot surfaces invalid pool JSON', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-root-invalid-'));
+  mkdirSync(path.join(root, 'pool'), { recursive: true });
+  writeFileSync(path.join(root, 'pool', 'broken.json'), '{');
+
+  assert.throws(() => resolveCurrentSlot(root, root), /Invalid pool config .*broken\.json/);
+});
+
 test('resolveSlotId keeps an explicit slot id', () => {
   assert.equal(resolveSlotId('runner-a-2'), 'runner-a-2');
 });

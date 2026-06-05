@@ -37,21 +37,29 @@ function isPathInside(parent: string, child: string): boolean {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+function normalizeLocalName(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\.local$/u, '') : '';
+}
+
 function isLocalPool(pool: PoolConfig): boolean {
-  const hostname = os.hostname();
+  const hostname = normalizeLocalName(os.hostname());
+  const host = normalizeLocalName(pool.host);
+  const machine = normalizeLocalName(pool.machine);
   return (
     pool.host === 'localhost' ||
     pool.host === '127.0.0.1' ||
-    pool.host === `${hostname}.local` ||
-    pool.machine === hostname
+    host === hostname ||
+    machine === hostname
   );
 }
 
-function readPoolConfig(poolFile: string): PoolConfig | null {
+function readPoolConfig(poolFile: string): PoolConfig {
   try {
     return JSON.parse(readFileSync(poolFile, 'utf8')) as PoolConfig;
-  } catch {
-    return null;
+  } catch (err) {
+    throw new Error(
+      `Invalid pool config ${poolFile}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -69,7 +77,7 @@ export function resolveCurrentSlot(
     if (!fileName.endsWith('.json')) continue;
     const poolFile = path.join(poolDir, fileName);
     const pool = readPoolConfig(poolFile);
-    if (!pool || !Array.isArray(pool.slots)) continue;
+    if (!Array.isArray(pool.slots)) continue;
 
     for (const rawSlot of pool.slots) {
       const slot = rawSlot as PoolSlot;

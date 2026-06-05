@@ -79,7 +79,7 @@ export function registerNodeCommand(program: Command): void {
         if (output.json) {
           output.writeJson(result);
         } else {
-          output.write(formatNodeStatus(result));
+          output.write(`${formatNodeStatus(result)}\n`);
         }
       } catch (err) {
         output.error(err instanceof Error ? err.message : String(err));
@@ -103,7 +103,7 @@ export function registerNodeCommand(program: Command): void {
         } else {
           output.write(result.output);
           if (result.success) {
-            output.write(`\n${green('✓')} Node deployed to ${machine}`);
+            output.write(`\n${green('✓')} Node deployed to ${machine}\n`);
           } else {
             output.error(`Node deploy to ${machine} failed`);
             process.exit(1);
