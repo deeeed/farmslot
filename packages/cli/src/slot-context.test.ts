@@ -37,6 +37,19 @@ test('resolveCurrentSlot resolves relative repos against the farmslot root', () 
   assert.equal(resolveCurrentSlot(outside, root), null);
 });
 
+test('resolveCurrentSlot prefers the deepest matching repo path', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-root-overlap-'));
+  const nested = path.join(root, 'worktrees', 'nested-slot');
+  const child = path.join(nested, 'src');
+  mkdirSync(child, { recursive: true });
+  writePool(root, [
+    { id: 'broad-root-slot', repo: '.' },
+    { id: 'nested-slot', repo: nested },
+  ]);
+
+  assert.equal(resolveCurrentSlot(child, root)?.slotId, 'nested-slot');
+});
+
 test('resolveCurrentSlot surfaces invalid pool JSON', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-root-invalid-'));
   mkdirSync(path.join(root, 'pool'), { recursive: true });

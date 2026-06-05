@@ -91,8 +91,11 @@ export function resolveCurrentSlot(
     }
   }
 
-  const localMatch = matches.find((match) => match.local);
-  const match = localMatch ?? matches[0];
+  matches.sort((a, b) => b.repo.length - a.repo.length);
+  const deepestRepoLength = matches[0]?.repo.length;
+  const deepestMatches = matches.filter((match) => match.repo.length === deepestRepoLength);
+  const localMatch = deepestMatches.find((match) => match.local);
+  const match = localMatch ?? deepestMatches[0];
   if (!match) return null;
   return { slotId: match.slotId, repo: match.repo, poolFile: match.poolFile };
 }
