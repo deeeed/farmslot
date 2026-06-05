@@ -2,16 +2,17 @@ import type { Command } from 'commander';
 
 import type { NodeDeployResult, NodesListResult } from '@farmslot/protocol';
 
+import { bold, dim, green, red, yellow } from '../colors.js';
 import { resolveContext } from '../context.js';
 import { withProgress } from '../progress.js';
 
 function formatNodeStatus(result: NodesListResult): string {
   const lines: string[] = [];
-  lines.push(`Gateway protocol: ${result.gatewayProtocolVersion}`);
+  lines.push(`${dim('Gateway protocol:')} ${result.gatewayProtocolVersion}`);
   lines.push('');
 
   if (result.nodes.length === 0) {
-    lines.push('No nodes connected.');
+    lines.push(dim('No nodes connected.'));
     return lines.join('\n');
   }
 
@@ -33,13 +34,20 @@ function formatNodeStatus(result: NodesListResult): string {
   // Calculate column widths
   const widths = cols.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
   const header = cols.map((h, i) => h.padEnd(widths[i])).join('  ');
-  lines.push(header);
-  lines.push(widths.map((w) => '─'.repeat(w)).join('  '));
+  lines.push(bold(header));
+  lines.push(dim(widths.map((w) => '─'.repeat(w)).join('  ')));
 
   for (const row of rows) {
     const mismatch = row[3].includes('MISMATCH');
-    const line = row.map((c, i) => c.padEnd(widths[i])).join('  ');
-    lines.push(mismatch ? `\x1b[33m${line}\x1b[0m` : line);
+    const colored = row.map((c, i) => {
+      const padded = c.padEnd(widths[i]);
+      if (i === 3 && c === '✓') return green(padded);
+      if (i === 3 && mismatch) return yellow(padded);
+      if (i === 4) return dim(padded);
+      return padded;
+    });
+    const line = colored.join('  ');
+    lines.push(mismatch ? red(line) : line);
   }
 
   return lines.join('\n');
@@ -95,7 +103,7 @@ export function registerNodeCommand(program: Command): void {
         } else {
           output.write(result.output);
           if (result.success) {
-            output.write(`\n✓ Node deployed to ${machine}`);
+            output.write(`\n${green('✓')} Node deployed to ${machine}`);
           } else {
             output.error(`Node deploy to ${machine} failed`);
             process.exit(1);

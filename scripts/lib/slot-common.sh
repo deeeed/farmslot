@@ -619,6 +619,45 @@ apply_project_command_env_current_shell() {
   [ -n "$_prefix" ] && eval "$_prefix"
 }
 
+# ── expand_slot_template <text> ─────────────────────────────────────
+# Substitutes slot resource placeholders in hook strings and fixture paths.
+expand_slot_template() {
+  local text="${1:-}"
+  text="${text//\{\{port\}\}/${PORT:-}}"
+  text="${text//\{\{PORT\}\}/${PORT:-}}"
+  text="${text//\{\{simulator\}\}/${SIMULATOR:-}}"
+  text="${text//\{\{SIMULATOR\}\}/${SIMULATOR:-}}"
+  text="${text//\{\{avd\}\}/${AVD:-}}"
+  text="${text//\{\{AVD\}\}/${AVD:-}}"
+  text="${text//\{\{adb_serial\}\}/${ADB_SERIAL:-}}"
+  text="${text//\{\{ADB_SERIAL\}\}/${ADB_SERIAL:-}}"
+  text="${text//\{\{cdp_port\}\}/${CDP_PORT:-}}"
+  text="${text//\{\{CDP_PORT\}\}/${CDP_PORT:-}}"
+  text="${text//\{\{headless\}\}/${HEADLESS:-}}"
+  text="${text//\{\{HEADLESS\}\}/${HEADLESS:-}}"
+  text="${text//\{\{snapshot\}\}/${SNAPSHOT:-}}"
+  text="${text//\{\{SNAPSHOT\}\}/${SNAPSHOT:-}}"
+  text="${text//\{\{app\}\}/${APP:-}}"
+  text="${text//\{\{APP\}\}/${APP:-}}"
+  text="${text//\{\{platform\}\}/${PLATFORM:-}}"
+  text="${text//\{\{PLATFORM\}\}/${PLATFORM:-}}"
+  text="${text//\{\{slot_id\}\}/${SLOT_ID:-}}"
+  text="${text//\{\{SLOT_ID\}\}/${SLOT_ID:-}}"
+  text="${text//\{\{runtime_dir\}\}/${RUNTIME_DIR:-.agent}}"
+  text="${text//\{\{RUNTIME_DIR\}\}/${RUNTIME_DIR:-.agent}}"
+  text="${text//\{\{artifact_dir\}\}/${ARTIFACT_DIR:-.task}}"
+  text="${text//\{\{ARTIFACT_DIR\}\}/${ARTIFACT_DIR:-.task}}"
+  text="${text//\{\{recipe_dir\}\}/${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}}"
+  text="${text//\{\{RECIPE_DIR\}\}/${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}}"
+  text="${text//\{\{farmslot_dir\}\}/${FARMSLOT_DIR:-}}"
+  text="${text//\{\{FARMSLOT_DIR\}\}/${FARMSLOT_DIR:-}}"
+  text="${text//\{\{repo\}\}/${REMOTE_REPO:-${REPO:-}}}"
+  text="${text//\{\{REPO\}\}/${REMOTE_REPO:-${REPO:-}}}"
+  text="${text//\{\{mobile_repo\}\}/${MOBILE_REPO:-}}"
+  text="${text//\{\{MOBILE_REPO\}\}/${MOBILE_REPO:-}}"
+  printf '%s\n' "$text"
+}
+
 # ── expand_hook <hook-name> ──────────────────────────────────────────
 # Reads hooks.<name> from project.json, substitutes slot variables.
 # Returns empty string if hook not defined.
@@ -633,25 +672,7 @@ print(d.get('hooks', {}).get('${hook_name}', ''))
 ")
   [ -z "$cmd" ] && return 0
 
-  # Dynamic resource var substitution (lowercase placeholders)
-  cmd="${cmd//\{\{port\}\}/${PORT:-}}"
-  cmd="${cmd//\{\{simulator\}\}/${SIMULATOR:-}}"
-  cmd="${cmd//\{\{avd\}\}/${AVD:-}}"
-  cmd="${cmd//\{\{adb_serial\}\}/${ADB_SERIAL:-}}"
-  cmd="${cmd//\{\{cdp_port\}\}/${CDP_PORT:-}}"
-  cmd="${cmd//\{\{headless\}\}/${HEADLESS:-}}"
-  cmd="${cmd//\{\{snapshot\}\}/${SNAPSHOT:-}}"
-  cmd="${cmd//\{\{app\}\}/${APP:-}}"
-  # Auto-injected
-  cmd="${cmd//\{\{platform\}\}/$PLATFORM}"
-  cmd="${cmd//\{\{slot_id\}\}/${SLOT_ID:-}}"
-  cmd="${cmd//\{\{runtime_dir\}\}/${RUNTIME_DIR:-.agent}}"
-  cmd="${cmd//\{\{artifact_dir\}\}/${ARTIFACT_DIR:-.task}}"
-  cmd="${cmd//\{\{recipe_dir\}\}/${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}}"
-  cmd="${cmd//\{\{farmslot_dir\}\}/$FARMSLOT_DIR}"
-  cmd="${cmd//\{\{repo\}\}/${REMOTE_REPO:-$REPO}}"
-  cmd="${cmd//\{\{REPO\}\}/${REMOTE_REPO:-$REPO}}"
-  cmd="${cmd//\{\{mobile_repo\}\}/${MOBILE_REPO:-}}"
+  cmd=$(expand_slot_template "$cmd")
   echo "$cmd"
 }
 
@@ -669,25 +690,7 @@ print(v if v else '')
 ")
   [ -z "$cmd" ] && return 0
 
-  # Dynamic resource var substitution (lowercase placeholders)
-  cmd="${cmd//\{\{port\}\}/${PORT:-}}"
-  cmd="${cmd//\{\{simulator\}\}/${SIMULATOR:-}}"
-  cmd="${cmd//\{\{avd\}\}/${AVD:-}}"
-  cmd="${cmd//\{\{adb_serial\}\}/${ADB_SERIAL:-}}"
-  cmd="${cmd//\{\{cdp_port\}\}/${CDP_PORT:-}}"
-  cmd="${cmd//\{\{headless\}\}/${HEADLESS:-}}"
-  cmd="${cmd//\{\{snapshot\}\}/${SNAPSHOT:-}}"
-  cmd="${cmd//\{\{app\}\}/${APP:-}}"
-  # Auto-injected
-  cmd="${cmd//\{\{platform\}\}/$PLATFORM}"
-  cmd="${cmd//\{\{slot_id\}\}/${SLOT_ID:-}}"
-  cmd="${cmd//\{\{runtime_dir\}\}/${RUNTIME_DIR:-.agent}}"
-  cmd="${cmd//\{\{artifact_dir\}\}/${ARTIFACT_DIR:-.task}}"
-  cmd="${cmd//\{\{recipe_dir\}\}/${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}}"
-  cmd="${cmd//\{\{farmslot_dir\}\}/$FARMSLOT_DIR}"
-  cmd="${cmd//\{\{repo\}\}/${REMOTE_REPO:-$REPO}}"
-  cmd="${cmd//\{\{REPO\}\}/${REMOTE_REPO:-$REPO}}"
-  cmd="${cmd//\{\{mobile_repo\}\}/${MOBILE_REPO:-}}"
+  cmd=$(expand_slot_template "$cmd")
   echo "$cmd"
 }
 

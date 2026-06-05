@@ -18,7 +18,8 @@ It does **not** own Gateway behavior, protocol definitions, recipe execution sem
 ## Command groups
 
 - `farmslot fleet ...` — fleet status and refresh.
-- `farmslot slot ...` — slot checks, prepare, recycle, release.
+- `farmslot gateway status` — Gateway health and connected-node summary.
+- `farmslot slot ...` — slot checks, prepare/release/recycle, fixture refresh, light refresh, editor open, and project slot actions. Slot IDs are optional for slot-repo cwd commands.
 - `farmslot dispatch ...` — dispatch preview helpers.
 - `farmslot run create ...` — create supervised runs from Jira/GitHub refs or existing task files.
 - `farmslot pr ...` — PR status/list views.

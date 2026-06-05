@@ -4,6 +4,7 @@ import { registerCompletionCommand } from './commands/completion.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerDispatchCommand } from './commands/dispatch.js';
 import { registerFleetCommand } from './commands/fleet.js';
+import { registerGatewayCommand } from './commands/gateway.js';
 import { registerNodeCommand } from './commands/node.js';
 import { registerPRCommand } from './commands/pr.js';
 import { registerRecipeCommand } from './commands/recipe.js';
@@ -22,6 +23,7 @@ program
   .option('--json', 'Output raw JSON');
 
 registerFleetCommand(program);
+registerGatewayCommand(program);
 registerSlotCommand(program);
 registerDispatchCommand(program);
 registerPRCommand(program);

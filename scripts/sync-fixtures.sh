@@ -149,6 +149,7 @@ if [ -n "${SLOT_ID}" ]; then
   for i in $(seq 0 $((TEMPLATE_COUNT - 1))); do
     TPL_SRC=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['templates'][$i].get('src',''))")
     TPL_DST=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['templates'][$i]['dst'])")
+    TPL_DST=$(expand_slot_template "$TPL_DST")
 
     # Check for compose config
     COMPOSE_VAR=$(echo "$PROJECT_JSON" | python3 -c "
@@ -260,12 +261,7 @@ else:
   for i in $(seq 0 $((DIR_COUNT - 1))); do
     DIR_SRC=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['directories'][$i]['src'])")
     DIR_DST=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['directories'][$i]['dst'])")
-    DIR_DST="${DIR_DST//\{\{runtime_dir\}\}/${RUNTIME_DIR:-.agent}}"
-    DIR_DST="${DIR_DST//\{\{RUNTIME_DIR\}\}/${RUNTIME_DIR:-.agent}}"
-    DIR_DST="${DIR_DST//\{\{artifact_dir\}\}/${ARTIFACT_DIR:-.task}}"
-    DIR_DST="${DIR_DST//\{\{ARTIFACT_DIR\}\}/${ARTIFACT_DIR:-.task}}"
-    DIR_DST="${DIR_DST//\{\{recipe_dir\}\}/${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}}"
-    DIR_DST="${DIR_DST//\{\{RECIPE_DIR\}\}/${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}}"
+    DIR_DST=$(expand_slot_template "$DIR_DST")
 
     LOCAL_DIR="${PROJECT_FIXTURES_DIR}/${DIR_SRC}"
     if [ ! -d "$LOCAL_DIR" ]; then

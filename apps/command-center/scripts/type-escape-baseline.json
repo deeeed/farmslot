@@ -62,14 +62,6 @@
       "count": 1
     },
     {
-      "key": "packages/cli/src/commands/slot.ts:as-any:as any",
-      "count": 1
-    },
-    {
-      "key": "packages/cli/src/commands/slot.ts:type-any:: any",
-      "count": 4
-    },
-    {
       "key": "packages/cli/src/gateway-client.ts:type-any:: any",
       "count": 1
     },
