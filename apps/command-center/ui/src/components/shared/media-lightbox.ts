@@ -612,6 +612,7 @@ export class MediaLightbox extends MediaLightboxState {
                             this._syncVideoState(event.currentTarget as HTMLVideoElement)}
                           @seeked=${(event: Event) =>
                             this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                          @ended=${() => this._pauseVideoPlayback()}
                           @error=${() => this._markBroken(selectedIdx)}
                         ></video>
                         ${this._renderVideoControls(false)}

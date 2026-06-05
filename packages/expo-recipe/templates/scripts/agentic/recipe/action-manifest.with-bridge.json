@@ -27,8 +27,9 @@
   "capabilities": [
     {
       "capability": "record.video",
-      "status": "supported",
+      "status": "partial",
       "provider": "capture-helper",
+      "reason": "Supported on macOS when capture-helper is installed; node health reports runtime availability per machine.",
       "platforms": ["macos"],
       "modes": ["full_run"],
       "artifactTypes": ["video/mp4"]
