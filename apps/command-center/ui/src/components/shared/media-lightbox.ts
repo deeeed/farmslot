@@ -26,8 +26,10 @@ import {
 import { MD_CACHE_LIMIT, MediaLightboxState } from './media-lightbox-state.js';
 import { mediaLightboxStyles } from './media-lightbox-styles.js';
 import type { LightboxItem, LightboxPair } from './media-lightbox-types.js';
-
-const DEFAULT_VIDEO_FRAME_RATE = 30;
+import {
+  mediaLightboxFrameRateForSelection,
+  mediaLightboxFrameStepSeconds,
+} from './media-lightbox-video-model.js';
 
 @customElement('media-lightbox')
 export class MediaLightbox extends MediaLightboxState {
@@ -323,15 +325,16 @@ export class MediaLightbox extends MediaLightboxState {
       this.mode === 'compare'
         ? (this.pairs[this.pairIndex]?.after ?? this.pairs[this.pairIndex]?.before)
         : this.items[this.selectedIndex];
-    const frameRate = item?.frameRate;
-    return typeof frameRate === 'number' && Number.isFinite(frameRate) && frameRate > 0
-      ? frameRate
-      : DEFAULT_VIDEO_FRAME_RATE;
+    return mediaLightboxFrameRateForSelection({
+      mode: this.mode,
+      item: this.mode === 'single' ? item : undefined,
+      pair: this.mode === 'compare' ? this.pairs[this.pairIndex] : undefined,
+    });
   }
 
   private _stepVideo(frames: -1 | 1): void {
     for (const candidate of this._videoSet()) candidate.pause();
-    this._seekVideo(frames / this._activeVideoFrameRate());
+    this._seekVideo(mediaLightboxFrameStepSeconds(frames, this._activeVideoFrameRate()));
   }
 
   private _scrubVideo(value: string): void {

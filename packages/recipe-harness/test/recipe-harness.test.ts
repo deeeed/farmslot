@@ -361,9 +361,7 @@ test('capture-helper recorder stop times out when the helper ignores SIGINT', as
     await writeFile(
       helperPath,
       `#!/usr/bin/env node
-process.on('SIGINT', () => {
-  setTimeout(() => process.exit(0), 1000);
-});
+process.on('SIGINT', () => {});
 setInterval(() => {}, 1000);
 `,
     );
@@ -380,6 +378,7 @@ setInterval(() => {}, 1000);
       record: 'full_run',
     });
 
+    await new Promise((resolve) => setTimeout(resolve, 500));
     await assert.rejects(() => active.stop(), /did not stop within 50ms after SIGINT/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
