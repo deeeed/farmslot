@@ -233,7 +233,7 @@ function targetArgs(target: RecordingTarget): string[] {
   return ['--app-name', target.appName, '--window-name', target.windowName];
 }
 
-function manifestTarget(target: RecordingTarget): RecipeArtifactRecorderTarget {
+export function manifestTarget(target: RecordingTarget): RecipeArtifactRecorderTarget {
   if (target.kind === 'pid') return { selector: 'pid', value: String(target.pid) };
   if (target.kind === 'app-window') {
     return { selector: 'app-window', value: `${target.appName}:${target.windowName}` };
@@ -245,6 +245,6 @@ function formatExit(code: number | null, signal: NodeJS.Signals | null): string 
   return signal ? `signal ${signal}` : `exit ${code ?? 'unknown'}`;
 }
 
-function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

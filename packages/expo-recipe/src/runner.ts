@@ -16,6 +16,7 @@ import { resolveRecipeCliPath, validateRecipeCliInput } from '@farmslot/recipe-h
 
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { readJsonFile } from './json.js';
+import { positiveInteger } from './positive-integer.js';
 import { createRedactingCoreAdapters } from './redaction.js';
 
 export interface ExpoRecipeRunOptions {
@@ -107,14 +108,6 @@ export function resolveExpoRecordingTarget(
   const appName = env.FARMSLOT_RECORD_APP_NAME ?? 'Simulator';
   const windowName = env.FARMSLOT_RECORD_WINDOW_NAME ?? 'Simulator';
   return { kind: 'app-window', appName, windowName };
-}
-
-function positiveInteger(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`Expected a positive integer, got ${JSON.stringify(value)}.`);
-  }
-  return parsed;
 }
 
 function dryRunUiTransport(isDryRun: boolean): UiActionTransport {

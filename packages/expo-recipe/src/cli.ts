@@ -5,6 +5,7 @@ import type { RecipeVideoRecordingOptions, RecordingTarget } from '@farmslot/rec
 
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { printDoctorResult, runExpoRecipeDoctor } from './doctor.js';
+import { positiveInteger } from './positive-integer.js';
 import {
   type ExpoRecipeRunOptions,
   runExpoRecipeDocument,
@@ -169,14 +170,6 @@ function parseRecordingTarget(options: ParsedCliOptions): RecordingTarget | unde
     };
   }
   return undefined;
-}
-
-function positiveInteger(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`Expected a positive integer, got ${JSON.stringify(value)}.`);
-  }
-  return parsed;
 }
 
 function requiredValue(args: string[], index: number, option: string): string {

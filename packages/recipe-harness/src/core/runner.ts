@@ -1,16 +1,19 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   getRecipeActionManifestActionNames,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
-  type RecipeArtifactRecorderTarget,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 
 import { JsonArtifactWriter, JsonSummaryWriter, JsonTraceWriter } from '../node/writers.js';
-import { createCaptureHelperVideoRecorder } from '../recording/capture-helper.js';
+import {
+  createCaptureHelperVideoRecorder,
+  errorMessage,
+  manifestTarget,
+} from '../recording/capture-helper.js';
 
 import { collectFlows, executeInlineFlowCall } from './flows.js';
 import {
@@ -700,8 +703,6 @@ class DefaultRecipeRunner implements RecipeRunner {
     outputPath: string;
   }): Promise<RecipeArtifactManifestEntry> {
     const result = await runRecording.recording.stop();
-    const stats = await stat(runRecording.outputPath);
-    if (stats.size <= 0) throw new Error(`Recording output is empty: ${runRecording.outputPath}`);
     return result.recorder
       ? {
           ...runRecording.entry,
@@ -847,18 +848,4 @@ function normalizeVideoRecordingMode(mode: unknown): { mode: 'off' | 'full-run' 
     );
   }
   throw new Error(`recordVideo mode must be full-run or off, got ${JSON.stringify(mode)}.`);
-}
-
-function manifestTarget(
-  target: NonNullable<RecipeVideoRecordingOptions['target']>,
-): RecipeArtifactRecorderTarget {
-  if (target.kind === 'pid') return { selector: 'pid', value: String(target.pid) };
-  if (target.kind === 'app-window') {
-    return { selector: 'app-window', value: `${target.appName}:${target.windowName}` };
-  }
-  return { selector: 'window-id', value: target.windowId };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
