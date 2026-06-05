@@ -309,6 +309,12 @@ export class MediaLightbox extends MediaLightboxState {
     this._syncVideoState(video);
   }
 
+  private _pauseVideoPlayback(): void {
+    const video = this._primaryVideo();
+    for (const candidate of this._videoSet()) candidate.pause();
+    this._syncVideoState(video);
+  }
+
   private _seekVideo(deltaSeconds: number): void {
     const video = this._primaryVideo();
     if (!video) return;
@@ -1040,11 +1046,28 @@ export class MediaLightbox extends MediaLightboxState {
               this._syncVideoState(event.currentTarget as HTMLVideoElement)}
             @seeked=${(event: Event) =>
               this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @ended=${() => this._pauseVideoPlayback()}
           ></video>
         </div>
         <div class="ml-cmp-video-cell">
           <div class="ml-cmp-label ml-cmp-label-static">AFTER</div>
-          <video class="ml-cmp-video b" src=${pair.after.url} preload="metadata"></video>
+          <video
+            class="ml-cmp-video b"
+            src=${pair.after.url}
+            preload="metadata"
+            @loadedmetadata=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @timeupdate=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @play=${(event: Event) => this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @pause=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @ratechange=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @seeked=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @ended=${() => this._pauseVideoPlayback()}
+          ></video>
         </div>
       </div>
       ${this._renderVideoControls(true)}
