@@ -19,10 +19,12 @@
   "dependencies": {
     "@farmslot/protocol": "workspace:*",
     "@farmslot/recipe-harness": "workspace:*",
-    "commander": "^12.0.0"
+    "commander": "^12.0.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
     "eslint": "^10.3.0",
     "prettier": "^3.8.3",
     "tsx": "^4.19.0",

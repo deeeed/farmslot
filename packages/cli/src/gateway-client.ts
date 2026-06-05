@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { WebSocket as NodeWebSocket } from 'ws';
+
 import type { EventFrame } from '@farmslot/protocol';
 
 export interface GatewayClientOpts {
@@ -37,7 +39,8 @@ export class GatewayClient {
     const reqId = `cli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
     return new Promise<T>((resolve, reject) => {
-      const ws = new WebSocket(this.url);
+      const WebSocketCtor = globalThis.WebSocket ?? NodeWebSocket;
+      const ws = new WebSocketCtor(this.url);
       let done = false;
       let timer: ReturnType<typeof setTimeout>;
 
@@ -180,7 +183,7 @@ function findGatewayEnvFiles(): string[] {
   // Source path: <repo>/packages/cli/src/gateway-client.ts.
   // Built path, if introduced later: <repo>/packages/cli/dist/…
   const sourceDir = dirname(fileURLToPath(import.meta.url));
-  roots.add(resolve(sourceDir, '../../../..'));
+  roots.add(resolve(sourceDir, '../../..'));
 
   const files: string[] = [];
   for (const root of roots) {
