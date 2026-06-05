@@ -295,7 +295,7 @@ Respond with ONLY a JSON object (no markdown, no code fences):
 }
 
 Guidelines:
-- "full-qa": PR touches UI components, styles, layouts, or user-visible behavior. Run the full QA session — screenshots + video for every acceptance criterion.
+- "full-qa": PR touches UI components, styles, layouts, or user-visible behavior. Run the full QA session — screenshots plus opt-in video when motion proof helps.
 - "smoke": PR is purely backend, config, tests, or non-visual. Run the backend smoke regression only; no UI evidence.
 - "targeted": PR has mixed changes — smoke regression plus targeted screenshots for the UI-impacting parts only.
 - When in doubt, prefer "full-qa" (safer).`;

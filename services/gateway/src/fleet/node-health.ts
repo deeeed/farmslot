@@ -3,7 +3,12 @@
 import { execSync } from 'node:child_process';
 import os from 'node:os';
 
-import type { Headroom, MachineHealth, NodeSystemMetrics } from '@farmslot/protocol';
+import type {
+  Headroom,
+  MachineHealth,
+  NodeSystemMetrics,
+  RecipeRuntimeCapabilityDeclaration,
+} from '@farmslot/protocol';
 
 import { getCachedFleet } from './state.js';
 
@@ -27,6 +32,7 @@ export function updateMachineMetrics(machine: string, metrics: NodeSystemMetrics
   healthMap.set(machine, {
     machine,
     online: true,
+    ...(existing?.capabilities ? { capabilities: existing.capabilities } : {}),
     system: metrics,
     capacity,
     headroom: computeHeadroom(metrics.cpuPercent, metrics.memoryPercent, metrics.diskPercent),
@@ -47,10 +53,21 @@ export function markMachineOffline(machine: string): void {
 
 // ─── Mark machine online (agent connected) ───
 
-export function markMachineOnline(machine: string): void {
+export function markMachineOnline(
+  machine: string,
+  capabilities?: RecipeRuntimeCapabilityDeclaration[],
+): void {
   const existing = healthMap.get(machine);
   if (existing) {
     existing.online = true;
+    if (capabilities) existing.capabilities = capabilities;
+  } else {
+    healthMap.set(machine, {
+      machine,
+      online: true,
+      ...(capabilities ? { capabilities } : {}),
+      headroom: 'green',
+    });
   }
 }
 

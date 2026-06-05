@@ -84,6 +84,7 @@ export async function operatorSnapshot(): Promise<OperatorSnapshotResult> {
             loadAvg1: m.system.loadAvg1,
           }
         : {}),
+      ...(m.capabilities ? { capabilities: m.capabilities } : {}),
     })),
     activeRuns: activeRuns.map((run) => ({
       id: run.id,

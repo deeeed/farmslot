@@ -1,3 +1,5 @@
+import type { RecipeRuntimeCapabilityDeclaration } from '../recipe/common.js';
+
 import type { AgentContextSummary, SlotAgent } from './agents.js';
 import type { ResourceRollup } from './resources.js';
 import type { RunLane } from './runs.js';
@@ -129,6 +131,7 @@ export interface NodeSystemMetrics {
 export interface MachineHealth {
   machine: string;
   online: boolean;
+  capabilities?: RecipeRuntimeCapabilityDeclaration[];
   system?: NodeSystemMetrics;
   capacity?: { maxSlots: number; activeSlots: number; cpuCores: number };
   headroom: Headroom;

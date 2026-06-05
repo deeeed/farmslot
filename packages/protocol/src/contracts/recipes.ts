@@ -5,7 +5,7 @@ export type EvidenceQualityVerdict = 'RELEVANT_HIGH' | 'RELEVANT_LOW' | 'IRRELEV
 /** Evidence strategy the worker uses for a review-pr run.
  * - `smoke`: backend smoke regression only (no UI evidence).
  * - `targeted`: smoke + screenshots for changed UI surfaces.
- * - `full-qa`: screenshots + video for every acceptance criterion. */
+ * - `full-qa`: screenshots plus opt-in video when motion proof is useful. */
 export type RecipeStrategyToken = 'full-qa' | 'smoke' | 'targeted';
 
 export interface RecipeStrategyDecision {
@@ -20,7 +20,7 @@ export const RECIPE_STRATEGY_LABELS: Record<
   RecipeStrategyToken,
   { label: string; tagline: string }
 > = {
-  'full-qa': { label: 'Full QA', tagline: 'screenshots + video per acceptance criterion' },
+  'full-qa': { label: 'Full QA', tagline: 'screenshots + opt-in motion video' },
   targeted: { label: 'Targeted evidence', tagline: 'smoke + screenshots for changed UI' },
   smoke: { label: 'Smoke only', tagline: 'backend regression test, no UI evidence' },
 };

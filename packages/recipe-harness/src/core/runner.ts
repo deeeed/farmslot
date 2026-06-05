@@ -671,14 +671,20 @@ class DefaultRecipeRunner implements RecipeRunner {
     const relativePath = 'videos/recipe-run.mp4';
     const outputPath = path.join(artifactsDir, relativePath);
     await mkdir(path.dirname(outputPath), { recursive: true });
-    const recording = await recorder.start({
-      outputPath,
-      target,
-      maxFps: videoOptions.maxFps,
-      maxSize: videoOptions.maxSize,
-      nodeId: 'recipe-run',
-      record: 'full_run',
-    });
+    let recording: ActiveVideoRecording;
+    try {
+      recording = await recorder.start({
+        outputPath,
+        target,
+        maxFps: videoOptions.maxFps,
+        maxSize: videoOptions.maxSize,
+        nodeId: 'recipe-run',
+        record: 'full_run',
+      });
+    } catch (error) {
+      await removePartialRunVideoOutput(outputPath, this.#logger);
+      throw error;
+    }
     const entry: RecipeArtifactManifestEntry = {
       path: relativePath,
       type: 'video',

@@ -190,6 +190,7 @@ export interface NodeConnectedPayload {
   pid: number;
   protocolVersion?: string;
   versionMatch?: boolean;
+  capabilities?: import('../recipe/common.js').RecipeRuntimeCapabilityDeclaration[];
 }
 
 export interface NodeDisconnectedPayload {

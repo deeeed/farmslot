@@ -30,7 +30,7 @@ const REVIEW_TIER_HELP: Record<ReviewTier, string> = {
   '': 'Auto — LLM picks evidence depth from the PR diff; you confirm at the gate.',
   light: 'Smoke only — backend regression test, no UI evidence.',
   standard: 'Targeted evidence — smoke + screenshots for changed UI surfaces.',
-  full: 'Full QA — screenshots + video for every acceptance criterion.',
+  full: 'Full QA — screenshots plus opt-in video when motion proof helps.',
 };
 
 export interface DispatchWizardPrimaryControlsRenderContext {

@@ -604,13 +604,14 @@ export async function routeMethod(
     // Nodes
     case 'node.connect': {
       requireNodeSession(authRuntime, state);
-      const { machine, pid, protocolVersion } = p as {
+      const { machine, pid, protocolVersion, capabilities } = p as {
         machine: string;
         pid: number;
         protocolVersion?: string;
+        capabilities?: import('@farmslot/protocol').RecipeRuntimeCapabilityDeclaration[];
       };
       registerNode(machine, pid, state.ws, protocolVersion, PROTOCOL_VERSION);
-      markMachineOnline(machine);
+      markMachineOnline(machine, capabilities);
       const versionMatch = protocolVersion === PROTOCOL_VERSION;
       if (protocolVersion && !versionMatch) {
         console.log(
@@ -628,7 +629,7 @@ export async function routeMethod(
       broadcast({
         type: 'event',
         event: Events.NODE_CONNECTED,
-        payload: { machine, pid, protocolVersion, versionMatch },
+        payload: { machine, pid, protocolVersion, versionMatch, capabilities },
         seq: nextEventSeq(),
       });
       // Refresh this machine's slot branches now that node exec is available.
