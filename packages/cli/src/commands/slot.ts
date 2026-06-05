@@ -343,6 +343,7 @@ export function registerSlotCommand(program: Command): void {
         } else {
           if (result.stdout) output.write(result.stdout);
           if (result.stderr) process.stderr.write(result.stderr);
+          if (result.command) output.write(`${result.command}\n`);
           output.write(`${result.ok ? 'Action complete' : 'Action failed'} for ${slotId}\n`);
           if (result.detail) output.write(`${result.detail}\n`);
           if (!result.ok) process.exit(1);
