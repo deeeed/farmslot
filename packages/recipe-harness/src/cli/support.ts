@@ -26,6 +26,14 @@ export function resolveRecipeCliPath(filePath: string, baseDir = recipeCliBaseDi
   return path.resolve(baseDir, filePath);
 }
 
+export function parsePositiveInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Expected a positive integer, got ${JSON.stringify(value)}.`);
+  }
+  return parsed;
+}
+
 export async function readRecipeCliJsonFile(
   filePath: string,
   baseDir = recipeCliBaseDir(),

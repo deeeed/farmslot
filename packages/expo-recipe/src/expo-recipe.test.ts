@@ -182,6 +182,10 @@ test('CLI rejects missing option values before treating the next flag as a path'
     /proof-window is reserved for future focused clips/u,
   );
   await assert.rejects(
+    () => runExpoRecipeCli(['run', '--record-video=proof_window']),
+    /proof-window is reserved for future focused clips/u,
+  );
+  await assert.rejects(
     () => runExpoRecipeCli(['run', '--record-video', '--record-pid', 'abc']),
     /Expected a positive integer/u,
   );

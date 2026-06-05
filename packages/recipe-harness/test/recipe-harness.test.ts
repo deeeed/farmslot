@@ -1327,6 +1327,20 @@ test('CLI rejects proof-window video mode until focused clips are implemented', 
         ]),
       /proof-window is reserved for future focused clips/,
     );
+    await assert.rejects(
+      () =>
+        runRecipeHarnessCli([
+          'run',
+          recipePath,
+          '--artifacts-dir',
+          path.join(tempRoot, 'artifacts'),
+          '--action-manifest',
+          manifestPath,
+          '--record-video',
+          'proof_window',
+        ]),
+      /proof-window is reserved for future focused clips/,
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

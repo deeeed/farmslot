@@ -9,7 +9,7 @@ import { createStandardCoreAdapters } from '../adapters/core.js';
 import { createRecipeRunner } from '../core/runner.js';
 import type { RecipeVideoRecordingOptions, RecordingTarget } from '../core/types.js';
 
-import { readRecipeCliJsonFile, resolveRecipeCliPath } from './support.js';
+import { parsePositiveInteger, readRecipeCliJsonFile, resolveRecipeCliPath } from './support.js';
 
 interface RunCommandOptions {
   artifactsDir: string;
@@ -74,7 +74,7 @@ function parseRecordVideoOptions(options: RunCommandOptions): false | RecipeVide
     typeof options.recordVideo === 'string' && options.recordVideo !== 'true'
       ? options.recordVideo
       : 'full-run';
-  if (mode === 'proof-window') {
+  if (mode === 'proof-window' || mode === 'proof_window') {
     throw new Error(
       '--record-video=proof-window is reserved for future focused clips; use --record-video=full-run for phase 1.',
     );
@@ -105,12 +105,4 @@ function parseRecordingTarget(options: RunCommandOptions): RecordingTarget | und
     };
   }
   return undefined;
-}
-
-function parsePositiveInteger(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`Expected a positive integer, got ${JSON.stringify(value)}.`);
-  }
-  return parsed;
 }

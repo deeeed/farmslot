@@ -289,6 +289,10 @@ export class MediaLightbox extends MediaLightboxState {
     this._videoRate = video.playbackRate || 1;
   }
 
+  private _syncPrimaryVideoState(): void {
+    this._syncVideoState(this._primaryVideo());
+  }
+
   private _toggleVideoPlayback(): void {
     const video = this._primaryVideo();
     if (!video) return;
@@ -1035,17 +1039,12 @@ export class MediaLightbox extends MediaLightboxState {
             class="ml-cmp-video a"
             src=${pair.before.url}
             preload="metadata"
-            @loadedmetadata=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @timeupdate=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @play=${(event: Event) => this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @pause=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @ratechange=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @seeked=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @loadedmetadata=${() => this._syncPrimaryVideoState()}
+            @timeupdate=${() => this._syncPrimaryVideoState()}
+            @play=${() => this._syncPrimaryVideoState()}
+            @pause=${() => this._syncPrimaryVideoState()}
+            @ratechange=${() => this._syncPrimaryVideoState()}
+            @seeked=${() => this._syncPrimaryVideoState()}
             @ended=${() => this._pauseVideoPlayback()}
           ></video>
         </div>
@@ -1055,17 +1054,12 @@ export class MediaLightbox extends MediaLightboxState {
             class="ml-cmp-video b"
             src=${pair.after.url}
             preload="metadata"
-            @loadedmetadata=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @timeupdate=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @play=${(event: Event) => this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @pause=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @ratechange=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
-            @seeked=${(event: Event) =>
-              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @loadedmetadata=${() => this._syncPrimaryVideoState()}
+            @timeupdate=${() => this._syncPrimaryVideoState()}
+            @play=${() => this._syncPrimaryVideoState()}
+            @pause=${() => this._syncPrimaryVideoState()}
+            @ratechange=${() => this._syncPrimaryVideoState()}
+            @seeked=${() => this._syncPrimaryVideoState()}
             @ended=${() => this._pauseVideoPlayback()}
           ></video>
         </div>

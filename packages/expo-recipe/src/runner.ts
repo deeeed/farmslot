@@ -12,11 +12,14 @@ import {
   type RecordingTargetProvider,
   type UiActionTransport,
 } from '@farmslot/recipe-harness';
-import { resolveRecipeCliPath, validateRecipeCliInput } from '@farmslot/recipe-harness/cli/support';
+import {
+  parsePositiveInteger,
+  resolveRecipeCliPath,
+  validateRecipeCliInput,
+} from '@farmslot/recipe-harness/cli/support';
 
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { readJsonFile } from './json.js';
-import { positiveInteger } from './positive-integer.js';
 import { createRedactingCoreAdapters } from './redaction.js';
 
 export interface ExpoRecipeRunOptions {
@@ -101,7 +104,7 @@ export function resolveExpoRecordingTarget(
   env: Record<string, string | undefined>,
 ): RecordingTarget {
   if (env.FARMSLOT_RECORD_PID)
-    return { kind: 'pid', pid: positiveInteger(env.FARMSLOT_RECORD_PID) };
+    return { kind: 'pid', pid: parsePositiveInteger(env.FARMSLOT_RECORD_PID) };
   if (env.FARMSLOT_RECORD_WINDOW_ID) {
     return { kind: 'window-id', windowId: env.FARMSLOT_RECORD_WINDOW_ID };
   }
