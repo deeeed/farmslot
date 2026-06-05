@@ -122,7 +122,8 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 - define `recipe-doctor`, `recipe-cook`, `recipe-harness`, `recipe-quality`, and `project-adopt` as the initial generic skill set;
 - support install targets for Claude, Codex, Cursor, and generic `.agents/skills` folders;
 - keep the first-run flow recipe-only and project-local;
-- document the adoption ladder: skills only → recipe runner → project recipe layer → Farmslot project integration → full OS/IDE;
+- document the adoption ladder: skills only → generic `recipe` front-controller → project runner → project recipe layer → Farmslot project integration → full OS/IDE;
+- plan a thin generic `recipe` CLI front-controller that discovers project recipe config, renders actions/flows/artifacts, and delegates `doctor`, `status`, `launch`, `refresh`, `record`, and `run` to platform/project adapters;
 - avoid private/project-specific assumptions so domain packs such as domain-specific skills can layer on top instead of forking the generic recipe concepts.
 
 ### 4. Active Follow-Up — Replay Closure and Evidence Use
