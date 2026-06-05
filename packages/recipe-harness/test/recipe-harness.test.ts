@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -16,6 +16,7 @@ import { validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
 import { createRecipeRunner, defineActionAdapter } from '../src/core/runner.js';
 import type { VideoRecorder, VideoRecorderStartRequest } from '../src/core/types.js';
+import { createCaptureHelperVideoRecorder } from '../src/recording/capture-helper.js';
 import { extensionIdFromTarget } from '../src/runtime/browser-extension.js';
 import { createCdpWebUiTransport } from '../src/runtime/cdp.js';
 import {
@@ -246,7 +247,6 @@ test('records one opt-in whole-recipe video and registers it in the artifact man
       type: 'video',
       mimeType: 'video/mp4',
       category: 'proof',
-      nodeId: 'recipe-run',
       label: 'Recipe run video',
       record: 'full_run',
       recorder: {
@@ -307,6 +307,52 @@ test('record-video doctor failure writes a failed artifact package', async () =>
     assert.equal((summary as { status?: string }).status, 'fail');
     assert.match(videoFailure?.error ?? '', /fake-recorder doctor missing-permission/);
     assert.match(videoFailure?.error ?? '', /Open permissions/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('capture-helper recorder stop sends SIGINT and returns recorder metadata', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const helperPath = path.join(tempRoot, 'fake-capture-helper.mjs');
+    await writeFile(
+      helperPath,
+      `#!/usr/bin/env python3
+import pathlib
+import signal
+import sys
+import time
+
+output = pathlib.Path(sys.argv[sys.argv.index("--output") + 1])
+
+def stop(_signum, _frame):
+    output.write_text("fake mp4")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, stop)
+while True:
+    time.sleep(1)
+`,
+    );
+    await chmod(helperPath, 0o755);
+
+    const outputPath = path.join(tempRoot, 'recording.mp4');
+    const recorder = createCaptureHelperVideoRecorder({ captureHelperPath: helperPath });
+    const active = await recorder.start({
+      outputPath,
+      target: { kind: 'pid', pid: 123 },
+      nodeId: 'recipe-run',
+      record: 'full_run',
+    });
+    const result = await active.stop();
+
+    assert.match(await readFile(outputPath, 'utf-8'), /fake mp4/);
+    assert.deepEqual(result.recorder, {
+      name: 'capture-helper',
+      platform: 'macos',
+      target: { selector: 'pid', value: '123' },
+    });
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

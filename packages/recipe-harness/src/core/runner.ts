@@ -665,7 +665,6 @@ class DefaultRecipeRunner implements RecipeRunner {
       type: 'video',
       mimeType: 'video/mp4',
       category: 'proof',
-      nodeId: 'recipe-run',
       label: 'Recipe run video',
       record: 'full_run',
       recorder: {

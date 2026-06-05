@@ -149,7 +149,8 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
       async stop() {
         if (child.exitCode == null && child.signalCode == null) child.kill('SIGINT');
         const result = await exit;
-        if (result.code !== 0) {
+        const expectedInterrupt = result.signal === 'SIGINT';
+        if (result.code !== 0 && !expectedInterrupt) {
           throw new Error(
             `capture-helper record failed (${formatExit(result.code, result.signal)}): ${stderr.join('').trim()}`,
           );
