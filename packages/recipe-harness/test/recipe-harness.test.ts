@@ -314,6 +314,46 @@ test('record-video doctor failure writes a failed artifact package', async () =>
   }
 });
 
+test('runner rejects proof-window video mode until focused clips are implemented', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const unsupportedRecordVideo = { mode: 'proof-window' } as unknown as Parameters<
+      typeof runner.run
+    >[0]['recordVideo'];
+
+    await assert.rejects(
+      () =>
+        runner.run({
+          recipeDocument: createSmokeRecipe(),
+          artifactsDir: path.join(tempRoot, 'artifacts'),
+          projectRoot: tempRoot,
+          recordVideo: unsupportedRecordVideo,
+        }),
+      /proof-window mode is reserved for future focused clips/,
+    );
+
+    const unknownRecordVideo = { mode: 'focused-clip' } as unknown as Parameters<
+      typeof runner.run
+    >[0]['recordVideo'];
+    await assert.rejects(
+      () =>
+        runner.run({
+          recipeDocument: createSmokeRecipe(),
+          artifactsDir: path.join(tempRoot, 'unknown-artifacts'),
+          projectRoot: tempRoot,
+          recordVideo: unknownRecordVideo,
+        }),
+      /recordVideo mode must be full-run or off/,
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('capture-helper recorder stop sends SIGINT and returns recorder metadata', async () => {
   const tempRoot = await createTempRoot();
   try {

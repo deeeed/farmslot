@@ -199,9 +199,7 @@ run "cat > $REMOTE_DIR/package.json" << 'PKGJSON'
   "type": "module",
   "dependencies": {
     "ws": "^8.18.0",
-    "tsx": "^4.19.0"
-  },
-  "optionalDependencies": {
+    "tsx": "^4.19.0",
     "@siteed/capture-helper": "^0.1.8"
   }
 }

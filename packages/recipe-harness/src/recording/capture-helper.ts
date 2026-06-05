@@ -48,25 +48,6 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
     return this.#version;
   }
 
-  async capability() {
-    const doctor = await this.doctor();
-    if (!doctor.ok) {
-      return {
-        capability: 'record.video',
-        status: 'unsupported' as const,
-        reason: doctor.message,
-      };
-    }
-    return {
-      capability: 'record.video',
-      status: 'supported' as const,
-      provider: this.name,
-      platforms: ['macos'],
-      modes: ['full_run'],
-      artifactTypes: ['video/mp4'],
-    };
-  }
-
   async doctor(): Promise<VideoRecorderDoctorResult> {
     if (process.platform !== 'darwin') {
       return {

@@ -816,10 +816,22 @@ class DefaultRecipeRunner implements RecipeRunner {
 function normalizeVideoRecordingOptions(
   input: RecipeRunRequest['recordVideo'],
 ): RecipeVideoRecordingOptions & { mode: 'off' | 'full-run' } {
-  if (!input || input === 'off') return { mode: 'off' };
+  if (!input) return { mode: 'off' };
   if (input === true) return { mode: 'full-run' };
-  if (input === 'full-run') return { mode: 'full-run' };
-  return { ...input, mode: input.mode === 'off' ? 'off' : 'full-run' };
+  if (typeof input === 'string') return normalizeVideoRecordingMode(input);
+  const mode = input.mode ?? 'full-run';
+  return { ...input, mode: normalizeVideoRecordingMode(mode).mode };
+}
+
+function normalizeVideoRecordingMode(mode: unknown): { mode: 'off' | 'full-run' } {
+  if (mode === 'off') return { mode: 'off' };
+  if (mode === 'full-run') return { mode: 'full-run' };
+  if (mode === 'proof-window' || mode === 'proof_window') {
+    throw new Error(
+      'recordVideo proof-window mode is reserved for future focused clips; use full-run for phase 1.',
+    );
+  }
+  throw new Error(`recordVideo mode must be full-run or off, got ${JSON.stringify(mode)}.`);
 }
 
 function manifestTarget(

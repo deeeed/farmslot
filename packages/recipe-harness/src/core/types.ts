@@ -1,8 +1,4 @@
-import type {
-  RecipeActionManifestDocument,
-  RecipeArtifactManifestEntry,
-  RecipeRuntimeCapabilityDeclaration,
-} from '@farmslot/protocol';
+import type { RecipeActionManifestDocument, RecipeArtifactManifestEntry } from '@farmslot/protocol';
 
 export type RecipeRunStatus = 'pass' | 'fail' | 'unknown';
 export type RecipeVideoRecordingMode = 'off' | 'full-run';
@@ -104,7 +100,6 @@ export interface VideoRecorder {
   name: string;
   version?: string;
   platform?: string;
-  capability?(): Promise<RecipeRuntimeCapabilityDeclaration>;
   doctor?(): Promise<VideoRecorderDoctorResult>;
   start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording>;
 }
