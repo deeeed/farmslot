@@ -25,6 +25,7 @@ import {
 import { buildHudNode } from './hud.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import { evaluateNodeGate } from './predicates.js';
+import { cleanupAbortedRunVideoRecording } from './recording-cleanup.js';
 import { recordSyntheticFailure, traceNodeMetadata } from './trace.js';
 import type {
   ActionAdapter,
@@ -443,12 +444,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       if (runRecording) {
         const recordingToCleanup = runRecording;
         runRecording = undefined;
-        try {
-          await recordingToCleanup.recording.stop();
-        } catch (error) {
-          // Preserve the original run error while still surfacing cleanup failure evidence.
-          this.#logger.error(`record.video cleanup failed after run abort: ${errorMessage(error)}`);
-        }
+        await cleanupAbortedRunVideoRecording(recordingToCleanup, this.#logger);
       }
     }
     const endedAt = new Date();

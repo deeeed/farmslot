@@ -7,9 +7,14 @@ import {
 
 import { createStandardCoreAdapters } from '../adapters/core.js';
 import { createRecipeRunner } from '../core/runner.js';
-import type { RecipeVideoRecordingOptions, RecordingTarget } from '../core/types.js';
+import type { RecipeVideoRecordingOptions } from '../core/types.js';
 
-import { parsePositiveInteger, readRecipeCliJsonFile, resolveRecipeCliPath } from './support.js';
+import {
+  parsePositiveInteger,
+  parseRecordingTarget,
+  readRecipeCliJsonFile,
+  resolveRecipeCliPath,
+} from './support.js';
 
 interface RunCommandOptions {
   artifactsDir: string;
@@ -89,20 +94,4 @@ function parseRecordVideoOptions(options: RunCommandOptions): false | RecipeVide
     ...(options.recordMaxSize ? { maxSize: parsePositiveInteger(options.recordMaxSize) } : {}),
     ...(target ? { target } : {}),
   };
-}
-
-function parseRecordingTarget(options: RunCommandOptions): RecordingTarget | undefined {
-  if (options.recordPid) return { kind: 'pid', pid: parsePositiveInteger(options.recordPid) };
-  if (options.recordWindowId) return { kind: 'window-id', windowId: options.recordWindowId };
-  if (options.recordAppName || options.recordWindowName) {
-    if (!options.recordAppName || !options.recordWindowName) {
-      throw new Error('--record-app-name and --record-window-name must be provided together.');
-    }
-    return {
-      kind: 'app-window',
-      appName: options.recordAppName,
-      windowName: options.recordWindowName,
-    };
-  }
-  return undefined;
 }

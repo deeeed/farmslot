@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -14,6 +14,7 @@ import { createStandardUiAdapters, type UiActionTransport } from '../src/adapter
 import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
+import { cleanupAbortedRunVideoRecording } from '../src/core/recording-cleanup.js';
 import { createRecipeRunner, defineActionAdapter } from '../src/core/runner.js';
 import type { VideoRecorder, VideoRecorderStartRequest } from '../src/core/types.js';
 import { createCaptureHelperVideoRecorder } from '../src/recording/capture-helper.js';
@@ -309,6 +310,40 @@ test('record-video doctor failure writes a failed artifact package', async () =>
     assert.equal((summary as { status?: string }).status, 'fail');
     assert.match(videoFailure?.error ?? '', /fake-recorder doctor missing-permission/);
     assert.match(videoFailure?.error ?? '', /Open permissions/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('aborted video cleanup removes partial MP4 written during recorder stop', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const artifactsDir = path.join(tempRoot, 'artifacts');
+    const outputPath = path.join(artifactsDir, 'videos/recipe-run.mp4');
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    const errors: string[] = [];
+
+    await cleanupAbortedRunVideoRecording(
+      {
+        outputPath,
+        recording: {
+          async stop() {
+            await writeFile(outputPath, 'partial mp4');
+            return {};
+          },
+        },
+      },
+      {
+        info() {},
+        warn() {},
+        error(message) {
+          errors.push(message);
+        },
+      },
+    );
+
+    assert.equal((await listRelativeFiles(artifactsDir)).includes('videos/recipe-run.mp4'), false);
+    assert.deepEqual(errors, []);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

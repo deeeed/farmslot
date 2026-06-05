@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { RecipeVideoRecordingOptions, RecordingTarget } from '@farmslot/recipe-harness';
-import { parsePositiveInteger } from '@farmslot/recipe-harness/cli/support';
+import type { RecipeVideoRecordingOptions } from '@farmslot/recipe-harness';
+import { parsePositiveInteger, parseRecordingTarget } from '@farmslot/recipe-harness/cli/support';
 
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { printDoctorResult, runExpoRecipeDoctor } from './doctor.js';
@@ -134,11 +134,8 @@ function parseOptions(args: string[]): ParsedCliOptions {
   return options;
 }
 
-function parseRecordVideoOptions(
-  options: ParsedCliOptions,
-  requestedMode?: string,
-): RecipeVideoRecordingOptions {
-  const mode = requestedMode ?? options.recordVideoMode ?? 'full-run';
+function parseRecordVideoOptions(options: ParsedCliOptions): RecipeVideoRecordingOptions {
+  const mode = options.recordVideoMode ?? 'full-run';
   if (mode === 'proof-window' || mode === 'proof_window') {
     throw new Error(
       '--record-video=proof-window is reserved for future focused clips; use --record-video=full-run for phase 1.',
@@ -154,22 +151,6 @@ function parseRecordVideoOptions(
     ...(options.recordMaxSize ? { maxSize: parsePositiveInteger(options.recordMaxSize) } : {}),
     ...(target ? { target } : {}),
   };
-}
-
-function parseRecordingTarget(options: ParsedCliOptions): RecordingTarget | undefined {
-  if (options.recordPid) return { kind: 'pid', pid: parsePositiveInteger(options.recordPid) };
-  if (options.recordWindowId) return { kind: 'window-id', windowId: options.recordWindowId };
-  if (options.recordAppName || options.recordWindowName) {
-    if (!options.recordAppName || !options.recordWindowName) {
-      throw new Error('--record-app-name and --record-window-name must be provided together.');
-    }
-    return {
-      kind: 'app-window',
-      appName: options.recordAppName,
-      windowName: options.recordWindowName,
-    };
-  }
-  return undefined;
 }
 
 function requiredValue(args: string[], index: number, option: string): string {
