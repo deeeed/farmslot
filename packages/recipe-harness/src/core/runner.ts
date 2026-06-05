@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -9,6 +9,7 @@ import {
 } from '@farmslot/protocol';
 
 import { JsonArtifactWriter, JsonSummaryWriter, JsonTraceWriter } from '../node/writers.js';
+import { createCaptureHelperVideoRecorder } from '../recording/capture-helper.js';
 
 import { collectFlows, executeInlineFlowCall } from './flows.js';
 import {
@@ -23,15 +24,19 @@ import { evaluateNodeGate } from './predicates.js';
 import { recordSyntheticFailure, traceNodeMetadata } from './trace.js';
 import type {
   ActionAdapter,
+  ActiveVideoRecording,
   CreateRecipeRunnerOptions,
   PreconditionChecker,
   RecipeHudOptions,
   RecipeLogger,
+  RecipeRecordingOptions,
   RecipeRunner,
   RecipeRunRequest,
   RecipeRunResult,
   RecipeRunStatus,
+  RecipeVideoRecordingOptions,
   SummaryDocument,
+  VideoRecorder,
 } from './types.js';
 import { assertManifestIsValid, assertRecipeMatchesManifest } from './validation.js';
 
@@ -95,6 +100,7 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
     options.logger ?? noopLogger,
     options.hud,
     options.runner,
+    options.recording,
   );
 }
 
@@ -105,6 +111,7 @@ class DefaultRecipeRunner implements RecipeRunner {
   readonly #logger: RecipeLogger;
   readonly #hud: RecipeHudOptions | false | undefined;
   readonly #runnerProvenance: CreateRecipeRunnerOptions['runner'];
+  readonly #recording: RecipeRecordingOptions | undefined;
 
   constructor(
     actionManifest: RecipeActionManifestDocument,
@@ -113,6 +120,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     logger: RecipeLogger,
     hud: RecipeHudOptions | false | undefined,
     runnerProvenance: CreateRecipeRunnerOptions['runner'],
+    recording: RecipeRecordingOptions | undefined,
   ) {
     this.#actionManifest = actionManifest;
     this.#adapters = adapters;
@@ -120,6 +128,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     this.#logger = logger;
     this.#hud = hud;
     this.#runnerProvenance = runnerProvenance;
+    this.#recording = recording;
   }
 
   async run(request: RecipeRunRequest): Promise<RecipeRunResult> {
@@ -145,6 +154,18 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     const outputs = new Map<string, unknown>();
     const recipePath = await artifactWriter.copyRecipe(recipe);
+    const videoOptions = normalizeVideoRecordingOptions(request.recordVideo);
+    const videoRecorder = videoOptions.mode !== 'off' ? this.#videoRecorder() : undefined;
+    const runRecording = videoRecorder
+      ? await this.#startRunVideoRecording({
+          recorder: videoRecorder,
+          videoOptions,
+          recipe,
+          projectRoot,
+          artifactsDir,
+          env: request.env ?? {},
+        })
+      : undefined;
 
     let status: RecipeRunStatus = 'unknown';
     let currentNodeId: string | undefined = graph.entry;
@@ -196,28 +217,15 @@ class DefaultRecipeRunner implements RecipeRunner {
       }
 
       const nodeStartedAt = new Date();
-      const context = {
+      const context = this.#createExecutionContext({
         nodeId: activeNodeId,
         recipe,
         projectRoot,
         artifactsDir,
         env: request.env ?? {},
         outputs,
-        getOutput(nodeId: string) {
-          if (!outputs.has(nodeId)) throw new Error(`No output recorded for node ${nodeId}.`);
-          return outputs.get(nodeId);
-        },
-        resolveProjectPath(relativePath: string) {
-          return path.join(projectRoot, normalizeRelativePath(relativePath));
-        },
-        resolveArtifactPath(relativePath: string) {
-          return path.join(artifactsDir, normalizeRelativePath(relativePath));
-        },
-        registerArtifact(entry: RecipeArtifactManifestEntry) {
-          artifactWriter.register(entry);
-        },
-        logger: this.#logger,
-      };
+        artifactWriter,
+      });
       try {
         const gate = evaluateNodeGate(node, context.outputs);
         if (!gate.run) {
@@ -382,6 +390,25 @@ class DefaultRecipeRunner implements RecipeRunner {
           error: message,
         });
         this.#logger.error(`app.hud complete update failed: ${message}`);
+        status = 'fail';
+      }
+    }
+    if (runRecording) {
+      try {
+        const videoArtifact = await this.#stopRunVideoRecording(runRecording);
+        artifactWriter.register(videoArtifact);
+      } catch (error) {
+        const message = errorMessage(error);
+        traceWriter.record({
+          nodeId: 'recipe-run:video',
+          action: 'record.video',
+          startedAt: startedAt.toISOString(),
+          endedAt: new Date().toISOString(),
+          durationMs: Date.now() - startedAt.getTime(),
+          ok: false,
+          error: message,
+        });
+        this.#logger.error(`record.video failed: ${message}`);
         status = 'fail';
       }
     }
@@ -551,6 +578,102 @@ class DefaultRecipeRunner implements RecipeRunner {
     };
   }
 
+  #videoRecorder(): VideoRecorder {
+    return this.#recording?.videoRecorder ?? createCaptureHelperVideoRecorder();
+  }
+
+  async #startRunVideoRecording({
+    recorder,
+    videoOptions,
+    recipe,
+    projectRoot,
+    artifactsDir,
+    env,
+  }: {
+    recorder: VideoRecorder;
+    videoOptions: RecipeVideoRecordingOptions;
+    recipe: unknown;
+    projectRoot: string;
+    artifactsDir: string;
+    env: Record<string, string | undefined>;
+  }): Promise<{
+    recording: ActiveVideoRecording;
+    entry: RecipeArtifactManifestEntry;
+    outputPath: string;
+  }> {
+    const doctor = await recorder.doctor?.();
+    if (doctor && !doctor.ok) {
+      throw new Error(
+        `${recorder.name} doctor ${doctor.code}: ${doctor.message}${
+          doctor.suggestedFix ? ` Suggested fix: ${doctor.suggestedFix}` : ''
+        }`,
+      );
+    }
+    const node = {
+      action: 'record.video',
+      intent: 'Record the recipe run when motion proof is useful',
+    };
+    const target =
+      videoOptions.target ??
+      (await this.#recording?.targetProvider?.resolveRecordingTarget({
+        nodeId: 'recipe-run',
+        node,
+        recipe,
+        projectRoot,
+        artifactsDir,
+        env,
+        scope: 'run',
+      }));
+    if (!target) {
+      throw new Error(
+        '--record-video requires a recording target. Provide a project RecordingTargetProvider or CLI target flags.',
+      );
+    }
+    const relativePath = 'videos/recipe-run.mp4';
+    const outputPath = path.join(artifactsDir, relativePath);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    const recording = await recorder.start({
+      outputPath,
+      target,
+      maxFps: videoOptions.maxFps,
+      maxSize: videoOptions.maxSize,
+      nodeId: 'recipe-run',
+      record: 'full_run',
+    });
+    const entry = {
+      path: relativePath,
+      type: 'video',
+      mimeType: 'video/mp4',
+      category: 'proof',
+      nodeId: 'recipe-run',
+      label: 'Recipe run video',
+      record: 'full_run',
+      recorder: {
+        name: recorder.name,
+        ...(recorder.version ? { version: recorder.version } : {}),
+        ...(recorder.platform ? { platform: recorder.platform } : {}),
+        target: manifestTarget(target),
+      },
+    } as RecipeArtifactManifestEntry;
+    return { recording, entry, outputPath };
+  }
+
+  async #stopRunVideoRecording(runRecording: {
+    recording: ActiveVideoRecording;
+    entry: RecipeArtifactManifestEntry;
+    outputPath: string;
+  }): Promise<RecipeArtifactManifestEntry> {
+    const result = await runRecording.recording.stop();
+    const stats = await stat(runRecording.outputPath);
+    if (stats.size <= 0) throw new Error(`Recording output is empty: ${runRecording.outputPath}`);
+    return result.recorder
+      ? ({
+          ...runRecording.entry,
+          recorder: result.recorder,
+        } as RecipeArtifactManifestEntry)
+      : runRecording.entry;
+  }
+
   #hudAction(): string | undefined {
     if (this.#hud === false || this.#hud?.enabled === false) return undefined;
     return this.#adapters.has('app.hud') ? 'app.hud' : undefined;
@@ -667,4 +790,28 @@ class DefaultRecipeRunner implements RecipeRunner {
     if (isRecord(recipe) && typeof recipe.title === 'string') return recipe.title;
     return 'Recipe run';
   }
+}
+
+function normalizeVideoRecordingOptions(
+  input: RecipeRunRequest['recordVideo'],
+): RecipeVideoRecordingOptions & { mode: 'off' | 'full-run' } {
+  if (!input || input === 'off') return { mode: 'off' };
+  if (input === true) return { mode: 'full-run' };
+  if (input === 'full-run') return { mode: 'full-run' };
+  if (input === 'proof-window') return { mode: 'full-run' };
+  return { ...input, mode: input.mode === 'off' ? 'off' : 'full-run' };
+}
+
+function manifestTarget(
+  target: NonNullable<RecipeVideoRecordingOptions['target']>,
+): Record<string, string> {
+  if (target.kind === 'pid') return { selector: 'pid', value: String(target.pid) };
+  if (target.kind === 'app-window') {
+    return { selector: 'app-window', value: `${target.appName}:${target.windowName}` };
+  }
+  return { selector: 'window-id', value: target.windowId };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

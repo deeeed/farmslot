@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -15,6 +15,7 @@ import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
 import { createRecipeRunner, defineActionAdapter } from '../src/core/runner.js';
+import type { VideoRecorder, VideoRecorderStartRequest } from '../src/core/types.js';
 import { extensionIdFromTarget } from '../src/runtime/browser-extension.js';
 import { createCdpWebUiTransport } from '../src/runtime/cdp.js';
 import {
@@ -156,6 +157,12 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     const summary = await readJsonFile(path.join(artifactsDir, 'summary.json'));
     const trace = await readJsonFile(path.join(artifactsDir, 'trace.json'));
     const manifest = await readJsonFile(path.join(artifactsDir, 'artifact-manifest.json'));
+    assert.equal(
+      (manifest as { artifacts?: Array<{ type?: string }> }).artifacts?.some(
+        (artifact) => artifact.type === 'video',
+      ),
+      false,
+    );
     assert.deepEqual(copiedRecipe, recipe);
     assert.match(await readFile(path.join(artifactsDir, 'logs/api-smoke.log'), 'utf-8'), /ok log/);
     assert.ok(Array.isArray(trace));
@@ -172,6 +179,82 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
     });
     assert.equal(packageResult.status, 'valid', JSON.stringify(packageResult.findings));
     assert.deepEqual(packageResult.findings, []);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('records one opt-in whole-recipe video and registers it in the artifact manifest', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipe = createSmokeRecipe();
+    const starts: VideoRecorderStartRequest[] = [];
+    const recorder: VideoRecorder = {
+      name: 'fake-recorder',
+      platform: 'test',
+      async doctor() {
+        return { ok: true, code: 'ok', message: 'ready' };
+      },
+      async start(request) {
+        starts.push(request);
+        return {
+          async stop() {
+            await writeFile(request.outputPath, 'fake mp4');
+            return {
+              recorder: {
+                name: 'fake-recorder',
+                platform: 'test',
+                target: { selector: 'pid', value: '123' },
+              },
+            };
+          },
+        };
+      },
+    };
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+      recording: {
+        videoRecorder: recorder,
+        targetProvider: {
+          async resolveRecordingTarget() {
+            return { kind: 'pid', pid: 123 };
+          },
+        },
+      },
+    });
+    const result = await runner.run({
+      recipeDocument: recipe,
+      artifactsDir: path.join(tempRoot, 'artifacts'),
+      projectRoot: tempRoot,
+      recordVideo: true,
+    });
+
+    assert.equal(result.status, 'pass');
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0]?.nodeId, 'recipe-run');
+    assert.equal(starts[0]?.record, 'full_run');
+    const files = await listRelativeFiles(path.join(tempRoot, 'artifacts'));
+    assert.ok(files.includes('videos/recipe-run.mp4'));
+
+    const manifest = await readJsonFile(result.artifactManifestPath);
+    const video = (manifest as { artifacts: Array<Record<string, unknown>> }).artifacts.find(
+      (artifact) => artifact.path === 'videos/recipe-run.mp4',
+    );
+    assert.deepEqual(video, {
+      path: 'videos/recipe-run.mp4',
+      type: 'video',
+      mimeType: 'video/mp4',
+      category: 'proof',
+      nodeId: 'recipe-run',
+      label: 'Recipe run video',
+      record: 'full_run',
+      recorder: {
+        name: 'fake-recorder',
+        platform: 'test',
+        target: { selector: 'pid', value: '123' },
+      },
+    });
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

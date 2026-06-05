@@ -1,6 +1,12 @@
-import type { RecipeActionManifestDocument, RecipeArtifactManifestEntry } from '@farmslot/protocol';
+import type {
+  RecipeActionManifestDocument,
+  RecipeArtifactManifestEntry,
+  RecipeRuntimeCapabilityDeclaration,
+} from '@farmslot/protocol';
 
 export type RecipeRunStatus = 'pass' | 'fail' | 'unknown';
+export type RecipeVideoRecordingMode = 'off' | 'full-run' | 'proof-window';
+export type RecipeRecordPolicy = 'none' | 'trace_only' | 'proof_window' | 'failure_only';
 
 export interface RecipeRunRequest {
   recipePath?: string;
@@ -8,6 +14,7 @@ export interface RecipeRunRequest {
   artifactsDir: string;
   projectRoot?: string;
   env?: Record<string, string | undefined>;
+  recordVideo?: boolean | RecipeVideoRecordingMode | RecipeVideoRecordingOptions;
 }
 
 export interface RecipeRunResult {
@@ -42,6 +49,71 @@ export interface CreateRecipeRunnerOptions {
   logger?: RecipeLogger;
   hud?: RecipeHudOptions | false;
   runner?: RecipeRunnerProvenance;
+  recording?: RecipeRecordingOptions;
+}
+
+export interface RecipeVideoRecordingOptions {
+  mode?: RecipeVideoRecordingMode;
+  maxFps?: number;
+  maxSize?: number;
+  target?: RecordingTarget;
+}
+
+export interface RecipeRecordingOptions {
+  targetProvider?: RecordingTargetProvider;
+  videoRecorder?: VideoRecorder;
+}
+
+export interface RecordingTargetProvider {
+  resolveRecordingTarget(context: RecordingTargetContext): Promise<RecordingTarget>;
+}
+
+export interface RecordingTargetContext {
+  nodeId: string;
+  node: Record<string, unknown>;
+  recipe: unknown;
+  projectRoot: string;
+  artifactsDir: string;
+  env: Record<string, string | undefined>;
+  scope?: 'run' | 'node';
+}
+
+export type RecordingTarget =
+  | { kind: 'window-id'; windowId: string }
+  | { kind: 'pid'; pid: number }
+  | { kind: 'app-window'; appName: string; windowName: string };
+
+export interface VideoRecorderStartRequest {
+  outputPath: string;
+  target: RecordingTarget;
+  maxFps?: number;
+  maxSize?: number;
+  nodeId: string;
+  record: RecipeRecordPolicy | 'full_run';
+}
+
+export interface ActiveVideoRecording {
+  stop(): Promise<VideoRecordingResult>;
+}
+
+export interface VideoRecordingResult {
+  recorder?: Record<string, unknown>;
+}
+
+export interface VideoRecorder {
+  name: string;
+  version?: string;
+  platform?: string;
+  capability?(): Promise<RecipeRuntimeCapabilityDeclaration>;
+  doctor?(): Promise<VideoRecorderDoctorResult>;
+  start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording>;
+}
+
+export interface VideoRecorderDoctorResult {
+  ok: boolean;
+  code: string;
+  message: string;
+  suggestedFix?: string;
 }
 
 export interface RecipeHudOptions {

@@ -95,6 +95,49 @@ test('validates runner action manifests and rejects undeclared recipe actions', 
   );
 });
 
+test('validates runtime capability declarations in runner action manifests', () => {
+  const supportedResult = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+    capabilities: [
+      {
+        capability: 'record.video',
+        status: 'supported',
+        provider: 'capture-helper',
+        platforms: ['macos'],
+        modes: ['full_run', 'proof_window'],
+        artifactTypes: ['video/mp4'],
+      },
+    ],
+  });
+  assert.equal(supportedResult.status, 'valid');
+  assert.deepEqual(supportedResult.findings, []);
+
+  const invalidResult = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+    capabilities: [{ capability: '', status: 'maybe', modes: ['full_run', 42] }],
+  });
+  assert.equal(invalidResult.status, 'invalid');
+  assert.ok(
+    invalidResult.findings.some(
+      (finding) => finding.code === 'action_manifest.invalid_capability_name',
+    ),
+  );
+  assert.ok(
+    invalidResult.findings.some(
+      (finding) => finding.code === 'action_manifest.invalid_capability_status',
+    ),
+  );
+  assert.ok(
+    invalidResult.findings.some(
+      (finding) => finding.code === 'action_manifest.invalid_capability_field',
+    ),
+  );
+});
+
 test('validates lifecycle actions against the runner manifest', () => {
   const recipe = {
     schema_version: 1,

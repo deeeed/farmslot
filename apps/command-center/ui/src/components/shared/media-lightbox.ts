@@ -264,6 +264,136 @@ export class MediaLightbox extends MediaLightboxState {
       });
   }
 
+  private _primaryVideo(): HTMLVideoElement | null {
+    return this.renderRoot.querySelector<HTMLVideoElement>(
+      this.mode === 'compare' ? '.ml-cmp-video.a' : '.ml-video',
+    );
+  }
+
+  private _secondaryVideo(): HTMLVideoElement | null {
+    return this.mode === 'compare'
+      ? this.renderRoot.querySelector<HTMLVideoElement>('.ml-cmp-video.b')
+      : null;
+  }
+
+  private _videoSet(): HTMLVideoElement[] {
+    return [this._primaryVideo(), this._secondaryVideo()].filter(
+      (video): video is HTMLVideoElement => Boolean(video),
+    );
+  }
+
+  private _syncVideoState(video: HTMLVideoElement | null = this._primaryVideo()): void {
+    if (!video) return;
+    this._videoTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+    this._videoDuration = Number.isFinite(video.duration) ? video.duration : 0;
+    this._videoPaused = video.paused;
+    this._videoRate = video.playbackRate || 1;
+  }
+
+  private _toggleVideoPlayback(): void {
+    const video = this._primaryVideo();
+    if (!video) return;
+    if (video.paused) {
+      for (const candidate of this._videoSet()) {
+        candidate.playbackRate = this._videoRate;
+      }
+      void video.play();
+    } else {
+      for (const candidate of this._videoSet()) candidate.pause();
+    }
+    this._syncVideoState(video);
+  }
+
+  private _seekVideo(deltaSeconds: number): void {
+    const video = this._primaryVideo();
+    if (!video) return;
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const next = Math.max(0, duration ? Math.min(duration, video.currentTime + deltaSeconds) : 0);
+    for (const candidate of this._videoSet()) {
+      candidate.currentTime = next;
+    }
+    this._syncVideoState(video);
+  }
+
+  private _stepVideo(frames: -1 | 1): void {
+    for (const candidate of this._videoSet()) candidate.pause();
+    this._seekVideo(frames / 30);
+  }
+
+  private _scrubVideo(value: string): void {
+    const video = this._primaryVideo();
+    if (!video) return;
+    const next = Number(value);
+    if (!Number.isFinite(next)) return;
+    for (const candidate of this._videoSet()) {
+      candidate.currentTime = next;
+    }
+    this._syncVideoState(video);
+  }
+
+  private _setVideoRate(rate: number): void {
+    this._videoRate = rate;
+    for (const candidate of this._videoSet()) {
+      candidate.playbackRate = rate;
+    }
+  }
+
+  private _formatVideoTime(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00.00';
+    const minutes = Math.floor(seconds / 60);
+    const wholeSeconds = Math.floor(seconds % 60);
+    const hundredths = Math.floor((seconds % 1) * 100);
+    return `${minutes}:${String(wholeSeconds).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}`;
+  }
+
+  private _renderVideoControls(compare = false) {
+    const duration = this._videoDuration || 0;
+    const time = duration ? Math.min(this._videoTime, duration) : this._videoTime;
+    const RATES = [0.25, 0.5, 1, 2];
+    return html`
+      <div class="ml-video-controls" data-testid="media-lightbox-video-controls">
+        <div class="ml-video-control-row">
+          <button class="ml-btn" @click=${() => this._toggleVideoPlayback()}>
+            ${this._videoPaused ? 'Play' : 'Pause'}
+          </button>
+          <button class="ml-btn" @click=${() => this._seekVideo(-1)}>−1s</button>
+          <button class="ml-btn" @click=${() => this._seekVideo(-0.1)}>−0.1s</button>
+          <button class="ml-btn" @click=${() => this._stepVideo(-1)}>−1 frame</button>
+          <button class="ml-btn" @click=${() => this._stepVideo(1)}>+1 frame</button>
+          <button class="ml-btn" @click=${() => this._seekVideo(0.1)}>+0.1s</button>
+          <button class="ml-btn" @click=${() => this._seekVideo(1)}>+1s</button>
+          ${RATES.map(
+            (rate) => html`
+              <button
+                class="ml-btn ${this._videoRate === rate ? 'active' : ''}"
+                @click=${() => this._setVideoRate(rate)}
+              >
+                ${rate}×
+              </button>
+            `,
+          )}
+        </div>
+        <div class="ml-video-scrub-row">
+          <span class="ml-count">${compare ? 'Synced' : 'Video'} · Space play/pause</span>
+          <input
+            class="ml-video-scrub"
+            type="range"
+            min="0"
+            max=${duration || 0}
+            step="0.01"
+            .value=${String(time)}
+            ?disabled=${duration <= 0}
+            @input=${(event: Event) => this._scrubVideo((event.target as HTMLInputElement).value)}
+            aria-label="Video timeline"
+          />
+          <span class="ml-count">
+            ${this._formatVideoTime(time)} / ${this._formatVideoTime(duration)}
+          </span>
+        </div>
+      </div>
+    `;
+  }
+
   override render() {
     if (!this.open) return nothing;
     const hasPairs = this.pairs.length > 0;
@@ -425,14 +555,31 @@ export class MediaLightbox extends MediaLightboxState {
                     </div>
                   </div>`
                 : fileType === 'video'
-                  ? html`<video
-                      class="ml-expanded ml-video"
-                      src=${item.url}
-                      controls
-                      autoplay
-                      preload="metadata"
-                      @error=${() => this._markBroken(selectedIdx)}
-                    ></video>`
+                  ? html`
+                      <div class="ml-video-shell">
+                        <video
+                          class="ml-expanded ml-video"
+                          src=${item.url}
+                          autoplay
+                          preload="metadata"
+                          @click=${() => this._toggleVideoPlayback()}
+                          @loadedmetadata=${(event: Event) =>
+                            this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                          @timeupdate=${(event: Event) =>
+                            this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                          @play=${(event: Event) =>
+                            this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                          @pause=${(event: Event) =>
+                            this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                          @ratechange=${(event: Event) =>
+                            this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                          @seeked=${(event: Event) =>
+                            this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+                          @error=${() => this._markBroken(selectedIdx)}
+                        ></video>
+                        ${this._renderVideoControls(false)}
+                      </div>
+                    `
                   : fileType === 'markdown'
                     ? this._renderMarkdownItem(item)
                     : fileType === 'json'
@@ -851,16 +998,29 @@ export class MediaLightbox extends MediaLightboxState {
       <div class="ml-cmp-video-grid">
         <div class="ml-cmp-video-cell">
           <div class="ml-cmp-label ml-cmp-label-static">BEFORE</div>
-          <video class="ml-cmp-video a" src=${pair.before.url} controls preload="metadata"></video>
+          <video
+            class="ml-cmp-video a"
+            src=${pair.before.url}
+            preload="metadata"
+            @loadedmetadata=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @timeupdate=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @play=${(event: Event) => this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @pause=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @ratechange=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+            @seeked=${(event: Event) =>
+              this._syncVideoState(event.currentTarget as HTMLVideoElement)}
+          ></video>
         </div>
         <div class="ml-cmp-video-cell">
           <div class="ml-cmp-label ml-cmp-label-static">AFTER</div>
-          <video class="ml-cmp-video b" src=${pair.after.url} controls preload="metadata"></video>
+          <video class="ml-cmp-video b" src=${pair.after.url} preload="metadata"></video>
         </div>
       </div>
-      <div class="ml-toolbar">
-        <span class="ml-count">Synced playback · Space to play/pause · ← → next pair</span>
-      </div>
+      ${this._renderVideoControls(true)}
     `;
   }
 

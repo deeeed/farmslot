@@ -7,6 +7,7 @@ import {
 import {
   createRecipeRunner,
   createStandardUiAdapters,
+  type RecipeVideoRecordingOptions,
   type UiActionTransport,
 } from '@farmslot/recipe-harness';
 import { resolveRecipeCliPath, validateRecipeCliInput } from '@farmslot/recipe-harness/cli/support';
@@ -21,6 +22,7 @@ export interface ExpoRecipeRunOptions {
   artifactsDir?: string;
   dryRun?: boolean;
   json?: boolean;
+  recordVideo?: boolean | RecipeVideoRecordingOptions;
 }
 
 export function validateExpoRecipeDocument(
@@ -77,6 +79,7 @@ export async function runExpoRecipeDocument(
     env: {
       FARMSLOT_RECIPE_ARTIFACTS_DIR: artifactsDir,
     },
+    recordVideo: options.recordVideo,
   });
 }
 

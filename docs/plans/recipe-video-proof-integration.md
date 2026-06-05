@@ -11,8 +11,9 @@ Recipe Protocol v1 already models recording intent through `record` values such 
 Observed gaps:
 
 - recording often wraps the whole task/run, including setup, waiting, retries, and idle time;
-- some prompts use Farmslot `record-window.sh` / `capture-helper`, while others use platform-specific commands;
+- some prompts use repo-embedded wrappers or platform-specific commands instead of the node-advertised capture toolchain;
 - agents cannot reliably discover video support from the recipe runner manifest;
+- agents cannot reliably discover whether screenshots and live window streaming are available on the node;
 - videos are not consistently registered in `artifact-manifest.json`.
 
 ## Goal
@@ -23,36 +24,38 @@ Make video proof a recipe-layer capability:
 recipe-runner run recipe.json --record-video --artifacts-dir artifacts/run
 ```
 
-The runner records only proof windows by default, writes MP4 artifacts under the run artifact directory, and registers them in the artifact manifest.
+The runner records an optional whole-recipe MP4 by default, writes it under the run artifact directory, and registers it in the artifact manifest. Proof-window clipping remains an advanced mode for cases where a shorter focused clip is worth the extra lifecycle complexity.
 
 ## Non-goals
 
 - No product-specific recording commands in prompts.
-- No mandatory video for every recipe run.
+- No mandatory video for every recipe run or every acceptance criterion.
 - No replacement for screenshots; screenshots remain cheaper and preferred for static visual proof.
-- No cross-platform guarantee in phase 1. macOS-only via `capture-helper` is acceptable when discoverability reports the limitation.
+- No cross-platform guarantee in phase 1. macOS-only via externally installed `capture-helper` is acceptable when discoverability reports the limitation.
 
 ## Layering
 
-| Layer                   | Owns                                                                                                |
-| ----------------------- | --------------------------------------------------------------------------------------------------- |
-| `capture-helper`        | Generic macOS window discovery, snapshot, and MP4 recording.                                        |
-| Farmslot recipe harness | Recording lifecycle, artifact registration, permission diagnostics, `record` policy interpretation. |
-| Project runner          | Target resolution: which browser/window/simulator to record.                                        |
-| Project prompt/skill    | High-level guidance only: use runner recording when motion proof helps.                             |
+| Layer                     | Owns                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| External `capture-helper` | Generic macOS window discovery, snapshot, stream, and MP4 recording. Installed on each machine node (PATH or `CAPTURE_HELPER_PATH`). |
+| Farmslot node             | Tool install/doctor checks, live `screen.subscribe` streaming into Farmslot, node-local screenshot/thumbnail capture.                |
+| Farmslot recipe harness   | Recording lifecycle, artifact registration, permission diagnostics, `record` policy interpretation.                                  |
+| Project runner            | Target resolution: which browser/window/simulator to record.                                                                         |
+| Project prompt/skill      | High-level guidance only: use runner recording when motion proof helps.                                                              |
 
 Project runners must not reimplement capture. They provide a `RecordingTargetProvider` to the harness.
+Farmslot must not rely on the repo-embedded development binary as the integration contract; production nodes should install the external `capture-helper` package and expose its status.
 
 ## Protocol contract
 
 Existing `record` values remain valid:
 
-| Value          | Video behavior                                                           |
-| -------------- | ------------------------------------------------------------------------ |
-| `none`         | Never record.                                                            |
-| `trace_only`   | Do not record media; trace only.                                         |
-| `proof_window` | Record this node/flow when `--record-video` is enabled.                  |
-| `failure_only` | Record failure evidence, or preserve recent buffered proof if supported. |
+| Value          | Video behavior                                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `none`         | Never record.                                                                                                            |
+| `trace_only`   | Do not record media; trace only.                                                                                         |
+| `proof_window` | Marks reviewer-visible proof. Phase 1 may satisfy this with the single run-level video when `--record-video` is enabled. |
+| `failure_only` | Record failure evidence, or preserve recent buffered proof if supported.                                                 |
 
 Default phase policy remains:
 
@@ -79,38 +82,40 @@ recipe-runner run recipe.json \
 Optional advanced flags:
 
 ```bash
---record-video=proof-window|full-run|off
+--record-video=full-run|proof-window|off
 --record-max-fps 15
 --record-max-size 720
 --record-app-name <name>
 --record-window-name <substring>
 --record-window-id <id>
+--record-pid <pid>
 ```
 
 Defaults:
 
-- `--record-video` means `proof-window`;
-- `full-run` is explicit and should be rare;
+- `--record-video` means `full-run`;
+- `proof-window` is explicit and can be implemented by runners that need focused clips;
 - no video is captured unless the flag is present or project policy enables it.
 
 ## Harness recording lifecycle
 
-For each node/flow:
+Phase 1 records one whole-recipe video when requested:
 
-1. Determine effective record policy from node, flow, phase default, and CLI.
-2. If policy is not active, execute normally.
-3. If active:
-   - resolve target through the project runner;
-   - run `capture-helper doctor` once per run and fail with actionable permission diagnostics if unavailable;
-   - start `capture-helper record` immediately before the proof node/flow;
-   - execute the node/flow;
-   - stop recording immediately after the node/flow settles;
+1. If `--record-video` is omitted, execute normally with no media change.
+2. If enabled:
+   - resolve one target through the project runner or explicit CLI target flags;
+   - run external `capture-helper doctor --json` once and fail with actionable install/permission diagnostics if unavailable;
+   - start recording before recipe execution;
+   - execute the recipe normally;
+   - stop recording after the recipe settles;
    - verify the MP4 exists and is non-empty;
    - register the video in `artifact-manifest.json`.
 
+Future proof-window mode may use the same provider to clip only selected nodes/flows, but it is not required for phase 1.
+
 Failure behavior:
 
-- If the recipe node passes but video recording fails, the recipe verdict is `pass-with-gaps` unless the proof target explicitly requires video.
+- In phase 1, if `--record-video` is explicitly requested and video recording fails, the recipe fails with recorder diagnostics. A later protocol update may add a `pass-with-gaps` verdict for optional evidence gaps.
 - If the recipe node fails and `failure_only` is configured, capture or preserve failure video when possible.
 - Permission errors must include the `capture-helper doctor` code and suggested fix.
 
@@ -123,22 +128,20 @@ artifacts/run/
   artifact-manifest.json
   screenshots/
   videos/
-    001-ac1-open-menu.mp4
-    002-ac2-submit-form.mp4
+    recipe-run.mp4
 ```
 
 Manifest entry shape:
 
 ```json
 {
-  "path": "videos/001-ac1-open-menu.mp4",
+  "path": "videos/recipe-run.mp4",
   "type": "video",
   "mimeType": "video/mp4",
   "category": "proof",
-  "nodeId": "ac1-open-menu",
-  "proofTarget": "AC1",
-  "label": "AC1 proof window",
-  "record": "proof_window",
+  "nodeId": "recipe-run",
+  "label": "Recipe run video",
+  "record": "full_run",
   "recorder": {
     "name": "capture-helper",
     "version": "...",
@@ -151,7 +154,51 @@ Manifest entry shape:
 }
 ```
 
-## Capability manifest
+## Node and runner capabilities
+
+Machine nodes should surface the capture stack status as node capabilities because screenshots, recordings, and live streaming all depend on node-local tools and permissions:
+
+```json
+[
+  {
+    "capability": "capture.screenshot",
+    "status": "supported",
+    "provider": "capture-helper",
+    "platforms": ["macos"],
+    "artifactTypes": ["image/png"]
+  },
+  {
+    "capability": "capture.stream",
+    "status": "supported",
+    "provider": "capture-helper",
+    "platforms": ["macos"],
+    "modes": ["framed-h264"]
+  },
+  {
+    "capability": "record.video",
+    "status": "supported",
+    "provider": "capture-helper",
+    "platforms": ["macos"],
+    "modes": ["full_run", "proof_window"],
+    "artifactTypes": ["video/mp4"]
+  }
+]
+```
+
+Unsupported status should include the failed doctor code and an installation/permission fix, for example:
+
+```json
+{
+  "capability": "capture.stream",
+  "status": "unsupported",
+  "provider": "capture-helper",
+  "reason": "capture-helper is not on PATH; install the external capture-helper tool on this node"
+}
+```
+
+Live window streaming into Farmslot remains a node/gateway concern: the node handles `screen.subscribe`, runs `capture-helper stream --framed` or the compatible framed mode, and relays frames to the gateway/UI. Recipe video proof should reuse the same installed toolchain but should not bypass the node streaming contract.
+
+## Runner manifest
 
 Runners that support video must expose a runtime capability:
 
@@ -161,7 +208,7 @@ Runners that support video must expose a runtime capability:
   "status": "supported",
   "provider": "capture-helper",
   "platforms": ["macos"],
-  "modes": ["proof_window", "full_run"],
+  "modes": ["full_run", "proof_window"],
   "artifactTypes": ["video/mp4"]
 }
 ```
@@ -172,11 +219,12 @@ If unsupported:
 {
   "capability": "record.video",
   "status": "unsupported",
-  "reason": "capture-helper is not available on this host"
+  "reason": "capture-helper is not installed on this node"
 }
 ```
 
 Agents should discover this through the runner manifest, not through prompt-specific shell snippets.
+For screenshot actions, runners should also declare `ui.screenshot` and/or `capture.screenshot` support so agents know screenshot proof is available before writing recipes.
 
 ## Target provider contract
 
@@ -184,7 +232,7 @@ Project runners implement:
 
 ```ts
 interface RecordingTargetProvider {
-  resolveRecordingTarget(context: RecipeRunContext): Promise<RecordingTarget>;
+  resolveRecordingTarget(context: RecordingTargetContext): Promise<RecordingTarget>;
 }
 
 type RecordingTarget =
@@ -205,29 +253,30 @@ The harness owns capture invocation once the target is resolved.
 Replace platform-specific recording snippets with runner-level language:
 
 ```md
-If motion proof helps, run the recipe with `--record-video`. The runner records proof windows and writes videos under `artifacts/run/videos/`.
+If motion proof helps, run the recipe with `--record-video`. The runner records one recipe-run video and writes it under `artifacts/run/videos/`.
 ```
 
 Remove direct prompt guidance for platform-specific video commands except as a last-resort debugging note.
 
 ## Acceptance criteria
 
-1. `recipe-runner run --record-video` creates MP4 proof-window videos for nodes/flows with effective `record: "proof_window"`.
-2. Setup/start-state is not recorded by default.
-3. Videos are registered in `artifact-manifest.json` with node/proof-target links.
+1. `recipe-runner run --record-video` creates one whole-recipe MP4 when motion/visual proof is useful.
+2. Videos are opt-in; screenshot-only recipe runs remain unchanged when `--record-video` is omitted.
+3. Videos are registered in `artifact-manifest.json` with a stable run-level link.
 4. Runner manifest exposes `record.video` support or an explicit unsupported reason.
 5. macOS permission failures surface `capture-helper doctor` diagnostics.
-6. Existing screenshot-only recipe runs remain unchanged when `--record-video` is omitted.
+6. The docs and prompts do not imply every acceptance criterion needs a video.
 7. Project prompts no longer instruct agents to use platform-specific video commands as the primary path.
 
 ## Implementation phases
 
 ### Phase 1 — Harness capability
 
-- Add recording provider wrapper around `capture-helper record`.
+- Add recording provider wrapper around external `capture-helper record`.
 - Add `--record-video` CLI plumbing where the harness CLI exists.
-- Add artifact registration and MP4 verification.
+- Add run-level artifact registration and MP4 verification.
 - Add capability manifest support.
+- Add node doctor/capability reporting for `capture.screenshot`, `capture.stream`, and `record.video`.
 
 ### Phase 2 — Project runner target providers
 
@@ -239,7 +288,7 @@ Remove direct prompt guidance for platform-specific video commands except as a l
 
 - Replace direct recording snippets in project templates.
 - Update recipe skills to mention runner recording only.
-- Keep direct `capture-helper` commands documented as operator/debug fallback.
+- Keep direct `capture-helper` commands documented only as operator/debug fallback and installation troubleshooting.
 
 ### Phase 4 — Evidence packaging
 

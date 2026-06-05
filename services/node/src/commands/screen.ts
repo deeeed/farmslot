@@ -8,7 +8,6 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { resolve } from 'node:path';
 
 import { ensureLiveBrowserPid } from './screen-browser-pid.js';
 import { buildStreamSink, createSinkStats, trackSinkFrame } from './screen-sinks.js';
@@ -34,9 +33,7 @@ let machineCapture: MachineCapture | null = null;
 const MACOS_CAPTURE_WAIT_TIMEOUT_MS = 60_000;
 const RECORDING_MAX_QUEUE_BYTES = 4 * 1024 * 1024;
 
-const CAPTURE_HELPER_PATH =
-  process.env.CAPTURE_HELPER_PATH ??
-  resolve(import.meta.dirname, '../../../../../tools/capture-helper/capture-helper');
+const CAPTURE_HELPER_PATH = process.env.CAPTURE_HELPER_PATH ?? 'capture-helper';
 
 function log(action: string, slotId: string, detail?: string) {
   const parts = [`[screen] ${action} slot=${slotId}`];
@@ -585,7 +582,7 @@ function ensureMachineCapture(maxFps: number, maxSize: number): MachineCapture {
 
   const proc = spawn(
     CAPTURE_HELPER_PATH,
-    ['--framed', '--max-fps', String(maxFps), '--max-size', String(maxSize)],
+    ['stream', '--framed', '--max-fps', String(maxFps), '--max-size', String(maxSize)],
     { stdio: ['pipe', 'pipe', 'pipe'] },
   );
 

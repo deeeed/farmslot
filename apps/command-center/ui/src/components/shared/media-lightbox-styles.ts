@@ -205,6 +205,39 @@ export const mediaLightboxStyles = css`
     justify-content: center;
     min-height: 240px;
   }
+  .ml-video-shell {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: ${unsafeCSS(spacing.sm)};
+    align-items: center;
+  }
+  .ml-video-shell .ml-video {
+    max-height: 68vh;
+    background: #000;
+  }
+  .ml-video-controls {
+    width: min(100%, 960px);
+    display: flex;
+    flex-direction: column;
+    gap: ${unsafeCSS(spacing.sm)};
+    padding: ${unsafeCSS(spacing.sm)};
+    border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+    border-radius: ${unsafeCSS(radii.sm)};
+    background: ${unsafeCSS(colors.bgSurface)};
+  }
+  .ml-video-control-row,
+  .ml-video-scrub-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: ${unsafeCSS(spacing.sm)};
+    flex-wrap: wrap;
+  }
+  .ml-video-scrub {
+    min-width: min(560px, 60vw);
+    accent-color: ${unsafeCSS(colors.accent)};
+  }
   .ml-fallback {
     min-height: 320px;
     width: 100%;
