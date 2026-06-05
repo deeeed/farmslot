@@ -136,17 +136,17 @@ export function registerSlotCommand(program: Command): void {
     )
     .action(async (id: string | undefined, opts: PrepareOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
-      const slotId = resolveSlotId(id);
-      const vars: Record<string, string> = opts.var ?? {};
-      const params = {
-        slotId,
-        branch: opts.branch,
-        mergeMain: opts.mergeMain,
-        flowType: opts.flowType,
-        app: opts.app,
-        vars: Object.keys(vars).length > 0 ? vars : undefined,
-      };
       try {
+        const slotId = resolveSlotId(id);
+        const vars: Record<string, string> = opts.var ?? {};
+        const params = {
+          slotId,
+          branch: opts.branch,
+          mergeMain: opts.mergeMain,
+          flowType: opts.flowType,
+          app: opts.app,
+          vars: Object.keys(vars).length > 0 ? vars : undefined,
+        };
         if (output.json) {
           const result = await client.call<ScriptActionResult>('slot.prepare', params);
           output.writeJson(result);
@@ -175,16 +175,16 @@ export function registerSlotCommand(program: Command): void {
     .option('--kill-tmux', 'Kill tmux session after release')
     .action(async (id: string | undefined, opts: ReleaseOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
-      const slotId = resolveSlotId(id);
-      const params = {
-        slotId,
-        keepWarm: opts.keepWarm,
-        keepWork: opts.keepWork,
-        skipArtifacts: opts.skipArtifacts,
-        forceReset: opts.reset,
-        killTmux: opts.killTmux,
-      };
       try {
+        const slotId = resolveSlotId(id);
+        const params = {
+          slotId,
+          keepWarm: opts.keepWarm,
+          keepWork: opts.keepWork,
+          skipArtifacts: opts.skipArtifacts,
+          forceReset: opts.reset,
+          killTmux: opts.killTmux,
+        };
         if (output.json) {
           const result = await client.call<ScriptActionResult>('slot.release', params);
           output.writeJson(result);
