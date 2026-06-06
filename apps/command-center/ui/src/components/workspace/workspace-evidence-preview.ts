@@ -32,9 +32,7 @@ export function dedupeWorkspaceEvidenceArtifacts(artifacts: readonly ArtifactRef
   return deduped;
 }
 
-function evidenceTypeLabel(artifact: ArtifactRef): string {
-  if (IMAGE_EXTS.test(artifact.path)) return workspaceArtifactTypeBadge('image');
-  if (VIDEO_EXTS.test(artifact.path)) return workspaceArtifactTypeBadge('video');
+function evidenceTypeLabel(): string {
   return workspaceArtifactTypeBadge('other');
 }
 
@@ -72,6 +70,7 @@ export function renderWorkspaceEvidencePreview(input: {
         >
       </div>
       <div
+        role="list"
         style="display:grid; grid-template-columns:repeat(auto-fit, minmax(${input.compact
           ? '160px'
           : '200px'}, 1fr)); gap:${spacing.sm};"
@@ -124,7 +123,7 @@ export function renderWorkspaceEvidencePreview(input: {
                         style="width:100%; height:100%; object-fit:contain; display:block;"
                       ></video>`
                     : html`<span style="font-size:${fonts.sizeXs}; color:${colors.textMuted};"
-                        >${evidenceTypeLabel(artifact)}</span
+                        >${evidenceTypeLabel()}</span
                       >`}
               </div>
               <span
