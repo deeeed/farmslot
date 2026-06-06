@@ -27,20 +27,30 @@ export function familyLedgerEntry(
   return snapshot.familyChangeLedger?.entries.find((entry) => entry.runId === runId);
 }
 
+export function ledgerDiffScopeLabel(entry: FamilyChangeLedgerEntry): string {
+  if (entry.changeKind === 'review-input' && entry.inputDiff?.available) {
+    return 'reviewed input snapshot';
+  }
+  if (entry.contributionDiff.available) return 'produced code delta';
+  if (entry.inputDiff?.available) return 'reviewed input snapshot';
+  if (entry.legacyDiffFallback?.available) return 'legacy diff fallback';
+  return 'no code delta';
+}
+
 export function ledgerDiffLabel(entry: FamilyChangeLedgerEntry): string {
   if (entry.changeKind === 'review-input' && entry.inputDiff?.available) {
-    return `reviewed PR diff +${entry.inputDiff.additions} -${entry.inputDiff.deletions}`;
+    return `reviewed PR input +${entry.inputDiff.additions} -${entry.inputDiff.deletions}`;
   }
   if (entry.contributionDiff.available) {
-    return `produced code +${entry.contributionDiff.additions} -${entry.contributionDiff.deletions}`;
+    return `produced code delta +${entry.contributionDiff.additions} -${entry.contributionDiff.deletions}`;
   }
   if (entry.inputDiff?.available) {
-    return `reviewed PR diff +${entry.inputDiff.additions} -${entry.inputDiff.deletions}`;
+    return `reviewed PR input +${entry.inputDiff.additions} -${entry.inputDiff.deletions}`;
   }
   if (entry.legacyDiffFallback?.available) {
     return `legacy diff +${entry.legacyDiffFallback.additions} -${entry.legacyDiffFallback.deletions}`;
   }
-  return 'no code diff';
+  return 'no code delta';
 }
 
 export function familyDiffLabel(snapshot: Pick<FamilyDiffSnapshot, 'diffStat'>): string {
@@ -65,17 +75,17 @@ export function runDiffLabel(
 ): string {
   const entry = familyLedgerEntry(snapshot, run.runId);
   if (entry?.contributionDiff.available) {
-    return `produced code +${entry.contributionDiff.additions} -${entry.contributionDiff.deletions}`;
+    return `produced code delta +${entry.contributionDiff.additions} -${entry.contributionDiff.deletions}`;
   }
   if (entry?.inputDiff?.available) {
-    return `reviewed PR diff +${entry.inputDiff.additions} -${entry.inputDiff.deletions}`;
+    return `reviewed PR input +${entry.inputDiff.additions} -${entry.inputDiff.deletions}`;
   }
   if (entry?.legacyDiffFallback?.available) {
     return `legacy diff +${entry.legacyDiffFallback.additions} -${entry.legacyDiffFallback.deletions}`;
   }
   return run.diffStat.available
-    ? `produced code +${run.diffStat.additions} -${run.diffStat.deletions}`
-    : 'no code diff';
+    ? `produced code delta +${run.diffStat.additions} -${run.diffStat.deletions}`
+    : 'no code delta';
 }
 
 export function artifactFromPath(

@@ -4,7 +4,7 @@
 import { nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
-import type { ArtifactRef, ReadyGatePayload, RecipeRunArtifactGroup } from '@farmslot/protocol';
+import type { ArtifactRef, ReadyGatePayload } from '@farmslot/protocol';
 
 import '../diff-viewer/diff-review.js';
 import '../recipe-graph/recipe-graph.js';
@@ -20,7 +20,6 @@ import { ReadyWorkspaceActionPresenter } from './ready-workspace-action-presente
 import {
   renderReadyArtifactCard,
   renderReadyArtifactGroups,
-  renderReadyRecipeRunArtifactCard,
   renderReadySelectedRecipeRunArtifacts,
 } from './ready-workspace-artifact-renderers.js';
 import {
@@ -73,6 +72,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       renderTopBar: () => this._renderTopBar(payload),
       renderResolvedBanner: () => this._renderResolvedBanner(payload),
       renderPackagePanel: () => this._renderPackagePanel(payload),
+      renderReportEvidence: () => this._renderSelectedRecipeRunArtifacts(payload),
       renderTabBar: () => this._renderTabBar(payload),
       renderTabContent: () => this._renderTabContent(payload),
       renderInputArtifactViewer: () => this._renderInputArtifactViewer(payload),
@@ -319,8 +319,12 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
         this._lightboxOpen = true;
         this._syncViewStateToHash();
       },
-      renderArtifactCard: (selectedGroup, artifact, scopedArtifacts) =>
-        this._renderRecipeRunArtifactCard(payload, selectedGroup, artifact, scopedArtifacts),
+      artifactUrl: (selectedGroup, artifact) => this._recipeRunArtifactUrl(selectedGroup, artifact),
+      openArtifact: (selectedGroup, artifact, scopedArtifacts) =>
+        this._openRecipeRunArtifact(payload, selectedGroup, artifact, {
+          paths: scopedArtifacts.map((entry) => entry.path),
+          label: selectedGroup.label,
+        }),
     });
   }
 
@@ -412,25 +416,6 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
           this._openDiffModal(workspaceArtifactBasename(artifact.path, 'Diff'), artifact);
       },
       setIncluded: (included) => this._setEvidenceIncluded(payload, artifact, included),
-    });
-  }
-
-  private _renderRecipeRunArtifactCard(
-    payload: ReadyGatePayload,
-    group: RecipeRunArtifactGroup,
-    artifact: ArtifactRef,
-    scopedArtifacts: ArtifactRef[],
-  ) {
-    return renderReadyRecipeRunArtifactCard({
-      artifact,
-      group,
-      url: this._recipeRunArtifactUrl(group, artifact),
-      opensInLightbox: this._opensInLightbox(artifact),
-      open: () =>
-        this._openRecipeRunArtifact(payload, group, artifact, {
-          paths: scopedArtifacts.map((entry) => entry.path),
-          label: group.label,
-        }),
     });
   }
 

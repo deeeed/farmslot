@@ -51,6 +51,10 @@ import {
   renderReviewTopBar,
 } from './review-workspace-shell-renderers.js';
 import { ReviewWorkspaceState } from './review-workspace-state.js';
+import {
+  dedupeWorkspaceEvidenceArtifacts,
+  renderWorkspaceEvidencePreview,
+} from './workspace-evidence-preview.js';
 import { runArtifactUrl, workspaceArtifactBasename } from './workspace-artifacts.js';
 
 const GATEWAY_BASE = gatewayHttpOrigin();
@@ -67,7 +71,9 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   /** Media artifacts from the review gate payload */
   private get _mediaArtifacts(): ArtifactRef[] {
-    return reviewEvidenceArtifacts(this._payload?.artifactManifest);
+    return dedupeWorkspaceEvidenceArtifacts(
+      reviewEvidenceArtifacts(this._payload?.artifactManifest),
+    );
   }
 
   /** Lightbox items derived from media artifacts */
@@ -535,31 +541,40 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
           : nothing}
         <div class="rw-md-section" style="flex: ${this._splitPct} 1 0%">
           ${unsafeHTML(renderMarkdown(payload.reviewMd))}
+          ${this._mediaArtifacts.length > 0
+            ? renderWorkspaceEvidencePreview({
+                title: 'Review evidence',
+                subtitle:
+                  'Local screenshot/video artifacts attached to this review gate — the same proof the reviewer should inspect before posting.',
+                compact: true,
+                items: this._mediaArtifacts.map((artifact, index) => ({
+                  artifact,
+                  url: runArtifactUrl(GATEWAY_BASE, this.runId, artifact),
+                  open: () => {
+                    this._lightboxIndex = index;
+                    this._lightboxOpen = true;
+                  },
+                })),
+              })
+            : nothing}
         </div>
         ${this._showEvidence && this._mediaArtifacts.length > 0
           ? html`
               <div class="rw-evidence-panel">
-                <div class="rw-evidence-grid">
-                  ${this._mediaArtifacts.map((a, i) => {
-                    const url = runArtifactUrl(GATEWAY_BASE, this.runId, a);
-                    const name = workspaceArtifactBasename(a.path);
-                    const isVideo = /\.(mp4|mov|webm)$/i.test(a.path);
-                    return html`
-                      <div
-                        class="rw-evidence-card"
-                        @click=${() => {
-                          this._lightboxIndex = i;
-                          this._lightboxOpen = true;
-                        }}
-                      >
-                        ${isVideo
-                          ? html`<video src=${url} muted preload="metadata"></video>`
-                          : html`<img src=${url} alt=${name} loading="lazy" />`}
-                        <div class="rw-evidence-label" title=${a.path}>${name}</div>
-                      </div>
-                    `;
-                  })}
-                </div>
+                ${renderWorkspaceEvidencePreview({
+                  title: 'Review evidence',
+                  subtitle:
+                    'Local artifacts attached to this review gate — click any card to inspect it in the viewer.',
+                  compact: true,
+                  items: this._mediaArtifacts.map((artifact, index) => ({
+                    artifact,
+                    url: runArtifactUrl(GATEWAY_BASE, this.runId, artifact),
+                    open: () => {
+                      this._lightboxIndex = index;
+                      this._lightboxOpen = true;
+                    },
+                  })),
+                })}
               </div>
             `
           : nothing}

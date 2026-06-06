@@ -190,7 +190,7 @@ export const runDetailStyles = css`
     flex: 1;
   }
   .gate-section {
-    flex: 1;
+    flex: 0 0 auto;
     min-height: 0;
     display: flex;
     flex-direction: column;

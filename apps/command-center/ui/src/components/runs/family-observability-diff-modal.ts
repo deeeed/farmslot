@@ -19,13 +19,24 @@ export type FamilyDiffModalHashAction =
   | { kind: 'close' }
   | { kind: 'open'; label: string; artifact: FamilyObservabilityArtifact };
 
+function diffArtifactScopeTitle(artifact: FamilyObservabilityArtifact): string {
+  if (artifact.source === 'task-input' || artifact.path.startsWith('inputs/')) {
+    return 'Reviewed PR input snapshot';
+  }
+  if (artifact.source === 'task-artifact' || artifact.path.startsWith('artifacts/diff')) {
+    return 'Produced code delta';
+  }
+  return 'Diff artifact';
+}
+
 export function familyDiffModalState(
   label: string,
   artifact: FamilyObservabilityArtifact,
 ): FamilyDiffModalState {
   const filename = artifact.path.split('/').pop() ?? artifact.path;
+  const labelPrefix = label === filename ? filename : `${label} · ${filename}`;
   return {
-    title: `${label} · ${filename}`,
+    title: `${diffArtifactScopeTitle(artifact)} · ${labelPrefix}`,
     artifactUrl: familyArtifactApiPath(artifact),
     artifact,
   };

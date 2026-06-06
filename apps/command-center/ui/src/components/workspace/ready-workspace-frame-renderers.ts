@@ -18,6 +18,7 @@ export interface ReadyWorkspaceFrameInput {
   renderTopBar: () => TemplateResult;
   renderResolvedBanner: () => unknown;
   renderPackagePanel: () => unknown;
+  renderReportEvidence?: () => unknown;
   renderTabBar: () => unknown;
   renderTabContent: () => unknown;
   renderInputArtifactViewer: () => unknown;
@@ -65,6 +66,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
               ${input.payload.workerReport
                 ? html`<div class="rdy-md-section">
                     ${unsafeHTML(renderReadyWorkspaceMarkdown(input.payload.workerReport))}
+                    ${input.renderReportEvidence?.() ?? nothing}
                   </div>`
                 : html`<div class="rdy-md-empty">No worker report</div>`}
             </div>

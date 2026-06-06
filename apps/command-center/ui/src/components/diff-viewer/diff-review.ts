@@ -98,6 +98,9 @@ export class DiffReview extends LitElement {
           overflow: auto;
           border-radius: 0 0 ${radii.md} ${radii.md};
           background: ${colors.bgSurface};
+          min-width: 0;
+          position: relative;
+          contain: layout paint;
         }
         .dr-body::-webkit-scrollbar {
           width: 6px;
@@ -152,6 +155,27 @@ export class DiffReview extends LitElement {
           background: ${colors.bgCard} !important;
           color: ${colors.textMuted} !important;
           border-color: #1e1e36 !important;
+          box-sizing: border-box !important;
+          display: table-cell !important;
+          min-width: 54px !important;
+          max-width: 54px !important;
+          overflow: hidden !important;
+          position: static !important;
+          text-align: right !important;
+          vertical-align: top !important;
+          width: 54px !important;
+          white-space: nowrap !important;
+        }
+        .d2h-code-line,
+        .d2h-code-side-line {
+          box-sizing: border-box !important;
+          padding-left: 8px !important;
+        }
+        .d2h-code-line-ctn {
+          white-space: pre !important;
+        }
+        .d2h-diff-table {
+          table-layout: auto !important;
         }
 
         /* Deletions */

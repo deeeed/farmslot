@@ -405,6 +405,14 @@ export const familyObservabilityLayoutStyles = css`
     color: ${unsafeCSS(colors.textMuted)};
     font-size: 10px;
   }
+  .diff-scope-chip {
+    border: 1px solid ${unsafeCSS(colors.textMuted)}44;
+    border-radius: ${unsafeCSS(radii.sm)};
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+    padding: 2px 6px;
+    white-space: nowrap;
+  }
   .warn {
     color: ${unsafeCSS(colors.statusWarn)};
   }

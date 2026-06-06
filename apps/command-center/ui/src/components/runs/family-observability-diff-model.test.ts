@@ -17,6 +17,7 @@ import {
   familyLedgerEntry,
   ledgerDiffArtifact,
   ledgerDiffLabel,
+  ledgerDiffScopeLabel,
   runDiffArtifact,
   runDiffLabel,
 } from './family-observability-diff-model.js';
@@ -140,11 +141,11 @@ test('ledgerDiffLabel follows review input contribution input legacy fallback or
         contributionDiff: diff({ additions: 10, deletions: 2 }),
       }),
     ),
-    'reviewed PR diff +8 -3',
+    'reviewed PR input +8 -3',
   );
   assert.equal(
     ledgerDiffLabel(ledgerEntry({ contributionDiff: diff({ additions: 10, deletions: 2 }) })),
-    'produced code +10 -2',
+    'produced code delta +10 -2',
   );
   assert.equal(
     ledgerDiffLabel(
@@ -153,7 +154,7 @@ test('ledgerDiffLabel follows review input contribution input legacy fallback or
         inputDiff: diff({ additions: 7, deletions: 1 }),
       }),
     ),
-    'reviewed PR diff +7 -1',
+    'reviewed PR input +7 -1',
   );
   assert.equal(
     ledgerDiffLabel(
@@ -164,7 +165,30 @@ test('ledgerDiffLabel follows review input contribution input legacy fallback or
     ),
     'legacy diff +5 -4',
   );
-  assert.equal(ledgerDiffLabel(ledgerEntry({ contributionDiff: emptyDiff() })), 'no code diff');
+  assert.equal(ledgerDiffLabel(ledgerEntry({ contributionDiff: emptyDiff() })), 'no code delta');
+});
+
+test('ledgerDiffScopeLabel distinguishes reviewed input snapshots from produced deltas', () => {
+  assert.equal(
+    ledgerDiffScopeLabel(
+      ledgerEntry({
+        changeKind: 'review-input',
+        inputDiff: diff({ additions: 8, deletions: 3 }),
+        contributionDiff: diff({ additions: 10, deletions: 2 }),
+      }),
+    ),
+    'reviewed input snapshot',
+  );
+  assert.equal(
+    ledgerDiffScopeLabel(ledgerEntry({ contributionDiff: diff({ additions: 10, deletions: 2 }) })),
+    'produced code delta',
+  );
+  assert.equal(
+    ledgerDiffScopeLabel(
+      ledgerEntry({ contributionDiff: emptyDiff(), inputDiff: diff({ additions: 7 }) }),
+    ),
+    'reviewed input snapshot',
+  );
 });
 
 test('family diff labels preserve summary display text', () => {
@@ -192,7 +216,7 @@ test('runDiffLabel uses ledger label before run diff stat fallback', () => {
   const entry = ledgerEntry({ contributionDiff: diff({ additions: 3, deletions: 1 }) });
   assert.equal(
     runDiffLabel(snapshot({ familyChangeLedger: { entries: [entry] } }), run()),
-    'produced code +3 -1',
+    'produced code delta +3 -1',
   );
   assert.equal(
     runDiffLabel(
@@ -209,15 +233,15 @@ test('runDiffLabel uses ledger label before run diff stat fallback', () => {
       }),
       run(),
     ),
-    'produced code +11 -4',
+    'produced code delta +11 -4',
   );
   assert.equal(
     runDiffLabel(snapshot(), run({ diffStat: stat({ additions: 9, deletions: 2 }) })),
-    'produced code +9 -2',
+    'produced code delta +9 -2',
   );
   assert.equal(
     runDiffLabel(snapshot(), run({ diffStat: stat({ available: false }) })),
-    'no code diff',
+    'no code delta',
   );
 });
 
