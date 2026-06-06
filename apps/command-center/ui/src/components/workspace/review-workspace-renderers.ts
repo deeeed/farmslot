@@ -438,7 +438,7 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       font-weight: 600;
     }
 
-    review-workspace .rw-evidence-toggle {
+    review-workspace .rw-panel-toggle {
       font-family: ${fonts.mono};
       font-size: 11px;
       font-weight: 600;
@@ -450,10 +450,10 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       color: ${colors.accent};
       transition: background 0.1s;
     }
-    review-workspace .rw-evidence-toggle:hover {
+    review-workspace .rw-panel-toggle:hover {
       background: ${colors.accent}22;
     }
-    review-workspace .rw-evidence-toggle.active {
+    review-workspace .rw-panel-toggle.active {
       background: ${colors.accent}22;
       border-color: ${colors.accent};
     }

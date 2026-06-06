@@ -56,6 +56,7 @@ export function renderGeneratedVisualArtifacts(
       artifact,
       url: view._artifactUrl(recipeHost, artifact.path),
       selected: view._selectedRecipeArtifactPath === artifact.path,
+      openLabel: 'Select preview',
       open: () => {
         view._selectedRecipeArtifactPath =
           view._selectedRecipeArtifactPath === artifact.path ? null : artifact.path;

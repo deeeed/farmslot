@@ -15,16 +15,36 @@ export interface WorkspaceEvidencePreviewItem {
   artifact: ArtifactRef;
   url: string;
   open?: () => void;
+  openLabel?: string;
   selected?: boolean;
+}
+
+function evidenceArtifactLabel(artifact: ArtifactRef): string {
+  const explicit = artifact.label?.trim();
+  if (explicit) return explicit;
+  const basename = workspaceArtifactBasename(artifact.path);
+  const withoutFinalExtension = basename.replace(/\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i, '');
+  const withoutTimestamp = withoutFinalExtension.replace(/-\d{10,}(?:\.\w+)?$/i, '');
+  const withoutEmbeddedExtension = withoutTimestamp.replace(
+    /\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i,
+    '',
+  );
+  const withoutEvidencePrefix = withoutEmbeddedExtension.replace(/^evidence[-_]?/i, '');
+  return withoutEvidencePrefix
+    .replace(/[-_]+/g, ' ')
+    .replace(/\bac(\d+)\b/gi, 'AC$1')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 export function dedupeWorkspaceEvidenceArtifacts(artifacts: readonly ArtifactRef[]): ArtifactRef[] {
   const seen = new Set<string>();
   const deduped: ArtifactRef[] = [];
   for (const artifact of artifacts) {
-    // Collapse mirrored copies of the same media by content hash; hashless artifacts
-    // keep path identity so before/after captures do not disappear by size/name.
-    const key = artifact.sha256 ? `sha:${artifact.sha256}` : `path:${artifact.path}`;
+    // Collapse mirrored copies of the same media by content hash while preserving
+    // semantic before/after pairs that happen to be byte-identical.
+    const key = artifact.sha256
+      ? `purpose:${artifact.purpose}:sha:${artifact.sha256}`
+      : `path:${artifact.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
     deduped.push(artifact);
@@ -70,10 +90,10 @@ export function renderWorkspaceEvidencePreview(input: {
           ? '160px'
           : '200px'}, 1fr)); gap:${spacing.sm};"
       >
-        ${input.items.map(({ artifact, url, open, selected }) => {
+        ${input.items.map(({ artifact, url, open, openLabel = 'Open in lightbox', selected }) => {
           const isImage = IMAGE_EXTS.test(artifact.path);
           const isVideo = VIDEO_EXTS.test(artifact.path);
-          const name = workspaceArtifactBasename(artifact.path);
+          const label = evidenceArtifactLabel(artifact);
           const clickable = Boolean(open) && !isVideo;
           return html`
             <div
@@ -107,7 +127,7 @@ export function renderWorkspaceEvidencePreview(input: {
                 ${isImage
                   ? html`<img
                       src=${url}
-                      alt=${artifact.label ?? name}
+                      alt=${label}
                       loading="lazy"
                       style="width:100%; height:100%; object-fit:contain; display:block;"
                     />`
@@ -129,14 +149,14 @@ export function renderWorkspaceEvidencePreview(input: {
                     style="border:1px solid ${colors.bgCardHover}; border-radius:${radii.sm}; background:${colors.bgCard}; color:${colors.accent}; font-size:${fonts.sizeXs}; font-family:${fonts.mono}; padding:4px 6px; cursor:pointer;"
                     @click=${() => open()}
                   >
-                    Open in lightbox
+                    ${openLabel}
                   </button>`
                 : nothing}
               <span
                 style="font-size:${fonts.sizeXs}; color:${colors.textPrimary}; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-                title=${artifact.label ?? name}
+                title=${label}
               >
-                ${artifact.label ?? name}
+                ${label}
               </span>
               <span
                 style="font-family:${fonts.mono}; font-size:${fonts.sizeXs}; color:${colors.textMuted}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"

@@ -123,7 +123,7 @@ export function renderReviewTopBar(input: {
       ${input.qualityCount !== null
         ? html`
             <button
-              class="rw-evidence-toggle ${input.showQuality ? 'active' : ''}"
+              class="rw-panel-toggle ${input.showQuality ? 'active' : ''}"
               @click=${input.toggleQuality}
             >
               Quality (${input.qualityCount})
@@ -133,7 +133,7 @@ export function renderReviewTopBar(input: {
       ${input.hasRecipe
         ? html`
             <button
-              class="rw-evidence-toggle ${input.showRecipe ? 'active' : ''}"
+              class="rw-panel-toggle ${input.showRecipe ? 'active' : ''}"
               @click=${input.toggleRecipe}
             >
               Recipe
@@ -143,7 +143,7 @@ export function renderReviewTopBar(input: {
       ${input.hasLearnings
         ? html`
             <button
-              class="rw-evidence-toggle ${input.showLearnings ? 'active' : ''}"
+              class="rw-panel-toggle ${input.showLearnings ? 'active' : ''}"
               @click=${input.toggleLearnings}
             >
               Learnings
@@ -152,7 +152,7 @@ export function renderReviewTopBar(input: {
         : nothing}
       <span class="rw-spacer"></span>
       <button
-        class="rw-evidence-toggle"
+        class="rw-panel-toggle"
         ?disabled=${input.posting || input.recovering || input.refreshing}
         title="Re-read review.md and line-comments.json from the worker. Preserves your comment selection."
         @click=${input.refresh}
@@ -162,7 +162,7 @@ export function renderReviewTopBar(input: {
       ${input.hasLearnings
         ? html`
             <button
-              class="rw-evidence-toggle"
+              class="rw-panel-toggle"
               ?disabled=${input.posting || input.recovering || input.proposing}
               title="Fire-and-forget LLM call. Analyzes learnings.md and proposes a recipe/process improvement. Decision arrives in timeline when done (~30–120s)."
               @click=${input.proposeImprovement}
