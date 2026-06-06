@@ -10,6 +10,10 @@ import {
 } from '../../utils/artifact-markdown.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
+import {
+  dedupeWorkspaceEvidenceArtifacts,
+  renderWorkspaceEvidencePreview,
+} from '../workspace/workspace-evidence-preview.js';
 
 import { isImageRecipeArtifact, isVideoRecipeArtifact } from './slot-view-recipe-helpers.js';
 import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
@@ -27,33 +31,13 @@ export function recipeArtifactPurposeLabel(artifact: ArtifactRef): string {
   return artifact.purpose;
 }
 
-function generatedArtifactLabel(artifactPath: string): string {
-  const basename = artifactPath.replace(/\\/g, '/').split('/').pop() ?? artifactPath;
-  const withoutFinalExtension = basename.replace(/\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i, '');
-  // Some runner filenames preserve the source extension before appending a timestamp/preview
-  // extension, so strip both the final and embedded visual suffixes before humanizing.
-  const withoutTimestamp = withoutFinalExtension.replace(/-\d{10,}(?:\.\w+)?$/i, '');
-  const withoutEmbeddedExtension = withoutTimestamp.replace(
-    /\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i,
-    '',
-  );
-  const withoutEvidencePrefix = withoutEmbeddedExtension.replace(/^evidence[-_]?/i, '');
-  return withoutEvidencePrefix
-    .replace(/[-_]+/g, ' ')
-    .replace(/\bac(\d+)\b/gi, 'AC$1')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function artifactDisplayLabel(artifact: ArtifactRef): string {
-  return artifact.label?.trim() || generatedArtifactLabel(artifact.path);
-}
-
 export function renderGeneratedVisualArtifacts(
   view: SlotViewRecipePresenter,
   recipeHost: ReturnType<typeof createSlotViewRecipeHostEntry>,
   visualArtifacts: ArtifactRef[],
 ) {
-  if (visualArtifacts.length === 0) {
+  const dedupedArtifacts = dedupeWorkspaceEvidenceArtifacts(visualArtifacts);
+  if (dedupedArtifacts.length === 0) {
     return html`
       <div
         style="margin-bottom:${spacing.sm}; padding:${spacing.sm}; border:1px dashed ${colors.bgCardHover}; border-radius:${radii.md}; color:${colors.textMuted}; font-size:${fonts.sizeXs};"
@@ -63,84 +47,30 @@ export function renderGeneratedVisualArtifacts(
       </div>
     `;
   }
-  return html`
-    <div
-      style="margin-bottom:${spacing.sm}; padding:${spacing.sm}; border:1px solid ${colors.bgCardHover}; border-radius:${radii.md}; background:${colors.bgSurface};"
-    >
-      <div
-        style="display:flex; align-items:center; justify-content:space-between; gap:${spacing.sm}; margin-bottom:${spacing.xs};"
-      >
-        <div style="display:flex; flex-direction:column; gap:2px;">
-          <span
-            style="font-size:${fonts.sizeXs}; text-transform:uppercase; letter-spacing:0.08em; color:${colors.textMuted}; font-weight:700;"
-            >Generated visual artifacts</span
-          >
-          <span style="font-size:${fonts.sizeXs}; color:${colors.textSecondary};">
-            ${visualArtifacts.length} screenshot/video
-            artifact${visualArtifacts.length === 1 ? '' : 's'} from this selected run — click one to
-            inspect what the replay proved.
-          </span>
-        </div>
-      </div>
-      <div
-        style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:${spacing.sm};"
-      >
-        ${visualArtifacts.slice(0, 8).map((artifact) => {
-          const selected = view._selectedRecipeArtifact(recipeHost)?.path === artifact.path;
-          const url = view._artifactUrl(recipeHost, artifact.path);
-          return html`
-            <button
-              data-testid=${`slot-recipe-visual-artifact-${artifact.path.replace(/^artifacts\//, '').replace(/[^a-zA-Z0-9_-]+/g, '-')}`}
-              style="display:flex; flex-direction:column; gap:6px; text-align:left; border:1px solid ${selected
-                ? colors.accent
-                : colors.bgCardHover}; border-radius:${radii.md}; background:${selected
-                ? `${colors.accent}16`
-                : colors.bgCard}; color:${colors.textPrimary}; padding:${spacing.xs}; cursor:pointer; overflow:hidden;"
-              @click=${() => {
-                view._selectedRecipeArtifactPath =
-                  view._selectedRecipeArtifactPath === artifact.path ? null : artifact.path;
-                view._syncUrlState();
-                void view._loadSelectedRecipeArtifactPreview(recipeHost);
-              }}
-            >
-              <div
-                style="height:112px; border-radius:${radii.sm}; overflow:hidden; background:${colors.bgBase}; border:1px solid ${colors.bgCardHover}; display:flex; align-items:center; justify-content:center;"
-              >
-                ${isImageRecipeArtifact(artifact)
-                  ? html`<img
-                      src=${url}
-                      alt=${artifactDisplayLabel(artifact)}
-                      style="width:100%; height:100%; object-fit:contain;"
-                    />`
-                  : html`<video
-                      src=${url}
-                      muted
-                      style="width:100%; height:100%; object-fit:contain;"
-                    ></video>`}
-              </div>
-              <span
-                style="font-size:${fonts.sizeXs}; color:${colors.textPrimary}; font-weight:700;"
-              >
-                ${artifactDisplayLabel(artifact)}
-              </span>
-              <span
-                style="font-family:${fonts.mono}; font-size:${fonts.sizeXs}; color:${colors.textMuted}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-              >
-                ${artifact.path}
-              </span>
-            </button>
-          `;
-        })}
-      </div>
-      ${visualArtifacts.length > 8
-        ? html`<div
-            style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; margin-top:${spacing.xs};"
-          >
-            +${visualArtifacts.length - 8} more visual artifact(s) in the grid below.
-          </div>`
-        : nothing}
-    </div>
-  `;
+  const previewArtifacts = dedupedArtifacts.slice(0, 8);
+  const hiddenCount = dedupedArtifacts.length - previewArtifacts.length;
+  return renderWorkspaceEvidencePreview({
+    title: 'Generated visual artifacts',
+    subtitle: `${dedupedArtifacts.length} screenshot/video artifact${
+      dedupedArtifacts.length === 1 ? '' : 's'
+    } from this selected run — click one to inspect what the replay proved.`,
+    totalCount: dedupedArtifacts.length,
+    overflowHint: `+${hiddenCount} more visual artifact${
+      hiddenCount === 1 ? '' : 's'
+    } in the full artifact grid below.`,
+    items: previewArtifacts.map((artifact) => ({
+      artifact,
+      url: view._artifactUrl(recipeHost, artifact.path),
+      selected: view._selectedRecipeArtifactPath === artifact.path,
+      openLabel: 'Select preview',
+      open: () => {
+        view._selectedRecipeArtifactPath =
+          view._selectedRecipeArtifactPath === artifact.path ? null : artifact.path;
+        view._syncUrlState();
+        void view._loadSelectedRecipeArtifactPreview(recipeHost);
+      },
+    })),
+  });
 }
 
 export function renderRecipeArtifactPreview(

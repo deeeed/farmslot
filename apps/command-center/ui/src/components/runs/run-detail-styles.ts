@@ -198,6 +198,9 @@ export const runDetailStyles = css`
     border-radius: ${unsafeCSS(radii.md)};
     overflow: hidden;
   }
+  .gate-section.ready-gate {
+    flex: 0 0 auto;
+  }
   .gate-header {
     display: flex;
     align-items: center;

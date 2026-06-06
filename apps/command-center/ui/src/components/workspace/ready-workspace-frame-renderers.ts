@@ -18,6 +18,7 @@ export interface ReadyWorkspaceFrameInput {
   renderTopBar: () => TemplateResult;
   renderResolvedBanner: () => unknown;
   renderPackagePanel: () => unknown;
+  renderReportEvidence?: () => unknown;
   renderTabBar: () => unknown;
   renderTabContent: () => unknown;
   renderInputArtifactViewer: () => unknown;
@@ -50,6 +51,7 @@ export interface ReadyWorkspaceFrameInput {
 
 export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
   const packageGate = !!input.payload.prPackage;
+  const reportEvidence = input.renderReportEvidence?.() ?? nothing;
 
   return html`
     <style>
@@ -65,14 +67,18 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
               ${input.payload.workerReport
                 ? html`<div class="rdy-md-section">
                     ${unsafeHTML(renderReadyWorkspaceMarkdown(input.payload.workerReport))}
+                    ${reportEvidence}
                   </div>`
-                : html`<div class="rdy-md-empty">No worker report</div>`}
+                : html`<div class="rdy-md-section">
+                    <div class="rdy-md-empty">No worker report</div>
+                    ${reportEvidence}
+                  </div>`}
             </div>
             <div class="rdy-resize" @mousedown=${input.onResizeStart}></div>
           `}
       <div class="rdy-bottom" style="flex: ${packageGate ? 1 : 100 - input.splitPct} 1 0%">
-        ${input.payload.prPackage ? input.renderPackagePanel() : nothing} ${input.renderTabBar()}
-        ${input.renderTabContent()}
+        ${input.payload.prPackage ? html`${input.renderPackagePanel()} ${reportEvidence}` : nothing}
+        ${input.renderTabBar()} ${input.renderTabContent()}
       </div>
     </div>
     <media-lightbox

@@ -60,7 +60,6 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @state() _checkingOut = false;
 
   // Panel state
-  @state() _showEvidence = false;
   @state() _showRecipe = false;
   @state() _showQuality = false;
   @state() _showLearnings = false;
@@ -68,7 +67,6 @@ export abstract class ReviewWorkspaceState extends LitElement {
   _syncPanelToHash() {
     // Track all open panels, not just one
     const panels: ReviewWorkspacePanel[] = [];
-    if (this._showEvidence) panels.push('evidence');
     if (this._showQuality) panels.push('quality');
     if (this._showRecipe) panels.push('recipe');
     if (this._showLearnings) panels.push('learnings');
@@ -77,7 +75,6 @@ export abstract class ReviewWorkspaceState extends LitElement {
 
   _readPanelFromHash() {
     const { panels } = parseReviewWorkspaceHashState();
-    if (panels.includes('evidence')) this._showEvidence = true;
     if (panels.includes('quality')) this._showQuality = true;
     if (panels.includes('recipe')) this._showRecipe = true;
     if (panels.includes('learnings')) this._showLearnings = true;

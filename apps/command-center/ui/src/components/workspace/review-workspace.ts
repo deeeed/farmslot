@@ -52,6 +52,10 @@ import {
 } from './review-workspace-shell-renderers.js';
 import { ReviewWorkspaceState } from './review-workspace-state.js';
 import { runArtifactUrl, workspaceArtifactBasename } from './workspace-artifacts.js';
+import {
+  dedupeWorkspaceEvidenceArtifacts,
+  renderWorkspaceEvidencePreview,
+} from './workspace-evidence-preview.js';
 
 const GATEWAY_BASE = gatewayHttpOrigin();
 
@@ -67,12 +71,14 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   /** Media artifacts from the review gate payload */
   private get _mediaArtifacts(): ArtifactRef[] {
-    return reviewEvidenceArtifacts(this._payload?.artifactManifest);
+    return dedupeWorkspaceEvidenceArtifacts(
+      reviewEvidenceArtifacts(this._payload?.artifactManifest),
+    );
   }
 
   /** Lightbox items derived from media artifacts */
-  private get _lightboxItems(): LightboxItem[] {
-    return this._mediaArtifacts.map((a) => ({
+  private _lightboxItems(mediaArtifacts: ArtifactRef[]): LightboxItem[] {
+    return mediaArtifacts.map((a) => ({
       url: runArtifactUrl(GATEWAY_BASE, this.runId, a),
       path: a.path,
       purpose: a.purpose,
@@ -475,6 +481,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       branch: this.branch || null,
       payload,
     });
+    const mediaArtifacts = this._mediaArtifacts;
 
     return html`
       ${renderReviewWorkspaceStyles(this._recoveryPhase)} ${this._renderTopBar()}
@@ -535,34 +542,23 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
           : nothing}
         <div class="rw-md-section" style="flex: ${this._splitPct} 1 0%">
           ${unsafeHTML(renderMarkdown(payload.reviewMd))}
+          ${mediaArtifacts.length > 0
+            ? renderWorkspaceEvidencePreview({
+                title: 'Review evidence',
+                subtitle:
+                  'Local screenshot/video artifacts attached to this review gate — the same proof the reviewer should inspect before posting.',
+                compact: true,
+                items: mediaArtifacts.map((artifact, index) => ({
+                  artifact,
+                  url: runArtifactUrl(GATEWAY_BASE, this.runId, artifact),
+                  open: () => {
+                    this._lightboxIndex = index;
+                    this._lightboxOpen = true;
+                  },
+                })),
+              })
+            : nothing}
         </div>
-        ${this._showEvidence && this._mediaArtifacts.length > 0
-          ? html`
-              <div class="rw-evidence-panel">
-                <div class="rw-evidence-grid">
-                  ${this._mediaArtifacts.map((a, i) => {
-                    const url = runArtifactUrl(GATEWAY_BASE, this.runId, a);
-                    const name = workspaceArtifactBasename(a.path);
-                    const isVideo = /\.(mp4|mov|webm)$/i.test(a.path);
-                    return html`
-                      <div
-                        class="rw-evidence-card"
-                        @click=${() => {
-                          this._lightboxIndex = i;
-                          this._lightboxOpen = true;
-                        }}
-                      >
-                        ${isVideo
-                          ? html`<video src=${url} muted preload="metadata"></video>`
-                          : html`<img src=${url} alt=${name} loading="lazy" />`}
-                        <div class="rw-evidence-label" title=${a.path}>${name}</div>
-                      </div>
-                    `;
-                  })}
-                </div>
-              </div>
-            `
-          : nothing}
         ${renderRecipeQualityCockpit({
           recipeJson: recipeHost.recipeJson,
           recipeView: this._recipeView,
@@ -650,7 +646,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         </div>
       </div>
       <media-lightbox
-        .items=${this._lightboxItems}
+        .items=${this._lightboxItems(mediaArtifacts)}
         .open=${this._lightboxOpen}
         .selectedIndex=${this._lightboxIndex}
         @lightbox-close=${() => {
@@ -705,12 +701,6 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       selectedRecommendation: this._selectedRecommendation,
       setRecommendation: (recommendation) => {
         this._selectedRecommendation = recommendation;
-      },
-      mediaArtifactCount: this._mediaArtifacts.length,
-      showEvidence: this._showEvidence,
-      toggleEvidence: () => {
-        this._showEvidence = !this._showEvidence;
-        this._syncPanelToHash();
       },
       qualityCount: this._payload?.qualityReport?.acVerdicts.length ?? null,
       showQuality: this._showQuality,

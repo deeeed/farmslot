@@ -438,7 +438,7 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       font-weight: 600;
     }
 
-    review-workspace .rw-evidence-toggle {
+    review-workspace .rw-panel-toggle {
       font-family: ${fonts.mono};
       font-size: 11px;
       font-weight: 600;
@@ -450,56 +450,12 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       color: ${colors.accent};
       transition: background 0.1s;
     }
-    review-workspace .rw-evidence-toggle:hover {
+    review-workspace .rw-panel-toggle:hover {
       background: ${colors.accent}22;
     }
-    review-workspace .rw-evidence-toggle.active {
+    review-workspace .rw-panel-toggle.active {
       background: ${colors.accent}22;
       border-color: ${colors.accent};
-    }
-    review-workspace .rw-evidence-panel {
-      padding: ${spacing.sm} ${spacing.lg};
-      border-bottom: 1px solid #2a2a44;
-      background: ${colors.bgCard};
-      overflow-y: auto;
-      max-height: 280px;
-    }
-    review-workspace .rw-evidence-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: ${spacing.md};
-    }
-    review-workspace .rw-evidence-card {
-      border: 1px solid #2a2a44;
-      border-radius: ${radii.md};
-      overflow: hidden;
-      background: ${colors.bgSurface};
-      cursor: pointer;
-      transition: border-color 0.15s;
-    }
-    review-workspace .rw-evidence-card:hover {
-      border-color: ${colors.accent}55;
-    }
-    review-workspace .rw-evidence-card img {
-      width: 100%;
-      max-height: 200px;
-      object-fit: contain;
-      display: block;
-      background: #000;
-    }
-    review-workspace .rw-evidence-card video {
-      width: 100%;
-      max-height: 200px;
-      display: block;
-      background: #000;
-    }
-    review-workspace .rw-evidence-label {
-      padding: 4px 8px;
-      font-size: 10px;
-      color: ${colors.textMuted};
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
     review-workspace .rw-recipe-panel {
       padding: ${spacing.sm} ${spacing.lg};

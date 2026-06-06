@@ -20,22 +20,30 @@ import {
   workspaceArtifactTypeBadge,
   workspaceArtifactTypeLabel,
 } from './workspace-artifacts.js';
+import {
+  dedupeWorkspaceEvidenceArtifacts,
+  renderWorkspaceEvidencePreview,
+} from './workspace-evidence-preview.js';
 
 export interface ReadySelectedRecipeRunArtifactsContext {
   group: RecipeRunArtifactGroup | null;
   artifacts: ArtifactRef[];
   openCompare: (group: RecipeRunArtifactGroup, artifacts: ArtifactRef[]) => void;
-  renderArtifactCard: (
+  artifactUrl: (group: RecipeRunArtifactGroup, artifact: ArtifactRef) => string;
+  openArtifact: (
     group: RecipeRunArtifactGroup,
     artifact: ArtifactRef,
     scopedArtifacts: ArtifactRef[],
-  ) => TemplateResult;
+  ) => void;
 }
 
 export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRunArtifactsContext) {
   if (!ctx.group || ctx.artifacts.length === 0) return nothing;
   const group = ctx.group;
-  const pairCount = buildBeforeAfterPairs(ctx.artifacts).length;
+  const displayArtifacts = dedupeWorkspaceEvidenceArtifacts(ctx.artifacts);
+  const previewArtifacts = displayArtifacts.slice(0, 12);
+  const hiddenCount = displayArtifacts.length - previewArtifacts.length;
+  const pairCount = buildBeforeAfterPairs(displayArtifacts).length;
   return html`
     <section class="rdy-quality-card">
       <div class="rdy-learnings-header">
@@ -54,18 +62,26 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
           ? html`
               <button
                 class="rdy-artifact-filter compare"
-                @click=${() => ctx.openCompare(group, ctx.artifacts)}
+                @click=${() => ctx.openCompare(group, displayArtifacts)}
               >
                 Compare ${pairCount} before/after
               </button>
             `
           : nothing}
       </div>
-      <div class="rdy-artifacts-grid">
-        ${ctx.artifacts
-          .slice(0, 12)
-          .map((artifact) => ctx.renderArtifactCard(group, artifact, ctx.artifacts))}
-      </div>
+      ${renderWorkspaceEvidencePreview({
+        title: `${group.label} evidence`,
+        subtitle: 'Local screenshot/video artifacts exactly as the gate will use them.',
+        totalCount: displayArtifacts.length,
+        overflowHint: `+${hiddenCount} more artifact${
+          hiddenCount === 1 ? '' : 's'
+        } in the full artifact grid below.`,
+        items: previewArtifacts.map((artifact) => ({
+          artifact,
+          url: ctx.artifactUrl(group, artifact),
+          open: () => ctx.openArtifact(group, artifact, displayArtifacts),
+        })),
+      })}
     </section>
   `;
 }
@@ -286,58 +302,6 @@ export function renderReadyArtifactCard(ctx: ReadyArtifactCardContext) {
             ${artifact.path.split('.').pop()?.toUpperCase()}
           </div>`
         : nothing}
-    </div>
-  `;
-}
-
-export interface ReadyRecipeRunArtifactCardContext {
-  artifact: ArtifactRef;
-  group: RecipeRunArtifactGroup;
-  url: string;
-  opensInLightbox: boolean;
-  open: () => void;
-}
-
-export function renderReadyRecipeRunArtifactCard(ctx: ReadyRecipeRunArtifactCardContext) {
-  const artifact = ctx.artifact;
-  const isImage = IMAGE_EXTS.test(artifact.path);
-  const isVideo = VIDEO_EXTS.test(artifact.path);
-  const isMedia = isImage || isVideo;
-  const type = workspaceArtifactType(artifact);
-  const open = () => {
-    if (ctx.opensInLightbox) ctx.open();
-  };
-  return html`
-    <div
-      class=${`rdy-artifact-card ${isMedia ? 'rdy-media-card' : ''} clickable`}
-      role="button"
-      tabindex="0"
-      title=${`Open ${artifact.path} from ${ctx.group.label}`}
-      @click=${open}
-      @keydown=${(event: KeyboardEvent) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
-        open();
-      }}
-    >
-      <span class=${`rdy-artifact-type-badge ${type}`}>${workspaceArtifactTypeBadge(type)}</span>
-      ${isImage
-        ? html`<img class="rdy-media-preview" src=${ctx.url} alt=${artifact.path} loading="lazy" />`
-        : isVideo
-          ? html`
-              <video
-                class="rdy-media-preview"
-                src=${ctx.url}
-                controls
-                muted
-                preload="metadata"
-              ></video>
-            `
-          : nothing}
-      <div class="rdy-artifact-name" title=${artifact.path}>
-        <span class="rdy-artifact-purpose">${artifact.purpose}</span>
-        ${workspaceArtifactBasename(artifact.path)}
-      </div>
     </div>
   `;
 }

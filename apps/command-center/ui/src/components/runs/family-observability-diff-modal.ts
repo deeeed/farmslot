@@ -19,13 +19,37 @@ export type FamilyDiffModalHashAction =
   | { kind: 'close' }
   | { kind: 'open'; label: string; artifact: FamilyObservabilityArtifact };
 
+function diffArtifactScopeTitle(artifact: FamilyObservabilityArtifact, label: string): string {
+  if (/^reviewed pr input(?: snapshot)?\b/i.test(label)) {
+    return 'Reviewed PR input snapshot';
+  }
+  if (/^produced code delta\b/i.test(label)) {
+    return 'Produced code delta';
+  }
+  if (artifact.source === 'task-input') {
+    return 'Reviewed PR input snapshot';
+  }
+  if (artifact.source === 'task-artifact') {
+    return 'Produced code delta';
+  }
+  return 'Diff artifact';
+}
+
 export function familyDiffModalState(
   label: string,
   artifact: FamilyObservabilityArtifact,
 ): FamilyDiffModalState {
   const filename = artifact.path.split('/').pop() ?? artifact.path;
+  const scopeTitle = diffArtifactScopeTitle(artifact, label);
+  const normalizedLabel = label
+    .replace(/^reviewed pr input(?: snapshot)?\s*[·-]?\s*/i, '')
+    .replace(/^produced code delta\s*[·-]?\s*/i, '')
+    .trim();
+  const labelPrefix =
+    normalizedLabel && normalizedLabel !== filename ? `${normalizedLabel} · ${filename}` : filename;
+  const title = `${scopeTitle} · ${labelPrefix}`;
   return {
-    title: `${label} · ${filename}`,
+    title,
     artifactUrl: familyArtifactApiPath(artifact),
     artifact,
   };

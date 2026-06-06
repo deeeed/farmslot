@@ -10,7 +10,7 @@ import type {
 import { formatBytes } from '../../utils/format.js';
 
 import { familyBucketSummary } from './family-observability-artifact-model.js';
-import { familyLedgerEntry } from './family-observability-diff-model.js';
+import { familyLedgerEntry, ledgerDiffScopeLabel } from './family-observability-diff-model.js';
 import { familyLedgerTurnLabel, flowColor, flowLabel } from './run-utils.js';
 
 interface FamilyLedgerRenderContext {
@@ -84,7 +84,7 @@ export function renderFamilyLedgerDiffDetail(
   return html`
     <div class="detail-section diff-detail-grid">
       <div class="diff-detail-card">
-        <div class="detail-title">Produced code</div>
+        <div class="detail-title">Produced code delta</div>
         ${entry.contributionDiff.available
           ? html`<div>
               ${context.renderDiffModalLink(
@@ -104,7 +104,7 @@ export function renderFamilyLedgerDiffDetail(
         </div>
       </div>
       <div class="diff-detail-card">
-        <div class="detail-title">Reviewed PR diff</div>
+        <div class="detail-title">Reviewed PR input snapshot</div>
         ${entry.inputDiff
           ? entry.inputDiff.available
             ? html`<div>
@@ -143,11 +143,11 @@ export function renderFamilyChangeLedger(
       </div>
       <div class="ledger-metrics">
         <div>
-          <span class="muted">Produced-code diffs</span
+          <span class="muted">Produced-code deltas</span
           ><strong>${summary.runsWithContributionDiff}/${ledger.entries.length}</strong>
         </div>
         <div>
-          <span class="muted">Reviewed input diffs</span
+          <span class="muted">Reviewed PR input snapshots</span
           ><strong>${summary.runsWithReviewInputDiff}/${ledger.entries.length}</strong>
         </div>
         <div>
@@ -202,6 +202,12 @@ export function renderFamilyChangeLedger(
                 <strong>${entry.runId.slice(0, 8)}</strong>
                 <span class="muted">${familyLedgerTurnLabel(entry)}</span>
                 <span>${context.renderLedgerDiffLink(entry)}</span>
+                <span
+                  class="diff-scope-chip"
+                  title="Whether this link is the run output delta or the PR input snapshot reviewed by the run."
+                >
+                  ${ledgerDiffScopeLabel(entry)}
+                </span>
               </div>
               <div class="ledger-entry-meta">
                 ${entry.reviewSignals
