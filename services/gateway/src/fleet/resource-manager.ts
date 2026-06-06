@@ -21,8 +21,9 @@ import {
 } from '@farmslot/protocol';
 
 // ─── Placeholder helpers ───
-import { loadProjectVars, loadSlotVars, resolveSlot } from '../core/config.js';
+import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
 import { expandTemplate } from '../core/hooks.js';
+import { shellQuote } from '../core/tmux.js';
 
 import { getNode } from './machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
@@ -322,48 +323,184 @@ export async function executeResourceHealth(
     return { ok: false, detail: `skipped (${unresolved.join(', ')} not configured)` };
   }
 
-  // Try agent-mediated execution for remote machines
+  const result = await execResourceCommand(slotId, slotVars.repo, expanded, 5_000);
+  if (result.exitCode === 0) {
+    if (resourceDef.type !== 'browser') return { ok: true };
+    const capturable = await verifyBrowserPidFileCapturable(
+      slotId,
+      resourceDef,
+      slotVars,
+      projectVars,
+    );
+    if (capturable.ok) return capturable;
+  }
+
+  const fallback = await recoverBrowserPidFromCdp(
+    slotId,
+    resourceId,
+    resourceDef,
+    slotVars,
+    projectVars,
+  );
+  if (fallback.ok) return fallback;
+
+  return { ok: false, detail: result.stderr?.trim() || `exit ${result.exitCode}` };
+}
+
+async function execResourceCommand(
+  slotId: string,
+  cwd: string,
+  cmd: string,
+  timeout: number,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   const { isLocal, machine } = await getSlotLocality(slotId);
   if (!isLocal) {
     const node = getNode(machine);
     if (node) {
       try {
-        const result = (await sendNodeRequest(node, 'exec', {
-          cmd: expanded,
-          cwd: slotVars.repo,
-          timeout: 5_000,
-        })) as { stdout: string; stderr: string; exitCode: number };
-        if (result.exitCode === 0) {
-          return { ok: true };
-        }
-        return { ok: false, detail: result.stderr?.trim() || `exit ${result.exitCode}` };
+        return (await sendNodeRequest(node, 'exec', { cmd, cwd, timeout })) as {
+          stdout: string;
+          stderr: string;
+          exitCode: number;
+        };
       } catch (err) {
-        return { ok: false, detail: (err as Error).message };
+        return { stdout: '', stderr: (err as Error).message, exitCode: 1 };
       }
     }
-    // No node — fall through to local exec (will use SSH if configured)
+    // No node — fall through to local exec, matching the legacy health path.
   }
 
   return new Promise((resolve) => {
-    execFile(
-      'bash',
-      ['-c', expanded],
-      { cwd: slotVars.repo, timeout: 5_000 },
-      (err, _stdout, stderr) => {
-        if (err) {
-          resolve({ ok: false, detail: stderr.trim() || err.message });
-        } else {
-          resolve({ ok: true });
-        }
-      },
-    );
+    execFile('bash', ['-c', cmd], { cwd, timeout }, (err, stdout, stderr) => {
+      if (err) {
+        resolve({ stdout, stderr: stderr.trim() || err.message, exitCode: 1 });
+      } else {
+        resolve({ stdout, stderr, exitCode: 0 });
+      }
+    });
   });
+}
+
+async function verifyBrowserPidFileCapturable(
+  slotId: string,
+  resourceDef: NonNullable<RawProjectJson['resources']>[string],
+  slotVars: Awaited<ReturnType<typeof loadSlotVars>>,
+  projectVars: Awaited<ReturnType<typeof loadProjectVars>>,
+): Promise<{ ok: boolean; detail?: string }> {
+  const pidPath = browserPidPath(resourceDef, slotVars, projectVars);
+  if (!pidPath) return { ok: false };
+  const result = await execResourceCommand(
+    slotId,
+    slotVars.repo,
+    buildBrowserPidFileCapturableCommand(pidPath),
+    5_000,
+  );
+  return result.exitCode === 0 ? { ok: true } : { ok: false };
+}
+
+function browserPidPath(
+  resourceDef: NonNullable<RawProjectJson['resources']>[string],
+  slotVars: Awaited<ReturnType<typeof loadSlotVars>>,
+  projectVars: Awaited<ReturnType<typeof loadProjectVars>>,
+): string | null {
+  const rawPidPath = resourceDef.watch?.path;
+  if (!rawPidPath) return null;
+  const expandedPidPath = expandTemplate(rawPidPath, slotVars, projectVars);
+  if (hasUnresolvedPlaceholders(expandedPidPath)) return null;
+  return expandedPidPath.startsWith('/')
+    ? expandedPidPath
+    : `${slotVars.remoteRepo}/${expandedPidPath}`;
+}
+
+export function buildBrowserPidFileCapturableCommand(pidPath: string): string {
+  return [
+    'set -e',
+    `pid_file=${shellQuote(pidPath)}`,
+    'pid="$(cat "$pid_file")"',
+    '[ -n "$pid" ]',
+    'kill -0 "$pid" 2>/dev/null',
+    'capture-helper resolve --pid "$pid" --json >/dev/null',
+  ].join('\n');
+}
+
+async function recoverBrowserPidFromCdp(
+  slotId: string,
+  resourceId: string,
+  resourceDef: NonNullable<RawProjectJson['resources']>[string],
+  slotVars: Awaited<ReturnType<typeof loadSlotVars>>,
+  projectVars: Awaited<ReturnType<typeof loadProjectVars>>,
+): Promise<{ ok: boolean; detail?: string }> {
+  if (resourceDef.type !== 'browser') return { ok: false };
+
+  const rawPort = slotVars.resourceVars.cdp_port;
+  const cdpPort = rawPort ? Number(rawPort) : NaN;
+  if (!Number.isInteger(cdpPort) || cdpPort <= 0 || cdpPort > 65_535) return { ok: false };
+
+  const pidPath = browserPidPath(resourceDef, slotVars, projectVars);
+  if (!pidPath) return { ok: false };
+  const pidDir = path.dirname(pidPath);
+  const cmd = buildBrowserPidRecoveryCommand(cdpPort, pidDir);
+  const result = await execResourceCommand(slotId, slotVars.repo, cmd, 5_000);
+  if (result.exitCode !== 0) return { ok: false };
+
+  return { ok: true, detail: `${resourceId} pid repaired from cdp_port ${cdpPort}` };
+}
+
+export function buildBrowserPidRecoveryCommand(cdpPort: number, pidDir: string): string {
+  const qPidDir = shellQuote(pidDir);
+  return [
+    'set -e',
+    `pid_dir=${qPidDir}`,
+    'lsof_bin="$(command -v lsof 2>/dev/null || true)"',
+    '[ -n "$lsof_bin" ] || lsof_bin=/usr/sbin/lsof',
+    `pid="$($lsof_bin -ti tcp:${cdpPort} -sTCP:LISTEN 2>/dev/null | head -1)"`,
+    '[ -n "$pid" ]',
+    'kill -0 "$pid" 2>/dev/null',
+    'capture-helper resolve --pid "$pid" --json >/dev/null',
+    'mkdir -p "$pid_dir"',
+    'printf "%s\\n" "$pid" > "$pid_dir/browser.pid"',
+    'printf "%s\\n" "$pid" > "$pid_dir/chromium.pid"',
+  ].join('\n');
+}
+
+export function buildBrowserNodeWatchCommand(pidPath: string, cdpPortRaw?: string): string {
+  const cdpPort = cdpPortRaw ? Number(cdpPortRaw) : NaN;
+  const pidFileCheck = [
+    `pid_file=${shellQuote(pidPath)}`,
+    'if [ -f "$pid_file" ]; then',
+    '  pid="$(cat "$pid_file" 2>/dev/null || true)"',
+    '  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && capture-helper resolve --pid "$pid" --json >/dev/null; then',
+    '    exit 0',
+    '  fi',
+    'fi',
+  ];
+
+  if (!Number.isInteger(cdpPort) || cdpPort <= 0 || cdpPort > 65_535) {
+    return ['set -e', ...pidFileCheck, 'exit 1'].join('\n');
+  }
+
+  return [
+    ...pidFileCheck,
+    `pid_dir=${shellQuote(path.dirname(pidPath))}`,
+    'lsof_bin="$(command -v lsof 2>/dev/null || true)"',
+    '[ -n "$lsof_bin" ] || lsof_bin=/usr/sbin/lsof',
+    `pid="$($lsof_bin -ti tcp:${cdpPort} -sTCP:LISTEN 2>/dev/null | head -1)"`,
+    '[ -n "$pid" ]',
+    'kill -0 "$pid" 2>/dev/null',
+    'capture-helper resolve --pid "$pid" --json >/dev/null',
+    'mkdir -p "$pid_dir"',
+    'printf "%s\\n" "$pid" > "$pid_dir/browser.pid"',
+    'printf "%s\\n" "$pid" > "$pid_dir/chromium.pid"',
+  ].join('\n');
 }
 
 /**
  * Poll all resources for a single slot. Updates cache and returns results.
  */
-export async function pollSlotResources(slotId: string): Promise<ResourceStateUpdate[]> {
+export async function pollSlotResources(
+  slotId: string,
+  opts?: { probeInactiveSimulators?: boolean },
+): Promise<ResourceStateUpdate[]> {
   const resources = await resolveSlotResources(slotId);
   if (resources.length === 0) return [];
   const slot = getCachedFleet()?.slots.find((s) => s.slot === slotId);
@@ -372,7 +509,7 @@ export async function pollSlotResources(slotId: string): Promise<ResourceStateUp
 
   await Promise.all(
     resources.map(async (r) => {
-      if (!shouldProbeResourceForSlot(slot, r.definition)) {
+      if (!opts?.probeInactiveSimulators && !shouldProbeResourceForSlot(slot, r.definition)) {
         results.push({ id: r.id, status: 'stopped' });
         return;
       }
@@ -657,7 +794,6 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
 
         for (const [id, def] of Object.entries(projectJson.resources)) {
           if (!def.watch) continue;
-          if (!shouldProbeResourceForSlot(slot, def as ResourceDefinition)) continue;
 
           const expandedWatch: {
             type: string;
@@ -694,6 +830,17 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
 
           if (def.watch.intervalMs) {
             expandedWatch.intervalMs = def.watch.intervalMs;
+          }
+
+          if (def.type === 'browser' && expandedWatch.path) {
+            expandedWatch.type = 'process-poll';
+            expandedWatch.cmd = buildBrowserNodeWatchCommand(
+              expandedWatch.path,
+              slotVars.resourceVars.cdp_port,
+            );
+            expandedWatch.cwd = slotVars.remoteRepo;
+            delete expandedWatch.path;
+            delete expandedWatch.port;
           }
 
           watchInstructions.push({ id, watch: expandedWatch });

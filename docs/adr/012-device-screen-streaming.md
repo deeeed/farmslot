@@ -4,6 +4,8 @@
 **Date:** 2026-03-27
 **Relates to:** [ADR-002](002-tmux-streaming.md), [ADR-008](008-remote-communication.md), [PRD](../PRD-command-center-canonical.md) — Feature C8
 
+**Terminology note:** ADR-020 renamed the per-machine daemon from "agent" to "node". In this ADR, the streaming daemon on a machine is the Farmslot node; LLM workers remain "agents".
+
 ## Context
 
 Terminal streaming (ADR-002) solved "watch what the agent types" — but agents also interact with visual UIs (React Native app via CDP, browser, emulator). The command center has no visibility into the device screen.
@@ -99,7 +101,7 @@ Capture process outputs JPEG frames → gateway serves `multipart/x-mixed-replac
 ```
 ANDROID (remote: runner-a/runner-b)                    iOS (local: runner-local)
 +----------------------------+                  +----------------------------+
-| Agent daemon               |                  | Gateway                    |
+| Node daemon                |                  | Gateway                    |
 |  +-- scrcpy --no-display   |                  |  +-- swift capture-helper  |
 |      --video-codec=h264    |                  |      (ScreenCaptureKit)    |
 |      --max-size=720        |                  |      -> H.264 to stdout   |
@@ -111,7 +113,7 @@ ANDROID (remote: runner-a/runner-b)                    iOS (local: runner-local)
     |                    Gateway (port 7777)                      |
     |  ScreenSessionManager: per-slot capture state              |
     |  Multicast: one capture -> N subscribers (like PtySession) |
-    |  Binary WS relay: agent binary -> client binary            |
+    |  Binary WS relay: node binary -> client binary             |
     +----------------------------+-------------------------------+
                                  | binary WS frames (H.264 NAL units)
                                  v
@@ -129,7 +131,7 @@ ANDROID (remote: runner-a/runner-b)                    iOS (local: runner-local)
 - `scrcpy --no-display --video-codec=h264 --max-size=720 --max-fps=15 --serial=<ADB_SERIAL>`
 - scrcpy pushes a lightweight server APK to the device, encodes framebuffer via Android MediaCodec
 - Output: raw H.264 byte stream on a local TCP socket
-- Agent reads socket, forwards binary frames over WS to gateway
+- Node reads socket, forwards binary frames over WS to gateway
 - Install: `apt install scrcpy` (Linux) or `brew install scrcpy` (macOS)
 
 **iOS (ScreenCaptureKit helper):**

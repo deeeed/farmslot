@@ -734,6 +734,7 @@ export async function sendRunnerPostLaunchPrompt(
     verifyWaitMs?: number;
     maxAttempts?: number;
     blockerSnapshotPath?: string;
+    signalPath?: string;
   } = {},
 ): Promise<void> {
   const runner = normalizeRunner(runnerId);
@@ -904,6 +905,19 @@ export async function sendRunnerPostLaunchPrompt(
       tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
     )
   ).stdout;
+  if (opts.signalPath) {
+    const signalResult = await execOnSlot(
+      vars,
+      `cat ${shellQuote(opts.signalPath)} 2>/dev/null`,
+      vars.remoteRepo,
+    );
+    if (signalResult.exitCode === 0 && runnerSignalShowsCompletion(signalResult.stdout)) {
+      console.log(
+        `[${logPrefix}] prompt delivery verifier missed completed task; accepting ${opts.signalPath}`,
+      );
+      return;
+    }
+  }
   let snapshotNote = '';
   if (opts.blockerSnapshotPath) {
     try {
@@ -931,6 +945,22 @@ export async function sendRunnerPostLaunchPrompt(
       `The pane did not change, echo "${marker}", or show runner progress, meaning the runner input handler was not live.${snapshotNote}\n` +
       `Last pane content:\n${failurePane}`,
   );
+}
+
+export function runnerSignalShowsCompletion(signalText: string): boolean {
+  let signal: unknown;
+  try {
+    signal = JSON.parse(signalText);
+  } catch {
+    // A missing/incomplete/partially-written signal is expected while workers
+    // are still running. It is not completion evidence.
+    return false;
+  }
+  if (!signal || typeof signal !== 'object') return false;
+  const record = signal as Record<string, unknown>;
+  const status = typeof record.status === 'string' ? record.status.toLowerCase() : '';
+  const outcome = typeof record.outcome === 'string' ? record.outcome.toLowerCase() : '';
+  return status === 'complete' || status === 'done' || outcome === 'success';
 }
 
 export async function resolvePrimaryWorkerTarget(

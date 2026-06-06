@@ -274,11 +274,13 @@ export async function runReplayStep(
     targetIdx >= completeIdx &&
     targetIdx <= humanGateIdx;
   const replaysPostGate = targetIdx >= 0 && humanGateIdx >= 0 && targetIdx > humanGateIdx;
-  const clearedDecisions = replaysCompletionOrGate
-    ? []
-    : replaysPostGate
-      ? existing.decisions
-      : existing.decisions.filter((d) => !d.resolvedAt);
+  const replaysTaskGeneration = targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx <= writeTaskIdx;
+  const clearedDecisions =
+    replaysTaskGeneration || replaysCompletionOrGate
+      ? []
+      : replaysPostGate
+        ? existing.decisions
+        : existing.decisions.filter((d) => !d.resolvedAt);
 
   // Reset run status, clear error and stale outcome
   const {

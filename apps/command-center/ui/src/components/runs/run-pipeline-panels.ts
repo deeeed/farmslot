@@ -12,20 +12,34 @@ export interface PipelineControlHandlers {
   cancel: () => void | Promise<void>;
 }
 
-export function renderPipelineControls(run: Run, handlers: PipelineControlHandlers) {
+export function renderPipelineControls(
+  run: Run,
+  handlers: PipelineControlHandlers,
+  opts: { cancelPending?: boolean } = {},
+) {
   const status = run.status;
   const isRunning = ['monitoring', 'ci-watching', 'preparing', 'dispatching'].includes(status);
   const isPaused = status === 'paused';
+  const isTerminal = ['done', 'failed', 'cancelled'].includes(status);
 
   return html`
     <div class="controls">
-      ${isPaused
+      ${opts.cancelPending ? html`<span class="ctrl-pending">Cancelling run…</span>` : nothing}
+      ${!opts.cancelPending && isPaused
         ? html` <button class="ctrl-btn ctrl-resume" @click=${handlers.resume}>Resume</button> `
-        : isRunning
+        : !opts.cancelPending && isRunning
           ? html` <button class="ctrl-btn ctrl-pause" @click=${handlers.pause}>Pause</button> `
           : nothing}
-      ${!['done', 'failed', 'cancelled'].includes(status)
-        ? html` <button class="ctrl-btn ctrl-cancel" @click=${handlers.cancel}>Cancel</button> `
+      ${!isTerminal
+        ? html`
+            <button
+              class="ctrl-btn ctrl-cancel"
+              ?disabled=${opts.cancelPending}
+              @click=${handlers.cancel}
+            >
+              ${opts.cancelPending ? 'Cancelling…' : 'Cancel'}
+            </button>
+          `
         : nothing}
     </div>
   `;

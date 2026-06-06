@@ -27,6 +27,6 @@ export async function resourceControl(
 }
 
 export async function resourceHealth(params: ResourceHealthParams): Promise<ResourceHealthResult> {
-  const results = await pollSlotResources(params.slotId);
+  const results = await pollSlotResources(params.slotId, { probeInactiveSimulators: true });
   return { slotId: params.slotId, resources: results };
 }

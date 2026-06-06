@@ -22,6 +22,12 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getRunForSlot, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
+import {
+  isDeviceGridResourceApplicable,
+  isDeviceGridResourceLive,
+  resolveDeviceGridResourceStatus,
+} from './device-grid-model.js';
+
 type LayoutMode = 'auto' | '1x1' | '2x1' | '2x2' | '3x2' | '4x2';
 
 interface DevicePane {
@@ -34,6 +40,7 @@ interface AvailableResource {
   resourceId: string;
   resourceLabel: string;
   workSummary: string;
+  resourceType: SlotResource['definition']['type'];
   platform: string;
   status: ResourceStatus;
   stream?: ResourceStreamStatus;
@@ -467,21 +474,23 @@ export class DeviceGrid extends LitElement {
         if (entry.status !== 'fulfilled') continue;
         const { slot, resources: slotResources } = entry.value;
         for (const r of slotResources) {
-          if (!r.definition.streamable) continue;
+          if (!r.definition.streamable || !isDeviceGridResourceApplicable(slot, r)) continue;
+          const status = resolveDeviceGridResourceStatus(slot, r);
           resources.push({
             slotId: slot.slot,
             resourceId: r.id,
             resourceLabel: r.definition.label,
             workSummary: this._summaryForSlot(slot),
+            resourceType: r.definition.type,
             platform: r.definition.platform ?? '',
-            status: r.status,
+            status,
             stream: r.stream,
             machine: slot.machine,
             hasBoot: !!r.definition.hooks?.boot,
             hasShutdown: !!r.definition.hooks?.shutdown,
             hasRelaunch: !!r.definition.hooks?.relaunch,
           });
-          statusMap.set(`${slot.slot}:${r.id}`, r.status);
+          statusMap.set(`${slot.slot}:${r.id}`, status);
         }
       }
 
@@ -523,7 +532,7 @@ export class DeviceGrid extends LitElement {
   private async _showAllRunning() {
     await this._fetchAllResources();
     const running = this._availableResources
-      .filter((r) => r.status === 'running')
+      .filter((r) => isDeviceGridResourceLive(r.status))
       .map((r) => ({ slotId: r.slotId, resourceId: r.resourceId }));
     this._panes = running.slice(0, 8);
     this._layout = 'auto';
@@ -629,7 +638,7 @@ export class DeviceGrid extends LitElement {
           </button>
           ${this._pickerOpen ? this._renderPicker() : ''}
         </div>
-        <button class="toolbar-btn" @click=${this._showAllRunning}>All Running</button>
+        <button class="toolbar-btn" @click=${() => this._showAllRunning()}>All Running</button>
         <div class="layout-btns">
           ${(['auto', '1x1', '2x1', '2x2', '3x2', '4x2'] as LayoutMode[]).map(
             (l) => html`

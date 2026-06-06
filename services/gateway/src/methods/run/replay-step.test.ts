@@ -107,6 +107,46 @@ test('runReplayStep restores taskFile from completed write-task output for downs
   assert.equal(getRun(run.id)?.taskFile, taskFile);
 });
 
+test('runReplayStep clears stale decisions when replaying task generation', async (t) => {
+  const taskFile = '/tmp/farmslot-stale-task/TASK.md';
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const staleDecision: RunDecision = {
+    id: 'stale-recipe-strategy',
+    type: 'engine_recipe_strategy',
+    title: 'Stale recipe strategy',
+    description: 'Old decision from a prior task generation',
+    actions: [{ id: 'accept', label: 'Use recommended', style: 'primary' as const }],
+    createdAt: '2026-04-15T00:00:00.000Z',
+    payload: { kind: 'recipe-strategy' } as any,
+  };
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile,
+    decisions: [staleDecision],
+    steps: run.steps.map((step) =>
+      step.name === 'write-task' ? { ...step, status: 'failed', outputs: { taskFile } } : step,
+    ),
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await runReplayStep({ runId: run.id, stepName: 'write-task', triggeredBy: 'operator' }, () => {});
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.taskFile, null);
+  assert.deepEqual(replayed.decisions, []);
+});
+
 test('runReplayStep forces eval worker replays through prepare to reinstall harness', async (t) => {
   const taskFile = '/tmp/farmslot-eval-task/TASK.md';
   const run = createRun({

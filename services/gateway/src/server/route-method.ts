@@ -322,7 +322,8 @@ import {
 } from './terminal-subscriptions.js';
 
 const ENABLE_RESOURCE_WATCHES =
-  process.env.FARMSLOT_RESOURCE_WATCHES === '1' || process.env.FARMSLOT_RESOURCE_WATCHES === 'true';
+  process.env.FARMSLOT_RESOURCE_WATCHES !== '0' &&
+  process.env.FARMSLOT_RESOURCE_WATCHES !== 'false';
 const ENABLE_BRANCH_WATCHERS =
   process.env.FARMSLOT_BRANCH_WATCHERS === '1' || process.env.FARMSLOT_BRANCH_WATCHERS === 'true';
 
@@ -648,8 +649,8 @@ export async function routeMethod(
       if (state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify(subscribeFrame));
       }
-      // Resource watches can start node-side filesystem/port/cmd monitors for every
-      // configured slot, so keep them opt-in. Resource health remains request-driven.
+      // Resource watches are the default cache source for resource.list / device grids.
+      // Full resource.health probes remain request-driven.
       if (ENABLE_RESOURCE_WATCHES) {
         sendWatchInstructions(machine).catch((err) => {
           console.log(

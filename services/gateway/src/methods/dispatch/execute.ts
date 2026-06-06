@@ -940,6 +940,7 @@ export async function dispatchExecute(
         'dispatch',
         {
           blockerSnapshotPath: `${workerTaskDir}/artifacts/runner-blockers/dispatch-launch.txt`,
+          signalPath: `${workerTaskDir}/SIGNAL.json`,
         },
       );
       step('task', 'Task prompt delivered and verified');

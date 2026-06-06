@@ -4,6 +4,8 @@
 **Date:** 2026-03-26
 **Relates to:** [ADR-001](001-gateway-architecture.md), [ADR-002](002-tmux-streaming.md), [PRD](../PRD-command-center-canonical.md) — Features A2, B2, C1, F3
 
+**Terminology note:** This ADR predates [ADR-020](020-agent-to-node-rename.md). Historical references to the per-machine "agent" / "Node Agent" were renamed in the implementation to the Farmslot **node** (`services/node`, `node.connect`, `node.*` events). LLM workers remain "agents".
+
 ## Context
 
 Farmslot manages slots across 3 machines (runner-local local, runner-a remote, runner-b remote). Today all remote operations go through SSH:
@@ -234,14 +236,14 @@ The agent runs locally too — same code, same WebSocket connection (localhost:7
 
 ## Amendment: Unified Exec (2026-04-01)
 
-The original design left exec timeout hardcoded at 30s in the gateway and ignored the agent's `agent.exec.output` streaming events. This caused long-running commands (e.g., `yarn setup` during prepare) to time out on remote slots, and led to a workaround SSH exec path (`slotExecStreaming`) that bypassed the agent entirely.
+The original design left exec timeout hardcoded at 30s in the gateway and ignored node exec output streaming events. Before ADR-020 these events were named `agent.exec.output`; the implemented post-rename event is `node.exec.output`. This caused long-running commands (e.g., `yarn setup` during prepare) to time out on remote slots, and led to a workaround SSH exec path (`slotExecStreaming`) that bypassed the per-machine daemon entirely.
 
 **Changes:**
 
-- Agent `exec` timeout is now optional (no default = runs until done)
-- Gateway routes `agent.exec.output` events to per-request callbacks via an `outputListeners` map in `agent-rpc.ts`
+- Node `exec` timeout is now optional (no default = runs until done)
+- Gateway routes node exec output events to per-request callbacks via an `outputListeners` map (`node-rpc.ts` in the current implementation)
 - `execOnSlot` is the single entry point for all slot command execution (local + remote), with optional `timeout` and `onOutput` callback
-- SSH exec path (`slotExecStreaming`) deleted — agent handles all remote execution
+- SSH exec path (`slotExecStreaming`) deleted — node handles all remote execution
 - `execLocalStreaming`, `execViaAgent`, `SlotStreamingOpts`, `StreamingExecOptions` deleted
 
 ## References

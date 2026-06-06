@@ -22,6 +22,7 @@ import {
   runnerPersistsSessionFiles,
   runnerProcessPattern,
   runnerProcessPatternSource,
+  runnerSignalShowsCompletion,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
   runnerSupportsTmuxNudges,
@@ -444,6 +445,30 @@ describe('tmux-interaction helpers — unknown runner isolation', () => {
     const pattern = runnerProcessPattern('aider');
     assert.ok(pattern.test('aider'), 'matches the unknown runner id itself');
     assert.equal(pattern.test('claude'), false, 'does not borrow claude matcher');
+  });
+});
+
+describe('worker signals', () => {
+  it('accepts completed worker SIGNAL.json as completion evidence', () => {
+    assert.equal(
+      runnerSignalShowsCompletion(
+        JSON.stringify({
+          status: 'complete',
+          outcome: 'success',
+          timestamp: '2026-06-06T05:56:30Z',
+        }),
+      ),
+      true,
+    );
+    assert.equal(runnerSignalShowsCompletion(JSON.stringify({ status: 'done' })), true);
+    assert.equal(runnerSignalShowsCompletion(JSON.stringify({ outcome: 'success' })), true);
+  });
+
+  it('rejects incomplete or invalid worker SIGNAL.json', () => {
+    assert.equal(runnerSignalShowsCompletion(JSON.stringify({ status: 'blocked' })), false);
+    assert.equal(runnerSignalShowsCompletion(JSON.stringify({ outcome: 'failure' })), false);
+    assert.equal(runnerSignalShowsCompletion(''), false);
+    assert.equal(runnerSignalShowsCompletion('{'), false);
   });
 });
 

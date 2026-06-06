@@ -133,6 +133,16 @@ export const runPipelineStyles = css`
   .ctrl-btn:hover {
     opacity: 1;
   }
+  .ctrl-btn:disabled {
+    cursor: wait;
+    opacity: 0.55;
+  }
+  .ctrl-pending {
+    color: ${unsafeCSS(colors.statusWarn)};
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
   .ctrl-pause {
     border-color: ${unsafeCSS(colors.statusWarn)};
     color: ${unsafeCSS(colors.statusWarn)};
