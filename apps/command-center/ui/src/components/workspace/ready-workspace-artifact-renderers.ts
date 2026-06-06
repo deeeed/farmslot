@@ -41,7 +41,7 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
   if (!ctx.group || ctx.artifacts.length === 0) return nothing;
   const group = ctx.group;
   const displayArtifacts = dedupeWorkspaceEvidenceArtifacts(ctx.artifacts);
-  const pairCount = buildBeforeAfterPairs(ctx.artifacts).length;
+  const pairCount = buildBeforeAfterPairs(displayArtifacts).length;
   return html`
     <section class="rdy-quality-card">
       <div class="rdy-learnings-header">
@@ -60,7 +60,7 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
           ? html`
               <button
                 class="rdy-artifact-filter compare"
-                @click=${() => ctx.openCompare(group, ctx.artifacts)}
+                @click=${() => ctx.openCompare(group, displayArtifacts)}
               >
                 Compare ${pairCount} before/after
               </button>

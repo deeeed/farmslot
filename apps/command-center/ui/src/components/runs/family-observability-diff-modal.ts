@@ -20,10 +20,10 @@ export type FamilyDiffModalHashAction =
   | { kind: 'open'; label: string; artifact: FamilyObservabilityArtifact };
 
 function diffArtifactScopeTitle(artifact: FamilyObservabilityArtifact): string {
-  if (artifact.source === 'task-input' || artifact.path.startsWith('inputs/')) {
+  if (artifact.source === 'task-input') {
     return 'Reviewed PR input snapshot';
   }
-  if (artifact.source === 'task-artifact' || artifact.path.startsWith('artifacts/diff')) {
+  if (artifact.source === 'task-artifact') {
     return 'Produced code delta';
   }
   return 'Diff artifact';

@@ -45,3 +45,13 @@ test('familyDiffModalState falls back to generic diff artifact titles', () => {
     'Diff artifact · custom review diff · custom.diff',
   );
 });
+
+test('familyDiffModalState does not infer produced deltas from legacy step-output paths', () => {
+  assert.equal(
+    familyDiffModalState(
+      'legacy step diff',
+      artifact({ path: 'artifacts/diff.txt', source: 'step-output' }),
+    ).title,
+    'Diff artifact · legacy step diff · diff.txt',
+  );
+});
