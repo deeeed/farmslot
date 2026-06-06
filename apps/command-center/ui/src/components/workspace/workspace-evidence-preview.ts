@@ -22,6 +22,8 @@ export function dedupeWorkspaceEvidenceArtifacts(artifacts: readonly ArtifactRef
   const seen = new Set<string>();
   const deduped: ArtifactRef[] = [];
   for (const artifact of artifacts) {
+    // Collapse mirrored copies of the same media by content hash; hashless artifacts
+    // keep path identity so before/after captures do not disappear by size/name.
     const key = artifact.sha256 ? `sha:${artifact.sha256}` : `path:${artifact.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -116,11 +118,9 @@ export function renderWorkspaceEvidencePreview(input: {
                   : isVideo
                     ? html`<video
                         src=${url}
-                        controls
+                        ?controls=${!clickable}
                         muted
                         preload="metadata"
-                        @click=${(event: Event) => event.stopPropagation()}
-                        @keydown=${(event: KeyboardEvent) => event.stopPropagation()}
                         style="width:100%; height:100%; object-fit:contain; display:block;"
                       ></video>`
                     : html`<span style="font-size:${fonts.sizeXs}; color:${colors.textMuted};"

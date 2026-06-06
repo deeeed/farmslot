@@ -77,8 +77,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   /** Lightbox items derived from media artifacts */
-  private get _lightboxItems(): LightboxItem[] {
-    return this._mediaArtifacts.map((a) => ({
+  private _lightboxItems(mediaArtifacts: ArtifactRef[]): LightboxItem[] {
+    return mediaArtifacts.map((a) => ({
       url: runArtifactUrl(GATEWAY_BASE, this.runId, a),
       path: a.path,
       purpose: a.purpose,
@@ -481,6 +481,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       branch: this.branch || null,
       payload,
     });
+    const mediaArtifacts = this._mediaArtifacts;
 
     return html`
       ${renderReviewWorkspaceStyles(this._recoveryPhase)} ${this._renderTopBar()}
@@ -541,13 +542,13 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
           : nothing}
         <div class="rw-md-section" style="flex: ${this._splitPct} 1 0%">
           ${unsafeHTML(renderMarkdown(payload.reviewMd))}
-          ${this._mediaArtifacts.length > 0
+          ${mediaArtifacts.length > 0
             ? renderWorkspaceEvidencePreview({
                 title: 'Review evidence',
                 subtitle:
                   'Local screenshot/video artifacts attached to this review gate — the same proof the reviewer should inspect before posting.',
                 compact: true,
-                items: this._mediaArtifacts.map((artifact, index) => ({
+                items: mediaArtifacts.map((artifact, index) => ({
                   artifact,
                   url: runArtifactUrl(GATEWAY_BASE, this.runId, artifact),
                   open: () => {
@@ -645,7 +646,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
         </div>
       </div>
       <media-lightbox
-        .items=${this._lightboxItems}
+        .items=${this._lightboxItems(mediaArtifacts)}
         .open=${this._lightboxOpen}
         .selectedIndex=${this._lightboxIndex}
         @lightbox-close=${() => {
