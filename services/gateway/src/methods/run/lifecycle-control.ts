@@ -34,9 +34,26 @@ export async function runCancel(params: RunCancelParams, emit: Emit): Promise<Ru
 
   cancelRunEngine(params.runId);
 
+  const completedAt = new Date().toISOString();
+  const run = updateRun(params.runId, {
+    status: 'cancelled',
+    completedAt,
+    error: params.reason ?? 'Cancelled by user',
+    steps: existing.steps.map((step) =>
+      step.status === 'running' || step.status === 'pending'
+        ? { ...step, status: 'skipped', completedAt }
+        : step,
+    ),
+    metrics: { ...existing.metrics, outcome: 'cancelled' },
+    agentContexts: [],
+  });
+  emit(Events.RUN_UPDATED, { run });
+
   // Release any claimed slot on cancel. Runs can be cancelled from human-gate /
   // blocked review-gate states long after dispatch, and keeping the slot busy
-  // strands live validation until someone manually resets it.
+  // strands live validation until someone manually resets it. Do this after
+  // publishing the terminal run state so Command Center responds immediately
+  // even when tmux/window cleanup is slow.
   if (existing.slotId) {
     try {
       const { loadSlotVars, resetSlot } = await import('../../core/index.js');
@@ -57,15 +74,6 @@ export async function runCancel(params: RunCancelParams, emit: Emit): Promise<Ru
       );
     }
   }
-
-  const run = updateRun(params.runId, {
-    status: 'cancelled',
-    completedAt: new Date().toISOString(),
-    error: params.reason ?? 'Cancelled by user',
-    metrics: { ...existing.metrics, outcome: 'cancelled' },
-    agentContexts: [],
-  });
-  emit(Events.RUN_UPDATED, { run });
   return { run };
 }
 

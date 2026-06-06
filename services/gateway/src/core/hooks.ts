@@ -22,6 +22,15 @@ export function expandTemplate(
   slotVars: SlotVars,
   projectVars?: ProjectVars,
 ): string {
+  return expandTemplateInternal(template, slotVars, projectVars, true);
+}
+
+function expandTemplateInternal(
+  template: string,
+  slotVars: SlotVars,
+  projectVars: ProjectVars | undefined,
+  includeProjectTemplateVars: boolean,
+): string {
   let result = template;
   // Dynamic resource vars
   for (const [field, value] of Object.entries(slotVars.resourceVars)) {
@@ -68,6 +77,13 @@ export function expandTemplate(
       const placeholder = `${key}_repo`;
       result = result.replaceAll(`{{${placeholder}}}`, refPath);
       result = result.replaceAll(`{{${placeholder.toUpperCase()}}}`, refPath);
+    }
+  }
+  if (includeProjectTemplateVars && projectVars?.projectJson.vars) {
+    for (const [key, rawValue] of Object.entries(projectVars.projectJson.vars)) {
+      const value = expandTemplateInternal(String(rawValue), slotVars, projectVars, false);
+      result = result.replaceAll(`{{${key}}}`, value);
+      result = result.replaceAll(`{{${key.toUpperCase()}}}`, value);
     }
   }
   return result;

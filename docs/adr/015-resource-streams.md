@@ -218,24 +218,26 @@ Three layout modes within slot-view:
 - `resource-manager.ts` — `resolveSlotResources()`, `executeResourceControl()`, hook expansion
 - `methods/resource.ts` — `resource.list`, `resource.control` handlers
 
-## Amendment: Resource Status Push (2026-03-31)
+## Amendment: Resource Status Push (2026-03-31; terminology updated by ADR-020)
+
+**Terminology:** ADR-020 renamed the per-machine daemon from "agent" to "node". In this ADR, "node" means the Farmslot daemon in `services/node`; "agent" is reserved for LLM workers running inside slots.
 
 **Problem:** Resource status relies on 60s pull-based polling with gateway-side health hook execution. Between polls, UI shows stale data — slots show green "running" when browsers/devices are dead.
 
-**Decision:** Agent-owned reactive resource monitoring. The agent is the single source of truth for resource state on its machine.
+**Decision:** Node-owned reactive resource monitoring. The node is the single source of truth for resource state on its machine.
 
 **Flow:**
 
-1. Gateway sends `resource.watch.start { slotId, resources: [...] }` to agent on connect
-2. Agent watches the specified resources (PID files, ports, processes) on its machine
-3. Agent emits `agent.resource.changed { slotId, resourceId, status, pid? }` on state change
-4. Gateway updates cache + broadcasts `resource.status.updated` to UI
-5. On agent disconnect → gateway marks all that machine's resources as `unknown`
+1. Gateway sends `resource.watch.start { slotId, resources: [...] }` to the node on connect
+2. Node watches the specified resources (PID files, ports, processes) on its machine
+3. Node emits `node.resource.changed { machine, slotId, resourceId, status, pid?, oldPid?, newPid?, at?, meta? }` on state change
+4. Gateway updates cache + broadcasts `resource.status.updated { slotId, resources }` to UI
+5. On node disconnect → gateway marks all that machine's resources as `unknown`
 6. 60s poll kept as reconciliation only
 
 **Watch types:**
 
-| Type           | Agent method                                 | Emits on                                 |
+| Type           | Node method                                  | Emits on                                 |
 | -------------- | -------------------------------------------- | ---------------------------------------- |
 | `pid-file`     | `fs.watch` on directory + periodic `kill -0` | PID file create/delete, zombie detection |
 | `port-listen`  | periodic `lsof -i :PORT`                     | port open/closed                         |
@@ -250,7 +252,34 @@ Three layout modes within slot-view:
 }
 ```
 
-Gateway expands template vars to absolute paths before sending to agent. Agent doesn't need pool/project config.
+Gateway expands template vars to absolute paths before sending to the node. The node doesn't need pool/project config.
+
+## Amendment: Cached Resource Discovery Contract (2026-06-06)
+
+**Problem:** Fleet-wide UI affordances such as the Devices page `All Running` button must list active streamable resources quickly. Running `resource.health` for every slot from the UI/gateway path turns discovery into a slow full-machine scan (`simctl`, ADB, `capture-helper`, browser pid repair), causing missing macwork resources, long waits, and inconsistent results.
+
+**Decision:** Resource discovery is cache-first. The node owns machine-local observation and pushes status changes for every configured watched resource on its machine, regardless of whether the slot currently has an active run. The gateway stores that pushed cache and serves `resource.list`/fleet resource summaries from it. UI surfaces that need an active-resource list read the cache only; they do not trigger full health checks inline.
+
+**Refresh semantics:** Explicit refresh actions may request a full check (`resource.health` / operator refresh), but that is an operator-initiated reconciliation path, not the normal discovery path. If a full check is slow or unavailable, the last pushed node cache remains the UI's best current value and may be marked `unknown`/stale separately.
+
+**Streamability:** For stream grids, `running` should mean the resource is expected to be stream-capturable, not merely that a process exists. For browser resources, node/gateway health may repair stale CDP/browser pid files, but must not mark a browser stream running when `capture-helper resolve --pid` cannot find a capturable window.
+
+## Amendment: Resource Pressure Controls (2026-06-06)
+
+**Problem:** Resource streams and node-owned watches make stale simulators, dev servers, browsers, and other project runtimes visible, but visibility alone does not relieve local machine pressure. Project-specific teardown shortcuts can stop those resources, but they are outside the typed Farmslot protocol and cannot be safely exposed from Command Center or future node-management surfaces.
+
+**Decision:** Add typed resource pressure controls on top of the existing project-driven resource model:
+
+- `resource.cleanup` previews or executes shutdown for idle `running`/`stale` resources that declare a configured `shutdown` hook.
+- `resource.watch.setEnabled` pauses/resumes node resource watches at runtime. Pausing watches marks cached resources for affected machines `unknown`; explicit health checks remain operator-driven.
+- Gateway Intelligence exposes a read-only resource pressure snapshot that combines machine health, slot activity, resource status counts, and dry-run cleanup candidates for diagnosis.
+- Command Center exposes these controls from the fleet resource view as an operator action, not an autonomous recovery.
+
+**Authority boundary:** Cleanup must use configured resource hooks through `resource.control`/gateway resource-manager paths. It must not hardcode project names, ports, process patterns, or raw `pkill` logic in Farmslot. Projects that need custom teardown semantics should express those semantics in their `project.json` resource shutdown hooks.
+
+**Safety defaults:** Cleanup defaults to dry-run preview and excludes busy, held, actively working, or current-run slots unless a caller explicitly opts in. This keeps pressure relief targeted at stale background resources rather than active or retained runs.
+
+**Diagnosis boundary:** The read-only pressure snapshot must report the runtime watch state. If watches are paused, cached resource statuses may be `unknown`; machine health and slot activity remain the primary pressure evidence. Default cleanup is not a substitute for stopping active builds or retained run slots unless an operator explicitly opts into a busier action. Watch pause/resume is persisted in the gateway's local runtime cache so node reconnects or gateway restarts do not silently re-arm an operator-paused watch set.
 
 ## Consequences
 

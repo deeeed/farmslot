@@ -47,11 +47,18 @@ export class RunPipeline extends LitElement {
   @property({ attribute: false }) taskProgress?: TaskProgressStructured;
   @state() private monitorExpanded = false;
   @state() private autoExpandDone = false;
+  @state() private cancelPending = false;
   private elapsedTimer: ReturnType<typeof setInterval> | null = null;
 
   static styles = runPipelineStyles;
 
   willUpdate(changed: PropertyValues) {
+    if (changed.has('run')) {
+      const previous = changed.get('run') as Run | undefined;
+      const runChanged = previous?.id !== this.run?.id;
+      const terminal = ['done', 'failed', 'cancelled'].includes(this.run?.status ?? '');
+      if (runChanged || terminal) this.cancelPending = false;
+    }
     if (!this.autoExpandDone && (changed.has('run') || changed.has('taskProgress'))) {
       if (this._activeTaskProgress()) {
         this.monitorExpanded = true;
@@ -154,11 +161,15 @@ export class RunPipeline extends LitElement {
   }
 
   private renderControls() {
-    return renderPipelineControls(this.run, {
-      pause: () => this.handlePause(),
-      resume: () => this.handleResume(),
-      cancel: () => this.handleCancel(),
-    });
+    return renderPipelineControls(
+      this.run,
+      {
+        pause: () => this.handlePause(),
+        resume: () => this.handleResume(),
+        cancel: () => this.handleCancel(),
+      },
+      { cancelPending: this.cancelPending },
+    );
   }
 
   private renderRunSummary() {
@@ -221,9 +232,12 @@ export class RunPipeline extends LitElement {
   }
 
   private async handleCancel() {
+    if (this.cancelPending) return;
+    this.cancelPending = true;
     try {
       await gateway.request(Methods.RUN_CANCEL, { runId: this.run.id });
     } catch (err) {
+      this.cancelPending = false;
       console.error('Failed to cancel run:', err);
       alert(`Cancel failed: ${(err as Error).message}`);
     }

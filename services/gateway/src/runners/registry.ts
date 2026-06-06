@@ -3,7 +3,12 @@
 
 import path from 'node:path';
 
-import { DEFAULT_CLAUDE_MODEL, DEFAULT_CURSOR_MODEL, type SafetyTier } from '@farmslot/protocol';
+import {
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CURSOR_MODEL,
+  type SafetyTier,
+  type WorkerSignal,
+} from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -14,6 +19,7 @@ import {
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
 /**
  * Env prefix for worker sessions.
@@ -734,6 +740,7 @@ export async function sendRunnerPostLaunchPrompt(
     verifyWaitMs?: number;
     maxAttempts?: number;
     blockerSnapshotPath?: string;
+    signalPath?: string;
   } = {},
 ): Promise<void> {
   const runner = normalizeRunner(runnerId);
@@ -904,6 +911,19 @@ export async function sendRunnerPostLaunchPrompt(
       tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
     )
   ).stdout;
+  if (opts.signalPath) {
+    const signalResult = await execOnSlot(
+      vars,
+      `cat ${shellQuote(opts.signalPath)} 2>/dev/null`,
+      vars.remoteRepo,
+    );
+    if (signalResult.exitCode === 0 && runnerSignalShowsCompletion(signalResult.stdout)) {
+      console.log(
+        `[${logPrefix}] prompt delivery verifier missed completed task; accepting ${opts.signalPath}`,
+      );
+      return;
+    }
+  }
   let snapshotNote = '';
   if (opts.blockerSnapshotPath) {
     try {
@@ -930,6 +950,24 @@ export async function sendRunnerPostLaunchPrompt(
     `Prompt delivery failed after ${maxAttempts} attempts in tmux target ${target}. ` +
       `The pane did not change, echo "${marker}", or show runner progress, meaning the runner input handler was not live.${snapshotNote}\n` +
       `Last pane content:\n${failurePane}`,
+  );
+}
+
+export function runnerSignalShowsCompletion(signalText: string): boolean {
+  let signal: unknown;
+  try {
+    signal = JSON.parse(signalText);
+  } catch {
+    // A missing/incomplete/partially-written signal is expected while workers
+    // are still running. It is not completion evidence.
+    return false;
+  }
+  if (!signal || typeof signal !== 'object') return false;
+  const result = normalizeWorkerSignal(signal as WorkerSignal);
+  return (
+    result.ok &&
+    isTerminalWorkerSignal(result.signal) &&
+    (result.signal.status === 'complete' || result.signal.status === 'done')
   );
 }
 

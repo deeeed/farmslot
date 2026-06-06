@@ -41,6 +41,7 @@ export const COMMAND_CENTER_SURFACES: CommandCenterSurfaceDefinition[] = [
       'get_slot',
       'get_machine_health',
       'resource_list',
+      'resource_pressure_snapshot',
     ],
     sourceAnchors: [
       'apps/command-center/ui/src/components/app-shell.ts:renderContent fleet route',
@@ -100,7 +101,12 @@ export const COMMAND_CENTER_SURFACES: CommandCenterSurfaceDefinition[] = [
     componentSymbol: 'DeviceGrid',
     primaryEntities: ['devices', 'resources', 'streams', 'slot resources'],
     affordances: ['inspect-devices', 'inspect-resources'],
-    preferredTools: ['operator_snapshot', 'resource_list', 'get_slot'],
+    preferredTools: [
+      'operator_snapshot',
+      'resource_list',
+      'resource_pressure_snapshot',
+      'get_slot',
+    ],
     sourceAnchors: [
       'apps/command-center/ui/src/components/app-shell.ts:renderContent devices route',
       'apps/command-center/ui/src/components/device-grid/device-grid.ts:DeviceGrid',

@@ -209,6 +209,8 @@ for (const [name, actual, expected] of [
       list: Methods.RESOURCE_LIST,
       control: Methods.RESOURCE_CONTROL,
       health: Methods.RESOURCE_HEALTH,
+      cleanup: Methods.RESOURCE_CLEANUP,
+      watchSetEnabled: Methods.RESOURCE_WATCH_SET_ENABLED,
       streamSubscribe: Methods.STREAM_SUBSCRIBE,
       streamUnsubscribe: Methods.STREAM_UNSUBSCRIBE,
       streamSnapshot: Methods.STREAM_SNAPSHOT,

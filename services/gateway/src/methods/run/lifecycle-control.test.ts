@@ -17,6 +17,13 @@ test('runCancel marks non-terminal runs cancelled without slot release side effe
     project: 'example-mobile-farm',
     ticketOrPr: `PROJ-${Date.now()}-cancel`,
   });
+  updateRun(run.id, {
+    steps: [
+      { name: 'find-slot', status: 'done' },
+      { name: 'human-gate', status: 'running' },
+      { name: 'complete', status: 'pending' },
+    ],
+  });
   t.after(() => cleanupRun(run.id));
 
   const events: string[] = [];
@@ -27,6 +34,14 @@ test('runCancel marks non-terminal runs cancelled without slot release side effe
   assert.equal(result.run.status, 'cancelled');
   assert.equal(result.run.error, 'operator cleanup');
   assert.equal(result.run.metrics.outcome, 'cancelled');
+  assert.deepEqual(
+    result.run.steps.map((step) => [step.name, step.status]),
+    [
+      ['find-slot', 'done'],
+      ['human-gate', 'skipped'],
+      ['complete', 'skipped'],
+    ],
+  );
   assert.deepEqual(events, ['run.updated']);
 });
 

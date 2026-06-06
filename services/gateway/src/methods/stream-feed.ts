@@ -8,7 +8,6 @@ import {
   clearResourceStreamState,
   executeResourceHealth,
   resolveSlotResources,
-  setCachedResourceStatus,
   setResourceStreamState,
 } from '../fleet/resource-manager.js';
 import {
@@ -106,7 +105,6 @@ export async function streamSubscribe(
       const check = await executeResourceHealth(slotId, resource.id);
       if (!check.ok) {
         const detail = `${resource.definition.label ?? resource.id} is not running`;
-        setCachedResourceStatus(slotId, resource.id, 'stopped', { broadcast: false });
         setResourceStreamState(slotId, resource.id, {
           state: 'error',
           detail,

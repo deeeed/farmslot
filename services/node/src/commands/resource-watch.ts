@@ -1,5 +1,5 @@
 // resource-watch.ts — Watch PID files, ports, and processes for resource status changes.
-// Gateway sends watch instructions; agent watches locally and emits events on state change.
+// Gateway sends watch instructions; node watches locally and emits events on state change.
 
 import { execFile } from 'node:child_process';
 import { existsSync, type FSWatcher, readFileSync, watch } from 'node:fs';
@@ -118,27 +118,26 @@ function checkPidFileStatus(path: string): {
   return { status: 'stopped' }; // zombie: PID file exists but process is dead
 }
 
+async function checkPidFileStatusWithRepair(aw: ActiveWatch): Promise<{
+  status: ResourceStatusValue;
+  pid?: number;
+  meta?: ResourceSidecarMeta;
+}> {
+  const pidPath = aw.instruction.watch.path!;
+  const repairCmd = aw.instruction.watch.cmd;
+  if (repairCmd) {
+    const status = await checkProcessStatus(repairCmd, aw.instruction.watch.cwd);
+    if (status !== 'running') return { status: 'stopped' };
+  }
+  return checkPidFileStatus(pidPath);
+}
+
 function startPidFileWatch(
   aw: ActiveWatch,
   onChange: (change: ResourceStatusChange) => void,
 ): void {
   const pidPath = aw.instruction.watch.path!;
   const intervalMs = aw.instruction.watch.intervalMs ?? 10_000;
-
-  // Initial check — emit current state so gateway rebuilds `activeResource`
-  // after a restart. Without this, a long-lived `running` resource stays
-  // invisible until its next state transition.
-  const initial = checkPidFileStatus(pidPath);
-  aw.lastStatus = initial.status;
-  aw.lastPid = initial.pid;
-  aw.lastMetaRunId = initial.meta?.runId;
-  onChange({
-    slotId: aw.slotId,
-    resourceId: aw.resourceId,
-    status: initial.status,
-    ...(initial.pid !== undefined ? { pid: initial.pid } : {}),
-    ...(initial.meta ? { meta: initial.meta } : {}),
-  });
 
   const flushRelaunchAsStopped = () => {
     aw.relaunchWindow = undefined;
@@ -150,8 +149,8 @@ function startPidFileWatch(
     onChange({ slotId: aw.slotId, resourceId: aw.resourceId, status: 'stopped', pid: prevPid });
   };
 
-  const emitIfChanged = () => {
-    const current = checkPidFileStatus(pidPath);
+  const emitIfChanged = async (force = false) => {
+    const current = await checkPidFileStatusWithRepair(aw);
     const currentMetaRunId = current.meta?.runId;
     // Emit when status, pid, OR meta.runId changes. Pure metadata transitions
     // happen on the first poll after boot: the pidfile appears (running) a
@@ -160,6 +159,7 @@ function startPidFileWatch(
     // forwarding that transition, gateway stale detection keys on a stale
     // or missing runId until the next real state change.
     if (
+      !force &&
       current.status === aw.lastStatus &&
       current.pid === aw.lastPid &&
       currentMetaRunId === aw.lastMetaRunId
@@ -220,7 +220,11 @@ function startPidFileWatch(
     aw.fsWatcher = watch(dir, { persistent: false }, (_eventType, changedFile) => {
       if (changedFile === filename) {
         // Small delay for file write to complete
-        setTimeout(emitIfChanged, 100);
+        setTimeout(() => {
+          emitIfChanged().catch((err) => {
+            console.warn(`[resource-watch] pid-file poll failed for ${pidPath}: ${err.message}`);
+          });
+        }, 100);
       }
     });
   } catch {
@@ -228,8 +232,19 @@ function startPidFileWatch(
     console.log(`[resource-watch] dir not found for ${pidPath}, polling only`);
   }
 
+  // Initial check — emit current state so gateway rebuilds `activeResource`
+  // after a restart. Without this, a long-lived `running` resource stays
+  // invisible until its next state transition.
+  emitIfChanged(true).catch((err) => {
+    console.warn(`[resource-watch] initial pid-file poll failed for ${pidPath}: ${err.message}`);
+  });
+
   // Periodic zombie detection (kill -0 check)
-  aw.pollTimer = setInterval(emitIfChanged, intervalMs);
+  aw.pollTimer = setInterval(() => {
+    emitIfChanged().catch((err) => {
+      console.warn(`[resource-watch] pid-file poll failed for ${pidPath}: ${err.message}`);
+    });
+  }, intervalMs);
 }
 
 // ─── Port listen watcher ───
@@ -262,9 +277,17 @@ function startPortListenWatch(
   };
 
   // Initial check
-  poll().catch(() => {});
+  poll().catch((err) => {
+    console.warn(
+      `[resource-watch] port poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
+    );
+  });
   aw.pollTimer = setInterval(() => {
-    poll().catch(() => {});
+    poll().catch((err) => {
+      console.warn(
+        `[resource-watch] port poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
+      );
+    });
   }, intervalMs);
 }
 
@@ -295,9 +318,17 @@ function startProcessPollWatch(
   };
 
   // Initial check
-  poll().catch(() => {});
+  poll().catch((err) => {
+    console.warn(
+      `[resource-watch] process poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
+    );
+  });
   aw.pollTimer = setInterval(() => {
-    poll().catch(() => {});
+    poll().catch((err) => {
+      console.warn(
+        `[resource-watch] process poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
+      );
+    });
   }, intervalMs);
 }
 

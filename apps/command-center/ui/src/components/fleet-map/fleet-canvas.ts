@@ -9,10 +9,12 @@ import type {
   NodeHealthUpdatedPayload,
   NodeInfo,
   NodesListResult,
+  ResourceCleanupResult,
   ResourceHealthResult,
   ResourceListResult,
   ResourceStatus,
   ResourceStatusUpdatedPayload,
+  ResourceWatchSetEnabledResult,
   Run,
   SlotResource,
   SlotStatus,
@@ -79,6 +81,9 @@ export class FleetCanvas extends LitElement {
   @state() private viewMode: FleetCanvasViewMode = 'card';
   @state() private actionsModalSlotId = '';
   @state() private fleetRefreshOpen = false;
+  @state() private resourceActionBusy = false;
+  @state() private resourceActionFlash = '';
+  @state() private resourceWatchesEnabled = true;
   private _resourceFetched = false;
   private unsub?: () => void;
   private _unsubConnected?: () => void;
@@ -190,6 +195,45 @@ export class FleetCanvas extends LitElement {
       color: ${unsafeCSS(colors.statusWarn)};
       font-family: ${unsafeCSS(fonts.mono)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    .resource-controls {
+      display: flex;
+      align-items: center;
+      gap: ${unsafeCSS(spacing.sm)};
+      padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+      background: ${unsafeCSS(colors.bgSurface)};
+      border: 1px solid ${unsafeCSS(colors.bgCard)};
+      color: ${unsafeCSS(colors.textSecondary)};
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    .resource-controls button {
+      background: ${unsafeCSS(colors.bgInput)};
+      color: ${unsafeCSS(colors.textMuted)};
+      border: 1px solid ${unsafeCSS(colors.bgCard)};
+      border-radius: 4px;
+      padding: 3px 8px;
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+      cursor: pointer;
+    }
+    .resource-controls button:hover:not(:disabled) {
+      color: ${unsafeCSS(colors.accent)};
+      border-color: ${unsafeCSS(colors.accent)};
+    }
+    .resource-controls button.danger:hover:not(:disabled) {
+      color: ${unsafeCSS(colors.statusFail)};
+      border-color: ${unsafeCSS(colors.statusFail)};
+    }
+    .resource-controls button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .resource-flash-ok {
+      color: ${unsafeCSS(colors.statusOk)};
+    }
+    .resource-flash-err {
+      color: ${unsafeCSS(colors.statusFail)};
     }
   `;
 
@@ -586,6 +630,80 @@ export class FleetCanvas extends LitElement {
     this._writeUrlParams();
   }
 
+  private showResourceFlash(message: string, ok: boolean) {
+    this.resourceActionFlash = `${ok ? 'ok' : 'err'}:${message}`;
+    setTimeout(() => {
+      this.resourceActionFlash = '';
+      this.requestUpdate();
+    }, 5000);
+  }
+
+  private async previewResourceCleanup() {
+    this.resourceActionBusy = true;
+    try {
+      const result = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
+        dryRun: true,
+      });
+      this.showResourceFlash(
+        `would stop ${result.targets.length} idle running/stale resource${result.targets.length === 1 ? '' : 's'}`,
+        true,
+      );
+    } catch (err) {
+      this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
+    } finally {
+      this.resourceActionBusy = false;
+    }
+  }
+
+  private async cleanupBackgroundResources() {
+    this.resourceActionBusy = true;
+    try {
+      const preview = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
+        dryRun: true,
+      });
+      if (preview.targets.length === 0) {
+        this.showResourceFlash('no idle running/stale resources to stop', true);
+        return;
+      }
+      const confirmed = window.confirm(
+        `Stop ${preview.targets.length} idle running/stale resource(s)? Active, held, and working slots are excluded.`,
+      );
+      if (!confirmed) return;
+      const result = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {
+        dryRun: false,
+      });
+      this.showResourceFlash(
+        `stopped ${result.stopped}/${result.targets.length}${result.failed ? `, failed ${result.failed}` : ''}`,
+        result.ok,
+      );
+      await this.fetchResourceData();
+    } catch (err) {
+      this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
+    } finally {
+      this.resourceActionBusy = false;
+    }
+  }
+
+  private async setResourceWatches(enabled: boolean) {
+    this.resourceActionBusy = true;
+    try {
+      const result = await gateway.request<ResourceWatchSetEnabledResult>(
+        Methods.RESOURCE_WATCH_SET_ENABLED,
+        { enabled },
+      );
+      this.resourceWatchesEnabled = result.enabled;
+      this.showResourceFlash(
+        `${enabled ? 'resumed' : 'paused'} watches on ${result.affectedMachines.length} machine${result.affectedMachines.length === 1 ? '' : 's'}`,
+        result.ok,
+      );
+      if (!enabled) await this.fetchResourceData();
+    } catch (err) {
+      this.showResourceFlash(err instanceof Error ? err.message : String(err), false);
+    } finally {
+      this.resourceActionBusy = false;
+    }
+  }
+
   render() {
     return html`
       <div class="toolbar">
@@ -744,17 +862,52 @@ export class FleetCanvas extends LitElement {
     if (groups.length === 0) {
       return html`<div class="empty">No resources found</div>`;
     }
-    return groups.map(
-      (g) => html`
-        <resource-overview
-          .resourceId=${g.key}
-          .label=${g.label}
-          .entries=${g.entries}
-          .onlineMachines=${this.onlineMachines}
-          @refresh-resources=${() => this.fetchResourceData()}
-        ></resource-overview>
-      `,
-    );
+    return html`
+      <div class="resource-controls">
+        <span>Resource pressure</span>
+        <button ?disabled=${this.resourceActionBusy} @click=${() => this.previewResourceCleanup()}>
+          Preview cleanup
+        </button>
+        <button
+          class="danger"
+          ?disabled=${this.resourceActionBusy}
+          @click=${() => this.cleanupBackgroundResources()}
+        >
+          Stop idle resources
+        </button>
+        <button
+          ?disabled=${this.resourceActionBusy || !this.resourceWatchesEnabled}
+          @click=${() => this.setResourceWatches(false)}
+        >
+          Pause watches
+        </button>
+        <button
+          ?disabled=${this.resourceActionBusy || this.resourceWatchesEnabled}
+          @click=${() => this.setResourceWatches(true)}
+        >
+          Resume watches
+        </button>
+        ${this.resourceActionFlash
+          ? html`<span
+              class="${this.resourceActionFlash.startsWith('ok:')
+                ? 'resource-flash-ok'
+                : 'resource-flash-err'}"
+              >${this.resourceActionFlash.slice(this.resourceActionFlash.indexOf(':') + 1)}</span
+            >`
+          : ''}
+      </div>
+      ${groups.map(
+        (g) => html`
+          <resource-overview
+            .resourceId=${g.key}
+            .label=${g.label}
+            .entries=${g.entries}
+            .onlineMachines=${this.onlineMachines}
+            @refresh-resources=${() => this.fetchResourceData()}
+          ></resource-overview>
+        `,
+      )}
+    `;
   }
 }
 

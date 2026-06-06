@@ -121,6 +121,12 @@ Create `pool/<machine>.json`:
 
 Multiple farmslot worktrees can run dev servers simultaneously using per-worktree port config.
 
+Resource watches are enabled by default so connected nodes keep the gateway
+resource cache fresh. Set `FARMSLOT_RESOURCE_WATCHES=0` or
+`FARMSLOT_RESOURCE_WATCHES=false` before starting the gateway to disable them.
+At runtime, Command Center's fleet resource view can pause/resume watches and
+preview or run idle-resource cleanup through configured project shutdown hooks.
+
 **Setup:**
 
 1. Copy `.env.ports.example` to `.env.ports` at the repo root
