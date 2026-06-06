@@ -76,3 +76,19 @@ test('renderWorkspaceEvidencePreview uses caller-supplied video action labels', 
   assert.match(text, /Select preview/);
   assert.doesNotMatch(text, /Open in lightbox/);
 });
+
+test('renderWorkspaceEvidencePreview discloses sliced preview overflow', () => {
+  const rendered = renderWorkspaceEvidencePreview({
+    title: 'Generated visual artifacts',
+    totalCount: 3,
+    overflowHint: '+1 more visual artifact in the full artifact grid below.',
+    items: [
+      { artifact: artifact('artifacts/one.png'), url: '/one.png' },
+      { artifact: artifact('artifacts/two.png'), url: '/two.png' },
+    ],
+  });
+
+  const text = litText(rendered);
+  assert.match(text, /2 of 3/);
+  assert.match(text, /\+1 more visual artifact/);
+});

@@ -41,6 +41,8 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
   if (!ctx.group || ctx.artifacts.length === 0) return nothing;
   const group = ctx.group;
   const displayArtifacts = dedupeWorkspaceEvidenceArtifacts(ctx.artifacts);
+  const previewArtifacts = displayArtifacts.slice(0, 12);
+  const hiddenCount = displayArtifacts.length - previewArtifacts.length;
   const pairCount = buildBeforeAfterPairs(displayArtifacts).length;
   return html`
     <section class="rdy-quality-card">
@@ -70,7 +72,11 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
       ${renderWorkspaceEvidencePreview({
         title: `${group.label} evidence`,
         subtitle: 'Local screenshot/video artifacts exactly as the gate will use them.',
-        items: displayArtifacts.slice(0, 12).map((artifact) => ({
+        totalCount: displayArtifacts.length,
+        overflowHint: `+${hiddenCount} more artifact${
+          hiddenCount === 1 ? '' : 's'
+        } in the full artifact grid below.`,
+        items: previewArtifacts.map((artifact) => ({
           artifact,
           url: ctx.artifactUrl(group, artifact),
           open: () => ctx.openArtifact(group, artifact, displayArtifacts),

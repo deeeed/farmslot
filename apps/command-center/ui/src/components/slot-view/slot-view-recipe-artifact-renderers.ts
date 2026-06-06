@@ -47,12 +47,18 @@ export function renderGeneratedVisualArtifacts(
       </div>
     `;
   }
+  const previewArtifacts = dedupedArtifacts.slice(0, 8);
+  const hiddenCount = dedupedArtifacts.length - previewArtifacts.length;
   return renderWorkspaceEvidencePreview({
     title: 'Generated visual artifacts',
     subtitle: `${dedupedArtifacts.length} screenshot/video artifact${
       dedupedArtifacts.length === 1 ? '' : 's'
     } from this selected run — click one to inspect what the replay proved.`,
-    items: dedupedArtifacts.slice(0, 8).map((artifact) => ({
+    totalCount: dedupedArtifacts.length,
+    overflowHint: `+${hiddenCount} more visual artifact${
+      hiddenCount === 1 ? '' : 's'
+    } in the full artifact grid below.`,
+    items: previewArtifacts.map((artifact) => ({
       artifact,
       url: view._artifactUrl(recipeHost, artifact.path),
       selected: view._selectedRecipeArtifactPath === artifact.path,

@@ -55,3 +55,13 @@ test('familyDiffModalState does not infer produced deltas from legacy step-outpu
     'Diff artifact · legacy step diff · diff.txt',
   );
 });
+
+test('familyDiffModalState prefers label scope over unexpected artifact source', () => {
+  assert.equal(
+    familyDiffModalState(
+      'reviewed PR input +2 -1',
+      artifact({ path: 'artifacts/diff.txt', source: 'step-output' }),
+    ).title,
+    'Reviewed PR input snapshot · +2 -1 · diff.txt',
+  );
+});

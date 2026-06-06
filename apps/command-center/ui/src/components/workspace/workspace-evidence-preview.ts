@@ -56,10 +56,14 @@ export function renderWorkspaceEvidencePreview(input: {
   title: string;
   subtitle?: string;
   items: WorkspaceEvidencePreviewItem[];
+  totalCount?: number;
+  overflowHint?: string;
   compact?: boolean;
   empty?: TemplateResult | typeof nothing;
 }): TemplateResult | typeof nothing {
   if (input.items.length === 0) return input.empty ?? nothing;
+  const totalCount = input.totalCount ?? input.items.length;
+  const hiddenCount = Math.max(totalCount - input.items.length, 0);
   return html`
     <section
       class="ws-evidence-preview"
@@ -82,7 +86,8 @@ export function renderWorkspaceEvidencePreview(input: {
         </div>
         <span
           style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; padding:2px 8px; border-radius:999px; border:1px solid ${colors.bgCardHover}; white-space:nowrap;"
-          >${input.items.length} artifact${input.items.length === 1 ? '' : 's'}</span
+          >${hiddenCount > 0 ? `${input.items.length} of ${totalCount}` : totalCount}
+          artifact${totalCount === 1 ? '' : 's'}</span
         >
       </div>
       <div
@@ -168,6 +173,13 @@ export function renderWorkspaceEvidencePreview(input: {
           `;
         })}
       </div>
+      ${hiddenCount > 0
+        ? html`<div
+            style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; margin-top:${spacing.xs};"
+          >
+            ${input.overflowHint ?? `+${hiddenCount} more artifact${hiddenCount === 1 ? '' : 's'}.`}
+          </div>`
+        : nothing}
     </section>
   `;
 }
