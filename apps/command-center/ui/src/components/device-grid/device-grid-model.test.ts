@@ -51,6 +51,21 @@ test('resolveDeviceGridResourceStatus falls back to slot device health when reso
   assert.equal(status, 'running');
 });
 
+test('resolveDeviceGridResourceStatus preserves concrete resource cache states', () => {
+  const healthySlot = slot({
+    health: { ssh: 'OK', device: 'sim:OK', devserver: 'OK', cdp: '-', fixtures: '-' },
+  });
+
+  assert.equal(
+    resolveDeviceGridResourceStatus(healthySlot, resource({ status: 'stopped' })),
+    'stopped',
+  );
+  assert.equal(
+    resolveDeviceGridResourceStatus(healthySlot, resource({ status: 'error' })),
+    'error',
+  );
+});
+
 test('resolveDeviceGridResourceStatus does not treat CDP health as browser stream health', () => {
   const status = resolveDeviceGridResourceStatus(
     slot({

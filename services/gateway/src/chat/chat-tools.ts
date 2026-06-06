@@ -434,6 +434,14 @@ export async function executeTool(
         );
         break;
       }
+      case 'resource_pressure_snapshot': {
+        const { resourcePressureSnapshot } = await import('../methods/resource.js');
+        result = await resourcePressureSnapshot({
+          ...(typeof args.machine === 'string' ? { machine: args.machine } : {}),
+          ...(typeof args.project === 'string' ? { project: args.project } : {}),
+        });
+        break;
+      }
       case 'resource_refresh': {
         const { pollSlotResources } = await import('../fleet/resource-manager.js');
         const fleetState = getCachedFleet();
@@ -584,6 +592,7 @@ export const DIAGNOSTIC_READ_ONLY_TOOL_NAMES = new Set([
   'search_code',
   'tmux_list',
   'resource_list',
+  'resource_pressure_snapshot',
 ]);
 
 const READ_ONLY_INVESTIGATION_TOOL_NAMES = new Set(

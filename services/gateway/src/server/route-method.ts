@@ -99,9 +99,11 @@ import {
   type RecipeProjectHookCommandParams,
   type RecipeProjectHookRunParams,
   type RecipeRerunParams,
+  type ResourceCleanupParams,
   type ResourceControlParams,
   type ResourceHealthParams,
   type ResourceListParams,
+  type ResourceWatchSetEnabledParams,
   type SearchQueryParams,
   type SlotActionListParams,
   type SlotActionRunParams,
@@ -145,7 +147,10 @@ import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js'
 import { getAllNodes, registerNode } from '../fleet/machine-registry.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
 import { pairingCreate } from '../fleet/pairing.js';
-import { sendWatchInstructions } from '../fleet/resource-manager.js';
+import {
+  sendWatchInstructions,
+  shouldAutoStartResourceWatches,
+} from '../fleet/resource-manager.js';
 import { slotCleanup } from '../fleet/slot-cleanup.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
@@ -259,7 +264,13 @@ import {
   recipeProjectHookRun,
   recipeRerun,
 } from '../methods/recipe.js';
-import { resourceControl, resourceHealth, resourceList } from '../methods/resource.js';
+import {
+  resourceCleanup,
+  resourceControl,
+  resourceHealth,
+  resourceList,
+  resourceWatchSetEnabled,
+} from '../methods/resource.js';
 import { searchQuery } from '../methods/search.js';
 import {
   slotCheck,
@@ -321,9 +332,6 @@ import {
   terminalUnsubscribeKeysForRequest,
 } from './terminal-subscriptions.js';
 
-const ENABLE_RESOURCE_WATCHES =
-  process.env.FARMSLOT_RESOURCE_WATCHES !== '0' &&
-  process.env.FARMSLOT_RESOURCE_WATCHES !== 'false';
 const ENABLE_BRANCH_WATCHERS =
   process.env.FARMSLOT_BRANCH_WATCHERS === '1' || process.env.FARMSLOT_BRANCH_WATCHERS === 'true';
 
@@ -651,7 +659,7 @@ export async function routeMethod(
       }
       // Resource watches are the default cache source for resource.list / device grids.
       // Full resource.health probes remain request-driven.
-      if (ENABLE_RESOURCE_WATCHES) {
+      if (shouldAutoStartResourceWatches()) {
         sendWatchInstructions(machine).catch((err) => {
           console.log(
             `[server] failed to send resource watches for ${machine}: ${(err as Error).message}`,
@@ -839,6 +847,10 @@ export async function routeMethod(
       return resourceControl(p as ResourceControlParams);
     case Methods.RESOURCE_HEALTH:
       return resourceHealth(p as ResourceHealthParams);
+    case Methods.RESOURCE_CLEANUP:
+      return resourceCleanup(p as ResourceCleanupParams);
+    case Methods.RESOURCE_WATCH_SET_ENABLED:
+      return resourceWatchSetEnabled(p as ResourceWatchSetEnabledParams);
 
     // Fine-tuning data export
     case Methods.FINETUNE_INDEX:

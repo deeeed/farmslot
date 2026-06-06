@@ -3,7 +3,12 @@
 
 import path from 'node:path';
 
-import { DEFAULT_CLAUDE_MODEL, DEFAULT_CURSOR_MODEL, type SafetyTier } from '@farmslot/protocol';
+import {
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CURSOR_MODEL,
+  type SafetyTier,
+  type WorkerSignal,
+} from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -14,6 +19,7 @@ import {
   tmuxSendTextCommand,
   tmuxShellSnippet,
 } from '../core/tmux.js';
+import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
 /**
  * Env prefix for worker sessions.
@@ -957,10 +963,12 @@ export function runnerSignalShowsCompletion(signalText: string): boolean {
     return false;
   }
   if (!signal || typeof signal !== 'object') return false;
-  const record = signal as Record<string, unknown>;
-  const status = typeof record.status === 'string' ? record.status.toLowerCase() : '';
-  const outcome = typeof record.outcome === 'string' ? record.outcome.toLowerCase() : '';
-  return status === 'complete' || status === 'done' || outcome === 'success';
+  const result = normalizeWorkerSignal(signal as WorkerSignal);
+  return (
+    result.ok &&
+    isTerminalWorkerSignal(result.signal) &&
+    (result.signal.status === 'complete' || result.signal.status === 'done')
+  );
 }
 
 export async function resolvePrimaryWorkerTarget(

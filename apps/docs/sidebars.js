@@ -33,6 +33,7 @@ const sidebars = {
         'architecture/gateway',
         'architecture/gateway-intelligence',
         'architecture/configurable-flows',
+        'architecture/resource-management-and-streaming',
         'architecture/multi-node-security',
         'architecture/gateway-api-protocol',
         'architecture/recipe-harness',

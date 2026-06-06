@@ -461,10 +461,18 @@ describe('worker signals', () => {
       true,
     );
     assert.equal(runnerSignalShowsCompletion(JSON.stringify({ status: 'done' })), true);
-    assert.equal(runnerSignalShowsCompletion(JSON.stringify({ outcome: 'success' })), true);
   });
 
   it('rejects incomplete or invalid worker SIGNAL.json', () => {
+    assert.equal(runnerSignalShowsCompletion(JSON.stringify({ outcome: 'success' })), false);
+    assert.equal(
+      runnerSignalShowsCompletion(JSON.stringify({ status: 'complete', outcome: 'failure' })),
+      false,
+    );
+    assert.equal(
+      runnerSignalShowsCompletion(JSON.stringify({ status: 'failed', outcome: 'failure' })),
+      false,
+    );
     assert.equal(runnerSignalShowsCompletion(JSON.stringify({ status: 'blocked' })), false);
     assert.equal(runnerSignalShowsCompletion(JSON.stringify({ outcome: 'failure' })), false);
     assert.equal(runnerSignalShowsCompletion(''), false);

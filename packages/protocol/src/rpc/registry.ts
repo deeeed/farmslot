@@ -156,6 +156,8 @@ export const Methods = {
   RESOURCE_LIST: 'resource.list',
   RESOURCE_CONTROL: 'resource.control',
   RESOURCE_HEALTH: 'resource.health',
+  RESOURCE_CLEANUP: 'resource.cleanup',
+  RESOURCE_WATCH_SET_ENABLED: 'resource.watch.setEnabled',
   SLOT_ACTION_LIST: 'slot.action.list',
   SLOT_ACTION_RUN: 'slot.action.run',
 

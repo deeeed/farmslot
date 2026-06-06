@@ -264,6 +264,23 @@ Gateway expands template vars to absolute paths before sending to the node. The 
 
 **Streamability:** For stream grids, `running` should mean the resource is expected to be stream-capturable, not merely that a process exists. For browser resources, node/gateway health may repair stale CDP/browser pid files, but must not mark a browser stream running when `capture-helper resolve --pid` cannot find a capturable window.
 
+## Amendment: Resource Pressure Controls (2026-06-06)
+
+**Problem:** Resource streams and node-owned watches make stale simulators, dev servers, browsers, and other project runtimes visible, but visibility alone does not relieve local machine pressure. Project-specific teardown shortcuts can stop those resources, but they are outside the typed Farmslot protocol and cannot be safely exposed from Command Center or future node-management surfaces.
+
+**Decision:** Add typed resource pressure controls on top of the existing project-driven resource model:
+
+- `resource.cleanup` previews or executes shutdown for idle `running`/`stale` resources that declare a configured `shutdown` hook.
+- `resource.watch.setEnabled` pauses/resumes node resource watches at runtime. Pausing watches marks cached resources for affected machines `unknown`; explicit health checks remain operator-driven.
+- Gateway Intelligence exposes a read-only resource pressure snapshot that combines machine health, slot activity, resource status counts, and dry-run cleanup candidates for diagnosis.
+- Command Center exposes these controls from the fleet resource view as an operator action, not an autonomous recovery.
+
+**Authority boundary:** Cleanup must use configured resource hooks through `resource.control`/gateway resource-manager paths. It must not hardcode project names, ports, process patterns, or raw `pkill` logic in Farmslot. Projects that need custom teardown semantics should express those semantics in their `project.json` resource shutdown hooks.
+
+**Safety defaults:** Cleanup defaults to dry-run preview and excludes busy/working slots unless a caller explicitly opts in. This keeps pressure relief targeted at stale background resources rather than active runs.
+
+**Diagnosis boundary:** The read-only pressure snapshot must report the runtime watch state. If watches are paused, cached resource statuses may be `unknown`; machine health and slot activity remain the primary pressure evidence. Idle cleanup is not a substitute for stopping active builds or working slots unless an operator explicitly opts into a busier action. Watch pause/resume is persisted in the gateway's local runtime cache so node reconnects or gateway restarts do not silently re-arm an operator-paused watch set.
+
 ## Consequences
 
 **Positive:**

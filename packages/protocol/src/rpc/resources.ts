@@ -6,6 +6,8 @@ export const ResourceMethods = {
   list: Methods.RESOURCE_LIST,
   control: Methods.RESOURCE_CONTROL,
   health: Methods.RESOURCE_HEALTH,
+  cleanup: Methods.RESOURCE_CLEANUP,
+  watchSetEnabled: Methods.RESOURCE_WATCH_SET_ENABLED,
   streamSubscribe: Methods.STREAM_SUBSCRIBE,
   streamUnsubscribe: Methods.STREAM_UNSUBSCRIBE,
   streamSnapshot: Methods.STREAM_SNAPSHOT,
@@ -107,4 +109,46 @@ export interface ResourceHealthParams {
 export interface ResourceHealthResult {
   slotId: string;
   resources: import('../contracts/index.js').ResourceStateUpdate[];
+}
+
+export interface ResourceCleanupParams {
+  dryRun?: boolean;
+  includeBusy?: boolean;
+  machine?: string;
+  project?: string;
+  slotIds?: string[];
+  resourceIds?: string[];
+  statuses?: import('../contracts/index.js').ResourceStatus[];
+}
+
+export interface ResourceCleanupTarget {
+  slotId: string;
+  machine: string;
+  project: string;
+  resourceId: string;
+  label: string;
+  status: import('../contracts/index.js').ResourceStatus;
+  afterStatus?: import('../contracts/index.js').ResourceStatus;
+  ok?: boolean;
+  detail?: string;
+}
+
+export interface ResourceCleanupResult {
+  ok: boolean;
+  dryRun: boolean;
+  targets: ResourceCleanupTarget[];
+  stopped: number;
+  failed: number;
+}
+
+export interface ResourceWatchSetEnabledParams {
+  enabled: boolean;
+}
+
+export interface ResourceWatchSetEnabledResult {
+  ok: boolean;
+  enabled: boolean;
+  affectedMachines: string[];
+  affectedSlots: string[];
+  detail?: string;
 }

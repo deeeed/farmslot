@@ -1,14 +1,11 @@
 import type { ResourceStatus, SlotResource, SlotStatus } from '@farmslot/protocol';
 
-function healthStatus(
-  value: string | undefined,
-  opts?: { nonEmptyMeansRunning?: boolean },
-): ResourceStatus {
+function healthStatus(value: string | undefined): ResourceStatus {
   if (!value || value === '-') return 'unknown';
   if (/FAIL/i.test(value)) return 'error';
   if (/OFF/i.test(value)) return 'stopped';
   if (/OK/i.test(value)) return 'running';
-  return opts?.nonEmptyMeansRunning ? 'running' : 'unknown';
+  return 'unknown';
 }
 
 export function isDeviceGridResourceApplicable(slot: SlotStatus, resource: SlotResource): boolean {
@@ -24,7 +21,7 @@ export function resolveDeviceGridResourceStatus(
 ): ResourceStatus {
   if (!isDeviceGridResourceApplicable(slot, resource)) return 'stopped';
 
-  if (resource.status === 'running' || resource.status === 'stale') return resource.status;
+  if (resource.status !== 'unknown') return resource.status;
 
   const inferred = (() => {
     switch (resource.definition.type) {

@@ -40,7 +40,6 @@ interface AvailableResource {
   resourceId: string;
   resourceLabel: string;
   workSummary: string;
-  resourceType: SlotResource['definition']['type'];
   platform: string;
   status: ResourceStatus;
   stream?: ResourceStreamStatus;
@@ -481,7 +480,6 @@ export class DeviceGrid extends LitElement {
             resourceId: r.id,
             resourceLabel: r.definition.label,
             workSummary: this._summaryForSlot(slot),
-            resourceType: r.definition.type,
             platform: r.definition.platform ?? '',
             status,
             stream: r.stream,
@@ -597,6 +595,8 @@ export class DeviceGrid extends LitElement {
     switch (status) {
       case 'running':
         return colors.statusOk;
+      case 'stale':
+        return colors.statusWarn;
       case 'stopped':
         return colors.textMuted;
       case 'error':

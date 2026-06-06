@@ -73,6 +73,7 @@ test('buildBrowserPidFileCapturableCommand verifies capture-helper can resolve t
 test('buildBrowserNodeWatchCommand requires stream-capturable browser status', () => {
   const recover = buildBrowserNodeWatchCommand('/tmp/runtime/browser.pid', '7666');
   assert.match(recover, /pid_file='\/tmp\/runtime\/browser\.pid'/);
+  assert.match(recover, /^set -e\n/);
   assert.match(recover, /exit 0/);
   assert.match(recover, /tcp:7666/);
   assert.match(recover, /capture-helper resolve --pid/);

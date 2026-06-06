@@ -274,6 +274,10 @@ await test('diagnostic-readonly tool config excludes write and refresh tools', (
   assert(names.has('propose_run_recovery'), 'diagnostic-readonly missing propose_run_recovery');
   assert(names.has('list_pull_requests'), 'diagnostic-readonly missing list_pull_requests');
   assert(
+    names.has('resource_pressure_snapshot'),
+    'diagnostic-readonly missing resource pressure snapshot',
+  );
+  assert(
     names.has('read_observer_evidence'),
     'diagnostic-readonly missing observer evidence reader',
   );
@@ -303,6 +307,7 @@ await test('general Co-Pilot tool config excludes write and destructive tools', 
   assert(names.has('read_last_screen_evidence'), 'general Co-Pilot missing screen evidence reader');
   assert(names.has('read_observer_evidence'), 'general Co-Pilot missing observer evidence reader');
   assert(names.has('list_pull_requests'), 'general Co-Pilot missing PR dashboard reader');
+  assert(names.has('resource_pressure_snapshot'), 'general Co-Pilot missing pressure snapshot');
 });
 
 await test('surface map is injected into system prompt', () => {

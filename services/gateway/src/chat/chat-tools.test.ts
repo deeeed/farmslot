@@ -70,6 +70,7 @@ await test('FLEET_TOOLS exposes required core tools', async () => {
     'chat_session_context',
     'terminal_snapshot',
     'task_progress',
+    'resource_pressure_snapshot',
     'slot_prepare',
     'slot_release',
     'slot_recycle',
@@ -115,6 +116,7 @@ await test('diagnostic read-only tools exclude write and refresh tools', async (
   assert(names.has('run_context_bundle'), 'missing run_context_bundle');
   assert(names.has('propose_run_recovery'), 'missing propose_run_recovery');
   assert(names.has('investigate_gateway_issue'), 'missing investigate_gateway_issue');
+  assert(names.has('resource_pressure_snapshot'), 'missing resource_pressure_snapshot');
 });
 
 await test('investigation tools exclude write and refresh tools', async () => {
@@ -225,6 +227,17 @@ await test('chat_session_context returns session meter', async () => {
   assert(typeof data.messages?.total === 'number', 'missing message count');
   assert(data.compaction?.status === 'not-implemented', 'missing compaction status');
   assert('remainingInputTokens' in data.contextWindow, 'missing remaining token estimate field');
+});
+
+await test('resource_pressure_snapshot returns read-only pressure summary', async () => {
+  const r = await executeTool('resource_pressure_snapshot', {}, 'test-6b3');
+  assert(!r.isError, `error: ${r.content}`);
+  const data = JSON.parse(r.content);
+  assert(typeof data.checkedAt === 'string', 'missing checkedAt');
+  assert(typeof data.watchAutoStartEnabled === 'boolean', 'missing watch state');
+  assert(typeof data.summary?.machines === 'number', 'missing machine count');
+  assert(Array.isArray(data.machines), 'missing machines array');
+  assert(Array.isArray(data.cleanupCandidates), 'missing cleanup candidates array');
 });
 
 await test('read-only investigator guard rejects recursion and write tools', async () => {

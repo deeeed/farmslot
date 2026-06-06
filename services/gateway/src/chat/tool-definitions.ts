@@ -378,6 +378,23 @@ export const FLEET_TOOLS: Tool[] = [
     }),
   },
   {
+    name: 'resource_pressure_snapshot',
+    description:
+      'Read a fleet resource-pressure snapshot for Co-Pilot diagnosis: machine health, slot load, resource status counts, and idle cleanup candidates. Read-only; use this before proposing cleanup or watch changes.',
+    parameters: Type.Object({
+      machine: Type.Optional(
+        Type.String({
+          description: 'Optional machine filter, e.g. mini or runner-local.',
+        }),
+      ),
+      project: Type.Optional(
+        Type.String({
+          description: 'Optional project filter, e.g. example-mobile.',
+        }),
+      ),
+    }),
+  },
+  {
     name: 'resource_control',
     description:
       'Boot, shutdown, or relaunch a resource on a specific slot. Use resource_list first to discover available resources and their IDs.',

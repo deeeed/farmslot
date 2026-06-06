@@ -2,6 +2,7 @@
 // Supports both push-based (agent watches) and pull-based (60s poll reconciliation)
 
 import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -15,6 +16,7 @@ import {
   type ResourceStateUpdate,
   type ResourceStatus,
   type ResourceStreamStatus,
+  type ResourceWatchSetEnabledResult,
   type ResourceWatchType,
   type SlotResource,
   type SlotStatus,
@@ -24,8 +26,9 @@ import {
 import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
 import { expandTemplate } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
+import { farmslotRoot } from '../projects/repo-root.js';
 
-import { getNode } from './machine-registry.js';
+import { getAllNodes, getNode } from './machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from './node-rpc.js';
 import { getCachedFleet, loadFleetStatus } from './state.js';
 
@@ -53,6 +56,56 @@ let pollAllInFlight = false;
 
 // Track which machines have active resource watches
 const activeWatchMachines = new Set<string>();
+const resourceWatchStateFile =
+  process.env.FARMSLOT_RESOURCE_WATCH_STATE_FILE ??
+  path.join(farmslotRoot, '.farm-cache', 'resource-watch-state.json');
+const persistedResourceWatchState = loadPersistedResourceWatchState();
+let resourceWatchAutoStartEnabled =
+  readEnvResourceWatchEnabled() ?? persistedResourceWatchState?.enabled ?? true;
+let resourceWatchStateUpdatedAt: string | null = persistedResourceWatchState?.updatedAt ?? null;
+
+export function shouldAutoStartResourceWatches(): boolean {
+  return resourceWatchAutoStartEnabled;
+}
+
+export function getResourceWatchRuntimeState(): { enabled: boolean; updatedAt: string | null } {
+  return { enabled: resourceWatchAutoStartEnabled, updatedAt: resourceWatchStateUpdatedAt };
+}
+
+function readEnvResourceWatchEnabled(): boolean | undefined {
+  if (process.env.FARMSLOT_RESOURCE_WATCHES === undefined) return undefined;
+  return (
+    process.env.FARMSLOT_RESOURCE_WATCHES !== '0' &&
+    process.env.FARMSLOT_RESOURCE_WATCHES !== 'false'
+  );
+}
+
+function loadPersistedResourceWatchState(): { enabled: boolean; updatedAt: string | null } | null {
+  if (!existsSync(resourceWatchStateFile)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(resourceWatchStateFile, 'utf8')) as {
+      enabled?: unknown;
+      updatedAt?: unknown;
+    };
+    if (typeof parsed.enabled !== 'boolean') return null;
+    return {
+      enabled: parsed.enabled,
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : null,
+    };
+  } catch (err) {
+    // Corrupt local runtime state should not prevent the gateway from starting;
+    // env/default state remains authoritative until the operator toggles again.
+    console.warn(
+      `[resource-manager] ignoring invalid resource watch state file: ${(err as Error).message}`,
+    );
+    return null;
+  }
+}
+
+function persistResourceWatchState(enabled: boolean, updatedAt: string): void {
+  mkdirSync(path.dirname(resourceWatchStateFile), { recursive: true });
+  writeFileSync(resourceWatchStateFile, JSON.stringify({ enabled, updatedAt }, null, 2));
+}
 
 /**
  * Get cached resource status for a slot+resource. Returns 'unknown' if not cached.
@@ -344,6 +397,10 @@ export async function executeResourceHealth(
   );
   if (fallback.ok) return fallback;
 
+  if (resourceDef.type === 'browser' && result.exitCode === 0) {
+    return { ok: false, detail: 'browser pid is not stream-capturable and CDP recovery failed' };
+  }
+
   return { ok: false, detail: result.stderr?.trim() || `exit ${result.exitCode}` };
 }
 
@@ -480,6 +537,7 @@ export function buildBrowserNodeWatchCommand(pidPath: string, cdpPortRaw?: strin
   }
 
   return [
+    'set -e',
     ...pidFileCheck,
     `pid_dir=${shellQuote(path.dirname(pidPath))}`,
     'lsof_bin="$(command -v lsof 2>/dev/null || true)"',
@@ -510,7 +568,7 @@ export async function pollSlotResources(
   await Promise.all(
     resources.map(async (r) => {
       if (!opts?.probeInactiveSimulators && !shouldProbeResourceForSlot(slot, r.definition)) {
-        results.push({ id: r.id, status: 'stopped' });
+        results.push({ id: r.id, status: getCachedResourceStatus(slotId, r.id) });
         return;
       }
       if (!r.definition.hooks?.health) {
@@ -762,6 +820,8 @@ export function handleNodeResourceChanged(payload: {
  * Called when an agent connects.
  */
 export async function sendWatchInstructions(machine: string): Promise<void> {
+  if (!resourceWatchAutoStartEnabled) return;
+
   const node = getNode(machine);
   if (!node) return;
 
@@ -833,13 +893,15 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
           }
 
           if (def.type === 'browser' && expandedWatch.path) {
-            expandedWatch.type = 'process-poll';
+            // Keep pid-file watch semantics so node events still carry pid,
+            // sidecar meta, and relaunch coalescing. The command only repairs
+            // stale/missing pid files from CDP before the pid-file watcher
+            // re-reads the canonical file.
             expandedWatch.cmd = buildBrowserNodeWatchCommand(
               expandedWatch.path,
               slotVars.resourceVars.cdp_port,
             );
             expandedWatch.cwd = slotVars.remoteRepo;
-            delete expandedWatch.path;
             delete expandedWatch.port;
           }
 
@@ -869,6 +931,48 @@ export async function sendWatchInstructions(machine: string): Promise<void> {
       `[resource-manager] sendWatchInstructions error for ${machine}: ${(err as Error).message}`,
     );
   }
+}
+
+export async function setResourceWatchesEnabled(
+  enabled: boolean,
+): Promise<ResourceWatchSetEnabledResult> {
+  resourceWatchAutoStartEnabled = enabled;
+  resourceWatchStateUpdatedAt = new Date().toISOString();
+  persistResourceWatchState(enabled, resourceWatchStateUpdatedAt);
+
+  const fleet = await loadFleetStatus();
+  const connectedMachines = new Set(getAllNodes().map((node) => node.machine));
+  const affectedMachines = Array.from(
+    new Set(
+      fleet.slots
+        .filter((slot) => slot.enabled && connectedMachines.has(slot.machine))
+        .map((slot) => slot.machine),
+    ),
+  ).sort();
+  const affectedSlots = fleet.slots
+    .filter((slot) => slot.enabled && affectedMachines.includes(slot.machine))
+    .map((slot) => slot.slot)
+    .sort();
+
+  if (enabled) {
+    for (const machine of affectedMachines) {
+      await sendWatchInstructions(machine);
+    }
+    return { ok: true, enabled, affectedMachines, affectedSlots };
+  }
+
+  for (const slot of fleet.slots) {
+    if (!slot.enabled || !affectedMachines.includes(slot.machine)) continue;
+    const node = getNode(slot.machine);
+    if (!node) continue;
+    await sendNodeRequest(node, 'resource.watch.stop', { slotId: slot.slot });
+  }
+
+  for (const machine of affectedMachines) {
+    await clearMachineResourceStatus(machine);
+  }
+  activeWatchMachines.clear();
+  return { ok: true, enabled, affectedMachines, affectedSlots };
 }
 
 /**
@@ -1053,7 +1157,11 @@ export async function executeResourceControl(
   }
 
   // Immediate re-poll after control action
-  pollSlotResources(slotId).catch(() => {});
+  pollSlotResources(slotId).catch((err) => {
+    console.warn(
+      `[resource-manager] immediate resource poll failed for ${slotId}: ${(err as Error).message}`,
+    );
+  });
 
   return result;
 }
