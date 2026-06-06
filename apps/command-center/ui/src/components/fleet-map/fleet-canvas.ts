@@ -666,7 +666,7 @@ export class FleetCanvas extends LitElement {
         return;
       }
       const confirmed = window.confirm(
-        `Stop ${preview.targets.length} idle running/stale resource(s)? Busy/working slots are excluded.`,
+        `Stop ${preview.targets.length} idle running/stale resource(s)? Active, held, and working slots are excluded.`,
       );
       if (!confirmed) return;
       const result = await gateway.request<ResourceCleanupResult>(Methods.RESOURCE_CLEANUP, {

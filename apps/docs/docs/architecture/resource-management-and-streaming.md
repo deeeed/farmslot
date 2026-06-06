@@ -53,7 +53,7 @@ Resource status also powers operational cleanup. Command Center can preview and
 run resource cleanup for idle resources:
 
 - Cleanup targets only `running` or `stale` resources.
-- Busy or actively working slots are excluded by default.
+- Busy, held, actively working, or current-run slots are excluded by default.
 - Shutdown always goes through the configured resource `shutdown` hook.
 - Farmslot does not hardcode `pkill`, Metro ports, webpack commands, or simulator
   names in the shared layer.
@@ -76,11 +76,11 @@ The snapshot is evidence, not an actuator. Cleanup, resource control, and watch
 pause/resume remain typed operator actions that must be surfaced separately from
 diagnosis.
 
-Cleanup is idle-only by default. If machine pressure comes from actively working
-builds, dev servers, or simulators, the snapshot should identify busy/working
-slots and pressure signals so an operator can decide whether to cancel, release,
-or explicitly include busy slots. The default cleanup action does not stop active
-runs.
+Cleanup is non-active-slot-only by default. If machine pressure comes from
+actively working builds, dev servers, or simulators, the snapshot should identify
+busy/held/current-run slots and pressure signals so an operator can decide
+whether to cancel, release, or explicitly include active slots. The default
+cleanup action does not stop active or retained runs.
 
 When watches are paused, the gateway persists that runtime state under its local
 cache so a restart or node reconnect does not silently re-arm watches. The

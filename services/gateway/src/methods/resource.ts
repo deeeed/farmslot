@@ -66,7 +66,7 @@ export interface ResourcePressureSnapshotResult {
   checkedAt: string;
   watchState: { enabled: boolean; updatedAt: string | null };
   watchAutoStartEnabled: boolean;
-  cleanupScope: 'idle-only';
+  cleanupScope: 'non-active-slots-only';
   filters: ResourcePressureSnapshotParams;
   summary: {
     machines: number;
@@ -114,8 +114,7 @@ export async function resourceCleanup(
   const slots = fleet.slots.filter((slot) => {
     if (!slot.enabled) return false;
     if (slot.lifecycle === 'disabled' || slot.lifecycle === 'manual') return false;
-    if (!params.includeBusy && (slot.lifecycle === 'busy' || slot.agent === 'working'))
-      return false;
+    if (!params.includeBusy && !slotAllowsDefaultResourceCleanup(slot)) return false;
     if (params.machine && slot.machine !== params.machine) return false;
     if (params.project && slot.project !== params.project) return false;
     if (slotFilter.size > 0 && !slotFilter.has(slot.slot)) return false;
@@ -232,7 +231,7 @@ export async function resourcePressureSnapshot(
     checkedAt: new Date().toISOString(),
     watchState,
     watchAutoStartEnabled: watchState.enabled,
-    cleanupScope: 'idle-only',
+    cleanupScope: 'non-active-slots-only',
     filters: params,
     summary: {
       machines: machines.length,
@@ -252,6 +251,14 @@ function matchesPressureFilters(slot: SlotStatus, params: ResourcePressureSnapsh
   if (params.machine && slot.machine !== params.machine) return false;
   if (params.project && slot.project !== params.project) return false;
   return true;
+}
+
+export function slotAllowsDefaultResourceCleanup(
+  slot: Pick<SlotStatus, 'agent' | 'currentRunId' | 'lifecycle'>,
+): boolean {
+  if (slot.lifecycle === 'busy' || slot.lifecycle === 'held') return false;
+  if (slot.agent === 'working') return false;
+  return !slot.currentRunId;
 }
 
 function emptyStatusCounts(): Record<ResourceStatus, number> {
