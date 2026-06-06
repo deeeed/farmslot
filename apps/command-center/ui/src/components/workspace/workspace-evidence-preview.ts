@@ -32,10 +32,6 @@ export function dedupeWorkspaceEvidenceArtifacts(artifacts: readonly ArtifactRef
   return deduped;
 }
 
-function evidenceTypeLabel(): string {
-  return workspaceArtifactTypeBadge('other');
-}
-
 export function renderWorkspaceEvidencePreview(input: {
   title: string;
   subtitle?: string;
@@ -70,7 +66,6 @@ export function renderWorkspaceEvidencePreview(input: {
         >
       </div>
       <div
-        role="list"
         style="display:grid; grid-template-columns:repeat(auto-fit, minmax(${input.compact
           ? '160px'
           : '200px'}, 1fr)); gap:${spacing.sm};"
@@ -79,7 +74,7 @@ export function renderWorkspaceEvidencePreview(input: {
           const isImage = IMAGE_EXTS.test(artifact.path);
           const isVideo = VIDEO_EXTS.test(artifact.path);
           const name = workspaceArtifactBasename(artifact.path);
-          const clickable = Boolean(open);
+          const clickable = Boolean(open) && !isVideo;
           return html`
             <div
               class="ws-evidence-card"
@@ -93,9 +88,11 @@ export function renderWorkspaceEvidencePreview(input: {
                 : 'none'}; color:${colors.textPrimary}; padding:${spacing.xs}; cursor:${clickable
                 ? 'pointer'
                 : 'default'}; overflow:hidden;"
-              role=${clickable ? 'button' : 'listitem'}
-              tabindex=${clickable ? '0' : '-1'}
-              @click=${() => open?.()}
+              role=${clickable ? 'button' : nothing}
+              tabindex=${clickable ? '0' : nothing}
+              @click=${() => {
+                if (clickable) open?.();
+              }}
               @keydown=${(event: KeyboardEvent) => {
                 if (!clickable || (event.key !== 'Enter' && event.key !== ' ')) return;
                 event.preventDefault();
@@ -117,15 +114,24 @@ export function renderWorkspaceEvidencePreview(input: {
                   : isVideo
                     ? html`<video
                         src=${url}
-                        ?controls=${!clickable}
+                        controls
                         muted
                         preload="metadata"
                         style="width:100%; height:100%; object-fit:contain; display:block;"
                       ></video>`
                     : html`<span style="font-size:${fonts.sizeXs}; color:${colors.textMuted};"
-                        >${evidenceTypeLabel()}</span
+                        >${workspaceArtifactTypeBadge('other')}</span
                       >`}
               </div>
+              ${isVideo && open
+                ? html`<button
+                    type="button"
+                    style="border:1px solid ${colors.bgCardHover}; border-radius:${radii.sm}; background:${colors.bgCard}; color:${colors.accent}; font-size:${fonts.sizeXs}; font-family:${fonts.mono}; padding:4px 6px; cursor:pointer;"
+                    @click=${() => open()}
+                  >
+                    Open in lightbox
+                  </button>`
+                : nothing}
               <span
                 style="font-size:${fonts.sizeXs}; color:${colors.textPrimary}; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
                 title=${artifact.label ?? name}

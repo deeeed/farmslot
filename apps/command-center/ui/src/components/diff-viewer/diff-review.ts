@@ -169,6 +169,7 @@ export class DiffReview extends LitElement {
         .d2h-code-side-line {
           box-sizing: border-box !important;
           padding-left: 8px !important;
+          padding-right: 8px !important;
         }
         .d2h-code-line-ctn {
           white-space: pre !important;
