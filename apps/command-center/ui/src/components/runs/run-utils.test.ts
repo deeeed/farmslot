@@ -322,7 +322,7 @@ test('familyLedgerTurnLabel describes operator turns from ledger provenance', ()
         },
       }),
     ),
-    'Produced code delta',
+    'Follow-up code delta',
   );
   assert.equal(familyLedgerTurnLabel(makeLedgerEntry({ changeKind: 'legacy' })), 'Legacy diff');
 });

@@ -21,11 +21,7 @@ export function dedupeWorkspaceEvidenceArtifacts(artifacts: readonly ArtifactRef
   const seen = new Set<string>();
   const deduped: ArtifactRef[] = [];
   for (const artifact of artifacts) {
-    const key = artifact.sha256
-      ? `sha:${artifact.sha256}`
-      : artifact.sizeBytes != null
-        ? `size:${artifact.sizeBytes}:${workspaceArtifactBasename(artifact.path)}`
-        : `path:${artifact.path}`;
+    const key = artifact.sha256 ? `sha:${artifact.sha256}` : `path:${artifact.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
     deduped.push(artifact);

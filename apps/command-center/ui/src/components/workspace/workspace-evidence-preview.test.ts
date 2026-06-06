@@ -25,8 +25,11 @@ test('dedupeWorkspaceEvidenceArtifacts collapses mirrored media by content hash'
 test('dedupeWorkspaceEvidenceArtifacts keeps distinct same-name media without hashes', () => {
   const out = dedupeWorkspaceEvidenceArtifacts([
     artifact('artifacts/a/after.png', { sizeBytes: 10 }),
-    artifact('artifacts/b/after.png', { sizeBytes: 11 }),
+    artifact('artifacts/b/after.png', { sizeBytes: 10 }),
   ]);
 
-  assert.equal(out.length, 2);
+  assert.deepEqual(
+    out.map((entry) => entry.path),
+    ['artifacts/a/after.png', 'artifacts/b/after.png'],
+  );
 });

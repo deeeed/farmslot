@@ -273,7 +273,7 @@ export function familyLedgerTurnLabel(entry: FamilyChangeLedgerEntry): string {
     return 'Review turn';
   }
   if (entry.flowType === 'pr-complete')
-    return entry.contributionDiff.available ? 'Produced code delta' : 'No code change';
+    return entry.contributionDiff.available ? 'Follow-up code delta' : 'No code change';
   if (entry.contributionDiff.available) return 'Produced code delta';
   if (entry.changeKind === 'legacy') return 'Legacy diff';
   return 'No code change';

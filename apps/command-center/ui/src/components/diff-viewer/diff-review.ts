@@ -158,12 +158,11 @@ export class DiffReview extends LitElement {
           box-sizing: border-box !important;
           display: table-cell !important;
           min-width: 54px !important;
-          max-width: 54px !important;
-          overflow: hidden !important;
+          overflow: visible !important;
           position: static !important;
           text-align: right !important;
           vertical-align: top !important;
-          width: 54px !important;
+          width: auto !important;
           white-space: nowrap !important;
         }
         .d2h-code-line,

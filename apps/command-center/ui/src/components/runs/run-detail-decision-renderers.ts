@@ -120,7 +120,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
     : undefined;
 
   return html`
-    <div class=${`gate-section ${isReady ? 'ready-gate' : isReview ? 'review-gate' : ''}`}>
+    <div class=${`gate-section ${isReady ? 'ready-gate' : ''}`}>
       <div class="gate-header">
         <span class="gate-icon">!</span>
         <div style="flex:1">

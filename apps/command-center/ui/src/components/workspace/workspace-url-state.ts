@@ -9,7 +9,7 @@ export type ReadyWorkspaceTab =
   | 'recipe'
   | 'learnings';
 export type ReadyWorkspaceModal = 'diff' | 'review' | 'lightbox';
-export type ReviewWorkspacePanel = 'evidence' | 'quality' | 'recipe' | 'learnings';
+export type ReviewWorkspacePanel = 'quality' | 'recipe' | 'learnings';
 
 export interface ReadyWorkspaceHashState {
   tab?: ReadyWorkspaceTab;
@@ -43,7 +43,7 @@ const READY_TABS = new Set<ReadyWorkspaceTab>([
   'learnings',
 ]);
 const READY_MODALS = new Set<ReadyWorkspaceModal>(['diff', 'review', 'lightbox']);
-const REVIEW_PANELS = new Set<ReviewWorkspacePanel>(['evidence', 'quality', 'recipe', 'learnings']);
+const REVIEW_PANELS = new Set<ReviewWorkspacePanel>(['quality', 'recipe', 'learnings']);
 
 function readyWorkspaceTab(value: string | null): ReadyWorkspaceTab | undefined {
   if (!value) return undefined;

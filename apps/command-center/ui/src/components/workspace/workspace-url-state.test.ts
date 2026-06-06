@@ -83,16 +83,16 @@ test('review workspace panel state preserves unrelated params', () => {
   assert.deepEqual(
     parseReviewWorkspaceHashState('#slot/demo?panel=evidence,quality,bad&projects=cc'),
     {
-      panels: ['evidence', 'quality'],
+      panels: ['quality'],
     },
   );
 
   assert.equal(
     reviewWorkspaceHashWithState(
-      { panels: ['evidence', 'recipe', 'learnings'] },
+      { panels: ['recipe', 'learnings'] },
       '#slot/demo?projects=cc&panel=quality',
     ),
-    '#slot/demo?projects=cc&panel=evidence%2Crecipe%2Clearnings',
+    '#slot/demo?projects=cc&panel=recipe%2Clearnings',
   );
 
   assert.equal(
