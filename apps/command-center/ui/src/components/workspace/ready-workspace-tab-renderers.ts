@@ -72,7 +72,6 @@ export function renderReadyRecipeTab(input: {
   runId: string;
   slotId: string;
   recovering: boolean;
-  selectedArtifacts: TemplateResult | typeof nothing;
   setRecipeView: (view: 'graph' | 'json') => void;
 }) {
   const { payload } = input;
@@ -102,7 +101,6 @@ export function renderReadyRecipeTab(input: {
         showPlayback
         ?disabled=${input.recovering}
       ></recipe-runner-controls>
-      ${input.selectedArtifacts}
       ${input.recipeView === 'graph'
         ? html`
             <div class="rdy-recipe-graph-wrap">

@@ -55,6 +55,7 @@ export function renderGeneratedVisualArtifacts(
     items: dedupedArtifacts.slice(0, 8).map((artifact) => ({
       artifact,
       url: view._artifactUrl(recipeHost, artifact.path),
+      selected: view._selectedRecipeArtifactPath === artifact.path,
       open: () => {
         view._selectedRecipeArtifactPath =
           view._selectedRecipeArtifactPath === artifact.path ? null : artifact.path;

@@ -40,8 +40,8 @@ export interface ReadySelectedRecipeRunArtifactsContext {
 export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRunArtifactsContext) {
   if (!ctx.group || ctx.artifacts.length === 0) return nothing;
   const group = ctx.group;
-  const artifacts = dedupeWorkspaceEvidenceArtifacts(ctx.artifacts);
-  const pairCount = buildBeforeAfterPairs(artifacts).length;
+  const displayArtifacts = dedupeWorkspaceEvidenceArtifacts(ctx.artifacts);
+  const pairCount = buildBeforeAfterPairs(ctx.artifacts).length;
   return html`
     <section class="rdy-quality-card">
       <div class="rdy-learnings-header">
@@ -60,7 +60,7 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
           ? html`
               <button
                 class="rdy-artifact-filter compare"
-                @click=${() => ctx.openCompare(group, artifacts)}
+                @click=${() => ctx.openCompare(group, ctx.artifacts)}
               >
                 Compare ${pairCount} before/after
               </button>
@@ -70,10 +70,10 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
       ${renderWorkspaceEvidencePreview({
         title: `${group.label} evidence`,
         subtitle: 'Local screenshot/video artifacts exactly as the gate will use them.',
-        items: artifacts.slice(0, 12).map((artifact) => ({
+        items: displayArtifacts.slice(0, 12).map((artifact) => ({
           artifact,
           url: ctx.artifactUrl(group, artifact),
-          open: () => ctx.openArtifact(group, artifact, artifacts),
+          open: () => ctx.openArtifact(group, artifact, displayArtifacts),
         })),
       })}
     </section>

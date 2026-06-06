@@ -15,6 +15,7 @@ export interface WorkspaceEvidencePreviewItem {
   artifact: ArtifactRef;
   url: string;
   open?: () => void;
+  selected?: boolean;
 }
 
 export function dedupeWorkspaceEvidenceArtifacts(artifacts: readonly ArtifactRef[]): ArtifactRef[] {
@@ -73,7 +74,7 @@ export function renderWorkspaceEvidencePreview(input: {
           ? '160px'
           : '200px'}, 1fr)); gap:${spacing.sm};"
       >
-        ${input.items.map(({ artifact, url, open }) => {
+        ${input.items.map(({ artifact, url, open, selected }) => {
           const isImage = IMAGE_EXTS.test(artifact.path);
           const isVideo = VIDEO_EXTS.test(artifact.path);
           const name = workspaceArtifactBasename(artifact.path);
@@ -82,7 +83,13 @@ export function renderWorkspaceEvidencePreview(input: {
             <div
               class="ws-evidence-card"
               data-testid=${`workspace-evidence-${artifact.path.replace(/^artifacts\//, '').replace(/[^a-zA-Z0-9_-]+/g, '-')}`}
-              style="display:flex; flex-direction:column; gap:6px; text-align:left; border:1px solid ${colors.bgCardHover}; border-radius:${radii.md}; background:${colors.bgSurface}; color:${colors.textPrimary}; padding:${spacing.xs}; cursor:${clickable
+              style="display:flex; flex-direction:column; gap:6px; text-align:left; border:1px solid ${selected
+                ? colors.accent
+                : colors.bgCardHover}; border-radius:${radii.md}; background:${selected
+                ? `${colors.accent}16`
+                : colors.bgSurface}; box-shadow:${selected
+                ? `inset 0 0 0 1px ${colors.accent}22`
+                : 'none'}; color:${colors.textPrimary}; padding:${spacing.xs}; cursor:${clickable
                 ? 'pointer'
                 : 'default'}; overflow:hidden;"
               role=${clickable ? 'button' : 'listitem'}
@@ -112,6 +119,8 @@ export function renderWorkspaceEvidencePreview(input: {
                         controls
                         muted
                         preload="metadata"
+                        @click=${(event: Event) => event.stopPropagation()}
+                        @keydown=${(event: KeyboardEvent) => event.stopPropagation()}
                         style="width:100%; height:100%; object-fit:contain; display:block;"
                       ></video>`
                     : html`<span style="font-size:${fonts.sizeXs}; color:${colors.textMuted};"

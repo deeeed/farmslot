@@ -295,7 +295,6 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       runId: this.runId,
       slotId: this.slotId,
       recovering: this._isRecovering,
-      selectedArtifacts: this._renderSelectedRecipeRunArtifacts(payload),
       setRecipeView: (view) => {
         this._recipeView = view;
       },
