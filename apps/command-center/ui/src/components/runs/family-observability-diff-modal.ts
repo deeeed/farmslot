@@ -34,9 +34,13 @@ export function familyDiffModalState(
   artifact: FamilyObservabilityArtifact,
 ): FamilyDiffModalState {
   const filename = artifact.path.split('/').pop() ?? artifact.path;
+  const scopeTitle = diffArtifactScopeTitle(artifact);
   const labelPrefix = label === filename ? filename : `${label} · ${filename}`;
+  const title = labelPrefix.toLowerCase().startsWith(scopeTitle.toLowerCase())
+    ? labelPrefix
+    : `${scopeTitle} · ${labelPrefix}`;
   return {
-    title: `${diffArtifactScopeTitle(artifact)} · ${labelPrefix}`,
+    title,
     artifactUrl: familyArtifactApiPath(artifact),
     artifact,
   };

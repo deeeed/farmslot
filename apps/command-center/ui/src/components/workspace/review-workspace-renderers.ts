@@ -457,13 +457,6 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       background: ${colors.accent}22;
       border-color: ${colors.accent};
     }
-    review-workspace .rw-evidence-panel {
-      padding: ${spacing.sm} ${spacing.lg};
-      border-bottom: 1px solid #2a2a44;
-      background: ${colors.bgCard};
-      overflow-y: auto;
-      max-height: 280px;
-    }
     review-workspace .rw-recipe-panel {
       padding: ${spacing.sm} ${spacing.lg};
       border-bottom: 1px solid #2a2a44;

@@ -72,9 +72,6 @@ export function renderReviewTopBar(input: {
   includedComments: number;
   selectedRecommendation: string;
   setRecommendation: (recommendation: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE') => void;
-  mediaArtifactCount: number;
-  showEvidence: boolean;
-  toggleEvidence: () => void;
   qualityCount: number | null;
   showQuality: boolean;
   toggleQuality: () => void;
@@ -123,16 +120,6 @@ export function renderReviewTopBar(input: {
           `,
         )}
       </span>
-      ${input.mediaArtifactCount > 0
-        ? html`
-            <button
-              class="rw-evidence-toggle ${input.showEvidence ? 'active' : ''}"
-              @click=${input.toggleEvidence}
-            >
-              Evidence (${input.mediaArtifactCount})
-            </button>
-          `
-        : nothing}
       ${input.qualityCount !== null
         ? html`
             <button

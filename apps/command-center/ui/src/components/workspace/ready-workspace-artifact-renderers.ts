@@ -6,10 +6,6 @@ import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 import { formatBytes } from '../../utils/format.js';
 
 import {
-  dedupeWorkspaceEvidenceArtifacts,
-  renderWorkspaceEvidencePreview,
-} from './workspace-evidence-preview.js';
-import {
   type ArtifactFilter,
   type ArtifactGroup,
   type ArtifactTypeFilter,
@@ -24,6 +20,10 @@ import {
   workspaceArtifactTypeBadge,
   workspaceArtifactTypeLabel,
 } from './workspace-artifacts.js';
+import {
+  dedupeWorkspaceEvidenceArtifacts,
+  renderWorkspaceEvidencePreview,
+} from './workspace-evidence-preview.js';
 
 export interface ReadySelectedRecipeRunArtifactsContext {
   group: RecipeRunArtifactGroup | null;

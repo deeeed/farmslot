@@ -268,13 +268,13 @@ export function flowColor(flow: FlowType): string {
 
 export function familyLedgerTurnLabel(entry: FamilyChangeLedgerEntry): string {
   if (entry.flowType === 'review-pr') {
-    if (entry.inputDiff?.available) return 'Reviewed PR diff';
+    if (entry.inputDiff?.available) return 'Reviewed PR input';
     if (entry.inputDiff) return 'Missing reviewed input';
     return 'Review turn';
   }
   if (entry.flowType === 'pr-complete')
-    return entry.contributionDiff.available ? 'Follow-up fix' : 'No code change';
-  if (entry.contributionDiff.available) return 'Produced code';
+    return entry.contributionDiff.available ? 'Produced code delta' : 'No code change';
+  if (entry.contributionDiff.available) return 'Produced code delta';
   if (entry.changeKind === 'legacy') return 'Legacy diff';
   return 'No code change';
 }

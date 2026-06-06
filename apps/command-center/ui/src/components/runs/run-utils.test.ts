@@ -271,7 +271,7 @@ test('familyLedgerTurnLabel describes operator turns from ledger provenance', ()
         },
       }),
     ),
-    'Produced code',
+    'Produced code delta',
   );
   assert.equal(
     familyLedgerTurnLabel(
@@ -288,7 +288,7 @@ test('familyLedgerTurnLabel describes operator turns from ledger provenance', ()
         },
       }),
     ),
-    'Reviewed PR diff',
+    'Reviewed PR input',
   );
   assert.equal(
     familyLedgerTurnLabel(
@@ -322,7 +322,7 @@ test('familyLedgerTurnLabel describes operator turns from ledger provenance', ()
         },
       }),
     ),
-    'Follow-up fix',
+    'Produced code delta',
   );
   assert.equal(familyLedgerTurnLabel(makeLedgerEntry({ changeKind: 'legacy' })), 'Legacy diff');
 });

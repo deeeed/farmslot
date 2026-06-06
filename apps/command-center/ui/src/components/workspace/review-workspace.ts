@@ -51,11 +51,11 @@ import {
   renderReviewTopBar,
 } from './review-workspace-shell-renderers.js';
 import { ReviewWorkspaceState } from './review-workspace-state.js';
+import { runArtifactUrl, workspaceArtifactBasename } from './workspace-artifacts.js';
 import {
   dedupeWorkspaceEvidenceArtifacts,
   renderWorkspaceEvidencePreview,
 } from './workspace-evidence-preview.js';
-import { runArtifactUrl, workspaceArtifactBasename } from './workspace-artifacts.js';
 
 const GATEWAY_BASE = gatewayHttpOrigin();
 
@@ -558,26 +558,6 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
               })
             : nothing}
         </div>
-        ${this._showEvidence && this._mediaArtifacts.length > 0
-          ? html`
-              <div class="rw-evidence-panel">
-                ${renderWorkspaceEvidencePreview({
-                  title: 'Review evidence',
-                  subtitle:
-                    'Local artifacts attached to this review gate — click any card to inspect it in the viewer.',
-                  compact: true,
-                  items: this._mediaArtifacts.map((artifact, index) => ({
-                    artifact,
-                    url: runArtifactUrl(GATEWAY_BASE, this.runId, artifact),
-                    open: () => {
-                      this._lightboxIndex = index;
-                      this._lightboxOpen = true;
-                    },
-                  })),
-                })}
-              </div>
-            `
-          : nothing}
         ${renderRecipeQualityCockpit({
           recipeJson: recipeHost.recipeJson,
           recipeView: this._recipeView,
@@ -720,12 +700,6 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       selectedRecommendation: this._selectedRecommendation,
       setRecommendation: (recommendation) => {
         this._selectedRecommendation = recommendation;
-      },
-      mediaArtifactCount: this._mediaArtifacts.length,
-      showEvidence: this._showEvidence,
-      toggleEvidence: () => {
-        this._showEvidence = !this._showEvidence;
-        this._syncPanelToHash();
       },
       qualityCount: this._payload?.qualityReport?.acVerdicts.length ?? null,
       showQuality: this._showQuality,
