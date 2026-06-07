@@ -562,6 +562,7 @@ export async function runHealthCheck(
     console.log(
       `[${options.logPrefix ?? 'prepare'}] health check: cmd="${healthHook}" raw="${raw}" exit=${result.exitCode} stderr="${result.stderr.slice(0, 100)}"`,
     );
+    if (result.exitCode !== 0) return '';
     if (!raw) return '';
     if (!parseHealthCmd) return raw;
     const { execLocal } = await import('../../core/exec.js');

@@ -155,7 +155,11 @@ function applySlotViewRecipeRunsResult(
     reviewDecision: slotViewPendingReviewDecision(run),
     hasRecipeHost: !!nextHost,
   });
-  if (drawerKey && drawerKey !== view._dismissedReviewDrawerKey && !view._reviewPanelOpen) {
+  const shouldAutoOpen =
+    drawerKey !== ''
+      ? drawerKey !== view._dismissedReviewDrawerKey
+      : result.recipeRuns.length > 0 && !view._dismissedReviewDrawerKey;
+  if (shouldAutoOpen && !view._reviewPanelOpen) {
     view._reviewPanelOpen = true;
   }
   void view._loadSelectedRecipeFlow(nextHost);
