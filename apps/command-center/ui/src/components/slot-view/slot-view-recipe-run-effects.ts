@@ -4,6 +4,7 @@ import { Methods } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 
+import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
 import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
 import {
   slotViewDesiredRecipeRunId,
@@ -148,7 +149,17 @@ function applySlotViewRecipeRunsResult(
     selectedRun,
     recipeHost: nextHost,
   });
-  if (result.recipeRuns.length > 0 && !view._reviewPanelOpen) {
+  const drawerKey = slotViewReviewDrawerKey({
+    run,
+    readyDecision: view._readyGateDecision(),
+    reviewDecision: slotViewPendingReviewDecision(run),
+    hasRecipeHost: !!nextHost,
+  });
+  const shouldAutoOpen =
+    drawerKey !== ''
+      ? drawerKey !== view._dismissedReviewDrawerKey
+      : result.recipeRuns.length > 0 && !view._dismissedReviewDrawerKey;
+  if (shouldAutoOpen && !view._reviewPanelOpen) {
     view._reviewPanelOpen = true;
   }
   void view._loadSelectedRecipeFlow(nextHost);

@@ -224,11 +224,12 @@ async function checkFixtures(
 
   // Check templates (skip compose entries without src)
   for (const tpl of templates) {
+    const dst = expandTemplate(tpl.dst, vars, projectVars);
     if (!tpl.src) continue;
     const localPath = path.join(projectVars.projectFixturesDir, tpl.src);
     if (!existsSync(localPath)) {
       steps.push({
-        name: `fixture:${tpl.dst}`,
+        name: `fixture:${dst}`,
         status: 'warn',
         detail: `Template ${tpl.src} not found locally`,
       });
@@ -237,25 +238,25 @@ async function checkFixtures(
     }
     const rendered = await renderFixtureTemplate(localPath, vars, projectVars);
     const localMd5 = md5(rendered);
-    const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${tpl.dst}`);
+    const remoteMd5 = await getRemoteMd5(vars, `${vars.remoteRepo}/${dst}`);
     if (!remoteMd5) {
       steps.push({
-        name: `fixture:${tpl.dst}`,
+        name: `fixture:${dst}`,
         status: 'warn',
-        detail: `${tpl.dst} missing on worker`,
+        detail: `${dst} missing on worker`,
       });
       mismatches++;
     } else if (localMd5 === remoteMd5) {
       steps.push({
-        name: `fixture:${tpl.dst}`,
+        name: `fixture:${dst}`,
         status: 'pass',
-        detail: `${tpl.dst} — ${localMd5.slice(0, 8)}`,
+        detail: `${dst} — ${localMd5.slice(0, 8)}`,
       });
     } else {
       steps.push({
-        name: `fixture:${tpl.dst}`,
+        name: `fixture:${dst}`,
         status: 'warn',
-        detail: `${tpl.dst} mismatch (expected ${localMd5.slice(0, 8)}, got ${remoteMd5.slice(0, 8)})`,
+        detail: `${dst} mismatch (expected ${localMd5.slice(0, 8)}, got ${remoteMd5.slice(0, 8)})`,
       });
       mismatches++;
     }
@@ -264,14 +265,15 @@ async function checkFixtures(
   // Check directories (sentinel-based)
   const directories = projectJson.fixtures.directories ?? [];
   for (const dir of directories) {
-    const remoteDirPath = `${vars.remoteRepo}/${dir.dst}`;
+    const dst = expandTemplate(dir.dst, vars, projectVars);
+    const remoteDirPath = `${vars.remoteRepo}/${dst}`;
     try {
       const dirExists = await execOnSlot(vars, `test -d ${shellQuote(remoteDirPath)}`);
       if (dirExists.exitCode !== 0) {
         steps.push({
-          name: `fixture:${dir.dst}/`,
+          name: `fixture:${dst}/`,
           status: 'warn',
-          detail: `${dir.dst}/ missing on worker`,
+          detail: `${dst}/ missing on worker`,
         });
         mismatches++;
         continue;
@@ -284,40 +286,40 @@ async function checkFixtures(
           const remoteMd5 = await getRemoteMd5(vars, `${remoteDirPath}/${dir.sentinel}`);
           if (!remoteMd5) {
             steps.push({
-              name: `fixture:${dir.dst}/`,
+              name: `fixture:${dst}/`,
               status: 'warn',
-              detail: `${dir.dst}/${dir.sentinel} missing on worker`,
+              detail: `${dst}/${dir.sentinel} missing on worker`,
             });
             mismatches++;
           } else if (localMd5 === remoteMd5) {
             steps.push({
-              name: `fixture:${dir.dst}/`,
+              name: `fixture:${dst}/`,
               status: 'pass',
-              detail: `${dir.dst}/ — sentinel ${localMd5.slice(0, 8)}`,
+              detail: `${dst}/ — sentinel ${localMd5.slice(0, 8)}`,
             });
           } else {
             steps.push({
-              name: `fixture:${dir.dst}/`,
+              name: `fixture:${dst}/`,
               status: 'warn',
-              detail: `${dir.dst}/ sentinel mismatch (${localMd5.slice(0, 8)} vs ${remoteMd5.slice(0, 8)})`,
+              detail: `${dst}/ sentinel mismatch (${localMd5.slice(0, 8)} vs ${remoteMd5.slice(0, 8)})`,
             });
             mismatches++;
           }
         } else {
           steps.push({
-            name: `fixture:${dir.dst}/`,
+            name: `fixture:${dst}/`,
             status: 'pass',
-            detail: `${dir.dst}/ exists (no local sentinel)`,
+            detail: `${dst}/ exists (no local sentinel)`,
           });
         }
       } else {
-        steps.push({ name: `fixture:${dir.dst}/`, status: 'pass', detail: `${dir.dst}/ exists` });
+        steps.push({ name: `fixture:${dst}/`, status: 'pass', detail: `${dst}/ exists` });
       }
     } catch {
       steps.push({
-        name: `fixture:${dir.dst}/`,
+        name: `fixture:${dst}/`,
         status: 'warn',
-        detail: `${dir.dst}/ check failed`,
+        detail: `${dst}/ check failed`,
       });
       mismatches++;
     }
@@ -548,16 +550,19 @@ export async function runHealthCheck(
   vars: SlotVars,
   healthHook: string,
   parseHealthCmd: string,
+  options: { timeoutMs?: number; logPrefix?: string } = {},
 ): Promise<string> {
   try {
     const result = await execOnSlot(
       vars,
       `cd ${shellQuote(vars.remoteRepo)} && ${healthHook} 2>/dev/null`,
+      { timeout: options.timeoutMs },
     );
     const raw = result.stdout.trim();
     console.log(
-      `[prepare] health check: cmd="${healthHook}" raw="${raw}" exit=${result.exitCode} stderr="${result.stderr.slice(0, 100)}"`,
+      `[${options.logPrefix ?? 'prepare'}] health check: cmd="${healthHook}" raw="${raw}" exit=${result.exitCode} stderr="${result.stderr.slice(0, 100)}"`,
     );
+    if (result.exitCode !== 0) return '';
     if (!raw) return '';
     if (!parseHealthCmd) return raw;
     const { execLocal } = await import('../../core/exec.js');

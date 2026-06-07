@@ -8,6 +8,7 @@ import {
   slotSwitcherEntries,
   slotSwitcherSignature,
   slotViewReadyGateDecision,
+  slotViewReviewDrawerKey,
 } from './slot-view-model.js';
 
 function makeSlot(slot: string, overrides: Partial<SlotStatus> = {}): SlotStatus {
@@ -169,4 +170,59 @@ test('slotViewReadyGateDecision prefers pending ready decisions then newest reso
     null,
   );
   assert.equal(slotViewReadyGateDecision(null), null);
+});
+
+test('slotViewReviewDrawerKey preserves ready/review precedence over recipe hosts', () => {
+  const readyDecision = {
+    id: 'ready-1',
+    type: 'engine_ready',
+    title: 'Ready',
+    description: 'Ready gate',
+    actions: [],
+    createdAt: '2026-05-14T00:00:00.000Z',
+    payload: { kind: 'ready' },
+  } as unknown as Run['decisions'][number];
+  const reviewDecision = {
+    ...readyDecision,
+    id: 'review-1',
+    type: 'engine_review',
+    payload: { kind: 'review' },
+  } as unknown as Run['decisions'][number];
+
+  assert.equal(
+    slotViewReviewDrawerKey({
+      run: { id: 'run-1' },
+      readyDecision,
+      reviewDecision,
+      hasRecipeHost: true,
+    }),
+    'ready:ready-1',
+  );
+  assert.equal(
+    slotViewReviewDrawerKey({
+      run: { id: 'run-1' },
+      readyDecision: null,
+      reviewDecision,
+      hasRecipeHost: true,
+    }),
+    'review:review-1',
+  );
+  assert.equal(
+    slotViewReviewDrawerKey({
+      run: { id: 'run-1' },
+      readyDecision: null,
+      reviewDecision: null,
+      hasRecipeHost: true,
+    }),
+    'recipe:run-1',
+  );
+  assert.equal(
+    slotViewReviewDrawerKey({
+      run: { id: 'run-1' },
+      readyDecision: null,
+      reviewDecision: null,
+      hasRecipeHost: false,
+    }),
+    '',
+  );
 });

@@ -71,10 +71,10 @@ export function readyWorkspaceLightStyles(): string {
         z-index: 1000;
         background: rgba(0, 0, 0, 0.68);
         display: flex;
-      ${readyWorkspaceReviewModalStyles()}
-min-height: 0;
-        overflow: hidden;
+        align-items: center;
+        justify-content: center;
       }
+      ${readyWorkspaceReviewModalStyles()}
       ready-workspace .rdy-package-summary,
       ready-workspace .rdy-review-strip {
         display: flex;

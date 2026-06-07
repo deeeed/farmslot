@@ -179,3 +179,15 @@ export function slotViewPendingReviewDecision(
     ) ?? null
   );
 }
+
+export function slotViewReviewDrawerKey(input: {
+  run: Pick<Run, 'id'> | null | undefined;
+  readyDecision: Run['decisions'][number] | null;
+  reviewDecision: Run['decisions'][number] | null;
+  hasRecipeHost: boolean;
+}): string {
+  if (input.readyDecision) return `ready:${input.readyDecision.id}`;
+  if (input.reviewDecision) return `review:${input.reviewDecision.id}`;
+  if (input.hasRecipeHost && input.run) return `recipe:${input.run.id}`;
+  return '';
+}

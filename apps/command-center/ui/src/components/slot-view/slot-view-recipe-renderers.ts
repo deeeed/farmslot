@@ -13,7 +13,7 @@ import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-he
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
 import { renderSlotRecipeDrawer } from './slot-recipe-drawer.js';
-import { slotViewPendingReviewDecision } from './slot-view-model.js';
+import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
 import {
   recipeArtifactPurposeLabel,
   renderGeneratedVisualArtifacts,
@@ -647,6 +647,12 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
   const drawerMode = canSwitchToRecipe ? view._reviewDrawerMode : 'primary';
   const primaryLabel = readyDecision ? 'READY' : reviewDecision ? 'REVIEW' : 'RECIPE';
   const drawerLabel = drawerMode === 'recipe' ? 'RECIPE' : primaryLabel;
+  const drawerKey = slotViewReviewDrawerKey({
+    run: view._linkedRun,
+    readyDecision,
+    reviewDecision,
+    hasRecipeHost: !!recipeHost,
+  });
   const collapsedTitle = readyDecision
     ? 'Open ready workspace'
     : reviewDecision
@@ -782,10 +788,12 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
     onClose: () => {
       view._reviewFullWidth = false;
       view._reviewPanelOpen = false;
+      view._dismissedReviewDrawerKey = drawerKey;
       view._saveLayout();
     },
     onOpen: () => {
       view._reviewPanelOpen = true;
+      if (drawerKey === view._dismissedReviewDrawerKey) view._dismissedReviewDrawerKey = '';
       view._saveLayout();
     },
   });

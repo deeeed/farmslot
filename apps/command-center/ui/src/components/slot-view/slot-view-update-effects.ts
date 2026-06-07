@@ -3,7 +3,7 @@ import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js
 import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
-import { slotViewPendingReviewDecision } from './slot-view-model.js';
+import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
 
 export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unknown>): void {
   // Auto-focus new file input when prompt opens
@@ -20,6 +20,7 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
       view._cancelFileRestoreRetry();
       view._cancelResourceRestoreRetry();
       view._resetRecipePanelState();
+      view._dismissedReviewDrawerKey = '';
       view._openFiles = [];
       view._activeFile = '';
       view._activeResourceId = '';
@@ -111,15 +112,19 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
   // Auto-open review panel when a review gate decision becomes pending
   if (changed.has('_linkedRun')) {
     const hasSlotRecipeHost = !!createSlotViewRecipeHostEntry(view._linkedRun, view.slotId);
-    const hasReadyDecision = !!view._readyGateDecision();
-    const hasPendingReviewDecision = !!slotViewPendingReviewDecision(view._linkedRun);
-    if (
-      (hasReadyDecision || hasPendingReviewDecision || hasSlotRecipeHost) &&
-      !view._reviewPanelOpen
-    ) {
+    const readyDecision = view._readyGateDecision();
+    const reviewDecision = slotViewPendingReviewDecision(view._linkedRun);
+    const drawerKey = slotViewReviewDrawerKey({
+      run: view._linkedRun,
+      readyDecision,
+      reviewDecision,
+      hasRecipeHost: hasSlotRecipeHost,
+    });
+    if (drawerKey && drawerKey !== view._dismissedReviewDrawerKey && !view._reviewPanelOpen) {
       view._reviewPanelOpen = true;
       view._saveLayout();
     }
+    if (!drawerKey) view._dismissedReviewDrawerKey = '';
     if (view._fileUrlReady) {
       view._syncUrlState();
     }
