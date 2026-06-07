@@ -3,7 +3,7 @@ import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js
 import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
-import { slotViewPendingReviewDecision } from './slot-view-model.js';
+import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
 
 export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unknown>): void {
   // Auto-focus new file input when prompt opens
@@ -114,13 +114,12 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
     const hasSlotRecipeHost = !!createSlotViewRecipeHostEntry(view._linkedRun, view.slotId);
     const readyDecision = view._readyGateDecision();
     const reviewDecision = slotViewPendingReviewDecision(view._linkedRun);
-    const drawerKey = readyDecision
-      ? `ready:${readyDecision.id}`
-      : reviewDecision
-        ? `review:${reviewDecision.id}`
-        : hasSlotRecipeHost && view._linkedRun
-          ? `recipe:${view._linkedRun.id}`
-          : '';
+    const drawerKey = slotViewReviewDrawerKey({
+      run: view._linkedRun,
+      readyDecision,
+      reviewDecision,
+      hasRecipeHost: hasSlotRecipeHost,
+    });
     if (drawerKey && drawerKey !== view._dismissedReviewDrawerKey && !view._reviewPanelOpen) {
       view._reviewPanelOpen = true;
       view._saveLayout();

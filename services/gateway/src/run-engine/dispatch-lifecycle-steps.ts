@@ -33,6 +33,8 @@ interface WarmPrepareHealth {
   detail: string;
 }
 
+const WARM_PREPARE_HEALTH_TIMEOUT_MS = 10_000;
+
 async function projectRequiresLiveWarmPrepareHealth(run: Run): Promise<boolean> {
   const slotVars = run.slotId ? await loadSlotVars(run.slotId) : null;
   const projectVars = await loadProjectVars(run.project || slotVars?.projectName || '');
@@ -49,7 +51,10 @@ async function checkWarmPrepareHealth(run: Run): Promise<WarmPrepareHealth> {
   }
   const readyIndicator = getProjectField(projectVars.projectJson, 'health.ready_indicator');
   const parseCmd = getProjectField(projectVars.projectJson, 'health.parse_health');
-  const value = await runHealthCheck(slotVars, healthHook, parseCmd);
+  const value = await runHealthCheck(slotVars, healthHook, parseCmd, {
+    timeoutMs: WARM_PREPARE_HEALTH_TIMEOUT_MS,
+    logPrefix: 'run-engine',
+  });
   if (value && (!readyIndicator || value === readyIndicator)) {
     return { ok: true, detail: value };
   }

@@ -550,15 +550,17 @@ export async function runHealthCheck(
   vars: SlotVars,
   healthHook: string,
   parseHealthCmd: string,
+  options: { timeoutMs?: number; logPrefix?: string } = {},
 ): Promise<string> {
   try {
     const result = await execOnSlot(
       vars,
       `cd ${shellQuote(vars.remoteRepo)} && ${healthHook} 2>/dev/null`,
+      { timeout: options.timeoutMs },
     );
     const raw = result.stdout.trim();
     console.log(
-      `[prepare] health check: cmd="${healthHook}" raw="${raw}" exit=${result.exitCode} stderr="${result.stderr.slice(0, 100)}"`,
+      `[${options.logPrefix ?? 'prepare'}] health check: cmd="${healthHook}" raw="${raw}" exit=${result.exitCode} stderr="${result.stderr.slice(0, 100)}"`,
     );
     if (!raw) return '';
     if (!parseHealthCmd) return raw;

@@ -48,6 +48,7 @@ export function startSlotViewRecipeExecution(
     : '';
   view._recipeExecutionOpen = false;
   view._reviewDrawerMode = 'recipe';
+  view._dismissedReviewDrawerKey = '';
   view._reviewPanelOpen = true;
   view._saveLayout();
   view._syncUrlState();
@@ -80,6 +81,7 @@ export function handleSlotViewRecipeExecutionComplete(
   view._selectedRecipeFlowPath = '';
   view._recipeEvidenceCache = null;
   view._reviewDrawerMode = 'recipe';
+  view._dismissedReviewDrawerKey = '';
   view._reviewPanelOpen = true;
   void view._refreshLinkedRun(view._linkedRun?.status ?? null);
   view._syncUrlState();
