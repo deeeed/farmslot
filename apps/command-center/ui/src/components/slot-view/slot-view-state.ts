@@ -145,6 +145,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _reviewPanelWidth = 480;
   @state() _reviewFullWidth = false;
   @state() _reviewDrawerMode: 'primary' | 'recipe' = 'primary';
+  _dismissedReviewDrawerKey = '';
   @state() _slotRecipeView: 'graph' | 'json' = 'graph';
   @state() _recipeRuns: RecipeRunArtifactGroup[] = [];
   @state() _selectedRecipeRunId = '';

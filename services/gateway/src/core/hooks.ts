@@ -38,6 +38,21 @@ function expandTemplateInternal(
     // Also support uppercase form (e.g. {{PLATFORM}}, {{ADB_SERIAL}})
     result = result.replaceAll(`{{${field.toUpperCase()}}}`, value);
   }
+  // Optional resource placeholders are valid even when a slot does not carry
+  // that resource (for example iOS slots have no adb_serial/avd). Match the
+  // shell fixture-sync path by rendering missing optional resources as empty.
+  for (const field of [
+    'port',
+    'cdp_port',
+    'simulator',
+    'avd',
+    'adb_serial',
+    'headless',
+    'snapshot',
+  ]) {
+    result = result.replaceAll(`{{${field}}}`, '');
+    result = result.replaceAll(`{{${field.toUpperCase()}}}`, '');
+  }
   // Project-level vars
   const runtimeDir = projectVars?.runtimeDir ?? '.agent';
   const artifactDir = projectVars?.artifactDir ?? '.task';

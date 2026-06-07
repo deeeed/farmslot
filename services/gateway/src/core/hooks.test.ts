@@ -64,6 +64,36 @@ test('expandTemplate uses configured session when machine ids contain hyphens', 
   );
 });
 
+test('expandTemplate renders missing optional resource placeholders as empty strings', () => {
+  const slotVars: SlotVars = {
+    slotId: 'macwork-mm-1',
+    machine: 'macwork',
+    platform: 'ios',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'mm-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'example-mobile-farm',
+    resourceVars: { port: '8061', simulator: 'mm-1' },
+  };
+
+  assert.equal(
+    expandTemplate('{{port}} {{simulator}} {{avd}} {{adb_serial}} {{ADB_SERIAL}}', slotVars),
+    '8061 mm-1   ',
+  );
+});
+
 test('expandDispatchCmd supports Cursor Agent runner path placeholders', () => {
   const slotVars: SlotVars = {
     slotId: 'runner-browser-1',

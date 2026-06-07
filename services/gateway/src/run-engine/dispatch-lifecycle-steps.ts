@@ -1,11 +1,12 @@
 import { Events, type Run } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
-import { execOnSlot, isLocal } from '../core/exec.js';
+import { isLocal } from '../core/exec.js';
 import { expandHook } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { dispatchExecute, nudgeDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
+import { runHealthCheck } from '../methods/slot/check.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import { runnerNeedsPostLaunchPrompt } from '../runners/registry.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -47,20 +48,14 @@ async function checkWarmPrepareHealth(run: Run): Promise<WarmPrepareHealth> {
     return { ok: false, detail: `Project ${run.project} has no health_check hook` };
   }
   const readyIndicator = getProjectField(projectVars.projectJson, 'health.ready_indicator');
-  const result = await execOnSlot(
-    slotVars,
-    `cd ${shellQuote(slotVars.remoteRepo)} && ${healthHook} 2>/dev/null`,
-    { timeout: 10_000 },
-  );
-  const value = result.stdout.trim();
-  if (result.exitCode === 0 && value && (!readyIndicator || value === readyIndicator)) {
+  const parseCmd = getProjectField(projectVars.projectJson, 'health.parse_health');
+  const value = await runHealthCheck(slotVars, healthHook, parseCmd);
+  if (value && (!readyIndicator || value === readyIndicator)) {
     return { ok: true, detail: value };
   }
   return {
     ok: false,
-    detail:
-      `health_check failed (exit=${result.exitCode}, value=${value || 'none'}` +
-      `${readyIndicator ? `, expected=${readyIndicator}` : ''})`,
+    detail: `health_check failed (value=${value || 'none'}${readyIndicator ? `, expected=${readyIndicator}` : ''})`,
   };
 }
 
