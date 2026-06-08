@@ -57,7 +57,7 @@ import {
   listRunnerSessionFiles,
 } from '../../runners/session-process.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
-import { slotPrepare } from '../slot.js';
+import { killAgentInSession, slotPrepare } from '../slot.js';
 
 import { buildDispatchRoleShellCommand, parseCapturedAgentPaneTarget } from './role-target.js';
 import { resolveDispatchSafetyTier } from './safety-tier.js';
@@ -281,6 +281,25 @@ export async function waitForRunnerProcessExit(
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`Timed out waiting for ${runner} process to exit from ${target}`);
+}
+
+interface DispatchFailureCleanupDeps {
+  killAgentInSession?: typeof killAgentInSession;
+  waitForRunnerProcessExit?: typeof waitForRunnerProcessExit;
+}
+
+export async function cleanupLaunchedWorkerAfterDispatchFailure(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  role: AgentRole,
+  deps: DispatchFailureCleanupDeps = {},
+): Promise<void> {
+  const killRunner = deps.killAgentInSession ?? killAgentInSession;
+  const waitForExit = deps.waitForRunnerProcessExit ?? waitForRunnerProcessExit;
+
+  await killRunner(vars, runner, role);
+  await waitForExit(vars, target, runner, 5_000);
 }
 
 /**
@@ -864,6 +883,7 @@ export async function dispatchExecute(
     runnerSessionPath: null,
     runnerSessionId: null,
   };
+  let runnerProcessStarted = false;
   try {
     // Some shell init paths (e.g. anaconda's `(base)` prompt activation) query
     // the terminal for DA1/DA2 attributes during prompt setup. The terminal's
@@ -908,6 +928,7 @@ export async function dispatchExecute(
     // instead of 'failed' — the false-success path that left review-pr runs
     // sitting at human-gate waiting for artifacts that were never produced.
     await assertRunnerProcessStarted(vars, workerTarget, runner);
+    runnerProcessStarted = true;
     step('launch', `${runner} launched in tmux target ${workerTarget}`);
     primaryTarget = await captureAgentPaneTarget(vars, session, workerTarget);
     sessionMeta = await captureRunnerSessionMetadata(vars, runner, sessionFilesBefore);
@@ -951,6 +972,18 @@ export async function dispatchExecute(
         lastSignalAt: new Date().toISOString(),
         target: primaryTarget,
       });
+    }
+    if (runnerProcessStarted) {
+      try {
+        step('cleanup', `Stopping launched ${runner} after dispatch failure...`);
+        await cleanupLaunchedWorkerAfterDispatchFailure(vars, workerTarget, runner, workerRole);
+        step('cleanup', `Stopped launched ${runner} after dispatch failure`);
+      } catch (cleanupErr) {
+        throw new Error(
+          `${(err as Error).message}\n\nDispatch cleanup also failed after ${runner} launched in ${workerTarget}: ${(cleanupErr as Error).message}`,
+          { cause: err },
+        );
+      }
     }
     throw err;
   }

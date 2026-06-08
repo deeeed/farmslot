@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { RunDecision } from '@farmslot/protocol';
+import { Events, type RunDecision } from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
@@ -105,6 +105,46 @@ test('runReplayStep restores taskFile from completed write-task output for downs
   await runReplayStep({ runId: run.id, stepName: 'dispatch', triggeredBy: 'operator' }, () => {});
 
   assert.equal(getRun(run.id)?.taskFile, taskFile);
+});
+
+test('runReplayStep moves terminal runs back to the active replay phase immediately', async (t) => {
+  const taskFile = '/tmp/farmslot-task/TASK.md';
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'dispatch failed',
+    taskFile,
+    steps: run.steps.map((step) =>
+      step.name === 'write-task' || step.name === 'prepare'
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'dispatch'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+  const emittedStatuses: string[] = [];
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await runReplayStep(
+    { runId: run.id, stepName: 'dispatch', triggeredBy: 'operator' },
+    (event, payload) => {
+      if (event === Events.RUN_UPDATED) {
+        emittedStatuses.push((payload as { run: { status: string } }).run.status);
+      }
+    },
+  );
+
+  assert.equal(emittedStatuses[0], 'dispatching');
 });
 
 test('runReplayStep clears stale decisions when replaying task generation', async (t) => {

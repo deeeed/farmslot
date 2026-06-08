@@ -534,10 +534,36 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   if (idx === -1) return false;
   const after = compactPane.slice(idx + needle.length);
   return (
-    /\b(Working|Running|Reading|Explored|Edited|Ran|UserPromptSubmit hook|SessionStart hook)\b/i.test(
+    /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|UserPromptSubmit hook|SessionStart hook)\b/i.test(
       after,
     ) || /[•✔✖]\s/.test(after)
   );
+}
+
+function paneLineLooksShellPrompt(line: string): boolean {
+  return /^[^\s@]+@[^\s]+\s+\S+\s+[%$#]\s*$/.test(line.trim());
+}
+
+function runnerPaneShowsCurrentCursorProgress(pane: string, runnerId?: string | null): boolean {
+  if (normalizeRunner(runnerId) !== 'cursor') return false;
+  const tail = pane
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-12);
+  let progressIndex = -1;
+  for (let i = tail.length - 1; i >= 0; i--) {
+    if (
+      /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running)\b(?:\s+\d+\s+tokens)?/i.test(
+        tail[i] ?? '',
+      )
+    ) {
+      progressIndex = i;
+      break;
+    }
+  }
+  if (progressIndex === -1) return false;
+  return !tail.slice(progressIndex + 1).some((line) => paneLineLooksShellPrompt(line));
 }
 
 export function runnerPaneShowsPromptAccepted(
@@ -548,6 +574,13 @@ export function runnerPaneShowsPromptAccepted(
   runnerId?: string | null,
 ): boolean {
   if (pane === previousPane) return false;
+  if (
+    runnerPaneShowsCurrentCursorProgress(pane, runnerId) &&
+    (runnerPaneContainsInstruction(pane, message) ||
+      (marker && paneTailText(pane, 16).includes(marker)))
+  ) {
+    return true;
+  }
   // Seeing the marker alone is not proof that the runner accepted the prompt:
   // Codex can echo the full instruction (including SELF-REVIEW.md/TASK.md) in
   // the live composer while the final Enter was swallowed. Treat that as not
@@ -622,6 +655,29 @@ export function runnerBufferedInstructionSubmitKey(
     return 'Tab';
   }
   return 'Enter';
+}
+
+function paneTailText(pane: string, lines = 12): string {
+  return pane.split('\n').slice(-lines).join('\n');
+}
+
+export function runnerPaneShouldSubmitExistingInstruction(
+  pane: string,
+  message: string,
+  marker: string,
+  runnerId?: string | null,
+  options: { allowMarkerOnly?: boolean } = {},
+): boolean {
+  if (runnerPaneHasBufferedInstruction(pane, message, runnerId)) return true;
+  if (
+    options.allowMarkerOnly !== true ||
+    !marker ||
+    !paneTailText(pane).includes(marker) ||
+    runnerPaneHasProgressAfterInstruction(pane, message)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 async function captureTmuxPane(
@@ -868,7 +924,13 @@ export async function sendRunnerPostLaunchPrompt(
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
       )
     ).stdout;
-    const sendCommand = runnerPaneHasBufferedInstruction(preSendPane, message, runner)
+    const sendCommand = runnerPaneShouldSubmitExistingInstruction(
+      preSendPane,
+      message,
+      marker,
+      runner,
+      { allowMarkerOnly: attempt > 1 },
+    )
       ? tmuxShellSnippet(
           `send-keys -t ${shellQuote(target)} ${runnerBufferedInstructionSubmitKey(preSendPane, runner)} 2>/dev/null`,
         )

@@ -8,6 +8,7 @@ import {
   PipelineSteps as PS,
   type RunReplayStepParams,
   type RunReplayStepResult,
+  type RunStatus,
 } from '@farmslot/protocol';
 
 import { execOnSlot } from '../../core/exec.js';
@@ -24,6 +25,24 @@ import { validateTicketRef } from '../dispatch/ticket-ref.js';
 import { isInternalArtifactOnlyEvalTicket, isLocalDevRef } from './ticket-policy.js';
 
 type Emit = (event: string, payload: unknown) => void;
+
+const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
+  [PS.GRADE]: 'grading',
+  [PS.WRITE_TASK]: 'writing-task',
+  [PS.FIND_SLOT]: 'slot-finding',
+  [PS.PREPARE]: 'preparing',
+  [PS.DISPATCH]: 'dispatching',
+  [PS.MONITOR]: 'monitoring',
+  [PS.SELF_REVIEW]: 'self-reviewing',
+  [PS.HUMAN_GATE]: 'human-gating',
+  [PS.FINALIZE]: 'completing',
+  [PS.COMPLETE]: 'completing',
+  [PS.CI_WATCH]: 'ci-watching',
+};
+
+function activeStatusForReplayStep(stepName: string): RunStatus {
+  return REPLAY_STEP_TO_ACTIVE_STATUS[stepName] ?? 'created';
+}
 
 export async function runReplayStep(
   params: RunReplayStepParams,
@@ -326,7 +345,7 @@ export async function runReplayStep(
   const replayGeneration =
     getRun(params.runId)?.engineState?.generation ?? existing.engineState?.generation ?? 0;
   updateRun(params.runId, {
-    status: 'created',
+    status: activeStatusForReplayStep(replayStepName),
     error: undefined,
     completedAt: undefined,
     taskFile: replayTaskFile,
