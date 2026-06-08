@@ -32,6 +32,7 @@ import {
   resolveDispatchTargetBranch,
   resolvePreviewModel,
   selectBranchAffinityEligibleSlots,
+  selectBranchAffinityRefreshSlots,
 } from './dispatch.js';
 
 function makeSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
@@ -1065,6 +1066,20 @@ test('selectBranchAffinityEligibleSlots enables Codex TUI nudges but keeps OpenC
     ['mini-mme-2', true],
     ['mini-mme-3', false],
   ]);
+});
+
+test('selectBranchAffinityRefreshSlots refreshes non-nudge working slots for fresh-only branch reuse', () => {
+  const claude = makeBusyClaudeSlot({ slot: 'runner-browser-2', runner: 'claude' });
+  const opencode = makeBusyClaudeSlot({ slot: 'runner-browser-3', runner: 'opencode' });
+  const idle = makeBusyClaudeSlot({ slot: 'runner-browser-4', agent: 'idle' });
+  const manual = makeBusyClaudeSlot({ slot: 'runner-browser-5', lifecycle: 'manual' });
+
+  const refreshSlots = selectBranchAffinityRefreshSlots([claude, opencode, idle, manual]);
+
+  assert.deepEqual(
+    refreshSlots.map((slot) => slot.slot),
+    ['runner-browser-2', 'runner-browser-3'],
+  );
 });
 
 test('selectBranchAffinityEligibleSlots prefers targetBranch exact match over PR-number / slug paths', () => {

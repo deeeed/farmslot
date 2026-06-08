@@ -446,6 +446,22 @@ export async function findBranchAffinityNudgeCandidate(
 }
 
 /**
+ * Busy slots whose live branch should be refreshed before branch-affinity matching.
+ *
+ * Keep this wider than nudge capability: non-tmux runners still surface as Fresh-only
+ * branch-affinity rows, so stale cached branch state would otherwise hide valid reuse options.
+ */
+export function selectBranchAffinityRefreshSlots(slots: SlotStatus[]): SlotStatus[] {
+  return slots.filter(
+    (s) =>
+      s.agent === 'working' &&
+      s.lifecycle !== 'manual' &&
+      s.lifecycle !== 'disabled' &&
+      s.lifecycle !== 'held',
+  );
+}
+
+/**
  * Re-verify a slot is still nudge-eligible right before binding it.
  *
  * Two TOCTOU windows make this load-bearing:
@@ -638,14 +654,7 @@ export async function dispatchCandidates(
   // `forceRefresh: true` to `loadFleetStatus`.
   let nudgeMetaBySlot: Map<string, BranchAffinityNudgeCandidate> = new Map();
   if (isPrFlow && params.ticketOrPr && resolvedTargetBranch) {
-    const busyMatching = projectSlots.filter(
-      (s) =>
-        s.agent === 'working' &&
-        s.lifecycle !== 'manual' &&
-        s.lifecycle !== 'disabled' &&
-        s.lifecycle !== 'held' &&
-        runnerSupportsTmuxNudges(s.runner),
-    );
+    const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
     if (busyMatching.length > 0) await refreshBranches(busyMatching);
     const candidatesList = await collectBranchAffinityNudgeCandidates(
       fleet.slots,

@@ -18,6 +18,7 @@ import {
   findAffinitySlot,
   prepareSlotForFreshReuse,
   refreshBranches,
+  selectBranchAffinityRefreshSlots,
   verifyBranchAffinityNudgeStillEligible,
 } from '../methods/dispatch.js';
 import { isCdpLive, isFreeSlot, slotScore } from '../methods/dispatch/slot-scoring.js';
@@ -248,13 +249,7 @@ export async function executeFindSlotStep(
     // at the top of the case. Production lane only — collect helper short-circuits on
     // comparison lane to preserve ADR-024 §7 scrub-between-siblings.
     if (run.lane !== 'comparison') {
-      const busyMatching = projectSlots.filter(
-        (s) =>
-          s.agent === 'working' &&
-          s.lifecycle !== 'manual' &&
-          s.lifecycle !== 'disabled' &&
-          s.lifecycle !== 'held',
-      );
+      const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
       if (busyMatching.length > 0) await refreshBranches(busyMatching);
       const nudgeCandidates = await collectBranchAffinityNudgeCandidates(
         fleet.slots,
