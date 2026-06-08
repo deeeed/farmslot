@@ -722,6 +722,9 @@ export async function monitorRun(
               workerSignal: postDecisionSignal,
             };
           }
+          // Avoid immediately reopening the same timeout decision if the operator resolved the
+          // handoff but the signal read races with a file write/delete.
+          state.startedAt = Date.now();
           continue;
         }
         const actionId = await createBlockedDecision(

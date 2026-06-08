@@ -249,11 +249,6 @@ export class DispatchWizard extends DispatchWizardState {
       this._templateOptions = next.options;
       this._templateOptionsError = next.error;
       this._selectedTaskTemplateFileName = next.selectedFileName;
-      this._mode = selectedTemplateMode(
-        this._flowType,
-        this._templateOptions,
-        this._selectedTaskTemplateFileName,
-      );
     } catch (err: unknown) {
       if (this._templateOptionsKey !== key) return;
       this._templateOptions = [];
@@ -426,7 +421,6 @@ export class DispatchWizard extends DispatchWizardState {
         if (flowState) {
           this._flowType = flowState.flowType;
           this._autoFlowType = flowState.autoFlowType;
-          this._mode = flowState.mode;
         }
       }
       if (res.project) {
@@ -562,7 +556,6 @@ export class DispatchWizard extends DispatchWizardState {
     if (!prefill) return;
     if (prefill.flowType) {
       this._flowType = prefill.flowType;
-      this._mode = modeForFlow(prefill.flowType);
       if (prefill.ticketId) this._ticketId = prefill.ticketId;
     }
     if (prefill.publicationReviewLoops.length > 0) {
@@ -722,7 +715,6 @@ export class DispatchWizard extends DispatchWizardState {
   private _selectFlowType(flowType: FlowType): void {
     this._flowType = flowType;
     this._autoFlowType = false;
-    this._mode = modeForFlow(flowType);
     void this._fetchTemplateOptions();
   }
 
@@ -846,7 +838,6 @@ export class DispatchWizard extends DispatchWizardState {
       },
       setTaskTemplateFileName: (fileName) => {
         this._selectedTaskTemplateFileName = fileName;
-        this._mode = selectedTemplateMode(this._flowType, this._templateOptions, fileName);
       },
       setRunner: (runner) => this._setRunner(runner),
       setModel: (model) => this._setModel(model),
