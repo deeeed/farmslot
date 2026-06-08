@@ -92,8 +92,10 @@ const ROOT_FLOW_TYPES = new Set<Run['flowType']>(['fix-bug', 'dev']);
  * UI-dispatched pr-complete starts a new family with no recipe inheritance.
  *
  * Strategy: prefer the most recent root-flow run (fix-bug/dev) that produced a
- * taskFile and shares either ticketOrPr or prNumber with the new follow-up.
- * Falls back to ANY run with matching ticket/PR + taskFile if no root match.
+ * taskFile and shares ticketOrPr, prNumber, or the resolved PR head branch with
+ * the new follow-up. Branch-only matches are limited to root flows to avoid
+ * linking standalone PR re-entry to an unrelated follow-up that happened to reuse
+ * a branch name. Falls back to ANY run with matching ticket/PR + taskFile if no root match.
  * Returns null if no candidate exists — caller proceeds with no parent (the
  * pre-F6 behavior) so we never break standalone follow-up dispatches.
  */
@@ -110,7 +112,8 @@ export function findFollowUpParentRun(
     if (params.project && run.project !== params.project) return false;
     if (run.ticketOrPr === params.ticketOrPr) return true;
     if (params.prNumber != null && run.prNumber === params.prNumber) return true;
-    if (params.branch && run.branch === params.branch) return true;
+    if (params.branch && run.branch === params.branch && ROOT_FLOW_TYPES.has(run.flowType))
+      return true;
     return false;
   };
   const candidates = runs.filter((run) => matchesTarget(run) && Boolean(run.taskFile));

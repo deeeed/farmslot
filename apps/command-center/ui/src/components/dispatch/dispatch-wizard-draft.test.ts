@@ -98,6 +98,30 @@ test('selectedTemplateMode derives mode from task template selection', () => {
   assert.equal(selectedTemplateMode('dev', devOptions, 'dev-interactive.md'), 'interactive');
   assert.equal(selectedTemplateMode('dev', devOptions, 'dev.md'), 'autonomous');
 
+  const prCompleteOptions = [
+    {
+      fileName: 'pr-complete.md',
+      label: 'pr-complete (default)',
+      isDefault: true,
+      flowType: 'pr-complete' as const,
+    },
+    {
+      fileName: 'pr-complete-interactive.md',
+      label: 'pr-complete · interactive',
+      isDefault: false,
+      flowType: 'pr-complete' as const,
+      variant: 'interactive',
+    },
+  ];
+  assert.equal(
+    selectedTemplateMode('pr-complete', prCompleteOptions, 'pr-complete-interactive.md'),
+    'interactive',
+  );
+  assert.equal(
+    selectedTemplateMode('pr-complete', prCompleteOptions, 'pr-complete.md'),
+    'autonomous',
+  );
+
   const fixBugOptions = [
     {
       fileName: 'fix-bug.md',
