@@ -69,6 +69,7 @@ import {
 } from '../runs/store.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
+import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
   assertTicketRefMatchesProjectRepo,
   normalizeTicketRef,
@@ -198,15 +199,33 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   params.variant = variant ?? undefined;
 
   let normalizedTaskTemplate: RunCreateParams['taskTemplate'];
-  if (params.taskTemplate || (params.flowType === 'dev' && params.mode === 'interactive')) {
+  const shouldResolveImplicitInteractiveTemplate =
+    params.mode === 'interactive' &&
+    (params.flowType === 'dev' || params.flowType === 'pr-complete');
+  if (params.taskTemplate || shouldResolveImplicitInteractiveTemplate) {
     const projectVars = await loadProjectVars(params.project);
     const selectedTemplate = await resolveWorkerTemplateSelectionForRun(
       projectVars,
       params.flowType,
       params.mode,
       params.taskTemplate,
-    );
-    if (params.taskTemplate || selectedTemplate.selectionSource === 'implicit-interactive-dev') {
+    ).catch((err) => {
+      if (
+        !params.taskTemplate &&
+        params.flowType === 'pr-complete' &&
+        params.mode === 'interactive' &&
+        /Worker template not found/.test((err as Error).message)
+      ) {
+        return null;
+      }
+      throw err;
+    });
+    if (
+      selectedTemplate &&
+      (params.taskTemplate ||
+        selectedTemplate.selectionSource === 'implicit-interactive-dev' ||
+        selectedTemplate.selectionSource === 'implicit-interactive-pr-complete')
+    ) {
       normalizedTaskTemplate = {
         fileName: selectedTemplate.fileName,
         variant: selectedTemplate.variant,
@@ -264,10 +283,22 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   if (isFollowUpFlow(params.flowType) && !params.parentRunId) {
     const prMatch = params.ticketOrPr.match(/#(\d+)$/);
     const prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
+    const resolvedFollowUpBranch =
+      params.branch ??
+      (await resolveDispatchTargetBranch(
+        {
+          project: params.project,
+          flowType: params.flowType,
+          ticketOrPr: params.ticketOrPr,
+          targetBranch: params.branch,
+        },
+        { logPrefix: 'run-create' },
+      ));
+    if (!params.branch && resolvedFollowUpBranch) params.branch = resolvedFollowUpBranch;
     const parent = findFollowUpParentRun(getAllRuns(), {
       ticketOrPr: params.ticketOrPr,
       prNumber,
-      branch: params.branch,
+      branch: resolvedFollowUpBranch,
       project: params.project,
     });
     if (parent) {

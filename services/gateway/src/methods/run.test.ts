@@ -782,10 +782,14 @@ test('runCreate rejects direct prior-run startRef provenance', async (t) => {
 });
 
 test('runCreate persists implicit dev-interactive template selection for interactive dev', async (t) => {
+  const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
   const created: string[] = [];
   t.after(async () => {
+    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
     if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
     else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
     for (const id of created.reverse()) {
@@ -811,6 +815,72 @@ test('runCreate persists implicit dev-interactive template selection for interac
     fileName: 'dev-interactive.md',
     variant: 'interactive',
   });
+});
+
+test('runCreate persists implicit pr-complete-interactive template and branch-based lineage', async (t) => {
+  const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
+  const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  const projectDir = mkdtempSync(path.join(projectsDir, 'run-test-pr-complete-'));
+  const project = path.basename(projectDir);
+  const templatesDir = path.join(projectDir, 'templates', 'worker');
+  mkdirSync(templatesDir, { recursive: true });
+  writeFileSync(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({ name: project, ci: { repo: 'example-org/example-mobile' } }),
+    'utf-8',
+  );
+  writeFileSync(path.join(templatesDir, 'pr-complete.md'), 'Default PR complete\n', 'utf-8');
+  writeFileSync(
+    path.join(templatesDir, 'pr-complete-interactive.md'),
+    'Interactive PR complete\n',
+    'utf-8',
+  );
+  const created: string[] = [];
+  const parent = createRun({
+    flowType: 'dev',
+    project,
+    ticketOrPr: `TAT-${Date.now()}`,
+    prNumber: 456789,
+    branch: 'feat/pr-complete-reentry',
+    taskFile: 'tasks/dev/TAT-root/TASK.md',
+    familyRootTicketOrPr: 'TAT-root',
+  });
+  created.push(parent.id);
+  t.after(async () => {
+    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
+    if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+    for (const id of created.reverse()) {
+      const run = getRun(id);
+      if (!run) continue;
+      updateRun(id, { status: 'done', completedAt: new Date().toISOString() });
+      await deleteRun(id);
+    }
+    invalidateProjectVarsCache(project);
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  const result = await runCreate(
+    {
+      flowType: 'pr-complete',
+      mode: 'interactive',
+      project,
+      ticketOrPr: 'example-org/example-mobile#456789',
+    },
+    () => {},
+  );
+  created.push(result.run.id);
+
+  assert.deepEqual(result.run.taskTemplate, {
+    fileName: 'pr-complete-interactive.md',
+    variant: 'interactive',
+  });
+  assert.equal(result.run.branch, 'feat/pr-complete-reentry');
+  assert.equal(result.run.parentRunId, parent.id);
+  assert.equal(result.run.familyId, parent.familyId);
 });
 
 test('runRehydratePrNumber rejects unpublished autonomous dev runs before PR lookup', async (t) => {

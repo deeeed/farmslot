@@ -29,6 +29,7 @@ import {
   PoolConfigError,
   resolveDispatchFamilyContext,
   resolveDispatchPreviewFromFleet,
+  resolveDispatchTargetBranch,
   resolvePreviewModel,
   selectBranchAffinityEligibleSlots,
 } from './dispatch.js';
@@ -622,6 +623,55 @@ test('resolveDispatchFamilyContext infers PR-complete lineage from prior run bra
 
   assert.equal(context.familyId, 'family-root');
   assert.equal(context.parentRunId, 'run-root');
+});
+
+test('resolveDispatchTargetBranch feeds branch-based family inference for PR re-entry', async () => {
+  const branch = 'feat/perps-centralize-market-category-filter';
+  const parent = {
+    id: 'run-root',
+    project: 'metamask-core-farm',
+    flowType: 'dev',
+    ticketOrPr: 'TAT-9009',
+    prNumber: null,
+    branch,
+    taskFile: 'tasks/dev/TAT-9009/TASK.md',
+    familyId: 'family-root',
+    familyRootTicketOrPr: 'TAT-9009',
+    createdAt: '2026-06-01T00:00:00Z',
+    updatedAt: '2026-06-02T00:00:00Z',
+  } as unknown as Run;
+  const prRef = 'https://github.com/MetaMask/core/pull/9009';
+
+  const targetBranch = await resolveDispatchTargetBranch(
+    {
+      project: 'metamask-core-farm',
+      flowType: 'pr-complete',
+      ticketOrPr: prRef,
+    },
+    {
+      fleetSlots: [
+        makeSlot({
+          project: 'metamask-core-farm',
+          currentTicketOrPr: 'MetaMask/core#9009',
+          branch,
+        }),
+      ],
+      logPrefix: 'test',
+    },
+  );
+  const context = resolveDispatchFamilyContext(
+    {
+      project: 'metamask-core-farm',
+      flowType: 'pr-complete',
+      ticketOrPr: prRef,
+      targetBranch,
+    },
+    [parent],
+  );
+
+  assert.equal(targetBranch, branch);
+  assert.equal(context.parentRunId, 'run-root');
+  assert.equal(context.familyId, 'family-root');
 });
 
 test('resolveDispatchPreviewFromFleet honors allowedSlots', () => {

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   bindSignalToMonitorContext,
   isWorkerSignalFreshForRun,
+  shouldHoldForInteractivePrComplete,
   signalMatchesMonitorContext,
 } from './run-monitor.js';
 
@@ -111,4 +112,19 @@ test('bindSignalToMonitorContext preserves explicit mismatched signal tags', () 
   assert.equal(signal.role, 'fix-bug');
   assert.equal(signal.contextId, 'fix-bug');
   assert.equal(signalMatchesMonitorContext(signal, monitorContext), false);
+});
+
+test('shouldHoldForInteractivePrComplete only gates interactive PR-complete handoff runs', () => {
+  assert.equal(
+    shouldHoldForInteractivePrComplete({ flowType: 'pr-complete', mode: 'interactive' } as any),
+    true,
+  );
+  assert.equal(
+    shouldHoldForInteractivePrComplete({ flowType: 'pr-complete', mode: 'autonomous' } as any),
+    false,
+  );
+  assert.equal(
+    shouldHoldForInteractivePrComplete({ flowType: 'dev', mode: 'interactive' } as any),
+    false,
+  );
 });

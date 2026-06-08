@@ -219,6 +219,10 @@ function launchCommandForRun(run: Run): unknown {
   return run.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.outputs?.launchCommand;
 }
 
+export function shouldHoldForInteractivePrComplete(run: Pick<Run, 'flowType' | 'mode'>): boolean {
+  return run.flowType === 'pr-complete' && run.mode === 'interactive';
+}
+
 export async function monitorRun(
   runId: string,
   slotId: string,
@@ -413,6 +417,17 @@ export async function monitorRun(
       console.log(
         `[run-monitor] run ${runId.slice(0, 8)} — worker already done on start (agent=${startupAgent})`,
       );
+      if (shouldHoldForInteractivePrComplete(run)) {
+        const actionId = await createBlockedDecision(
+          runId,
+          'interactive_handoff',
+          'Interactive PR-complete worker is no longer active and did not write a terminal signal. Inspect the slot, do any manual PR work, then write SIGNAL.json or abort the run.',
+        );
+        if (actionId === 'abort') {
+          return { pollCount: 0, exitReason: 'aborted', violations: allViolations, snapshots };
+        }
+        return { pollCount: 0, exitReason: 'cancelled', violations: allViolations, snapshots };
+      }
       return { pollCount: 0, exitReason: 'worker-done', violations: allViolations, snapshots };
     }
 
@@ -464,6 +479,12 @@ export async function monitorRun(
         }
       }
 
+      const currentRun = getRun(runId);
+      if (!currentRun || currentRun.status === 'cancelled') {
+        exitReason = 'cancelled';
+        return { pollCount, exitReason, violations: allViolations, snapshots };
+      }
+
       // 1. Check if worker is done — live tmux pgrep (not .farm-status.json which is stale for gateway-dispatched runs)
       const liveContext = currentMonitorContext();
       const agentStatus = await checkAgentLive(
@@ -487,6 +508,20 @@ export async function monitorRun(
           console.log(
             `[run-monitor] run ${runId.slice(0, 8)} — worker done (agent=${agentStatus}, confirmed=${recoveredStatus})`,
           );
+          if (shouldHoldForInteractivePrComplete(currentRun)) {
+            snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
+            const actionId = await createBlockedDecision(
+              runId,
+              'interactive_handoff',
+              'Interactive PR-complete worker stopped without a terminal signal. Inspect the slot, do any manual PR work, then write SIGNAL.json or abort the run.',
+            );
+            if (actionId === 'abort') {
+              exitReason = 'aborted';
+              return { pollCount, exitReason, violations: allViolations, snapshots };
+            }
+            exitReason = 'cancelled';
+            return { pollCount, exitReason, violations: allViolations, snapshots };
+          }
           exitReason = 'worker-done';
           return { pollCount, exitReason, violations: allViolations, snapshots };
         }
@@ -494,12 +529,6 @@ export async function monitorRun(
       }
 
       // 2. Capture pane + detect violations
-      const currentRun = getRun(runId);
-      if (!currentRun || currentRun.status === 'cancelled') {
-        exitReason = 'cancelled';
-        return { pollCount, exitReason, violations: allViolations, snapshots };
-      }
-
       const violationContext = currentMonitorContext();
       const violations = await detectViolations(
         runId,
@@ -527,7 +556,21 @@ export async function monitorRun(
             return { pollCount, exitReason, violations: allViolations, snapshots };
           }
 
-          if (latestRun.metrics.nudgeCount >= config.maxNudges) {
+          if (shouldHoldForInteractivePrComplete(latestRun)) {
+            console.log(
+              `[run-monitor] run ${runId.slice(0, 8)} — interactive PR-complete handoff (${v.type}), blocking instead of nudging`,
+            );
+            snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
+            const actionId = await createBlockedDecision(
+              runId,
+              'interactive_handoff',
+              `Interactive PR-complete is waiting for operator handoff (${v.message}). Inspect the slot, do any manual PR work, then write SIGNAL.json or abort the run.`,
+            );
+            if (actionId === 'abort') {
+              exitReason = 'aborted';
+              return { pollCount, exitReason, violations: allViolations, snapshots };
+            }
+          } else if (latestRun.metrics.nudgeCount >= config.maxNudges) {
             // Max nudges exceeded — create decision
             console.log(
               `[run-monitor] run ${runId.slice(0, 8)} — max nudges (${config.maxNudges}), creating decision`,
