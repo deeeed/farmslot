@@ -79,7 +79,12 @@ export function useRecipeBridgeRelay(bridge: FarmslotRecipeBridgeApi, enabled: b
           if (!resultResponse.ok) {
             throw new Error(`Recipe relay result failed with HTTP ${resultResponse.status}.`);
           }
-        } catch {
+        } catch (error) {
+          // Metro may restart or the host may time out between poll cycles; retry is expected.
+          console.warn(
+            '[recipe-bridge] relay cycle failed:',
+            error instanceof Error ? error.message : String(error),
+          );
           await sleep(RETRY_DELAY_MS);
         }
       }
