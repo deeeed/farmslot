@@ -67,6 +67,7 @@ jobs:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - 'scripts/quality/check-companion-structure.mjs'
               - 'apps/companion/**'
               - 'packages/expo-recipe/**'
               - 'packages/protocol/**'

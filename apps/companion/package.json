@@ -44,7 +44,9 @@
     "recipe:dry-run": "farmslot-expo-recipe run --dry-run",
     "recipe:run": "farmslot-expo-recipe run",
     "test:identity": "bash scripts/agentic/identity.test.sh",
-    "quality": "yarn typecheck && yarn test:lib"
+    "quality": "yarn typecheck && yarn test:lib && yarn quality:structure:ci",
+    "quality:structure": "node ../../scripts/quality/check-companion-structure.mjs",
+    "quality:structure:ci": "node ../../scripts/quality/check-companion-structure.mjs --strict --scope workspace"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",
