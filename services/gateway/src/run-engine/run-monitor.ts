@@ -401,9 +401,6 @@ export async function monitorRun(
         }
         return undefined;
       }
-      const vars = await loadSlotVars(slotId);
-      const result = await execOnSlot(vars, `cat ${shellQuote(signalJsonPath)} 2>/dev/null`);
-      if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
       return readFreshTerminalSignalForRun(runId, slotId, currentMonitorContext());
     } catch (err) {
       console.warn(
@@ -628,6 +625,7 @@ export async function monitorRun(
                 workerSignal: postDecisionSignal,
               };
             }
+            continue;
           } else if (latestRun.metrics.nudgeCount >= config.maxNudges) {
             // Max nudges exceeded — create decision
             console.log(

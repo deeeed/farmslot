@@ -524,7 +524,7 @@ Keep `flowType:'pr-complete'` as the single PR follow-up flow and use `mode` for
 - Interactive PR-complete must still resolve/materialize family context using the existing ADR-024 inheritance model (`inputs/inherited-context.json`, `inputs/inherited/`, seeded `artifacts/recipe.json` when available).
 - Interactive PR-complete must stop before terminal `SIGNAL.json`; the operator owns final completion after manual inspection/work.
 
-The dispatch UI defaults ordinary PR-complete dispatches to autonomous and exposes interactive re-entry through the task-template selector (for example `pr-complete-interactive.md`). The task template, not a separate Mode selector, is the operator-facing autonomy choice.
+The dispatch UI defaults ordinary PR-complete dispatches to autonomous and exposes interactive re-entry through the task-template selector (for example `pr-complete-interactive.md`). The task template, not a separate Mode selector, is the operator-facing autonomy choice. This narrows ADR-018's visible dispatch toggle while preserving ADR-018's `Run.mode` semantics.
 
 ## References
 
