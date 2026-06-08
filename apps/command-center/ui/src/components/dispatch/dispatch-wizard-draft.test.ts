@@ -129,7 +129,18 @@ test('selectedTemplateMode derives mode from task template selection', () => {
       isDefault: true,
       flowType: 'fix-bug' as const,
     },
+    {
+      fileName: 'fix-bug-interactive.md',
+      label: 'fix-bug · interactive',
+      isDefault: false,
+      flowType: 'fix-bug' as const,
+      variant: 'interactive',
+    },
   ];
   assert.equal(selectedTemplateMode('fix-bug', fixBugOptions, 'fix-bug.md'), 'autonomous');
+  assert.equal(
+    selectedTemplateMode('fix-bug', fixBugOptions, 'fix-bug-interactive.md'),
+    'interactive',
+  );
   assert.equal(selectedTemplateMode('dev', [], ''), 'interactive');
 });

@@ -701,6 +701,29 @@ export async function monitorRun(
           `[run-monitor] run ${runId.slice(0, 8)} — total timeout (${config.totalTimeoutMs / 60000}min)`,
         );
         snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
+        const timeoutRun = getRun(runId);
+        if (timeoutRun && shouldHoldForInteractivePrComplete(timeoutRun)) {
+          const actionId = await createBlockedDecision(
+            runId,
+            'interactive_handoff',
+            `Interactive PR-complete exceeded ${config.totalTimeoutMs / 60000} minute timeout. Inspect the slot, do any manual PR work, then write SIGNAL.json or abort the run.`,
+          );
+          if (actionId === 'abort') {
+            exitReason = 'aborted';
+            return { pollCount, exitReason, violations: allViolations, snapshots };
+          }
+          const postDecisionSignal = await checkSignalFile();
+          if (postDecisionSignal) {
+            return {
+              pollCount,
+              exitReason: 'worker-done',
+              violations: allViolations,
+              snapshots,
+              workerSignal: postDecisionSignal,
+            };
+          }
+          continue;
+        }
         const actionId = await createBlockedDecision(
           runId,
           'timeout',

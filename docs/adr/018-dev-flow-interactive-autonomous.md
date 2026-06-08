@@ -59,8 +59,14 @@ On load, `RunStore` rewrites any persisted `flowType: 'feature'` to `'dev'`. No 
 - All persisted runs with `flowType: 'feature'` auto-migrated on load. No data loss.
 - `farm-feature` skill deleted -- gateway UI handles all dispatch.
 - Templates renamed: `new-feature.md` to `dev.md` across all projects.
-- Dispatch wizard gains Interactive/Autonomous toggle with flow-specific defaults.
+- Dispatch wizard initially gained an Interactive/Autonomous toggle with flow-specific defaults.
 - Jira comments now available to workers, reducing context loss on tickets with discussion threads.
+
+## Addendum: Template-Driven UI Autonomy
+
+**Added:** 2026-06-08
+
+ADR-024's interactive PR-complete re-entry changes the dispatch UI control surface: the visible autonomy choice now comes from the task-template selector, not a separate Mode toggle. `Run.mode` semantics from this ADR still apply, but the wizard derives the mode from selected `*-interactive.md` variants such as `dev-interactive.md`, `fix-bug-interactive.md`, or `pr-complete-interactive.md`.
 
 ## Relates To
 
