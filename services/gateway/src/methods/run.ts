@@ -267,6 +267,7 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
     const parent = findFollowUpParentRun(getAllRuns(), {
       ticketOrPr: params.ticketOrPr,
       prNumber,
+      branch: params.branch,
       project: params.project,
     });
     if (parent) {

@@ -7,6 +7,7 @@ import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 const RED_HOST_PENALTY = 100;
 const YELLOW_HOST_PENALTY = 20;
 const TARGET_BRANCH_BONUS = 100;
+const FAMILY_AFFINITY_BONUS = 75;
 const STALE_BRANCH_PENALTY = 50;
 const CDP_MISSING_PENALTY = 5;
 const DEVICE_MISSING_PENALTY = 5;
@@ -21,7 +22,11 @@ export function isCdpLive(cdp: string): boolean {
   return cdp !== 'OFF' && cdp !== '-' && cdp !== 'FAIL' && cdp !== 'Other';
 }
 
-export function slotScore(slot: SlotStatus, targetBranch?: string): number {
+export function slotScore(
+  slot: SlotStatus,
+  targetBranch?: string,
+  options?: { familyId?: string | null },
+): number {
   let score = 0;
   const hostHeadroom = slot.hostLoad?.headroom;
   const hostRed = hostHeadroom === 'red';
@@ -39,6 +44,15 @@ export function slotScore(slot: SlotStatus, targetBranch?: string): number {
   } else if (slot.branch && slot.branch !== DEFAULT_BRANCH && slot.branch !== '') {
     // Stale branch is the primary penalty — prepare must reset to main first
     score += STALE_BRANCH_PENALTY;
+  }
+  // Family matching — follow-up flows (review-pr / pr-complete / merge-main) often
+  // target a PR whose head branch is not discoverable yet from pr.list/gh, but the
+  // run store can still tell us which dev/fix family produced it. Prefer the slot
+  // already carrying that family over clean main so the operator lands back in the
+  // prepared workspace with inherited context nearby. Red host load remains dominant
+  // just like target-branch affinity.
+  if (options?.familyId && slot.currentFamilyId === options.familyId && !hostRed) {
+    score -= FAMILY_AFFINITY_BONUS;
   }
   // Device and CDP are tiebreakers — prepare rebuilds these anyway
   if (!isCdpLive(slot.health.cdp)) score += CDP_MISSING_PENALTY;
@@ -117,7 +131,11 @@ export function findBestSlot(
       );
       return policy.action !== 'block';
     })
-    .sort((a, b) => slotScore(a, options?.targetBranch) - slotScore(b, options?.targetBranch));
+    .sort(
+      (a, b) =>
+        slotScore(a, options?.targetBranch, { familyId: options?.familyId }) -
+        slotScore(b, options?.targetBranch, { familyId: options?.familyId }),
+    );
   if (candidates.length === 0) return null;
   const cdpCandidates = candidates.filter((s) => isCdpLive(s.health.cdp));
   return cdpCandidates.length > 0 ? cdpCandidates[0] : candidates[0];

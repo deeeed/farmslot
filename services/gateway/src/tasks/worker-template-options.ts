@@ -19,6 +19,11 @@ export const FLOW_TO_TEMPLATE: Record<string, string> = {
   'merge-main': 'merge-main.md',
 };
 
+const INTERACTIVE_TEMPLATE_BY_FLOW: Partial<Record<FlowType, string>> = {
+  dev: 'dev-interactive.md',
+  'pr-complete': 'pr-complete-interactive.md',
+};
+
 export interface ResolvedWorkerTemplateSelection extends WorkerTemplateOption {
   templatePath: string;
   content: string;
@@ -164,21 +169,21 @@ export async function resolveWorkerTemplateSelectionForRun(
   selection?: TaskTemplateSelection | null,
 ): Promise<ResolvedWorkerTemplateSelection> {
   if (selection) return resolveWorkerTemplateSelection(projectVars, flowType, selection);
-  if (flowType === 'dev' && mode === 'interactive') {
-    const interactiveFileName = 'dev-interactive.md';
+  const interactiveFileName =
+    mode === 'interactive' ? INTERACTIVE_TEMPLATE_BY_FLOW[flowType] : undefined;
+  if (interactiveFileName) {
     if (await workerTemplateExists(projectVars, interactiveFileName)) {
       return resolveWorkerTemplateSelection(
         projectVars,
         flowType,
         { fileName: interactiveFileName },
-        'implicit-interactive-dev',
-        'dev interactive mode selected dev-interactive.md because it exists',
+        flowType === 'dev' ? 'implicit-interactive-dev' : 'implicit-interactive-pr-complete',
+        `${flowType} interactive mode selected ${interactiveFileName} because it exists`,
       );
     }
   }
-  const fallbackReason =
-    flowType === 'dev' && mode === 'interactive'
-      ? 'dev-interactive.md absent, using default dev template'
-      : undefined;
+  const fallbackReason = interactiveFileName
+    ? `${interactiveFileName} absent, using default ${flowType} template`
+    : undefined;
   return resolveWorkerTemplateSelection(projectVars, flowType, null, 'default', fallbackReason);
 }

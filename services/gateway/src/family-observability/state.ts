@@ -99,12 +99,18 @@ const ROOT_FLOW_TYPES = new Set<Run['flowType']>(['fix-bug', 'dev']);
  */
 export function findFollowUpParentRun(
   runs: Run[],
-  params: { ticketOrPr: string; prNumber?: number | null; project?: string | null },
+  params: {
+    ticketOrPr: string;
+    prNumber?: number | null;
+    branch?: string | null;
+    project?: string | null;
+  },
 ): Run | null {
   const matchesTarget = (run: Run): boolean => {
     if (params.project && run.project !== params.project) return false;
     if (run.ticketOrPr === params.ticketOrPr) return true;
     if (params.prNumber != null && run.prNumber === params.prNumber) return true;
+    if (params.branch && run.branch === params.branch) return true;
     return false;
   };
   const candidates = runs.filter((run) => matchesTarget(run) && Boolean(run.taskFile));

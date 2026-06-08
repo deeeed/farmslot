@@ -620,11 +620,6 @@ export const dispatchWizardStyles = css`
     padding-top: 1px;
   }
 
-  .cand-cdp {
-    font-size: 10px;
-    width: 28px;
-    text-align: center;
-  }
   .cand-lifecycle {
     color: ${unsafeCSS(colors.textMuted)};
     font-size: 10px;
@@ -644,6 +639,16 @@ export const dispatchWizardStyles = css`
     background: ${unsafeCSS(colors.accent)}22;
     border: 1px solid ${unsafeCSS(colors.accent)}55;
     color: ${unsafeCSS(colors.accent)};
+    white-space: nowrap;
+  }
+
+  .cand-affinity {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: ${unsafeCSS(colors.statusOk)}18;
+    border: 1px solid ${unsafeCSS(colors.statusOk)}55;
+    color: ${unsafeCSS(colors.statusOk)};
     white-space: nowrap;
   }
 

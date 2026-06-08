@@ -562,6 +562,53 @@ test('writeTaskFile implicitly renders dev-interactive template for interactive 
   }
 });
 
+test('writeTaskFile implicitly renders pr-complete-interactive template for interactive pr-complete', async (t) => {
+  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot-farm', 'templates', 'worker');
+  const variantPath = path.join(workerDir, 'pr-complete-interactive.md');
+  await writeFile(
+    variantPath,
+    [
+      '# Worker: Interactive PR-Complete',
+      '',
+      'PR: {{PR_NUMBER}}',
+      'BRANCH: {{PR_BRANCH}}',
+      'TASK_DIR: {{TASK_DIR}}',
+      'STATUS: pending',
+      '',
+      'Do not write terminal `SIGNAL.json`.',
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
+  const run = makeRun('123', 'interactive-pr-complete');
+  run.flowType = 'pr-complete';
+  run.familyRootTicketOrPr = '123';
+  run.branch = 'feature/pr-123';
+  let taskPath = '';
+  t.after(async () => {
+    if (taskPath) await rm(path.dirname(taskPath), { recursive: true, force: true });
+    await rm(variantPath, { force: true });
+  });
+
+  taskPath = await writeTaskFile(run, { skipCollisionCheck: true });
+
+  const rendered = await readFile(taskPath, 'utf-8');
+  const provenance = JSON.parse(
+    await readFile(path.join(path.dirname(taskPath), TEMPLATE_PROVENANCE_INPUT), 'utf-8'),
+  ) as {
+    templateName?: string;
+    templateSelectionSource?: string;
+    templateSelectionReason?: string;
+  };
+  assert.match(rendered, /Worker: Interactive PR-Complete/);
+  assert.match(rendered, /Interactive PR-complete handoff/);
+  assert.match(rendered, /STATUS: waiting-human/);
+  assert.match(rendered, /Do \*\*not\*\* write a terminal `SIGNAL\.json`/);
+  assert.equal(provenance.templateName, 'pr-complete-interactive.md');
+  assert.equal(provenance.templateSelectionSource, 'implicit-interactive-pr-complete');
+  assert.match(provenance.templateSelectionReason ?? '', /interactive mode/);
+});
+
 test('writeTaskFile fails loudly when explicit selected template disappears', async () => {
   const run = makeRun(`PROJ-${Date.now()}`, 'missing-template');
   run.taskTemplate = { fileName: 'dev-definitely-missing.md', variant: 'definitely-missing' };

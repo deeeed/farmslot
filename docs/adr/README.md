@@ -1,8 +1,8 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-05-22
-**Stale by:** 2026-08-22
+**Last updated:** 2026-06-08
+**Stale by:** 2026-09-08
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
 

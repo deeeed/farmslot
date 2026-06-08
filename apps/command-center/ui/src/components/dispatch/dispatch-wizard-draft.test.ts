@@ -11,6 +11,7 @@ import {
   publicationReviewsEnabled,
   selectedDispatchApp,
   selectedTaskTemplate,
+  selectedTemplateMode,
   syncSelectedAppForProject,
 } from './dispatch-wizard-draft.js';
 
@@ -78,6 +79,33 @@ test('publication review draft builds gate params for fix-bug and autonomous dev
 test('default draft choices derive from flow and current runner', () => {
   assert.equal(modeForFlow('fix-bug'), 'autonomous');
   assert.equal(modeForFlow('review-pr'), 'interactive');
+  assert.equal(modeForFlow('pr-complete'), 'autonomous');
   assert.equal(defaultExtraReviewRunner('claude', runners), 'codex');
   assert.equal(defaultExtraReviewRunner('missing', runners), 'codex');
+});
+
+test('selectedTemplateMode derives mode from task template selection', () => {
+  const devOptions = [
+    { fileName: 'dev.md', label: 'dev (default)', isDefault: true, flowType: 'dev' as const },
+    {
+      fileName: 'dev-interactive.md',
+      label: 'dev · interactive',
+      isDefault: false,
+      flowType: 'dev' as const,
+      variant: 'interactive',
+    },
+  ];
+  assert.equal(selectedTemplateMode('dev', devOptions, 'dev-interactive.md'), 'interactive');
+  assert.equal(selectedTemplateMode('dev', devOptions, 'dev.md'), 'autonomous');
+
+  const fixBugOptions = [
+    {
+      fileName: 'fix-bug.md',
+      label: 'fix-bug (default)',
+      isDefault: true,
+      flowType: 'fix-bug' as const,
+    },
+  ];
+  assert.equal(selectedTemplateMode('fix-bug', fixBugOptions, 'fix-bug.md'), 'autonomous');
+  assert.equal(selectedTemplateMode('dev', [], ''), 'interactive');
 });

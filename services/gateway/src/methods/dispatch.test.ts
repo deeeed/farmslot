@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildComparisonVariant, DEFAULT_CURSOR_MODEL, type SlotStatus } from '@farmslot/protocol';
+import {
+  buildComparisonVariant,
+  DEFAULT_CURSOR_MODEL,
+  type Run,
+  type SlotStatus,
+} from '@farmslot/protocol';
 
 import {
   buildDispatchRoleShellCommand,
@@ -22,6 +27,7 @@ import {
   classifyRefreshSlotAction,
   findAffinitySlot,
   PoolConfigError,
+  resolveDispatchFamilyContext,
   resolveDispatchPreviewFromFleet,
   resolvePreviewModel,
   selectBranchAffinityEligibleSlots,
@@ -518,6 +524,106 @@ test('slotScore penalizes stale branches by default', () => {
   assert.equal(slotScore(staleSlot), 50);
 });
 
+test('slotScore prefers a same-family stale slot over unrelated main', () => {
+  const familySlot = makeSlot({
+    branch: 'feat/perps-e2e-validation',
+    currentFamilyId: 'family-1',
+    lifecycle: 'ready',
+    phase: null,
+    health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const mainSlot = makeSlot({
+    branch: 'main',
+    lifecycle: 'ready',
+    phase: null,
+    health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  assert.ok(
+    slotScore(familySlot, undefined, { familyId: 'family-1' }) <
+      slotScore(mainSlot, undefined, { familyId: 'family-1' }),
+    'same-family slot wins even when it is not on main',
+  );
+  assert.ok(
+    slotScore(familySlot, undefined, { familyId: 'other-family' }) >
+      slotScore(mainSlot, undefined, { familyId: 'other-family' }),
+    'unrelated stale slot still loses to main',
+  );
+});
+
+test('resolveDispatchFamilyContext leaves standalone PR follow-ups unlinked when no parent run exists', () => {
+  const context = resolveDispatchFamilyContext(
+    {
+      project: 'metamask-core-farm',
+      flowType: 'pr-complete',
+      ticketOrPr: 'https://github.com/MetaMask/core/pull/9009',
+    },
+    [],
+  );
+
+  assert.deepEqual(context, {});
+});
+
+test('resolveDispatchFamilyContext infers PR-complete lineage from prior dev PR number', () => {
+  const parent = {
+    id: 'run-root',
+    project: 'metamask-core-farm',
+    flowType: 'dev',
+    ticketOrPr: 'TAT-3182',
+    prNumber: 9009,
+    taskFile: 'tasks/dev/TAT-3182/TASK.md',
+    familyId: 'family-root',
+    familyRootTicketOrPr: 'TAT-3182',
+    createdAt: '2026-06-01T00:00:00Z',
+    updatedAt: '2026-06-02T00:00:00Z',
+  } as unknown as Run;
+
+  const context = resolveDispatchFamilyContext(
+    {
+      project: 'metamask-core-farm',
+      flowType: 'pr-complete',
+      ticketOrPr: 'https://github.com/MetaMask/core/pull/9009',
+    },
+    [parent],
+  );
+
+  assert.deepEqual(context, {
+    familyId: 'family-root',
+    parentRunId: 'run-root',
+    familyRootTicketOrPr: 'TAT-3182',
+    inferredFromParentRunId: 'run-root',
+  });
+});
+
+test('resolveDispatchFamilyContext infers PR-complete lineage from prior run branch', () => {
+  const parent = {
+    id: 'run-root',
+    project: 'metamask-core-farm',
+    flowType: 'dev',
+    ticketOrPr: 'TAT-9009',
+    prNumber: null,
+    branch: 'feat/perps-centralize-market-category-filter',
+    taskFile: 'tasks/dev/TAT-9009/TASK.md',
+    familyId: 'family-root',
+    familyRootTicketOrPr: 'TAT-9009',
+    createdAt: '2026-06-01T00:00:00Z',
+    updatedAt: '2026-06-02T00:00:00Z',
+  } as unknown as Run;
+
+  const context = resolveDispatchFamilyContext(
+    {
+      project: 'metamask-core-farm',
+      flowType: 'pr-complete',
+      ticketOrPr: 'MetaMask/core#9009',
+      targetBranch: 'feat/perps-centralize-market-category-filter',
+    },
+    [parent],
+  );
+
+  assert.equal(context.familyId, 'family-root');
+  assert.equal(context.parentRunId, 'run-root');
+});
+
 test('resolveDispatchPreviewFromFleet honors allowedSlots', () => {
   const excluded = makeSlot({
     slot: 'mini-mme-1',
@@ -561,6 +667,37 @@ test('resolveDispatchPreviewFromFleet honors allowedSlots', () => {
       ),
     /No slots found for project farmslot-farm within allowed slots/,
   );
+});
+
+test('resolveDispatchPreviewFromFleet prefers same-family ready slot for follow-ups', () => {
+  const mainSlot = makeSlot({
+    slot: 'macwork-core-5',
+    branch: 'main',
+    lifecycle: 'ready',
+    phase: null,
+    health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const familySlot = makeSlot({
+    slot: 'macwork-core-1',
+    branch: 'feat/perps-e2e-validation',
+    lifecycle: 'ready',
+    phase: null,
+    currentFamilyId: 'family-root',
+    currentLane: 'production',
+    health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  const result = resolveDispatchPreviewFromFleet(
+    {
+      project: 'farmslot-farm',
+      flowType: 'pr-complete',
+      ticketOrPr: 'example-org/example-mobile#9009',
+      familyId: 'family-root',
+    },
+    [mainSlot, familySlot],
+  );
+
+  assert.equal(result.preview.slotId, 'macwork-core-1');
 });
 
 test('findAffinitySlot respects allowedSlots', () => {

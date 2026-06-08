@@ -64,7 +64,6 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   setEffort: (effort: EffortLevel) => void;
   setReviewTier: (reviewTier: ReviewTier) => void;
   setSkipPrepare: (skipPrepare: boolean) => void;
-  setMode: (mode: DispatchMode) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
 }
 
@@ -75,7 +74,7 @@ export function renderDispatchWizardPrimaryControls(
     ${renderTicketInput(ctx)} ${ctx.interstitialContent} ${renderFlowSelector(ctx)}
     ${renderProjectSelector(ctx)} ${renderAppSelector(ctx)} ${ctx.taskTemplateSelector}
     ${renderRunnerModelConfig(ctx)} ${renderReviewTierSelector(ctx)} ${renderPrepareToggle(ctx)}
-    ${renderModeSelector(ctx)}
+    ${renderInteractiveDevProfile(ctx)}
   `;
 }
 
@@ -299,28 +298,6 @@ function renderPrepareToggle(ctx: DispatchWizardPrimaryControlsRenderContext) {
         </button>
       </div>
     </div>
-  `;
-}
-
-function renderModeSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
-  if (ctx.flowType !== 'dev' && ctx.flowType !== 'fix-bug') return nothing;
-  return html`
-    <div class="config-group">
-      <div class="section-label">Mode</div>
-      <div class="pill-row">
-        ${(['interactive', 'autonomous'] as DispatchMode[]).map(
-          (mode) => html`
-            <button
-              class="pill ${ctx.mode === mode ? 'selected' : ''}"
-              @click=${() => ctx.setMode(mode)}
-            >
-              ${mode === 'interactive' ? 'Interactive' : 'Autonomous'}
-            </button>
-          `,
-        )}
-      </div>
-    </div>
-    ${renderInteractiveDevProfile(ctx)}
   `;
 }
 

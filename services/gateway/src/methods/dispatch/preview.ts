@@ -6,12 +6,16 @@ import {
   type DispatchPreviewParams,
   type DispatchPreviewResult,
   type FlowType,
+  PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
+  type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
 
 import { execOnSlot, isLocal, loadSlotVars, updateSlotStatus } from '../../core/index.js';
 import { firstWindowTarget, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
+import { buildFollowUpLineage } from '../../family-observability/context.js';
+import { findFollowUpParentRun } from '../../family-observability/state.js';
 import { getNode } from '../../fleet/machine-registry.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import {
@@ -21,6 +25,7 @@ import {
   runnerSupportsTmuxNudgesForLaunch,
 } from '../../runners/registry.js';
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
+import { getAllRuns } from '../../runs/store.js';
 
 import {
   findBestSlot,
@@ -34,6 +39,55 @@ import { normalizeTicketRef } from './ticket-ref.js';
 
 const BRANCH_REFRESH_CONCURRENCY = 4;
 const BRANCH_REFRESH_TIMEOUT_MS = 5_000;
+
+interface DispatchFamilyContext {
+  familyId?: string;
+  parentRunId?: string;
+  familyRootTicketOrPr?: string;
+  inferredFromParentRunId?: string;
+}
+
+function parsePrNumberForFollowUp(input: { flowType?: string | null; ticketOrPr?: string | null }) {
+  if (!input.ticketOrPr) return null;
+  const flowType = input.flowType as FlowType | undefined;
+  if (!flowType || !PR_BOUND_FLOW_TYPES.has(flowType)) return null;
+  const normalized = normalizeTicketRef(input.ticketOrPr);
+  const match = normalized.match(/#(\d+)$/);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+export function resolveDispatchFamilyContext(
+  params: {
+    flowType?: string | null;
+    ticketOrPr?: string | null;
+    project: string;
+    familyId?: string | null;
+    parentRunId?: string | null;
+    familyRootTicketOrPr?: string | null;
+    targetBranch?: string | null;
+  },
+  runs: Run[] = getAllRuns(),
+): DispatchFamilyContext {
+  if (params.familyId) {
+    return {
+      familyId: params.familyId,
+      parentRunId: params.parentRunId ?? undefined,
+      familyRootTicketOrPr: params.familyRootTicketOrPr ?? undefined,
+    };
+  }
+  if (!params.flowType || !params.ticketOrPr) return {};
+  const flowType = params.flowType as FlowType;
+  if (!PR_BOUND_FLOW_TYPES.has(flowType)) return {};
+  const parent = findFollowUpParentRun(runs, {
+    ticketOrPr: normalizeTicketRef(params.ticketOrPr),
+    prNumber: parsePrNumberForFollowUp(params),
+    branch: params.targetBranch,
+    project: params.project,
+  });
+  if (!parent) return {};
+  const lineage = buildFollowUpLineage(parent);
+  return { ...lineage, inferredFromParentRunId: parent.id };
+}
 
 // ─── PR Affinity — prefer slot already on this PR's branch ───
 
@@ -558,7 +612,6 @@ export async function dispatchCandidates(
       s.lifecycle !== 'disabled' &&
       (!machineFilter || machineFilter.has(s.machine)),
   );
-
   // Live-check branches for free slots so the UI shows accurate data
   const freeSlots = projectSlots.filter(isFreeSlot);
   if (freeSlots.length > 0) await refreshBranches(freeSlots);
@@ -670,6 +723,11 @@ export async function dispatchCandidates(
     }
   }
 
+  const familyContext = resolveDispatchFamilyContext({
+    ...params,
+    targetBranch: resolvedTargetBranch,
+  });
+
   // PR-bound calls ALSO get the busy-slot branch-affinity nudge slice so the wizard can
   // surface "REUSE WORKER" rows. Refresh busy-slot branches first — without this, a slot
   // whose worker checked out the PR branch since last status flush is invisible to the
@@ -698,7 +756,7 @@ export async function dispatchCandidates(
       params.project,
       params.ticketOrPr,
       {
-        familyId: params.familyId ?? null,
+        familyId: familyContext.familyId ?? null,
         lane: params.lane ?? null,
         variant: params.variant ?? null,
         targetBranch: resolvedTargetBranch ?? null,
@@ -712,13 +770,18 @@ export async function dispatchCandidates(
       const nudge = nudgeMetaBySlot.get(s.slot);
       return {
         slotId: s.slot,
-        score: isFreeSlot(s) ? slotScore(s, resolvedTargetBranch) : 999,
+        score: isFreeSlot(s)
+          ? slotScore(s, resolvedTargetBranch, { familyId: familyContext.familyId })
+          : 999,
         cdpLive: isCdpLive(s.health.cdp),
         branch: s.branch || '',
         lifecycle: s.lifecycle,
         onMain: !s.branch || s.branch === DEFAULT_BRANCH || s.branch === '',
         hostLoad: s.hostLoad,
         free: isFreeSlot(s),
+        familyAffinity: Boolean(
+          familyContext.familyId && s.currentFamilyId === familyContext.familyId,
+        ),
         ...(nudge
           ? {
               nudgeEligible: true,
@@ -752,7 +815,10 @@ export async function dispatchPreview(
   params: DispatchPreviewParams,
 ): Promise<DispatchPreviewResult> {
   const fleet = await loadFleetStatus(true);
-  return resolveDispatchPreviewFromFleet(params, fleet.slots);
+  return resolveDispatchPreviewFromFleet(
+    { ...params, ...resolveDispatchFamilyContext(params) },
+    fleet.slots,
+  );
 }
 
 export function resolveDispatchPreviewFromFleet(

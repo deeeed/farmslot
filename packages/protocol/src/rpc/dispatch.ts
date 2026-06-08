@@ -95,6 +95,8 @@ export interface DispatchCandidate {
   hostLoad?: { cpuPercent: number; memoryPercent: number; diskPercent: number; headroom: string };
   /** True when direct dispatch can pin this slot immediately. Busy/held rows are informational only. */
   free: boolean;
+  /** True when this slot already carries the inferred/explicit run family for the dispatch. */
+  familyAffinity?: boolean;
   /** True when this row is a busy slot already on the dispatch's `targetBranch` and the
    * runner supports tmux nudges (Claude today). The wizard renders these rows with a
    * "REUSE WORKER" badge and per-row nudge / fresh / pick actions. */
