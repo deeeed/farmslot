@@ -37,6 +37,7 @@ export interface TaskTemplateSelection {
 export type TaskTemplateSelectionSource =
   | 'explicit'
   | 'default'
+  | 'implicit-interactive-fix-bug'
   | 'implicit-interactive-dev'
   | 'implicit-interactive-pr-complete';
 export type EvalPackageRole = 'reference' | 'candidate' | 'control' | 'challenger';

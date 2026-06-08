@@ -20,6 +20,7 @@ export const FLOW_TO_TEMPLATE: Record<string, string> = {
 };
 
 const INTERACTIVE_TEMPLATE_BY_FLOW: Partial<Record<FlowType, string>> = {
+  'fix-bug': 'fix-bug-interactive.md',
   dev: 'dev-interactive.md',
   'pr-complete': 'pr-complete-interactive.md',
 };
@@ -177,7 +178,11 @@ export async function resolveWorkerTemplateSelectionForRun(
         projectVars,
         flowType,
         { fileName: interactiveFileName },
-        flowType === 'dev' ? 'implicit-interactive-dev' : 'implicit-interactive-pr-complete',
+        flowType === 'fix-bug'
+          ? 'implicit-interactive-fix-bug'
+          : flowType === 'dev'
+            ? 'implicit-interactive-dev'
+            : 'implicit-interactive-pr-complete',
         `${flowType} interactive mode selected ${interactiveFileName} because it exists`,
       );
     }

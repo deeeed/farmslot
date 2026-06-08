@@ -87,6 +87,16 @@ test('resolveWorkerTemplateSelection reads the selected variant and normalizes v
   });
 });
 
+test('resolveWorkerTemplateSelectionForRun implicitly selects fix-bug-interactive for interactive fix-bug when present', async () => {
+  await withProjectVars(async (vars) => {
+    const selected = await resolveWorkerTemplateSelectionForRun(vars, 'fix-bug', 'interactive');
+    assert.equal(selected.fileName, 'fix-bug-interactive.md');
+    assert.equal(selected.variant, 'interactive');
+    assert.equal(selected.selectionSource, 'implicit-interactive-fix-bug');
+    assert.match(selected.selectionReason, /interactive mode/);
+  });
+});
+
 test('parseWorkerTemplateFileName accepts dev-interactive as a dev template variant', () => {
   assert.deepEqual(parseWorkerTemplateFileName('dev', 'dev-interactive.md'), {
     variant: 'interactive',

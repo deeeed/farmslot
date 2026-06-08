@@ -307,11 +307,11 @@ async function captureBranchAffinityCandidateMeta(
 }
 
 /**
- * Collect every busy slot whose loaded branch matches the requested PR and whose runner
- * supports tmux nudges (Claude in v1). Sorted by lowest ctxPct first (room to absorb the
- * nudge without compact), then lowest nudgeCount (less churn), then most recent dispatch
- * (freshest context). Returns an empty array when comparison-lane is requested — the
- * caller is expected to filter that out, but defend-in-depth.
+ * Collect every busy slot whose loaded branch matches the requested PR. Nudge-capable rows
+ * sort ahead of fresh-only rows, then by lowest ctxPct (room to absorb the nudge without
+ * compact), lowest nudgeCount, and most recent dispatch (freshest context). Returns an empty
+ * array when comparison-lane is requested — the caller is expected to filter that out, but
+ * defend-in-depth.
  */
 /**
  * Pure eligibility filter — extracted so it can be unit-tested without SSH / tmux / git IO.
