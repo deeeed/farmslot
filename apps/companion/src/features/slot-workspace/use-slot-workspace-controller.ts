@@ -305,7 +305,7 @@ export function useSlotWorkspaceController() {
         .map((entry) => entry.runId),
     [slotHistory, workspaceRunId],
   );
-  const _historyRecipeRunIdsKey = historyRecipeRunIds.join('\n');
+  const historyRecipeRunIdsKey = historyRecipeRunIds.join('\n');
 
   useEffect(() => {
     if (!client || historyRecipeRunIds.length === 0) {
@@ -363,7 +363,7 @@ export function useSlotWorkspaceController() {
     return () => {
       disposed = true;
     };
-  }, [client, gatewayUrl, historyRecipeRunIds]);
+  }, [client, gatewayUrl, historyRecipeRunIds, historyRecipeRunIdsKey]);
 
   useEffect(() => {
     if (!client || historyRecipeRunIds.length === 0) {
@@ -408,7 +408,7 @@ export function useSlotWorkspaceController() {
     return () => {
       disposed = true;
     };
-  }, [client, gatewayUrl, historyRecipeRunIds]);
+  }, [client, gatewayUrl, historyRecipeRunIds, historyRecipeRunIdsKey]);
 
   const refreshCurrentRecipeRuns = useCallback(
     async (reason: string, reset: boolean) => {
