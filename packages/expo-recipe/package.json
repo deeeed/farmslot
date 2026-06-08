@@ -17,7 +17,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "build": "yarn workspace @farmslot/protocol build && yarn workspace @farmslot/recipe-harness build && rm -rf dist && tsc --project tsconfig.build.json",
-    "test": "tsx --tsconfig tsconfig.json src/expo-recipe.test.ts",
+    "test": "tsx --tsconfig tsconfig.json --test src/expo-recipe.test.ts src/metro-recipe-bridge-transport.test.ts",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\" \"templates/src/farmslot/**/*.{ts,tsx}\"",

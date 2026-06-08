@@ -7,6 +7,9 @@ build/
 .env.*.local
 scripts/agentic/agentic.local.conf
 
+# Local recipe runner artifacts and agentic runtime output (metro logs, trace packages)
+.agent/
+
 # npm — this project uses yarn v4, never npm
 package-lock.json
 

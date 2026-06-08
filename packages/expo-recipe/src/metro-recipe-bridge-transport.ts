@@ -1,0 +1,77 @@
+import type { ActionExecutionContext, UiActionTransport } from '@farmslot/recipe-harness';
+import {
+  createReactNativeBridgeUiTransport,
+  type ReactNativeBridge,
+  type ReactNativeBridgeCommand,
+} from '@farmslot/recipe-harness/runtime/react-native-bridge';
+
+export interface MetroRecipeBridgeTransportOptions {
+  host?: string;
+  port?: number;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}
+
+export function resolveMetroRecipeBridgePort(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.FARMSLOT_RECIPE_METRO_PORT ?? env.METRO_PORT ?? env.WATCHER_PORT ?? '7677';
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error(`Invalid Metro port for recipe bridge transport: ${raw}`);
+  }
+  return port;
+}
+
+export function createMetroRecipeBridge(
+  options: MetroRecipeBridgeTransportOptions = {},
+): ReactNativeBridge {
+  const host = options.host ?? '127.0.0.1';
+  const port = options.port ?? resolveMetroRecipeBridgePort();
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const baseUrl = `http://${host}:${port}`;
+
+  return {
+    async send(
+      command: ReactNativeBridgeCommand,
+      _context: ActionExecutionContext,
+    ): Promise<unknown> {
+      const response = await fetchImpl(`${baseUrl}/farmslot-recipe/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: command.command,
+          nodeId: command.nodeId,
+          payload: command.payload,
+          timeout_ms: timeoutMs,
+        }),
+      });
+
+      const body = (await response.json()) as Record<string, unknown>;
+      if (!response.ok) {
+        const message =
+          typeof body.error === 'string'
+            ? body.error
+            : `Metro recipe bridge command failed with HTTP ${response.status}.`;
+        throw new Error(message);
+      }
+      if (body.ok === false) {
+        throw new Error(
+          typeof body.error === 'string'
+            ? body.error
+            : 'Companion recipe bridge returned ok:false.',
+        );
+      }
+      return body;
+    },
+  };
+}
+
+export function createMetroRecipeBridgeUiTransport(
+  options: MetroRecipeBridgeTransportOptions = {},
+): UiActionTransport {
+  return createReactNativeBridgeUiTransport({
+    bridge: createMetroRecipeBridge(options),
+  });
+}

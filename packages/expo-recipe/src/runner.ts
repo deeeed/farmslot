@@ -20,6 +20,10 @@ import {
 
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { readJsonFile } from './json.js';
+import {
+  createMetroRecipeBridgeUiTransport,
+  resolveMetroRecipeBridgePort,
+} from './metro-recipe-bridge-transport.js';
 import { createRedactingCoreAdapters } from './redaction.js';
 
 export interface ExpoRecipeRunOptions {
@@ -29,6 +33,8 @@ export interface ExpoRecipeRunOptions {
   dryRun?: boolean;
   json?: boolean;
   recordVideo?: boolean | RecipeVideoRecordingOptions;
+  metroHost?: string;
+  metroPort?: number;
 }
 
 export function validateExpoRecipeDocument(
@@ -63,7 +69,10 @@ export async function runExpoRecipeDocument(
   const actions = getRecipeActionManifestActionNames(manifest);
   const adapters = [
     ...createRedactingCoreAdapters(actions),
-    ...createStandardUiAdapters({ actions, transport: dryRunUiTransport(options.dryRun === true) }),
+    ...createStandardUiAdapters({
+      actions,
+      transport: createExpoUiTransport(options),
+    }),
   ];
 
   const runner = createRecipeRunner({
@@ -111,6 +120,16 @@ export function resolveExpoRecordingTarget(
   const appName = env.FARMSLOT_RECORD_APP_NAME ?? 'Simulator';
   const windowName = env.FARMSLOT_RECORD_WINDOW_NAME ?? 'Simulator';
   return { kind: 'app-window', appName, windowName };
+}
+
+function createExpoUiTransport(options: ExpoRecipeRunOptions): UiActionTransport {
+  if (options.dryRun === true) {
+    return dryRunUiTransport(true);
+  }
+  return createMetroRecipeBridgeUiTransport({
+    host: options.metroHost ?? process.env.FARMSLOT_RECIPE_METRO_HOST ?? '127.0.0.1',
+    port: options.metroPort ?? resolveMetroRecipeBridgePort(),
+  });
 }
 
 function dryRunUiTransport(isDryRun: boolean): UiActionTransport {

@@ -1,6 +1,7 @@
 import React, { createContext, useEffect, useMemo, useState } from 'react';
 import { Platform, View } from 'react-native';
 
+import { useRecipeBridgeRelay } from './recipe-bridge-relay';
 import { type FarmslotRecipeHudState, RecipeHud } from './RecipeHud';
 
 export interface FarmslotRecipeBridgeCommand {
@@ -59,6 +60,8 @@ export function RecipeBridgeProvider({
     }),
     [bridgeName, enabled],
   );
+
+  useRecipeBridgeRelay(bridge, enabled);
 
   useEffect(() => {
     if (!enabled) return;
