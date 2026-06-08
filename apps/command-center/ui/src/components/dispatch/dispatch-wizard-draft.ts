@@ -41,6 +41,14 @@ export function selectedTaskTemplate(
   return { fileName: selected.fileName, variant: selected.variant ?? null };
 }
 
+export function interactiveTemplateOption(
+  options: ReadonlyArray<WorkerTemplateOption>,
+): WorkerTemplateOption | undefined {
+  return options.find(
+    (option) => option.variant === 'interactive' || /-interactive\.md$/.test(option.fileName),
+  );
+}
+
 export function projectApps(
   configs: ReadonlyArray<{ name: string; apps?: string[] }>,
   projectName: string,
@@ -67,7 +75,22 @@ export function appLabel(app: string): string {
 }
 
 export function modeForFlow(flowType: FlowType): 'interactive' | 'autonomous' {
+  if (flowType === 'pr-complete') return 'autonomous';
   return flowType === 'fix-bug' ? 'autonomous' : 'interactive';
+}
+
+export function selectedTemplateMode(
+  flowType: FlowType | null,
+  options: ReadonlyArray<WorkerTemplateOption>,
+  selectedFileName: string,
+): 'interactive' | 'autonomous' {
+  if (!flowType) return 'interactive';
+  const selected = options.find((option) => option.fileName === selectedFileName);
+  if (selected?.variant === 'interactive' || /-interactive\.md$/.test(selected?.fileName ?? '')) {
+    return 'interactive';
+  }
+  if (selected?.isDefault && interactiveTemplateOption(options)) return 'autonomous';
+  return modeForFlow(flowType);
 }
 
 export function defaultExtraReviewRunner(

@@ -24,6 +24,12 @@ async function withProjectVars(fn: (vars: ProjectVars) => Promise<void>): Promis
     await writeFile(path.join(workerDir, 'fix-bug-v2.md'), '# V2\n', 'utf-8');
     await writeFile(path.join(workerDir, 'dev.md'), '# Dev\n', 'utf-8');
     await writeFile(path.join(workerDir, 'dev-interactive.md'), '# Dev Interactive\n', 'utf-8');
+    await writeFile(path.join(workerDir, 'pr-complete.md'), '# PR Complete\n', 'utf-8');
+    await writeFile(
+      path.join(workerDir, 'pr-complete-interactive.md'),
+      '# PR Complete Interactive\n',
+      'utf-8',
+    );
     await writeFile(path.join(workerDir, 'other.md'), '# Other\n', 'utf-8');
     await fn({
       projectName: 'demo',
@@ -81,8 +87,25 @@ test('resolveWorkerTemplateSelection reads the selected variant and normalizes v
   });
 });
 
+test('resolveWorkerTemplateSelectionForRun implicitly selects fix-bug-interactive for interactive fix-bug when present', async () => {
+  await withProjectVars(async (vars) => {
+    const selected = await resolveWorkerTemplateSelectionForRun(vars, 'fix-bug', 'interactive');
+    assert.equal(selected.fileName, 'fix-bug-interactive.md');
+    assert.equal(selected.variant, 'interactive');
+    assert.equal(selected.selectionSource, 'implicit-interactive-fix-bug');
+    assert.match(selected.selectionReason, /interactive mode/);
+  });
+});
+
 test('parseWorkerTemplateFileName accepts dev-interactive as a dev template variant', () => {
   assert.deepEqual(parseWorkerTemplateFileName('dev', 'dev-interactive.md'), {
+    variant: 'interactive',
+    isDefault: false,
+  });
+});
+
+test('parseWorkerTemplateFileName accepts pr-complete-interactive as a pr-complete template variant', () => {
+  assert.deepEqual(parseWorkerTemplateFileName('pr-complete', 'pr-complete-interactive.md'), {
     variant: 'interactive',
     isDefault: false,
   });
@@ -103,6 +126,25 @@ test('resolveWorkerTemplateSelectionForRun falls back to dev.md when dev-interac
     await rm(path.join(vars.projectTemplatesDir, 'worker', 'dev-interactive.md'));
     const selected = await resolveWorkerTemplateSelectionForRun(vars, 'dev', 'interactive');
     assert.equal(selected.fileName, 'dev.md');
+    assert.equal(selected.selectionSource, 'default');
+  });
+});
+
+test('resolveWorkerTemplateSelectionForRun implicitly selects pr-complete-interactive for interactive pr-complete when present', async () => {
+  await withProjectVars(async (vars) => {
+    const selected = await resolveWorkerTemplateSelectionForRun(vars, 'pr-complete', 'interactive');
+    assert.equal(selected.fileName, 'pr-complete-interactive.md');
+    assert.equal(selected.variant, 'interactive');
+    assert.equal(selected.selectionSource, 'implicit-interactive-pr-complete');
+    assert.match(selected.selectionReason, /interactive mode/);
+  });
+});
+
+test('resolveWorkerTemplateSelectionForRun falls back to pr-complete.md when pr-complete-interactive is absent', async () => {
+  await withProjectVars(async (vars) => {
+    await rm(path.join(vars.projectTemplatesDir, 'worker', 'pr-complete-interactive.md'));
+    const selected = await resolveWorkerTemplateSelectionForRun(vars, 'pr-complete', 'interactive');
+    assert.equal(selected.fileName, 'pr-complete.md');
     assert.equal(selected.selectionSource, 'default');
   });
 });

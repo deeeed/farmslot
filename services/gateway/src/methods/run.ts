@@ -30,7 +30,7 @@ import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/context.js';
 import { findFollowUpParentRun } from '../family-observability/state.js';
-import { loadProjectConfig } from '../fleet/state.js';
+import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -56,7 +56,10 @@ import {
   setRunFlags,
   startRun,
 } from '../run-engine/orchestrator.js';
-import { resolveMonitorDecision } from '../run-engine/run-monitor.js';
+import {
+  readFreshTerminalSignalForRun,
+  resolveMonitorDecision,
+} from '../run-engine/run-monitor.js';
 import { runnerSupportsModel } from '../runners/registry.js';
 import {
   createRun,
@@ -69,6 +72,7 @@ import {
 } from '../runs/store.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
+import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
   assertTicketRefMatchesProjectRepo,
   normalizeTicketRef,
@@ -198,15 +202,33 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   params.variant = variant ?? undefined;
 
   let normalizedTaskTemplate: RunCreateParams['taskTemplate'];
-  if (params.taskTemplate || (params.flowType === 'dev' && params.mode === 'interactive')) {
+  const shouldResolveImplicitInteractiveTemplate =
+    params.mode === 'interactive' &&
+    (params.flowType === 'dev' || params.flowType === 'pr-complete');
+  if (params.taskTemplate || shouldResolveImplicitInteractiveTemplate) {
     const projectVars = await loadProjectVars(params.project);
     const selectedTemplate = await resolveWorkerTemplateSelectionForRun(
       projectVars,
       params.flowType,
       params.mode,
       params.taskTemplate,
-    );
-    if (params.taskTemplate || selectedTemplate.selectionSource === 'implicit-interactive-dev') {
+    ).catch((err) => {
+      if (
+        !params.taskTemplate &&
+        params.flowType === 'pr-complete' &&
+        params.mode === 'interactive' &&
+        /Worker template not found/.test((err as Error).message)
+      ) {
+        return null;
+      }
+      throw err;
+    });
+    if (
+      selectedTemplate &&
+      (params.taskTemplate ||
+        selectedTemplate.selectionSource === 'implicit-interactive-dev' ||
+        selectedTemplate.selectionSource === 'implicit-interactive-pr-complete')
+    ) {
       normalizedTaskTemplate = {
         fileName: selectedTemplate.fileName,
         variant: selectedTemplate.variant,
@@ -264,9 +286,23 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   if (isFollowUpFlow(params.flowType) && !params.parentRunId) {
     const prMatch = params.ticketOrPr.match(/#(\d+)$/);
     const prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
+    const fleet = params.branch ? null : await loadFleetStatus();
+    const resolvedFollowUpBranch =
+      params.branch ??
+      (await resolveDispatchTargetBranch(
+        {
+          project: params.project,
+          flowType: params.flowType,
+          ticketOrPr: params.ticketOrPr,
+          targetBranch: params.branch,
+        },
+        { fleetSlots: fleet?.slots, logPrefix: 'run-create' },
+      ));
+    if (!params.branch && resolvedFollowUpBranch) params.branch = resolvedFollowUpBranch;
     const parent = findFollowUpParentRun(getAllRuns(), {
       ticketOrPr: params.ticketOrPr,
       prNumber,
+      branch: resolvedFollowUpBranch,
       project: params.project,
     });
     if (parent) {
@@ -831,6 +867,14 @@ export async function runResolveDecision(
   if (decision.resolvedAt) throw new Error(`Decision already resolved`);
   if (!decision.actions.some((action) => action.id === params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
+  }
+  if (decision.type === 'monitor_interactive_handoff' && params.actionId !== 'abort') {
+    const signal = await readFreshTerminalSignalForRun(existing.id, existing.slotId);
+    if (!signal) {
+      throw new Error(
+        'Interactive PR-complete handoff can resume only after a fresh terminal SIGNAL.json is written on the slot.',
+      );
+    }
   }
   await assertReadyPublishResolveIsFresh(existing, decision, params);
 

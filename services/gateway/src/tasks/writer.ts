@@ -452,6 +452,29 @@ export async function buildTemplateProvenance(input: {
   };
 }
 
+function buildInteractivePrCompleteHandoffSection(taskDir: string): string {
+  return [
+    '',
+    '---',
+    '',
+    '## Interactive PR-complete handoff',
+    '',
+    'This run is interactive. Complete the PR-complete prep, context reload, comment triage, fixes, validation, and artifacts, but **stop before terminal completion**.',
+    '',
+    'This section overrides any earlier checklist item that says to write a terminal `SIGNAL.json` automatically.',
+    '',
+    'Before handing off to the operator:',
+    '',
+    `- Write or update \`${taskDir}/artifacts/report.md\` with summary, files changed, validation, comments handled, and remaining manual work.`,
+    `- Write or update \`${taskDir}/artifacts/comments-report.md\` when PR comments were triaged.`,
+    `- If family context was inherited, write \`${taskDir}/artifacts/family-scope.json\` before handoff.`,
+    '- Set this task status to `STATUS: waiting-human` instead of `STATUS: done`.',
+    '- Do **not** write a terminal `SIGNAL.json` with `complete`, `done`, `blocked`, or `failed`.',
+    '',
+    'The human operator will inspect the workspace, do any manual edits/review/replies, and write the terminal signal only when the PR-complete session is actually ready to close.',
+  ].join('\n');
+}
+
 export async function writeTaskFile(
   run: Run,
   opts?: {
@@ -496,9 +519,11 @@ export async function writeTaskFile(
   const modePreamble =
     run.mode === 'autonomous'
       ? '> Fully autonomous — zero human input. Execute all phases without stopping.'
-      : isLightweightInteractiveDevRun(run)
-        ? '> Interactive lightweight dev — operator may steer the session; keep CHECKLIST.md and inputs/dev-intake.json current, then wait for Farmslot operator completion.'
-        : '> Human-operated — pauses at HUMAN GATE steps for approval.';
+      : run.flowType === 'pr-complete' && run.mode === 'interactive'
+        ? '> Interactive PR-complete — reload prior PR/run context and perform the PR-complete work, then stop before terminal SIGNAL.json so the operator can take over.'
+        : isLightweightInteractiveDevRun(run)
+          ? '> Interactive lightweight dev — operator may steer the session; keep CHECKLIST.md and inputs/dev-intake.json current, then wait for Farmslot operator completion.'
+          : '> Human-operated — pauses at HUMAN GATE steps for approval.';
   template = template.replace(/^(#.+\n)/, `$1\n${modePreamble}\n`);
 
   // Build task folder — each run gets its own timestamped dir (allows comparison across runs).
@@ -812,7 +837,11 @@ export async function writeTaskFile(
   const withInheritedContext = inheritedContext
     ? `${content.trimEnd()}\n${buildFollowUpScopeContractSection(vars.TASK_DIR, inheritedContext)}\n`
     : content;
-  const finalContent = applyArtifactOnlyTaskPolicy(withInheritedContext, run);
+  const withInteractivePrCompleteHandoff =
+    run.flowType === 'pr-complete' && run.mode === 'interactive'
+      ? `${withInheritedContext.trimEnd()}\n${buildInteractivePrCompleteHandoffSection(vars.TASK_DIR)}\n`
+      : withInheritedContext;
+  const finalContent = applyArtifactOnlyTaskPolicy(withInteractivePrCompleteHandoff, run);
   if (shouldApplyArtifactOnlyTaskPolicy(run)) {
     assertArtifactOnlyTaskGuard(finalContent);
   }

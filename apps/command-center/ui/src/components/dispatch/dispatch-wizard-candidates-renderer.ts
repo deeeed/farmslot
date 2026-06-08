@@ -146,6 +146,9 @@ function renderCandidateRow(
       ${candidate.nudgeEligible
         ? html`<span class="cand-nudge-badge">REUSE WORKER</span>`
         : nothing}
+      ${candidate.familyAffinity && !candidate.nudgeEligible
+        ? html`<span class="cand-affinity">same family</span>`
+        : nothing}
       ${hadTask && !candidate.nudgeEligible
         ? html`<span class="cand-reuse">same task</span>`
         : nothing}
@@ -198,9 +201,6 @@ function renderNudgeActions(
 
 function renderFreeSlotMeta(candidate: DispatchCandidate) {
   return html`
-    <span class="cand-cdp" style="color:${candidate.cdpLive ? colors.statusOk : colors.textMuted}"
-      >${candidate.cdpLive ? 'CDP' : '---'}</span
-    >
     <span class="cand-lifecycle">${candidate.lifecycle}</span>
     <span class="cand-score">${candidate.score}</span>
   `;

@@ -18,6 +18,7 @@ import {
   findAffinitySlot,
   prepareSlotForFreshReuse,
   refreshBranches,
+  selectBranchAffinityRefreshSlots,
   verifyBranchAffinityNudgeStillEligible,
 } from '../methods/dispatch.js';
 import { isCdpLive, isFreeSlot, slotScore } from '../methods/dispatch/slot-scoring.js';
@@ -209,7 +210,7 @@ export async function executeFindSlotStep(
       : undefined;
   const candidates = freeSlots.slice(0, 10).map((s) => ({
     slotId: s.slot,
-    score: slotScore(s, targetBranch),
+    score: slotScore(s, targetBranch, { familyId: run.familyId }),
     cdpLive: isCdpLive(s.health.cdp),
   }));
 
@@ -248,13 +249,7 @@ export async function executeFindSlotStep(
     // at the top of the case. Production lane only — collect helper short-circuits on
     // comparison lane to preserve ADR-024 §7 scrub-between-siblings.
     if (run.lane !== 'comparison') {
-      const busyMatching = projectSlots.filter(
-        (s) =>
-          s.agent === 'working' &&
-          s.lifecycle !== 'manual' &&
-          s.lifecycle !== 'disabled' &&
-          s.lifecycle !== 'held',
-      );
+      const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
       if (busyMatching.length > 0) await refreshBranches(busyMatching);
       const nudgeCandidates = await collectBranchAffinityNudgeCandidates(
         fleet.slots,
@@ -309,7 +304,7 @@ export async function executeFindSlotStep(
           },
           freeSlotCandidates: projectSlots.filter(isFreeSlot).map((s) => ({
             slotId: s.slot,
-            score: slotScore(s, targetBranch),
+            score: slotScore(s, targetBranch, { familyId: run.familyId }),
             branch: s.branch || '',
             lifecycle: s.lifecycle,
             health: s.health,
@@ -429,12 +424,14 @@ export async function executeFindSlotStep(
   if (
     !run.slotId &&
     (freeSlots.length === 0 ||
-      freeSlots.every((s) => slotScore(s, targetBranch) >= STALE_THRESHOLD))
+      freeSlots.every(
+        (s) => slotScore(s, targetBranch, { familyId: run.familyId }) >= STALE_THRESHOLD,
+      ))
   ) {
     const reason = freeSlots.length === 0 ? 'no_free_slots' : 'all_stale';
     const allProjectSlots = projectSlots.map((s) => ({
       slotId: s.slot,
-      score: isFreeSlot(s) ? slotScore(s, targetBranch) : -1,
+      score: isFreeSlot(s) ? slotScore(s, targetBranch, { familyId: run.familyId }) : -1,
       branch: s.branch || '',
       lifecycle: s.lifecycle,
       health: s.health,

@@ -269,6 +269,39 @@ test('findFollowUpParentRun matches by prNumber when ticketOrPr differs (PROJ-ke
   assert.equal(parent?.id, 'fix');
 });
 
+test('findFollowUpParentRun matches root runs by resolved PR branch when PR number is absent', () => {
+  const parent = findFollowUpParentRun(
+    [
+      makeRun({
+        id: 'feature-root',
+        flowType: 'dev',
+        ticketOrPr: 'PROJ-9009',
+        branch: 'feat/pr-head',
+        taskFile: '/tasks/feat/proj-9009/TASK.md',
+      }),
+    ],
+    { ticketOrPr: 'owner/repo#9009', prNumber: 9009, branch: 'feat/pr-head' },
+  );
+  assert.equal(parent?.id, 'feature-root');
+});
+
+test('findFollowUpParentRun does not match branch-only follow-up runs', () => {
+  const parent = findFollowUpParentRun(
+    [
+      makeRun({
+        id: 'stale-follow-up',
+        flowType: 'pr-complete',
+        ticketOrPr: 'owner/repo#1',
+        prNumber: 1,
+        branch: 'feat/reused',
+        taskFile: '/tasks/fix/1/TASK.md',
+      }),
+    ],
+    { ticketOrPr: 'owner/repo#2', prNumber: 2, branch: 'feat/reused' },
+  );
+  assert.equal(parent, null);
+});
+
 test('findFollowUpParentRun falls back to latest follow-up run when no fix-bug/dev parent exists', () => {
   const parent = findFollowUpParentRun(
     [

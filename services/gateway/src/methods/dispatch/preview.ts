@@ -6,12 +6,16 @@ import {
   type DispatchPreviewParams,
   type DispatchPreviewResult,
   type FlowType,
+  PR_BOUND_FLOW_TYPES,
   primaryRoleForFlow,
+  type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
 
 import { execOnSlot, isLocal, loadSlotVars, updateSlotStatus } from '../../core/index.js';
 import { firstWindowTarget, resolveTmuxSession, shellQuote } from '../../core/tmux.js';
+import { buildFollowUpLineage } from '../../family-observability/context.js';
+import { findFollowUpParentRun } from '../../family-observability/state.js';
 import { getNode } from '../../fleet/machine-registry.js';
 import { loadFleetStatus } from '../../fleet/state.js';
 import {
@@ -21,19 +25,63 @@ import {
   runnerSupportsTmuxNudgesForLaunch,
 } from '../../runners/registry.js';
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
+import { getAllRuns } from '../../runs/store.js';
 
-import {
-  findBestSlot,
-  isCdpLive,
-  isFreeSlot,
-  resolveJiraTargetBranchFromFleet,
-  slotScore,
-  validateSlot,
-} from './slot-scoring.js';
+import { findBestSlot, isCdpLive, isFreeSlot, slotScore, validateSlot } from './slot-scoring.js';
+import { resolveDispatchTargetBranch } from './target-branch.js';
 import { normalizeTicketRef } from './ticket-ref.js';
 
 const BRANCH_REFRESH_CONCURRENCY = 4;
 const BRANCH_REFRESH_TIMEOUT_MS = 5_000;
+
+interface DispatchFamilyContext {
+  familyId?: string;
+  parentRunId?: string;
+  familyRootTicketOrPr?: string;
+  inferredFromParentRunId?: string;
+}
+
+function parsePrNumberForFollowUp(input: { flowType?: string | null; ticketOrPr?: string | null }) {
+  if (!input.ticketOrPr) return null;
+  const flowType = input.flowType as FlowType | undefined;
+  if (!flowType || !PR_BOUND_FLOW_TYPES.has(flowType)) return null;
+  const normalized = normalizeTicketRef(input.ticketOrPr);
+  const match = normalized.match(/#(\d+)$/);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+export function resolveDispatchFamilyContext(
+  params: {
+    flowType?: string | null;
+    ticketOrPr?: string | null;
+    project: string;
+    familyId?: string | null;
+    parentRunId?: string | null;
+    familyRootTicketOrPr?: string | null;
+    targetBranch?: string | null;
+  },
+  runs: Run[] = getAllRuns(),
+): DispatchFamilyContext {
+  if (params.familyId) {
+    return {
+      familyId: params.familyId,
+      parentRunId: params.parentRunId ?? undefined,
+      familyRootTicketOrPr: params.familyRootTicketOrPr ?? undefined,
+    };
+  }
+  if (!params.flowType || !params.ticketOrPr) return {};
+  const flowType = params.flowType as FlowType;
+  if (!PR_BOUND_FLOW_TYPES.has(flowType)) return {};
+  const parent = findFollowUpParentRun(runs, {
+    ticketOrPr: normalizeTicketRef(params.ticketOrPr),
+    prNumber: parsePrNumberForFollowUp(params),
+    branch: params.targetBranch,
+    project: params.project,
+  });
+  if (!parent) return {};
+  const lineage = buildFollowUpLineage(parent);
+  return { ...lineage, inferredFromParentRunId: parent.id };
+}
 
 // ─── PR Affinity — prefer slot already on this PR's branch ───
 
@@ -259,11 +307,11 @@ async function captureBranchAffinityCandidateMeta(
 }
 
 /**
- * Collect every busy slot whose loaded branch matches the requested PR and whose runner
- * supports tmux nudges (Claude in v1). Sorted by lowest ctxPct first (room to absorb the
- * nudge without compact), then lowest nudgeCount (less churn), then most recent dispatch
- * (freshest context). Returns an empty array when comparison-lane is requested — the
- * caller is expected to filter that out, but defend-in-depth.
+ * Collect every busy slot whose loaded branch matches the requested PR. Nudge-capable rows
+ * sort ahead of fresh-only rows, then by lowest ctxPct (room to absorb the nudge without
+ * compact), lowest nudgeCount, and most recent dispatch (freshest context). Returns an empty
+ * array when comparison-lane is requested — the caller is expected to filter that out, but
+ * defend-in-depth.
  */
 /**
  * Pure eligibility filter — extracted so it can be unit-tested without SSH / tmux / git IO.
@@ -395,6 +443,22 @@ export async function findBranchAffinityNudgeCandidate(
 ): Promise<BranchAffinityNudgeCandidate | null> {
   const all = await collectBranchAffinityNudgeCandidates(slots, project, ticketOrPr, options);
   return all[0] ?? null;
+}
+
+/**
+ * Busy slots whose live branch should be refreshed before branch-affinity matching.
+ *
+ * Keep this wider than nudge capability: non-tmux runners still surface as Fresh-only
+ * branch-affinity rows, so stale cached branch state would otherwise hide valid reuse options.
+ */
+export function selectBranchAffinityRefreshSlots(slots: SlotStatus[]): SlotStatus[] {
+  return slots.filter(
+    (s) =>
+      s.agent === 'working' &&
+      s.lifecycle !== 'manual' &&
+      s.lifecycle !== 'disabled' &&
+      s.lifecycle !== 'held',
+  );
 }
 
 /**
@@ -558,117 +622,23 @@ export async function dispatchCandidates(
       s.lifecycle !== 'disabled' &&
       (!machineFilter || machineFilter.has(s.machine)),
   );
-
   // Live-check branches for free slots so the UI shows accurate data
   const freeSlots = projectSlots.filter(isFreeSlot);
   if (freeSlots.length > 0) await refreshBranches(freeSlots);
 
-  // Resolve targetBranch server-side when missing for PR-bound flows. The wizard derives
-  // targetBranch from its local pr.list cache (see `_resolveTargetBranch` in dispatch-wizard.ts);
-  // when the requested PR isn't in that cache (recently-typed URL, dashboard filter excluded
-  // the PR, etc.) the wizard sends `targetBranch: undefined`. Without it, slotScore can't
-  // apply the target-branch bonus and a slot already on the PR's head branch is ranked the
-  // the same way as another stale-branch slot.
-  //
-  // Resolution chain — cheapest to most-expensive, every tier uses already-available data
-  // before reaching for gh:
-  //   1. fleet scan — any slot whose `currentTicketOrPr` matches has `branch` set to the
-  //      PR's head branch (slot was dispatched against this PR; branch was checked out by
-  //      prepare-slot.sh). Free, instant, fleet is already in memory.
-  //   2. run-store — listRuns({prNumber}) returns Run records for this PR; their `branch`
-  //      field was set at dispatch time. Free, instant, persists across gateway restarts.
-  //   3. pr-raw cache — getPRRawData has a 60s TTL + ETag cache; pr.list typically primed it.
-  //      May trigger a gh call when stale.
-  //   4. direct gh pr view — last resort.
-  // Failure across all four is non-fatal: proceed without the bonus, matching prior behavior.
-  let resolvedTargetBranch = params.targetBranch ?? undefined;
-  if (!resolvedTargetBranch && params.flowType === 'fix-bug' && params.ticketOrPr) {
-    resolvedTargetBranch = resolveJiraTargetBranchFromFleet(
-      projectSlots,
-      params.project,
-      params.ticketOrPr,
-    );
-    if (resolvedTargetBranch) {
-      console.log(
-        `[dispatch.candidates] resolved targetBranch=${resolvedTargetBranch} for ${params.ticketOrPr} via Jira slot branch`,
-      );
-    }
-  }
+  // Resolve targetBranch server-side when the wizard lacks PR-list context, then reuse the
+  // same hint for scoring, nudge eligibility, and follow-up family inference.
   const isPrFlow = params.flowType === 'pr-complete' || params.flowType === 'review-pr';
-  // Resolve when (a) flow is explicitly PR-bound, OR (b) the ticket itself is a PR ref AND
-  // the flow is not explicitly non-PR. Case (b) covers the "operator typed URL before
-  // picking flow" path — they want the slot on the PR's branch ranked first regardless of
-  // whether they end up clicking PR Complete or Review PR. Fix-bug / dev with a Jira-shape
-  // ticket still scores against clean-main.
-  const flowExplicitlyNonPr = params.flowType === 'fix-bug' || params.flowType === 'dev';
-  const ticketLooksLikePr = params.ticketOrPr
-    ? /#\d+$|\/pull\/\d+\b|^\d+$/.test(params.ticketOrPr)
-    : false;
-  const shouldResolve = !flowExplicitlyNonPr && (isPrFlow || ticketLooksLikePr);
-  if (!resolvedTargetBranch && shouldResolve && params.ticketOrPr) {
-    // Normalize before parsing — the wizard sends the raw input (e.g.
-    // `https://github.com/example-org/example-mobile/pull/29373`) when its async match-project
-    // resolution hasn't finished yet. Without this, the canonical-shape regex below misses
-    // and every tier short-circuits to "no PR resolved".
-    const canonicalTicketOrPr = normalizeTicketRef(params.ticketOrPr);
-    const m = canonicalTicketOrPr.match(/^([^/#\s]+\/[^/#\s]+)#(\d+)$/);
-    if (m) {
-      const [, repo, numStr] = m;
-      const prNum = parseInt(numStr, 10);
+  const resolvedTargetBranch = await resolveDispatchTargetBranch(params, {
+    fleetSlots: fleet.slots,
+    projectSlots,
+    logPrefix: 'dispatch.candidates',
+  });
 
-      // Tier 1: fleet scan — match against either the raw or canonical form because slots
-      // record whichever shape was passed at dispatch time.
-      const matchingSlot = fleet.slots.find(
-        (s) =>
-          s.project === params.project &&
-          (s.currentTicketOrPr === params.ticketOrPr ||
-            s.currentTicketOrPr === canonicalTicketOrPr) &&
-          s.branch &&
-          s.branch !== '-' &&
-          s.branch !== DEFAULT_BRANCH,
-      );
-      if (matchingSlot?.branch) {
-        resolvedTargetBranch = matchingSlot.branch;
-        console.log(
-          `[dispatch.candidates] resolved targetBranch=${resolvedTargetBranch} for ${params.ticketOrPr} via fleet scan (slot ${matchingSlot.slot})`,
-        );
-      }
-
-      // Tier 2: run-store lookup
-      if (!resolvedTargetBranch) {
-        const { listRuns } = await import('../../runs/store.js');
-        const { runs } = listRuns({ prNumber: prNum, limit: 5 });
-        const runWithBranch = runs.find((r) => r.branch && r.project === params.project);
-        if (runWithBranch?.branch) {
-          resolvedTargetBranch = runWithBranch.branch;
-          console.log(
-            `[dispatch.candidates] resolved targetBranch=${resolvedTargetBranch} for ${params.ticketOrPr} via run-store (run ${runWithBranch.id.slice(0, 8)})`,
-          );
-        }
-      }
-
-      // Tier 3 + 4: pr-raw cache (may transparently fall through to gh on cache miss)
-      if (!resolvedTargetBranch) {
-        try {
-          const { getPRRawData } = await import('../pr/raw-cache.js');
-          const raw = await getPRRawData(repo, prNum);
-          // raw.prStateStdout is tab-separated; headRefName is index 4 by contract
-          const parts = raw.prStateStdout.trim().split('\t');
-          const headRefName = parts[4];
-          if (headRefName) {
-            resolvedTargetBranch = headRefName;
-            console.log(
-              `[dispatch.candidates] resolved targetBranch=${resolvedTargetBranch} for ${params.ticketOrPr} via pr-raw cache`,
-            );
-          }
-        } catch (err) {
-          console.warn(
-            `[dispatch.candidates] pr-raw lookup failed for ${params.ticketOrPr}: ${(err as Error).message}`,
-          );
-        }
-      }
-    }
-  }
+  const familyContext = resolveDispatchFamilyContext({
+    ...params,
+    targetBranch: resolvedTargetBranch,
+  });
 
   // PR-bound calls ALSO get the busy-slot branch-affinity nudge slice so the wizard can
   // surface "REUSE WORKER" rows. Refresh busy-slot branches first — without this, a slot
@@ -684,21 +654,14 @@ export async function dispatchCandidates(
   // `forceRefresh: true` to `loadFleetStatus`.
   let nudgeMetaBySlot: Map<string, BranchAffinityNudgeCandidate> = new Map();
   if (isPrFlow && params.ticketOrPr && resolvedTargetBranch) {
-    const busyMatching = projectSlots.filter(
-      (s) =>
-        s.agent === 'working' &&
-        s.lifecycle !== 'manual' &&
-        s.lifecycle !== 'disabled' &&
-        s.lifecycle !== 'held' &&
-        runnerSupportsTmuxNudges(s.runner),
-    );
+    const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
     if (busyMatching.length > 0) await refreshBranches(busyMatching);
     const candidatesList = await collectBranchAffinityNudgeCandidates(
       fleet.slots,
       params.project,
       params.ticketOrPr,
       {
-        familyId: params.familyId ?? null,
+        familyId: familyContext.familyId ?? null,
         lane: params.lane ?? null,
         variant: params.variant ?? null,
         targetBranch: resolvedTargetBranch ?? null,
@@ -712,13 +675,18 @@ export async function dispatchCandidates(
       const nudge = nudgeMetaBySlot.get(s.slot);
       return {
         slotId: s.slot,
-        score: isFreeSlot(s) ? slotScore(s, resolvedTargetBranch) : 999,
+        score: isFreeSlot(s)
+          ? slotScore(s, resolvedTargetBranch, { familyId: familyContext.familyId })
+          : 999,
         cdpLive: isCdpLive(s.health.cdp),
         branch: s.branch || '',
         lifecycle: s.lifecycle,
         onMain: !s.branch || s.branch === DEFAULT_BRANCH || s.branch === '',
         hostLoad: s.hostLoad,
         free: isFreeSlot(s),
+        familyAffinity: Boolean(
+          familyContext.familyId && s.currentFamilyId === familyContext.familyId,
+        ),
         ...(nudge
           ? {
               nudgeEligible: true,
@@ -752,7 +720,19 @@ export async function dispatchPreview(
   params: DispatchPreviewParams,
 ): Promise<DispatchPreviewResult> {
   const fleet = await loadFleetStatus(true);
-  return resolveDispatchPreviewFromFleet(params, fleet.slots);
+  const projectSlots = fleet.slots.filter(
+    (s) => s.project === params.project && s.lifecycle !== 'disabled',
+  );
+  const resolvedTargetBranch = await resolveDispatchTargetBranch(params, {
+    fleetSlots: fleet.slots,
+    projectSlots,
+    logPrefix: 'dispatch.preview',
+  });
+  const enriched = { ...params, targetBranch: resolvedTargetBranch };
+  return resolveDispatchPreviewFromFleet(
+    { ...enriched, ...resolveDispatchFamilyContext(enriched) },
+    fleet.slots,
+  );
 }
 
 export function resolveDispatchPreviewFromFleet(

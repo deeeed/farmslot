@@ -499,6 +499,33 @@ What changes is not the flow types themselves but how they are **triggered**: au
 3. **Family-context inheritance** — (same as Phase 1 above) chained runs inherit parent artifacts
 4. **Webhook integration** (separate) — GitHub webhook receiver to auto-create pr-complete runs when events arrive for completed PRs
 
+---
+
+## Addendum: Interactive PR-Complete Re-Entry
+
+**Added:** 2026-06-08
+
+### Problem
+
+`pr-complete` has two valid operator intents:
+
+1. **Autonomous follow-up** — fix CI, bot comments, or mechanical review feedback, push, reply, and terminal-signal completion.
+2. **Interactive re-entry** — reopen an existing PR/run, reload prior family artifacts such as recipes and reports, perform the normal PR-complete preparation/fix/validation work, then stop before terminal completion so the operator can inspect or do manual work.
+
+Before this addendum, `pr-complete` behaved as an autonomous template even when `run.mode` was `interactive`, so manual re-entry could accidentally run through push/reply/signal completion.
+
+### Decision
+
+Keep `flowType:'pr-complete'` as the single PR follow-up flow and use `mode` for autonomy:
+
+- `mode:'autonomous'` keeps the existing automated PR-complete behavior.
+- `mode:'interactive'` selects a project-owned `pr-complete-interactive.md` template when present.
+- If an interactive template is absent, the task writer still appends an interactive handoff contract that overrides terminal completion instructions.
+- Interactive PR-complete must still resolve/materialize family context using the existing ADR-024 inheritance model (`inputs/inherited-context.json`, `inputs/inherited/`, seeded `artifacts/recipe.json` when available).
+- Interactive PR-complete must stop before terminal `SIGNAL.json`; the operator owns final completion after manual inspection/work.
+
+The dispatch UI defaults ordinary PR-complete dispatches to autonomous and exposes interactive re-entry through the task-template selector (for example `pr-complete-interactive.md`). The task template, not a separate Mode selector, is the operator-facing autonomy choice. This narrows ADR-018's visible dispatch toggle while preserving ADR-018's `Run.mode` semantics.
+
 ## References
 
 - ADR-013: gateway-mediated orchestration

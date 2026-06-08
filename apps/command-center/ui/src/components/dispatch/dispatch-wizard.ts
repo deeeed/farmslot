@@ -37,11 +37,13 @@ import {
   buildPublicationReviewGateParams,
   buildPublicationReviewPlan,
   defaultExtraReviewRunner,
+  interactiveTemplateOption,
   modeForFlow,
   projectApps,
   publicationReviewsEnabled,
   selectedDispatchApp,
   selectedTaskTemplate,
+  selectedTemplateMode,
   syncSelectedAppForProject,
 } from './dispatch-wizard-draft.js';
 import {
@@ -232,7 +234,18 @@ export class DispatchWizard extends DispatchWizardState {
     try {
       const options = await requestTemplateOptions(this._project, this._flowType);
       if (this._templateOptionsKey !== key) return;
+      const previousSelectionStillValid = options.some(
+        (option) => option.fileName === this._selectedTaskTemplateFileName,
+      );
       const next = deriveTemplateOptionsState(options, this._selectedTaskTemplateFileName);
+      if (
+        !previousSelectionStillValid &&
+        this._flowType &&
+        modeForFlow(this._flowType) === 'interactive'
+      ) {
+        next.selectedFileName =
+          interactiveTemplateOption(next.options)?.fileName ?? next.selectedFileName;
+      }
       this._templateOptions = next.options;
       this._templateOptionsError = next.error;
       this._selectedTaskTemplateFileName = next.selectedFileName;
@@ -408,7 +421,6 @@ export class DispatchWizard extends DispatchWizardState {
         if (flowState) {
           this._flowType = flowState.flowType;
           this._autoFlowType = flowState.autoFlowType;
-          this._mode = flowState.mode;
         }
       }
       if (res.project) {
@@ -622,6 +634,15 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _dispatchPayloadDraft() {
+    const mode = selectedTemplateMode(
+      this._flowType,
+      this._templateOptions,
+      this._selectedTaskTemplateFileName,
+    );
+    const taskTemplate = selectedTaskTemplate(
+      this._templateOptions,
+      this._selectedTaskTemplateFileName,
+    );
     return buildDispatchWizardPayloadDraft({
       flowType: this._flowType,
       project: this._project,
@@ -633,14 +654,14 @@ export class DispatchWizard extends DispatchWizardState {
       runner: this._runner,
       effort: this._effort,
       app: selectedDispatchApp(projectApps(this._projectConfigs, this._project), this._app),
-      taskTemplate: selectedTaskTemplate(this._templateOptions, this._selectedTaskTemplateFileName),
+      taskTemplate,
       skipPrepare: this._skipPrepare,
       nudgeIntent: selectedNudgeIntent({
         candidates: this._candidates,
         slotOverride: this._slotOverride,
         intents: this._nudgeIntents,
       }),
-      mode: this._mode,
+      mode,
       devInteractiveProfile: this._devInteractiveProfile,
       reviewTier: this._reviewTier,
       ...buildPublicationReviewGateParams(
@@ -648,7 +669,7 @@ export class DispatchWizard extends DispatchWizardState {
         this._runner,
         this._publicationReviewLoops,
         RUNNER_OPTIONS,
-        this._mode,
+        mode,
       ),
       comparison: buildComparisonRunParams({
         comparisonLane: this._comparisonLane,
@@ -694,7 +715,6 @@ export class DispatchWizard extends DispatchWizardState {
   private _selectFlowType(flowType: FlowType): void {
     this._flowType = flowType;
     this._autoFlowType = false;
-    this._mode = modeForFlow(flowType);
     void this._fetchTemplateOptions();
   }
 
@@ -746,6 +766,11 @@ export class DispatchWizard extends DispatchWizardState {
 
   render() {
     const blockers = this._blockingState();
+    const mode = selectedTemplateMode(
+      this._flowType,
+      this._templateOptions,
+      this._selectedTaskTemplateFileName,
+    );
     return renderDispatchWizardView({
       hydrating: this._hydrating,
       bootstrapFailed: this._bootstrapFailed,
@@ -773,7 +798,7 @@ export class DispatchWizard extends DispatchWizardState {
       effort: this._effort,
       reviewTier: this._reviewTier,
       skipPrepare: this._skipPrepare,
-      mode: this._mode,
+      mode,
       devInteractiveProfile: this._devInteractiveProfile,
       comparisonLane: this._comparisonLane,
       comparisonFamilyId: this._comparisonFamilyId,
@@ -782,14 +807,14 @@ export class DispatchWizard extends DispatchWizardState {
       priorRuns: this._priorRuns,
       variantCollision: this._variantCollision,
       variantInput: this._variantInput,
-      publicationReviewsEnabled: publicationReviewsEnabled(this._flowType, this._mode),
+      publicationReviewsEnabled: publicationReviewsEnabled(this._flowType, mode),
       publicationReviewLoops: this._publicationReviewLoops,
       publicationReviewPlan: buildPublicationReviewPlan(
         this._flowType,
         this._runner,
         this._publicationReviewLoops,
         RUNNER_OPTIONS,
-        this._mode,
+        mode,
       ),
       runnerOptions: RUNNER_OPTIONS,
       loadingCandidates: this._loadingCandidates,
@@ -824,9 +849,6 @@ export class DispatchWizard extends DispatchWizardState {
       },
       setSkipPrepare: (skipPrepare) => {
         this._skipPrepare = skipPrepare;
-      },
-      setMode: (mode) => {
-        this._mode = mode;
       },
       setDevInteractiveProfile: (profile) => {
         this._devInteractiveProfile = profile;

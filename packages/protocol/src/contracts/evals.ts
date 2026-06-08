@@ -34,7 +34,12 @@ export interface TaskTemplateSelection {
   /** Parsed suffix after the canonical flow prefix. null/omitted means default template. */
   variant?: string | null;
 }
-export type TaskTemplateSelectionSource = 'explicit' | 'default' | 'implicit-interactive-dev';
+export type TaskTemplateSelectionSource =
+  | 'explicit'
+  | 'default'
+  | 'implicit-interactive-fix-bug'
+  | 'implicit-interactive-dev'
+  | 'implicit-interactive-pr-complete';
 export type EvalPackageRole = 'reference' | 'candidate' | 'control' | 'challenger';
 export type ResultPackageStatus = 'draft' | 'final';
 export type EvalEvidenceState = 'present' | 'missing' | 'not_applicable' | 'failed';

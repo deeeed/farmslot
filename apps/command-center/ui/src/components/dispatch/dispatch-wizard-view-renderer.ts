@@ -91,7 +91,6 @@ interface DispatchWizardViewContext {
   setEffort: (effort: EffortLevel) => void;
   setReviewTier: (reviewTier: '' | 'light' | 'standard' | 'full') => void;
   setSkipPrepare: (skipPrepare: boolean) => void;
-  setMode: (mode: 'interactive' | 'autonomous') => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
   openEvals: () => void;
   forkFromPriorRun: (run: Run) => void;
@@ -177,7 +176,6 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
         setEffort: ctx.setEffort,
         setReviewTier: ctx.setReviewTier,
         setSkipPrepare: ctx.setSkipPrepare,
-        setMode: ctx.setMode,
         setDevInteractiveProfile: ctx.setDevInteractiveProfile,
       })}
       ${renderVariantInput({
@@ -270,7 +268,10 @@ function renderTaskTemplateSelector(ctx: DispatchWizardViewContext) {
           `,
         )}
       </div>
-      <div class="section-help">Render-only for this run; project templates are not modified.</div>
+      <div class="section-help">
+        Render-only for this run; project templates are not modified. Interactive template variants
+        set interactive mode.
+      </div>
     </div>
   `;
 }
