@@ -197,8 +197,22 @@ stop_recording() {
     kill -INT "$CAPTURE_PID" 2>/dev/null || true
   fi
 
-  # Wait for capture-helper to exit (flushes + closes FIFO)
+  # Wait for capture-helper to exit (flushes + closes FIFO), but never
+  # indefinitely. ScreenCaptureKit can wedge when the target window disappeared;
+  # leaked recorders keep replayd/capture-helper hot and make the machine unusable.
   if [[ -n "$CAPTURE_PID" ]]; then
+    for _ in $(seq 1 100); do
+      kill -0 "$CAPTURE_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    if kill -0 "$CAPTURE_PID" 2>/dev/null; then
+      kill -TERM "$CAPTURE_PID" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        kill -0 "$CAPTURE_PID" 2>/dev/null || break
+        sleep 0.1
+      done
+    fi
+    kill -9 "$CAPTURE_PID" 2>/dev/null || true
     wait "$CAPTURE_PID" 2>/dev/null || true
   fi
 

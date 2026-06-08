@@ -472,11 +472,33 @@ function browserPidPath(
 export function buildBrowserPidFileCapturableCommand(pidPath: string): string {
   return [
     'set -e',
+    buildCaptureHelperResolveFunction(),
     `pid_file=${shellQuote(pidPath)}`,
     'pid="$(cat "$pid_file")"',
     '[ -n "$pid" ]',
     'kill -0 "$pid" 2>/dev/null',
-    'capture-helper resolve --pid "$pid" --json >/dev/null',
+    'capture_helper_resolve "$pid"',
+  ].join('\n');
+}
+
+function buildCaptureHelperResolveFunction(): string {
+  return [
+    'capture_helper_resolve() {',
+    '  python3 - "$1" <<\'PY\'',
+    'import subprocess',
+    'import sys',
+    'try:',
+    '    subprocess.run(',
+    '        ["capture-helper", "resolve", "--pid", sys.argv[1], "--json"],',
+    '        stdout=subprocess.DEVNULL,',
+    '        stderr=subprocess.DEVNULL,',
+    '        timeout=3,',
+    '        check=True,',
+    '    )',
+    'except Exception:',
+    '    sys.exit(1)',
+    'PY',
+    '}',
   ].join('\n');
 }
 
@@ -507,13 +529,14 @@ export function buildBrowserPidRecoveryCommand(cdpPort: number, pidDir: string):
   const qPidDir = shellQuote(pidDir);
   return [
     'set -e',
+    buildCaptureHelperResolveFunction(),
     `pid_dir=${qPidDir}`,
     'lsof_bin="$(command -v lsof 2>/dev/null || true)"',
     '[ -n "$lsof_bin" ] || lsof_bin=/usr/sbin/lsof',
     `pid="$($lsof_bin -ti tcp:${cdpPort} -sTCP:LISTEN 2>/dev/null | head -1)"`,
     '[ -n "$pid" ]',
     'kill -0 "$pid" 2>/dev/null',
-    'capture-helper resolve --pid "$pid" --json >/dev/null',
+    'capture_helper_resolve "$pid"',
     'mkdir -p "$pid_dir"',
     'printf "%s\\n" "$pid" > "$pid_dir/browser.pid"',
     'printf "%s\\n" "$pid" > "$pid_dir/chromium.pid"',
@@ -526,18 +549,19 @@ export function buildBrowserNodeWatchCommand(pidPath: string, cdpPortRaw?: strin
     `pid_file=${shellQuote(pidPath)}`,
     'if [ -f "$pid_file" ]; then',
     '  pid="$(cat "$pid_file" 2>/dev/null || true)"',
-    '  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && capture-helper resolve --pid "$pid" --json >/dev/null; then',
+    '  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && capture_helper_resolve "$pid"; then',
     '    exit 0',
     '  fi',
     'fi',
   ];
 
   if (!Number.isInteger(cdpPort) || cdpPort <= 0 || cdpPort > 65_535) {
-    return ['set -e', ...pidFileCheck, 'exit 1'].join('\n');
+    return ['set -e', buildCaptureHelperResolveFunction(), ...pidFileCheck, 'exit 1'].join('\n');
   }
 
   return [
     'set -e',
+    buildCaptureHelperResolveFunction(),
     ...pidFileCheck,
     `pid_dir=${shellQuote(path.dirname(pidPath))}`,
     'lsof_bin="$(command -v lsof 2>/dev/null || true)"',
@@ -545,7 +569,7 @@ export function buildBrowserNodeWatchCommand(pidPath: string, cdpPortRaw?: strin
     `pid="$($lsof_bin -ti tcp:${cdpPort} -sTCP:LISTEN 2>/dev/null | head -1)"`,
     '[ -n "$pid" ]',
     'kill -0 "$pid" 2>/dev/null',
-    'capture-helper resolve --pid "$pid" --json >/dev/null',
+    'capture_helper_resolve "$pid"',
     'mkdir -p "$pid_dir"',
     'printf "%s\\n" "$pid" > "$pid_dir/browser.pid"',
     'printf "%s\\n" "$pid" > "$pid_dir/chromium.pid"',
