@@ -1,6 +1,8 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
+const { createMetroRecipeBridgeMiddleware } = require('./metro-recipe-bridge.cjs');
+
 const projectRoot = __dirname;
 const protocolRoot = path.resolve(projectRoot, '../../packages/protocol');
 
@@ -18,7 +20,17 @@ function isProtocolModule(modulePath) {
 const config = getDefaultConfig(projectRoot);
 
 // Isolated metro port
-config.server = { ...config.server, port: 7677 };
+config.server = {
+  ...config.server,
+  port: 7677,
+  enhanceMiddleware: (middleware) => {
+    const recipeBridge = createMetroRecipeBridgeMiddleware();
+    return (req, res, next) => {
+      if (recipeBridge.handle(req, res)) return;
+      return middleware(req, res, next);
+    };
+  },
+};
 
 // Keep Expo's SDK 52+ workspace autodetection intact. It adds the monorepo
 // root node_modules and workspace packages to Metro's watched file map; if we

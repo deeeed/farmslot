@@ -1,6 +1,6 @@
 # Farmslot — Mobile Companion UI Architecture Refactor
 
-**Status:** Approved (plan only — no implementation yet)
+**Status:** Implemented (PR `refactor/companion-workspaces`)
 **Date:** 2026-06-08
 **Owner:** Arthur / Farmslot
 **Relates to:** [PRD-mobile-companion-canonical.md](../PRD-mobile-companion-canonical.md), [ROADMAP-next.md](../ROADMAP-next.md) immediate execution order item 1 (operator UI/UX stabilization pass), [ADR-033](../adr/033-mobile-tmux-worker-control.md)
@@ -9,7 +9,7 @@
 
 Restructure the Mobile Companion so route files stay thin, business/data orchestration lives in feature-level screen controllers, and presentational UI is split into maintainable components with co-located styles. This is **structural stabilization** of shipped operator surfaces — not a new product lane and not desktop parity work.
 
-**Delivery model:** workspace refactor ships as one PR (slot + family + workspace-scoped CI gate); terminal/artifacts/run/decision/diff + full-tree strict gate follow in a second PR.
+**Delivery model:** single PR — slot/family/terminal/artifacts/run/decision/diff thin routes + feature folders + full-tree CI gate (`--scope all`).
 
 In scope:
 

@@ -941,7 +941,7 @@ export function SlotWorkspaceSection({
   );
 }
 
-function FocusedSlotArtifactCard({
+export function FocusedSlotArtifactCard({
   artifactPath,
   recipeRunId,
   familyId,
@@ -1027,7 +1027,7 @@ function FocusedSlotArtifactCard({
   );
 }
 
-function focusedArtifactKindLabel(artifactPath: string): string {
+export function focusedArtifactKindLabel(artifactPath: string): string {
   if (shouldOpenFocusedArtifactAsDiff(artifactPath)) return 'diff';
   const filter = artifactFilterParamForArtifactPath(artifactPath);
   if (filter === 'recipes') return 'recipe file';
@@ -1035,11 +1035,11 @@ function focusedArtifactKindLabel(artifactPath: string): string {
   return 'evidence file';
 }
 
-function shouldOpenFocusedArtifactAsDiff(artifactPath: string): boolean {
+export function shouldOpenFocusedArtifactAsDiff(artifactPath: string): boolean {
   return Boolean(diffArtifactCandidate([{ path: artifactPath }]));
 }
 
-function ActiveRunWorkspaceCard({
+export function ActiveRunWorkspaceCard({
   run,
   recipeRuns,
   recipeRunsLoaded,
@@ -1655,7 +1655,7 @@ function ActiveRunWorkspaceCard({
   );
 }
 
-function SlotMissingGateFocusPanel({
+export function SlotMissingGateFocusPanel({
   workspace,
   artifactCount,
   recipeCount,
@@ -1768,7 +1768,7 @@ function SlotMissingGateFocusPanel({
   );
 }
 
-function SlotDiffFocusPanel({
+export function SlotDiffFocusPanel({
   diffValue,
   diffAvailable,
   artifactCount,
@@ -1842,7 +1842,7 @@ function SlotDiffFocusPanel({
   );
 }
 
-function SlotCompareFocusPanel({
+export function SlotCompareFocusPanel({
   pair,
   pairCount,
   pairIsRecipe,
@@ -1925,7 +1925,7 @@ function SlotCompareFocusPanel({
   );
 }
 
-function SlotTerminalFocusPanel({
+export function SlotTerminalFocusPanel({
   diffValue,
   artifactCount,
   recipeCount,
@@ -2004,7 +2004,7 @@ function SlotTerminalFocusPanel({
   );
 }
 
-function SlotRetroFocusPanel({
+export function SlotRetroFocusPanel({
   retro,
   runId,
   gatewayUrl,
@@ -2133,7 +2133,7 @@ function SlotRetroFocusPanel({
   );
 }
 
-function SlotBeforeAfterPriorityPanel({
+export function SlotBeforeAfterPriorityPanel({
   pair,
   pairCount,
   authHeaders,
@@ -2204,7 +2204,7 @@ function SlotBeforeAfterPriorityPanel({
   );
 }
 
-function SlotCockpitSummary({
+export function SlotCockpitSummary({
   artifactCount,
   recipeCount,
   recipeAvailable,
@@ -2374,7 +2374,7 @@ function SlotCockpitSummary({
   );
 }
 
-function familyRetrosCockpitValue(summary: SlotFamilyContextSummary | null): string {
+export function familyRetrosCockpitValue(summary: SlotFamilyContextSummary | null): string {
   if (!summary) return '-';
   if (summary.pendingRetrospectives > 0) {
     return `${summary.pendingRetrospectives} pending`;
@@ -2385,14 +2385,14 @@ function familyRetrosCockpitValue(summary: SlotFamilyContextSummary | null): str
   return 'none';
 }
 
-function gateStateLabel(gate: SlotWorkspaceGateSummary): string {
+export function gateStateLabel(gate: SlotWorkspaceGateSummary): string {
   if (!gate.resolved) return 'pending';
   if (gate.tone === 'ready') return 'ready';
   if (gate.tone === 'warning') return 'warning';
   return 'resolved';
 }
 
-function workspaceGateCockpitHint(gate: SlotWorkspaceGateSummary): string {
+export function workspaceGateCockpitHint(gate: SlotWorkspaceGateSummary): string {
   const diffValue = workspaceGateDiffMetricValue(gate);
   const artifactLabel = `${gate.artifactPaths.length} file${
     gate.artifactPaths.length === 1 ? '' : 's'
@@ -2400,7 +2400,7 @@ function workspaceGateCockpitHint(gate: SlotWorkspaceGateSummary): string {
   return diffValue ? `${artifactLabel} · ${diffValue}` : artifactLabel;
 }
 
-function workspaceRetroCockpitHint(retro: SlotWorkspaceRetroSummary): string {
+export function workspaceRetroCockpitHint(retro: SlotWorkspaceRetroSummary): string {
   const fileLabel = `${retro.artifactPaths.length} file${
     retro.artifactPaths.length === 1 ? '' : 's'
   }`;
@@ -2408,7 +2408,7 @@ function workspaceRetroCockpitHint(retro: SlotWorkspaceRetroSummary): string {
   return `${fileLabel} · ${retro.visualPairCount} before→after`;
 }
 
-function CockpitTile({
+export function CockpitTile({
   label,
   value,
   onPress,
@@ -2440,7 +2440,7 @@ function CockpitTile({
   );
 }
 
-function SlotFamilyContextPanel({
+export function SlotFamilyContextPanel({
   title = 'Family context',
   summary,
   gatewayUrl,
@@ -2612,7 +2612,7 @@ function SlotFamilyContextPanel({
   );
 }
 
-function FamilyRetroSignalAction({
+export function FamilyRetroSignalAction({
   label,
   value,
   onPress,
@@ -2637,7 +2637,7 @@ function FamilyRetroSignalAction({
   );
 }
 
-function FamilyContextMetric({
+export function FamilyContextMetric({
   label,
   value,
   onPress,
@@ -2671,7 +2671,7 @@ function FamilyContextMetric({
   return <View style={styles.familyContextMetric}>{content}</View>;
 }
 
-function decisionPresentationForRun(run: Run, decision: RunDecision): DecisionPresentation {
+export function decisionPresentationForRun(run: Run, decision: RunDecision): DecisionPresentation {
   return presentDecision({
     ...decision,
     slotId: run.slotId,
@@ -2698,7 +2698,7 @@ function decisionPresentationForRun(run: Run, decision: RunDecision): DecisionPr
   });
 }
 
-function SlotDecisionSignalsPanel({
+export function SlotDecisionSignalsPanel({
   run,
   decisions,
   onOpenDecision,
@@ -2800,7 +2800,7 @@ function SlotDecisionSignalsPanel({
   );
 }
 
-function RunEvidencePreviewPanel({
+export function RunEvidencePreviewPanel({
   artifactCount,
   artifacts,
   primaryPair,
@@ -2882,7 +2882,7 @@ function RunEvidencePreviewPanel({
   );
 }
 
-function SlotRecipeEvidencePanel({
+export function SlotRecipeEvidencePanel({
   summary,
   selectedRecipeRunId,
   selectedArtifactCount,
@@ -3050,7 +3050,7 @@ function SlotRecipeEvidencePanel({
   );
 }
 
-function WorkspaceGateCard({
+export function WorkspaceGateCard({
   gate,
   runId,
   artifactManifest,
@@ -3289,7 +3289,7 @@ function WorkspaceGateCard({
   );
 }
 
-function workspaceGateMetricAction(
+export function workspaceGateMetricAction(
   label: string,
   onOpenAllArtifacts: () => void,
   onOpenCompare?: () => void,
@@ -3302,13 +3302,13 @@ function workspaceGateMetricAction(
   return undefined;
 }
 
-function recipeStatusColor(status: RecipeRunArtifactGroup['status']): string {
+export function recipeStatusColor(status: RecipeRunArtifactGroup['status']): string {
   if (status === 'pass') return colors.statusOk;
   if (status === 'fail') return colors.statusFail;
   return colors.textMuted;
 }
 
-function HistoryRunCard({
+export function HistoryRunCard({
   entry,
   slotId,
   onFocusRun,
@@ -3453,7 +3453,7 @@ function HistoryRunCard({
   );
 }
 
-function WorkspaceMetric({
+export function WorkspaceMetric({
   label,
   value,
   compact,
@@ -3497,7 +3497,7 @@ function WorkspaceMetric({
   );
 }
 
-function WorkspaceAction({
+export function WorkspaceAction({
   label,
   value,
   primary,

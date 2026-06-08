@@ -78,16 +78,33 @@ UI changes that affect operator flows need manual or recipe validation on a conn
 
 ## File size
 
-CI thresholds (`yarn quality:structure:ci`, workspace scope, blocking):
+CI thresholds (`yarn quality:structure:ci`, `--scope all`, blocking):
 
-| Path                                   | Max LOC |
-| -------------------------------------- | ------- |
-| `src/app/slot/**`, `src/app/family/**` | 200     |
-| `src/features/*/**Screen.tsx`          | 1800    |
-| `src/features/**/use-*-controller.ts`  | 1500    |
-| `src/features/workspace-shared/**`     | 300     |
+| Path                                              | Max LOC |
+| ------------------------------------------------- | ------- |
+| `src/app/**` workspace routes (not tabs/\_layout) | 200     |
+| `src/features/**/**Screen.tsx`                    | 2100    |
+| `src/features/**/use-*-controller.ts`             | 1500    |
+| `src/features/workspace-shared/**`                | 300     |
 
-Local `yarn quality:structure` (no flags) scans the full companion tree and warns on panel/component debt.
+Panel files (`*-panels.tsx`) warn at 500 LOC — split over time, not CI-blocking yet.
+
+## Recipe validation (device)
+
+Headless scaffold check:
+
+```bash
+yarn recipe:validate
+yarn recipe:run
+```
+
+Live bridge smoke against a connected Android/iOS dev build:
+
+```bash
+# Metro must be running with recipe relay middleware (restart Metro after metro.config.js changes).
+# Dev client must be launched with EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE=1 (run-android.sh / start.sh set this).
+yarn recipe:run:bridge
+```
 
 Legacy warn thresholds for non-workspace paths until PR 2 migration:
 

@@ -1,0 +1,1155 @@
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, type LayoutChangeEvent, Pressable, Text, View } from 'react-native';
+import Animated, {
+  Extrapolation,
+  interpolate,
+  runOnJS,
+  useAnimatedReaction,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import {
+  Events,
+  isTerminalRunStatus,
+  Methods,
+  type RecipeRunArtifactGroup,
+  type Run,
+  type RunGetResult,
+  type RunRecipeRunsForRunResult,
+  type RunReplayStepResult,
+  type RunStep,
+  type TaskProgressResult,
+  type TaskProgressStructured,
+  type TaskProgressUpdatedPayload,
+} from '@farmslot/protocol';
+
+import { RunPipelineFull } from '../../components/RunPipeline';
+import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
+import {
+  artifactsForRecipeRun,
+  DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+  extractRunArtifactManifest,
+  resolveRecipeRunSelection,
+} from '../../lib/artifact-url';
+import { diffArtifactCandidate } from '../../lib/diff';
+import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
+import { runRefreshEventMatches } from '../../lib/run-refresh';
+import {
+  runWorkspaceDiffValue,
+  selectSlotCompareTarget,
+  summarizeSlotWorkspaceGates,
+  summarizeSlotWorkspaceRetro,
+} from '../../lib/slot-workspace';
+import {
+  effectiveTaskProgressForRun,
+  isWorkerProgressActive,
+  shouldAcceptTaskProgressUpdate,
+} from '../../lib/task-progress';
+import { baseStyles, colors, spacing } from '../../lib/theme';
+import { buildFailedStepDiagnosticDraft } from '../../lib/workspace-copilot';
+import {
+  selectPrimaryWorkspaceDecision,
+  selectReadyWorkspaceDecision,
+  selectRetrospectiveWorkspaceDecision,
+  selectReviewGateWorkspaceDecision,
+  workspaceDecisionKind,
+} from '../../lib/workspace-decisions';
+import { workspaceGateNavMeta, workspaceRetroNavMeta } from '../../lib/workspace-nav-meta';
+import {
+  artifactFilterParamForArtifactPath,
+  artifactFilterParamForWorkspaceNav,
+  decisionWorkspaceRouteParams,
+  familySectionRouteContextParams,
+  recipeWorkspaceParam,
+  shouldPreserveArtifactForRecipeContext,
+  targetWorkspaceForArtifactRoute,
+  targetWorkspaceRouteContextParams,
+  workspaceNavCurrentForRoute,
+  workspaceRouteContextParams,
+} from '../../lib/workspace-navigation';
+import {
+  type WorkspaceStickyNavLayout,
+  workspaceStickyNavThreshold,
+} from '../../lib/workspace-sticky-nav';
+import { useConnectionStore } from '../../store/connection';
+import { useRunStore } from '../../store/runs';
+import { formatDuration } from '../workspace-shared/format';
+
+import {
+  ArtifactsSection,
+  decisionPresentationForRun,
+  DecisionSummaryCard,
+  MetricItem,
+  PipelineStepCard,
+  RecipeRunsSection,
+  routeParamString,
+  RunFocusedArtifactCard,
+  RunReviewWorkspaceSummary,
+} from './components/run-detail-panels';
+import { runDetailStyles as styles } from './styles/run-detail.styles';
+
+const STATUS_COLORS: Record<string, string> = {
+  done: colors.statusOk,
+  failed: colors.statusFail,
+  cancelled: colors.statusWarn,
+  monitoring: colors.lifecycleWorking,
+  preparing: colors.lifecycleDispatching,
+  dispatching: colors.lifecycleDispatching,
+  'writing-task': colors.accent,
+  grading: colors.accent,
+  'slot-finding': colors.accent,
+  paused: colors.statusWarn,
+};
+
+// Gateway artifact text cache TTL is 5s; delayed refresh lets typed manifests written
+// at completion replace the initial live-run placeholder/missing-file cache entry.
+const RECIPE_COMPLETION_REFRESH_DELAY_MS = 5500;
+
+export default function RunDetailScreen() {
+  const { id, recipeRun, artifact, workspace, decisionKind } = useLocalSearchParams<{
+    id: string;
+    recipeRun?: string | string[];
+    artifact?: string | string[];
+    workspace?: string | string[];
+    decisionKind?: string | string[];
+  }>();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const client = useConnectionStore((s) => s.client);
+  const connectionStatus = useConnectionStore((s) => s.status);
+  const gatewayUrl = useConnectionStore((s) => s.gatewayUrl);
+  const artifactAuthHeaders = useConnectionStore((s) => s.activeProfileHttpAuthHeaders);
+  const storeRun = useRunStore((s) => s.runs.find((r) => r.id === id));
+  const upsertRun = useRunStore((s) => s.upsertRun);
+  const [run, setRun] = useState<Run | null>(storeRun ?? null);
+  const [recipeRuns, setRecipeRuns] = useState<RecipeRunArtifactGroup[]>([]);
+  const [recipeRunsLoaded, setRecipeRunsLoaded] = useState(false);
+  const [selectedRecipeRunId, setSelectedRecipeRunId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
+  const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
+  const [expandedStep, setExpandedStep] = useState<string | null>(null);
+  const [replayingStepName, setReplayingStepName] = useState<string | null>(null);
+  const recipeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [navLayout, setNavLayout] = useState<WorkspaceStickyNavLayout | null>(null);
+  const [stickyNavVisible, setStickyNavVisibleState] = useState(false);
+  const stickyNavVisibleRef = useRef(false);
+  const scrollY = useSharedValue(0);
+
+  const requestedRecipeRunId = Array.isArray(recipeRun)
+    ? (recipeRun[0] ?? null)
+    : (recipeRun ?? null);
+  const requestedRecipeRunIdRef = useRef<string | null>(requestedRecipeRunId);
+  const requestedArtifactPath = Array.isArray(artifact) ? (artifact[0] ?? '') : (artifact ?? '');
+  const workspaceRouteContext = useMemo(
+    () =>
+      workspaceRouteContextParams(
+        routeParamString(workspace),
+        routeParamString(decisionKind),
+        'run',
+      ),
+    [decisionKind, workspace],
+  );
+  const diffRouteContext = useMemo(
+    () => targetWorkspaceRouteContextParams('diff', workspaceRouteContext.decisionKind),
+    [workspaceRouteContext.decisionKind],
+  );
+  const targetRouteContext = useCallback(
+    (targetWorkspace: Parameters<typeof targetWorkspaceRouteContextParams>[0]) =>
+      targetWorkspaceRouteContextParams(targetWorkspace, workspaceRouteContext.decisionKind),
+    [workspaceRouteContext.decisionKind],
+  );
+
+  const setStickyNavVisible = useCallback((visible: boolean) => {
+    if (stickyNavVisibleRef.current === visible) return;
+    stickyNavVisibleRef.current = visible;
+    setStickyNavVisibleState(visible);
+  }, []);
+  const stickyThreshold = workspaceStickyNavThreshold(navLayout);
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollY.value = event.contentOffset.y;
+    },
+  });
+  const stickyNavStyle = useAnimatedStyle(() => {
+    const progress = interpolate(
+      scrollY.value,
+      [stickyThreshold, stickyThreshold + 40],
+      [0, 1],
+      Extrapolation.CLAMP,
+    );
+    return {
+      opacity: progress,
+      transform: [{ translateY: interpolate(progress, [0, 1], [-8, 0], Extrapolation.CLAMP) }],
+    };
+  }, [stickyThreshold]);
+
+  useAnimatedReaction(
+    () => scrollY.value > stickyThreshold + 8,
+    (visible, previous) => {
+      if (visible !== previous) runOnJS(setStickyNavVisible)(visible);
+    },
+    [setStickyNavVisible, stickyThreshold],
+  );
+
+  const rememberNavLayout = useCallback((event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    setNavLayout({ y, height });
+  }, []);
+
+  useEffect(() => {
+    requestedRecipeRunIdRef.current = requestedRecipeRunId;
+  }, [requestedRecipeRunId]);
+
+  useEffect(
+    () => () => {
+      if (recipeRefreshTimerRef.current) clearTimeout(recipeRefreshTimerRef.current);
+    },
+    [],
+  );
+
+  const loadRecipeRuns = useCallback(
+    (selectionHint: string | null) => {
+      if (!client || !id) {
+        setRecipeRunsLoaded(false);
+        return Promise.resolve();
+      }
+      setRecipeRunsLoaded(false);
+      return client
+        .request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', { runId: id })
+        .then((result) => {
+          setRecipeRuns(result.recipeRuns);
+          setSelectedRecipeRunId(
+            selectionHint === DECISION_EVIDENCE_RECIPE_RUN_PARAM
+              ? null
+              : resolveRecipeRunSelection(
+                  result.recipeRuns,
+                  selectionHint,
+                  result.selectedRecipeRunId,
+                ),
+          );
+        })
+        .finally(() => setRecipeRunsLoaded(true));
+    },
+    [client, id],
+  );
+
+  const loadRun = useCallback(() => {
+    if (!client || !id) return Promise.resolve();
+    setError(null);
+    return client
+      .request<RunGetResult>('run.get', { runId: id })
+      .then((r) => setRun(r.run))
+      .catch((err: Error) => setError(`Failed to load run: ${err.message}`));
+  }, [client, id]);
+
+  useEffect(() => {
+    void loadRun();
+  }, [loadRun]);
+
+  const refreshRecipeState = useCallback(
+    (recipeRequestId?: string) => {
+      // Prefer the live group for the completed request, then let
+      // resolveRecipeRunSelection fall back to the gateway-selected group if the
+      // live group was promoted/renamed while the delayed refresh waited out the
+      // artifact text cache.
+      const selectionHint = recipeRequestId ? `live-run:${recipeRequestId}` : null;
+      void loadRun();
+      void loadRecipeRuns(selectionHint).catch((err: Error) =>
+        setError(`Failed to load recipe runs: ${err.message}`),
+      );
+      if (recipeRefreshTimerRef.current) clearTimeout(recipeRefreshTimerRef.current);
+      recipeRefreshTimerRef.current = setTimeout(() => {
+        recipeRefreshTimerRef.current = null;
+        void loadRun();
+        void loadRecipeRuns(selectionHint).catch((err: Error) =>
+          setError(`Failed to load recipe runs: ${err.message}`),
+        );
+      }, RECIPE_COMPLETION_REFRESH_DELAY_MS);
+    },
+    [loadRecipeRuns, loadRun],
+  );
+
+  useEffect(() => {
+    loadRecipeRuns(requestedRecipeRunId).catch((err: Error) =>
+      setError(`Failed to load recipe runs: ${err.message}`),
+    );
+  }, [loadRecipeRuns, requestedRecipeRunId]);
+
+  useEffect(() => {
+    if (!client || !id) return;
+    const handleRunEvent = (payload: unknown, reason: string) => {
+      const event = payload as { run?: Run; runId?: string };
+      if (!runRefreshEventMatches(id, event)) return;
+      if (event.run?.id === id) {
+        setRun(event.run);
+        upsertRun(event.run);
+      } else {
+        void loadRun();
+      }
+      loadRecipeRuns(requestedRecipeRunIdRef.current).catch((err: Error) =>
+        setError(`Failed to refresh recipe runs after ${reason}: ${err.message}`),
+      );
+    };
+    const unsubscribers = [
+      client.subscribe(Events.RUN_UPDATED, (payload) => handleRunEvent(payload, 'run.updated')),
+      client.subscribe(Events.RUN_COMPLETED, (payload) => handleRunEvent(payload, 'run.completed')),
+      client.subscribe(Events.RUN_STEP_COMPLETED, (payload) =>
+        handleRunEvent(payload, 'run.step.completed'),
+      ),
+      client.subscribe(Events.RUN_DECISION_NEW, (payload) =>
+        handleRunEvent(payload, 'run.decision.new'),
+      ),
+      client.subscribe(Events.RUN_DECISION_RESOLVED, (payload) =>
+        handleRunEvent(payload, 'run.decision.resolved'),
+      ),
+      client.subscribe(Events.RUN_DECISION_UPDATED, (payload) =>
+        handleRunEvent(payload, 'run.decision.updated'),
+      ),
+    ];
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [client, id, loadRecipeRuns, loadRun, upsertRun]);
+
+  const fetchTaskProgress = useCallback(() => {
+    if (!client || !run?.slotId) return Promise.resolve();
+    return client
+      .request<TaskProgressResult>(Methods.TASK_PROGRESS, { slotId: run.slotId, runId: run.id })
+      .then((result) => {
+        setTaskProgress(result.structured ?? null);
+        setTaskProgressError(null);
+      })
+      .catch((err: Error) => {
+        setTaskProgressError(`Task progress unavailable: ${err.message}`);
+      });
+  }, [client, run?.id, run?.slotId]);
+
+  useEffect(() => {
+    if (!client || !run) return;
+    const unsub = client.subscribe(Events.TASK_PROGRESS_UPDATED, (payload) => {
+      const update = payload as TaskProgressUpdatedPayload;
+      if (!shouldAcceptTaskProgressUpdate(run, update)) return;
+      setTaskProgress(update.progress.structured ?? null);
+      setTaskProgressError(null);
+    });
+    return unsub;
+  }, [client, run]);
+
+  useEffect(() => {
+    if (!isWorkerProgressActive(run)) {
+      setTaskProgress(null);
+      setTaskProgressError(null);
+      return;
+    }
+    void fetchTaskProgress();
+    const timer = setInterval(() => {
+      void fetchTaskProgress();
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [fetchTaskProgress, run]);
+
+  const handleSelectRecipeRun = useCallback(
+    (recipeRunId: string | null) => {
+      setSelectedRecipeRunId(recipeRunId);
+      router.setParams({ recipeRun: recipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM });
+    },
+    [router],
+  );
+
+  const goBackOrRuns = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/(tabs)/runs');
+  }, [router]);
+
+  const replayStep = useCallback(
+    async (stepName: string, skipPrepare?: boolean) => {
+      if (!client || !run) return;
+      setReplayingStepName(stepName);
+      setError(null);
+      try {
+        const result = await client.request<RunReplayStepResult>(Methods.RUN_REPLAY_STEP, {
+          runId: run.id,
+          stepName,
+          ...(skipPrepare ? { skipPrepare: true } : {}),
+        });
+        setRun(result.run);
+        upsertRun(result.run);
+        setExpandedStep(null);
+      } catch (err) {
+        setError(`Failed to retry from ${stepName}: ${(err as Error).message}`);
+      } finally {
+        setReplayingStepName(null);
+      }
+    },
+    [client, run, upsertRun],
+  );
+
+  const confirmReplayStep = useCallback(
+    (stepName: string, skipPrepare?: boolean) => {
+      if (!run) return;
+      Alert.alert(
+        skipPrepare ? 'Warm retry from here?' : 'Retry from here?',
+        skipPrepare
+          ? `Replay "${stepName}" and subsequent steps for ${run.ticketOrPr}, reusing the warm slot.`
+          : `Replay "${stepName}" and all subsequent steps for ${run.ticketOrPr}.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: skipPrepare ? 'Warm retry' : 'Retry',
+            style: 'destructive',
+            onPress: () => void replayStep(stepName, skipPrepare),
+          },
+        ],
+      );
+    },
+    [replayStep, run],
+  );
+
+  const openFailedStepDiagnosis = useCallback(
+    (step: RunStep) => {
+      if (!run) return;
+      router.push({
+        pathname: '/(tabs)/copilot',
+        params: {
+          draft: buildFailedStepDiagnosticDraft({
+            runId: run.id,
+            ticketOrPr: run.ticketOrPr,
+            flowType: run.flowType,
+            slotId: run.slotId,
+            stepName: step.name,
+            stepDetail: step.detail,
+          }),
+        },
+      });
+    },
+    [router, run],
+  );
+
+  const activeTaskProgress = useMemo(
+    () => effectiveTaskProgressForRun(run, taskProgress) ?? null,
+    [run, taskProgress],
+  );
+  const workspaceGates = useMemo(() => (run ? summarizeSlotWorkspaceGates(run) : []), [run]);
+  const activeDiffValue = useMemo(
+    () => (run ? runWorkspaceDiffValue(run, workspaceGates[0] ?? null) : '-'),
+    [run, workspaceGates],
+  );
+  const selectedRecipeRun = useMemo(
+    () => recipeRuns.find((group) => group.id === selectedRecipeRunId) ?? null,
+    [recipeRuns, selectedRecipeRunId],
+  );
+  const workspaceRecipeRunId =
+    requestedRecipeRunId === DECISION_EVIDENCE_RECIPE_RUN_PARAM
+      ? DECISION_EVIDENCE_RECIPE_RUN_PARAM
+      : selectedRecipeRunId;
+  const selectedRecipeArtifactCount = selectedRecipeRun
+    ? artifactsForRecipeRun(selectedRecipeRun).length
+    : 0;
+  const runArtifactCount = run ? extractRunArtifactManifest(run).length : null;
+  const totalRecipeArtifactCount = useMemo(
+    () => recipeRuns.reduce((sum, group) => sum + artifactsForRecipeRun(group).length, 0),
+    [recipeRuns],
+  );
+  const recipeAvailable = recipeRunsLoaded ? totalRecipeArtifactCount > 0 : undefined;
+  const visibleRecipeArtifactCount = recipeRunsLoaded
+    ? totalRecipeArtifactCount || selectedRecipeArtifactCount
+    : null;
+  const compareTarget = useMemo(
+    () =>
+      run
+        ? selectSlotCompareTarget({
+            runArtifacts: extractRunArtifactManifest(run),
+            recipeRuns,
+            selectedRecipeRunId,
+          })
+        : null,
+    [recipeRuns, run, selectedRecipeRunId],
+  );
+
+  if (!run) {
+    return (
+      <View
+        style={[baseStyles.container, styles.center, { paddingBottom: insets.bottom + spacing.xl }]}
+      >
+        <Text style={baseStyles.textSecondary}>
+          {client && connectionStatus === 'connected'
+            ? 'Loading run...'
+            : 'Connect to the gateway to load this run.'}
+        </Text>
+        <Pressable style={styles.backFallbackButton} onPress={goBackOrRuns}>
+          <Text style={styles.backFallbackText}>Back to runs</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const statusColor = STATUS_COLORS[run.status] ?? colors.textMuted;
+  const replayAllowed =
+    ['failed', 'done', 'cancelled'].includes(run.status) &&
+    Boolean(client) &&
+    connectionStatus === 'connected';
+  const primaryDecision = selectPrimaryWorkspaceDecision(run);
+  const readyDecision = selectReadyWorkspaceDecision(run);
+  const reviewGateDecision = selectReviewGateWorkspaceDecision(run);
+  const retroDecision = selectRetrospectiveWorkspaceDecision(run);
+  const readyGateForNav = workspaceGates.find((gate) => gate.label === 'Ready workspace') ?? null;
+  const reviewGateForNav =
+    workspaceGates.find(
+      (gate) => gate.label === 'Review workspace' || gate.label === 'No-change review',
+    ) ?? null;
+  const retroSummaryForNav = summarizeSlotWorkspaceRetro(run);
+  const focusedArtifactPath = requestedArtifactPath.trim() || null;
+  const focusedArtifactIsDiff = Boolean(
+    focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
+  );
+  const workspaceNavProps = {
+    dense: true,
+    current: workspaceNavCurrentForRoute('run', workspaceRouteContext.workspace),
+    routeWorkspace: workspaceRouteContext.workspace,
+    routeDecisionKind: workspaceRouteContext.decisionKind,
+    decisionId: primaryDecision?.id ?? null,
+    decisionKind: workspaceDecisionKind(primaryDecision),
+    readyDecisionId: readyDecision?.id ?? null,
+    reviewDecisionId: reviewGateDecision?.id ?? null,
+    retroDecisionId: retroDecision?.id ?? null,
+    readyMeta: workspaceGateNavMeta(readyGateForNav),
+    reviewMeta: workspaceGateNavMeta(reviewGateForNav),
+    retroMeta: workspaceRetroNavMeta(retroSummaryForNav),
+    familyId: run.familyId,
+    project: run.project,
+    prNumber: run.prNumber,
+    prRepo: prRepoFromWorkspaceSource(run, run.prNumber ?? null),
+    recipeRunId: workspaceRecipeRunId,
+    recipeAvailable,
+    recipeArtifactCount: visibleRecipeArtifactCount,
+    diffAvailable: activeDiffValue !== '-',
+    artifactCount: runArtifactCount,
+    visualPairCount: compareTarget?.pairCount ?? 0,
+    compareArtifactPath: compareTarget?.artifactPath ?? null,
+    compareRecipeRunId: compareTarget?.recipeRunId,
+    artifactPath: focusedArtifactPath,
+    slotId: run.slotId,
+    runId: run.id,
+  };
+  const openRunEvidenceArtifact = (
+    artifactPath?: string,
+    recipeRunId?: string | null,
+    filter?: ReturnType<typeof artifactFilterParamForWorkspaceNav>,
+  ) => {
+    const recipeRunParam = recipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM;
+    if (artifactPath && diffArtifactCandidate([{ path: artifactPath }])) {
+      router.push({
+        pathname: '/diff/[runId]',
+        params: {
+          runId: run.id,
+          ...diffRouteContext,
+          path: artifactPath,
+          recipeRun: recipeRunParam,
+        },
+      });
+      return;
+    }
+    const targetFilter =
+      filter ??
+      (recipeRunParam !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+        ? artifactFilterParamForWorkspaceNav('recipe')
+        : artifactPath
+          ? (artifactFilterParamForArtifactPath(artifactPath) ??
+            artifactFilterParamForWorkspaceNav('review'))
+          : artifactFilterParamForWorkspaceNav('review'));
+    router.push({
+      pathname: '/artifacts/[runId]',
+      params: {
+        runId: run.id,
+        ...targetRouteContext(targetWorkspaceForArtifactRoute(recipeRunParam, targetFilter)),
+        recipeRun: recipeRunParam,
+        ...(targetFilter ? { filter: targetFilter } : {}),
+        ...(artifactPath ? { artifact: artifactPath } : {}),
+      },
+    });
+  };
+
+  return (
+    <View style={baseStyles.container}>
+      <Animated.View
+        pointerEvents={stickyNavVisible && navLayout !== null ? 'auto' : 'none'}
+        style={[styles.stickyWorkspaceNav, stickyNavStyle]}
+      >
+        <RunWorkspaceNav {...workspaceNavProps} />
+      </Animated.View>
+      <Animated.ScrollView
+        onScroll={scrollHandler}
+        scrollEventThrottle={16}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: styles.scrollContent.paddingBottom + insets.bottom },
+        ]}
+      >
+        <View style={styles.headerCard}>
+          <View style={styles.row}>
+            <View style={[styles.flowBadge, { backgroundColor: colors.accent + '30' }]}>
+              <Text style={[styles.flowText, { color: colors.accent }]}>{run.flowType}</Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: statusColor + '30' }]}>
+              <Text style={[styles.statusText, { color: statusColor }]}>{run.status}</Text>
+            </View>
+          </View>
+          <Text style={styles.ticketText}>{run.ticketOrPr}</Text>
+          {run.summary && <Text style={baseStyles.textSecondary}>{run.summary}</Text>}
+          <View style={[styles.row, { marginTop: spacing.lg }]}>
+            {run.slotId && <Text style={baseStyles.textMuted}>Slot: {run.slotId}</Text>}
+            <Text style={baseStyles.textMuted}>{formatDuration(run.metrics?.durationMs)}</Text>
+          </View>
+        </View>
+
+        <View onLayout={rememberNavLayout}>
+          <RunWorkspaceNav {...workspaceNavProps} />
+        </View>
+
+        {focusedArtifactPath ? (
+          <RunFocusedArtifactCard
+            artifactPath={focusedArtifactPath}
+            recipeRunId={workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM}
+            slotId={run.slotId}
+            familyId={run.familyId}
+            prNumber={run.prNumber}
+            recipeAvailable={recipeAvailable}
+            diffAvailable={activeDiffValue !== '-' || Boolean(run.slotId)}
+            diffValue={activeDiffValue !== '-' ? activeDiffValue : run.slotId ? 'workspace' : '-'}
+            comparePairCount={compareTarget?.pairCount ?? 0}
+            onOpenArtifact={() =>
+              openRunEvidenceArtifact(
+                focusedArtifactPath,
+                workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+              )
+            }
+            onOpenFiles={() =>
+              router.push({
+                pathname: '/artifacts/[runId]',
+                params: {
+                  runId: run.id,
+                  ...targetRouteContext(
+                    targetWorkspaceForArtifactRoute(
+                      workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                      artifactFilterParamForArtifactPath(focusedArtifactPath) ??
+                        (workspaceRecipeRunId &&
+                        workspaceRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+                          ? artifactFilterParamForWorkspaceNav('recipe')
+                          : artifactFilterParamForWorkspaceNav('review')),
+                    ),
+                  ),
+                  recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                  artifact: focusedArtifactPath,
+                  filter:
+                    artifactFilterParamForArtifactPath(focusedArtifactPath) ??
+                    (workspaceRecipeRunId &&
+                    workspaceRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+                      ? artifactFilterParamForWorkspaceNav('recipe')
+                      : artifactFilterParamForWorkspaceNav('review')),
+                },
+              })
+            }
+            onOpenRecipe={() => {
+              const recipeTarget = recipeWorkspaceParam(workspaceRecipeRunId);
+              router.push({
+                pathname: '/artifacts/[runId]',
+                params: {
+                  runId: run.id,
+                  ...targetRouteContext('recipe'),
+                  recipeRun: recipeTarget,
+                  filter: artifactFilterParamForWorkspaceNav('recipe'),
+                  ...(shouldPreserveArtifactForRecipeContext(recipeTarget, focusedArtifactPath)
+                    ? { artifact: focusedArtifactPath }
+                    : {}),
+                },
+              });
+            }}
+            onOpenDiff={() =>
+              activeDiffValue === '-' && run.slotId
+                ? router.push({
+                    pathname: '/diff/slot/[slotId]',
+                    params: {
+                      slotId: run.slotId,
+                      ...diffRouteContext,
+                      ...(focusedArtifactIsDiff ? { path: focusedArtifactPath } : {}),
+                    },
+                  })
+                : router.push({
+                    pathname: '/diff/[runId]',
+                    params: {
+                      runId: run.id,
+                      ...diffRouteContext,
+                      ...(focusedArtifactIsDiff ? { path: focusedArtifactPath } : {}),
+                      recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                    },
+                  })
+            }
+            onOpenCompare={() => {
+              if (!compareTarget) return;
+              openRunEvidenceArtifact(
+                compareTarget.artifactPath,
+                compareTarget.recipeRunId,
+                artifactFilterParamForWorkspaceNav('compare'),
+              );
+            }}
+            onOpenSlot={() => {
+              if (!run.slotId) return;
+              router.push({
+                pathname: '/slot/[id]',
+                params: {
+                  id: run.slotId,
+                  ...targetRouteContext('slot'),
+                  runId: run.id,
+                  recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                  artifact: focusedArtifactPath,
+                },
+              });
+            }}
+            onOpenTerminal={() => {
+              if (!run.slotId) return;
+              router.push({
+                pathname: '/terminal/[slotId]',
+                params: {
+                  slotId: run.slotId,
+                  ...targetRouteContext('terminal'),
+                  runId: run.id,
+                  details: '1',
+                  recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                  artifact: focusedArtifactPath,
+                },
+              });
+            }}
+            onOpenFamily={() => {
+              if (!run.familyId) return;
+              router.push({
+                pathname: '/family/[familyId]',
+                params: {
+                  familyId: run.familyId,
+                  project: run.project,
+                  ...familySectionRouteContextParams('focus', workspaceRouteContext.decisionKind),
+                  runId: run.id,
+                  recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                  artifact: focusedArtifactPath,
+                  section: 'focus',
+                },
+              });
+            }}
+            onOpenPR={() => {
+              if (!run.prNumber) return;
+              const prRepo = prRepoFromWorkspaceSource(run, run.prNumber);
+              router.push({
+                pathname: '/(tabs)/prs',
+                params: {
+                  pr: String(run.prNumber),
+                  ...targetRouteContext('pr'),
+                  ...(prRepo ? { repo: prRepo } : {}),
+                },
+              });
+            }}
+          />
+        ) : null}
+
+        <RunReviewWorkspaceSummary
+          run={run}
+          gates={workspaceGates}
+          gatewayUrl={gatewayUrl}
+          artifactAuthHeaders={artifactAuthHeaders}
+          recipeArtifactCount={visibleRecipeArtifactCount}
+          recipeAvailable={recipeAvailable}
+          recipeRuns={recipeRuns}
+          selectedRecipeRunId={selectedRecipeRunId}
+          compareTarget={compareTarget}
+          activeTaskProgress={isWorkerProgressActive(run) ? activeTaskProgress : null}
+          taskProgressError={taskProgressError}
+          onOpenDecision={(decisionId) =>
+            router.push({
+              pathname: '/decision/[id]',
+              params: {
+                id: decisionId,
+                ...decisionWorkspaceRouteParams(
+                  workspaceDecisionKind(
+                    run.decisions.find((decision) => decision.id === decisionId),
+                  ),
+                ),
+                runId: run.id,
+                ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+                ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+              },
+            })
+          }
+          onOpenArtifacts={(artifactPath) =>
+            openRunEvidenceArtifact(artifactPath, DECISION_EVIDENCE_RECIPE_RUN_PARAM)
+          }
+          onOpenRecipeArtifact={(artifactPath, recipeRunId) =>
+            openRunEvidenceArtifact(
+              artifactPath,
+              recipeRunId,
+              artifactFilterParamForWorkspaceNav('compare'),
+            )
+          }
+          onOpenRecipe={() => {
+            const recipeTarget = recipeWorkspaceParam(workspaceRecipeRunId);
+            router.push({
+              pathname: '/artifacts/[runId]',
+              params: {
+                runId: run.id,
+                ...targetRouteContext('recipe'),
+                recipeRun: recipeTarget,
+                filter: artifactFilterParamForWorkspaceNav('recipe'),
+                ...(shouldPreserveArtifactForRecipeContext(recipeTarget, focusedArtifactPath)
+                  ? { artifact: focusedArtifactPath }
+                  : {}),
+              },
+            });
+          }}
+          onOpenDiff={() =>
+            activeDiffValue === '-' && run.slotId
+              ? router.push({
+                  pathname: '/diff/slot/[slotId]',
+                  params: { slotId: run.slotId, ...diffRouteContext },
+                })
+              : router.push({
+                  pathname: '/diff/[runId]',
+                  params: {
+                    runId: run.id,
+                    ...diffRouteContext,
+                    ...(focusedArtifactIsDiff && focusedArtifactPath
+                      ? { path: focusedArtifactPath }
+                      : {}),
+                    recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                  },
+                })
+          }
+          onOpenFamily={() =>
+            run.familyId
+              ? router.push({
+                  pathname: '/family/[familyId]',
+                  params: {
+                    familyId: run.familyId,
+                    project: run.project,
+                    ...familySectionRouteContextParams('focus', workspaceRouteContext.decisionKind),
+                    runId: run.id,
+                    ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+                    ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+                    section: 'focus',
+                  },
+                })
+              : undefined
+          }
+          onOpenFamilyRetros={() =>
+            run.familyId
+              ? router.push({
+                  pathname: '/family/[familyId]',
+                  params: {
+                    familyId: run.familyId,
+                    project: run.project,
+                    ...familySectionRouteContextParams(
+                      'retros',
+                      workspaceRouteContext.decisionKind,
+                    ),
+                    runId: run.id,
+                    ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+                    ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+                    section: 'retros',
+                  },
+                })
+              : undefined
+          }
+          onOpenTerminal={() =>
+            run.slotId
+              ? router.push({
+                  pathname: '/terminal/[slotId]',
+                  params: {
+                    slotId: run.slotId,
+                    ...targetRouteContext('terminal'),
+                    runId: run.id,
+                    details: '1',
+                    ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+                    ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+                  },
+                })
+              : undefined
+          }
+          onOpenSlot={() =>
+            run.slotId
+              ? router.push({
+                  pathname: '/slot/[id]',
+                  params: {
+                    id: run.slotId,
+                    ...targetRouteContext('slot'),
+                    runId: run.id,
+                    recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                    ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+                  },
+                })
+              : undefined
+          }
+          onOpenPR={() => {
+            if (!run.prNumber) return;
+            const prRepo = prRepoFromWorkspaceSource(run, run.prNumber);
+            router.push({
+              pathname: '/(tabs)/prs',
+              params: {
+                pr: String(run.prNumber),
+                ...targetRouteContext('pr'),
+                ...(prRepo ? { repo: prRepo } : {}),
+              },
+            });
+          }}
+          onOpenCompareTarget={() => {
+            if (!compareTarget) return;
+            openRunEvidenceArtifact(
+              compareTarget.artifactPath,
+              compareTarget.recipeRunId,
+              artifactFilterParamForWorkspaceNav('compare'),
+            );
+          }}
+        />
+
+        {/* Decisions */}
+        {(run.decisions ?? []).length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Decisions</Text>
+            {(run.decisions ?? []).map((d) => (
+              <DecisionSummaryCard
+                key={d.id}
+                presentation={decisionPresentationForRun(run, d)}
+                resolvedAction={d.resolvedAction}
+                resolvedAt={d.resolvedAt}
+                onPress={() =>
+                  router.push({
+                    pathname: '/decision/[id]',
+                    params: {
+                      id: d.id,
+                      ...decisionWorkspaceRouteParams(workspaceDecisionKind(d)),
+                      runId: run.id,
+                      ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+                      ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+                    },
+                  })
+                }
+                onOpenArtifacts={() =>
+                  router.push({
+                    pathname: '/artifacts/[runId]',
+                    params: {
+                      runId: run.id,
+                      ...targetRouteContext(
+                        workspaceRecipeRunId &&
+                          workspaceRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+                          ? 'recipe'
+                          : 'artifacts',
+                      ),
+                      recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                      filter:
+                        workspaceRecipeRunId &&
+                        workspaceRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+                          ? artifactFilterParamForWorkspaceNav('recipe')
+                          : artifactFilterParamForWorkspaceNav('review'),
+                      ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+                    },
+                  })
+                }
+                onOpenDiff={() =>
+                  activeDiffValue === '-' && run.slotId
+                    ? router.push({
+                        pathname: '/diff/slot/[slotId]',
+                        params: {
+                          slotId: run.slotId,
+                          ...diffRouteContext,
+                          ...(focusedArtifactIsDiff && focusedArtifactPath
+                            ? { path: focusedArtifactPath }
+                            : {}),
+                        },
+                      })
+                    : router.push({
+                        pathname: '/diff/[runId]',
+                        params: {
+                          runId: run.id,
+                          ...diffRouteContext,
+                          recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                          ...(focusedArtifactIsDiff && focusedArtifactPath
+                            ? { path: focusedArtifactPath }
+                            : {}),
+                        },
+                      })
+                }
+                onOpenCompare={(artifactPath) => {
+                  if (artifactPath) {
+                    openRunEvidenceArtifact(artifactPath, DECISION_EVIDENCE_RECIPE_RUN_PARAM);
+                    return;
+                  }
+                  if (compareTarget) {
+                    openRunEvidenceArtifact(
+                      compareTarget.artifactPath,
+                      compareTarget.recipeRunId,
+                      artifactFilterParamForWorkspaceNav('compare'),
+                    );
+                    return;
+                  }
+                  openRunEvidenceArtifact(undefined, DECISION_EVIDENCE_RECIPE_RUN_PARAM);
+                }}
+              />
+            ))}
+          </View>
+        )}
+
+        {/* Step Timeline */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Pipeline</Text>
+          {(run.steps ?? []).length > 0 && (
+            <RunPipelineFull
+              steps={run.steps}
+              runStatus={run.status}
+              onStepPress={(_name, i) =>
+                setExpandedStep((current) => {
+                  const key = `${run.steps[i].name}-${i}`;
+                  return current === key ? null : key;
+                })
+              }
+            />
+          )}
+          {(run.steps ?? []).map((step, i) => (
+            <PipelineStepCard
+              key={`${step.name}-${i}`}
+              step={step}
+              index={i}
+              expanded={expandedStep === `${step.name}-${i}`}
+              allowReplay={replayAllowed && !replayingStepName}
+              replaying={replayingStepName === step.name}
+              onReplayStep={(skipPrepare) => confirmReplayStep(step.name, skipPrepare)}
+              onDiagnoseFailure={() => openFailedStepDiagnosis(step)}
+              onOpenArtifact={(artifactPath) => {
+                if (diffArtifactCandidate([{ path: artifactPath }])) {
+                  router.push({
+                    pathname: '/diff/[runId]',
+                    params: {
+                      runId: run.id,
+                      ...diffRouteContext,
+                      path: artifactPath,
+                      recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                    },
+                  });
+                  return;
+                }
+                router.push({
+                  pathname: '/artifacts/[runId]',
+                  params: {
+                    runId: run.id,
+                    ...targetRouteContext(
+                      targetWorkspaceForArtifactRoute(
+                        DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                        artifactFilterParamForArtifactPath(artifactPath) ??
+                          artifactFilterParamForWorkspaceNav('review'),
+                      ),
+                    ),
+                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                    artifact: artifactPath,
+                    filter:
+                      artifactFilterParamForArtifactPath(artifactPath) ??
+                      artifactFilterParamForWorkspaceNav('review'),
+                  },
+                });
+              }}
+              onToggle={() =>
+                setExpandedStep((current) =>
+                  current === `${step.name}-${i}` ? null : `${step.name}-${i}`,
+                )
+              }
+            />
+          ))}
+        </View>
+
+        {/* Artifacts */}
+        <RecipeRunsSection
+          run={run}
+          client={client}
+          gatewayUrl={gatewayUrl}
+          artifactAuthHeaders={artifactAuthHeaders}
+          recipeRuns={recipeRuns}
+          selectedRecipeRunId={selectedRecipeRunId}
+          onSelectRecipeRun={handleSelectRecipeRun}
+          onViewArtifacts={(recipeRunId) =>
+            router.push({
+              pathname: '/artifacts/[runId]',
+              params: {
+                runId: run.id,
+                ...targetRouteContext('recipe'),
+                recipeRun: recipeRunId,
+                filter: artifactFilterParamForWorkspaceNav('recipe'),
+              },
+            })
+          }
+          onOpenRecipeArtifact={(recipeRunId, artifactPath, filter) =>
+            openRunEvidenceArtifact(artifactPath, recipeRunId, filter)
+          }
+          onRecipeComplete={refreshRecipeState}
+        />
+
+        <ArtifactsSection
+          run={run}
+          gatewayUrl={gatewayUrl}
+          artifactAuthHeaders={artifactAuthHeaders}
+          onViewAll={() =>
+            router.push({
+              pathname: '/artifacts/[runId]',
+              params: {
+                runId: run.id,
+                ...targetRouteContext('artifacts'),
+                recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                filter: artifactFilterParamForWorkspaceNav('review'),
+              },
+            })
+          }
+          onOpenArtifact={(artifactPath) =>
+            openRunEvidenceArtifact(artifactPath, DECISION_EVIDENCE_RECIPE_RUN_PARAM)
+          }
+        />
+
+        {run.slotId && !isTerminalRunStatus(run.status) && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Worker Terminal</Text>
+            <Pressable
+              style={styles.terminalButton}
+              onPress={() =>
+                router.push({
+                  pathname: '/terminal/[slotId]',
+                  params: {
+                    slotId: run.slotId!,
+                    ...targetRouteContext('terminal'),
+                    runId: run.id,
+                    details: '1',
+                    ...(workspaceRecipeRunId ? { recipeRun: workspaceRecipeRunId } : {}),
+                    ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+                  },
+                })
+              }
+            >
+              <Text style={styles.terminalButtonText}>Observe / reply to {run.slotId}</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {error && <Text style={styles.errorText}>{error}</Text>}
+
+        {/* Metrics */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Metrics</Text>
+          <View style={styles.metricsGrid}>
+            <MetricItem label="Nudges" value={String(run.metrics?.nudgeCount ?? 0)} />
+            <MetricItem label="Model" value={run.metrics?.model ?? '-'} />
+            <MetricItem label="Runner" value={run.metrics?.runner ?? '-'} />
+            <MetricItem label="Outcome" value={run.metrics?.outcome ?? '-'} />
+          </View>
+        </View>
+      </Animated.ScrollView>
+    </View>
+  );
+}

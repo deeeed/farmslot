@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "title": "Companion recipe bridge status smoke",
+  "description": "Validates the dev-only Farmslot recipe bridge is reachable on a connected Android or iOS device through Metro relay.",
+  "proofTargets": [
+    {
+      "id": "companion-bridge",
+      "claim": "The Mobile Companion dev build exposes the Farmslot recipe bridge to the host runner."
+    }
+  ],
+  "validate": {
+    "workflow": {
+      "entry": "bridge-status",
+      "nodes": {
+        "bridge-status": {
+          "action": "app.status",
+          "intent": "Confirm the companion recipe bridge is reachable on the connected device.",
+          "timeout_ms": 30000,
+          "next": "show-hud",
+          "proofTarget": "companion-bridge"
+        },
+        "show-hud": {
+          "action": "app.hud",
+          "intent": "Show bridge status on the device HUD overlay.",
+          "status": "pass",
+          "next": "done",
+          "proofTarget": "companion-bridge"
+        },
+        "done": {
+          "action": "end",
+          "status": "pass"
+        }
+      }
+    }
+  }
+}

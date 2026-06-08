@@ -317,7 +317,7 @@ export function FamilyWorkspaceCockpit({
   );
 }
 
-function FamilyCockpitTile({
+export function FamilyCockpitTile({
   label,
   value,
   onPress,
@@ -349,7 +349,7 @@ function FamilyCockpitTile({
   );
 }
 
-function FamilyCockpitAction({
+export function FamilyCockpitAction({
   label,
   onPress,
   disabled,
@@ -470,7 +470,7 @@ export function FamilyFocusedArtifactCard({
   );
 }
 
-function familyFocusedArtifactKindLabel(artifactPath: string): string {
+export function familyFocusedArtifactKindLabel(artifactPath: string): string {
   if (shouldOpenFamilyFocusedArtifactAsDiff(artifactPath)) return 'diff';
   const filter = artifactFilterParamForArtifactPath(artifactPath);
   if (filter === 'recipes') return 'recipe file';
@@ -478,7 +478,7 @@ function familyFocusedArtifactKindLabel(artifactPath: string): string {
   return 'evidence file';
 }
 
-function shouldOpenFamilyFocusedArtifactAsDiff(artifactPath: string): boolean {
+export function shouldOpenFamilyFocusedArtifactAsDiff(artifactPath: string): boolean {
   return Boolean(diffArtifactCandidate([{ path: artifactPath }]));
 }
 
@@ -811,7 +811,7 @@ export function FamilyChangeLedgerPanel({
   );
 }
 
-function primaryLedgerDiffPath(entry: FamilyChangeLedgerEntry): string | undefined {
+export function primaryLedgerDiffPath(entry: FamilyChangeLedgerEntry): string | undefined {
   return (
     entry.contributionDiff.artifactPath ??
     entry.inputDiff?.artifactPath ??
@@ -819,7 +819,7 @@ function primaryLedgerDiffPath(entry: FamilyChangeLedgerEntry): string | undefin
   );
 }
 
-function decisionPresentationForFamilyRun(
+export function decisionPresentationForFamilyRun(
   run: FamilyObservabilityRunSummary,
   decision: RunDecision,
 ): DecisionPresentation {
@@ -1066,7 +1066,7 @@ export function RetrospectiveCard({
   );
 }
 
-function RetroEvidencePreview({
+export function RetroEvidencePreview({
   run,
   artifacts,
   gatewayUrl,
@@ -1163,7 +1163,7 @@ function RetroEvidencePreview({
   );
 }
 
-function familyArtifactFromManifest(
+export function familyArtifactFromManifest(
   run: FamilyObservabilityRunSummary,
   artifact: ArtifactManifestEntry,
 ): FamilyObservabilityArtifact {
@@ -1177,7 +1177,7 @@ function familyArtifactFromManifest(
   };
 }
 
-function RetroAction({
+export function RetroAction({
   label,
   value,
   onPress,
@@ -1210,7 +1210,7 @@ function RetroAction({
   );
 }
 
-function FamilyDecisionSignalsPanel({
+export function FamilyDecisionSignalsPanel({
   run,
   onOpenDecision,
   onOpenArtifacts,
@@ -2020,7 +2020,7 @@ export function hasRecipeArtifacts(run: {
   return hasRecipeArtifactEntries(run.artifacts);
 }
 
-function hasRecipeArtifactEntries(
+export function hasRecipeArtifactEntries(
   artifacts: Array<{ path: string; purpose?: string | null }>,
 ): boolean {
   return artifacts.some((artifact) => {
@@ -2030,7 +2030,7 @@ function hasRecipeArtifactEntries(
   });
 }
 
-function FocusedRunRecipeQualityPanel({
+export function FocusedRunRecipeQualityPanel({
   run,
   gatewayUrl,
   artifactAuthHeaders,
@@ -2143,14 +2143,14 @@ function FocusedRunRecipeQualityPanel({
   );
 }
 
-function recipeQualityColor(value: string): string {
+export function recipeQualityColor(value: string): string {
   if (value === 'pass' || value === 'good' || value === 'PASS') return colors.statusOk;
   if (value === 'fail' || value === 'bad' || value === 'FAIL') return colors.statusFail;
   if (value === 'warn' || value === 'ok' || value === 'WARN') return colors.statusWarn;
   return colors.textMuted;
 }
 
-function FocusedRunEvidencePreview({
+export function FocusedRunEvidencePreview({
   run,
   gatewayUrl,
   artifactAuthHeaders,
@@ -2457,13 +2457,13 @@ export function EvidenceGroupCard({
   );
 }
 
-function artifactKindStyle(kind: ReturnType<typeof familyArtifactKind>) {
+export function artifactKindStyle(kind: ReturnType<typeof familyArtifactKind>) {
   if (kind === 'before') return styles.artifactKindBefore;
   if (kind === 'after') return styles.artifactKindAfter;
   return styles.artifactKindSetup;
 }
 
-function ArtifactCell({ children }: { children: React.ReactNode }) {
+export function ArtifactCell({ children }: { children: React.ReactNode }) {
   return <View style={styles.artifactCell}>{children}</View>;
 }
 
@@ -2521,7 +2521,7 @@ export function formatDateTime(value: string): string {
   });
 }
 
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
   let value = bytes;

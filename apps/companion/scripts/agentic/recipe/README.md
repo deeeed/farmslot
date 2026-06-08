@@ -12,3 +12,4 @@ The files use Recipe Protocol v1, but the project-facing path and scripts are in
 - Use UI actions only when the proof must show real user-visible interaction.
 - Use commands/controllers for setup, diagnostics, and non-visual checks.
 - If you declare app/HUD bridge actions, wire the dev-only bridge and run `yarn recipe:doctor`.
+- Live device smoke: restart Metro after pulling bridge relay changes, launch with `EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE=1`, then run `yarn recipe:run:bridge`.
