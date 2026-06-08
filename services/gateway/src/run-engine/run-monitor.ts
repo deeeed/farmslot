@@ -426,9 +426,10 @@ export async function monitorRun(
         if (actionId === 'abort') {
           return { pollCount: 0, exitReason: 'aborted', violations: allViolations, snapshots };
         }
-        return { pollCount: 0, exitReason: 'cancelled', violations: allViolations, snapshots };
       }
-      return { pollCount: 0, exitReason: 'worker-done', violations: allViolations, snapshots };
+      if (!shouldHoldForInteractivePrComplete(run)) {
+        return { pollCount: 0, exitReason: 'worker-done', violations: allViolations, snapshots };
+      }
     }
 
     while (!signal.aborted) {
@@ -519,8 +520,7 @@ export async function monitorRun(
               exitReason = 'aborted';
               return { pollCount, exitReason, violations: allViolations, snapshots };
             }
-            exitReason = 'cancelled';
-            return { pollCount, exitReason, violations: allViolations, snapshots };
+            continue;
           }
           exitReason = 'worker-done';
           return { pollCount, exitReason, violations: allViolations, snapshots };
