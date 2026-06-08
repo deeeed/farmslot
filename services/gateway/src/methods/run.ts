@@ -30,7 +30,7 @@ import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/context.js';
 import { findFollowUpParentRun } from '../family-observability/state.js';
-import { loadProjectConfig } from '../fleet/state.js';
+import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -283,6 +283,7 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   if (isFollowUpFlow(params.flowType) && !params.parentRunId) {
     const prMatch = params.ticketOrPr.match(/#(\d+)$/);
     const prNumber = prMatch ? parseInt(prMatch[1], 10) : null;
+    const fleet = params.branch ? null : await loadFleetStatus();
     const resolvedFollowUpBranch =
       params.branch ??
       (await resolveDispatchTargetBranch(
@@ -292,7 +293,7 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
           ticketOrPr: params.ticketOrPr,
           targetBranch: params.branch,
         },
-        { logPrefix: 'run-create' },
+        { fleetSlots: fleet?.slots, logPrefix: 'run-create' },
       ));
     if (!params.branch && resolvedFollowUpBranch) params.branch = resolvedFollowUpBranch;
     const parent = findFollowUpParentRun(getAllRuns(), {
