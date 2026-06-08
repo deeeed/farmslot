@@ -215,6 +215,78 @@ export function signalMatchesMonitorContext(
   return true;
 }
 
+async function resolveSignalJsonPathForRun(
+  run: Run,
+  slotId: string,
+  monitorContext?: (MonitorContextIdentity & Pick<AgentContext, 'taskFile' | 'signalFile'>) | null,
+): Promise<string | undefined> {
+  const vars = await loadSlotVars(slotId);
+  const pv = await loadProjectVars(vars.projectName);
+  const taskDir = getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR;
+  const orchRoot = getOrchestratorTaskRoot(run.project, pv.projectJson);
+  const taskFile = run.taskFile ? (resolveTaskRelDir(run.taskFile, orchRoot) ?? '') : '';
+  if (monitorContext?.signalFile) {
+    const taskPath = monitorContext.taskFile
+      ? resolveContextFilePath(
+          vars.remoteRepo,
+          monitorContext.taskFile,
+          `${vars.remoteRepo}/${taskDir}/${taskFile}/TASK.md`,
+        )
+      : undefined;
+    return resolveContextFilePath(
+      vars.remoteRepo,
+      monitorContext.signalFile,
+      `${vars.remoteRepo}/${taskDir}/${taskFile}/SIGNAL.json`,
+      taskPath,
+    );
+  }
+  return taskFile ? `${vars.remoteRepo}/${taskDir}/${taskFile}/SIGNAL.json` : undefined;
+}
+
+export async function readFreshTerminalSignalForRun(
+  runId: string,
+  slotId?: string | null,
+  monitorContext?: AgentContext | null,
+): Promise<WorkerSignal | undefined> {
+  if (!slotId) return undefined;
+  const run = getRun(runId);
+  if (!run) return undefined;
+  try {
+    const ctx =
+      monitorContext ?? selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+    const signalJsonPath = await resolveSignalJsonPathForRun(run, slotId, ctx);
+    if (!signalJsonPath) return undefined;
+    const vars = await loadSlotVars(slotId);
+    const result = await execOnSlot(vars, `cat ${shellQuote(signalJsonPath)} 2>/dev/null`);
+    if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
+    const parsed = JSON.parse(result.stdout) as WorkerSignal;
+    const normalized = normalizeWorkerSignal(parsed);
+    if (!normalized.ok) {
+      console.warn(
+        `[run-monitor] run ${runId.slice(0, 8)} — ignoring invalid SIGNAL.json: ${normalized.reason}`,
+      );
+      return undefined;
+    }
+    const sig = normalized.signal;
+    if (!isTerminalWorkerSignal(sig)) return undefined;
+    const boundSig = bindSignalToMonitorContext(sig, ctx);
+    if (!signalMatchesMonitorContext(boundSig, ctx)) return undefined;
+    const latestRun = getRun(runId) ?? run;
+    if (!isWorkerSignalFreshForRun(latestRun, boundSig)) {
+      console.log(
+        `[run-monitor] run ${runId.slice(0, 8)} — ignoring stale SIGNAL.json: status=${boundSig.status} timestamp=${boundSig.timestamp}`,
+      );
+      return undefined;
+    }
+    return boundSig;
+  } catch (err) {
+    console.warn(
+      `[run-monitor] failed to read SIGNAL.json for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
+    );
+    return undefined;
+  }
+}
+
 function launchCommandForRun(run: Run): unknown {
   return run.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.outputs?.launchCommand;
 }
@@ -313,30 +385,7 @@ export async function monitorRun(
 
   let warnedNoSignalPath = false;
   async function resolveSignalJsonPath(): Promise<string | undefined> {
-    const vars = await loadSlotVars(slotId);
-    const pv = await loadProjectVars(vars.projectName);
-    const taskDir = getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR;
-    const orchRoot = getOrchestratorTaskRoot(initialRun.project, pv.projectJson);
-    const taskFile = initialRun.taskFile
-      ? (resolveTaskRelDir(initialRun.taskFile, orchRoot) ?? '')
-      : '';
-    const ctx = currentMonitorContext();
-    if (ctx?.signalFile) {
-      const taskPath = ctx.taskFile
-        ? resolveContextFilePath(
-            vars.remoteRepo,
-            ctx.taskFile,
-            `${vars.remoteRepo}/${taskDir}/${taskFile}/TASK.md`,
-          )
-        : undefined;
-      return resolveContextFilePath(
-        vars.remoteRepo,
-        ctx.signalFile,
-        `${vars.remoteRepo}/${taskDir}/${taskFile}/SIGNAL.json`,
-        taskPath,
-      );
-    }
-    return taskFile ? `${vars.remoteRepo}/${taskDir}/${taskFile}/SIGNAL.json` : undefined;
+    return resolveSignalJsonPathForRun(initialRun, slotId, currentMonitorContext());
   }
 
   // Helper: check SIGNAL.json directly via agent exec (fallback when push fails)
@@ -355,28 +404,7 @@ export async function monitorRun(
       const vars = await loadSlotVars(slotId);
       const result = await execOnSlot(vars, `cat ${shellQuote(signalJsonPath)} 2>/dev/null`);
       if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
-      const parsed = JSON.parse(result.stdout) as WorkerSignal;
-      const normalized = normalizeWorkerSignal(parsed);
-      if (!normalized.ok) {
-        console.warn(
-          `[run-monitor] run ${runId.slice(0, 8)} — ignoring invalid SIGNAL.json: ${normalized.reason}`,
-        );
-        return undefined;
-      }
-      const sig = normalized.signal;
-      if (isTerminalWorkerSignal(sig)) {
-        const ctx = currentMonitorContext();
-        const boundSig = bindSignalToMonitorContext(sig, ctx);
-        if (!signalMatchesMonitorContext(boundSig, ctx)) return undefined;
-        const latestRun = getRun(runId) ?? initialRun;
-        if (!isWorkerSignalFreshForRun(latestRun, boundSig)) {
-          console.log(
-            `[run-monitor] run ${runId.slice(0, 8)} — ignoring stale SIGNAL.json: status=${boundSig.status} timestamp=${boundSig.timestamp}`,
-          );
-          return undefined;
-        }
-        return boundSig;
-      }
+      return readFreshTerminalSignalForRun(runId, slotId, currentMonitorContext());
     } catch (err) {
       console.warn(
         `[run-monitor] failed to read SIGNAL.json for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
@@ -425,6 +453,16 @@ export async function monitorRun(
         );
         if (actionId === 'abort') {
           return { pollCount: 0, exitReason: 'aborted', violations: allViolations, snapshots };
+        }
+        const postDecisionSignal = await checkSignalFile();
+        if (postDecisionSignal) {
+          return {
+            pollCount: 0,
+            exitReason: 'worker-done',
+            violations: allViolations,
+            snapshots,
+            workerSignal: postDecisionSignal,
+          };
         }
       }
       if (!shouldHoldForInteractivePrComplete(run)) {
@@ -520,6 +558,16 @@ export async function monitorRun(
               exitReason = 'aborted';
               return { pollCount, exitReason, violations: allViolations, snapshots };
             }
+            const postDecisionSignal = await checkSignalFile();
+            if (postDecisionSignal) {
+              return {
+                pollCount,
+                exitReason: 'worker-done',
+                violations: allViolations,
+                snapshots,
+                workerSignal: postDecisionSignal,
+              };
+            }
             continue;
           }
           exitReason = 'worker-done';
@@ -569,6 +617,16 @@ export async function monitorRun(
             if (actionId === 'abort') {
               exitReason = 'aborted';
               return { pollCount, exitReason, violations: allViolations, snapshots };
+            }
+            const postDecisionSignal = await checkSignalFile();
+            if (postDecisionSignal) {
+              return {
+                pollCount,
+                exitReason: 'worker-done',
+                violations: allViolations,
+                snapshots,
+                workerSignal: postDecisionSignal,
+              };
             }
           } else if (latestRun.metrics.nudgeCount >= config.maxNudges) {
             // Max nudges exceeded — create decision
@@ -859,6 +917,10 @@ async function createBlockedDecision(
   runId: string,
   reason: string,
   description: string,
+  actions: RunDecision['actions'] = [
+    { id: 'continue', label: 'Continue', style: 'primary' },
+    { id: 'abort', label: 'Abort Run', style: 'danger' },
+  ],
 ): Promise<string> {
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
@@ -868,10 +930,13 @@ async function createBlockedDecision(
     type: `monitor_${reason}`,
     title: `Run ${runId.slice(0, 8)} — ${reason.replace('_', ' ')}`,
     description,
-    actions: [
-      { id: 'continue', label: 'Continue', style: 'primary' },
-      { id: 'abort', label: 'Abort Run', style: 'danger' },
-    ],
+    actions:
+      reason === 'interactive_handoff'
+        ? [
+            { id: 'signal-written', label: 'I wrote SIGNAL.json', style: 'primary' },
+            { id: 'abort', label: 'Abort Run', style: 'danger' },
+          ]
+        : actions,
     createdAt: new Date().toISOString(),
   };
 

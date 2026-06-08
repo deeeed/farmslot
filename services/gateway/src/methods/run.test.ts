@@ -883,6 +883,48 @@ test('runCreate persists implicit pr-complete-interactive template and branch-ba
   assert.equal(result.run.familyId, parent.familyId);
 });
 
+test('runResolveDecision rejects interactive PR-complete handoff resume without terminal signal', async (t) => {
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'example-mobile-farm',
+    ticketOrPr: `example-org/example-mobile#${Date.now()}`,
+    mode: 'interactive',
+  });
+  const decision: RunDecision = {
+    id: 'interactive-handoff',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description: 'Worker stopped for human handoff',
+    actions: [
+      { id: 'signal-written', label: 'I wrote SIGNAL.json', style: 'primary' },
+      { id: 'abort', label: 'Abort Run', style: 'danger' },
+    ],
+    createdAt: new Date().toISOString(),
+  };
+  updateRun(run.id, { status: 'blocked', decisions: [decision] });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runResolveDecision(
+        {
+          runId: run.id,
+          decisionId: decision.id,
+          actionId: 'signal-written',
+        },
+        () => {},
+      ),
+    /fresh terminal SIGNAL\.json/,
+  );
+  assert.equal(getRun(run.id)?.status, 'blocked');
+  assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+});
+
 test('runRehydratePrNumber rejects unpublished autonomous dev runs before PR lookup', async (t) => {
   const run = createRun({
     flowType: 'dev',

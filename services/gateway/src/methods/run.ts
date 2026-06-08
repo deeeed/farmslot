@@ -56,7 +56,10 @@ import {
   setRunFlags,
   startRun,
 } from '../run-engine/orchestrator.js';
-import { resolveMonitorDecision } from '../run-engine/run-monitor.js';
+import {
+  readFreshTerminalSignalForRun,
+  resolveMonitorDecision,
+} from '../run-engine/run-monitor.js';
 import { runnerSupportsModel } from '../runners/registry.js';
 import {
   createRun,
@@ -864,6 +867,14 @@ export async function runResolveDecision(
   if (decision.resolvedAt) throw new Error(`Decision already resolved`);
   if (!decision.actions.some((action) => action.id === params.actionId)) {
     throw new Error(`Action not found for decision ${params.decisionId}: ${params.actionId}`);
+  }
+  if (decision.type === 'monitor_interactive_handoff' && params.actionId !== 'abort') {
+    const signal = await readFreshTerminalSignalForRun(existing.id, existing.slotId);
+    if (!signal) {
+      throw new Error(
+        'Interactive PR-complete handoff can resume only after a fresh terminal SIGNAL.json is written on the slot.',
+      );
+    }
   }
   await assertReadyPublishResolveIsFresh(existing, decision, params);
 
