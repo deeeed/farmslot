@@ -539,7 +539,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /--model sonnet --disable-slash-commands --print 'Read TASK\.md and execute\.'/,
+        /env -i HOME="\$HOME" PATH="\$PATH" USER="\$\{USER:-\}" SHELL="\$\{SHELL:-\/bin\/zsh\}" TERM="\$\{TERM:-xterm-256color\}" \/usr\/local\/bin\/claude --model sonnet --disable-slash-commands --mcp-config '\{"mcpServers":\{\}\}' --print 'Read TASK\.md and execute\.'/,
       );
     });
 

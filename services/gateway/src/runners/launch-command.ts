@@ -194,10 +194,15 @@ export function buildLaunchCommand(
     const claudePath = vars.claudePath || 'claude';
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.join(' ');
-    const headlessFlags = opts.headlessPrintPrompt ? ' --disable-slash-commands' : '';
+    const headlessEnv = opts.headlessPrintPrompt
+      ? 'env -i HOME="$HOME" PATH="$PATH" USER="${USER:-}" SHELL="${SHELL:-/bin/zsh}" TERM="${TERM:-xterm-256color}" '
+      : '';
+    const headlessFlags = opts.headlessPrintPrompt
+      ? ` --disable-slash-commands --mcp-config ${shellQuote('{"mcpServers":{}}')}`
+      : '';
     const promptArg =
       opts.headlessPrintPrompt && prompt.trim() ? ` --print ${shellQuote(prompt)}` : '';
-    return `cd '${repo}' && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${headlessFlags}${promptArg}`;
+    return `cd '${repo}' && unset CLAUDECODE && ${headlessEnv}${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${headlessFlags}${promptArg}`;
   }
 
   // Codex: route through dispatch_cmd when it's runner-aware; otherwise fall
