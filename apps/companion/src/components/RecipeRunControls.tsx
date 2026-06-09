@@ -55,6 +55,7 @@ export function RecipeRunControls({
   onComplete,
 }: RecipeRunControlsProps) {
   const [playbackSlowMs, setPlaybackSlowMs] = useState(2000);
+  const [recordVideo, setRecordVideo] = useState(true);
   const [output, setOutput] = useState<RecipeOutputState | null>(null);
   const [commandPreview, setCommandPreview] = useState('');
   const [error, setError] = useState('');
@@ -67,8 +68,8 @@ export function RecipeRunControls({
   const canCancel = Boolean(client && slotId && output?.running && output.requestId);
   const canCommand = Boolean(client && runId && slotId && !output?.running);
   const params = useMemo(
-    () => recipeRequestParams(runId, slotId ?? '', recipeRunId, playbackSlowMs),
-    [playbackSlowMs, recipeRunId, runId, slotId],
+    () => recipeRequestParams(runId, slotId ?? '', recipeRunId, playbackSlowMs, recordVideo),
+    [playbackSlowMs, recipeRunId, recordVideo, runId, slotId],
   );
 
   useEffect(() => {
@@ -289,6 +290,24 @@ export function RecipeRunControls({
         ))}
       </View>
 
+      <View style={styles.playbackRow}>
+        <Text style={styles.playbackLabel}>Video</Text>
+        <Pressable
+          style={[
+            styles.playbackChip,
+            recordVideo && styles.activeChip,
+            output?.running && styles.disabledButton,
+          ]}
+          disabled={output?.running}
+          accessibilityLabel="Record recipe replay video when supported"
+          onPress={() => setRecordVideo((current) => !current)}
+        >
+          <Text style={[styles.playbackChipText, recordVideo && styles.activeChipText]}>
+            Record if supported
+          </Text>
+        </Pressable>
+      </View>
+
       <View style={styles.actionRow}>
         {output?.running ? (
           <Pressable
@@ -349,11 +368,13 @@ function recipeRequestParams(
   slotId: string,
   recipeRunId: string | null | undefined,
   playbackSlowMs: number,
+  recordVideo: boolean,
 ): RecipeRerunParams | null {
   if (!runId || !slotId) return null;
   const params: RecipeRerunParams = { runId, slotId };
   if (recipeRunId) params.recipeRunId = recipeRunId;
   if (playbackSlowMs > 0) params.playbackSlowMs = playbackSlowMs;
+  params.recordVideo = recordVideo;
   return params;
 }
 

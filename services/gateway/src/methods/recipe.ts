@@ -488,11 +488,33 @@ function normalizePlaybackSlowMs(playbackSlowMs: number | undefined): number | u
 
 export function appendRecipePlaybackOptions(
   command: string,
-  args: { playbackSlowMs?: number },
+  args: { playbackSlowMs?: number; recordVideo?: boolean },
 ): string {
   const playbackSlowMs = normalizePlaybackSlowMs(args.playbackSlowMs);
-  if (playbackSlowMs === undefined) return command;
-  return `${command} --slow ${playbackSlowMs}`;
+  const options: string[] = [];
+  if (playbackSlowMs !== undefined) options.push(`--slow ${playbackSlowMs}`);
+  if (args.recordVideo) options.push('--record');
+  return options.length > 0 ? `${command} ${options.join(' ')}` : command;
+}
+
+export function recipeRunOptionsForProject(
+  projectJson: RawProjectJson,
+  args: { playbackSlowMs?: number; recordVideo?: boolean },
+): { playbackSlowMs?: number; recordVideo?: boolean } {
+  const options: { playbackSlowMs?: number; recordVideo?: boolean } = {};
+  if (
+    args.playbackSlowMs !== undefined &&
+    getProjectFieldRaw(projectJson, 'recipe_run_supports_playback_slow') === true
+  ) {
+    options.playbackSlowMs = args.playbackSlowMs;
+  }
+  if (
+    args.recordVideo &&
+    getProjectFieldRaw(projectJson, 'recipe_run_supports_video_recording') === true
+  ) {
+    options.recordVideo = true;
+  }
+  return options;
 }
 
 async function resolveSelectedRecipeArtifactRoot(
@@ -522,6 +544,7 @@ async function buildRecipeExecutionCommand(
   recipeRunId: string | undefined,
   artifactRunId: string,
   playbackSlowMs: number | undefined,
+  recordVideo: boolean | undefined,
 ): Promise<{ recipePath: string; artifactRoot: string; command: string }> {
   assertValidArtifactRunId(artifactRunId);
   const workerTaskDir = resolveWorkerTaskDir(run, slotVars, projectVars.projectJson);
@@ -560,11 +583,10 @@ async function buildRecipeExecutionCommand(
     shellExpressionForRemotePath(slotRecipePath),
     shellExpressionForRemotePath(slotRecipeRunArtifactsDir),
   );
-  const supportsPlaybackSlow =
-    getProjectFieldRaw(projectVars.projectJson, 'recipe_run_supports_playback_slow') === true;
-  recipeCmd = appendRecipePlaybackOptions(recipeCmd, {
-    playbackSlowMs: supportsPlaybackSlow ? playbackSlowMs : undefined,
-  });
+  recipeCmd = appendRecipePlaybackOptions(
+    recipeCmd,
+    recipeRunOptionsForProject(projectVars.projectJson, { playbackSlowMs, recordVideo }),
+  );
   return {
     recipePath: slotRecipePath,
     artifactRoot: slotRecipeRunArtifactsDir,
@@ -573,7 +595,7 @@ async function buildRecipeExecutionCommand(
 }
 
 export async function recipeCommand(params: RecipeCommandParams): Promise<RecipeCommandResult> {
-  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs } = params;
+  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs, recordVideo } = params;
   const run = getRun(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
   const slotVars = await loadSlotVars(slotId);
@@ -586,6 +608,7 @@ export async function recipeCommand(params: RecipeCommandParams): Promise<Recipe
     recipeRunId,
     `manual-${randomUUID().slice(0, 8)}`,
     playbackSlowMs,
+    recordVideo,
   );
   return { command: built.command, artifactRoot: built.artifactRoot, recipePath: built.recipePath };
 }
@@ -647,7 +670,7 @@ export async function recipeRerun(
   params: RecipeRerunParams,
   emit: EmitFn,
 ): Promise<ScriptActionResult> {
-  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs } = params;
+  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs, recordVideo } = params;
 
   // Validate run
   const run = getRun(runId);
@@ -693,6 +716,7 @@ export async function recipeRerun(
       recipeRunId,
       requestId,
       playbackSlowMs,
+      recordVideo,
     );
     const slotRecipePath = built.recipePath;
     if (!slotRecipePath) {

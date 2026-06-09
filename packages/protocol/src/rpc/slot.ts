@@ -132,6 +132,7 @@ export interface RecipeRerunParams {
   recipeArtifactPath?: string;
   recipeRunId?: string;
   playbackSlowMs?: number;
+  recordVideo?: boolean;
 }
 
 export interface RecipeCancelParams {
@@ -145,6 +146,7 @@ export interface RecipeCommandParams {
   recipeArtifactPath?: string;
   recipeRunId?: string;
   playbackSlowMs?: number;
+  recordVideo?: boolean;
 }
 
 export interface RecipeCommandResult {

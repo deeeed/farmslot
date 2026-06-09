@@ -209,11 +209,15 @@ A Farmslot-compatible project implements this minimum contract.
   "hooks": {
     "recipe_run": "node scripts/agentic/validate-recipe.js --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}}"
   },
-  "recipe_run_supports_playback_slow": true
+  "recipe_run_supports_playback_slow": true,
+  "recipe_run_supports_video_recording": true
 }
 ```
 
 The project hook receives Farmslot variables and executes the project runner. `{{recipe_path}}` is a shell-boundary convenience, not a claim that every internal API must use a file literally named `recipe.json`. In-process APIs may pass a recipe document object directly, and adapters may normalize project-native recipe references. V1 shell hooks must include `{{recipe_path}}` and `{{artifacts_dir}}` explicitly.
+Optional replay controls are capability-gated: `recipe_run_supports_playback_slow`
+allows the gateway to append `--slow <ms>`, and
+`recipe_run_supports_video_recording` allows it to append `--record`.
 
 ### Recipe document
 

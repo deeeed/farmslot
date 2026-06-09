@@ -29,6 +29,7 @@ export class RecipeRunnerControls extends LitElement {
   @property() description =
     'Runs without covering the stream. Watch the streaming panel live, follow logs below, then inspect the new attempt artifacts.';
   @property({ type: Number }) playbackSlowMs = 0;
+  @property({ type: Boolean }) recordVideo = true;
   @property({ type: Boolean }) showPlayback = false;
   @property({ type: Boolean }) showArtifactAction = false;
   @property({ type: Boolean }) disabled = false;
@@ -89,6 +90,7 @@ export class RecipeRunnerControls extends LitElement {
       if (this.recipeArtifactPath) params.recipeArtifactPath = this.recipeArtifactPath;
       if (this.recipeRunId) params.recipeRunId = this.recipeRunId;
       if (this.playbackSlowMs > 0) params.playbackSlowMs = this.playbackSlowMs;
+      params.recordVideo = this.recordVideo;
       const result = await gateway.request<RecipeCommandResult>(Methods.RECIPE_COMMAND, params);
       await navigator.clipboard.writeText(result.command);
       this._copyFeedbackTimer.show(COPY_COMMAND);
@@ -150,6 +152,27 @@ export class RecipeRunnerControls extends LitElement {
                 </label>
               `
             : nothing}
+          ${this.showPlayback
+            ? html`
+                <label
+                  style="display:flex; align-items:center; gap:6px; color:${colors.textMuted}; font-size:${fonts.sizeXs};"
+                >
+                  <input
+                    type="checkbox"
+                    .checked=${this.recordVideo}
+                    ?disabled=${this._running || this.disabled}
+                    @change=${(event: Event) => {
+                      this.recordVideo = (event.target as HTMLInputElement).checked;
+                    }}
+                  />
+                  Record video
+                  <span
+                    title="Only project runners that opt into video recording receive this flag."
+                    >(if supported)</span
+                  >
+                </label>
+              `
+            : nothing}
           ${this._running
             ? html`
                 <button
@@ -187,6 +210,7 @@ export class RecipeRunnerControls extends LitElement {
             recipeArtifactPath=${this.recipeArtifactPath}
             recipeRunId=${this.recipeRunId}
             .playbackSlowMs=${this.playbackSlowMs}
+            .recordVideo=${this.recordVideo}
             .showArtifactAction=${this.showArtifactAction}
             @running-change=${this._onRunningChange}
           ></recipe-output-panel>
