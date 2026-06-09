@@ -317,21 +317,27 @@ describe('runnerDefaultModel', () => {
   });
 });
 
-describe('Cursor tmux nudge launch policy', () => {
-  it('allows normal interactive Cursor launches but blocks explicit headless print launches', () => {
-    const interactive =
+describe('tmux nudge launch policy', () => {
+  it('allows normal interactive launches but blocks explicit headless print launches', () => {
+    const cursorInteractive =
       "cd /repo && cursor-agent --force --sandbox disabled --model composer-2 'Read TASK.md'";
-    const headless =
+    const cursorHeadless =
       "cd /repo && cursor-agent --print --trust --force --sandbox disabled --model composer-2 'Read TASK.md'";
+    const claudeInteractive = 'cd /repo && claude --model sonnet';
+    const claudeHeadless = "cd /repo && claude --model sonnet --print 'Read TASK.md'";
 
     assert.equal(runnerSupportsTmuxNudges('cursor'), true);
-    assert.equal(runnerLaunchCommandUsesHeadlessPrint('cursor', headless), true);
-    assert.equal(runnerSupportsTmuxNudgesForLaunch('cursor', interactive), true);
-    assert.equal(runnerSupportsTmuxNudgesForLaunch('cursor', headless), false);
+    assert.equal(runnerSupportsTmuxNudges('claude'), true);
+    assert.equal(runnerLaunchCommandUsesHeadlessPrint('cursor', cursorHeadless), true);
+    assert.equal(runnerLaunchCommandUsesHeadlessPrint('claude', claudeHeadless), true);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('cursor', cursorInteractive), true);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('cursor', cursorHeadless), false);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', claudeInteractive), true);
+    assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', claudeHeadless), false);
     assert.equal(runnerSupportsTmuxNudgesForLaunch('cursor', undefined), true);
   });
 
-  it('keeps Claude and Codex tmux-nudgeable independent of recorded launch command', () => {
+  it('keeps Claude and Codex tmux-nudgeable when no headless launch is recorded', () => {
     assert.equal(runnerSupportsTmuxNudgesForLaunch('claude', undefined), true);
     assert.equal(runnerSupportsTmuxNudgesForLaunch('codex', undefined), true);
   });

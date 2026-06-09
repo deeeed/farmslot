@@ -252,6 +252,20 @@ async function persistGateFeedback(
   });
 }
 
+export function localVideoProofWarning(
+  evidence: Array<{ path: string }> | undefined,
+): string | null {
+  const paths = evidence?.map((artifact) => artifact.path.toLowerCase()) ?? [];
+  if (paths.length === 0) return null;
+  const hasScreenshot = paths.some((path) => /\.(png|jpe?g|gif)$/.test(path));
+  const hasVideo = paths.some((path) => /\.(mp4|mov|webm)$/.test(path));
+  if (!hasScreenshot || hasVideo) return null;
+  return [
+    '⚠️ Local video proof missing: screenshot evidence exists, but no after.mp4/.mov/.webm was packaged.',
+    'Capture-helper screenshots can still prove the PR body, but add a local recipe video when you want fast post-run review without reloading the slot.',
+  ].join(' ');
+}
+
 export async function executeReadyGate(runId: string): Promise<string> {
   const current = getRun(runId)!;
   const artifactOnly = isArtifactOnlyRun(current);
@@ -284,9 +298,18 @@ export async function executeReadyGate(runId: string): Promise<string> {
   // Build diff stat
   const diffStat = await getDiffStat(current);
 
+  const videoProofWarning = localVideoProofWarning(preparedPackage?.evidenceManifest);
   const desc =
     publicationApprovalGate && preparedPackage
-      ? `**Package:** ${preparedPackage.id}\n**Target:** ${preparedPackage.publicationTarget}\n**Branch:** ${preparedPackage.branch || current.branch || 'unknown'}\n**Files:** ${preparedPackage.diffStat.files} (+${preparedPackage.diffStat.additions} -${preparedPackage.diffStat.deletions})\n\n${report?.slice(0, 300) ?? 'Review the local package before public PR publication.'}`
+      ? [
+          `**Package:** ${preparedPackage.id}`,
+          `**Target:** ${preparedPackage.publicationTarget}`,
+          `**Branch:** ${preparedPackage.branch || current.branch || 'unknown'}`,
+          `**Files:** ${preparedPackage.diffStat.files} (+${preparedPackage.diffStat.additions} -${preparedPackage.diffStat.deletions})`,
+          ...(videoProofWarning ? ['', videoProofWarning] : []),
+          '',
+          report?.slice(0, 300) ?? 'Review the local package before public PR publication.',
+        ].join('\n')
       : report
         ? `**Branch:** ${current.branch ?? 'unknown'}\n**Files:** ${diffStat.files} (+${diffStat.additions} -${diffStat.deletions})\n\n${report.slice(0, 300)}`
         : `Worker finished. Branch: ${current.branch ?? 'unknown'}`;

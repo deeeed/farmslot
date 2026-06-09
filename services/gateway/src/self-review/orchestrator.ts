@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  type AgentContext,
   type IndependentReviewAttempt,
   primaryRoleForFlow,
   type ReviewDiffSnapshot,
@@ -329,6 +330,7 @@ export async function runSelfReviewRetryLoop({
   retryCount,
   validationDepth = 'full-live',
   artifactScope = null,
+  feedbackAlreadySent = false,
   deps = PRODUCTION_DEPS,
 }: {
   vars: Awaited<ReturnType<typeof loadSlotVars>>;
@@ -345,10 +347,11 @@ export async function runSelfReviewRetryLoop({
   retryCount: number;
   validationDepth?: ReviewValidationDepth;
   artifactScope?: string | null;
+  feedbackAlreadySent?: boolean;
   deps?: SelfReviewRetryDeps;
 }): Promise<SelfReviewResult> {
   let result = reviewResult;
-  let feedbackSent = retryCount > 0;
+  let feedbackSent = feedbackAlreadySent;
   const attempts: IndependentReviewAttempt[] = [reviewAttemptFromResult(result, retryCount + 1)];
 
   while (result.verdict === 'issues' && result.issues.length > 0 && retryCount < maxRetries) {
@@ -568,6 +571,18 @@ async function readSelfReviewFixIssues(
   return parseSelfReviewIssueBullets(content);
 }
 
+export function canRecoverSelfReviewFixPass(
+  fixContext: Pick<AgentContext, 'role' | 'status' | 'taskFile' | 'signalFile'> | null | undefined,
+  taskDir: string,
+): boolean {
+  return (
+    fixContext?.role === 'self-review-fix' &&
+    fixContext.status === 'working' &&
+    fixContext.taskFile === `${taskDir}/SELF-REVIEW-FIX.md` &&
+    fixContext.signalFile === `${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`
+  );
+}
+
 async function recoverSelfReviewFixPass({
   vars,
   taskDir,
@@ -596,9 +611,12 @@ async function recoverSelfReviewFixPass({
   artifactScope?: string | null;
 }): Promise<SelfReviewResult | null> {
   const run = getRun(runId);
-  const fixContext = run?.agentContexts?.find(
-    (ctx) => ctx.role === 'self-review-fix' && ctx.status === 'working',
-  );
+  const fixContext = run?.agentContexts?.find((ctx) => canRecoverSelfReviewFixPass(ctx, taskDir));
+  // Never recover from SELF-REVIEW-FIX-SIGNAL.json alone. That file is reused by every
+  // review loop in the task dir, so a completed prior loop can otherwise masquerade as the
+  // fix pass for a new external review and prevent feedback from reaching the worker.
+  if (!fixContext) return null;
+
   const fixSignalPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`;
   const rawSignal = await readOptionalSlotFile(vars, fixSignalPath);
   let fixSignal: WorkerSignal | undefined;
@@ -616,8 +634,6 @@ async function recoverSelfReviewFixPass({
   if (fixSignal && !signalFreshSince(fixSignal, fixContext?.startedAt)) {
     fixSignal = undefined;
   }
-
-  if (!fixContext && !fixSignal) return null;
 
   const issues = await readSelfReviewFixIssues(vars, taskDir);
   debugSelfReviewLog(
@@ -671,6 +687,7 @@ async function recoverSelfReviewFixPass({
       retryCount: 1,
       validationDepth,
       artifactScope,
+      feedbackAlreadySent: true,
     });
   }
 
@@ -746,6 +763,7 @@ async function recoverSelfReviewFixPass({
     retryCount: 1,
     validationDepth,
     artifactScope,
+    feedbackAlreadySent: true,
   });
 }
 

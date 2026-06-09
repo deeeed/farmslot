@@ -4,15 +4,15 @@ import type { SelfReviewIssue } from '@farmslot/protocol';
 
 export function parseSelfReviewIssueBullets(content: string): SelfReviewIssue[] {
   const issues: SelfReviewIssue[] = [];
-  const issueRegex = /[-*]\s+\*\*([^*]+)\*\*\s*[—–-]\s*(.*)/g;
+  const issueRegex = /[-*]\s+(?:\*\*([^*\n]+)\*\*|`([^`\n]+)`)\s*[—–-]\s*(.*)/g;
   let match: RegExpExecArray | null;
   while ((match = issueRegex.exec(content)) !== null) {
-    const loc = match[1].trim();
-    const desc = match[2].trim();
-    const [file, lineStr] = loc.split(':');
+    const loc = (match[1] ?? match[2] ?? '').trim();
+    const desc = match[3].trim();
+    const lineMatch = loc.match(/^(.*):(\d+)$/);
     issues.push({
-      file: file || loc,
-      line: lineStr ? parseInt(lineStr, 10) || undefined : undefined,
+      file: lineMatch?.[1] || loc,
+      line: lineMatch ? parseInt(lineMatch[2], 10) : undefined,
       description: desc,
     });
   }

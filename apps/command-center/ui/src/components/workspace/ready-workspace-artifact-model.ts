@@ -1,6 +1,6 @@
 import type { ArtifactRef, ReadyGatePayload } from '@farmslot/protocol';
 
-import { DIFF_EXTS, isWorkspaceEvidenceArtifact } from './workspace-artifacts.js';
+import { DIFF_EXTS, isWorkspaceEvidenceArtifact, MEDIA_EXTS } from './workspace-artifacts.js';
 
 export function readyWorkspaceReviewArtifacts(payload: ReadyGatePayload): ArtifactRef[] {
   return (payload.independentReviews ?? []).flatMap((review) =>
@@ -46,14 +46,35 @@ export function readyWorkspaceAllArtifacts(payload: ReadyGatePayload): ArtifactR
   ]);
 }
 
-export function readyWorkspacePublishEvidenceArtifacts(payload: ReadyGatePayload): ArtifactRef[] {
-  const selected = new Set(payload.prPackage?.selectedEvidenceKeys ?? []);
-  return dedupeReadyWorkspaceArtifacts(
-    (payload.prPackage?.evidenceManifest?.length
-      ? payload.prPackage.evidenceManifest
-      : (payload.artifactManifest ?? [])
-    ).filter((artifact) => isWorkspaceEvidenceArtifact(artifact) || selected.has(artifact.path)),
+function evidenceKeyVariants(key: string): string[] {
+  const normalized = key.replace(/\\/g, '/').replace(/^\.?\//, '');
+  const withoutArtifacts = normalized.startsWith('artifacts/')
+    ? normalized.slice('artifacts/'.length)
+    : normalized;
+  const base = normalized.split('/').pop() ?? normalized;
+  return [...new Set([normalized, withoutArtifacts, `artifacts/${withoutArtifacts}`, base])];
+}
+
+function selectedPackageMediaEvidenceArtifacts(payload: ReadyGatePayload): ArtifactRef[] {
+  const evidenceManifest = payload.prPackage?.evidenceManifest ?? [];
+  const selectedEvidenceKeys = payload.prPackage?.selectedEvidenceKeys ?? [];
+  if (evidenceManifest.length === 0 || selectedEvidenceKeys.length === 0) return [];
+  const selected = new Set(selectedEvidenceKeys.flatMap(evidenceKeyVariants));
+  return evidenceManifest.filter(
+    (artifact) =>
+      MEDIA_EXTS.test(artifact.path) &&
+      evidenceKeyVariants(artifact.path).some((variant) => selected.has(variant)),
   );
+}
+
+export function readyWorkspacePublishEvidenceArtifacts(payload: ReadyGatePayload): ArtifactRef[] {
+  const source = payload.prPackage?.evidenceManifest?.length
+    ? payload.prPackage.evidenceManifest
+    : (payload.artifactManifest ?? []);
+  return dedupeReadyWorkspaceArtifacts([
+    ...source.filter(isWorkspaceEvidenceArtifact),
+    ...selectedPackageMediaEvidenceArtifacts(payload),
+  ]);
 }
 
 export function readyWorkspaceEvidenceArtifacts(payload: ReadyGatePayload): ArtifactRef[] {

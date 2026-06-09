@@ -4,7 +4,11 @@ import test from 'node:test';
 import type { SelfReviewIssue, WorkerSignal } from '@farmslot/protocol';
 
 import { parseSelfReviewIssueBullets } from './issues.js';
-import { runSelfReviewRetryLoop, type SelfReviewRetryDeps } from './orchestrator.js';
+import {
+  canRecoverSelfReviewFixPass,
+  runSelfReviewRetryLoop,
+  type SelfReviewRetryDeps,
+} from './orchestrator.js';
 import type { ReviewAgentResult } from './review-agent.js';
 
 test('parseSelfReviewIssueBullets recovers issues from SELF-REVIEW-FIX.md', () => {
@@ -19,6 +23,57 @@ test('parseSelfReviewIssueBullets recovers issues from SELF-REVIEW-FIX.md', () =
     { file: 'modal-footer.test.tsx', line: 9, description: 'remove should from test name.' },
     { file: 'src/no-line.ts', line: undefined, description: 'explain issue without a line.' },
   ]);
+});
+
+test('parseSelfReviewIssueBullets accepts review-feedback backtick locations', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- \`ui/__mocks__/perps/perps-controller/index.ts:790\` — mock type lacks isHip3.
+- \`lavamoat/build-system/policy.json:6908\` — unrelated OS-specific policy churn.
+`);
+
+  assert.deepEqual(issues, [
+    {
+      file: 'ui/__mocks__/perps/perps-controller/index.ts',
+      line: 790,
+      description: 'mock type lacks isHip3.',
+    },
+    {
+      file: 'lavamoat/build-system/policy.json',
+      line: 6908,
+      description: 'unrelated OS-specific policy churn.',
+    },
+  ]);
+});
+
+test('canRecoverSelfReviewFixPass requires a working context for the current fix task', () => {
+  const current = {
+    role: 'self-review-fix',
+    status: 'working',
+    taskFile: 'tasks/foo/SELF-REVIEW-FIX.md',
+    signalFile: 'tasks/foo/SELF-REVIEW-FIX-SIGNAL.json',
+  } as const;
+
+  assert.equal(canRecoverSelfReviewFixPass(current, 'tasks/foo'), true);
+  assert.equal(canRecoverSelfReviewFixPass(null, 'tasks/foo'), false);
+  assert.equal(
+    canRecoverSelfReviewFixPass({ ...current, status: 'complete' }, 'tasks/foo'),
+    false,
+    'completed fix contexts must not resurrect a stale signal',
+  );
+  assert.equal(
+    canRecoverSelfReviewFixPass(
+      { ...current, taskFile: 'tasks/bar/SELF-REVIEW-FIX.md' },
+      'tasks/foo',
+    ),
+    false,
+    'a fix for another task dir is not valid recovery state',
+  );
+  assert.equal(
+    canRecoverSelfReviewFixPass({ ...current, signalFile: null }, 'tasks/foo'),
+    false,
+    'legacy contexts without the scoped signal path are not valid recovery state',
+  );
 });
 
 // ─── runSelfReviewRetryLoop ───
@@ -323,9 +378,7 @@ test('runSelfReviewRetryLoop: forwards a fresh baseline to waitForWorkerSignal o
   );
 });
 
-test('runSelfReviewRetryLoop: seeded retryCount=1 from recovery path passes through to result', async () => {
-  // Mirrors recoverSelfReviewFixPass: a fix pass already happened before we entered the loop.
-  // If the seeded re-review verdict is `pass`, the loop should not iterate and retryCount stays at 1.
+test('runSelfReviewRetryLoop: seeded retryCount does not imply feedback was sent', async () => {
   const { deps, calls } = buildDeps({ reviewVerdicts: [] });
 
   const result = await runSelfReviewRetryLoop({
@@ -338,11 +391,27 @@ test('runSelfReviewRetryLoop: seeded retryCount=1 from recovery path passes thro
 
   assert.equal(result.verdict, 'pass');
   assert.equal(result.retryCount, 1);
-  assert.equal(
-    result.feedbackSent,
-    true,
-    'feedbackSent stays true because retryCount>0 means the recovery path already sent feedback',
-  );
+  assert.equal(result.feedbackSent, false);
+  assert.equal(calls.sendFeedback, 0);
+});
+
+test('runSelfReviewRetryLoop: recovery path can mark prior feedback as already sent', async () => {
+  // Mirrors recoverSelfReviewFixPass: a fix pass already happened before we entered the loop.
+  // If the seeded re-review verdict is `pass`, the loop should not iterate and retryCount stays at 1.
+  const { deps, calls } = buildDeps({ reviewVerdicts: [] });
+
+  const result = await runSelfReviewRetryLoop({
+    ...baseArgs,
+    maxRetries: 3,
+    reviewResult: { verdict: 'pass', issues: [] },
+    retryCount: 1,
+    feedbackAlreadySent: true,
+    deps,
+  });
+
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.retryCount, 1);
+  assert.equal(result.feedbackSent, true);
   assert.equal(calls.sendFeedback, 0);
 });
 

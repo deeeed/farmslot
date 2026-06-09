@@ -13,6 +13,7 @@ import {
   assertReadyGatePackageInputsCurrent,
   assertSelectedEvidencePublished,
   defaultReviewDepthPolicy,
+  defaultSelectedEvidenceKeysForPublication,
   effectiveRequiredReviewCount,
   expandEvidenceSelectionForManifest,
   filterArtifactUrlsByEvidenceSelection,
@@ -26,6 +27,7 @@ import {
   publicationStatusForRun,
   readCommentsTriageSummary,
   readEvidenceManifest,
+  selectedEvidenceKeysForPublication,
 } from './orchestrator.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -43,6 +45,22 @@ test('assertSelectedEvidencePublished fails closed for non-empty approved eviden
   assert.doesNotThrow(() =>
     assertSelectedEvidencePublished(['./after.png'], new Map([['nested/after.png', 'url']])),
   );
+  assert.doesNotThrow(() =>
+    assertSelectedEvidencePublished(
+      [
+        'artifacts/after.png',
+        'artifacts/after-capture-helper.log',
+        'artifacts/recipe-capture-helper.json',
+      ],
+      new Map([['after.png', 'url']]),
+    ),
+  );
+  assert.doesNotThrow(() =>
+    assertSelectedEvidencePublished(
+      ['artifacts/after-capture-helper.log', 'artifacts/recipe-capture-helper.json'],
+      new Map(),
+    ),
+  );
   assert.throws(
     () => assertSelectedEvidencePublished(['artifacts/after.png'], new Map()),
     /Selected evidence was not published/,
@@ -54,6 +72,67 @@ test('assertSelectedEvidencePublished fails closed for non-empty approved eviden
         new Map([['after.png', 'url']]),
       ),
     /before\.png/,
+  );
+});
+
+test('selectedEvidenceKeysForPublication drops non-publishable sidecar artifacts', () => {
+  assert.deepEqual(
+    selectedEvidenceKeysForPublication({
+      selectedEvidenceKeys: [
+        'artifacts/after-capture-helper-ac1-orders-spacing.png',
+        'artifacts/after-capture-helper.log',
+        'artifacts/recipe-capture-helper.json',
+        'artifacts/screenshots/manifest-proof.png',
+      ],
+      evidenceManifest: [
+        {
+          path: 'artifacts/after-capture-helper-ac1-orders-spacing.png',
+          purpose: 'screenshot',
+        },
+        { path: 'artifacts/after-capture-helper.log', purpose: 'log' },
+        { path: 'artifacts/recipe-capture-helper.json', purpose: 'json' },
+        {
+          path: 'artifacts/screenshots/manifest-proof.png',
+          purpose: 'screenshot',
+        },
+      ],
+      trustedEvidenceManifest: {
+        preferred_mode: 'screenshots',
+        standalone: [{ label: 'Manifest proof', file: 'screenshots/manifest-proof.png' }],
+      },
+    }),
+    [
+      'artifacts/after-capture-helper-ac1-orders-spacing.png',
+      'artifacts/screenshots/manifest-proof.png',
+    ],
+  );
+});
+
+test('defaultSelectedEvidenceKeysForPublication keeps local proof videos out of PR body selection', () => {
+  const evidenceManifest = [
+    { path: 'artifacts/after.png', purpose: 'screenshot' },
+    { path: 'artifacts/after.mp4', purpose: 'video-after' },
+  ];
+  const trustedEvidenceManifest = {
+    preferred_mode: 'screenshots' as const,
+    standalone: [{ label: 'After', file: 'after.png' }],
+    videos: { after: 'after.mp4' },
+  };
+
+  assert.deepEqual(
+    defaultSelectedEvidenceKeysForPublication({
+      evidenceManifest,
+      trustedEvidenceManifest,
+    }),
+    ['artifacts/after.png'],
+  );
+  assert.deepEqual(
+    selectedEvidenceKeysForPublication({
+      selectedEvidenceKeys: ['artifacts/after.mp4'],
+      evidenceManifest,
+      trustedEvidenceManifest,
+    }),
+    ['artifacts/after.mp4'],
   );
 });
 

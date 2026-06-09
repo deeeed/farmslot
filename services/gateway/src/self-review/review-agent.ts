@@ -90,6 +90,7 @@ export async function runReviewAgent(
   const artifactDir = reviewArtifactDir(loopNumber, artifactScope);
   let progressWatcher: { stop(): void } | null = null;
   let activeTaskSet = false;
+  let completedSuccessfully = false;
   const sessionFilesBefore = await bestEffortListRunnerSessionFiles(vars, runner);
   let sessionMeta: ReviewSessionMeta = {
     runnerSessionPath: null,
@@ -161,10 +162,9 @@ export async function runReviewAgent(
     activeTaskSet = true;
     if (reviewContext) await watchContext(vars.slotId, reviewContext);
 
-    // Exec-mode runners (no post-launch prompt) bake the prompt into the launch
-    // command — it must be self-contained. Interactive runners get a shorter
-    // prompt sent after readiness, so the detailed instructions live in the
-    // SELF-REVIEW.md file.
+    // Interactive runners receive a short prompt after the TUI is ready; the
+    // detailed instructions live in SELF-REVIEW.md. Exec runners bake a
+    // self-contained prompt into their launch command.
     const taskPrompt = runnerNeedsPostLaunchPrompt(runner)
       ? `Read ${taskMdPath} and execute all steps. Mark each checkbox as you complete it.`
       : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. You must write ${taskDir}/artifacts/review-feedback.md and ${taskDir}/SELF-REVIEW-SIGNAL.json before exiting.`;
@@ -254,6 +254,7 @@ export async function runReviewAgent(
 
     // 7. Read review-feedback.md
     const feedback = await readReviewFeedback(vars, taskDir);
+    completedSuccessfully = true;
     const persistedArtifacts: string[] = [];
     const taskProgressRel = `${artifactDir}/self-review.md`;
     const taskProgressCopy = await execOnSlot(
@@ -330,18 +331,20 @@ export async function runReviewAgent(
   } finally {
     progressWatcher?.stop();
     // Cleanup must not mask the original throw above — log and continue so the outer error
-    // propagates intact to the run-engine catch. unwatchContext + killSelfReviewWindow are
-    // best-effort teardown; their failures are recoverable on the next dispatch.
+    // propagates intact to the run-engine catch. Keep failed review panes alive for
+    // forensics/manual recovery; only successful review agents are torn down.
     try {
       await unwatchContext(vars.slotId, 'self-review');
     } catch (cleanupErr) {
       console.warn(`[self-review] cleanup unwatchContext failed: ${(cleanupErr as Error).message}`);
     }
     if (activeTaskSet) updateRun(_runId, { activeTaskFile: undefined });
-    try {
-      await killSelfReviewWindow(vars, session, 'post-run cleanup');
-    } catch (cleanupErr) {
-      console.warn(`[self-review] cleanup killWindow failed: ${(cleanupErr as Error).message}`);
+    if (completedSuccessfully) {
+      try {
+        await killSelfReviewWindow(vars, session, 'post-run cleanup');
+      } catch (cleanupErr) {
+        console.warn(`[self-review] cleanup killWindow failed: ${(cleanupErr as Error).message}`);
+      }
     }
   }
 }

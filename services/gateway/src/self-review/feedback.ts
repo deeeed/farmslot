@@ -4,6 +4,7 @@ import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
+import { parseSelfReviewIssueBullets } from './issues.js';
 import type { ReviewAgentResult } from './review-agent.js';
 
 // ─── Read review output ───
@@ -27,20 +28,9 @@ export async function readReviewFeedback(
     const verdict = verdictMatch?.[1]?.toUpperCase() === 'ISSUES' ? 'issues' : 'pass';
 
     // Parse issues
-    const issues: SelfReviewIssue[] = [];
+    let issues: SelfReviewIssue[] = [];
     if (verdict === 'issues') {
-      const issueRegex = /[-*]\s+\*\*([^*]+)\*\*\s*[—–-]\s*(.*)/g;
-      let match;
-      while ((match = issueRegex.exec(content)) !== null) {
-        const loc = match[1].trim();
-        const desc = match[2].trim();
-        const [file, lineStr] = loc.split(':');
-        issues.push({
-          file: file || loc,
-          line: lineStr ? parseInt(lineStr, 10) || undefined : undefined,
-          description: desc,
-        });
-      }
+      issues = parseSelfReviewIssueBullets(content);
     }
 
     if (verdict === 'issues' && issues.length === 0) {

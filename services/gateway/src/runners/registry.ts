@@ -286,12 +286,10 @@ export function runnerSupportsTmuxNudges(runnerId?: string | null): boolean {
 }
 
 export function runnerLaunchCommandUsesHeadlessPrint(
-  runnerId?: string | null,
+  _runnerId?: string | null,
   launchCommand?: unknown,
 ): boolean {
-  const runner = normalizeRunner(runnerId);
   if (typeof launchCommand !== 'string' || !launchCommand.trim()) return false;
-  if (runner !== 'cursor') return false;
   return /(^|\s)--print(\s|$)/.test(launchCommand) || /(^|\s)-p(\s|$)/.test(launchCommand);
 }
 
@@ -300,8 +298,8 @@ export function runnerSupportsTmuxNudgesForLaunch(
   launchCommand?: unknown,
 ): boolean {
   const runner = normalizeRunner(runnerId);
-  // Explicit headless Cursor launches are the exception: --print has no live chat prompt
-  // behind tmux stdin, so do not send dead keystrokes even though Cursor's normal TUI
+  // Explicit headless launches are the exception: --print has no live chat prompt
+  // behind tmux stdin, so do not send dead keystrokes even when the runner's normal TUI
   // launch is nudge-capable.
   if (runnerLaunchCommandUsesHeadlessPrint(runner, launchCommand)) return false;
   if (runnerSupportsTmuxNudges(runner)) return true;
@@ -320,8 +318,8 @@ export function runnerTmuxNudgeUnsupportedDescription(
       : violationType === 'idle'
         ? 'appears idle'
         : 'is waiting';
-  if (runner === 'cursor' && runnerLaunchCommandUsesHeadlessPrint(runner, launchCommand)) {
-    return `Cursor ${reason}, but this lane was launched with cursor-agent --print/headless, so tmux keystrokes cannot reach a live chat prompt. Re-run or resume Cursor instead of using tmux nudge.`;
+  if (runnerLaunchCommandUsesHeadlessPrint(runner, launchCommand)) {
+    return `${runner} ${reason}, but this lane was launched with --print/headless, so tmux keystrokes cannot reach a live chat prompt. Re-run or resume the worker instead of using tmux nudge.`;
   }
   return `${runnerId ?? 'runner'} ${reason}, but this launch mode does not support tmux nudges`;
 }
@@ -540,6 +538,26 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   );
 }
 
+function claudePaneShowsQueuedInstruction(pane: string, message: string): boolean {
+  if (!runnerPaneContainsInstruction(pane, message)) return false;
+  return /messages? to be\s+submitted\s+after next\s+tool call/i.test(normalizePaneText(pane));
+}
+
+function claudePaneShowsSubmittedInstruction(pane: string, message: string): boolean {
+  const needle = instructionNeedle(message);
+  if (!needle) return false;
+  const compactPane = normalizePaneText(pane);
+  const idx = compactPane.lastIndexOf(needle);
+  if (idx === -1) return false;
+  const after = compactPane.slice(idx + needle.length);
+
+  // Claude terminal output is cosmetic and changes often. Do not parse spinner
+  // labels as correctness signals. The only terminal distinction we need here is
+  // whether the instruction left the live composer and entered transcript
+  // history; completion is proven later by signal files/artifacts.
+  return /(?:^|\s)❯(?:\s|$)/.test(after) || /\bctx:\d+%\b/i.test(after);
+}
+
 export function runnerPaneShowsPromptAccepted(
   pane: string,
   previousPane: string,
@@ -554,6 +572,12 @@ export function runnerPaneShowsPromptAccepted(
   // accepted so sendRunnerPostLaunchPrompt sends a bare Enter and verifies
   // actual progress instead of leaving the run stuck at an idle prompt.
   if (runnerPaneHasBufferedInstruction(pane, message, runnerId)) return false;
+  if (
+    normalizeRunner(runnerId) === 'claude' &&
+    claudePaneShowsSubmittedInstruction(pane, message)
+  ) {
+    return true;
+  }
   if (runnerPaneHasProgressAfterInstruction(pane, message)) return true;
   if (marker && pane.includes(marker)) return !runnerPaneLooksIdle(pane.split('\n'), runnerId);
   return !runnerPaneLooksIdle(pane.split('\n'), runnerId);
@@ -591,6 +615,8 @@ export function runnerPaneHasPendingInstruction(
     );
   }
   if (runner === 'claude') {
+    if (claudePaneShowsQueuedInstruction(pane, message)) return true;
+    if (claudePaneShowsSubmittedInstruction(pane, message)) return false;
     return (
       compactTail.includes(needle) && (compactTail.includes('❯') || /ctx:\d+%/i.test(compactTail))
     );
@@ -604,6 +630,7 @@ export function runnerPaneHasBufferedInstruction(
   runnerId?: string | null,
 ): boolean {
   if (runnerPaneHasPendingInstruction(pane, message, runnerId)) return true;
+  if (normalizeRunner(runnerId) === 'claude') return false;
   return (
     runnerPaneContainsInstruction(pane, message) &&
     !runnerPaneHasProgressAfterInstruction(pane, message)
