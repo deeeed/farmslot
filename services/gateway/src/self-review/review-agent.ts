@@ -24,8 +24,10 @@ import {
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import { buildLaunchCommand } from '../runners/launch-command.js';
 import {
+  runnerLaunchCommandUsesHeadlessPrint,
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
+  runnerSupportsHeadlessPrintPrompt,
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
@@ -161,13 +163,14 @@ export async function runReviewAgent(
     activeTaskSet = true;
     if (reviewContext) await watchContext(vars.slotId, reviewContext);
 
-    // Exec-mode runners (no post-launch prompt) bake the prompt into the launch
-    // command — it must be self-contained. Interactive runners get a shorter
-    // prompt sent after readiness, so the detailed instructions live in the
-    // SELF-REVIEW.md file.
-    const taskPrompt = runnerNeedsPostLaunchPrompt(runner)
-      ? `Read ${taskMdPath} and execute all steps. Mark each checkbox as you complete it.`
-      : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. You must write ${taskDir}/artifacts/review-feedback.md and ${taskDir}/SELF-REVIEW-SIGNAL.json before exiting.`;
+    // Exec/headless runners bake the prompt into the launch command, so it must
+    // be self-contained. Interactive runners get a shorter prompt after the TUI
+    // is ready; the detailed instructions live in SELF-REVIEW.md.
+    const useHeadlessPrintPrompt = runnerSupportsHeadlessPrintPrompt(runner);
+    const taskPrompt =
+      runnerNeedsPostLaunchPrompt(runner) && !useHeadlessPrintPrompt
+        ? `Read ${taskMdPath} and execute all steps. Mark each checkbox as you complete it.`
+        : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. You must write ${taskDir}/artifacts/review-feedback.md and ${taskDir}/SELF-REVIEW-SIGNAL.json before exiting.`;
 
     // 4. Launch review agent in the review window. Inherit the run's safety
     // tier (ADR-023) so the review agent runs with the same posture as the worker.
@@ -176,6 +179,7 @@ export async function runReviewAgent(
       taskFile: taskMdPath,
       effort: getRun(_runId)?.effort,
       safetyTier: parentSafetyTier,
+      headlessPrintPrompt: useHeadlessPrintPrompt,
     });
     launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
     debugSelfReviewLog(`[self-review] launching (${runner}): ${launchCmd}`);
@@ -204,7 +208,10 @@ export async function runReviewAgent(
     // 5. For interactive runners, send the task with verify-and-retry.
     // Use the same runner-neutral post-launch protocol as dispatch: wait for a
     // stable runner prompt, send, then verify that the pane echoes our marker.
-    if (runnerNeedsPostLaunchPrompt(runner) && runner !== 'claude') {
+    if (
+      runnerNeedsPostLaunchPrompt(runner) &&
+      !runnerLaunchCommandUsesHeadlessPrint(runner, launchCmd)
+    ) {
       await sendRunnerPostLaunchPrompt(
         vars,
         `${session}:${REVIEW_WINDOW}`,

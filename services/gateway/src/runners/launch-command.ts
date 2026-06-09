@@ -128,6 +128,11 @@ export interface BuildLaunchOptions {
    * When omitted, `runnerDefaultSafetyTier(runnerId)` is consulted.
    */
   safetyTier?: SafetyTier;
+  /**
+   * Embed the prompt into a headless print-style launch when the runner supports it.
+   * Omit for persistent interactive worker/relaunch paths that need tmux nudges.
+   */
+  headlessPrintPrompt?: boolean;
 }
 
 /**
@@ -189,7 +194,8 @@ export function buildLaunchCommand(
     const claudePath = vars.claudePath || 'claude';
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.join(' ');
-    const promptArg = prompt.trim() ? ` --print ${shellQuote(prompt)}` : '';
+    const promptArg =
+      opts.headlessPrintPrompt && prompt.trim() ? ` --print ${shellQuote(prompt)}` : '';
     return `cd '${repo}' && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${promptArg}`;
   }
 

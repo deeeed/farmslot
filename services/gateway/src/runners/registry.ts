@@ -59,6 +59,8 @@ export interface RunnerDefinition {
   defaultSafetyTier: SafetyTier;
   /** Default model used when the operator/project did not provide one. */
   defaultModel: string | null;
+  /** Runner can receive a complete prompt via a headless print-style CLI flag. */
+  supportsHeadlessPrintPrompt: boolean;
   /**
    * Predicate invoked by `runCreate` to reject incompatible runner+model
    * combos at entry. Codex CLI accepts an `--model claude-opus` flag at the
@@ -105,6 +107,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // higher tiers via project.json `default_safety_tier`.
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CLAUDE_MODEL,
+    supportsHeadlessPrintPrompt: true,
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
   },
   codex: {
@@ -136,6 +139,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // higher tiers via project.json `default_safety_tier`.
     defaultSafetyTier: 'sandboxed',
     defaultModel: 'gpt-5.5',
+    supportsHeadlessPrintPrompt: false,
     acceptsModel: (model) => model === 'unknown' || !CLAUDE_MODEL_PREFIXES.test(model),
   },
   cursor: {
@@ -158,6 +162,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     },
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CURSOR_MODEL,
+    supportsHeadlessPrintPrompt: false,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
   },
   opencode: {
@@ -173,6 +178,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
+    supportsHeadlessPrintPrompt: false,
     acceptsModel: () => true,
   },
   none: {
@@ -188,6 +194,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
+    supportsHeadlessPrintPrompt: false,
     acceptsModel: () => true,
   },
   fake: {
@@ -203,6 +210,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
+    supportsHeadlessPrintPrompt: false,
     acceptsModel: () => true,
   },
 };
@@ -285,13 +293,16 @@ export function runnerSupportsTmuxNudges(runnerId?: string | null): boolean {
   return getRunnerDefinition(runnerId).supportsTmuxNudges;
 }
 
+export function runnerSupportsHeadlessPrintPrompt(runnerId?: string | null): boolean {
+  if (!isKnownRunner(runnerId)) return false;
+  return getRunnerDefinition(runnerId).supportsHeadlessPrintPrompt;
+}
+
 export function runnerLaunchCommandUsesHeadlessPrint(
-  runnerId?: string | null,
+  _runnerId?: string | null,
   launchCommand?: unknown,
 ): boolean {
-  const runner = normalizeRunner(runnerId);
   if (typeof launchCommand !== 'string' || !launchCommand.trim()) return false;
-  if (runner !== 'cursor') return false;
   return /(^|\s)--print(\s|$)/.test(launchCommand) || /(^|\s)-p(\s|$)/.test(launchCommand);
 }
 
@@ -300,8 +311,8 @@ export function runnerSupportsTmuxNudgesForLaunch(
   launchCommand?: unknown,
 ): boolean {
   const runner = normalizeRunner(runnerId);
-  // Explicit headless Cursor launches are the exception: --print has no live chat prompt
-  // behind tmux stdin, so do not send dead keystrokes even though Cursor's normal TUI
+  // Explicit headless launches are the exception: --print has no live chat prompt
+  // behind tmux stdin, so do not send dead keystrokes even when the runner's normal TUI
   // launch is nudge-capable.
   if (runnerLaunchCommandUsesHeadlessPrint(runner, launchCommand)) return false;
   if (runnerSupportsTmuxNudges(runner)) return true;
@@ -320,8 +331,8 @@ export function runnerTmuxNudgeUnsupportedDescription(
       : violationType === 'idle'
         ? 'appears idle'
         : 'is waiting';
-  if (runner === 'cursor' && runnerLaunchCommandUsesHeadlessPrint(runner, launchCommand)) {
-    return `Cursor ${reason}, but this lane was launched with cursor-agent --print/headless, so tmux keystrokes cannot reach a live chat prompt. Re-run or resume Cursor instead of using tmux nudge.`;
+  if (runnerLaunchCommandUsesHeadlessPrint(runner, launchCommand)) {
+    return `${runner} ${reason}, but this lane was launched with --print/headless, so tmux keystrokes cannot reach a live chat prompt. Re-run or resume the worker instead of using tmux nudge.`;
   }
   return `${runnerId ?? 'runner'} ${reason}, but this launch mode does not support tmux nudges`;
 }
@@ -537,18 +548,6 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
     /\b(Working|Running|Reading|Explored|Edited|Ran|UserPromptSubmit hook|SessionStart hook)\b/i.test(
       after,
     ) || /[•✔✖]\s/.test(after)
-  );
-}
-
-export function runnerPaneHasQueuedInstruction(pane: string, message: string): boolean {
-  if (!runnerPaneContainsInstruction(pane, message)) return false;
-  const compactPane = normalizePaneText(pane).toLowerCase();
-  return (
-    compactPane.includes('messages to be submitted after next tool call') ||
-    compactPane.includes('submitted after next tool call') ||
-    compactPane.includes('message queued') ||
-    compactPane.includes('queued message') ||
-    compactPane.includes('tab to queue message')
   );
 }
 

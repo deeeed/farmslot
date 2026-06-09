@@ -16,7 +16,6 @@ import {
   runnerPaneHasBufferedInstruction,
   runnerPaneHasPendingInstruction,
   runnerPaneHasProgressAfterInstruction,
-  runnerPaneHasQueuedInstruction,
   runnerPaneLooksIdle,
   runnerPaneShowsPromptAccepted,
   runnerPaneShowsWorkspaceTrustPrompt,
@@ -24,6 +23,7 @@ import {
   runnerProcessPattern,
   runnerProcessPatternSource,
   runnerSignalShowsCompletion,
+  runnerSupportsHeadlessPrintPrompt,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
   runnerSupportsTmuxNudges,
@@ -64,8 +64,9 @@ describe('claude runner', () => {
     assert.equal(runnerNeedsPostLaunchPrompt('claude-code'), true);
   });
 
-  it('needs post-launch prompt', () => {
+  it('needs post-launch prompt for normal interactive launches', () => {
     assert.equal(runnerNeedsPostLaunchPrompt('claude'), true);
+    assert.equal(runnerSupportsHeadlessPrintPrompt('claude'), true);
   });
 
   it('has /continue as continue command', () => {
@@ -346,7 +347,7 @@ describe('cursor runner', () => {
     Mark each checkbox as you complete it.
 `;
 
-    assert.equal(runnerPaneHasQueuedInstruction(after, message), true);
+    assert.equal(runnerPaneHasBufferedInstruction(after, message, 'claude'), true);
     assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'claude'), false);
   });
 
@@ -519,14 +520,24 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
     });
 
-    it('inline-launches without any --dangerously-* flag when no tier is supplied (sandboxed default)', () => {
+    it('inline-launches interactively by default so relaunch paths stay steerable', () => {
       const vars = makeVars({ dispatchCmd: '' });
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT);
       assert.doesNotMatch(cmd, /--dangerously-/);
+      assert.doesNotMatch(cmd, /--print/);
+      assert.doesNotMatch(cmd, /Read TASK/);
       assert.match(
         cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet/,
+        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet$/,
       );
+    });
+
+    it('adds --print only when a caller explicitly requests a headless prompt', () => {
+      const vars = makeVars({ dispatchCmd: '' });
+      const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, {
+        headlessPrintPrompt: true,
+      });
+      assert.match(cmd, /--model sonnet --print 'Read TASK\.md and execute\.'/);
     });
 
     it('routes through expandDispatchCmd when claudeUsesDispatchCmd=true', () => {
