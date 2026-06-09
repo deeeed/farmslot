@@ -66,6 +66,32 @@ test('ready workspace evidence model keeps publish selection media-only', () => 
   );
 });
 
+test('ready workspace evidence model preserves selected package media under screenshots paths', () => {
+  const input = payload({
+    prPackage: {
+      evidenceManifest: [
+        { path: 'artifacts/screenshots/manifest-proof.png', purpose: 'screenshot' },
+        { path: 'artifacts/recipe-capture-helper.json', purpose: 'json' },
+        { path: 'artifacts/after-capture-helper.log', purpose: 'log' },
+      ],
+      selectedEvidenceKeys: [
+        'screenshots/manifest-proof.png',
+        'artifacts/recipe-capture-helper.json',
+        'artifacts/after-capture-helper.log',
+      ],
+    },
+  });
+
+  assert.deepEqual(
+    readyWorkspacePublishEvidenceArtifacts(input).map((artifact) => artifact.path),
+    ['artifacts/screenshots/manifest-proof.png'],
+  );
+  assert.deepEqual(
+    readyWorkspaceEvidenceArtifacts(input).map((artifact) => artifact.path),
+    ['artifacts/screenshots/manifest-proof.png'],
+  );
+});
+
 test('ready workspace artifact model exposes review, package preview, and diff helpers', () => {
   const input = payload({
     artifactManifest: [{ path: 'reports/changes.diff', purpose: 'review patch' }],

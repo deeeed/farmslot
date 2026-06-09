@@ -59,8 +59,6 @@ export interface RunnerDefinition {
   defaultSafetyTier: SafetyTier;
   /** Default model used when the operator/project did not provide one. */
   defaultModel: string | null;
-  /** Runner can receive a complete prompt via a headless print-style CLI flag. */
-  supportsHeadlessPrintPrompt: boolean;
   /**
    * Predicate invoked by `runCreate` to reject incompatible runner+model
    * combos at entry. Codex CLI accepts an `--model claude-opus` flag at the
@@ -107,7 +105,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // higher tiers via project.json `default_safety_tier`.
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CLAUDE_MODEL,
-    supportsHeadlessPrintPrompt: true,
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
   },
   codex: {
@@ -139,7 +136,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // higher tiers via project.json `default_safety_tier`.
     defaultSafetyTier: 'sandboxed',
     defaultModel: 'gpt-5.5',
-    supportsHeadlessPrintPrompt: false,
     acceptsModel: (model) => model === 'unknown' || !CLAUDE_MODEL_PREFIXES.test(model),
   },
   cursor: {
@@ -162,7 +158,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     },
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CURSOR_MODEL,
-    supportsHeadlessPrintPrompt: false,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
   },
   opencode: {
@@ -178,7 +173,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
-    supportsHeadlessPrintPrompt: false,
     acceptsModel: () => true,
   },
   none: {
@@ -194,7 +188,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
-    supportsHeadlessPrintPrompt: false,
     acceptsModel: () => true,
   },
   fake: {
@@ -210,7 +203,6 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     flagsByTier: { sandboxed: [], 'full-auto': [], dangerous: [] },
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
-    supportsHeadlessPrintPrompt: false,
     acceptsModel: () => true,
   },
 };
@@ -291,11 +283,6 @@ export function runnerSupportsInteractivePrompt(runnerId?: string | null): boole
 export function runnerSupportsTmuxNudges(runnerId?: string | null): boolean {
   if (!isKnownRunner(runnerId)) return false;
   return getRunnerDefinition(runnerId).supportsTmuxNudges;
-}
-
-export function runnerSupportsHeadlessPrintPrompt(runnerId?: string | null): boolean {
-  if (!isKnownRunner(runnerId)) return false;
-  return getRunnerDefinition(runnerId).supportsHeadlessPrintPrompt;
 }
 
 export function runnerLaunchCommandUsesHeadlessPrint(
@@ -551,6 +538,26 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   );
 }
 
+function claudePaneShowsQueuedInstruction(pane: string, message: string): boolean {
+  if (!runnerPaneContainsInstruction(pane, message)) return false;
+  return /messages? to be\s+submitted\s+after next\s+tool call/i.test(normalizePaneText(pane));
+}
+
+function claudePaneShowsSubmittedInstruction(pane: string, message: string): boolean {
+  const needle = instructionNeedle(message);
+  if (!needle) return false;
+  const compactPane = normalizePaneText(pane);
+  const idx = compactPane.lastIndexOf(needle);
+  if (idx === -1) return false;
+  const after = compactPane.slice(idx + needle.length);
+
+  // Claude terminal output is cosmetic and changes often. Do not parse spinner
+  // labels as correctness signals. The only terminal distinction we need here is
+  // whether the instruction left the live composer and entered transcript
+  // history; completion is proven later by signal files/artifacts.
+  return /(?:^|\s)❯(?:\s|$)/.test(after) || /\bctx:\d+%\b/i.test(after);
+}
+
 export function runnerPaneShowsPromptAccepted(
   pane: string,
   previousPane: string,
@@ -565,6 +572,12 @@ export function runnerPaneShowsPromptAccepted(
   // accepted so sendRunnerPostLaunchPrompt sends a bare Enter and verifies
   // actual progress instead of leaving the run stuck at an idle prompt.
   if (runnerPaneHasBufferedInstruction(pane, message, runnerId)) return false;
+  if (
+    normalizeRunner(runnerId) === 'claude' &&
+    claudePaneShowsSubmittedInstruction(pane, message)
+  ) {
+    return true;
+  }
   if (runnerPaneHasProgressAfterInstruction(pane, message)) return true;
   if (marker && pane.includes(marker)) return !runnerPaneLooksIdle(pane.split('\n'), runnerId);
   return !runnerPaneLooksIdle(pane.split('\n'), runnerId);
@@ -602,6 +615,8 @@ export function runnerPaneHasPendingInstruction(
     );
   }
   if (runner === 'claude') {
+    if (claudePaneShowsQueuedInstruction(pane, message)) return true;
+    if (claudePaneShowsSubmittedInstruction(pane, message)) return false;
     return (
       compactTail.includes(needle) && (compactTail.includes('❯') || /ctx:\d+%/i.test(compactTail))
     );
@@ -615,6 +630,7 @@ export function runnerPaneHasBufferedInstruction(
   runnerId?: string | null,
 ): boolean {
   if (runnerPaneHasPendingInstruction(pane, message, runnerId)) return true;
+  if (normalizeRunner(runnerId) === 'claude') return false;
   return (
     runnerPaneContainsInstruction(pane, message) &&
     !runnerPaneHasProgressAfterInstruction(pane, message)

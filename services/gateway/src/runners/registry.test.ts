@@ -23,7 +23,6 @@ import {
   runnerProcessPattern,
   runnerProcessPatternSource,
   runnerSignalShowsCompletion,
-  runnerSupportsHeadlessPrintPrompt,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
   runnerSupportsTmuxNudges,
@@ -66,7 +65,6 @@ describe('claude runner', () => {
 
   it('needs post-launch prompt for normal interactive launches', () => {
     assert.equal(runnerNeedsPostLaunchPrompt('claude'), true);
-    assert.equal(runnerSupportsHeadlessPrintPrompt('claude'), true);
   });
 
   it('has /continue as continue command', () => {
@@ -332,6 +330,34 @@ describe('cursor runner', () => {
     );
   });
 
+  it('accepts Claude post-launch prompt delivery once the prompt is in transcript history', () => {
+    const message =
+      'Read temp/tasks/feat/tat-1043-0608-144339/SELF-REVIEW.md and execute all steps. Mark each checkbox as you complete it.';
+    const before = `
+ ▐▛███▜▌   Claude Code v2.1.162
+
+❯ 
+`;
+    const after = `
+ ▐▛███▜▌   Claude Code v2.1.162
+
+❯ ${message}
+
+✽ Any future Claude turn label can appear here…
+
+───────────────────────────────────────────────────────────────────────────────
+❯ 
+───────────────────────────────────────────────────────────────────────────────
+  [OMC#4.14.4] | session:0m | ctx:0%
+`;
+
+    assert.equal(runnerPaneHasBufferedInstruction(after, message, 'claude'), false);
+    assert.equal(
+      runnerPaneShowsPromptAccepted(after, before, message, 'SELF-REVIEW.md', 'claude'),
+      true,
+    );
+  });
+
   it('does not accept post-launch prompt delivery when the runner only queued it for the next tool call', () => {
     const message =
       'Read temp/tasks/feat/tat-3307-0609-103547/TASK.md and execute all steps. Mark each checkbox as you complete it.';
@@ -529,17 +555,6 @@ describe('buildLaunchCommand', () => {
       assert.match(
         cmd,
         /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet$/,
-      );
-    });
-
-    it('adds --print only when a caller explicitly requests a headless prompt', () => {
-      const vars = makeVars({ dispatchCmd: '' });
-      const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, {
-        headlessPrintPrompt: true,
-      });
-      assert.match(
-        cmd,
-        /env -i HOME="\$HOME" PATH="\$PATH" USER="\$\{USER:-\}" SHELL="\$\{SHELL:-\/bin\/zsh\}" TERM="\$\{TERM:-xterm-256color\}" \/usr\/local\/bin\/claude --model sonnet --disable-slash-commands --mcp-config '\{"mcpServers":\{\}\}' --print 'Read TASK\.md and execute\.'/,
       );
     });
 
