@@ -540,6 +540,18 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   );
 }
 
+export function runnerPaneHasQueuedInstruction(pane: string, message: string): boolean {
+  if (!runnerPaneContainsInstruction(pane, message)) return false;
+  const compactPane = normalizePaneText(pane).toLowerCase();
+  return (
+    compactPane.includes('messages to be submitted after next tool call') ||
+    compactPane.includes('submitted after next tool call') ||
+    compactPane.includes('message queued') ||
+    compactPane.includes('queued message') ||
+    compactPane.includes('tab to queue message')
+  );
+}
+
 export function runnerPaneShowsPromptAccepted(
   pane: string,
   previousPane: string,
@@ -553,6 +565,7 @@ export function runnerPaneShowsPromptAccepted(
   // the live composer while the final Enter was swallowed. Treat that as not
   // accepted so sendRunnerPostLaunchPrompt sends a bare Enter and verifies
   // actual progress instead of leaving the run stuck at an idle prompt.
+  if (runnerPaneHasQueuedInstruction(pane, message)) return true;
   if (runnerPaneHasBufferedInstruction(pane, message, runnerId)) return false;
   if (runnerPaneHasProgressAfterInstruction(pane, message)) return true;
   if (marker && pane.includes(marker)) return !runnerPaneLooksIdle(pane.split('\n'), runnerId);
@@ -892,6 +905,12 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
+    if (runnerPaneHasQueuedInstruction(postPane, message)) {
+      console.log(
+        `[${logPrefix}] prompt queued in ${target} (attempt ${attempt}/${maxAttempts})`,
+      );
+      return;
+    }
     if (runnerPaneHasBufferedInstruction(postPane, message, runner)) {
       console.log(
         `[${logPrefix}] prompt appears buffered after attempt ${attempt}/${maxAttempts}; retrying with submit key`,
@@ -911,6 +930,12 @@ export async function sendRunnerPostLaunchPrompt(
       tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
     )
   ).stdout;
+  if (runnerPaneHasQueuedInstruction(failurePane, message)) {
+    console.log(
+      `[${logPrefix}] prompt delivery verifier found queued instruction in ${target}; accepting delayed submit`,
+    );
+    return;
+  }
   if (opts.signalPath) {
     const signalResult = await execOnSlot(
       vars,

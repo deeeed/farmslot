@@ -14,6 +14,7 @@ import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
   runnerPaneHasBufferedInstruction,
+  runnerPaneHasQueuedInstruction,
   runnerPaneHasPendingInstruction,
   runnerPaneHasProgressAfterInstruction,
   runnerPaneLooksIdle,
@@ -328,6 +329,25 @@ describe('cursor runner', () => {
       runnerPaneShowsPromptAccepted(after, before, message, 'SELF-REVIEW.md', 'codex'),
       false,
     );
+  });
+
+  it('accepts post-launch prompt delivery when the runner queues it for the next tool call', () => {
+    const message =
+      'Read temp/tasks/feat/tat-3307-0609-103547/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+    const before = `
+⏺ Working (6s • esc to interrupt)
+`;
+    const after = `
+• Messages to be
+  submitted
+  after next
+  tool call
+  ↳ Read temp/tasks/feat/tat-3307-0609-103547/TASK.md and execute all steps.
+    Mark each checkbox as you complete it.
+`;
+
+    assert.equal(runnerPaneHasQueuedInstruction(after, message), true);
+    assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'claude'), true);
   });
 
   it('uses Tab to submit buffered Codex prompts when the TUI requests queueing', () => {
