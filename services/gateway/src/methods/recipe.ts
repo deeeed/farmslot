@@ -517,6 +517,39 @@ export function recipeRunOptionsForProject(
   return options;
 }
 
+export function recipeRunUnsupportedOptionWarnings(
+  projectJson: RawProjectJson,
+  args: { playbackSlowMs?: number; recordVideo?: boolean },
+): string[] {
+  const warnings: string[] = [];
+  if (
+    args.playbackSlowMs !== undefined &&
+    getProjectFieldRaw(projectJson, 'recipe_run_supports_playback_slow') !== true
+  ) {
+    warnings.push(
+      'Slow playback requested, but this project has not set recipe_run_supports_playback_slow=true; running at normal speed.',
+    );
+  }
+  if (
+    args.recordVideo &&
+    getProjectFieldRaw(projectJson, 'recipe_run_supports_video_recording') !== true
+  ) {
+    warnings.push(
+      'Video recording requested, but this project has not set recipe_run_supports_video_recording=true; replay will not include a video artifact.',
+    );
+  }
+  return warnings;
+}
+
+async function recipeRunHasVideoArtifact(
+  slotVars: SlotVars,
+  artifactRoot: string,
+): Promise<boolean> {
+  const script = `root=${shellExpressionForRemotePath(artifactRoot)}; test -d "$root" || exit 0; find "$root" -type f \( -iname '*.mp4' -o -iname '*.mov' -o -iname '*.webm' \) -print -quit`;
+  const result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 64 * 1024 });
+  return result.stdout.trim().length > 0;
+}
+
 async function resolveSelectedRecipeArtifactRoot(
   run: { taskFile: string | null; project: string } & { id: string },
   recipeRunId: string | undefined,
@@ -758,6 +791,18 @@ export async function recipeRerun(
       }
     }
 
+    for (const warning of recipeRunUnsupportedOptionWarnings(projectJson, {
+      playbackSlowMs,
+      recordVideo,
+    })) {
+      emit(Events.SCRIPT_OUTPUT, {
+        requestId,
+        stream: 'stderr',
+        data: `⚠ recipe option: ${warning}\n`,
+        timestamp: Date.now(),
+      });
+    }
+
     // Build recipe command from project hook
     const rawTimeout = getProjectField(projectJson, 'recipe_timeout');
     const timeoutMs = typeof rawTimeout === 'number' ? rawTimeout : DEFAULT_TIMEOUT_MS;
@@ -798,6 +843,17 @@ export async function recipeRerun(
           },
         });
         publishLiveRecipeContext();
+        if (
+          recordVideo &&
+          !(await recipeRunHasVideoArtifact(slotVars, slotRecipeRunArtifactsDir))
+        ) {
+          emit(Events.SCRIPT_OUTPUT, {
+            requestId,
+            stream: 'stderr',
+            data: '⚠ recipe option: Video recording was requested, but no .mp4/.mov/.webm artifact was produced. Check the project runner recorder/capture-helper integration.\n',
+            timestamp: Date.now(),
+          });
+        }
         emit(Events.SCRIPT_COMPLETE, {
           requestId,
           exitCode: result.exitCode,
