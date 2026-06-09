@@ -194,9 +194,10 @@ export function buildLaunchCommand(
     const claudePath = vars.claudePath || 'claude';
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.join(' ');
+    const headlessFlags = opts.headlessPrintPrompt ? ' --disable-slash-commands' : '';
     const promptArg =
       opts.headlessPrintPrompt && prompt.trim() ? ` --print ${shellQuote(prompt)}` : '';
-    return `cd '${repo}' && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${promptArg}`;
+    return `cd '${repo}' && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${headlessFlags}${promptArg}`;
   }
 
   // Codex: route through dispatch_cmd when it's runner-aware; otherwise fall

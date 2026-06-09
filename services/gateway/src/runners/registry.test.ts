@@ -537,7 +537,10 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, {
         headlessPrintPrompt: true,
       });
-      assert.match(cmd, /--model sonnet --print 'Read TASK\.md and execute\.'/);
+      assert.match(
+        cmd,
+        /--model sonnet --disable-slash-commands --print 'Read TASK\.md and execute\.'/,
+      );
     });
 
     it('routes through expandDispatchCmd when claudeUsesDispatchCmd=true', () => {
