@@ -25,6 +25,27 @@ test('parseSelfReviewIssueBullets recovers issues from SELF-REVIEW-FIX.md', () =
   ]);
 });
 
+test('parseSelfReviewIssueBullets accepts review-feedback backtick locations', () => {
+  const issues = parseSelfReviewIssueBullets(`
+## Issues
+- \`ui/__mocks__/perps/perps-controller/index.ts:790\` — mock type lacks isHip3.
+- \`lavamoat/build-system/policy.json:6908\` — unrelated OS-specific policy churn.
+`);
+
+  assert.deepEqual(issues, [
+    {
+      file: 'ui/__mocks__/perps/perps-controller/index.ts',
+      line: 790,
+      description: 'mock type lacks isHip3.',
+    },
+    {
+      file: 'lavamoat/build-system/policy.json',
+      line: 6908,
+      description: 'unrelated OS-specific policy churn.',
+    },
+  ]);
+});
+
 test('canRecoverSelfReviewFixPass requires a working context for the current fix task', () => {
   const current = {
     role: 'self-review-fix',

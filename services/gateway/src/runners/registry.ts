@@ -540,6 +540,18 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   );
 }
 
+export function runnerPaneHasQueuedInstruction(pane: string, message: string): boolean {
+  if (!runnerPaneContainsInstruction(pane, message)) return false;
+  const compactPane = normalizePaneText(pane).toLowerCase();
+  return (
+    compactPane.includes('messages to be submitted after next tool call') ||
+    compactPane.includes('submitted after next tool call') ||
+    compactPane.includes('message queued') ||
+    compactPane.includes('queued message') ||
+    compactPane.includes('tab to queue message')
+  );
+}
+
 export function runnerPaneShowsPromptAccepted(
   pane: string,
   previousPane: string,
