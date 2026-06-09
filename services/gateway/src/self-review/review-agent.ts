@@ -204,7 +204,7 @@ export async function runReviewAgent(
     // 5. For interactive runners, send the task with verify-and-retry.
     // Use the same runner-neutral post-launch protocol as dispatch: wait for a
     // stable runner prompt, send, then verify that the pane echoes our marker.
-    if (runnerNeedsPostLaunchPrompt(runner)) {
+    if (runnerNeedsPostLaunchPrompt(runner) && runner !== 'claude') {
       await sendRunnerPostLaunchPrompt(
         vars,
         `${session}:${REVIEW_WINDOW}`,

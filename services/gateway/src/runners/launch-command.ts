@@ -189,7 +189,8 @@ export function buildLaunchCommand(
     const claudePath = vars.claudePath || 'claude';
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.join(' ');
-    return `cd '${repo}' && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`;
+    const promptArg = prompt.trim() ? ` --print ${shellQuote(prompt)}` : '';
+    return `cd '${repo}' && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}${promptArg}`;
   }
 
   // Codex: route through dispatch_cmd when it's runner-aware; otherwise fall
