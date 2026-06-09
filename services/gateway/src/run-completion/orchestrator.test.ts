@@ -13,6 +13,7 @@ import {
   assertReadyGatePackageInputsCurrent,
   assertSelectedEvidencePublished,
   defaultReviewDepthPolicy,
+  defaultSelectedEvidenceKeysForPublication,
   effectiveRequiredReviewCount,
   expandEvidenceSelectionForManifest,
   filterArtifactUrlsByEvidenceSelection,
@@ -104,6 +105,34 @@ test('selectedEvidenceKeysForPublication drops non-publishable sidecar artifacts
       'artifacts/after-capture-helper-ac1-orders-spacing.png',
       'artifacts/screenshots/manifest-proof.png',
     ],
+  );
+});
+
+test('defaultSelectedEvidenceKeysForPublication keeps local proof videos out of PR body selection', () => {
+  const evidenceManifest = [
+    { path: 'artifacts/after.png', purpose: 'screenshot' },
+    { path: 'artifacts/after.mp4', purpose: 'video-after' },
+  ];
+  const trustedEvidenceManifest = {
+    preferred_mode: 'screenshots' as const,
+    standalone: [{ label: 'After', file: 'after.png' }],
+    videos: { after: 'after.mp4' },
+  };
+
+  assert.deepEqual(
+    defaultSelectedEvidenceKeysForPublication({
+      evidenceManifest,
+      trustedEvidenceManifest,
+    }),
+    ['artifacts/after.png'],
+  );
+  assert.deepEqual(
+    selectedEvidenceKeysForPublication({
+      selectedEvidenceKeys: ['artifacts/after.mp4'],
+      evidenceManifest,
+      trustedEvidenceManifest,
+    }),
+    ['artifacts/after.mp4'],
   );
 });
 

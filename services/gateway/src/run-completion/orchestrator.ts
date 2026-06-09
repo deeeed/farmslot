@@ -384,6 +384,22 @@ export function selectedEvidenceKeysForPublication(input: {
   ].sort();
 }
 
+const LOCAL_PROOF_VIDEO_EXT = /\.(mp4|mov|webm)$/i;
+
+export function defaultSelectedEvidenceKeysForPublication(input: {
+  evidenceManifest: ArtifactRef[];
+  trustedEvidenceManifest: EvidenceManifest | null | undefined;
+}): string[] {
+  return input.evidenceManifest
+    .filter(
+      (artifact) =>
+        !LOCAL_PROOF_VIDEO_EXT.test(artifact.path) &&
+        isPackageSelectableEvidenceArtifact(artifact, input.trustedEvidenceManifest),
+    )
+    .map((artifact) => artifact.path)
+    .sort();
+}
+
 /**
  * Pre-gate safe completion phase for fix-bug v1. This copies local artifacts,
  * captures branch/session/package metadata, and writes immutable package files.
@@ -490,10 +506,10 @@ export async function prepareCompletionPackage(
     evidenceManifest,
     selectedEvidenceKeys:
       validSelectedEvidenceKeys ??
-      evidenceManifest
-        .filter((artifact) => isPackageSelectableEvidenceArtifact(artifact, runEvidenceManifest))
-        .map((artifact) => artifact.path)
-        .sort(),
+      defaultSelectedEvidenceKeysForPublication({
+        evidenceManifest,
+        trustedEvidenceManifest: runEvidenceManifest,
+      }),
     validationSummaryPath: validation.path,
     validationSummaryHash: validation.hash,
     reviewArtifactIds: independentReviews.flatMap((review) => review.artifactPaths ?? [review.id]),
