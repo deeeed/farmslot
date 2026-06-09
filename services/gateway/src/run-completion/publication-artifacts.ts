@@ -410,6 +410,12 @@ function sanitizePRBody(body: string): string {
     /^\s*(?:\/Users\/|\/home\/|\/tmp\/|~\/)\S+\.(?:mp4|mov|png|jpg|jpeg|gif)\s*$/gm,
     '',
   );
+  // Strip generated artifact-reference lines. The final PR should contain
+  // uploaded evidence URLs, not task-local artifact package paths.
+  result = result.replace(
+    /^.*(^|[\s|<(='"])(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"|]+.*$/gim,
+    '',
+  );
   // Strip markdown image refs with just artifact filenames (before.mp4, after.mp4, evidence-*.png)
   result = result.replace(
     /!\[[^\]]*\]\((?:before|after|evidence)[^)]*\.(?:mp4|mov|png|jpg|jpeg)\)/g,

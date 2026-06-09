@@ -39,6 +39,7 @@ export class RecipeOutputPanel extends LitElement {
   @property() recipeArtifactPath = '';
   @property() recipeRunId = '';
   @property({ type: Number }) playbackSlowMs = 0;
+  @property({ type: Boolean }) recordVideo = true;
   @property({ type: Boolean }) showArtifactAction = false;
 
   @state() private _output: RecipeOutputState | null = null;
@@ -127,6 +128,7 @@ export class RecipeOutputPanel extends LitElement {
       if (this.recipeArtifactPath) params.recipeArtifactPath = this.recipeArtifactPath;
       if (this.recipeRunId) params.recipeRunId = this.recipeRunId;
       if (this.playbackSlowMs > 0) params.playbackSlowMs = this.playbackSlowMs;
+      params.recordVideo = this.recordVideo;
       const result = (await gateway.request(Methods.RECIPE_RERUN, params)) as ScriptActionResult;
       requestId = result.requestId;
       this._output = { requestId, lines: [], running: true };

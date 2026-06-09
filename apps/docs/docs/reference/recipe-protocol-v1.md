@@ -333,6 +333,13 @@ Use `proofTarget` casing in recipe nodes and artifact manifests.
 
 Proof windows should start at the relevant user-visible proof interaction and exclude generic setup by default. Setup can use `proof_window` only when setup itself is the claim.
 
+Video proof is a first-class Recipe v1 evidence type for UI-capable projects. A
+runner that supports replay recording should capture the proof window into the
+run artifact directory and index it in `artifact-manifest.json` with `type: "video"`, a reviewer-readable label, and the relevant `nodeId`/`proofTarget`.
+On macOS slots, the preferred provider is Farmslot's installed `capture-helper`;
+recipes and agents should not invent project-specific capture commands when the
+slot recorder capability is available.
+
 ### 11.1 Visual proof HUD and overlay
 
 For UI-capable projects, HUD/overlay support is a first-class Recipe v1 runtime capability exposed through the official `app.hud` action. The HUD is a reviewer aid for live playback and recorded proof media; it is not the proof source of truth. Trace, assertions, screenshots/videos, and artifact manifests remain authoritative. Headless projects are not required to support `app.hud`, but any runner that advertises it must implement the lifecycle semantics below.

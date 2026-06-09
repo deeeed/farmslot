@@ -50,7 +50,10 @@ Important hook variables:
 | `{{cdp_port}}`, `{{port}}`, `{{simulator}}`, `{{adb_serial}}` | Runtime-specific resources when present. |
 
 A v1 `recipe_run` hook must make recipe input and artifact output explicit. Hidden
-output paths make review and replay unreliable.
+output paths make review and replay unreliable. UI-capable projects should treat
+video proof as a normal recipe-run capability: install/doctor the recorder during
+runtime setup, record into `{{artifacts_dir}}` when requested, and publish the
+video through `artifact-manifest.json`.
 
 ## Action manifest
 

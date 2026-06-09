@@ -197,27 +197,87 @@ export class CdpWebPage {
   }
 
   async click(selector: string): Promise<unknown> {
-    return this.evaluate(
-      `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.click(); return { clicked: true }; })()`,
+    const target = await this.evaluate<{
+      x: number;
+      y: number;
+      selector: string;
+      tagName: string;
+    }>(
+      `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Selector has no clickable box: ${escapeForJsMessage(selector)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, selector: ${JSON.stringify(selector)}, tagName: el.tagName }; })()`,
     );
+    await this.clickPoint(target.x, target.y);
+    return { clicked: true, selector: target.selector, tagName: target.tagName };
   }
 
   async clickText(text: string): Promise<unknown> {
-    return this.evaluate(
-      `(() => { const expected = ${JSON.stringify(text)}; const el = Array.from(document.querySelectorAll('button, [role=button], a, input, textarea, [tabindex], *')).find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.click(); return { clicked: true, text: expected }; })()`,
+    const target = await this.evaluate<{
+      x: number;
+      y: number;
+      text: string;
+      tagName: string;
+    }>(
+      `(() => { const expected = ${JSON.stringify(text)}; const candidates = Array.from(document.querySelectorAll('button, [role=button], a, label, input, textarea, [tabindex]')); const el = candidates.find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || candidate.getAttribute('value') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Text target has no clickable box: ${escapeForJsMessage(text)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: expected, tagName: el.tagName }; })()`,
     );
+    await this.clickPoint(target.x, target.y);
+    return { clicked: true, text: target.text, tagName: target.tagName };
   }
 
   async setInput(selector: string, value: string): Promise<unknown> {
-    return this.evaluate(
-      `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.focus(); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ${JSON.stringify(value)} })); el.dispatchEvent(new Event('change', { bubbles: true })); return { set: true }; })()`,
+    const before = await this.evaluate<{
+      selector: string;
+      tagName: string;
+      previousValue: string;
+    }>(
+      `(() => { const root = document.querySelector(${JSON.stringify(selector)}); if (!root) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); const el = root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : root.querySelector('input, textarea, [contenteditable="true"], [contenteditable=""]'); if (!el) throw new Error('Input target not found inside selector: ${escapeForJsMessage(selector)}'); if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Input target is disabled: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); if (typeof el.select === 'function') { el.select(); } else { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } return { selector: ${JSON.stringify(selector)}, tagName: el.tagName, previousValue: el.value ?? el.textContent ?? '' }; })()`,
     );
+    await this.session.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace' });
+    await this.session.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace' });
+    if (value) await this.session.call('Input.insertText', { text: value });
+    const after = await this.evaluate<{ value: string }>(
+      `(() => { const root = document.querySelector(${JSON.stringify(selector)}); const el = root && (root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : root.querySelector('input, textarea, [contenteditable="true"], [contenteditable=""]')); if (!el) throw new Error('Input target disappeared after typing: ${escapeForJsMessage(selector)}'); el.dispatchEvent(new Event('change', { bubbles: true })); return { value: el.value ?? el.textContent ?? '' }; })()`,
+    );
+    if (after.value !== value) {
+      throw new Error(
+        `Input target value mismatch after typing ${selector}: expected ${JSON.stringify(value)}, got ${JSON.stringify(after.value)}.`,
+      );
+    }
+    return {
+      set: true,
+      selector: before.selector,
+      tagName: before.tagName,
+      previousValue: before.previousValue,
+    };
   }
 
   async keyPress(key: string): Promise<unknown> {
     await this.session.call('Input.dispatchKeyEvent', { type: 'keyDown', key });
     await this.session.call('Input.dispatchKeyEvent', { type: 'keyUp', key });
     return { key };
+  }
+
+  async clickPoint(x: number, y: number): Promise<void> {
+    await this.session.call('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x,
+      y,
+      button: 'none',
+    });
+    await this.session.call('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x,
+      y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    });
+    await this.session.call('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x,
+      y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    });
   }
 
   async scroll(options: {
@@ -641,23 +701,38 @@ function waitForPredicateExpression(options: {
   expected?: string;
 }): string {
   let presentExpression: string;
+  let visibleExpression: string | undefined;
   if (options.selector && options.text) {
-    presentExpression = `Boolean(document.querySelector(${JSON.stringify(options.selector)})) && document.body.innerText.includes(${JSON.stringify(options.text)})`;
+    const selector = JSON.stringify(options.selector);
+    const text = JSON.stringify(options.text);
+    presentExpression = `Boolean(document.querySelector(${selector})) && document.body.innerText.includes(${text})`;
+    visibleExpression = `${visibleSelectorExpression(options.selector)} && document.body.innerText.includes(${text})`;
   } else if (options.selector) {
     presentExpression = `Boolean(document.querySelector(${JSON.stringify(options.selector)}))`;
+    visibleExpression = visibleSelectorExpression(options.selector);
   } else if (options.text) {
     presentExpression = `document.body.innerText.includes(${JSON.stringify(options.text)})`;
   } else {
     throw new Error('ui.wait_for requires selector or text.');
   }
   const expected = String(options.expected ?? 'present').toLowerCase();
-  if (expected === 'absent' || expected === 'hidden' || expected === 'not_present') {
+  if (expected === 'absent' || expected === 'not_present') {
     return `!(${presentExpression})`;
   }
-  if (expected !== 'present' && expected !== 'visible') {
+  if (expected === 'hidden') {
+    return `!(${visibleExpression ?? presentExpression})`;
+  }
+  if (expected === 'visible') {
+    return visibleExpression ?? presentExpression;
+  }
+  if (expected !== 'present') {
     throw new Error(`ui.wait_for expected must be present or absent, got ${expected}.`);
   }
   return presentExpression;
+}
+
+function visibleSelectorExpression(selector: string): string {
+  return `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; const rect = el.getBoundingClientRect(); const style = window.getComputedStyle(el); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; })()`;
 }
 
 function escapeForJsMessage(value: string): string {

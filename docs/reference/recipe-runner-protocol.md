@@ -352,9 +352,19 @@ Runner requirements:
    emit `workflow.json` too when a normalized workflow view is useful.
 
 When a project sets `recipe_run_supports_playback_slow: true`, the UI may append
-runner options such as `--slow <ms>` for human-readable live playback. Projects
-that do not opt in keep replay commands free of playback flags. The gateway
-accepts slow-down values from `100` through `60_000` milliseconds.
+runner options such as `--slow <ms>` for human-readable live playback. When a
+project sets `recipe_run_supports_video_recording: true`, replay surfaces request
+video recording by default and append `--record` unless the operator turns it
+off. Projects that do not opt in keep replay commands free of these optional
+flags. The gateway accepts slow-down values from `100` through `60_000`
+milliseconds.
+
+`--record` is project-runner neutral. On macOS slots, runners should use the
+Farmslot-installed `capture-helper` provider where available instead of ad-hoc
+screen recorders: `capture-helper doctor --json` for setup/permission checks,
+stable JSON target resolution for the slot browser/simulator, and recorded MP4
+artifacts saved under `{{artifacts_dir}}`. Non-macOS runners may use their native
+recorder, but they should expose the same Recipe v1 artifact package contract.
 
 ## Action registry and artifact package
 

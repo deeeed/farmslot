@@ -8,6 +8,9 @@ import {
   type SlotStatus,
 } from '@farmslot/protocol';
 
+import type { SlotVars } from '../core/config.js';
+
+import { cleanupLaunchedWorkerAfterDispatchFailure } from './dispatch/execute.js';
 import {
   buildDispatchRoleShellCommand,
   parseCapturedAgentPaneTarget,
@@ -91,6 +94,43 @@ test('dispatch role shell command starts a real repo shell, not the prepare plac
 
   assert.equal(command, "cd '/tmp/farm slot/repo' && exec ${SHELL:-bash}");
   assert.doesNotMatch(command, /while :; do sleep 86400; done/);
+});
+
+test('dispatch failure cleanup kills launched role runner and verifies exit', async () => {
+  const calls: string[] = [];
+  const vars: SlotVars = {
+    slotId: 'macwork-mme-2',
+    machine: 'macwork',
+    platform: 'macos',
+    host: 'localhost',
+    sshUser: '',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'mme-2',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: '',
+    remoteRepo: '/repo',
+    projectName: 'metamask-extension-farm',
+    resourceVars: {},
+  };
+
+  await cleanupLaunchedWorkerAfterDispatchFailure(vars, 'mme-2:dev', 'cursor', 'primary', {
+    killAgentInSession: async (_vars, runner, role) => {
+      calls.push(`kill:${runner}:${role}`);
+    },
+    waitForRunnerProcessExit: async (_vars, target, runner, timeoutMs) => {
+      calls.push(`wait:${target}:${runner}:${timeoutMs}`);
+    },
+  });
+
+  assert.deepEqual(calls, ['kill:cursor:primary', 'wait:mme-2:dev:cursor:5000']);
 });
 
 test('normalizeTicketRef only extracts standalone GitHub and Jira URLs', () => {

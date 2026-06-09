@@ -40,6 +40,11 @@
       "description": "Opt in when hooks.recipe_run supports the gateway-appended --slow <ms> playback flag. Projects that omit this keep replay commands backwards-compatible even if the UI exposes playback controls.",
       "default": false
     },
+    "recipe_run_supports_video_recording": {
+      "type": "boolean",
+      "description": "Opt in when hooks.recipe_run supports the gateway-appended --record video recording flag. Replay surfaces request video by default for supporting projects; projects that omit this keep commands backwards-compatible.",
+      "default": false
+    },
     "branch_namespace": {
       "type": "string",
       "description": "Short namespace prepended to branch names (e.g. 'perps', 'mm'). Produces fix/perps/123-slug.",
@@ -329,7 +334,7 @@
         },
         "recipe_run": {
           "type": "string",
-          "description": "Command used by the gateway to re-run a selected recipe against a slot. Must explicitly include {{recipe_path}} and {{artifacts_dir}}. Receives {{repo}}, {{cdp_port}}, and other slot/project variables. Set top-level recipe_run_supports_playback_slow=true to opt into gateway-appended --slow <ms> playback flags."
+          "description": "Command used by the gateway to re-run a selected recipe against a slot. Must explicitly include {{recipe_path}} and {{artifacts_dir}}. Receives {{repo}}, {{cdp_port}}, and other slot/project variables. Set top-level recipe_run_supports_playback_slow=true to opt into gateway-appended --slow <ms> playback flags; set recipe_run_supports_video_recording=true to opt into gateway-appended --record video recording flags."
         },
         "recipe_harness_install": {
           "type": "string",

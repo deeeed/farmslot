@@ -16,7 +16,9 @@ import {
   runnerPaneHasBufferedInstruction,
   runnerPaneHasPendingInstruction,
   runnerPaneHasProgressAfterInstruction,
+  runnerPaneHasQueuedInstruction,
   runnerPaneLooksIdle,
+  runnerPaneShouldSubmitExistingInstruction,
   runnerPaneShowsPromptAccepted,
   runnerPaneShowsWorkspaceTrustPrompt,
   runnerPersistsSessionFiles,
@@ -358,7 +360,7 @@ describe('cursor runner', () => {
     );
   });
 
-  it('does not accept post-launch prompt delivery when the runner only queued it for the next tool call', () => {
+  it('accepts post-launch prompt delivery when the runner queues it for the next tool call', () => {
     const message =
       'Read temp/tasks/feat/tat-3307-0609-103547/TASK.md and execute all steps. Mark each checkbox as you complete it.';
     const before = `
@@ -373,8 +375,8 @@ describe('cursor runner', () => {
     Mark each checkbox as you complete it.
 `;
 
-    assert.equal(runnerPaneHasBufferedInstruction(after, message, 'claude'), true);
-    assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'claude'), false);
+    assert.equal(runnerPaneHasQueuedInstruction(after, message), true);
+    assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'claude'), true);
   });
 
   it('uses Tab to submit buffered Codex prompts when the TUI requests queueing', () => {
@@ -387,6 +389,144 @@ describe('cursor runner', () => {
 
     assert.equal(runnerBufferedInstructionSubmitKey(pane, 'codex'), 'Tab');
     assert.equal(runnerBufferedInstructionSubmitKey(pane, 'claude'), 'Enter');
+  });
+
+  it('submits instead of duplicating a post-launch prompt when Cursor already shows the TASK marker', () => {
+    const message =
+      'Read temp/tasks/feat/tat-1043-0608-144339/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+    const pane = `
+  Follow-ups
+  - Read temp/tasks/feat/tat-1043-0608-144339/TASK.md and execute all steps.
+
+  Composer 2.5 · 83.9% · Auto-run
+`;
+
+    assert.equal(
+      runnerPaneShouldSubmitExistingInstruction(pane, message, 'TASK.md', 'cursor', {
+        allowMarkerOnly: false,
+      }),
+      false,
+    );
+    assert.equal(
+      runnerPaneShouldSubmitExistingInstruction(pane, message, 'TASK.md', 'cursor', {
+        allowMarkerOnly: true,
+      }),
+      true,
+    );
+  });
+
+  it('does not submit from marker-only text when the marker is stale above the live composer', () => {
+    const message =
+      'Read temp/tasks/feat/tat-1043-0608-144339/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+    const pane = `
+  Old transcript
+  - Read temp/tasks/feat/tat-1043-0608-144339/TASK.md and execute all steps.
+
+
+
+
+
+
+
+
+
+
+  Cursor Agent
+  → Plan, search, build anything
+`;
+
+    assert.equal(
+      runnerPaneShouldSubmitExistingInstruction(pane, message, 'TASK.md', 'cursor', {
+        allowMarkerOnly: true,
+      }),
+      false,
+    );
+  });
+
+  it('accepts Cursor prompt delivery when the latest duplicate prompt occurrence has live progress', () => {
+    const message =
+      'Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+    const before = `
+  Cursor Agent
+  → Plan, search, build anything
+`;
+    const after = `
+  Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all
+  steps. Mark each checkbox as you complete it.
+
+  Reading the task file and executing its steps.
+
+    Read temp/tasks/feat/tat-3303-0608-192956/TASK.md
+
+ ┌─ follow-ups ─────────────────────────────────────────────────────────────┐
+ │ ○ Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all      │
+ │   steps. Mark each checkbox as you complete it.                          │
+ └──────────────────────────────────────────────────────────────────────────┘
+
+ ⠰⠰ Reading  474 tokens
+`;
+
+    assert.equal(runnerPaneHasProgressAfterInstruction(after, message), true);
+    assert.equal(runnerPaneHasBufferedInstruction(after, message, 'cursor'), false);
+    assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'cursor'), true);
+  });
+
+  it('accepts Cursor delivery when current tail status is reading despite a duplicate follow-up', () => {
+    const message =
+      'Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+    const before = `
+  Cursor Agent
+  → Plan, search, build anything
+`;
+    const after = `
+  Cursor Agent
+  v2026.06.04-5fd875e
+
+  Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.
+
+  I'll read the task file first, then work through each step and mark checkboxes as they're completed.
+
+    Read temp/tasks/feat/tat-3303-0608-192956/TASK.md
+
+ ┌─ follow-ups ─────────────────────────────────────────────────────────────┐
+ │ ○ Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all      │
+ │   steps. Mark each checkbox as you complete it.                          │
+ │ enter send now · ↑ edit · esc cancel                                     │
+ └──────────────────────────────────────────────────────────────────────────┘
+
+ ⠀⠞ Reading  487 tokens
+
+  → Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.
+
+  Composer 2.5 · Auto-run
+`;
+
+    assert.equal(runnerPaneHasBufferedInstruction(after, message, 'cursor'), true);
+    assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'cursor'), true);
+  });
+
+  it('does not accept stale Cursor progress before a later buffered duplicate prompt', () => {
+    const message =
+      'Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+    const before = `
+  Cursor Agent
+  → Plan, search, build anything
+`;
+    const after = `
+  Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all
+  steps. Mark each checkbox as you complete it.
+
+  Reading the task file and executing its steps.
+
+  → Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps.
+    Mark each checkbox as you complete it.
+
+  Composer 2.5 · Auto-run
+`;
+
+    assert.equal(runnerPaneHasProgressAfterInstruction(after, message), false);
+    assert.equal(runnerPaneHasBufferedInstruction(after, message, 'cursor'), true);
+    assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'cursor'), false);
   });
 
   it('detects Codex instructions buffered after tmux wraps long task paths', () => {

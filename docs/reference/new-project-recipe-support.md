@@ -20,12 +20,15 @@ Example `project.json` excerpt:
   "hooks": {
     "recipe_run": "bash scripts/agentic/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}}"
   },
-  "recipe_run_supports_playback_slow": false
+  "recipe_run_supports_playback_slow": false,
+  "recipe_run_supports_video_recording": false
 }
 ```
 
 Set `recipe_run_supports_playback_slow` to `true` only when the runner supports a
-slow/live replay option that Command Center may append.
+slow/live replay option that Command Center may append. Set
+`recipe_run_supports_video_recording` to `true` only when the runner supports the
+appended `--record` replay video flag.
 
 ## Backend/API recipe example
 

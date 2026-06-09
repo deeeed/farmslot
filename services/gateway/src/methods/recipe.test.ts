@@ -10,6 +10,8 @@ import {
   canRecipeRerunOnSlot,
   expandRecipeProjectHookTemplate,
   expandRecipeRunHookTemplate,
+  recipeRunOptionsForProject,
+  recipeRunUnsupportedOptionWarnings,
   resolveRecipeArtifactRootForSlot,
   resolveSlotRecipePath,
   resolveSlotRecipePathCandidates,
@@ -308,6 +310,53 @@ test('appendRecipePlaybackOptions appends typed slow playback flag', () => {
       playbackSlowMs: 1000,
     }),
     'node validate-recipe.js --recipe recipe.json --slow 1000',
+  );
+});
+
+test('appendRecipePlaybackOptions appends opt-in video recording flag', () => {
+  assert.equal(
+    appendRecipePlaybackOptions('node validate-recipe.js --recipe recipe.json', {
+      recordVideo: true,
+    }),
+    'node validate-recipe.js --recipe recipe.json --record',
+  );
+});
+
+test('appendRecipePlaybackOptions preserves typed option ordering', () => {
+  assert.equal(
+    appendRecipePlaybackOptions('node validate-recipe.js --recipe recipe.json', {
+      playbackSlowMs: 1000,
+      recordVideo: true,
+    }),
+    'node validate-recipe.js --recipe recipe.json --slow 1000 --record',
+  );
+});
+
+test('recipeRunOptionsForProject only passes options supported by the project hook', () => {
+  assert.deepEqual(recipeRunOptionsForProject({}, { playbackSlowMs: 1000, recordVideo: true }), {});
+  assert.deepEqual(
+    recipeRunOptionsForProject(
+      { recipe_run_supports_playback_slow: true, recipe_run_supports_video_recording: true },
+      { playbackSlowMs: 1000, recordVideo: true },
+    ),
+    { playbackSlowMs: 1000, recordVideo: true },
+  );
+});
+
+test('recipeRunUnsupportedOptionWarnings explains ignored replay options without failing', () => {
+  assert.deepEqual(
+    recipeRunUnsupportedOptionWarnings({}, { playbackSlowMs: 1000, recordVideo: true }),
+    [
+      'Slow playback requested, but this project has not set recipe_run_supports_playback_slow=true; running at normal speed.',
+      'Video recording requested, but this project has not set recipe_run_supports_video_recording=true; replay will not include a video artifact.',
+    ],
+  );
+  assert.deepEqual(
+    recipeRunUnsupportedOptionWarnings(
+      { recipe_run_supports_playback_slow: true, recipe_run_supports_video_recording: true },
+      { playbackSlowMs: 1000, recordVideo: true },
+    ),
+    [],
   );
 });
 
