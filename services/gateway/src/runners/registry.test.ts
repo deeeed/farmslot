@@ -16,6 +16,7 @@ import {
   runnerPaneHasBufferedInstruction,
   runnerPaneHasPendingInstruction,
   runnerPaneHasProgressAfterInstruction,
+  runnerPaneHasQueuedInstruction,
   runnerPaneLooksIdle,
   runnerPaneShouldSubmitExistingInstruction,
   runnerPaneShowsPromptAccepted,
@@ -359,7 +360,7 @@ describe('cursor runner', () => {
     );
   });
 
-  it('does not accept post-launch prompt delivery when the runner only queued it for the next tool call', () => {
+  it('accepts post-launch prompt delivery when the runner queues it for the next tool call', () => {
     const message =
       'Read temp/tasks/feat/tat-3307-0609-103547/TASK.md and execute all steps. Mark each checkbox as you complete it.';
     const before = `
@@ -374,8 +375,8 @@ describe('cursor runner', () => {
     Mark each checkbox as you complete it.
 `;
 
-    assert.equal(runnerPaneHasBufferedInstruction(after, message, 'claude'), true);
-    assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'claude'), false);
+    assert.equal(runnerPaneHasQueuedInstruction(after, message), true);
+    assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'claude'), true);
   });
 
   it('uses Tab to submit buffered Codex prompts when the TUI requests queueing', () => {

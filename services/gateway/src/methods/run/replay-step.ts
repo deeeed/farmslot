@@ -44,6 +44,57 @@ function activeStatusForReplayStep(stepName: string): RunStatus {
   return REPLAY_STEP_TO_ACTIVE_STATUS[stepName] ?? 'created';
 }
 
+function isQueuedPromptDispatchFalseNegative(
+  existing: NonNullable<ReturnType<typeof getRun>>,
+): boolean {
+  const dispatchStep = existing.steps.find((candidate) => candidate.name === PS.DISPATCH);
+  if (dispatchStep?.status !== 'failed') return false;
+  const text = [dispatchStep.detail, existing.error].filter(Boolean).join('\n');
+  const normalized = text.replace(/\s+/g, ' ').toLowerCase();
+  return (
+    normalized.includes('messages to be submitted after next tool call') ||
+    normalized.includes('submitted after next tool call')
+  );
+}
+
+function repairQueuedPromptDispatchFalseNegative(runId: string): void {
+  const current = getRun(runId);
+  if (!current) return;
+  const dispatchStep = current.steps.find((candidate) => candidate.name === PS.DISPATCH);
+  if (!dispatchStep || dispatchStep.status !== 'failed') return;
+
+  const repairedAt = new Date().toISOString();
+  const durationMs = dispatchStep.startedAt
+    ? Date.now() - new Date(dispatchStep.startedAt).getTime()
+    : dispatchStep.durationMs;
+
+  updateRunStep(runId, PS.DISPATCH, {
+    status: 'done',
+    completedAt: dispatchStep.completedAt ?? repairedAt,
+    durationMs,
+    detail: 'Prompt accepted: runner queued the task for submission after the next tool call.',
+    outputs: {
+      ...(dispatchStep.outputs ?? {}),
+      promptDelivery: 'queued-after-next-tool-call',
+      repairedAt,
+    },
+  });
+
+  updateRun(runId, {
+    agentContexts: (current.agentContexts ?? []).map((context) =>
+      context.status === 'failed'
+        ? {
+            ...context,
+            status: 'working',
+            completedAt: undefined,
+            lastSignalAt: repairedAt,
+            updatedAt: repairedAt,
+          }
+        : context,
+    ),
+  });
+}
+
 export async function runReplayStep(
   params: RunReplayStepParams,
   emit: Emit,
@@ -104,6 +155,10 @@ export async function runReplayStep(
 
   const step = existing.steps.find((s) => s.name === replayStepName);
   if (!step) throw new Error(`Step not found: ${params.stepName}`);
+
+  if (replayStepName === PS.MONITOR && isQueuedPromptDispatchFalseNegative(existing)) {
+    repairQueuedPromptDispatchFalseNegative(params.runId);
+  }
 
   // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
   // Do this only after replay entry validation so rejected replays do not leave a

@@ -538,9 +538,20 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   );
 }
 
-function claudePaneShowsQueuedInstruction(pane: string, message: string): boolean {
+export function runnerPaneHasQueuedInstruction(pane: string, message: string): boolean {
   if (!runnerPaneContainsInstruction(pane, message)) return false;
-  return /messages? to be\s+submitted\s+after next\s+tool call/i.test(normalizePaneText(pane));
+  const compactPane = normalizePaneText(pane).toLowerCase();
+  return (
+    compactPane.includes('messages to be submitted after next tool call') ||
+    compactPane.includes('submitted after next tool call') ||
+    compactPane.includes('message queued') ||
+    compactPane.includes('queued message') ||
+    compactPane.includes('tab to queue message')
+  );
+}
+
+function claudePaneShowsQueuedInstruction(pane: string, message: string): boolean {
+  return runnerPaneHasQueuedInstruction(pane, message);
 }
 
 function claudePaneShowsSubmittedInstruction(pane: string, message: string): boolean {
@@ -555,7 +566,7 @@ function claudePaneShowsSubmittedInstruction(pane: string, message: string): boo
   // labels as correctness signals. The only terminal distinction we need here is
   // whether the instruction left the live composer and entered transcript
   // history; completion is proven later by signal files/artifacts.
-  return /(?:^|\s)❯(?:\s|$)/.test(after) || /ctx:\d+%/i.test(after);
+  return /(?:^|\s)❯(?:\s|$)/.test(after) || /\bctx:\d+%\b/i.test(after);
 }
 
 function paneLineLooksShellPrompt(line: string): boolean {
@@ -604,6 +615,7 @@ export function runnerPaneShowsPromptAccepted(
   // the live composer while the final Enter was swallowed. Treat that as not
   // accepted so sendRunnerPostLaunchPrompt sends a bare Enter and verifies
   // actual progress instead of leaving the run stuck at an idle prompt.
+  if (runnerPaneHasQueuedInstruction(pane, message)) return true;
   if (runnerPaneHasBufferedInstruction(pane, message, runnerId)) return false;
   if (
     normalizeRunner(runnerId) === 'claude' &&
@@ -981,6 +993,10 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
+    if (runnerPaneHasQueuedInstruction(postPane, message)) {
+      console.log(`[${logPrefix}] prompt queued in ${target} (attempt ${attempt}/${maxAttempts})`);
+      return;
+    }
     if (runnerPaneHasBufferedInstruction(postPane, message, runner)) {
       console.log(
         `[${logPrefix}] prompt appears buffered after attempt ${attempt}/${maxAttempts}; retrying with submit key`,
@@ -1000,6 +1016,12 @@ export async function sendRunnerPostLaunchPrompt(
       tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
     )
   ).stdout;
+  if (runnerPaneHasQueuedInstruction(failurePane, message)) {
+    console.log(
+      `[${logPrefix}] prompt delivery verifier found queued instruction in ${target}; accepting delayed submit`,
+    );
+    return;
+  }
   if (opts.signalPath) {
     const signalResult = await execOnSlot(
       vars,
