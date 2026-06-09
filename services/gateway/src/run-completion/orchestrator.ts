@@ -342,8 +342,12 @@ function preserveSelectedEvidenceKeys(
   const preserved = [
     ...new Set(
       selectedEvidenceKeys
-        .map((key) => resolveSelectedEvidenceRef(key, evidenceManifest)?.path ?? null)
-        .filter((key): key is string => typeof key === 'string'),
+        .map((key) => resolveSelectedEvidenceRef(key, evidenceManifest))
+        .filter((artifact): artifact is ArtifactRef => {
+          if (!artifact) return false;
+          return isPackageSelectableEvidenceArtifact(artifact, trustedEvidenceManifest);
+        })
+        .map((artifact) => artifact.path),
     ),
   ];
   if (priorEvidenceManifest) {
@@ -360,6 +364,24 @@ function preserveSelectedEvidenceKeys(
     }
   }
   return preserved.sort();
+}
+
+export function selectedEvidenceKeysForPublication(input: {
+  selectedEvidenceKeys: readonly string[] | undefined;
+  evidenceManifest: ArtifactRef[];
+  trustedEvidenceManifest: EvidenceManifest | null | undefined;
+}): string[] {
+  return [
+    ...new Set(
+      (input.selectedEvidenceKeys ?? [])
+        .map((key) => resolveSelectedEvidenceRef(key, input.evidenceManifest))
+        .filter((artifact): artifact is ArtifactRef => {
+          if (!artifact) return false;
+          return isPackageSelectableEvidenceArtifact(artifact, input.trustedEvidenceManifest);
+        })
+        .map((artifact) => artifact.path),
+    ),
+  ].sort();
 }
 
 /**
@@ -916,8 +938,13 @@ export async function publishCompletionPackage(
     const approvedSelectedEvidenceKeys =
       options?.selectedEvidenceKeys ?? approvedPackage.selectedEvidenceKeys ?? [];
     const evidenceManifest = latestRun.taskFile ? await readEvidenceManifest(latestRun) : null;
+    const publishableSelectedEvidenceKeys = selectedEvidenceKeysForPublication({
+      selectedEvidenceKeys: approvedSelectedEvidenceKeys,
+      evidenceManifest: approvedPackage.evidenceManifest ?? [],
+      trustedEvidenceManifest: evidenceManifest,
+    });
     const selectedEvidenceKeys =
-      expandEvidenceSelectionForManifest(evidenceManifest, approvedSelectedEvidenceKeys) ?? [];
+      expandEvidenceSelectionForManifest(evidenceManifest, publishableSelectedEvidenceKeys) ?? [];
     let artifactUrls = new Map<string, string>();
     if (latestRun.taskFile) {
       emit('substep', {

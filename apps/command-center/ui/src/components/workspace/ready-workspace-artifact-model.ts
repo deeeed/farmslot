@@ -47,12 +47,11 @@ export function readyWorkspaceAllArtifacts(payload: ReadyGatePayload): ArtifactR
 }
 
 export function readyWorkspacePublishEvidenceArtifacts(payload: ReadyGatePayload): ArtifactRef[] {
-  const selected = new Set(payload.prPackage?.selectedEvidenceKeys ?? []);
   return dedupeReadyWorkspaceArtifacts(
     (payload.prPackage?.evidenceManifest?.length
       ? payload.prPackage.evidenceManifest
       : (payload.artifactManifest ?? [])
-    ).filter((artifact) => isWorkspaceEvidenceArtifact(artifact) || selected.has(artifact.path)),
+    ).filter(isWorkspaceEvidenceArtifact),
   );
 }
 

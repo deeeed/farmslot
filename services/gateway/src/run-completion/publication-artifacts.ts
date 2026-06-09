@@ -95,6 +95,13 @@ ${body}`;
 
 const MEDIA_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.mp4', '.mov', '.webm']);
 
+function isUploadableMediaPath(file: string): boolean {
+  // Publication uploads only PR-renderable media. Logs/JSON stay available in the
+  // task artifact package, but they are not embedded into the PR evidence block.
+  const withoutQuery = file.split(/[?#]/, 1)[0] ?? file;
+  return MEDIA_EXTENSIONS.has(path.extname(withoutQuery).toLowerCase());
+}
+
 async function fileDigestPrefix(filePath: string): Promise<string> {
   return createHash('sha256')
     .update(await readFile(filePath))
@@ -235,7 +242,9 @@ export async function uploadArtifacts(
     console.warn(`[run-completion] ${message}`);
     return urlMap;
   };
-  const hasSelectedEvidence = Boolean(selectedEvidenceKeys?.length);
+  const hasSelectedEvidence = Boolean(
+    selectedEvidenceKeys?.some((key) => isUploadableMediaPath(key)),
+  );
   if (!run.taskFile) {
     return hasSelectedEvidence
       ? failOrReturnEmpty('artifact upload failed: run has no task file')
@@ -342,7 +351,7 @@ export function assertSelectedEvidencePublished(
   artifactUrls: Map<string, string>,
 ): void {
   const selected = (selectedEvidenceKeys ?? []).filter((key) =>
-    typeof key === 'string' ? Boolean(key.trim()) : false,
+    typeof key === 'string' ? Boolean(key.trim()) && isUploadableMediaPath(key.trim()) : false,
   );
   if (selected.length === 0) return;
 

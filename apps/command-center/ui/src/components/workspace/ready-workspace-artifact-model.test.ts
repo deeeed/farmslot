@@ -45,7 +45,7 @@ test('ready workspace artifact model merges package, evidence, and review artifa
   );
 });
 
-test('ready workspace evidence model prefers publish evidence and preserves selected non-media rows', () => {
+test('ready workspace evidence model keeps publish selection media-only', () => {
   const input = payload({
     artifactManifest: [
       { path: 'artifacts/after.png', purpose: 'screenshot' },
@@ -58,11 +58,11 @@ test('ready workspace evidence model prefers publish evidence and preserves sele
 
   assert.deepEqual(
     readyWorkspacePublishEvidenceArtifacts(input).map((artifact) => artifact.path),
-    ['artifacts/after.png', 'artifacts/raw.json'],
+    ['artifacts/after.png'],
   );
   assert.deepEqual(
     readyWorkspaceEvidenceArtifacts(input).map((artifact) => artifact.path),
-    ['artifacts/after.png', 'artifacts/raw.json'],
+    ['artifacts/after.png'],
   );
 });
 
