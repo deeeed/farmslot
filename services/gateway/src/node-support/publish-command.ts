@@ -35,7 +35,7 @@ export function buildNodeSupportPublishCommand({
       'exit 1;',
       'else',
       [
-        `if mv ${shellExpressionForRemotePath(incomingDir)} ${shellExpressionForRemotePath(supportDir)} && chmod -R u+rwX,go+rX ${shellExpressionForRemotePath(supportDir)}; then`,
+        `if mv ${shellExpressionForRemotePath(incomingDir)} ${shellExpressionForRemotePath(supportDir)}; then`,
         ':;',
         'else',
         'status=$?;',

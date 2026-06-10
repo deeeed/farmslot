@@ -48,7 +48,7 @@ export function supportHash(
   files: Array<Pick<NodeSupportFile, 'relativePath' | 'contentBase64' | 'mode'>>,
 ): string {
   const hash = createHash('sha256');
-  for (const file of files.sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
+  for (const file of [...files].sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
     hash.update(file.relativePath);
     hash.update('\0');
     hash.update(file.mode.toString(8));
