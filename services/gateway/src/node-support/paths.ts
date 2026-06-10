@@ -12,7 +12,7 @@ export interface NodeSupportPathResolution {
   undeclaredHookPaths: string[];
 }
 
-const FARM_PATH_STOP = /^[^\s'"`;&|)]+/;
+const FARM_PATH_STOP = /^[^\s'"`;&|()<>{},:]+/;
 
 // Local nested getter so we don't value-import from core (which would pull the
 // whole gateway graph into the CLI gate). Equivalent to core's getProjectFieldRaw.

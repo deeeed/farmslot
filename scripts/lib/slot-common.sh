@@ -661,19 +661,28 @@ expand_slot_template() {
   text="${text//\{\{mobile_repo\}\}/${MOBILE_REPO:-}}"
   text="${text//\{\{MOBILE_REPO\}\}/${MOBILE_REPO:-}}"
   if [ "${EXPAND_PROJECT_TEMPLATE_VARS:-1}" != "0" ] && [ -n "${PROJECT_JSON:-}" ]; then
-    local key value expanded upper
+    local key value expanded upper project_vars_tsv
+    # Capture (don't process-substitute) so a missing python3 or malformed
+    # project.json fails hard here instead of silently leaving {{vars}}
+    # unexpanded in the hook command.
+    if ! project_vars_tsv="$(printf '%s' "$PROJECT_JSON" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for k, v in (d.get("vars") or {}).items():
+    print(f"{k}\t{v}")
+')"; then
+      [ "$restore_patsub_replacement" = "1" ] && shopt -s patsub_replacement
+      echo "FAIL: expand_slot_template could not read project vars (python3 missing or project.json invalid)" >&2
+      return 1
+    fi
+    # Here-string runs the loop in the current shell, so text mutations persist.
     while IFS=$'\t' read -r key value; do
       [ -z "$key" ] && continue
       expanded="$(EXPAND_PROJECT_TEMPLATE_VARS=0 expand_slot_template "$value")"
       text="${text//\{\{${key}\}\}/$expanded}"
       upper="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
       text="${text//\{\{${upper}\}\}/$expanded}"
-    done < <(printf '%s' "$PROJECT_JSON" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-for k, v in (d.get("vars") or {}).items():
-    print(f"{k}\t{v}")
-')
+    done <<< "$project_vars_tsv"
   fi
   [ "$restore_patsub_replacement" = "1" ] && shopt -s patsub_replacement
   printf '%s\n' "$text"
@@ -764,7 +773,12 @@ render_fixture_template() {
     -e "s|{{REPO}}|${REMOTE_REPO:-}|g" \
     "$rendered"
   rm -f "${rendered}.bak"
-  if [ -n "${PROJECT_JSON:-}" ]; then
+  # Only run the project-var expansion pass when {{placeholders}} actually remain
+  # after the resource-var sed pass above. This keeps fixtures with no remaining
+  # placeholders (the common case, including all var-less projects) byte-identical
+  # instead of round-tripping through command substitution, which would normalize
+  # trailing newlines.
+  if [ -n "${PROJECT_JSON:-}" ] && grep -q '{{[A-Za-z_][A-Za-z0-9_]*}}' "$rendered"; then
     local rendered_text
     rendered_text="$(cat "$rendered")"
     expand_slot_template "$rendered_text" > "$rendered"

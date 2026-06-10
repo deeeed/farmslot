@@ -53,8 +53,12 @@ for (const poolFile of poolFiles) {
     if (!projectCache.has(projectName)) {
       try {
         projectCache.set(projectName, readJson(projectFile));
-      } catch {
-        failures.push(`${machine}/${slotName}: missing projects/${projectName}/project.json`);
+      } catch (error) {
+        const reason =
+          (error as NodeJS.ErrnoException)?.code === 'ENOENT'
+            ? `missing projects/${projectName}/project.json`
+            : `unreadable projects/${projectName}/project.json: ${error instanceof Error ? error.message : String(error)}`;
+        failures.push(`${machine}/${slotName}: ${reason}`);
         continue;
       }
     }
