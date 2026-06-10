@@ -2,6 +2,8 @@
 
 All notable changes to `@farmslot/recipe-harness` are tracked here.
 
+## Unreleased
+
 ## 0.2.2 - 2026-06-10
 
 - Publish with npm-resolvable `@farmslot/protocol` dependency metadata instead of workspace-only protocol references.
