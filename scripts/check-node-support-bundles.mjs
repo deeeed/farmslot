@@ -38,14 +38,32 @@ function addProjectJson(paths, projectName) {
 }
 
 function addProjectTopLevel(paths, projectName, projectRelativePath) {
-  const [topLevel] = projectRelativePath.split('/').filter(Boolean);
+  const normalized = normalizeFarmPath(projectRelativePath);
+  const [topLevel] = normalized.split('/').filter(Boolean);
   if (!topLevel) return;
   addProjectJson(paths, projectName);
   paths.add(path.posix.join('projects', projectName, topLevel));
 }
 
+function normalizeFarmPath(value) {
+  const input = value.replaceAll('\\', '/').trim();
+  if (!input || input.startsWith('/')) {
+    throw new Error(`Invalid node_support path ${JSON.stringify(value)}: path must be relative`);
+  }
+  const normalized = path.posix.normalize(input).replace(/\/+$/, '');
+  if (
+    normalized === '.' ||
+    normalized === '..' ||
+    normalized.startsWith('../') ||
+    path.posix.isAbsolute(normalized)
+  ) {
+    throw new Error(`Invalid node_support path ${JSON.stringify(value)}: path escapes Farmslot`);
+  }
+  return normalized;
+}
+
 function addFarmPath(paths, projectName, farmPath) {
-  const normalized = farmPath.replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const normalized = normalizeFarmPath(farmPath);
   if (!normalized) return;
   const projectPrefix = `projects/${projectName}/`;
   if (normalized === 'scripts' || normalized.startsWith('scripts/')) {
@@ -55,7 +73,9 @@ function addFarmPath(paths, projectName, farmPath) {
   } else if (normalized.startsWith(projectPrefix)) {
     addProjectTopLevel(paths, projectName, normalized.slice(projectPrefix.length));
   } else {
-    paths.add(normalized);
+    throw new Error(
+      `Invalid node_support path ${JSON.stringify(farmPath)}: expected scripts or projects/${projectName}/...`,
+    );
   }
 }
 
@@ -156,7 +176,13 @@ for (const poolFile of poolFiles) {
       }
     }
     const projectJson = projectCache.get(projectName);
-    const support = resolveSupport(projectName, projectJson);
+    let support;
+    try {
+      support = resolveSupport(projectName, projectJson);
+    } catch (error) {
+      failures.push(`${machine}/${slotName}: ${error instanceof Error ? error.message : error}`);
+      continue;
+    }
     for (const supportPath of support.paths) {
       if (!exists(supportPath)) {
         failures.push(`${machine}/${slotName}: missing node support path ${supportPath}`);

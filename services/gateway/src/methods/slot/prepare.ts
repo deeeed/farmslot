@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto';
-import { open as fsOpen, readdir, readFile, stat as fsStat } from 'node:fs/promises';
+import {
+  lstat,
+  open as fsOpen,
+  readdir,
+  readFile,
+  realpath,
+  stat as fsStat,
+} from 'node:fs/promises';
 import path from 'node:path';
 
 import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
@@ -157,12 +164,19 @@ async function slotPrepareInner(
   const step = (name: string, detail: string) => emit('slot.prepare.step', { name, detail });
 
   let hookSupportDir: string | undefined;
-  const hookSupportManifestPath = () => path.join(hookSupportDir!, 'manifest.json');
+  const hookSupportManifestPath = () => path.posix.join(hookSupportDir!, 'manifest.json');
+  const pathWithin = (rootPath: string, candidatePath: string): boolean => {
+    const relative = path.relative(rootPath, candidatePath);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  };
   const collectSupportFiles = async (
     sourcePath: string,
     relativeDest: string,
   ): Promise<Array<{ relativePath: string; content: string }>> => {
-    const st = await fsStat(sourcePath);
+    const st = await lstat(sourcePath);
+    if (st.isSymbolicLink()) {
+      throw new Error(`Node support refuses symlinked path ${sourcePath}`);
+    }
 
     if (st.isDirectory()) {
       const files: Array<{ relativePath: string; content: string }> = [];
@@ -201,11 +215,22 @@ async function slotPrepareInner(
       farmslotRoot,
     );
     if (supportPaths.length === 0) return;
+    if (slotIsLocal) {
+      hookSupportDir = farmslotRoot;
+      step('support', 'Using local node support source');
+      return;
+    }
+    const farmslotRootRealPath = await realpath(farmslotRoot);
     const files = (
       await Promise.all(
-        supportPaths.map((supportPath) =>
-          collectSupportFiles(path.join(farmslotRoot, supportPath), supportPath),
-        ),
+        supportPaths.map(async (supportPath) => {
+          const sourcePath = path.join(farmslotRoot, supportPath);
+          const sourceRealPath = await realpath(sourcePath);
+          if (!pathWithin(farmslotRootRealPath, sourceRealPath)) {
+            throw new Error(`Node support path escapes Farmslot root: ${supportPath}`);
+          }
+          return collectSupportFiles(sourcePath, supportPath);
+        }),
       )
     ).flat();
     const manifest = {
@@ -215,11 +240,6 @@ async function slotPrepareInner(
       paths: supportPaths,
       fileCount: files.length,
     };
-    if (slotIsLocal) {
-      hookSupportDir = farmslotRoot;
-      step('support', `Using local node support source (${files.length} files)`);
-      return;
-    }
 
     hookSupportDir = path.posix.join('~/farmslot-node/support', manifest.hash);
     if (await slotFileExists(vars, hookSupportManifestPath())) {
@@ -232,14 +252,20 @@ async function slotPrepareInner(
       }
     }
 
-    const incomingDir = path.posix.join(
-      '~/farmslot-node/support/.incoming',
-      `${manifest.hash}-${Date.now()}`,
-    );
-    await execOnSlot(
+    const incomingResult = await execOnSlot(
       vars,
-      `rm -rf ${shellExpressionForRemotePath(incomingDir)} && mkdir -p ${shellExpressionForRemotePath(incomingDir)}`,
+      [
+        `mkdir -p ${shellExpressionForRemotePath('~/farmslot-node/support/.incoming')}`,
+        `mktemp -d ${shellExpressionForRemotePath(
+          path.posix.join('~/farmslot-node/support/.incoming', `${manifest.hash}.XXXXXX`),
+        )}`,
+      ].join(' && '),
     );
+    if (incomingResult.exitCode !== 0) {
+      throw new Error(`Node support temp dir creation failed: ${incomingResult.stderr}`);
+    }
+    const incomingDir = incomingResult.stdout.trim().split(/\r?\n/).at(-1);
+    if (!incomingDir) throw new Error('Node support temp dir creation produced no path');
 
     for (const file of files) {
       const dest = path.posix.join(incomingDir, file.relativePath);
@@ -251,15 +277,43 @@ async function slotPrepareInner(
       path.posix.join(incomingDir, 'manifest.json'),
       `${JSON.stringify(manifest, null, 2)}\n`,
     );
-    await execOnSlot(
+    const publishResult = await execOnSlot(
       vars,
       [
-        `rm -rf ${shellExpressionForRemotePath(hookSupportDir)}`,
+        `mkdir -p ${shellExpressionForRemotePath('~/farmslot-node/support/.locks')}`,
         `mkdir -p ${shellExpressionForRemotePath(path.posix.dirname(hookSupportDir))}`,
-        `mv ${shellExpressionForRemotePath(incomingDir)} ${shellExpressionForRemotePath(hookSupportDir)}`,
-        `chmod -R u+rwX,go+rX ${shellExpressionForRemotePath(hookSupportDir)}`,
+        [
+          `lock=${shellExpressionForRemotePath(
+            path.posix.join('~/farmslot-node/support/.locks', `${manifest.hash}.lock`),
+          )};`,
+          `while ! mkdir "$lock" 2>/dev/null; do`,
+          `if [ -f ${shellExpressionForRemotePath(hookSupportManifestPath())} ]; then rm -rf ${shellExpressionForRemotePath(incomingDir)}; exit 0; fi;`,
+          'sleep 0.2;',
+          'done;',
+          'trap \'rmdir "$lock" 2>/dev/null || true\' EXIT;',
+          `if [ -f ${shellExpressionForRemotePath(hookSupportManifestPath())} ]; then`,
+          `rm -rf ${shellExpressionForRemotePath(incomingDir)};`,
+          `elif [ -e ${shellExpressionForRemotePath(hookSupportDir)} ]; then`,
+          `rm -rf ${shellExpressionForRemotePath(incomingDir)};`,
+          `echo "node support target exists without manifest: ${hookSupportDir}" >&2;`,
+          'exit 1;',
+          'else',
+          `mv ${shellExpressionForRemotePath(incomingDir)} ${shellExpressionForRemotePath(hookSupportDir)} && chmod -R u+rwX,go+rX ${shellExpressionForRemotePath(hookSupportDir)};`,
+          'fi',
+          'rmdir "$lock" 2>/dev/null || true;',
+          'trap - EXIT',
+        ].join(' '),
       ].join(' && '),
     );
+    if (publishResult.exitCode !== 0) {
+      throw new Error(`Node support publish failed: ${publishResult.stderr}`);
+    }
+    const published = JSON.parse(await slotReadFile(vars, hookSupportManifestPath())) as {
+      hash?: string;
+    };
+    if (published.hash !== manifest.hash) {
+      throw new Error(`Node support publish hash mismatch for ${manifest.hash}`);
+    }
     step(
       'support',
       `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`,

@@ -12,7 +12,20 @@ export interface NodeSupportPathResolution {
 const FARM_PATH_STOP = /^[^\s'"`;&|)]+/;
 
 function normalizeFarmPath(value: string): string {
-  return value.replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const input = value.replaceAll('\\', '/').trim();
+  if (!input || input.startsWith('/')) {
+    throw new Error(`Invalid node_support path ${JSON.stringify(value)}: path must be relative`);
+  }
+  const normalized = path.posix.normalize(input).replace(/\/+$/, '');
+  if (
+    normalized === '.' ||
+    normalized === '..' ||
+    normalized.startsWith('../') ||
+    path.posix.isAbsolute(normalized)
+  ) {
+    throw new Error(`Invalid node_support path ${JSON.stringify(value)}: path escapes Farmslot`);
+  }
+  return normalized;
 }
 
 function addRootScripts(paths: Set<string>): void {
@@ -28,7 +41,8 @@ function addProjectTopLevel(
   projectName: string,
   projectRelativePath: string,
 ): void {
-  const [topLevel] = projectRelativePath.split('/').filter(Boolean);
+  const normalized = normalizeFarmPath(projectRelativePath);
+  const [topLevel] = normalized.split('/').filter(Boolean);
   if (!topLevel) return;
   addProjectJson(paths, projectName);
   paths.add(path.posix.join('projects', projectName, topLevel));
@@ -45,7 +59,9 @@ function addFarmPath(paths: Set<string>, projectName: string, farmPath: string):
   } else if (normalized.startsWith(projectPrefix)) {
     addProjectTopLevel(paths, projectName, normalized.slice(projectPrefix.length));
   } else {
-    paths.add(normalized);
+    throw new Error(
+      `Invalid node_support path ${JSON.stringify(farmPath)}: expected scripts or projects/${projectName}/...`,
+    );
   }
 }
 

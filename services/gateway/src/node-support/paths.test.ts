@@ -100,3 +100,51 @@ test('node_support_dir hook refs require the same explicit coverage', () => {
     'scripts',
   ]);
 });
+
+test('declared node support paths cannot escape the supported roots', () => {
+  assert.throws(
+    () =>
+      resolveNodeSupportPaths(
+        'example-mobile-farm',
+        { node_support: { paths: ['../outside'] }, hooks: {} },
+        root,
+      ),
+    /path escapes Farmslot/,
+  );
+
+  assert.throws(
+    () =>
+      resolveNodeSupportPaths(
+        'example-mobile-farm',
+        { node_support: { paths: ['/tmp/outside'] }, hooks: {} },
+        root,
+      ),
+    /path must be relative/,
+  );
+
+  assert.throws(
+    () =>
+      resolveNodeSupportPaths(
+        'example-mobile-farm',
+        { node_support: { paths: ['projects/other-farm/scripts'] }, hooks: {} },
+        root,
+      ),
+    /expected scripts or projects\/example-mobile-farm/,
+  );
+});
+
+test('legacy hook inference rejects escaping project refs', () => {
+  assert.throws(
+    () =>
+      resolveNodeSupportPaths(
+        'example-mobile-farm',
+        {
+          hooks: {
+            preflight: 'bash {{farmslot_dir}}/projects/example-mobile-farm/../../outside.sh',
+          },
+        },
+        root,
+      ),
+    /path escapes Farmslot/,
+  );
+});
