@@ -121,6 +121,9 @@ export interface RawProjectJson {
   reference_repos?: Record<string, { repo_url: string; local_name: string; branch?: string }>;
   paths?: { runtime_dir?: string; artifact_dir?: string; recipe_dir?: string };
   vars?: Record<string, string>;
+  node_support?: {
+    paths?: string[];
+  };
   command_env?: {
     unset?: string[];
     set?: Record<string, string>;

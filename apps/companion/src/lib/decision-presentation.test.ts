@@ -154,10 +154,20 @@ assert.equal(
 assert.deepEqual(
   artifactSource('https://example.test/artifact.png', { Authorization: 'Bearer dev-token' }),
   {
-    uri: 'https://example.test/artifact.png',
+    uri: 'https://example.test/artifact.png?token=dev-token',
     headers: { Authorization: 'Bearer dev-token' },
   },
-  'artifact sources should carry auth headers for protected media loads',
+  'artifact sources should carry auth headers and query token for protected native media loads',
+);
+assert.deepEqual(
+  artifactSource('https://example.test/artifact.png?token=existing', {
+    Authorization: 'Bearer dev-token',
+  }),
+  {
+    uri: 'https://example.test/artifact.png?token=existing',
+    headers: { Authorization: 'Bearer dev-token' },
+  },
+  'artifact sources should not replace an existing query token',
 );
 assert.deepEqual(
   artifactSource('https://example.test/artifact.png'),

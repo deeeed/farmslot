@@ -43,6 +43,7 @@ import {
 import { documentTitle, presentDecision } from '../../lib/decision-presentation';
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
+import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import {
   hasRunWorkspaceDiff,
@@ -451,7 +452,7 @@ export default function DecisionDetailScreen() {
       const controller = new AbortController();
       documentAbortRef.current = controller;
       setLoadingDocument(artifact.path);
-      fetch(url, { signal: controller.signal, headers: artifactAuthHeaders })
+      gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();

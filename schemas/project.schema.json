@@ -147,6 +147,28 @@
       },
       "additionalProperties": false
     },
+    "vars": {
+      "type": "object",
+      "description": "Project-level template variables available to hooks, fixtures, and worker task templates.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "node_support": {
+      "type": "object",
+      "description": "Optional Farmslot-side support paths to materialize on remote nodes for lifecycle hooks.",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "description": "Farmslot-relative support paths. Allowed roots are scripts/ and this project's projects/<name>/ subtree.",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
     "command_env": {
       "type": "object",
       "description": "Project-declared environment mutations applied generically before project lifecycle commands and worker runner launches.",

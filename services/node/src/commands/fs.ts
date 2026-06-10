@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { constants, createReadStream, existsSync, type FSWatcher, watch } from 'node:fs';
 import {
   access,
+  chmod,
   mkdir,
   readdir,
   readFile,
@@ -13,7 +14,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 // Pool configs can declare remote repos as `~/...`. The gateway composes
 // absolute-looking paths but `~` is a shell token, not a filesystem prefix —
@@ -62,6 +63,33 @@ export async function fsRead(params: { path: string }): Promise<{ content: strin
 export async function fsWrite(params: { path: string; content: string }): Promise<{ ok: true }> {
   await writeFile(expandTilde(params.path), params.content, 'utf-8');
   return { ok: true };
+}
+
+export interface FsWriteFileEntry {
+  path: string;
+  content: string;
+  mode?: number;
+}
+
+// Batch base64 write: materializes a whole bundle (dirs + modes) under baseDir in
+// one RPC instead of one mkdir/write/chmod round-trip per file. Bundles are small
+// helper scripts, so a single frame is fine. Each entry path is contained to
+// baseDir so a malformed relative path can't escape the incoming directory.
+export async function fsWriteFiles(params: {
+  baseDir: string;
+  files: FsWriteFileEntry[];
+}): Promise<{ ok: true; count: number }> {
+  const base = resolve(expandTilde(params.baseDir));
+  for (const file of params.files) {
+    const dest = resolve(join(base, file.path));
+    if (dest !== base && !dest.startsWith(base + sep)) {
+      throw new Error(`fs.writeFiles refuses path escaping baseDir: ${file.path}`);
+    }
+    await mkdir(dirname(dest), { recursive: true });
+    await writeFile(dest, Buffer.from(file.content, 'base64'));
+    if (typeof file.mode === 'number') await chmod(dest, file.mode);
+  }
+  return { ok: true, count: params.files.length };
 }
 
 export async function fsRename(params: {

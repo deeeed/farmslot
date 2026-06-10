@@ -45,6 +45,7 @@ import {
 } from '../../lib/family-evidence';
 import { shouldRefreshFamilySnapshotForRunEvent } from '../../lib/family-refresh';
 import { collectFamilyRetrospectives } from '../../lib/family-retrospectives';
+import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { runRefreshEventRunId } from '../../lib/run-refresh';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
@@ -606,7 +607,7 @@ export function useFamilyWorkspaceController() {
       const controller = new AbortController();
       documentAbortRef.current = controller;
       const url = familyArtifactUrl(gatewayUrl, artifact);
-      fetch(url, { signal: controller.signal, headers: artifactAuthHeaders })
+      gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();

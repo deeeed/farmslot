@@ -4490,7 +4490,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@farmslot/protocol@workspace:*, @farmslot/protocol@workspace:packages/protocol":
+"@farmslot/protocol@npm:^0.6.0, @farmslot/protocol@workspace:*, @farmslot/protocol@workspace:packages/protocol":
   version: 0.0.0-use.local
   resolution: "@farmslot/protocol@workspace:packages/protocol"
   dependencies:
@@ -4506,7 +4506,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/recipe-harness@workspace:packages/recipe-harness"
   dependencies:
-    "@farmslot/protocol": "workspace:*"
+    "@farmslot/protocol": "npm:^0.6.0"
     "@types/node": "npm:^22.0.0"
     "@types/ws": "npm:^8.5.12"
     commander: "npm:^12.0.0"

@@ -1,4 +1,4 @@
-import { open as fsOpen, stat as fsStat } from 'node:fs/promises';
+import { open as fsOpen, realpath, stat as fsStat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
@@ -18,9 +18,20 @@ import {
   loadSlotVars,
   type ProjectVars,
   type RawProjectJson,
+  slotFileExists,
+  slotReadFile,
+  slotWriteFile,
+  slotWriteFiles,
   updateSlotStatus,
 } from '../../core/index.js';
+import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { collectSupportFiles, supportHash } from '../../node-support/files.js';
+import { resolveNodeSupportPaths } from '../../node-support/paths.js';
+import {
+  buildNodeSupportPublishCommand,
+  buildNodeSupportVerifyCommand,
+} from '../../node-support/publish-command.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
 import {
   resolveStartRefInRepo,
@@ -149,6 +160,180 @@ async function slotPrepareInner(
   const phaseLog = (name: string) => path.join(prepareLogDir, `${sanitizePhaseName(name)}.log`);
 
   const step = (name: string, detail: string) => emit('slot.prepare.step', { name, detail });
+
+  let hookSupportDir: string | undefined;
+  let hookSupportChecked = false;
+  const hookSupportManifestPath = () => path.posix.join(hookSupportDir!, 'manifest.json');
+  const pathWithin = (rootPath: string, candidatePath: string): boolean => {
+    const relative = path.relative(rootPath, candidatePath);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  };
+
+  const materializeHookSupport = async () => {
+    if (!projectVars || hookSupportChecked) return;
+    hookSupportChecked = true;
+    const { paths: supportPaths } = resolveNodeSupportPaths(
+      vars.projectName,
+      projectJson,
+      farmslotRoot,
+    );
+    if (supportPaths.length === 0) return;
+    if (slotIsLocal) {
+      hookSupportDir = farmslotRoot;
+      step('support', 'Using local node support source');
+      return;
+    }
+    const farmslotRootRealPath = await realpath(farmslotRoot);
+    const files = (
+      await Promise.all(
+        supportPaths.map(async (supportPath) => {
+          const sourcePath = path.join(farmslotRoot, supportPath);
+          const sourceRealPath = await realpath(sourcePath);
+          if (!pathWithin(farmslotRootRealPath, sourceRealPath)) {
+            throw new Error(`Node support path escapes Farmslot root: ${supportPath}`);
+          }
+          return collectSupportFiles(sourcePath, supportPath);
+        }),
+      )
+    ).flat();
+    const manifest = {
+      version: 1,
+      project: vars.projectName,
+      hash: supportHash(files),
+      paths: supportPaths,
+      fileCount: files.length,
+      files: files.map((file) => ({
+        path: file.relativePath,
+        sha256: file.sha256,
+        mode: file.mode.toString(8).padStart(3, '0'),
+        size: file.size,
+      })),
+    };
+
+    hookSupportDir = path.posix.join('~/farmslot-node/support', manifest.hash);
+    const verifyHookSupport = async () => {
+      const verifyResult = await execOnSlot(
+        vars,
+        buildNodeSupportVerifyCommand({
+          manifestPath: hookSupportManifestPath(),
+          supportDir: hookSupportDir!,
+          files,
+        }),
+      );
+      return verifyResult.exitCode === 0;
+    };
+    if (await slotFileExists(vars, hookSupportManifestPath())) {
+      const current = JSON.parse(await slotReadFile(vars, hookSupportManifestPath())) as {
+        hash?: string;
+      };
+      if (current.hash === manifest.hash) {
+        if (!(await verifyHookSupport())) {
+          throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
+        }
+        step('support', `Node support bundle current (${files.length} files)`);
+        return;
+      }
+    }
+
+    const incomingResult = await execOnSlot(
+      vars,
+      [
+        `mkdir -p ${shellExpressionForRemotePath('~/farmslot-node/support/.incoming')}`,
+        `mktemp -d ${shellExpressionForRemotePath(
+          path.posix.join('~/farmslot-node/support/.incoming', `${manifest.hash}.XXXXXX`),
+        )}`,
+      ].join(' && '),
+    );
+    if (incomingResult.exitCode !== 0) {
+      throw new Error(`Node support temp dir creation failed: ${incomingResult.stderr}`);
+    }
+    const incomingDir = incomingResult.stdout.trim().split(/\r?\n/).at(-1);
+    if (!incomingDir) throw new Error('Node support temp dir creation produced no path');
+
+    // Materialize the whole bundle in one RPC (parent dirs + modes included)
+    // rather than a mkdir/write/chmod round-trip per file. A throw here — before
+    // the verify/publish branches, which already clean up — would otherwise
+    // orphan the mktemp'd incoming dir, so cover the upload + manifest write.
+    try {
+      await slotWriteFiles(
+        vars,
+        incomingDir,
+        files.map((file) => ({
+          path: file.relativePath,
+          content: file.contentBase64,
+          mode: file.mode,
+        })),
+      );
+      await slotWriteFile(
+        vars,
+        path.posix.join(incomingDir, 'manifest.json'),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      );
+    } catch (error) {
+      // execOnSlot reports failure via exitCode rather than throwing, so this
+      // best-effort cleanup won't mask the original error before we rethrow it.
+      await execOnSlot(vars, `rm -rf ${shellExpressionForRemotePath(incomingDir)}`);
+      throw error;
+    }
+    const incomingVerifyResult = await execOnSlot(
+      vars,
+      buildNodeSupportVerifyCommand({
+        manifestPath: path.posix.join(incomingDir, 'manifest.json'),
+        supportDir: incomingDir,
+        files,
+      }),
+    );
+    if (incomingVerifyResult.exitCode !== 0) {
+      await execOnSlot(vars, `rm -rf ${shellExpressionForRemotePath(incomingDir)}`);
+      throw new Error(`Node support incoming verification failed for ${manifest.hash}`);
+    }
+    const publishResult = await execOnSlot(
+      vars,
+      buildNodeSupportPublishCommand({
+        incomingDir,
+        manifestPath: hookSupportManifestPath(),
+        supportDir: hookSupportDir,
+        supportHash: manifest.hash,
+      }),
+    );
+    if (publishResult.exitCode !== 0) {
+      const cleanupResult = await execOnSlot(
+        vars,
+        `rm -rf ${shellExpressionForRemotePath(incomingDir)}`,
+      );
+      const cleanupDetail =
+        cleanupResult.exitCode === 0 ? '' : `; cleanup failed: ${cleanupResult.stderr}`;
+      throw new Error(`Node support publish failed: ${publishResult.stderr}${cleanupDetail}`);
+    }
+    const published = JSON.parse(await slotReadFile(vars, hookSupportManifestPath())) as {
+      hash?: string;
+    };
+    if (published.hash !== manifest.hash) {
+      throw new Error(`Node support publish hash mismatch for ${manifest.hash}`);
+    }
+    if (!(await verifyHookSupport())) {
+      throw new Error(`Node support publish verification failed for ${manifest.hash}`);
+    }
+    step(
+      'support',
+      `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`,
+    );
+  };
+
+  const remapHookSupport = (command: string): string => {
+    if (!hookSupportDir || !command) return command;
+    return command
+      .replaceAll('{{node_support_dir}}', hookSupportDir)
+      .replaceAll('{{NODE_SUPPORT_DIR}}', hookSupportDir)
+      .replaceAll(`${farmslotRoot}/projects/`, `${hookSupportDir}/projects/`)
+      .replaceAll(`${farmslotRoot}/scripts/`, `${hookSupportDir}/scripts/`)
+      .replaceAll('~/farmslot-node/projects/', `${hookSupportDir}/projects/`)
+      .replaceAll('~/farmslot-node/scripts/', `${hookSupportDir}/scripts/`);
+  };
+
+  const expandPrepareHook = (hookName: string): string =>
+    remapHookSupport(expandHook(hookName, projectJson, vars, projectVars));
+
   const installEvalRecipeHarness = async () => {
     if (!params.runId) return;
     const run = getRun(params.runId);
@@ -172,6 +357,7 @@ async function slotPrepareInner(
     if (r.exitCode !== 0) throw new Error(`Cannot reach ${vars.sshTarget}`);
   }
   step('ssh', `Connected to ${vars.sshTarget}`);
+  await materializeHookSupport();
 
   // 1b. Device existence check (fail fast)
   const iosSim = vars.resourceVars.simulator ?? '';
@@ -551,9 +737,7 @@ async function slotPrepareInner(
     // timeout on the next webpack run.
     checkAborted();
     step('deps', 'Installing deps after merge...');
-    const installCmd =
-      expandHook('post_merge_install', projectJson, vars, projectVars) ||
-      'yarn install --frozen-lockfile';
+    const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
     const depsLogPath = phaseLog('deps');
     const installR = await runPrepareCommand(
       vars,
@@ -585,9 +769,7 @@ async function slotPrepareInner(
     // branch resets if synced earlier.
     await syncFixtures();
 
-    const installCmd =
-      expandHook('post_merge_install', projectJson, vars, projectVars) ||
-      'yarn install --frozen-lockfile';
+    const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
     if (installCmd) {
       checkAborted();
       step('deps', `Installing deps: ${installCmd}`);
@@ -652,7 +834,7 @@ async function slotPrepareInner(
   }
 
   // 5b. Run preflight
-  let preflightHook = expandHook('preflight', projectJson, vars, projectVars);
+  let preflightHook = expandPrepareHook('preflight');
   if (preflightHook && opts?.stripClean) {
     preflightHook = preflightHook.replace(/\s*--clean\b/g, '');
     step('preflight', 'Recovery mode — skipping --clean rebuild');
@@ -788,7 +970,7 @@ async function slotPrepareInner(
   }
 
   // 6. Verify health
-  const healthHook = expandHook('health_check', projectJson, vars, projectVars);
+  const healthHook = expandPrepareHook('health_check');
   if (healthHook) {
     step('health', 'Verifying health...');
     const parseCmd = getProjectField(projectJson, 'health.parse_health');
@@ -796,7 +978,7 @@ async function slotPrepareInner(
 
     if (readyIndicator && healthValue !== readyIndicator) {
       // Try unlock
-      const unlockHook = expandHook('unlock', projectJson, vars, projectVars);
+      const unlockHook = expandPrepareHook('unlock');
       if (unlockHook) {
         step('health', 'Trying unlock...');
         await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`);

@@ -32,7 +32,7 @@ load_project_config || { echo "FAIL: no project config for ${PROJECT_NAME}" >&2;
 REPO_DIR="${REMOTE_REPO}"
 # Harness injection root — keep in sync with the skill's RECIPE_HARNESS_ROOT
 # (path.sh default). Configurable, not hardcoded.
-HARNESS_ROOT="${RECIPE_HARNESS_ROOT:-temp/agentic/recipe-harness}"
+HARNESS_ROOT="${RECIPE_HARNESS_ROOT:-temp/recipe/harness}"
 # Mirror the skill's path.sh validation: relative, safe charset, no '.'/'..' components,
 # so a hostile RECIPE_HARNESS_ROOT can't escape REPO_DIR.
 case "$HARNESS_ROOT" in ""|/*|*[!A-Za-z0-9._/-]*) echo "FAIL: invalid RECIPE_HARNESS_ROOT: '$HARNESS_ROOT'" >&2; exit 1 ;; esac

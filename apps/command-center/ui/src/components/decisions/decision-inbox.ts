@@ -35,35 +35,51 @@ function toUnifiedDiff(change: ImprovementFileChange): string {
   );
 }
 
-function typeIcon(type: DecisionType | string): string {
+function typeLabel(type: DecisionType | string): string {
   switch (type) {
     case 'collision_check':
-      return 'CC';
+      return 'Collision check';
     case 'plan_confirmation':
-      return 'PL';
+      return 'Plan confirmation';
     case 'retrospective':
-      return 'RT';
+      return 'Retrospective';
     case 'review_posting':
-      return 'RV';
+      return 'Review posting';
     case 'blocked_alert':
-      return 'BL';
+      return 'Blocked alert';
     case 'review_comments':
-      return 'RC';
+      return 'Review comments';
     case 'ci_ci_timeout':
-      return 'CI';
+      return 'CI timeout';
     case 'ci_ci_failed':
-      return 'CI';
+      return 'CI failed';
     case 'ci_merge_conflict':
-      return 'MC';
+      return 'Merge conflict';
     case 'ci_review_comments':
-      return 'RC';
+      return 'Review comments';
     case 'ci_review_comments_early':
-      return 'RC';
+      return 'Early review comments';
     case 'improvement':
-      return 'IM';
+      return 'Improvement';
+    case 'recipe_strategy':
+      return 'Recipe strategy';
     default:
-      return type.slice(0, 2).toUpperCase();
+      if (type.startsWith('engine_'))
+        return `Engine ${humanizeTypeSuffix(type.slice('engine_'.length))}`;
+      if (type.startsWith('monitor_')) {
+        return `Monitor ${humanizeTypeSuffix(type.slice('monitor_'.length))}`;
+      }
+      if (type.startsWith('ci_')) return `CI ${humanizeTypeSuffix(type.slice('ci_'.length))}`;
+      return humanizeTypeSuffix(type);
   }
+}
+
+function humanizeTypeSuffix(type: string): string {
+  return type
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function typeColor(type: DecisionType | string): string {
@@ -635,8 +651,13 @@ export class DecisionInbox extends LitElement {
               return html`
                 <div class="decision ${isNew ? 'new' : ''}">
                   <div class="decision-top">
-                    <div class="type-icon" style="background:${color}22; color:${color}">
-                      ${typeIcon(d.type)}
+                    <div
+                      class="type-icon"
+                      style="background:${color}22; color:${color}"
+                      title=${d.type}
+                      aria-label=${`Decision type: ${typeLabel(d.type)}`}
+                    >
+                      ${typeLabel(d.type)}
                     </div>
                     <span class="decision-title">${d.title}</span>
                     ${d.slotId ? html`<span class="decision-slot">${d.slotId}</span>` : ''}

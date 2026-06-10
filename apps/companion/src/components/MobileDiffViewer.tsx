@@ -21,6 +21,7 @@ import {
   filterDiffFiles,
   parseUnifiedDiff,
 } from '../lib/diff';
+import { gatewayFetch } from '../lib/gateway-http-auth';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 interface MobileDiffViewerProps {
@@ -86,7 +87,7 @@ export function MobileDiffViewer({
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    fetch(diffUrl, { signal: controller.signal, headers: fetchHeaders })
+    gatewayFetch(diffUrl, fetchHeaders, { signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.text();

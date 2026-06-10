@@ -34,6 +34,7 @@ import {
   fsWatchStop,
   fsWatchStopAll,
   fsWrite,
+  fsWriteFiles,
 } from './commands/fs.js';
 import {
   type ResourceStatusChange,
@@ -385,6 +386,28 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
         const path = requireString(params, 'path');
         const content = requireString(params, 'content');
         const result = await fsWrite({ path, content });
+        sendResponse(frame.id, true, result);
+        break;
+      }
+
+      case 'fs.writeFiles': {
+        const baseDir = requireString(params, 'baseDir');
+        const rawFiles = params.files;
+        if (!Array.isArray(rawFiles)) {
+          throw new Error('Missing required array param: files');
+        }
+        const files = rawFiles.map((entry) => {
+          const file = entry as Record<string, unknown>;
+          if (typeof file.path !== 'string' || typeof file.content !== 'string') {
+            throw new Error('fs.writeFiles entries require string path and content');
+          }
+          return {
+            path: file.path,
+            content: file.content,
+            mode: typeof file.mode === 'number' ? file.mode : undefined,
+          };
+        });
+        const result = await fsWriteFiles({ baseDir, files });
         sendResponse(frame.id, true, result);
         break;
       }

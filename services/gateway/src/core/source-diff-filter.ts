@@ -297,7 +297,7 @@ export function buildSourceDiffFilter(config: SourceDiffFilterConfig = {}): Sour
   ]);
   const compiledAllow = customAllowPatterns.map(compileGlob);
   const compiledBlock = capCustomEntries(
-    // Always block the configured harness injection root (default temp/agentic/recipe-harness),
+    // Always block the configured harness injection root (default temp/recipe/harness),
     // so harness overlay files are excluded from diff analysis even under a custom root.
     [
       `${harnessRoot()}/**`,

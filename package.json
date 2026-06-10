@@ -39,7 +39,8 @@
     "quality:structure": "node scripts/quality/check-workspace-structure.mjs",
     "quality:imports": "node scripts/quality/check-import-boundaries.mjs",
     "quality:workspaces": "node scripts/quality/run-workspace-quality.mjs",
-    "quality:changelogs": "node scripts/quality/check-workspace-changelogs.mjs"
+    "quality:changelogs": "node scripts/quality/check-workspace-changelogs.mjs",
+    "check:node-support": "tsx scripts/check-node-support-bundles.ts"
   },
   "license": "MIT",
   "resolutions": {

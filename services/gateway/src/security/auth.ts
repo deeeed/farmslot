@@ -285,7 +285,26 @@ function getHttpCredential(req: IncomingMessage): string | undefined {
       return nonEmpty(separator >= 0 ? decoded.slice(separator + 1) : decoded);
     }
   }
+  const queryCredential = getQueryCredential(req.url);
+  if (queryCredential) return queryCredential;
   return getCookieValue(req.headers.cookie, HTTP_AUTH_COOKIE);
+}
+
+// Query-string credentials exist only for header-incapable clients (React Native
+// <Image>/Source, which cannot send an Authorization header). They are accepted
+// last (after header and before cookie) and compared with the same constant-time
+// check + rate limiter as header auth. Query tokens are intrinsically more
+// exposed than headers (browser history, Referer, intermediary access logs), so
+// the gateway must never log raw req.url, and the companion only appends a query
+// token on Image/Source URLs — fetch() calls stay header-only (gatewayFetch).
+function getQueryCredential(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const queryStart = url.indexOf('?');
+  if (queryStart < 0) return undefined;
+  const hashStart = url.indexOf('#', queryStart);
+  const query = url.slice(queryStart + 1, hashStart >= 0 ? hashStart : undefined);
+  const params = new URLSearchParams(query);
+  return nonEmpty(params.get('token') ?? undefined);
 }
 
 function getCookieValue(

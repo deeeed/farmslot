@@ -320,9 +320,9 @@ describe('runnerDefaultModel', () => {
 describe('tmux nudge launch policy', () => {
   it('allows normal interactive launches but blocks explicit headless print launches', () => {
     const cursorInteractive =
-      "cd /repo && cursor-agent --force --sandbox disabled --model composer-2 'Read TASK.md'";
+      "cd /repo && cursor-agent --force --sandbox disabled --model composer-2.5 'Read TASK.md'";
     const cursorHeadless =
-      "cd /repo && cursor-agent --print --trust --force --sandbox disabled --model composer-2 'Read TASK.md'";
+      "cd /repo && cursor-agent --print --trust --force --sandbox disabled --model composer-2.5 'Read TASK.md'";
     const claudeInteractive = 'cd /repo && claude --model sonnet';
     const claudeHeadless = "cd /repo && claude --model sonnet --print 'Read TASK.md'";
 
@@ -360,36 +360,36 @@ describe('runnerFlagsForTier — cursor', () => {
 });
 
 describe('buildCursorAgentLaunch', () => {
-  it('defaults to composer-2 and sandboxed flags without embedding the task prompt', () => {
+  it('defaults to composer-2.5 and sandboxed flags without embedding the task prompt', () => {
     const cmd = buildCursorAgentLaunch({
       binary: 'agent',
       model: null,
       prompt: 'hi',
       repo: '/tmp/repo',
     });
-    assert.equal(cmd, "cd '/tmp/repo' && agent --sandbox enabled --model composer-2");
+    assert.equal(cmd, "cd '/tmp/repo' && agent --sandbox enabled --model composer-2.5");
     assert.doesNotMatch(cmd, /hi/);
   });
 
   it('ignores prompt text because Cursor receives tasks after TUI readiness', () => {
     const cmd = buildCursorAgentLaunch({
       binary: 'agent',
-      model: 'composer-2',
+      model: 'composer-2.5',
       prompt: "read Bob's task",
       repo: '/tmp/repo',
     });
-    assert.equal(cmd, "cd '/tmp/repo' && agent --sandbox enabled --model composer-2");
+    assert.equal(cmd, "cd '/tmp/repo' && agent --sandbox enabled --model composer-2.5");
     assert.doesNotMatch(cmd, /Bob/);
   });
 
   it('omits prompt argument when prompt is empty', () => {
     const cmd = buildCursorAgentLaunch({
       binary: 'agent',
-      model: 'composer-2',
+      model: 'composer-2.5',
       prompt: '',
       repo: '/tmp/repo',
     });
-    assert.equal(cmd, "cd '/tmp/repo' && agent --sandbox enabled --model composer-2");
+    assert.equal(cmd, "cd '/tmp/repo' && agent --sandbox enabled --model composer-2.5");
   });
 
   it('resolveCursorAgentBinary falls back to bare `agent` when no path is configured', () => {

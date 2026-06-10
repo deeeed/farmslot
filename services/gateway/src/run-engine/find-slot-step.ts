@@ -506,7 +506,7 @@ export async function executeFindSlotStep(
   // card surfaces the upcoming worker as soon as the bind happens.
   // Without this, the slot retains the previous run's runner/model until
   // DISPATCH (buildSlotClaimStatus, methods/dispatch.ts) overwrites them
-  // — so operators see e.g. "cursor/composer-2" while a claude/opus run
+  // — so operators see e.g. "cursor/composer-2.5" while a claude/opus run
   // is preparing on the slot. dispatchExecute will overwrite with its
   // final resolved values once the worker launches.
   const previewRunner = result.preview.runner;
@@ -530,7 +530,7 @@ export async function executeFindSlotStep(
   // User's model/runner selection takes priority over slot/project defaults.
   // If the operator picked a runner but left model unset/unknown, resolve
   // through that runner's registry default instead of borrowing the slot's
-  // runner/model (for Cursor this must be composer-2, not Claude's opus).
+  // runner/model (for Cursor this must be composer-2.5, not Claude's opus).
   //
   // Aside on grade.modelRecommendation: the dispatch wizard sends a default
   // `model` on every run.create (the displayed pill value), so by the time

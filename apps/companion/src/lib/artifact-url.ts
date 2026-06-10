@@ -1,15 +1,20 @@
 import type { RecipeRunArtifactGroup, Run } from '@farmslot/protocol';
 
+import {
+  type GatewayHttpAuthHeaders,
+  gatewayResourceSource,
+} from './gateway-http-auth';
+
 export const DECISION_EVIDENCE_RECIPE_RUN_PARAM = 'decision-evidence';
 export const CURRENT_ARTIFACTS_RECIPE_RUN_PARAM = 'current-artifacts';
 
-export type ArtifactHttpHeaders = Record<string, string>;
+export type ArtifactHttpHeaders = GatewayHttpAuthHeaders;
 
 export function artifactSource(
   uri: string,
   headers: ArtifactHttpHeaders = {},
 ): { uri: string; headers?: ArtifactHttpHeaders } {
-  return Object.keys(headers).length > 0 ? { uri, headers } : { uri };
+  return gatewayResourceSource(uri, headers);
 }
 
 export type ArtifactManifestType =

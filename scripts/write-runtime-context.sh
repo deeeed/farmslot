@@ -98,7 +98,7 @@ def git(args):
         return None
 
 def extension_id():
-    default_root = 'temp/agentic/recipe-harness'
+    default_root = 'temp/recipe/harness'
     harness_root = os.environ.get('RECIPE_HARNESS_ROOT', default_root)
     # Validate like harness-path.sh; fall back to default on an unsafe value.
     safe = (harness_root and not harness_root.startswith('/')
