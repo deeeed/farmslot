@@ -4,6 +4,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.2.2 - 2026-06-10
+
+- Publish with npm-resolvable `@farmslot/protocol` dependency metadata instead of workspace-only protocol references.
+
 ## 0.2.1 - 2026-06-10
 
 - Drive CDP text inputs with trusted keyboard insertion instead of direct DOM value assignment so React-controlled inputs receive real input/change handling.

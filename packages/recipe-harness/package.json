@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/recipe-harness",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -77,7 +77,7 @@
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/recipe-harness"
   },
   "dependencies": {
-    "@farmslot/protocol": "workspace:*",
+    "@farmslot/protocol": "^0.6.0",
     "commander": "^12.0.0",
     "ws": "^8.18.0"
   },
