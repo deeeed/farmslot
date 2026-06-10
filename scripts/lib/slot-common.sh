@@ -678,6 +678,9 @@ for k, v in (d.get("vars") or {}).items():
     # Here-string runs the loop in the current shell, so text mutations persist.
     while IFS=$'\t' read -r key value; do
       [ -z "$key" ] && continue
+      # EXPAND_PROJECT_TEMPLATE_VARS=0 guards against recursion, so a var's value
+      # expands resource placeholders only — vars are single-level and cannot
+      # reference other {{vars}}.
       expanded="$(EXPAND_PROJECT_TEMPLATE_VARS=0 expand_slot_template "$value")"
       text="${text//\{\{${key}\}\}/$expanded}"
       upper="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"

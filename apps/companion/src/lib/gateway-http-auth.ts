@@ -65,5 +65,5 @@ function hasAuthQueryParam(uri: string): boolean {
   const hashStart = uri.indexOf('#', queryStart);
   const query = uri.slice(queryStart + 1, hashStart >= 0 ? hashStart : undefined);
   const params = new URLSearchParams(query);
-  return params.has('token') || params.has('access_token');
+  return params.has('token');
 }

@@ -20,6 +20,7 @@ function exists(rel: string): boolean {
     statSync(path.join(root, rel));
     return true;
   } catch {
+    // statSync throws ENOENT when the path is absent — that is the answer here.
     return false;
   }
 }

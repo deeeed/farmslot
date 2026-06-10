@@ -304,9 +304,7 @@ function getQueryCredential(url: string | undefined): string | undefined {
   const hashStart = url.indexOf('#', queryStart);
   const query = url.slice(queryStart + 1, hashStart >= 0 ? hashStart : undefined);
   const params = new URLSearchParams(query);
-  return (
-    nonEmpty(params.get('token') ?? undefined) ?? nonEmpty(params.get('access_token') ?? undefined)
-  );
+  return nonEmpty(params.get('token') ?? undefined);
 }
 
 function getCookieValue(

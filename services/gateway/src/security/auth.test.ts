@@ -83,17 +83,6 @@ const queryTokenAuthorized = authorizeHttpRequest({
 });
 assert.equal(queryTokenAuthorized, true);
 
-const accessTokenResponse = createFakeResponse();
-const accessTokenAuthorized = authorizeHttpRequest({
-  runtime: createGatewayAuthRuntime({ FARMSLOT_GATEWAY_TOKEN: 'access-token' }),
-  req: createFakeRequest({
-    url: '/api/run-artifact?runId=run-1&path=artifacts%2Fafter.png&access_token=access-token',
-    remoteAddress: '127.0.0.1',
-  }),
-  res: accessTokenResponse,
-});
-assert.equal(accessTokenAuthorized, true);
-
 const missingCookieResponse = createFakeResponse();
 const missingCookieAuthorized = authorizeHttpRequest({
   runtime: cookieRuntime,

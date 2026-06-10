@@ -727,7 +727,6 @@ async function slotPrepareInner(
     // (for example AGENTS.md) survive, but before dependency install so
     // project setup files such as .tool-versions are in place.
     await syncFixtures();
-    await materializeHookSupport();
 
     // Always install after a merge-flow checkout. Skip-heuristics (lockHash
     // before/after, .yarn-state.yml present) miss the common case where a
@@ -769,7 +768,6 @@ async function slotPrepareInner(
     // fixture outputs are ignored, but tracked outputs still get reverted by
     // branch resets if synced earlier.
     await syncFixtures();
-    await materializeHookSupport();
 
     const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
     if (installCmd) {
@@ -802,7 +800,6 @@ async function slotPrepareInner(
 
   // 3. Fallback for uncommon paths that skipped both dependency branches.
   await syncFixtures();
-  await materializeHookSupport();
   await installEvalRecipeHarness();
 
   // 4. Ensure tmux session
