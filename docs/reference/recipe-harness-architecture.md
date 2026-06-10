@@ -219,6 +219,15 @@ Optional replay controls are capability-gated: `recipe_run_supports_playback_slo
 allows the gateway to append `--slow <ms>`, and
 `recipe_run_supports_video_recording` allows it to append `--record`.
 
+### Runtime overlay hygiene
+
+Project farms own the hygiene contract for generated harness overlays in their
+target repos. If a farm config sets `RECIPE_HARNESS_ROOT` or relies on the
+default `temp/recipe/harness`, that path must be ignored by the target repo's
+git rules and by any farm-level source-diff filters. Harness installation may
+write executable runners, helper manifests, and adapter overlays there; those
+files are runtime state, not source changes.
+
 ### Recipe document
 
 ```json

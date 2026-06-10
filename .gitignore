@@ -7,17 +7,8 @@ pool/*.json
 !pool/example.json
 !pool/farmslot-demo.json
 
-# Recipe runner validation artifacts — created in cwd/temp during runtime-health/
-# live runs; contain throwaway wallet fixtures that must never be committed.
-# Scoped to temp/ so it can't block a legitimately-named fixture elsewhere.
-temp/.recipe-validation-*/
-temp/**/wallet-fixture.json
-
-# Local quality tool artifacts
-temp/quality/
-
-# Generated agent/runtime overlays; never commit transient agentic state.
-temp/agentic/**
+# Generated runtime artifacts and overlays; never commit transient Farmslot state.
+temp/
 
 # Co-pilot session history (raw JSON, transient)
 copilot/sessions/
