@@ -4,6 +4,11 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.2.1 - 2026-06-10
+
+- Drive CDP text inputs with trusted keyboard insertion instead of direct DOM value assignment so React-controlled inputs receive real input/change handling.
+- Drive CDP clicks with real mouse events and expose `ui.key_press` through the standard UI adapter.
+
 ## 0.2.0 - 2026-06-02
 
 - Define the v0 public harness package surface with explicit core, adapter, node, CLI, and runtime entry points.
