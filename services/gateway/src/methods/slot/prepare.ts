@@ -34,6 +34,7 @@ import {
 import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { resolveNodeSupportPaths } from '../../node-support/paths.js';
+import { buildNodeSupportPublishCommand } from '../../node-support/publish-command.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
 import {
   resolveStartRefInRepo,
@@ -279,34 +280,21 @@ async function slotPrepareInner(
     );
     const publishResult = await execOnSlot(
       vars,
-      [
-        `mkdir -p ${shellExpressionForRemotePath('~/farmslot-node/support/.locks')}`,
-        `mkdir -p ${shellExpressionForRemotePath(path.posix.dirname(hookSupportDir))}`,
-        [
-          `lock=${shellExpressionForRemotePath(
-            path.posix.join('~/farmslot-node/support/.locks', `${manifest.hash}.lock`),
-          )};`,
-          `while ! mkdir "$lock" 2>/dev/null; do`,
-          `if [ -f ${shellExpressionForRemotePath(hookSupportManifestPath())} ]; then rm -rf ${shellExpressionForRemotePath(incomingDir)}; exit 0; fi;`,
-          'sleep 0.2;',
-          'done;',
-          'trap \'rmdir "$lock" 2>/dev/null || true\' EXIT;',
-          `if [ -f ${shellExpressionForRemotePath(hookSupportManifestPath())} ]; then`,
-          `rm -rf ${shellExpressionForRemotePath(incomingDir)};`,
-          `elif [ -e ${shellExpressionForRemotePath(hookSupportDir)} ]; then`,
-          `rm -rf ${shellExpressionForRemotePath(incomingDir)};`,
-          `echo "node support target exists without manifest: ${hookSupportDir}" >&2;`,
-          'exit 1;',
-          'else',
-          `mv ${shellExpressionForRemotePath(incomingDir)} ${shellExpressionForRemotePath(hookSupportDir)} && chmod -R u+rwX,go+rX ${shellExpressionForRemotePath(hookSupportDir)};`,
-          'fi',
-          'rmdir "$lock" 2>/dev/null || true;',
-          'trap - EXIT',
-        ].join(' '),
-      ].join(' && '),
+      buildNodeSupportPublishCommand({
+        incomingDir,
+        manifestPath: hookSupportManifestPath(),
+        supportDir: hookSupportDir,
+        supportHash: manifest.hash,
+      }),
     );
     if (publishResult.exitCode !== 0) {
-      throw new Error(`Node support publish failed: ${publishResult.stderr}`);
+      const cleanupResult = await execOnSlot(
+        vars,
+        `rm -rf ${shellExpressionForRemotePath(incomingDir)}`,
+      );
+      const cleanupDetail =
+        cleanupResult.exitCode === 0 ? '' : `; cleanup failed: ${cleanupResult.stderr}`;
+      throw new Error(`Node support publish failed: ${publishResult.stderr}${cleanupDetail}`);
     }
     const published = JSON.parse(await slotReadFile(vars, hookSupportManifestPath())) as {
       hash?: string;
