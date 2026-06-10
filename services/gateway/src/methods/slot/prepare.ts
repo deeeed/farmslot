@@ -1,4 +1,5 @@
-import { open as fsOpen, stat as fsStat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { open as fsOpen, readdir, readFile, stat as fsStat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
@@ -18,9 +19,14 @@ import {
   loadSlotVars,
   type ProjectVars,
   type RawProjectJson,
+  slotFileExists,
+  slotReadFile,
+  slotWriteFile,
   updateSlotStatus,
 } from '../../core/index.js';
+import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { resolveNodeSupportPaths } from '../../node-support/paths.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
 import {
   resolveStartRefInRepo,
@@ -149,6 +155,131 @@ async function slotPrepareInner(
   const phaseLog = (name: string) => path.join(prepareLogDir, `${sanitizePhaseName(name)}.log`);
 
   const step = (name: string, detail: string) => emit('slot.prepare.step', { name, detail });
+
+  let hookSupportDir: string | undefined;
+  const hookSupportManifestPath = () => path.join(hookSupportDir!, 'manifest.json');
+  const collectSupportFiles = async (
+    sourcePath: string,
+    relativeDest: string,
+  ): Promise<Array<{ relativePath: string; content: string }>> => {
+    const st = await fsStat(sourcePath);
+
+    if (st.isDirectory()) {
+      const files: Array<{ relativePath: string; content: string }> = [];
+      for (const entry of await readdir(sourcePath, { withFileTypes: true })) {
+        if (entry.name === '.git' || entry.name === 'node_modules') continue;
+        files.push(
+          ...(await collectSupportFiles(
+            path.join(sourcePath, entry.name),
+            path.join(relativeDest, entry.name),
+          )),
+        );
+      }
+      return files;
+    }
+
+    if (!st.isFile()) return [];
+    return [{ relativePath: relativeDest, content: await readFile(sourcePath, 'utf-8') }];
+  };
+
+  const supportHash = (files: Array<{ relativePath: string; content: string }>): string => {
+    const hash = createHash('sha256');
+    for (const file of files.sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
+      hash.update(file.relativePath);
+      hash.update('\0');
+      hash.update(file.content);
+      hash.update('\0');
+    }
+    return hash.digest('hex');
+  };
+
+  const materializeHookSupport = async () => {
+    if (!projectVars || hookSupportDir) return;
+    const { paths: supportPaths } = resolveNodeSupportPaths(
+      vars.projectName,
+      projectJson,
+      farmslotRoot,
+    );
+    if (supportPaths.length === 0) return;
+    const files = (
+      await Promise.all(
+        supportPaths.map((supportPath) =>
+          collectSupportFiles(path.join(farmslotRoot, supportPath), supportPath),
+        ),
+      )
+    ).flat();
+    const manifest = {
+      version: 1,
+      project: vars.projectName,
+      hash: supportHash(files),
+      paths: supportPaths,
+      fileCount: files.length,
+    };
+    if (slotIsLocal) {
+      hookSupportDir = farmslotRoot;
+      step('support', `Using local node support source (${files.length} files)`);
+      return;
+    }
+
+    hookSupportDir = path.posix.join('~/farmslot-node/support', manifest.hash);
+    if (await slotFileExists(vars, hookSupportManifestPath())) {
+      const current = JSON.parse(await slotReadFile(vars, hookSupportManifestPath())) as {
+        hash?: string;
+      };
+      if (current.hash === manifest.hash) {
+        step('support', `Node support bundle current (${files.length} files)`);
+        return;
+      }
+    }
+
+    const incomingDir = path.posix.join(
+      '~/farmslot-node/support/.incoming',
+      `${manifest.hash}-${Date.now()}`,
+    );
+    await execOnSlot(
+      vars,
+      `rm -rf ${shellExpressionForRemotePath(incomingDir)} && mkdir -p ${shellExpressionForRemotePath(incomingDir)}`,
+    );
+
+    for (const file of files) {
+      const dest = path.posix.join(incomingDir, file.relativePath);
+      await execOnSlot(vars, `mkdir -p ${shellExpressionForRemotePath(path.posix.dirname(dest))}`);
+      await slotWriteFile(vars, dest, file.content);
+    }
+    await slotWriteFile(
+      vars,
+      path.posix.join(incomingDir, 'manifest.json'),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+    );
+    await execOnSlot(
+      vars,
+      [
+        `rm -rf ${shellExpressionForRemotePath(hookSupportDir)}`,
+        `mkdir -p ${shellExpressionForRemotePath(path.posix.dirname(hookSupportDir))}`,
+        `mv ${shellExpressionForRemotePath(incomingDir)} ${shellExpressionForRemotePath(hookSupportDir)}`,
+        `chmod -R u+rwX,go+rX ${shellExpressionForRemotePath(hookSupportDir)}`,
+      ].join(' && '),
+    );
+    step(
+      'support',
+      `Synced node support bundle (${files.length} files: ${supportPaths.join(', ')})`,
+    );
+  };
+
+  const remapHookSupport = (command: string): string => {
+    if (!hookSupportDir || !command) return command;
+    return command
+      .replaceAll('{{node_support_dir}}', hookSupportDir)
+      .replaceAll('{{NODE_SUPPORT_DIR}}', hookSupportDir)
+      .replaceAll(`${farmslotRoot}/projects/`, `${hookSupportDir}/projects/`)
+      .replaceAll(`${farmslotRoot}/scripts/`, `${hookSupportDir}/scripts/`)
+      .replaceAll('~/farmslot-node/projects/', `${hookSupportDir}/projects/`)
+      .replaceAll('~/farmslot-node/scripts/', `${hookSupportDir}/scripts/`);
+  };
+
+  const expandPrepareHook = (hookName: string): string =>
+    remapHookSupport(expandHook(hookName, projectJson, vars, projectVars));
+
   const installEvalRecipeHarness = async () => {
     if (!params.runId) return;
     const run = getRun(params.runId);
@@ -541,6 +672,7 @@ async function slotPrepareInner(
     // (for example AGENTS.md) survive, but before dependency install so
     // project setup files such as .tool-versions are in place.
     await syncFixtures();
+    await materializeHookSupport();
 
     // Always install after a merge-flow checkout. Skip-heuristics (lockHash
     // before/after, .yarn-state.yml present) miss the common case where a
@@ -551,9 +683,7 @@ async function slotPrepareInner(
     // timeout on the next webpack run.
     checkAborted();
     step('deps', 'Installing deps after merge...');
-    const installCmd =
-      expandHook('post_merge_install', projectJson, vars, projectVars) ||
-      'yarn install --frozen-lockfile';
+    const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
     const depsLogPath = phaseLog('deps');
     const installR = await runPrepareCommand(
       vars,
@@ -584,10 +714,9 @@ async function slotPrepareInner(
     // fixture outputs are ignored, but tracked outputs still get reverted by
     // branch resets if synced earlier.
     await syncFixtures();
+    await materializeHookSupport();
 
-    const installCmd =
-      expandHook('post_merge_install', projectJson, vars, projectVars) ||
-      'yarn install --frozen-lockfile';
+    const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
     if (installCmd) {
       checkAborted();
       step('deps', `Installing deps: ${installCmd}`);
@@ -618,6 +747,7 @@ async function slotPrepareInner(
 
   // 3. Fallback for uncommon paths that skipped both dependency branches.
   await syncFixtures();
+  await materializeHookSupport();
   await installEvalRecipeHarness();
 
   // 4. Ensure tmux session
@@ -652,7 +782,7 @@ async function slotPrepareInner(
   }
 
   // 5b. Run preflight
-  let preflightHook = expandHook('preflight', projectJson, vars, projectVars);
+  let preflightHook = expandPrepareHook('preflight');
   if (preflightHook && opts?.stripClean) {
     preflightHook = preflightHook.replace(/\s*--clean\b/g, '');
     step('preflight', 'Recovery mode — skipping --clean rebuild');
@@ -788,7 +918,7 @@ async function slotPrepareInner(
   }
 
   // 6. Verify health
-  const healthHook = expandHook('health_check', projectJson, vars, projectVars);
+  const healthHook = expandPrepareHook('health_check');
   if (healthHook) {
     step('health', 'Verifying health...');
     const parseCmd = getProjectField(projectJson, 'health.parse_health');
@@ -796,7 +926,7 @@ async function slotPrepareInner(
 
     if (readyIndicator && healthValue !== readyIndicator) {
       // Try unlock
-      const unlockHook = expandHook('unlock', projectJson, vars, projectVars);
+      const unlockHook = expandPrepareHook('unlock');
       if (unlockHook) {
         step('health', 'Trying unlock...');
         await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`);
