@@ -4,6 +4,7 @@
 
 import { existsSync } from 'node:fs';
 import {
+  chmod as fsChmod,
   copyFile,
   lstat,
   mkdir,
@@ -130,19 +131,33 @@ export async function slotWriteFile(
   await sendNodeRequest(requireNode(ctx.machine), 'fs.write', { path: filePath, content: data });
 }
 
-export async function slotWriteFileBase64(
+export interface SlotWriteFileEntry {
+  /** Path relative to baseDir. */
+  path: string;
+  /** Base64-encoded file content. */
+  content: string;
+  /** Octal file mode (e.g. 0o755); left unchanged when omitted. */
+  mode?: number;
+}
+
+// Batch base64 write: materializes a whole file set under baseDir (creating
+// parent dirs and applying modes) in a single node RPC, instead of a mkdir +
+// write + chmod round-trip per file.
+export async function slotWriteFiles(
   ctx: SlotLocality,
-  filePath: string,
-  base64Data: string,
+  baseDir: string,
+  files: SlotWriteFileEntry[],
 ): Promise<void> {
   if (local(ctx)) {
-    await fsWriteFile(filePath, Buffer.from(base64Data, 'base64'));
+    for (const file of files) {
+      const dest = path.join(baseDir, file.path);
+      await mkdir(path.dirname(dest), { recursive: true });
+      await fsWriteFile(dest, Buffer.from(file.content, 'base64'));
+      if (typeof file.mode === 'number') await fsChmod(dest, file.mode);
+    }
     return;
   }
-  await sendNodeRequest(requireNode(ctx.machine), 'fs.writeBase64', {
-    path: filePath,
-    content: base64Data,
-  });
+  await sendNodeRequest(requireNode(ctx.machine), 'fs.writeFiles', { baseDir, files });
 }
 
 // ─── slotCopyFile ───

@@ -5,17 +5,12 @@ export interface GatewayAuthCredentials {
 
 export type GatewayHttpAuthHeaders = Record<string, string>;
 
-export function gatewayHttpAuthHeaders(
-  auth: GatewayAuthCredentials = {},
-): GatewayHttpAuthHeaders {
+export function gatewayHttpAuthHeaders(auth: GatewayAuthCredentials = {}): GatewayHttpAuthHeaders {
   const credential = auth.token?.trim() || auth.password?.trim();
   return credential ? { Authorization: `Bearer ${credential}` } : {};
 }
 
-export function gatewayResourceUrl(
-  uri: string,
-  headers: GatewayHttpAuthHeaders = {},
-): string {
+export function gatewayResourceUrl(uri: string, headers: GatewayHttpAuthHeaders = {}): string {
   const token = gatewayBearerToken(headers);
   if (!token || hasAuthQueryParam(uri)) return uri;
 
@@ -39,7 +34,12 @@ export function gatewayFetch(
   headers: GatewayHttpAuthHeaders = {},
   init: RequestInit = {},
 ): Promise<Response> {
-  return fetch(gatewayResourceUrl(uri, headers), {
+  // Header-only: fetch fully supports request headers, so the bearer token must
+  // never leak into the URL here (where it could land in proxy/request logs or
+  // RN network inspectors). URL-token injection (gatewayResourceUrl /
+  // gatewayResourceSource) is reserved for header-incapable consumers — RN
+  // <Image>/Source — that cannot send an Authorization header.
+  return fetch(uri, {
     ...init,
     headers: {
       ...headers,

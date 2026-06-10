@@ -21,7 +21,7 @@ import {
   slotFileExists,
   slotReadFile,
   slotWriteFile,
-  slotWriteFileBase64,
+  slotWriteFiles,
   updateSlotStatus,
 } from '../../core/index.js';
 import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
@@ -250,25 +250,31 @@ async function slotPrepareInner(
     const incomingDir = incomingResult.stdout.trim().split(/\r?\n/).at(-1);
     if (!incomingDir) throw new Error('Node support temp dir creation produced no path');
 
-    for (const file of files) {
-      const dest = path.posix.join(incomingDir, file.relativePath);
-      await execOnSlot(vars, `mkdir -p ${shellExpressionForRemotePath(path.posix.dirname(dest))}`);
-      await slotWriteFileBase64(vars, dest, file.contentBase64);
-      const chmodResult = await execOnSlot(
+    // Materialize the whole bundle in one RPC (parent dirs + modes included)
+    // rather than a mkdir/write/chmod round-trip per file. A throw here — before
+    // the verify/publish branches, which already clean up — would otherwise
+    // orphan the mktemp'd incoming dir, so cover the upload + manifest write.
+    try {
+      await slotWriteFiles(
         vars,
-        `chmod ${file.mode.toString(8)} ${shellExpressionForRemotePath(dest)}`,
+        incomingDir,
+        files.map((file) => ({
+          path: file.relativePath,
+          content: file.contentBase64,
+          mode: file.mode,
+        })),
       );
-      if (chmodResult.exitCode !== 0) {
-        throw new Error(
-          `Node support chmod failed for ${file.relativePath}: ${chmodResult.stderr}`,
-        );
-      }
+      await slotWriteFile(
+        vars,
+        path.posix.join(incomingDir, 'manifest.json'),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      );
+    } catch (error) {
+      // execOnSlot reports failure via exitCode rather than throwing, so this
+      // best-effort cleanup won't mask the original error before we rethrow it.
+      await execOnSlot(vars, `rm -rf ${shellExpressionForRemotePath(incomingDir)}`);
+      throw error;
     }
-    await slotWriteFile(
-      vars,
-      path.posix.join(incomingDir, 'manifest.json'),
-      `${JSON.stringify(manifest, null, 2)}\n`,
-    );
     const incomingVerifyResult = await execOnSlot(
       vars,
       buildNodeSupportVerifyCommand({

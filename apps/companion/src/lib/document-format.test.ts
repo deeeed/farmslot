@@ -33,4 +33,19 @@ assert.deepEqual(
   ],
 );
 
+// snake_case / SCREAMING_CASE identifiers must survive — they are not emphasis.
+assert.deepEqual(
+  formatDocument(
+    'report.md',
+    [
+      'Set `node_support_dir` and MY_CONST, then run a_b_c.',
+      'Real _emphasis_ stays stripped.',
+    ].join('\n'),
+  ).map(({ kind, text }) => ({ kind, text })),
+  [
+    { kind: 'paragraph', text: 'Set node_support_dir and MY_CONST, then run a_b_c.' },
+    { kind: 'paragraph', text: 'Real emphasis stays stripped.' },
+  ],
+);
+
 console.log('document format tests passed');

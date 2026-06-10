@@ -115,10 +115,17 @@ function formatTable(lines: string[]): string {
 }
 
 function cleanInlineMarkdown(text: string): string {
-  return text
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1 ($2)')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/(\*\*|__)(.*?)\1/g, '$2')
-    .replace(/(\*|_)(.*?)\1/g, '$2');
+  return (
+    text
+      .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1 ($2)')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/(\*\*|__)(.*?)\1/g, '$2')
+      .replace(/\*([^*]+)\*/g, '$1')
+      // Single-underscore italics only when the delimiters sit on word boundaries,
+      // so snake_case / SCREAMING_CASE identifiers (e.g. node_support_dir) in
+      // evidence docs keep their underscores. Lookahead only — Hermes (RN) has
+      // historically lacked lookbehind — with the left boundary captured/restored.
+      .replace(/(^|[^A-Za-z0-9_])_(\S(?:[^_]*\S)?)_(?![A-Za-z0-9_])/g, '$1$2')
+  );
 }
