@@ -655,6 +655,21 @@ expand_slot_template() {
   text="${text//\{\{REPO\}\}/${REMOTE_REPO:-${REPO:-}}}"
   text="${text//\{\{mobile_repo\}\}/${MOBILE_REPO:-}}"
   text="${text//\{\{MOBILE_REPO\}\}/${MOBILE_REPO:-}}"
+  if [ "${EXPAND_PROJECT_TEMPLATE_VARS:-1}" != "0" ] && [ -n "${PROJECT_JSON:-}" ]; then
+    local key value expanded upper
+    while IFS=$'\t' read -r key value; do
+      [ -z "$key" ] && continue
+      expanded="$(EXPAND_PROJECT_TEMPLATE_VARS=0 expand_slot_template "$value")"
+      text="${text//\{\{${key}\}\}/$expanded}"
+      upper="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
+      text="${text//\{\{${upper}\}\}/$expanded}"
+    done < <(printf '%s' "$PROJECT_JSON" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for k, v in (d.get("vars") or {}).items():
+    print(f"{k}\t{v}")
+')
+  fi
   printf '%s\n' "$text"
 }
 
@@ -743,5 +758,10 @@ render_fixture_template() {
     -e "s|{{REPO}}|${REMOTE_REPO:-}|g" \
     "$rendered"
   rm -f "${rendered}.bak"
+  if [ -n "${PROJECT_JSON:-}" ]; then
+    local rendered_text
+    rendered_text="$(cat "$rendered")"
+    expand_slot_template "$rendered_text" > "$rendered"
+  fi
   echo "$rendered"
 }

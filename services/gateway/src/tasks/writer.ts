@@ -18,6 +18,7 @@ import {
 } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import { expandTemplate } from '../core/hooks.js';
 import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
 import {
   buildFollowUpScopeContractSection,
@@ -665,6 +666,15 @@ export async function writeTaskFile(
         ? ticket.comments.map((c) => `- ${c}`).join('\n')
         : '_No comments_',
   };
+
+  // Project-level command snippets are part of the template contract. Keep them
+  // in project.json so worker templates don't hardcode repo-local tool paths.
+  if (projectVars.projectJson.vars) {
+    for (const [key, rawValue] of Object.entries(projectVars.projectJson.vars)) {
+      vars[key] = expandTemplate(String(rawValue), slotVars, projectVars);
+      vars[key.toUpperCase()] = vars[key];
+    }
+  }
 
   // Build --label flags from project config
   const prLabels = (projectVars.projectJson as any)?.ci?.pr_labels as string[] | undefined;
