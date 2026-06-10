@@ -83,7 +83,7 @@ export const decisionInboxStyles = css`
   }
 
   .type-icon {
-    width: 28px;
+    min-width: 28px;
     height: 28px;
     display: flex;
     align-items: center;
@@ -92,6 +92,8 @@ export const decisionInboxStyles = css`
     font-family: ${unsafeCSS(fonts.mono)};
     font-size: ${unsafeCSS(fonts.sizeXs)};
     font-weight: 700;
+    padding: 0 ${unsafeCSS(spacing.sm)};
+    white-space: nowrap;
     flex-shrink: 0;
   }
 
