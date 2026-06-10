@@ -5,6 +5,7 @@ import path from 'node:path';
 export interface NodeSupportFile {
   relativePath: string;
   contentBase64: string;
+  sha256: string;
   mode: number;
   size: number;
 }
@@ -38,6 +39,7 @@ export async function collectSupportFiles(
     {
       relativePath: relativeDest,
       contentBase64: content.toString('base64'),
+      sha256: createHash('sha256').update(content).digest('hex'),
       mode: st.mode & 0o777,
       size: content.length,
     },

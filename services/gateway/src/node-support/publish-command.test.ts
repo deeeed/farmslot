@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
-import { buildNodeSupportPublishCommand } from './publish-command.js';
+import {
+  buildNodeSupportPublishCommand,
+  buildNodeSupportVerifyCommand,
+} from './publish-command.js';
 
 const command = buildNodeSupportPublishCommand({
   incomingDir: '/tmp/farmslot-node/support/.incoming/hash.abc123',
@@ -24,4 +27,21 @@ test('node support publish command is valid zsh when available', () => {
 
 test('node support publish command separates fi from cleanup', () => {
   assert.doesNotMatch(command, /\bfi rmdir\b/);
+});
+
+test('node support verify command is valid bash', () => {
+  const verifyCommand = buildNodeSupportVerifyCommand({
+    manifestPath: '~/farmslot-node/support/hash/manifest.json',
+    supportDir: '~/farmslot-node/support/hash',
+    files: [
+      {
+        relativePath: 'scripts/helper.sh',
+        sha256: 'a'.repeat(64),
+        mode: 0o755,
+        size: 12,
+      },
+    ],
+  });
+  const result = spawnSync('bash', ['-n', '-c', verifyCommand], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
 });

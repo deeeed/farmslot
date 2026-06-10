@@ -64,6 +64,45 @@ test('legacy farmslot_dir hook refs are inferred for migration', () => {
   assert.deepEqual(result.undeclaredHookPaths, result.paths);
 });
 
+test('farm-side refs hidden behind project vars are inferred', () => {
+  const result = resolveNodeSupportPaths(
+    'example-browser-farm',
+    {
+      vars: {
+        support_cmd:
+          'bash {{farmslot_dir}}/projects/example-browser-farm/setup/preflight.sh {{slot_id}}',
+      },
+      hooks: {
+        preflight: '{{support_cmd}}',
+      },
+    },
+    root,
+  );
+
+  assert.deepEqual(result.paths, [
+    'projects/example-browser-farm/project.json',
+    'projects/example-browser-farm/setup',
+    'scripts',
+  ]);
+});
+
+test('repo-local project vars do not require node support', () => {
+  const result = resolveNodeSupportPaths(
+    'simple-farm',
+    {
+      vars: {
+        test_cmd: 'yarn test',
+      },
+      hooks: {
+        preflight: '{{test_cmd}}',
+      },
+    },
+    root,
+  );
+
+  assert.deepEqual(result.paths, []);
+});
+
 test('explicit declarations cover legacy hook refs', () => {
   const result = resolveNodeSupportPaths(
     'example-browser-farm',

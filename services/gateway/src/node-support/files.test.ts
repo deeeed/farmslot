@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,6 +19,12 @@ test('collectSupportFiles preserves binary bytes and executable mode', async () 
   const binary = files.find((file) => file.relativePath === 'scripts/payload.bin');
 
   assert.equal(script?.mode, 0o755);
+  assert.equal(
+    binary?.sha256,
+    createHash('sha256')
+      .update(Buffer.from([0, 255, 1, 254]))
+      .digest('hex'),
+  );
   assert.equal(
     Buffer.from(script?.contentBase64 ?? '', 'base64').toString(),
     '#!/bin/sh\necho ok\n',

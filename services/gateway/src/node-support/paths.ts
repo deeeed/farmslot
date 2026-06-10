@@ -77,6 +77,9 @@ function hookCommands(projectJson: RawProjectJson): string[] {
       }
     }
   }
+  for (const value of Object.values(projectJson.vars ?? {})) {
+    if (typeof value === 'string') commands.push(value);
+  }
   return commands;
 }
 

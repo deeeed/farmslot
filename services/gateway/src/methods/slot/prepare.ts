@@ -28,7 +28,10 @@ import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
 import { collectSupportFiles, supportHash } from '../../node-support/files.js';
 import { resolveNodeSupportPaths } from '../../node-support/paths.js';
-import { buildNodeSupportPublishCommand } from '../../node-support/publish-command.js';
+import {
+  buildNodeSupportPublishCommand,
+  buildNodeSupportVerifyCommand,
+} from '../../node-support/publish-command.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
 import {
   resolveStartRefInRepo,
@@ -159,6 +162,7 @@ async function slotPrepareInner(
   const step = (name: string, detail: string) => emit('slot.prepare.step', { name, detail });
 
   let hookSupportDir: string | undefined;
+  let hookSupportChecked = false;
   const hookSupportManifestPath = () => path.posix.join(hookSupportDir!, 'manifest.json');
   const pathWithin = (rootPath: string, candidatePath: string): boolean => {
     const relative = path.relative(rootPath, candidatePath);
@@ -166,7 +170,8 @@ async function slotPrepareInner(
   };
 
   const materializeHookSupport = async () => {
-    if (!projectVars || hookSupportDir) return;
+    if (!projectVars || hookSupportChecked) return;
+    hookSupportChecked = true;
     const { paths: supportPaths } = resolveNodeSupportPaths(
       vars.projectName,
       projectJson,
@@ -199,17 +204,32 @@ async function slotPrepareInner(
       fileCount: files.length,
       files: files.map((file) => ({
         path: file.relativePath,
+        sha256: file.sha256,
         mode: file.mode.toString(8).padStart(3, '0'),
         size: file.size,
       })),
     };
 
     hookSupportDir = path.posix.join('~/farmslot-node/support', manifest.hash);
+    const verifyHookSupport = async () => {
+      const verifyResult = await execOnSlot(
+        vars,
+        buildNodeSupportVerifyCommand({
+          manifestPath: hookSupportManifestPath(),
+          supportDir: hookSupportDir!,
+          files,
+        }),
+      );
+      return verifyResult.exitCode === 0;
+    };
     if (await slotFileExists(vars, hookSupportManifestPath())) {
       const current = JSON.parse(await slotReadFile(vars, hookSupportManifestPath())) as {
         hash?: string;
       };
       if (current.hash === manifest.hash) {
+        if (!(await verifyHookSupport())) {
+          throw new Error(`Node support bundle corrupt for ${manifest.hash}`);
+        }
         step('support', `Node support bundle current (${files.length} files)`);
         return;
       }
@@ -249,6 +269,18 @@ async function slotPrepareInner(
       path.posix.join(incomingDir, 'manifest.json'),
       `${JSON.stringify(manifest, null, 2)}\n`,
     );
+    const incomingVerifyResult = await execOnSlot(
+      vars,
+      buildNodeSupportVerifyCommand({
+        manifestPath: path.posix.join(incomingDir, 'manifest.json'),
+        supportDir: incomingDir,
+        files,
+      }),
+    );
+    if (incomingVerifyResult.exitCode !== 0) {
+      await execOnSlot(vars, `rm -rf ${shellExpressionForRemotePath(incomingDir)}`);
+      throw new Error(`Node support incoming verification failed for ${manifest.hash}`);
+    }
     const publishResult = await execOnSlot(
       vars,
       buildNodeSupportPublishCommand({
@@ -272,6 +304,9 @@ async function slotPrepareInner(
     };
     if (published.hash !== manifest.hash) {
       throw new Error(`Node support publish hash mismatch for ${manifest.hash}`);
+    }
+    if (!(await verifyHookSupport())) {
+      throw new Error(`Node support publish verification failed for ${manifest.hash}`);
     }
     step(
       'support',
@@ -316,6 +351,7 @@ async function slotPrepareInner(
     if (r.exitCode !== 0) throw new Error(`Cannot reach ${vars.sshTarget}`);
   }
   step('ssh', `Connected to ${vars.sshTarget}`);
+  await materializeHookSupport();
 
   // 1b. Device existence check (fail fast)
   const iosSim = vars.resourceVars.simulator ?? '';

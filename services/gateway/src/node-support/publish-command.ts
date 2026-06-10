@@ -9,6 +9,19 @@ export interface NodeSupportPublishCommandParams {
   supportHash: string;
 }
 
+export interface NodeSupportVerifyFile {
+  relativePath: string;
+  sha256: string;
+  mode: number;
+  size: number;
+}
+
+export interface NodeSupportVerifyCommandParams {
+  manifestPath: string;
+  supportDir: string;
+  files: NodeSupportVerifyFile[];
+}
+
 export function buildNodeSupportPublishCommand({
   incomingDir,
   manifestPath,
@@ -48,4 +61,34 @@ export function buildNodeSupportPublishCommand({
       'trap - EXIT',
     ].join(' '),
   ].join(' && ');
+}
+
+export function buildNodeSupportVerifyCommand({
+  manifestPath,
+  supportDir,
+  files,
+}: NodeSupportVerifyCommandParams): string {
+  const commands = [
+    `[ -f ${shellExpressionForRemotePath(manifestPath)} ]`,
+    'count=0',
+    'hash_file() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1"; else sha256sum "$1"; fi | awk \'{print $1}\'; }',
+    'stat_mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }',
+    'stat_size() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }',
+  ];
+  for (const file of files) {
+    const filePath = path.posix.join(supportDir, file.relativePath);
+    const quotedPath = shellExpressionForRemotePath(filePath);
+    commands.push(
+      `[ -f ${quotedPath} ]`,
+      `actual_sha="$(hash_file ${quotedPath})"`,
+      `[ "$actual_sha" = '${file.sha256}' ]`,
+      `actual_mode="$(stat_mode ${quotedPath})"`,
+      `[ "$actual_mode" = '${file.mode.toString(8)}' ]`,
+      `actual_size="$(stat_size ${quotedPath})"`,
+      `[ "$actual_size" = '${file.size}' ]`,
+      'count=$((count + 1))',
+    );
+  }
+  commands.push(`[ "$count" -eq ${files.length} ]`);
+  return commands.join(' && ');
 }
