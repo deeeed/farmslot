@@ -1,6 +1,6 @@
 /**
  * Configurable recipe-harness injection root, kept in sync with the skill's
- * path.sh resolver (RECIPE_HARNESS_ROOT, default `temp/agentic/recipe-harness`).
+ * path.sh resolver (RECIPE_HARNESS_ROOT, default `temp/recipe/harness`).
  *
  * Validation mirrors path.sh: relative, safe charset, no `.`/`..` components. A
  * hostile/typo'd value falls back to the default with a warning rather than
@@ -8,7 +8,7 @@
  */
 
 /** Single default harness injection root, under the gitignored temp/ dir. */
-export const DEFAULT_HARNESS_ROOT = 'temp/agentic/recipe-harness';
+export const DEFAULT_HARNESS_ROOT = 'temp/recipe/harness';
 
 export function harnessRoot(): string {
   // Validate the raw value (no trim) so leading/trailing whitespace is rejected,

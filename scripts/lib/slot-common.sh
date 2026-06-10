@@ -623,6 +623,11 @@ apply_project_command_env_current_shell() {
 # Substitutes slot resource placeholders in hook strings and fixture paths.
 expand_slot_template() {
   local text="${1:-}"
+  local restore_patsub_replacement=0
+  if shopt -q patsub_replacement 2>/dev/null; then
+    restore_patsub_replacement=1
+    shopt -u patsub_replacement
+  fi
   text="${text//\{\{port\}\}/${PORT:-}}"
   text="${text//\{\{PORT\}\}/${PORT:-}}"
   text="${text//\{\{simulator\}\}/${SIMULATOR:-}}"
@@ -670,6 +675,7 @@ for k, v in (d.get("vars") or {}).items():
     print(f"{k}\t{v}")
 ')
   fi
+  [ "$restore_patsub_replacement" = "1" ] && shopt -s patsub_replacement
   printf '%s\n' "$text"
 }
 
