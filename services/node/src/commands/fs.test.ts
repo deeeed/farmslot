@@ -48,7 +48,11 @@ test('fsWriteFiles materializes a nested bundle with parent dirs and modes', asy
   const result = await fsWriteFiles({
     baseDir: base,
     files: [
-      { path: 'scripts/helper.sh', content: Buffer.from('#!/bin/sh\n').toString('base64'), mode: 0o755 },
+      {
+        path: 'scripts/helper.sh',
+        content: Buffer.from('#!/bin/sh\n').toString('base64'),
+        mode: 0o755,
+      },
       { path: 'manifest.txt', content: Buffer.from('ok').toString('base64') },
     ],
   });
