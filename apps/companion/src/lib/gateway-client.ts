@@ -9,21 +9,17 @@ import {
   type ResponseFrame,
 } from '@farmslot/protocol';
 
+import type { GatewayAuthCredentials } from './gateway-http-auth';
+
+export {
+  type GatewayAuthCredentials,
+  type GatewayHttpAuthHeaders,
+  gatewayHttpAuthHeaders,
+} from './gateway-http-auth';
+
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
 type EventCallback = (payload: unknown) => void;
 type ConnectionCallback = (state: ConnectionState) => void;
-
-export interface GatewayAuthCredentials {
-  token?: string;
-  password?: string;
-}
-
-export type GatewayHttpAuthHeaders = Record<string, string>;
-
-export function gatewayHttpAuthHeaders(auth: GatewayAuthCredentials = {}): GatewayHttpAuthHeaders {
-  const credential = auth.token?.trim() || auth.password?.trim();
-  return credential ? { Authorization: `Bearer ${credential}` } : {};
-}
 
 export interface GatewayConnectionTestResult extends GatewayAuthConnectResult {
   latencyMs: number;

@@ -285,7 +285,22 @@ function getHttpCredential(req: IncomingMessage): string | undefined {
       return nonEmpty(separator >= 0 ? decoded.slice(separator + 1) : decoded);
     }
   }
+  const queryCredential = getQueryCredential(req.url);
+  if (queryCredential) return queryCredential;
   return getCookieValue(req.headers.cookie, HTTP_AUTH_COOKIE);
+}
+
+function getQueryCredential(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const queryStart = url.indexOf('?');
+  if (queryStart < 0) return undefined;
+  const hashStart = url.indexOf('#', queryStart);
+  const query = url.slice(queryStart + 1, hashStart >= 0 ? hashStart : undefined);
+  const params = new URLSearchParams(query);
+  return (
+    nonEmpty(params.get('token') ?? undefined) ??
+    nonEmpty(params.get('access_token') ?? undefined)
+  );
 }
 
 function getCookieValue(

@@ -72,6 +72,28 @@ const encodedCookieAuthorized = authorizeHttpRequest({
 });
 assert.equal(encodedCookieAuthorized, true);
 
+const queryTokenResponse = createFakeResponse();
+const queryTokenAuthorized = authorizeHttpRequest({
+  runtime: createGatewayAuthRuntime({ FARMSLOT_GATEWAY_TOKEN: 'query token' }),
+  req: createFakeRequest({
+    url: `/api/run-artifact?runId=run-1&path=artifacts%2Fafter.png&token=${encodeURIComponent('query token')}`,
+    remoteAddress: '127.0.0.1',
+  }),
+  res: queryTokenResponse,
+});
+assert.equal(queryTokenAuthorized, true);
+
+const accessTokenResponse = createFakeResponse();
+const accessTokenAuthorized = authorizeHttpRequest({
+  runtime: createGatewayAuthRuntime({ FARMSLOT_GATEWAY_TOKEN: 'access-token' }),
+  req: createFakeRequest({
+    url: '/api/run-artifact?runId=run-1&path=artifacts%2Fafter.png&access_token=access-token',
+    remoteAddress: '127.0.0.1',
+  }),
+  res: accessTokenResponse,
+});
+assert.equal(accessTokenAuthorized, true);
+
 const missingCookieResponse = createFakeResponse();
 const missingCookieAuthorized = authorizeHttpRequest({
   runtime: cookieRuntime,
@@ -118,8 +140,10 @@ function createFakeRequest(params: {
   cookie?: string;
   forwardedFor?: string;
   remoteAddress?: string;
+  url?: string;
 }): IncomingMessage {
   return {
+    url: params.url,
     headers: {
       ...(params.cookie ? { cookie: params.cookie } : {}),
       ...(params.forwardedFor ? { 'x-forwarded-for': params.forwardedFor } : {}),

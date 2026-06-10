@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { formatDocument } from '../lib/document-format';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 export function DocumentViewer({
@@ -61,7 +62,9 @@ export function DocumentViewer({
         <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
           {formatted.length > 0 ? (
             formatted.map((block, index) =>
-              block.kind === 'code' || block.kind === 'json' ? (
+              block.kind === 'separator' ? (
+                <View key={`${block.kind}-${index}`} style={styles.separator} />
+              ) : block.kind === 'code' || block.kind === 'json' || block.kind === 'table' ? (
                 <ScrollView
                   key={`${block.kind}-${index}`}
                   horizontal
@@ -96,62 +99,6 @@ export function DocumentViewer({
       </View>
     </Modal>
   );
-}
-
-type DocumentBlockKind = 'paragraph' | 'heading' | 'bullet' | 'code' | 'json';
-
-function formatDocument(
-  title: string,
-  body: string,
-): Array<{ kind: DocumentBlockKind; text: string }> {
-  if (!body.trim()) return [];
-  if (/\.json$/i.test(title)) {
-    return [{ kind: 'json', text: formatJson(body) }];
-  }
-
-  const blocks: Array<{ kind: DocumentBlockKind; text: string }> = [];
-  let inFence = false;
-  let codeBuffer: string[] = [];
-
-  const flushCode = () => {
-    if (!codeBuffer.length) return;
-    blocks.push({ kind: 'code', text: codeBuffer.join('\n') });
-    codeBuffer = [];
-  };
-
-  for (const rawLine of body.replace(/\r\n?/g, '\n').split('\n')) {
-    const line = rawLine.trimEnd();
-    if (line.trim().startsWith('```')) {
-      if (inFence) flushCode();
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) {
-      codeBuffer.push(line);
-      continue;
-    }
-    if (!line.trim()) {
-      flushCode();
-      blocks.push({ kind: 'paragraph', text: '' });
-    } else if (/^#{1,6}\s+/.test(line)) {
-      blocks.push({ kind: 'heading', text: line.replace(/^#{1,6}\s+/, '') });
-    } else if (/^\s*[-*]\s+/.test(line)) {
-      blocks.push({ kind: 'bullet', text: `• ${line.replace(/^\s*[-*]\s+/, '')}` });
-    } else {
-      blocks.push({ kind: 'paragraph', text: line });
-    }
-  }
-  if (inFence || codeBuffer.length) flushCode();
-  return blocks;
-}
-
-function formatJson(body: string): string {
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2);
-  } catch {
-    // Invalid JSON artifacts are still useful evidence; show the raw body instead of failing.
-    return body;
-  }
 }
 
 const styles = StyleSheet.create({
@@ -212,6 +159,29 @@ const styles = StyleSheet.create({
   bullet: {
     color: colors.textSecondary,
     paddingLeft: spacing.md,
+  },
+  numbered: {
+    color: colors.textSecondary,
+    paddingLeft: spacing.md,
+  },
+  quote: {
+    borderLeftColor: colors.accent + '66',
+    borderLeftWidth: 3,
+    color: colors.textSecondary,
+    paddingLeft: spacing.md,
+  },
+  separator: {
+    backgroundColor: colors.bgCard,
+    height: 1,
+    marginBottom: spacing.md,
+    marginTop: spacing.sm,
+  },
+  table: {
+    color: colors.textPrimary,
+    fontFamily: 'Menlo',
+    backgroundColor: colors.bgInput,
+    borderRadius: radii.md,
+    padding: spacing.md,
   },
   code: {
     color: colors.textPrimary,

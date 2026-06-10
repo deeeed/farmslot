@@ -50,6 +50,7 @@ import {
   isArtifactWorkspaceFilter,
 } from '../../lib/artifact-workspace';
 import { diffArtifactCandidate } from '../../lib/diff';
+import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
@@ -538,7 +539,7 @@ export default function ArtifactViewerScreen() {
       documentAbortRef.current?.abort();
       const controller = new AbortController();
       documentAbortRef.current = controller;
-      fetch(url, { signal: controller.signal, headers: artifactAuthHeaders })
+      gatewayFetch(url, artifactAuthHeaders, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return res.text();
