@@ -34,6 +34,7 @@ import {
   fsWatchStop,
   fsWatchStopAll,
   fsWrite,
+  fsWriteBase64,
 } from './commands/fs.js';
 import {
   type ResourceStatusChange,
@@ -385,6 +386,14 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
         const path = requireString(params, 'path');
         const content = requireString(params, 'content');
         const result = await fsWrite({ path, content });
+        sendResponse(frame.id, true, result);
+        break;
+      }
+
+      case 'fs.writeBase64': {
+        const path = requireString(params, 'path');
+        const content = requireString(params, 'content');
+        const result = await fsWriteBase64({ path, content });
         sendResponse(frame.id, true, result);
         break;
       }

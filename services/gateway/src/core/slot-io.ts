@@ -130,6 +130,21 @@ export async function slotWriteFile(
   await sendNodeRequest(requireNode(ctx.machine), 'fs.write', { path: filePath, content: data });
 }
 
+export async function slotWriteFileBase64(
+  ctx: SlotLocality,
+  filePath: string,
+  base64Data: string,
+): Promise<void> {
+  if (local(ctx)) {
+    await fsWriteFile(filePath, Buffer.from(base64Data, 'base64'));
+    return;
+  }
+  await sendNodeRequest(requireNode(ctx.machine), 'fs.writeBase64', {
+    path: filePath,
+    content: base64Data,
+  });
+}
+
 // ─── slotCopyFile ───
 // Copy a single file from slot to a local destination.
 // Local: fs.copyFile. Remote: agent fs.readBase64 → local write.

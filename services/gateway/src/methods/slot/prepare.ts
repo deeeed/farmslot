@@ -1,12 +1,4 @@
-import { createHash } from 'node:crypto';
-import {
-  lstat,
-  open as fsOpen,
-  readdir,
-  readFile,
-  realpath,
-  stat as fsStat,
-} from 'node:fs/promises';
+import { open as fsOpen, realpath, stat as fsStat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
@@ -29,10 +21,12 @@ import {
   slotFileExists,
   slotReadFile,
   slotWriteFile,
+  slotWriteFileBase64,
   updateSlotStatus,
 } from '../../core/index.js';
 import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { collectSupportFiles, supportHash } from '../../node-support/files.js';
 import { resolveNodeSupportPaths } from '../../node-support/paths.js';
 import { buildNodeSupportPublishCommand } from '../../node-support/publish-command.js';
 import { assertStartRefWorkBranchIsLocalOnly } from '../../projects/start-ref-policy.js';
@@ -170,43 +164,6 @@ async function slotPrepareInner(
     const relative = path.relative(rootPath, candidatePath);
     return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
   };
-  const collectSupportFiles = async (
-    sourcePath: string,
-    relativeDest: string,
-  ): Promise<Array<{ relativePath: string; content: string }>> => {
-    const st = await lstat(sourcePath);
-    if (st.isSymbolicLink()) {
-      throw new Error(`Node support refuses symlinked path ${sourcePath}`);
-    }
-
-    if (st.isDirectory()) {
-      const files: Array<{ relativePath: string; content: string }> = [];
-      for (const entry of await readdir(sourcePath, { withFileTypes: true })) {
-        if (entry.name === '.git' || entry.name === 'node_modules') continue;
-        files.push(
-          ...(await collectSupportFiles(
-            path.join(sourcePath, entry.name),
-            path.join(relativeDest, entry.name),
-          )),
-        );
-      }
-      return files;
-    }
-
-    if (!st.isFile()) return [];
-    return [{ relativePath: relativeDest, content: await readFile(sourcePath, 'utf-8') }];
-  };
-
-  const supportHash = (files: Array<{ relativePath: string; content: string }>): string => {
-    const hash = createHash('sha256');
-    for (const file of files.sort((a, b) => a.relativePath.localeCompare(b.relativePath))) {
-      hash.update(file.relativePath);
-      hash.update('\0');
-      hash.update(file.content);
-      hash.update('\0');
-    }
-    return hash.digest('hex');
-  };
 
   const materializeHookSupport = async () => {
     if (!projectVars || hookSupportDir) return;
@@ -240,6 +197,11 @@ async function slotPrepareInner(
       hash: supportHash(files),
       paths: supportPaths,
       fileCount: files.length,
+      files: files.map((file) => ({
+        path: file.relativePath,
+        mode: file.mode.toString(8).padStart(3, '0'),
+        size: file.size,
+      })),
     };
 
     hookSupportDir = path.posix.join('~/farmslot-node/support', manifest.hash);
@@ -271,7 +233,16 @@ async function slotPrepareInner(
     for (const file of files) {
       const dest = path.posix.join(incomingDir, file.relativePath);
       await execOnSlot(vars, `mkdir -p ${shellExpressionForRemotePath(path.posix.dirname(dest))}`);
-      await slotWriteFile(vars, dest, file.content);
+      await slotWriteFileBase64(vars, dest, file.contentBase64);
+      const chmodResult = await execOnSlot(
+        vars,
+        `chmod ${file.mode.toString(8)} ${shellExpressionForRemotePath(dest)}`,
+      );
+      if (chmodResult.exitCode !== 0) {
+        throw new Error(
+          `Node support chmod failed for ${file.relativePath}: ${chmodResult.stderr}`,
+        );
+      }
     }
     await slotWriteFile(
       vars,

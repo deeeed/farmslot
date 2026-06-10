@@ -64,6 +64,14 @@ export async function fsWrite(params: { path: string; content: string }): Promis
   return { ok: true };
 }
 
+export async function fsWriteBase64(params: {
+  path: string;
+  content: string;
+}): Promise<{ ok: true }> {
+  await writeFile(expandTilde(params.path), Buffer.from(params.content, 'base64'));
+  return { ok: true };
+}
+
 export async function fsRename(params: {
   oldPath: string;
   newPath: string;

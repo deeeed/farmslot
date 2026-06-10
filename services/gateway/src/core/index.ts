@@ -58,6 +58,7 @@ export {
   slotReadFile,
   slotWatchFile,
   slotWriteFile,
+  slotWriteFileBase64,
 } from './slot-io.js';
 export {
   markSlotBusy,
