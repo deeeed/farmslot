@@ -52,7 +52,7 @@ test('resolveCIWatchTerminalPatch maps comments to success and failed to failure
   });
 });
 
-test('resolveRunDispatchRunnerModel defaults explicit Cursor runner to composer-2', () => {
+test('resolveRunDispatchRunnerModel defaults explicit Cursor runner to composer-2.5', () => {
   const run = makeRun({
     metrics: {
       nudgeCount: 0,

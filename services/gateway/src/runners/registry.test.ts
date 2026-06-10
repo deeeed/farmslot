@@ -133,7 +133,7 @@ describe('opencode runner', () => {
 });
 
 describe('cursor runner', () => {
-  it('is registered as an interactive runner with composer-2 default model', () => {
+  it('is registered as an interactive runner with composer-2.5 default model', () => {
     const def = getRunnerDefinition('cursor');
     assert.equal(def.id, 'cursor');
     assert.equal(def.defaultLaunchMode, 'interactive');
@@ -547,11 +547,11 @@ describe('cursor runner', () => {
   it('matches Cursor Agent process patterns without making unknown runners inherit Cursor semantics', () => {
     assert.equal(runnerProcessPattern('cursor').test('agent'), true);
     assert.equal(
-      runnerProcessPattern('cursor').test('/Users/me/.local/bin/agent --model composer-2'),
+      runnerProcessPattern('cursor').test('/Users/me/.local/bin/agent --model composer-2.5'),
       true,
     );
     assert.equal(
-      runnerProcessPattern('cursor').test('/usr/local/bin/cursor-agent --model composer-2'),
+      runnerProcessPattern('cursor').test('/usr/local/bin/cursor-agent --model composer-2.5'),
       true,
     );
     assert.equal(runnerProcessPattern('cursor').test('ssh-agent'), false);
@@ -560,7 +560,7 @@ describe('cursor runner', () => {
     assert.equal(runnerProcessPattern('aider').test('agent'), false);
   });
 
-  it('accepts composer-2 and account-specific model names', () => {
+  it('accepts composer-2.5 and account-specific model names', () => {
     assert.equal(runnerSupportsModel('cursor', DEFAULT_CURSOR_MODEL), true);
     assert.equal(runnerSupportsModel('cursor', 'sonnet-4-thinking'), true);
     assert.equal(getRunnerDefinition('cursor').acceptsModel?.(null as any), false);
@@ -815,15 +815,15 @@ describe('buildLaunchCommand', () => {
     it('falls back to bare `agent` on PATH when no cursor_path is configured', () => {
       const vars = makeVars({ dispatchCmd: '', cursorPath: '' });
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
-      assert.equal(cmd, "cd '/tmp/repo' && agent --sandbox enabled --model composer-2");
+      assert.equal(cmd, "cd '/tmp/repo' && agent --sandbox enabled --model composer-2.5");
     });
 
-    it('falls back to inline Cursor Agent launcher with composer-2 default model', () => {
+    it('falls back to inline Cursor Agent launcher with composer-2.5 default model', () => {
       const vars = makeVars({ dispatchCmd: '', cursorPath: '/usr/local/bin/cursor-agent' });
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model composer-2",
+        "cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model composer-2.5",
       );
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
@@ -856,7 +856,7 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /cd \/tmp\/repo && \/usr\/local\/bin\/cursor-agent --force --sandbox disabled --model composer-2$/,
+        /cd \/tmp\/repo && \/usr\/local\/bin\/cursor-agent --force --sandbox disabled --model composer-2.5$/,
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);

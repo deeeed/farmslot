@@ -29,6 +29,14 @@ test('node support publish command separates fi from cleanup', () => {
   assert.doesNotMatch(command, /\bfi rmdir\b/);
 });
 
+test('node support publish command cannot hang on a stale or held lock', () => {
+  // Reclaims a lock abandoned by a dead prepare...
+  assert.match(command, /-mmin \+5/);
+  // ...and bails loudly instead of looping forever on a live one.
+  assert.match(command, /node support lock timeout/);
+  assert.match(command, /-gt 600/);
+});
+
 test('node support verify command is valid bash', () => {
   const verifyCommand = buildNodeSupportVerifyCommand({
     manifestPath: '~/farmslot-node/support/hash/manifest.json',

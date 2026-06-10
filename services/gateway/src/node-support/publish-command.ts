@@ -35,8 +35,16 @@ export function buildNodeSupportPublishCommand({
       `lock=${shellExpressionForRemotePath(
         path.posix.join('~/farmslot-node/support/.locks', `${supportHash}.lock`),
       )};`,
+      'waited=0;',
       `while ! mkdir "$lock" 2>/dev/null; do`,
       `if [ -f ${shellExpressionForRemotePath(manifestPath)} ]; then rm -rf ${shellExpressionForRemotePath(incomingDir)}; exit 0; fi;`,
+      // A live holder never re-touches its lock, so an mtime older than 5min means
+      // the owning prepare died (SIGKILL/ssh drop) before cleanup. Reclaim it.
+      'if [ -n "$(find "$lock" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then rm -rf "$lock" 2>/dev/null || true; continue; fi;',
+      // Hard cap so a fresh, genuinely-held lock can never hang prepare forever.
+      // 600 * 0.2s = 120s — ample for a concurrent publish (an mv plus verify).
+      'waited=$((waited + 1));',
+      `if [ "$waited" -gt 600 ]; then echo "node support lock timeout for ${supportHash}" >&2; rm -rf ${shellExpressionForRemotePath(incomingDir)}; exit 1; fi;`,
       'sleep 0.2;',
       'done;',
       'trap \'rmdir "$lock" 2>/dev/null || true\' EXIT;',

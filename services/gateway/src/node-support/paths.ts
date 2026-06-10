@@ -1,6 +1,9 @@
 import path from 'node:path';
 
-import { getProjectFieldRaw, type RawProjectJson } from '../core/index.js';
+// Type-only — this module stays runtime-dependency-free (just node:path) so the
+// standalone `scripts/check-node-support-bundles.ts` gate can import it under
+// tsx without dragging in the gateway's runtime graph.
+import type { RawProjectJson } from '../core/config.js';
 
 export interface NodeSupportPathResolution {
   paths: string[];
@@ -10,6 +13,17 @@ export interface NodeSupportPathResolution {
 }
 
 const FARM_PATH_STOP = /^[^\s'"`;&|)]+/;
+
+// Local nested getter so we don't value-import from core (which would pull the
+// whole gateway graph into the CLI gate). Equivalent to core's getProjectFieldRaw.
+function getProjectFieldRaw(projectJson: RawProjectJson, dotpath: string): unknown {
+  let cur: unknown = projectJson;
+  for (const key of dotpath.split('.')) {
+    if (!cur || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
+}
 
 function normalizeFarmPath(value: string): string {
   const input = value.replaceAll('\\', '/').trim();

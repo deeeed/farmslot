@@ -122,11 +122,11 @@ test('expandDispatchCmd supports Cursor Agent runner path placeholders', () => {
   assert.equal(
     expandDispatchCmd(slotVars, {
       runner: 'cursor',
-      model: 'composer-2',
+      model: 'composer-2.5',
       taskPrompt: 'Read TASK.md',
       safetyFlags: '--sandbox enabled',
     }),
-    'cd /repo && cursor /usr/local/bin/agent /usr/local/bin/agent --sandbox enabled --model composer-2 Read TASK.md',
+    'cd /repo && cursor /usr/local/bin/agent /usr/local/bin/agent --sandbox enabled --model composer-2.5 Read TASK.md',
   );
 });
 

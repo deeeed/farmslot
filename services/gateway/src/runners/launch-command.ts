@@ -214,7 +214,7 @@ export function buildLaunchCommand(
 
   // Cursor Agent: route through runner-aware dispatch templates when configured,
   // otherwise use the inline TUI-first argv-prompt launcher. The default model
-  // is runner-owned (`composer-2`) rather than borrowed from Claude/Codex.
+  // is runner-owned (`composer-2.5`) rather than borrowed from Claude/Codex.
   if (runner === 'cursor') {
     if (cmdIsRunnerAware) {
       return expanded;

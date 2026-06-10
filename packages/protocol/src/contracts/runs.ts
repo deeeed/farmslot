@@ -1434,7 +1434,7 @@ export const DEFAULT_TASK_DIR = '.task';
 export const DEFAULT_CLAUDE_MODEL = 'opus';
 
 /** Default Cursor Agent model used when no slot/task/project/user override is set. */
-export const DEFAULT_CURSOR_MODEL = 'composer-2';
+export const DEFAULT_CURSOR_MODEL = 'composer-2.5';
 export type DecisionType =
   | 'collision_check'
   | 'plan_confirmation'
