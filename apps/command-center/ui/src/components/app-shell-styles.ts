@@ -97,7 +97,11 @@ export function renderAppShellAuthStyles() {
   `;
 }
 
-export function renderAppShellStyles(sidebarExpanded: boolean) {
+export function renderAppShellStyles(
+  sidebarExpanded: boolean,
+  sidebarWidth: number,
+  sidebarResizing = false,
+) {
   return html`
     <style>
       farm-app {
@@ -110,7 +114,7 @@ export function renderAppShellStyles(sidebarExpanded: boolean) {
         font-family: ${fonts.mono};
       }
       farm-app > nav {
-        width: ${sidebarExpanded ? layout.sidebarWidthExpanded : layout.sidebarWidth};
+        width: ${sidebarExpanded ? `${sidebarWidth}px` : layout.sidebarWidth};
         background: ${colors.bgSidebar};
         border-right: 1px solid ${colors.bgCard};
         display: flex;
@@ -121,6 +125,8 @@ export function renderAppShellStyles(sidebarExpanded: boolean) {
         flex-shrink: 0;
         transition: width 0.2s ease;
         overflow: hidden;
+        position: relative;
+        user-select: ${sidebarResizing ? 'none' : 'auto'};
       }
       farm-app .fa-nav-btn {
         width: ${sidebarExpanded ? 'auto' : '36px'};
@@ -195,6 +201,128 @@ export function renderAppShellStyles(sidebarExpanded: boolean) {
         align-items: center;
         justify-content: center;
         padding: 0 3px;
+      }
+      farm-app .fa-sidebar-resize {
+        display: ${sidebarExpanded ? 'block' : 'none'};
+        position: absolute;
+        top: 0;
+        right: -3px;
+        width: 6px;
+        height: 100%;
+        cursor: ew-resize;
+        z-index: 3;
+      }
+      farm-app .fa-sidebar-resize:hover {
+        background: ${colors.accent}33;
+      }
+      farm-app .fa-active-runs {
+        margin: 2px 6px 8px;
+        padding: 6px;
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.12);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: min(52vh, 520px);
+        overflow-y: auto;
+      }
+      farm-app .fa-active-runs-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: ${colors.textMuted};
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 0 2px;
+      }
+      farm-app .fa-active-runs-empty,
+      farm-app .fa-active-runs-more {
+        color: ${colors.textMuted};
+        font-size: 11px;
+        padding: 6px 2px 2px;
+      }
+      farm-app .fa-active-runs-more {
+        color: ${colors.accent};
+        text-decoration: none;
+      }
+      farm-app .fa-active-runs-more:hover {
+        text-decoration: underline;
+      }
+      farm-app .fa-active-run {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 7px;
+        border-radius: 7px;
+        border: 1px solid transparent;
+        background: ${colors.bgCard};
+        color: ${colors.textSecondary};
+        text-decoration: none;
+        min-width: 0;
+      }
+      farm-app .fa-active-run:hover {
+        background: ${colors.bgCardHover};
+        border-color: ${colors.accent}44;
+      }
+      farm-app .fa-active-run.active {
+        background: ${colors.accent}18;
+        border-color: ${colors.accent}66;
+      }
+      farm-app .fa-active-run-top,
+      farm-app .fa-active-run-meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      farm-app .fa-active-run-ticket {
+        color: ${colors.textPrimary};
+        font-size: 12px;
+        font-weight: 800;
+        min-width: 0;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        line-height: 1.25;
+      }
+      farm-app .fa-active-run-flow {
+        flex-shrink: 0;
+        border-radius: 4px;
+        background: var(--flow-color, ${colors.textMuted});
+        color: #000;
+        font-size: 9px;
+        font-weight: 800;
+        padding: 1px 4px;
+      }
+      farm-app .fa-active-run-summary {
+        color: ${colors.textSecondary};
+        font-size: 11px;
+        line-height: 1.3;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      farm-app .fa-active-run-meta {
+        color: ${colors.textMuted};
+        font-size: 10px;
+        flex-wrap: wrap;
+      }
+      farm-app .fa-active-run-meta span {
+        overflow-wrap: anywhere;
+      }
+      farm-app .fa-active-run-steps {
+        display: flex;
+        gap: 4px;
+        padding-top: 1px;
+      }
+      farm-app .fa-active-run-step {
+        height: 4px;
+        flex: 1;
+        min-width: 10px;
+        border-radius: 999px;
+        background: var(--step-color, ${colors.textMuted});
+        opacity: 0.9;
       }
       farm-app .fa-main {
         flex: 1;
