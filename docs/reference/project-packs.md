@@ -1,0 +1,97 @@
+# Project Packs
+
+A project pack is the unit of project onboarding: a directory (local path or git
+repo) that `farmslot project add <source>` turns into registered projects,
+cloned repos, and validated pool slots.
+
+## Layout
+
+```
+my-pack/
+  pack.json                      # pack manifest (required)
+  projects/<name>-farm/          # one or more project dirs, standard layout
+    project.json                 # per schemas/project.schema.json
+    setup/<platform>.sh          # one-time slot bootstrap (run by setup-slot.sh)
+    fixtures/                    # optional fixture templates
+    templates/                   # optional task templates
+  hooks/                         # optional pack hook scripts
+```
+
+## pack.json
+
+```json
+{
+  "name": "my-pack",
+  "description": "What this pack farms.",
+  "projects": [
+    {
+      "dir": "projects/my-app-farm",
+      "platform": "cli",
+      "slots": 2,
+      "short": "my-app",
+      "repo_url": "git@github.com:you/my-app.git"
+    }
+  ],
+  "hooks": {
+    "pre_add": "bash hooks/pre-add.sh",
+    "post_add": "bash hooks/post-add.sh",
+    "sync": "bash hooks/sync.sh",
+    "smoke": "bash hooks/smoke.sh"
+  },
+  "action_sheet": "Printed after a successful add — operator next steps."
+}
+```
+
+| Field                 | Required | Meaning                                                                                        |
+| --------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `name`                | yes      | Kebab-case pack id; key in workspace `state.json`.                                             |
+| `projects[].dir`      | yes      | Project dir inside the pack (`projects/<name>`); basename must equal `project.json` `name`.    |
+| `projects[].platform` | yes      | Slot platform (`cli`, `web`, `ios`, ...).                                                      |
+| `projects[].slots`    | yes      | Default slot count created on add.                                                             |
+| `projects[].short`    | no       | Short name for slot ids/sessions; defaults to the project name minus a `-farm` suffix.         |
+| `projects[].repo_url` | no       | Product repo to clone per slot; overrides `project.json` `repo_url`. Supports `{{workspace}}`. |
+| `hooks.*`             | no       | Shell commands run with cwd = pack dir (see below).                                            |
+| `action_sheet`        | no       | Text printed after a successful add.                                                           |
+
+## Hooks
+
+All hooks run with cwd = the pack directory and env:
+
+- `FARMSLOT_WORKSPACE` — workspace root
+- `FARMSLOT_DIR` — the workspace farmslot clone
+- `FARMSLOT_REPOS_DIR` — `<workspace>/repos`
+
+| Hook       | When                                                              |
+| ---------- | ----------------------------------------------------------------- |
+| `pre_add`  | Before product repos are cloned (e.g. seed a local fixture repo). |
+| `post_add` | After slots are created and validated.                            |
+| `sync`     | During `farmslot update`, when the pack content hash changed.     |
+| `smoke`    | Last step of `project add`; non-zero exit fails the add.          |
+
+## What `project add` does
+
+1. Resolve the source (local dir, or git URL cloned under `<workspace>/packs/`).
+2. Validate `pack.json` + each project dir against the contract above.
+3. Decide: new pack → add; same content hash → no-op (re-verify); changed → repair.
+4. Run `pre_add`.
+5. Copy project dirs into the workspace farmslot `projects/` (applying
+   `repo_url` overrides).
+6. Per slot: blobless-clone (`--filter=blob:none`) the product repo into
+   `<workspace>/repos/<short>-<n>`, register the slot in the machine pool file
+   (ports allocated from 9300+; existing slots are never clobbered), then run
+   the existing lifecycle scripts: `sync-fixtures.sh`, `setup-slot.sh`, the
+   project `preflight` hook, and `preflight-slot.sh` (validation).
+7. Run `post_add`, then `smoke`.
+8. Record the pack (source, content hash, projects, slots) in workspace
+   `state.json`, print the action sheet, and finish with `farmslot doctor`.
+
+`prepare-slot.sh` is not part of onboarding: it delegates to the gateway
+(`slot.prepare`), which is not running yet during install. Dispatch-time
+prepare still owns the branch lifecycle.
+
+## Example
+
+`packs/example-app/` is the reference pack: a CLI-platform project whose
+`pre_add` hook seeds a tiny local fixture repo, with a fast smoke check. The
+onboarding E2E (`scripts/quality/test-onboarding.sh`) runs it end to end in a
+scratch workspace.

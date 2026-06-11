@@ -1,5 +1,6 @@
 {
   "$schema": "../schemas/pool.schema.json",
+  "schema_version": 1,
   "machine": "my-server",
   "project": "my-app-farm",
   "platform": "android",
