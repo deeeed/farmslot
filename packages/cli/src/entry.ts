@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { registerCompletionCommand } from './commands/completion.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerDispatchCommand } from './commands/dispatch.js';
+import { registerDoctorCommand } from './commands/doctor.js';
 import { registerFleetCommand } from './commands/fleet.js';
 import { registerGatewayCommand } from './commands/gateway.js';
 import { registerNodeCommand } from './commands/node.js';
@@ -33,5 +34,6 @@ registerRpcCommand(program);
 registerRunCommand(program);
 registerCompletionCommand(program);
 registerNodeCommand(program);
+registerDoctorCommand(program);
 
 program.parse();

@@ -10,6 +10,11 @@
       "type": "string",
       "description": "JSON Schema reference for editor validation."
     },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Pool config schema version. Bumped by farmslot update migrations; files without it are treated as version 0."
+    },
     "machine": {
       "type": "string",
       "description": "Unique machine identifier. Used as prefix for slot IDs.",
@@ -96,8 +101,7 @@
       "description": "Available work slots on this machine. Each slot = one repo clone + one device + one agent.",
       "items": {
         "$ref": "#/$defs/slot"
-      },
-      "minItems": 1
+      }
     }
   },
   "additionalProperties": false,

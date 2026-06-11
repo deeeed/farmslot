@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+
+import {
+  allocatePort,
+  generatePool,
+  type PoolConfig,
+  poolFileName,
+  PORT_BLOCK_START,
+  registerSlot,
+  validatePoolConfig,
+} from './pool-config.js';
+
+function pool(slots: PoolConfig['slots'] = []): PoolConfig {
+  return { machine: 'm', host: 'localhost', ssh_user: 'u', slots };
+}
+
+test('validatePoolConfig accepts a minimal valid pool', () => {
+  assert.deepEqual(validatePoolConfig(pool()), []);
+  assert.deepEqual(
+    validatePoolConfig(pool([{ id: 'm-app-1', repo: '/tmp/r', session: 'app-1' }])),
+    [],
+  );
+});
+
+test('validatePoolConfig reports actionable errors', () => {
+  assert.deepEqual(validatePoolConfig('nope'), ['pool config must be a JSON object']);
+  const errors = validatePoolConfig({ machine: '', slots: [{ id: 'a', repo: '', session: 's' }] });
+  assert.ok(errors.some((e) => e.includes(`'machine'`)));
+  assert.ok(errors.some((e) => e.includes(`'host'`)));
+  assert.ok(errors.some((e) => e.includes(`'ssh_user'`)));
+  assert.ok(errors.some((e) => e.includes(`slots[0]: 'repo'`)));
+});
+
+test('validatePoolConfig rejects duplicate slot ids', () => {
+  const errors = validatePoolConfig(
+    pool([
+      { id: 'm-app-1', repo: '/a', session: 's1' },
+      { id: 'm-app-1', repo: '/b', session: 's2' },
+    ]),
+  );
+  assert.ok(errors.some((e) => e.includes('duplicate slot id')));
+});
+
+test('generatePool produces a schema-valid zero-slot pool with detected runners', () => {
+  const generated = generatePool({
+    machine: 'host-a',
+    os: 'darwin',
+    sshUser: 'dev',
+    runnerPaths: { claude: '/usr/local/bin/claude' },
+  });
+  assert.deepEqual(validatePoolConfig(generated), []);
+  assert.equal(generated.machine, 'host-a');
+  assert.equal(generated.claude_path, '/usr/local/bin/claude');
+  assert.equal(generated.codex_path, undefined);
+  assert.equal(generated.slots.length, 0);
+  assert.equal(generated.schema_version! >= 1, true);
+});
+
+test('allocatePort starts at the high block and skips taken ports', () => {
+  const p = pool([
+    { id: 'm-a-1', repo: '/a', session: 'a-1', resources: { 'dev-server': { port: 9300 } } },
+    { id: 'm-a-2', repo: '/b', session: 'a-2', resources: { 'dev-server': { port: 9301 } } },
+  ]);
+  assert.equal(allocatePort(pool()), PORT_BLOCK_START);
+  assert.equal(allocatePort(p), 9302);
+});
+
+test('registerSlot never clobbers an existing slot', () => {
+  const p = pool([{ id: 'm-a-1', repo: '/user-edited', session: 'a-1' }]);
+  const added = registerSlot(p, { id: 'm-a-1', repo: '/new', session: 'a-1' });
+  assert.equal(added, false);
+  assert.equal(p.slots[0].repo, '/user-edited');
+  assert.equal(registerSlot(p, { id: 'm-a-2', repo: '/b', session: 'a-2' }), true);
+  assert.equal(p.slots.length, 2);
+});
+
+test('poolFileName avoids colliding with an existing host pool file', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fs-pool-'));
+  assert.equal(poolFileName('myhost', dir), 'myhost.json');
+  writeFileSync(join(dir, 'myhost.json'), '{}');
+  assert.equal(poolFileName('myhost', dir), 'myhost-onboard.json');
+  assert.equal(poolFileName('myhost', null), 'myhost.json');
+});
