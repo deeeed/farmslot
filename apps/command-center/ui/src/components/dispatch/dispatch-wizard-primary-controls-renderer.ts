@@ -222,7 +222,13 @@ function renderRunnerModelConfig(ctx: DispatchWizardPrimaryControlsRenderContext
                 account model.
               </div>
             `
-          : nothing}
+          : ctx.runner === 'claude' && ctx.model === 'fable'
+            ? html`
+                <div style="font-size:${fonts.sizeXs}; color:${colors.statusWarn}; margin-top:4px;">
+                  Fable is a heavyweight Claude model; select it only for very complex tasks.
+                </div>
+              `
+            : nothing}
       </div>
       ${renderEffortSelector(ctx)}
     </div>

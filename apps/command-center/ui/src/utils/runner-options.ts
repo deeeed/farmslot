@@ -9,7 +9,7 @@ export type EffortLevel = '' | 'low' | 'medium' | 'high' | 'xhigh';
 export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor'];
 
 export const MODELS_BY_RUNNER: Record<string, string[]> = {
-  claude: ['sonnet', 'opus', 'haiku'],
+  claude: ['sonnet', 'opus', 'haiku', 'fable'],
   codex: ['gpt-5.5', 'gpt-5.4'],
   cursor: [DEFAULT_CURSOR_MODEL],
 };

@@ -34,6 +34,19 @@ export interface ConfigProjectParams {
   project: string;
 }
 
+export interface ProjectLearningsDocument {
+  exists: boolean;
+  relativePath: string;
+  content: string;
+  updatedAt: string | null;
+  sizeBytes: number | null;
+}
+
+export interface ConfigProjectResult {
+  project: ProjectConfig;
+  learnings: ProjectLearningsDocument;
+}
+
 export interface ConfigTemplatesParams {
   project: string;
 }

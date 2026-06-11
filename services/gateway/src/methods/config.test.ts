@@ -5,7 +5,11 @@ import test from 'node:test';
 
 import { farmslotRoot } from '../core/config.js';
 
-import { configProjectAutoRecoveryUpdate, configProjectBacklogUpdate } from './config.js';
+import {
+  configProject,
+  configProjectAutoRecoveryUpdate,
+  configProjectBacklogUpdate,
+} from './config.js';
 
 async function makeProject(
   t: { after: (fn: () => unknown) => void },
@@ -163,4 +167,39 @@ test('configProjectBacklogUpdate writes typed backlog policy with backup', async
   assert.match(result.backup, /project\.json\.bak\./);
   const raw = JSON.parse(await readFile(path.join(projectDir, 'project.json'), 'utf8'));
   assert.equal(raw.backlog.auto_dispatch.enabled, true);
+});
+
+test('configProject returns project learnings document when present', async (t) => {
+  const project = `config-learnings-${process.pid}-${Math.random().toString(36).slice(2, 6)}`;
+  const projectDir = await makeProject(t, project);
+  await mkdir(path.join(projectDir, 'learnings'), { recursive: true });
+  await writeFile(
+    path.join(projectDir, 'learnings', 'LEARNINGS.md'),
+    '# Lessons\n\n- Keep loop visible.\n',
+    'utf8',
+  );
+
+  const result = await configProject({ project });
+
+  assert.equal(result.project.name, project);
+  assert.equal(result.learnings.exists, true);
+  assert.equal(result.learnings.relativePath, `projects/${project}/learnings/LEARNINGS.md`);
+  assert.match(result.learnings.content, /Keep loop visible/);
+  assert.equal(typeof result.learnings.updatedAt, 'string');
+  assert.equal(
+    result.learnings.sizeBytes,
+    Buffer.byteLength('# Lessons\n\n- Keep loop visible.\n'),
+  );
+});
+
+test('configProject returns empty learnings document when absent', async (t) => {
+  const project = `config-learnings-missing-${process.pid}-${Math.random().toString(36).slice(2, 6)}`;
+  await makeProject(t, project);
+
+  const result = await configProject({ project });
+
+  assert.equal(result.learnings.exists, false);
+  assert.equal(result.learnings.content, '');
+  assert.equal(result.learnings.updatedAt, null);
+  assert.equal(result.learnings.sizeBytes, null);
 });
