@@ -10,18 +10,24 @@ The public surface should be understood through capabilities, not by reading eve
 
 ## High-value capabilities
 
-| Capability           | Example methods                                                                | Safety shape                                                  |
-| -------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| Protocol discovery   | `protocol.capabilities`                                                        | Read-only metadata for clients and docs.                      |
-| Fleet state          | `fleet.status`, `node.health.all`                                              | Read-only observation of machines, slots, and health.         |
-| Dispatch and backlog | `backlog.create`, `backlog.enqueue`, `dispatch.preview`, `dispatch.queue.list` | Bounded-write/lifecycle actions with operator policy.         |
-| Worker observation   | `tmux.worker.list`, `terminal.worker.snapshot`, `stream.snapshot`              | Read-only state for terminals and workers.                    |
-| Worker steering      | `terminal.worker.input`, `terminal.send`                                       | Bounded-write actions that should be visible and auditable.   |
-| Slot lifecycle       | `slot.prepare`, `slot.release`, `slot.recycle`                                 | Lifecycle operations that change runtime state.               |
-| Run lifecycle        | `run.create`, `run.pause`, `run.resume`, `run.cancel`                          | Lifecycle operations over supervised work.                    |
-| Recipe control       | `recipe.command`, `recipe.projectHookCommand`, `recipe.projectHookRun`         | Project validation and evidence production.                   |
-| Decisions            | `decision.list`, `decision.resolve`                                            | Read/resolve explicit human gates.                            |
-| Files and git        | `fs.read`, `git.status`, `git.diff`, `git.discard`                             | Read-only by default; destructive operations are high-impact. |
+| Capability           | Example methods                                                                                    | Safety shape                                                  |
+| -------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Protocol discovery   | `protocol.capabilities`                                                                            | Read-only metadata for clients and docs.                      |
+| Fleet state          | `fleet.status`, `node.health.all`                                                                  | Read-only observation of machines, slots, and health.         |
+| Dispatch and backlog | `backlog.create`, `backlog.enqueue`, `dispatch.preview`, `dispatch.queue.list`                     | Bounded-write/lifecycle actions with operator policy.         |
+| Worker observation   | `tmux.worker.list`, `tmux.worker.inventory.updated`, `terminal.worker.snapshot`, `stream.snapshot` | Read-only state for terminals and workers.                    |
+| Worker steering      | `terminal.worker.input`, `terminal.send`                                                           | Bounded-write actions that should be visible and auditable.   |
+| Slot lifecycle       | `slot.prepare`, `slot.release`, `slot.recycle`                                                     | Lifecycle operations that change runtime state.               |
+| Run lifecycle        | `run.create`, `run.pause`, `run.resume`, `run.cancel`                                              | Lifecycle operations over supervised work.                    |
+| Recipe control       | `recipe.command`, `recipe.projectHookCommand`, `recipe.projectHookRun`                             | Project validation and evidence production.                   |
+| Decisions            | `decision.list`, `decision.resolve`                                                                | Read/resolve explicit human gates.                            |
+| Files and git        | `fs.read`, `git.status`, `git.diff`, `git.discard`                                                 | Read-only by default; destructive operations are high-impact. |
+
+## Worker status surfaces
+
+Use `worker.signal` only for task-template semantics from `SIGNAL.json` (completion, blocked state, phase). Runner process activity is exposed through tmux-worker inventory rows: `tmux.worker.list` returns attachable panes with a `status.source` such as `hook`, `statusline`, `task-file`, or `tmux`; `tmux.worker.inventory.updated` broadcasts the same list shape when a node observes a changed pane/status snapshot. This keeps run completion signals separate from terminal/runner liveness.
+
+Worker rows may set `status.requiresAttention` with an `attentionReason` such as `waiting`, `idle`, or `stale-signal`. Clients can use that runner-neutral flag to highlight pinned slots or watchlist panes without parsing Claude/Codex/Cursor-specific output. Plain tmux-only idle panes do not set this flag because that would be a fragile inference.
 
 ## Returning to manual work
 

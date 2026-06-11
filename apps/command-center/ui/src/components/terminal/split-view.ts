@@ -5,6 +5,7 @@ import { repeat } from 'lit/directives/repeat.js';
 import type {
   FleetStatus,
   SlotStatus,
+  TmuxWorkerInventoryUpdatedPayload,
   TmuxWorkerListResult,
   TmuxWorkerRef,
   TmuxWorkerSummary,
@@ -65,6 +66,7 @@ export class TerminalSplitView extends LitElement {
   @state() private _workerPaneFilter: WorkerPaneFilter = 'adhoc';
 
   private _unsubFleet?: () => void;
+  private _unsubTmuxWorkerUpdated?: () => void;
   private _unsubState?: () => void;
   private _tmuxWorkerFetchSeq = 0;
   private _globalFilters: AppState['globalFilters'] = { projects: [], machines: [] };
@@ -277,6 +279,11 @@ export class TerminalSplitView extends LitElement {
       border-color: ${unsafeCSS(colors.statusOk)}55;
     }
 
+    .worker-chip.needs-attention {
+      border-color: ${unsafeCSS(colors.statusWarn)}aa;
+      box-shadow: 0 0 0 1px ${unsafeCSS(colors.statusWarn)}22;
+    }
+
     .worker-chip.stale {
       opacity: 0.7;
     }
@@ -353,6 +360,16 @@ export class TerminalSplitView extends LitElement {
       const fleet = payload as FleetStatus;
       this._availableSlots = this._applyFilters(fleet.slots).map((s) => s.slot);
     });
+    this._unsubTmuxWorkerUpdated = gateway.subscribe<TmuxWorkerInventoryUpdatedPayload>(
+      Events.TMUX_WORKER_INVENTORY_UPDATED,
+      (payload) => {
+        this._tmuxWorkers = flattenTmuxWorkers(payload.result.nodes);
+        this._workerWatchItems = reconcileTmuxWorkerWatchlist(
+          this._workerWatchItems,
+          this._tmuxWorkers,
+        ).map((entry) => entry.item);
+      },
+    );
     this._unsubState = subscribe((s: AppState) => {
       this._globalFilters = s.globalFilters;
       this._hydrating = isHydrating(s, 'fleet');
@@ -365,6 +382,7 @@ export class TerminalSplitView extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this._unsubFleet?.();
+    this._unsubTmuxWorkerUpdated?.();
     this._unsubState?.();
   }
 
@@ -700,8 +718,13 @@ export class TerminalSplitView extends LitElement {
   }
 
   private _renderWatchEntry(entry: TmuxWorkerWatchEntry) {
+    const needsAttention = entry.worker?.status.requiresAttention === true;
     return html`
-      <div class="worker-chip ${entry.live ? 'live' : 'stale'}">
+      <div
+        class="worker-chip ${entry.live ? 'live' : 'stale'} ${needsAttention
+          ? 'needs-attention'
+          : ''}"
+      >
         <button class="worker-chip-btn pinned" @click=${() => this._removeWatchEntry(entry)}>
           ★
         </button>
@@ -716,8 +739,9 @@ export class TerminalSplitView extends LitElement {
   }
 
   private _renderLiveWorker(worker: TmuxWorkerSummary) {
+    const needsAttention = worker.status.requiresAttention === true;
     return html`
-      <div class="worker-chip live">
+      <div class="worker-chip live ${needsAttention ? 'needs-attention' : ''}">
         <button class="worker-chip-btn" @click=${() => this._toggleWorkerWatch(worker)}>☆</button>
         <div class="worker-chip-title">${workerTitle(worker)}</div>
         <button class="worker-chip-btn active" @click=${() => this._openWorker(worker.ref)}>

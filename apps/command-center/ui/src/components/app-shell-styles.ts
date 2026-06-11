@@ -271,6 +271,12 @@ export function renderAppShellStyles(
         background: ${colors.accent}18;
         border-color: ${colors.accent}66;
       }
+      farm-app .fa-active-run.needs-attention {
+        border-color: ${colors.statusWarn}aa;
+        box-shadow:
+          0 0 0 1px ${colors.statusWarn}22,
+          0 0 18px ${colors.statusWarn}18;
+      }
       farm-app .fa-active-run-top,
       farm-app .fa-active-run-meta {
         display: flex;

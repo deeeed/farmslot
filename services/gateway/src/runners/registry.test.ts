@@ -687,9 +687,10 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, { safetyTier: 'full-auto' });
       assert.match(
         cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
+        /unset CLAUDECODE && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
       );
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
+      assert.match(cmd, /farmslot-observability-hook\.mjs/);
     });
 
     it('inline-launches interactively by default so relaunch paths stay steerable', () => {
@@ -698,10 +699,7 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /--dangerously-/);
       assert.doesNotMatch(cmd, /--print/);
       assert.doesNotMatch(cmd, /Read TASK/);
-      assert.match(
-        cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet$/,
-      );
+      assert.match(cmd, /unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet$/);
     });
 
     it('routes through expandDispatchCmd when claudeUsesDispatchCmd=true', () => {

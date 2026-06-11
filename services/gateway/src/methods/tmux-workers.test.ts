@@ -433,6 +433,18 @@ test('tmux worker filter rules use AND within one rule and exclude wins', () => 
   );
 });
 
+test('buildTmuxWorkerUpdateFromNodeSnapshot rejects malformed pane snapshots', async () => {
+  const { buildTmuxWorkerUpdateFromNodeSnapshot } = await import('./tmux-workers.js');
+
+  await assert.rejects(
+    buildTmuxWorkerUpdateFromNodeSnapshot({
+      machine: 'runner-local',
+      panes: { panes: [] },
+    }),
+    /invalid panes payload/,
+  );
+});
+
 test('tmuxWorkerStatusFromPane prefers fresh hook/statusline signals and marks stale signals', async () => {
   const { tmuxWorkerStatusFromPane } = await import('./tmux-workers.js');
   const observedAt = 1779411229000;
@@ -455,6 +467,8 @@ test('tmuxWorkerStatusFromPane prefers fresh hook/statusline signals and marks s
       confidence: 'high',
       observedAt: observedAt - 1_000,
       state: 'idle',
+      requiresAttention: true,
+      attentionReason: 'idle',
     },
   );
 
@@ -498,6 +512,8 @@ test('tmuxWorkerStatusFromPane prefers fresh hook/statusline signals and marks s
       observedAt: observedAt - 300_000,
       stale: true,
       state: 'stale',
+      requiresAttention: true,
+      attentionReason: 'stale-signal',
     },
   );
 
@@ -522,6 +538,8 @@ test('tmuxWorkerStatusFromPane prefers fresh hook/statusline signals and marks s
       observedAt: observedAt - 300_000,
       stale: true,
       state: 'stale',
+      requiresAttention: true,
+      attentionReason: 'stale-signal',
     },
   );
 

@@ -69,6 +69,8 @@ The snapshot should include only fields that are available from Claude's statusl
 
 ### R4. Gateway reader/provider
 
+Node-level monitoring owns file/pane change detection. The node daemon samples tmux panes and runner observability files, pushes changed snapshots to the gateway, and the gateway rebroadcasts `tmux.worker.inventory.updated` for Command Center/Mobile clients. Keep this distinct from `worker.signal`, which remains task-template semantics from `SIGNAL.json`. Runner-aware idle/waiting/stale readings should set `status.requiresAttention` so clients can highlight workers that likely need operator input; tmux-only idle panes should not infer attention. The Claude launcher may add a repo-root `.observability` compatibility symlink pointing at the runtime-dir observability folder for cheap node sampling.
+
 Add a `RunnerObservabilityProvider` abstraction in `services/gateway/src/runners.ts` next to the existing runner status provider. The Claude implementation reads `hooks.jsonl` and `statusline.json` and exposes telemetry-only methods for:
 
 - recent activity,
@@ -104,7 +106,7 @@ Expose Phase 1 as minimal diagnostics, not as a new primary UI surface:
 ## Acceptance Criteria
 
 - A minimal empirical report exists for runner-local, mini, and runner-a covering R1.
-- Claude hook events are written to `hooks.jsonl` and can be read by the gateway for at least one active slot.
+- Claude hook events are written to `hooks.jsonl` and can be read through node-pushed `tmux.worker.inventory.updated` / `tmux.worker.list` for at least one active slot.
 - `statusline.json` is atomically updated and parsed without partial-read failures.
 - Existing nudge behavior is unchanged when hooks are absent, stale, malformed, or disabled.
 - Agreement logging captures at least 200 consecutive nudge/control decisions without introducing user-visible regressions.

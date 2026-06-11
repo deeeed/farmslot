@@ -66,6 +66,9 @@ export const Events = {
   // Worker signal (push-based completion/status)
   WORKER_SIGNAL: 'worker.signal',
 
+  // Tmux worker inventory/status (node-pushed; gateway-enriched)
+  TMUX_WORKER_INVENTORY_UPDATED: 'tmux.worker.inventory.updated',
+
   // Workspace
   WORKSPACE_METRO_DATA: 'workspace.metro.data',
 
@@ -217,6 +220,10 @@ export interface WorkerSignalPayload {
   role?: AgentRole;
   contextId?: string;
   signal: WorkerSignal;
+}
+
+export interface TmuxWorkerInventoryUpdatedPayload {
+  result: import('../rpc/tmux.js').TmuxWorkerListResult;
 }
 
 export interface WorkspaceMetroDataPayload {

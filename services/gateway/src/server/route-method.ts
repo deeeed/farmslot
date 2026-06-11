@@ -657,6 +657,17 @@ export async function routeMethod(
       if (state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify(subscribeFrame));
       }
+      // Tmux worker sampling lives on the node; the gateway only receives changed snapshots.
+      if (state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(
+          JSON.stringify({
+            type: 'req',
+            id: `auto-tmux-workers-${machine}`,
+            method: 'tmux.worker.watch.start',
+            params: { intervalMs: 2_000 },
+          }),
+        );
+      }
       // Resource watches are the default cache source for resource.list / device grids.
       // Full resource.health probes remain request-driven.
       if (shouldAutoStartResourceWatches()) {

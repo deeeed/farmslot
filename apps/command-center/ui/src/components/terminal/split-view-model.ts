@@ -96,6 +96,7 @@ export function workerDescription(worker: TmuxWorkerSummary): string {
   });
   return [
     title,
+    worker.status.requiresAttention ? 'needs attention' : null,
     worker.status.label,
     worker.branch,
     worker.cwd,

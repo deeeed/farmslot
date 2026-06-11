@@ -875,6 +875,7 @@ export async function dispatchExecute(
     claudeUsesDispatchCmd: true,
     effort,
     safetyTier,
+    runtimeDir: projectVars?.runtimeDir,
   });
 
   agentLaunch = applyProjectCommandEnv(projectJson, `${WORKER_ENV_PREFIX} && ${agentLaunch}`);

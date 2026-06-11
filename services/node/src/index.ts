@@ -56,6 +56,7 @@ import {
   stopMetricsSubscription,
 } from './commands/system-metrics.js';
 import * as tmux from './commands/tmux.js';
+import { startTmuxWorkerWatch, stopTmuxWorkerWatch } from './commands/tmux-worker-watch.js';
 
 const GATEWAY_URL = process.env.GATEWAY_URL ?? 'ws://localhost:7777';
 const MACHINE_NAME = process.env.MACHINE_NAME ?? hostname();
@@ -98,6 +99,7 @@ function connect(): void {
     stopMetricsSubscription();
     stopAllCaptures();
     stopAllResourceWatches();
+    stopTmuxWorkerWatch();
     ws = null;
     scheduleReconnect();
   });
@@ -340,6 +342,28 @@ async function handleRequest(frame: RequestFrame): Promise<void> {
         break;
       }
 
+      case 'tmux.worker.watch.start': {
+        const intervalMs = typeof params.intervalMs === 'number' ? params.intervalMs : undefined;
+        startTmuxWorkerWatch(intervalMs, (change) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          ws.send(
+            JSON.stringify({
+              type: 'event',
+              event: 'node.tmux.workers.changed',
+              payload: { machine: MACHINE_NAME, ...change },
+            }),
+          );
+        });
+        sendResponse(frame.id, true, { watching: true });
+        break;
+      }
+
+      case 'tmux.worker.watch.stop': {
+        stopTmuxWorkerWatch();
+        sendResponse(frame.id, true, { stopped: true });
+        break;
+      }
+
       case 'fs.list': {
         const path = requireString(params, 'path');
         const result = await fsList({ path });
@@ -579,6 +603,7 @@ function shutdown(): void {
   stopScreenControlServer();
   stopAllCaptures();
   stopAllResourceWatches();
+  stopTmuxWorkerWatch();
   ws?.close();
   process.exit(0);
 }

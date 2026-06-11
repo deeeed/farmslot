@@ -10,10 +10,11 @@ import type {
   PairingCreateResult,
   Run,
   SlotStatus,
+  TmuxWorkerInventoryUpdatedPayload,
   TmuxWorkerListResult,
   TmuxWorkerSummary,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Events, Methods } from '@farmslot/protocol';
 
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
@@ -168,6 +169,7 @@ export class FarmApp extends LitElement {
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
   private tmuxWorkerRefreshTimer?: ReturnType<typeof setInterval>;
+  private unsubTmuxWorkerUpdated?: () => void;
 
   // Light DOM so Monaco/diff2html CSS from document.head reaches all children
   protected override createRenderRoot() {
@@ -190,6 +192,13 @@ export class FarmApp extends LitElement {
     this.tmuxWorkerRefreshTimer = setInterval(() => {
       void this.refreshTmuxWorkers();
     }, 10_000);
+    this.unsubTmuxWorkerUpdated = gateway.subscribe<TmuxWorkerInventoryUpdatedPayload>(
+      Events.TMUX_WORKER_INVENTORY_UPDATED,
+      (payload) => {
+        this.tmuxWorkers =
+          payload.result.workers ?? payload.result.nodes.flatMap((node) => node.workers);
+      },
+    );
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
   }
@@ -206,6 +215,7 @@ export class FarmApp extends LitElement {
     );
     window.removeEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
     if (this.tmuxWorkerRefreshTimer) clearInterval(this.tmuxWorkerRefreshTimer);
+    this.unsubTmuxWorkerUpdated?.();
     this.unsub?.();
   }
 
@@ -526,6 +536,7 @@ export class FarmApp extends LitElement {
   }
 
   private pinnedSlotWorkerColor(status: string): string {
+    if (status === 'needs attention') return '#ffcc00';
     if (status === 'active') return '#00ff88';
     if (status === 'waiting') return '#ffcc00';
     if (status === 'idle') return '#8888a0';
@@ -533,13 +544,20 @@ export class FarmApp extends LitElement {
     return '#777';
   }
 
+  private pinnedSlotNeedsAttention(worker: TmuxWorkerSummary | null): boolean {
+    return worker?.status.requiresAttention === true;
+  }
+
   private pinnedSlotWorkerTitle(worker: TmuxWorkerSummary | null): string {
     if (!worker) return 'No structured runner signal for this slot';
     const signal = `${worker.status.source}/${worker.status.confidence}`;
+    const attention = worker.status.requiresAttention
+      ? ` · needs attention (${worker.status.attentionReason ?? 'runner stopped'})`
+      : '';
     if (worker.status.source === 'tmux' || worker.status.source === 'inferred') {
-      return `${worker.status.label} · ${signal} · ignored for activity badge`;
+      return `${worker.status.label} · ${signal} · ignored for activity badge${attention}`;
     }
-    return `${worker.status.label} · ${signal}`;
+    return `${worker.status.label} · ${signal}${attention}`;
   }
 
   private renderPinnedSlotShortcut(pin: PinnedSlotPreference) {
@@ -555,11 +573,12 @@ export class FarmApp extends LitElement {
     const selected = this.route === 'slot' && pin.slotId === this.slotParam;
     const worker = this.tmuxWorkerForSlot(slot);
     const displayLabel = pin.label?.trim() || pin.slotId;
-    const workerStatus = this.pinnedSlotWorkerStatus(worker);
+    const needsAttention = this.pinnedSlotNeedsAttention(worker);
+    const workerStatus = needsAttention ? 'needs attention' : this.pinnedSlotWorkerStatus(worker);
     const statusColor = this.pinnedSlotWorkerColor(workerStatus);
     return html`
       <a
-        class="fa-active-run ${selected ? 'active' : ''}"
+        class="fa-active-run ${selected ? 'active' : ''} ${needsAttention ? 'needs-attention' : ''}"
         href=${`#slot/${pin.slotId}${run ? `?runId=${encodeURIComponent(run.id)}` : ''}`}
         title=${`${pin.slotId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
       >
