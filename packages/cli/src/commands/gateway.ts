@@ -12,6 +12,7 @@ import {
   assertProfileName,
   type GatewayProfile,
   loadProfiles,
+  loadProfilesOrExit,
   saveProfiles,
 } from '../gateway-profiles.js';
 import { OutputContext } from '../output.js';
@@ -150,16 +151,6 @@ export function registerGatewayCommand(program: Command): void {
     });
 
   registerProfileSubcommands(gateway);
-}
-
-/** Load the store with a clean CLI error (path included) instead of a stack trace. */
-function loadProfilesOrExit(output: OutputContext): ReturnType<typeof loadProfiles> {
-  try {
-    return loadProfiles();
-  } catch (err) {
-    output.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
 }
 
 /** Strip secrets for any output path — tokens never leave the store file. */

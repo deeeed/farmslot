@@ -7,7 +7,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-export type GatewayAuthMode = 'none' | 'token' | 'password';
+import type { GatewayAuthMode } from '@farmslot/protocol';
+
+export type { GatewayAuthMode };
 
 export interface GatewayProfile {
   url: string;
@@ -57,6 +59,16 @@ export function saveProfiles(profiles: GatewayProfilesFile, path: string = profi
   writeFileSync(path, JSON.stringify(profiles, null, 2) + '\n', { mode: 0o600 });
   // writeFileSync mode only applies on create — enforce on every save.
   chmodSync(path, 0o600);
+}
+
+/** Load the store with a clean CLI error (path included) instead of a stack trace. */
+export function loadProfilesOrExit(output: { error: (msg: string) => void }): GatewayProfilesFile {
+  try {
+    return loadProfiles();
+  } catch (err) {
+    output.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
 }
 
 const PROFILE_NAME_RE = /^[a-z][a-z0-9-]*$/;
@@ -128,18 +140,10 @@ export function resolveGatewayTarget(
 
   if (env.GW_URL) return { url: env.GW_URL, source: 'env' };
 
-  let profiles: GatewayProfilesFile;
-  try {
-    profiles = getProfiles();
-  } catch (err) {
-    // A corrupt store must not break local default-target commands — warn
-    // loudly on stderr and fall back; doctor and the gateway/auth commands
-    // surface the same error with the file path as a hard failure.
-    process.stderr.write(
-      `warning: ${err instanceof Error ? err.message : String(err)} — using default gateway target\n`,
-    );
-    return { url: DEFAULT_GATEWAY_URL, source: 'default' };
-  }
+  // Fail hard on a corrupt store here: silently falling back to localhost
+  // could aim a mutating command at the wrong gateway when the operator's
+  // active profile was remote. --url/GW_URL targets never reach this point.
+  const profiles = getProfiles();
   if (profiles.active) {
     const profile = profiles.gateways[profiles.active];
     if (profile) {

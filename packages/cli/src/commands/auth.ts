@@ -5,19 +5,11 @@ import { describeProbe, exchangePairingCode, probeGatewayAuth } from '../gateway
 import {
   type GatewayProfilesFile,
   loadProfiles,
+  loadProfilesOrExit,
   profileCredential,
   saveProfiles,
 } from '../gateway-profiles.js';
 import { OutputContext } from '../output.js';
-
-function loadProfilesOrExit(output: OutputContext): GatewayProfilesFile {
-  try {
-    return loadProfiles();
-  } catch (err) {
-    output.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  }
-}
 
 function requireProfile(
   profiles: GatewayProfilesFile,
