@@ -152,8 +152,18 @@ export function registerGatewayCommand(program: Command): void {
   registerProfileSubcommands(gateway);
 }
 
+/** Load the store with a clean CLI error (path included) instead of a stack trace. */
+function loadProfilesOrExit(output: OutputContext): ReturnType<typeof loadProfiles> {
+  try {
+    return loadProfiles();
+  } catch (err) {
+    output.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
 /** Strip secrets for any output path — tokens never leave the store file. */
-function redactProfile(name: string, profile: GatewayProfile, active: string | undefined) {
+export function redactProfile(name: string, profile: GatewayProfile, active: string | undefined) {
   return {
     name,
     url: profile.url,
@@ -205,7 +215,7 @@ function registerProfileSubcommands(gateway: Command): void {
     .argument('<name>', 'profile name')
     .action((name: string, _opts: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      const profiles = loadProfiles();
+      const profiles = loadProfilesOrExit(output);
       if (!profiles.gateways[name]) {
         output.error(`profile '${name}' not found`);
         process.exit(1);
@@ -222,7 +232,7 @@ function registerProfileSubcommands(gateway: Command): void {
     .description('List gateway profiles (secrets never shown)')
     .action((_opts: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      const profiles = loadProfiles();
+      const profiles = loadProfilesOrExit(output);
       const entries = Object.entries(profiles.gateways).map(([name, profile]) =>
         redactProfile(name, profile, profiles.active),
       );
@@ -249,7 +259,7 @@ function registerProfileSubcommands(gateway: Command): void {
     .argument('<name>', 'profile name')
     .action((name: string, _opts: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      const profiles = loadProfiles();
+      const profiles = loadProfilesOrExit(output);
       if (!profiles.gateways[name]) {
         output.error(
           `profile '${name}' not found — add it with: farmslot gateway add ${name} <ws-url>`,

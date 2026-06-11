@@ -40,7 +40,13 @@ export function loadProfiles(path: string = profilesPath()): GatewayProfilesFile
       `Invalid gateway profiles file: ${path} — fix or remove it (${err instanceof Error ? err.message : String(err)})`,
     );
   }
-  if (typeof parsed !== 'object' || parsed === null || typeof parsed.gateways !== 'object') {
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    typeof parsed.gateways !== 'object' ||
+    parsed.gateways === null ||
+    Array.isArray(parsed.gateways)
+  ) {
     throw new Error(`Invalid gateway profiles file: ${path} — fix or remove it`);
   }
   return { active: parsed.active, gateways: parsed.gateways ?? {} };

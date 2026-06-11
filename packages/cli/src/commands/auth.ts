@@ -10,6 +10,15 @@ import {
 } from '../gateway-profiles.js';
 import { OutputContext } from '../output.js';
 
+function loadProfilesOrExit(output: OutputContext): GatewayProfilesFile {
+  try {
+    return loadProfiles();
+  } catch (err) {
+    output.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
+
 function requireProfile(
   profiles: GatewayProfilesFile,
   name: string | undefined,
@@ -46,6 +55,11 @@ export function registerAuthCommands(program: Command): void {
     .action(async (profileArg: string | undefined, opts: LoginOptions, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       try {
+        const flagCount = [opts.code, opts.token, opts.password].filter(Boolean).length;
+        if (flagCount > 1) {
+          output.error('use exactly one of --code, --token, or --password');
+          process.exit(1);
+        }
         const profiles = loadProfiles();
         const { name } = requireProfile(profiles, profileArg, output);
         const profile = profiles.gateways[name];
@@ -65,14 +79,23 @@ export function registerAuthCommands(program: Command): void {
 
         const probe = await probeGatewayAuth(profile.url, profileCredential(profile));
         if (probe.state === 'authenticated' || probe.state === 'no-auth') {
-          if (opts.code || opts.token || opts.password) saveProfiles(profiles);
+          // Persist ONLY what the gateway actually verified: a no-auth gateway
+          // cannot validate a supplied secret, so storing one would keep an
+          // unverified (possibly wrong) credential around.
+          const verifiedCredential = probe.state === 'authenticated' && flagCount === 1;
+          if (verifiedCredential) saveProfiles(profiles);
           if (output.json) {
-            output.writeJson({ profile: name, state: probe.state, authMode: probe.authMode });
+            output.writeJson({
+              profile: name,
+              state: probe.state,
+              authMode: probe.authMode,
+              credentialStored: verifiedCredential,
+            });
           } else {
             output.write(`${green('[OK]')} ${describeProbe(name, profile, probe)}\n`);
-            if (probe.state === 'no-auth' && (opts.token || opts.password || opts.code)) {
+            if (probe.state === 'no-auth' && flagCount === 1) {
               output.write(
-                `${dim('gateway requires no auth — credential stored for later use')}\n`,
+                `${dim('gateway requires no auth — credential NOT stored (cannot be verified)')}\n`,
               );
             }
           }
@@ -100,7 +123,7 @@ export function registerAuthCommands(program: Command): void {
     .argument('[profile]', 'profile name; defaults to the active profile')
     .action((profileArg: string | undefined, _opts: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      const profiles = loadProfiles();
+      const profiles = loadProfilesOrExit(output);
       const { name } = requireProfile(profiles, profileArg, output);
       const profile = profiles.gateways[name];
       const hadSecret = Boolean(profile.secret);
@@ -125,7 +148,7 @@ export function registerAuthCommands(program: Command): void {
     .option('--all', 'probe every configured profile')
     .action(async (profileArg: string | undefined, opts: { all?: boolean }, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      const profiles = loadProfiles();
+      const profiles = loadProfilesOrExit(output);
       let names: string[];
       if (opts.all) {
         names = Object.keys(profiles.gateways);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -132,4 +132,14 @@ test('secrets never serialize into anything but the store file', () => {
   );
   // The store contains it; redaction tests for command output live with the commands.
   assert.match(readFileSync(path, 'utf-8'), /topsecret/);
+});
+
+test('loadProfiles rejects null/array gateways shapes', () => {
+  const path = tmpStore();
+  writeFileSync(path, JSON.stringify({ gateways: null }));
+  assert.throws(() => loadProfiles(path), /Invalid gateway profiles file/);
+  writeFileSync(path, JSON.stringify({ gateways: [] }));
+  assert.throws(() => loadProfiles(path), /Invalid gateway profiles file/);
+  writeFileSync(path, 'garbage{');
+  assert.throws(() => loadProfiles(path), /Invalid gateway profiles file: .*gateways\.json/);
 });
