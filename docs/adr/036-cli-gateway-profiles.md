@@ -1,6 +1,6 @@
 # ADR-036: CLI Gateway Profiles and Auth
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-12
 **Relates to:** [ADR-008](008-remote-communication.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-033](033-mobile-tmux-worker-control.md)
 
