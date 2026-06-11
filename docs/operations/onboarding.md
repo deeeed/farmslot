@@ -51,8 +51,9 @@ farmslot update
   workspace — local edits are stashed with a warning first); dev/test installs
   re-sync from the source checkout's branch instead
 - reinstalls dependencies and rebuilds the CLI packages
-- applies versioned pool migrations (`migrations/pool/`) — new defaults are
-  added, user edits preserved, applied steps recorded in `state.json`
+- applies versioned pool migrations (`migrations/pool/`) to this workspace's
+  machine pool file — new defaults are added, user edits preserved, applied
+  steps recorded in `state.json`
 - re-runs the `sync` hook of any registered pack whose content hash changed
 - ends with doctor
 

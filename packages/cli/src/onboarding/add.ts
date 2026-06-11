@@ -129,15 +129,44 @@ interface RegisteredProject {
   slots: number;
 }
 
+/**
+ * Refuse to replace a registered project dir this pack does not own: another
+ * pack's project, or a pre-existing unowned project dir. Full-replace would
+ * silently destroy it and adopt its slots.
+ */
+function assertProjectOwnership(
+  name: string,
+  packName: string,
+  state: WorkspaceState,
+  dest: string,
+): void {
+  for (const [otherPack, packState] of Object.entries(state.packs)) {
+    if (otherPack !== packName && packState.projects.includes(name)) {
+      throw new AddError(
+        `project '${name}' is owned by pack '${otherPack}' — packs collide on a project dir name`,
+      );
+    }
+  }
+  const ownedByThisPack = state.packs[packName]?.projects.includes(name) ?? false;
+  if (!ownedByThisPack && existsSync(dest)) {
+    throw new AddError(
+      `projects/${name} already exists but is not registered to any pack — move it aside before adding this pack`,
+    );
+  }
+}
+
 function registerProject(
   proj: PackProject,
   packDir: string,
   ws: Workspace,
+  state: WorkspaceState,
+  packName: string,
   progress: AddProgress,
 ): RegisteredProject {
   const name = projectName(proj);
   const src = join(packDir, proj.dir);
   const dest = join(ws.farmslotDir, 'projects', name);
+  assertProjectOwnership(name, packName, state, dest);
   // Full replace: packs own their project dirs — files deleted from the pack
   // must disappear here too, not survive as stale hooks/fixtures.
   rmSync(dest, { recursive: true, force: true });
@@ -207,9 +236,12 @@ export function syncPackProjects(
   pack: PackJson,
   packDir: string,
   ws: Workspace,
+  state: WorkspaceState,
   progress: AddProgress,
 ): void {
-  for (const proj of pack.projects) registerProject(proj, packDir, ws, progress);
+  for (const proj of pack.projects) {
+    registerProject(proj, packDir, ws, state, pack.name, progress);
+  }
 }
 
 /** Read an already-registered project's metadata without re-copying the pack dir. */
@@ -299,7 +331,7 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
 
   for (const proj of pack.projects) {
     const registered = mutate
-      ? registerProject(proj, packDir, ws, progress)
+      ? registerProject(proj, packDir, ws, state, pack.name, progress)
       : readRegisteredProject(proj, ws);
     projects.push(registered.name);
 

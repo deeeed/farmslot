@@ -1,7 +1,6 @@
 import type { Command } from 'commander';
 
 import { bold, dim, green, red } from '../colors.js';
-import { AddError } from '../onboarding/add.js';
 import { runDoctor } from '../onboarding/doctor.js';
 import { farmslotUpdate } from '../onboarding/update.js';
 import { resolveWorkspace } from '../onboarding/workspace.js';
@@ -60,11 +59,8 @@ export function registerUpdateCommand(program: Command): void {
         }
         if (!report.ok) process.exit(1);
       } catch (err) {
-        if (err instanceof AddError) {
-          output.error(err.message);
-          process.exit(1);
-        }
-        throw err;
+        output.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
       }
     });
 }

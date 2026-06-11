@@ -123,7 +123,7 @@ export async function farmslotUpdate(
     // Apply content changes now — stamping the hash without re-copying would
     // strand them (the next add would see noop). Structural changes (new
     // slots/repos) escalate to repair on the next project add.
-    syncPackProjects(pack, packDir, ws, {
+    syncPackProjects(pack, packDir, ws, state, {
       step: (s) => progress.step(s.label, s.detail),
       info: progress.info,
     });

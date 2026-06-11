@@ -68,9 +68,9 @@ MARKER="E2E_SYNC_MARKER_$(date +%s)"
 echo "# ${MARKER}" >> "${PACK}/projects/example-app-farm/fixtures/app.env.template"
 python3 -c "
 import json
-path = '${FARMSLOT_WORKSPACE}/farmslot/pool'
-import glob
-f = [p for p in glob.glob(path + '/*.json') if 'demo' not in p and 'example' not in p][0]
+ws = '${FARMSLOT_WORKSPACE}'
+state = json.load(open(f'{ws}/state.json'))
+f = f\"{ws}/farmslot/{state['pool_file']}\"
 with open(f) as fh: pool = json.load(fh)
 pool['schema_version'] = 0
 with open(f, 'w') as fh: json.dump(pool, fh, indent=2)

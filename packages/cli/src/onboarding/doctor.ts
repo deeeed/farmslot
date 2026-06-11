@@ -191,8 +191,15 @@ function packSection(ws: Workspace | null, state: WorkspaceState | null): Doctor
   let slotIds = new Set<string>();
   try {
     slotIds = new Set(readPool(poolPath).slots.map((s) => s.id));
-  } catch {
-    // Pool problems are reported by the Pool section; here they just surface as missing slots.
+  } catch (err) {
+    // The Pool section reports the root cause; record it here so pack checks
+    // explain WHY every slot looks missing instead of silently failing.
+    checks.push({
+      name: 'pool readable',
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+      hint: 'fix the pool config (see the Pool section)',
+    });
   }
   for (const name of names) {
     const pack = state.packs[name];
