@@ -123,8 +123,14 @@ if [ -d "${CLONE}/.git" ]; then
     git -C "$CLONE" remote set-head origin --auto >/dev/null
     src_branch="$(git -C "$CLONE" rev-parse --abbrev-ref origin/HEAD | sed 's|^origin/||')"
   fi
-  git -C "$CLONE" checkout --quiet "$src_branch" 2>/dev/null || git -C "$CLONE" checkout --quiet -b "$src_branch" "origin/${src_branch}"
-  git -C "$CLONE" reset --hard --quiet "origin/${src_branch}"
+  if git -C "$CLONE" rev-parse --verify --quiet "origin/${src_branch}" >/dev/null; then
+    # Branch ref: track and hard-update to the remote tip.
+    git -C "$CLONE" checkout --quiet "$src_branch" 2>/dev/null || git -C "$CLONE" checkout --quiet -b "$src_branch" "origin/${src_branch}"
+    git -C "$CLONE" reset --hard --quiet "origin/${src_branch}"
+  else
+    # Tag or commit SHA (FARMSLOT_REPO_REF): detached checkout, already exact.
+    git -C "$CLONE" checkout --quiet --detach "$src_branch"
+  fi
 else
   # No --branch: clone the source's default/checked-out branch, whatever its name.
   git clone --quiet "$SOURCE" "$CLONE"

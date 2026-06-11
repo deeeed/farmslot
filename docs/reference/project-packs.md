@@ -65,6 +65,9 @@ All hooks run with cwd = the pack directory and env:
 - `FARMSLOT_DIR` — the workspace farmslot clone
 - `FARMSLOT_REPOS_DIR` — `<workspace>/repos`
 
+Hook commands run through `bash -c` and the slot lifecycle shell — avoid single
+quotes in workspace, repo, and hook paths.
+
 | Hook       | When                                                              |
 | ---------- | ----------------------------------------------------------------- |
 | `pre_add`  | Before product repos are cloned (e.g. seed a local fixture repo). |
