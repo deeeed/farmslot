@@ -706,7 +706,10 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /--print/);
       assert.doesNotMatch(cmd, /Read TASK/);
       assert.match(cmd, /install-runner-observability\.mjs/);
-      assert.match(cmd, /unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet$/);
+      assert.match(
+        cmd,
+        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet$/,
+      );
     });
 
     it('routes through expandDispatchCmd when claudeUsesDispatchCmd=true', () => {
@@ -732,6 +735,7 @@ describe('buildLaunchCommand', () => {
         /node "\$\{HOME\}\/farmslot-node\/scripts\/install-runner-observability\.mjs"/,
       );
       assert.match(cmd, /--repo "\$\{HOME\}\/work\/repo"/);
+      assert.match(cmd, /cd "\$\{HOME\}\/work\/repo" && unset CLAUDECODE/);
     });
 
     it('appends modelFlag when dispatch_cmd lacks {model} placeholder', () => {

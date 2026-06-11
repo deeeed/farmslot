@@ -2,6 +2,7 @@ import { DEFAULT_CURSOR_MODEL, type SafetyTier } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 import { expandDispatchCmd } from '../core/hooks.js';
+import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 
 import {
@@ -205,7 +206,7 @@ export function buildLaunchCommand(
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.join(' ');
     return withRunnerObservabilityInstall(
-      `unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`,
+      `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`,
       installCommand,
     );
   }

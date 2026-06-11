@@ -216,7 +216,6 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
   const hookPath = path.join(binDir, 'farmslot-observability-hook.mjs');
   const statuslinePath = path.join(binDir, 'farmslot-statusline.mjs');
   fs.mkdirSync(binDir, { recursive: true });
-  fs.writeFileSync(markerPath, 'farmslot\n');
   fs.writeFileSync(hookPath, HOOK_SCRIPT);
   fs.writeFileSync(statuslinePath, STATUSLINE_SCRIPT);
   execFileSync(process.execPath, ['--check', hookPath], { stdio: 'pipe' });
@@ -233,6 +232,7 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
     hookCommand,
     statusCommand,
   );
+  fs.writeFileSync(markerPath, 'farmslot\n');
   fs.writeFileSync(
     path.join(obsDir, 'install.json'),
     JSON.stringify(
