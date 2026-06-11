@@ -562,7 +562,7 @@ export class FarmApp extends LitElement {
     }
     if (source === 'tmux') {
       if (state === 'active' || state === 'waiting' || state === 'stale') return state;
-      if (state === 'idle') return 'quiet';
+      if (state === 'idle') return 'unknown';
     }
     return 'unknown';
   }
@@ -571,7 +571,7 @@ export class FarmApp extends LitElement {
     if (status === 'needs attention') return '#ffcc00';
     if (status === 'active') return '#00ff88';
     if (status === 'waiting') return '#ffcc00';
-    if (status === 'idle' || status === 'quiet') return '#8888a0';
+    if (status === 'idle') return '#8888a0';
     if (status === 'stale') return '#f97316';
     return '#777';
   }
@@ -587,7 +587,7 @@ export class FarmApp extends LitElement {
       ? ` · needs attention (${worker.status.attentionReason ?? 'runner stopped'})`
       : '';
     if (worker.status.source === 'tmux') {
-      return `${worker.status.label} · ${signal} · tmux-only output activity; quiet is not a runner idle signal${attention}`;
+      return `${worker.status.label} · ${signal} · tmux pane detected; no activity signal${attention}`;
     }
     if (worker.status.source === 'inferred') {
       return `${worker.status.label} · ${signal} · inferred, not a runner signal${attention}`;

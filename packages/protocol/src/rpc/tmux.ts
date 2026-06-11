@@ -106,6 +106,13 @@ export interface NodeTmuxPaneSignals {
     status?: string;
     phase?: string;
   };
+  process?: {
+    label?: string;
+    observedAt?: number;
+    active?: boolean;
+    cpuPct?: number;
+    runningProcesses?: number;
+  };
 }
 
 export interface NodeTmuxPane {

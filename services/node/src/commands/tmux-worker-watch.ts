@@ -43,6 +43,7 @@ export function panesSignature(panes: NodeTmuxPane[], now = Date.now()): string 
         hook: signalFreshnessBucket(pane.signals?.hook?.observedAt, now),
         statusline: signalFreshnessBucket(pane.signals?.statusline?.observedAt, now),
         taskFile: signalFreshnessBucket(pane.signals?.taskFile?.observedAt, now),
+        process: signalFreshnessBucket(pane.signals?.process?.observedAt, now),
       },
     }))
     .sort((a, b) => `${a.session}:${a.target}`.localeCompare(`${b.session}:${b.target}`));

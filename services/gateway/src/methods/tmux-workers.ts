@@ -69,6 +69,10 @@ function tmuxPaneActivityState(
     if (status && /done|complete|success|idle|ready/u.test(status)) return 'idle';
     return 'active';
   }
+  const processSignal = pane.signals?.process;
+  if (processSignal && isFresh(processSignal.observedAt, observedAt) && processSignal.active) {
+    return 'active';
+  }
   if (activityHint) return activityHint;
   if (pane.lastChangedAt != null) {
     const age = observedAt - pane.lastChangedAt;
@@ -144,6 +148,17 @@ export function tmuxWorkerStatusFromPane(
       },
       fresh ? attentionReasonForRunnerState(state) : 'stale-signal',
     );
+  }
+
+  const processSignal = signals?.process;
+  if (processSignal && isFresh(processSignal.observedAt, observedAt) && processSignal.active) {
+    return {
+      label: processSignal.label ?? 'process active',
+      source: 'tmux',
+      confidence: 'medium',
+      observedAt: processSignal.observedAt,
+      state: 'active',
+    };
   }
 
   if (hook || statusline) {
