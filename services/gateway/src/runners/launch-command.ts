@@ -4,7 +4,6 @@ import type { loadSlotVars } from '../core/config.js';
 import { expandDispatchCmd } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 
-import { buildClaudeObservabilityPrelude } from './claude-observability.js';
 import {
   normalizeRunner,
   runnerDefaultSafetyTier,
@@ -183,17 +182,16 @@ export function buildLaunchCommand(
   // Claude: either route through dispatch_cmd (production dispatch) or launch
   // inline via its configured binary + inline flags (relaunch paths).
   if (runner === 'claude') {
-    const observabilityPrelude = buildClaudeObservabilityPrelude(vars, repo, opts.runtimeDir);
     if (opts.claudeUsesDispatchCmd) {
       if (!hasDispatchCmd) {
         throw new Error(`No dispatch_cmd in pool config for ${vars.machine}`);
       }
-      return `${observabilityPrelude} && unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}`;
+      return `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}`;
     }
     const claudePath = vars.claudePath || 'claude';
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.join(' ');
-    return `${observabilityPrelude} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`;
+    return `unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`;
   }
 
   // Codex: route through dispatch_cmd when it's runner-aware; otherwise fall

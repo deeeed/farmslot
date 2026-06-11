@@ -690,9 +690,8 @@ describe('buildLaunchCommand', () => {
         /unset CLAUDECODE && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
       );
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
-      assert.match(cmd, /farmslot-observability-hook\.mjs/);
-      assert.match(cmd, /base64 --decode > .*farmslot-observability-hook\.mjs/);
-      assert.doesNotMatch(cmd, /printf %s 'import fs from/);
+      assert.doesNotMatch(cmd, /farmslot-observability-hook\.mjs/);
+      assert.doesNotMatch(cmd, /base64 --decode/);
     });
 
     it('inline-launches interactively by default so relaunch paths stay steerable', () => {
