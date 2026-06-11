@@ -93,6 +93,12 @@ ws.addEventListener('message', (event) => {
 
 With auth enabled, the client first calls `auth.connect`, then sends normal requests.
 
+## Worker status events
+
+`tmux.worker.list` is the request/response snapshot for attachable tmux workers. Node agents also sample local tmux panes and push changed snapshots to the gateway; gateway clients receive those as `tmux.worker.inventory.updated` with the same `TmuxWorkerListResult` shape.
+
+Do not confuse that event with `worker.signal`: `worker.signal` is task-level `SIGNAL.json` semantics for a supervised run, while tmux-worker inventory rows describe pane/runner liveness and include a `status.source` field (`hook`, `statusline`, `task-file`, or `tmux`). Runner-aware sources may also set `status.requiresAttention` so clients can highlight stopped/waiting workers without per-runner parsing.
+
 ## Why capability discovery matters
 
 If other tools or LLMs should operate Farmslot safely, they need a machine-readable contract:

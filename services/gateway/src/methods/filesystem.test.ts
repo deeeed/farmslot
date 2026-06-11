@@ -14,6 +14,7 @@ import { createRun, deleteRun, updateRun } from '../runs/store.js';
 
 import {
   fsDelete,
+  fsList,
   fsRead,
   fsWrite,
   serveFile,
@@ -520,6 +521,22 @@ test('serveRunArtifact rejects symlinked recipe-run roots before serving local c
     await serveRunArtifact(req, res as any);
     assert.equal(res.statusCode, 403);
     assert.match(res.body, /Path traversal not allowed/);
+  });
+});
+
+test('fsList classifies local symlinked directories as directories', async (t) => {
+  await withLocalSlot(t, async ({ slotId, repoDir }) => {
+    const linkedDir = path.join(repoDir, 'temp', 'recipe', 'runtime', '.observability');
+    await mkdir(linkedDir, { recursive: true });
+    await writeFile(path.join(linkedDir, 'statusline.json'), '{}', 'utf-8');
+    await symlink(linkedDir, path.join(repoDir, '.observability'));
+
+    const result = await fsList({ slotId, path: '.', includeIgnored: true });
+
+    assert.deepEqual(
+      result.entries.find((entry) => entry.name === '.observability'),
+      { name: '.observability', type: 'directory', path: '.observability' },
+    );
   });
 });
 

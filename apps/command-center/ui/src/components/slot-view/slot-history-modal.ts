@@ -568,11 +568,7 @@ export class SlotHistoryModal extends LitElement {
                   </div>
                 </div>
                 <div class="shm-actions">
-                  <a
-                    class="shm-link"
-                    href=${`#${routeForRun({ id: run.runId, familyId: run.familyId, status: run.status })}`}
-                    >Open run</a
-                  >
+                  <a class="shm-link" href=${`#${routeForRun({ id: run.runId })}`}>Open run</a>
                 </div>
               </div>
             `

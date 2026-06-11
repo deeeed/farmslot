@@ -16,6 +16,7 @@ import { isSlotPinned } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import {
+  canReplayRunSteps,
   INTERACTIVE_DEV_ACTIONS,
   isActiveInteractiveDevRun,
   runEvidenceSummary,
@@ -654,8 +655,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               .step=${ctx.selectedStep}
               .run=${ctx.run}
               .taskProgress=${ctx.selectedStepProgress}
-              .allowReplay=${!actionsBlocked &&
-              (r.status === 'failed' || r.status === 'done' || r.status === 'cancelled')}
+              .allowReplay=${canReplayRunSteps(r, actionsBlocked)}
               @inspector-close=${() => ctx.onStepInspectorClose()}
               @step-replay=${(e: CustomEvent) =>
                 ctx._onReplayStep(e.detail.stepName, e.detail.skipPrepare)}

@@ -10,10 +10,11 @@ import type {
   PairingCreateResult,
   Run,
   SlotStatus,
+  TmuxWorkerInventoryUpdatedPayload,
   TmuxWorkerListResult,
   TmuxWorkerSummary,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Events, Methods } from '@farmslot/protocol';
 
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
@@ -50,6 +51,7 @@ import {
   listPinnedSlots as listPinnedSlotPreferences,
   PINNED_SLOTS_CHANGED,
   type PinnedSlotPreference,
+  unpinSlot,
 } from '../utils/pinned-slots.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
@@ -57,6 +59,7 @@ import {
   activeSidebarRuns,
   clampSidebarWidth,
   DEFAULT_SIDEBAR_WIDTH,
+  isSidebarActiveRun,
   parseStoredSidebarWidth,
   SIDEBAR_WIDTH_PREF_KEY,
 } from './app-shell-nav-model.js';
@@ -168,6 +171,7 @@ export class FarmApp extends LitElement {
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
   private tmuxWorkerRefreshTimer?: ReturnType<typeof setInterval>;
+  private unsubTmuxWorkerUpdated?: () => void;
 
   // Light DOM so Monaco/diff2html CSS from document.head reaches all children
   protected override createRenderRoot() {
@@ -190,6 +194,13 @@ export class FarmApp extends LitElement {
     this.tmuxWorkerRefreshTimer = setInterval(() => {
       void this.refreshTmuxWorkers();
     }, 10_000);
+    this.unsubTmuxWorkerUpdated = gateway.subscribe<TmuxWorkerInventoryUpdatedPayload>(
+      Events.TMUX_WORKER_INVENTORY_UPDATED,
+      (payload) => {
+        this.tmuxWorkers =
+          payload.result.workers ?? payload.result.nodes.flatMap((node) => node.workers);
+      },
+    );
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
   }
@@ -206,6 +217,7 @@ export class FarmApp extends LitElement {
     );
     window.removeEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
     if (this.tmuxWorkerRefreshTimer) clearInterval(this.tmuxWorkerRefreshTimer);
+    this.unsubTmuxWorkerUpdated?.();
     this.unsub?.();
   }
 
@@ -506,26 +518,57 @@ export class FarmApp extends LitElement {
 
   private tmuxWorkerForSlot(slot: SlotStatus | undefined): TmuxWorkerSummary | null {
     if (!slot) return null;
-    return (
-      this.tmuxWorkers.find((worker) => worker.linkedSlotId === slot.slot) ??
-      this.tmuxWorkers.find(
-        (worker) => worker.ref.nodeId === slot.machine && worker.ref.session === slot.slot,
-      ) ??
-      null
+    const workers = this.tmuxWorkers.filter(
+      (worker) =>
+        worker.linkedSlotId === slot.slot ||
+        (worker.ref.nodeId === slot.machine && worker.ref.session === slot.slot),
     );
+    return (
+      workers.sort(
+        (a, b) =>
+          this.tmuxWorkerRank(b) - this.tmuxWorkerRank(a) ||
+          (b.lastChangedAt ?? 0) - (a.lastChangedAt ?? 0),
+      )[0] ?? null
+    );
+  }
+
+  private tmuxWorkerRank(worker: TmuxWorkerSummary): number {
+    const state = worker.status.state;
+    const source = worker.status.source;
+    const isRunnerSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
+    const signalScore = isRunnerSignal && !worker.status.stale ? 1000 : 0;
+    const stateScore =
+      state === 'active'
+        ? 500
+        : state === 'waiting'
+          ? 400
+          : state === 'stale'
+            ? 300
+            : state === 'idle'
+              ? 100
+              : 0;
+    const attentionScore = worker.status.requiresAttention ? 800 : 0;
+    const activePaneScore = worker.active ? 20 : 0;
+    return signalScore + attentionScore + stateScore + activePaneScore;
   }
 
   private pinnedSlotWorkerStatus(worker: TmuxWorkerSummary | null): string {
     if (!worker) return 'unknown';
     const source = worker.status.source;
-    const isRealSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
-    if (!isRealSignal || worker.status.stale || worker.status.confidence === 'low') {
-      return 'unknown';
+    const state = worker.status.state;
+    const isRunnerSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
+    if (isRunnerSignal && !worker.status.stale && worker.status.confidence !== 'low') {
+      return state ?? 'unknown';
     }
-    return worker.status.state ?? 'unknown';
+    if (source === 'tmux') {
+      if (state === 'active' || state === 'waiting' || state === 'stale') return state;
+      if (state === 'idle') return 'unknown';
+    }
+    return 'unknown';
   }
 
   private pinnedSlotWorkerColor(status: string): string {
+    if (status === 'needs attention') return '#ffcc00';
     if (status === 'active') return '#00ff88';
     if (status === 'waiting') return '#ffcc00';
     if (status === 'idle') return '#8888a0';
@@ -533,70 +576,107 @@ export class FarmApp extends LitElement {
     return '#777';
   }
 
+  private pinnedSlotNeedsAttention(worker: TmuxWorkerSummary | null): boolean {
+    return worker?.status.requiresAttention === true;
+  }
+
   private pinnedSlotWorkerTitle(worker: TmuxWorkerSummary | null): string {
     if (!worker) return 'No structured runner signal for this slot';
     const signal = `${worker.status.source}/${worker.status.confidence}`;
-    if (worker.status.source === 'tmux' || worker.status.source === 'inferred') {
-      return `${worker.status.label} · ${signal} · ignored for activity badge`;
+    const attention = worker.status.requiresAttention
+      ? ` · needs attention (${worker.status.attentionReason ?? 'runner stopped'})`
+      : '';
+    if (worker.status.source === 'tmux') {
+      return `${worker.status.label} · ${signal} · tmux pane detected; no activity signal${attention}`;
     }
-    return `${worker.status.label} · ${signal}`;
+    if (worker.status.source === 'inferred') {
+      return `${worker.status.label} · ${signal} · inferred, not a runner signal${attention}`;
+    }
+    return `${worker.status.label} · ${signal}${attention}`;
+  }
+
+  private pinnedSlotRun(slotId: string, currentRunId?: string | null): Run | null {
+    if (currentRunId) {
+      const current = this.runs.find((candidate) => candidate.id === currentRunId);
+      if (current) return current;
+    }
+    if (this.route === 'run') {
+      const selected = this.runs.find(
+        (candidate) => candidate.id === this.runParam && candidate.slotId === slotId,
+      );
+      if (selected) return selected;
+    }
+    return (
+      this.runs.find((candidate) => candidate.slotId === slotId && isSidebarActiveRun(candidate)) ??
+      null
+    );
   }
 
   private renderPinnedSlotShortcut(pin: PinnedSlotPreference) {
     const slot = this.fleetSlots.find((candidate) => candidate.slot === pin.slotId);
-    const run =
-      (slot?.currentRunId
-        ? this.runs.find((candidate) => candidate.id === slot.currentRunId)
-        : null) ??
-      this.runs.find(
-        (candidate) => candidate.slotId === pin.slotId && candidate.status === 'monitoring',
-      ) ??
-      null;
+    const run = this.pinnedSlotRun(pin.slotId, slot?.currentRunId);
     const selected = this.route === 'slot' && pin.slotId === this.slotParam;
     const worker = this.tmuxWorkerForSlot(slot);
     const displayLabel = pin.label?.trim() || pin.slotId;
-    const workerStatus = this.pinnedSlotWorkerStatus(worker);
+    const needsAttention = this.pinnedSlotNeedsAttention(worker);
+    const workerStatus = needsAttention ? 'needs attention' : this.pinnedSlotWorkerStatus(worker);
     const statusColor = this.pinnedSlotWorkerColor(workerStatus);
     return html`
-      <a
-        class="fa-active-run ${selected ? 'active' : ''}"
-        href=${`#slot/${pin.slotId}${run ? `?runId=${encodeURIComponent(run.id)}` : ''}`}
-        title=${`${pin.slotId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
-      >
-        <div class="fa-active-run-top">
-          <span class="fa-active-run-ticket">${displayLabel}</span>
-          ${slot?.machine || pin.label
-            ? html`<span class="fa-active-run-flow" style="--flow-color:#94a3b8"
-                >${pin.label ? pin.slotId : slot?.machine}</span
-              >`
+      <div class="fa-active-run-wrap">
+        <a
+          class="fa-active-run ${selected ? 'active' : ''} ${needsAttention
+            ? 'needs-attention'
+            : ''}"
+          href=${`#slot/${pin.slotId}${run ? `?runId=${encodeURIComponent(run.id)}` : ''}`}
+          title=${`${pin.slotId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
+        >
+          <div class="fa-active-run-top">
+            <span class="fa-active-run-ticket">${displayLabel}</span>
+            ${slot?.machine || pin.label
+              ? html`<span class="fa-active-run-flow" style="--flow-color:#94a3b8"
+                  >${pin.label ? pin.slotId : slot?.machine}</span
+                >`
+              : nothing}
+          </div>
+          <div class="fa-active-run-summary">
+            ${run?.summary || run?.ticketOrPr || slot?.branch || 'Slot not in current fleet'}
+          </div>
+          <div class="fa-active-run-meta">
+            <span
+              class="fa-active-run-worker"
+              style="--worker-color:${statusColor}"
+              title=${this.pinnedSlotWorkerTitle(worker)}
+            >
+              <span class="fa-active-run-worker-dot"></span>${workerStatus}
+            </span>
+            ${worker
+              ? html`<span>${worker.status.source}/${worker.status.confidence}</span>`
+              : nothing}
+            ${slot?.phase ? html`<span>${slot.phase}</span>` : nothing}
+            ${slot?.branch ? html`<span>${slot.branch}</span>` : nothing}
+            ${run ? html`<span>${run.status}</span>` : nothing}
+          </div>
+          ${run
+            ? html`<run-pipeline-mini
+                class="fa-pinned-run-pipeline"
+                .run=${run}
+                .flowType=${run.flowType}
+              ></run-pipeline-mini>`
             : nothing}
-        </div>
-        <div class="fa-active-run-summary">
-          ${run?.summary || run?.ticketOrPr || slot?.branch || 'Slot not in current fleet'}
-        </div>
-        <div class="fa-active-run-meta">
-          <span
-            class="fa-active-run-worker"
-            style="--worker-color:${statusColor}"
-            title=${this.pinnedSlotWorkerTitle(worker)}
-          >
-            <span class="fa-active-run-worker-dot"></span>${workerStatus}
-          </span>
-          ${worker
-            ? html`<span>${worker.status.source}/${worker.status.confidence}</span>`
-            : nothing}
-          ${slot?.phase ? html`<span>${slot.phase}</span>` : nothing}
-          ${slot?.branch ? html`<span>${slot.branch}</span>` : nothing}
-          ${run ? html`<span>${run.status}</span>` : nothing}
-        </div>
-        ${run
-          ? html`<run-pipeline-mini
-              class="fa-pinned-run-pipeline"
-              .run=${run}
-              .flowType=${run.flowType}
-            ></run-pipeline-mini>`
-          : nothing}
-      </a>
+        </a>
+        <button
+          class="fa-active-run-unpin"
+          title=${`Unpin ${pin.slotId}`}
+          aria-label=${`Unpin ${pin.slotId}`}
+          @click=${(event: Event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            unpinSlot(pin.slotId);
+          }}
+        >
+          ×
+        </button>
+      </div>
     `;
   }
 

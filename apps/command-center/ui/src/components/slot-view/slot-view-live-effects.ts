@@ -13,7 +13,12 @@ import { gateway } from '../../gateway-client.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
-import { isImageFile, isMediaFile, realPath } from './slot-view-model.js';
+import {
+  isDirectoryReadErrorMessage,
+  isImageFile,
+  isMediaFile,
+  realPath,
+} from './slot-view-model.js';
 import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
 
 type LoadContentOptions = {
@@ -181,18 +186,19 @@ export async function loadSlotViewFileContent(
     return true;
   } catch (err) {
     if (!isCurrentLiveResult(view, epoch)) return false;
+    const message = err instanceof Error ? err.message : String(err);
+    if (isDirectoryReadErrorMessage(message)) {
+      // A direct file URL/search hit can point at a symlinked directory such as
+      // `.observability`. Treat it as a folder, not as a failed plaintext file.
+      await loadSlotViewDirectory(view, path);
+      return false;
+    }
     if (options.warnLabel) {
-      console.warn(
-        `[slot-view] ${options.warnLabel}:`,
-        err instanceof Error ? err.message : String(err),
-      );
+      console.warn(`[slot-view] ${options.warnLabel}:`, message);
     }
     if (options.errorFallback !== null) {
       const next = new Map(view._liveFileContents);
-      next.set(
-        path,
-        `Error: ${err instanceof Error ? err.message : (options.errorFallback ?? 'Failed to read file')}`,
-      );
+      next.set(path, `Error: ${message || (options.errorFallback ?? 'Failed to read file')}`);
       view._liveFileContents = next;
     }
     return true;

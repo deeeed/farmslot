@@ -12,6 +12,7 @@ export type TmuxWorkerStatusSource =
 export type TmuxWorkerStatusConfidence = 'high' | 'medium' | 'low';
 
 export type TmuxWorkerActivityState = 'active' | 'waiting' | 'idle' | 'stale' | 'unknown';
+export type TmuxWorkerAttentionReason = 'waiting' | 'idle' | 'stale-signal';
 
 export interface TmuxWorkerRef {
   nodeId: string;
@@ -30,6 +31,8 @@ export interface TmuxWorkerStatusReading {
   observedAt?: number;
   stale?: boolean;
   state?: TmuxWorkerActivityState;
+  requiresAttention?: boolean;
+  attentionReason?: TmuxWorkerAttentionReason;
   conflicts?: string[];
 }
 
@@ -102,6 +105,13 @@ export interface NodeTmuxPaneSignals {
     observedAt?: number;
     status?: string;
     phase?: string;
+  };
+  process?: {
+    label?: string;
+    observedAt?: number;
+    active?: boolean;
+    cpuPct?: number;
+    runningProcesses?: number;
   };
 }
 

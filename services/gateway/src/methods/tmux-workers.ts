@@ -8,6 +8,7 @@ import type {
   Run,
   RunStatus,
   TmuxWorkerActivityState,
+  TmuxWorkerAttentionReason,
   TmuxWorkerFilterConfig,
   TmuxWorkerFilterRule,
   TmuxWorkerListParams,
@@ -25,7 +26,10 @@ import { listRuns } from '../runs/store.js';
 const TMUX_PANES_TIMEOUT_MS = 5_000;
 const SIGNAL_FRESH_MS = 120_000;
 const PANE_RECENT_CHANGE_MS = 30_000;
+const NODE_TMUX_PUSH_SNAPSHOT_FRESH_MS = 30_000;
 const FILTERED_WORKER_ERROR = 'worker target is excluded by tmux worker filter config';
+const nodeTmuxPaneSnapshots = new Map<string, { observedAt: number; panes: NodeTmuxPane[] }>();
+
 const WAITING_RUN_STATUSES: ReadonlySet<RunStatus> = new Set([
   'blocked',
   'paused',
@@ -65,6 +69,10 @@ function tmuxPaneActivityState(
     if (status && /done|complete|success|idle|ready/u.test(status)) return 'idle';
     return 'active';
   }
+  const processSignal = pane.signals?.process;
+  if (processSignal && isFresh(processSignal.observedAt, observedAt) && processSignal.active) {
+    return 'active';
+  }
   if (activityHint) return activityHint;
   if (pane.lastChangedAt != null) {
     const age = observedAt - pane.lastChangedAt;
@@ -72,6 +80,21 @@ function tmuxPaneActivityState(
     return 'idle';
   }
   return 'unknown';
+}
+
+function attentionReasonForRunnerState(
+  state: TmuxWorkerActivityState | undefined,
+): TmuxWorkerAttentionReason | undefined {
+  if (state === 'waiting') return 'waiting';
+  if (state === 'idle') return 'idle';
+  return undefined;
+}
+
+function withAttention(
+  status: TmuxWorkerSummary['status'],
+  reason: TmuxWorkerAttentionReason | undefined,
+): TmuxWorkerSummary['status'] {
+  return reason ? { ...status, requiresAttention: true, attentionReason: reason } : status;
 }
 
 export function tmuxWorkerStatusFromPane(
@@ -82,48 +105,78 @@ export function tmuxWorkerStatusFromPane(
   const signals = pane.signals;
   const hook = signals?.hook;
   if (hook && isFresh(hook.observedAt, observedAt)) {
-    return {
-      label: hook.label ?? 'hook event',
-      source: 'hook',
-      confidence: 'high',
-      observedAt: hook.observedAt,
-      state: tmuxPaneActivityState(pane, observedAt, activityHint),
-    };
+    const state = tmuxPaneActivityState(pane, observedAt, activityHint);
+    return withAttention(
+      {
+        label: hook.label ?? 'hook event',
+        source: 'hook',
+        confidence: 'high',
+        observedAt: hook.observedAt,
+        state,
+      },
+      attentionReasonForRunnerState(state),
+    );
   }
+
   const statusline = signals?.statusline;
   if (statusline && isFresh(statusline.observedAt, observedAt)) {
-    return {
-      label: statusline.label ?? 'statusline',
-      source: 'statusline',
-      confidence: 'high',
-      observedAt: statusline.observedAt,
-      state: tmuxPaneActivityState(pane, observedAt, activityHint),
-    };
+    const state = tmuxPaneActivityState(pane, observedAt, activityHint);
+    return withAttention(
+      {
+        label: statusline.label ?? 'statusline',
+        source: 'statusline',
+        confidence: 'high',
+        observedAt: statusline.observedAt,
+        state,
+      },
+      attentionReasonForRunnerState(state),
+    );
   }
+
   const taskFile = signals?.taskFile;
   if (taskFile) {
     const fresh = isFresh(taskFile.observedAt, observedAt);
+    const state = fresh ? tmuxPaneActivityState(pane, observedAt, activityHint) : 'stale';
+    return withAttention(
+      {
+        label: taskFile.label ?? 'task signal',
+        source: 'task-file',
+        confidence: fresh ? 'medium' : 'low',
+        ...(taskFile.observedAt != null ? { observedAt: taskFile.observedAt } : { observedAt }),
+        ...(taskFile.observedAt != null && !fresh ? { stale: true } : {}),
+        state,
+      },
+      fresh ? attentionReasonForRunnerState(state) : 'stale-signal',
+    );
+  }
+
+  const processSignal = signals?.process;
+  if (processSignal && isFresh(processSignal.observedAt, observedAt) && processSignal.active) {
     return {
-      label: taskFile.label ?? 'task signal',
-      source: 'task-file',
-      confidence: fresh ? 'medium' : 'low',
-      ...(taskFile.observedAt != null ? { observedAt: taskFile.observedAt } : { observedAt }),
-      ...(taskFile.observedAt != null && !fresh ? { stale: true } : {}),
-      state: fresh ? tmuxPaneActivityState(pane, observedAt, activityHint) : 'stale',
+      label: processSignal.label ?? 'process active',
+      source: 'tmux',
+      confidence: 'medium',
+      observedAt: processSignal.observedAt,
+      state: 'active',
     };
   }
+
   if (hook || statusline) {
     const signal = hook ?? statusline;
-    return {
-      label: signal?.label ?? 'stale worker signal',
-      source: hook ? 'hook' : 'statusline',
-      confidence: 'low',
-      ...(signal?.observedAt != null
-        ? { observedAt: signal.observedAt, stale: true }
-        : { observedAt }),
-      state: 'stale',
-    };
+    return withAttention(
+      {
+        label: signal?.label ?? 'stale worker signal',
+        source: hook ? 'hook' : 'statusline',
+        confidence: 'low',
+        ...(signal?.observedAt != null
+          ? { observedAt: signal.observedAt, stale: true }
+          : { observedAt }),
+        state: 'stale',
+      },
+      'stale-signal',
+    );
   }
+
   return {
     label: pane.command ? `${pane.command} in tmux` : 'tmux pane',
     source: 'tmux',
@@ -307,6 +360,24 @@ function summarizeTmuxWorkers(workers: TmuxWorkerSummary[]): TmuxWorkerNodeSumma
   return summary;
 }
 
+export function rememberNodeTmuxPaneSnapshot(params: {
+  nodeId: string;
+  observedAt: number;
+  panes: NodeTmuxPane[];
+}): void {
+  nodeTmuxPaneSnapshots.set(params.nodeId, {
+    observedAt: params.observedAt,
+    panes: params.panes,
+  });
+}
+
+function freshNodeTmuxPaneSnapshot(nodeId: string, now: number): NodeTmuxPane[] | null {
+  const snapshot = nodeTmuxPaneSnapshots.get(nodeId);
+  if (!snapshot) return null;
+  if (now - snapshot.observedAt > NODE_TMUX_PUSH_SNAPSHOT_FRESH_MS) return null;
+  return snapshot.panes;
+}
+
 function normalizeNodeTmuxPanesResult(payload: unknown): NodeTmuxPane[] {
   if (
     !payload ||
@@ -316,6 +387,13 @@ function normalizeNodeTmuxPanesResult(payload: unknown): NodeTmuxPane[] {
     throw new Error('node tmux.panes returned invalid payload');
   }
   return (payload as NodeTmuxPanesResult).panes;
+}
+
+function normalizeNodeTmuxPaneArray(payload: unknown): NodeTmuxPane[] {
+  if (!Array.isArray(payload)) {
+    throw new Error('node tmux worker update returned invalid panes payload');
+  }
+  return payload as NodeTmuxPane[];
 }
 
 async function listNodeWorkers(params: {
@@ -472,6 +550,8 @@ export async function tmuxWorkerList(
     includeDisconnected: params.includeDisconnected,
     observedAt,
     requestPanes: async (nodeId) => {
+      const cached = freshNodeTmuxPaneSnapshot(nodeId, observedAt);
+      if (cached) return cached;
       const node = getNode(nodeId);
       if (!node) throw new Error(`node ${nodeId} is not connected`);
       const payload = await sendNodeRequest(
@@ -485,4 +565,19 @@ export async function tmuxWorkerList(
       return normalizeNodeTmuxPanesResult(payload);
     },
   });
+}
+
+export async function buildTmuxWorkerUpdateFromNodeSnapshot(payload: {
+  machine: string;
+  observedAt?: number;
+  panes?: unknown;
+}): Promise<TmuxWorkerListResult> {
+  if (!payload.machine) throw new Error('node tmux worker update missing machine');
+  const panes = normalizeNodeTmuxPaneArray(payload.panes);
+  rememberNodeTmuxPaneSnapshot({
+    nodeId: payload.machine,
+    observedAt: payload.observedAt ?? Date.now(),
+    panes,
+  });
+  return tmuxWorkerList({ includeDisconnected: true });
 }

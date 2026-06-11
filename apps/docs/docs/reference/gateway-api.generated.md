@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.6.0`
+Protocol version: `0.6.1`
 
 ## WebSocket frame shape
 
@@ -166,9 +166,11 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `recipe.projectHookCommand`          | recipe       | bounded-write | —      | —      | Recipe ProjectHookCommand gateway method.          |
 | `recipe.projectHookRun`              | recipe       | bounded-write | —      | —      | Recipe ProjectHookRun gateway method.              |
 | `recipe.rerun`                       | recipe       | bounded-write | —      | —      | Recipe Rerun gateway method.                       |
+| `resource.cleanup`                   | resource     | bounded-write | —      | —      | Resource Cleanup gateway method.                   |
 | `resource.control`                   | resource     | bounded-write | —      | —      | Resource Control gateway method.                   |
 | `resource.health`                    | resource     | bounded-write | —      | —      | Resource Health gateway method.                    |
 | `resource.list`                      | resource     | read-only     | —      | —      | Resource List gateway method.                      |
+| `resource.watch.setEnabled`          | resource     | bounded-write | —      | —      | Resource Watch SetEnabled gateway method.          |
 | `run.archive`                        | run          | bounded-write | —      | —      | Run Archive gateway method.                        |
 | `run.autoRecovery.stop`              | run          | bounded-write | —      | —      | Run AutoRecovery Stop gateway method.              |
 | `run.backfillSummaries`              | run          | bounded-write | —      | —      | Run BackfillSummaries gateway method.              |
@@ -292,5 +294,6 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `terminal.data`                 | terminal  | Terminal Data gateway event.                 |
 | `terminal.exited`               | terminal  | Terminal Exited gateway event.               |
 | `terminal.mode`                 | terminal  | Terminal Mode gateway event.                 |
+| `tmux.worker.inventory.updated` | tmux      | Tmux Worker Inventory Updated gateway event. |
 | `worker.signal`                 | worker    | Worker Signal gateway event.                 |
 | `workspace.metro.data`          | workspace | Workspace Metro Data gateway event.          |

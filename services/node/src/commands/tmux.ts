@@ -21,6 +21,82 @@ const paneChangeCache = new Map<string, PaneCacheEntry>();
 const gitBranchCache = new Map<string, { observedAt: number; branch?: string }>();
 const gitBranchWatchers = new Map<string, FSWatcher[]>();
 
+interface ProcessRow {
+  pid: number;
+  ppid: number;
+  stat: string;
+  cpuPct: number;
+}
+
+const PROCESS_ACTIVE_CPU_THRESHOLD = 1;
+
+function parseProcessRows(stdout: string): ProcessRow[] {
+  return stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [pidRaw, ppidRaw, stat = '', cpuRaw = '0'] = line.split(/\s+/, 4);
+      return {
+        pid: Number.parseInt(pidRaw, 10),
+        ppid: Number.parseInt(ppidRaw, 10),
+        stat,
+        cpuPct: Number.parseFloat(cpuRaw),
+      };
+    })
+    .filter(
+      (row) => Number.isFinite(row.pid) && Number.isFinite(row.ppid) && Number.isFinite(row.cpuPct),
+    );
+}
+
+async function sampleProcessRows(): Promise<ProcessRow[]> {
+  try {
+    const { stdout } = await execFileAsync('ps', ['-Ao', 'pid=,ppid=,stat=,pcpu='], {
+      timeout: 2000,
+    });
+    return parseProcessRows(stdout);
+  } catch {
+    return [];
+  }
+}
+
+function descendantRows(rootPid: number | undefined, rows: ProcessRow[]): ProcessRow[] {
+  if (rootPid == null) return [];
+  const byParent = new Map<number, ProcessRow[]>();
+  for (const row of rows) {
+    const siblings = byParent.get(row.ppid) ?? [];
+    siblings.push(row);
+    byParent.set(row.ppid, siblings);
+  }
+  const descendants: ProcessRow[] = [];
+  const queue = [...(byParent.get(rootPid) ?? [])];
+  while (queue.length > 0) {
+    const row = queue.shift()!;
+    descendants.push(row);
+    queue.push(...(byParent.get(row.pid) ?? []));
+  }
+  return descendants;
+}
+
+function processSignalForPane(
+  pane: NodeTmuxPane,
+  rows: ProcessRow[],
+  observedAt: number,
+): NonNullable<NodeTmuxPaneSignals['process']> | undefined {
+  const descendants = descendantRows(pane.pid, rows);
+  if (descendants.length === 0) return undefined;
+  const cpuPct = Number(descendants.reduce((sum, row) => sum + row.cpuPct, 0).toFixed(1));
+  const runningProcesses = descendants.filter((row) => row.stat.includes('R')).length;
+  const active = cpuPct >= PROCESS_ACTIVE_CPU_THRESHOLD || runningProcesses > 0;
+  return {
+    label: active ? `process active · cpu ${cpuPct}%` : `process idle · cpu ${cpuPct}%`,
+    observedAt,
+    active,
+    cpuPct,
+    runningProcesses,
+  };
+}
+
 // Resolve tmux binary — launchd agents have a minimal PATH that may not include /opt/homebrew/bin
 const TMUX = (() => {
   const candidates = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux'];
@@ -212,6 +288,7 @@ function paneStableKey(pane: NodeTmuxPane): string {
 }
 
 function paneSignature(pane: NodeTmuxPane): string {
+  const process = pane.signals?.process ? { active: pane.signals.process.active } : undefined;
   return createHash('sha1')
     .update(
       JSON.stringify({
@@ -227,6 +304,7 @@ function paneSignature(pane: NodeTmuxPane): string {
         hook: pane.signals?.hook,
         statusline: pane.signals?.statusline,
         taskFile: pane.signals?.taskFile,
+        process,
       }),
     )
     .digest('hex');
@@ -398,6 +476,7 @@ async function samplePanes(): Promise<NodeTmuxPane[]> {
     throw error;
   }
   const panes = parseTmuxPaneList(stdout);
+  const processRows = await sampleProcessRows();
   const signalCache = new Map<string, Promise<NodeTmuxPaneSignals | undefined>>();
   const enriched = await Promise.all(
     panes.map(async (pane) => {
@@ -408,10 +487,15 @@ async function samplePanes(): Promise<NodeTmuxPane[]> {
           : undefined,
         resolveGitBranch(pane.cwd, observedAt),
       ]);
+      const processSignal = processSignalForPane(pane, processRows, observedAt);
+      const mergedSignals =
+        signals || processSignal
+          ? { ...(signals ?? {}), ...(processSignal ? { process: processSignal } : {}) }
+          : undefined;
       return {
         ...pane,
         ...(branch ? { branch } : {}),
-        ...(signals ? { signals } : {}),
+        ...(mergedSignals ? { signals: mergedSignals } : {}),
       };
     }),
   );

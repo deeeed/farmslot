@@ -34,6 +34,7 @@ import { loadFleetStatus, onStateChange } from './fleet/state.js';
 import { resetClientResourceIndex, streamUnsubscribe } from './methods/stream-feed.js';
 import { parseTerminalKey } from './methods/terminal.js';
 import { unsubscribeWorkerTerminalPty } from './methods/terminal-worker.js';
+import { buildTmuxWorkerUpdateFromNodeSnapshot } from './methods/tmux-workers.js';
 import { metroUnsubscribeAll } from './methods/workspace.js';
 import { initThumbnailCache, unsubscribeThumbnails } from './observability/thumbnail-cache.js';
 import { onPtyExit, unsubscribeAllPty } from './runtime/pty-stream.js';
@@ -188,6 +189,34 @@ export function createWebSocketServer(
             return;
           }
           handleNodeResourceChanged(peek.payload);
+          return;
+        }
+
+        // Route node-pushed tmux worker inventory/status updates. The node owns
+        // sampling so the gateway can broadcast changes without polling every pane.
+        if (peek.type === 'event' && peek.event === 'node.tmux.workers.changed') {
+          if (
+            authRuntime.auth.mode !== 'none' &&
+            (!state.authenticated || state.clientKind !== 'node')
+          ) {
+            console.warn(`[auth] rejected pre-auth node event from ${state.id}`);
+            ws.close(1008, 'node authentication required');
+            return;
+          }
+          buildTmuxWorkerUpdateFromNodeSnapshot(peek.payload)
+            .then((result) => {
+              broadcast({
+                type: 'event',
+                event: Events.TMUX_WORKER_INVENTORY_UPDATED,
+                payload: { result },
+                seq: ++eventSeq,
+              });
+            })
+            .catch((err) => {
+              // Node-pushed inventory is a live cache optimization. Keep the gateway serving
+              // request-time tmux.worker.list even if one pushed snapshot is malformed/stale.
+              console.warn(`[server] tmux worker update failed: ${(err as Error).message}`);
+            });
           return;
         }
         // Route node metrics events to node health

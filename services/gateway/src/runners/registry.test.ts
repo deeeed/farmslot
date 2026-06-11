@@ -687,9 +687,16 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, { safetyTier: 'full-auto' });
       assert.match(
         cmd,
-        /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
+        /unset CLAUDECODE && \/usr\/local\/bin\/claude --dangerously-skip-permissions --model sonnet/,
       );
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
+      assert.match(
+        cmd,
+        /install-runner-observability\.mjs' --runner 'claude' --repo '\/tmp\/repo'/,
+      );
+      assert.doesNotMatch(cmd, /farmslot-observability-hook\.mjs/);
+      assert.doesNotMatch(cmd, /base64 --decode/);
+      assert.doesNotMatch(cmd, /import fs from/);
     });
 
     it('inline-launches interactively by default so relaunch paths stay steerable', () => {
@@ -698,6 +705,7 @@ describe('buildLaunchCommand', () => {
       assert.doesNotMatch(cmd, /--dangerously-/);
       assert.doesNotMatch(cmd, /--print/);
       assert.doesNotMatch(cmd, /Read TASK/);
+      assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
         /cd '\/tmp\/repo' && unset CLAUDECODE && \/usr\/local\/bin\/claude --model sonnet$/,
@@ -712,10 +720,22 @@ describe('buildLaunchCommand', () => {
         taskFile: TASK_FILE,
         claudeUsesDispatchCmd: true,
       });
+      assert.match(cmd, /install-runner-observability\.mjs/);
       assert.match(
         cmd,
         /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/claude --model opus \.task\/fix\/abc\/TASK\.md/,
       );
+    });
+
+    it('uses a shell-safe HOME expression for remote observability installs', () => {
+      const vars = makeVars({ host: 'remote-mac', remoteRepo: '~/work/repo' });
+      const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT);
+      assert.match(
+        cmd,
+        /node "\$\{HOME\}\/farmslot-node\/scripts\/install-runner-observability\.mjs"/,
+      );
+      assert.match(cmd, /--repo "\$\{HOME\}\/work\/repo"/);
+      assert.match(cmd, /cd "\$\{HOME\}\/work\/repo" && unset CLAUDECODE/);
     });
 
     it('appends modelFlag when dispatch_cmd lacks {model} placeholder', () => {

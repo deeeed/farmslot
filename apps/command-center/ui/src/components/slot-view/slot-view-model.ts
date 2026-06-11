@@ -158,6 +158,14 @@ export function isMediaFile(filePath: string): boolean {
   return MEDIA_EXTS.has(ext);
 }
 
+export function isDirectoryReadErrorMessage(message: string): boolean {
+  return (
+    message.includes('EISDIR') ||
+    /illegal operation on a directory/i.test(message) ||
+    /is a directory/i.test(message)
+  );
+}
+
 export function slotViewReadyGateDecision(
   run: Pick<Run, 'decisions'> | null | undefined,
 ): Run['decisions'][number] | null {

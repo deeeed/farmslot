@@ -5,6 +5,7 @@ import type { Run, SlotStatus } from '@farmslot/protocol';
 
 import {
   adjacentSlotId,
+  isDirectoryReadErrorMessage,
   slotSwitcherEntries,
   slotSwitcherSignature,
   slotViewReadyGateDecision,
@@ -123,6 +124,12 @@ test('adjacentSlotId wraps around and tolerates a missing current slot', () => {
   assert.equal(adjacentSlotId(entries, 'missing', -1), 'c');
   assert.equal(adjacentSlotId([{ slot: 'a' }], 'a', 1), 'a');
   assert.equal(adjacentSlotId([], 'missing', 1), '');
+});
+
+test('isDirectoryReadErrorMessage recognizes directory read failures', () => {
+  assert.equal(isDirectoryReadErrorMessage('EISDIR: illegal operation on a directory, read'), true);
+  assert.equal(isDirectoryReadErrorMessage('Path is a directory'), true);
+  assert.equal(isDirectoryReadErrorMessage('ENOENT: no such file or directory'), false);
 });
 
 test('slotViewReadyGateDecision prefers pending ready decisions then newest resolved ready decision', () => {

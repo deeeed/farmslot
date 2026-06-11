@@ -2,6 +2,7 @@ import { DEFAULT_CURSOR_MODEL, type SafetyTier } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 import { expandDispatchCmd } from '../core/hooks.js';
+import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
 
 import {
@@ -10,6 +11,10 @@ import {
   runnerFlagsForTier,
   runnerNeedsPostLaunchPrompt,
 } from './registry.js';
+import {
+  buildRunnerObservabilityInstallCommand,
+  withRunnerObservabilityInstall,
+} from './runner-observability.js';
 
 const CODEX_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
 
@@ -128,6 +133,8 @@ export interface BuildLaunchOptions {
    * When omitted, `runnerDefaultSafetyTier(runnerId)` is consulted.
    */
   safetyTier?: SafetyTier;
+  /** Project runtime directory that owns observability files (defaults to .agent). */
+  runtimeDir?: string;
 }
 
 /**
@@ -180,16 +187,28 @@ export function buildLaunchCommand(
   // Claude: either route through dispatch_cmd (production dispatch) or launch
   // inline via its configured binary + inline flags (relaunch paths).
   if (runner === 'claude') {
+    const installCommand = buildRunnerObservabilityInstallCommand(
+      vars,
+      runner,
+      repo,
+      opts.runtimeDir,
+    );
     if (opts.claudeUsesDispatchCmd) {
       if (!hasDispatchCmd) {
         throw new Error(`No dispatch_cmd in pool config for ${vars.machine}`);
       }
-      return `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}`;
+      return withRunnerObservabilityInstall(
+        `unset CLAUDECODE && ${expanded}${cmdHasModelPlaceholder ? '' : modelFlag}`,
+        installCommand,
+      );
     }
     const claudePath = vars.claudePath || 'claude';
     const flagList = runnerFlagsForTier(runner, tier);
     const flags = flagList.join(' ');
-    return `cd '${repo}' && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`;
+    return withRunnerObservabilityInstall(
+      `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags ? ` ${flags}` : ''}${modelFlag}`,
+      installCommand,
+    );
   }
 
   // Codex: route through dispatch_cmd when it's runner-aware; otherwise fall

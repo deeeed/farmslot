@@ -126,7 +126,7 @@ SIGNAL.json (existing)     # extended with phase: busy|idle|done
 
 ### Gateway integration
 
-`task-watcher.ts` already watches `TASK.md` + `SIGNAL.json` per active context. Extend it to also watch the two new files via the same chokidar / remote-node mechanism — no new transport, no new lifecycle. The watcher emits `runner.observability.update` events into `RunMonitorState` and the existing `Run.monitorState` subfield (ADR-027), so persistence and restart-recovery are already covered.
+Node agents own runtime-file monitoring. Each node samples local tmux panes and observability files, then pushes changed snapshots to the gateway; gateway clients receive `tmux.worker.inventory.updated` with the same shape as `tmux.worker.list`. This deliberately stays separate from `worker.signal`: `SIGNAL.json` remains task-template/run semantics, while hook/statusline files are runner-process liveness (`status.source: hook | statusline | task-file | tmux`). Runner-aware readings can set `status.requiresAttention` with an `attentionReason` so Command Center can highlight stopped/waiting workers without parsing runner output. Implementations may expose a repo-root `.observability` compatibility symlink to the canonical runtime-dir observability folder so tmux-pane inventory can read status without loading project config on every sample.
 
 Pane scraping stays in `runners.ts`. It becomes the **diagnostic fallback** path inside `RunnerObservability` impls, returning `{ source: 'pane', confidence: 'low' }` so callers can decide whether to trust it. `sendRunnerInstructionSafely` consults `RunnerObservability.isBusy()` first; only when the observability provider returns `unknown` does it fall back to `paneShowsBusyComposer`.
 

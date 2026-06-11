@@ -388,10 +388,8 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
   return status === 'done' || status === 'failed' || status === 'cancelled';
 }
 
-export function routeForRun(run: Pick<Run, 'id' | 'familyId' | 'status'>): string {
-  return isTerminalRunStatus(run.status)
-    ? `family/${run.familyId}?run=${encodeURIComponent(run.id)}`
-    : `run/${run.id}`;
+export function routeForRun(run: Pick<Run, 'id'>): string {
+  return `run/${run.id}`;
 }
 
 export interface GitHubPrLink {
