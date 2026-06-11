@@ -10,7 +10,7 @@
 // gateway (slot.prepare RPC) and onboarding must work before any gateway runs.
 // Slot readiness is proven by the project preflight hook + preflight-slot.sh.
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 
 import {
@@ -58,6 +58,15 @@ function isGitUrl(source: string): boolean {
   return /^(https?|ssh|git):\/\//.test(source) || /^[\w.-]+@[\w.-]+:/.test(source);
 }
 
+/** Origin remote URL of a clone, or '' when git fails / no origin is configured. */
+function gitOriginUrl(repoDir: string): string {
+  const result = spawnSync('git', ['-C', repoDir, 'remote', 'get-url', 'origin'], {
+    encoding: 'utf-8',
+  });
+  if (result.error || result.status !== 0) return '';
+  return result.stdout.trim();
+}
+
 /** Resolve a pack source (local dir or git URL) to a local pack directory. */
 export function resolvePackSource(source: string, ws: Workspace): string {
   if (isGitUrl(source)) {
@@ -65,12 +74,10 @@ export function resolvePackSource(source: string, ws: Workspace): string {
     const dest = join(ws.root, 'packs', name);
     if (existsSync(join(dest, '.git'))) {
       // Same-named packs from different remotes must not silently share a clone.
-      const origin = spawnSync('git', ['-C', dest, 'remote', 'get-url', 'origin'], {
-        encoding: 'utf-8',
-      }).stdout.trim();
+      const origin = gitOriginUrl(dest);
       if (origin !== source) {
         throw new AddError(
-          `pack clone ${dest} tracks ${origin}, not ${source} — remove it or rename one pack repo`,
+          `pack clone ${dest} tracks ${origin || '(no origin remote)'}, not ${source} — remove it or rename one pack repo`,
         );
       }
       run('git', ['-C', dest, 'fetch', 'origin', '--quiet'], { cwd: ws.root });
@@ -131,7 +138,10 @@ function registerProject(
   const name = projectName(proj);
   const src = join(packDir, proj.dir);
   const dest = join(ws.farmslotDir, 'projects', name);
-  cpSync(src, dest, { recursive: true, force: true });
+  // Full replace: packs own their project dirs — files deleted from the pack
+  // must disappear here too, not survive as stale hooks/fixtures.
+  rmSync(dest, { recursive: true, force: true });
+  cpSync(src, dest, { recursive: true });
 
   const projectJsonPath = join(dest, 'project.json');
   const projectJson = JSON.parse(readFileSync(projectJsonPath, 'utf-8')) as {
@@ -163,12 +173,20 @@ function registerProject(
 }
 
 function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress): void {
+  // file:// keeps --filter working for local sources (plain paths bypass the transport).
+  const url = isAbsolute(repoUrl) ? `file://${repoUrl}` : repoUrl;
   if (existsSync(join(repoPath, '.git'))) {
+    // The clone must still track what the pack declares — a repo_url change
+    // with a leftover old clone would validate the wrong codebase.
+    const origin = gitOriginUrl(repoPath);
+    if (origin !== url && origin !== repoUrl) {
+      throw new AddError(
+        `slot repo ${repoPath} tracks ${origin || '(no origin remote)'}, but the pack declares ${repoUrl} — move or remove the old clone, then re-run project add`,
+      );
+    }
     progress.info(`repo exists: ${repoPath}`);
     return;
   }
-  // file:// keeps --filter working for local sources (plain paths bypass the transport).
-  const url = isAbsolute(repoUrl) ? `file://${repoUrl}` : repoUrl;
   run('git', ['clone', '--quiet', '--filter=blob:none', url, repoPath], { cwd: '/' });
   progress.step({ label: `repo cloned (blobless)`, detail: repoPath });
 }

@@ -34,5 +34,7 @@ if is_local "$HOST" "$MACHINE"; then
   cd "$REPO"
   eval "$HOOK"
 else
-  remote "cd '${REMOTE_REPO}' && ${ENV_PREFIX} ${HOOK}"
+  # ENV_PREFIX ends in ';' — guard the cd explicitly so a bad repo path cannot
+  # fall through and run the hook in $HOME.
+  remote "cd '${REMOTE_REPO}' || exit 1; ${ENV_PREFIX} ${HOOK}"
 fi

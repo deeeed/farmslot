@@ -101,6 +101,9 @@ mkdir -p "$WORKSPACE"
 CLONE="${WORKSPACE}/farmslot"
 if [ -d "${CLONE}/.git" ]; then
   echo "  clone exists — refreshing from source"
+  # Re-point origin at the current source so a changed FARMSLOT_REPO_URL or a
+  # git↔local mode switch is applied instead of silently ignored.
+  git -C "$CLONE" remote set-url origin "$SOURCE"
   git -C "$CLONE" fetch origin --quiet
   if [ "$SOURCE_MODE" = "local" ]; then
     src_branch="$(git -C "$SOURCE" rev-parse --abbrev-ref HEAD)"

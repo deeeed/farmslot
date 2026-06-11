@@ -137,10 +137,11 @@ const AUTH_PROBE_TIMEOUT_MS = 10_000;
 
 /** Auth probe per runner. Exit 0 + the expected marker = authenticated. */
 function probeRunnerAuth(name: string): boolean {
+  // Markers are mirrored by install.sh's bash probe — keep both in sync.
   const probes: Record<string, { args: string[]; marker: RegExp }> = {
-    claude: { args: ['auth', 'status'], marker: /"loggedIn":\s*true/ },
-    codex: { args: ['login', 'status'], marker: /logged in/i },
-    'cursor-agent': { args: ['status'], marker: /logged in/i },
+    claude: { args: ['auth', 'status'], marker: /"loggedin":\s*true/i },
+    codex: { args: ['login', 'status'], marker: /logged in (as|using)/i },
+    'cursor-agent': { args: ['status'], marker: /logged in (as|using)/i },
   };
   const probe = probes[name];
   if (!probe) return false;

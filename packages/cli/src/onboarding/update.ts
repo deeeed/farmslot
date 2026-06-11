@@ -62,10 +62,14 @@ export async function farmslotUpdate(
     git(['stash', 'push', '--include-untracked', '-m', 'farmslot-update backup'], clone);
   }
   git(['fetch', 'origin', '--quiet'], clone);
-  const branch =
-    state.source.mode === 'local'
-      ? git(['rev-parse', '--abbrev-ref', 'HEAD'], state.source.path)
-      : 'main';
+  let branch: string;
+  if (state.source.mode === 'local') {
+    branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], state.source.path);
+  } else {
+    // Track the remote's current default branch, not a hardcoded name.
+    git(['remote', 'set-head', 'origin', '--auto'], clone);
+    branch = git(['rev-parse', '--abbrev-ref', 'origin/HEAD'], clone).replace(/^origin\//, '');
+  }
   const hasBranch =
     spawnSync('git', ['rev-parse', '--verify', branch], { cwd: clone }).status === 0;
   git(

@@ -130,9 +130,17 @@ export function validatePackDir(packDir: string): { pack: PackJson | null; error
       continue;
     }
     const name = projectName(proj);
-    const declared = JSON.parse(readFileSync(join(projDir, 'project.json'), 'utf-8')) as {
-      name?: string;
-    };
+    let declared: { name?: string };
+    try {
+      declared = JSON.parse(readFileSync(join(projDir, 'project.json'), 'utf-8')) as {
+        name?: string;
+      };
+    } catch (err) {
+      errors.push(
+        `${proj.dir}/project.json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      continue;
+    }
     if (declared.name !== name) {
       errors.push(
         `${proj.dir}/project.json: 'name' is ${JSON.stringify(declared.name)} but must match the dir name '${name}'`,

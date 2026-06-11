@@ -21,19 +21,53 @@ export function registerProjectCommand(program: Command): void {
         process.exit(1);
       }
 
+      const infos: string[] = [];
       try {
         const result = projectAdd(source, ws, {
           step: (s) => {
-            output.write(`${green('[OK]')} ${s.label}${s.detail ? dim(`  ${s.detail}`) : ''}\n`);
+            if (!output.json) {
+              output.write(`${green('[OK]')} ${s.label}${s.detail ? dim(`  ${s.detail}`) : ''}\n`);
+            }
           },
-          info: (msg) => output.write(`${dim(msg)}\n`),
+          info: (msg) => {
+            infos.push(msg);
+            if (!output.json) output.write(`${dim(msg)}\n`);
+          },
         });
 
-        output.write(`\n${bold(`pack ${result.pack.name}: ${result.action}`)}\n`);
-        output.write(`  ${green('✓')} slots: ${result.slots.join(', ')}\n`);
-        if (result.pack.action_sheet) {
-          output.write(`\n${bold('Next steps')}\n${result.pack.action_sheet}\n`);
+        // Every onboarding command ends with doctor.
+        const report = runDoctor(ws);
+        if (output.json) {
+          output.writeJson({
+            pack: result.pack.name,
+            action: result.action,
+            slots: result.slots,
+            notes: infos,
+            doctor: report,
+          });
+        } else {
+          output.write(`\n${bold(`pack ${result.pack.name}: ${result.action}`)}\n`);
+          output.write(`  ${green('✓')} slots: ${result.slots.join(', ')}\n`);
+          if (result.pack.action_sheet) {
+            output.write(`\n${bold('Next steps')}\n${result.pack.action_sheet}\n`);
+          }
+          output.write(`\n${bold('doctor')}\n`);
+          for (const section of report.sections) {
+            for (const check of section.checks) {
+              if (!check.ok) {
+                output.write(
+                  `${red('[FAIL]')} ${section.title}: ${check.name}${check.detail ? dim(`  ${check.detail}`) : ''}\n`,
+                );
+              }
+            }
+          }
+          output.write(
+            report.ok
+              ? `${green('doctor: all checks passed')}\n`
+              : `${red('doctor: checks failed')}\n`,
+          );
         }
+        if (!report.ok) process.exit(1);
       } catch (err) {
         if (err instanceof AddError) {
           output.error(err.message);
@@ -41,22 +75,5 @@ export function registerProjectCommand(program: Command): void {
         }
         throw err;
       }
-
-      // Every onboarding command ends with doctor.
-      output.write(`\n${bold('doctor')}\n`);
-      const report = runDoctor(ws);
-      for (const section of report.sections) {
-        for (const check of section.checks) {
-          if (!check.ok) {
-            output.write(
-              `${red('[FAIL]')} ${section.title}: ${check.name}${check.detail ? dim(`  ${check.detail}`) : ''}\n`,
-            );
-          }
-        }
-      }
-      output.write(
-        report.ok ? `${green('doctor: all checks passed')}\n` : `${red('doctor: checks failed')}\n`,
-      );
-      if (!report.ok) process.exit(1);
     });
 }

@@ -97,9 +97,10 @@ Ownership rules:
   edits are always preserved.)
 - **Nothing is deregistered.** Slots/projects removed from a pack stay in the
   pool and `projects/` until removed manually — repair only adds or verifies.
-- Re-running `project add` with an **unchanged** pack is verify-only: no hooks,
-  no setup, no re-copy. Missing pieces (deleted repo, removed slot) escalate
-  that run to a repair automatically.
+- Re-running `project add` with an **unchanged** pack is verify-only: no
+  mutation hooks (`pre_add`/`post_add`), no setup, no re-copy. Validation
+  (`preflight-slot.sh`) and the `smoke` hook still run. Missing pieces (deleted
+  repo, removed slot) escalate that run to a repair automatically.
 
 ## Example
 

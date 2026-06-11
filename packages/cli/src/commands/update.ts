@@ -18,17 +18,47 @@ export function registerUpdateCommand(program: Command): void {
         output.error('no workspace found — set FARMSLOT_WORKSPACE or run install.sh');
         process.exit(1);
       }
+      const infos: string[] = [];
       try {
         const result = await farmslotUpdate(ws, {
-          step: (label, detail) =>
-            output.write(`${green('[OK]')} ${label}${detail ? dim(`  ${detail}`) : ''}\n`),
-          info: (msg) => output.write(`${dim(msg)}\n`),
+          step: (label, detail) => {
+            if (!output.json) {
+              output.write(`${green('[OK]')} ${label}${detail ? dim(`  ${detail}`) : ''}\n`);
+            }
+          },
+          info: (msg) => {
+            infos.push(msg);
+            if (!output.json) output.write(`${dim(msg)}\n`);
+          },
         });
-        output.write(
-          `\n${bold('update complete')} ${dim(`${result.branch} @ ${result.commit}`)}\n` +
-            `  migrations: ${result.migrationsApplied.length ? result.migrationsApplied.join(', ') : 'none'}\n` +
-            `  packs re-synced: ${result.packsSynced.length ? result.packsSynced.join(', ') : 'none'}\n`,
-        );
+
+        // Every onboarding command ends with doctor.
+        const report = runDoctor(ws);
+        if (output.json) {
+          output.writeJson({ ...result, notes: infos, doctor: report });
+        } else {
+          output.write(
+            `\n${bold('update complete')} ${dim(`${result.branch} @ ${result.commit}`)}\n` +
+              `  migrations: ${result.migrationsApplied.length ? result.migrationsApplied.join(', ') : 'none'}\n` +
+              `  packs re-synced: ${result.packsSynced.length ? result.packsSynced.join(', ') : 'none'}\n`,
+          );
+          output.write(`\n${bold('doctor')}\n`);
+          for (const section of report.sections) {
+            for (const check of section.checks) {
+              if (!check.ok) {
+                output.write(
+                  `${red('[FAIL]')} ${section.title}: ${check.name}${check.detail ? dim(`  ${check.detail}`) : ''}\n`,
+                );
+              }
+            }
+          }
+          output.write(
+            report.ok
+              ? `${green('doctor: all checks passed')}\n`
+              : `${red('doctor: checks failed')}\n`,
+          );
+        }
+        if (!report.ok) process.exit(1);
       } catch (err) {
         if (err instanceof AddError) {
           output.error(err.message);
@@ -36,21 +66,5 @@ export function registerUpdateCommand(program: Command): void {
         }
         throw err;
       }
-
-      output.write(`\n${bold('doctor')}\n`);
-      const report = runDoctor(ws);
-      for (const section of report.sections) {
-        for (const check of section.checks) {
-          if (!check.ok) {
-            output.write(
-              `${red('[FAIL]')} ${section.title}: ${check.name}${check.detail ? dim(`  ${check.detail}`) : ''}\n`,
-            );
-          }
-        }
-      }
-      output.write(
-        report.ok ? `${green('doctor: all checks passed')}\n` : `${red('doctor: checks failed')}\n`,
-      );
-      if (!report.ok) process.exit(1);
     });
 }
