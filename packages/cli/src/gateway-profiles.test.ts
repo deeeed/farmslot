@@ -88,6 +88,33 @@ test('resolveGatewayTarget precedence: url > gateway > env > active > default', 
     url: DEFAULT_GATEWAY_URL,
     source: 'default',
   });
+  // Profile WITHOUT a stored secret: credential must be null (not undefined),
+  // so the client never borrows env secrets for a remote profile target.
+  assert.deepEqual(
+    resolveGatewayTarget({ gateway: 'bare' }, {}, { gateways: { bare: { url: 'ws://b' } } }),
+    { url: 'ws://b', credential: null, profileName: 'bare', source: 'gateway-flag' },
+  );
+});
+
+test('resolveGatewayTarget ignores a corrupt store for default targets', () => {
+  // profilesOverride simulating loadProfiles() throwing is covered through the
+  // lazy path: url/env branches must never call the loader at all.
+  let loaderCalls = 0;
+  const throwingProfiles: GatewayProfilesFile = {
+    get gateways(): Record<string, never> {
+      loaderCalls += 1;
+      throw new Error('boom');
+    },
+  };
+  assert.deepEqual(resolveGatewayTarget({ url: 'ws://x' }, {}, throwingProfiles), {
+    url: 'ws://x',
+    source: 'url-flag',
+  });
+  assert.deepEqual(resolveGatewayTarget({}, { GW_URL: 'ws://env' }, throwingProfiles), {
+    url: 'ws://env',
+    source: 'env',
+  });
+  assert.equal(loaderCalls, 0);
 });
 
 test('resolveGatewayTarget rejects unknown --gateway with an actionable hint', () => {

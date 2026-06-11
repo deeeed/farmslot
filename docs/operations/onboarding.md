@@ -67,10 +67,10 @@ stored machine-level in `~/.farmslot/gateways.json` (0600 — secrets never
 appear in command output):
 
 ```bash
-farmslot gateway add lab --profile-url wss://lab-host:7777   # first profile becomes active
+farmslot gateway add lab wss://lab-host:7777   # first profile becomes active
 farmslot login lab --token <token>      # or --password <p> / --code <pairing-code>
 farmslot auth status --all              # authenticated / not signed in / unreachable per profile
-farmslot fleet --gateway lab            # any command can target a profile
+farmslot fleet status --gateway lab     # any command can target a profile
 farmslot gateway use lab                # set the default for future commands
 farmslot logout lab                     # forget the stored credential
 ```
@@ -78,7 +78,8 @@ farmslot logout lab                     # forget the stored credential
 Resolution order per invocation: `--url` > `--gateway <name>` > `GW_URL` env >
 active profile > `ws://localhost:7777`. `login` verifies against the gateway's
 existing `auth.connect` / pairing flow before storing anything; a wrong
-credential is never persisted. Local single-gateway use needs no profiles at
+credential is never persisted. Prefer `--code` (pairing) on shared machines —
+`--token`/`--password` values land in shell history. Local single-gateway use needs no profiles at
 all.
 
 ## Check health anytime

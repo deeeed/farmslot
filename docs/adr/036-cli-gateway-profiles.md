@@ -26,7 +26,7 @@ Make the CLI a first-class multi-gateway client by reusing the Companion's
 profile/auth model:
 
 1. **Profiles (kubeconfig-style contexts).**
-   - `farmslot gateway add <name> --url <ws-url>` / `remove <name>` / `list`
+   - `farmslot gateway add <name> <ws-url>` / `remove <name>` / `list`
    - `farmslot gateway use <name>` sets the active profile;
      `--gateway <name>` overrides per invocation; `--url` keeps working for
      ad-hoc targets.

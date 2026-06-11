@@ -3,7 +3,7 @@
 // new gateway methods.
 import type { GatewayAuthConnectResult, PairingExchangeResult } from '@farmslot/protocol';
 
-import { GatewayClient } from './gateway-client.js';
+import { GatewayClient, GatewayConnectionError } from './gateway-client.js';
 import type { GatewayProfile } from './gateway-profiles.js';
 
 export const AUTH_PROBE_TIMEOUT_MS = 5_000;
@@ -39,7 +39,9 @@ export async function probeGatewayAuth(
       : { state: 'authenticated', authMode: result.authMode };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    if (/Connection failed|Timeout|closed unexpectedly/.test(detail)) {
+    // Typed transport failure = unreachable; anything else came back from the
+    // gateway and means the credential was rejected/missing.
+    if (err instanceof GatewayConnectionError) {
       return { state: 'unreachable', detail };
     }
     return { state: 'inactive', detail };

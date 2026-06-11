@@ -364,8 +364,7 @@ async function gatewaySection(): Promise<DoctorSection> {
         {
           name: 'profiles',
           ok: true,
-          detail:
-            'none configured (ad-hoc --url mode) — farmslot gateway add <name> --profile-url <ws-url>',
+          detail: 'none configured (ad-hoc --url mode) — farmslot gateway add <name> <ws-url>',
         },
       ],
     };

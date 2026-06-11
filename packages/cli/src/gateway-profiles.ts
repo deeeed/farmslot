@@ -31,7 +31,15 @@ export function profilesPath(env: NodeJS.ProcessEnv = process.env): string {
 
 export function loadProfiles(path: string = profilesPath()): GatewayProfilesFile {
   if (!existsSync(path)) return { gateways: {} };
-  const parsed = JSON.parse(readFileSync(path, 'utf-8')) as GatewayProfilesFile;
+  let parsed: GatewayProfilesFile;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf-8')) as GatewayProfilesFile;
+  } catch (err) {
+    // Always name the file — a raw SyntaxError with no path is undiagnosable.
+    throw new Error(
+      `Invalid gateway profiles file: ${path} — fix or remove it (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
   if (typeof parsed !== 'object' || parsed === null || typeof parsed.gateways !== 'object') {
     throw new Error(`Invalid gateway profiles file: ${path} — fix or remove it`);
   }
@@ -61,8 +69,13 @@ export function assertGatewayUrl(url: string): void {
 
 export interface GatewayTarget {
   url: string;
-  /** Profile credential when the target came from a profile. */
-  credential?: { token?: string; password?: string };
+  /**
+   * Profile credential when the target came from a profile. null = profile has
+   * no credential: the client must NOT fall back to env discovery, or a local
+   * secret could leak to a remote gateway. undefined = non-profile target
+   * (env discovery stays allowed for back-compat).
+   */
+  credential?: { token?: string; password?: string } | null;
   profileName?: string;
   source: 'url-flag' | 'gateway-flag' | 'env' | 'active-profile' | 'default';
 }
@@ -79,24 +92,29 @@ export function profileCredential(
  * Resolve which gateway a command targets.
  * Precedence: --url > --gateway <name> > GW_URL env (back-compat) >
  * active profile > default localhost.
+ *
+ * The profile store is read lazily and only on the profile branches: a corrupt
+ * gateways.json must never break --url/GW_URL/default invocations.
  */
 export function resolveGatewayTarget(
   opts: { url?: string; gateway?: string },
   env: NodeJS.ProcessEnv = process.env,
-  profiles: GatewayProfilesFile = loadProfiles(),
+  profilesOverride?: GatewayProfilesFile,
 ): GatewayTarget {
   if (opts.url) return { url: opts.url, source: 'url-flag' };
+  const getProfiles = (): GatewayProfilesFile => profilesOverride ?? loadProfiles();
 
   if (opts.gateway) {
+    const profiles = getProfiles();
     const profile = profiles.gateways[opts.gateway];
     if (!profile) {
       throw new Error(
-        `Unknown gateway profile '${opts.gateway}' — add it with: farmslot gateway add ${opts.gateway} --url <ws-url>`,
+        `Unknown gateway profile '${opts.gateway}' — add it with: farmslot gateway add ${opts.gateway} <ws-url>`,
       );
     }
     return {
       url: profile.url,
-      credential: profileCredential(profile),
+      credential: profileCredential(profile) ?? null,
       profileName: opts.gateway,
       source: 'gateway-flag',
     };
@@ -104,12 +122,24 @@ export function resolveGatewayTarget(
 
   if (env.GW_URL) return { url: env.GW_URL, source: 'env' };
 
+  let profiles: GatewayProfilesFile;
+  try {
+    profiles = getProfiles();
+  } catch (err) {
+    // A corrupt store must not break local default-target commands — warn
+    // loudly on stderr and fall back; doctor and the gateway/auth commands
+    // surface the same error with the file path as a hard failure.
+    process.stderr.write(
+      `warning: ${err instanceof Error ? err.message : String(err)} — using default gateway target\n`,
+    );
+    return { url: DEFAULT_GATEWAY_URL, source: 'default' };
+  }
   if (profiles.active) {
     const profile = profiles.gateways[profiles.active];
     if (profile) {
       return {
         url: profile.url,
-        credential: profileCredential(profile),
+        credential: profileCredential(profile) ?? null,
         profileName: profiles.active,
         source: 'active-profile',
       };

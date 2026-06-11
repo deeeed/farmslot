@@ -168,26 +168,28 @@ function registerProfileSubcommands(gateway: Command): void {
     .command('add')
     .description('Add a named gateway profile')
     .argument('<name>', 'profile name (lowercase kebab-case)')
-    .requiredOption('--profile-url <ws-url>', 'gateway WebSocket URL, e.g. wss://host:7777')
+    // Positional URL: the global --url target flag is parsed at program level,
+    // so a same-named subcommand option can never receive a value.
+    .argument('<ws-url>', 'gateway WebSocket URL, e.g. wss://host:7777')
     .option('--use', 'make this the active profile')
-    .action((name: string, opts: { profileUrl: string; use?: boolean }, cmd: Command) => {
+    .action((name: string, url: string, opts: { use?: boolean }, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       try {
         assertProfileName(name);
-        assertGatewayUrl(opts.profileUrl);
+        assertGatewayUrl(url);
         const profiles = loadProfiles();
         if (profiles.gateways[name]) {
           output.error(`profile '${name}' already exists — remove it first or pick another name`);
           process.exit(1);
         }
-        profiles.gateways[name] = { url: opts.profileUrl };
+        profiles.gateways[name] = { url };
         if (opts.use || !profiles.active) profiles.active = name;
         saveProfiles(profiles);
         const entry = redactProfile(name, profiles.gateways[name], profiles.active);
         if (output.json) output.writeJson(entry);
         else {
           output.write(
-            `${green('added')} ${name} ${dim(opts.profileUrl)}${entry.active ? ` ${dim('(active)')}` : ''}\n` +
+            `${green('added')} ${name} ${dim(url)}${entry.active ? ` ${dim('(active)')}` : ''}\n` +
               `${dim(`next: farmslot login ${name}`)}\n`,
           );
         }
@@ -230,7 +232,7 @@ function registerProfileSubcommands(gateway: Command): void {
       }
       if (entries.length === 0) {
         output.write(
-          `${dim('no profiles — add one with: farmslot gateway add <name> --profile-url <ws-url>')}\n`,
+          `${dim('no profiles — add one with: farmslot gateway add <name> <ws-url>')}\n`,
         );
         return;
       }
@@ -250,7 +252,7 @@ function registerProfileSubcommands(gateway: Command): void {
       const profiles = loadProfiles();
       if (!profiles.gateways[name]) {
         output.error(
-          `profile '${name}' not found — add it with: farmslot gateway add ${name} --profile-url <ws-url>`,
+          `profile '${name}' not found — add it with: farmslot gateway add ${name} <ws-url>`,
         );
         process.exit(1);
       }

@@ -18,7 +18,7 @@ function requireProfile(
   const resolved = name ?? profiles.active;
   if (!resolved) {
     output.error(
-      'no profile given and no active profile — add one with: farmslot gateway add <name> --profile-url <ws-url>',
+      'no profile given and no active profile — add one with: farmslot gateway add <name> <ws-url>',
     );
     process.exit(1);
   }

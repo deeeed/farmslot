@@ -17,14 +17,23 @@ export interface CommandContext {
 
 export function resolveContext(cmd: Command, options: ResolveContextOptions = {}): CommandContext {
   const opts = cmd.optsWithGlobals();
-  const target = resolveGatewayTarget({ url: opts.url, gateway: opts.gateway });
+  const output = new OutputContext(opts.json ?? false);
+  let target: GatewayTarget;
+  try {
+    target = resolveGatewayTarget({ url: opts.url, gateway: opts.gateway });
+  } catch (err) {
+    // Unknown --gateway etc. must print like every other CLI failure, not as a
+    // raw stack trace out of commander's action wrapper.
+    output.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
   return {
     client: new GatewayClient({
       url: target.url,
       timeout: options.timeout ?? Number(opts.timeout),
       credential: target.credential,
     }),
-    output: new OutputContext(opts.json ?? false),
+    output,
     target,
   };
 }

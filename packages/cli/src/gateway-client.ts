@@ -16,6 +16,14 @@ export interface GatewayClientOpts {
   credential?: GatewayCredential | null;
 }
 
+/** Transport-level failure (refused/timeout/closed) — distinct from RPC errors. */
+export class GatewayConnectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GatewayConnectionError';
+  }
+}
+
 interface GatewayCredential {
   token?: string;
   password?: string;
@@ -29,7 +37,7 @@ export class GatewayClient {
   constructor(opts: GatewayClientOpts) {
     this.url = opts.url;
     this.timeout = opts.timeout;
-    this.credential = opts.credential === undefined ? resolveGatewayCredential() : opts.credential;
+    this.credential = effectiveCredential(opts.credential, resolveGatewayCredential);
   }
 
   async call<T = unknown>(method: string, params: unknown = {}): Promise<T> {
@@ -56,7 +64,7 @@ export class GatewayClient {
           if (!done) {
             done = true;
             ws.close();
-            reject(new Error(`Timeout — no activity for ${this.timeout}ms`));
+            reject(new GatewayConnectionError(`Timeout — no activity for ${this.timeout}ms`));
           }
         }, this.timeout);
       };
@@ -136,18 +144,31 @@ export class GatewayClient {
       });
 
       ws.addEventListener('error', () => {
-        finish(() => reject(new Error('Connection failed — is the gateway running?')));
+        finish(() =>
+          reject(new GatewayConnectionError('Connection failed — is the gateway running?')),
+        );
       });
 
       ws.addEventListener('close', () => {
         if (!done) {
           done = true;
           clearTimeout(timer);
-          reject(new Error('Connection closed unexpectedly'));
+          reject(new GatewayConnectionError('Connection closed unexpectedly'));
         }
       });
     });
   }
+}
+
+/**
+ * Profile credential beats env discovery; an explicit null disables discovery
+ * entirely (profile targets must never borrow local env secrets).
+ */
+export function effectiveCredential(
+  optCredential: GatewayCredential | null | undefined,
+  discover: () => GatewayCredential | null,
+): GatewayCredential | null {
+  return optCredential === undefined ? discover() : optCredential;
 }
 
 function resolveGatewayCredential(): GatewayCredential | null {

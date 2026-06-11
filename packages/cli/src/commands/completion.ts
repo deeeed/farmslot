@@ -199,6 +199,12 @@ _farmslot_commands() {
     'run:Run lifecycle operations'
     'completion:Generate or install shell completions'
     'node:Node management'
+    'doctor:Check workspace health'
+    'project:Project pack management'
+    'update:Update workspace clone and packs'
+    'login:Authenticate a gateway profile'
+    'logout:Forget a gateway credential'
+    'auth:Gateway authentication'
   )
   _describe 'command' commands
 }
@@ -211,7 +217,7 @@ _farmslot_fleet() {
 
 _farmslot_gateway() {
   local -a commands
-  commands=('status:Show Gateway health')
+  commands=('status:Show Gateway health' 'add:Add gateway profile' 'remove:Remove gateway profile' 'list:List gateway profiles' 'use:Set active gateway profile')
   _describe 'subcommand' commands
 }
 
@@ -273,11 +279,11 @@ const BASH_COMPLETION = `_farmslot_completions() {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
   case \${COMP_CWORD} in
-    1) COMPREPLY=($(compgen -W "fleet gateway slot dispatch pr config rpc recipe run completion node" -- "$cur")) ;;
+    1) COMPREPLY=($(compgen -W "fleet gateway slot dispatch pr config rpc recipe run completion node doctor project update login logout auth" -- "$cur")) ;;
     2)
       case \${COMP_WORDS[1]} in
         fleet) COMPREPLY=($(compgen -W "status refresh" -- "$cur")) ;;
-        gateway) COMPREPLY=($(compgen -W "status" -- "$cur")) ;;
+        gateway) COMPREPLY=($(compgen -W "status add remove list use" -- "$cur")) ;;
         slot) COMPREPLY=($(compgen -W "current check prepare release refresh fixtures fixture-refresh sync open action recycle" -- "$cur")) ;;
         dispatch) COMPREPLY=($(compgen -W "preview" -- "$cur")) ;;
         pr) COMPREPLY=($(compgen -W "status list" -- "$cur")) ;;
@@ -296,6 +302,12 @@ complete -F _farmslot_completions farmslot
 const FISH_COMPLETION = `# farmslot completions for fish
 complete -c farmslot -n '__fish_use_subcommand' -a fleet -d 'Fleet management'
 complete -c farmslot -n '__fish_use_subcommand' -a gateway -d 'Gateway management'
+complete -c farmslot -n '__fish_use_subcommand' -a doctor -d 'Check workspace health'
+complete -c farmslot -n '__fish_use_subcommand' -a project -d 'Project pack management'
+complete -c farmslot -n '__fish_use_subcommand' -a update -d 'Update workspace clone and packs'
+complete -c farmslot -n '__fish_use_subcommand' -a login -d 'Authenticate a gateway profile'
+complete -c farmslot -n '__fish_use_subcommand' -a logout -d 'Forget a gateway credential'
+complete -c farmslot -n '__fish_use_subcommand' -a auth -d 'Gateway authentication'
 complete -c farmslot -n '__fish_use_subcommand' -a slot -d 'Slot lifecycle'
 complete -c farmslot -n '__fish_use_subcommand' -a dispatch -d 'Dispatch planning'
 complete -c farmslot -n '__fish_use_subcommand' -a pr -d 'PR status'
@@ -307,7 +319,7 @@ complete -c farmslot -n '__fish_use_subcommand' -a completion -d 'Shell completi
 complete -c farmslot -n '__fish_use_subcommand' -a node -d 'Node management'
 
 complete -c farmslot -n '__fish_seen_subcommand_from fleet' -a 'status refresh'
-complete -c farmslot -n '__fish_seen_subcommand_from gateway' -a 'status'
+complete -c farmslot -n '__fish_seen_subcommand_from gateway' -a 'status add remove list use'
 complete -c farmslot -n '__fish_seen_subcommand_from slot' -a 'current check prepare release refresh fixtures fixture-refresh sync open action recycle'
 complete -c farmslot -n '__fish_seen_subcommand_from dispatch' -a 'preview'
 complete -c farmslot -n '__fish_seen_subcommand_from pr' -a 'status list'
