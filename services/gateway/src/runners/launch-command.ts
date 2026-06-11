@@ -34,7 +34,7 @@ export function buildCursorAgentLaunch(options: {
 
 export function resolveCursorAgentBinary(preferred?: string | null): string {
   if (preferred && preferred.trim()) return preferred.trim();
-  return 'agent';
+  return 'cursor-agent';
 }
 
 export function assertRunnerLaunchPrerequisites(
@@ -45,7 +45,7 @@ export function assertRunnerLaunchPrerequisites(
   // (resolveCodexBinary / resolveCursorAgentBinary / etc.) falls back to the
   // bare CLI name when the pool omits an explicit `*_path`, matching SSH
   // PATH lookup. Machines whose binary lives outside PATH (or under a
-  // non-canonical name like `agent` instead of `cursor-agent`) must still
+  // non-standard install location) must still
   // configure `<runner>_path` in their pool JSON; the failure surfaces at
   // launch time as a missing-binary error rather than here.
 }
