@@ -528,11 +528,14 @@ export class FarmApp extends LitElement {
   private pinnedSlotWorkerStatus(worker: TmuxWorkerSummary | null): string {
     if (!worker) return 'unknown';
     const source = worker.status.source;
-    const isRealSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
-    if (!isRealSignal || worker.status.stale || worker.status.confidence === 'low') {
-      return 'unknown';
+    const isRunnerSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
+    if (isRunnerSignal && !worker.status.stale && worker.status.confidence !== 'low') {
+      return worker.status.state ?? 'unknown';
     }
-    return worker.status.state ?? 'unknown';
+    if (source === 'tmux' && worker.status.state && worker.status.state !== 'unknown') {
+      return worker.status.state;
+    }
+    return 'unknown';
   }
 
   private pinnedSlotWorkerColor(status: string): string {
