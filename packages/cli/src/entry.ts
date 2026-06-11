@@ -12,6 +12,7 @@ import { registerRecipeCommand } from './commands/recipe.js';
 import { registerRpcCommand } from './commands/rpc.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSlotCommand } from './commands/slot.js';
+import { registerWorkspaceCommand } from './commands/workspace.js';
 
 const program = new Command();
 
@@ -35,5 +36,6 @@ registerRunCommand(program);
 registerCompletionCommand(program);
 registerNodeCommand(program);
 registerDoctorCommand(program);
+registerWorkspaceCommand(program);
 
 program.parse();
