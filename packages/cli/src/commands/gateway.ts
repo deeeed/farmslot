@@ -7,6 +7,14 @@ import type { NodesListResult } from '@farmslot/protocol';
 
 import { bold, cyan, dim, green, red } from '../colors.js';
 import { resolveContext } from '../context.js';
+import {
+  assertGatewayUrl,
+  assertProfileName,
+  type GatewayProfile,
+  loadProfiles,
+  saveProfiles,
+} from '../gateway-profiles.js';
+import { OutputContext } from '../output.js';
 
 interface GatewayHealthResult {
   status?: string;
@@ -103,8 +111,8 @@ export function registerGatewayCommand(program: Command): void {
     .description('Show Gateway health and connected node count')
     .action(async (_opts: unknown, cmd: Command) => {
       const opts = cmd.optsWithGlobals();
-      const { client, output } = resolveContext(cmd);
-      const url = String(opts.url);
+      const { client, output, target } = resolveContext(cmd);
+      const url = target.url;
       const timeoutMs = Number(opts.timeout);
       const healthUrl = gatewayHealthUrl(url);
       try {
@@ -139,5 +147,117 @@ export function registerGatewayCommand(program: Command): void {
         else output.error(formatGatewayStatus(result));
         process.exit(1);
       }
+    });
+
+  registerProfileSubcommands(gateway);
+}
+
+/** Strip secrets for any output path — tokens never leave the store file. */
+function redactProfile(name: string, profile: GatewayProfile, active: string | undefined) {
+  return {
+    name,
+    url: profile.url,
+    active: name === active,
+    authMode: profile.authMode ?? null,
+    loggedIn: Boolean(profile.secret),
+  };
+}
+
+function registerProfileSubcommands(gateway: Command): void {
+  gateway
+    .command('add')
+    .description('Add a named gateway profile')
+    .argument('<name>', 'profile name (lowercase kebab-case)')
+    .requiredOption('--profile-url <ws-url>', 'gateway WebSocket URL, e.g. wss://host:7777')
+    .option('--use', 'make this the active profile')
+    .action((name: string, opts: { profileUrl: string; use?: boolean }, cmd: Command) => {
+      const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
+      try {
+        assertProfileName(name);
+        assertGatewayUrl(opts.profileUrl);
+        const profiles = loadProfiles();
+        if (profiles.gateways[name]) {
+          output.error(`profile '${name}' already exists — remove it first or pick another name`);
+          process.exit(1);
+        }
+        profiles.gateways[name] = { url: opts.profileUrl };
+        if (opts.use || !profiles.active) profiles.active = name;
+        saveProfiles(profiles);
+        const entry = redactProfile(name, profiles.gateways[name], profiles.active);
+        if (output.json) output.writeJson(entry);
+        else {
+          output.write(
+            `${green('added')} ${name} ${dim(opts.profileUrl)}${entry.active ? ` ${dim('(active)')}` : ''}\n` +
+              `${dim(`next: farmslot login ${name}`)}\n`,
+          );
+        }
+      } catch (err) {
+        output.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    });
+
+  gateway
+    .command('remove')
+    .description('Remove a gateway profile')
+    .argument('<name>', 'profile name')
+    .action((name: string, _opts: unknown, cmd: Command) => {
+      const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
+      const profiles = loadProfiles();
+      if (!profiles.gateways[name]) {
+        output.error(`profile '${name}' not found`);
+        process.exit(1);
+      }
+      delete profiles.gateways[name];
+      if (profiles.active === name) delete profiles.active;
+      saveProfiles(profiles);
+      if (output.json) output.writeJson({ removed: name });
+      else output.write(`${green('removed')} ${name}\n`);
+    });
+
+  gateway
+    .command('list')
+    .description('List gateway profiles (secrets never shown)')
+    .action((_opts: unknown, cmd: Command) => {
+      const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
+      const profiles = loadProfiles();
+      const entries = Object.entries(profiles.gateways).map(([name, profile]) =>
+        redactProfile(name, profile, profiles.active),
+      );
+      if (output.json) {
+        output.writeJson({ active: profiles.active ?? null, gateways: entries });
+        return;
+      }
+      if (entries.length === 0) {
+        output.write(
+          `${dim('no profiles — add one with: farmslot gateway add <name> --profile-url <ws-url>')}\n`,
+        );
+        return;
+      }
+      for (const entry of entries) {
+        const marker = entry.active ? green('* ') : '  ';
+        const auth = entry.loggedIn ? green(`${entry.authMode} (logged in)`) : dim('no credential');
+        output.write(`${marker}${bold(entry.name)}  ${entry.url}  ${auth}\n`);
+      }
+    });
+
+  gateway
+    .command('use')
+    .description('Set the active gateway profile')
+    .argument('<name>', 'profile name')
+    .action((name: string, _opts: unknown, cmd: Command) => {
+      const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
+      const profiles = loadProfiles();
+      if (!profiles.gateways[name]) {
+        output.error(
+          `profile '${name}' not found — add it with: farmslot gateway add ${name} --profile-url <ws-url>`,
+        );
+        process.exit(1);
+      }
+      profiles.active = name;
+      saveProfiles(profiles);
+      if (output.json) output.writeJson({ active: name });
+      else
+        output.write(`${green('active profile:')} ${name} ${dim(profiles.gateways[name].url)}\n`);
     });
 }

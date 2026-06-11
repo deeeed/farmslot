@@ -9,6 +9,8 @@ import type { EventFrame } from '@farmslot/protocol';
 export interface GatewayClientOpts {
   url: string;
   timeout: number;
+  /** Profile credential (ADR-036); takes precedence over env/.env discovery. */
+  credential?: GatewayCredential;
 }
 
 interface GatewayCredential {
@@ -24,7 +26,7 @@ export class GatewayClient {
   constructor(opts: GatewayClientOpts) {
     this.url = opts.url;
     this.timeout = opts.timeout;
-    this.credential = resolveGatewayCredential();
+    this.credential = opts.credential ?? resolveGatewayCredential();
   }
 
   async call<T = unknown>(method: string, params: unknown = {}): Promise<T> {

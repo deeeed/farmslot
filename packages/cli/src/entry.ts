@@ -22,7 +22,8 @@ program
   .name('farmslot')
   .description('Farmslot fleet management CLI')
   .version('0.1.0')
-  .option('--url <url>', 'Gateway WebSocket URL', process.env.GW_URL || 'ws://localhost:7777')
+  .option('--url <url>', 'Gateway WebSocket URL (overrides profiles; default ws://localhost:7777)')
+  .option('--gateway <name>', 'Gateway profile to target (see: farmslot gateway list)')
   .option('--timeout <ms>', 'Timeout in ms', process.env.GW_TIMEOUT || '30000')
   .option('--json', 'Output raw JSON');
 
