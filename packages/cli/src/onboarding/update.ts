@@ -112,6 +112,12 @@ export async function farmslotUpdate(
   const { pool: migrated, applied } = applyMigrations(pool, steps);
   if (applied.length > 0) {
     writePool(poolPath, migrated);
+    // Persist the migration record immediately — a pack-sync failure later
+    // must not leave a migrated pool with no bookkeeping.
+    state.pool_migrations = {
+      applied: [...new Set([...state.pool_migrations.applied, ...applied])],
+    };
+    writeState(ws, state);
     progress.step(`pool migrated to schema v${migrated.schema_version}`, applied.join(', '));
   } else {
     progress.info(`pool already at schema v${pool.schema_version ?? 0} — no migrations pending`);

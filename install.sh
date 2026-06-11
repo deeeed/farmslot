@@ -15,6 +15,7 @@
 # Env:
 #   FARMSLOT_WORKSPACE  workspace dir              (default: ~/dev/farmslot-workspace)
 #   FARMSLOT_REPO_URL   git source for fresh mode  (default: the canonical repo URL)
+#   FARMSLOT_REPO_REF   branch/ref for fresh mode  (default: the remote default branch)
 #   FARMSLOT_BIN_DIR    dir for the PATH symlink   (default: ~/.local/bin)
 set -euo pipefail
 
@@ -72,28 +73,29 @@ check_cmd python3 "macOS: brew install python3 · Linux: apt install python3"
 # ── Runners: require at least one AUTHENTICATED runner ──────────────────────
 bold "── Runners ──"
 runner_authenticated=0
-# check_runner <name> <auth-cmd...> — three states: missing / inactive / authenticated
+# check_runner <name> <install-hint> <login-hint> <auth-marker-regex> <auth-cmd...>
+# Three states: missing / inactive / authenticated. Per-runner markers mirror
+# packages/cli prereqs.ts probeRunnerAuth — keep both in sync.
 check_runner() {
-  local name="$1" install_hint="$2" login_hint="$3"
-  shift 3
+  local name="$1" install_hint="$2" login_hint="$3" marker="$4"
+  shift 4
   if ! command -v "$name" >/dev/null 2>&1; then
     echo "  [--] ${name} not found — ${install_hint}"
     return 0
   fi
-  # Authenticated = probe exits 0 AND prints a positive marker. "Not logged in"
-  # or a nonzero exit is inactive. Markers mirror packages/cli prereqs.ts.
-  local probe_out
+  # Authenticated = probe exits 0 AND prints the runner's positive marker.
   # 2>&1: some runners print auth status to stderr — prereqs.ts matches both too.
-  if probe_out="$("$@" 2>&1)" && echo "$probe_out" | grep -qiE '"loggedin": *true|logged in (as|using)'; then
+  local probe_out
+  if probe_out="$("$@" 2>&1)" && echo "$probe_out" | grep -qiE "$marker"; then
     green "  [OK] ${name} (authenticated)"
     runner_authenticated=1
   else
     printf '\033[0;33m  [WARN] %s on PATH but not signed in — %s\033[0m\n' "$name" "$login_hint"
   fi
 }
-check_runner claude "npm install -g @anthropic-ai/claude-code" "run: claude (sign in)" claude auth status
-check_runner codex "npm install -g @openai/codex" "run: codex login" codex login status
-check_runner cursor-agent "see https://cursor.com/cli" "run: cursor-agent login" cursor-agent status
+check_runner claude "npm install -g @anthropic-ai/claude-code" "run: claude (sign in)" '"loggedin": *true' claude auth status
+check_runner codex "npm install -g @openai/codex" "run: codex login" 'logged in (as|using)' codex login status
+check_runner cursor-agent "see https://cursor.com/cli" "run: cursor-agent login" 'logged in (as|using)' cursor-agent status
 [ "$runner_authenticated" = 1 ] || fail "no authenticated agent runner" "install and sign in to at least one of: claude, codex, cursor-agent"
 
 # ── Clone / update the farmslot repo ────────────────────────────────────────
@@ -102,12 +104,20 @@ mkdir -p "$WORKSPACE"
 CLONE="${WORKSPACE}/farmslot"
 if [ -d "${CLONE}/.git" ]; then
   echo "  clone exists — refreshing from source"
+  # Back up local edits like `farmslot update` does — the clone is a tool, but
+  # never silently destroy work (recover with: git stash pop).
+  if [ -n "$(git -C "$CLONE" status --porcelain)" ]; then
+    echo "  clone has local changes — backing them up with git stash (recover: git stash pop)"
+    git -C "$CLONE" stash push --include-untracked -m "farmslot-install backup" >/dev/null
+  fi
   # Re-point origin at the current source so a changed FARMSLOT_REPO_URL or a
   # git↔local mode switch is applied instead of silently ignored.
   git -C "$CLONE" remote set-url origin "$SOURCE"
   git -C "$CLONE" fetch origin --quiet
   if [ "$SOURCE_MODE" = "local" ]; then
     src_branch="$(git -C "$SOURCE" rev-parse --abbrev-ref HEAD)"
+  elif [ -n "${FARMSLOT_REPO_REF:-}" ]; then
+    src_branch="$FARMSLOT_REPO_REF"
   else
     # Track the remote's current default branch (forks may not use main).
     git -C "$CLONE" remote set-head origin --auto >/dev/null
@@ -118,6 +128,9 @@ if [ -d "${CLONE}/.git" ]; then
 else
   # No --branch: clone the source's default/checked-out branch, whatever its name.
   git clone --quiet "$SOURCE" "$CLONE"
+  if [ "$SOURCE_MODE" = "git" ] && [ -n "${FARMSLOT_REPO_REF:-}" ]; then
+    git -C "$CLONE" checkout --quiet "$FARMSLOT_REPO_REF"
+  fi
 fi
 green "  [OK] ${CLONE} ($(git -C "$CLONE" rev-parse --abbrev-ref HEAD) @ $(git -C "$CLONE" rev-parse --short HEAD))"
 

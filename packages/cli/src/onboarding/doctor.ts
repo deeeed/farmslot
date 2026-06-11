@@ -290,8 +290,15 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
       hint: fresh ? undefined : 'run: farmslot update',
     });
   }
-  const resolveLink = (p: string): string =>
-    lstatSync(p).isSymbolicLink() ? resolve(join(p, '..'), readlinkSync(p)) : p;
+  // Follow symlink chains (bounded) — a single readlink misreports
+  // link → link → workspace as "outside this workspace".
+  const resolveLink = (p: string): string => {
+    let current = p;
+    for (let depth = 0; depth < 10 && lstatSync(current).isSymbolicLink(); depth++) {
+      current = resolve(join(current, '..'), readlinkSync(current));
+    }
+    return current;
+  };
 
   const binPath = commandPath('farmslot');
   if (binPath) {

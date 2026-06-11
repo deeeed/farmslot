@@ -395,16 +395,19 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
     for (let n = 1; n <= registered.slots; n++) {
       const slotId = `${pool.machine}-${registered.short}-${n}`;
       const session = `${registered.short}-${n}`;
-      const repoPath = join(ws.reposDir, `${registered.short}-${n}`);
       allSlots.push(slotId);
 
-      // Fail fast when another pack's project already owns this slot/repo name.
+      // Fail fast when the slot id is already taken by anything this project
+      // does not own — another pack's project, or a hand-created slot with no
+      // project field (adopting it would run lifecycle scripts against it).
       const existing = pool.slots.find((s) => s.id === slotId);
-      if (existing && existing.project && existing.project !== registered.name) {
+      if (existing && existing.project !== registered.name) {
         throw new AddError(
-          `slot ${slotId} already belongs to project '${existing.project}' — packs collide on short name '${registered.short}'; set a distinct 'short' in pack.json`,
+          `slot ${slotId} already belongs to ${existing.project ? `project '${existing.project}'` : 'an operator-defined slot (no project field)'} — set a distinct 'short' in pack.json or remove the conflicting slot`,
         );
       }
+      // Honor an operator-repointed slot repo; default for new slots.
+      const repoPath = existing?.repo ?? join(ws.reposDir, `${registered.short}-${n}`);
 
       if (mutate) {
         cloneSlotRepo(registered.repoUrl, repoPath, progress);

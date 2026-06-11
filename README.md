@@ -27,7 +27,28 @@ farmslot/
   docs/              # Architecture, protocols, reference
 ```
 
-## Try it locally
+## Try it
+
+One-line install (experimental — `main` moves daily, run `farmslot update` often):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | bash
+```
+
+Then the happy path is three commands:
+
+```bash
+farmslot project add <pack-dir-or-git-url>   # register a project pack: repos, slots, validation
+farmslot doctor                              # green checklist or specific failures with fix hints
+farmslot update                              # later: pull latest, migrate pool, re-sync packs
+```
+
+The installer checks prerequisites (never auto-installs), sets up `~/dev/farmslot-workspace/`,
+and ends with `farmslot doctor`. Details: [Getting started](https://farmslot.io/docs/guides/getting-started)
+/ [docs/operations/onboarding.md](docs/operations/onboarding.md); the pack contract is in
+[docs/reference/project-packs.md](docs/reference/project-packs.md), with `packs/example-app/` as the reference pack.
+
+### Try the Command Center from a checkout
 
 ```bash
 bash scripts/dev.sh
