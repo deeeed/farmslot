@@ -34,6 +34,13 @@ export interface AddStep {
 export interface AddProgress {
   step: (s: AddStep) => void;
   info: (msg: string) => void;
+  /** JSON mode: child process output goes to stderr so stdout stays pure JSON. */
+  childOutputToStderr?: boolean;
+}
+
+/** spawnSync stdio config honoring the JSON-mode stdout contract. */
+function childStdio(progress: AddProgress): 'inherit' | [number, number, number] {
+  return progress.childOutputToStderr ? [0, 2, 2] : 'inherit';
 }
 
 export class AddError extends Error {}
@@ -41,12 +48,12 @@ export class AddError extends Error {}
 function run(
   cmd: string,
   args: string[],
-  opts: { cwd: string; env?: Record<string, string> },
+  opts: { cwd: string; env?: Record<string, string>; stdio?: 'inherit' | [number, number, number] },
 ): void {
   const result = spawnSync(cmd, args, {
     cwd: opts.cwd,
     env: { ...process.env, ...opts.env },
-    stdio: 'inherit',
+    stdio: opts.stdio ?? 'inherit',
   });
   if (result.error) throw new AddError(`${cmd} failed to start: ${result.error.message}`);
   if (result.status !== 0) {
@@ -68,7 +75,11 @@ function gitOriginUrl(repoDir: string): string {
 }
 
 /** Resolve a pack source (local dir or git URL) to a local pack directory. */
-export function resolvePackSource(source: string, ws: Workspace): string {
+export function resolvePackSource(
+  source: string,
+  ws: Workspace,
+  stdio: 'inherit' | [number, number, number] = 'inherit',
+): string {
   if (isGitUrl(source)) {
     const name = basename(source).replace(/\.git$/, '');
     const dest = join(ws.root, 'packs', name);
@@ -80,13 +91,16 @@ export function resolvePackSource(source: string, ws: Workspace): string {
           `pack clone ${dest} tracks ${origin || '(no origin remote)'}, not ${source} — remove it or rename one pack repo`,
         );
       }
-      run('git', ['-C', dest, 'fetch', 'origin', '--quiet'], { cwd: ws.root });
+      run('git', ['-C', dest, 'fetch', 'origin', '--quiet'], { cwd: ws.root, stdio });
       // Track the remote's CURRENT default branch, not the one cached at clone time.
-      run('git', ['-C', dest, 'remote', 'set-head', 'origin', '--auto'], { cwd: ws.root });
-      run('git', ['-C', dest, 'reset', '--hard', '--quiet', 'origin/HEAD'], { cwd: ws.root });
+      run('git', ['-C', dest, 'remote', 'set-head', 'origin', '--auto'], { cwd: ws.root, stdio });
+      run('git', ['-C', dest, 'reset', '--hard', '--quiet', 'origin/HEAD'], {
+        cwd: ws.root,
+        stdio,
+      });
     } else {
       mkdirSync(join(ws.root, 'packs'), { recursive: true });
-      run('git', ['clone', '--quiet', source, dest], { cwd: ws.root });
+      run('git', ['clone', '--quiet', source, dest], { cwd: ws.root, stdio });
     }
     return dest;
   }
@@ -115,7 +129,7 @@ function runPackHook(
   const cmd = pack.hooks?.[hook];
   if (!cmd) return;
   progress.info(`running pack hook ${hook}: ${cmd}`);
-  run('bash', ['-c', cmd], { cwd: packDir, env: hookEnv(ws) });
+  run('bash', ['-c', cmd], { cwd: packDir, env: hookEnv(ws), stdio: childStdio(progress) });
 }
 
 interface RegisteredProject {
@@ -202,6 +216,12 @@ function registerProject(
 }
 
 function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress): void {
+  const stdio = childStdio(progress);
+  if (!isAbsolute(repoUrl) && !isGitUrl(repoUrl) && !repoUrl.startsWith('file://')) {
+    throw new AddError(
+      `repo_url must be an absolute path or git URL, got '${repoUrl}' — relative paths would clone from an undefined location`,
+    );
+  }
   // file:// keeps --filter working for local sources (plain paths bypass the transport).
   const url = isAbsolute(repoUrl) ? `file://${repoUrl}` : repoUrl;
   if (existsSync(join(repoPath, '.git'))) {
@@ -216,7 +236,7 @@ function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress)
     progress.info(`repo exists: ${repoPath}`);
     return;
   }
-  run('git', ['clone', '--quiet', '--filter=blob:none', url, repoPath], { cwd: '/' });
+  run('git', ['clone', '--quiet', '--filter=blob:none', url, repoPath], { cwd: '/', stdio });
   progress.step({ label: `repo cloned (blobless)`, detail: repoPath });
 }
 
@@ -301,7 +321,7 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
     throw new AddError(`workspace state not found at ${ws.statePath} — run install.sh first`);
   }
 
-  const packDir = resolvePackSource(source, ws);
+  const packDir = resolvePackSource(source, ws, childStdio(progress));
   const { pack, errors } = validatePackDir(packDir);
   if (!pack) {
     throw new AddError(`invalid pack at ${packDir}:\n  - ${errors.join('\n  - ')}`);
@@ -390,22 +410,30 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
 
         // Existing lifecycle scripts own fixtures, setup, and hook expansion;
         // never reimplement them.
-        run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], { cwd: ws.farmslotDir });
+        run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], {
+          cwd: ws.farmslotDir,
+          stdio: childStdio(progress),
+        });
         progress.step({ label: `slot ${slotId} fixtures synced` });
         run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
           cwd: ws.farmslotDir,
+          stdio: childStdio(progress),
         });
         progress.step({ label: `slot ${slotId} setup complete` });
 
         if (registered.preflight) {
           run('bash', ['scripts/run-project-hook.sh', slotId, 'preflight'], {
             cwd: ws.farmslotDir,
+            stdio: childStdio(progress),
           });
           progress.step({ label: `slot ${slotId} preflight hook ran` });
         }
       }
 
-      run('bash', ['scripts/preflight-slot.sh', slotId], { cwd: ws.farmslotDir });
+      run('bash', ['scripts/preflight-slot.sh', slotId], {
+        cwd: ws.farmslotDir,
+        stdio: childStdio(progress),
+      });
       progress.step({ label: `slot ${slotId} validated (preflight + health)` });
     }
   }

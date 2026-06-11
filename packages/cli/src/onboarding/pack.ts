@@ -92,9 +92,11 @@ export function validatePackJson(pack: unknown): string[] {
     if (typeof p.hooks !== 'object' || p.hooks === null) {
       errors.push(`'hooks' must be an object`);
     } else {
-      for (const key of Object.keys(p.hooks)) {
+      for (const [key, value] of Object.entries(p.hooks)) {
         if (!HOOK_KEYS.includes(key as keyof PackHooks)) {
           errors.push(`hooks.${key}: unknown hook (expected one of ${HOOK_KEYS.join(', ')})`);
+        } else if (typeof value !== 'string' || value.length === 0) {
+          errors.push(`hooks.${key}: must be a non-empty shell command string`);
         }
       }
     }

@@ -15,21 +15,32 @@ import { readState, type Workspace, writeState } from './workspace.js';
 export interface UpdateProgress {
   step: (label: string, detail?: string) => void;
   info: (msg: string) => void;
+  /** JSON mode: child process output goes to stderr so stdout stays pure JSON. */
+  childOutputToStderr?: boolean;
 }
 
 function git(args: string[], cwd: string): string {
   const result = spawnSync('git', args, { cwd, encoding: 'utf-8' });
+  if (result.error) {
+    throw new AddError(`git failed to start in ${cwd}: ${result.error.message}`);
+  }
   if (result.status !== 0) {
-    throw new AddError(`git ${args.join(' ')} failed in ${cwd}: ${result.stderr.trim()}`);
+    throw new AddError(`git ${args.join(' ')} failed in ${cwd}: ${result.stderr?.trim() ?? ''}`);
   }
   return result.stdout.trim();
 }
 
-function sh(cmd: string, args: string[], cwd: string, env: Record<string, string> = {}): void {
+function sh(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  env: Record<string, string> = {},
+  stdio: 'inherit' | [number, number, number] = 'inherit',
+): void {
   const result = spawnSync(cmd, args, {
     cwd,
     env: { ...process.env, ...env },
-    stdio: 'inherit',
+    stdio,
   });
   if (result.status !== 0) {
     throw new AddError(`${cmd} ${args.join(' ')} exited ${result.status} (cwd ${cwd})`);
@@ -82,9 +93,13 @@ export async function farmslotUpdate(
   const commit = git(['rev-parse', '--short', 'HEAD'], clone);
   progress.step('farmslot clone updated', `${branch} @ ${commit}`);
 
+  const stdio: 'inherit' | [number, number, number] = progress.childOutputToStderr
+    ? [0, 2, 2]
+    : 'inherit';
+
   // 2. Reinstall dependencies + rebuild the CLI's workspace deps.
-  sh('yarn', ['install'], clone);
-  sh('yarn', ['workspace', '@farmslot/recipe-harness', 'build'], clone);
+  sh('yarn', ['install'], clone, {}, stdio);
+  sh('yarn', ['workspace', '@farmslot/recipe-harness', 'build'], clone, {}, stdio);
   progress.step('dependencies installed and CLI rebuilt');
 
   // 3. Pool schema migrations (versioned, preserve user edits).
@@ -103,7 +118,7 @@ export async function farmslotUpdate(
   const packsSynced: string[] = [];
   const packs = { ...state.packs };
   for (const [name, packState] of Object.entries(packs)) {
-    const packDir = resolvePackSource(packState.source, ws);
+    const packDir = resolvePackSource(packState.source, ws, stdio);
     const hash = hashPackDir(packDir);
     if (hash === packState.hash) {
       progress.info(`pack ${name} unchanged`);
@@ -114,11 +129,17 @@ export async function farmslotUpdate(
       throw new AddError(`pack ${name} changed but is now invalid:\n  - ${errors.join('\n  - ')}`);
     }
     if (pack.hooks?.sync) {
-      sh('bash', ['-c', pack.hooks.sync], packDir, {
-        FARMSLOT_WORKSPACE: ws.root,
-        FARMSLOT_DIR: ws.farmslotDir,
-        FARMSLOT_REPOS_DIR: ws.reposDir,
-      });
+      sh(
+        'bash',
+        ['-c', pack.hooks.sync],
+        packDir,
+        {
+          FARMSLOT_WORKSPACE: ws.root,
+          FARMSLOT_DIR: ws.farmslotDir,
+          FARMSLOT_REPOS_DIR: ws.reposDir,
+        },
+        stdio,
+      );
     }
     // Claim ownership of any newly added project dirs BEFORE copying them, and
     // keep the old hash until the sync succeeds — a failed sync retries on the
@@ -139,6 +160,7 @@ export async function farmslotUpdate(
       {
         step: (s) => progress.step(s.label, s.detail),
         info: progress.info,
+        childOutputToStderr: progress.childOutputToStderr,
       },
     );
     packs[name] = { ...packs[name], hash };

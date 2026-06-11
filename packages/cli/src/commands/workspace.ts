@@ -57,7 +57,15 @@ export function registerWorkspaceCommand(program: Command): void {
 
       for (const dir of [ws.root, ws.reposDir, ws.runsDir]) mkdirSync(dir, { recursive: true });
 
-      const existing = readState(ws);
+      let existing;
+      try {
+        existing = readState(ws);
+      } catch (err) {
+        output.error(
+          `${err instanceof Error ? err.message : String(err)} — fix or remove ${ws.statePath} and re-run install.sh`,
+        );
+        process.exit(1);
+      }
       const host = shortHostname();
       // In dev/test mode the source checkout may already own pool/<host>.json —
       // never collide with a live machine config.
@@ -67,6 +75,7 @@ export function registerWorkspaceCommand(program: Command): void {
       const poolRelPath = `pool/${fileName}`;
       const poolAbsPath = join(ws.farmslotDir, poolRelPath);
 
+      let poolCreated = false;
       if (!existsSync(poolAbsPath)) {
         mkdirSync(join(ws.farmslotDir, 'pool'), { recursive: true });
         const pool = generatePool({
@@ -80,9 +89,14 @@ export function registerWorkspaceCommand(program: Command): void {
           },
         });
         writePool(poolAbsPath, pool);
-        output.write(`${green('created')} ${poolRelPath} ${dim(`(machine ${machine})`)}\n`);
-      } else {
-        output.write(`${dim('exists')} ${poolRelPath} — left untouched\n`);
+        poolCreated = true;
+      }
+      if (!output.json) {
+        output.write(
+          poolCreated
+            ? `${green('created')} ${poolRelPath} ${dim(`(machine ${machine})`)}\n`
+            : `${dim('exists')} ${poolRelPath} — left untouched\n`,
+        );
       }
 
       const state: WorkspaceState = {
@@ -98,9 +112,19 @@ export function registerWorkspaceCommand(program: Command): void {
         pool_migrations: existing?.pool_migrations ?? { applied: [] },
       };
       writeState(ws, state);
-      output.write(`${green('workspace ready')} ${dim(ws.root)}\n`);
 
       const runners = detectRunners().filter((r) => r.status === 'authenticated');
+      if (output.json) {
+        output.writeJson({
+          workspace: ws.root,
+          machine,
+          pool_file: poolRelPath,
+          pool_created: poolCreated,
+          authenticated_runners: runners.map((r) => r.name),
+        });
+      } else {
+        output.write(`${green('workspace ready')} ${dim(ws.root)}\n`);
+      }
       if (runners.length === 0) {
         output.error(
           'no authenticated agent runner found (sign in to one of: claude, codex, cursor-agent)',

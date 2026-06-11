@@ -29,6 +29,7 @@ export function registerUpdateCommand(program: Command): void {
             infos.push(msg);
             if (!output.json) output.write(`${dim(msg)}\n`);
           },
+          childOutputToStderr: output.json,
         });
 
         // Every onboarding command ends with doctor.

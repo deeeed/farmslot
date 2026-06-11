@@ -99,8 +99,10 @@ Ownership rules:
   from the pack, overwriting local edits there. Persist customizations in the
   pack source, not the registered copy. (Pool files are the opposite: user
   edits are always preserved.)
-- **Nothing is deregistered.** Slots/projects removed from a pack stay in the
-  pool and `projects/` until removed manually — repair only adds or verifies.
+- **Nothing is deleted on removal.** Slots/projects removed from a pack stay in
+  the pool and `projects/` until removed manually — repair only adds or
+  verifies. State ownership (`state.json`) always reflects the pack's current
+  manifest, so removed entries become unowned leftovers on disk.
 - Re-running `project add` with an **unchanged** pack is verify-only: no
   mutation hooks (`pre_add`/`post_add`), no setup, no re-copy. Validation
   (`preflight-slot.sh`) and the `smoke` hook still run. Missing pieces (deleted

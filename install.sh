@@ -83,7 +83,8 @@ check_runner() {
   # Authenticated = probe exits 0 AND prints a positive marker. "Not logged in"
   # or a nonzero exit is inactive. Markers mirror packages/cli prereqs.ts.
   local probe_out
-  if probe_out="$("$@" 2>/dev/null)" && echo "$probe_out" | grep -qiE '"loggedin": *true|logged in (as|using)'; then
+  # 2>&1: some runners print auth status to stderr — prereqs.ts matches both too.
+  if probe_out="$("$@" 2>&1)" && echo "$probe_out" | grep -qiE '"loggedin": *true|logged in (as|using)'; then
     green "  [OK] ${name} (authenticated)"
     runner_authenticated=1
   else
