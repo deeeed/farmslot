@@ -57,14 +57,6 @@ function hookName(phase: EvalHarnessLifecyclePhase): string {
   return `recipe_harness_${phase}`;
 }
 
-function inferHarnessAdapter(project: string, axis: EvalPackageAxisRef): string | undefined {
-  const fromAxis = axis.version?.trim() || axis.name?.trim();
-  if (fromAxis === 'mobile' || fromAxis === 'extension') return fromAxis;
-  if (project.includes('mobile')) return 'mobile';
-  if (project.includes('extension')) return 'extension';
-  return fromAxis || undefined;
-}
-
 interface EvalHarnessCatalogEntry {
   repo_url?: string;
   path?: string;
@@ -97,14 +89,7 @@ function requestedHarnessRef(
   axis: EvalPackageAxisRef,
   entry?: EvalHarnessCatalogEntry,
 ): string | undefined {
-  const version = axis.version?.trim();
-  return (
-    axis.ref?.trim() ||
-    axis.hash?.trim() ||
-    (version && version !== 'mobile' && version !== 'extension' ? version : undefined) ||
-    entry?.default_ref?.trim() ||
-    undefined
-  );
+  return axis.ref?.trim() || axis.hash?.trim() || entry?.default_ref?.trim() || undefined;
 }
 
 function fullSha(value: string | undefined): string | undefined {
@@ -260,7 +245,6 @@ export function mergeHarnessLifecycle(
   patch: Partial<EvalHarnessLifecycle>,
 ): ResultPackageManifest {
   const axis = currentPackage.axes.harness;
-  const adapter = axis ? inferHarnessAdapter(currentPackage.project, axis) : undefined;
   const normalizedPatch = resetDownstreamLifecycleOnInstall(phase, patch);
   const next: EvalHarnessLifecycle = {
     ...currentPackage.harnessLifecycle,
@@ -273,10 +257,8 @@ export function mergeHarnessLifecycle(
     resolvedSha: axis
       ? (requestedHarnessResolvedSha(axis) ?? currentPackage.harnessLifecycle?.resolvedSha)
       : currentPackage.harnessLifecycle?.resolvedSha,
-    adapter: adapter ?? currentPackage.harnessLifecycle?.adapter,
-    manifestPath: adapter
-      ? `${harnessRoot()}/${adapter}/manifest.json`
-      : currentPackage.harnessLifecycle?.manifestPath,
+    adapter: normalizedPatch.adapter ?? currentPackage.harnessLifecycle?.adapter,
+    manifestPath: normalizedPatch.manifestPath ?? currentPackage.harnessLifecycle?.manifestPath,
     ...normalizedPatch,
     updatedAt: new Date().toISOString(),
   };
@@ -353,7 +335,6 @@ export async function executeEvalHarnessLifecycle(
   const vars = await loadSlotVars(run.slotId);
   const projectVars = await loadProjectVars(run.project);
   const hook = expandHook(hookName(phase), projectVars.projectJson, vars, projectVars);
-  const adapter = inferHarnessAdapter(run.project, harnessAxis);
   const relativeLogPath = `artifacts/recipe-harness/${phase}.log`;
   const taskDir = workerTaskDir(
     taskFile,
@@ -378,7 +359,6 @@ export async function executeEvalHarnessLifecycle(
   await mkdir(localHarnessArtifactsDir, { recursive: true });
 
   await updateHarnessLifecyclePackage(link.packagePath, phase, {
-    adapter,
     source: harnessSource(harnessAxis, projectVars.projectJson),
     requestedRef: resolveHarnessSource(harnessAxis, projectVars.projectJson).ref,
     [statusKey(phase)]: 'pending',
@@ -403,7 +383,6 @@ export async function executeEvalHarnessLifecycle(
     `export RECIPE_HARNESS_ROOT=${shellQuote(harnessRoot())}`,
     `export FARMSLOT_EVAL_HARNESS_SOURCE=${shellQuote(harnessSource(harnessAxis, projectVars.projectJson) ?? '')}`,
     `export FARMSLOT_EVAL_HARNESS_REF=${shellQuote(resolveHarnessSource(harnessAxis, projectVars.projectJson).ref ?? '')}`,
-    `export FARMSLOT_EVAL_HARNESS_ADAPTER=${shellQuote(adapter ?? '')}`,
     `export FARMSLOT_EVAL_HARNESS_DIR=${shellQuote(materializedHarness.harnessDir)}`,
     `export FARMSLOT_TASK_DIR=${shellQuote(taskDir)}`,
     `export FARMSLOT_ARTIFACTS_DIR=${shellQuote(path.join(taskDir, 'artifacts'))}`,
