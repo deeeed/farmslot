@@ -51,6 +51,7 @@ import {
   listPinnedSlots as listPinnedSlotPreferences,
   PINNED_SLOTS_CHANGED,
   type PinnedSlotPreference,
+  unpinSlot,
 } from '../utils/pinned-slots.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
@@ -58,6 +59,7 @@ import {
   activeSidebarRuns,
   clampSidebarWidth,
   DEFAULT_SIDEBAR_WIDTH,
+  isSidebarActiveRun,
   parseStoredSidebarWidth,
   SIDEBAR_WIDTH_PREF_KEY,
 } from './app-shell-nav-model.js';
@@ -563,16 +565,26 @@ export class FarmApp extends LitElement {
     return `${worker.status.label} · ${signal}${attention}`;
   }
 
+  private pinnedSlotRun(slotId: string, currentRunId?: string | null): Run | null {
+    if (currentRunId) {
+      const current = this.runs.find((candidate) => candidate.id === currentRunId);
+      if (current) return current;
+    }
+    if (this.route === 'run') {
+      const selected = this.runs.find(
+        (candidate) => candidate.id === this.runParam && candidate.slotId === slotId,
+      );
+      if (selected) return selected;
+    }
+    return (
+      this.runs.find((candidate) => candidate.slotId === slotId && isSidebarActiveRun(candidate)) ??
+      null
+    );
+  }
+
   private renderPinnedSlotShortcut(pin: PinnedSlotPreference) {
     const slot = this.fleetSlots.find((candidate) => candidate.slot === pin.slotId);
-    const run =
-      (slot?.currentRunId
-        ? this.runs.find((candidate) => candidate.id === slot.currentRunId)
-        : null) ??
-      this.runs.find(
-        (candidate) => candidate.slotId === pin.slotId && candidate.status === 'monitoring',
-      ) ??
-      null;
+    const run = this.pinnedSlotRun(pin.slotId, slot?.currentRunId);
     const selected = this.route === 'slot' && pin.slotId === this.slotParam;
     const worker = this.tmuxWorkerForSlot(slot);
     const displayLabel = pin.label?.trim() || pin.slotId;
@@ -580,45 +592,61 @@ export class FarmApp extends LitElement {
     const workerStatus = needsAttention ? 'needs attention' : this.pinnedSlotWorkerStatus(worker);
     const statusColor = this.pinnedSlotWorkerColor(workerStatus);
     return html`
-      <a
-        class="fa-active-run ${selected ? 'active' : ''} ${needsAttention ? 'needs-attention' : ''}"
-        href=${`#slot/${pin.slotId}${run ? `?runId=${encodeURIComponent(run.id)}` : ''}`}
-        title=${`${pin.slotId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
-      >
-        <div class="fa-active-run-top">
-          <span class="fa-active-run-ticket">${displayLabel}</span>
-          ${slot?.machine || pin.label
-            ? html`<span class="fa-active-run-flow" style="--flow-color:#94a3b8"
-                >${pin.label ? pin.slotId : slot?.machine}</span
-              >`
+      <div class="fa-active-run-wrap">
+        <a
+          class="fa-active-run ${selected ? 'active' : ''} ${needsAttention
+            ? 'needs-attention'
+            : ''}"
+          href=${`#slot/${pin.slotId}${run ? `?runId=${encodeURIComponent(run.id)}` : ''}`}
+          title=${`${pin.slotId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
+        >
+          <div class="fa-active-run-top">
+            <span class="fa-active-run-ticket">${displayLabel}</span>
+            ${slot?.machine || pin.label
+              ? html`<span class="fa-active-run-flow" style="--flow-color:#94a3b8"
+                  >${pin.label ? pin.slotId : slot?.machine}</span
+                >`
+              : nothing}
+          </div>
+          <div class="fa-active-run-summary">
+            ${run?.summary || run?.ticketOrPr || slot?.branch || 'Slot not in current fleet'}
+          </div>
+          <div class="fa-active-run-meta">
+            <span
+              class="fa-active-run-worker"
+              style="--worker-color:${statusColor}"
+              title=${this.pinnedSlotWorkerTitle(worker)}
+            >
+              <span class="fa-active-run-worker-dot"></span>${workerStatus}
+            </span>
+            ${worker
+              ? html`<span>${worker.status.source}/${worker.status.confidence}</span>`
+              : nothing}
+            ${slot?.phase ? html`<span>${slot.phase}</span>` : nothing}
+            ${slot?.branch ? html`<span>${slot.branch}</span>` : nothing}
+            ${run ? html`<span>${run.status}</span>` : nothing}
+          </div>
+          ${run
+            ? html`<run-pipeline-mini
+                class="fa-pinned-run-pipeline"
+                .run=${run}
+                .flowType=${run.flowType}
+              ></run-pipeline-mini>`
             : nothing}
-        </div>
-        <div class="fa-active-run-summary">
-          ${run?.summary || run?.ticketOrPr || slot?.branch || 'Slot not in current fleet'}
-        </div>
-        <div class="fa-active-run-meta">
-          <span
-            class="fa-active-run-worker"
-            style="--worker-color:${statusColor}"
-            title=${this.pinnedSlotWorkerTitle(worker)}
-          >
-            <span class="fa-active-run-worker-dot"></span>${workerStatus}
-          </span>
-          ${worker
-            ? html`<span>${worker.status.source}/${worker.status.confidence}</span>`
-            : nothing}
-          ${slot?.phase ? html`<span>${slot.phase}</span>` : nothing}
-          ${slot?.branch ? html`<span>${slot.branch}</span>` : nothing}
-          ${run ? html`<span>${run.status}</span>` : nothing}
-        </div>
-        ${run
-          ? html`<run-pipeline-mini
-              class="fa-pinned-run-pipeline"
-              .run=${run}
-              .flowType=${run.flowType}
-            ></run-pipeline-mini>`
-          : nothing}
-      </a>
+        </a>
+        <button
+          class="fa-active-run-unpin"
+          title=${`Unpin ${pin.slotId}`}
+          aria-label=${`Unpin ${pin.slotId}`}
+          @click=${(event: Event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            unpinSlot(pin.slotId);
+          }}
+        >
+          ×
+        </button>
+      </div>
     `;
   }
 

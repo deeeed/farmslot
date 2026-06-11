@@ -251,6 +251,9 @@ export function renderAppShellStyles(
       farm-app .fa-active-runs-more:hover {
         text-decoration: underline;
       }
+      farm-app .fa-active-run-wrap {
+        position: relative;
+      }
       farm-app .fa-active-run {
         display: flex;
         flex-direction: column;
@@ -266,6 +269,29 @@ export function renderAppShellStyles(
       farm-app .fa-active-run:hover {
         background: ${colors.bgCardHover};
         border-color: ${colors.accent}44;
+      }
+      farm-app .fa-active-run-unpin {
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        border: 1px solid ${colors.bgCardHover};
+        background: ${colors.bgSurface};
+        color: ${colors.textMuted};
+        font-size: 12px;
+        line-height: 16px;
+        cursor: pointer;
+        opacity: 0;
+      }
+      farm-app .fa-active-run-wrap:hover .fa-active-run-unpin,
+      farm-app .fa-active-run-unpin:focus {
+        opacity: 1;
+      }
+      farm-app .fa-active-run-unpin:hover {
+        color: ${colors.statusFail};
+        border-color: ${colors.statusFail}88;
       }
       farm-app .fa-active-run.active {
         background: ${colors.accent}18;
