@@ -1,0 +1,41 @@
+import os from 'node:os';
+import path from 'node:path';
+
+import type { loadSlotVars } from '../core/config.js';
+import { shellExpressionForRemotePath } from '../core/remote-paths.js';
+import { shellQuote } from '../core/tmux.js';
+import { farmslotRoot } from '../projects/repo-root.js';
+
+const REMOTE_AGENT_DIR = '~/farmslot-node';
+const INSTALLER_RELATIVE_PATH = 'scripts/install-runner-observability.mjs';
+const localHostname = os.hostname().replace(/\.local$/, '');
+
+function farmslotDirForSlot(vars: Awaited<ReturnType<typeof loadSlotVars>>): string {
+  const slotHost = vars.host.replace(/\.local$/, '');
+  const isLocal =
+    slotHost === 'localhost' || slotHost === '127.0.0.1' || slotHost === localHostname;
+  return isLocal ? farmslotRoot : REMOTE_AGENT_DIR;
+}
+
+export function buildRunnerObservabilityInstallCommand(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  repo: string,
+  runtimeDir = '.agent',
+): string {
+  const installer = path.posix.join(farmslotDirForSlot(vars), INSTALLER_RELATIVE_PATH);
+  return [
+    `node ${shellExpressionForRemotePath(installer)}`,
+    `--runner ${shellQuote(runner)}`,
+    `--repo ${shellExpressionForRemotePath(repo)}`,
+    `--runtime-dir ${shellQuote(runtimeDir)}`,
+    `--slot-id ${shellQuote(vars.slotId)}`,
+  ].join(' ');
+}
+
+export function withRunnerObservabilityInstall(
+  launchCommand: string,
+  installCommand: string,
+): string {
+  return `(${installCommand} || echo '[farmslot-observability] install failed; continuing without hooks' >&2) && ${launchCommand}`;
+}
