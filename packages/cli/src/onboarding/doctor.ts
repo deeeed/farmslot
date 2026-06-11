@@ -222,6 +222,15 @@ function cliSection(ws: Workspace | null): DoctorSection {
     detail: depsInstalled ? nodeModules : 'node_modules missing',
     hint: depsInstalled ? undefined : `run: yarn --cwd ${root} install`,
   });
+  const protocolDist = join(root, 'packages', 'protocol', 'dist', 'index.js');
+  const harnessDist = join(root, 'packages', 'recipe-harness', 'dist', 'index.js');
+  const built = existsSync(protocolDist) && existsSync(harnessDist);
+  checks.push({
+    name: 'workspace packages built',
+    ok: built,
+    detail: built ? 'protocol + recipe-harness dist present' : 'missing dist output',
+    hint: built ? undefined : `run: yarn --cwd ${root} workspace @farmslot/recipe-harness build`,
+  });
   if (depsInstalled) {
     const lock = join(root, 'yarn.lock');
     const stateFile = join(nodeModules, '.yarn-state.yml');

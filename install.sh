@@ -126,6 +126,12 @@ if ! (cd "$CLONE" && yarn install >"$install_log" 2>&1); then
   tail -40 "$install_log"
   fail "yarn install failed in ${CLONE}" "full log: ${install_log}"
 fi
+echo "  building CLI workspace deps ..."
+build_log="${WORKSPACE}/.install-build.log"
+if ! (cd "$CLONE" && yarn workspace @farmslot/recipe-harness build >"$build_log" 2>&1); then
+  tail -40 "$build_log"
+  fail "workspace package build failed in ${CLONE}" "full log: ${build_log}"
+fi
 FARMSLOT_BIN="${CLONE}/packages/cli/bin/farmslot.mjs"
 "$FARMSLOT_BIN" --version >/dev/null || fail "farmslot CLI failed to run" "check the yarn install output above"
 green "  [OK] farmslot CLI runs"

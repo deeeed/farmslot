@@ -1,0 +1,281 @@
+// onboarding/add.ts — engine for `farmslot project add <source>`.
+//
+// Pipeline: resolve source → validate pack → register projects → blobless-clone
+// product repos → register slots in the pool → run existing lifecycle scripts
+// (sync-fixtures.sh, setup-slot.sh, preflight hook, preflight-slot.sh) → pack
+// hooks → state. Idempotent: re-running the same source no-ops/repairs and
+// never duplicates slots.
+//
+// Note: prepare-slot.sh is deliberately NOT called here — it delegates to the
+// gateway (slot.prepare RPC) and onboarding must work before any gateway runs.
+// Slot readiness is proven by the project preflight hook + preflight-slot.sh.
+import { spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { basename, isAbsolute, join, resolve } from 'node:path';
+
+import {
+  decideAddAction,
+  expandPackVars,
+  hashPackDir,
+  type PackJson,
+  type PackProject,
+  projectName,
+  projectShortName,
+  validatePackDir,
+} from './pack.js';
+import { allocatePort, readPool, registerSlot, writePool } from './pool-config.js';
+import { readState, type Workspace, type WorkspaceState, writeState } from './workspace.js';
+
+export interface AddStep {
+  label: string;
+  detail?: string;
+}
+
+export interface AddProgress {
+  step: (s: AddStep) => void;
+  info: (msg: string) => void;
+}
+
+export class AddError extends Error {}
+
+function run(
+  cmd: string,
+  args: string[],
+  opts: { cwd: string; env?: Record<string, string> },
+): void {
+  const result = spawnSync(cmd, args, {
+    cwd: opts.cwd,
+    env: { ...process.env, ...opts.env },
+    stdio: 'inherit',
+  });
+  if (result.error) throw new AddError(`${cmd} failed to start: ${result.error.message}`);
+  if (result.status !== 0) {
+    throw new AddError(`${cmd} ${args.join(' ')} exited ${result.status} (cwd ${opts.cwd})`);
+  }
+}
+
+function isGitUrl(source: string): boolean {
+  return /^(https?|ssh|git):\/\//.test(source) || /^[\w.-]+@[\w.-]+:/.test(source);
+}
+
+/** Resolve a pack source (local dir or git URL) to a local pack directory. */
+export function resolvePackSource(source: string, ws: Workspace): string {
+  if (isGitUrl(source)) {
+    const name = basename(source).replace(/\.git$/, '');
+    const dest = join(ws.root, 'packs', name);
+    if (existsSync(join(dest, '.git'))) {
+      run('git', ['-C', dest, 'fetch', 'origin', '--quiet'], { cwd: ws.root });
+      run('git', ['-C', dest, 'reset', '--hard', '--quiet', 'origin/HEAD'], { cwd: ws.root });
+    } else {
+      mkdirSync(join(ws.root, 'packs'), { recursive: true });
+      run('git', ['clone', '--quiet', source, dest], { cwd: ws.root });
+    }
+    return dest;
+  }
+  const dir = resolve(source);
+  if (!existsSync(dir)) {
+    throw new AddError(`pack source not found: ${dir} (expected a local directory or git URL)`);
+  }
+  return dir;
+}
+
+function hookEnv(ws: Workspace): Record<string, string> {
+  return {
+    FARMSLOT_WORKSPACE: ws.root,
+    FARMSLOT_DIR: ws.farmslotDir,
+    FARMSLOT_REPOS_DIR: ws.reposDir,
+  };
+}
+
+function runPackHook(
+  pack: PackJson,
+  hook: keyof NonNullable<PackJson['hooks']>,
+  packDir: string,
+  ws: Workspace,
+  progress: AddProgress,
+): void {
+  const cmd = pack.hooks?.[hook];
+  if (!cmd) return;
+  progress.info(`running pack hook ${hook}: ${cmd}`);
+  run('bash', ['-c', cmd], { cwd: packDir, env: hookEnv(ws) });
+}
+
+/** Flatten slot resources + identity into {{var}} replacements for project hooks. */
+export function expandHookTemplate(
+  template: string,
+  vars: Record<string, string | number | boolean>,
+): string {
+  let text = template;
+  for (const [key, value] of Object.entries(vars)) {
+    text = text.replaceAll(`{{${key}}}`, String(value));
+  }
+  const left = text.match(/\{\{([a-z_]+)\}\}/);
+  if (left) throw new AddError(`hook references unknown variable {{${left[1]}}}: ${template}`);
+  return text;
+}
+
+interface RegisteredProject {
+  name: string;
+  short: string;
+  platform: string;
+  repoUrl: string;
+  defaultBranch: string;
+  runtimeDir: string;
+  preflight?: string;
+  slots: number;
+}
+
+function registerProject(
+  proj: PackProject,
+  packDir: string,
+  ws: Workspace,
+  progress: AddProgress,
+): RegisteredProject {
+  const name = projectName(proj);
+  const src = join(packDir, proj.dir);
+  const dest = join(ws.farmslotDir, 'projects', name);
+  cpSync(src, dest, { recursive: true, force: true });
+
+  const projectJsonPath = join(dest, 'project.json');
+  const projectJson = JSON.parse(readFileSync(projectJsonPath, 'utf-8')) as {
+    repo_url?: string;
+    default_branch?: string;
+    paths?: { runtime_dir?: string };
+    hooks?: { preflight?: string };
+  };
+  if (proj.repo_url) {
+    projectJson.repo_url = expandPackVars(proj.repo_url, { workspace: ws.root });
+    writeFileSync(projectJsonPath, JSON.stringify(projectJson, null, 2) + '\n');
+  }
+  if (!projectJson.repo_url) {
+    throw new AddError(
+      `project '${name}' has no repo_url (set it in project.json or as repo_url in pack.json)`,
+    );
+  }
+  progress.step({ label: `project ${name} registered`, detail: dest });
+  return {
+    name,
+    short: projectShortName(proj),
+    platform: proj.platform,
+    repoUrl: projectJson.repo_url,
+    defaultBranch: projectJson.default_branch ?? 'main',
+    runtimeDir: projectJson.paths?.runtime_dir ?? '.agent',
+    preflight: projectJson.hooks?.preflight,
+    slots: proj.slots,
+  };
+}
+
+function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress): void {
+  if (existsSync(join(repoPath, '.git'))) {
+    progress.info(`repo exists: ${repoPath}`);
+    return;
+  }
+  // file:// keeps --filter working for local sources (plain paths bypass the transport).
+  const url = isAbsolute(repoUrl) ? `file://${repoUrl}` : repoUrl;
+  run('git', ['clone', '--quiet', '--filter=blob:none', url, repoPath], { cwd: '/' });
+  progress.step({ label: `repo cloned (blobless)`, detail: repoPath });
+}
+
+export interface AddResult {
+  pack: PackJson;
+  action: 'add' | 'noop' | 'repair';
+  slots: string[];
+}
+
+export function projectAdd(source: string, ws: Workspace, progress: AddProgress): AddResult {
+  const state = readState(ws);
+  if (!state) {
+    throw new AddError(`workspace state not found at ${ws.statePath} — run install.sh first`);
+  }
+
+  const packDir = resolvePackSource(source, ws);
+  const { pack, errors } = validatePackDir(packDir);
+  if (!pack) {
+    throw new AddError(`invalid pack at ${packDir}:\n  - ${errors.join('\n  - ')}`);
+  }
+  const hash = hashPackDir(packDir);
+  const action = decideAddAction(state.packs[pack.name]?.hash, hash);
+  progress.step({ label: `pack ${pack.name} validated`, detail: `${packDir} (${action})` });
+
+  runPackHook(pack, 'pre_add', packDir, ws, progress);
+
+  const poolPath = join(ws.farmslotDir, state.pool_file);
+  const pool = readPool(poolPath);
+  const allSlots: string[] = [];
+  const projects: string[] = [];
+
+  for (const proj of pack.projects) {
+    const registered = registerProject(proj, packDir, ws, progress);
+    projects.push(registered.name);
+
+    for (let n = 1; n <= registered.slots; n++) {
+      const slotId = `${pool.machine}-${registered.short}-${n}`;
+      const session = `${registered.short}-${n}`;
+      const repoPath = join(ws.reposDir, `${registered.short}-${n}`);
+      allSlots.push(slotId);
+
+      cloneSlotRepo(registered.repoUrl, repoPath, progress);
+
+      const added = registerSlot(pool, {
+        id: slotId,
+        project: registered.name,
+        platform: registered.platform,
+        repo: repoPath,
+        session,
+        branch: registered.defaultBranch,
+        resources: { 'dev-server': { port: allocatePort(pool) } },
+      });
+      if (added) {
+        writePool(poolPath, pool);
+        progress.step({ label: `slot ${slotId} registered`, detail: state.pool_file });
+      } else {
+        progress.info(`slot ${slotId} already in pool — left untouched`);
+      }
+
+      const slot = pool.slots.find((s) => s.id === slotId);
+      const port = Number(slot?.resources?.['dev-server']?.port ?? 0);
+
+      // Existing lifecycle scripts own fixtures + setup; never reimplement them.
+      run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], { cwd: ws.farmslotDir });
+      progress.step({ label: `slot ${slotId} fixtures synced` });
+      run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
+        cwd: ws.farmslotDir,
+      });
+      progress.step({ label: `slot ${slotId} setup complete` });
+
+      if (registered.preflight) {
+        const cmd = expandHookTemplate(registered.preflight, {
+          port,
+          slot_id: slotId,
+          platform: registered.platform,
+          runtime_dir: registered.runtimeDir,
+        });
+        run('bash', ['-c', cmd], { cwd: repoPath });
+        progress.step({ label: `slot ${slotId} preflight hook ran`, detail: cmd });
+      }
+
+      run('bash', ['scripts/preflight-slot.sh', slotId], { cwd: ws.farmslotDir });
+      progress.step({ label: `slot ${slotId} validated (preflight + health)` });
+    }
+  }
+
+  runPackHook(pack, 'post_add', packDir, ws, progress);
+  runPackHook(pack, 'smoke', packDir, ws, progress);
+  progress.step({ label: `pack ${pack.name} smoke check passed` });
+
+  const newState: WorkspaceState = {
+    ...state,
+    packs: {
+      ...state.packs,
+      [pack.name]: {
+        source: isGitUrl(source) ? source : resolve(source),
+        hash,
+        projects,
+        slots: allSlots,
+      },
+    },
+  };
+  writeState(ws, newState);
+
+  return { pack, action, slots: allSlots };
+}

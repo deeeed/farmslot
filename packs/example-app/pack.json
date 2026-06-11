@@ -1,0 +1,18 @@
+{
+  "name": "example-app",
+  "description": "Minimal CLI-platform example pack that exercises the full onboarding path with no real product.",
+  "projects": [
+    {
+      "dir": "projects/example-app-farm",
+      "platform": "cli",
+      "slots": 1,
+      "repo_url": "{{workspace}}/repos/example-app-src"
+    }
+  ],
+  "hooks": {
+    "pre_add": "bash hooks/pre-add.sh",
+    "sync": "bash hooks/sync.sh",
+    "smoke": "bash hooks/smoke.sh"
+  },
+  "action_sheet": "example-app is ready.\n  - check status anytime:  farmslot doctor\n  - slot repos live in:    <workspace>/repos/\n  - dispatch runs via the gateway (farmslot run create) once it is running"
+}

@@ -8,10 +8,12 @@ import { registerFleetCommand } from './commands/fleet.js';
 import { registerGatewayCommand } from './commands/gateway.js';
 import { registerNodeCommand } from './commands/node.js';
 import { registerPRCommand } from './commands/pr.js';
+import { registerProjectCommand } from './commands/project.js';
 import { registerRecipeCommand } from './commands/recipe.js';
 import { registerRpcCommand } from './commands/rpc.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSlotCommand } from './commands/slot.js';
+import { registerUpdateCommand } from './commands/update.js';
 import { registerWorkspaceCommand } from './commands/workspace.js';
 
 const program = new Command();
@@ -37,5 +39,7 @@ registerCompletionCommand(program);
 registerNodeCommand(program);
 registerDoctorCommand(program);
 registerWorkspaceCommand(program);
+registerProjectCommand(program);
+registerUpdateCommand(program);
 
 program.parse();
