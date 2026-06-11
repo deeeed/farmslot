@@ -63,9 +63,10 @@ export function validatePackJson(pack: unknown): string[] {
       return;
     }
     const proj = entry as Record<string, unknown>;
-    if (typeof proj.dir !== 'string' || !proj.dir.startsWith('projects/')) {
+    // Single path segment under projects/ — never a traversal like projects/../..
+    if (typeof proj.dir !== 'string' || !/^projects\/[a-z][a-z0-9-]*$/.test(proj.dir)) {
       errors.push(
-        `projects[${i}]: 'dir' must be a path under projects/ (got ${JSON.stringify(proj.dir)})`,
+        `projects[${i}]: 'dir' must be projects/<kebab-case-name> (got ${JSON.stringify(proj.dir)})`,
       );
     }
     if (typeof proj.platform !== 'string' || !/^[a-z][a-z0-9-]*$/.test(proj.platform as string)) {
@@ -73,6 +74,18 @@ export function validatePackJson(pack: unknown): string[] {
     }
     if (typeof proj.slots !== 'number' || !Number.isInteger(proj.slots) || proj.slots < 1) {
       errors.push(`projects[${i}]: 'slots' must be a positive integer`);
+    }
+    if (
+      proj.short !== undefined &&
+      (typeof proj.short !== 'string' || !/^[a-z][a-z0-9-]*$/.test(proj.short))
+    ) {
+      errors.push(`projects[${i}]: 'short' must be a lowercase kebab-case identifier`);
+    }
+    if (
+      proj.repo_url !== undefined &&
+      (typeof proj.repo_url !== 'string' || proj.repo_url.length === 0)
+    ) {
+      errors.push(`projects[${i}]: 'repo_url' must be a non-empty string`);
     }
   });
   if (p.hooks !== undefined) {

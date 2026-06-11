@@ -64,7 +64,18 @@ export function resolvePackSource(source: string, ws: Workspace): string {
     const name = basename(source).replace(/\.git$/, '');
     const dest = join(ws.root, 'packs', name);
     if (existsSync(join(dest, '.git'))) {
+      // Same-named packs from different remotes must not silently share a clone.
+      const origin = spawnSync('git', ['-C', dest, 'remote', 'get-url', 'origin'], {
+        encoding: 'utf-8',
+      }).stdout.trim();
+      if (origin !== source) {
+        throw new AddError(
+          `pack clone ${dest} tracks ${origin}, not ${source} — remove it or rename one pack repo`,
+        );
+      }
       run('git', ['-C', dest, 'fetch', 'origin', '--quiet'], { cwd: ws.root });
+      // Track the remote's CURRENT default branch, not the one cached at clone time.
+      run('git', ['-C', dest, 'remote', 'set-head', 'origin', '--auto'], { cwd: ws.root });
       run('git', ['-C', dest, 'reset', '--hard', '--quiet', 'origin/HEAD'], { cwd: ws.root });
     } else {
       mkdirSync(join(ws.root, 'packs'), { recursive: true });
@@ -98,20 +109,6 @@ function runPackHook(
   if (!cmd) return;
   progress.info(`running pack hook ${hook}: ${cmd}`);
   run('bash', ['-c', cmd], { cwd: packDir, env: hookEnv(ws) });
-}
-
-/** Flatten slot resources + identity into {{var}} replacements for project hooks. */
-export function expandHookTemplate(
-  template: string,
-  vars: Record<string, string | number | boolean>,
-): string {
-  let text = template;
-  for (const [key, value] of Object.entries(vars)) {
-    text = text.replaceAll(`{{${key}}}`, String(value));
-  }
-  const left = text.match(/\{\{([A-Za-z0-9_]+)\}\}/);
-  if (left) throw new AddError(`hook references unknown variable {{${left[1]}}}: ${template}`);
-  return text;
 }
 
 interface RegisteredProject {
@@ -180,6 +177,21 @@ export interface AddResult {
   pack: PackJson;
   action: 'add' | 'noop' | 'repair';
   slots: string[];
+}
+
+/**
+ * Re-copy a pack's project dirs into the workspace (no slot work). Used by
+ * `farmslot update` so content-only pack changes (hooks, fixtures, templates)
+ * are applied when the hash is stamped; structural gaps (new slots/repos) are
+ * caught by findMissingState on the next `project add`.
+ */
+export function syncPackProjects(
+  pack: PackJson,
+  packDir: string,
+  ws: Workspace,
+  progress: AddProgress,
+): void {
+  for (const proj of pack.projects) registerProject(proj, packDir, ws, progress);
 }
 
 /** Read an already-registered project's metadata without re-copying the pack dir. */
@@ -306,10 +318,8 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
           progress.info(`slot ${slotId} already in pool — left untouched`);
         }
 
-        const slot = pool.slots.find((s) => s.id === slotId);
-        const port = Number(slot?.resources?.['dev-server']?.port ?? 0);
-
-        // Existing lifecycle scripts own fixtures + setup; never reimplement them.
+        // Existing lifecycle scripts own fixtures, setup, and hook expansion;
+        // never reimplement them.
         run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], { cwd: ws.farmslotDir });
         progress.step({ label: `slot ${slotId} fixtures synced` });
         run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
@@ -318,14 +328,10 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
         progress.step({ label: `slot ${slotId} setup complete` });
 
         if (registered.preflight) {
-          const cmd = expandHookTemplate(registered.preflight, {
-            port,
-            slot_id: slotId,
-            platform: registered.platform,
-            runtime_dir: registered.runtimeDir,
+          run('bash', ['scripts/run-project-hook.sh', slotId, 'preflight'], {
+            cwd: ws.farmslotDir,
           });
-          run('bash', ['-c', cmd], { cwd: repoPath });
-          progress.step({ label: `slot ${slotId} preflight hook ran`, detail: cmd });
+          progress.step({ label: `slot ${slotId} preflight hook ran` });
         }
       }
 

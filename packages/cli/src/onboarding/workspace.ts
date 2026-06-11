@@ -28,6 +28,8 @@ export interface WorkspaceState {
   source: { mode: 'local'; path: string } | { mode: 'git'; url: string };
   machine: string;
   pool_file: string; // relative to the farmslot clone, e.g. pool/myhost.json
+  /** Where install.sh put the farmslot PATH symlink. */
+  bin_dir?: string;
   packs: Record<string, PackState>;
   pool_migrations: { applied: string[] };
 }

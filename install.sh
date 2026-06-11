@@ -80,7 +80,10 @@ check_runner() {
     echo "  [--] ${name} not found — ${install_hint}"
     return 0
   fi
-  if "$@" 2>/dev/null | grep -qiE 'logged ?in.*true|logged in'; then
+  # Authenticated = probe exits 0 AND prints a positive marker. "Not logged in"
+  # or a nonzero exit is inactive. Markers mirror packages/cli prereqs.ts.
+  local probe_out
+  if probe_out="$("$@" 2>/dev/null)" && echo "$probe_out" | grep -qiE '"loggedin": *true|logged in (as|using)'; then
     green "  [OK] ${name} (authenticated)"
     runner_authenticated=1
   else
@@ -155,7 +158,7 @@ esac
 
 # ── Workspace state + pool ───────────────────────────────────────────────────
 bold "── Workspace ──"
-FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" workspace init --source-mode "$SOURCE_MODE" --source "$SOURCE"
+FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" workspace init --source-mode "$SOURCE_MODE" --source "$SOURCE" --bin-dir "$BIN_DIR"
 
 # ── Doctor ───────────────────────────────────────────────────────────────────
 echo ""

@@ -4,28 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { AddError, expandHookTemplate, findMissingState } from './add.js';
+import { findMissingState } from './add.js';
 import type { PackJson } from './pack.js';
-
-test('expandHookTemplate substitutes slot vars', () => {
-  assert.equal(
-    expandHookTemplate('node scripts/build.mjs --port {{port}} --slot {{slot_id}}', {
-      port: 9300,
-      slot_id: 'm-app-1',
-    }),
-    'node scripts/build.mjs --port 9300 --slot m-app-1',
-  );
-});
-
-test('expandHookTemplate fails hard on unknown variables', () => {
-  assert.throws(
-    () => expandHookTemplate('run --device {{adb_serial}}', { port: 1 }),
-    (err: unknown) =>
-      err instanceof AddError && /unknown variable \{\{adb_serial\}\}/.test(err.message),
-  );
-  // Uppercase/digit placeholders must fail hard too, not pass through silently.
-  assert.throws(() => expandHookTemplate('run --port {{PORT}}', { port: 1 }), AddError);
-});
 
 test('findMissingState: complete state is a true no-op, missing pieces escalate', () => {
   const root = mkdtempSync(join(tmpdir(), 'fs-noop-'));

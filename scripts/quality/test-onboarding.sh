@@ -21,10 +21,11 @@ export PATH="${FARMSLOT_BIN_DIR}:${PATH}"
 # if this run created it (never kill an operator's pre-existing session).
 PACK="${SCRATCH}/example-app"
 SESSION_PRE_EXISTING=0
-tmux has-session -t example-app-1 2>/dev/null && SESSION_PRE_EXISTING=1
+tmux has-session -t '=example-app-1' 2>/dev/null && SESSION_PRE_EXISTING=1
 cleanup() {
   if [ "$SESSION_PRE_EXISTING" = 0 ]; then
-    tmux kill-session -t example-app-1 2>/dev/null || true # best-effort: session may not exist
+    # =name forces exact match — plain -t prefix-matches other sessions.
+    tmux kill-session -t '=example-app-1' 2>/dev/null || true # best-effort: session may not exist
   fi
   rm -rf "$SCRATCH"
 }
@@ -62,6 +63,9 @@ echo "$add_out" | grep -q 'example-app: noop' || die "re-add was not a no-op"
 
 step "5. update (pack content bump + pool schema fixture)"
 echo "# content bump $(date +%s)" >> "${PACK}/README.bump.md"
+# Project-dir content edits must propagate to the registered copy on update.
+MARKER="E2E_SYNC_MARKER_$(date +%s)"
+echo "# ${MARKER}" >> "${PACK}/projects/example-app-farm/fixtures/app.env.template"
 python3 -c "
 import json
 path = '${FARMSLOT_WORKSPACE}/farmslot/pool'
@@ -76,6 +80,8 @@ update_out="$(farmslot update)"
 echo "$update_out" | tail -20
 echo "$update_out" | grep -q '001-init-schema-version' || die "pool migration did not run"
 echo "$update_out" | grep -q 'pack example-app re-synced' || die "pack was not re-synced"
+grep -q "$MARKER" "${FARMSLOT_WORKSPACE}/farmslot/projects/example-app-farm/fixtures/app.env.template" \
+  || die "project-dir content edit did not propagate to the registered copy"
 
 step "6. final doctor"
 farmslot doctor

@@ -26,6 +26,7 @@ function runnerPath(name: string): string | undefined {
 interface WorkspaceInitOptions {
   sourceMode: 'local' | 'git';
   source: string;
+  binDir?: string;
 }
 
 export function registerWorkspaceCommand(program: Command): void {
@@ -41,6 +42,7 @@ export function registerWorkspaceCommand(program: Command): void {
       '--source <pathOrUrl>',
       'local checkout path or git URL farmslot was installed from',
     )
+    .option('--bin-dir <path>', 'directory holding the farmslot PATH symlink')
     .action((opts: WorkspaceInitOptions, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       if (opts.sourceMode !== 'local' && opts.sourceMode !== 'git') {
@@ -91,6 +93,7 @@ export function registerWorkspaceCommand(program: Command): void {
             : { mode: 'git', url: opts.source },
         machine,
         pool_file: poolRelPath,
+        bin_dir: opts.binDir ?? existing?.bin_dir,
         packs: existing?.packs ?? {},
         pool_migrations: existing?.pool_migrations ?? { applied: [] },
       };

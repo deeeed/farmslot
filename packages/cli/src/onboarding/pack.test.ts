@@ -42,7 +42,7 @@ test('validatePackJson reports actionable errors', () => {
     hooks: { unknown_hook: 'true' },
   });
   assert.ok(errors.some((e) => e.includes(`'name'`)));
-  assert.ok(errors.some((e) => e.includes(`'dir' must be a path under projects/`)));
+  assert.ok(errors.some((e) => e.includes(`'dir' must be projects/<kebab-case-name>`)));
   assert.ok(errors.some((e) => e.includes(`'platform'`)));
   assert.ok(errors.some((e) => e.includes(`'slots'`)));
   assert.ok(errors.some((e) => e.includes('unknown hook')));

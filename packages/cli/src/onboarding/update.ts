@@ -6,7 +6,7 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-import { AddError, resolvePackSource } from './add.js';
+import { AddError, resolvePackSource, syncPackProjects } from './add.js';
 import { applyMigrations, loadMigrations } from './migrations.js';
 import { hashPackDir, validatePackDir } from './pack.js';
 import { readPool, writePool } from './pool-config.js';
@@ -116,11 +116,18 @@ export async function farmslotUpdate(
         FARMSLOT_REPOS_DIR: ws.reposDir,
       });
     }
+    // Apply content changes now — stamping the hash without re-copying would
+    // strand them (the next add would see noop). Structural changes (new
+    // slots/repos) escalate to repair on the next project add.
+    syncPackProjects(pack, packDir, ws, {
+      step: (s) => progress.step(s.label, s.detail),
+      info: progress.info,
+    });
     packs[name] = { ...packState, hash };
     packsSynced.push(name);
     progress.step(
-      `pack ${name} re-synced`,
-      `re-run 'farmslot project add ${packState.source}' to apply project/slot changes`,
+      `pack ${name} re-synced (project defs re-registered)`,
+      `slot/repo additions need: farmslot project add ${packState.source}`,
     );
   }
 
