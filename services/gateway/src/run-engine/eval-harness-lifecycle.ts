@@ -59,9 +59,10 @@ function hookName(phase: EvalHarnessLifecyclePhase): string {
 
 function inferHarnessAdapter(project: string, axis: EvalPackageAxisRef): string | undefined {
   const fromAxis = axis.version?.trim() || axis.name?.trim();
-  if (fromAxis === 'mobile' || fromAxis === 'extension') return fromAxis;
+  if (fromAxis === 'mobile' || fromAxis === 'extension' || fromAxis === 'core') return fromAxis;
   if (project.includes('mobile')) return 'mobile';
   if (project.includes('extension')) return 'extension';
+  if (project.includes('core')) return 'core';
   return fromAxis || undefined;
 }
 
