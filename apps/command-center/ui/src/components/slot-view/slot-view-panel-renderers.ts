@@ -703,9 +703,12 @@ export function renderSlotViewBody(
                               ${view._renderAgentContexts()}
                               <terminal-view
                                 .slotId=${view.slotId}
-                                .runId=${view._linkedRun?.id ?? ''}
-                                .role=${view._selectedAgentContext()?.role ?? ''}
-                                .contextId=${view._selectedAgentContext()?.id ?? ''}
+                                .role=${view._selectedAgentContext()?.role === 'primary'
+                                  ? ''
+                                  : (view._selectedAgentContext()?.role ?? '')}
+                                .contextId=${view._selectedAgentContext()?.id === 'primary'
+                                  ? ''
+                                  : (view._selectedAgentContext()?.id ?? '')}
                                 @terminal-subscribe-failed=${(
                                   e: CustomEvent<{ contextId?: string; role?: string }>,
                                 ) => {

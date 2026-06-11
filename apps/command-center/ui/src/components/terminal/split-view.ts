@@ -29,6 +29,7 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { isSlotPinned, togglePinnedSlot } from '../../utils/pinned-slots.js';
 
 import {
   isFarmslotWatchEntry,
@@ -732,6 +733,17 @@ export class TerminalSplitView extends LitElement {
         <button class="worker-chip-btn active" @click=${() => this._openWorker(entry.ref)}>
           Open
         </button>
+        ${entry.worker?.linkedSlotId
+          ? html`<button
+              class="worker-chip-btn ${isSlotPinned(entry.worker.linkedSlotId) ? 'pinned' : ''}"
+              title=${isSlotPinned(entry.worker.linkedSlotId)
+                ? `Remove ${entry.worker.linkedSlotId} from pinned slots`
+                : `Pin ${entry.worker.linkedSlotId}`}
+              @click=${() => togglePinnedSlot(entry.worker!.linkedSlotId!)}
+            >
+              ${isSlotPinned(entry.worker.linkedSlotId) ? 'Pinned slot' : 'Pin slot'}
+            </button>`
+          : ''}
         <button class="worker-chip-btn" @click=${() => this._closeWorker(entry.ref)}>Close</button>
         <div class="worker-chip-meta">${watchEntryDescription(entry)}</div>
       </div>
@@ -747,6 +759,17 @@ export class TerminalSplitView extends LitElement {
         <button class="worker-chip-btn active" @click=${() => this._openWorker(worker.ref)}>
           Open
         </button>
+        ${worker.linkedSlotId
+          ? html`<button
+              class="worker-chip-btn ${isSlotPinned(worker.linkedSlotId) ? 'pinned' : ''}"
+              title=${isSlotPinned(worker.linkedSlotId)
+                ? `Remove ${worker.linkedSlotId} from pinned slots`
+                : `Pin ${worker.linkedSlotId}`}
+              @click=${() => togglePinnedSlot(worker.linkedSlotId!)}
+            >
+              ${isSlotPinned(worker.linkedSlotId) ? 'Pinned slot' : 'Pin slot'}
+            </button>`
+          : ''}
         <button class="worker-chip-btn" @click=${() => this._closeWorker(worker.ref)}>Close</button>
         <div class="worker-chip-meta">${workerDescription(worker)}</div>
       </div>

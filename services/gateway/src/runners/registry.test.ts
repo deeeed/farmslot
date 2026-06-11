@@ -691,6 +691,8 @@ describe('buildLaunchCommand', () => {
       );
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
       assert.match(cmd, /farmslot-observability-hook\.mjs/);
+      assert.match(cmd, /base64 --decode > .*farmslot-observability-hook\.mjs/);
+      assert.doesNotMatch(cmd, /printf %s 'import fs from/);
     });
 
     it('inline-launches interactively by default so relaunch paths stay steerable', () => {

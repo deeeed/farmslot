@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 import type { loadSlotVars } from '../core/config.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -135,7 +137,8 @@ fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\\n');
 `;
 
 function writeScript(pathValue: string, content: string): string {
-  return `printf %s ${shellQuote(content)} > ${shellQuote(pathValue)}`;
+  const encoded = Buffer.from(content, 'utf8').toString('base64');
+  return `printf %s ${shellQuote(encoded)} | base64 --decode > ${shellQuote(pathValue)}`;
 }
 
 export function buildClaudeObservabilityPrelude(

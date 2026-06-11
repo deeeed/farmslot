@@ -518,24 +518,51 @@ export class FarmApp extends LitElement {
 
   private tmuxWorkerForSlot(slot: SlotStatus | undefined): TmuxWorkerSummary | null {
     if (!slot) return null;
-    return (
-      this.tmuxWorkers.find((worker) => worker.linkedSlotId === slot.slot) ??
-      this.tmuxWorkers.find(
-        (worker) => worker.ref.nodeId === slot.machine && worker.ref.session === slot.slot,
-      ) ??
-      null
+    const workers = this.tmuxWorkers.filter(
+      (worker) =>
+        worker.linkedSlotId === slot.slot ||
+        (worker.ref.nodeId === slot.machine && worker.ref.session === slot.slot),
     );
+    return (
+      workers.sort(
+        (a, b) =>
+          this.tmuxWorkerRank(b) - this.tmuxWorkerRank(a) ||
+          (b.lastChangedAt ?? 0) - (a.lastChangedAt ?? 0),
+      )[0] ?? null
+    );
+  }
+
+  private tmuxWorkerRank(worker: TmuxWorkerSummary): number {
+    const state = worker.status.state;
+    const source = worker.status.source;
+    const isRunnerSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
+    const signalScore = isRunnerSignal && !worker.status.stale ? 1000 : 0;
+    const stateScore =
+      state === 'active'
+        ? 500
+        : state === 'waiting'
+          ? 400
+          : state === 'stale'
+            ? 300
+            : state === 'idle'
+              ? 100
+              : 0;
+    const attentionScore = worker.status.requiresAttention ? 800 : 0;
+    const activePaneScore = worker.active ? 20 : 0;
+    return signalScore + attentionScore + stateScore + activePaneScore;
   }
 
   private pinnedSlotWorkerStatus(worker: TmuxWorkerSummary | null): string {
     if (!worker) return 'unknown';
     const source = worker.status.source;
+    const state = worker.status.state;
     const isRunnerSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
     if (isRunnerSignal && !worker.status.stale && worker.status.confidence !== 'low') {
-      return worker.status.state ?? 'unknown';
+      return state ?? 'unknown';
     }
-    if (source === 'tmux' && worker.status.state && worker.status.state !== 'unknown') {
-      return worker.status.state;
+    if (source === 'tmux') {
+      if (state === 'active' || state === 'waiting' || state === 'stale') return state;
+      if (state === 'idle') return 'quiet';
     }
     return 'unknown';
   }
@@ -544,7 +571,7 @@ export class FarmApp extends LitElement {
     if (status === 'needs attention') return '#ffcc00';
     if (status === 'active') return '#00ff88';
     if (status === 'waiting') return '#ffcc00';
-    if (status === 'idle') return '#8888a0';
+    if (status === 'idle' || status === 'quiet') return '#8888a0';
     if (status === 'stale') return '#f97316';
     return '#777';
   }
@@ -559,8 +586,11 @@ export class FarmApp extends LitElement {
     const attention = worker.status.requiresAttention
       ? ` · needs attention (${worker.status.attentionReason ?? 'runner stopped'})`
       : '';
-    if (worker.status.source === 'tmux' || worker.status.source === 'inferred') {
-      return `${worker.status.label} · ${signal} · ignored for activity badge${attention}`;
+    if (worker.status.source === 'tmux') {
+      return `${worker.status.label} · ${signal} · tmux-only output activity; quiet is not a runner idle signal${attention}`;
+    }
+    if (worker.status.source === 'inferred') {
+      return `${worker.status.label} · ${signal} · inferred, not a runner signal${attention}`;
     }
     return `${worker.status.label} · ${signal}${attention}`;
   }
