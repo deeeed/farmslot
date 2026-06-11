@@ -72,6 +72,12 @@ describe('claude runner', () => {
   it('has /continue as continue command', () => {
     assert.equal(runnerContinueCommand('claude'), '/continue');
   });
+
+  it('accepts fable without making it the default model', () => {
+    assert.equal(runnerSupportsModel('claude', 'fable'), true);
+    assert.notEqual(getRunnerDefinition('claude').defaultModel, 'fable');
+    assert.equal(runnerSupportsModel('codex', 'fable'), false);
+  });
 });
 
 describe('codex runner', () => {

@@ -1,13 +1,16 @@
 import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   ConfigPoolsResult,
   ConfigPoolUpdateResult,
   ConfigProjectAutoRecoveryUpdateResult,
+  ConfigProjectResult,
   ConfigProjectsResult,
   PoolConfig,
   ProjectConfig,
+  ProjectLearningsDocument,
   SlotStatus,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
@@ -19,6 +22,7 @@ import '../flow-graph/flow-graph.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, type GlobalFilters, subscribe } from '../../state.js';
+import { renderMarkdown } from '../../utils/markdown.js';
 
 import {
   type AutoRecoveryDraft,
@@ -38,6 +42,11 @@ import {
 } from './config-panel-url-state.js';
 
 type PoolViewMode = 'structured' | 'editor';
+type ProjectTab = 'config' | 'templates' | 'learnings';
+
+function pathForProjectLearnings(project: string): string {
+  return `projects/${project}/learnings/LEARNINGS.md`;
+}
 
 @customElement('config-panel')
 export class ConfigPanel extends LitElement {
@@ -57,13 +66,16 @@ export class ConfigPanel extends LitElement {
   @state() private _editorDirty = false;
   @state() private _editorError = '';
   @state() private _saving = false;
-  @state() private _projectTab: 'config' | 'templates' = 'config';
+  @state() private _projectTab: ProjectTab = 'config';
   @state() private _filters: GlobalFilters = { projects: [], machines: [] };
   @state() private _fleetSlots: SlotStatus[] = [];
   @state() private _autoRecoveryDraft: AutoRecoveryDraft | null = null;
   @state() private _autoRecoveryDirty = false;
   @state() private _autoRecoverySaving = false;
   @state() private _autoRecoveryError = '';
+  @state() private _projectLearnings = new Map<string, ProjectLearningsDocument>();
+  @state() private _projectLearningsLoading = false;
+  @state() private _projectLearningsError = '';
 
   // Light DOM so Monaco CSS works
   protected override createRenderRoot() {
@@ -194,7 +206,30 @@ export class ConfigPanel extends LitElement {
     this._autoRecoveryDraft = null;
     this._autoRecoveryDirty = false;
     this._autoRecoveryError = '';
+    this._projectLearningsError = '';
     this._updateHash();
+  }
+
+  private selectProjectTab(project: ProjectConfig, tab: ProjectTab) {
+    this._projectTab = tab;
+    if (tab === 'learnings') void this.loadProjectLearnings(project.name);
+  }
+
+  private async loadProjectLearnings(projectName: string, force = false) {
+    if (!force && this._projectLearnings.has(projectName)) return;
+    this._projectLearningsLoading = true;
+    this._projectLearningsError = '';
+    try {
+      const result = (await gateway.request(Methods.CONFIG_PROJECT, {
+        project: projectName,
+      })) as ConfigProjectResult;
+      this._projects = this._projects.map((p) => (p.name === projectName ? result.project : p));
+      this._projectLearnings = new Map(this._projectLearnings).set(projectName, result.learnings);
+    } catch (err) {
+      this._projectLearningsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this._projectLearningsLoading = false;
+    }
   }
 
   private getSelectedPool(): PoolConfig | undefined {
@@ -492,27 +527,79 @@ export class ConfigPanel extends LitElement {
         <div class="tab-group">
           <button
             class="tab-btn ${this._projectTab === 'config' ? 'active' : ''}"
-            @click=${() => {
-              this._projectTab = 'config';
-            }}
+            @click=${() => this.selectProjectTab(project, 'config')}
           >
             Config
           </button>
           <button
             class="tab-btn ${this._projectTab === 'templates' ? 'active' : ''}"
-            @click=${() => {
-              this._projectTab = 'templates';
-            }}
+            @click=${() => this.selectProjectTab(project, 'templates')}
           >
             Templates
           </button>
+          <button
+            class="tab-btn ${this._projectTab === 'learnings' ? 'active' : ''}"
+            @click=${() => this.selectProjectTab(project, 'learnings')}
+          >
+            Learnings
+          </button>
         </div>
       </div>
-      ${this._projectTab === 'config'
-        ? this.renderProjectConfig(project)
-        : html`<div class="cp-template-container">
-            <template-viewer project=${project.name}></template-viewer>
-          </div>`}
+      ${this.renderProjectTabContent(project)}
+    `;
+  }
+
+  private renderProjectTabContent(project: ProjectConfig) {
+    if (this._projectTab === 'config') return this.renderProjectConfig(project);
+    if (this._projectTab === 'templates') {
+      return html`<div class="cp-template-container">
+        <template-viewer project=${project.name}></template-viewer>
+      </div>`;
+    }
+    return this.renderProjectLearnings(project);
+  }
+
+  private renderProjectLearnings(project: ProjectConfig) {
+    const learnings = this._projectLearnings.get(project.name);
+    if (!learnings && !this._projectLearningsLoading && !this._projectLearningsError) {
+      void this.loadProjectLearnings(project.name);
+    }
+    return html`
+      <div class="cp-learnings-card">
+        <div class="cp-learnings-head">
+          <div>
+            <div class="cp-learnings-title">Self-improvement loop</div>
+            <div class="cp-learnings-subtitle">
+              Accepted retros and template/process improvements from
+              <code>${learnings?.relativePath ?? pathForProjectLearnings(project.name)}</code>.
+            </div>
+          </div>
+          <button
+            class="cp-action-btn secondary"
+            ?disabled=${this._projectLearningsLoading}
+            @click=${() => this.loadProjectLearnings(project.name, true)}
+          >
+            ${this._projectLearningsLoading ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
+        ${this._projectLearningsError
+          ? html`<div class="cp-editor-error">${this._projectLearningsError}</div>`
+          : this._projectLearningsLoading && !learnings
+            ? html`<div class="cp-empty">Loading learnings...</div>`
+            : !learnings?.exists
+              ? html`<div class="cp-empty">No project LEARNINGS.md yet.</div>`
+              : html`
+                  <div class="cp-learnings-meta">
+                    ${learnings.sizeBytes ?? 0}
+                    bytes${learnings.updatedAt
+                      ? ` · updated ${new Date(learnings.updatedAt).toLocaleString()}`
+                      : ''}
+                  </div>
+                  <div class="cp-learnings-body">
+                    ${unsafeHTML(renderMarkdown(learnings.content))}
+                  </div>
+                `}
+      </div>
     `;
   }
 

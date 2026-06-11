@@ -16,3 +16,8 @@ test('eval candidates expose Cursor through the shared comparison runner allowli
   assert.deepEqual(MODELS_BY_RUNNER.cursor, [DEFAULT_CURSOR_MODEL]);
   assert.equal(DEFAULT_MODEL.cursor, DEFAULT_CURSOR_MODEL);
 });
+
+test('Claude fable is selectable but not the default model', () => {
+  assert.equal(MODELS_BY_RUNNER.claude.includes('fable'), true);
+  assert.notEqual(DEFAULT_MODEL.claude, 'fable');
+});

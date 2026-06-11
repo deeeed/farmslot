@@ -2,7 +2,7 @@
 // config.templates, config.templatePreview, config.templateOptions, config.slot.update, config.pool.update
 
 import { existsSync } from 'node:fs';
-import { copyFile, readdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -15,6 +15,7 @@ import type {
   ConfigProjectBacklogUpdateParams,
   ConfigProjectBacklogUpdateResult,
   ConfigProjectParams,
+  ConfigProjectResult,
   ConfigProjectsResult,
   ConfigSlotUpdateParams,
   ConfigSlotUpdateResult,
@@ -25,7 +26,6 @@ import type {
   ConfigTemplatesParams,
   ConfigTemplatesResult,
   PoolConfig,
-  ProjectConfig,
   TemplatePreview,
 } from '@farmslot/protocol';
 
@@ -73,6 +73,33 @@ async function buildTemplatePreview(
   const schema = generateTaskSchema(content, flowType);
   const placeholders = extractPlaceholders(content);
   return { flowType, fileName, schema, placeholders, rawMarkdown: content };
+}
+
+function isNodeFsError(err: unknown, code: string): err is NodeJS.ErrnoException {
+  return err instanceof Error && (err as NodeJS.ErrnoException).code === code;
+}
+
+async function readProjectLearnings(project: string): Promise<ConfigProjectResult['learnings']> {
+  const relativePath = `projects/${project}/learnings/LEARNINGS.md`;
+  const learningsPath = path.join(projectsDir, project, 'learnings', 'LEARNINGS.md');
+  try {
+    const [content, info] = await Promise.all([
+      readFile(learningsPath, 'utf-8'),
+      stat(learningsPath),
+    ]);
+    return {
+      exists: true,
+      relativePath,
+      content,
+      updatedAt: info.mtime.toISOString(),
+      sizeBytes: info.size,
+    };
+  } catch (err) {
+    if (isNodeFsError(err, 'ENOENT')) {
+      return { exists: false, relativePath, content: '', updatedAt: null, sizeBytes: null };
+    }
+    throw err;
+  }
 }
 
 // ─── Existing handlers ───
@@ -160,12 +187,10 @@ export async function configProjects(): Promise<ConfigProjectsResult> {
   return { projects };
 }
 
-export async function configProject(
-  params: ConfigProjectParams,
-): Promise<{ project: ProjectConfig }> {
+export async function configProject(params: ConfigProjectParams): Promise<ConfigProjectResult> {
   const project = await loadProjectConfig(params.project);
   if (!project) throw new Error(`Project not found: ${params.project}`);
-  return { project };
+  return { project, learnings: await readProjectLearnings(params.project) };
 }
 
 // ─── Raw pool JSON for editor ───

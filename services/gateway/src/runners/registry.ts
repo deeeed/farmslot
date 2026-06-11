@@ -80,7 +80,7 @@ const RUNNER_ALIASES: Record<string, string> = {
 // these at the API layer ("'opus' is not supported with ChatGPT account"),
 // so the cross-runner compat check below uses this prefix set as the deny
 // list for codex and the allow set for claude.
-const CLAUDE_MODEL_PREFIXES = /^(claude|opus|sonnet|haiku)\b/i;
+const CLAUDE_MODEL_PREFIXES = /^(claude|opus|sonnet|haiku|fable)\b/i;
 
 export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
   claude: {

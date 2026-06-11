@@ -435,6 +435,73 @@ export function renderConfigPanelStyles() {
       color: ${colors.textPrimary};
     }
 
+    config-panel .cp-learnings-card {
+      border: 1px solid ${colors.bgCard};
+      border-radius: ${radii.md};
+      background: ${colors.bgSurface};
+      padding: ${spacing.md};
+    }
+
+    config-panel .cp-learnings-head {
+      display: flex;
+      justify-content: space-between;
+      gap: ${spacing.md};
+      align-items: flex-start;
+      margin-bottom: ${spacing.md};
+    }
+
+    config-panel .cp-learnings-title {
+      color: ${colors.textPrimary};
+      font-size: ${fonts.sizeSm};
+      font-weight: 700;
+    }
+
+    config-panel .cp-learnings-subtitle,
+    config-panel .cp-learnings-meta {
+      color: ${colors.textMuted};
+      font-size: ${fonts.sizeXs};
+      margin-top: 4px;
+    }
+
+    config-panel .cp-learnings-subtitle code {
+      color: ${colors.textSecondary};
+      background: ${colors.bgInput};
+      border-radius: ${radii.sm};
+      padding: 1px 4px;
+    }
+
+    config-panel .cp-learnings-body {
+      margin-top: ${spacing.md};
+      max-height: calc(100vh - 260px);
+      overflow: auto;
+      border: 1px solid ${colors.bgCard};
+      border-radius: ${radii.sm};
+      background: ${colors.bgInput};
+      color: ${colors.textSecondary};
+      padding: ${spacing.md};
+      font-size: ${fonts.sizeSm};
+      line-height: 1.55;
+    }
+
+    config-panel .cp-learnings-body h1,
+    config-panel .cp-learnings-body h2,
+    config-panel .cp-learnings-body h3 {
+      color: ${colors.textPrimary};
+    }
+
+    config-panel .cp-learnings-body code {
+      background: ${colors.bgCard};
+      border-radius: ${radii.sm};
+      padding: 1px 4px;
+    }
+
+    config-panel .cp-learnings-body pre {
+      overflow: auto;
+      background: ${colors.bgCard};
+      border-radius: ${radii.sm};
+      padding: ${spacing.sm};
+    }
+
     /* Template container */
     config-panel .cp-template-container {
       height: calc(100% - 50px);
