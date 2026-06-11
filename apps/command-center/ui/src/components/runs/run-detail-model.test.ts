@@ -12,6 +12,7 @@ import type {
 import {
   buildRerunAlongsideHref,
   buildRunDiagnosisPrompt,
+  canReplayRunSteps,
   hasActiveInlineCiFix,
   INTERACTIVE_DEV_ACTIONS,
   isActiveInteractiveDevRun,
@@ -237,6 +238,15 @@ test('buildRerunAlongsideHref omits runner/model/variant when unavailable', () =
     href,
     '#dispatch?flow=fix-bug&ticket=BUG-123&project=farmslot&lane=comparison&familyId=family-1&parentRunId=run-1',
   );
+});
+
+test('canReplayRunSteps allows terminal runs when actions are not blocked', () => {
+  assert.equal(canReplayRunSteps(makeRun({ status: 'failed' })), true);
+  assert.equal(canReplayRunSteps(makeRun({ status: 'done' })), true);
+  assert.equal(canReplayRunSteps(makeRun({ status: 'cancelled' })), true);
+  assert.equal(canReplayRunSteps(makeRun({ status: 'monitoring' })), false);
+  assert.equal(canReplayRunSteps(makeRun({ status: 'failed' }), true), false);
+  assert.equal(canReplayRunSteps(null), false);
 });
 
 test('run detail recipe selection preserves pending current gateway precedence', () => {

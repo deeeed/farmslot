@@ -24,6 +24,13 @@ export function isActiveInteractiveDevRun(run: Run): boolean {
   return run.flowType === 'dev' && run.mode === 'interactive' && !isTerminalRunStatus(run.status);
 }
 
+export function canReplayRunSteps(
+  run: Pick<Run, 'status'> | null | undefined,
+  actionsBlocked = false,
+): boolean {
+  return Boolean(run && !actionsBlocked && isTerminalRunStatus(run.status));
+}
+
 export function pendingCITimeoutDecision(run: Pick<Run, 'decisions'>): RunDecision | null {
   return (
     run.decisions.find((decision) => decision.type === 'ci_ci_timeout' && !decision.resolvedAt) ??

@@ -3,7 +3,7 @@ import { html, nothing } from 'lit';
 import { agentRoleShortLabel } from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
-import { buildRerunAlongsideHref } from '../runs/run-detail-model.js';
+import { buildRerunAlongsideHref, canReplayRunSteps } from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
@@ -620,6 +620,10 @@ export function renderSlotViewBody(
                               <step-inspector
                                 .step=${view._runPanelSelectedStep}
                                 .run=${view._linkedRun}
+                                .allowReplay=${canReplayRunSteps(
+                                  view._linkedRun,
+                                  view._isRecoveryBlocked,
+                                )}
                                 @inspector-close=${() => {
                                   view._runPanelSelectedStep = null;
                                 }}
