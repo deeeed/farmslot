@@ -10,6 +10,8 @@ import { readState, type Workspace, type WorkspaceState } from './workspace.js';
 export interface DoctorCheck {
   name: string;
   ok: boolean;
+  /** True for non-fatal findings: shown as WARN, does not fail the report. */
+  warn?: boolean;
   detail?: string;
   hint?: string;
 }
@@ -36,25 +38,34 @@ function prereqSection(): DoctorSection {
 
 function runnerSection(): DoctorSection {
   const runners = detectRunners();
+  const anyAuthenticated = runners.some((r) => r.status === 'authenticated');
+  // Individual runner problems stay visible as warnings once the ≥1
+  // authenticated gate passes; the gate check carries the failure.
   const checks: DoctorCheck[] = runners.map((r) => ({
     name: r.name,
-    ok: r.found,
-    detail: r.found ? 'on PATH' : 'not found',
-    hint: r.found ? undefined : runnerHint(r.name),
+    ok: anyAuthenticated || r.status === 'authenticated',
+    warn: r.status !== 'authenticated',
+    detail:
+      r.status === 'authenticated'
+        ? 'authenticated'
+        : r.status === 'inactive'
+          ? 'on PATH but not signed in'
+          : 'not found',
+    hint: r.status === 'authenticated' ? undefined : runnerHint(r.name, r.status),
   }));
-  const anyFound = runners.some((r) => r.found);
-  if (!anyFound) {
-    checks.push({
-      name: 'at least one runner',
-      ok: false,
-      detail: 'no agent runner found',
-      hint: 'install one of: claude, codex, cursor-agent',
-    });
-  } else {
-    // Individual missing runners are informational once one runner exists.
-    for (const check of checks) if (!check.ok) check.ok = true;
-    checks.push({ name: 'at least one runner', ok: true, detail: 'ok' });
-  }
+  checks.push({
+    name: 'at least one authenticated runner',
+    ok: anyAuthenticated,
+    detail: anyAuthenticated
+      ? runners
+          .filter((r) => r.status === 'authenticated')
+          .map((r) => r.name)
+          .join(', ')
+      : 'no authenticated agent runner',
+    hint: anyAuthenticated
+      ? undefined
+      : 'install and sign in to one of: claude, codex, cursor-agent',
+  });
   return { title: 'Runners', checks };
 }
 

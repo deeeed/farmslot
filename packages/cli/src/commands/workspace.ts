@@ -9,7 +9,6 @@ import { generatePool, poolFileName, writePool } from '../onboarding/pool-config
 import { commandPath, detectRunners } from '../onboarding/prereqs.js';
 import {
   readState,
-  repoRoot,
   resolveWorkspace,
   type WorkspaceState,
   writeState,
@@ -64,10 +63,10 @@ export function registerWorkspaceCommand(program: Command): void {
       const fileName = existing?.pool_file.split('/').pop() ?? poolFileName(host, sourcePoolDir);
       const machine = fileName.replace(/\.json$/, '');
       const poolRelPath = `pool/${fileName}`;
-      const poolAbsPath = join(repoRoot, poolRelPath);
+      const poolAbsPath = join(ws.farmslotDir, poolRelPath);
 
       if (!existsSync(poolAbsPath)) {
-        mkdirSync(join(repoRoot, 'pool'), { recursive: true });
+        mkdirSync(join(ws.farmslotDir, 'pool'), { recursive: true });
         const pool = generatePool({
           machine,
           os: process.platform === 'darwin' ? 'darwin' : 'linux',
@@ -98,9 +97,11 @@ export function registerWorkspaceCommand(program: Command): void {
       writeState(ws, state);
       output.write(`${green('workspace ready')} ${dim(ws.root)}\n`);
 
-      const runners = detectRunners().filter((r) => r.found);
+      const runners = detectRunners().filter((r) => r.status === 'authenticated');
       if (runners.length === 0) {
-        output.error('no agent runner found on PATH (claude, codex, or cursor-agent required)');
+        output.error(
+          'no authenticated agent runner found (sign in to one of: claude, codex, cursor-agent)',
+        );
         process.exit(1);
       }
     });

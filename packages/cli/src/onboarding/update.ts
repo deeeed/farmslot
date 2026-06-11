@@ -127,7 +127,8 @@ export async function farmslotUpdate(
   writeState(ws, {
     ...state,
     packs,
-    pool_migrations: { applied: [...state.pool_migrations.applied, ...applied] },
+    // Dedup: a downgraded-then-remigrated pool must not accumulate duplicates.
+    pool_migrations: { applied: [...new Set([...state.pool_migrations.applied, ...applied])] },
   });
 
   return { branch, commit, migrationsApplied: applied, packsSynced };

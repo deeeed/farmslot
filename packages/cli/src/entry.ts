@@ -42,4 +42,6 @@ registerWorkspaceCommand(program);
 registerProjectCommand(program);
 registerUpdateCommand(program);
 
-program.parse();
+// parseAsync: async command actions (update) must reject through commander,
+// not become unhandled rejections.
+await program.parseAsync();

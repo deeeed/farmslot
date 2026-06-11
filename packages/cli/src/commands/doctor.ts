@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 
-import { bold, dim, green, red } from '../colors.js';
+import { bold, dim, green, red, yellow } from '../colors.js';
 import { runDoctor } from '../onboarding/doctor.js';
 import { resolveWorkspace } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
@@ -18,11 +18,13 @@ export function registerDoctorCommand(program: Command): void {
         for (const section of report.sections) {
           output.write(`${bold(section.title)}\n`);
           for (const check of section.checks) {
-            const mark = check.ok ? green('[OK]') : red('[FAIL]');
+            const mark = !check.ok ? red('[FAIL]') : check.warn ? yellow('[WARN]') : green('[OK]');
             output.write(
               `  ${mark} ${check.name}${check.detail ? dim(`  ${check.detail}`) : ''}\n`,
             );
-            if (!check.ok && check.hint) output.write(`         ${dim(`fix: ${check.hint}`)}\n`);
+            if ((!check.ok || check.warn) && check.hint) {
+              output.write(`         ${dim(`fix: ${check.hint}`)}\n`);
+            }
           }
         }
         output.write(

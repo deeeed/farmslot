@@ -109,7 +109,7 @@ export function expandHookTemplate(
   for (const [key, value] of Object.entries(vars)) {
     text = text.replaceAll(`{{${key}}}`, String(value));
   }
-  const left = text.match(/\{\{([a-z_]+)\}\}/);
+  const left = text.match(/\{\{([A-Za-z0-9_]+)\}\}/);
   if (left) throw new AddError(`hook references unknown variable {{${left[1]}}}: ${template}`);
   return text;
 }
@@ -182,6 +182,57 @@ export interface AddResult {
   slots: string[];
 }
 
+/** Read an already-registered project's metadata without re-copying the pack dir. */
+function readRegisteredProject(proj: PackProject, ws: Workspace): RegisteredProject {
+  const name = projectName(proj);
+  const projectJsonPath = join(ws.farmslotDir, 'projects', name, 'project.json');
+  const projectJson = JSON.parse(readFileSync(projectJsonPath, 'utf-8')) as {
+    repo_url?: string;
+    default_branch?: string;
+    paths?: { runtime_dir?: string };
+    hooks?: { preflight?: string };
+  };
+  return {
+    name,
+    short: projectShortName(proj),
+    platform: proj.platform,
+    repoUrl: projectJson.repo_url ?? '',
+    defaultBranch: projectJson.default_branch ?? 'main',
+    runtimeDir: projectJson.paths?.runtime_dir ?? '.agent',
+    preflight: projectJson.hooks?.preflight,
+    slots: proj.slots,
+  };
+}
+
+/**
+ * Verify-only check for an unchanged pack: list anything missing that the add
+ * pipeline would have created. Empty list = true no-op; anything missing
+ * escalates the run to a repair.
+ */
+export function findMissingState(
+  pack: PackJson,
+  pool: { machine: string; slots: Array<{ id: string }> },
+  ws: { farmslotDir: string; reposDir: string },
+): string[] {
+  const missing: string[] = [];
+  const slotIds = new Set(pool.slots.map((s) => s.id));
+  for (const proj of pack.projects) {
+    const name = projectName(proj);
+    const short = projectShortName(proj);
+    if (!existsSync(join(ws.farmslotDir, 'projects', name, 'project.json'))) {
+      missing.push(`project ${name} not registered`);
+    }
+    for (let n = 1; n <= proj.slots; n++) {
+      const slotId = `${pool.machine}-${short}-${n}`;
+      if (!slotIds.has(slotId)) missing.push(`slot ${slotId} not in pool`);
+      if (!existsSync(join(ws.reposDir, `${short}-${n}`, '.git'))) {
+        missing.push(`repo ${short}-${n} missing`);
+      }
+    }
+  }
+  return missing;
+}
+
 export function projectAdd(source: string, ws: Workspace, progress: AddProgress): AddResult {
   const state = readState(ws);
   if (!state) {
@@ -194,18 +245,32 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
     throw new AddError(`invalid pack at ${packDir}:\n  - ${errors.join('\n  - ')}`);
   }
   const hash = hashPackDir(packDir);
-  const action = decideAddAction(state.packs[pack.name]?.hash, hash);
-  progress.step({ label: `pack ${pack.name} validated`, detail: `${packDir} (${action})` });
-
-  runPackHook(pack, 'pre_add', packDir, ws, progress);
+  let action = decideAddAction(state.packs[pack.name]?.hash, hash);
 
   const poolPath = join(ws.farmslotDir, state.pool_file);
   const pool = readPool(poolPath);
+
+  // An unchanged pack is verify-only — one-time setup must not rerun. Anything
+  // missing (deleted repo, edited pool, lost project dir) escalates to repair.
+  if (action === 'noop') {
+    const missing = findMissingState(pack, pool, ws);
+    if (missing.length > 0) {
+      progress.info(`pack unchanged but state incomplete — repairing: ${missing.join('; ')}`);
+      action = 'repair';
+    }
+  }
+  const mutate = action !== 'noop';
+  progress.step({ label: `pack ${pack.name} validated`, detail: `${packDir} (${action})` });
+
+  if (mutate) runPackHook(pack, 'pre_add', packDir, ws, progress);
+
   const allSlots: string[] = [];
   const projects: string[] = [];
 
   for (const proj of pack.projects) {
-    const registered = registerProject(proj, packDir, ws, progress);
+    const registered = mutate
+      ? registerProject(proj, packDir, ws, progress)
+      : readRegisteredProject(proj, ws);
     projects.push(registered.name);
 
     for (let n = 1; n <= registered.slots; n++) {
@@ -214,44 +279,54 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
       const repoPath = join(ws.reposDir, `${registered.short}-${n}`);
       allSlots.push(slotId);
 
-      cloneSlotRepo(registered.repoUrl, repoPath, progress);
-
-      const added = registerSlot(pool, {
-        id: slotId,
-        project: registered.name,
-        platform: registered.platform,
-        repo: repoPath,
-        session,
-        branch: registered.defaultBranch,
-        resources: { 'dev-server': { port: allocatePort(pool) } },
-      });
-      if (added) {
-        writePool(poolPath, pool);
-        progress.step({ label: `slot ${slotId} registered`, detail: state.pool_file });
-      } else {
-        progress.info(`slot ${slotId} already in pool — left untouched`);
+      // Fail fast when another pack's project already owns this slot/repo name.
+      const existing = pool.slots.find((s) => s.id === slotId);
+      if (existing && existing.project && existing.project !== registered.name) {
+        throw new AddError(
+          `slot ${slotId} already belongs to project '${existing.project}' — packs collide on short name '${registered.short}'; set a distinct 'short' in pack.json`,
+        );
       }
 
-      const slot = pool.slots.find((s) => s.id === slotId);
-      const port = Number(slot?.resources?.['dev-server']?.port ?? 0);
+      if (mutate) {
+        cloneSlotRepo(registered.repoUrl, repoPath, progress);
 
-      // Existing lifecycle scripts own fixtures + setup; never reimplement them.
-      run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], { cwd: ws.farmslotDir });
-      progress.step({ label: `slot ${slotId} fixtures synced` });
-      run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
-        cwd: ws.farmslotDir,
-      });
-      progress.step({ label: `slot ${slotId} setup complete` });
-
-      if (registered.preflight) {
-        const cmd = expandHookTemplate(registered.preflight, {
-          port,
-          slot_id: slotId,
+        const added = registerSlot(pool, {
+          id: slotId,
+          project: registered.name,
           platform: registered.platform,
-          runtime_dir: registered.runtimeDir,
+          repo: repoPath,
+          session,
+          branch: registered.defaultBranch,
+          resources: { 'dev-server': { port: allocatePort(pool) } },
         });
-        run('bash', ['-c', cmd], { cwd: repoPath });
-        progress.step({ label: `slot ${slotId} preflight hook ran`, detail: cmd });
+        if (added) {
+          writePool(poolPath, pool);
+          progress.step({ label: `slot ${slotId} registered`, detail: state.pool_file });
+        } else {
+          progress.info(`slot ${slotId} already in pool — left untouched`);
+        }
+
+        const slot = pool.slots.find((s) => s.id === slotId);
+        const port = Number(slot?.resources?.['dev-server']?.port ?? 0);
+
+        // Existing lifecycle scripts own fixtures + setup; never reimplement them.
+        run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], { cwd: ws.farmslotDir });
+        progress.step({ label: `slot ${slotId} fixtures synced` });
+        run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
+          cwd: ws.farmslotDir,
+        });
+        progress.step({ label: `slot ${slotId} setup complete` });
+
+        if (registered.preflight) {
+          const cmd = expandHookTemplate(registered.preflight, {
+            port,
+            slot_id: slotId,
+            platform: registered.platform,
+            runtime_dir: registered.runtimeDir,
+          });
+          run('bash', ['-c', cmd], { cwd: repoPath });
+          progress.step({ label: `slot ${slotId} preflight hook ran`, detail: cmd });
+        }
       }
 
       run('bash', ['scripts/preflight-slot.sh', slotId], { cwd: ws.farmslotDir });
@@ -259,9 +334,11 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
     }
   }
 
-  runPackHook(pack, 'post_add', packDir, ws, progress);
-  runPackHook(pack, 'smoke', packDir, ws, progress);
-  progress.step({ label: `pack ${pack.name} smoke check passed` });
+  if (mutate) runPackHook(pack, 'post_add', packDir, ws, progress);
+  if (pack.hooks?.smoke) {
+    runPackHook(pack, 'smoke', packDir, ws, progress);
+    progress.step({ label: `pack ${pack.name} smoke check passed` });
+  }
 
   const newState: WorkspaceState = {
     ...state,

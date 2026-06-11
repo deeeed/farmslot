@@ -89,6 +89,18 @@ All hooks run with cwd = the pack directory and env:
 (`slot.prepare`), which is not running yet during install. Dispatch-time
 prepare still owns the branch lifecycle.
 
+Ownership rules:
+
+- **Packs own their project dirs.** An add/repair re-copies `projects/<name>/`
+  from the pack, overwriting local edits there. Persist customizations in the
+  pack source, not the registered copy. (Pool files are the opposite: user
+  edits are always preserved.)
+- **Nothing is deregistered.** Slots/projects removed from a pack stay in the
+  pool and `projects/` until removed manually — repair only adds or verifies.
+- Re-running `project add` with an **unchanged** pack is verify-only: no hooks,
+  no setup, no re-copy. Missing pieces (deleted repo, removed slot) escalate
+  that run to a repair automatically.
+
 ## Example
 
 `packs/example-app/` is the reference pack: a CLI-platform project whose

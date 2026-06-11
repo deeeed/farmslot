@@ -4,7 +4,7 @@
 // A pack is a directory (local path or git clone) with a pack.json at its root
 // and one or more project dirs in the standard projects/<name>/ layout.
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 export interface PackProject {
@@ -139,23 +139,33 @@ export function projectShortName(proj: PackProject): string {
   return name.endsWith('-farm') ? name.slice(0, -'-farm'.length) : name;
 }
 
-/** Deterministic content hash of a pack directory (path + bytes of every file, sorted). */
+/**
+ * Deterministic content hash of a pack directory (path + bytes of every file,
+ * sorted). Symlinks are hashed by their target path, not followed — packs must
+ * be self-contained and link-following could escape the pack or loop.
+ */
 export function hashPackDir(packDir: string): string {
   const hash = createHash('sha256');
-  const files: string[] = [];
+  const entries: Array<{ rel: string; content: Buffer | string }> = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir).sort()) {
       if (entry === '.git' || entry === 'node_modules') continue;
       const full = join(dir, entry);
-      if (statSync(full).isDirectory()) walk(full);
-      else files.push(full);
+      const stat = lstatSync(full);
+      if (stat.isSymbolicLink()) {
+        entries.push({ rel: relative(packDir, full), content: `symlink:${readlinkSync(full)}` });
+      } else if (stat.isDirectory()) {
+        walk(full);
+      } else {
+        entries.push({ rel: relative(packDir, full), content: readFileSync(full) });
+      }
     }
   };
   walk(packDir);
-  for (const file of files) {
-    hash.update(relative(packDir, file));
+  for (const entry of entries) {
+    hash.update(entry.rel);
     hash.update('\0');
-    hash.update(readFileSync(file));
+    hash.update(entry.content);
     hash.update('\0');
   }
   return hash.digest('hex');

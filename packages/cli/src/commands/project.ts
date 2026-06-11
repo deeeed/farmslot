@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 
 import { bold, dim, green, red } from '../colors.js';
-import { AddError, type AddStep, projectAdd } from '../onboarding/add.js';
+import { AddError, projectAdd } from '../onboarding/add.js';
 import { runDoctor } from '../onboarding/doctor.js';
 import { resolveWorkspace } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
@@ -21,18 +21,15 @@ export function registerProjectCommand(program: Command): void {
         process.exit(1);
       }
 
-      const steps: AddStep[] = [];
       try {
         const result = projectAdd(source, ws, {
           step: (s) => {
-            steps.push(s);
             output.write(`${green('[OK]')} ${s.label}${s.detail ? dim(`  ${s.detail}`) : ''}\n`);
           },
           info: (msg) => output.write(`${dim(msg)}\n`),
         });
 
         output.write(`\n${bold(`pack ${result.pack.name}: ${result.action}`)}\n`);
-        for (const s of steps) output.write(`  ${green('✓')} ${s.label}\n`);
         output.write(`  ${green('✓')} slots: ${result.slots.join(', ')}\n`);
         if (result.pack.action_sheet) {
           output.write(`\n${bold('Next steps')}\n${result.pack.action_sheet}\n`);

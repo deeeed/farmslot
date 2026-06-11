@@ -112,21 +112,58 @@ export function checkPrereqs(root: string = repoRoot): PrereqResult[] {
 
 export const KNOWN_RUNNERS = ['claude', 'codex', 'cursor-agent'] as const;
 
+/** Runner state: missing from PATH, installed but not signed in, or ready to work. */
+export type RunnerStatus = 'missing' | 'inactive' | 'authenticated';
+
 export interface RunnerResult {
   name: string;
   found: boolean;
+  status: RunnerStatus;
 }
 
-const RUNNER_HINTS: Record<string, string> = {
+const RUNNER_INSTALL_HINTS: Record<string, string> = {
   claude: 'npm install -g @anthropic-ai/claude-code',
   codex: 'npm install -g @openai/codex',
   'cursor-agent': 'see https://cursor.com/cli',
 };
 
-export function detectRunners(): RunnerResult[] {
-  return KNOWN_RUNNERS.map((name) => ({ name, found: commandExists(name) }));
+const RUNNER_LOGIN_HINTS: Record<string, string> = {
+  claude: 'run: claude (sign in interactively)',
+  codex: 'run: codex login',
+  'cursor-agent': 'run: cursor-agent login',
+};
+
+const AUTH_PROBE_TIMEOUT_MS = 10_000;
+
+/** Auth probe per runner. Exit 0 + the expected marker = authenticated. */
+function probeRunnerAuth(name: string): boolean {
+  const probes: Record<string, { args: string[]; marker: RegExp }> = {
+    claude: { args: ['auth', 'status'], marker: /"loggedIn":\s*true/ },
+    codex: { args: ['login', 'status'], marker: /logged in/i },
+    'cursor-agent': { args: ['status'], marker: /logged in/i },
+  };
+  const probe = probes[name];
+  if (!probe) return false;
+  const result = spawnSync(name, probe.args, {
+    encoding: 'utf-8',
+    timeout: AUTH_PROBE_TIMEOUT_MS,
+  });
+  if (result.error || result.status !== 0) return false;
+  return probe.marker.test(`${result.stdout}\n${result.stderr}`);
 }
 
-export function runnerHint(name: string): string {
-  return RUNNER_HINTS[name] ?? '';
+export function detectRunners(): RunnerResult[] {
+  return KNOWN_RUNNERS.map((name) => {
+    if (!commandExists(name)) return { name, found: false, status: 'missing' as const };
+    return {
+      name,
+      found: true,
+      status: probeRunnerAuth(name) ? ('authenticated' as const) : ('inactive' as const),
+    };
+  });
+}
+
+export function runnerHint(name: string, status: RunnerStatus = 'missing'): string {
+  if (status === 'inactive') return RUNNER_LOGIN_HINTS[name] ?? '';
+  return RUNNER_INSTALL_HINTS[name] ?? '';
 }

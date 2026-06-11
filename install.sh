@@ -14,13 +14,15 @@
 #
 # Env:
 #   FARMSLOT_WORKSPACE  workspace dir              (default: ~/dev/farmslot-workspace)
-#   FARMSLOT_REPO_URL   git source for fresh mode  (default: this repo's origin)
+#   FARMSLOT_REPO_URL   git source for fresh mode  (default: the canonical repo URL)
 #   FARMSLOT_BIN_DIR    dir for the PATH symlink   (default: ~/.local/bin)
 set -euo pipefail
 
 WORKSPACE="${FARMSLOT_WORKSPACE:-${HOME}/dev/farmslot-workspace}"
 BIN_DIR="${FARMSLOT_BIN_DIR:-${HOME}/.local/bin}"
-DEFAULT_REPO_URL="https://github.com/farmslot/farmslot.git"
+# Fresh (piped) installs clone this repo; override with FARMSLOT_REPO_URL.
+# Dev/test mode (run from a checkout) uses the checkout itself as the source.
+DEFAULT_REPO_URL="https://github.com/deeeed/farmslot.git"
 
 red() { printf '\033[0;31m%s\033[0m\n' "$1"; }
 green() { printf '\033[0;32m%s\033[0m\n' "$1"; }
@@ -67,22 +69,28 @@ check_cmd yarn "corepack enable (ships with node)"
 check_cmd tmux "macOS: brew install tmux · Linux: apt install tmux"
 check_cmd python3 "macOS: brew install python3 · Linux: apt install python3"
 
-# ── Runners: require at least one, hint the rest ────────────────────────────
+# ── Runners: require at least one AUTHENTICATED runner ──────────────────────
 bold "── Runners ──"
-runner_found=0
+runner_authenticated=0
+# check_runner <name> <auth-cmd...> — three states: missing / inactive / authenticated
 check_runner() {
-  local name="$1" hint="$2"
-  if command -v "$name" >/dev/null 2>&1; then
-    green "  [OK] ${name}"
-    runner_found=1
+  local name="$1" install_hint="$2" login_hint="$3"
+  shift 3
+  if ! command -v "$name" >/dev/null 2>&1; then
+    echo "  [--] ${name} not found — ${install_hint}"
+    return 0
+  fi
+  if "$@" 2>/dev/null | grep -qiE 'logged ?in.*true|logged in'; then
+    green "  [OK] ${name} (authenticated)"
+    runner_authenticated=1
   else
-    echo "  [--] ${name} not found — ${hint}"
+    printf '\033[0;33m  [WARN] %s on PATH but not signed in — %s\033[0m\n' "$name" "$login_hint"
   fi
 }
-check_runner claude "npm install -g @anthropic-ai/claude-code"
-check_runner codex "npm install -g @openai/codex"
-check_runner cursor-agent "see https://cursor.com/cli"
-[ "$runner_found" = 1 ] || fail "no agent runner found" "install at least one of: claude, codex, cursor-agent"
+check_runner claude "npm install -g @anthropic-ai/claude-code" "run: claude (sign in)" claude auth status
+check_runner codex "npm install -g @openai/codex" "run: codex login" codex login status
+check_runner cursor-agent "see https://cursor.com/cli" "run: cursor-agent login" cursor-agent status
+[ "$runner_authenticated" = 1 ] || fail "no authenticated agent runner" "install and sign in to at least one of: claude, codex, cursor-agent"
 
 # ── Clone / update the farmslot repo ────────────────────────────────────────
 bold "── Farmslot repo ──"
