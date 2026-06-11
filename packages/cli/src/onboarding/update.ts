@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 import { AddError, resolvePackSource, syncPackProjects } from './add.js';
 import { applyMigrations, loadMigrations } from './migrations.js';
-import { hashPackDir, validatePackDir } from './pack.js';
+import { hashPackDir, projectName, validatePackDir } from './pack.js';
 import { readPool, writePool } from './pool-config.js';
 import { readState, type Workspace, writeState } from './workspace.js';
 
@@ -120,14 +120,28 @@ export async function farmslotUpdate(
         FARMSLOT_REPOS_DIR: ws.reposDir,
       });
     }
+    // Claim ownership of any newly added project dirs BEFORE copying them, and
+    // keep the old hash until the sync succeeds — a failed sync retries on the
+    // next update, and the follow-up `project add` never sees unowned dirs.
+    packs[name] = {
+      ...packState,
+      projects: [...new Set([...packState.projects, ...pack.projects.map(projectName)])],
+    };
+    writeState(ws, { ...state, packs });
     // Apply content changes now — stamping the hash without re-copying would
     // strand them (the next add would see noop). Structural changes (new
     // slots/repos) escalate to repair on the next project add.
-    syncPackProjects(pack, packDir, ws, state, {
-      step: (s) => progress.step(s.label, s.detail),
-      info: progress.info,
-    });
-    packs[name] = { ...packState, hash };
+    syncPackProjects(
+      pack,
+      packDir,
+      ws,
+      { ...state, packs },
+      {
+        step: (s) => progress.step(s.label, s.detail),
+        info: progress.info,
+      },
+    );
+    packs[name] = { ...packs[name], hash };
     packsSynced.push(name);
     progress.step(
       `pack ${name} re-synced (project defs re-registered)`,

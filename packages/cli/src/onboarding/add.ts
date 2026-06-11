@@ -324,6 +324,26 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
   const mutate = action !== 'noop';
   progress.step({ label: `pack ${pack.name} validated`, detail: `${packDir} (${action})` });
 
+  // Claim ownership BEFORE mutating: a failed add must leave a state where the
+  // re-run repairs (empty hash never matches → repair) instead of rejecting the
+  // half-created project dirs as unowned.
+  let claimedState = state;
+  if (mutate) {
+    claimedState = {
+      ...state,
+      packs: {
+        ...state.packs,
+        [pack.name]: {
+          source: isGitUrl(source) ? source : resolve(source),
+          hash: '',
+          projects: pack.projects.map(projectName),
+          slots: state.packs[pack.name]?.slots ?? [],
+        },
+      },
+    };
+    writeState(ws, claimedState);
+  }
+
   if (mutate) runPackHook(pack, 'pre_add', packDir, ws, progress);
 
   const allSlots: string[] = [];
@@ -331,7 +351,7 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
 
   for (const proj of pack.projects) {
     const registered = mutate
-      ? registerProject(proj, packDir, ws, state, pack.name, progress)
+      ? registerProject(proj, packDir, ws, claimedState, pack.name, progress)
       : readRegisteredProject(proj, ws);
     projects.push(registered.name);
 
@@ -397,9 +417,9 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
   }
 
   const newState: WorkspaceState = {
-    ...state,
+    ...claimedState,
     packs: {
-      ...state.packs,
+      ...claimedState.packs,
       [pack.name]: {
         source: isGitUrl(source) ? source : resolve(source),
         hash,

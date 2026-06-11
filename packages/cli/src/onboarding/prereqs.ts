@@ -20,7 +20,11 @@ export function parseVersionOutput(output: string): string | null {
   return match ? `${match[1]}.${match[2]}.${match[3] ?? '0'}` : null;
 }
 
-/** Parse the minimum version out of an engines range like ">=22.12.0", "^22", "22.15.0". */
+/**
+ * Parse the minimum version out of an engines range like ">=22.12.0", "^22",
+ * "22.15.0". Lower bound only — upper bounds (caret/tilde ceilings) are
+ * intentionally ignored; onboarding only enforces "at least this version".
+ */
 export function parseMinimumVersion(range: string): [number, number, number] | null {
   const match = range.match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
   if (!match) return null;
@@ -133,7 +137,8 @@ const RUNNER_LOGIN_HINTS: Record<string, string> = {
   'cursor-agent': 'run: cursor-agent login',
 };
 
-const AUTH_PROBE_TIMEOUT_MS = 10_000;
+// Probes run for all runners on every doctor pass — keep the hang ceiling low.
+const AUTH_PROBE_TIMEOUT_MS = 5_000;
 
 /** Auth probe per runner. Exit 0 + the expected marker = authenticated. */
 function probeRunnerAuth(name: string): boolean {

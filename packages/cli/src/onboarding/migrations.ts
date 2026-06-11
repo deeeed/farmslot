@@ -47,6 +47,13 @@ export async function loadMigrations(dir: string = poolMigrationsDir()): Promise
     });
   }
   steps.sort((a, b) => a.toVersion - b.toVersion);
+  for (let i = 1; i < steps.length; i++) {
+    if (steps[i].toVersion === steps[i - 1].toVersion) {
+      throw new Error(
+        `Migration steps '${steps[i - 1].id}' and '${steps[i].id}' both declare toVersion ${steps[i].toVersion}`,
+      );
+    }
+  }
   return steps;
 }
 

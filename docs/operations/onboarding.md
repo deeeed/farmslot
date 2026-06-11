@@ -5,7 +5,7 @@ Two commands take a fresh machine to working farm slots; one keeps it current.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/farmslot/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | bash
 ```
 
 From inside a checkout (dev/test mode), `bash install.sh` uses the checkout as

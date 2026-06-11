@@ -3,8 +3,9 @@
 #
 #   install → doctor → project add example-app → re-add (no-op) → update → doctor
 #
-# Pre-push guard. Everything runs in a throwaway FARMSLOT_WORKSPACE; the real
-# workspace, pool files, and PATH are never touched.
+# Run before pushing onboarding changes: yarn test:onboarding (repo root).
+# Everything runs in a throwaway FARMSLOT_WORKSPACE; the real workspace, pool
+# files, and PATH are never touched.
 #
 # NOTE: install.sh dev mode clones the checkout's committed HEAD — uncommitted
 # changes are not exercised. Commit before running.

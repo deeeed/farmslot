@@ -260,9 +260,12 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
       existsSync(lock) &&
       existsSync(stateFile) &&
       statSync(stateFile).mtimeMs >= statSync(lock).mtimeMs;
+    // Recoverable advice, not breakage — stale deps warn instead of failing
+    // an otherwise-successful command.
     checks.push({
       name: 'install fresh',
-      ok: fresh,
+      ok: true,
+      warn: !fresh,
       detail: fresh ? 'node_modules newer than yarn.lock' : 'yarn.lock changed since last install',
       hint: fresh ? undefined : 'run: farmslot update',
     });

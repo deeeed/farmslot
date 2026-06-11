@@ -53,6 +53,10 @@ my-pack/
 | `hooks.*`             | no       | Shell commands run with cwd = pack dir (see below).                                            |
 | `action_sheet`        | no       | Text printed after a successful add.                                                           |
 
+Note: a project.json `$schema` like `../../schemas/project.schema.json`
+resolves once the dir is registered into the farmslot clone, not in the pack
+source — editor validation works after `project add`.
+
 ## Hooks
 
 All hooks run with cwd = the pack directory and env:
