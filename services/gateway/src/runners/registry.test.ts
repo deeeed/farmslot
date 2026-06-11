@@ -818,10 +818,10 @@ describe('buildLaunchCommand', () => {
   });
 
   describe('cursor runner', () => {
-    it('falls back to bare `agent` on PATH when no cursor_path is configured', () => {
+    it('falls back to bare `cursor-agent` on PATH when no cursor_path is configured', () => {
       const vars = makeVars({ dispatchCmd: '', cursorPath: '' });
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
-      assert.equal(cmd, "cd '/tmp/repo' && agent --sandbox enabled --model composer-2.5");
+      assert.equal(cmd, "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5");
     });
 
     it('falls back to inline Cursor Agent launcher with composer-2.5 default model', () => {
