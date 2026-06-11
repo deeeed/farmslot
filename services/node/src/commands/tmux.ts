@@ -288,6 +288,7 @@ function paneStableKey(pane: NodeTmuxPane): string {
 }
 
 function paneSignature(pane: NodeTmuxPane): string {
+  const process = pane.signals?.process ? { active: pane.signals.process.active } : undefined;
   return createHash('sha1')
     .update(
       JSON.stringify({
@@ -303,7 +304,7 @@ function paneSignature(pane: NodeTmuxPane): string {
         hook: pane.signals?.hook,
         statusline: pane.signals?.statusline,
         taskFile: pane.signals?.taskFile,
-        process: pane.signals?.process,
+        process,
       }),
     )
     .digest('hex');

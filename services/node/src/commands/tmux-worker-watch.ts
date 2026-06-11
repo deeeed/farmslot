@@ -24,6 +24,45 @@ function signalFreshnessBucket(observedAt: number | undefined, now: number): str
   return now - observedAt <= SIGNAL_FRESH_MS ? 'fresh' : 'stale';
 }
 
+function signalSignature(
+  signal: NodeTmuxPane['signals'] | undefined,
+  now: number,
+): Record<string, unknown> | undefined {
+  if (!signal) return undefined;
+  return {
+    hook: signal.hook
+      ? {
+          event: signal.hook.event,
+          label: signal.hook.label,
+          freshness: signalFreshnessBucket(signal.hook.observedAt, now),
+        }
+      : undefined,
+    statusline: signal.statusline
+      ? {
+          label: signal.statusline.label,
+          busy: signal.statusline.busy,
+          model: signal.statusline.model,
+          ctxPct: signal.statusline.ctxPct,
+          freshness: signalFreshnessBucket(signal.statusline.observedAt, now),
+        }
+      : undefined,
+    taskFile: signal.taskFile
+      ? {
+          label: signal.taskFile.label,
+          status: signal.taskFile.status,
+          phase: signal.taskFile.phase,
+          freshness: signalFreshnessBucket(signal.taskFile.observedAt, now),
+        }
+      : undefined,
+    process: signal.process
+      ? {
+          active: signal.process.active,
+          freshness: signalFreshnessBucket(signal.process.observedAt, now),
+        }
+      : undefined,
+  };
+}
+
 export function panesSignature(panes: NodeTmuxPane[], now = Date.now()): string {
   const stable = panes
     .map((pane) => ({
@@ -38,13 +77,7 @@ export function panesSignature(panes: NodeTmuxPane[], now = Date.now()): string 
       pid: pane.pid,
       branch: pane.branch,
       lastChangedAt: pane.lastChangedAt,
-      signals: pane.signals,
-      signalFreshness: {
-        hook: signalFreshnessBucket(pane.signals?.hook?.observedAt, now),
-        statusline: signalFreshnessBucket(pane.signals?.statusline?.observedAt, now),
-        taskFile: signalFreshnessBucket(pane.signals?.taskFile?.observedAt, now),
-        process: signalFreshnessBucket(pane.signals?.process?.observedAt, now),
-      },
+      signals: signalSignature(pane.signals, now),
     }))
     .sort((a, b) => `${a.session}:${a.target}`.localeCompare(`${b.session}:${b.target}`));
   return createHash('sha1').update(JSON.stringify(stable)).digest('hex');
