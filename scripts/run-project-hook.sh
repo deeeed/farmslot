@@ -26,11 +26,13 @@ if [ -z "$HOOK" ]; then
 fi
 
 echo "[run-project-hook] ${SLOT_ID} ${HOOK_NAME}: ${HOOK}"
+# Note: apply_project_command_env_current_shell ends in `[ -n ] && eval`, which
+# returns 1 under errexit when no command_env is configured — guard explicitly.
+ENV_PREFIX=$(project_command_env_shell_prefix)
 if is_local "$HOST" "$MACHINE"; then
-  apply_project_command_env_current_shell
+  if [ -n "$ENV_PREFIX" ]; then eval "$ENV_PREFIX"; fi
   cd "$REPO"
   eval "$HOOK"
 else
-  ENV_PREFIX=$(project_command_env_shell_prefix)
   remote "cd '${REMOTE_REPO}' && ${ENV_PREFIX} ${HOOK}"
 fi
