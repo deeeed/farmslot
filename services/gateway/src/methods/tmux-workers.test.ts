@@ -454,7 +454,7 @@ test('tmuxWorkerStatusFromPane prefers fresh hook/statusline signals and marks s
       source: 'hook',
       confidence: 'high',
       observedAt: observedAt - 1_000,
-      state: 'waiting',
+      state: 'idle',
     },
   );
 
@@ -497,7 +497,31 @@ test('tmuxWorkerStatusFromPane prefers fresh hook/statusline signals and marks s
       confidence: 'low',
       observedAt: observedAt - 300_000,
       stale: true,
-      state: 'unknown',
+      state: 'stale',
+    },
+  );
+
+  assert.deepEqual(
+    tmuxWorkerStatusFromPane(
+      {
+        session: 's',
+        window: '0',
+        pane: '0',
+        target: '%1',
+        command: 'zsh',
+        signals: { taskFile: { label: 'task running', observedAt: observedAt - 300_000 } },
+        lastChangedAt: observedAt - 1_000,
+      },
+      observedAt,
+      'active',
+    ),
+    {
+      label: 'task running',
+      source: 'task-file',
+      confidence: 'low',
+      observedAt: observedAt - 300_000,
+      stale: true,
+      state: 'stale',
     },
   );
 

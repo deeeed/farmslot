@@ -10,6 +10,8 @@ import type {
   PairingCreateResult,
   Run,
   SlotStatus,
+  TmuxWorkerListResult,
+  TmuxWorkerSummary,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
@@ -25,6 +27,7 @@ import './decisions/decision-inbox.js';
 import './slot-view/slot-view.js';
 import './runs/run-list.js';
 import './runs/run-detail.js';
+import './runs/run-pipeline-mini.js';
 import './runs/run-compare.js';
 import './runs/family-observability.js';
 import './intelligence-audit/intelligence-incidents-panel.js';
@@ -36,25 +39,26 @@ import './config/config-panel.js';
 
 import type { ConnectionState } from '../gateway-client.js';
 import { gateway } from '../gateway-client.js';
-import { type AppState, getState, isFullyHydrated, subscribe } from '../state.js';
+import {
+  type AppState,
+  getState,
+  type GlobalFilters,
+  isFullyHydrated,
+  subscribe,
+} from '../state.js';
+import {
+  listPinnedSlots as listPinnedSlotPreferences,
+  PINNED_SLOTS_CHANGED,
+  type PinnedSlotPreference,
+} from '../utils/pinned-slots.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
-import {
-  formatElapsed,
-  runDisplayColor,
-  runDisplayLabel,
-  runStatusColor,
-  stepStatusColor,
-} from './runs/run-utils.js';
 import {
   activeSidebarRuns,
   clampSidebarWidth,
   DEFAULT_SIDEBAR_WIDTH,
   parseStoredSidebarWidth,
   SIDEBAR_WIDTH_PREF_KEY,
-  sidebarPreviewSteps,
-  sidebarRunRoute,
-  sidebarRunSummary,
 } from './app-shell-nav-model.js';
 import { renderAppShellAuthStyles, renderAppShellStyles } from './app-shell-styles.js';
 
@@ -133,6 +137,9 @@ export class FarmApp extends LitElement {
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
   @state() private runs: Run[] = [];
+  @state() private pinnedSlots: PinnedSlotPreference[] = [];
+  @state() private globalFilters: GlobalFilters = { projects: [], machines: [] };
+  @state() private tmuxWorkers: TmuxWorkerSummary[] = [];
   @state() private chatOpen = false;
   @state() private chatUnread = 0;
   @state() private _sidebarExpanded = false;
@@ -160,6 +167,7 @@ export class FarmApp extends LitElement {
   private unsub?: () => void;
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
+  private tmuxWorkerRefreshTimer?: ReturnType<typeof setInterval>;
 
   // Light DOM so Monaco/diff2html CSS from document.head reaches all children
   protected override createRenderRoot() {
@@ -176,6 +184,12 @@ export class FarmApp extends LitElement {
     window.addEventListener('pointermove', this.onSidebarResizeMove);
     window.addEventListener('pointerup', this.onSidebarResizeEnd);
     window.addEventListener('copilot-prompt-request', this.onCopilotPromptRequest as EventListener);
+    window.addEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
+    this.pinnedSlots = listPinnedSlotPreferences();
+    void this.refreshTmuxWorkers();
+    this.tmuxWorkerRefreshTimer = setInterval(() => {
+      void this.refreshTmuxWorkers();
+    }, 10_000);
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
   }
@@ -190,7 +204,31 @@ export class FarmApp extends LitElement {
       'copilot-prompt-request',
       this.onCopilotPromptRequest as EventListener,
     );
+    window.removeEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
+    if (this.tmuxWorkerRefreshTimer) clearInterval(this.tmuxWorkerRefreshTimer);
     this.unsub?.();
+  }
+
+  private onPinnedSlotsChanged = () => {
+    this.pinnedSlots = listPinnedSlotPreferences();
+    void this.refreshTmuxWorkers();
+  };
+
+  private async refreshTmuxWorkers(): Promise<void> {
+    if (this.pinnedSlots.length === 0) {
+      this.tmuxWorkers = [];
+      return;
+    }
+    try {
+      const result = await gateway.request<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {
+        includeDisconnected: true,
+      });
+      this.tmuxWorkers = result.workers ?? result.nodes.flatMap((node) => node.workers);
+    } catch (err) {
+      // Worker telemetry is optional/recoverable. Keep pins visible, but downgrade activity to unknown.
+      console.warn('[app-shell] pinned slot worker telemetry unavailable', err);
+      this.tmuxWorkers = [];
+    }
   }
 
   private onGlobalKeyDown = (e: KeyboardEvent) => {
@@ -341,6 +379,7 @@ export class FarmApp extends LitElement {
     this.decisionCount = s.decisions.length;
     this.violationCount = s.violations.length;
     this.runs = s.runs;
+    this.globalFilters = s.globalFilters;
   }
 
   private submitGatewayAuth(event: Event) {
@@ -434,66 +473,128 @@ export class FarmApp extends LitElement {
     }
   }
 
-  private renderActiveRunsNav() {
-    const activeRuns = activeSidebarRuns(this.runs);
-    const totalActiveRuns = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
+  private renderPinnedSlotsNav() {
+    const pins = this.filteredPinnedSlots();
+    const hiddenCount = this.pinnedSlots.length - pins.length;
     if (!this._sidebarExpanded) return nothing;
     return html`
-      <div class="fa-active-runs" aria-label="Active runs">
+      <div class="fa-active-runs" aria-label="Pinned slots">
         <div class="fa-active-runs-head">
-          <span>Active runs</span>
-          <span>${totalActiveRuns}</span>
+          <span>Pinned slots</span>
+          <span>${pins.length}${hiddenCount > 0 ? `/${this.pinnedSlots.length}` : ''}</span>
         </div>
-        ${activeRuns.length === 0
-          ? html`<div class="fa-active-runs-empty">none</div>`
-          : html`${activeRuns.map((run) => this.renderActiveRunShortcut(run))}
-            ${totalActiveRuns > activeRuns.length
-              ? html`<a class="fa-active-runs-more" href="#runs"
-                  >+${totalActiveRuns - activeRuns.length} more</a
-                >`
-              : nothing}`}
+        ${pins.length === 0
+          ? html`<div class="fa-active-runs-empty">
+              ${hiddenCount > 0 ? 'hidden by filters' : 'none'}
+            </div>`
+          : html`${pins.map((pin) => this.renderPinnedSlotShortcut(pin))}`}
       </div>
     `;
   }
 
-  private renderActiveRunShortcut(run: Run) {
-    const route = sidebarRunRoute(run);
-    const selected =
-      (this.route === 'slot' && run.slotId === this.slotParam) ||
-      (this.route === 'run' && run.id === this.runParam);
-    const flowColor = runDisplayColor(run);
-    const statusColor = runStatusColor(run.status);
-    const steps = sidebarPreviewSteps(run.steps);
-    const summary = sidebarRunSummary(run);
+  private filteredPinnedSlots(): PinnedSlotPreference[] {
+    const { projects, machines } = this.globalFilters;
+    if (projects.length === 0 && machines.length === 0) return this.pinnedSlots;
+    return this.pinnedSlots.filter((pin) => {
+      const slot = this.fleetSlots.find((candidate) => candidate.slot === pin.slotId);
+      if (!slot) return false;
+      if (projects.length > 0 && !projects.includes(slot.project)) return false;
+      if (machines.length > 0 && !machines.includes(slot.machine)) return false;
+      return true;
+    });
+  }
+
+  private tmuxWorkerForSlot(slot: SlotStatus | undefined): TmuxWorkerSummary | null {
+    if (!slot) return null;
+    return (
+      this.tmuxWorkers.find((worker) => worker.linkedSlotId === slot.slot) ??
+      this.tmuxWorkers.find(
+        (worker) => worker.ref.nodeId === slot.machine && worker.ref.session === slot.slot,
+      ) ??
+      null
+    );
+  }
+
+  private pinnedSlotWorkerStatus(worker: TmuxWorkerSummary | null): string {
+    if (!worker) return 'unknown';
+    const source = worker.status.source;
+    const isRealSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
+    if (!isRealSignal || worker.status.stale || worker.status.confidence === 'low') {
+      return 'unknown';
+    }
+    return worker.status.state ?? 'unknown';
+  }
+
+  private pinnedSlotWorkerColor(status: string): string {
+    if (status === 'active') return '#00ff88';
+    if (status === 'waiting') return '#ffcc00';
+    if (status === 'idle') return '#8888a0';
+    if (status === 'stale') return '#f97316';
+    return '#777';
+  }
+
+  private pinnedSlotWorkerTitle(worker: TmuxWorkerSummary | null): string {
+    if (!worker) return 'No structured runner signal for this slot';
+    const signal = `${worker.status.source}/${worker.status.confidence}`;
+    if (worker.status.source === 'tmux' || worker.status.source === 'inferred') {
+      return `${worker.status.label} · ${signal} · ignored for activity badge`;
+    }
+    return `${worker.status.label} · ${signal}`;
+  }
+
+  private renderPinnedSlotShortcut(pin: PinnedSlotPreference) {
+    const slot = this.fleetSlots.find((candidate) => candidate.slot === pin.slotId);
+    const run =
+      (slot?.currentRunId
+        ? this.runs.find((candidate) => candidate.id === slot.currentRunId)
+        : null) ??
+      this.runs.find(
+        (candidate) => candidate.slotId === pin.slotId && candidate.status === 'monitoring',
+      ) ??
+      null;
+    const selected = this.route === 'slot' && pin.slotId === this.slotParam;
+    const worker = this.tmuxWorkerForSlot(slot);
+    const displayLabel = pin.label?.trim() || pin.slotId;
+    const workerStatus = this.pinnedSlotWorkerStatus(worker);
+    const statusColor = this.pinnedSlotWorkerColor(workerStatus);
     return html`
       <a
         class="fa-active-run ${selected ? 'active' : ''}"
-        href=${route}
-        title=${`${run.ticketOrPr} · ${summary}`}
+        href=${`#slot/${pin.slotId}${run ? `?runId=${encodeURIComponent(run.id)}` : ''}`}
+        title=${`${pin.slotId}${pin.label ? ` · ${pin.label}` : ''}${run ? ` · ${run.ticketOrPr}` : ''}`}
       >
         <div class="fa-active-run-top">
-          <span class="fa-active-run-ticket">${run.ticketOrPr}</span>
-          <span class="fa-active-run-flow" style="--flow-color:${flowColor}"
-            >${runDisplayLabel(run)}</span
-          >
+          <span class="fa-active-run-ticket">${displayLabel}</span>
+          ${slot?.machine || pin.label
+            ? html`<span class="fa-active-run-flow" style="--flow-color:#94a3b8"
+                >${pin.label ? pin.slotId : slot?.machine}</span
+              >`
+            : nothing}
         </div>
-        <div class="fa-active-run-summary">${summary}</div>
+        <div class="fa-active-run-summary">
+          ${run?.summary || run?.ticketOrPr || slot?.branch || 'Slot not in current fleet'}
+        </div>
         <div class="fa-active-run-meta">
-          <span style="color:${statusColor}">${run.status}</span>
-          ${run.slotId ? html`<span>${run.slotId}</span>` : html`<span>no slot</span>`}
-          <span>${formatElapsed(run.createdAt)}</span>
+          <span
+            class="fa-active-run-worker"
+            style="--worker-color:${statusColor}"
+            title=${this.pinnedSlotWorkerTitle(worker)}
+          >
+            <span class="fa-active-run-worker-dot"></span>${workerStatus}
+          </span>
+          ${worker
+            ? html`<span>${worker.status.source}/${worker.status.confidence}</span>`
+            : nothing}
+          ${slot?.phase ? html`<span>${slot.phase}</span>` : nothing}
+          ${slot?.branch ? html`<span>${slot.branch}</span>` : nothing}
+          ${run ? html`<span>${run.status}</span>` : nothing}
         </div>
-        ${steps.length
-          ? html`<div class="fa-active-run-steps">
-              ${steps.map(
-                (step) =>
-                  html`<span
-                    class="fa-active-run-step"
-                    style="--step-color:${stepStatusColor(step.status)}"
-                    title=${`${step.name}: ${step.status}`}
-                  ></span>`,
-              )}
-            </div>`
+        ${run
+          ? html`<run-pipeline-mini
+              class="fa-pinned-run-pipeline"
+              .run=${run}
+              .flowType=${run.flowType}
+            ></run-pipeline-mini>`
           : nothing}
       </a>
     `;
@@ -742,7 +843,7 @@ export class FarmApp extends LitElement {
                 ? html`<span class="fa-badge-count">${activeRunCount}</span>`
                 : ''}
             </a>
-            ${item.route === 'runs' ? this.renderActiveRunsNav() : nothing}
+            ${item.route === 'runs' ? this.renderPinnedSlotsNav() : nothing}
           `,
         )}
         <div class="fa-sidebar-resize" @pointerdown=${this.onSidebarResizeStart}></div>

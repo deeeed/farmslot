@@ -12,6 +12,7 @@ import { modelsMatch } from '@farmslot/protocol';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { isSlotPinned } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import {
@@ -56,6 +57,7 @@ export interface RunDetailViewContext {
   _confirmForceComplete: (runId: string) => void;
   _requestCopilotRunDiagnosis: (run: Run) => void;
   _buildRerunAlongsideHref: (run: Run) => string;
+  _togglePinnedSlot: (slotId: string) => void;
   _renderInteractiveDevGate: (run: Run) => unknown;
   _currentCiStatus: (run: Run) => CiCheckUpdatedPayload | null;
   _shouldShowCiStatus: (run: Run) => boolean;
@@ -479,10 +481,21 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         <div class="meta-value">
           ${r.slotId
             ? html`<a
-                href=${`#slot/${r.slotId}?runId=${encodeURIComponent(r.id)}`}
-                style="color:${colors.accent}; text-decoration:none"
-                >${r.slotId}</a
-              >`
+                  href=${`#slot/${r.slotId}?runId=${encodeURIComponent(r.id)}`}
+                  style="color:${colors.accent}; text-decoration:none"
+                  >${r.slotId}</a
+                >
+                <button
+                  style="margin-left:8px; border:1px solid ${isSlotPinned(r.slotId)
+                    ? colors.accent
+                    : colors.bgCardHover}; color:${isSlotPinned(r.slotId)
+                    ? colors.accent
+                    : colors.textMuted}; background:transparent; border-radius:4px; font-size:10px; font-family:${fonts.mono}; cursor:pointer"
+                  @click=${() => ctx._togglePinnedSlot(r.slotId!)}
+                  title="Toggle this run's slot in pinned slots"
+                >
+                  ${isSlotPinned(r.slotId) ? 'pinned' : 'pin'}
+                </button>`
             : 'pending'}
         </div>
       </div>

@@ -23,6 +23,12 @@ The public surface should be understood through capabilities, not by reading eve
 | Decisions            | `decision.list`, `decision.resolve`                                            | Read/resolve explicit human gates.                            |
 | Files and git        | `fs.read`, `git.status`, `git.diff`, `git.discard`                             | Read-only by default; destructive operations are high-impact. |
 
+## Returning to manual work
+
+Manual terminal continuation is slot state, not a gateway run-lifecycle primitive. If a run completes and an operator keeps working in that slot, Command Center should help them keep the slot visible with client-local pinned slots and optional local display labels. Those pins are filtered by the active Command Center project/machine selection in the UI, but they are not gateway state. When the work needs Farmslot supervision again, use a durable ref as the handoff boundary: push/open the branch or draft PR manually, then start an interactive `pr-complete` run against that PR.
+
+There is intentionally no `run.adopt` protocol method. A run should represent a supervised workflow with a clear task/ref and completion contract; a pinned slot represents operator focus on an ongoing workspace.
+
 ## Safety tiers
 
 | Tier            | Meaning                                                                                         |

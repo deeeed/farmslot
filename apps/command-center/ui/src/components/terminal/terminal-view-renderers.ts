@@ -2,6 +2,8 @@ import { html } from 'lit';
 
 import { Methods } from '@farmslot/protocol';
 
+import { isSlotPinned, togglePinnedSlot } from '../../utils/pinned-slots.js';
+
 export type TerminalMode = 'pty' | 'poll' | 'none';
 
 export interface TmuxWindowSummary {
@@ -251,13 +253,28 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
       ${ctx.summary ? html`<span class="task-summary">${ctx.summary}</span>` : ''}
       <span style="flex:1"></span>
       ${!ctx.isWorkerTarget && ctx.slotId
-        ? html`<a
-            class="slot-link"
-            href="#slot/${ctx.slotId}"
-            @click=${(event: Event) => event.stopPropagation()}
-            title="Open slot view"
-            >&#x2197;</a
-          >`
+        ? html`
+            <button
+              class="slot-link"
+              type="button"
+              @click=${(event: Event) => {
+                event.stopPropagation();
+                togglePinnedSlot(ctx.slotId);
+              }}
+              title=${isSlotPinned(ctx.slotId)
+                ? 'Remove this slot from pinned slots'
+                : 'Add this slot to pinned slots'}
+            >
+              ${isSlotPinned(ctx.slotId) ? 'unpin' : '+pin'}
+            </button>
+            <a
+              class="slot-link"
+              href="#slot/${ctx.slotId}"
+              @click=${(event: Event) => event.stopPropagation()}
+              title="Open slot view"
+              >&#x2197;</a
+            >
+          `
         : ''}
       ${ctx.hasTarget
         ? html`<button

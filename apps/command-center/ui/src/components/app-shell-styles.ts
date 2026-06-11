@@ -311,6 +311,24 @@ export function renderAppShellStyles(
       farm-app .fa-active-run-meta span {
         overflow-wrap: anywhere;
       }
+      farm-app .fa-active-run-worker {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: var(--worker-color, ${colors.textMuted});
+        font-weight: 700;
+      }
+      farm-app .fa-active-run-worker-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: var(--worker-color, ${colors.textMuted});
+        box-shadow: 0 0 8px var(--worker-color, transparent);
+      }
+      farm-app .fa-pinned-run-pipeline {
+        width: 100%;
+        padding-top: 1px;
+      }
       farm-app .fa-active-run-steps {
         display: flex;
         gap: 4px;
