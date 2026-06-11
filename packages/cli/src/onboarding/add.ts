@@ -74,6 +74,12 @@ function gitOriginUrl(repoDir: string): string {
   return result.stdout.trim();
 }
 
+/** Equivalent-URL compare: .git suffix and trailing slashes don't make a different repo. */
+function sameRepoUrl(a: string, b: string): boolean {
+  const normalize = (u: string): string => u.replace(/\/+$/, '').replace(/\.git$/, '');
+  return normalize(a) === normalize(b);
+}
+
 /** Resolve a pack source (local dir or git URL) to a local pack directory. */
 export function resolvePackSource(
   source: string,
@@ -86,7 +92,7 @@ export function resolvePackSource(
     if (existsSync(join(dest, '.git'))) {
       // Same-named packs from different remotes must not silently share a clone.
       const origin = gitOriginUrl(dest);
-      if (origin !== source) {
+      if (!sameRepoUrl(origin, source)) {
         throw new AddError(
           `pack clone ${dest} tracks ${origin || '(no origin remote)'}, not ${source} — remove it or rename one pack repo`,
         );
@@ -232,7 +238,7 @@ function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress)
     // The clone must still track what the pack declares — a repo_url change
     // with a leftover old clone would validate the wrong codebase.
     const origin = gitOriginUrl(repoPath);
-    if (origin !== url && origin !== repoUrl) {
+    if (!sameRepoUrl(origin, url) && !sameRepoUrl(origin, repoUrl)) {
       throw new AddError(
         `slot repo ${repoPath} tracks ${origin || '(no origin remote)'}, but the pack declares ${repoUrl} — move or remove the old clone, then re-run project add`,
       );

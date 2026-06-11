@@ -62,6 +62,9 @@ farmslot update
 - re-runs the `sync` hook of any registered pack whose content hash changed
 - ends with doctor
 
+Note: the update engine itself runs from the pre-update code — when an update
+changes `farmslot update`'s own logic, run it twice to pick the new engine up.
+
 ## Check health anytime
 
 ```bash

@@ -79,6 +79,11 @@ export async function farmslotUpdate(
   let branch: string;
   if (state.source.mode === 'local') {
     branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], state.source.path);
+    if (branch === 'HEAD') {
+      throw new AddError(
+        `source checkout ${state.source.path} is on a detached HEAD — check out a branch there, then re-run farmslot update`,
+      );
+    }
   } else {
     // Track the remote's current default branch, not a hardcoded name.
     git(['remote', 'set-head', 'origin', '--auto'], clone);

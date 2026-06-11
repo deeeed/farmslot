@@ -85,7 +85,12 @@ check_runner() {
   fi
   # Authenticated = probe exits 0 AND prints the runner's positive marker.
   # 2>&1: some runners print auth status to stderr — prereqs.ts matches both too.
+  # Cap probe time (mirrors prereqs.ts 5s) so a wedged runner CLI cannot hang
+  # a piped install; stock macOS lacks coreutils timeout, hence the guard.
   local probe_out
+  if command -v timeout >/dev/null 2>&1; then
+    set -- timeout 5 "$@"
+  fi
   if probe_out="$("$@" 2>&1)" && echo "$probe_out" | grep -qiE "$marker"; then
     green "  [OK] ${name} (authenticated)"
     runner_authenticated=1
