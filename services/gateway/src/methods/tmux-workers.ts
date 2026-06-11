@@ -102,15 +102,14 @@ export function tmuxWorkerStatusFromPane(
   }
   const taskFile = signals?.taskFile;
   if (taskFile) {
+    const fresh = isFresh(taskFile.observedAt, observedAt);
     return {
       label: taskFile.label ?? 'task signal',
       source: 'task-file',
-      confidence: isFresh(taskFile.observedAt, observedAt) ? 'medium' : 'low',
+      confidence: fresh ? 'medium' : 'low',
       ...(taskFile.observedAt != null ? { observedAt: taskFile.observedAt } : { observedAt }),
-      ...(taskFile.observedAt != null && !isFresh(taskFile.observedAt, observedAt)
-        ? { stale: true }
-        : {}),
-      state: tmuxPaneActivityState(pane, observedAt, activityHint),
+      ...(taskFile.observedAt != null && !fresh ? { stale: true } : {}),
+      state: fresh ? tmuxPaneActivityState(pane, observedAt, activityHint) : 'stale',
     };
   }
   if (hook || statusline) {
@@ -122,7 +121,7 @@ export function tmuxWorkerStatusFromPane(
       ...(signal?.observedAt != null
         ? { observedAt: signal.observedAt, stale: true }
         : { observedAt }),
-      state: tmuxPaneActivityState(pane, observedAt, activityHint),
+      state: 'stale',
     };
   }
   return {

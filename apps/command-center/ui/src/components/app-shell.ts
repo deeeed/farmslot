@@ -519,7 +519,9 @@ export class FarmApp extends LitElement {
     if (!worker) return 'unknown';
     const source = worker.status.source;
     const isRealSignal = source === 'hook' || source === 'statusline' || source === 'task-file';
-    if (!isRealSignal) return 'unknown';
+    if (!isRealSignal || worker.status.stale || worker.status.confidence === 'low') {
+      return 'unknown';
+    }
     return worker.status.state ?? 'unknown';
   }
 

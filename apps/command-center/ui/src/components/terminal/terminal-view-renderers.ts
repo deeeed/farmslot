@@ -261,9 +261,11 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
                 event.stopPropagation();
                 togglePinnedSlot(ctx.slotId);
               }}
-              title="Toggle this slot in pinned slots"
+              title=${isSlotPinned(ctx.slotId)
+                ? 'Remove this slot from pinned slots'
+                : 'Add this slot to pinned slots'}
             >
-              ${isSlotPinned(ctx.slotId) ? 'pin' : '+pin'}
+              ${isSlotPinned(ctx.slotId) ? 'unpin' : '+pin'}
             </button>
             <a
               class="slot-link"
