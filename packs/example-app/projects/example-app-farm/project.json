@@ -1,0 +1,39 @@
+{
+  "$schema": "../../schemas/project.schema.json",
+  "name": "example-app-farm",
+  "type": "standalone",
+  "default_branch": "main",
+  "paths": {
+    "runtime_dir": ".agent"
+  },
+  "defaults": {
+    "dev": {
+      "runner": "claude",
+      "model": "sonnet"
+    }
+  },
+  "hooks": {
+    "post_merge_install": "true",
+    "preflight": "node scripts/build.mjs --port {{port}}",
+    "health_check": "cat .agent/health",
+    "teardown": "true"
+  },
+  "health": {
+    "ready_indicator": "ready",
+    "parse_health": "tail -1",
+    "dev_server_name": "AppServer"
+  },
+  "fixtures": {
+    "templates": [
+      {
+        "src": "app.env.template",
+        "dst": ".agent/app.env"
+      }
+    ]
+  },
+  "platforms": {
+    "cli": {
+      "device_check": "true"
+    }
+  }
+}

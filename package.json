@@ -5,6 +5,9 @@
   "homepage": "https://farmslot.io",
   "private": true,
   "packageManager": "yarn@4.5.3",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "workspaces": [
     "packages/*",
     "services/*",
@@ -40,7 +43,8 @@
     "quality:imports": "node scripts/quality/check-import-boundaries.mjs",
     "quality:workspaces": "node scripts/quality/run-workspace-quality.mjs",
     "quality:changelogs": "node scripts/quality/check-workspace-changelogs.mjs",
-    "check:node-support": "tsx scripts/check-node-support-bundles.ts"
+    "check:node-support": "tsx scripts/check-node-support-bundles.ts",
+    "test:onboarding": "bash scripts/quality/test-onboarding.sh"
   },
   "license": "MIT",
   "resolutions": {

@@ -3,14 +3,18 @@ import { Command } from 'commander';
 import { registerCompletionCommand } from './commands/completion.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerDispatchCommand } from './commands/dispatch.js';
+import { registerDoctorCommand } from './commands/doctor.js';
 import { registerFleetCommand } from './commands/fleet.js';
 import { registerGatewayCommand } from './commands/gateway.js';
 import { registerNodeCommand } from './commands/node.js';
 import { registerPRCommand } from './commands/pr.js';
+import { registerProjectCommand } from './commands/project.js';
 import { registerRecipeCommand } from './commands/recipe.js';
 import { registerRpcCommand } from './commands/rpc.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerSlotCommand } from './commands/slot.js';
+import { registerUpdateCommand } from './commands/update.js';
+import { registerWorkspaceCommand } from './commands/workspace.js';
 
 const program = new Command();
 
@@ -33,5 +37,11 @@ registerRpcCommand(program);
 registerRunCommand(program);
 registerCompletionCommand(program);
 registerNodeCommand(program);
+registerDoctorCommand(program);
+registerWorkspaceCommand(program);
+registerProjectCommand(program);
+registerUpdateCommand(program);
 
-program.parse();
+// parseAsync: async command actions (update) must reject through commander,
+// not become unhandled rejections.
+await program.parseAsync();

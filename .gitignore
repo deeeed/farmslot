@@ -51,6 +51,7 @@ tools/capture-helper/capture-helper
 .env.local-auth
 **/.chrome-farmslot/
 .runs/
+.task/
 .backups/
 
 # Session work tracker (local only)

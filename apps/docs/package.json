@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "generate:api": "tsx scripts/generate-gateway-api-docs.ts && yarn --cwd ../command-center prettier --write ../docs/docs/reference/gateway-api.generated.md",
-    "start": "yarn generate:api && node scripts/start-docs-dev.mjs",
-    "build": "yarn generate:api && docusaurus build",
+    "generate:onboarding": "node scripts/generate-getting-started.mjs && yarn --cwd ../command-center prettier --write ../docs/docs/guides/getting-started.generated.md",
+    "start": "yarn generate:api && yarn generate:onboarding && node scripts/start-docs-dev.mjs",
+    "build": "yarn generate:api && yarn generate:onboarding && docusaurus build",
     "serve": "docusaurus serve --host 0.0.0.0",
     "clear": "docusaurus clear",
     "deploy": "docusaurus deploy",

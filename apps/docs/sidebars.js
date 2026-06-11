@@ -53,6 +53,7 @@ const sidebars = {
       type: 'category',
       label: 'Guides',
       items: [
+        'guides/getting-started.generated',
         'guides/adoption-path',
         'guides/local-demo-and-cli',
         'guides/recipe-skills-adoption',
