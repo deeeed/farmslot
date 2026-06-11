@@ -109,16 +109,15 @@ if [ -d "${CLONE}/.git" ]; then
   if [ "$SOURCE_MODE" = "local" ]; then
     src_branch="$(git -C "$SOURCE" rev-parse --abbrev-ref HEAD)"
   else
-    src_branch="main"
+    # Track the remote's current default branch (forks may not use main).
+    git -C "$CLONE" remote set-head origin --auto >/dev/null
+    src_branch="$(git -C "$CLONE" rev-parse --abbrev-ref origin/HEAD | sed 's|^origin/||')"
   fi
   git -C "$CLONE" checkout --quiet "$src_branch" 2>/dev/null || git -C "$CLONE" checkout --quiet -b "$src_branch" "origin/${src_branch}"
   git -C "$CLONE" reset --hard --quiet "origin/${src_branch}"
 else
-  if [ "$SOURCE_MODE" = "local" ]; then
-    git clone --quiet "$SOURCE" "$CLONE"
-  else
-    git clone --quiet --branch main "$SOURCE" "$CLONE"
-  fi
+  # No --branch: clone the source's default/checked-out branch, whatever its name.
+  git clone --quiet "$SOURCE" "$CLONE"
 fi
 green "  [OK] ${CLONE} ($(git -C "$CLONE" rev-parse --abbrev-ref HEAD) @ $(git -C "$CLONE" rev-parse --short HEAD))"
 

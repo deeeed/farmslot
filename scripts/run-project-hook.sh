@@ -31,7 +31,8 @@ echo "[run-project-hook] ${SLOT_ID} ${HOOK_NAME}: ${HOOK}"
 ENV_PREFIX=$(project_command_env_shell_prefix)
 if is_local "$HOST" "$MACHINE"; then
   if [ -n "$ENV_PREFIX" ]; then eval "$ENV_PREFIX"; fi
-  cd "$REPO"
+  # REMOTE_REPO is the ~-expanded absolute path; quoted "$REPO" would not expand ~.
+  cd "$REMOTE_REPO"
   eval "$HOOK"
 else
   # ENV_PREFIX ends in ';' — guard the cd explicitly so a bad repo path cannot

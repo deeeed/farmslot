@@ -4,8 +4,57 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { findMissingState } from './add.js';
+import { assertProjectOwnership, findMissingState } from './add.js';
 import type { PackJson } from './pack.js';
+import type { WorkspaceState } from './workspace.js';
+
+function stateWith(packs: WorkspaceState['packs']): WorkspaceState {
+  return {
+    schema_version: 1,
+    source: { mode: 'local', path: '/src' },
+    machine: 'm',
+    pool_file: 'pool/m.json',
+    packs,
+    pool_migrations: { applied: [] },
+  };
+}
+
+test('assertProjectOwnership guards cross-pack and unowned project dirs (pre-claim state)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-own-'));
+  const dest = join(root, 'projects', 'app-farm');
+
+  // Owned by another pack → always rejected, even before the dir exists.
+  assert.throws(
+    () =>
+      assertProjectOwnership(
+        'app-farm',
+        'pack-b',
+        stateWith({ 'pack-a': { source: '/a', hash: 'x', projects: ['app-farm'], slots: [] } }),
+        dest,
+      ),
+    /owned by pack 'pack-a'/,
+  );
+
+  // Not on disk, not owned → fine (fresh add).
+  assert.doesNotThrow(() => assertProjectOwnership('app-farm', 'pack-b', stateWith({}), dest));
+
+  // On disk but unowned (hand-created or lost state) → rejected, never deleted.
+  mkdirSync(dest, { recursive: true });
+  assert.throws(
+    () => assertProjectOwnership('app-farm', 'pack-b', stateWith({}), dest),
+    /not registered to any pack/,
+  );
+
+  // Owned by this pack → re-add/repair allowed.
+  assert.doesNotThrow(() =>
+    assertProjectOwnership(
+      'app-farm',
+      'pack-b',
+      stateWith({ 'pack-b': { source: '/b', hash: 'x', projects: ['app-farm'], slots: [] } }),
+      dest,
+    ),
+  );
+});
 
 test('findMissingState: complete state is a true no-op, missing pieces escalate', () => {
   const root = mkdtempSync(join(tmpdir(), 'fs-noop-'));

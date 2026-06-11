@@ -6,7 +6,7 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
-import { AddError, resolvePackSource, syncPackProjects } from './add.js';
+import { AddError, assertProjectOwnership, resolvePackSource, syncPackProjects } from './add.js';
 import { applyMigrations, loadMigrations } from './migrations.js';
 import { hashPackDir, projectName, validatePackDir } from './pack.js';
 import { readPool, writePool } from './pool-config.js';
@@ -42,6 +42,9 @@ function sh(
     env: { ...process.env, ...env },
     stdio,
   });
+  if (result.error) {
+    throw new AddError(`${cmd} failed to start: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     throw new AddError(`${cmd} ${args.join(' ')} exited ${result.status} (cwd ${cwd})`);
   }
@@ -139,6 +142,18 @@ export async function farmslotUpdate(
           FARMSLOT_REPOS_DIR: ws.reposDir,
         },
         stdio,
+      );
+    }
+    // Ownership is authoritative against the PRE-claim state: a project newly
+    // added to the pack must not silently adopt another pack's dir or destroy
+    // a pre-existing unowned one.
+    for (const proj of pack.projects) {
+      const projName = projectName(proj);
+      assertProjectOwnership(
+        projName,
+        name,
+        { ...state, packs },
+        join(ws.farmslotDir, 'projects', projName),
       );
     }
     // Claim ownership of any newly added project dirs BEFORE copying them, and

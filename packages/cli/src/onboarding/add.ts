@@ -147,8 +147,12 @@ interface RegisteredProject {
  * Refuse to replace a registered project dir this pack does not own: another
  * pack's project, or a pre-existing unowned project dir. Full-replace would
  * silently destroy it and adopt its slots.
+ *
+ * MUST be checked against the PRE-claim state: once the pack has claimed its
+ * project list in state.json, ownedByThisPack is always true and the unowned
+ * check is unreachable.
  */
-function assertProjectOwnership(
+export function assertProjectOwnership(
   name: string,
   packName: string,
   state: WorkspaceState,
@@ -293,11 +297,11 @@ function readRegisteredProject(proj: PackProject, ws: Workspace): RegisteredProj
  */
 export function findMissingState(
   pack: PackJson,
-  pool: { machine: string; slots: Array<{ id: string }> },
+  pool: { machine: string; slots: Array<{ id: string; repo?: string }> },
   ws: { farmslotDir: string; reposDir: string },
 ): string[] {
   const missing: string[] = [];
-  const slotIds = new Set(pool.slots.map((s) => s.id));
+  const slots = new Map(pool.slots.map((s) => [s.id, s]));
   for (const proj of pack.projects) {
     const name = projectName(proj);
     const short = projectShortName(proj);
@@ -306,8 +310,12 @@ export function findMissingState(
     }
     for (let n = 1; n <= proj.slots; n++) {
       const slotId = `${pool.machine}-${short}-${n}`;
-      if (!slotIds.has(slotId)) missing.push(`slot ${slotId} not in pool`);
-      if (!existsSync(join(ws.reposDir, `${short}-${n}`, '.git'))) {
+      const slot = slots.get(slotId);
+      if (!slot) missing.push(`slot ${slotId} not in pool`);
+      // Respect an operator-repointed slot repo: check the pool's actual path,
+      // not the derived default — otherwise every re-add re-clones an orphan.
+      const repoPath = slot?.repo ?? join(ws.reposDir, `${short}-${n}`);
+      if (!existsSync(join(repoPath, '.git'))) {
         missing.push(`repo ${short}-${n} missing`);
       }
     }
@@ -343,6 +351,15 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
   }
   const mutate = action !== 'noop';
   progress.step({ label: `pack ${pack.name} validated`, detail: `${packDir} (${action})` });
+
+  // Ownership is authoritative against the PRE-claim state — the claim below
+  // would make every project look owned and disarm the unowned-dir guard.
+  if (mutate) {
+    for (const proj of pack.projects) {
+      const name = projectName(proj);
+      assertProjectOwnership(name, pack.name, state, join(ws.farmslotDir, 'projects', name));
+    }
+  }
 
   // Claim ownership BEFORE mutating: a failed add must leave a state where the
   // re-run repairs (empty hash never matches → repair) instead of rejecting the

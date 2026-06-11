@@ -74,14 +74,17 @@ function workspaceSection(ws: Workspace | null): {
   state: WorkspaceState | null;
 } {
   if (!ws) {
+    // Plain dev checkout / legacy machine: prereq + runner health still matters,
+    // a missing workspace is advice, not breakage.
     return {
       section: {
         title: 'Workspace',
         checks: [
           {
             name: 'workspace',
-            ok: false,
-            detail: 'no workspace found',
+            ok: true,
+            warn: true,
+            detail: 'no workspace found (dev checkout mode)',
             hint: 'set FARMSLOT_WORKSPACE or run install.sh',
           },
         ],
@@ -126,7 +129,14 @@ function poolSection(ws: Workspace | null, state: WorkspaceState | null): Doctor
   if (!ws || !state) {
     return {
       title: 'Pool',
-      checks: [{ name: 'pool config', ok: false, detail: 'skipped (no workspace state)' }],
+      checks: [
+        {
+          name: 'pool config',
+          ok: !ws,
+          warn: !ws,
+          detail: ws ? 'skipped (no workspace state)' : 'skipped (dev checkout mode)',
+        },
+      ],
     };
   }
   const poolPath = join(ws.farmslotDir, state.pool_file);
@@ -174,7 +184,14 @@ function packSection(ws: Workspace | null, state: WorkspaceState | null): Doctor
   if (!ws || !state) {
     return {
       title: 'Packs',
-      checks: [{ name: 'packs', ok: false, detail: 'skipped (no workspace state)' }],
+      checks: [
+        {
+          name: 'packs',
+          ok: !ws,
+          warn: !ws,
+          detail: ws ? 'skipped (no workspace state)' : 'skipped (dev checkout mode)',
+        },
+      ],
     };
   }
   const names = Object.keys(state.packs);
@@ -234,7 +251,10 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
   const checks: DoctorCheck[] = [];
   const root = ws?.farmslotDir;
   if (!root) {
-    return { title: 'CLI', checks: [{ name: 'cli', ok: false, detail: 'skipped (no workspace)' }] };
+    return {
+      title: 'CLI',
+      checks: [{ name: 'cli', ok: true, warn: true, detail: 'skipped (dev checkout mode)' }],
+    };
   }
   const nodeModules = join(root, 'node_modules');
   const depsInstalled = existsSync(nodeModules);
