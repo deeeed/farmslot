@@ -65,11 +65,32 @@ farmslot update
 Note: the update engine itself runs from the pre-update code — when an update
 changes `farmslot update`'s own logic, run it twice to pick the new engine up.
 
+## Manage multiple gateways
+
+The CLI targets any number of gateways through named profiles (ADR-036),
+stored machine-level in `~/.farmslot/gateways.json` (0600 — secrets never
+appear in command output):
+
+```bash
+farmslot gateway add lab --profile-url wss://lab-host:7777   # first profile becomes active
+farmslot login lab --token <token>      # or --password <p> / --code <pairing-code>
+farmslot auth status --all              # authenticated / not signed in / unreachable per profile
+farmslot fleet --gateway lab            # any command can target a profile
+farmslot gateway use lab                # set the default for future commands
+farmslot logout lab                     # forget the stored credential
+```
+
+Resolution order per invocation: `--url` > `--gateway <name>` > `GW_URL` env >
+active profile > `ws://localhost:7777`. `login` verifies against the gateway's
+existing `auth.connect` / pairing flow before storing anything; a wrong
+credential is never persisted. Local single-gateway use needs no profiles at
+all.
+
 ## Check health anytime
 
 ```bash
 farmslot doctor
 ```
 
-Green checklist (prereqs, runners, workspace, pool, packs, CLI) or specific
-failures with fix hints. Exit code reflects status.
+Green checklist (prereqs, runners, workspace, pool, packs, CLI, gateway
+profiles) or specific failures with fix hints. Exit code reflects status.
