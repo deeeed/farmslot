@@ -28,6 +28,7 @@ import '../workspace/recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, lifecycleColor } from '../../styles/theme-tokens.js';
+import { setPinnedSlotLabel, togglePinnedSlot } from '../../utils/pinned-slots.js';
 import {
   currentRecoveryEpoch,
   isRecoveryEpochCurrent,
@@ -608,6 +609,20 @@ export class SlotView extends SlotViewRecipePresenter {
 
   async _toggleManual(toManual: boolean) {
     return await toggleSlotViewManualMode(this, toManual);
+  }
+
+  _togglePinnedSlot() {
+    if (!this.slotId) return;
+    togglePinnedSlot(this.slotId);
+    this.requestUpdate();
+  }
+
+  _renamePinnedSlot() {
+    if (!this.slotId) return;
+    const label = window.prompt('Pinned slot label (blank to use slot id):', this.slotId);
+    if (label === null) return;
+    setPinnedSlotLabel(this.slotId, label);
+    this.requestUpdate();
   }
 
   async _pauseRun() {

@@ -454,7 +454,7 @@ test('tmuxWorkerStatusFromPane prefers fresh hook/statusline signals and marks s
       source: 'hook',
       confidence: 'high',
       observedAt: observedAt - 1_000,
-      state: 'waiting',
+      state: 'idle',
     },
   );
 

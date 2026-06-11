@@ -21,6 +21,12 @@ It exists because supervising many agents from one serial chat or a pile of term
   <div class="product-tile"><strong>Eval/replay</strong><br/>Reference/candidate comparisons for prompts, templates, runners, and harness changes.</div>
 </div>
 
+## Pinned slots and manual work recovery
+
+Command Center separates operator focus from run lifecycle. The left sidebar can pin slots you want to keep watching, even when many other runs are active. Pinning is a local Command Center preference: it changes navigation, not gateway protocol state. Pinned slots can also have local display labels for manual continuation work when the AI-generated run title is not useful, and the sidebar view respects the active global project/machine filters without deleting out-of-scope pins. When a pinned slot has an attached run, the sidebar shows the mini pipeline. The worker activity badge only uses structured runner signals (hook, statusline, or task-file); unsupported or heuristic-only panes show as unknown instead of guessing.
+
+If a worker finished a run but you keep using the same terminal session for follow-up work, do not create a special adopted run. Keep the slot pinned while you work, push the branch or open a draft PR when ready, then start an interactive `pr-complete` run against that PR so Farmslot can supervise review, CI, and completion from a durable ref.
+
 ## Relationship to the gateway
 
 Command Center is a client of the gateway. It should not invent a second state model.

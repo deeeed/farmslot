@@ -25,6 +25,7 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { togglePinnedSlot } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
@@ -678,6 +679,10 @@ export class RunDetail extends RunDetailState {
       _confirmForceComplete: (runId) => this._confirmForceComplete(runId),
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
+      _togglePinnedSlot: (slotId) => {
+        togglePinnedSlot(slotId);
+        this.requestUpdate();
+      },
       _renderInteractiveDevGate: (run) =>
         renderInteractiveDevGate(run, {
           busyAction: this._interactiveDevActionInProgress,

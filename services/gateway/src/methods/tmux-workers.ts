@@ -45,21 +45,24 @@ function tmuxPaneActivityState(
   const statusline = pane.signals?.statusline;
   if (statusline && isFresh(statusline.observedAt, observedAt)) {
     if (statusline.busy === true) return 'active';
-    if (statusline.busy === false) return 'waiting';
+    if (statusline.busy === false) return 'idle';
     const label = statusline.label?.toLowerCase();
     if (label && /busy|running|working|thinking|composing/u.test(label)) return 'active';
-    if (label && /idle|ready|waiting|prompt/u.test(label)) return 'waiting';
+    if (label && /waiting|input-needed|approval-needed/u.test(label)) return 'waiting';
+    if (label && /idle|ready|prompt|stopped/u.test(label)) return 'idle';
   }
   const hook = pane.signals?.hook;
   if (hook && isFresh(hook.observedAt, observedAt)) {
     const event = (hook.event ?? hook.label)?.toLowerCase();
-    if (event && /stop|idle|ready|prompt|waiting/u.test(event)) return 'waiting';
+    if (event && /waiting|input-needed|approval-needed/u.test(event)) return 'waiting';
+    if (event && /stop|idle|ready|prompt/u.test(event)) return 'idle';
     return 'active';
   }
   const taskFile = pane.signals?.taskFile;
   if (taskFile && isFresh(taskFile.observedAt, observedAt)) {
     const status = taskFile.status?.toLowerCase();
-    if (status && /done|complete|success|idle|ready|waiting/u.test(status)) return 'waiting';
+    if (status && /waiting|input-needed|approval-needed/u.test(status)) return 'waiting';
+    if (status && /done|complete|success|idle|ready/u.test(status)) return 'idle';
     return 'active';
   }
   if (activityHint) return activityHint;

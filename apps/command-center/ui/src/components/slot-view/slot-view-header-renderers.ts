@@ -3,6 +3,7 @@ import { html, nothing } from 'lit';
 import type { SlotStatus } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
+import { isSlotPinned } from '../../utils/pinned-slots.js';
 
 import type { SlotView } from './slot-view.js';
 import { EDITORS } from './slot-view-model.js';
@@ -18,11 +19,40 @@ export function renderSlotViewHeader(
   view: SlotView,
   { slot, hasSlotData, hasResources, lcColor }: SlotViewHeaderRenderContext,
 ) {
+  const pinned = view.slotId ? isSlotPinned(view.slotId) : false;
   return html`
     <!-- Header -->
     <div class="sv-header">
       <button class="sv-back-btn" @click=${view._handleBack}>&larr;</button>
       <span class="sv-slot-title">${hasSlotData ? slot!.slot : view.slotId || 'workspace'}</span>
+      ${view.slotId
+        ? html`
+            <button
+              class="sv-run-ctrl"
+              style="background:${pinned ? colors.accent : colors.bgCard}22; color:${pinned
+                ? colors.accent
+                : colors.textMuted}; border:1px solid ${pinned
+                ? colors.accent
+                : colors.bgCardHover}; padding:2px 8px; border-radius:4px; font-size:11px; font-family:${fonts.mono}; cursor:pointer; margin-left:4px"
+              @click=${() => view._togglePinnedSlot()}
+              title="Toggle this slot in the Command Center pinned slots list"
+            >
+              ${pinned ? 'Pinned' : 'Pin slot'}
+            </button>
+            ${pinned
+              ? html`
+                  <button
+                    class="sv-run-ctrl"
+                    style="background:${colors.bgCard}22; color:${colors.textMuted}; border:1px solid ${colors.bgCardHover}; padding:2px 8px; border-radius:4px; font-size:11px; font-family:${fonts.mono}; cursor:pointer; margin-left:4px"
+                    @click=${() => view._renamePinnedSlot()}
+                    title="Override the label shown for this pinned slot"
+                  >
+                    Rename pin
+                  </button>
+                `
+              : nothing}
+          `
+        : nothing}
       ${hasSlotData
         ? html`
             <span class="sv-lifecycle-badge" style="background:${lcColor}22; color:${lcColor}">
