@@ -408,6 +408,29 @@ export async function fsList(params: FsListParams): Promise<FsListResult> {
           ...(isIgnored && { ignored: true }),
         });
       }
+    } else if (entry.isSymbolicLink()) {
+      try {
+        const stats = await stat(fullPath);
+        if (stats.isDirectory()) {
+          entries.push({
+            name: entry.name,
+            type: 'directory',
+            path: entryRelPath,
+            ...(isIgnored && { ignored: true }),
+          });
+        } else if (stats.isFile()) {
+          entries.push({
+            name: entry.name,
+            type: 'file',
+            path: entryRelPath,
+            size: stats.size,
+            ...(isIgnored && { ignored: true }),
+          });
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        // Broken symlinks are not actionable in the workspace tree.
+      }
     }
   }
 

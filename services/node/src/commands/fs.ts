@@ -37,14 +37,29 @@ export async function fsList(params: { path: string }): Promise<{ entries: FsEnt
   const entries: FsEntry[] = [];
   for (const entry of dirEntries) {
     if (entry.name === '.git' || entry.name === '.' || entry.name === '..') continue;
+    const fullPath = join(root, entry.name);
     if (entry.isDirectory()) {
       entries.push({ name: entry.name, type: 'directory' });
     } else if (entry.isFile()) {
       try {
-        const s = await stat(`${root}/${entry.name}`);
+        const s = await stat(fullPath);
         entries.push({ name: entry.name, type: 'file', size: s.size });
-      } catch {
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        // Disappearing entries are expected while workers rewrite temp files.
         entries.push({ name: entry.name, type: 'file' });
+      }
+    } else if (entry.isSymbolicLink()) {
+      try {
+        const s = await stat(fullPath);
+        if (s.isDirectory()) {
+          entries.push({ name: entry.name, type: 'directory' });
+        } else if (s.isFile()) {
+          entries.push({ name: entry.name, type: 'file', size: s.size });
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        // Broken symlinks are not actionable in the workspace tree.
       }
     }
   }

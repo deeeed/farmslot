@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { fsHash, fsList, fsWriteFiles } from './fs.js';
 
-test('fsList filters symlinks out of remote file listings', async (t) => {
+test('fsList classifies symlinked directories as directories', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-'));
   const linkedDir = await mkdtemp(path.join(tmpdir(), 'farmslot-node-fs-link-'));
   await mkdir(path.join(root, 'dir'));
@@ -22,6 +22,7 @@ test('fsList filters symlinks out of remote file listings', async (t) => {
   const result = await fsList({ path: root });
   assert.deepEqual(result.entries, [
     { name: 'dir', type: 'directory' },
+    { name: 'linked-dir', type: 'directory' },
     { name: 'file.txt', type: 'file', size: 2 },
   ]);
 });
