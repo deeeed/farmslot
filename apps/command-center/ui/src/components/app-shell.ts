@@ -1,4 +1,4 @@
-import { html, LitElement } from 'lit';
+import { html, LitElement, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import QRCode from 'qrcode';
 
@@ -8,6 +8,7 @@ import type {
   FleetSummary,
   GitHubRateLimitPayload,
   PairingCreateResult,
+  Run,
   SlotStatus,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
@@ -38,6 +39,23 @@ import { gateway } from '../gateway-client.js';
 import { type AppState, getState, isFullyHydrated, subscribe } from '../state.js';
 
 import type { ChatPanel } from './chat/chat-panel.js';
+import {
+  formatElapsed,
+  runDisplayColor,
+  runDisplayLabel,
+  runStatusColor,
+  stepStatusColor,
+} from './runs/run-utils.js';
+import {
+  activeSidebarRuns,
+  clampSidebarWidth,
+  DEFAULT_SIDEBAR_WIDTH,
+  parseStoredSidebarWidth,
+  SIDEBAR_WIDTH_PREF_KEY,
+  sidebarPreviewSteps,
+  sidebarRunRoute,
+  sidebarRunSummary,
+} from './app-shell-nav-model.js';
 import { renderAppShellAuthStyles, renderAppShellStyles } from './app-shell-styles.js';
 
 type Route =
@@ -114,9 +132,12 @@ export class FarmApp extends LitElement {
   @state() private githubQuota: GitHubRateLimitPayload | null = null;
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
+  @state() private runs: Run[] = [];
   @state() private chatOpen = false;
   @state() private chatUnread = 0;
   @state() private _sidebarExpanded = false;
+  @state() private _sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
+  @state() private _sidebarResizing = false;
   @state() private devHarnessLoaded = false;
   @state() private authMode: 'token' | 'password' = localStorage.getItem(
     'farmslot.gateway.password',
@@ -137,6 +158,8 @@ export class FarmApp extends LitElement {
   @state() private pairingProfileCount = 0;
   @state() private pairingError = '';
   private unsub?: () => void;
+  private sidebarResizeStartX = 0;
+  private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
 
   // Light DOM so Monaco/diff2html CSS from document.head reaches all children
   protected override createRenderRoot() {
@@ -146,9 +169,12 @@ export class FarmApp extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this._sidebarExpanded = localStorage.getItem(SIDEBAR_PREF_KEY) === 'true';
+    this._sidebarWidth = parseStoredSidebarWidth(localStorage.getItem(SIDEBAR_WIDTH_PREF_KEY));
     this.route = this.getRouteFromHash();
     window.addEventListener('hashchange', this.onHashChange);
     window.addEventListener('keydown', this.onGlobalKeyDown);
+    window.addEventListener('pointermove', this.onSidebarResizeMove);
+    window.addEventListener('pointerup', this.onSidebarResizeEnd);
     window.addEventListener('copilot-prompt-request', this.onCopilotPromptRequest as EventListener);
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
@@ -158,6 +184,8 @@ export class FarmApp extends LitElement {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.onHashChange);
     window.removeEventListener('keydown', this.onGlobalKeyDown);
+    window.removeEventListener('pointermove', this.onSidebarResizeMove);
+    window.removeEventListener('pointerup', this.onSidebarResizeEnd);
     window.removeEventListener(
       'copilot-prompt-request',
       this.onCopilotPromptRequest as EventListener,
@@ -199,6 +227,28 @@ export class FarmApp extends LitElement {
     this._sidebarExpanded = !this._sidebarExpanded;
     localStorage.setItem(SIDEBAR_PREF_KEY, String(this._sidebarExpanded));
   }
+
+  private onSidebarResizeStart = (e: PointerEvent) => {
+    if (!this._sidebarExpanded) return;
+    e.preventDefault();
+    this._sidebarResizing = true;
+    this.sidebarResizeStartX = e.clientX;
+    this.sidebarResizeStartWidth = this._sidebarWidth;
+  };
+
+  private onSidebarResizeMove = (e: PointerEvent) => {
+    if (!this._sidebarResizing) return;
+    const next = clampSidebarWidth(
+      this.sidebarResizeStartWidth + e.clientX - this.sidebarResizeStartX,
+    );
+    if (next === this._sidebarWidth) return;
+    this._sidebarWidth = next;
+    localStorage.setItem(SIDEBAR_WIDTH_PREF_KEY, String(next));
+  };
+
+  private onSidebarResizeEnd = () => {
+    this._sidebarResizing = false;
+  };
 
   private onHashChange = () => {
     this.parseHash();
@@ -290,6 +340,7 @@ export class FarmApp extends LitElement {
     this.githubQuota = s.githubQuota;
     this.decisionCount = s.decisions.length;
     this.violationCount = s.violations.length;
+    this.runs = s.runs;
   }
 
   private submitGatewayAuth(event: Event) {
@@ -381,6 +432,71 @@ export class FarmApp extends LitElement {
     } finally {
       this.pairingBusy = false;
     }
+  }
+
+  private renderActiveRunsNav() {
+    const activeRuns = activeSidebarRuns(this.runs);
+    const totalActiveRuns = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
+    if (!this._sidebarExpanded) return nothing;
+    return html`
+      <div class="fa-active-runs" aria-label="Active runs">
+        <div class="fa-active-runs-head">
+          <span>Active runs</span>
+          <span>${totalActiveRuns}</span>
+        </div>
+        ${activeRuns.length === 0
+          ? html`<div class="fa-active-runs-empty">none</div>`
+          : html`${activeRuns.map((run) => this.renderActiveRunShortcut(run))}
+            ${totalActiveRuns > activeRuns.length
+              ? html`<a class="fa-active-runs-more" href="#runs"
+                  >+${totalActiveRuns - activeRuns.length} more</a
+                >`
+              : nothing}`}
+      </div>
+    `;
+  }
+
+  private renderActiveRunShortcut(run: Run) {
+    const route = sidebarRunRoute(run);
+    const selected =
+      (this.route === 'slot' && run.slotId === this.slotParam) ||
+      (this.route === 'run' && run.id === this.runParam);
+    const flowColor = runDisplayColor(run);
+    const statusColor = runStatusColor(run.status);
+    const steps = sidebarPreviewSteps(run.steps);
+    const summary = sidebarRunSummary(run);
+    return html`
+      <a
+        class="fa-active-run ${selected ? 'active' : ''}"
+        href=${route}
+        title=${`${run.ticketOrPr} · ${summary}`}
+      >
+        <div class="fa-active-run-top">
+          <span class="fa-active-run-ticket">${run.ticketOrPr}</span>
+          <span class="fa-active-run-flow" style="--flow-color:${flowColor}"
+            >${runDisplayLabel(run)}</span
+          >
+        </div>
+        <div class="fa-active-run-summary">${summary}</div>
+        <div class="fa-active-run-meta">
+          <span style="color:${statusColor}">${run.status}</span>
+          ${run.slotId ? html`<span>${run.slotId}</span>` : html`<span>no slot</span>`}
+          <span>${formatElapsed(run.createdAt)}</span>
+        </div>
+        ${steps.length
+          ? html`<div class="fa-active-run-steps">
+              ${steps.map(
+                (step) =>
+                  html`<span
+                    class="fa-active-run-step"
+                    style="--step-color:${stepStatusColor(step.status)}"
+                    title=${`${step.name}: ${step.status}`}
+                  ></span>`,
+              )}
+            </div>`
+          : nothing}
+      </a>
+    `;
   }
 
   private renderAuthScreen() {
@@ -594,9 +710,10 @@ export class FarmApp extends LitElement {
 
   render() {
     if (this.connection === 'auth_required') return this.renderAuthScreen();
+    const activeRunCount = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
 
     return html`
-      ${renderAppShellStyles(this._sidebarExpanded)}
+      ${renderAppShellStyles(this._sidebarExpanded, this._sidebarWidth, this._sidebarResizing)}
       <nav>
         <button
           class="fa-nav-toggle"
@@ -621,9 +738,14 @@ export class FarmApp extends LitElement {
               ${item.route === 'intelligence' && this.violationCount > 0
                 ? html`<span class="fa-badge-count">${this.violationCount}</span>`
                 : ''}
+              ${item.route === 'runs' && activeRunCount > 0
+                ? html`<span class="fa-badge-count">${activeRunCount}</span>`
+                : ''}
             </a>
+            ${item.route === 'runs' ? this.renderActiveRunsNav() : nothing}
           `,
         )}
+        <div class="fa-sidebar-resize" @pointerdown=${this.onSidebarResizeStart}></div>
         <div style="flex:1"></div>
         <button
           class="fa-nav-btn ${this.chatOpen ? 'active' : ''}"
