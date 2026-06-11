@@ -1,11 +1,10 @@
 // onboarding/doctor.ts — health checks for an installed farmslot workspace.
 // Standalone `farmslot doctor`; install.sh / project add / update all end with it.
-import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { readPool } from './pool-config.js';
-import { checkPrereqs, detectRunners, runnerHint } from './prereqs.js';
+import { checkPrereqs, commandPath, detectRunners, runnerHint } from './prereqs.js';
 import { readState, type Workspace, type WorkspaceState } from './workspace.js';
 
 export interface DoctorCheck {
@@ -245,8 +244,7 @@ function cliSection(ws: Workspace | null): DoctorSection {
       hint: fresh ? undefined : 'run: farmslot update',
     });
   }
-  const which = spawnSync('command', ['-v', 'farmslot'], { encoding: 'utf-8', shell: '/bin/bash' });
-  const binPath = which.status === 0 ? which.stdout.trim() : null;
+  const binPath = commandPath('farmslot');
   if (!binPath) {
     checks.push({
       name: 'farmslot on PATH',

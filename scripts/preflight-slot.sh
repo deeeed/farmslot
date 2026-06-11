@@ -104,7 +104,9 @@ check_fixture() {
 
 # Check templates (with var substitution)
 if [ -n "$PROJECT_JSON" ]; then
+  # Guard the seq loops: BSD seq counts DOWN from 0 to -1 when the list is empty.
   TEMPLATE_COUNT=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('fixtures',{}).get('templates',[])))")
+  if [ "$TEMPLATE_COUNT" -gt 0 ]; then
   for i in $(seq 0 $((TEMPLATE_COUNT - 1))); do
     TPL_SRC=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['templates'][$i]['src'])")
     TPL_DST=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['templates'][$i]['dst'])")
@@ -118,9 +120,11 @@ if [ -n "$PROJECT_JSON" ]; then
       FIXTURE_MISMATCHES+=("${TPL_SRC} (template missing locally)")
     fi
   done
+  fi
 
   # Check plain files
   FILE_COUNT=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('fixtures',{}).get('files',[])))")
+  if [ "$FILE_COUNT" -gt 0 ]; then
   for i in $(seq 0 $((FILE_COUNT - 1))); do
     FILE_SRC=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['files'][$i]['src'])")
     FILE_DST=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['files'][$i]['dst'])")
@@ -131,6 +135,7 @@ if [ -n "$PROJECT_JSON" ]; then
       warn "${FILE_SRC} not found in fixtures"
     fi
   done
+  fi
 fi
 
 if [ ${#FIXTURE_MISMATCHES[@]} -gt 0 ]; then

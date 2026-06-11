@@ -51,8 +51,14 @@ function commandVersion(cmd: string, args: string[] = ['--version']): string | n
 }
 
 function commandExists(cmd: string): boolean {
-  const result = spawnSync('command', ['-v', cmd], { encoding: 'utf-8', shell: '/bin/bash' });
+  const result = spawnSync('bash', ['-c', `command -v -- '${cmd}'`], { encoding: 'utf-8' });
   return result.status === 0;
+}
+
+/** Absolute path of a command on PATH, or null. */
+export function commandPath(cmd: string): string | null {
+  const result = spawnSync('bash', ['-c', `command -v -- '${cmd}'`], { encoding: 'utf-8' });
+  return result.status === 0 ? result.stdout.trim() : null;
 }
 
 const INSTALL_HINTS: Record<string, string> = {

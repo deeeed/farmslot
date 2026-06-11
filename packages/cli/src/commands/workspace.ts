@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +6,7 @@ import type { Command } from 'commander';
 
 import { dim, green } from '../colors.js';
 import { generatePool, poolFileName, writePool } from '../onboarding/pool-config.js';
-import { detectRunners } from '../onboarding/prereqs.js';
+import { commandPath, detectRunners } from '../onboarding/prereqs.js';
 import {
   readState,
   repoRoot,
@@ -22,8 +21,7 @@ function shortHostname(): string {
 }
 
 function runnerPath(name: string): string | undefined {
-  const result = spawnSync('command', ['-v', name], { encoding: 'utf-8', shell: '/bin/bash' });
-  return result.status === 0 ? result.stdout.trim() : undefined;
+  return commandPath(name) ?? undefined;
 }
 
 interface WorkspaceInitOptions {
