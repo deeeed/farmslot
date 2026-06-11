@@ -9,9 +9,9 @@ export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
     .description('Check prerequisites, runners, workspace, pool, and registered packs')
-    .action((_: unknown, cmd: Command) => {
+    .action(async (_: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      const report = runDoctor(resolveWorkspace());
+      const report = await runDoctor(resolveWorkspace());
       if (output.json) {
         output.writeJson(report);
       } else {

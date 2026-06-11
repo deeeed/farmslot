@@ -33,7 +33,7 @@ export function registerUpdateCommand(program: Command): void {
         });
 
         // Every onboarding command ends with doctor.
-        const report = runDoctor(ws);
+        const report = await runDoctor(ws);
         if (output.json) {
           output.writeJson({ ...result, notes: infos, doctor: report });
         } else {

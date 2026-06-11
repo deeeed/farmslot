@@ -3,6 +3,9 @@
 import { existsSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
+import { probeGatewayAuth } from '../gateway-auth.js';
+import { loadProfiles, profileCredential } from '../gateway-profiles.js';
+
 import { readPool } from './pool-config.js';
 import { checkPrereqs, commandPath, detectRunners, runnerHint } from './prereqs.js';
 import { readState, type Workspace, type WorkspaceState } from './workspace.js';
@@ -331,7 +334,79 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
   return { title: 'CLI', checks };
 }
 
-export function runDoctor(ws: Workspace | null): DoctorReport {
+/**
+ * Gateway profile health (ADR-036). A down remote gateway or a not-yet-logged-in
+ * profile is advice (WARN), not a broken local install; only an unreadable
+ * profile store fails the report.
+ */
+async function gatewaySection(): Promise<DoctorSection> {
+  let profiles;
+  try {
+    profiles = loadProfiles();
+  } catch (err) {
+    return {
+      title: 'Gateways',
+      checks: [
+        {
+          name: 'profile store',
+          ok: false,
+          detail: err instanceof Error ? err.message : String(err),
+          hint: 'fix or remove ~/.farmslot/gateways.json',
+        },
+      ],
+    };
+  }
+  const names = Object.keys(profiles.gateways);
+  if (names.length === 0) {
+    return {
+      title: 'Gateways',
+      checks: [
+        {
+          name: 'profiles',
+          ok: true,
+          detail:
+            'none configured (ad-hoc --url mode) — farmslot gateway add <name> --profile-url <ws-url>',
+        },
+      ],
+    };
+  }
+  const checks = await Promise.all(
+    names.map(async (name): Promise<DoctorCheck> => {
+      const profile = profiles.gateways[name];
+      const probe = await probeGatewayAuth(profile.url, profileCredential(profile));
+      const label = profiles.active === name ? `${name} (active)` : name;
+      switch (probe.state) {
+        case 'authenticated':
+          return {
+            name: label,
+            ok: true,
+            detail: `authenticated (${probe.authMode}) ${profile.url}`,
+          };
+        case 'no-auth':
+          return { name: label, ok: true, detail: `reachable, no auth required ${profile.url}` };
+        case 'inactive':
+          return {
+            name: label,
+            ok: true,
+            warn: true,
+            detail: `not signed in ${profile.url}`,
+            hint: `run: farmslot login ${name}`,
+          };
+        case 'unreachable':
+          return {
+            name: label,
+            ok: true,
+            warn: true,
+            detail: `unreachable ${profile.url}`,
+            hint: 'check the gateway is running and the profile URL is correct',
+          };
+      }
+    }),
+  );
+  return { title: 'Gateways', checks };
+}
+
+export async function runDoctor(ws: Workspace | null): Promise<DoctorReport> {
   const { section: workspace, state } = workspaceSection(ws);
   const sections = [
     prereqSection(),
@@ -340,6 +415,7 @@ export function runDoctor(ws: Workspace | null): DoctorReport {
     poolSection(ws, state),
     packSection(ws, state),
     cliSection(ws, state),
+    await gatewaySection(),
   ];
   return { sections, ok: sections.every((s) => s.checks.every((c) => c.ok)) };
 }

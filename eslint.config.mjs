@@ -33,6 +33,7 @@ export default [
       '**/probes/**',
       'apps/command-center/ui/dist/**',
       'apps/docs/build/**',
+      'apps/docs/.docusaurus/**',
       'apps/companion/.expo/**',
       'apps/companion/android/**',
       'apps/companion/ios/**',

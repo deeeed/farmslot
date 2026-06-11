@@ -13,7 +13,7 @@ export function registerProjectCommand(program: Command): void {
     .command('add')
     .description('Register a project pack: projects, repos, slots, validation')
     .argument('<source>', 'pack directory or git URL containing pack.json')
-    .action((source: string, _: unknown, cmd: Command) => {
+    .action(async (source: string, _: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       const ws = resolveWorkspace();
       if (!ws) {
@@ -37,7 +37,7 @@ export function registerProjectCommand(program: Command): void {
         });
 
         // Every onboarding command ends with doctor.
-        const report = runDoctor(ws);
+        const report = await runDoctor(ws);
         if (output.json) {
           output.writeJson({
             pack: result.pack.name,
