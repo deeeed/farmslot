@@ -1,21 +1,27 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
 import type { SlotStatus } from '@farmslot/protocol';
 
 import {
   buildDevServerPortCleanup,
   buildKillRoleWindowCommand,
+  buildPrepareNewWindowCommand,
   buildPreparePlaceholderCommand,
   buildPrepareWindowName,
   buildPrepareWrappedCommand,
   getPrepareDepsTimeoutMs,
   getPreparePreflightTimeoutMs,
   getPrepareSentinelPollTimeoutMs,
+  prepareSessionTarget,
   shouldEmitPreparePollWarning,
   shouldPreservePrepareWindowOnSuccess,
   slotRefreshBlockedReason,
 } from './slot.js';
+
+const execFileAsync = promisify(execFile);
 
 function makeSlot(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
   return {
@@ -63,6 +69,46 @@ test('buildPreparePlaceholderCommand avoids GNU-only sleep infinity', () => {
 
   assert.doesNotMatch(command, /sleep infinity/);
   assert.match(command, /sleep 86400/);
+});
+
+test('buildPrepareNewWindowCommand uses an explicit session target', () => {
+  const command = buildPrepareNewWindowCommand('core-5', 'prepare-abc123', '/tmp/repo', 'sleep 60');
+
+  assert.match(command, /has-session -t 'core-5'/);
+  assert.match(command, /new-session -d -s 'core-5' -c '\/tmp\/repo'/);
+  assert.match(command, /new-window -d -t 'core-5:'/);
+  assert.equal(prepareSessionTarget('core-5'), 'core-5:');
+});
+
+test('buildPrepareNewWindowCommand recreates a missing tmux session before opening window', async (t) => {
+  try {
+    await execFileAsync('tmux', ['-V'], { timeout: 2000 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      t.skip('tmux is not installed');
+      return;
+    }
+    throw error;
+  }
+
+  const session = `farmslot_prepare_missing_${process.pid}_${Date.now()}`;
+  await execFileAsync('tmux', ['kill-session', '-t', session], { timeout: 2000 }).catch(
+    () => undefined,
+  );
+  const command = buildPrepareNewWindowCommand(session, 'prepare-test', '/tmp', 'sleep 60');
+  try {
+    await execFileAsync('/bin/bash', ['-lc', command], { timeout: 5000 });
+    const { stdout } = await execFileAsync(
+      'tmux',
+      ['list-windows', '-t', session, '-F', '#{window_name}'],
+      { timeout: 2000 },
+    );
+    assert(stdout.split('\n').includes('prepare-test'));
+  } finally {
+    await execFileAsync('tmux', ['kill-session', '-t', session], { timeout: 2000 }).catch(
+      () => undefined,
+    );
+  }
 });
 
 test('buildPrepareWrappedCommand writes sentinel and preserves output flush on success', () => {

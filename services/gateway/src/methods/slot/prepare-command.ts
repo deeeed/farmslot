@@ -126,6 +126,30 @@ export function buildPreparePlaceholderCommand(): string {
   return 'while :; do sleep 86400; done';
 }
 
+export function prepareSessionTarget(sessionName: string): string {
+  return `${sessionName}:`;
+}
+
+function prepareEnsureSessionSnippet(sessionName: string, cwd: string): string {
+  return (
+    `has-session -t ${shellQuote(sessionName)} 2>/dev/null || ` +
+    `"$TMUX_BIN" new-session -d -s ${shellQuote(sessionName)} -c ${shellQuote(cwd)}`
+  );
+}
+
+export function buildPrepareNewWindowCommand(
+  sessionName: string,
+  windowName: string,
+  cwd: string,
+  placeholderCommand: string,
+): string {
+  return tmuxShellSnippet(
+    `${prepareEnsureSessionSnippet(sessionName, cwd)}; ` +
+      `"$TMUX_BIN" new-window -d -t ${shellQuote(prepareSessionTarget(sessionName))} ` +
+      `-n ${shellQuote(windowName)} -c ${shellQuote(cwd)} ${shellQuote(placeholderCommand)}`,
+  );
+}
+
 export function buildPrepareWrappedCommand(
   cmd: string,
   sentinelPath: string,
@@ -302,10 +326,7 @@ export async function runPrepareCommand(
   // Ensure session exists (idle slots may not have one yet) and add the prepare window.
   // tmuxShellSnippet handles the PATH-fallback for remote ssh shells where /opt/homebrew/bin
   // isn't on $PATH by default.
-  const ensureSessionCmd = tmuxShellSnippet(
-    `has-session -t ${shellQuote(sessionName)} 2>/dev/null || ` +
-      `"$TMUX_BIN" new-session -d -s ${shellQuote(sessionName)} -c ${shellQuote(windowCwd)}`,
-  );
+  const ensureSessionCmd = tmuxShellSnippet(prepareEnsureSessionSnippet(sessionName, windowCwd));
   const placeholderCmd = buildPreparePlaceholderCommand();
   // Two-phase pane lifecycle: open a dormant pane first (sleep placeholder),
   // attach pipe-pane, then respawn-pane with the real cmd.
@@ -313,9 +334,11 @@ export async function runPrepareCommand(
   // parse error) can exit before pipe-pane attaches and the diagnostic output
   // is lost — exactly the opaque-prepare-failure class this whole rewrite is
   // meant to eliminate.
-  const newWindowCmd = tmuxShellSnippet(
-    `new-window -d -t ${shellQuote(sessionName)} -n ${shellQuote(windowName)} -c ${shellQuote(windowCwd)} ` +
-      shellQuote(placeholderCmd),
+  const newWindowCmd = buildPrepareNewWindowCommand(
+    sessionName,
+    windowName,
+    windowCwd,
+    placeholderCmd,
   );
   const pipeCmd = tmuxShellSnippet(
     `pipe-pane -t ${shellQuote(target)} -O 'cat >> ${shellQuote(slotHostLogPath)}'`,

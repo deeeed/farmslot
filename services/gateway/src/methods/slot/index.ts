@@ -4,6 +4,7 @@ export { slotFixtureRefresh } from './fixtures.js';
 export { slotPrepare } from './prepare.js';
 export {
   buildDevServerPortCleanup,
+  buildPrepareNewWindowCommand,
   buildPreparePlaceholderCommand,
   buildPrepareWindowName,
   buildPrepareWrappedCommand,
@@ -11,6 +12,7 @@ export {
   getPrepareDepsTimeoutMs,
   getPreparePreflightTimeoutMs,
   getPrepareSentinelPollTimeoutMs,
+  prepareSessionTarget,
   shouldEmitPreparePollWarning,
   shouldPreservePrepareWindowOnSuccess,
 } from './prepare-command.js';
