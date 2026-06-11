@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
-import { flowColor, flowLabel, runStatusColor } from '../runs/run-utils.js';
+import { flowColor, flowLabel, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
 
@@ -231,15 +231,9 @@ export function renderSlotViewInfoPanel(view: SlotView) {
                   <div
                     style="cursor:pointer"
                     @click=${() => {
-                      location.hash = ['done', 'failed', 'cancelled'].includes(
-                        view._linkedRun!.status,
-                      )
-                        ? `family/${view._linkedRun!.familyId}?run=${encodeURIComponent(view._linkedRun!.id)}`
-                        : `run/${view._linkedRun!.id}`;
+                      location.hash = routeForRun(view._linkedRun!);
                     }}
-                    title=${['done', 'failed', 'cancelled'].includes(view._linkedRun!.status)
-                      ? 'Click to open retrospective'
-                      : 'Click to open full run detail'}
+                    title="Click to open full run detail"
                   >
                     <run-pipeline .run=${view._linkedRun}></run-pipeline>
                   </div>

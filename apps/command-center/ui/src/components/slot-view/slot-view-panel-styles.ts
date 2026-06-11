@@ -174,6 +174,35 @@ export function renderSlotViewPanelStyles(recoveryPhase: RecoveryPhase): string 
         border-top: 1px solid ${colors.bgCard};
         padding: 8px;
       }
+      slot-view .sv-run-link {
+        color: ${colors.accent};
+        font-size: 10px;
+        text-decoration: none;
+      }
+      slot-view .sv-run-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      slot-view .sv-run-action {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid ${colors.accent}55;
+        border-radius: 4px;
+        color: ${colors.accent};
+        padding: 3px 8px;
+        text-decoration: none;
+        background: ${colors.accent}11;
+      }
+      slot-view .sv-run-action.muted {
+        border-color: ${colors.bgCardHover};
+        color: ${colors.textSecondary};
+        background: ${colors.bgCard};
+      }
+      slot-view .sv-run-action.accent {
+        border-color: ${colors.accent};
+      }
       slot-view .sv-task-panel-col {
         display: flex;
         flex-direction: column;

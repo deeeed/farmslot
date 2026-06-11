@@ -26,6 +26,7 @@ import {
   pickComparisonPartner,
   pickFamilyComparePair,
   prLinkForRun,
+  routeForRun,
   runDisplayLabel,
   runDisplayTitle,
   runStatusColor,
@@ -78,6 +79,12 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     engineState: overrides.engineState,
   };
 }
+
+test('routeForRun always opens run detail, including terminal family runs', () => {
+  assert.equal(routeForRun(makeRun({ id: 'active-run', status: 'monitoring' })), 'run/active-run');
+  assert.equal(routeForRun(makeRun({ id: 'done-run', status: 'done' })), 'run/done-run');
+  assert.equal(routeForRun(makeRun({ id: 'failed-run', status: 'failed' })), 'run/failed-run');
+});
 
 function makeLedgerEntry(
   overrides: Partial<FamilyChangeLedgerEntry> = {},

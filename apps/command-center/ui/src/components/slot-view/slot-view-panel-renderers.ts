@@ -3,7 +3,8 @@ import { html, nothing } from 'lit';
 import { agentRoleShortLabel } from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
-import { runStatusColor } from '../runs/run-utils.js';
+import { buildRerunAlongsideHref } from '../runs/run-detail-model.js';
+import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
 import { realPath } from './slot-view-model.js';
@@ -571,12 +572,10 @@ export function renderSlotViewBody(
                       >`
                     : nothing}
                   <a
-                    style="color:${colors.accent};font-size:10px;text-decoration:none"
-                    href=${`#${['done', 'failed', 'cancelled'].includes(view._linkedRun.status) ? `family/${view._linkedRun.familyId}?run=${encodeURIComponent(view._linkedRun.id)}` : `run/${view._linkedRun.id}`}`}
+                    class="sv-run-link"
+                    href=${`#${routeForRun(view._linkedRun)}`}
                     @click=${(e: Event) => e.stopPropagation()}
-                    >${['done', 'failed', 'cancelled'].includes(view._linkedRun.status)
-                      ? 'retrospective'
-                      : 'open'}</a
+                    >open detail</a
                   >
                   <span style="color:${colors.textMuted};width:12px;text-align:center"
                     >${view._runPanelOpen ? '\u25BE' : '\u25B8'}</span
@@ -585,6 +584,30 @@ export function renderSlotViewBody(
                 ${view._runPanelOpen
                   ? html`
                       <div class="sv-run-body">
+                        <div class="sv-run-actions">
+                          <a class="sv-run-action" href=${`#${routeForRun(view._linkedRun)}`}>
+                            Open full run detail
+                          </a>
+                          <a
+                            class="sv-run-action muted"
+                            href=${`#family/${view._linkedRun.familyId}?run=${encodeURIComponent(
+                              view._linkedRun.id,
+                            )}`}
+                          >
+                            Retrospective / evidence
+                          </a>
+                          ${isTerminalRunStatus(view._linkedRun.status)
+                            ? html`
+                                <a
+                                  class="sv-run-action accent"
+                                  href=${buildRerunAlongsideHref(view._linkedRun)}
+                                  title="Open dispatch wizard prefilled to fork a comparison-lane sibling of this run."
+                                >
+                                  Re-run alongside →
+                                </a>
+                              `
+                            : nothing}
+                        </div>
                         <run-pipeline
                           .run=${view._linkedRun}
                           @step-select=${(e: CustomEvent) => {
