@@ -116,6 +116,6 @@ export function registerPairCommand(program: Command): void {
       for (const profile of profiles) {
         output.write(`  ${green('•')} ${profile.profileName}  ${cyan(profile.url)}\n`);
       }
-      output.write(`${dim(`  codes expire ${profiles[0].expiresAt}`)}\n`);
+      output.write(`${dim(`  codes expire ${profiles[0]?.expiresAt ?? 'unknown'}`)}\n`);
     });
 }

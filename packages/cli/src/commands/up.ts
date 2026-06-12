@@ -52,6 +52,24 @@ function isAlive(pid: number): boolean {
   }
 }
 
+/** SIGTERM, wait up to 5s for exit, escalate to SIGKILL — shared by down() and failed boots. */
+async function killGracefully(pid: number): Promise<void> {
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // Raced to exit between the liveness check and the signal — nothing to do.
+    return;
+  }
+  for (let i = 0; i < 10 && isAlive(pid); i++) await delay(500);
+  if (isAlive(pid)) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Exited just now — fine.
+    }
+  }
+}
+
 function readPid(): number | null {
   const path = pidFilePath();
   if (!existsSync(path)) return null;
@@ -107,11 +125,14 @@ function waitForHealth(port: number, timeoutMs: number): Promise<boolean> {
 async function up(port: number, output: OutputContext): Promise<void> {
   const existingPid = readPid();
   if (existingPid && isAlive(existingPid)) {
-    // A live process owns the pidfile — never respawn over it. The bound port is
-    // the real mutex (a second gateway would just fail with EADDRINUSE), so this
-    // also closes the concurrent-`up` race without a separate lock file.
-    output.write(`${green('gateway already running')} ${dim(`pid ${existingPid}`)}\n`);
-    return;
+    if (await waitForHealth(port, 2000)) {
+      output.write(`${green('gateway already running')} ${dim(`pid ${existingPid}`)}\n`);
+      return;
+    }
+    // Pid alive but our port is not healthy: either a wedged gateway or the OS
+    // reused the pid after a crash. Health on the port is the real authority —
+    // stop the stale owner and respawn rather than reporting "already running".
+    await killGracefully(existingPid);
   }
   if (existingPid) rmSync(pidFilePath(), { force: true }); // stale pidfile from a crash
 
@@ -146,12 +167,9 @@ async function up(port: number, output: OutputContext): Promise<void> {
   child.unref();
 
   if (!(await waitForHealth(port, 25_000))) {
-    // Don't leave a half-started daemon + stale pidfile behind (e.g. EADDRINUSE).
-    try {
-      process.kill(child.pid, 'SIGTERM');
-    } catch {
-      // Already exited — nothing to signal.
-    }
+    // Don't leave a half-started daemon + stale pidfile behind (e.g. EADDRINUSE
+    // or a boot deadlock that ignores SIGTERM).
+    await killGracefully(child.pid);
     rmSync(pidFilePath(), { force: true });
     output.error(`gateway did not become healthy on :${port} — see ${logFilePath()}`);
     process.exit(1);
@@ -188,21 +206,7 @@ async function down(output: OutputContext): Promise<void> {
     output.write(`${dim('gateway not running')}\n`);
     return;
   }
-  try {
-    process.kill(pid, 'SIGTERM');
-  } catch {
-    // Raced to exit between the liveness check and the signal — nothing to do.
-  }
-  // Wait up to 5s for a graceful exit, then escalate to SIGKILL so a wedged
-  // gateway can't outlive `down` and keep the port bound.
-  for (let i = 0; i < 10 && isAlive(pid); i++) await delay(500);
-  if (isAlive(pid)) {
-    try {
-      process.kill(pid, 'SIGKILL');
-    } catch {
-      // Exited just now — fine.
-    }
-  }
+  await killGracefully(pid);
   rmSync(pidFilePath(), { force: true });
   output.write(`${red('gateway stopped')} ${dim(`pid ${pid}`)}\n`);
 }

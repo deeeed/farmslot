@@ -21,7 +21,7 @@
 #   FARMSLOT_REPO_URL   git source for fresh mode  (default: the canonical repo URL)
 #   FARMSLOT_REPO_REF   branch/ref for fresh mode  (default: the remote default branch)
 #   FARMSLOT_BIN_DIR    dir for the PATH symlink   (default: ~/.local/bin)
-#   FARMSLOT_MINIMAL    set to skip the pair-your-phone step (framework-only)
+#   FARMSLOT_MINIMAL    set to skip the dashboard build + pair-your-phone step
 #   FARMSLOT_PAIR       set to 1 to pair non-interactively (no prompt)
 set -euo pipefail
 
@@ -45,13 +45,18 @@ fail() {
 # run_step "label" cmd...  — run one long command behind a single live status
 # line (spinner + last output line) instead of a silent wait or a wall of noise.
 # Prints [OK] on success; tails the captured log and fails hard on error. Falls
-# back to quiet mode (no spinner) when stdout is not a terminal (CI/log capture).
+# back to a static label line (no spinner) when stdout is not a terminal
+# (CI/log capture). Logs persist under ${WORKSPACE}/.install-logs/ — success
+# runs too — for post-mortem debugging.
 SPIN_FRAMES=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
 run_step() {
   local label="$1"
   shift
-  local log
-  log="$(mktemp -t farmslot-step.XXXXXX)"
+  local slug log
+  slug="$(printf '%s' "$label" | tr -cs 'a-zA-Z0-9' '-')"
+  log="${WORKSPACE}/.install-logs/${slug}.log"
+  mkdir -p "${WORKSPACE}/.install-logs"
+  : >"$log"
   "$@" >"$log" 2>&1 &
   local pid=$! i=0
   if [ -t 1 ]; then
@@ -63,10 +68,11 @@ run_step() {
       sleep 0.1
     done
     printf '\r\033[K'
+  else
+    echo "  ... ${label}"
   fi
   if wait "$pid"; then
     green "  [OK] ${label}"
-    rm -f "$log"
   else
     [ -t 1 ] && echo
     red "  [FAIL] ${label}"
@@ -200,9 +206,15 @@ for (let i = 0; i < 3; i++) { if (cur[i] !== min[i]) process.exit(cur[i] > min[i
 
 step_cli() {
   bold "── CLI ──"
-  run_step "yarn install (workspace)" bash -c "cd '$CLONE' && yarn install"
-  run_step "build recipe-harness" bash -c "cd '$CLONE' && yarn workspace @farmslot/recipe-harness build"
-  run_step "build Command Center dashboard" bash -c "cd '$CLONE/apps/command-center/ui' && yarn build"
+  # Positional-arg sh -c: $CLONE is passed as "$1", never embedded in the
+  # command string, so any path (quotes, spaces) survives intact.
+  run_step "yarn install (workspace)" sh -c 'cd "$1" && yarn install' _ "$CLONE"
+  run_step "build recipe-harness" sh -c 'cd "$1" && yarn workspace @farmslot/recipe-harness build' _ "$CLONE"
+  if [ -n "${FARMSLOT_MINIMAL:-}" ]; then
+    echo "  dashboard build skipped (FARMSLOT_MINIMAL) — build later: yarn --cwd ${CLONE}/apps/command-center/ui build"
+  else
+    run_step "build Command Center dashboard" sh -c 'cd "$1/apps/command-center/ui" && yarn build' _ "$CLONE"
+  fi
   FARMSLOT_BIN="${CLONE}/packages/cli/bin/farmslot.mjs"
   "$FARMSLOT_BIN" --version >/dev/null || fail "farmslot CLI failed to run" "check the yarn install output above"
   green "  [OK] farmslot CLI runs"
