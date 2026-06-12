@@ -1,5 +1,4 @@
 import { html, nothing } from 'lit';
-import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
 
 import type {
   DevInteractiveProfile,
@@ -25,6 +24,7 @@ import {
   renderVariantInput,
 } from './dispatch-wizard-banners-renderer.js';
 import { renderDispatchCandidateSelection } from './dispatch-wizard-candidates-renderer.js';
+import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
 import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
 import { renderDispatchWizardPrimaryControls } from './dispatch-wizard-primary-controls-renderer.js';
 import {

@@ -63,7 +63,10 @@ export interface PrepareProfileOption {
 }
 
 export function projectPrepareProfiles(
-  configs: ReadonlyArray<{ name: string; prepare?: import('@farmslot/protocol').ProjectPrepareConfig }>,
+  configs: ReadonlyArray<{
+    name: string;
+    prepare?: import('@farmslot/protocol').ProjectPrepareConfig;
+  }>,
   projectName: string,
 ): PrepareProfileOption[] {
   const prepare = configs.find((project) => project.name === projectName)?.prepare;
