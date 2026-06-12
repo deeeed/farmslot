@@ -49,6 +49,7 @@ import { isFreeSlot } from './methods/dispatch/slot-scoring.js';
 import { serveFile, serveRunArtifact } from './methods/filesystem.js';
 import { fleetRefresh } from './methods/fleet.js';
 import { reconcileStalePrepareLocks } from './methods/slot.js';
+import { serveStaticUi } from './methods/static-ui.js';
 import { startMonitor } from './observability/fleet-monitor.js';
 import { initRunCompletion } from './run-completion/orchestrator.js';
 import {
@@ -285,6 +286,8 @@ async function main(): Promise<void> {
       });
       return;
     }
+    // Fall through: serve the built Command Center UI bundle for GET, else 404.
+    if (req.method === 'GET' && serveStaticUi(req, res)) return;
     res.writeHead(404);
     res.end();
   });
