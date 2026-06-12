@@ -257,7 +257,9 @@ step_pair() {
   fi
   if [ -n "$pair_now" ]; then
     FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" up
-    FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" pair
+    # --gateway local: pair must mint codes for the gateway `up` just started,
+    # not whatever profile happened to be active on a machine with prior config.
+    FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" --gateway local pair
     echo ""
     echo "  Scan the QR above with the Farmslot companion app (App Store / Play Store)."
     echo "  Stop the gateway anytime with: farmslot down"
