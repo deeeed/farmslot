@@ -24,6 +24,7 @@ import { repoRoot } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
 const LOCAL_PROFILE = 'local';
+const UI_DIST_INDEX = join(repoRoot, 'apps', 'command-center', 'ui', 'dist', 'index.html');
 
 function farmslotHome(): string {
   return dirname(profilesPath());
@@ -35,6 +36,10 @@ function pidFilePath(): string {
 
 function logFilePath(): string {
   return join(farmslotHome(), 'gateway.log');
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isAlive(pid: number): boolean {
@@ -101,10 +106,14 @@ function waitForHealth(port: number, timeoutMs: number): Promise<boolean> {
 
 async function up(port: number, output: OutputContext): Promise<void> {
   const existingPid = readPid();
-  if (existingPid && isAlive(existingPid) && (await waitForHealth(port, 2000))) {
-    output.write(`${green('gateway already up')} ${dim(`pid ${existingPid}`)}\n`);
+  if (existingPid && isAlive(existingPid)) {
+    // A live process owns the pidfile — never respawn over it. The bound port is
+    // the real mutex (a second gateway would just fail with EADDRINUSE), so this
+    // also closes the concurrent-`up` race without a separate lock file.
+    output.write(`${green('gateway already running')} ${dim(`pid ${existingPid}`)}\n`);
     return;
   }
+  if (existingPid) rmSync(pidFilePath(), { force: true }); // stale pidfile from a crash
 
   const tsx = join(repoRoot, 'node_modules', '.bin', 'tsx');
   const entry = join(repoRoot, 'services', 'gateway', 'src', 'index.ts');
@@ -137,27 +146,42 @@ async function up(port: number, output: OutputContext): Promise<void> {
   child.unref();
 
   if (!(await waitForHealth(port, 25_000))) {
+    // Don't leave a half-started daemon + stale pidfile behind (e.g. EADDRINUSE).
+    try {
+      process.kill(child.pid, 'SIGTERM');
+    } catch {
+      // Already exited — nothing to signal.
+    }
+    rmSync(pidFilePath(), { force: true });
     output.error(`gateway did not become healthy on :${port} — see ${logFilePath()}`);
     process.exit(1);
   }
   registerLocalProfile(port, token);
 
+  const dashboardBuilt = existsSync(UI_DIST_INDEX);
   if (output.json) {
     output.writeJson({
       pid: child.pid,
       port,
       url: `ws://localhost:${port}`,
       profile: LOCAL_PROFILE,
+      dashboard: dashboardBuilt ? `http://localhost:${port}` : null,
     });
     return;
   }
   output.write(`${green('gateway up')} ${dim(`pid ${child.pid}`)}\n`);
-  output.write(`  ${dim('dashboard')}  ${cyan(`http://localhost:${port}`)}\n`);
+  if (dashboardBuilt) {
+    output.write(`  ${dim('dashboard')}  ${cyan(`http://localhost:${port}`)}\n`);
+  } else {
+    output.write(
+      `  ${dim('dashboard')}  ${dim('not built — run: yarn --cwd apps/command-center/ui build')}\n`,
+    );
+  }
   output.write(`  ${dim('gateway')}    ${cyan(`ws://localhost:${port}`)}\n`);
   output.write(`  ${dim('next')}       ${bold('farmslot pair')} ${dim('(pair your phone)')}\n`);
 }
 
-function down(output: OutputContext): void {
+async function down(output: OutputContext): Promise<void> {
   const pid = readPid();
   if (!pid || !isAlive(pid)) {
     rmSync(pidFilePath(), { force: true });
@@ -166,11 +190,18 @@ function down(output: OutputContext): void {
   }
   try {
     process.kill(pid, 'SIGTERM');
-  } catch (err) {
-    output.error(
-      `failed to stop gateway pid ${pid}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    process.exit(1);
+  } catch {
+    // Raced to exit between the liveness check and the signal — nothing to do.
+  }
+  // Wait up to 5s for a graceful exit, then escalate to SIGKILL so a wedged
+  // gateway can't outlive `down` and keep the port bound.
+  for (let i = 0; i < 10 && isAlive(pid); i++) await delay(500);
+  if (isAlive(pid)) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Exited just now — fine.
+    }
   }
   rmSync(pidFilePath(), { force: true });
   output.write(`${red('gateway stopped')} ${dim(`pid ${pid}`)}\n`);
@@ -189,8 +220,8 @@ export function registerUpCommand(program: Command): void {
   program
     .command('down')
     .description('Stop the local gateway started by farmslot up')
-    .action((_opts: unknown, cmd: Command) => {
+    .action(async (_opts: unknown, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      down(output);
+      await down(output);
     });
 }

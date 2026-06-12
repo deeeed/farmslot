@@ -30,14 +30,23 @@ interface ReachableAddress {
   name: string;
 }
 
-/** First non-internal IPv4 address — the LAN address a phone on the same Wi-Fi uses. */
-function lanIPv4(): string | null {
+/**
+ * Non-internal IPv4 addresses, preferring private LAN ranges (RFC1918) so a
+ * Wi-Fi address wins over VPN/virtual interfaces. Falls back to all non-internal
+ * addresses when none are private. Every candidate becomes its own QR profile,
+ * and the app tries each (multi-URL fallback), so extras are harmless.
+ */
+function lanIPv4s(): string[] {
+  const all: string[] = [];
   for (const list of Object.values(networkInterfaces())) {
     for (const iface of list ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+      if (iface.family === 'IPv4' && !iface.internal) all.push(iface.address);
     }
   }
-  return null;
+  const isPrivate = (ip: string): boolean =>
+    /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+  const priv = all.filter(isPrivate);
+  return [...new Set(priv.length > 0 ? priv : all)];
 }
 
 /** Tailscale MagicDNS name for "from anywhere" access, or null when Tailscale is absent. */
@@ -62,8 +71,9 @@ function tailscaleDnsName(): string | null {
 function reachableAddresses(port: string): ReachableAddress[] {
   const host = hostname().replace(/\.local$/, '');
   const addresses: ReachableAddress[] = [];
-  const lan = lanIPv4();
-  if (lan) addresses.push({ url: `ws://${lan}:${port}/ws`, name: `${host} (LAN)` });
+  for (const ip of lanIPv4s()) {
+    addresses.push({ url: `ws://${ip}:${port}/ws`, name: `${host} (LAN)` });
+  }
   const tailnet = tailscaleDnsName();
   if (tailnet) addresses.push({ url: `ws://${tailnet}:${port}/ws`, name: `${host} (Tailscale)` });
   return addresses;
