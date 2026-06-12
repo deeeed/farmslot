@@ -8,7 +8,7 @@ Everyone will have coding agents and model subscriptions. The hard part is turni
 
 Farmslot is built around the idea of scaling the engineer, not replacing the engineer: keep human taste, risk judgment, and final approval, while the system handles repeatable coordination across projects, slots, runners, evidence, and review.
 
-Farmslot is the operating system and IDE around those agents: it remembers intent, dispatches work, shows live execution, lets the operator steer, validates behavior, collects evidence, coordinates review, and turns past runs into future leverage.
+Farmslot is the framework and control plane around those agents: it remembers intent, dispatches work, shows live execution, lets the operator steer, validates behavior, collects evidence, coordinates review, and turns past runs into future leverage.
 
 ## The bottleneck moved
 

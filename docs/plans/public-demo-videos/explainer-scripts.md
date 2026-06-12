@@ -11,7 +11,7 @@ lifecycle: Keep until final public demo videos are recorded, then promote stable
 
 The landing page should not only show screens. Each video should explain one product promise in a human voice:
 
-> Farmslot is your **personal dev-agent OS and IDE**: scale work across many projects, machines, and model runners, **watch and steer** agents while they work, then trust results through visual validation, executable recipes, and proof artifacts.
+> Farmslot is your **agentic engineering framework**: scale work across many projects, machines, and model runners, **watch and steer** agents while they work, then trust results through visual validation, executable recipes, and proof artifacts.
 
 Use this page as the recording index. Each concept has its own script so the narration, shot list, captions, and success criteria can evolve independently.
 

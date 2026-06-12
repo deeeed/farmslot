@@ -309,7 +309,7 @@ const readyPayload = {
     taskPrompt:
       'Create the first approved human-ready gate screenshot for the Docusaurus landing page, using a reproducible capture recipe and sanitized Farmslot fixture data.',
     initialContext:
-      'This is a public documentation demo for Farmslot as an agentic engineering operating system.',
+      'This is a public documentation demo for Farmslot as an agentic engineering framework.',
     checklist: [
       'Render ready workspace with package preview.',
       'Verify evidence and decision actions are visible.',

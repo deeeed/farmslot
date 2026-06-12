@@ -13,9 +13,9 @@ const operatingLoop = ['Dispatch', 'Watch', 'Steer', 'Validate', 'Review', 'Impr
 
 const productPillars = [
   {
-    title: 'Agentic engineering OS',
-    body: 'Coordinate projects, machines, slots, runners, hooks, run state, artifacts, and memory as one operating environment.',
-    to: '/docs/concepts/agentic-engineering-os',
+    title: 'Agentic engineering framework',
+    body: 'Coordinate projects, machines, slots, runners, hooks, run state, artifacts, and memory through one framework.',
+    to: '/docs/concepts/agentic-engineering-framework',
   },
   {
     title: 'Watch-and-steer IDE',
@@ -127,7 +127,7 @@ function HomepageHeader() {
         <div className={styles.heroCopy}>
           <span className={styles.eyebrow}>Farmslot</span>
           <Heading as="h1" className={styles.heroTitle}>
-            Your OS and IDE for scaling agentic engineering work.
+            Your framework for scaling agentic engineering work.
           </Heading>
           <p className={styles.heroSubtitle}>
             Run many agents across many project types, computers, and model subscriptions. Watch and
@@ -201,9 +201,9 @@ function LatestAdditions() {
           <span className={styles.sectionEyebrow}>Why it matters</span>
           <Heading as="h2">Scale your own workflow without losing trust.</Heading>
           <p>
-            Farmslot is the product layer around agents: a framework for many project types, an OS
-            for coordinating the fleet, an IDE for watching and steering work, and a proof-first
-            recipe layer for visually and mechanically validating the result.
+            Farmslot is the product layer around agents: a framework for many project types, a
+            control plane for coordinating the fleet, a cockpit for watching and steering work, and
+            a proof-first recipe layer for visually and mechanically validating the result.
           </p>
         </div>
         <div className={styles.cardGrid}>
@@ -336,8 +336,8 @@ function DocsCallout() {
 export default function Home() {
   return (
     <Layout
-      title="Agentic engineering OS and IDE"
-      description="Farmslot is a personal dev-agent OS and IDE for scaling work across projects, machines, and model runners with visual validation, executable recipes, and proof artifacts"
+      title="Agentic engineering framework"
+      description="Farmslot is a framework for scaling supervised agentic engineering work across projects, machines, and model runners with visual validation, executable recipes, and proof artifacts"
     >
       <HomepageHeader />
       <main>

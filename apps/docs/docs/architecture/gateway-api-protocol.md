@@ -189,7 +189,7 @@ The curated public entry point is [Gateway API capability surface](/docs/referen
 
 Once capabilities are discoverable, an LLM does not need custom hidden knowledge of Farmslot. It can follow the same [client pattern](/docs/reference/gateway-api#client-pattern) as the CLI or UI: discover capabilities, observe with read-only methods, and require explicit operator confirmation before higher-risk actions.
 
-That turns Farmslot into an interoperable agent operating system rather than a single UI.
+That turns Farmslot into an interoperable agentic engineering framework rather than a single UI.
 
 ## Current implementation
 
