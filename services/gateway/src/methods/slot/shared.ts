@@ -6,8 +6,15 @@ import {
 } from '../../core/index.js';
 import type { StartRefResolution } from '../../projects/start-ref-resolution.js';
 
+import type { PrepareProfileFallback } from './prepare-profile.js';
+
 export type EventEmitter = (event: string, payload: unknown) => void;
-export type SlotPrepareResult = { prepared: boolean; startRef?: StartRefResolution };
+export type SlotPrepareResult = {
+  prepared: boolean;
+  startRef?: StartRefResolution;
+  /** Selected prepare profile + any precondition fallbacks taken (ADR-037). */
+  profile?: { selected: string; requested?: string; fallbacks: PrepareProfileFallback[] };
+};
 export interface SlotPrepareInternalOptions {
   stripClean?: boolean;
   startRef?: { requestedRef: string };

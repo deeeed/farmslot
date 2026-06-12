@@ -44,6 +44,11 @@ export interface SlotPrepareParams {
   flowType?: string;
   app?: string;
   /**
+   * Named prepare profile from the project's prepare.profiles (ADR-037).
+   * Unset → prepare.default → implicit full. Unknown names fail the prepare.
+   */
+  prepareProfile?: string;
+  /**
    * Project-scoped key/value pairs. Exported to the preflight hook as
    * `FARMSLOT_VAR_<UPPERCASE_KEY>` env vars. Framework does not interpret them —
    * projects define their own allowed keys/values.
