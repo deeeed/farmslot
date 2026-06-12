@@ -29,7 +29,11 @@ That keeps app code stable when the protocol evolves.
 
 That means Expo projects should not reimplement generic actions like `ui.press`, `ui.set_input`, `ui.scroll`, `app.hud`, or `app.status`. Add only project/domain actions in the app-specific layer when the official actions are not enough.
 
-## Install into an Expo app
+## Current status
+
+`@farmslot/expo-recipe` is the in-repo Expo integration package and is not the recommended external install path until it is published. For external Expo apps today, start with [Headless Recipe integration](./headless-recipe.md) and add app-specific bridge/HUD files locally when needed.
+
+When the Expo package is released, the install flow will be:
 
 ```bash
 yarn add -D @farmslot/expo-recipe @farmslot/recipe-harness @farmslot/protocol
@@ -37,7 +41,7 @@ farmslot-expo-recipe init
 yarn recipe:doctor
 ```
 
-The package manager resolves the current published versions. Do not use the Yarn workspace protocol outside the Farmslot monorepo; it only works for local workspace packages.
+The package manager will resolve the current published versions. Do not use the Yarn workspace protocol outside the Farmslot monorepo; it only works for local workspace packages.
 
 ## Default mode: headless and safe
 
