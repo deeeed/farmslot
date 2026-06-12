@@ -79,3 +79,26 @@ test('findMissingState: complete state is a true no-op, missing pieces escalate'
   // Missing pool slot and project registration are reported too.
   assert.equal(findMissingState(pack, { machine: 'm', slots: [] }, ws).length, 2);
 });
+
+test('findMissingState escalates platform slots missing their device/browser resource', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-res-'));
+  const ws = { farmslotDir: join(root, 'farmslot'), reposDir: join(root, 'repos') };
+  const pack: PackJson = {
+    name: 'p',
+    projects: [{ dir: 'projects/app-farm', platform: 'ios', slots: 1 }],
+  };
+  mkdirSync(join(ws.farmslotDir, 'projects', 'app-farm'), { recursive: true });
+  writeFileSync(join(ws.farmslotDir, 'projects', 'app-farm', 'project.json'), '{}');
+  mkdirSync(join(ws.reposDir, 'app-1', '.git'), { recursive: true });
+
+  // Slot created by pre-defaultResources code: no ios-sim → repair escalation.
+  const bare = { machine: 'm', slots: [{ id: 'm-app-1' }] };
+  assert.deepEqual(findMissingState(pack, bare, ws), ['slot m-app-1 missing ios-sim resource']);
+
+  // With the resource present the state is complete.
+  const complete = {
+    machine: 'm',
+    slots: [{ id: 'm-app-1', resources: { 'ios-sim': { simulator: 'app-1' } } }],
+  };
+  assert.deepEqual(findMissingState(pack, complete, ws), []);
+});

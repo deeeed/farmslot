@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import {
   allocatePort,
+  CDP_PORT_BLOCK_START,
+  defaultResources,
   generatePool,
   type PoolConfig,
   poolFileName,
@@ -67,6 +69,35 @@ test('allocatePort starts at the high block and skips taken ports', () => {
   ]);
   assert.equal(allocatePort(pool()), PORT_BLOCK_START);
   assert.equal(allocatePort(p), 9302);
+});
+
+test('defaultResources gives platform slots their device/browser resource', () => {
+  assert.deepEqual(defaultResources('ios', 'mm', 2, pool()), {
+    'ios-sim': { simulator: 'mm-2', headless: true },
+  });
+  assert.deepEqual(defaultResources('android', 'mm', 1, pool()), {
+    'android-emu': { avd: 'mm-1' },
+  });
+  assert.deepEqual(defaultResources('chrome-extension', 'mme', 1, pool()), {
+    browser: { cdp_port: CDP_PORT_BLOCK_START },
+  });
+  assert.deepEqual(defaultResources('cli', 'core', 1, pool()), {});
+});
+
+test('defaultResources allocates cdp ports clear of taken ones', () => {
+  const p = pool([
+    { id: 'm-x-1', repo: '/a', session: 'x-1', resources: { browser: { cdp_port: 9500 } } },
+  ]);
+  assert.deepEqual(defaultResources('browser', 'x', 2, p), { browser: { cdp_port: 9501 } });
+});
+
+test('defaultResources cdp allocation skips ports taken by other resource blocks', () => {
+  const p = pool([
+    { id: 'm-y-1', repo: '/a', session: 'y-1', resources: { 'dev-server': { port: 9500 } } },
+  ]);
+  assert.deepEqual(defaultResources('chrome-extension', 'y', 1, p), {
+    browser: { cdp_port: 9501 },
+  });
 });
 
 test('registerSlot never clobbers an existing slot', () => {
