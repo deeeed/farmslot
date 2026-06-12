@@ -37,19 +37,7 @@ farmslot-expo-recipe init
 yarn recipe:doctor
 ```
 
-Equivalent `package.json` entry for an external project:
-
-```json
-{
-  "devDependencies": {
-    "@farmslot/expo-recipe": "^0.1.1",
-    "@farmslot/recipe-harness": "^0.2.2",
-    "@farmslot/protocol": "^0.6.0"
-  }
-}
-```
-
-Do not use the Yarn workspace protocol outside the Farmslot monorepo; it only works for local workspace packages.
+The package manager resolves the current published versions. Do not use the Yarn workspace protocol outside the Farmslot monorepo; it only works for local workspace packages.
 
 ## Default mode: headless and safe
 
