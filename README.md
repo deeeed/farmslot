@@ -2,6 +2,14 @@
 
 Project-agnostic orchestration for dispatching autonomous coding agents to a fleet of machines.
 
+**Install with one command:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | bash
+```
+
+Checks prerequisites, sets up `~/dev/farmslot-workspace/`, and ends with a green `farmslot doctor` — nothing is auto-installed without telling you. [Getting started →](https://farmslot.io/docs/guides/getting-started)
+
 > Why the name? I know. It stuck: agentic dev farming across many isolated slots. Naming is harder than scheduling the agents.
 
 > [!WARNING]
@@ -29,13 +37,8 @@ farmslot/
 
 ## Try it
 
-One-line install (experimental — `main` moves daily, run `farmslot update` often):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | bash
-```
-
-Then the happy path is three commands:
+After the [one-line install](#farmslot) above, the happy path is three commands
+(experimental — `main` moves daily, run `farmslot update` often):
 
 ```bash
 farmslot project add <pack-dir-or-git-url>   # register a project pack: repos, slots, validation
@@ -43,8 +46,7 @@ farmslot doctor                              # green checklist or specific failu
 farmslot update                              # later: pull latest, migrate pool, re-sync packs
 ```
 
-The installer checks prerequisites (never auto-installs), sets up `~/dev/farmslot-workspace/`,
-and ends with `farmslot doctor`. Details: [Getting started](https://farmslot.io/docs/guides/getting-started)
+Details: [Getting started](https://farmslot.io/docs/guides/getting-started)
 / [docs/operations/onboarding.md](docs/operations/onboarding.md); the pack contract is in
 [docs/reference/project-packs.md](docs/reference/project-packs.md), with `packs/example-app/` as the reference pack.
 
