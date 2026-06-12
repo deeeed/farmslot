@@ -136,3 +136,22 @@ test('buildDispatchQueueAddParams matches golden queue-add payload', () => {
   });
   assert.deepEqual(stablePayload<DispatchQueueAddParams>(payload), fixture('queue-add'));
 });
+
+test('buildRunCreateParams forwards prepareProfile and suppresses it under skipPrepare', () => {
+  const draft: DispatchPayloadDraft = {
+    ...baseDraft,
+    flowType: 'fix-bug',
+    project: 'demo',
+    ticketOrPr: 'DEMO-1',
+    mode: 'autonomous',
+    devInteractiveProfile: 'lightweight',
+    prepareProfile: 'relaunch',
+    comparison: {},
+  };
+  assert.equal(buildRunCreateParams(draft).prepareProfile, 'relaunch');
+  assert.equal(buildDispatchQueueAddParams(draft).prepareProfile, 'relaunch');
+  const skipped: DispatchPayloadDraft = { ...draft, skipPrepare: true };
+  assert.equal(buildRunCreateParams(skipped).prepareProfile, undefined);
+  assert.equal(buildRunCreateParams(skipped).skipPrepare, true);
+  assert.equal(buildDispatchQueueAddParams(skipped).prepareProfile, undefined);
+});

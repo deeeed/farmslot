@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { PreparePhase } from '@farmslot/protocol';
+
 import {
   appLabel,
   buildPublicationReviewGateParams,
@@ -8,6 +10,7 @@ import {
   defaultExtraReviewRunner,
   modeForFlow,
   projectApps,
+  projectPrepareProfiles,
   publicationReviewsEnabled,
   selectedDispatchApp,
   selectedTaskTemplate,
@@ -143,4 +146,29 @@ test('selectedTemplateMode derives mode from task template selection', () => {
     'interactive',
   );
   assert.equal(selectedTemplateMode('dev', [], ''), 'interactive');
+});
+
+test('projectPrepareProfiles maps profiles with labels and default star', () => {
+  const configs = [
+    {
+      name: 'demo',
+      prepare: {
+        default: 'relaunch',
+        profiles: {
+          full: { phases: ['git', 'deps'] as PreparePhase[] },
+          relaunch: { phases: ['git'] as PreparePhase[], label: 'Relaunch app' },
+        },
+      },
+    },
+  ];
+  assert.deepEqual(projectPrepareProfiles(configs, 'demo'), [
+    { name: 'full', label: 'full', isDefault: false },
+    { name: 'relaunch', label: 'Relaunch app', isDefault: true },
+  ]);
+  // No explicit default → a profile literally named "full" is the implicit default.
+  const noDefault = [
+    { name: 'demo', prepare: { profiles: { full: { phases: ['git'] as PreparePhase[] } } } },
+  ];
+  assert.equal(projectPrepareProfiles(noDefault, 'demo')[0]?.isDefault, true);
+  assert.deepEqual(projectPrepareProfiles(configs, 'other'), []);
 });
