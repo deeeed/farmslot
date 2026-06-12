@@ -119,6 +119,8 @@ export function depsSentinelPath(runtimeDir: string): string {
 function lockfileHashSnippet(): string {
   // sha256sum on Linux, shasum -a 256 on macOS. Empty output when no lockfile
   // exists — callers treat that as "cannot prove deps are current".
+  // `cat $files` is deliberately unquoted: it relies on word splitting, which
+  // is safe only because LOCKFILE_CANDIDATES are space-free by construction.
   return [
     `files=""`,
     `for f in ${LOCKFILE_CANDIDATES.join(' ')}; do [ -f "$f" ] && files="$files $f"; done`,
@@ -213,13 +215,14 @@ export async function selectPrepareProfile(
   ctx: RequirementCheckContext,
   requested?: string,
   onCheck?: (profile: string, result: RequirementCheckResult) => void,
+  check: typeof checkPrepareRequirement = checkPrepareRequirement,
 ): Promise<PrepareProfileSelection> {
   let profile = resolvePrepareProfile(ctx.projectJson, requested);
   const fallbacks: PrepareProfileFallback[] = [];
   while (profile.requires.length > 0) {
     const failures: RequirementCheckResult[] = [];
     for (const requirement of profile.requires) {
-      const result = await checkPrepareRequirement(requirement, ctx);
+      const result = await check(requirement, ctx);
       onCheck?.(profile.name, result);
       if (!result.ok) failures.push(result);
     }

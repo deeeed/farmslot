@@ -439,6 +439,10 @@ async function slotPrepareInner(
   }
 
   let fixturesSynced = false;
+  // Fixtures are framework file materialization (template render + copy), not a
+  // project hook invocation, so they intentionally do not receive
+  // FARMSLOT_PREPARE_PROFILE — ADR-037's "every hook" covers deps/preflight/
+  // health/unlock, which run project-owned commands.
   const syncFixtures = async () => {
     if (fixturesSynced) return;
     if (!phaseEnabled('fixtures')) {

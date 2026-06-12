@@ -705,6 +705,7 @@ export function normalizeRawProjectBacklog(
 
 export function normalizeRawProjectPrepare(
   raw: RawProjectJson['prepare'],
+  projectName?: string,
 ): ProjectConfig['prepare'] | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const profilesRaw = raw.profiles;
@@ -719,7 +720,15 @@ export function normalizeRawProjectPrepare(
           (PREPARE_PHASES as readonly string[]).includes(String(p)),
         )
       : [];
-    if (phases.length === 0) continue;
+    if (phases.length === 0) {
+      // The fleet-status read path is lenient (unlike validatePrepareConfig in
+      // loadProjectVars) — surface the drop so a phase typo doesn't just make
+      // profile pills vanish from the wizard with no feedback.
+      console.warn(
+        `[config] project ${projectName ?? '<unknown>'}: prepare.profiles.${name} has no valid phases, skipping`,
+      );
+      continue;
+    }
     profiles[name] = {
       phases,
       ...(typeof profile.label === 'string' ? { label: profile.label } : {}),

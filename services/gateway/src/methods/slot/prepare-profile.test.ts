@@ -10,6 +10,7 @@ import {
   buildLockfileHashCommand,
   depsSentinelPath,
   resolvePrepareProfile,
+  selectPrepareProfile,
 } from './prepare-profile.js';
 
 const PROFILES: RawProjectJson = {
@@ -79,4 +80,42 @@ test('deps sentinel commands target the runtime dir and cover lockfiles', () => 
   const hash = buildLockfileHashCommand('/repo');
   assert.match(hash, /sha256sum/);
   assert.match(hash, /shasum -a 256/);
+});
+
+test('selectPrepareProfile walks multi-hop fallback chain on failing checks', async () => {
+  const projectJson: RawProjectJson = {
+    prepare: {
+      profiles: {
+        full: { phases: ['git', 'deps'] },
+        relaunch: { phases: ['git'], requires: ['dev_server_up'], fallback: 'full' },
+        attach: { phases: ['health'], requires: ['health_ok'], fallback: 'relaunch' },
+      },
+    },
+  };
+  const ctx = {
+    vars: {} as never,
+    projectJson,
+    runtimeDir: '.agent',
+  };
+  const checked: string[] = [];
+  const failingCheck = async (requirement: 'deps_current' | 'dev_server_up' | 'health_ok') => {
+    checked.push(requirement);
+    return { requirement, ok: false, detail: 'forced failure' };
+  };
+  const selection = await selectPrepareProfile(ctx, 'attach', undefined, failingCheck);
+  assert.equal(selection.profile.name, 'full');
+  assert.deepEqual(
+    selection.fallbacks.map((f) => `${f.from}->${f.to}`),
+    ['attach->relaunch', 'relaunch->full'],
+  );
+  assert.deepEqual(checked, ['health_ok', 'dev_server_up']);
+
+  const passingCheck = async (requirement: 'deps_current' | 'dev_server_up' | 'health_ok') => ({
+    requirement,
+    ok: true,
+    detail: 'forced pass',
+  });
+  const direct = await selectPrepareProfile(ctx, 'attach', undefined, passingCheck);
+  assert.equal(direct.profile.name, 'attach');
+  assert.deepEqual(direct.fallbacks, []);
 });
