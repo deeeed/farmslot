@@ -110,9 +110,24 @@ export function resolvePackSource(
         cwd: ws.root,
         stdio,
       });
+      // reset --hard moves submodule POINTERS but not their working trees —
+      // sync+update or the pack would keep serving stale project content.
+      run('git', ['-C', dest, 'submodule', 'sync', '--recursive', '--quiet'], {
+        cwd: ws.root,
+        stdio,
+      });
+      run('git', ['-C', dest, 'submodule', 'update', '--init', '--recursive', '--quiet'], {
+        cwd: ws.root,
+        stdio,
+      });
     } else {
       mkdirSync(join(ws.root, 'packs'), { recursive: true });
-      run('git', ['clone', '--quiet', source, dest], { cwd: ws.root, stdio });
+      // Packs may mount their project dirs as submodules (separate repos per
+      // project); a plain clone would leave those dirs empty and fail validation.
+      run('git', ['clone', '--quiet', '--recurse-submodules', source, dest], {
+        cwd: ws.root,
+        stdio,
+      });
     }
     return dest;
   }
