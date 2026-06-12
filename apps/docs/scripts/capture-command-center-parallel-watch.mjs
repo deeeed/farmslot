@@ -293,7 +293,7 @@ async function prepareBrowserView() {
   `);
   await sleep(4000);
   await evalInPage(`
-    document.title = ${JSON.stringify('Farmslot Demo Capture')};
+    document.title = ${JSON.stringify(captureWindowName)};
     const styleId = 'docusaurus-demo-capture-style';
     document.getElementById(styleId)?.remove();
     const style = document.createElement('style');
@@ -568,13 +568,13 @@ async function steerVisibleDemoPanes() {
   );
   const log = resolve(artifactsDir, 'logs/steer-demo-panes.log');
   const commands = [
-    ['demo-1:dev.1', 'C-c', null],
-    ['demo-1:dev.1', 'clear', 'Enter'],
-    ['demo-1:dev.1', 'printf "FARMSLOT DEMO: operator steers a live terminal\\n"', 'Enter'],
-    ['demo-1:dev.1', 'printf "workspace: farmslot\\n"', 'Enter'],
-    ['demo-1:dev.1', 'ls docs/plans | grep docusaurus | head -6', 'Enter'],
+    ['demo-work-1:dev.1', 'C-c', null],
+    ['demo-work-1:dev.1', 'clear', 'Enter'],
+    ['demo-work-1:dev.1', 'printf "FARMSLOT DEMO: operator steers a live terminal\\n"', 'Enter'],
+    ['demo-work-1:dev.1', 'printf "workspace: farmslot\\n"', 'Enter'],
+    ['demo-work-1:dev.1', 'ls docs/plans | grep docusaurus | head -6', 'Enter'],
     [
-      'ff-1:dev.1',
+      'demo-1:dev.1',
       'Demo capture only: briefly acknowledge that Command Center can steer this run live. Do not edit files; then wait.',
       'Enter',
     ],

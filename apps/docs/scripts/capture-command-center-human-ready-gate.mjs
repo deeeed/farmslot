@@ -1106,7 +1106,7 @@ async function listCdpTabs() {
 
 async function cdpHttpOk() {
   const response = await fetch(`http://localhost:${cdpPort}/json/version`).catch((err) => {
-    if (err?.code === 'ECONNREFUSED') return null;
+    if (err?.code === 'ECONNREFUSED' || err?.cause?.code === 'ECONNREFUSED') return null;
     throw err;
   });
   return Boolean(response?.ok);
