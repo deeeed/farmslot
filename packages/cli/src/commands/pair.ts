@@ -1,0 +1,111 @@
+// commands/pair.ts — mint pairing codes and render a QR to pair the mobile app.
+//
+// The companion app (App Store / Play Store) scans this QR, exchanges each code
+// for a credential, and connects to the gateway for tmux control on the go. The
+// QR carries one profile per reachable address (LAN, and Tailscale when present);
+// the app tries each and keeps whichever connects (gateway-pairing.ts fallback).
+//
+// Requires the gateway to run with token/password auth — pairing.create rejects
+// an unauthenticated gateway. `farmslot up` starts it that way.
+import { spawnSync } from 'node:child_process';
+import { hostname, networkInterfaces } from 'node:os';
+
+import type { Command } from 'commander';
+import * as QRCode from 'qrcode';
+
+import type { PairingCreateResult } from '@farmslot/protocol';
+
+import { bold, cyan, dim, green } from '../colors.js';
+import { resolveContext } from '../context.js';
+
+const PAIRING_QR_TYPE = 'farmslot.gateway-pairing.v1';
+
+interface PairingQrPayload {
+  type: typeof PAIRING_QR_TYPE;
+  profiles: PairingCreateResult[];
+}
+
+interface ReachableAddress {
+  url: string;
+  name: string;
+}
+
+/** First non-internal IPv4 address — the LAN address a phone on the same Wi-Fi uses. */
+function lanIPv4(): string | null {
+  for (const list of Object.values(networkInterfaces())) {
+    for (const iface of list ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) return iface.address;
+    }
+  }
+  return null;
+}
+
+/** Tailscale MagicDNS name for "from anywhere" access, or null when Tailscale is absent. */
+function tailscaleDnsName(): string | null {
+  const result = spawnSync('tailscale', ['status', '--json'], {
+    encoding: 'utf-8',
+    timeout: 4000,
+  });
+  if (result.error || result.status !== 0) return null;
+  // Tailscale present but unparseable status = treat as absent; pairing still
+  // works over LAN. This is the one expected, recoverable miss, not a swallow.
+  let status: { Self?: { DNSName?: string } };
+  try {
+    status = JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+  const dns = status.Self?.DNSName?.replace(/\.$/, '');
+  return dns && dns.length > 0 ? dns : null;
+}
+
+function reachableAddresses(port: string): ReachableAddress[] {
+  const host = hostname().replace(/\.local$/, '');
+  const addresses: ReachableAddress[] = [];
+  const lan = lanIPv4();
+  if (lan) addresses.push({ url: `ws://${lan}:${port}/ws`, name: `${host} (LAN)` });
+  const tailnet = tailscaleDnsName();
+  if (tailnet) addresses.push({ url: `ws://${tailnet}:${port}/ws`, name: `${host} (Tailscale)` });
+  return addresses;
+}
+
+export function registerPairCommand(program: Command): void {
+  program
+    .command('pair')
+    .description('Show a QR to pair the mobile companion app for tmux control')
+    .action(async (_opts: unknown, cmd: Command) => {
+      const { client, output, target } = resolveContext(cmd);
+      const port = new URL(target.url).port || '7777';
+      const addresses = reachableAddresses(port);
+      if (addresses.length === 0) {
+        output.error(
+          'no reachable LAN or Tailscale address found — connect to a network, or install Tailscale for remote pairing',
+        );
+        process.exit(1);
+      }
+
+      const profiles: PairingCreateResult[] = [];
+      for (const address of addresses) {
+        profiles.push(
+          await client.call<PairingCreateResult>('pairing.create', {
+            gatewayUrl: address.url,
+            profileName: address.name,
+          }),
+        );
+      }
+      const payload: PairingQrPayload = { type: PAIRING_QR_TYPE, profiles };
+
+      if (output.json) {
+        output.writeJson(payload);
+        return;
+      }
+
+      const qr = await QRCode.toString(JSON.stringify(payload), { type: 'terminal', small: true });
+      output.write(`\n${qr}\n`);
+      output.write(`${bold('Scan with the Farmslot companion app')} (App Store / Play Store)\n\n`);
+      for (const profile of profiles) {
+        output.write(`  ${green('•')} ${profile.profileName}  ${cyan(profile.url)}\n`);
+      }
+      output.write(`${dim(`  codes expire ${profiles[0].expiresAt}`)}\n`);
+    });
+}

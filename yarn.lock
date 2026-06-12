@@ -4314,10 +4314,12 @@ __metadata:
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-harness": "workspace:*"
     "@types/node": "npm:^22.0.0"
+    "@types/qrcode": "npm:^1.5.5"
     "@types/ws": "npm:^8.5.0"
     commander: "npm:^12.0.0"
     eslint: "npm:^10.3.0"
     prettier: "npm:^3.8.3"
+    qrcode: "npm:^1.5.4"
     tsx: "npm:^4.19.0"
     typescript: "npm:^5.6.0"
     ws: "npm:^8.18.0"
@@ -7271,7 +7273,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/qrcode@npm:^1.5.6":
+"@types/qrcode@npm:^1.5.5, @types/qrcode@npm:^1.5.6":
   version: 1.5.6
   resolution: "@types/qrcode@npm:1.5.6"
   dependencies:
