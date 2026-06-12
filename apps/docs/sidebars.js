@@ -9,7 +9,7 @@ const sidebars = {
       label: 'Concepts',
       items: [
         'concepts/why-farmslot',
-        'concepts/agentic-engineering-os',
+        'concepts/agentic-engineering-framework',
         'concepts/operating-loop',
         'concepts/vision',
         'concepts/recipe-evidence-loop',
@@ -62,7 +62,6 @@ const sidebars = {
         'guides/expo-project-integration',
         'guides/expo-recipe',
         'guides/headless-recipe',
-        'guides/demo-recording-plan',
         'guides/customize-worker-prompts',
         'guides/write-a-recipe',
       ],

@@ -33,20 +33,10 @@ package:
 ## Install
 
 ```bash
-# Published package path, once @farmslot packages are public.
 yarn add -D @farmslot/recipe-harness @farmslot/protocol
 ```
 
-For a workspace checkout:
-
-```json
-{
-  "devDependencies": {
-    "@farmslot/recipe-harness": "workspace:*",
-    "@farmslot/protocol": "workspace:*"
-  }
-}
-```
+The package manager resolves the current published versions. Do not use the Yarn workspace protocol outside the Farmslot monorepo; it only works for local workspace packages.
 
 ## In-repo example path
 

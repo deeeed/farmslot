@@ -1,14 +1,14 @@
 ---
-title: Agentic engineering OS
+title: Agentic engineering framework
 ---
 
-# Agentic engineering OS
+# Agentic engineering framework
 
-Farmslot is an **agentic engineering OS and IDE**: the place where one operator can scale work across many project types, machines, devices, model runners, and subscriptions without losing control of quality.
+Farmslot is an **agentic engineering framework and control plane**: the place where one operator can scale work across many project types, machines, devices, model runners, and subscriptions without losing control of quality.
 
-The point is not to replace the engineer with a black box. The point is to give the engineer a stronger operating environment for agentic work:
+The point is not to replace the engineer with a black box. The point is to give the engineer a stronger framework for supervised agentic work:
 
-- an **OS** for projects, slots, machines, runners, lifecycle hooks, memory, and policy;
+- a **control plane** for projects, slots, machines, runners, lifecycle hooks, memory, and policy;
 - an **IDE** for watching terminals, steering runs, inspecting artifacts, and making decisions;
 - a **framework** that can adapt to mobile apps, web apps, browser extensions, desktop apps, CLIs, services, workers, and headless systems;
 - a **proof-first trust layer** where recipes validate behavior visually and mechanically, then turn claims into reproducible evidence.
@@ -23,18 +23,18 @@ Farmslot is built for the operator who wants to say:
 
 That requires more than prompts. It requires an operating loop.
 
-## The OS layer
+## The control-plane layer
 
-The OS layer coordinates the environment around agents:
+The control-plane layer coordinates the environment around agents:
 
-| OS responsibility | What Farmslot provides                                                                                |
-| ----------------- | ----------------------------------------------------------------------------------------------------- |
-| Projects          | Importable project profiles with hooks, fixtures, health checks, and validation expectations.         |
-| Slots             | Isolated workspaces tied to machines, devices, ports, branches, and runtime state.                    |
-| Machines          | Local and remote computers treated as a fleet instead of one-off terminals.                           |
-| Runners           | Claude, Codex, Cursor, scripts, browser automation, and custom runners behind a common control plane. |
-| Lifecycle         | Prepare, dispatch, monitor, validate, recycle, and recover as explicit phases.                        |
-| Memory            | Runs, artifacts, decisions, retrospectives, and curated learnings that survive a chat session.        |
+| Control-plane responsibility | What Farmslot provides                                                                                |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Projects                     | Importable project profiles with hooks, fixtures, health checks, and validation expectations.         |
+| Slots                        | Isolated workspaces tied to machines, devices, ports, branches, and runtime state.                    |
+| Machines                     | Local and remote computers treated as a fleet instead of one-off terminals.                           |
+| Runners                      | Claude, Codex, Cursor, scripts, browser automation, and custom runners behind a common control plane. |
+| Lifecycle                    | Prepare, dispatch, monitor, validate, recycle, and recover as explicit phases.                        |
+| Memory                       | Runs, artifacts, decisions, retrospectives, and curated learnings that survive a chat session.        |
 
 This is what lets one engineer scale beyond one project, one terminal, one machine, and one model subscription.
 
@@ -100,4 +100,4 @@ Without recipes, an agent can only tell you what it thinks happened. With recipe
 
 ## The product in one sentence
 
-Farmslot is the operating environment for scaling agentic engineering: **coordinate many project types and model runners, watch and steer agents like an IDE, and trust results through visual validation, executable recipes, and proof artifacts.**
+Farmslot is the framework for scaling supervised agentic engineering: **coordinate many project types and model runners, watch and steer agents like an IDE, and trust results through visual validation, executable recipes, and proof artifacts.**

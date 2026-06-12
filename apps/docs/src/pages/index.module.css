@@ -197,8 +197,7 @@
 }
 
 .featureCard,
-.demoCard,
-.inlineCallout,
+.featuredDemoCard,
 .callout,
 .feedbackList li {
   background: var(--ifm-card-background-color);
@@ -245,47 +244,44 @@
   background: linear-gradient(180deg, transparent, var(--ifm-color-emphasis-100), transparent);
 }
 
-.demoGrid {
-  display: grid;
-  gap: 1.25rem;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.demoCard {
+.featuredDemoCard {
   border-radius: 22px;
   overflow: hidden;
 }
 
-.posterFrame {
+.demoShowcase {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.featuredDemoCard {
+  min-width: 0;
+}
+
+.featuredPosterFrame {
   background: #0c1220;
   border-bottom: 1px solid var(--ifm-color-emphasis-200);
   position: relative;
 }
 
-.posterFrame img {
-  aspect-ratio: 16 / 9;
+.demoVideo {
+  aspect-ratio: 16 / 10;
   background: #0c1220;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
   width: 100%;
 }
 
-.demoCardPortrait .posterFrame {
-  align-items: center;
-  background: radial-gradient(circle at 50% 35%, #172035, #05070d 68%);
-  display: flex;
-  justify-content: center;
-  padding: 0.85rem 0;
+.portraitDemo {
+  aspect-ratio: 9 / 16;
+  max-height: 680px;
+  object-fit: contain;
 }
 
-.demoCardPortrait .posterFrame img {
-  aspect-ratio: 9 / 16;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 18px;
-  box-shadow: 0 10px 32px rgb(0 0 0 / 35%);
-  max-height: 280px;
-  object-fit: contain;
-  width: auto;
+.heroPoster {
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
 }
 
 .videoBadge {
@@ -332,26 +328,6 @@
   font-size: 0.72rem;
   line-height: 1.45;
   margin-top: 0.75rem;
-}
-
-.inlineCallout {
-  align-items: center;
-  border-radius: 18px;
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: auto 1fr auto;
-  margin-top: 1.25rem;
-  padding: 1rem 1.25rem;
-}
-
-.inlineCallout span,
-.inlineCallout a {
-  font-weight: 900;
-}
-
-.inlineCallout p {
-  color: var(--ifm-color-emphasis-700);
-  margin: 0;
 }
 
 .loopLayout {
@@ -454,16 +430,11 @@
   }
 
   .cardGrid,
-  .demoGrid {
+  .demoShowcase {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .demoCardPortrait .posterFrame img {
-    max-height: min(420px, 72vh);
-  }
-
   .callout,
-  .inlineCallout,
   .developmentNotice {
     align-items: flex-start;
     display: flex;
@@ -508,7 +479,7 @@
     min-height: auto;
   }
 
-  .demoGrid {
+  .demoShowcase {
     grid-template-columns: 1fr;
   }
 }
@@ -520,9 +491,8 @@
 
   .heroGrid,
   .heroPanel,
-  .posterFrame,
-  .posterFrame img,
-  .demoCardPortrait .posterFrame img,
+  .featuredPosterFrame,
+  .demoVideo,
   .heroPoster {
     max-width: 100%;
   }
@@ -536,14 +506,30 @@
 
 .heroInstall pre {
   margin-bottom: 0.4rem;
+  overflow-x: auto;
+  white-space: pre;
 }
 
 .heroInstall code {
-  font-size: 0.85rem;
+  font-size: clamp(0.68rem, 1.6vw, 0.85rem);
+}
+
+.heroInstall pre code {
+  white-space: pre;
+}
+
+.noWrap {
+  white-space: nowrap;
 }
 
 .heroInstallHint {
+  color: rgb(255 255 255 / 86%);
   display: block;
   font-size: 0.8rem;
-  opacity: 0.85;
+}
+
+.heroInstallHint code {
+  background: rgb(0 0 0 / 28%);
+  border: 1px solid rgb(255 255 255 / 24%);
+  color: #d9ffe9;
 }

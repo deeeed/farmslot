@@ -28,4 +28,4 @@ Turn failures, flakes, and repeated review comments into durable improvements to
 
 ## Success criteria
 
-The viewer understands that Farmslot compounds over time because each run can improve the operating system around the agents.
+The viewer understands that Farmslot compounds over time because each run can improve the framework around the agents.

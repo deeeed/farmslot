@@ -9,6 +9,6 @@
   <rect width="1200" height="630" fill="url(#g)"/>
   <circle cx="980" cy="80" r="250" fill="#6ee7c8" opacity="0.18"/>
   <text x="96" y="230" fill="#f6fffc" font-family="Inter, system-ui, sans-serif" font-size="88" font-weight="800">Farmslot</text>
-  <text x="96" y="320" fill="#bdf4e6" font-family="Inter, system-ui, sans-serif" font-size="40">Supervised agentic engineering OS</text>
+  <text x="96" y="320" fill="#bdf4e6" font-family="Inter, system-ui, sans-serif" font-size="40">Supervised agentic framework</text>
   <text x="96" y="410" fill="#f6fffc" opacity="0.85" font-family="Inter, system-ui, sans-serif" font-size="30">Gateway → slots → intelligence → evidence</text>
 </svg>

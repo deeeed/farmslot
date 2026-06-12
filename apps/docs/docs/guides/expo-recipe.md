@@ -32,23 +32,12 @@ That means Expo projects should not reimplement generic actions like `ui.press`,
 ## Install into an Expo app
 
 ```bash
-# Published package path, once @farmslot packages are public.
 yarn add -D @farmslot/expo-recipe @farmslot/recipe-harness @farmslot/protocol
 farmslot-expo-recipe init
 yarn recipe:doctor
 ```
 
-For a workspace checkout, use the workspace protocol instead:
-
-```json
-{
-  "devDependencies": {
-    "@farmslot/expo-recipe": "workspace:*",
-    "@farmslot/recipe-harness": "workspace:*",
-    "@farmslot/protocol": "workspace:*"
-  }
-}
-```
+The package manager resolves the current published versions. Do not use the Yarn workspace protocol outside the Farmslot monorepo; it only works for local workspace packages.
 
 ## Default mode: headless and safe
 

@@ -4,7 +4,7 @@ title: Adoption path
 
 # Adoption path
 
-Adopting Farmslot should feel like asking an agent to produce better review evidence, not like installing a whole operating system on day one.
+Adopting Farmslot should feel like asking an agent to produce better review evidence, not like adopting a whole platform on day one.
 
 The operator only has three decisions:
 

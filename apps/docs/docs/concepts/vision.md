@@ -4,13 +4,13 @@ title: Product vision
 
 # Product vision
 
-Farmslot is an agentic engineering OS and IDE for operating, steering, validating, and improving coding-agent work across many project types, machines, and model runners.
+Farmslot is an agentic engineering framework and control plane for operating, steering, validating, and improving coding-agent work across many project types, machines, and model runners.
 
 The goal is not to hide agents behind a black box. The goal is to make parallel agent work **operator-controlled, observable, reproducible, and reviewable**.
 
 ## Product thesis
 
-AI coding agents need more than prompts. They need an operating environment:
+AI coding agents need more than prompts. They need a framework around the work:
 
 - isolated places to work;
 - low-friction project import across UI, mobile, web, CLI, service, desktop, and headless projects;
@@ -23,7 +23,7 @@ AI coding agents need more than prompts. They need an operating environment:
 - explicit human gates before high-impact actions;
 - replay/eval loops so the system improves instead of only producing one-off outputs.
 
-Farmslot is that environment: an OS for the fleet, an IDE for the operator, and a proof-first trust layer built around visual validation, executable recipes, and reviewable artifacts.
+Farmslot is that framework: a control plane for the fleet, a cockpit for the operator, and a proof-first trust layer built around visual validation, executable recipes, and reviewable artifacts.
 
 ## Current / next / later
 

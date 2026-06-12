@@ -54,7 +54,7 @@ The bulk flow should:
 5. route project-specific lessons to the relevant adapter, recipe, or guide;
 6. leave an auditable trail of what was accepted, rejected, or deferred.
 
-The goal is to improve the operating system without letting raw agent output silently rewrite the operating system.
+The goal is to improve the framework without letting raw agent output silently rewrite the framework.
 
 ## Relationship to recipes
 

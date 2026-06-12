@@ -7,11 +7,23 @@
   "ssh_user": "dev",
   "slots": [
     {
+      "id": "demo-work-1",
+      "repo": ".",
+      "session": "demo-work-1",
+      "resources": {
+        "dev-server": {
+          "port": 7778
+        }
+      }
+    },
+    {
       "id": "demo-ff-1",
       "repo": ".",
       "session": "demo-1",
       "resources": {
-        "dev-server": { "port": 7777 }
+        "dev-server": {
+          "port": 7777
+        }
       }
     }
   ]

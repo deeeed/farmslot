@@ -41,17 +41,18 @@ CHROME_ARGS=(
   --user-data-dir="$PROFILE"
   --no-first-run
   --no-default-browser-check
+  --disable-notifications
+  --deny-permission-prompts
 )
 if [[ "$HEADLESS" == "1" || "$HEADLESS" == "true" || "$HEADLESS" == "yes" ]]; then
   CHROME_ARGS+=(--headless=new --disable-gpu)
 fi
-if [[ "$HEADLESS" == "1" || "$HEADLESS" == "true" || "$HEADLESS" == "yes" ]] \
-  && [[ "$CHROME" == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]] \
+if [[ "$CHROME" == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]] \
   && command -v open >/dev/null 2>&1; then
   # macOS routes direct Chrome binary invocations into the already-running GUI
-  # instance, which can drop the requested CDP port. `open -na` forces a
-  # separate app instance; with headless mode this does not create a visible
-  # browser window.
+  # instance, which can drop the requested CDP port and immediately exit.
+  # `open -na` forces a separate app instance for both headed capture and
+  # headless validation profiles.
   open -na "Google Chrome" --args "${CHROME_ARGS[@]}" "$URL" >/dev/null 2>&1
 else
   "$CHROME" "${CHROME_ARGS[@]}" "$URL" >/dev/null 2>&1 &

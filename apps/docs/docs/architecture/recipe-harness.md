@@ -4,14 +4,14 @@ title: Recipe harness architecture
 
 # Recipe harness architecture
 
-Farmslot is an **agentic engineering framework / local operating system** for running work across projects, machines, models, and human gates.
+Farmslot is an **agentic engineering framework and control plane** for running work across projects, machines, models, and human gates.
 
-The recipe harness is the contract layer that lets projects plug into that operating system without adopting every Farmslot feature.
+The recipe harness is the contract layer that lets projects plug into that framework without adopting every Farmslot feature.
 
 ## Mental model
 
 ```text
-Farmslot OS / framework
+Farmslot framework
 Recipe Runner Protocol
 Recipe Harness runtime
 Project adapters
@@ -22,20 +22,20 @@ Agent authoring workflows
 
 ## Terms
 
-| Term                        | Meaning                                                                                                                       |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **Farmslot OS / framework** | Fleet, slots, dispatch queue, worker lifecycle, eval/replay, Command Center, and evidence consumption.                        |
-| **Recipe Runner Protocol**  | The v1 contract for recipe graph shape, runner invocation, mandatory output files, typed artifacts, and validation.           |
-| **Recipe Harness**          | Shared runtime package that validates recipe documents, executes graph nodes through adapters, and writes evidence artifacts. |
-| **Project runner**          | Project-owned executable behind `project.json` hooks that calls the shared harness or wraps native test/runtime tooling.      |
-| **Action adapter**          | Implementation of one recipe action such as `command`, `ui.navigate`, `cdp.evaluate`, or `project.wallet.unlock`.             |
-| **Artifact package**        | Filesystem evidence API consumed by review, replay, and eval surfaces.                                                        |
+| Term                       | Meaning                                                                                                                       |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Farmslot framework**     | Fleet, slots, dispatch queue, worker lifecycle, eval/replay, Command Center, and evidence consumption.                        |
+| **Recipe Runner Protocol** | The v1 contract for recipe graph shape, runner invocation, mandatory output files, typed artifacts, and validation.           |
+| **Recipe Harness**         | Shared runtime package that validates recipe documents, executes graph nodes through adapters, and writes evidence artifacts. |
+| **Project runner**         | Project-owned executable behind `project.json` hooks that calls the shared harness or wraps native test/runtime tooling.      |
+| **Action adapter**         | Implementation of one recipe action such as `command`, `ui.navigate`, `cdp.evaluate`, or `project.wallet.unlock`.             |
+| **Artifact package**       | Filesystem evidence API consumed by review, replay, and eval surfaces.                                                        |
 
 ## Boundary diagram
 
 ```mermaid
 flowchart TD
-  OS[Farmslot OS / framework]
+  Core[Farmslot framework]
   Protocol[Recipe Runner Protocol]
   Hook[project.json recipe_run hook]
   Runner[Project runner command]
@@ -45,8 +45,8 @@ flowchart TD
   Package[Artifact package]
   UI[Command Center / Companion / PR evidence]
 
-  OS --> Protocol
-  OS --> Hook
+  Core --> Protocol
+  Core --> Hook
   Hook --> Runner
   Runner --> Harness
   Harness --> Adapter
@@ -55,7 +55,7 @@ flowchart TD
   Adapter --> Harness
   Harness --> Package
   Package --> UI
-  UI --> OS
+  UI --> Core
 ```
 
 ## Ownership split
@@ -63,7 +63,7 @@ flowchart TD
 | Layer                     | Owns                                                                               | Does not own                                 |
 | ------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------- |
 | Agent authoring workflows | Extract acceptance criteria, draft recipes, critique evidence, format review proof | Production runtime execution                 |
-| Farmslot OS               | Dispatch, slots, lifecycle, evals, human gates, evidence consumption               | Project-specific UI/test semantics           |
+| Farmslot framework        | Dispatch, slots, lifecycle, evals, human gates, evidence consumption               | Project-specific UI/test semantics           |
 | Recipe Runner Protocol    | Graph envelope, artifact manifest, validation contract                             | How each app clicks buttons or seeds state   |
 | Recipe Harness            | Runtime execution, adapter registry, trace/summary/artifact writing                | Prompting strategy or product business logic |
 | Project adapters          | Native actions for a specific app/platform                                         | Farmslot scheduling or generic review UI     |

@@ -1,0 +1,51 @@
+{
+  "id": "docusaurus-gateway-intelligence",
+  "title": "Docusaurus Gateway intelligence capture",
+  "description": "Open Command Center with a public-safe filter, ask about allowed demo fleet status through gateway intelligence, record the live gateway answer, and emit docs-ready proof artifacts.",
+  "schema_version": "recipe-v1",
+  "proofTargets": [
+    {
+      "id": "cmdk",
+      "claim": "The operator can open gateway intelligence from Command Center."
+    },
+    {
+      "id": "gateway-answer",
+      "claim": "Gateway intelligence can summarize live allowed demo slot/run state without exposing private project names."
+    }
+  ],
+  "validate": {
+    "workflow": {
+      "entry": "open-command-center",
+      "nodes": {
+        "open-command-center": {
+          "action": "browser.open",
+          "description": "Open Command Center with public demo project filters.",
+          "next": "open-cmd-k",
+          "proofTarget": "cmdk"
+        },
+        "open-cmd-k": {
+          "action": "keyboard.shortcut",
+          "keys": "Meta+K",
+          "description": "Open the Command Center chat/intelligence drawer.",
+          "next": "ask-status"
+        },
+        "ask-status": {
+          "action": "ui.type_submit",
+          "description": "Ask for a public-safe summary of allowed demo slots.",
+          "next": "record-proof-window",
+          "proofTarget": "gateway-answer"
+        },
+        "record-proof-window": {
+          "action": "capture.video",
+          "record": "proof_window",
+          "description": "Record the prompt and live answer.",
+          "next": "done"
+        },
+        "done": {
+          "action": "end",
+          "status": "pass"
+        }
+      }
+    }
+  }
+}

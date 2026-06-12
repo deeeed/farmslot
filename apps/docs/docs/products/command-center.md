@@ -8,7 +8,7 @@ Command Center is the desktop operator surface for Farmslot.
 
 It exists because supervising many agents from one serial chat or a pile of terminal windows does not scale. The operator needs a persistent cockpit for fleet state, run state, evidence, terminals, decisions, and publication gates.
 
-<img class="product-image" src="/img/mockups/command-center.svg" alt="Illustrated Command Center product mockup" />
+<video class="product-image" src="/videos/demos/command-center-parallel-watch.mp4" poster="/img/demos/command-center-parallel-watch.png" controls muted playsinline preload="metadata" aria-label="Command Center watching and steering parallel Farmslot runs"></video>
 
 ## Core jobs
 
@@ -56,11 +56,8 @@ flowchart LR
 4. Review evidence, diffs, recipe traces, and before/after artifacts.
 5. Approve, reject, recover, or ask for another iteration.
 
-## Demo evidence
+## Human review gates
 
-The illustration above is a docs-safe product mockup. Public demos should use a clean synthetic dataset:
+Command Center is also where finished work becomes reviewable. The ready gate brings the package, app behavior, validation results, diff, and quality checks into one decision surface.
 
-- fleet overview with non-sensitive slot names;
-- run detail with a synthetic artifact package;
-- evidence workspace with generic before/after media;
-- eval comparison with synthetic reference/candidate packages.
+<img class="product-image" src="/img/demos/command-center-human-ready-gate.png" alt="Command Center ready gate with app evidence, validation results, diff, and approval actions" />

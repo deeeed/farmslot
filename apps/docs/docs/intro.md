@@ -4,7 +4,7 @@ title: What is Farmslot?
 
 # What is Farmslot?
 
-Farmslot is a local operating system for supervised agentic engineering: a way to scale one engineer's judgment across many agent workers, projects, machines, and review loops.
+Farmslot is a local framework for supervised agentic engineering: a way to scale one engineer's judgment across many agent workers, projects, machines, and review loops.
 
 It is the control plane around coding agents, combining current and emerging capabilities for roadmap memory, backlog refinement, dispatch, isolated slots, runner orchestration, live observability, recipe evidence, cross-runner review, and human approval.
 

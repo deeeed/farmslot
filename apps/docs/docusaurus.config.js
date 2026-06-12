@@ -5,7 +5,7 @@ const darkCodeTheme = require('prism-react-renderer').themes.dracula;
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Farmslot',
-  tagline: 'A local operating system for supervised agentic engineering',
+  tagline: 'A framework for supervised agentic engineering',
   favicon: 'img/favicon.svg',
 
   url: 'https://farmslot.io',

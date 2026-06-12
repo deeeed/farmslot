@@ -12,7 +12,7 @@ Related docs:
 
 ## Executive summary
 
-Farmslot should be framed as an **agentic engineering framework / local operating system** for running work across projects, machines, models, and human gates.
+Farmslot should be framed as an **agentic engineering framework and control plane** for running work across projects, machines, models, and human gates.
 
 Terminology boundary:
 
