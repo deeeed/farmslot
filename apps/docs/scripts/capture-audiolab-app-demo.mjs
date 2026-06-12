@@ -14,10 +14,9 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../../..');
-const projectConfig = JSON.parse(
-  readFileSync(resolve(repoRoot, 'projects/audiolab-farm/project.json'), 'utf8'),
-);
-const audiolabRepo = process.env.AUDIOLAB_REPO || projectConfig.primary_repo;
+const audiolabRepo =
+  process.env.AUDIOLAB_REPO ||
+  readProjectRepo('projects/audiolab-farm/project.json', 'AUDIOLAB_REPO');
 const appRoot = resolve(audiolabRepo, 'apps/playground');
 const importScreenPath = resolve(appRoot, 'src/app/(tabs)/import.tsx');
 const defaultRecipe = resolve(
@@ -140,6 +139,15 @@ function parseArgs(argv) {
     else if (arg === '--recipe') out.recipe = argv[++i];
   }
   return out;
+}
+
+function readProjectRepo(projectConfigPath, envName) {
+  const path = resolve(repoRoot, projectConfigPath);
+  if (existsSync(path)) {
+    const projectConfig = JSON.parse(readFileSync(path, 'utf8'));
+    if (projectConfig.primary_repo) return projectConfig.primary_repo;
+  }
+  throw new Error(`${envName} is required when ${projectConfigPath} is not present`);
 }
 
 function readEnvDefaults(path) {

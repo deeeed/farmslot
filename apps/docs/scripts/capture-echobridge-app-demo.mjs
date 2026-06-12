@@ -14,11 +14,10 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../../..');
-const projectConfig = JSON.parse(
-  readFileSync(resolve(repoRoot, 'projects/echobridge-farm/project.json'), 'utf8'),
-);
 const slotConfig = readEchoBridgeSlotConfig();
-const echobridgeRepo = process.env.ECHOBRIDGE_REPO || projectConfig.primary_repo;
+const echobridgeRepo =
+  process.env.ECHOBRIDGE_REPO ||
+  readProjectRepo('projects/echobridge-farm/project.json', 'ECHOBRIDGE_REPO');
 const appRoot = resolve(echobridgeRepo, 'apps/echobridge');
 const defaultRecipe = resolve(
   repoRoot,
@@ -167,6 +166,15 @@ function parseArgs(argv) {
     else if (arg === '--recipe') out.recipe = argv[++i];
   }
   return out;
+}
+
+function readProjectRepo(projectConfigPath, envName) {
+  const path = resolve(repoRoot, projectConfigPath);
+  if (existsSync(path)) {
+    const projectConfig = JSON.parse(readFileSync(path, 'utf8'));
+    if (projectConfig.primary_repo) return projectConfig.primary_repo;
+  }
+  throw new Error(`${envName} is required when ${projectConfigPath} is not present`);
 }
 
 function readEnvDefaults(...paths) {
