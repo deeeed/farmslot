@@ -135,6 +135,34 @@ export function allocatePort(pool: PoolConfig, from: number = PORT_BLOCK_START):
   return port;
 }
 
+/** First CDP port handed out for browser slots — separate block from dev servers. */
+export const CDP_PORT_BLOCK_START = 9500;
+
+/**
+ * Platform-default slot resources beyond the dev-server port. Without these,
+ * pack-created non-cli slots fail setup/preflight ({{simulator}} etc. expand
+ * empty). Names follow the operator convention: device per slot, named
+ * <short>-<n>. cli/unknown platforms need nothing extra. Android gets the AVD
+ * name only — adb serial pinning is machine-specific and stays an operator edit.
+ */
+export function defaultResources(
+  platform: string,
+  short: string,
+  n: number,
+  pool: PoolConfig,
+): Record<string, Record<string, unknown>> {
+  if (platform === 'ios') {
+    return { 'ios-sim': { simulator: `${short}-${n}`, headless: true } };
+  }
+  if (platform === 'android') {
+    return { 'android-emu': { avd: `${short}-${n}` } };
+  }
+  if (platform === 'chrome-extension' || platform === 'browser') {
+    return { browser: { cdp_port: allocatePort(pool, CDP_PORT_BLOCK_START) } };
+  }
+  return {};
+}
+
 /**
  * Register a slot in the pool, preserving user edits: an existing slot with the
  * same id is left untouched. Returns true when the slot was added.

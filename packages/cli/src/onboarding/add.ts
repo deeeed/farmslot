@@ -23,7 +23,13 @@ import {
   projectShortName,
   validatePackDir,
 } from './pack.js';
-import { allocatePort, readPool, registerSlot, writePool } from './pool-config.js';
+import {
+  allocatePort,
+  defaultResources,
+  readPool,
+  registerSlot,
+  writePool,
+} from './pool-config.js';
 import { readState, type Workspace, type WorkspaceState, writeState } from './workspace.js';
 
 export interface AddStep {
@@ -425,7 +431,10 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
           repo: repoPath,
           session,
           branch: registered.defaultBranch,
-          resources: { 'dev-server': { port: allocatePort(pool) } },
+          resources: {
+            'dev-server': { port: allocatePort(pool) },
+            ...defaultResources(registered.platform, registered.short, n, pool),
+          },
         });
         if (added) {
           writePool(poolPath, pool);
