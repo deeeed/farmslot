@@ -28,7 +28,7 @@ const docsScreenshot = resolve(
 );
 
 const forbidden = [/wallet/i, /seed phrase/i, /private key/i];
-const fixturePort = Number(process.env.FARMSLOT_DEMO_GATEWAY_PORT || 7777);
+const fixturePort = Number(process.env.FARMSLOT_DEMO_GATEWAY_PORT || 7787);
 const uiPort = Number(process.env.FARMSLOT_DEMO_UI_PORT || 5188);
 const cdpPort = Number(process.env.FARMSLOT_DEMO_CDP_PORT || 9325);
 const uiUrl = `http://localhost:${uiPort}/`;
