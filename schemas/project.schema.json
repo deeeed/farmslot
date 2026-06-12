@@ -25,10 +25,60 @@
       "description": "Default git branch for checkouts.",
       "default": "main"
     },
-    "skip_prepare_requires_health": {
-      "type": "boolean",
-      "description": "When true, a warm-slot/skip-prepare dispatch first runs the project's health_check. If health is not ready, Farmslot ignores the skip and runs full prepare.",
-      "default": false
+    "prepare": {
+      "type": "object",
+      "description": "Named prepare profiles (ADR-037): project-defined variations of slot preparation. Each profile selects a subset of the optional cost phases, may override hooks for its run, and declares precondition checks with a fallback profile.",
+      "additionalProperties": false,
+      "required": ["profiles"],
+      "properties": {
+        "default": {
+          "type": "string",
+          "description": "Profile used when no explicit selection is made. Falls back to a profile literally named 'full' when omitted."
+        },
+        "profiles": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["phases"],
+            "properties": {
+              "label": {
+                "type": "string",
+                "description": "Operator-facing label for wizard/CLI listings."
+              },
+              "phases": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "enum": ["git", "fixtures", "deps", "preflight", "health"]
+                },
+                "description": "Optional cost phases this profile runs. Safety invariants (ssh, device, tmux, sentinel, origin/HEAD guard) always run."
+              },
+              "hooks": {
+                "type": "object",
+                "additionalProperties": { "type": "string" },
+                "description": "Per-profile hook overrides; unlisted hooks resolve from the project's top-level hooks."
+              },
+              "requires": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "enum": ["deps_current", "dev_server_up", "health_ok"]
+                },
+                "description": "Framework precondition checks that must pass before this profile runs. Any failure falls back to the profile named in 'fallback'."
+              },
+              "fallback": {
+                "type": "string",
+                "description": "Profile to run instead when any 'requires' check fails. Required when 'requires' is non-empty; chains must be acyclic."
+              }
+            }
+          }
+        }
+      }
     },
     "default_safety_tier": {
       "type": "string",
