@@ -1,12 +1,12 @@
 {
   "id": "docusaurus-gateway-intelligence",
-  "title": "Docusaurus Gateway intelligence Cmd+K capture",
-  "description": "Open Command Center with a public-safe filter, press Cmd+K, ask about allowed demo fleet status, record the live gateway answer, and emit docs-ready proof artifacts.",
+  "title": "Docusaurus Gateway intelligence capture",
+  "description": "Open Command Center with a public-safe filter, ask about allowed demo fleet status through gateway intelligence, record the live gateway answer, and emit docs-ready proof artifacts.",
   "schema_version": "recipe-v1",
   "proofTargets": [
     {
       "id": "cmdk",
-      "claim": "The operator can open Command Center intelligence with Cmd+K."
+      "claim": "The operator can open gateway intelligence from Command Center."
     },
     {
       "id": "gateway-answer",

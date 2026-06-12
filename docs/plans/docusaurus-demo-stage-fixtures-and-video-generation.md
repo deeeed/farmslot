@@ -114,14 +114,14 @@ yarn --cwd apps/docs capture:human-ready-gate \
 
 The current capture records the real Command Center ready-workspace surface with public-safe demo data, opens evidence/quality tabs, opens the extra-review modal, verifies forbidden labels are absent from the visible page, and copies only the inspected MP4/poster/screenshot into the docs site.
 
-### Gateway intelligence via Cmd+K
+### Gateway intelligence from Command Center
 
-Purpose: show Command Center as an intelligent gateway, not only a terminal multiplexer. The operator opens Cmd+K and asks about fleet/runs, e.g. “which public demo slots are ready?” or “summarize active demo runs”.
+Purpose: show Command Center as an intelligent gateway, not only a terminal multiplexer. The operator opens gateway intelligence and asks about fleet/runs, e.g. “which public demo slots are ready?” or “summarize active demo runs”.
 
 Capture requirements:
 
 1. Use the real Command Center route and gateway state. A sanitized demo profile/filter is allowed; a generated product screenshot is not.
-2. The recipe must open Cmd+K via keyboard, type the question, submit it, and capture the answer.
+2. The recipe must open gateway intelligence through the UI, type the question, submit it, and capture the answer.
 3. The visible answer must not mention private projects, private paths,.
 4. If live LLM-backed gateway intelligence is unavailable, capture the current UI affordance honestly and mark the demo as blocked rather than faking an answer.
 5. Emit `summary.json`, `trace.json`, and `artifact-manifest.json`.

@@ -64,7 +64,7 @@ async function main() {
   step(
     'open-command-center',
     'started',
-    'Preparing Command Center and Chrome for Cmd+K gateway-intelligence capture',
+    'Preparing Command Center and Chrome for gateway-intelligence capture',
   );
   await ensureCommandCenter();
   await ensureChrome();
@@ -77,7 +77,7 @@ async function main() {
   step(
     'record-proof-window',
     'started',
-    `Recording ${captureSeconds}s proof window while opening Cmd+K and asking gateway intelligence`,
+    `Recording ${captureSeconds}s proof window while opening gateway intelligence and asking about fleet state`,
   );
   await recordWindow(videoPath);
   assertNonEmpty(videoPath, 'recorded MP4');
@@ -98,7 +98,7 @@ async function main() {
   step(
     'record-proof-window',
     'passed',
-    'Recorded Cmd+K prompt, live gateway answer, screenshot, and poster',
+    'Recorded gateway prompt, live gateway answer, screenshot, and poster',
   );
 
   if (copyToDocs) {
@@ -376,19 +376,14 @@ async function recordWindow(output) {
   await updateRunnerHud(
     'open-cmd-k',
     'running',
-    'Recipe is opening Command Center intelligence with Cmd+K.',
+    'Recipe is opening Command Center gateway intelligence.',
     35,
   );
-  step('open-cmd-k', 'started', 'Opening chat drawer with Cmd+K');
+  step('open-cmd-k', 'started', 'Opening gateway intelligence drawer');
   await dispatchShortcut('k', 'Meta');
   await sleep(800);
-  await updateRunnerHud(
-    'open-cmd-k',
-    'passed',
-    'Cmd+K opened the gateway intelligence drawer.',
-    52,
-  );
-  step('open-cmd-k', 'passed', 'Cmd+K opened Command Center chat');
+  await updateRunnerHud('open-cmd-k', 'passed', 'Gateway intelligence drawer opened.', 52);
+  step('open-cmd-k', 'passed', 'Gateway intelligence drawer opened');
   step('ask-status', 'started', 'Typing and submitting public-safe fleet status prompt');
   await updateRunnerHud(
     'ask-status',
@@ -508,7 +503,7 @@ function writeOutputs({ videoPath, posterPath, screenshotPath, verification }) {
       mimeType: 'video/mp4',
       category: 'proof',
       nodeId: 'record-proof-window',
-      label: 'Command Center gateway intelligence Cmd+K video',
+      label: 'Command Center gateway intelligence video',
     },
     {
       path: rel(posterPath),
