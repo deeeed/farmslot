@@ -45,3 +45,5 @@ Reference: [Product Roadmap](../ROADMAP.md) | [Command Center PRD](../PRD-comman
 | [033](033-mobile-tmux-worker-control.md)               | Mobile Control of General Tmux Workers                                  | Accepted |
 | [034](034-recipe-protocol-v1.md)                       | Recipe Protocol v1                                                      | Proposed |
 | [035](035-node-support-bundles.md)                     | Node Support Bundles                                                    | Accepted |
+| [036](036-cli-gateway-profiles.md)                     | CLI Gateway Profiles and Auth                                           | Accepted |
+| [037](037-prepare-profiles.md)                         | Prepare Profiles — Project-Defined Slot Entry Points                    | Accepted |
