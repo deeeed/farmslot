@@ -10,6 +10,8 @@ import {
   type PoolSlotMode,
   PREPARE_PHASES,
   PREPARE_REQUIREMENTS,
+  type PreparePhase,
+  type PrepareRequirement,
   type ProjectConfig,
   type SlotActionDefinition,
 } from '@farmslot/protocol';
@@ -699,6 +701,43 @@ export function normalizeRawProjectBacklog(
         }
       : {}),
   };
+}
+
+export function normalizeRawProjectPrepare(
+  raw: RawProjectJson['prepare'],
+): ProjectConfig['prepare'] | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const profilesRaw = raw.profiles;
+  if (!profilesRaw || typeof profilesRaw !== 'object' || Array.isArray(profilesRaw)) {
+    return undefined;
+  }
+  const profiles: NonNullable<ProjectConfig['prepare']>['profiles'] = {};
+  for (const [name, profile] of Object.entries(profilesRaw)) {
+    if (!profile || typeof profile !== 'object' || Array.isArray(profile)) continue;
+    const phases = Array.isArray(profile.phases)
+      ? profile.phases.filter((p): p is PreparePhase =>
+          (PREPARE_PHASES as readonly string[]).includes(String(p)),
+        )
+      : [];
+    if (phases.length === 0) continue;
+    profiles[name] = {
+      phases,
+      ...(typeof profile.label === 'string' ? { label: profile.label } : {}),
+      ...(profile.hooks && typeof profile.hooks === 'object' && !Array.isArray(profile.hooks)
+        ? { hooks: profile.hooks }
+        : {}),
+      ...(Array.isArray(profile.requires)
+        ? {
+            requires: profile.requires.filter((r): r is PrepareRequirement =>
+              (PREPARE_REQUIREMENTS as readonly string[]).includes(String(r)),
+            ),
+          }
+        : {}),
+      ...(typeof profile.fallback === 'string' ? { fallback: profile.fallback } : {}),
+    };
+  }
+  if (Object.keys(profiles).length === 0) return undefined;
+  return { ...(typeof raw.default === 'string' ? { default: raw.default } : {}), profiles };
 }
 
 export function normalizeRawProjectAutoRecovery(

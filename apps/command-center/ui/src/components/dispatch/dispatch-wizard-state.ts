@@ -57,6 +57,8 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _autoFlowType = false; // flow type was auto-detected from issue type
   @state() _issueType = ''; // Jira issue type (Bug, Task, etc.)
   @state() _skipPrepare = false;
+  /** Named prepare profile; '' = project default (ADR-037). */
+  @state() _prepareProfile = '';
   @state() _devInteractiveProfile: DevInteractiveProfile = 'lightweight';
   @state() _reviewTier: '' | 'light' | 'standard' | 'full' = '';
   @state() _publicationReviewLoops: PublicationReviewLoopDraft[] = [];

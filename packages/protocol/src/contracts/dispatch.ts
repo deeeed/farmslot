@@ -42,6 +42,8 @@ export interface QueueItem {
   /** Selected project-owned worker template version for queued dispatch parity. */
   taskTemplate?: TaskTemplateSelection;
   app?: string;
+  /** Named prepare profile persisted for queued dispatch parity (ADR-037). */
+  prepareProfile?: string;
   model?: string;
   runner?: string;
   effort?: string;

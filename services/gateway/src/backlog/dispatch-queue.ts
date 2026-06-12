@@ -182,6 +182,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
     variant: params.variant ?? null,
     taskTemplate: params.taskTemplate ? { ...params.taskTemplate } : undefined,
     app: params.app,
+    prepareProfile: params.prepareProfile,
     model: params.model,
     runner: params.runner,
     effort: params.effort,

@@ -98,6 +98,7 @@ export interface RunCreateCliOptions {
   task?: string;
   slot?: string;
   skipPrepare?: boolean;
+  prepareProfile?: string;
   mode?: string;
   runner?: string;
   model?: string;
@@ -115,6 +116,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
   const base = {
     slotId: opts.slot || undefined,
     skipPrepare: opts.skipPrepare || undefined,
+    prepareProfile: opts.prepareProfile || undefined,
     mode: opts.mode || undefined,
     runner: opts.runner || undefined,
     model: opts.model || undefined,
@@ -154,7 +156,11 @@ export function registerRunCommand(program: Command): void {
     .option('--ticket <ref>', 'Jira key/URL or GitHub issue/PR URL/ref')
     .option('--task <path>', 'Existing TASK.md to dispatch through the run pipeline')
     .option('--slot <id>', 'Specific slot ID')
-    .option('--skip-prepare', 'Skip slot preparation')
+    .option('--skip-prepare', 'Skip slot preparation entirely (operator owns slot state)')
+    .option(
+      '--prepare-profile <name>',
+      "Named prepare profile from the project's prepare.profiles (ADR-037)",
+    )
     .option('--mode <mode>', 'Run mode (interactive, autonomous, validation)')
     .option(
       '--runner <name>',

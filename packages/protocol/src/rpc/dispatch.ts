@@ -125,6 +125,8 @@ export interface DispatchQueueAddParams {
   /** Selected project-owned worker template version for queued dispatch parity. */
   taskTemplate?: import('../contracts/index.js').TaskTemplateSelection;
   app?: string;
+  /** Named prepare profile from the project's prepare.profiles (ADR-037). */
+  prepareProfile?: string;
   model?: string;
   runner?: string;
   effort?: string;

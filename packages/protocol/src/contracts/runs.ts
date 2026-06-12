@@ -978,6 +978,8 @@ export interface Run {
   project: string;
   ticketOrPr: string;
   app?: string;
+  /** Named prepare profile requested for this run (ADR-037). */
+  prepareProfile?: string;
   effort?: string;
   slotId: string | null;
   branch: string | null;

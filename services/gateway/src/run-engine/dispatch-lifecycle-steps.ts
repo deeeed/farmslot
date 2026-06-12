@@ -57,6 +57,7 @@ export async function executePrepareStep(
     mergeMain,
     flowType: current.flowType,
     app: current.app,
+    ...(current.prepareProfile ? { prepareProfile: current.prepareProfile } : {}),
     ...(current.startRef ? { startRef: current.startRef.requestedRef } : {}),
   };
 
@@ -86,7 +87,7 @@ export async function executePrepareStep(
     current.engineState?.evalExperiment && current.project.includes('extension')
       ? { watch: 'off' }
       : undefined;
-  const cliCommand = `farmslot slot prepare ${current.slotId}${current.branch ? ` --branch ${current.branch}` : ''}${mergeMain ? ' --merge-main' : ''}${current.flowType ? ` --flow-type ${current.flowType}` : ''}${current.app ? ` --app ${current.app}` : ''}${current.startRef ? ` --start-ref ${current.startRef.requestedRef}` : ''}${prepareVars ? ' --var watch=off' : ''}`;
+  const cliCommand = `farmslot slot prepare ${current.slotId}${current.branch ? ` --branch ${current.branch}` : ''}${mergeMain ? ' --merge-main' : ''}${current.flowType ? ` --flow-type ${current.flowType}` : ''}${current.app ? ` --app ${current.app}` : ''}${current.startRef ? ` --start-ref ${current.startRef.requestedRef}` : ''}${current.prepareProfile ? ` --prepare-profile ${current.prepareProfile}` : ''}${prepareVars ? ' --var watch=off' : ''}`;
 
   // Stash partial I/O before the potentially-failing call
   stepPartialIO.set(runId, { inputs, outputs: { cliCommand } });
@@ -159,6 +160,7 @@ export async function executePrepareStep(
         forceNewBranch,
         flowType: current.flowType,
         app: current.app,
+        prepareProfile: current.prepareProfile,
         vars: prepareVars,
         runId,
       },

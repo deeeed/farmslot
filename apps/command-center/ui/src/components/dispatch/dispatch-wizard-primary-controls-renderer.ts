@@ -9,6 +9,7 @@ import {
   MODELS_BY_RUNNER,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
+import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
 
 type DispatchMode = 'interactive' | 'autonomous';
 type ReviewTier = '' | 'light' | 'standard' | 'full';
@@ -51,6 +52,8 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   effort: EffortLevel;
   reviewTier: ReviewTier;
   skipPrepare: boolean;
+  prepareProfiles: readonly PrepareProfileOption[];
+  prepareProfile: string;
   mode: DispatchMode;
   devInteractiveProfile: DevInteractiveProfile;
   appLabel: (app: string) => string;
@@ -64,6 +67,7 @@ export interface DispatchWizardPrimaryControlsRenderContext {
   setEffort: (effort: EffortLevel) => void;
   setReviewTier: (reviewTier: ReviewTier) => void;
   setSkipPrepare: (skipPrepare: boolean) => void;
+  setPrepareProfile: (prepareProfile: string) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
 }
 
@@ -286,21 +290,43 @@ function renderReviewTierSelector(ctx: DispatchWizardPrimaryControlsRenderContex
 }
 
 function renderPrepareToggle(ctx: DispatchWizardPrimaryControlsRenderContext) {
+  const profiles = ctx.prepareProfiles;
+  const profileSelected = (profile: PrepareProfileOption): boolean =>
+    !ctx.skipPrepare &&
+    (ctx.prepareProfile ? ctx.prepareProfile === profile.name : profile.isDefault);
   return html`
     <div class="config-group" style="margin-top: 4px">
+      ${profiles.length > 0 ? html`<div class="section-label">Prepare</div>` : nothing}
       <div class="pill-row">
-        <button
-          class="pill ${!ctx.skipPrepare ? 'selected' : ''}"
-          @click=${() => ctx.setSkipPrepare(false)}
-        >
-          Full Prepare
-        </button>
+        ${profiles.length === 0
+          ? html`
+              <button
+                class="pill ${!ctx.skipPrepare ? 'selected' : ''}"
+                @click=${() => ctx.setSkipPrepare(false)}
+              >
+                Full Prepare
+              </button>
+            `
+          : profiles.map(
+              (profile) => html`
+                <button
+                  class="pill ${profileSelected(profile) ? 'selected' : ''}"
+                  title=${profile.label}
+                  @click=${() => {
+                    ctx.setSkipPrepare(false);
+                    ctx.setPrepareProfile(profile.isDefault ? '' : profile.name);
+                  }}
+                >
+                  ${profile.name}${profile.isDefault ? ' ★' : ''}
+                </button>
+              `,
+            )}
         <button
           class="pill ${ctx.skipPrepare ? 'selected' : ''}"
           @click=${() => ctx.setSkipPrepare(true)}
-          title="Reuse warm slot — skip deps install, device boot, health checks"
+          title="Run no preparation at all — operator owns slot state"
         >
-          Warm Slot
+          Skip Prepare
         </button>
       </div>
     </div>

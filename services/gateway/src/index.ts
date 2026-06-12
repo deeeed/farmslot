@@ -219,6 +219,7 @@ async function main(): Promise<void> {
       variant: item.variant ?? undefined,
       taskTemplate: item.taskTemplate ? { ...item.taskTemplate } : undefined,
       app: item.app,
+      prepareProfile: item.prepareProfile,
       slotId: item.slotId,
       allowedSlots:
         item.allowedSlots && item.allowedSlots.length > 0 ? item.allowedSlots : undefined,
