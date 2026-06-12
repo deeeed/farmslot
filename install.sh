@@ -17,6 +17,8 @@
 #   FARMSLOT_REPO_URL   git source for fresh mode  (default: the canonical repo URL)
 #   FARMSLOT_REPO_REF   branch/ref for fresh mode  (default: the remote default branch)
 #   FARMSLOT_BIN_DIR    dir for the PATH symlink   (default: ~/.local/bin)
+#   FARMSLOT_MINIMAL    set to skip the pair-your-phone step (framework-only)
+#   FARMSLOT_PAIR       set to 1 to pair non-interactively (no prompt)
 set -euo pipefail
 
 WORKSPACE="${FARMSLOT_WORKSPACE:-${HOME}/dev/farmslot-workspace}"
@@ -190,3 +192,29 @@ FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" workspace init --source-mode "$S
 # ── Doctor ───────────────────────────────────────────────────────────────────
 echo ""
 FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" doctor
+
+# ── Pair your phone (optional) ───────────────────────────────────────────────
+# Quick win: start the local gateway and show a QR to pair the mobile companion
+# app for tmux control on the go. Reads y/n from /dev/tty so a piped `curl | bash`
+# can still prompt; a non-interactive install (CI, no tty) skips without hanging.
+bold "── Pair your phone ──"
+pair_now=""
+if [ -n "${FARMSLOT_MINIMAL:-}" ]; then
+  echo "  skipped (FARMSLOT_MINIMAL) — pair later with: farmslot up && farmslot pair"
+elif [ "${FARMSLOT_PAIR:-}" = "1" ]; then
+  pair_now="yes"
+elif [ -r /dev/tty ]; then
+  printf '  Start the gateway and pair the Farmslot mobile app now? [Y/n] ' >/dev/tty
+  read -r reply </dev/tty || reply=""
+  case "$reply" in [Nn]*) ;; *) pair_now="yes" ;; esac
+else
+  echo "  non-interactive — pair later with: farmslot up && farmslot pair"
+fi
+
+if [ -n "$pair_now" ]; then
+  FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" up
+  FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" pair
+  echo ""
+  echo "  Scan the QR above with the Farmslot companion app (App Store / Play Store)."
+  echo "  Stop the gateway anytime with: farmslot down"
+fi
