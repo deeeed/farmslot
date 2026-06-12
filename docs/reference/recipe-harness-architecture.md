@@ -22,7 +22,7 @@ Terminology boundary:
   verifying, launching, and cleaning up Mobile/Extension runtime overlays.
 - **Project runner** — project-owned executable behind `hooks.recipe_run`.
 
-The recipe harness is the contract layer that lets projects plug into that OS. A project does not need to adopt every Farmslot feature. It needs to implement the Farmslot recipe contract:
+The recipe harness is the contract layer that lets projects plug into that framework. A project does not need to adopt every Farmslot feature. It needs to implement the Farmslot recipe contract:
 
 1. a `validate.workflow` graph envelope;
 2. a project-owned runner hook;
@@ -35,7 +35,7 @@ This makes Farmslot the orchestrator and evidence viewer, while projects remain 
 ## Architecture positioning
 
 ```text
-Farmslot framework / OS
+Farmslot framework / control plane
   ├─ fleet + slots + dispatch queue
   ├─ runners + tmux/session control
   ├─ backlog/eval/replay/human gates
@@ -58,7 +58,7 @@ The key distinction:
 - **Farmslot owns orchestration, contract validation, and evidence consumption.**
 - **Projects own execution semantics.**
 
-That is why the harness should not be a pile of project-specific scripts inside a skill. The production harness is a typed package boundary between the Farmslot OS and compatible projects.
+That is why the harness should not be a pile of project-specific scripts inside a skill. The production harness is a typed package boundary between the Farmslot framework and compatible projects.
 
 ## Layer model
 
@@ -720,7 +720,7 @@ Deliverable: this document plus `reference/recipe-runner-protocol.md`.
 
 Exit criteria:
 
-- architecture understood as Farmslot OS + v1-compatible projects;
+- architecture understood as Farmslot framework + v1-compatible projects;
 - generic, shared UI, app/runtime, CDP, native, and custom project action namespaces agreed;
 - first code seam agreed.
 
@@ -872,4 +872,4 @@ shared seam if implementation reveals missing generic behavior.
 
 ## Presentation phrasing
 
-> Farmslot is becoming the local OS for agentic engineering. Projects become compatible by implementing the recipe runner contract: graph in, project-native execution, typed evidence out. The harness is the kernel boundary for proof: it standardizes how work is validated and reviewed without forcing every project to use the same internal test tools.
+> Farmslot is an agentic engineering framework and control plane. Projects become compatible by implementing the recipe runner contract: graph in, project-native execution, typed evidence out. The harness is the proof boundary: it standardizes how work is validated and reviewed without forcing every project to use the same internal test tools.

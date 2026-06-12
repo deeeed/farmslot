@@ -25,7 +25,7 @@ Use this page as the recording index. Each concept has its own script so the nar
 
 ## Product concept videos
 
-The full video series should make three ideas obvious: Farmslot is the OS that coordinates the fleet, the IDE where the operator watches and steers, the framework that spans project types, and the recipe-centered proof layer that makes results trustworthy.
+The full video series should make three ideas obvious: Farmslot is the framework that coordinates the fleet, the control plane where the operator watches and steers, the project-type layer that spans different stacks, and the recipe-centered proof layer that makes results trustworthy.
 
 | Clip                             | Target length | Product promise                                                                                | Script                                           |
 | -------------------------------- | ------------: | ---------------------------------------------------------------------------------------------- | ------------------------------------------------ |

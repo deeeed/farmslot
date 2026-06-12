@@ -1,4 +1,4 @@
-# ADR-016: D9 Co-Pilot — Fleet OS Observer + Conversational Interface
+# ADR-016: D9 Co-Pilot — Fleet Observer + Conversational Interface
 
 **Status**: Accepted
 **Date**: 2026-03-29
@@ -7,7 +7,7 @@
 
 The command center manages 12+ slots and dozens of runs. Operators context-switch between views to answer basic questions. The gateway already holds all relevant state — fleet, runs, diffs, task progress, decisions — but none of it is surfaced proactively or conversationally.
 
-The original D9 PRD described a simple "chat panel that asks the gateway questions." During implementation, the design evolved into something more fundamental: the gateway as an always-on fleet OS, with the chat interface as one window into it.
+The original D9 PRD described a simple "chat panel that asks the gateway questions." During implementation, the design evolved into something more fundamental: the gateway as an always-on fleet observer, with the chat interface as one window into it.
 
 ## Decision
 
@@ -92,7 +92,7 @@ Default: `anthropic/sonnet`. Override via `COPILOT_PROVIDER` / `COPILOT_MODEL` i
 
 **Positive:**
 
-- The gateway is now an OS-level observer — it knows what happened even when the operator isn't looking
+- The gateway is now a fleet-level observer — it knows what happened even when the operator isn't looking
 - Notification badge on `✦` surfaces fleet problems without requiring the operator to poll views
 - Fleet context is always fresh (rebuilt per message from live state + rolling event log)
 - SOUL + MEMORY give the agent persistent identity that improves over time

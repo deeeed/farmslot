@@ -17,7 +17,7 @@ Recommend a pragmatic adoption path for recipe-first validation.
 1. Recipe runner: add a local command that executes one recipe and emits artifacts.
 2. Project recipe layer: add recipes, runner manifest, project actions, and artifact conventions.
 3. Farmslot project integration: add `project.json` hooks for slot-based execution.
-4. Full OS: adopt Gateway, Command Center, multi-slot dispatch, Companion, and retrospectives.
+4. Full framework: adopt Gateway, Command Center, multi-slot dispatch, Companion, and retrospectives.
 
 ## Workflow
 
@@ -28,6 +28,6 @@ Recommend a pragmatic adoption path for recipe-first validation.
 
 ## Hard Rules
 
-- Do not prescribe the full Farmslot OS when a local recipe runner is enough.
+- Do not prescribe the full Farmslot framework when a local recipe runner is enough.
 - Do not add domain-specific assumptions.
 - Do not require a project to change its test stack before proving the first useful recipe.

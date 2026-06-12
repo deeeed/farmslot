@@ -25,7 +25,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [Command Center PRD](../PRD-comman
 | [013](013-gateway-mediated-orchestration.md)           | Gateway-Mediated Orchestration — Run State Machine                      | Accepted |
 | [014](014-llm-provider-abstraction.md)                 | LLM Provider Abstraction — pi-ai Multi-Provider                         | Accepted |
 | [015](015-resource-streams.md)                         | Resource Streams — Project-Driven Multi-Stream Model                    | Accepted |
-| [016](016-d9-copilot.md)                               | D9 Co-Pilot — Fleet OS Observer + Conversational Interface              | Accepted |
+| [016](016-d9-copilot.md)                               | D9 Co-Pilot — Fleet Observer + Conversational Interface                 | Accepted |
 | [017](017-llm-task-summaries.md)                       | LLM Task Summaries & Smart Branch Naming                                | Accepted |
 | [018](018-dev-flow-interactive-autonomous.md)          | Dev Flow & Interactive/Autonomous Modes                                 | Accepted |
 | [019](019-recipe-graph-visualization.md)               | Recipe Graph Visualization                                              | Accepted |

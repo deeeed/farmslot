@@ -114,7 +114,7 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 
 **Status:** implementation is in progress on the `@farmslot/skills` package branch.
 
-**Goal:** make Farmslot useful before a project adopts the full OS/IDE. A user should be able to install a small skill pack, ask an agent to create or review a proof recipe, and produce a credible evidence plan with no gateway, pool, Command Center, or multi-machine setup.
+**Goal:** make Farmslot useful before a project adopts the full framework. A user should be able to install a small skill pack, ask an agent to create or review a proof recipe, and produce a credible evidence plan with no gateway, pool, Command Center, or multi-machine setup.
 
 **Placement rationale:** this is the external adoption wedge for Generic Recipe Protocol v1. The recipe specification becomes more valuable if agents can apply it inside arbitrary projects through low-friction skills, then graduate to `@farmslot/recipe-harness`, `@farmslot/expo-recipe`, project hooks, and Command Center only when useful.
 
@@ -124,7 +124,7 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 - define `recipe-doctor`, `recipe-cook`, `recipe-harness`, `recipe-quality`, and `project-adopt` as the initial generic skill set;
 - support install targets for Claude, Codex, Cursor, and generic `.agents/skills` folders;
 - keep the first-run flow recipe-only and project-local;
-- document the adoption ladder: skills only → generic `recipe` front-controller → project runner → project recipe layer → Farmslot project integration → full OS/IDE;
+- document the adoption ladder: skills only → generic `recipe` front-controller → project runner → project recipe layer → Farmslot project integration → full framework;
 - plan a thin generic `recipe` CLI front-controller that discovers project recipe config, renders actions/flows/artifacts, and delegates `doctor`, `status`, `launch`, `refresh`, `record`, and `run` to platform/project adapters;
 - avoid private/project-specific assumptions so domain packs such as domain-specific skills can layer on top instead of forking the generic recipe concepts.
 

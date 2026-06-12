@@ -1,6 +1,6 @@
 ---
 name: recipe-harness
-description: Help run or install a local recipe runtime without assuming the full Farmslot OS
+description: Help run or install a local recipe runtime without assuming the full Farmslot framework
 compatibility: Claude, Codex, Cursor, and Markdown skill runners with shell access
 metadata:
   package: '@farmslot/skills'

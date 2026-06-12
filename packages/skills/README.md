@@ -6,7 +6,7 @@ Public guide: https://farmslot.io/docs/guides/recipe-skills-adoption
 
 ## What This Package Is
 
-`@farmslot/skills` is the recipe-first adoption kit. It teaches an agent how to write, review, diagnose, and adopt validation recipes before a team installs the full Farmslot OS.
+`@farmslot/skills` is the recipe-first adoption kit. It teaches an agent how to write, review, diagnose, and adopt validation recipes before a team installs the full Farmslot framework.
 
 It does not require Gateway, Command Center, a pool file, slots, or Companion for first use.
 
@@ -49,7 +49,7 @@ Supported layouts:
 2. Recipe runner: add a local command that can execute one recipe and emit artifacts.
 3. Project recipe layer: add recipes, runner manifests, project actions, and artifact conventions.
 4. Farmslot project integration: add `project.json` hooks for Command Center and slots.
-5. Full OS: adopt multi-slot dispatch, live steering, Companion supervision, and retrospectives.
+5. Full framework: adopt multi-slot dispatch, live steering, Companion supervision, and retrospectives.
 
 ## Source layout
 

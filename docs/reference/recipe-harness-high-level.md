@@ -6,12 +6,12 @@ Use this as the easy-to-explain version of [reference/recipe-harness-architectur
 
 ## One sentence
 
-Farmslot is the local OS for agentic engineering; projects plug into it by accepting a recipe graph, executing project-native actions through adapters, and returning a typed evidence package that Farmslot can review, replay, and compare.
+Farmslot is an agentic engineering framework and control plane; projects plug into it by accepting a recipe graph, executing project-native actions through adapters, and returning a typed evidence package that Farmslot can review, replay, and compare.
 
 ## Mental model
 
 ```text
-Farmslot = OS / framework
+Farmslot = framework / control plane
 Recipe Runner Protocol = v1 project contract
 Recipe Harness = runtime kernel for proof execution
 Project Adapters = drivers for each app/repo/platform
@@ -20,13 +20,13 @@ Command Center / Companion = review UI
 /recipe-* skills = agent workflow layer
 ```
 
-## Key terms — OS, protocol, harness, runner, adapter
+## Key terms — framework, protocol, harness, runner, adapter
 
 These terms should be used consistently in presentations and implementation docs.
 
-### Farmslot OS / framework
+### Farmslot framework / control plane
 
-**Farmslot OS** is the whole system around agentic work:
+**Farmslot framework** is the whole system around agentic work:
 
 - fleet and slot management;
 - dispatch queue;
@@ -134,7 +134,7 @@ Example App /recipe-harness skill
 So:
 
 ```text
-Farmslot OS          = whole agentic work system
+Farmslot framework   = whole agentic work system
 Recipe Runner Protocol = spec/contract
 Recipe Harness      = shared runtime implementation of the spec
 Project runner      = project-owned command hook Farmslot invokes
@@ -146,7 +146,7 @@ Action adapter      = per-action implementation used by the harness/runner
 
 ```mermaid
 flowchart TD
-  OS[Farmslot OS / framework]
+  Farmslot[Farmslot framework / control plane]
   Protocol[Recipe Runner Protocol]
   Hook[project.json recipe_run hook]
   Runner[Project runner command]
@@ -156,8 +156,8 @@ flowchart TD
   Package[Artifact package]
   UI[Command Center / Companion / PR evidence]
 
-  OS --> Protocol
-  OS --> Hook
+  Farmslot --> Protocol
+  Farmslot --> Hook
   Hook --> Runner
   Runner --> Harness
   Harness --> Adapter
@@ -166,7 +166,7 @@ flowchart TD
   Adapter --> Harness
   Harness --> Package
   Package --> UI
-  UI --> OS
+  UI --> Farmslot
 ```
 
 ## The big picture
@@ -175,7 +175,7 @@ flowchart TD
 flowchart LR
   Human[Human / Jira / PR intent]
   Skills[/recipe-* skills]
-  Farmslot[Farmslot OS<br/>dispatch, slots, gates]
+  Farmslot[Farmslot framework<br/>dispatch, slots, gates]
   Protocol[Recipe Runner Protocol<br/>validate.workflow + artifacts]
   Harness[Recipe Harness<br/>runtime execution]
   Adapters[Project Adapters<br/>Mobile, Extension, backend]
@@ -201,7 +201,7 @@ flowchart LR
 | Layer                  | Owns                                                                              | Does not own                                      |
 | ---------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------- |
 | `/recipe-*` skills     | Agent instructions: extract ACs, write recipe, critique evidence, format PR proof | Production runtime execution                      |
-| Farmslot OS            | Dispatch, slots, lifecycle, evals, human gates, evidence consumption              | Project-specific UI/test semantics                |
+| Farmslot framework     | Dispatch, slots, lifecycle, evals, human gates, evidence consumption              | Project-specific UI/test semantics                |
 | Recipe Runner Protocol | Compatibility contract: graph shape, artifact manifest, validation result         | How each app clicks buttons or seeds state        |
 | Recipe Harness         | Runtime execution engine, adapter registry, trace/summary/artifact writing        | Prompting strategy, perps logic, product test IDs |
 | Project adapters       | Native actions for Mobile, Extension, backend, etc.                               | Farmslot scheduling or generic review UI          |
@@ -1312,6 +1312,6 @@ Recipes are the program.
 Adapters are the drivers.
 The harness is the runtime.
 Artifacts are the API.
-Farmslot is the OS.
+Farmslot is the framework.
 Skills are how agents use it.
 ```

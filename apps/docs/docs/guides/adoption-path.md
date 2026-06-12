@@ -71,7 +71,7 @@ This lets Command Center or the gateway run the same proof through a managed pro
 
 See [Import a project](./import-a-project.md) and [Project-type onboarding](./project-type-onboarding.md) for the fuller setup.
 
-## Level 4 — Grow into the OS
+## Level 4 — Grow into the full framework
 
 Adopt the rest only when the workflow needs it:
 
@@ -81,7 +81,7 @@ Adopt the rest only when the workflow needs it:
 - mobile supervision;
 - retrospectives that improve prompts, recipes, docs, and adapters.
 
-That is the full Farmslot OS path, but it is not the starting point.
+That is the full Farmslot framework path, but it is not the starting point.
 
 ## Rule of thumb
 

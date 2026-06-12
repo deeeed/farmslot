@@ -22,7 +22,7 @@ It is not the recipe runtime. It is the agent-facing layer that helps a project 
 - guide the agent to write high-quality recipes;
 - check whether the project can produce recipe evidence;
 - explain the smallest next integration step;
-- grow from recipe-only proof into the full Farmslot OS/IDE only when useful.
+- grow from recipe-only proof into the full Farmslot framework only when useful.
 
 ## Proposed package
 
@@ -97,7 +97,7 @@ Add a recipe folder, a runner manifest, optional project actions, and artifact o
 
 Add `project.json` hooks so Command Center can run the recipe through a project slot.
 
-### Level 4 — Full OS / IDE
+### Level 4 — Full framework
 
 Adopt multi-slot dispatch, live steering, cross-runner review, Companion supervision, and retrospective improvement loops.
 
@@ -112,6 +112,6 @@ Adopt multi-slot dispatch, live steering, cross-runner review, Companion supervi
 
 ## Why this matters
 
-This makes Farmslot useful before it is fully installed. A project can start with one recipe and one proof artifact, then grow into the OS only after the value is clear.
+This makes Farmslot useful before it is fully installed. A project can start with one recipe and one proof artifact, then grow into the broader framework only after the value is clear.
 
-That is the adoption wedge: **start with recipes, grow into the OS.**
+That is the adoption wedge: **start with recipes, grow into the framework.**

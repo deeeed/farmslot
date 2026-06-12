@@ -26,6 +26,7 @@ export default [
   {
     ignores: [
       '**/.git/**',
+      '.agent/**',
       '**/.yarn/**',
       '**/node_modules/**',
       '**/dist/**',
