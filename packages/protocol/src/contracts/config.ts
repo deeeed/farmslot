@@ -61,6 +61,42 @@ export interface ProjectPublicationReviewFlowConfig {
   requireCrossRunner?: boolean;
 }
 
+// ─── Prepare profiles (ADR-037) ───
+
+/**
+ * Optional cost phases a prepare profile may select. Safety invariants (ssh
+ * reachability, device existence, tmux session, prepare sentinel, origin/HEAD
+ * guard) always run and are not part of this set.
+ */
+export const PREPARE_PHASES = ['git', 'fixtures', 'deps', 'preflight', 'health'] as const;
+export type PreparePhase = (typeof PREPARE_PHASES)[number];
+
+/**
+ * Framework-owned precondition checks a profile may require before its cheap
+ * path is valid. Each name binds to existing project hooks/sentinels:
+ * deps_current → lockfile-hash sentinel, dev_server_up → dev_server_check
+ * hook, health_ok → health_check + ready_indicator pipeline.
+ */
+export const PREPARE_REQUIREMENTS = ['deps_current', 'dev_server_up', 'health_ok'] as const;
+export type PrepareRequirement = (typeof PREPARE_REQUIREMENTS)[number];
+
+export interface PrepareProfileConfig {
+  /** Operator-facing label for wizard/CLI listings. */
+  label?: string;
+  phases: PreparePhase[];
+  /** Per-profile hook overrides; unlisted hooks resolve from the project's top-level hooks. */
+  hooks?: Record<string, string>;
+  requires?: PrepareRequirement[];
+  /** Profile to run instead when any `requires` check fails. Required when `requires` is non-empty. */
+  fallback?: string;
+}
+
+export interface ProjectPrepareConfig {
+  /** Profile used when no explicit selection is made. */
+  default?: string;
+  profiles: Record<string, PrepareProfileConfig>;
+}
+
 export interface ProjectConfig {
   name: string;
   repoUrl: string;
@@ -123,6 +159,7 @@ export interface ProjectConfig {
   publicationReview?: Partial<Record<'fix-bug' | 'dev', ProjectPublicationReviewFlowConfig>>;
   autoRecovery?: ProjectAutoRecoveryConfig;
   backlog?: ProjectBacklogConfig;
+  prepare?: ProjectPrepareConfig;
 }
 
 export interface ProjectCICheckGroup {

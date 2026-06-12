@@ -8,6 +8,8 @@ import {
   DEFAULT_TASK_DIR,
   FAILURE_CATEGORIES,
   type PoolSlotMode,
+  PREPARE_PHASES,
+  PREPARE_REQUIREMENTS,
   type ProjectConfig,
   type SlotActionDefinition,
 } from '@farmslot/protocol';
@@ -210,6 +212,19 @@ export interface RawProjectJson {
   };
   backlog?: {
     auto_dispatch?: { enabled?: boolean };
+  };
+  prepare?: {
+    default?: string;
+    profiles?: Record<
+      string,
+      {
+        label?: string;
+        phases?: string[];
+        hooks?: Record<string, string>;
+        requires?: string[];
+        fallback?: string;
+      }
+    >;
   };
   recipe_timeout?: number;
   // Project-level safety-tier policy (ADR-023 §3). Applied at run create time
@@ -426,6 +441,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateBacklogConfig(projectJson, projectConfig);
   validateEvalHarnessesConfig(projectJson, projectConfig);
   validatePublicationReviewConfig(projectJson, projectConfig);
+  validatePrepareConfig(projectJson, projectConfig);
 
   const runtimeDir = projectJson.paths?.runtime_dir || '.agent';
   const artifactDir = projectJson.paths?.artifact_dir || '.task';
@@ -562,6 +578,110 @@ export function validateBacklogConfig(projectJson: RawProjectJson, projectConfig
     }
     if (typeof cfg.auto_dispatch.enabled !== 'boolean') {
       throw new Error(`${projectConfig}: backlog.auto_dispatch.enabled must be a boolean`);
+    }
+  }
+}
+
+export function validatePrepareConfig(projectJson: RawProjectJson, projectConfig: string): void {
+  const cfg = projectJson.prepare;
+  if (!cfg) return;
+  if (typeof cfg !== 'object' || Array.isArray(cfg)) {
+    throw new Error(`${projectConfig}: prepare must be an object`);
+  }
+  const profiles = cfg.profiles;
+  if (!profiles || typeof profiles !== 'object' || Array.isArray(profiles)) {
+    throw new Error(`${projectConfig}: prepare.profiles must be an object`);
+  }
+  const profileNames = Object.keys(profiles);
+  if (profileNames.length === 0) {
+    throw new Error(`${projectConfig}: prepare.profiles must define at least one profile`);
+  }
+  for (const [name, profile] of Object.entries(profiles)) {
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+      throw new Error(`${projectConfig}: prepare.profiles key "${name}" is invalid`);
+    }
+    if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+      throw new Error(`${projectConfig}: prepare.profiles.${name} must be an object`);
+    }
+    if (profile.label !== undefined && typeof profile.label !== 'string') {
+      throw new Error(`${projectConfig}: prepare.profiles.${name}.label must be a string`);
+    }
+    const phases = profile.phases;
+    if (!Array.isArray(phases) || phases.length === 0) {
+      throw new Error(`${projectConfig}: prepare.profiles.${name}.phases must be a non-empty array`);
+    }
+    for (const phase of phases) {
+      if (!(PREPARE_PHASES as readonly string[]).includes(phase)) {
+        throw new Error(
+          `${projectConfig}: prepare.profiles.${name}.phases contains unknown phase "${phase}" (allowed: ${PREPARE_PHASES.join(', ')})`,
+        );
+      }
+    }
+    if (new Set(phases).size !== phases.length) {
+      throw new Error(`${projectConfig}: prepare.profiles.${name}.phases contains duplicates`);
+    }
+    if (profile.hooks !== undefined) {
+      if (typeof profile.hooks !== 'object' || Array.isArray(profile.hooks)) {
+        throw new Error(`${projectConfig}: prepare.profiles.${name}.hooks must be an object`);
+      }
+      for (const [hookName, hookCmd] of Object.entries(profile.hooks)) {
+        if (typeof hookCmd !== 'string' || !hookCmd.trim()) {
+          throw new Error(
+            `${projectConfig}: prepare.profiles.${name}.hooks.${hookName} must be a non-empty string`,
+          );
+        }
+      }
+    }
+    const requires = profile.requires;
+    if (requires !== undefined) {
+      if (!Array.isArray(requires)) {
+        throw new Error(`${projectConfig}: prepare.profiles.${name}.requires must be an array`);
+      }
+      for (const requirement of requires) {
+        if (!(PREPARE_REQUIREMENTS as readonly string[]).includes(requirement)) {
+          throw new Error(
+            `${projectConfig}: prepare.profiles.${name}.requires contains unknown check "${requirement}" (allowed: ${PREPARE_REQUIREMENTS.join(', ')})`,
+          );
+        }
+      }
+      if (new Set(requires).size !== requires.length) {
+        throw new Error(`${projectConfig}: prepare.profiles.${name}.requires contains duplicates`);
+      }
+    }
+    if (profile.fallback !== undefined) {
+      if (typeof profile.fallback !== 'string' || !(profile.fallback in profiles)) {
+        throw new Error(
+          `${projectConfig}: prepare.profiles.${name}.fallback must name an existing profile`,
+        );
+      }
+      if (profile.fallback === name) {
+        throw new Error(`${projectConfig}: prepare.profiles.${name}.fallback must not be itself`);
+      }
+    }
+    if (Array.isArray(requires) && requires.length > 0 && !profile.fallback) {
+      throw new Error(
+        `${projectConfig}: prepare.profiles.${name} declares requires but no fallback profile`,
+      );
+    }
+  }
+  // Fallback chains must terminate. requires⇒fallback guarantees every chain
+  // keeps extending until a profile with no requires; only a cycle violates that.
+  for (const name of profileNames) {
+    const seen = new Set<string>([name]);
+    let current = profiles[name].fallback;
+    while (current) {
+      if (seen.has(current)) {
+        throw new Error(
+          `${projectConfig}: prepare.profiles fallback chain from "${name}" contains a cycle at "${current}"`,
+        );
+      }
+      seen.add(current);
+      current = profiles[current].fallback;
+    }
+  }
+  if (cfg.default !== undefined) {
+    if (typeof cfg.default !== 'string' || !(cfg.default in profiles)) {
+      throw new Error(`${projectConfig}: prepare.default must name an existing profile`);
     }
   }
 }
