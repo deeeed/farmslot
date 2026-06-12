@@ -10,7 +10,8 @@
     "serve": "docusaurus serve --host 0.0.0.0",
     "clear": "docusaurus clear",
     "deploy": "docusaurus deploy",
-    "quality": "yarn workspace @farmslot/protocol build && yarn build"
+    "quality": "yarn workspace @farmslot/protocol build && yarn build",
+    "generate:demos": "node scripts/generate-demo-media.mjs"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.1",

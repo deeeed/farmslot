@@ -1,9 +1,13 @@
 import Link from '@docusaurus/Link';
+import CodeBlock from '@theme/CodeBlock';
 import Heading from '@theme/Heading';
 import Layout from '@theme/Layout';
 import clsx from 'clsx';
 
 import styles from './index.module.css';
+
+const INSTALL_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | bash';
 
 const operatingLoop = ['Dispatch', 'Watch', 'Steer', 'Validate', 'Review', 'Improve'];
 
@@ -48,24 +52,36 @@ const productPillars = [
 const demoCards = [
   {
     title: 'Watch and steer a supervised run',
-    duration: 'Video planned',
-    image: '/img/mockups/command-center.svg',
-    alt: 'Poster showing a Command Center run timeline with terminal and artifact panels',
-    body: 'Show dispatch, slot assignment, live terminal output, decision gates, and how the human can redirect before trusting the result.',
+    status: 'Recipe-backed poster',
+    image: '/img/demos/command-center-recipe-workspace.svg',
+    alt: 'Recipe-backed Command Center workspace with stream, recipe controls, artifacts, and graph visible',
+    body: 'Show dispatch, slot assignment, live stream visibility, recipe controls, and how the human reviews evidence before trusting the result.',
+    provenance: 'Generated from docs/examples/recipes/farmslot/command-center-ui.recipe.json.',
   },
   {
     title: 'Recipe evidence run',
-    duration: 'Video planned',
-    image: '/img/mockups/recipe-evidence.svg',
-    alt: 'Poster showing a recipe graph flowing into screenshots, traces, and a summary artifact',
-    body: 'Show a recipe run turning setup, real actions, visual validation, assertions, HUD messages, and proof artifacts into review evidence.',
+    status: 'Recipe-backed poster',
+    image: '/img/demos/recipe-evidence-run.svg',
+    alt: 'Recipe-backed live replay result with stream, runner logs, and generated artifacts',
+    body: 'Show a recipe run turning setup, real actions, visual validation, assertions, and proof artifacts into review evidence.',
+    provenance: 'Generated from docs/examples/recipes/farmslot/recipe-player-e2e.recipe.json.',
+  },
+  {
+    title: 'Project-type framework',
+    status: 'Video fallback',
+    image: '/img/demos/project-type-framework.svg',
+    alt: 'Recipe-backed poster showing Audiolab and EchoBridge as public demo project integrations',
+    body: 'Show the same operating loop across approved public demo targets while keeping private work projects out of launch media.',
+    provenance:
+      'Generated from the demo media script and backed by Audiolab/EchoBridge Recipe v1 runners.',
   },
   {
     title: 'Companion mobile supervision',
-    duration: 'Video planned',
-    image: '/img/mockups/mobile-companion.svg',
-    alt: 'Poster showing a mobile companion watching worker status and run progress',
+    status: 'Recipe-backed poster',
+    image: '/img/demos/mobile-companion-artifacts.svg',
+    alt: 'Recipe-backed mobile companion evidence review screen',
     body: 'Show the operator checking workers, terminal status, and run progress from the mobile companion without losing control.',
+    provenance: 'Generated from docs/examples/recipes/farmslot/mobile-companion.recipe.json.',
     portrait: true,
   },
 ];
@@ -96,8 +112,24 @@ function HomepageHeader() {
             steer them while they work, then trust the result through visual validation, executable
             recipes, and proof artifacts instead of final claims.
           </p>
+          <div className={styles.heroInstall} aria-label="One-line installer">
+            <CodeBlock language="bash">{INSTALL_COMMAND}</CodeBlock>
+            <span className={styles.heroInstallHint}>
+              One command — checks prerequisites, sets up the workspace, ends with a green{' '}
+              <code>farmslot doctor</code>.
+            </span>
+          </div>
           <div className={styles.buttons}>
-            <Link className="button button--secondary button--lg" to="/docs/intro">
+            <Link className="button button--secondary button--lg" to="/docs/guides/getting-started">
+              Get started
+            </Link>
+            <Link
+              className={clsx(
+                'button button--outline button--secondary button--lg',
+                styles.heroOutlineButton,
+              )}
+              to="/docs/intro"
+            >
               Read the docs
             </Link>
             <Link
@@ -118,8 +150,8 @@ function HomepageHeader() {
           </div>
           <img
             className={styles.heroPoster}
-            src="/img/mockups/recipe-evidence.svg"
-            alt="Poster preview of the Farmslot recipe evidence loop"
+            src="/img/demos/recipe-evidence-run.svg"
+            alt="Recipe-backed poster preview of the Farmslot recipe evidence loop"
           />
           <div className={styles.loopRow} aria-label="Operating loop steps">
             {operatingLoop.map((item) => (
@@ -175,9 +207,9 @@ function DemoSection() {
           <span className={styles.sectionEyebrow}>Demo plan</span>
           <Heading as="h2">Each short clip should explain one product promise.</Heading>
           <p>
-            The best demos are narrated feature explainers: dispatch real work, watch and steer it
-            live, validate with recipes, review the evidence, and feed lessons back into the next
-            run.
+            The best demos are reproducible feature explainers: dispatch real work, watch and steer
+            it live, validate with recipes, review the evidence, and regenerate the screenshots or
+            clips from the same proof path.
           </p>
         </div>
         <div className={styles.demoGrid}>
@@ -188,12 +220,13 @@ function DemoSection() {
             >
               <div className={styles.posterFrame}>
                 <img src={demo.image} alt={demo.alt} loading="lazy" />
-                <span className={styles.videoBadge}>Video planned</span>
+                <span className={styles.videoBadge}>{demo.status}</span>
               </div>
               <div className={styles.demoCardBody}>
-                <div className={styles.demoMeta}>{demo.duration}</div>
+                <div className={styles.demoMeta}>{demo.status}</div>
                 <Heading as="h3">{demo.title}</Heading>
                 <p>{demo.body}</p>
+                <small className={styles.demoProvenance}>{demo.provenance}</small>
               </div>
             </article>
           ))}
@@ -201,9 +234,9 @@ function DemoSection() {
         <div className={styles.inlineCallout}>
           <span>Recording checklist</span>
           <p>
-            The landing page currently uses static public-safe placeholders. When final clips are
-            recorded, keep them short, caption-friendly, poster-backed, and verify representative
-            frames before publishing.
+            These cards now use recipe-backed public-safe poster frames. Short videos can replace
+            them later when recipe-level video capture is available; until then the poster is the
+            documented fallback.
           </p>
           <Link to="/docs/guides/demo-recording-plan">View recording plan →</Link>
         </div>

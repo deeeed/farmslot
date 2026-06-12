@@ -5,13 +5,63 @@ description: Public-safe recording specs and storyboards for Farmslot landing pa
 
 # Demo recording plan
 
-The landing page currently uses static, public-safe generated SVG mockups from `apps/docs/static/img/mockups/` so the project can be released before the final narrated videos are recorded. Final clips should be added later under `apps/docs/static/videos/` and wired back into the landing page after sanitization. Keep detailed narration drafts outside the public docs until they become stable product-facing copy.
+The landing page now uses recipe-backed public-safe poster frames from `apps/docs/static/img/demos/`. They are generated from checked-in Farmslot recipe fixtures or from the demo media generation script. Final short clips should be added later under `apps/docs/static/videos/demos/` and wired back into the same cards after sanitization. Keep detailed narration drafts outside the public docs until they become stable product-facing copy.
 
-Current placeholders represent real Farmslot surfaces:
+Current poster frames represent real Farmslot surfaces:
 
-- **Command Center supervised run**: Command Center dev harness with sanitized fixtures.
-- **Recipe evidence run**: Command Center recipe graph and provenance fixtures.
-- **Companion mobile supervision**: the iOS Companion app running in store-screenshot fixture mode.
+- **Command Center supervised run**: Command Center ready/review recipe workspace fixture.
+- **Recipe evidence run**: live recipe player fixture with stream, logs, and typed artifacts.
+- **Project-type framework**: Audiolab + EchoBridge public demo integration poster.
+- **Companion mobile supervision**: mobile companion recipe evidence fixture.
+
+## Reproduce current poster frames
+
+Regenerate committed poster frames from repository fixtures:
+
+```bash
+yarn --cwd apps/docs generate:demos
+```
+
+| Landing card                  | Committed asset                                                  | Provenance                                                                                                        |
+| ----------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Command Center supervised run | `apps/docs/static/img/demos/command-center-recipe-workspace.svg` | `docs/examples/recipes/farmslot/command-center-ui.recipe.json` plus its checked-in artifact package.              |
+| Recipe evidence run           | `apps/docs/static/img/demos/recipe-evidence-run.svg`             | `docs/examples/recipes/farmslot/recipe-player-e2e.recipe.json` plus its checked-in artifact package.              |
+| Project-type framework        | `apps/docs/static/img/demos/project-type-framework.svg`          | `apps/docs/scripts/generate-demo-media.mjs`, summarizing approved Audiolab and EchoBridge Recipe v1 integrations. |
+| Companion mobile supervision  | `apps/docs/static/img/demos/mobile-companion-artifacts.svg`      | `docs/examples/recipes/farmslot/mobile-companion.recipe.json` plus its checked-in artifact package.               |
+
+Reset path: delete `apps/docs/static/img/demos/*`, rerun `yarn --cwd apps/docs generate:demos`, and discard any unrelated local recipe-run output under project `.agent/` directories.
+
+## Validate project-type poster claims
+
+The project-type framework poster is a summary card, so validate it against the public demo project recipes before recording or publishing a replacement clip.
+
+Audiolab:
+
+```bash
+cd <audiolab-checkout>/apps/playground
+IOS_SIMULATOR=playground-1 WATCHER_PORT=7365 yarn ios
+WATCHER_PORT=7365 node scripts/agentic/recipe-v1/run-recipe-v1.mjs run \
+  scripts/agentic/recipe-v1/recipes/smoke.navigation.recipe.json \
+  --artifacts-dir /tmp/audiolab-recipe-smoke \
+  --device playground-1
+```
+
+EchoBridge:
+
+```bash
+cd <echobridge-checkout>/apps/echobridge
+IOS_SIMULATOR=echodev-1 yarn ios
+node scripts/agentic/recipe-v1/run-recipe-v1.mjs validate \
+  scripts/agentic/recipe-v1/recipes/smoke.navigation.recipe.json
+node scripts/agentic/recipe-v1/run-recipe-v1.mjs validate \
+  scripts/agentic/recipe-v1/recipes/recording.sync.lifecycle.recipe.json
+node scripts/agentic/recipe-v1/run-recipe-v1.mjs run \
+  scripts/agentic/recipe-v1/recipes/recording.sync.lifecycle.recipe.json \
+  --artifacts-dir /tmp/echobridge-recipe-sync \
+  --device web
+```
+
+Use the project-configured simulator names. The current EchoBridge iOS simulator is `echodev-1`; do not rename it for docs capture.
 
 ## Public-safety checklist
 
@@ -20,21 +70,22 @@ Before committing a screenshot or video, verify that it contains none of the fol
 - real private repository names, customer names, Jira IDs, tokens, secrets, wallet addresses, or API keys;
 - real machine names, private hostnames, local absolute paths, or home-directory usernames;
 - private chat, email, browser history, or notification content;
-- proprietary product details that are not intended for public docs.
+- proprietary product details that are not intended for public docs;
+- private work project names or screenshots until cleared for public use.
 
-Prefer demo projects, fixture data, and generic labels such as “example app”, “demo slot”, and “recipe evidence”. Re-record instead of blurring if private data appears.
+Prefer demo projects, fixture data, Audiolab, EchoBridge, and generic labels such as “example app”, “demo slot”, and “recipe evidence”. Re-record instead of blurring if private data appears.
 
 ## Recommended format
 
-| Asset        | Recommendation                                                              |
-| ------------ | --------------------------------------------------------------------------- |
-| Duration     | 4–15 seconds for committed clips; longer demos should be hosted externally. |
-| Aspect ratio | 16:9 for Command Center; 9:16 is acceptable for Companion.                  |
-| Resolution   | 1080p maximum unless the clip needs more detail.                            |
-| Poster       | Extract a real frame from the video and inspect it before publishing.       |
-| Captions     | Nearby page text must explain the clip because videos are muted by default. |
-| File size    | Keep committed clips small; use external hosting for large videos.          |
-| Naming       | `command-center-run`, `recipe-evidence-run`, `mobile-companion-run`.        |
+| Asset        | Recommendation                                                                                 |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| Duration     | 4–15 seconds for committed clips; longer demos should be hosted externally.                    |
+| Aspect ratio | 16:9 for Command Center; 9:16 is acceptable for Companion.                                     |
+| Resolution   | 1080p maximum unless the clip needs more detail.                                               |
+| Poster       | Extract a real frame from the video and inspect it before publishing.                          |
+| Captions     | Nearby page text must explain the clip because videos are muted by default.                    |
+| File size    | Keep committed clips small; use external hosting for large videos.                             |
+| Naming       | `command-center-run`, `recipe-evidence-run`, `project-type-framework`, `mobile-companion-run`. |
 
 ## Storyboards
 
@@ -58,7 +109,15 @@ Show how a recipe turns acceptance criteria into proof.
 3. Show recipe-run provenance or selected evidence.
 4. End on a reviewable artifact state.
 
-### 3. Companion mobile supervision
+### 3. Project-type framework
+
+Show that Farmslot is not one-app-specific.
+
+1. Show Audiolab and EchoBridge as approved public demo targets.
+2. Show each project exposing hooks/capabilities through Recipe v1.
+3. End on the shared artifact package shape.
+
+### 4. Companion mobile supervision
 
 Show that supervision does not require sitting at the workstation.
 
@@ -92,8 +151,9 @@ Then record with `xcrun simctl io <ios-simulator> recordVideo`, drive deep links
 
 ## Validation checklist
 
+- Regenerate posters with `yarn --cwd apps/docs generate:demos`.
 - Build the docs site with `yarn docs:build`.
-- Serve the site locally and verify the landing page placeholders render.
+- Serve the site locally and verify the landing page poster frames render.
 - When final clips are added, verify the landing page videos render.
 - Extract at least one frame from every committed MP4 and inspect it visually.
 - Verify Companion fixture mode on a real simulator/device when the mobile clip changes.

@@ -193,7 +193,7 @@
 .cardGrid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .featureCard,
@@ -248,7 +248,7 @@
 .demoGrid {
   display: grid;
   gap: 1.25rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .demoCard {
@@ -324,6 +324,14 @@
   color: var(--ifm-color-emphasis-700);
   line-height: 1.6;
   margin: 0;
+}
+
+.demoProvenance {
+  color: var(--ifm-color-emphasis-600);
+  display: block;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  margin-top: 0.75rem;
 }
 
 .inlineCallout {
@@ -447,7 +455,7 @@
 
   .cardGrid,
   .demoGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .demoCardPortrait .posterFrame img {
@@ -499,6 +507,10 @@
   .featureCard {
     min-height: auto;
   }
+
+  .demoGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media screen and (max-width: 420px) {
@@ -514,4 +526,24 @@
   .heroPoster {
     max-width: 100%;
   }
+}
+
+.heroInstall {
+  margin: 1.5rem 0 0.35rem;
+  max-width: 640px;
+  text-align: left;
+}
+
+.heroInstall pre {
+  margin-bottom: 0.4rem;
+}
+
+.heroInstall code {
+  font-size: 0.85rem;
+}
+
+.heroInstallHint {
+  display: block;
+  font-size: 0.8rem;
+  opacity: 0.85;
 }
