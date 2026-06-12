@@ -198,7 +198,6 @@
 
 .featureCard,
 .featuredDemoCard,
-.inlineCallout,
 .callout,
 .feedbackList li {
   background: var(--ifm-card-background-color);
@@ -331,26 +330,6 @@
   margin-top: 0.75rem;
 }
 
-.inlineCallout {
-  align-items: center;
-  border-radius: 18px;
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: auto 1fr auto;
-  margin-top: 1.25rem;
-  padding: 1rem 1.25rem;
-}
-
-.inlineCallout span,
-.inlineCallout a {
-  font-weight: 900;
-}
-
-.inlineCallout p {
-  color: var(--ifm-color-emphasis-700);
-  margin: 0;
-}
-
 .loopLayout {
   align-items: center;
   display: grid;
@@ -456,7 +435,6 @@
   }
 
   .callout,
-  .inlineCallout,
   .developmentNotice {
     align-items: flex-start;
     display: flex;

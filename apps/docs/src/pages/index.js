@@ -267,14 +267,6 @@ function DemoSection() {
             </article>
           ))}
         </div>
-        <div className={styles.inlineCallout}>
-          <span>Regeneration path</span>
-          <p>
-            Want the implementation details behind these examples? The recording plan documents how
-            each visual is reproduced and verified.
-          </p>
-          <Link to="/docs/guides/demo-recording-plan">View recording plan →</Link>
-        </div>
       </div>
     </section>
   );

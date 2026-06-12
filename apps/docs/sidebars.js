@@ -62,7 +62,6 @@ const sidebars = {
         'guides/expo-project-integration',
         'guides/expo-recipe',
         'guides/headless-recipe',
-        'guides/demo-recording-plan',
         'guides/customize-worker-prompts',
         'guides/write-a-recipe',
       ],

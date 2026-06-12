@@ -188,7 +188,7 @@ No build step for protocol — consumers compile it directly via TypeScript proj
   "type": "module",
   "dependencies": {
     "ws": "^8.18.0",
-    "@farmslot/protocol": "workspace:*"
+    "@farmslot/protocol": "^0.6.0"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",

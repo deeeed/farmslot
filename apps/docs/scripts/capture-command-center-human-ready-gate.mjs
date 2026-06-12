@@ -107,12 +107,12 @@ function demoNow(offsetMs = 0) {
   return new Date(Date.UTC(2026, 5, 12, 10, 0, 0) + offsetMs).toISOString();
 }
 
-const diffText = `diff --git a/apps/docs/docs/guides/demo-recording-plan.md b/apps/docs/docs/guides/demo-recording-plan.md
+const diffText = `diff --git a/apps/docs/docs/products/command-center.md b/apps/docs/docs/products/command-center.md
 index 1111111..2222222 100644
---- a/apps/docs/docs/guides/demo-recording-plan.md
-+++ b/apps/docs/docs/guides/demo-recording-plan.md
+--- a/apps/docs/docs/products/command-center.md
++++ b/apps/docs/docs/products/command-center.md
 @@ -12,6 +12,10 @@
- - Capture screenshots from real Farmslot surfaces.
+ - Use Command Center as the cockpit for live runs.
  - Keep external app evidence behind Farmslot gates.
 +- Add a reproducible human-ready gate recipe.
 +- Show accept / continue-steering decisions from Command Center.
@@ -672,7 +672,7 @@ function rpcPayload(method, params) {
         behind: 0,
         changes: [
           { path: 'apps/docs/src/pages/index.js', status: 'M' },
-          { path: 'apps/docs/docs/guides/demo-recording-plan.md', status: 'M' },
+          { path: 'apps/docs/docs/products/command-center.md', status: 'M' },
           {
             path: 'docs/examples/recipes/farmslot/docusaurus-human-ready-gate.recipe.json',
             status: 'A',
@@ -684,7 +684,7 @@ function rpcPayload(method, params) {
         files: [
           { path: 'apps/docs/src/pages/index.js', status: 'M', additions: 38, deletions: 6 },
           {
-            path: 'apps/docs/docs/guides/demo-recording-plan.md',
+            path: 'apps/docs/docs/products/command-center.md',
             status: 'M',
             additions: 18,
             deletions: 4,
@@ -718,7 +718,7 @@ function rpcPayload(method, params) {
       return {
         files: [
           'apps/docs/src/pages/index.js',
-          'apps/docs/docs/guides/demo-recording-plan.md',
+          'apps/docs/docs/products/command-center.md',
           'TASK.md',
         ],
       };
