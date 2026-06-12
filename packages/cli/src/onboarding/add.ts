@@ -26,6 +26,7 @@ import {
 import {
   allocatePort,
   defaultResources,
+  platformResourceKeys,
   readPool,
   registerSlot,
   writePool,
@@ -116,10 +117,18 @@ export function resolvePackSource(
         cwd: ws.root,
         stdio,
       });
-      run('git', ['-C', dest, 'submodule', 'update', '--init', '--recursive', '--quiet'], {
-        cwd: ws.root,
-        stdio,
-      });
+      try {
+        run('git', ['-C', dest, 'submodule', 'update', '--init', '--recursive', '--quiet'], {
+          cwd: ws.root,
+          stdio,
+        });
+      } catch (err) {
+        // Re-throw with recovery guidance: a partial clone (e.g. private
+        // submodule auth failure) hits this on every retry otherwise.
+        throw new AddError(
+          `${err instanceof Error ? err.message : String(err)} — submodule update failed in ${dest}; fix submodule access (SSH keys) or remove that clone and re-run project add`,
+        );
+      }
     } else {
       mkdirSync(join(ws.root, 'packs'), { recursive: true });
       // Packs may mount their project dirs as submodules (separate repos per
@@ -324,7 +333,10 @@ function readRegisteredProject(proj: PackProject, ws: Workspace): RegisteredProj
  */
 export function findMissingState(
   pack: PackJson,
-  pool: { machine: string; slots: Array<{ id: string; repo?: string }> },
+  pool: {
+    machine: string;
+    slots: Array<{ id: string; repo?: string; resources?: Record<string, unknown> }>;
+  },
   ws: { farmslotDir: string; reposDir: string },
 ): string[] {
   const missing: string[] = [];
@@ -339,6 +351,14 @@ export function findMissingState(
       const slotId = `${pool.machine}-${short}-${n}`;
       const slot = slots.get(slotId);
       if (!slot) missing.push(`slot ${slotId} not in pool`);
+      // Slots created before platform defaults existed lack their device/browser
+      // resource forever (registerSlot preserves user edits) — escalate so the
+      // repair path can backfill.
+      if (slot) {
+        for (const key of platformResourceKeys(proj.platform)) {
+          if (!slot.resources?.[key]) missing.push(`slot ${slotId} missing ${key} resource`);
+        }
+      }
       // Respect an operator-repointed slot repo: check the pool's actual path,
       // not the derived default — otherwise every re-add re-clones an orphan.
       const repoPath = slot?.repo ?? join(ws.reposDir, `${short}-${n}`);
@@ -454,8 +474,23 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
         if (added) {
           writePool(poolPath, pool);
           progress.step({ label: `slot ${slotId} registered`, detail: state.pool_file });
-        } else {
-          progress.info(`slot ${slotId} already in pool — left untouched`);
+        } else if (existing) {
+          // Backfill platform resources missing on slots created before
+          // defaultResources existed. Merge-only: user-edited values win.
+          const defaults = defaultResources(registered.platform, registered.short, n, pool);
+          const backfill = Object.fromEntries(
+            Object.entries(defaults).filter(([key]) => !existing.resources?.[key]),
+          );
+          if (Object.keys(backfill).length > 0) {
+            existing.resources = { ...backfill, ...existing.resources };
+            writePool(poolPath, pool);
+            progress.step({
+              label: `slot ${slotId} resources backfilled`,
+              detail: Object.keys(backfill).join(', '),
+            });
+          } else {
+            progress.info(`slot ${slotId} already in pool — left untouched`);
+          }
         }
 
         // Existing lifecycle scripts own fixtures, setup, and hook expansion;

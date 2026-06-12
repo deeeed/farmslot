@@ -91,6 +91,15 @@ test('defaultResources allocates cdp ports clear of taken ones', () => {
   assert.deepEqual(defaultResources('browser', 'x', 2, p), { browser: { cdp_port: 9501 } });
 });
 
+test('defaultResources cdp allocation skips ports taken by other resource blocks', () => {
+  const p = pool([
+    { id: 'm-y-1', repo: '/a', session: 'y-1', resources: { 'dev-server': { port: 9500 } } },
+  ]);
+  assert.deepEqual(defaultResources('chrome-extension', 'y', 1, p), {
+    browser: { cdp_port: 9501 },
+  });
+});
+
 test('registerSlot never clobbers an existing slot', () => {
   const p = pool([{ id: 'm-a-1', repo: '/user-edited', session: 'a-1' }]);
   const added = registerSlot(p, { id: 'm-a-1', repo: '/new', session: 'a-1' });

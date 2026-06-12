@@ -22,6 +22,8 @@ load_project_config || { echo "FAIL: no project config for ${SLOT_ID}"; exit 1; 
 # {{farmslot_dir}}: local = this checkout, remote = node agent deployment dir
 # (mirrors sync-fixtures.sh and the gateway's expandTemplate). Without it the
 # placeholder expands empty and hook paths resolve from filesystem root.
+# Not exported on purpose: hooks consume the {{farmslot_dir}} placeholder
+# (expanded before eval/ssh), never a $FARMSLOT_DIR env var.
 if is_local "$HOST" "$MACHINE"; then
   FARMSLOT_DIR="${PROJECT_DIR}"
 else

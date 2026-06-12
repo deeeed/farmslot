@@ -138,6 +138,20 @@ export function allocatePort(pool: PoolConfig, from: number = PORT_BLOCK_START):
 /** First CDP port handed out for browser slots — separate block from dev servers. */
 export const CDP_PORT_BLOCK_START = 9500;
 
+/** Resource type each platform's slots require beyond the dev server. */
+const PLATFORM_RESOURCE_TYPE: Record<string, string> = {
+  ios: 'ios-sim',
+  android: 'android-emu',
+  'chrome-extension': 'browser',
+  browser: 'browser',
+};
+
+/** Resource keys a slot of this platform must carry (single source for checks). */
+export function platformResourceKeys(platform: string): string[] {
+  const type = PLATFORM_RESOURCE_TYPE[platform];
+  return type ? [type] : [];
+}
+
 /**
  * Platform-default slot resources beyond the dev-server port. Without these,
  * pack-created non-cli slots fail setup/preflight ({{simulator}} etc. expand
@@ -151,13 +165,14 @@ export function defaultResources(
   n: number,
   pool: PoolConfig,
 ): Record<string, Record<string, unknown>> {
-  if (platform === 'ios') {
+  const type = PLATFORM_RESOURCE_TYPE[platform];
+  if (type === 'ios-sim') {
     return { 'ios-sim': { simulator: `${short}-${n}`, headless: true } };
   }
-  if (platform === 'android') {
+  if (type === 'android-emu') {
     return { 'android-emu': { avd: `${short}-${n}` } };
   }
-  if (platform === 'chrome-extension' || platform === 'browser') {
+  if (type === 'browser') {
     return { browser: { cdp_port: allocatePort(pool, CDP_PORT_BLOCK_START) } };
   }
   return {};
