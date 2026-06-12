@@ -172,6 +172,12 @@ if ! (cd "$CLONE" && yarn workspace @farmslot/recipe-harness build >"$build_log"
   tail -40 "$build_log"
   fail "workspace package build failed in ${CLONE}" "full log: ${build_log}"
 fi
+echo "  building Command Center dashboard ..."
+ui_build_log="${WORKSPACE}/.install-ui-build.log"
+if ! (cd "${CLONE}/apps/command-center/ui" && yarn build >"$ui_build_log" 2>&1); then
+  tail -40 "$ui_build_log"
+  fail "Command Center UI build failed in ${CLONE}" "full log: ${ui_build_log}"
+fi
 FARMSLOT_BIN="${CLONE}/packages/cli/bin/farmslot.mjs"
 "$FARMSLOT_BIN" --version >/dev/null || fail "farmslot CLI failed to run" "check the yarn install output above"
 green "  [OK] farmslot CLI runs"
