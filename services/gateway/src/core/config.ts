@@ -115,7 +115,6 @@ export interface RawProjectJson {
   name?: string;
   repo_url?: string;
   default_branch?: string;
-  skip_prepare_requires_health?: boolean;
   recipe_run_supports_playback_slow?: boolean;
   recipe_run_supports_video_recording?: boolean;
   apps?: string[];

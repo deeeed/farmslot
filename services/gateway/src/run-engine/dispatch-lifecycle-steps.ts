@@ -1,12 +1,10 @@
 import { Events, type Run } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
-import { expandHook } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { dispatchExecute, nudgeDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
-import { runHealthCheck } from '../methods/slot/check.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import { runnerNeedsPostLaunchPrompt } from '../runners/registry.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
@@ -26,42 +24,6 @@ interface RunEngineFlags {
   skipPrepare?: true;
   warmRecovery?: true;
   nudgeReuse?: true;
-}
-
-interface WarmPrepareHealth {
-  ok: boolean;
-  detail: string;
-}
-
-const WARM_PREPARE_HEALTH_TIMEOUT_MS = 10_000;
-
-async function projectRequiresLiveWarmPrepareHealth(run: Run): Promise<boolean> {
-  const slotVars = run.slotId ? await loadSlotVars(run.slotId) : null;
-  const projectVars = await loadProjectVars(run.project || slotVars?.projectName || '');
-  return projectVars.projectJson.skip_prepare_requires_health === true;
-}
-
-async function checkWarmPrepareHealth(run: Run): Promise<WarmPrepareHealth> {
-  if (!run.slotId) return { ok: false, detail: 'No slot assigned' };
-  const slotVars = await loadSlotVars(run.slotId);
-  const projectVars = await loadProjectVars(run.project || slotVars.projectName);
-  const healthHook = expandHook('health_check', projectVars.projectJson, slotVars, projectVars);
-  if (!healthHook) {
-    return { ok: false, detail: `Project ${run.project} has no health_check hook` };
-  }
-  const readyIndicator = getProjectField(projectVars.projectJson, 'health.ready_indicator');
-  const parseCmd = getProjectField(projectVars.projectJson, 'health.parse_health');
-  const value = await runHealthCheck(slotVars, healthHook, parseCmd, {
-    timeoutMs: WARM_PREPARE_HEALTH_TIMEOUT_MS,
-    logPrefix: 'run-engine',
-  });
-  if (value && (!readyIndicator || value === readyIndicator)) {
-    return { ok: true, detail: value };
-  }
-  return {
-    ok: false,
-    detail: `health_check failed (value=${value || 'none'}${readyIndicator ? `, expected=${readyIndicator}` : ''})`,
-  };
 }
 
 export interface PrepareStepContext {
@@ -98,29 +60,22 @@ export async function executePrepareStep(
     ...(current.startRef ? { startRef: current.startRef.requestedRef } : {}),
   };
 
-  // Skip prepare if flag set (warm slot reuse). Eval replays must always run
-  // prepare because that step installs and verifies the pinned recipe harness;
-  // reject before any slot/project lookup so this invariant is hermetic.
+  // skipPrepare is the pure binary "run no preparation at all" — the operator
+  // owns slot state, no health gating attached (ADR-037 §5). Verified reuse is
+  // a prepare profile (e.g. attach) with requires/fallback, not a gated skip.
+  // Eval replays must always run prepare because that step installs and
+  // verifies the pinned recipe harness; reject before any slot/project lookup
+  // so this invariant is hermetic.
   const flags = getRunFlags(runId);
-  let skipPrepare = flags?.skipPrepare === true;
+  const skipPrepare = flags?.skipPrepare === true;
   if (skipPrepare && current.engineState?.evalExperiment) {
     throw new Error(
       'Eval replay cannot skip prepare; prepare installs and verifies the pinned recipe harness.',
     );
   }
-  if (skipPrepare && (await projectRequiresLiveWarmPrepareHealth(current))) {
-    const warmHealth = await checkWarmPrepareHealth(current);
-    inputs.warmSlotHealth = warmHealth.detail;
-    if (!warmHealth.ok) {
-      skipPrepare = false;
-      console.warn(
-        `[run-engine] warm skip rejected for ${runId.slice(0, 8)} on ${current.slotId}: ${warmHealth.detail}; running full prepare`,
-      );
-    }
-  }
   if (skipPrepare) {
-    console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (warm slot)`);
-    return { inputs, outputs: { skipped: true, reason: 'warm-slot' } };
+    console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (operator skip)`);
+    return { inputs, outputs: { skipped: true, reason: 'operator-skip' } };
   }
 
   // Build cliCommand early so it's available on failure too. startRef is
