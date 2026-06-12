@@ -5,7 +5,7 @@
   "schema_version": "recipe-v1",
   "references": [
     "https://github.com/deeeed/audiolab/issues/414",
-    "/Volumes/c910ssd/dev/audiolab/apps/playground"
+    "projects/audiolab-farm/project.json and AUDIOLAB_REPO/apps/playground"
   ],
   "proofTargets": [
     {

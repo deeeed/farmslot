@@ -1,16 +1,16 @@
 # Docusaurus demo stage fixtures and video generation
 
-Status: planning support doc  
-Primary first-slice goal: `docs/plans/docusaurus-first-real-run-video-goal.md`  
+Status: planning support doc
+Primary first-slice goal: `docs/plans/docusaurus-first-real-run-video-goal.md`
 Parent media goal: `docs/plans/docusaurus-recipe-demo-media-goal.md`
 
 ## References
 
 - Farmslot demo issue: https://github.com/deeeed/farmslot/issues/28
 - Audiolab demo issue: https://github.com/deeeed/audiolab/issues/414
-- Farmslot repo: `/Users/deeeed/dev/farmslot`
-- Audiolab repo: `/Volumes/c910ssd/dev/audiolab`
-- EchoBridge repo: `/Volumes/c910ssd/dev/echobridge_monorepo`
+- Farmslot repo: the Farmslot checkout
+- Audiolab repo: `AUDIOLAB_REPO` / `projects/audiolab-farm/project.json`
+- EchoBridge repo: `ECHOBRIDGE_REPO` / `projects/echobridge-farm/project.json`
 - First video output:
   - `apps/docs/static/videos/demos/command-center-parallel-watch.mp4`
   - `apps/docs/static/img/demos/command-center-parallel-watch.png`

@@ -1,7 +1,7 @@
 # First real-run Docusaurus video goal
 
-Status: proposed first slice  
-Use as: `/goal docs/plans/docusaurus-first-real-run-video-goal.md`  
+Status: proposed first slice
+Use as: `/goal docs/plans/docusaurus-first-real-run-video-goal.md`
 Parent plan: `docs/plans/docusaurus-recipe-demo-media-goal.md`
 
 ## Goal
@@ -10,11 +10,11 @@ Prove the end-to-end workflow for **one** public-safe Docusaurus demo video befo
 
 ## First video target
 
-**Title:** Command Center parallel watch-and-steer  
-**Output:** one 8-15s MP4 + one extracted PNG poster frame  
-**Destination:** `apps/docs/static/videos/demos/command-center-parallel-watch.mp4` and `apps/docs/static/img/demos/command-center-parallel-watch.png`  
-**Must show:** multiple live terminal/worker panes, run statuses, monitoring, and allowed project labels only.  
-**Allowed projects:** Audiolab, EchoBridge, Farmslot self-demo.  
+**Title:** Command Center parallel watch-and-steer
+**Output:** one 8-15s MP4 + one extracted PNG poster frame
+**Destination:** `apps/docs/static/videos/demos/command-center-parallel-watch.mp4` and `apps/docs/static/img/demos/command-center-parallel-watch.png`
+**Must show:** multiple live terminal/worker panes, run statuses, monitoring, and allowed project labels only.
+**Allowed projects:** Audiolab, EchoBridge, Farmslot self-demo.
 **Forbidden:** private repos, private paths, tokens, notifications, work terminals.
 
 ## References

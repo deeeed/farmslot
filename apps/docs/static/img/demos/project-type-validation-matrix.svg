@@ -34,7 +34,7 @@
   <text x="76" y="145" class="title">Many stacks, one operating loop</text>
   <text x="76" y="188" class="subtitle">Bring each project type into the same dispatch, watch, validate, review, and improve workflow.</text>
 
-  
+
   <g transform="translate(76 220)">
     <rect width="500" height="118" rx="24" fill="#101a2b" stroke="#70f2b4" stroke-width="3" />
     <circle cx="58" cy="59" r="30" fill="#70f2b4" opacity="0.22" />

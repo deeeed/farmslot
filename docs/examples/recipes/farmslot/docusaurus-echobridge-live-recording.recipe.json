@@ -4,7 +4,7 @@
   "description": "Launch the real EchoBridge app on its configured iOS simulator, install public-safe local auth fixtures, start a real app recorder session, capture simulator video/screenshot proof, and stop the recorder cleanly.",
   "schema_version": "recipe-v1",
   "references": [
-    "/Volumes/c910ssd/dev/echobridge_monorepo/apps/echobridge",
+    "projects/echobridge-farm/project.json and ECHOBRIDGE_REPO/apps/echobridge",
     "projects/echobridge-farm/project.json",
     "configured EchoBridge simulator from project env/pool config"
   ],
