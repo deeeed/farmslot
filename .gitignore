@@ -9,6 +9,7 @@ pool/*.json
 
 # Generated runtime artifacts and overlays; never commit transient Farmslot state.
 temp/
+.agent/
 
 # Co-pilot session history (raw JSON, transient)
 copilot/sessions/

@@ -1,0 +1,61 @@
+{
+  "id": "docusaurus-echobridge-live-recording",
+  "title": "Docusaurus EchoBridge live-recording demo capture",
+  "description": "Launch the real EchoBridge app on its configured iOS simulator, install public-safe local auth fixtures, start a real app recorder session, capture simulator video/screenshot proof, and stop the recorder cleanly.",
+  "schema_version": "recipe-v1",
+  "references": [
+    "/Volumes/c910ssd/dev/echobridge_monorepo/apps/echobridge",
+    "projects/echobridge-farm/project.json",
+    "configured EchoBridge simulator from project env/pool config"
+  ],
+  "proofTargets": [
+    {
+      "id": "configured-runtime",
+      "claim": "Farmslot can launch and control the real EchoBridge iOS app through its configured simulator and Metro port."
+    },
+    {
+      "id": "live-recording-behavior",
+      "claim": "The demo is captured from a real EchoBridge recorder session with visible timer, waveform, size, pause/stop controls, and Recipe Protocol artifacts."
+    }
+  ],
+  "validate": {
+    "workflow": {
+      "entry": "launch-echobridge",
+      "nodes": {
+        "launch-echobridge": {
+          "action": "app.launch",
+          "description": "Launch EchoBridge using configured IOS_SIMULATOR/WATCHER_PORT from pool/project/.env defaults.",
+          "next": "prepare-public-safe-session",
+          "proofTarget": "configured-runtime"
+        },
+        "prepare-public-safe-session": {
+          "action": "fixture.apply",
+          "description": "Grant simulator microphone/notification permissions and install public-safe local auth fixtures.",
+          "next": "start-live-recording"
+        },
+        "start-live-recording": {
+          "action": "app.recording.start",
+          "description": "Start a real EchoBridge recording session through the app bridge and wait for isRecording=true.",
+          "next": "record-live-proof",
+          "proofTarget": "live-recording-behavior"
+        },
+        "record-live-proof": {
+          "action": "capture.video",
+          "description": "Record the iOS simulator while the EchoBridge recorder timer, waveform, and controls are live; capture final screenshot proof.",
+          "record": "proof_window",
+          "next": "stop-live-recording",
+          "proofTarget": "live-recording-behavior"
+        },
+        "stop-live-recording": {
+          "action": "app.recording.stop",
+          "description": "Stop the recorder after the docs proof media is captured.",
+          "next": "done"
+        },
+        "done": {
+          "action": "end",
+          "status": "pass"
+        }
+      }
+    }
+  }
+}

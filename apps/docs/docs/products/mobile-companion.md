@@ -8,7 +8,7 @@ Mobile Companion is the phone-native supervision surface for Farmslot.
 
 It is not intended to replicate every desktop workflow. The target scope is to keep the operator in the loop when away from the desk: awareness, quick decisions, artifact inspection, terminal observation, voice capture, and targeted intervention.
 
-<img class="product-image" src="/img/mockups/mobile-companion.svg" alt="Illustrated Mobile Companion product mockup" />
+<img class="product-image" src="/img/demos/companion-mobile-supervision.png" alt="Mobile Companion showing active runs, proof artifacts, slot details, and terminal actions" />
 
 ## Target scope
 

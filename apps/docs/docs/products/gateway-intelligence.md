@@ -8,7 +8,7 @@ Gateway Intelligence is the operator-facing automation layer that makes Farmslot
 
 It reduces coordination toil while keeping evidence, decisions, and escalation paths visible.
 
-<img class="product-image" src="/img/mockups/gateway-intelligence.svg" alt="Illustrated Gateway Intelligence loop" />
+<video class="product-image" src="/videos/demos/command-center-gateway-intelligence.mp4" poster="/img/demos/command-center-gateway-intelligence.png" controls muted playsinline preload="metadata" aria-label="Gateway intelligence answering a fleet status question from Command Center"></video>
 
 ## Product jobs
 

@@ -49,43 +49,65 @@ const productPillars = [
   },
 ];
 
-const demoCards = [
-  {
-    title: 'Watch and steer a supervised run',
-    status: 'Recipe-backed poster',
-    image: '/img/demos/command-center-recipe-workspace.svg',
-    alt: 'Recipe-backed Command Center workspace with stream, recipe controls, artifacts, and graph visible',
-    body: 'Show dispatch, slot assignment, live stream visibility, recipe controls, and how the human reviews evidence before trusting the result.',
-    provenance: 'Generated from docs/examples/recipes/farmslot/command-center-ui.recipe.json.',
-  },
-  {
-    title: 'Recipe evidence run',
-    status: 'Recipe-backed poster',
-    image: '/img/demos/recipe-evidence-run.svg',
-    alt: 'Recipe-backed live replay result with stream, runner logs, and generated artifacts',
-    body: 'Show a recipe run turning setup, real actions, visual validation, assertions, and proof artifacts into review evidence.',
-    provenance: 'Generated from docs/examples/recipes/farmslot/recipe-player-e2e.recipe.json.',
-  },
-  {
-    title: 'Project-type framework',
-    status: 'Video fallback',
-    image: '/img/demos/project-type-framework.svg',
-    alt: 'Recipe-backed poster showing Audiolab and EchoBridge as public demo project integrations',
-    body: 'Show the same operating loop across approved public demo targets while keeping private work projects out of launch media.',
-    provenance:
-      'Generated from the demo media script and backed by Audiolab/EchoBridge Recipe v1 runners.',
-  },
-  {
-    title: 'Companion mobile supervision',
-    status: 'Recipe-backed poster',
-    image: '/img/demos/mobile-companion-artifacts.svg',
-    alt: 'Recipe-backed mobile companion evidence review screen',
-    body: 'Show the operator checking workers, terminal status, and run progress from the mobile companion without losing control.',
-    provenance: 'Generated from docs/examples/recipes/farmslot/mobile-companion.recipe.json.',
-    portrait: true,
-  },
-];
+const commandCenterDemo = {
+  title: 'Command Center parallel watch-and-steer',
+  status: 'Real recipe video',
+  poster: '/img/demos/command-center-parallel-watch.png',
+  video: '/videos/demos/command-center-parallel-watch.mp4',
+  alt: 'Command Center monitoring multiple Farmslot runs in parallel terminal panes',
+  body: 'Command Center gives you a live cockpit for parallel agent work: see each slot, watch terminals move, steer a run before it drifts, and keep enough context to make a decision while the work is still active.',
+};
 
+const gatewayIntelligenceDemo = {
+  title: 'Gateway intelligence from Command Center',
+  status: 'Real recipe video',
+  poster: '/img/demos/command-center-gateway-intelligence.png',
+  video: '/videos/demos/command-center-gateway-intelligence.mp4',
+  alt: 'Command Center showing gateway intelligence answering a fleet status question',
+  body: 'Gateway intelligence turns fleet state into an operator assistant: ask what is running, which slots need attention, or where proof artifacts live without manually scanning every terminal and run card.',
+};
+
+const humanReadyGateDemo = {
+  title: 'Human ready gate',
+  status: 'Real Command Center screenshot',
+  image: '/img/demos/command-center-human-ready-gate.png',
+  alt: 'Command Center ready workspace showing a human approval gate with package evidence, recipe artifacts, quality checks, and approve or extra-review actions',
+  body: 'Ready gates make agent output reviewable before it becomes your code: inspect the package, app behavior, validation results, diff, and quality checks, then approve, request another review, or send feedback to keep steering.',
+};
+
+const recipeEvidenceDemo = {
+  title: 'Recipe evidence validation loop',
+  status: 'Validation trail',
+  image: '/img/demos/recipe-evidence-validation-loop.png',
+  alt: 'Validation board assembled from recipe summary, trace, and artifact manifest files',
+  body: 'Recipes make validation repeatable: instead of trusting a final claim, you can replay the actions, assertions, screenshots, videos, traces, summaries, and manifests behind the result.',
+};
+
+const projectTypeMatrixDemo = {
+  title: 'Project-type framework',
+  status: 'Concept diagram',
+  image: '/img/demos/project-type-validation-matrix.svg?v=20260612b',
+  alt: 'Labeled architecture diagram showing how mobile apps, web apps, CLIs, services, desktop apps, and headless systems fit into one Farmslot proof loop',
+  body: 'Farmslot is not tied to one stack. Model each project type with hooks, resources, and recipes, then supervise them through the same dispatch, validation, review, and retrospective loop.',
+};
+
+const companionSupervisionDemo = {
+  title: 'Companion mobile supervision',
+  status: 'Real app screenshot',
+  image: '/img/demos/companion-mobile-supervision.png',
+  portrait: true,
+  alt: 'Farmslot Companion mobile app showing active runs with evidence, recipe, diff, slot, and terminal actions',
+  body: 'The Companion app keeps the operating loop available away from the workstation: check active runs, inspect proof artifacts, see slot and terminal state, and stay close to approvals when you step away.',
+};
+
+const demoItems = [
+  commandCenterDemo,
+  gatewayIntelligenceDemo,
+  humanReadyGateDemo,
+  recipeEvidenceDemo,
+  companionSupervisionDemo,
+  projectTypeMatrixDemo,
+];
 const feedbackSteps = [
   ['Run', 'Execute in an isolated slot with live logs, artifacts, and human decision gates.'],
   ['Observe', 'Capture terminal streams, screenshots, traces, summaries, and reviewer notes.'],
@@ -115,22 +137,16 @@ function HomepageHeader() {
           <div className={styles.heroInstall} aria-label="One-line installer">
             <CodeBlock language="bash">{INSTALL_COMMAND}</CodeBlock>
             <span className={styles.heroInstallHint}>
-              One command — checks prerequisites, sets up the workspace, ends with a green{' '}
-              <code>farmslot doctor</code>.
+              One command — checks prerequisites, sets up the workspace, ends with a{' '}
+              <span className={styles.noWrap}>
+                green <code>farmslot doctor</code>
+              </span>
+              .
             </span>
           </div>
           <div className={styles.buttons}>
             <Link className="button button--secondary button--lg" to="/docs/guides/getting-started">
               Get started
-            </Link>
-            <Link
-              className={clsx(
-                'button button--outline button--secondary button--lg',
-                styles.heroOutlineButton,
-              )}
-              to="/docs/intro"
-            >
-              Read the docs
             </Link>
             <Link
               className={clsx(
@@ -148,10 +164,15 @@ function HomepageHeader() {
             <span>Watch-and-steer loop</span>
             <strong>Demo-ready</strong>
           </div>
-          <img
+          <video
             className={styles.heroPoster}
-            src="/img/demos/recipe-evidence-run.svg"
-            alt="Recipe-backed poster preview of the Farmslot recipe evidence loop"
+            src={commandCenterDemo.video}
+            poster={commandCenterDemo.poster}
+            aria-label={commandCenterDemo.alt}
+            autoPlay
+            loop
+            muted
+            playsInline
           />
           <div className={styles.loopRow} aria-label="Operating loop steps">
             {operatingLoop.map((item) => (
@@ -172,8 +193,8 @@ function LatestAdditions() {
           <strong>Active development preview</strong>
           <span>
             Farmslot is moving quickly while the product is finalized in one repo. Experimental
-            features, large/transient files, APIs, runner contracts, fixtures, and docs may change
-            while the project matures.
+            features, large/transient files, APIs, runner contracts, and docs may change while the
+            project matures.
           </span>
         </div>
         <div className={styles.sectionHeader}>
@@ -204,39 +225,53 @@ function DemoSection() {
     <section className={clsx('homepage-section', styles.demoSection)}>
       <div className="container">
         <div className={styles.sectionHeader}>
-          <span className={styles.sectionEyebrow}>Demo plan</span>
-          <Heading as="h2">Each short clip should explain one product promise.</Heading>
+          <span className={styles.sectionEyebrow}>Capabilities</span>
+          <Heading as="h2">What Farmslot helps you operate.</Heading>
           <p>
-            The best demos are reproducible feature explainers: dispatch real work, watch and steer
-            it live, validate with recipes, review the evidence, and regenerate the screenshots or
-            clips from the same proof path.
+            These examples show what Farmslot lets you do: coordinate active agent work, turn
+            validation into reusable proof, and supervise different project types through one
+            operating loop. The same workflow scales from live terminals to review gates, mobile
+            supervision, and repeatable validation.
           </p>
         </div>
-        <div className={styles.demoGrid}>
-          {demoCards.map((demo) => (
-            <article
-              className={clsx(styles.demoCard, demo.portrait && styles.demoCardPortrait)}
-              key={demo.title}
-            >
-              <div className={styles.posterFrame}>
-                <img src={demo.image} alt={demo.alt} loading="lazy" />
+        <div className={styles.demoShowcase}>
+          {demoItems.map((demo) => (
+            <article className={styles.featuredDemoCard} key={demo.title}>
+              <div className={styles.featuredPosterFrame}>
+                {'video' in demo ? (
+                  <video
+                    className={clsx(styles.demoVideo, demo.portrait && styles.portraitDemo)}
+                    src={demo.video}
+                    poster={demo.poster}
+                    aria-label={demo.alt}
+                    controls
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : (
+                  <img
+                    className={styles.demoVideo}
+                    src={demo.image}
+                    alt={demo.alt}
+                    loading="eager"
+                  />
+                )}
                 <span className={styles.videoBadge}>{demo.status}</span>
               </div>
               <div className={styles.demoCardBody}>
                 <div className={styles.demoMeta}>{demo.status}</div>
                 <Heading as="h3">{demo.title}</Heading>
                 <p>{demo.body}</p>
-                <small className={styles.demoProvenance}>{demo.provenance}</small>
               </div>
             </article>
           ))}
         </div>
         <div className={styles.inlineCallout}>
-          <span>Recording checklist</span>
+          <span>Regeneration path</span>
           <p>
-            These cards now use recipe-backed public-safe poster frames. Short videos can replace
-            them later when recipe-level video capture is available; until then the poster is the
-            documented fallback.
+            Want the implementation details behind these examples? The recording plan documents how
+            each visual is reproduced and verified.
           </p>
           <Link to="/docs/guides/demo-recording-plan">View recording plan →</Link>
         </div>

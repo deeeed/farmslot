@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" role="img" aria-labelledby="title desc">
+  <title id="title">Farmslot project-type validation matrix diagram</title>
+  <desc id="desc">A labeled schema diagram showing many project types flowing through the same Farmslot dispatch, supervision, recipe proof, and human-gate loop.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f" />
+      <stop offset="0.62" stop-color="#0c1728" />
+      <stop offset="1" stop-color="#123323" />
+    </linearGradient>
+    <marker id="arrowHead" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,8 L11,4 z" fill="#78ffc3" />
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; }
+      .eyebrow { fill: #83f8c2; font-size: 20px; font-weight: 900; letter-spacing: .10em; text-transform: uppercase; }
+      .title { fill: #f7fffb; font-size: 58px; font-weight: 900; }
+      .subtitle { fill: #d8e7f8; font-size: 25px; font-weight: 650; }
+      .cardTitle { fill: #ffffff; font-size: 34px; font-weight: 900; }
+      .cardText { fill: #c8d7e8; font-size: 22px; font-weight: 750; }
+      .flowTitle { fill: #ffffff; font-size: 28px; font-weight: 900; }
+      .flowText { fill: #cde1f4; font-size: 18px; font-weight: 750; }
+      .pill { fill: #102f25; stroke: #57efae; stroke-width: 2; }
+      .pillText { fill: #aaffd9; font-size: 17px; font-weight: 850; letter-spacing: .04em; }
+      .arrow { stroke: #78ffc3; stroke-width: 4; fill: none; marker-end: url(#arrowHead); opacity: .95; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="800" fill="url(#bg)" />
+  <circle cx="1050" cy="86" r="210" fill="#1ed08a" opacity="0.13" />
+  <circle cx="144" cy="725" r="250" fill="#6563ff" opacity="0.12" />
+
+  <text x="76" y="76" class="eyebrow">Labeled schema diagram — not a product screenshot</text>
+  <text x="76" y="145" class="title">Many stacks, one operating loop</text>
+  <text x="76" y="188" class="subtitle">Bring each project type into the same dispatch, watch, validate, review, and improve workflow.</text>
+
+  
+  <g transform="translate(76 220)">
+    <rect width="500" height="118" rx="24" fill="#101a2b" stroke="#70f2b4" stroke-width="3" />
+    <circle cx="58" cy="59" r="30" fill="#70f2b4" opacity="0.22" />
+    <text x="104" y="54" class="cardTitle">Mobile apps</text>
+    <text x="104" y="88" class="cardText">simulators, devices, app proof</text>
+  </g>
+
+  <g transform="translate(636 220)">
+    <rect width="500" height="118" rx="24" fill="#101a2b" stroke="#8ec8ff" stroke-width="3" />
+    <circle cx="58" cy="59" r="30" fill="#8ec8ff" opacity="0.22" />
+    <text x="104" y="54" class="cardTitle">Web apps</text>
+    <text x="104" y="88" class="cardText">browsers, CDP, visual checks</text>
+  </g>
+
+  <g transform="translate(76 380)">
+    <rect width="500" height="118" rx="24" fill="#101a2b" stroke="#d0a1ff" stroke-width="3" />
+    <circle cx="58" cy="59" r="30" fill="#d0a1ff" opacity="0.22" />
+    <text x="104" y="54" class="cardTitle">CLIs &amp; services</text>
+    <text x="104" y="88" class="cardText">commands, daemons, logs, APIs</text>
+  </g>
+
+  <g transform="translate(636 380)">
+    <rect width="500" height="118" rx="24" fill="#101a2b" stroke="#ffcf70" stroke-width="3" />
+    <circle cx="58" cy="59" r="30" fill="#ffcf70" opacity="0.22" />
+    <text x="104" y="54" class="cardTitle">Desktop &amp; headless</text>
+    <text x="104" y="88" class="cardText">native apps, workers, jobs</text>
+  </g>
+
+  <g transform="translate(76 570)">
+    <rect width="255" height="96" rx="24" fill="#13243a" stroke="#2f4b70" stroke-width="2" />
+    <text x="26" y="40" class="flowTitle">Real run</text>
+    <text x="26" y="70" class="flowText">app / CLI / service</text>
+  </g>
+  <path d="M352 618 H444" class="arrow" />
+  <g transform="translate(462 570)">
+    <rect width="255" height="96" rx="24" fill="#0f3127" stroke="#57efae" stroke-width="3" />
+    <text x="26" y="40" class="flowTitle">Recipe proof</text>
+    <text x="26" y="70" class="flowText">actions + assertions</text>
+  </g>
+  <path d="M738 618 H830" class="arrow" />
+  <g transform="translate(848 570)">
+    <rect width="356" height="96" rx="24" fill="#13243a" stroke="#2f4b70" stroke-width="2" />
+    <text x="26" y="40" class="flowTitle">Command Center / Companion</text>
+    <text x="26" y="70" class="flowText">ready gates + review evidence</text>
+  </g>
+
+  <g transform="translate(76 705)">
+    <rect width="348" height="42" rx="21" class="pill" />
+    <text x="22" y="27" class="pillText">project adapters</text>
+  </g>
+  <g transform="translate(466 705)">
+    <rect width="356" height="42" rx="21" class="pill" />
+    <text x="22" y="27" class="pillText">no standalone app demo cards</text>
+  </g>
+  <g transform="translate(864 705)">
+    <rect width="340" height="42" rx="21" class="pill" />
+    <text x="22" y="27" class="pillText">regenerate via recipes</text>
+  </g>
+</svg>

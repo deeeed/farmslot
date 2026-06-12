@@ -1,160 +1,195 @@
 ---
 title: Demo recording plan
-description: Public-safe recording specs and storyboards for Farmslot landing page demos.
+description: Public-safe recording specs and regeneration commands for Farmslot landing page demos.
 ---
 
 # Demo recording plan
 
-The landing page now uses recipe-backed public-safe poster frames from `apps/docs/static/img/demos/`. They are generated from checked-in Farmslot recipe fixtures or from the demo media generation script. Final short clips should be added later under `apps/docs/static/videos/demos/` and wired back into the same cards after sanitization. Keep detailed narration drafts outside the public docs until they become stable product-facing copy.
+The landing page uses checked-in, recipe-produced demo media:
 
-Current poster frames represent real Farmslot surfaces:
+| Landing asset                            | Committed files                                                                                                                                                                                                                    | Regeneration command                                                                                                                                                                                            |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command Center parallel watch-and-steer  | `apps/docs/static/videos/demos/command-center-parallel-watch.mp4`<br />`apps/docs/static/img/demos/command-center-parallel-watch.png`                                                                                              | `yarn --cwd apps/docs capture:first-video --artifacts-dir .agent/demo-stage/docusaurus-command-center-parallel/output --copy-to-docs`                                                                           |
+| Gateway intelligence from Command Center | `apps/docs/static/videos/demos/command-center-gateway-intelligence.mp4`<br />`apps/docs/static/img/demos/command-center-gateway-intelligence.png`<br />`apps/docs/static/img/demos/command-center-gateway-intelligence-answer.png` | `yarn --cwd apps/docs capture:gateway-intelligence --artifacts-dir .agent/demo-stage/docusaurus-gateway-intelligence/output --copy-to-docs`                                                                     |
+| Human ready gate                         | `apps/docs/static/img/demos/command-center-human-ready-gate.png`                                                                                                                                                                   | `yarn --cwd apps/docs capture:human-ready-gate --artifacts-dir .agent/demo-stage/docusaurus-human-ready-gate/output --copy-to-docs`                                                                             |
+| Recipe evidence validation loop          | `apps/docs/static/img/demos/recipe-evidence-validation-loop.png`                                                                                                                                                                   | `yarn --cwd apps/docs capture:recipe-evidence --artifacts-dir .agent/demo-stage/docusaurus-recipe-evidence-loop/output --source-dir .agent/demo-stage/docusaurus-command-center-parallel/output --copy-to-docs` |
+| Companion mobile supervision             | `apps/docs/static/img/demos/companion-mobile-supervision.png`                                                                                                                                                                      | `yarn --cwd apps/docs capture:companion-supervision --artifacts-dir .agent/demo-stage/docusaurus-companion-supervision/output --copy-to-docs`                                                                   |
+| Project-type validation matrix           | `apps/docs/static/img/demos/project-type-validation-matrix.svg`                                                                                                                                                                    | `yarn --cwd apps/docs capture:project-type-matrix --artifacts-dir .agent/demo-stage/docusaurus-project-type-validation-matrix/output --copy-to-docs`                                                            |
 
-- **Command Center supervised run**: Command Center ready/review recipe workspace fixture.
-- **Recipe evidence run**: live recipe player fixture with stream, logs, and typed artifacts.
-- **Project-type framework**: Audiolab + EchoBridge public demo integration poster.
-- **Companion mobile supervision**: mobile companion recipe evidence fixture.
+The Companion supervision card is captured from the real Companion development app on the configured `fs-companion-1` simulator against a public-safe fixture gateway. It does **not** regenerate store screenshots and must not use `apps/companion/scripts/screenshots/capture-store-screenshots.sh`.
 
-## Reproduce current poster frames
+The project-type validation matrix is a clearly labeled architecture/schema diagram, not a product screenshot. Raw external app screenshots must appear only as evidence artifacts inside Command Center or Companion surfaces, not as standalone landing cards.
 
-Regenerate committed poster frames from repository fixtures:
+The Command Center capture recipe opens real Command Center, applies a public-safe filter, verifies multiple terminal panes, records while sending visible steering input, and writes proof artifacts. The docs media then burns in a visible Recipe runner HUD overlay with `yarn --cwd apps/docs overlay:runner-hud` so the public clip shows the runner/proof layer, not just a dashboard.
 
-```bash
-yarn --cwd apps/docs generate:demos
-```
-
-| Landing card                  | Committed asset                                                  | Provenance                                                                                                        |
-| ----------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Command Center supervised run | `apps/docs/static/img/demos/command-center-recipe-workspace.svg` | `docs/examples/recipes/farmslot/command-center-ui.recipe.json` plus its checked-in artifact package.              |
-| Recipe evidence run           | `apps/docs/static/img/demos/recipe-evidence-run.svg`             | `docs/examples/recipes/farmslot/recipe-player-e2e.recipe.json` plus its checked-in artifact package.              |
-| Project-type framework        | `apps/docs/static/img/demos/project-type-framework.svg`          | `apps/docs/scripts/generate-demo-media.mjs`, summarizing approved Audiolab and EchoBridge Recipe v1 integrations. |
-| Companion mobile supervision  | `apps/docs/static/img/demos/mobile-companion-artifacts.svg`      | `docs/examples/recipes/farmslot/mobile-companion.recipe.json` plus its checked-in artifact package.               |
-
-Reset path: delete `apps/docs/static/img/demos/*`, rerun `yarn --cwd apps/docs generate:demos`, and discard any unrelated local recipe-run output under project `.agent/` directories.
-
-## Validate project-type poster claims
-
-The project-type framework poster is a summary card, so validate it against the public demo project recipes before recording or publishing a replacement clip.
-
-Audiolab:
-
-```bash
-cd <audiolab-checkout>/apps/playground
-IOS_SIMULATOR=playground-1 WATCHER_PORT=7365 yarn ios
-WATCHER_PORT=7365 node scripts/agentic/recipe-v1/run-recipe-v1.mjs run \
-  scripts/agentic/recipe-v1/recipes/smoke.navigation.recipe.json \
-  --artifacts-dir /tmp/audiolab-recipe-smoke \
-  --device playground-1
-```
-
-EchoBridge:
-
-```bash
-cd <echobridge-checkout>/apps/echobridge
-IOS_SIMULATOR=echodev-1 yarn ios
-node scripts/agentic/recipe-v1/run-recipe-v1.mjs validate \
-  scripts/agentic/recipe-v1/recipes/smoke.navigation.recipe.json
-node scripts/agentic/recipe-v1/run-recipe-v1.mjs validate \
-  scripts/agentic/recipe-v1/recipes/recording.sync.lifecycle.recipe.json
-node scripts/agentic/recipe-v1/run-recipe-v1.mjs run \
-  scripts/agentic/recipe-v1/recipes/recording.sync.lifecycle.recipe.json \
-  --artifacts-dir /tmp/echobridge-recipe-sync \
-  --device web
-```
-
-Use the project-configured simulator names. The current EchoBridge iOS simulator is `echodev-1`; do not rename it for docs capture.
+- `.agent/demo-stage/docusaurus-command-center-parallel/output/summary.json`
+- `.agent/demo-stage/docusaurus-command-center-parallel/output/trace.json`
+- `.agent/demo-stage/docusaurus-command-center-parallel/output/artifact-manifest.json`
 
 ## Public-safety checklist
 
-Before committing a screenshot or video, verify that it contains none of the following:
+Before copying a screenshot or video into `apps/docs/static/`, visually inspect it and confirm it contains none of:
 
-- real private repository names, customer names, Jira IDs, tokens, secrets, wallet addresses, or API keys;
-- real machine names, private hostnames, local absolute paths, or home-directory usernames;
-- private chat, email, browser history, or notification content;
-- proprietary product details that are not intended for public docs;
-- private work project names or screenshots until cleared for public use.
+- uncleared work project names, private farm aliases, or private repository names;
+- tokens, secrets, financial/account identifiers, customer/Jira data, notifications, private chats, browser history;
+- private absolute paths or local usernames;
+- private repository screens that are not explicitly approved for public docs.
 
-Prefer demo projects, fixture data, Audiolab, EchoBridge, and generic labels such as “example app”, “demo slot”, and “recipe evidence”. Re-record instead of blurring if private data appears.
+Use approved public demo targets only: Farmslot self-demo, Audiolab, EchoBridge, Companion, or generic demo labels.
 
-## Recommended format
+## First video recipe
 
-| Asset        | Recommendation                                                                                 |
-| ------------ | ---------------------------------------------------------------------------------------------- |
-| Duration     | 4–15 seconds for committed clips; longer demos should be hosted externally.                    |
-| Aspect ratio | 16:9 for Command Center; 9:16 is acceptable for Companion.                                     |
-| Resolution   | 1080p maximum unless the clip needs more detail.                                               |
-| Poster       | Extract a real frame from the video and inspect it before publishing.                          |
-| Captions     | Nearby page text must explain the clip because videos are muted by default.                    |
-| File size    | Keep committed clips small; use external hosting for large videos.                             |
-| Naming       | `command-center-run`, `recipe-evidence-run`, `project-type-framework`, `mobile-companion-run`. |
+Recipe metadata:
 
-## Storyboards
-
-Prefer one narrated clip per product promise. The key phrase is **watch and steer**: demos should show the human guiding the agent while work is happening, not merely watching a final report.
-
-### 1. Command Center supervised run
-
-Show the operator following work through the control plane.
-
-1. Start from the sanitized flow graph or run-control fixture.
-2. Show the orchestration path: find slot, dispatch, monitor, review, feedback, publish gate.
-3. Show a human decision or review state.
-4. End with the controlled completion path.
-
-### 2. Recipe evidence run
-
-Show how a recipe turns acceptance criteria into proof.
-
-1. Start from a recipe graph with setup, validate, and teardown lanes.
-2. Show action and assertion nodes.
-3. Show recipe-run provenance or selected evidence.
-4. End on a reviewable artifact state.
-
-### 3. Project-type framework
-
-Show that Farmslot is not one-app-specific.
-
-1. Show Audiolab and EchoBridge as approved public demo targets.
-2. Show each project exposing hooks/capabilities through Recipe v1.
-3. End on the shared artifact package shape.
-
-### 4. Companion mobile supervision
-
-Show that supervision does not require sitting at the workstation.
-
-1. Open the mobile companion on a sanitized fixture profile.
-2. Show active run status.
-3. Navigate to fleet or terminal status.
-4. Keep private gateway settings and machine-specific profiles out of frame.
-
-## Capture commands for future clips
-
-When final videos are ready, capture Command Center clips from the real dev harness served on port `5174`, encode with `ffmpeg`, and extract poster frames from the MP4 files.
-
-Companion was captured from an installed iOS development build with store-screenshot fixtures enabled:
-
-```bash
-# Terminal 1: sanitized Companion fixture bundle
-cd apps/companion
-env APP_VARIANT=development \
-  BUNDLE_ID=<your-dev-bundle-id> \
-  METRO_PORT=7688 RCT_METRO_PORT=7688 \
-  EXPO_PUBLIC_STORE_SCREENSHOTS=1 \
-  EXPO_PUBLIC_GATEWAY_URL= \
-  yarn expo start --dev-client --port 7688 --host lan --scheme farmslot-development
-
-# Terminal 2: launch the real iOS app against that bundle
-xcrun simctl openurl <ios-simulator> \
-  '<dev-client-scheme>://expo-development-client/?url=http%3A%2F%2F<lan-ip>%3A7688'
+```text
+docs/examples/recipes/farmslot/docusaurus-command-center-parallel-watch.recipe.json
 ```
 
-Then record with `xcrun simctl io <ios-simulator> recordVideo`, drive deep links such as `farmslot-development://runs`, and extract a poster frame with `ffmpeg -frames:v 1`.
+Run it from the repository root:
+
+```bash
+yarn --cwd apps/docs capture:first-video \
+  --artifacts-dir .agent/demo-stage/docusaurus-command-center-parallel/output \
+  --copy-to-docs
+```
+
+The capture script reuses an existing debug Chrome on `FARMSLOT_DEMO_CDP_PORT` when available, otherwise launches the dedicated profile with notifications disabled. During the MP4 recording it sends safe demo commands into the visible terminal panes so the clip demonstrates watch-and-steer, not just a static dashboard.
+
+Useful overrides:
+
+```bash
+FARMSLOT_DEMO_CDP_PORT=9324 \
+FARMSLOT_DEMO_CAPTURE_SECONDS=12 \
+yarn --cwd apps/docs capture:first-video \
+  --artifacts-dir .agent/demo-stage/docusaurus-command-center-parallel/output \
+  --copy-to-docs
+```
+
+## Companion mobile supervision screenshot
+
+Recipe metadata:
+
+```text
+docs/examples/recipes/farmslot/docusaurus-companion-supervision.recipe.json
+```
+
+Regenerate the real Companion simulator capture and docs copy:
+
+```bash
+yarn --cwd apps/docs capture:companion-supervision \
+  --artifacts-dir .agent/demo-stage/docusaurus-companion-supervision/output \
+  --copy-to-docs
+```
+
+This command launches the real Companion development build on the configured simulator, points it at a LAN-reachable public-safe fixture gateway, verifies real `fleet.status` and `run.list` websocket requests, records a simulator MP4/poster/final screenshot, and writes `summary.json`, `trace.json`, and `artifact-manifest.json`. It pre-approves notifications/camera/microphone permissions and suppresses the dev-menu onboarding/floating button for clean public media. It must not regenerate Companion store screenshots.
+
+## Project-type validation matrix
+
+Recipe metadata:
+
+```text
+docs/examples/recipes/farmslot/docusaurus-project-type-validation-matrix.recipe.json
+```
+
+Regenerate the labeled schema diagram from the repository root:
+
+```bash
+yarn --cwd apps/docs capture:project-type-matrix \
+  --artifacts-dir .agent/demo-stage/docusaurus-project-type-validation-matrix/output \
+  --copy-to-docs
+```
+
+This is intentionally a generated SVG diagram. It backs the project-type framework claim without pretending to be a product screenshot. AudioLab and EchoBridge evidence remains in recipe artifact packages until a Farmslot UI surface embeds it as review/ready-gate evidence.
+
+## Recipe evidence screenshot
+
+Recipe metadata:
+
+```text
+docs/examples/recipes/farmslot/docusaurus-recipe-evidence-loop.recipe.json
+```
+
+Run it after the Command Center capture exists:
+
+```bash
+yarn --cwd apps/docs capture:recipe-evidence \
+  --artifacts-dir .agent/demo-stage/docusaurus-recipe-evidence-loop/output \
+  --source-dir .agent/demo-stage/docusaurus-command-center-parallel/output \
+  --copy-to-docs
+```
+
+This capture reads the real `summary.json`, `trace.json`, `artifact-manifest.json`, and `recipe.json` from the Command Center capture output, renders a public-safe evidence board, verifies required artifact labels, and screenshots it. It is intentionally a screenshot, not a video, because the evidence package is static data.
+
+## Gateway intelligence from Command Center video
+
+Recipe metadata:
+
+```text
+docs/examples/recipes/farmslot/docusaurus-gateway-intelligence.recipe.json
+```
+
+Run it from the repository root:
+
+```bash
+yarn --cwd apps/docs capture:gateway-intelligence \
+  --artifacts-dir .agent/demo-stage/docusaurus-gateway-intelligence/output \
+  --copy-to-docs
+```
+
+This capture opens Command Center with public demo project filters, opens the intelligence drawer through Cmd+K, types a public-safe fleet-status question, waits for the live gateway answer, scans the visible page for forbidden labels, records an MP4, extracts a poster, and captures a final screenshot of the answer.
+
+## Human ready gate screenshot
+
+Recipe metadata:
+
+```text
+docs/examples/recipes/farmslot/docusaurus-human-ready-gate.recipe.json
+```
+
+Regenerate the Command Center ready-gate screenshot:
+
+```bash
+yarn --cwd apps/docs capture:human-ready-gate \
+  --artifacts-dir .agent/demo-stage/docusaurus-human-ready-gate/output \
+  --copy-to-docs
+```
+
+This capture starts a public-safe fixture gateway, opens the real Command Center UI at the slot ready workspace, verifies the human gate actions (`Approve Publish`, `Extra Review`), package evidence, recipe, quality, and diff tabs are visible, scans the rendered page for forbidden labels, and writes `summary.json`, `trace.json`, and `artifact-manifest.json`. It is a screenshot rather than a video because the gate is a review decision surface; motion should be recorded only when manually steering or approving the gate.
+
+## Backing app evidence captures
+
+AudioLab and EchoBridge app captures are backing evidence for the project-type framework claim. They are not standalone landing demos. If used publicly, show them inside a Command Center ready/review gate or Companion artifact/evidence surface.
+
+Recipe metadata:
+
+```text
+docs/examples/recipes/farmslot/docusaurus-audiolab-sample-banner.recipe.json
+docs/examples/recipes/farmslot/docusaurus-echobridge-live-recording.recipe.json
+```
+
+Regenerate local evidence packages from the repository root:
+
+```bash
+yarn --cwd apps/docs capture:audiolab-demo \
+  --artifacts-dir .agent/demo-stage/docusaurus-audiolab-sample-banner/output
+
+yarn --cwd apps/docs capture:echobridge-demo \
+  --artifacts-dir .agent/demo-stage/docusaurus-echobridge-live-recording/output
+```
+
+Only copy selected app media into `apps/docs/static/` when a Farmslot UI demo embeds that media as an artifact in Command Center or Companion.
+
+Current validated backing packages:
+
+- AudioLab: `.agent/demo-stage/docusaurus-audiolab-sample-banner/output/summary.json` (`playground-1`, `WATCHER_PORT=7365`). The capture drives the real Import screen, presses `load-sample-button`, verifies `FARMSLOT DEMO: SAMPLE AUDIO LOADED`, records the configured simulator with `xcrun simctl io`, extracts the poster from the MP4, and restores the temporary fixture.
+- EchoBridge: `.agent/demo-stage/docusaurus-echobridge-live-recording/output/summary.json` (`echodev-1`, `WATCHER_PORT=7600`). The capture installs only the local public-safe auth fixture, starts a real recorder session, verifies `isRecording=true`, records the configured simulator with `xcrun simctl io`, extracts the poster from the MP4, captures the final screenshot, and stops the recorder.
 
 ## Validation checklist
 
-- Regenerate posters with `yarn --cwd apps/docs generate:demos`.
+- Run the capture command above.
+- Run `yarn --cwd apps/docs overlay:runner-hud` after regenerating Command Center videos.
+- Inspect the produced MP4 and poster frame visually; Command Center clips must show the Recipe runner HUD, and Companion screenshots must show real run/evidence supervision rather than a fallback/store mock.
+- Confirm each capture output has `summary.json`, `trace.json`, and `artifact-manifest.json` referencing the produced media.
 - Build the docs site with `yarn docs:build`.
-- Serve the site locally and verify the landing page poster frames render.
-- When final clips are added, verify the landing page videos render.
-- Extract at least one frame from every committed MP4 and inspect it visually.
-- Verify Companion fixture mode on a real simulator/device when the mobile clip changes.
-- Keep raw capture files in `/tmp`; only commit compressed MP4s and poster frames.
+- Serve/open Docusaurus locally and verify the landing hero video and demo section render.
+- Do not add more landing videos until the first clip passes this loop.

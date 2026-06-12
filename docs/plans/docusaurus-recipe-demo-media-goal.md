@@ -6,18 +6,26 @@ Supports: `docs/ROADMAP-next.md` real-run capture gaps, Generic Recipe Protocol 
 
 ## Goal
 
-Replace Docusaurus mock/fallback demo media with public-safe screenshots and short clips captured from **real Farmslot runs**. Media must be recipe-owned, reproducible, visually inspected, and free of `metamask-*` or private work data. Audiolab, EchoBridge, Companion, and Farmslot self-hosting are allowed targets.
+Replace Docusaurus mock/fallback demo media with public-safe screenshots and short clips captured from **real Farmslot runs**. Media must be recipe-owned, reproducible, visually inspected, and free of uncleared work project names or private work data. Audiolab, EchoBridge, Companion, and Farmslot self-hosting are allowed targets.
+
+## References
+
+- Farmslot demo issue: https://github.com/deeeed/farmslot/issues/28
+- Audiolab demo issue: https://github.com/deeeed/audiolab/issues/414
+- Demo stage/capture doc: `docs/plans/docusaurus-demo-stage-fixtures-and-video-generation.md`
 
 ## Demo targets to confirm
 
 | Target                                  | Real run/task                                                                                                        | Media                                                                             | Must show                                                                           |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | Command Center parallel watch-and-steer | Dispatch 2-3 real demo tasks across `audiolab-farm`, `echobridge-farm`, and/or a Farmslot self-worktree              | 16:9 screenshot + 8-15s clip                                                      | multiple live terminals/worker panes, run statuses, monitoring, allowed labels only |
+| Human ready/review gate                 | Completed/PR-review workspace for an allowed demo run                                                                | 16:9 screenshot + 8-15s clip if interaction is visible                            | human can accept/continue steering after the agent says work is done                |
+| Gateway intelligence Cmd+K              | Command Center live gateway state on allowed/demo-filtered fleet                                                     | 16:9 screenshot + short clip                                                      | operator opens Cmd+K and asks about fleet/run status                                |
 | Farmslot fixes itself                   | Reversible `DO NOT MERGE` Farmslot debug-panel/demo task, like Audiolab #414                                         | 16:9 screenshot + clip                                                            | dispatch, diff/review workspace, recipe proof, “Farmslot building Farmslot”         |
 | Audiolab public demo                    | Use https://github.com/deeeed/audiolab/issues/414: debug banner after sample audio load                              | iOS/Web/Android screenshots + optional clip                                       | recipe opens Import, asserts banner absent, taps Load Sample, asserts exact banner  |
 | EchoBridge public demo                  | Equivalent reversible `DO NOT MERGE` EchoBridge task, e.g. debug indicator after sample recording sync/record action | iOS screenshot + optional clip; web/CDP validation if native inspector is limited | real EchoBridge interaction, trace, screenshot artifact                             |
 | Recipe evidence/proof view              | Command Center on one completed Audiolab/EchoBridge/Farmslot demo recipe run                                         | 16:9 screenshot + optional clip                                                   | graph/steps, assertions, screenshot/video artifact, provenance                      |
-| Companion supervision                   | Sanitized Companion store-screenshot/fixture recipe mode for the same demo family                                    | portrait screenshot + optional clip                                               | active runs, fleet/workers, recipe/evidence/terminal entry points                   |
+| Companion supervision                   | Real Companion development app with sanitized fixture gateway for the same demo family                               | portrait screenshot + optional clip                                               | active runs, fleet/workers, recipe/evidence/terminal entry points                   |
 | Architecture diagram                    | Generated SVG only                                                                                                   | SVG                                                                               | simplified project integration model; not fake demo media                           |
 
 ## Required pipeline
@@ -31,7 +39,7 @@ Replace Docusaurus mock/fallback demo media with public-safe screenshots and sho
 
 ## Public-safety rules
 
-Allowed names: Farmslot, Audiolab, EchoBridge, Companion, generic demo slots/tasks. Forbidden in media/copy: `metamask-*`, private repos, Jira/customer data, tokens, wallet addresses, local absolute paths, notifications, private terminals. Prefer re-recording over blurring.
+Allowed names: Farmslot, Audiolab, EchoBridge, Companion, generic demo slots/tasks. Forbidden in media/copy: uncleared work project names, private repos, Jira/customer data, tokens, account identifiers, local absolute paths, notifications, private terminals. Prefer re-recording over blurring.
 
 ## Acceptance criteria
 
@@ -42,3 +50,16 @@ Allowed names: Farmslot, Audiolab, EchoBridge, Companion, generic demo slots/tas
 - EchoBridge has Audiolab-style recipe integration and one validated artifact package.
 - Companion media is tied to sanitized demo run data.
 - `yarn docs:build` passes; Docusaurus is served, opened in browser, and visually verified.
+
+## 2026-06-12 progress
+
+- Command Center watch-and-steer video implemented via `yarn --cwd apps/docs capture:first-video --artifacts-dir .agent/demo-stage/docusaurus-command-center-parallel/output --copy-to-docs`.
+- Recipe evidence validation loop implemented via `yarn --cwd apps/docs capture:recipe-evidence --artifacts-dir .agent/demo-stage/docusaurus-recipe-evidence-loop/output --source-dir .agent/demo-stage/docusaurus-command-center-parallel/output --copy-to-docs`.
+- Gateway intelligence Cmd+K video implemented via `yarn --cwd apps/docs capture:gateway-intelligence --artifacts-dir .agent/demo-stage/docusaurus-gateway-intelligence/output --copy-to-docs`.
+- Human ready/review gate media was quarantined and removed from the landing page after visual inspection found broken/irrelevant evidence thumbnails and confusing fixture text. It remains a required future clean capture from a real/sanitized ready or PR-review workspace.
+- AudioLab and EchoBridge capture recipes now validate e2e as backing app evidence packages only; they must be surfaced through Command Center/Companion evidence gates, not standalone landing cards. Latest validated outputs:
+  - AudioLab: `.agent/demo-stage/docusaurus-audiolab-sample-banner/output/summary.json`, configured simulator `playground-1`, Metro `7365`, real Import screen + sample-load banner proof.
+  - EchoBridge: `.agent/demo-stage/docusaurus-echobridge-live-recording/output/summary.json`, configured simulator `echodev-1`, Metro `7600`, real live recorder proof.
+- Companion mobile supervision screenshot now uses the real Companion development app on configured simulator `fs-companion-1` with a public-safe fixture gateway: `yarn --cwd apps/docs capture:companion-supervision --artifacts-dir .agent/demo-stage/docusaurus-companion-supervision/output --copy-to-docs`. The capture verifies real websocket requests (`fleet.status`, `run.list`), records simulator video/poster/screenshot, pre-approves permissions, suppresses dev-menu overlays, and does not regenerate store screenshots.
+- Remaining required targets: final validation of Audiolab/EchoBridge backing evidence surfacing and a clean human ready/review gate capture. Project-type overview/validation matrix and Companion supervision now have docs media paths. Command Center videos require/keep a visible recipe runner HUD in the MP4 and in the Docusaurus hero/demo card rendering.
+- 2026-06-12 priority update: gateway intelligence via Cmd+K is covered. The human gate after a task completes in a ready or PR-review workspace is still the most important missing demo and must not be re-added until the actual visible evidence is clean.
