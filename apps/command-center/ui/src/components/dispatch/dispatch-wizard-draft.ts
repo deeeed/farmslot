@@ -56,6 +56,31 @@ export function projectApps(
   return configs.find((project) => project.name === projectName)?.apps ?? [];
 }
 
+export interface PrepareProfileOption {
+  name: string;
+  label: string;
+  isDefault: boolean;
+}
+
+export function projectPrepareProfiles(
+  configs: ReadonlyArray<{
+    name: string;
+    prepare?: import('@farmslot/protocol').ProjectPrepareConfig;
+  }>,
+  projectName: string,
+): PrepareProfileOption[] {
+  const prepare = configs.find((project) => project.name === projectName)?.prepare;
+  if (!prepare) return [];
+  // Mirrors gateway resolvePrepareProfile: prepare.default, else a profile
+  // literally named "full" is the implicit default.
+  const defaultName = prepare.default ?? ('full' in prepare.profiles ? 'full' : '');
+  return Object.entries(prepare.profiles).map(([name, profile]) => ({
+    name,
+    label: profile.label || name,
+    isDefault: name === defaultName,
+  }));
+}
+
 export function syncSelectedAppForProject(apps: ReadonlyArray<string>, currentApp: string): string {
   if (apps.length <= 1) return '';
   return apps.includes(currentApp) ? currentApp : (apps[0] ?? '');

@@ -20,6 +20,7 @@ interface PrepareOptions {
   mergeMain?: boolean;
   flowType?: string;
   app?: string;
+  prepareProfile?: string;
   var?: Record<string, string>;
 }
 
@@ -124,6 +125,10 @@ export function registerSlotCommand(program: Command): void {
     .option('--flow-type <type>', 'Flow type')
     .option('--app <path>', 'Project-specific app selector, e.g. apps/sherpa-voice')
     .option(
+      '--prepare-profile <name>',
+      "Named prepare profile from the project's prepare.profiles (ADR-037)",
+    )
+    .option(
       '--var <key=value>',
       'Project-scoped var passed to preflight as FARMSLOT_VAR_<KEY> (repeatable)',
       (value: string, acc: Record<string, string>) => {
@@ -145,6 +150,7 @@ export function registerSlotCommand(program: Command): void {
           mergeMain: opts.mergeMain,
           flowType: opts.flowType,
           app: opts.app,
+          prepareProfile: opts.prepareProfile,
           vars: Object.keys(vars).length > 0 ? vars : undefined,
         };
         if (output.json) {

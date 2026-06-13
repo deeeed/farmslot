@@ -28,6 +28,7 @@ export interface DispatchPayloadDraft {
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
   skipPrepare?: boolean;
+  prepareProfile?: string;
   reviewTier?: string;
   nudgeReuse?: boolean;
   freshReuse?: boolean;
@@ -62,6 +63,7 @@ export function buildRunCreateParams(input: DispatchPayloadDraft): RunCreatePara
     app: input.app,
     taskTemplate: input.taskTemplate,
     skipPrepare: input.skipPrepare,
+    prepareProfile: input.skipPrepare ? undefined : input.prepareProfile,
     nudgeReuse: input.nudgeReuse,
     freshReuse: input.freshReuse,
     mode: input.mode,
@@ -79,6 +81,7 @@ export function buildDispatchQueueAddParams(input: DispatchPayloadDraft): Dispat
     project: input.project,
     ticketOrPr: input.ticketOrPr,
     app: input.app,
+    prepareProfile: input.skipPrepare ? undefined : input.prepareProfile,
     taskTemplate: input.taskTemplate,
     model: input.model,
     runner: input.runner,

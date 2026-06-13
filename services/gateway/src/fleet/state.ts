@@ -22,7 +22,11 @@ import type {
   TmuxWorkerFilterConfig,
 } from '@farmslot/protocol';
 
-import { normalizeRawProjectAutoRecovery, normalizeRawProjectBacklog } from '../core/config.js';
+import {
+  normalizeRawProjectAutoRecovery,
+  normalizeRawProjectBacklog,
+  normalizeRawProjectPrepare,
+} from '../core/config.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
 import { enrichSlotHostLoad, getAllMachineHealth } from './node-health.js';
@@ -679,6 +683,7 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         }
         const autoRecovery = normalizeRawProjectAutoRecovery(raw.auto_recovery);
         const backlog = normalizeRawProjectBacklog(raw.backlog);
+        const prepare = normalizeRawProjectPrepare(raw.prepare, raw.name || dir);
         const publicationReview = normalizePublicationReview(raw);
         projects.push({
           name: raw.name || dir,
@@ -780,6 +785,7 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
             : {}),
           ...(autoRecovery ? { autoRecovery } : {}),
           ...(backlog ? { backlog } : {}),
+          ...(prepare ? { prepare } : {}),
           ...(publicationReview ? { publicationReview } : {}),
         });
       } catch {

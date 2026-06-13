@@ -24,6 +24,7 @@ import {
   renderVariantInput,
 } from './dispatch-wizard-banners-renderer.js';
 import { renderDispatchCandidateSelection } from './dispatch-wizard-candidates-renderer.js';
+import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
 import type { PublicationReviewLoopDraft } from './dispatch-wizard-draft.js';
 import { renderDispatchWizardPrimaryControls } from './dispatch-wizard-primary-controls-renderer.js';
 import {
@@ -55,6 +56,8 @@ interface DispatchWizardViewContext {
   effort: EffortLevel;
   reviewTier: '' | 'light' | 'standard' | 'full';
   skipPrepare: boolean;
+  prepareProfiles: readonly PrepareProfileOption[];
+  prepareProfile: string;
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
   comparisonLane: boolean;
@@ -91,6 +94,7 @@ interface DispatchWizardViewContext {
   setEffort: (effort: EffortLevel) => void;
   setReviewTier: (reviewTier: '' | 'light' | 'standard' | 'full') => void;
   setSkipPrepare: (skipPrepare: boolean) => void;
+  setPrepareProfile: (prepareProfile: string) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
   openEvals: () => void;
   forkFromPriorRun: (run: Run) => void;
@@ -163,6 +167,8 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
         effort: ctx.effort,
         reviewTier: ctx.reviewTier,
         skipPrepare: ctx.skipPrepare,
+        prepareProfiles: ctx.prepareProfiles,
+        prepareProfile: ctx.prepareProfile,
         mode: ctx.mode,
         devInteractiveProfile: ctx.devInteractiveProfile,
         appLabel: ctx.appLabel,
@@ -176,6 +182,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
         setEffort: ctx.setEffort,
         setReviewTier: ctx.setReviewTier,
         setSkipPrepare: ctx.setSkipPrepare,
+        setPrepareProfile: ctx.setPrepareProfile,
         setDevInteractiveProfile: ctx.setDevInteractiveProfile,
       })}
       ${renderVariantInput({

@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import test from 'node:test';
 
-import { invalidateProjectVarsCache, poolDir, projectsDir } from '../core/config.js';
 import { createRun } from '../runs/store.js';
 
 import { executePrepareStep } from './dispatch-lifecycle-steps.js';
@@ -110,7 +106,7 @@ test('eval harness resolved sha parsing only accepts standalone sha lines', () =
   assert.equal(parseResolvedHarnessSha(`prefix ${sha}`), undefined);
   assert.equal(parseResolvedHarnessSha(`${sha}\nnot-a-sha`), sha);
 });
-test('executePrepareStep rejects warm-slot skip for eval replay', async (t) => {
+test('executePrepareStep rejects skip-prepare for eval replay', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
     mode: 'autonomous',
@@ -147,75 +143,17 @@ test('executePrepareStep rejects warm-slot skip for eval replay', async (t) => {
   );
 });
 
-test('executePrepareStep accepts warm-slot skip when parsed project health is ready', async (t) => {
-  const suffix = `warm-health-${process.pid}-${Date.now()}`;
-  const projectName = `example-${suffix}`;
-  const slotId = `slot-${suffix}`;
-  const repo = await mkdtemp(path.join(os.tmpdir(), `${suffix}-repo-`));
-  const projectDir = path.join(projectsDir, projectName);
-  const poolFile = path.join(poolDir, `${slotId}.json`);
-  await mkdir(projectDir, { recursive: true });
-  await mkdir(poolDir, { recursive: true });
-  await writeFile(
-    path.join(projectDir, 'project.json'),
-    JSON.stringify(
-      {
-        skip_prepare_requires_health: true,
-        health: {
-          ready_indicator: 'WalletView',
-          parse_health:
-            'python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get(\\"route\\", \\"\\"))"',
-        },
-        hooks: {
-          health_check: `printf '%s\\n' '{"ready":true,"route":"WalletView"}'`,
-        },
-      },
-      null,
-      2,
-    ),
-  );
-  await writeFile(
-    poolFile,
-    JSON.stringify(
-      {
-        machine: 'local-test',
-        project: projectName,
-        platform: 'ios',
-        os: 'darwin',
-        host: 'localhost',
-        ssh_user: 'test',
-        slots: [
-          {
-            id: slotId,
-            project: projectName,
-            repo,
-            session: slotId,
-            enabled: true,
-            mode: 'dispatch',
-            resources: { 'dev-server': { port: 6553 } },
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-  );
-  invalidateProjectVarsCache(projectName);
-  t.after(async () => {
-    invalidateProjectVarsCache(projectName);
-    await rm(poolFile, { force: true });
-    await rm(projectDir, { recursive: true, force: true });
-    await rm(repo, { recursive: true, force: true });
-  });
-
+test('executePrepareStep honours binary operator skip without health gating', async (t) => {
+  // skipPrepare is "run no preparation at all" (ADR-037 §5): the step must
+  // return before any slot/project lookup, so no pool/project fixtures exist.
   const run = createRun({
     flowType: 'fix-bug',
     mode: 'autonomous',
-    project: projectName,
-    ticketOrPr: 'WARM-HEALTH',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'OPERATOR-SKIP',
     runner: 'codex',
-    slotId,
-    branch: 'warm-health',
+    slotId: 'runner-mobile-1',
+    branch: 'operator-skip',
   });
   t.after(async () => {
     await deleteTestRunIfPresent(run.id);
@@ -229,6 +167,5 @@ test('executePrepareStep accepts warm-slot skip when parsed project health is re
     stepPartialIO: new Map(),
   });
 
-  assert.deepEqual(result.outputs, { skipped: true, reason: 'warm-slot' });
-  assert.equal(result.inputs?.warmSlotHealth, 'WalletView');
+  assert.deepEqual(result.outputs, { skipped: true, reason: 'operator-skip' });
 });

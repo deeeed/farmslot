@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
 
-import { DEFAULT_BRANCH, type SlotPrepareParams } from '@farmslot/protocol';
+import { DEFAULT_BRANCH, type PreparePhase, type SlotPrepareParams } from '@farmslot/protocol';
 
 import {
   applyProjectCommandEnv,
@@ -54,6 +54,11 @@ import {
   PREPARE_PREFLIGHT_TIMEOUT_MS,
   runPrepareCommand,
 } from './prepare-command.js';
+import {
+  buildDepsSentinelWriteCommand,
+  type ResolvedPrepareProfile,
+  selectPrepareProfile,
+} from './prepare-profile.js';
 import {
   acquirePrepareSentinel,
   type PrepareSentinelLock,
@@ -331,8 +336,26 @@ async function slotPrepareInner(
       .replaceAll('~/farmslot-node/scripts/', `${hookSupportDir}/scripts/`);
   };
 
-  const expandPrepareHook = (hookName: string): string =>
-    remapHookSupport(expandHook(hookName, projectJson, vars, projectVars));
+  // Selected prepare profile (ADR-037). Assigned right after the SSH check;
+  // undefined only for steps that run before selection, none of which are
+  // phase-gated or hook-expanding.
+  let prepareProfile: ResolvedPrepareProfile | undefined;
+  const profileName = (): string => prepareProfile?.name ?? 'full';
+  const phaseEnabled = (phase: PreparePhase): boolean =>
+    !prepareProfile || prepareProfile.phases.has(phase);
+  // Every hook a prepare runs sees the selected profile, so a single project
+  // script can branch on FARMSLOT_PREPARE_PROFILE instead of per-profile hooks.
+  // Subshell form keeps the wrapper safe inside `a && b` chains.
+  const withProfileEnv = (cmd: string): string =>
+    `( export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}; ${cmd} )`;
+
+  const expandPrepareHook = (hookName: string): string => {
+    const override = prepareProfile?.hooks[hookName];
+    const cmd = override
+      ? expandTemplate(override, vars, projectVars)
+      : expandHook(hookName, projectJson, vars, projectVars);
+    return remapHookSupport(cmd);
+  };
 
   const installEvalRecipeHarness = async () => {
     if (!params.runId) return;
@@ -359,7 +382,34 @@ async function slotPrepareInner(
   step('ssh', `Connected to ${vars.sshTarget}`);
   await materializeHookSupport();
 
-  // 1b. Device existence check (fail fast)
+  // 1b. Resolve prepare profile (ADR-037): explicit request → prepare.default →
+  // implicit full. Precondition failures walk the project's declared fallback
+  // chain; every check and transition is logged as a prepare sub-step.
+  const profileSelection = await selectPrepareProfile(
+    { vars, projectJson, projectVars, runtimeDir },
+    params.prepareProfile,
+    (candidate, result) =>
+      step(
+        'profile',
+        `[${candidate}] ${result.requirement} ${result.ok ? 'ok' : 'fail'} — ${result.detail}`,
+      ),
+  );
+  for (const fb of profileSelection.fallbacks) {
+    step('profile', `Profile '${fb.from}' preconditions failed (${fb.reason}); falling back to '${fb.to}'`);
+  }
+  prepareProfile = profileSelection.profile;
+  if (!phaseEnabled('git') && (branch || mergeMain)) {
+    // Branch targeting and mergeMain are run-level (flow-driven) parameters; a
+    // profile that omits git must not silently prepare the wrong ref.
+    prepareProfile.phases.add('git');
+    step('profile', `git phase forced on: run supplies ${branch ? `branch ${branch}` : 'mergeMain'}`);
+  }
+  step(
+    'profile',
+    `Prepare profile '${prepareProfile.name}' — phases: ${[...prepareProfile.phases].join(', ')}`,
+  );
+
+  // 1c. Device existence check (fail fast)
   const iosSim = vars.resourceVars.simulator ?? '';
   const androidAvd = vars.resourceVars.avd ?? '';
   if (vars.platform === 'ios' && iosSim) {
@@ -389,8 +439,17 @@ async function slotPrepareInner(
   }
 
   let fixturesSynced = false;
+  // Fixtures are framework file materialization (template render + copy), not a
+  // project hook invocation, so they intentionally do not receive
+  // FARMSLOT_PREPARE_PROFILE — ADR-037's "every hook" covers deps/preflight/
+  // health/unlock, which run project-owned commands.
   const syncFixtures = async () => {
     if (fixturesSynced) return;
+    if (!phaseEnabled('fixtures')) {
+      step('fixtures', `Fixtures sync skipped (profile ${profileName()})`);
+      fixturesSynced = true;
+      return;
+    }
     checkAborted();
     step('fixtures', 'Syncing fixtures...');
     const syncLogPath = phaseLog('fixtures');
@@ -415,34 +474,40 @@ async function slotPrepareInner(
     )
   ).stdout.trim();
 
-  if (!branch && current && current !== defaultBranch) {
-    throw new Error(
-      `Slot is on '${current}', expected '${defaultBranch}'. Run release-slot.sh first.`,
-    );
-  }
+  if (!phaseEnabled('git')) {
+    // Profiles without the git phase reuse the slot's current checkout. Branch
+    // and mergeMain runs can never reach here — selection forces git on for them.
+    step('branch', `git sync skipped (profile ${profileName()}; HEAD stays on '${current || 'unknown'}')`);
+  } else {
+    if (!branch && current && current !== defaultBranch) {
+      throw new Error(
+        `Slot is on '${current}', expected '${defaultBranch}'. Run release-slot.sh first.`,
+      );
+    }
 
-  // 2b. Force local view of origin/HEAD to defaultBranch.
-  // `gh pr create` defaults to refs/remotes/origin/HEAD when --base is omitted, so a drifted
-  // symbolic ref silently produces wrong-base PRs. Reset it every prepare and hard-fail if
-  // it still doesn't match — this is the single gate per CLAUDE.md.
-  step('origin-head', `Resetting origin/HEAD to ${defaultBranch}...`);
-  await execOnSlot(
-    vars,
-    `cd ${shellQuote(vars.remoteRepo)} && git remote set-head origin ${shellQuote(defaultBranch)} 2>/dev/null`,
-  );
-  const originHead = (
+    // 2b. Force local view of origin/HEAD to defaultBranch.
+    // `gh pr create` defaults to refs/remotes/origin/HEAD when --base is omitted, so a drifted
+    // symbolic ref silently produces wrong-base PRs. Reset it every prepare and hard-fail if
+    // it still doesn't match — this is the single gate per CLAUDE.md.
+    step('origin-head', `Resetting origin/HEAD to ${defaultBranch}...`);
     await execOnSlot(
       vars,
-      `cd ${shellQuote(vars.remoteRepo)} && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null`,
-    )
-  ).stdout.trim();
-  const expectedHead = `refs/remotes/origin/${defaultBranch}`;
-  if (originHead !== expectedHead) {
-    throw new Error(
-      `origin/HEAD is '${originHead || 'unset'}' (expected '${expectedHead}'). Refusing to dispatch — gh pr create would default to the wrong base.`,
+      `cd ${shellQuote(vars.remoteRepo)} && git remote set-head origin ${shellQuote(defaultBranch)} 2>/dev/null`,
     );
+    const originHead = (
+      await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null`,
+      )
+    ).stdout.trim();
+    const expectedHead = `refs/remotes/origin/${defaultBranch}`;
+    if (originHead !== expectedHead) {
+      throw new Error(
+        `origin/HEAD is '${originHead || 'unset'}' (expected '${expectedHead}'). Refusing to dispatch — gh pr create would default to the wrong base.`,
+      );
+    }
+    step('origin-head', `origin/HEAD = ${expectedHead}`);
   }
-  step('origin-head', `origin/HEAD = ${expectedHead}`);
 
   if (branch) {
     step('branch', `Checking out ${branch}...`);
@@ -722,27 +787,33 @@ async function slotPrepareInner(
       throw new Error(`Merge conflict — PR author must rebase/merge ${defaultBranch}`);
     }
     step('merge', `Merged ${defaultBranch} into ${branch}`);
+  }
 
-    // Apply fixtures after checkout/reset/merge so tracked fixture outputs
-    // (for example AGENTS.md) survive, but before dependency install so
-    // project setup files such as .tool-versions are in place.
-    await syncFixtures();
+  // 3. Fixtures — after checkout/reset/merge so tracked fixture outputs (for
+  // example AGENTS.md) survive branch resets, but before dependency install so
+  // project setup files such as .tool-versions are in place. Profile-gated
+  // inside syncFixtures.
+  await syncFixtures();
 
-    // Always install after a merge-flow checkout. Skip-heuristics (lockHash
-    // before/after, .yarn-state.yml present) miss the common case where a
-    // slot inherits node_modules from a prior branch whose yarn.lock had
-    // different deps. `yarn install --immutable` is a fast no-op when
-    // node_modules already matches the lock, so the cost of always running
-    // is bounded; the cost of skipping incorrectly is a 240s preflight
-    // timeout on the next webpack run.
-    checkAborted();
-    step('deps', 'Installing deps after merge...');
+  // 3b. Install deps. Always install after a checkout when the phase is
+  // enabled: skip-heuristics (lockHash before/after, .yarn-state.yml present)
+  // miss the common case where a slot inherits node_modules from a prior
+  // branch whose yarn.lock had different deps. `yarn install --immutable` is a
+  // fast no-op when node_modules already matches the lock, so the cost of
+  // always running is bounded; the cost of skipping incorrectly is a 240s
+  // preflight timeout on the next webpack run. Profiles that skip this phase
+  // declare deps_current so the fallback chain catches stale trees.
+  if (!phaseEnabled('deps')) {
+    step('deps', `Deps install skipped (profile ${profileName()})`);
+  } else {
     const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
+    checkAborted();
+    step('deps', `Installing deps: ${installCmd}`);
     const depsLogPath = phaseLog('deps');
     const installR = await runPrepareCommand(
       vars,
       depsLogPath,
-      `cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`,
+      withProfileEnv(`cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`),
       {
         cwd: vars.remoteRepo,
         timeout: depsTimeoutMs,
@@ -759,47 +830,12 @@ async function slotPrepareInner(
       err.failedLogPath = depsLogPath;
       throw err;
     }
+    // Record the lockfile hash so deps_current precondition checks can prove
+    // the installed tree matches the checked-out lockfiles.
+    await execOnSlot(vars, buildDepsSentinelWriteCommand(vars.remoteRepo, runtimeDir));
     step('deps', `Dependencies installed (log: ${depsLogPath})`);
   }
 
-  // 2d. Install deps (non-merge flows)
-  if (!mergeMain) {
-    // Apply fixtures after checkout/reset, but before deps/preflight. Most
-    // fixture outputs are ignored, but tracked outputs still get reverted by
-    // branch resets if synced earlier.
-    await syncFixtures();
-
-    const installCmd = expandPrepareHook('post_merge_install') || 'yarn install --frozen-lockfile';
-    if (installCmd) {
-      checkAborted();
-      step('deps', `Installing deps: ${installCmd}`);
-      const depsLogPath = phaseLog('deps');
-      const installR = await runPrepareCommand(
-        vars,
-        depsLogPath,
-        `cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`,
-        {
-          cwd: vars.remoteRepo,
-          timeout: depsTimeoutMs,
-          signal,
-          windowLabel,
-          phase: 'deps',
-        },
-      );
-      if (installR.exitCode !== 0) {
-        const err: PrepareCommandError = new Error(
-          `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
-        );
-        err.failedCommand = installCmd;
-        err.failedLogPath = depsLogPath;
-        throw err;
-      }
-      step('deps', `Dependencies installed (log: ${depsLogPath})`);
-    }
-  }
-
-  // 3. Fallback for uncommon paths that skipped both dependency branches.
-  await syncFixtures();
   await installEvalRecipeHarness();
 
   // 4. Ensure tmux session
@@ -824,17 +860,28 @@ async function slotPrepareInner(
   //     Prevents port conflict when preflight's expo build briefly spawns its own
   //     bundler on the same port — the post-build port-free check would otherwise
   //     see our pre-existing Metro and abort.
-  const devServerPort = vars.resourceVars.port;
-  const devServerCleanup = buildDevServerPortCleanup(devServerPort, slotIsLocal);
-  if (devServerCleanup.command) {
-    await execOnSlot(vars, devServerCleanup.command, vars.remoteRepo);
-    step('preflight', 'Killed pre-existing dev server');
-  } else if (devServerCleanup.skippedReason) {
-    step('preflight', devServerCleanup.skippedReason);
+  //     Skipped when the profile overrides the preflight hook: a profile-supplied
+  //     preflight (e.g. relaunch) owns the dev-server lifecycle and typically
+  //     exists to keep the warm server alive.
+  const preflightOverridden = Boolean(prepareProfile?.hooks.preflight);
+  if (phaseEnabled('preflight') && !preflightOverridden) {
+    const devServerPort = vars.resourceVars.port;
+    const devServerCleanup = buildDevServerPortCleanup(devServerPort, slotIsLocal);
+    if (devServerCleanup.command) {
+      await execOnSlot(vars, devServerCleanup.command, vars.remoteRepo);
+      step('preflight', 'Killed pre-existing dev server');
+    } else if (devServerCleanup.skippedReason) {
+      step('preflight', devServerCleanup.skippedReason);
+    }
+  } else if (phaseEnabled('preflight')) {
+    step('preflight', 'Dev-server port cleanup skipped: profile overrides the preflight hook');
   }
 
   // 5b. Run preflight
-  let preflightHook = expandPrepareHook('preflight');
+  if (!phaseEnabled('preflight')) {
+    step('preflight', `Preflight skipped (profile ${profileName()})`);
+  }
+  let preflightHook = phaseEnabled('preflight') ? expandPrepareHook('preflight') : '';
   if (preflightHook && opts?.stripClean) {
     preflightHook = preflightHook.replace(/\s*--clean\b/g, '');
     step('preflight', 'Recovery mode — skipping --clean rebuild');
@@ -853,7 +900,9 @@ async function slotPrepareInner(
     let currentPreflightPhase = '';
     let phaseBuffer = '';
     const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-    const varExports: string[] = [];
+    const varExports: string[] = [
+      `export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}`,
+    ];
     for (const [rawKey, rawValue] of Object.entries(params.vars ?? {})) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(rawKey)) {
         throw new Error(`Invalid --var key '${rawKey}' (must match [A-Za-z_][A-Za-z0-9_]*)`);
@@ -970,20 +1019,26 @@ async function slotPrepareInner(
   }
 
   // 6. Verify health
-  const healthHook = expandPrepareHook('health_check');
+  const healthHook = phaseEnabled('health') ? expandPrepareHook('health_check') : '';
+  if (!phaseEnabled('health')) {
+    step('health', `Health check skipped (profile ${profileName()})`);
+  }
   if (healthHook) {
     step('health', 'Verifying health...');
     const parseCmd = getProjectField(projectJson, 'health.parse_health');
-    let healthValue = await runHealthCheck(vars, healthHook, parseCmd);
+    let healthValue = await runHealthCheck(vars, withProfileEnv(healthHook), parseCmd);
 
     if (readyIndicator && healthValue !== readyIndicator) {
       // Try unlock
       const unlockHook = expandPrepareHook('unlock');
       if (unlockHook) {
         step('health', 'Trying unlock...');
-        await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${unlockHook} 2>&1`);
+        await execOnSlot(
+          vars,
+          `cd ${shellQuote(vars.remoteRepo)} && ${withProfileEnv(unlockHook)} 2>&1`,
+        );
         await new Promise((r) => setTimeout(r, 3000));
-        healthValue = await runHealthCheck(vars, healthHook, parseCmd);
+        healthValue = await runHealthCheck(vars, withProfileEnv(healthHook), parseCmd);
       }
       if (readyIndicator && healthValue !== readyIndicator) {
         const err: PrepareCommandError = new Error(
@@ -997,7 +1052,15 @@ async function slotPrepareInner(
   }
 
   emit('slot.prepare.done', { slotId: params.slotId, prepared: true });
-  return { prepared: true, ...(resolvedStartRef ? { startRef: resolvedStartRef } : {}) };
+  return {
+    prepared: true,
+    profile: {
+      selected: prepareProfile.name,
+      ...(params.prepareProfile ? { requested: params.prepareProfile } : {}),
+      fallbacks: profileSelection.fallbacks,
+    },
+    ...(resolvedStartRef ? { startRef: resolvedStartRef } : {}),
+  };
 }
 
 // ─── slotRelease — native TS port of release-slot.sh ───

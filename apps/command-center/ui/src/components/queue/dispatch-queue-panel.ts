@@ -476,7 +476,9 @@ export class DispatchQueuePanel extends LitElement {
                         <span class="label">${labelFor(item)}</span>
                         <span class="meta"
                           >${item.project} ·
-                          ${item.ticketOrPr}${item.evalCell?.capGroupId
+                          ${item.ticketOrPr}${item.prepareProfile
+                            ? ` · prep:${item.prepareProfile}`
+                            : ''}${item.evalCell?.capGroupId
                             ? ` · ${item.evalCell.capGroupId}`
                             : ''}</span
                         >

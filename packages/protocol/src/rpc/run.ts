@@ -95,8 +95,10 @@ export interface RunCreateParams {
   effort?: string;
   app?: string;
   mode?: 'interactive' | 'autonomous' | 'validation';
-  /** Skip slot prepare (reuse warm slot with deps/device already running) */
+  /** Skip slot prepare entirely — operator owns slot state (ADR-037 §5). */
   skipPrepare?: boolean;
+  /** Named prepare profile from the project's prepare.profiles (ADR-037). */
+  prepareProfile?: string;
   /** Branch-affinity nudge — operator picked "Nudge worker" in the dispatch wizard for a
    * busy slot already on this PR's branch. Engine binds `slotId`, skips PREPARE, and routes
    * DISPATCH through `nudgeDispatch` (send-keys into the existing tmux session) instead of
@@ -228,8 +230,10 @@ export interface RunResumeResult {
 export interface RunReplayStepParams {
   runId: string;
   stepName: string;
-  /** Skip slot prepare on replay (reuse warm slot with deps/device already running) */
+  /** Skip slot prepare on replay entirely — operator owns slot state (ADR-037 §5). */
   skipPrepare?: boolean;
+  /** Replay PREPARE with this named profile; persisted on the run before the engine restarts. */
+  prepareProfile?: string;
   triggeredBy?: 'operator' | 'auto-recovery';
   intelligenceActionId?: string;
 }

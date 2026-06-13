@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 
 import {
   type FamilyObservabilityArtifact,
@@ -13,6 +13,11 @@ import '../shared/step-artifacts.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
+import {
+  type PrepareProfileOption,
+  projectPrepareProfiles,
+} from '../dispatch/dispatch-wizard-draft.js';
+import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { formatDuration, stepStatusColor } from './run-utils.js';
@@ -38,6 +43,26 @@ import { stepInspectorStyles } from './step-inspector-styles.js';
 export class StepInspector extends StepInspectorState {
   static styles = stepInspectorStyles;
 
+  /** Prepare profiles for retry-with-profile buttons (ADR-037). Lazily loaded
+   * from project config when a replayable prepare step is shown; set directly
+   * in the dev harness to avoid a gateway dependency. */
+  @state() prepareProfiles: PrepareProfileOption[] = [];
+  private _profilesLoadedFor = '';
+
+  private async _loadPrepareProfiles() {
+    const project = this.run?.project ?? '';
+    if (!project || this.step?.name !== 'prepare' || !this.allowReplay) return;
+    if (this._profilesLoadedFor === project) return;
+    this._profilesLoadedFor = project;
+    try {
+      this.prepareProfiles = projectPrepareProfiles(await requestProjectConfigs(), project);
+    } catch (err) {
+      // Profiles only add optional retry buttons; a config fetch failure must
+      // not break the inspector. Plain retry/skip stay available.
+      console.warn('[step-inspector] prepare profiles load failed:', err);
+    }
+  }
+
   render() {
     if (!this.step) return nothing;
     const s = this.step;
@@ -60,9 +85,14 @@ export class StepInspector extends StepInspectorState {
             !HIDDEN_KEYS.has(k) &&
             !COMMAND_KEYS.has(k) &&
             !LOG_KEYS.has(k) &&
+            k !== 'profile' &&
             !(skipArtifactsKey && k === 'artifacts'),
         )
       : [];
+    const profileSummary =
+      s.name === 'prepare'
+        ? prepareProfileSummary((s.outputs as Record<string, unknown> | undefined)?.profile)
+        : '';
     const commands = s.outputs
       ? Object.entries(s.outputs).filter(([k, v]) => COMMAND_KEYS.has(k) && typeof v === 'string')
       : [];
@@ -82,12 +112,25 @@ export class StepInspector extends StepInspectorState {
                 <button class="retry-btn" @click=${this._onReplay}>Retry from here</button>
                 ${s.name === 'prepare'
                   ? html`
+                      ${this.prepareProfiles.map(
+                        (profile) => html`
+                          <button
+                            class="retry-btn"
+                            title=${`Retry with prepare profile '${profile.name}'${
+                              profile.label !== profile.name ? ` — ${profile.label}` : ''
+                            }`}
+                            @click=${() => this._onReplayWithProfile(profile.name)}
+                          >
+                            Retry: ${profile.name}${profile.isDefault ? ' ★' : ''}
+                          </button>
+                        `,
+                      )}
                       <button
                         class="retry-btn"
-                        @click=${this._onReplayWarm}
-                        title="Skip prepare — reuse warm slot"
+                        @click=${this._onReplaySkipPrepare}
+                        title="Replay with no preparation at all — no health gating, you own slot state (ADR-037)"
                       >
-                        Warm Retry
+                        Retry, Skip Prepare
                       </button>
                     `
                   : nothing}
@@ -202,9 +245,10 @@ export class StepInspector extends StepInspectorState {
               ${inputs.map(([k, v]) => this._renderRow(k, v))}
             `
           : nothing}
-        ${outputs.length > 0
+        ${outputs.length > 0 || profileSummary
           ? html`
               <div class="section-title">Outputs</div>
+              ${profileSummary ? this._renderRow('profile', profileSummary) : nothing}
               ${outputs.map(([k, v]) => this._renderRow(k, v))}
             `
           : nothing}
@@ -395,6 +439,7 @@ export class StepInspector extends StepInspectorState {
   }
 
   updated() {
+    void this._loadPrepareProfiles();
     const stepName = this.step?.name ?? '';
     if (stepName !== this._prevStepName) {
       this._prevStepName = stepName;
@@ -729,7 +774,17 @@ export class StepInspector extends StepInspectorState {
     );
   }
 
-  private _onReplayWarm() {
+  private _onReplayWithProfile(prepareProfile: string) {
+    this.dispatchEvent(
+      new CustomEvent('step-replay', {
+        detail: { stepName: this.step?.name, prepareProfile },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private _onReplaySkipPrepare() {
     if (!this.step) return;
     this.dispatchEvent(
       new CustomEvent('step-replay', {
@@ -749,4 +804,22 @@ declare global {
   interface HTMLElementTagNameMap {
     'step-inspector': StepInspector;
   }
+}
+
+function prepareProfileSummary(value: unknown): string {
+  if (!value || typeof value !== 'object') return '';
+  const profile = value as {
+    selected?: string;
+    requested?: string;
+    fallbacks?: Array<{ from: string; to: string; reason: string }>;
+  };
+  if (!profile.selected) return '';
+  let summary = profile.selected;
+  if (profile.requested && profile.requested !== profile.selected) {
+    summary += ` (requested ${profile.requested})`;
+  }
+  for (const fb of profile.fallbacks ?? []) {
+    summary += ` · ${fb.from}→${fb.to}: ${fb.reason}`;
+  }
+  return summary;
 }

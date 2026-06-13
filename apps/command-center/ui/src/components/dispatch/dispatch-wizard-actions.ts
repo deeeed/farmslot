@@ -30,6 +30,7 @@ export interface DispatchPayloadDraftInput {
   app: string | undefined;
   taskTemplate: TaskTemplateSelection | undefined;
   skipPrepare: boolean;
+  prepareProfile: string;
   nudgeIntent: 'nudge' | 'fresh' | undefined;
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
@@ -56,6 +57,7 @@ export function buildDispatchWizardPayloadDraft(
     app: input.app,
     taskTemplate: input.taskTemplate,
     skipPrepare: input.skipPrepare || undefined,
+    prepareProfile: input.prepareProfile || undefined,
     nudgeReuse: input.nudgeIntent === 'nudge' ? true : undefined,
     freshReuse: input.nudgeIntent === 'fresh' ? true : undefined,
     mode: input.mode,

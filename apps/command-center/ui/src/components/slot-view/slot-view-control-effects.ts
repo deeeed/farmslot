@@ -108,6 +108,7 @@ export async function replaySlotViewRunStep(
   view: SlotView,
   stepName: string,
   skipPrepare?: boolean,
+  prepareProfile?: string,
 ) {
   if (!view._linkedRun || view._isRecoveryBlocked) return;
   try {
@@ -115,6 +116,7 @@ export async function replaySlotViewRunStep(
       runId: view._linkedRun.id,
       stepName,
       skipPrepare: skipPrepare || undefined,
+      prepareProfile: prepareProfile || undefined,
     });
     view._runPanelSelectedStep = null;
   } catch (err) {

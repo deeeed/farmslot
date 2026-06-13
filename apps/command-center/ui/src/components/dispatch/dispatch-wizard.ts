@@ -40,6 +40,7 @@ import {
   interactiveTemplateOption,
   modeForFlow,
   projectApps,
+  projectPrepareProfiles,
   publicationReviewsEnabled,
   selectedDispatchApp,
   selectedTaskTemplate,
@@ -263,6 +264,7 @@ export class DispatchWizard extends DispatchWizardState {
     this._project = project;
     this._autoProject = autoProject;
     this._slotOverride = '';
+    this._prepareProfile = '';
     this._syncSelectedAppForProject(project);
     this._syncFleet(getState());
     void this._fetchCandidates(project);
@@ -656,6 +658,7 @@ export class DispatchWizard extends DispatchWizardState {
       app: selectedDispatchApp(projectApps(this._projectConfigs, this._project), this._app),
       taskTemplate,
       skipPrepare: this._skipPrepare,
+      prepareProfile: this._prepareProfile,
       nudgeIntent: selectedNudgeIntent({
         candidates: this._candidates,
         slotOverride: this._slotOverride,
@@ -798,6 +801,8 @@ export class DispatchWizard extends DispatchWizardState {
       effort: this._effort,
       reviewTier: this._reviewTier,
       skipPrepare: this._skipPrepare,
+      prepareProfiles: projectPrepareProfiles(this._projectConfigs, this._project),
+      prepareProfile: this._prepareProfile,
       mode,
       devInteractiveProfile: this._devInteractiveProfile,
       comparisonLane: this._comparisonLane,
@@ -849,6 +854,9 @@ export class DispatchWizard extends DispatchWizardState {
       },
       setSkipPrepare: (skipPrepare) => {
         this._skipPrepare = skipPrepare;
+      },
+      setPrepareProfile: (prepareProfile) => {
+        this._prepareProfile = prepareProfile;
       },
       setDevInteractiveProfile: (profile) => {
         this._devInteractiveProfile = profile;

@@ -657,8 +657,8 @@ export class SlotView extends SlotViewRecipePresenter {
     return shouldShowSlotViewTaskUi(this._slot, this._structuredProgress, this._taskSteps);
   }
 
-  async _onRunStepReplay(stepName: string, skipPrepare?: boolean) {
-    return await replaySlotViewRunStep(this, stepName, skipPrepare);
+  async _onRunStepReplay(stepName: string, skipPrepare?: boolean, prepareProfile?: string) {
+    return await replaySlotViewRunStep(this, stepName, skipPrepare, prepareProfile);
   }
 
   // --- Render ---
