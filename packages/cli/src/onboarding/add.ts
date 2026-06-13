@@ -10,8 +10,19 @@
 // gateway (slot.prepare RPC) and onboarding must work before any gateway runs.
 // Slot readiness is proven by the project preflight hook + preflight-slot.sh.
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import {
   decideAddAction,
@@ -209,7 +220,61 @@ export function assertProjectOwnership(
   }
 }
 
-function registerProject(
+/** Subset of `paths` (relative to `src`) that the pack source's git ignores. */
+function packIgnoredFiles(src: string, paths: string[]): Set<string> {
+  if (paths.length === 0) return new Set();
+  // check-ignore exits 0 (some ignored, listed on stdout), 1 (none), or 128
+  // (src is not a git repo / other error). Only a git pack source carries the
+  // ignore signal that distinguishes operator-owned files from deleted ones.
+  const result = spawnSync('git', ['-C', src, 'check-ignore', '--', ...paths], {
+    encoding: 'utf-8',
+  });
+  if (result.status !== 0 && result.status !== 1) return new Set();
+  return new Set(
+    result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Relative paths of REGULAR files under `dest` that should survive the
+ * full-replace: present in the workspace project dir, absent from the pack
+ * `src`, AND ignored by the pack source's git — i.e. operator-owned files the
+ * pack intentionally does not ship (filled fixture secrets, local skills/notes
+ * the pack lists in .gitignore alongside .sample templates).
+ *
+ * The git-ignore test is what makes this safe: a file a pack UPDATE deleted is
+ * also absent from `src`, but it was tracked (not ignored), so it is excluded
+ * and correctly disappears — full-replace still removes stale pack files.
+ * `.git`/`node_modules`, symlinks (lstat reports dir-symlinks as not-a-dir, so
+ * readFileSync would EISDIR on restore), and empty operator dirs are not
+ * preserved. A non-git pack source yields no signal → nothing preserved
+ * (matches the prior full-replace; real packs are git clones/submodules).
+ */
+export function operatorAddedFiles(dest: string, src: string): string[] {
+  if (!existsSync(dest)) return [];
+  const candidates: string[] = [];
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(dest, rel))) {
+      if (entry === '.git' || entry === 'node_modules') continue;
+      const childRel = rel ? join(rel, entry) : entry;
+      const stat = lstatSync(join(dest, childRel));
+      if (stat.isSymbolicLink()) continue;
+      if (stat.isDirectory()) {
+        walk(childRel);
+      } else if (!existsSync(join(src, childRel))) {
+        candidates.push(childRel);
+      }
+    }
+  };
+  walk('');
+  const ignored = packIgnoredFiles(src, candidates);
+  return candidates.filter((rel) => ignored.has(rel));
+}
+
+export function registerProject(
   proj: PackProject,
   packDir: string,
   ws: Workspace,
@@ -221,10 +286,28 @@ function registerProject(
   const src = join(packDir, proj.dir);
   const dest = join(ws.farmslotDir, 'projects', name);
   assertProjectOwnership(name, packName, state, dest);
+  // Snapshot operator-added files (filled fixture secrets etc.) — the pack
+  // ships only .sample templates, so the real files exist only here and would
+  // be lost by the full-replace. Capture content + mode (secrets are 0600).
+  const preserved = operatorAddedFiles(dest, src).map((rel) => ({
+    rel,
+    content: readFileSync(join(dest, rel)),
+    mode: statSync(join(dest, rel)).mode,
+  }));
   // Full replace: packs own their project dirs — files deleted from the pack
   // must disappear here too, not survive as stale hooks/fixtures.
   rmSync(dest, { recursive: true, force: true });
   cpSync(src, dest, { recursive: true });
+  // Restore preserved operator files on top of the fresh pack copy.
+  for (const file of preserved) {
+    const target = join(dest, file.rel);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, file.content);
+    chmodSync(target, file.mode);
+  }
+  if (preserved.length > 0) {
+    progress.info(`preserved ${preserved.length} operator file(s) in projects/${name}`);
+  }
 
   const projectJsonPath = join(dest, 'project.json');
   const projectJson = JSON.parse(readFileSync(projectJsonPath, 'utf-8')) as {
