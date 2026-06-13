@@ -220,35 +220,58 @@ export function assertProjectOwnership(
   }
 }
 
+/** Subset of `paths` (relative to `src`) that the pack source's git ignores. */
+function packIgnoredFiles(src: string, paths: string[]): Set<string> {
+  if (paths.length === 0) return new Set();
+  // check-ignore exits 0 (some ignored, listed on stdout), 1 (none), or 128
+  // (src is not a git repo / other error). Only a git pack source carries the
+  // ignore signal that distinguishes operator-owned files from deleted ones.
+  const result = spawnSync('git', ['-C', src, 'check-ignore', '--', ...paths], {
+    encoding: 'utf-8',
+  });
+  if (result.status !== 0 && result.status !== 1) return new Set();
+  return new Set(
+    result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+}
+
 /**
- * Relative paths of REGULAR files under `dest` that do NOT exist in the pack
- * `src` — i.e. operator-added files (e.g. gitignored fixture secrets the
- * operator filled from the pack's .sample files). `.git`/`node_modules` and
- * symlinks are skipped, and empty operator-created directories are not tracked;
- * fixture secrets are always plain files, and restoring a symlink's target as a
- * regular file would silently rewrite it. These survive the full-replace below
- * so re-add / update never wipes filled secrets.
+ * Relative paths of REGULAR files under `dest` that should survive the
+ * full-replace: present in the workspace project dir, absent from the pack
+ * `src`, AND ignored by the pack source's git — i.e. operator-owned files the
+ * pack intentionally does not ship (filled fixture secrets, local skills/notes
+ * the pack lists in .gitignore alongside .sample templates).
+ *
+ * The git-ignore test is what makes this safe: a file a pack UPDATE deleted is
+ * also absent from `src`, but it was tracked (not ignored), so it is excluded
+ * and correctly disappears — full-replace still removes stale pack files.
+ * `.git`/`node_modules`, symlinks (lstat reports dir-symlinks as not-a-dir, so
+ * readFileSync would EISDIR on restore), and empty operator dirs are not
+ * preserved. A non-git pack source yields no signal → nothing preserved
+ * (matches the prior full-replace; real packs are git clones/submodules).
  */
 export function operatorAddedFiles(dest: string, src: string): string[] {
   if (!existsSync(dest)) return [];
-  const added: string[] = [];
+  const candidates: string[] = [];
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(dest, rel))) {
       if (entry === '.git' || entry === 'node_modules') continue;
       const childRel = rel ? join(rel, entry) : entry;
       const stat = lstatSync(join(dest, childRel));
-      // Skip symlinks: lstat reports a dir-symlink as not-a-dir, so it would be
-      // treated as a file and readFileSync would throw EISDIR on restore.
       if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory()) {
         walk(childRel);
       } else if (!existsSync(join(src, childRel))) {
-        added.push(childRel);
+        candidates.push(childRel);
       }
     }
   };
   walk('');
-  return added;
+  const ignored = packIgnoredFiles(src, candidates);
+  return candidates.filter((rel) => ignored.has(rel));
 }
 
 export function registerProject(
