@@ -221,10 +221,13 @@ export function assertProjectOwnership(
 }
 
 /**
- * Relative paths of files under `dest` that do NOT exist in the pack `src` —
- * i.e. operator-added files (e.g. gitignored fixture secrets the operator filled
- * from the pack's .sample files). `.git`/`node_modules` are skipped. These must
- * survive the full-replace below so re-add / update never wipes filled secrets.
+ * Relative paths of REGULAR files under `dest` that do NOT exist in the pack
+ * `src` — i.e. operator-added files (e.g. gitignored fixture secrets the
+ * operator filled from the pack's .sample files). `.git`/`node_modules` and
+ * symlinks are skipped, and empty operator-created directories are not tracked;
+ * fixture secrets are always plain files, and restoring a symlink's target as a
+ * regular file would silently rewrite it. These survive the full-replace below
+ * so re-add / update never wipes filled secrets.
  */
 export function operatorAddedFiles(dest: string, src: string): string[] {
   if (!existsSync(dest)) return [];
@@ -233,7 +236,11 @@ export function operatorAddedFiles(dest: string, src: string): string[] {
     for (const entry of readdirSync(join(dest, rel))) {
       if (entry === '.git' || entry === 'node_modules') continue;
       const childRel = rel ? join(rel, entry) : entry;
-      if (lstatSync(join(dest, childRel)).isDirectory()) {
+      const stat = lstatSync(join(dest, childRel));
+      // Skip symlinks: lstat reports a dir-symlink as not-a-dir, so it would be
+      // treated as a file and readFileSync would throw EISDIR on restore.
+      if (stat.isSymbolicLink()) continue;
+      if (stat.isDirectory()) {
         walk(childRel);
       } else if (!existsSync(join(src, childRel))) {
         added.push(childRel);

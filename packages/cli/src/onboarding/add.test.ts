@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -108,8 +116,9 @@ test('findMissingState escalates platform slots missing their device/browser res
   assert.deepEqual(findMissingState(pack, complete, ws), []);
 });
 
-test('operatorAddedFiles finds files in dest absent from the pack source', () => {
+test('operatorAddedFiles finds files in dest absent from the pack source', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'fs-op-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const src = join(root, 'src');
   const dest = join(root, 'dest');
   mkdirSync(join(src, 'fixtures'), { recursive: true });
@@ -123,6 +132,8 @@ test('operatorAddedFiles finds files in dest absent from the pack source', () =>
   writeFileSync(join(dest, 'fixtures', '.js.env'), 'KEY=secret');
   mkdirSync(join(dest, 'fixtures', 'runtime'), { recursive: true });
   writeFileSync(join(dest, 'fixtures', 'runtime', 'wallet-fixture.json'), '{"k":1}');
+  // A dir-symlink must be skipped, not treated as a file (would EISDIR on read).
+  symlinkSync(join(dest, 'fixtures', 'runtime'), join(dest, 'linked-runtime'));
 
   assert.deepEqual(operatorAddedFiles(dest, src).sort(), [
     join('fixtures', '.js.env'),
@@ -132,8 +143,9 @@ test('operatorAddedFiles finds files in dest absent from the pack source', () =>
   assert.deepEqual(operatorAddedFiles(join(root, 'missing'), src), []);
 });
 
-test('registerProject re-add preserves operator secrets, refreshes pack files', () => {
+test('registerProject re-add preserves operator secrets, refreshes pack files', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'fs-reg-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const ws: Workspace = workspaceAt(join(root, 'ws'));
   const packDir = join(root, 'pack');
   const proj: PackProject = { dir: 'projects/app-farm', platform: 'cli', slots: 1 };
