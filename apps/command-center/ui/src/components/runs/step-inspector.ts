@@ -84,10 +84,10 @@ export class StepInspector extends StepInspectorState {
                   ? html`
                       <button
                         class="retry-btn"
-                        @click=${this._onReplayWarm}
-                        title="Skip prepare — reuse warm slot"
+                        @click=${this._onReplaySkipPrepare}
+                        title="Replay with no preparation at all — no health gating, you own slot state (ADR-037)"
                       >
-                        Warm Retry
+                        Retry, Skip Prepare
                       </button>
                     `
                   : nothing}
@@ -729,7 +729,7 @@ export class StepInspector extends StepInspectorState {
     );
   }
 
-  private _onReplayWarm() {
+  private _onReplaySkipPrepare() {
     if (!this.step) return;
     this.dispatchEvent(
       new CustomEvent('step-replay', {
