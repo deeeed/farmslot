@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { assertProjectOwnership, findMissingState } from './add.js';
-import type { PackJson } from './pack.js';
-import type { WorkspaceState } from './workspace.js';
+import {
+  assertProjectOwnership,
+  findMissingState,
+  operatorAddedFiles,
+  registerProject,
+} from './add.js';
+import type { PackJson, PackProject } from './pack.js';
+import { type Workspace, workspaceAt, type WorkspaceState } from './workspace.js';
 
 function stateWith(packs: WorkspaceState['packs']): WorkspaceState {
   return {
@@ -101,4 +106,76 @@ test('findMissingState escalates platform slots missing their device/browser res
     slots: [{ id: 'm-app-1', resources: { 'ios-sim': { simulator: 'app-1' } } }],
   };
   assert.deepEqual(findMissingState(pack, complete, ws), []);
+});
+
+test('operatorAddedFiles finds files in dest absent from the pack source', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-op-'));
+  const src = join(root, 'src');
+  const dest = join(root, 'dest');
+  mkdirSync(join(src, 'fixtures'), { recursive: true });
+  mkdirSync(join(dest, 'fixtures'), { recursive: true });
+  // Pack ships only the .sample template + project.json.
+  writeFileSync(join(src, 'project.json'), '{}');
+  writeFileSync(join(src, 'fixtures', '.js.env.sample'), 'KEY=');
+  // Operator copy: same tracked files PLUS a filled secret + a nested one.
+  writeFileSync(join(dest, 'project.json'), '{}');
+  writeFileSync(join(dest, 'fixtures', '.js.env.sample'), 'KEY=');
+  writeFileSync(join(dest, 'fixtures', '.js.env'), 'KEY=secret');
+  mkdirSync(join(dest, 'fixtures', 'runtime'), { recursive: true });
+  writeFileSync(join(dest, 'fixtures', 'runtime', 'wallet-fixture.json'), '{"k":1}');
+
+  assert.deepEqual(operatorAddedFiles(dest, src).sort(), [
+    join('fixtures', '.js.env'),
+    join('fixtures', 'runtime', 'wallet-fixture.json'),
+  ]);
+  // Fresh dest (first add) has nothing to preserve.
+  assert.deepEqual(operatorAddedFiles(join(root, 'missing'), src), []);
+});
+
+test('registerProject re-add preserves operator secrets, refreshes pack files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-reg-'));
+  const ws: Workspace = workspaceAt(join(root, 'ws'));
+  const packDir = join(root, 'pack');
+  const proj: PackProject = { dir: 'projects/app-farm', platform: 'cli', slots: 1 };
+  const noop = { step: () => {}, info: () => {} };
+
+  // Pack source: project.json (with repo_url) + a .sample template only.
+  mkdirSync(join(packDir, 'projects', 'app-farm', 'fixtures'), { recursive: true });
+  writeFileSync(
+    join(packDir, 'projects', 'app-farm', 'project.json'),
+    JSON.stringify({ name: 'app-farm', repo_url: 'https://example.invalid/app.git' }),
+  );
+  writeFileSync(join(packDir, 'projects', 'app-farm', 'fixtures', '.js.env.sample'), 'KEY=\n');
+
+  const state: WorkspaceState = {
+    schema_version: 1,
+    source: { mode: 'local', path: packDir },
+    machine: 'm',
+    pool_file: 'pool/m.json',
+    packs: { p: { source: packDir, hash: '', projects: ['app-farm'], slots: [] } },
+    pool_migrations: { applied: [] },
+  };
+
+  // First add lays down the pack.
+  registerProject(proj, packDir, ws, state, 'p', noop);
+  const secret = join(ws.farmslotDir, 'projects', 'app-farm', 'fixtures', '.js.env');
+  writeFileSync(secret, 'KEY=filled-by-operator\n', { mode: 0o600 });
+
+  // The pack changes a tracked file between adds (must win on re-copy).
+  writeFileSync(
+    join(packDir, 'projects', 'app-farm', 'fixtures', '.js.env.sample'),
+    'KEY=\nNEW=\n',
+  );
+
+  // Re-add: operator secret survives with its mode; pack file is refreshed.
+  registerProject(proj, packDir, ws, state, 'p', noop);
+  assert.equal(readFileSync(secret, 'utf-8'), 'KEY=filled-by-operator\n');
+  assert.equal(statSync(secret).mode & 0o777, 0o600);
+  assert.equal(
+    readFileSync(
+      join(ws.farmslotDir, 'projects', 'app-farm', 'fixtures', '.js.env.sample'),
+      'utf-8',
+    ),
+    'KEY=\nNEW=\n',
+  );
 });

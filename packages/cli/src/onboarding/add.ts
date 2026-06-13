@@ -10,8 +10,19 @@
 // gateway (slot.prepare RPC) and onboarding must work before any gateway runs.
 // Slot readiness is proven by the project preflight hook + preflight-slot.sh.
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import {
   decideAddAction,
@@ -209,7 +220,31 @@ export function assertProjectOwnership(
   }
 }
 
-function registerProject(
+/**
+ * Relative paths of files under `dest` that do NOT exist in the pack `src` —
+ * i.e. operator-added files (e.g. gitignored fixture secrets the operator filled
+ * from the pack's .sample files). `.git`/`node_modules` are skipped. These must
+ * survive the full-replace below so re-add / update never wipes filled secrets.
+ */
+export function operatorAddedFiles(dest: string, src: string): string[] {
+  if (!existsSync(dest)) return [];
+  const added: string[] = [];
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(dest, rel))) {
+      if (entry === '.git' || entry === 'node_modules') continue;
+      const childRel = rel ? join(rel, entry) : entry;
+      if (lstatSync(join(dest, childRel)).isDirectory()) {
+        walk(childRel);
+      } else if (!existsSync(join(src, childRel))) {
+        added.push(childRel);
+      }
+    }
+  };
+  walk('');
+  return added;
+}
+
+export function registerProject(
   proj: PackProject,
   packDir: string,
   ws: Workspace,
@@ -221,10 +256,28 @@ function registerProject(
   const src = join(packDir, proj.dir);
   const dest = join(ws.farmslotDir, 'projects', name);
   assertProjectOwnership(name, packName, state, dest);
+  // Snapshot operator-added files (filled fixture secrets etc.) — the pack
+  // ships only .sample templates, so the real files exist only here and would
+  // be lost by the full-replace. Capture content + mode (secrets are 0600).
+  const preserved = operatorAddedFiles(dest, src).map((rel) => ({
+    rel,
+    content: readFileSync(join(dest, rel)),
+    mode: statSync(join(dest, rel)).mode,
+  }));
   // Full replace: packs own their project dirs — files deleted from the pack
   // must disappear here too, not survive as stale hooks/fixtures.
   rmSync(dest, { recursive: true, force: true });
   cpSync(src, dest, { recursive: true });
+  // Restore preserved operator files on top of the fresh pack copy.
+  for (const file of preserved) {
+    const target = join(dest, file.rel);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, file.content);
+    chmodSync(target, file.mode);
+  }
+  if (preserved.length > 0) {
+    progress.info(`preserved ${preserved.length} operator file(s) in projects/${name}`);
+  }
 
   const projectJsonPath = join(dest, 'project.json');
   const projectJson = JSON.parse(readFileSync(projectJsonPath, 'utf-8')) as {
