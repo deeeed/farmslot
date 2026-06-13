@@ -628,7 +628,11 @@ export function renderSlotViewBody(
                                   view._runPanelSelectedStep = null;
                                 }}
                                 @step-replay=${(e: CustomEvent) =>
-                                  view._onRunStepReplay(e.detail.stepName, e.detail.skipPrepare)}
+                                  view._onRunStepReplay(
+                                    e.detail.stepName,
+                                    e.detail.skipPrepare,
+                                    e.detail.prepareProfile,
+                                  )}
                               >
                               </step-inspector>
                             `

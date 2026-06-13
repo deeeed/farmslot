@@ -111,7 +111,11 @@ export class FamilyObservability extends FamilyObservabilityState {
     }
   };
 
-  private async _onReplayStep(stepName: string, skipPrepare?: boolean): Promise<void> {
+  private async _onReplayStep(
+    stepName: string,
+    skipPrepare?: boolean,
+    prepareProfile?: string,
+  ): Promise<void> {
     const runId = this.selectedRunId;
     if (!runId) return;
     // Re-entry guard: a fast double-click would otherwise fire two parallel
@@ -124,6 +128,7 @@ export class FamilyObservability extends FamilyObservabilityState {
         runId,
         stepName,
         skipPrepare: skipPrepare || undefined,
+        prepareProfile: prepareProfile || undefined,
       });
       this._selectedStep = null;
       // Drop the cached Run so the next selection re-fetches the post-replay
@@ -815,7 +820,8 @@ export class FamilyObservability extends FamilyObservabilityState {
       onCloseStepInspector: () => {
         this._selectedStep = null;
       },
-      onReplayStep: (stepName, skipPrepare) => this._onReplayStep(stepName, skipPrepare),
+      onReplayStep: (stepName, skipPrepare, prepareProfile) =>
+        this._onReplayStep(stepName, skipPrepare, prepareProfile),
       renderLedgerDiffDetail: (targetRun) => this._renderLedgerDiffDetail(targetRun),
     });
   }

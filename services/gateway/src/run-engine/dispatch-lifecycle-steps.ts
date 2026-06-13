@@ -151,6 +151,7 @@ export async function executePrepareStep(
   }
   activeMonitors.set(runId, prepareController);
   const warmRecovery = getRunFlags(runId)?.warmRecovery;
+  let selectedPrepareProfile: import('../methods/slot/shared.js').SlotPrepareResult['profile'];
   try {
     const prepareResult = await slotPrepare(
       {
@@ -171,6 +172,7 @@ export async function executePrepareStep(
         ...(current.startRef ? { startRef: { requestedRef: current.startRef.requestedRef } } : {}),
       },
     );
+    selectedPrepareProfile = prepareResult.profile;
     if (current.startRef) {
       if (!prepareResult.startRef) {
         throw new Error('startRef prepare completed without structured resolved provenance');
@@ -224,6 +226,7 @@ export async function executePrepareStep(
       platform,
       isLocal: local,
       cliCommand,
+      ...(selectedPrepareProfile ? { profile: selectedPrepareProfile } : {}),
       ...(preparedRun?.startRef ? { startRef: preparedRun.startRef } : {}),
       ...(lastOutput ? { lastOutput } : {}),
     },

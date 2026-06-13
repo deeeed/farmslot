@@ -574,6 +574,14 @@ export class RunList extends RunListState {
                   >runner:${run.safetyTier}</span
                 >`
               : nothing}
+            ${run.prepareProfile
+              ? html`<span
+                  class="badge status-badge"
+                  style="--status-color:${colors.textMuted}"
+                  title="Prepare profile (ADR-037)"
+                  >prep:${run.prepareProfile}</span
+                >`
+              : nothing}
             ${run.engineState?.intelligenceAuditDegraded
               ? html`<span class="badge status-badge" style="--status-color:${colors.statusWarn}"
                   >audit degraded</span

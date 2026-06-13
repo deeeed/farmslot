@@ -64,7 +64,11 @@ export interface RunDetailViewContext {
   _shouldShowCiStatus: (run: Run) => boolean;
   _renderCiStatus: (run: Run) => unknown;
   _renderRunEvidence: (run: Run) => unknown;
-  _onReplayStep: (stepName: string, skipPrepare?: boolean) => void | Promise<void>;
+  _onReplayStep: (
+    stepName: string,
+    skipPrepare?: boolean,
+    prepareProfile?: string,
+  ) => void | Promise<void>;
   renderGateSection: (run: Run) => unknown;
   renderGrade: (grade: RunGrade) => unknown;
   onStepSelect: (step: Run['steps'][number]) => void;
@@ -658,7 +662,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               .allowReplay=${canReplayRunSteps(r, actionsBlocked)}
               @inspector-close=${() => ctx.onStepInspectorClose()}
               @step-replay=${(e: CustomEvent) =>
-                ctx._onReplayStep(e.detail.stepName, e.detail.skipPrepare)}
+                ctx._onReplayStep(e.detail.stepName, e.detail.skipPrepare, e.detail.prepareProfile)}
             >
             </step-inspector>
             ${ctx.selectedStep.name === 'ci-watch' && ctx._currentCiStatus(r)

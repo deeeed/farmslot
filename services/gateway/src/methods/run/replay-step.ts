@@ -417,7 +417,13 @@ export async function runReplayStep(
   });
   emit(Events.RUN_UPDATED, { run: getRun(params.runId) });
 
-  // Set skipPrepare flag if requested (warm slot reuse)
+  // Retry-with-profile: persist the selection so the replayed PREPARE (and any
+  // later replay) uses it — profile choice is run state, not a one-shot flag.
+  if (params.prepareProfile) {
+    updateRun(params.runId, { prepareProfile: params.prepareProfile });
+  }
+
+  // Binary operator skip — no health gating (ADR-037 §5)
   if (params.skipPrepare) {
     setRunFlags(params.runId, { skipPrepare: true });
   }

@@ -703,7 +703,8 @@ export class RunDetail extends RunDetailState {
           now: this._now,
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
-      _onReplayStep: (stepName, skipPrepare) => this._onReplayStep(stepName, skipPrepare),
+      _onReplayStep: (stepName, skipPrepare, prepareProfile) =>
+        this._onReplayStep(stepName, skipPrepare, prepareProfile),
       renderGateSection: (run) => this.renderGateSection(run),
       renderGrade: renderRunGrade,
       onStepSelect: (step) => {
@@ -842,7 +843,7 @@ export class RunDetail extends RunDetailState {
     };
   }
 
-  private async _onReplayStep(stepName: string, skipPrepare?: boolean) {
+  private async _onReplayStep(stepName: string, skipPrepare?: boolean, prepareProfile?: string) {
     if (this._actionsBlocked()) return;
     if (!this.run) return;
     try {
@@ -850,6 +851,7 @@ export class RunDetail extends RunDetailState {
         runId: this.run.id,
         stepName,
         skipPrepare: skipPrepare || undefined,
+        prepareProfile: prepareProfile || undefined,
       });
       this.selectedStep = null;
     } catch (err) {

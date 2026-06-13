@@ -44,7 +44,7 @@ interface FamilySelectedRunDetailRenderOptions {
   ) => void;
   onSelectStep: (step: RunStep) => void;
   onCloseStepInspector: () => void;
-  onReplayStep: (stepName: string, skipPrepare?: boolean) => void;
+  onReplayStep: (stepName: string, skipPrepare?: boolean, prepareProfile?: string) => void;
   renderLedgerDiffDetail: (run: FamilyObservabilityRunSummary) => unknown;
 }
 
@@ -102,8 +102,18 @@ function renderFamilyRunPipelineDetail(options: FamilySelectedRunDetailRenderOpt
               .run=${options.fullRun}
               .allowReplay=${isFamilyStepReplayAllowed(options.fullRun, options.replayingStep)}
               @inspector-close=${() => options.onCloseStepInspector()}
-              @step-replay=${(event: CustomEvent<{ stepName: string; skipPrepare?: boolean }>) =>
-                options.onReplayStep(event.detail.stepName, event.detail.skipPrepare)}
+              @step-replay=${(
+                event: CustomEvent<{
+                  stepName: string;
+                  skipPrepare?: boolean;
+                  prepareProfile?: string;
+                }>,
+              ) =>
+                options.onReplayStep(
+                  event.detail.stepName,
+                  event.detail.skipPrepare,
+                  event.detail.prepareProfile,
+                )}
             >
             </step-inspector>
             ${options.replayError

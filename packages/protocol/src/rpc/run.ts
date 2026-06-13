@@ -230,8 +230,10 @@ export interface RunResumeResult {
 export interface RunReplayStepParams {
   runId: string;
   stepName: string;
-  /** Skip slot prepare on replay (reuse warm slot with deps/device already running) */
+  /** Skip slot prepare on replay entirely — operator owns slot state (ADR-037 §5). */
   skipPrepare?: boolean;
+  /** Replay PREPARE with this named profile; persisted on the run before the engine restarts. */
+  prepareProfile?: string;
   triggeredBy?: 'operator' | 'auto-recovery';
   intelligenceActionId?: string;
 }
