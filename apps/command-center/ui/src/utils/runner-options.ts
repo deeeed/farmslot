@@ -5,7 +5,7 @@ import {
   type ReviewRunnerId,
 } from '@farmslot/protocol';
 
-export type EffortLevel = '' | 'low' | 'medium' | 'high' | 'xhigh';
+export type EffortLevel = '' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'grok'];
 
@@ -23,12 +23,12 @@ export const DEFAULT_MODEL: Record<string, string> = {
   grok: DEFAULT_GROK_MODEL,
 };
 
-// Effort: claude/cursor don't use it. Codex and Grok expose low/medium/high/xhigh.
+// Effort: claude/cursor don't use it. Codex and Grok expose runner-specific levels.
 export const EFFORT_BY_RUNNER: Record<string, EffortLevel[]> = {
   claude: [],
   codex: ['low', 'medium', 'high', 'xhigh'],
   cursor: [],
-  grok: ['low', 'medium', 'high', 'xhigh'],
+  grok: ['low', 'medium', 'high', 'xhigh', 'max'],
 };
 
 // Comparison/eval candidates share the same runner allowlist. Cursor is

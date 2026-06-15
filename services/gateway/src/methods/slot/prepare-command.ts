@@ -241,7 +241,7 @@ export function buildDevServerPortCleanup(
     return { command: null, skippedReason: `Skipped dev-server cleanup for gateway port ${port}` };
   }
   return {
-    command: `lsof -ti :${port} 2>/dev/null | xargs kill 2>/dev/null; true`,
+    command: `lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | xargs kill 2>/dev/null; true`,
     skippedReason: null,
   };
 }

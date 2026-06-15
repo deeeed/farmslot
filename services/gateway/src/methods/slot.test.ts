@@ -173,7 +173,8 @@ test('buildDevServerPortCleanup skips local gateway port', () => {
 
 test('buildDevServerPortCleanup still cleans remote gateway-numbered ports', () => {
   assert.deepEqual(buildDevServerPortCleanup('7777', false, 7777), {
-    command: 'lsof -ti :7777 2>/dev/null | xargs kill 2>/dev/null; true',
+    command:
+      'lsof -nP -iTCP:7777 -sTCP:LISTEN -t 2>/dev/null | xargs kill 2>/dev/null; true',
     skippedReason: null,
   });
 });

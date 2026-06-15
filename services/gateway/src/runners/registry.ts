@@ -167,7 +167,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['(^|/)grok($| )'],
     // Grok Build's default mode is an interactive TUI. Match Cursor's
     // operator contract: open the pane first, then deliver the task prompt
-    // after the live composer is ready.
+    // after the live composer is ready. Resume/session persistence stays off
+    // until Farmslot has a Grok transcript scanner.
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
     supportsTmuxNudges: true,
@@ -623,7 +624,7 @@ function paneLineLooksShellPrompt(line: string): boolean {
   return /^[^\s@]+@[^\s]+\s+\S+\s+[%$#]\s*$/.test(line.trim());
 }
 
-function runnerPaneShowsCurrentCursorProgress(pane: string, runnerId?: string | null): boolean {
+function runnerPaneShowsCurrentInteractiveProgress(pane: string, runnerId?: string | null): boolean {
   const runner = normalizeRunner(runnerId);
   if (runner !== 'cursor' && runner !== 'grok') return false;
   const tail = pane
@@ -656,7 +657,7 @@ export function runnerPaneShowsPromptAccepted(
 ): boolean {
   if (pane === previousPane) return false;
   if (
-    runnerPaneShowsCurrentCursorProgress(pane, runnerId) &&
+    runnerPaneShowsCurrentInteractiveProgress(pane, runnerId) &&
     (runnerPaneContainsInstruction(pane, message) ||
       (marker && paneTailText(pane, 16).includes(marker)))
   ) {

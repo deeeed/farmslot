@@ -920,25 +920,11 @@ export async function dispatchExecute(
       if (!usesRoleWindow) return;
       await new Promise((resolve) => setTimeout(resolve, ROLE_WINDOW_STARTUP_SETTLE_MS));
     };
-    const recoverRoleWindowForLaunch = async () => {
-      if (!usesRoleWindow) return;
-      workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
-      await respawnRoleWindowForDispatch(vars, workerTarget);
-      await settleFreshRoleWindow();
-    };
-    const preludeClearKeys = usesRoleWindow ? 'C-u' : 'C-c C-u';
     const sendPreludeClear = async (stage: string) => {
-      let result = await execOnSlot(
+      const result = await execOnSlot(
         vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(workerTarget)} ${preludeClearKeys}`),
+        tmuxShellSnippet(`send-keys -t ${shellQuote(workerTarget)} C-c C-u`),
       );
-      if (result.exitCode !== 0 && usesRoleWindow) {
-        await recoverRoleWindowForLaunch();
-        result = await execOnSlot(
-          vars,
-          tmuxShellSnippet(`send-keys -t ${shellQuote(workerTarget)} ${preludeClearKeys}`),
-        );
-      }
       if (result.exitCode !== 0) {
         throw new Error(
           `Failed to clear ${runner} launch input (${stage}) in ${workerTarget}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
