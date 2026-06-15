@@ -59,9 +59,9 @@ test('buildKillRoleWindowCommand kills only the role window when other windows e
   );
 });
 
-test('buildPrepareWindowName keeps one prepare window per run label', () => {
+test('buildPrepareWindowName accepts phase-scoped run labels', () => {
   assert.equal(buildPrepareWindowName('7d1fc152'), 'prepare-7d1fc152');
-  assert.notEqual(buildPrepareWindowName('7d1fc152'), 'prepare-7d1fc152-preflight');
+  assert.equal(buildPrepareWindowName('7d1fc152-preflight'), 'prepare-7d1fc152-preflight');
 });
 
 test('buildPreparePlaceholderCommand avoids GNU-only sleep infinity', () => {
@@ -117,6 +117,14 @@ test('buildPrepareWrappedCommand writes sentinel and preserves output flush on s
   assert.match(command, /echo "\$__farmslot_status" > '\/tmp\/prep\.exit'/);
   assert.match(command, /sleep 1\nexit "\$__farmslot_status"/);
   assert.doesNotMatch(command, /\(echo ok; echo \$\? >/);
+});
+
+test('buildPrepareWrappedCommand disarms traps before writing the final child status', () => {
+  const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep');
+  const finalTrapIdx = command.indexOf('trap - HUP INT TERM\n' + "echo \"$__farmslot_status\"");
+  const signalTrapIdx = command.indexOf('__farmslot_signal_exit()');
+
+  assert(finalTrapIdx > signalTrapIdx);
 });
 
 test('buildPrepareWrappedCommand runs cmd in a subshell so `exec` inside the hook cannot strand the sentinel', () => {

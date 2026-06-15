@@ -86,6 +86,7 @@ export function registerWorkspaceCommand(program: Command): void {
             claude: runnerPath('claude'),
             codex: runnerPath('codex'),
             cursor: runnerPath('cursor-agent'),
+            grok: runnerPath('grok'),
           },
         });
         writePool(poolAbsPath, pool);
@@ -127,7 +128,7 @@ export function registerWorkspaceCommand(program: Command): void {
       }
       if (runners.length === 0) {
         output.error(
-          'no authenticated agent runner found (sign in to one of: claude, codex, cursor-agent)',
+          'no authenticated agent runner found (sign in to one of: claude, codex, cursor-agent, grok)',
         );
         process.exit(1);
       }

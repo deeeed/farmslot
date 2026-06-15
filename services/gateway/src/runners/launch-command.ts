@@ -1,4 +1,4 @@
-import { DEFAULT_CURSOR_MODEL, type SafetyTier } from '@farmslot/protocol';
+import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL, type SafetyTier } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 import { expandDispatchCmd } from '../core/hooks.js';
@@ -35,6 +35,27 @@ export function buildCursorAgentLaunch(options: {
 export function resolveCursorAgentBinary(preferred?: string | null): string {
   if (preferred && preferred.trim()) return preferred.trim();
   return 'cursor-agent';
+}
+
+export function buildGrokLaunch(options: {
+  binary: string;
+  model?: string | null;
+  effort?: string | null;
+  prompt: string;
+  repo: string;
+  safetyTier?: SafetyTier;
+}): string {
+  const effectiveModel =
+    options.model && options.model !== 'unknown' ? options.model : DEFAULT_GROK_MODEL;
+  const flagList = runnerFlagsForTier('grok', options.safetyTier);
+  const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
+  const effortFlag = options.effort?.trim() ? ` --effort ${options.effort.trim()}` : '';
+  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment}${effortFlag} --model ${effectiveModel}`;
+}
+
+export function resolveGrokBinary(preferred?: string | null): string {
+  if (preferred && preferred.trim()) return preferred.trim();
+  return 'grok';
 }
 
 export function assertRunnerLaunchPrerequisites(
@@ -92,7 +113,7 @@ export function resolveCodexBinary(preferred?: string | null): string {
 /**
  * Detect whether the pool's dispatch_cmd is runner-aware — i.e. it already
  * references the runner binary via {runner_path}, {runner}, or a
- * runner-specific placeholder such as {codex_path}/{opencode_path}/{cursor_path}.
+ * runner-specific placeholder such as {codex_path}/{opencode_path}/{cursor_path}/{grok_path}.
  *
  * Consumers never branch on this directly — it's absorbed into
  * {@link buildLaunchCommand} so every call site gets identical semantics.
@@ -105,6 +126,7 @@ function dispatchCmdIsRunnerAware(dispatchCmd: string | undefined | null, runner
   if (runner === 'codex' && dispatchCmd.includes('{codex_path}')) return true;
   if (runner === 'opencode' && dispatchCmd.includes('{opencode_path}')) return true;
   if (runner === 'cursor' && dispatchCmd.includes('{cursor_path}')) return true;
+  if (runner === 'grok' && dispatchCmd.includes('{grok_path}')) return true;
   return false;
 }
 
@@ -232,8 +254,8 @@ export function buildLaunchCommand(
   }
 
   // Cursor Agent: route through runner-aware dispatch templates when configured,
-  // otherwise use the inline TUI-first argv-prompt launcher. The default model
-  // is runner-owned (`composer-2.5`) rather than borrowed from Claude/Codex.
+  // otherwise use the inline TUI-first launcher. The task prompt is delivered
+  // after the interactive composer is ready.
   if (runner === 'cursor') {
     if (cmdIsRunnerAware) {
       return expanded;
@@ -247,12 +269,28 @@ export function buildLaunchCommand(
     });
   }
 
+  // Grok Build CLI: same interactive contract as Cursor. Launch the TUI first
+  // and deliver the task prompt after the composer is ready.
+  if (runner === 'grok') {
+    if (cmdIsRunnerAware) {
+      return expanded;
+    }
+    return buildGrokLaunch({
+      binary: resolveGrokBinary(vars.grokPath),
+      model,
+      effort: opts.effort,
+      prompt,
+      repo,
+      safetyTier: tier,
+    });
+  }
+
   // Any other runner (opencode + future additions): must have a runner-aware
   // dispatch_cmd — there is no inline fallback.
   if (!cmdIsRunnerAware) {
     throw new Error(
       `Runner '${runner}' requires a runner-aware dispatch_cmd on ${vars.machine}. ` +
-        `Use {runner_path} or a runner-specific placeholder such as {opencode_path}/{cursor_path}.`,
+        `Use {runner_path} or a runner-specific placeholder such as {opencode_path}/{cursor_path}/{grok_path}.`,
     );
   }
   return `unset CLAUDECODE && ${expanded}`;

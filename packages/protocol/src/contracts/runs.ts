@@ -192,7 +192,7 @@ export interface ReviewLoopRequest {
   validationDepth?: ReviewValidationDepth;
 }
 
-export type ReviewRunnerId = 'claude' | 'codex' | 'cursor' | 'opencode';
+export type ReviewRunnerId = 'claude' | 'codex' | 'cursor' | 'grok' | 'opencode';
 export interface DiffStat {
   files: number;
   additions: number;
@@ -1437,6 +1437,9 @@ export const DEFAULT_CLAUDE_MODEL = 'opus';
 
 /** Default Cursor Agent model used when no slot/task/project/user override is set. */
 export const DEFAULT_CURSOR_MODEL = 'composer-2.5';
+
+/** Default Grok model used when no slot/task/project/user override is set. */
+export const DEFAULT_GROK_MODEL = 'grok-build';
 export type DecisionType =
   | 'collision_check'
   | 'plan_confirmation'

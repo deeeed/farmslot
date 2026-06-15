@@ -14,7 +14,7 @@ the source instead of cloning from a URL.
 What it does:
 
 - checks prerequisites (git, node per `engines`, yarn, tmux, python3) and agent
-  runners (at least one of claude / codex / cursor-agent) — prints install
+  runners (at least one of claude / codex / cursor-agent / grok) — prints install
   hints, never auto-installs
 - creates the workspace (default `~/dev/farmslot-workspace`, override with
   `FARMSLOT_WORKSPACE`): `farmslot/` clone, `repos/`, `runs/`, `state.json`

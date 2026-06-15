@@ -71,6 +71,7 @@ const sidebars = {
       label: 'Reference',
       items: [
         'reference/gateway-api',
+        'reference/prepare-lifecycle',
         'reference/recipe-protocol-v1',
         'reference/recipe-runner-protocol',
         'reference/recipe-composition-quality',

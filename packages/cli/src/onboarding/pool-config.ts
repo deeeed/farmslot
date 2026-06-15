@@ -38,6 +38,7 @@ export interface PoolConfig {
   codex_path?: string;
   opencode_path?: string;
   cursor_path?: string;
+  grok_path?: string;
   android_home?: string;
   dispatch_cmd?: string;
   recycle_cmd?: string;
@@ -91,7 +92,7 @@ export interface GeneratePoolOptions {
   machine: string;
   os: 'darwin' | 'linux';
   sshUser: string;
-  runnerPaths: Partial<Record<'claude' | 'codex' | 'cursor', string>>;
+  runnerPaths: Partial<Record<'claude' | 'codex' | 'cursor' | 'grok', string>>;
 }
 
 /**
@@ -111,6 +112,7 @@ export function generatePool(opts: GeneratePoolOptions): PoolConfig {
   if (opts.runnerPaths.claude) pool.claude_path = opts.runnerPaths.claude;
   if (opts.runnerPaths.codex) pool.codex_path = opts.runnerPaths.codex;
   if (opts.runnerPaths.cursor) pool.cursor_path = opts.runnerPaths.cursor;
+  if (opts.runnerPaths.grok) pool.grok_path = opts.runnerPaths.grok;
   return pool;
 }
 

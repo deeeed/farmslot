@@ -20,6 +20,7 @@ function makeSlotVars(remoteRepo: string): SlotVars {
     codexPath: '',
     opencodePath: '',
     cursorPath: '',
+    grokPath: '',
     dispatchCmd: '',
     recycleCmd: '',
     repo: remoteRepo,

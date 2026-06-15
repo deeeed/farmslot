@@ -102,7 +102,7 @@ export function renderReadyReviewRequestModal(ctx: ReadyReviewRequestModalContex
                 <span class="rdy-review-loop-index">${index + 1}</span>
                 <div class="rdy-review-runner-picker" aria-label="Review runner">
                   ${(
-                    [ctx.currentRunner, 'claude', 'codex', 'cursor'].filter(
+                    [ctx.currentRunner, 'claude', 'codex', 'cursor', 'grok'].filter(
                       (runner, runnerIndex, runners) =>
                         runner && runners.indexOf(runner) === runnerIndex,
                     ) as ReviewRunnerChoice[]

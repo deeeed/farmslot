@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-06-13
 **Relates to:** [ADR-013](013-gateway-mediated-orchestration.md), [ADR-022](022-slot-lifecycle-simplification.md), [ADR-031](031-deterministic-first-auto-recovery.md)
+**Reference:** [Prepare lifecycle](../../apps/docs/docs/reference/prepare-lifecycle.md)
 
 ## Context
 

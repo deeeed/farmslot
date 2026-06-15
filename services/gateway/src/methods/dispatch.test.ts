@@ -109,6 +109,7 @@ test('dispatch failure cleanup kills launched role runner and verifies exit', as
     codexPath: '',
     opencodePath: '',
     cursorPath: '',
+    grokPath: '',
     dispatchCmd: '',
     recycleCmd: '',
     repo: '/repo',

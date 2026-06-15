@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CURSOR_MODEL,
+  DEFAULT_GROK_MODEL,
   type SafetyTier,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -142,9 +143,9 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'cursor',
     defaultLaunchMode: 'interactive',
     processMatchers: ['(^|/)(cursor-)?agent($| )'],
-    // Cursor Agent's normal Farmslot path is the interactive TUI. Unlike Codex,
-    // Cursor must be launched with no argv task prompt; Farmslot sends the task
-    // after the TUI input handler is live so humans can inspect/steer the pane.
+    // Cursor Agent's normal Farmslot path is the interactive TUI. Launch it
+    // without an argv task prompt, then send the task after the live composer is
+    // ready so operators can inspect and steer the pane.
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
     supportsTmuxNudges: true,
@@ -158,6 +159,28 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     },
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CURSOR_MODEL,
+    acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
+  },
+  grok: {
+    id: 'grok',
+    defaultLaunchMode: 'interactive',
+    processMatchers: ['(^|/)grok($| )'],
+    // Grok Build's default mode is an interactive TUI. Match Cursor's
+    // operator contract: open the pane first, then deliver the task prompt
+    // after the live composer is ready.
+    supportsInteractivePrompt: true,
+    needsPostLaunchPrompt: true,
+    supportsTmuxNudges: true,
+    continueCommand: null,
+    persistsSessionFiles: false,
+    requiresBusyComposerPoll: false,
+    flagsByTier: {
+      sandboxed: [],
+      'full-auto': ['--permission-mode', 'auto'],
+      dangerous: ['--permission-mode', 'bypassPermissions'],
+    },
+    defaultSafetyTier: 'sandboxed',
+    defaultModel: DEFAULT_GROK_MODEL,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
   },
   opencode: {
@@ -357,7 +380,7 @@ export function runnerProcessPatternSource(runnerId?: string | null): string {
   if (runnerId == null || runnerId === '' || normalized === DEFAULT_RUNNER) {
     // Broad fallback for unknown/legacy slots — callers should prefer an explicit runner
     // whenever available to avoid matching unrelated panes on mixed-runner machines.
-    return 'claude|codex|opencode|farmslot-fake-runner|fake-runner';
+    return 'claude|codex|opencode|cursor-agent|grok|farmslot-fake-runner|fake-runner';
   }
   if (!isKnownRunner(runnerId)) return normalized;
   const matchers = getRunnerDefinition(runnerId).processMatchers;
@@ -389,6 +412,12 @@ export function runnerLineLooksWaiting(line: string, runnerId?: string | null): 
       value,
     );
   }
+  if (runner === 'grok') {
+    return (
+      /continue|resume|waiting|press enter|send a message|type a message/i.test(value) ||
+      /(^|[│┃\s])❯(?:\s|[│┃]|$)/.test(value)
+    );
+  }
   return false;
 }
 
@@ -418,10 +447,23 @@ export function runnerPaneShowsWorkspaceTrustPrompt(
   );
 }
 
+function runnerPaneShowsGrokProjectDirectoryPrompt(
+  pane: string,
+  runnerId?: string | null,
+): boolean {
+  if (normalizeRunner(runnerId) !== 'grok') return false;
+  const value = normalizePaneText(pane).toLowerCase();
+  return (
+    value.includes('run grok build in a project directory') &&
+    value.includes('(current)') &&
+    value.includes('enter:submit')
+  );
+}
+
 export interface RunnerLaunchBlocker {
-  kind: 'workspace-trust' | 'auth-required';
+  kind: 'workspace-trust' | 'project-directory' | 'auth-required';
   summary: string;
-  autoAction: 'cursor-trust-workspace' | null;
+  autoAction: 'cursor-trust-workspace' | 'grok-select-current-project' | null;
 }
 
 export function detectRunnerLaunchBlocker(
@@ -434,6 +476,14 @@ export function detectRunnerLaunchBlocker(
       summary:
         'Cursor is waiting for workspace trust confirmation before the chat input is available.',
       autoAction: 'cursor-trust-workspace',
+    };
+  }
+  if (runnerPaneShowsGrokProjectDirectoryPrompt(pane, runnerId)) {
+    return {
+      kind: 'project-directory',
+      summary:
+        'Grok is waiting for project-directory selection before the chat input is available.',
+      autoAction: 'grok-select-current-project',
     };
   }
 
@@ -532,7 +582,7 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   if (idx === -1) return false;
   const after = compactPane.slice(idx + needle.length);
   return (
-    /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|UserPromptSubmit hook|SessionStart hook)\b/i.test(
+    /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|Starting session|Thinking|Thought|Turn completed|UserPromptSubmit hook|SessionStart hook)\b/i.test(
       after,
     ) || /[•✔✖]\s/.test(after)
   );
@@ -574,7 +624,8 @@ function paneLineLooksShellPrompt(line: string): boolean {
 }
 
 function runnerPaneShowsCurrentCursorProgress(pane: string, runnerId?: string | null): boolean {
-  if (normalizeRunner(runnerId) !== 'cursor') return false;
+  const runner = normalizeRunner(runnerId);
+  if (runner !== 'cursor' && runner !== 'grok') return false;
   const tail = pane
     .split('\n')
     .map((line) => line.trim())
@@ -583,9 +634,10 @@ function runnerPaneShowsCurrentCursorProgress(pane: string, runnerId?: string | 
   let progressIndex = -1;
   for (let i = tail.length - 1; i >= 0; i--) {
     if (
-      /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running)\b(?:\s+\d+\s+tokens)?/i.test(
+      /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running|Starting session)\b(?:\s+\d+\s+tokens)?/i.test(
         tail[i] ?? '',
-      )
+      ) ||
+      /\b(Thinking|Thought)\b/i.test(tail[i] ?? '')
     ) {
       progressIndex = i;
       break;
@@ -653,11 +705,14 @@ export function runnerPaneHasPendingInstruction(
   if (runner === 'codex') {
     return /(^|\s)›\s/.test(compactTail) && /\bContext\s+\d+%|\bgpt-[\w.-]+\b/i.test(compactTail);
   }
-  if (runner === 'cursor') {
-    return (
-      /plan, search, build anything|composer\s+\d/i.test(compactTail) &&
-      compactTail.includes(needle)
-    );
+  if (runner === 'cursor' || runner === 'grok') {
+    if (runner === 'cursor') {
+      return (
+        /plan, search, build anything|composer\s+\d/i.test(compactTail) &&
+        compactTail.includes(needle)
+      );
+    }
+    return compactTail.includes(needle) && /(^|\s|[│┃])❯(?:\s|[│┃]|$)/.test(compactTail);
   }
   if (runner === 'claude') {
     if (claudePaneShowsQueuedInstruction(pane, message)) return true;
@@ -850,6 +905,7 @@ export async function sendRunnerPostLaunchPrompt(
   let stableCount = 0;
   let ready = false;
   let workspaceTrustAnswered = false;
+  let grokProjectSelected = false;
   const snapshottedBlockers = new Set<string>();
   while (Date.now() - readyStart < readyTimeoutMs) {
     await new Promise((r) => setTimeout(r, pollIntervalMs));
@@ -893,6 +949,26 @@ export async function sendRunnerPostLaunchPrompt(
         `[${logPrefix}] accepted Cursor workspace trust prompt for ${target} (${vars.remoteRepo})`,
       );
       workspaceTrustAnswered = true;
+      stableCount = 0;
+      lastPane = '';
+      continue;
+    }
+    if (blocker?.autoAction === 'grok-select-current-project' && !grokProjectSelected) {
+      const selectResult = await execOnSlot(
+        vars,
+        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} Enter 2>/dev/null`),
+      );
+      if (selectResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to select current Grok project directory in ${target}: ${
+            selectResult.stderr || selectResult.stdout || `exit ${selectResult.exitCode}`
+          }`,
+        );
+      }
+      console.log(
+        `[${logPrefix}] selected current Grok project directory for ${target} (${vars.remoteRepo})`,
+      );
+      grokProjectSelected = true;
       stableCount = 0;
       lastPane = '';
       continue;

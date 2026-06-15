@@ -6,9 +6,11 @@ import { DEFAULT_CURSOR_MODEL, type SafetyTier } from '@farmslot/protocol';
 import {
   buildCodexExecLaunch,
   buildCursorAgentLaunch,
+  buildGrokLaunch,
   buildLaunchCommand,
   resolveCodexBinary,
   resolveCursorAgentBinary,
+  resolveGrokBinary,
 } from './launch-command.js';
 import {
   getRunnerDefinition,
@@ -322,7 +324,7 @@ describe('tmux nudge launch policy', () => {
     const cursorInteractive =
       "cd /repo && cursor-agent --force --sandbox disabled --model composer-2.5 'Read TASK.md'";
     const cursorHeadless =
-      "cd /repo && cursor-agent --print --trust --force --sandbox disabled --model composer-2.5 'Read TASK.md'";
+      "cd /repo && cursor-agent --print --output-format stream-json --stream-partial-output --trust --force --sandbox disabled --model composer-2.5 'Read TASK.md'";
     const claudeInteractive = 'cd /repo && claude --model sonnet';
     const claudeHeadless = "cd /repo && claude --model sonnet --print 'Read TASK.md'";
 
@@ -355,6 +357,17 @@ describe('runnerFlagsForTier — cursor', () => {
       '--force',
       '--sandbox',
       'disabled',
+    ]);
+  });
+});
+
+describe('runnerFlagsForTier — grok', () => {
+  it('maps Grok safety tiers to explicit permission-mode flags', () => {
+    assert.deepEqual(runnerFlagsForTier('grok', 'sandboxed'), []);
+    assert.deepEqual(runnerFlagsForTier('grok', 'full-auto'), ['--permission-mode', 'auto']);
+    assert.deepEqual(runnerFlagsForTier('grok', 'dangerous'), [
+      '--permission-mode',
+      'bypassPermissions',
     ]);
   });
 });
@@ -396,6 +409,40 @@ describe('buildCursorAgentLaunch', () => {
     assert.equal(resolveCursorAgentBinary(''), 'cursor-agent');
     assert.equal(resolveCursorAgentBinary(null), 'cursor-agent');
     assert.equal(resolveCursorAgentBinary('/custom/agent'), '/custom/agent');
+  });
+});
+
+describe('buildGrokLaunch', () => {
+  it('defaults to grok-build and leaves the task prompt for post-launch delivery', () => {
+    const cmd = buildGrokLaunch({
+      binary: 'grok',
+      model: null,
+      prompt: 'hi',
+      repo: '/tmp/repo',
+    });
+    assert.equal(cmd, "cd '/tmp/repo' && grok --model grok-build");
+    assert.doesNotMatch(cmd, /hi/);
+  });
+
+  it('passes safety tier, effort, and selected model', () => {
+    const cmd = buildGrokLaunch({
+      binary: '/Users/deeeed/.grok/bin/grok',
+      model: 'grok-composer-2.5-fast',
+      effort: 'high',
+      prompt: "read Bob's task",
+      repo: '/tmp/repo',
+      safetyTier: 'dangerous',
+    });
+    assert.equal(
+      cmd,
+      "cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode bypassPermissions --effort high --model grok-composer-2.5-fast",
+    );
+    assert.doesNotMatch(cmd, /Bob/);
+  });
+
+  it('resolveGrokBinary falls back to bare `grok` when no path is configured', () => {
+    assert.equal(resolveGrokBinary(''), 'grok');
+    assert.equal(resolveGrokBinary(null), 'grok');
   });
 });
 

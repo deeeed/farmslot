@@ -1,9 +1,7 @@
-import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
 import WebSocket from 'ws';
 
@@ -64,7 +62,6 @@ const GATEWAY_CREDENTIAL = resolveGatewayCredential();
 const GATEWAY_TOKEN = GATEWAY_CREDENTIAL?.token;
 const GATEWAY_PASSWORD = GATEWAY_CREDENTIAL?.password;
 const MAX_BACKOFF = 30_000;
-const execFileAsync = promisify(execFile);
 
 let ws: WebSocket | null = null;
 let backoff = 500;
@@ -175,11 +172,15 @@ async function collectCaptureCapabilities(): Promise<RecipeRuntimeCapabilityDecl
     return captureCapabilities('unsupported', 'capture-helper capture is macOS-only');
   }
   try {
-    const { stdout } = await execFileAsync(
-      process.env.CAPTURE_HELPER_PATH ?? 'capture-helper',
-      ['doctor', '--json'],
-      { timeout: 10_000 },
-    );
+    const helper = shellQuote(process.env.CAPTURE_HELPER_PATH ?? 'capture-helper');
+    const { stdout, stderr, exitCode } = await exec({
+      cmd: `${helper} doctor --json`,
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    if (exitCode !== 0) {
+      throw new Error(stderr.trim() || stdout.trim() || `exit ${exitCode}`);
+    }
     const doctor = JSON.parse(stdout) as CaptureHelperDoctorDocument;
     if (doctor.ok === false) {
       const failed = (doctor.checks ?? []).filter((check) => check.required && !check.ok);
@@ -199,6 +200,10 @@ async function collectCaptureCapabilities(): Promise<RecipeRuntimeCapabilityDecl
       `capture-helper doctor failed: ${errorMessage(error)}`,
     );
   }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function captureCapabilities(

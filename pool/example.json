@@ -10,6 +10,7 @@
   "android_home": "~/Android/Sdk",
   "claude_path": "/usr/local/bin/claude",
   "cursor_path": "/usr/local/bin/cursor-agent",
+  "grok_path": "/usr/local/bin/grok",
   "dispatch_cmd": "cd {repo} && {claude_path} {safety_flags}",
   "recycle_cmd": "adb -s {adb_serial} shell pm clear com.example.app",
   "tmux_workers": {

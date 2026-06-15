@@ -59,8 +59,8 @@ export interface SlotStatus {
   agentContexts?: AgentContextSummary[];
   dispatchedAt: string | null;
   completedAt: string | null;
-  runner: string | null; // claude | codex | opencode | custom
-  model: string | null; // sonnet | opus | haiku | gpt-5.5 | gpt-5.4 | custom
+  runner: string | null; // claude | codex | cursor | grok | opencode | custom
+  model: string | null; // sonnet | opus | haiku | gpt-5.5 | composer-2.5 | grok-build | custom
   resources?: Record<string, Record<string, string | number | boolean>>;
   deviceName: string | null;
   taskPhase: string | null; // e.g. "Validate 5/7"
