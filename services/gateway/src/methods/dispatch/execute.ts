@@ -540,15 +540,6 @@ async function respawnRoleWindowWithCommand(
   await applyRoleWindowOptions(vars, target);
 }
 
-async function ensureRoleWindowLiveForInput(
-  vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  target: string,
-): Promise<void> {
-  if (await isRoleWindowDead(vars, target)) {
-    await respawnRoleWindowForDispatch(vars, target);
-  }
-}
-
 async function tmuxSessionExists(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
