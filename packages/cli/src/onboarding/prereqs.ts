@@ -114,7 +114,7 @@ export function checkPrereqs(root: string = repoRoot): PrereqResult[] {
   return results;
 }
 
-export const KNOWN_RUNNERS = ['claude', 'codex', 'cursor-agent'] as const;
+export const KNOWN_RUNNERS = ['claude', 'codex', 'cursor-agent', 'grok'] as const;
 
 /** Runner state: missing from PATH, installed but not signed in, or ready to work. */
 export type RunnerStatus = 'missing' | 'inactive' | 'authenticated';
@@ -129,12 +129,14 @@ const RUNNER_INSTALL_HINTS: Record<string, string> = {
   claude: 'npm install -g @anthropic-ai/claude-code',
   codex: 'npm install -g @openai/codex',
   'cursor-agent': 'see https://cursor.com/cli',
+  grok: 'install Grok CLI, then run grok login',
 };
 
 const RUNNER_LOGIN_HINTS: Record<string, string> = {
   claude: 'run: claude (sign in interactively)',
   codex: 'run: codex login',
   'cursor-agent': 'run: cursor-agent login',
+  grok: 'run: grok login',
 };
 
 // Probes run for all runners on every doctor pass — keep the hang ceiling low.
@@ -147,6 +149,7 @@ function probeRunnerAuth(name: string): boolean {
     claude: { args: ['auth', 'status'], marker: /"loggedin":\s*true/i },
     codex: { args: ['login', 'status'], marker: /logged in (as|using)/i },
     'cursor-agent': { args: ['status'], marker: /logged in (as|using)/i },
+    grok: { args: ['models'], marker: /logged in/i },
   };
   const probe = probes[name];
   if (!probe) return false;

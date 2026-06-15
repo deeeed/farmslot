@@ -3,6 +3,7 @@ export const RUNNER_COLORS: Record<string, string> = {
   codex: '#10a37f',
   opencode: '#f59e0b',
   cursor: '#8b5cf6',
+  grok: '#14b8a6',
   fake: '#a78bfa',
 };
 

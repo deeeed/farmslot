@@ -14,6 +14,7 @@ export function makeVars(overrides: Partial<SlotVars> = {}): SlotVars {
     codexPath: '/usr/local/bin/codex',
     opencodePath: '/usr/local/bin/opencode',
     cursorPath: '/usr/local/bin/cursor-agent',
+    grokPath: '/usr/local/bin/grok',
     dispatchCmd: '',
     recycleCmd: '',
     repo: '/tmp/repo',

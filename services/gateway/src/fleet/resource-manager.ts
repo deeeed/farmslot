@@ -1,7 +1,6 @@
 // resource-manager.ts — resolve slot resources + execute resource control hooks + health polling
 // Supports both push-based (agent watches) and pull-based (60s poll reconciliation)
 
-import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -24,6 +23,7 @@ import {
 
 // ─── Placeholder helpers ───
 import { loadProjectVars, loadSlotVars, type RawProjectJson, resolveSlot } from '../core/config.js';
+import { execLocal } from '../core/exec.js';
 import { expandTemplate } from '../core/hooks.js';
 import { shellQuote } from '../core/tmux.js';
 import { farmslotRoot } from '../projects/repo-root.js';
@@ -427,15 +427,7 @@ async function execResourceCommand(
     // No node — fall through to local exec, matching the legacy health path.
   }
 
-  return new Promise((resolve) => {
-    execFile('bash', ['-c', cmd], { cwd, timeout }, (err, stdout, stderr) => {
-      if (err) {
-        resolve({ stdout, stderr: stderr.trim() || err.message, exitCode: 1 });
-      } else {
-        resolve({ stdout, stderr, exitCode: 0 });
-      }
-    });
-  });
+  return execLocal(cmd, { cwd, timeout });
 }
 
 async function verifyBrowserPidFileCapturable(
@@ -484,6 +476,11 @@ export function buildBrowserPidFileCapturableCommand(pidPath: string): string {
 function buildCaptureHelperResolveFunction(): string {
   return [
     'capture_helper_resolve() {',
+    '  timeout_bin="$(command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true)"',
+    '  if [ -n "$timeout_bin" ]; then',
+    '    "$timeout_bin" 3s capture-helper resolve --pid "$1" --json >/dev/null 2>&1',
+    '    return $?',
+    '  fi',
     '  python3 - "$1" <<\'PY\'',
     'import subprocess',
     'import sys',
@@ -1115,28 +1112,20 @@ export async function executeResourceControl(
       result = { ok: false, detail: (err as Error).message };
     }
   } else {
-    result = await new Promise<{ ok: boolean; detail?: string }>((resolve) => {
-      execFile(
-        'bash',
-        ['-c', expanded],
-        { cwd: slotVars.repo, timeout: 30_000 },
-        (err, stdout, stderr) => {
-          if (err) {
-            const msg = stderr || err.message;
-            if (/Unable to (shutdown|boot) device in current state/i.test(msg)) {
-              resolve({
-                ok: true,
-                detail: action === 'shutdown' ? 'already stopped' : 'already running',
-              });
-            } else {
-              resolve({ ok: false, detail: msg });
-            }
-          } else {
-            resolve({ ok: true, detail: stdout.trim() || undefined });
-          }
-        },
-      );
-    });
+    const execResult = await execLocal(expanded, { cwd: slotVars.repo, timeout: 30_000 });
+    if (execResult.exitCode === 0) {
+      result = { ok: true, detail: execResult.stdout.trim() || undefined };
+    } else {
+      const msg = execResult.stderr || `exit ${execResult.exitCode}`;
+      if (/Unable to (shutdown|boot) device in current state/i.test(msg)) {
+        result = {
+          ok: true,
+          detail: action === 'shutdown' ? 'already stopped' : 'already running',
+        };
+      } else {
+        result = { ok: false, detail: msg };
+      }
+    }
   }
 
   // After a successful boot, write a sidecar `<pidPath>.meta` next to the

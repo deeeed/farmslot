@@ -15,9 +15,9 @@
     "setup": "cd apps/companion && yarn install",
     "preflight": "cd apps/companion && METRO_PORT={{port}} IOS_SIMULATOR={{simulator}} ADB_SERIAL={{adb_serial}} bash scripts/agentic/preflight.sh",
     "health_check": "cd apps/companion && yarn typecheck",
-    "dev_server_check": "lsof -i :{{port}} >/dev/null 2>&1",
+    "dev_server_check": "lsof -nP -iTCP:{{port}} -sTCP:LISTEN -t >/dev/null 2>&1",
     "recipe_run": "bash apps/companion/scripts/agentic/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --runtime-dir {{runtime_dir}} --platform {{platform}} --metro-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
-    "teardown": "lsof -ti :{{port}} 2>/dev/null | xargs kill 2>/dev/null; true"
+    "teardown": "lsof -nP -tiTCP:{{port}} -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null; true"
   },
   "recipe_run_supports_playback_slow": false,
   "health": {
@@ -76,8 +76,8 @@
         "port": "{{port}}"
       },
       "hooks": {
-        "health": "lsof -i :{{port}} >/dev/null 2>&1",
-        "shutdown": "lsof -ti :{{port}} 2>/dev/null | xargs kill 2>/dev/null; true"
+        "health": "lsof -nP -iTCP:{{port}} -sTCP:LISTEN -t >/dev/null 2>&1",
+        "shutdown": "lsof -nP -tiTCP:{{port}} -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null; true"
       }
     }
   }

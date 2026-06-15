@@ -2,7 +2,9 @@ import { resolve } from 'path';
 import { defineConfig } from 'vite';
 
 const gatewayPort = Number(process.env.GATEWAY_PORT) || 7777;
+const gatewayHost = process.env.GATEWAY_PROXY_HOST || process.env.GATEWAY_HOST || '127.0.0.1';
 const vitePort = Number(process.env.VITE_PORT) || 5174;
+const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
 
 export default defineConfig({
   root: resolve(__dirname),
@@ -28,11 +30,11 @@ export default defineConfig({
     },
     proxy: {
       '/ws': {
-        target: `http://localhost:${gatewayPort}`,
+        target: gatewayTarget,
         ws: true,
       },
       '/api': {
-        target: `http://localhost:${gatewayPort}`,
+        target: gatewayTarget,
       },
     },
   },

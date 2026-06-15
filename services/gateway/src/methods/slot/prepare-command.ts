@@ -203,6 +203,10 @@ export function buildPrepareWrappedCommand(
     'if [ "$__farmslot_status" -ne 0 ]; then',
     '  __farmslot_cleanup_descendants',
     'fi',
+    // After the child command exits, the sentinel must report that real status.
+    // A later tmux cleanup can send SIGHUP during the drain sleep; if the traps
+    // stay armed, that late signal overwrites a successful phase with 129.
+    'trap - HUP INT TERM',
     `echo "$__farmslot_status" > ${quotedSentinelPath}`,
     'sleep 1',
     // On a successful preflight, keep this wrapping bash alive so the tmux pane
@@ -237,7 +241,7 @@ export function buildDevServerPortCleanup(
     return { command: null, skippedReason: `Skipped dev-server cleanup for gateway port ${port}` };
   }
   return {
-    command: `lsof -ti :${port} 2>/dev/null | xargs kill 2>/dev/null; true`,
+    command: `lsof -nP -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null | xargs kill 2>/dev/null; true`,
     skippedReason: null,
   };
 }
@@ -291,14 +295,15 @@ export async function runPrepareCommand(
   // derives from the window name, so unsanitized chars can break script staging.
   const rawLabel = (opts?.windowLabel ?? '').trim();
   const labelPart = /^[A-Za-z0-9_-]+$/.test(rawLabel) ? rawLabel : Date.now().toString();
-  const windowName = buildPrepareWindowName(labelPart);
+  const phaseName = opts?.phase ? sanitizePhaseName(opts.phase) : '';
+  const windowName = buildPrepareWindowName(phaseName ? `${labelPart}-${phaseName}` : labelPart);
   const target = `${sessionName}:${windowName}`;
   // Sentinel + remote log live on the host where tmux runs: the slot host by
   // default, or the orchestrator when forceLocal is set for orchestrator-only
   // scripts. Critical for remote slots: tmux pipe-pane writes on that host, so
   // the target path must exist there.
   const slotHostScratchDir = '/tmp/farmslot-prepare';
-  const phasePart = opts?.phase ? `-${sanitizePhaseName(opts.phase)}` : '';
+  const phasePart = '';
   const sentinelPath = `${slotHostScratchDir}/${sessionName}-${windowName}${phasePart}.exit`;
   const slotHostLogPath = `${slotHostScratchDir}/${sessionName}-${windowName}${phasePart}.log`;
   // Trailing `sleep 1` flushes pipe-pane's final bytes before bash exits. Do not
@@ -368,11 +373,9 @@ export async function runPrepareCommand(
     return failSetup('tmux ensure-session', ensureR);
   }
   // Pre-launch cleanup: kill stale prepare-* windows from prior runs (gateway restart,
-  // aborted run, orphaned cleanup). The prepare UX is intentionally one window per
-  // flow invocation (`prepare-<runId8>`), not phase-split windows like
-  // `prepare-<runId8>-deps` / `prepare-<runId8>-preflight`, so any stale prepare
-  // window in this slot session is safe to remove before launching the current
-  // command. activePrepareSlots prevents concurrent prepares for the same slot.
+  // aborted run, orphaned cleanup). Active prepare phases use phase-scoped windows
+  // such as `prepare-<runId8>-fixtures`; activePrepareSlots prevents concurrent
+  // prepares for the same slot.
   await exec(
     tmuxShellSnippet(
       `list-windows -t ${shellQuote(sessionName)} -F '#{window_name}' 2>/dev/null | ` +

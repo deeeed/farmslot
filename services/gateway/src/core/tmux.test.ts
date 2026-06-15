@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { parseTmuxKeys, selectResolvedTmuxSession, shellQuote, tmuxShellSnippet } from './tmux.js';
+import {
+  parseTmuxKeys,
+  selectResolvedTmuxSession,
+  shellQuote,
+  tmuxSendTextCommand,
+  tmuxShellSnippet,
+} from './tmux.js';
 
 describe('shellQuote', () => {
   it('wraps strings for safe single-quoted shell usage', () => {
@@ -21,6 +27,16 @@ describe('tmuxShellSnippet', () => {
 describe('parseTmuxKeys', () => {
   it('splits space-separated tmux key names and drops empty segments', () => {
     assert.deepEqual(parseTmuxKeys('  C-c   Enter  '), ['C-c', 'Enter']);
+  });
+});
+
+describe('tmuxSendTextCommand', () => {
+  it('submits literal text with Enter when enter is requested', () => {
+    const command = tmuxSendTextCommand('mm-1:bugfix', 'echo ok', { enter: true });
+
+    assert.match(command, /send-keys -t 'mm-1:bugfix' -l 'echo ok'/);
+    assert.match(command, /send-keys -t 'mm-1:bugfix' Enter/);
+    assert.doesNotMatch(command, /send-keys -t 'mm-1:bugfix' C-m/);
   });
 });
 

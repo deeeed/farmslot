@@ -240,7 +240,7 @@ Three layout modes within slot-view:
 | Type           | Node method                                  | Emits on                                 |
 | -------------- | -------------------------------------------- | ---------------------------------------- |
 | `pid-file`     | `fs.watch` on directory + periodic `kill -0` | PID file create/delete, zombie detection |
-| `port-listen`  | periodic `lsof -i :PORT`                     | port open/closed                         |
+| `port-listen`  | periodic local TCP connect probe             | port open/closed                         |
 | `process-poll` | periodic shell command execution             | exit code change                         |
 
 **Config:** `watch` field added to `ResourceDefinition` in `project.json`:

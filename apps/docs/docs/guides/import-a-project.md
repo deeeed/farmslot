@@ -78,7 +78,7 @@ A project profile owns project-specific behavior. The gateway orchestrates hooks
 }
 ```
 
-These snippets are intentionally generic. Real projects can add mobile devices, browser profiles, fixture sync, native build steps, backend services, custom validation adapters, and project-owned [worker prompt templates](./customize-worker-prompts.md).
+These snippets are intentionally generic. Real projects can add mobile devices, browser profiles, fixture sync, native build steps, backend services, custom validation adapters, and project-owned [worker prompt templates](./customize-worker-prompts.md). Projects that have more than one valid slot entry point should define [prepare profiles](../reference/prepare-lifecycle.md) instead of overloading one prepare hook with hidden modes.
 
 ## Configurable flows
 
@@ -101,7 +101,7 @@ flowchart TD
 
 Common configurable flows:
 
-- **Prepare flow** — install dependencies, sync fixtures, boot services, reserve devices.
+- **Prepare flow** — select a prepare profile, install dependencies, sync fixtures, boot services, reserve devices, and prove readiness.
 - **Health flow** — prove the slot is ready before dispatch.
 - **Prompt flow** — render the project-owned task template for bugfix, development, review, PR completion, or merge recovery.
 - **Dispatch flow** — launch the selected runner with the rendered prompt, safety tier, and context.

@@ -1,8 +1,10 @@
 // resource-watch.ts — Watch PID files, ports, and processes for resource status changes.
 // Gateway sends watch instructions; node watches locally and emits events on state change.
 
-import { execFile } from 'node:child_process';
 import { existsSync, type FSWatcher, readFileSync, watch } from 'node:fs';
+import net from 'node:net';
+
+import { exec } from './exec.js';
 
 export type WatchType = 'pid-file' | 'port-listen' | 'process-poll';
 
@@ -53,9 +55,11 @@ interface ActiveWatch {
   // running → stopped → running within this window collapses to `relaunched`.
   relaunchWindow?: ReturnType<typeof setTimeout>;
   relaunchPrevPid?: number;
+  pollInFlight?: boolean;
 }
 
 const RELAUNCH_WINDOW_MS = 2_000;
+const PORT_CHECK_TIMEOUT_MS = 1_000;
 
 const activeWatches = new Map<string, ActiveWatch>(); // key: "slotId:resourceId"
 
@@ -208,7 +212,19 @@ function startPidFileWatch(
       status: current.status,
       pid: current.pid,
       ...(current.meta ? { meta: current.meta } : {}),
-    });
+      });
+  };
+
+  const runPoll = (force = false, source = 'pid-file') => {
+    if (aw.pollInFlight) return;
+    aw.pollInFlight = true;
+    emitIfChanged(force)
+      .catch((err) => {
+        console.warn(`[resource-watch] ${source} poll failed for ${pidPath}: ${err.message}`);
+      })
+      .finally(() => {
+        aw.pollInFlight = false;
+      });
   };
 
   // fs.watch on the PID file (detects create/delete/modify)
@@ -221,9 +237,7 @@ function startPidFileWatch(
       if (changedFile === filename) {
         // Small delay for file write to complete
         setTimeout(() => {
-          emitIfChanged().catch((err) => {
-            console.warn(`[resource-watch] pid-file poll failed for ${pidPath}: ${err.message}`);
-          });
+          runPoll(false, 'pid-file');
         }, 100);
       }
     });
@@ -235,30 +249,54 @@ function startPidFileWatch(
   // Initial check — emit current state so gateway rebuilds `activeResource`
   // after a restart. Without this, a long-lived `running` resource stays
   // invisible until its next state transition.
-  emitIfChanged(true).catch((err) => {
-    console.warn(`[resource-watch] initial pid-file poll failed for ${pidPath}: ${err.message}`);
-  });
+  runPoll(true, 'initial pid-file');
 
   // Periodic zombie detection (kill -0 check)
   aw.pollTimer = setInterval(() => {
-    emitIfChanged().catch((err) => {
-      console.warn(`[resource-watch] pid-file poll failed for ${pidPath}: ${err.message}`);
-    });
+    runPoll(false, 'pid-file');
   }, intervalMs);
 }
 
 // ─── Port listen watcher ───
 
-function checkPortStatus(port: number): Promise<ResourceStatusValue> {
+function canConnectToPort(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const cmd =
-      process.platform === 'linux'
-        ? `ss -tln 2>/dev/null | grep -q ':${port} '`
-        : `lsof -i :${port} >/dev/null 2>&1`;
-    execFile('bash', ['-c', cmd], { timeout: 3_000 }, (err) => {
-      resolve(err ? 'stopped' : 'running');
-    });
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(PORT_CHECK_TIMEOUT_MS);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
   });
+}
+
+export async function checkPortStatus(port: number): Promise<ResourceStatusValue> {
+  if (!Number.isInteger(port) || port <= 0 || port > 65_535) return 'stopped';
+  const [ipv4, ipv6] = await Promise.all([
+    canConnectToPort(port, '127.0.0.1'),
+    canConnectToPort(port, '::1'),
+  ]);
+  return ipv4 || ipv6 ? 'running' : 'stopped';
+}
+
+function runWatchPoll(aw: ActiveWatch, label: string, poll: () => Promise<void>): void {
+  if (aw.pollInFlight) return;
+  aw.pollInFlight = true;
+  poll()
+    .catch((err) => {
+      console.warn(
+        `[resource-watch] ${label} poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
+      );
+    })
+    .finally(() => {
+      aw.pollInFlight = false;
+    });
 }
 
 function startPortListenWatch(
@@ -277,28 +315,17 @@ function startPortListenWatch(
   };
 
   // Initial check
-  poll().catch((err) => {
-    console.warn(
-      `[resource-watch] port poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
-    );
-  });
+  runWatchPoll(aw, 'port', poll);
   aw.pollTimer = setInterval(() => {
-    poll().catch((err) => {
-      console.warn(
-        `[resource-watch] port poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
-      );
-    });
+    runWatchPoll(aw, 'port', poll);
   }, intervalMs);
 }
 
 // ─── Process poll watcher ───
 
-function checkProcessStatus(cmd: string, cwd?: string): Promise<ResourceStatusValue> {
-  return new Promise((resolve) => {
-    execFile('bash', ['-c', cmd], { cwd, timeout: 5_000 }, (err) => {
-      resolve(err ? 'stopped' : 'running');
-    });
-  });
+async function checkProcessStatus(cmd: string, cwd?: string): Promise<ResourceStatusValue> {
+  const result = await exec({ cmd, cwd, timeout: 5_000 });
+  return result.exitCode === 0 ? 'running' : 'stopped';
 }
 
 function startProcessPollWatch(
@@ -318,17 +345,9 @@ function startProcessPollWatch(
   };
 
   // Initial check
-  poll().catch((err) => {
-    console.warn(
-      `[resource-watch] process poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
-    );
-  });
+  runWatchPoll(aw, 'process', poll);
   aw.pollTimer = setInterval(() => {
-    poll().catch((err) => {
-      console.warn(
-        `[resource-watch] process poll failed for ${aw.slotId}:${aw.resourceId}: ${err.message}`,
-      );
-    });
+    runWatchPoll(aw, 'process', poll);
   }, intervalMs);
 }
 

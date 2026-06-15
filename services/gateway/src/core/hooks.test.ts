@@ -16,6 +16,7 @@ test('expandTemplate exposes the full slot id for configured actions', () => {
     codexPath: '',
     opencodePath: '',
     cursorPath: '/usr/local/bin/agent',
+    grokPath: '',
     dispatchCmd: '',
     recycleCmd: '',
     repo: '/repo',
@@ -46,6 +47,7 @@ test('expandTemplate uses configured session when machine ids contain hyphens', 
     codexPath: '',
     opencodePath: '',
     cursorPath: '',
+    grokPath: '',
     dispatchCmd: '',
     recycleCmd: '',
     repo: '/repo',
@@ -76,6 +78,7 @@ test('expandTemplate renders missing optional resource placeholders as empty str
     codexPath: '',
     opencodePath: '',
     cursorPath: '',
+    grokPath: '',
     dispatchCmd: '',
     recycleCmd: '',
     repo: '/repo',
@@ -106,6 +109,7 @@ test('expandDispatchCmd supports Cursor Agent runner path placeholders', () => {
     codexPath: '',
     opencodePath: '',
     cursorPath: '/usr/local/bin/agent',
+    grokPath: '',
     dispatchCmd:
       'cd {repo} && {runner} {runner_path} {cursor_path} {safety_flags} --model {model} {task_prompt}',
     recycleCmd: '',
@@ -142,6 +146,7 @@ test('expandDispatchCmd leaves Cursor Agent path placeholders empty when cursor_
     codexPath: '',
     opencodePath: '',
     cursorPath: '',
+    grokPath: '',
     dispatchCmd: '{runner_path} {cursor_path}',
     recycleCmd: '',
     repo: '/repo',
@@ -155,4 +160,41 @@ test('expandDispatchCmd leaves Cursor Agent path placeholders empty when cursor_
   };
 
   assert.equal(expandDispatchCmd(slotVars, { runner: 'cursor' }), '');
+});
+
+test('expandDispatchCmd supports Grok runner path placeholders', () => {
+  const slotVars: SlotVars = {
+    slotId: 'runner-browser-1',
+    machine: 'runner-local',
+    platform: 'chrome-extension',
+    host: 'localhost',
+    sshUser: 'example',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '/Users/deeeed/.grok/bin/grok',
+    dispatchCmd:
+      'cd {repo} && {runner} {runner_path} {grok_path} {safety_flags} --model {model} {task_prompt}',
+    recycleCmd: '',
+    repo: '/repo',
+    session: 'browser-1',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    remoteRepo: '/repo',
+    projectName: 'example-browser-farm',
+    resourceVars: { cdp_port: '9222' },
+  };
+
+  assert.equal(
+    expandDispatchCmd(slotVars, {
+      runner: 'grok',
+      model: 'grok-build',
+      taskPrompt: 'Read TASK.md',
+      safetyFlags: '--permission-mode auto',
+    }),
+    'cd /repo && grok /Users/deeeed/.grok/bin/grok /Users/deeeed/.grok/bin/grok --permission-mode auto --model grok-build Read TASK.md',
+  );
 });

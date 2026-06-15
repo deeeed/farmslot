@@ -65,6 +65,11 @@
       "description": "Absolute path to the Cursor Agent CLI binary on this machine.",
       "examples": ["/usr/local/bin/cursor-agent", "~/.local/bin/cursor-agent"]
     },
+    "grok_path": {
+      "type": "string",
+      "description": "Absolute path to the Grok CLI binary on this machine.",
+      "examples": ["/Users/example/.grok/bin/grok", "~/.local/bin/grok"]
+    },
     "android_home": {
       "type": "string",
       "description": "Path to Android SDK. Required for Android platform machines.",
@@ -72,7 +77,7 @@
     },
     "dispatch_cmd": {
       "type": "string",
-      "description": "Shell command template to launch an agent in a slot. Supports {repo}, {runner}, {runner_path}, {claude_path}, {codex_path}, {opencode_path}, {cursor_path}, {model}, {task_file}, {task_prompt}, {effort}, and {adb_serial} placeholders.",
+      "description": "Shell command template to launch an agent in a slot. Supports {repo}, {runner}, {runner_path}, {claude_path}, {codex_path}, {opencode_path}, {cursor_path}, {grok_path}, {model}, {task_file}, {task_prompt}, {effort}, and {adb_serial} placeholders.",
       "examples": [
         "cd {repo} && {runner_path} --model {model}",
         "cd {repo} && {claude_path} --dangerously-skip-permissions"

@@ -604,7 +604,7 @@ async function checkDevServer(
     try {
       const r = await execOnSlot(
         vars,
-        `ss -tln 2>/dev/null | grep -q ':${port} ' || lsof -i :${port} >/dev/null 2>&1`,
+        `ss -tln 2>/dev/null | grep -q ':${port} ' || lsof -nP -iTCP:${port} -sTCP:LISTEN -t >/dev/null 2>&1`,
         { timeout: SLOT_CHECK_TIMEOUT_MS },
       );
       return r.exitCode === 0 ? 'OK' : 'OFF';

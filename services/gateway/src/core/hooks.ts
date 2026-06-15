@@ -158,6 +158,8 @@ function resolveRunnerPath(slotVars: SlotVars, runner?: string): string {
       return slotVars.opencodePath || slotVars.codexPath || '';
     case 'cursor':
       return slotVars.cursorPath || '';
+    case 'grok':
+      return slotVars.grokPath || '';
     case 'claude':
       return slotVars.claudePath;
     default:
@@ -197,6 +199,7 @@ export function expandDispatchCmd(
   cmd = cmd.replaceAll('{codex_path}', slotVars.codexPath);
   cmd = cmd.replaceAll('{opencode_path}', slotVars.opencodePath);
   cmd = cmd.replaceAll('{cursor_path}', slotVars.cursorPath);
+  cmd = cmd.replaceAll('{grok_path}', slotVars.grokPath);
   cmd = cmd.replaceAll('{adb_serial}', slotVars.resourceVars.adb_serial ?? '');
 
   // Empty placeholders (e.g. `{safety_flags}` for runners with no extra flags)

@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently \"yarn workspace @farmslot/gateway dev\" \"yarn --cwd ui dev\"",
-    "dev:gateway": "yarn workspace @farmslot/gateway dev",
+    "dev": "concurrently \"GATEWAY_HOST=${GATEWAY_HOST:-127.0.0.1} yarn workspace @farmslot/gateway dev\" \"yarn --cwd ui dev\"",
+    "dev:gateway": "GATEWAY_HOST=${GATEWAY_HOST:-127.0.0.1} yarn workspace @farmslot/gateway dev",
     "dev:ui": "yarn --cwd ui dev",
     "dev:node": "yarn workspace @farmslot/node dev",
     "farmslot": "tsx ../../packages/cli/src/entry.ts",

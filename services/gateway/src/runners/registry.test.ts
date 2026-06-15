@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { DEFAULT_CURSOR_MODEL } from '@farmslot/protocol';
+import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL } from '@farmslot/protocol';
 
 import { buildCodexExecLaunch, buildLaunchCommand } from './launch-command.js';
 import {
@@ -197,6 +197,7 @@ describe('cursor runner', () => {
 
     assert.equal(runnerPaneShowsWorkspaceTrustPrompt(pane, 'cursor'), true);
     assert.equal(runnerPaneShowsWorkspaceTrustPrompt(pane, 'claude'), false);
+    assert.equal(runnerPaneShowsWorkspaceTrustPrompt(pane, 'grok'), false);
     assert.deepEqual(detectRunnerLaunchBlocker(pane, 'cursor'), {
       kind: 'workspace-trust',
       summary:
@@ -216,6 +217,28 @@ describe('cursor runner', () => {
 `;
 
     assert.equal(runnerPaneShowsWorkspaceTrustPrompt(pane, 'cursor'), false);
+  });
+
+  it('detects Grok project-directory selection prompts before prompt delivery', () => {
+    const pane = `
+  ┃
+  ┃  Run Grok Build in a project directory?
+  ┃
+  ┃  1 (○) farmslot-grok-probe (current)                                     █
+  ┃                                /private/tmp/farmslot-grok-probe          █
+  ┃  2 (○) farmslot                ~/dev/farmslot  (9m ago)
+  ┃
+  ┃  ↑/↓ navigate · y copy                                    Enter:submit
+  ┃
+`;
+
+    assert.deepEqual(detectRunnerLaunchBlocker(pane, 'grok'), {
+      kind: 'project-directory',
+      summary:
+        'Grok is waiting for project-directory selection before the chat input is available.',
+      autoAction: 'grok-select-current-project',
+    });
+    assert.equal(detectRunnerLaunchBlocker(pane, 'cursor'), null);
   });
 
   it('classifies auth blockers without assigning an unsafe auto action', () => {
@@ -573,6 +596,58 @@ describe('cursor runner', () => {
   });
 });
 
+describe('grok runner', () => {
+  it('is registered as an interactive runner with grok-build default model', () => {
+    const def = getRunnerDefinition('grok');
+    assert.equal(def.id, 'grok');
+    assert.equal(def.defaultLaunchMode, 'interactive');
+    assert.equal(runnerDefaultModel('grok'), DEFAULT_GROK_MODEL);
+  });
+
+  it('uses post-launch prompt delivery and remains tmux-steerable', () => {
+    assert.equal(runnerNeedsPostLaunchPrompt('grok'), true);
+    assert.equal(runnerSupportsInteractivePrompt('grok'), true);
+    assert.equal(runnerSupportsTmuxNudges('grok'), true);
+    assert.equal(runnerContinueCommand('grok'), null);
+    assert.equal(getRunnerDefinition('grok').requiresBusyComposerPoll, false);
+    assert.equal(runnerPersistsSessionFiles('grok'), false);
+  });
+
+  it('recognizes Grok TUI waiting lines as nudge opportunities', () => {
+    assert.equal(runnerLineLooksWaiting('send a message', 'grok'), true);
+    assert.equal(runnerLineLooksWaiting('type a message', 'grok'), true);
+    assert.equal(
+      runnerLineLooksWaiting(
+        '│ ❯                                                                        │',
+        'grok',
+      ),
+      true,
+    );
+    assert.equal(runnerLineLooksWaiting('→ Plan, search, build anything', 'grok'), false);
+  });
+
+  it('recognizes Grok buffered prompts and submitted progress', () => {
+    const message = 'Reply exactly OK and do not edit files.';
+    const buffered = `
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯ Reply exactly OK and do not edit files.                                │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+    const submitted = `
+     #1 Reply exactly OK and do not edit files.
+
+    ⠋ Starting session… 5.0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+
+    assert.equal(runnerPaneHasPendingInstruction(buffered, message, 'grok'), true);
+    assert.equal(runnerPaneShowsPromptAccepted(submitted, buffered, message, '', 'grok'), true);
+  });
+});
+
 describe('custom runner fallback behavior', () => {
   it('uses the raw custom runner name as the process matcher source', () => {
     assert.equal(runnerProcessPatternSource('aider'), 'aider');
@@ -581,7 +656,7 @@ describe('custom runner fallback behavior', () => {
   it('uses the broad catch-all when no runner is specified', () => {
     assert.equal(
       runnerProcessPatternSource(undefined),
-      'claude|codex|opencode|farmslot-fake-runner|fake-runner',
+      'claude|codex|opencode|cursor-agent|grok|farmslot-fake-runner|fake-runner',
     );
   });
 });
@@ -883,6 +958,52 @@ describe('buildLaunchCommand', () => {
       assert.match(
         cmd,
         /cd \/tmp\/repo && \/usr\/local\/bin\/cursor-agent --force --sandbox disabled --model composer-2.5$/,
+      );
+      assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
+      assert.doesNotMatch(cmd, /CLAUDECODE/);
+    });
+  });
+
+  describe('grok runner', () => {
+    it('falls back to bare `grok` on PATH when no grok_path is configured', () => {
+      const vars = makeVars({ dispatchCmd: '', grokPath: '' });
+      const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
+      assert.equal(cmd, "cd '/tmp/repo' && grok --model grok-build");
+    });
+
+    it('falls back to inline Grok launcher with grok-build default model', () => {
+      const vars = makeVars({ dispatchCmd: '', grokPath: '/usr/local/bin/grok' });
+      const cmd = buildLaunchCommand(vars, 'grok', null, PROMPT);
+      assert.equal(cmd, "cd '/tmp/repo' && /usr/local/bin/grok --model grok-build");
+      assert.doesNotMatch(cmd, /Read TASK/);
+      assert.doesNotMatch(cmd, /--single/);
+      assert.doesNotMatch(cmd, /--print/);
+    });
+
+    it('uses selected model, effort, and configured grok path for inline launch', () => {
+      const vars = makeVars({ dispatchCmd: '', grokPath: '/Users/deeeed/.grok/bin/grok' });
+      const cmd = buildLaunchCommand(vars, 'grok', 'grok-composer-2.5-fast', PROMPT, {
+        effort: 'xhigh',
+        safetyTier: 'full-auto',
+      });
+      assert.equal(
+        cmd,
+        "cd '/tmp/repo' && /Users/deeeed/.grok/bin/grok --permission-mode auto --effort xhigh --model grok-composer-2.5-fast",
+      );
+    });
+
+    it('routes through expandDispatchCmd when dispatch_cmd uses {grok_path}', () => {
+      const vars = makeVars({
+        dispatchCmd:
+          'cd {repo} && {grok_path} {safety_flags} --effort {effort} --model {model} {task_prompt}',
+      });
+      const cmd = buildLaunchCommand(vars, 'grok', DEFAULT_GROK_MODEL, PROMPT, {
+        effort: 'high',
+        safetyTier: 'dangerous',
+      });
+      assert.match(
+        cmd,
+        /cd \/tmp\/repo && \/usr\/local\/bin\/grok --permission-mode bypassPermissions --effort high --model grok-build$/,
       );
       assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);

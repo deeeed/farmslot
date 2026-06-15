@@ -98,6 +98,13 @@ const LAUNCH_PRELUDE_DA_WAIT_MS = 250;
  */
 const LAUNCH_PRELUDE_SETTLE_MS = 50;
 
+/**
+ * Fresh role windows start a login shell before dispatch sends the runner
+ * launch line. On macOS/zsh, an immediate C-c during shell startup can exit the
+ * pane; with dispatch's pane-died hook that removes the whole role window.
+ */
+const ROLE_WINDOW_STARTUP_SETTLE_MS = 500;
+
 type EventEmitter = (event: string, payload: unknown) => void;
 
 async function captureAgentPaneTarget(
@@ -503,13 +510,34 @@ async function respawnRoleWindowForDispatch(
   await applyRoleWindowOptions(vars, target);
 }
 
-async function ensureRoleWindowLiveForInput(
+async function respawnRoleWindowWithCommand(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
+  command: string,
 ): Promise<void> {
-  if (await isRoleWindowDead(vars, target)) {
-    await respawnRoleWindowForDispatch(vars, target);
+  const launchCommand = `exec bash -lc ${shellQuote(command)}`;
+  const respawned = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `respawn-window -k -t ${shellQuote(target)} -c ${shellQuote(vars.remoteRepo)} ` +
+        shellQuote(launchCommand),
+    ),
+  );
+  if (respawned.exitCode !== 0) {
+    throw new Error(
+      `Failed to launch command in tmux role window ${target}: ${respawned.stderr || respawned.stdout || `exit ${respawned.exitCode}`}`,
+    );
   }
+  const collapse = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`kill-pane -a -t ${shellQuote(target)} 2>/dev/null || true`),
+  );
+  if (collapse.exitCode !== 0) {
+    throw new Error(
+      `Failed to collapse tmux role window ${target} to a single pane after launch: ${collapse.stderr || collapse.stdout || `exit ${collapse.exitCode}`}`,
+    );
+  }
+  await applyRoleWindowOptions(vars, target);
 }
 
 async function tmuxSessionExists(
@@ -886,39 +914,59 @@ export async function dispatchExecute(
   };
   let runnerProcessStarted = false;
   try {
-    // Some shell init paths (e.g. anaconda's `(base)` prompt activation) query
-    // the terminal for DA1/DA2 attributes during prompt setup. The terminal's
-    // response (`\033[?1;2c`, `\033[>0;276;0c`) lands on stdin AFTER the
-    // prompt is drawn, so zsh interprets it as typed input. If our send-keys
-    // appends the launch line to the same prompt buffer, the result is a
-    // single zsh command line of `1;2c0;276;0cexport DISABLE_OMC=1 …` that
-    // fails before codex/claude ever runs — and the monitor then misreads
-    // "no agent process" as "completed" because the worker never started.
-    //
-    // Double-flush sequence: a single clear-then-wait would leave a race
-    // where DA responses landing during the wait re-poison the prompt buffer
-    // before the launch line types. Pre-clear discards anything the shell
-    // already absorbed, the wait lets in-flight responses arrive, and the
-    // post-clear sweeps the late arrivals before any user-visible keystrokes.
-    // C-c covers heredoc/quote parsing on garbage; C-u clears the prompt line.
-    await execOnSlot(vars, tmuxShellSnippet(`send-keys -t ${shellQuote(workerTarget)} C-c C-u`));
-    await new Promise((resolve) => setTimeout(resolve, LAUNCH_PRELUDE_DA_WAIT_MS));
-    await execOnSlot(vars, tmuxShellSnippet(`send-keys -t ${shellQuote(workerTarget)} C-c C-u`));
-    // Tiny settle so the second C-u takes effect before the literal-text
-    // send-keys below appends the launch line to (now-empty) prompt input.
-    await new Promise((resolve) => setTimeout(resolve, LAUNCH_PRELUDE_SETTLE_MS));
-    if (agentRoleWindow(workerRole)) {
-      await ensureRoleWindowLiveForInput(vars, workerTarget);
-    }
-    // Escape single quotes for tmux send-keys
-    const launchResult = await execOnSlot(
-      vars,
-      tmuxSendTextCommand(workerTarget, agentLaunch, { enter: true }),
-    );
-    if (launchResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to launch ${runner} in ${workerTarget}: ${launchResult.stderr || launchResult.stdout || `exit ${launchResult.exitCode}`}`,
+    const roleWindowName = agentRoleWindow(workerRole);
+    const usesRoleWindow = Boolean(roleWindowName);
+    const settleFreshRoleWindow = async () => {
+      if (!usesRoleWindow) return;
+      await new Promise((resolve) => setTimeout(resolve, ROLE_WINDOW_STARTUP_SETTLE_MS));
+    };
+    const sendPreludeClear = async (stage: string) => {
+      const result = await execOnSlot(
+        vars,
+        tmuxShellSnippet(`send-keys -t ${shellQuote(workerTarget)} C-c C-u`),
       );
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `Failed to clear ${runner} launch input (${stage}) in ${workerTarget}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+        );
+      }
+    };
+
+    if (usesRoleWindow) {
+      workerTarget = await ensureWorkerRoleTarget(vars, session, runner, workerRole);
+      await respawnRoleWindowWithCommand(vars, workerTarget, agentLaunch);
+      await settleFreshRoleWindow();
+    } else {
+      // Some shell init paths (e.g. anaconda's `(base)` prompt activation) query
+      // the terminal for DA1/DA2 attributes during prompt setup. The terminal's
+      // response (`\033[?1;2c`, `\033[>0;276;0c`) lands on stdin AFTER the
+      // prompt is drawn, so zsh interprets it as typed input. If our send-keys
+      // appends the launch line to the same prompt buffer, the result is a
+      // single zsh command line of `1;2c0;276;0cexport DISABLE_OMC=1 …` that
+      // fails before codex/claude ever runs — and the monitor then misreads
+      // "no agent process" as "completed" because the worker never started.
+      //
+      // Double-flush sequence: a single clear-then-wait would leave a race
+      // where DA responses landing during the wait re-poison the prompt buffer
+      // before the launch line types. Pre-clear discards anything the shell
+      // already absorbed, the wait lets in-flight responses arrive, and the
+      // post-clear sweeps the late arrivals before any user-visible keystrokes.
+      // C-c covers heredoc/quote parsing on garbage; C-u clears the prompt line.
+      await sendPreludeClear('pre-clear');
+      await new Promise((resolve) => setTimeout(resolve, LAUNCH_PRELUDE_DA_WAIT_MS));
+      await sendPreludeClear('post-clear');
+      // Tiny settle so the second C-u takes effect before the literal-text
+      // send-keys below appends the launch line to (now-empty) prompt input.
+      await new Promise((resolve) => setTimeout(resolve, LAUNCH_PRELUDE_SETTLE_MS));
+      const launchResult = await execOnSlot(
+        vars,
+        tmuxSendTextCommand(workerTarget, agentLaunch, { enter: true }),
+      );
+      if (launchResult.exitCode !== 0) {
+        throw new Error(
+          `Failed to launch ${runner} in ${workerTarget}: ${launchResult.stderr || launchResult.stdout || `exit ${launchResult.exitCode}`}`,
+        );
+      }
     }
     // tmux send-keys returning exit 0 only proves the keystrokes were typed,
     // NOT that the receiving shell parsed them as the launch command. If shell

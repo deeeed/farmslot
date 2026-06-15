@@ -67,7 +67,7 @@ function runnerSection(): DoctorSection {
       : 'no authenticated agent runner',
     hint: anyAuthenticated
       ? undefined
-      : 'install and sign in to one of: claude, codex, cursor-agent',
+      : 'install and sign in to one of: claude, codex, cursor-agent, grok',
   });
   return { title: 'Runners', checks };
 }

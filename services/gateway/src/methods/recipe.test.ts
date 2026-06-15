@@ -36,6 +36,7 @@ function createSlotVars(): import('../core/config.js').SlotVars {
     codexPath: '',
     opencodePath: '',
     cursorPath: '',
+    grokPath: '',
     dispatchCmd: '',
     recycleCmd: '',
     repo: '/repo',

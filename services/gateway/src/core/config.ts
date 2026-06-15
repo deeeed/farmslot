@@ -64,6 +64,7 @@ export interface RawPoolJson {
   codex_path?: string;
   opencode_path?: string;
   cursor_path?: string;
+  grok_path?: string;
   dispatch_cmd?: string;
   recycle_cmd?: string;
   slots: RawPoolSlot[];
@@ -98,6 +99,7 @@ export interface SlotVars {
   codexPath: string;
   opencodePath: string;
   cursorPath: string;
+  grokPath: string;
   dispatchCmd: string;
   recycleCmd: string;
   repo: string;
@@ -332,6 +334,7 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
   const codexPath = pool.codex_path || '';
   const opencodePath = pool.opencode_path || '';
   const cursorPath = pool.cursor_path || '';
+  const grokPath = pool.grok_path || '';
   const dispatchCmd = pool.dispatch_cmd || '';
   const recycleCmd = pool.recycle_cmd || '';
 
@@ -392,6 +395,7 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
     codexPath,
     opencodePath,
     cursorPath,
+    grokPath,
     dispatchCmd,
     recycleCmd,
     repo,

@@ -52,11 +52,12 @@ test('generatePool produces a schema-valid zero-slot pool with detected runners'
     machine: 'host-a',
     os: 'darwin',
     sshUser: 'dev',
-    runnerPaths: { claude: '/usr/local/bin/claude' },
+    runnerPaths: { claude: '/usr/local/bin/claude', grok: '/Users/example/.grok/bin/grok' },
   });
   assert.deepEqual(validatePoolConfig(generated), []);
   assert.equal(generated.machine, 'host-a');
   assert.equal(generated.claude_path, '/usr/local/bin/claude');
+  assert.equal(generated.grok_path, '/Users/example/.grok/bin/grok');
   assert.equal(generated.codex_path, undefined);
   assert.equal(generated.slots.length, 0);
   assert.equal(generated.schema_version! >= 1, true);

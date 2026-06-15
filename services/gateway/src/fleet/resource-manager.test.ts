@@ -61,6 +61,9 @@ test('buildBrowserPidRecoveryCommand rewrites browser pid files from CDP listene
   assert.match(cmd, /browser\.pid/);
   assert.match(cmd, /chromium\.pid/);
   assert.match(cmd, /capture_helper_resolve "\$pid"/);
+  assert.match(cmd, /command -v timeout/);
+  assert.match(cmd, /command -v gtimeout/);
+  assert.match(cmd, /\$timeout_bin" 3s capture-helper resolve/);
   assert.match(cmd, /timeout=3/);
   assert.match(cmd, /'\/tmp\/slot runtime'/);
 });
@@ -69,6 +72,7 @@ test('buildBrowserPidFileCapturableCommand verifies capture-helper can resolve t
   const cmd = buildBrowserPidFileCapturableCommand('/tmp/runtime/browser.pid');
   assert.match(cmd, /cat \"\$pid_file\"/);
   assert.match(cmd, /capture_helper_resolve "\$pid"/);
+  assert.match(cmd, /\$timeout_bin" 3s capture-helper resolve/);
   assert.match(cmd, /timeout=3/);
 });
 
@@ -79,6 +83,7 @@ test('buildBrowserNodeWatchCommand requires stream-capturable browser status', (
   assert.match(recover, /exit 0/);
   assert.match(recover, /tcp:7666/);
   assert.match(recover, /capture_helper_resolve "\$pid"/);
+  assert.match(recover, /\$timeout_bin" 3s capture-helper resolve/);
   assert.match(recover, /timeout=3/);
   assert.ok(recover.indexOf('pid_file=') < recover.indexOf('tcp:7666'));
 
