@@ -29,7 +29,7 @@ import {
 import { DocumentViewer } from '../../components/DocumentViewer';
 import { EvidenceReviewWorkspace } from '../../components/EvidenceReviewWorkspace';
 import { MediaViewer } from '../../components/MediaViewer';
-import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
+import { ReviewPackageTabs } from '../../components/ReviewPackageTabs';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import {
   type ArtifactManifestEntry,
@@ -44,12 +44,11 @@ import { documentTitle, presentDecision } from '../../lib/decision-presentation'
 import { decisionRunId, enrichDecisionWithRunContext } from '../../lib/decision-run-context';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
+import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import {
   hasRunWorkspaceDiff,
   selectSlotRecipeArtifactsForPreviewScope,
-  summarizeSlotWorkspaceGates,
-  summarizeSlotWorkspaceRetro,
 } from '../../lib/slot-workspace';
 import {
   effectiveTaskProgressForRun,
@@ -63,11 +62,6 @@ import {
   selectRetrospectiveWorkspaceDecision,
   selectReviewGateWorkspaceDecision,
 } from '../../lib/workspace-decisions';
-import {
-  decisionWorkspaceNavMeta,
-  workspaceGateNavMeta,
-  workspaceRetroNavMeta,
-} from '../../lib/workspace-nav-meta';
 import {
   artifactFilterParamForArtifactPath,
   artifactFilterParamForWorkspaceNav,
@@ -314,6 +308,12 @@ export default function DecisionDetailScreen() {
         setRecipeAvailabilityError(null);
       } catch (err) {
         if (recipeRunsRequestRef.current !== requestId) return;
+        if (isGatewayBackgroundPauseError(err)) {
+          // App transitions can pause gateway refreshes; keep cached decision
+          // evidence visible instead of replacing the workspace with noise.
+          console.warn(`Recipe evidence availability paused after ${reason}: ${(err as Error).message}`);
+          return;
+        }
         setRecipeRuns([]);
         setRecipeArtifactCount(null);
         setRecipeAvailabilityError(
@@ -646,57 +646,94 @@ export default function DecisionDetailScreen() {
         : presentation.terminalSlotId
           ? 'slot'
           : 'none';
-  const workspaceGatesForNav = sourceRun ? summarizeSlotWorkspaceGates(sourceRun) : [];
-  const readyGateForNav =
-    workspaceGatesForNav.find((gate) => gate.label === 'Ready workspace') ?? null;
-  const reviewGateForNav =
-    workspaceGatesForNav.find(
-      (gate) => gate.label === 'Review workspace' || gate.label === 'No-change review',
-    ) ?? null;
-  const retroSummaryForNav = sourceRun ? summarizeSlotWorkspaceRetro(sourceRun) : null;
-  const currentDecisionMeta = decisionWorkspaceNavMeta({
-    statusLabel: decision.resolvedAt ? 'resolved' : 'pending',
-    artifactCount: presentation.artifactManifest.length,
-    diffValue: decisionDiffValue,
-    visualPairCount: priorityPairs.length,
-  });
   const focusedArtifactPath = requestedArtifactPath || diffArtifact?.path || null;
-  const workspaceNavProps = {
-    dense: true,
-    current:
-      presentation.kind === 'retrospective'
-        ? ('retro' as const)
-        : presentation.kind === 'ready'
-          ? ('ready' as const)
-          : ('review' as const),
-    decisionId: decision.id,
-    decisionKind: presentation.kind,
-    readyDecisionId,
-    reviewDecisionId,
-    retroDecisionId,
-    readyMeta: currentDecisionIsReady ? currentDecisionMeta : workspaceGateNavMeta(readyGateForNav),
-    reviewMeta: currentDecisionIsReview
-      ? currentDecisionMeta
-      : workspaceGateNavMeta(reviewGateForNav),
-    retroMeta: currentDecisionIsRetro
-      ? currentDecisionMeta
-      : workspaceRetroNavMeta(retroSummaryForNav),
-    familyId: presentation.familyId,
-    project: sourceRun?.project ?? presentation.project,
-    prNumber: presentation.prNumber,
-    prRepo: presentation.repo,
-    recipeRunId: workspaceRecipeRunId,
-    recipeAvailable,
-    recipeArtifactCount,
-    diffAvailable,
-    artifactCount: presentation.artifactManifest.length,
-    visualPairCount: priorityPairs.length,
-    compareArtifactPath: primaryPair?.after.path ?? null,
-    compareRecipeRunId: priorityCompareRecipeRunId,
-    slotId: presentation.slotId,
-    runId: presentation.runId,
-    artifactPath: focusedArtifactPath,
-  };
+  const decisionReviewTabs = [
+    {
+      id: 'evidence' as const,
+      label: 'Evidence',
+      meta: `${priorityPairs.length} visual`,
+      icon: 'images-outline' as const,
+      onPress: () => scrollToSection('evidence'),
+    },
+    {
+      id: 'diff' as const,
+      label: 'Diff',
+      meta: decisionDiffValue,
+      icon: 'git-compare-outline' as const,
+      disabled: !diffAvailable && !presentation.terminalSlotId,
+      onPress: () => {
+        if (diffArtifact?.path) {
+          openDiffArtifact(diffArtifact.path);
+          return;
+        }
+        if (presentation.runId && diffAvailable) {
+          router.push({
+            pathname: '/diff/[runId]',
+            params: {
+              runId: presentation.runId,
+              ...diffRouteContext,
+              recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+            },
+          });
+          return;
+        }
+        if (presentation.terminalSlotId) {
+          router.push({
+            pathname: '/diff/slot/[slotId]',
+            params: { slotId: presentation.terminalSlotId, ...diffRouteContext },
+          });
+        }
+      },
+    },
+    {
+      id: 'timeline' as const,
+      label: 'Timeline',
+      meta: activeTaskProgress || fallbackTaskProgress ? 'progress' : 'signals',
+      icon: 'pulse-outline' as const,
+      onPress: () =>
+        scrollToSection(activeTaskProgress || fallbackTaskProgress ? 'progress' : 'signals'),
+    },
+    {
+      id: 'terminal' as const,
+      label: 'Terminal',
+      meta: presentation.terminalSlotId ?? '-',
+      icon: 'terminal-outline' as const,
+      disabled: !presentation.terminalSlotId || !presentation.runId,
+      onPress: () => {
+        if (!presentation.terminalSlotId || !presentation.runId) return;
+        router.push({
+          pathname: '/terminal/[slotId]',
+          params: {
+            slotId: presentation.terminalSlotId,
+            ...decisionRouteContext,
+            runId: presentation.runId,
+            details: '1',
+            recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+            ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+          },
+        });
+      },
+    },
+    {
+      id: 'files' as const,
+      label: 'Files',
+      meta: String(presentation.artifactManifest.length + (recipeArtifactCount ?? 0)),
+      icon: 'folder-open-outline' as const,
+      disabled: !presentation.runId,
+      onPress: () => {
+        if (!presentation.runId) return;
+        router.push({
+          pathname: '/artifacts/[runId]',
+          params: {
+            runId: presentation.runId,
+            ...decisionRouteContext,
+            recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+            filter: artifactFilterParamForWorkspaceNav('review'),
+          },
+        });
+      },
+    },
+  ];
 
   return (
     <View style={baseStyles.container}>
@@ -714,7 +751,11 @@ export default function DecisionDetailScreen() {
         pointerEvents={stickyNavVisible && navLayout !== null ? 'auto' : 'none'}
         style={[styles.stickyWorkspaceNav, stickyNavStyle]}
       >
-        <RunWorkspaceNav {...workspaceNavProps} />
+        <ReviewPackageTabs
+          active="evidence"
+          tabs={decisionReviewTabs}
+          summary={presentation.kindLabel}
+        />
       </Animated.View>
       <Animated.ScrollView
         ref={scrollRef}
@@ -745,7 +786,11 @@ export default function DecisionDetailScreen() {
         </View>
 
         <View onLayout={rememberNavLayout}>
-          <RunWorkspaceNav {...workspaceNavProps} />
+          <ReviewPackageTabs
+            active="evidence"
+            tabs={decisionReviewTabs}
+            summary={presentation.kindLabel}
+          />
         </View>
 
         {requestedArtifactPath ? (

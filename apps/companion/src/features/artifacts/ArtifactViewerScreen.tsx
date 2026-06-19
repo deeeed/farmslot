@@ -52,6 +52,7 @@ import {
 import { diffArtifactCandidate } from '../../lib/diff';
 import { gatewayFetch } from '../../lib/gateway-http-auth';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
+import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
 import {
@@ -143,6 +144,7 @@ export default function ArtifactViewerScreen() {
   const stickyNavVisibleRef = useRef(false);
   const documentAbortRef = useRef<AbortController | null>(null);
   const runRefreshRequestRef = useRef(0);
+  const runRefreshRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recipeRunRefreshRequestRef = useRef(0);
 
   const { recipeRuns, gatewaySelectedRecipeRunId } = recipeRunSelection;
@@ -150,6 +152,7 @@ export default function ArtifactViewerScreen() {
   useEffect(() => {
     return () => {
       documentAbortRef.current?.abort();
+      if (runRefreshRetryRef.current) clearTimeout(runRefreshRetryRef.current);
     };
   }, []);
 
@@ -171,6 +174,18 @@ export default function ArtifactViewerScreen() {
         setError(null);
       } catch (err) {
         if (runRefreshRequestRef.current !== requestId) return;
+        if (isGatewayBackgroundPauseError(err)) {
+          // App route transitions can briefly pause the gateway; retry once
+          // instead of replacing already-loaded evidence with transient noise.
+          console.warn(`Run artifacts refresh paused after ${reason}: ${(err as Error).message}`);
+          if (!runRefreshRetryRef.current) {
+            runRefreshRetryRef.current = setTimeout(() => {
+              runRefreshRetryRef.current = null;
+              void refreshRun(`${reason} resume`);
+            }, 1200);
+          }
+          return;
+        }
         setError(`Failed to refresh run artifacts after ${reason}: ${(err as Error).message}`);
       }
     },
@@ -208,6 +223,12 @@ export default function ArtifactViewerScreen() {
       } catch (err) {
         if (recipeRunRefreshRequestRef.current !== requestId) return;
         setRecipeRunGroupsLoaded(true);
+        if (isGatewayBackgroundPauseError(err)) {
+          // Route screenshot transitions can background the gateway briefly; the
+          // current artifact list is still the primary review surface.
+          console.warn(`Recipe runs unavailable after ${reason}: ${(err as Error).message}`);
+          return;
+        }
         setError(`Failed to refresh recipe runs after ${reason}: ${(err as Error).message}`);
       }
     },

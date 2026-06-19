@@ -36,6 +36,7 @@ import {
   resolveRecipeRunSelection,
 } from '../../lib/artifact-url';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
+import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatchesSlotWorkspace, runRefreshEventRunId } from '../../lib/run-refresh';
 import { summarizeSlotFamilyContext } from '../../lib/slot-family-context';
 import {
@@ -442,6 +443,12 @@ export function useSlotWorkspaceController() {
       } catch (err) {
         if (currentRecipeRunsRequestRef.current !== requestId) return;
         setCurrentRecipeRunsLoaded(true);
+        if (isGatewayBackgroundPauseError(err)) {
+          // Mobile route changes can pause the gateway briefly; keep the current
+          // slot workspace visible rather than showing transient recipe noise.
+          console.warn(`Recipe artifacts unavailable after ${reason}: ${(err as Error).message}`);
+          return;
+        }
         setDetailError(
           `Failed to refresh recipe artifacts after ${reason}: ${(err as Error).message}`,
         );

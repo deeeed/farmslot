@@ -44,10 +44,12 @@
     "recipe:dry-run": "farmslot-expo-recipe run --dry-run",
     "recipe:run": "farmslot-expo-recipe run",
     "recipe:run:bridge": "farmslot-expo-recipe run scripts/agentic/recipe/recipes/bridge-status.recipe.json",
+    "recipe:run:ux-baseline:android": "farmslot-expo-recipe run scripts/agentic/recipe/recipes/ux-baseline-android.recipe.json",
     "test:identity": "bash scripts/agentic/identity.test.sh",
     "quality": "yarn typecheck && yarn test:lib && yarn quality:structure:ci",
     "quality:structure": "node ../../scripts/quality/check-companion-structure.mjs",
-    "quality:structure:ci": "node ../../scripts/quality/check-companion-structure.mjs --strict --scope all"
+    "quality:structure:ci": "node ../../scripts/quality/check-companion-structure.mjs --strict --scope all",
+    "recipe:run:ux-review-flow:android": "farmslot-expo-recipe run scripts/agentic/recipe/recipes/ux-review-flow-android.recipe.json"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",

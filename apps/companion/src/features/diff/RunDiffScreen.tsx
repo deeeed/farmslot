@@ -31,6 +31,7 @@ import {
 } from '../../lib/artifact-url';
 import { diffArtifactCandidate, diffFocusedFilePathFromRequest } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
+import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import { selectSlotRecipeArtifactsForPreviewScope } from '../../lib/slot-workspace';
 import {
@@ -86,6 +87,7 @@ export default function DiffViewerScreen() {
   const [taskProgress, setTaskProgress] = useState<TaskProgressStructured | null>(null);
   const [taskProgressError, setTaskProgressError] = useState<string | null>(null);
   const runRefreshRequestRef = useRef(0);
+  const runRefreshRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recipeRunRefreshRequestRef = useRef(0);
   const requestedRecipeRunId = typeof recipeRun === 'string' ? recipeRun : null;
   const workspaceRouteContext = useMemo(
@@ -109,6 +111,18 @@ export default function DiffViewerScreen() {
         setError(null);
       } catch (err) {
         if (runRefreshRequestRef.current !== requestId) return;
+        if (isGatewayBackgroundPauseError(err)) {
+          // App route transitions can briefly pause the gateway; retry once
+          // instead of replacing already-loaded diff context with transient noise.
+          console.warn(`Run diff refresh paused after ${reason}: ${(err as Error).message}`);
+          if (!runRefreshRetryRef.current) {
+            runRefreshRetryRef.current = setTimeout(() => {
+              runRefreshRetryRef.current = null;
+              void refreshRun(`${reason} resume`);
+            }, 1200);
+          }
+          return;
+        }
         setError(`Failed to refresh run diff after ${reason}: ${(err as Error).message}`);
       }
     },
@@ -118,6 +132,12 @@ export default function DiffViewerScreen() {
   useEffect(() => {
     void refreshRun('initial load');
   }, [refreshRun]);
+
+  useEffect(() => {
+    return () => {
+      if (runRefreshRetryRef.current) clearTimeout(runRefreshRetryRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (storeRun?.id === runId) setRun(storeRun);
@@ -155,6 +175,12 @@ export default function DiffViewerScreen() {
       } catch (err) {
         if (recipeRunRefreshRequestRef.current !== requestId) return;
         setRecipeRunsLoaded(true);
+        if (isGatewayBackgroundPauseError(err)) {
+          // Route screenshot transitions can background the gateway briefly; the
+          // loaded diff remains the primary review surface.
+          console.warn(`Recipe diff context unavailable after ${reason}: ${(err as Error).message}`);
+          return;
+        }
         setError(
           `Failed to refresh recipe diff context after ${reason}: ${(err as Error).message}`,
         );
