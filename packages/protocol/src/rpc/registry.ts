@@ -7,6 +7,7 @@ export const Methods = {
   // Auth
   AUTH_CONNECT: 'auth.connect',
   PAIRING_CREATE: 'pairing.create',
+  PAIRING_CANDIDATES: 'pairing.candidates',
   PAIRING_EXCHANGE: 'pairing.exchange',
 
   // Slot lifecycle

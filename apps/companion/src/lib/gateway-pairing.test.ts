@@ -74,6 +74,10 @@ test('plain ws Tailscale MagicDNS is classified as tailnet', () => {
   assert.equal(inferGatewayProfileKindFromUrl('ws://macbook.tailnet.ts.net:7777/ws'), 'tailnet');
 });
 
+test('tailnet detection requires the actual hostname to be in the tailnet namespace', () => {
+  assert.equal(inferGatewayProfileKindFromUrl('ws://evil.ts.net.attacker.example/ws'), 'lan');
+});
+
 test('tailnet profiles may use ws while remote profiles still require wss', () => {
   assert.equal(
     requiresSecureRemoteUrl({ kind: 'tailnet', url: 'ws://macbook.tailnet.ts.net:7777/ws' }),

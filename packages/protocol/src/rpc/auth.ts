@@ -39,6 +39,20 @@ export interface PairingCreateResult {
   expiresAt: string;
 }
 
+export interface PairingCandidatesParams {
+  port?: number;
+}
+
+export interface PairingCandidate {
+  gatewayUrl: string;
+  profileName: string;
+  kind: 'lan' | 'tailnet';
+}
+
+export interface PairingCandidatesResult {
+  candidates: PairingCandidate[];
+}
+
 export interface PairingExchangeParams {
   code: string;
 }

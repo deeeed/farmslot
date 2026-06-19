@@ -83,6 +83,7 @@ import {
   type NodeHealthAllResult,
   type NodeHealthParams,
   type NodeHealthResult,
+  type PairingCandidatesParams,
   type PairingCreateParams,
   type PRAddCommentParams,
   type PRDeleteCommentParams,
@@ -146,7 +147,7 @@ import {
 import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js';
 import { getAllNodes, registerNode } from '../fleet/machine-registry.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
-import { pairingCreate } from '../fleet/pairing.js';
+import { pairingCandidates, pairingCreate } from '../fleet/pairing.js';
 import {
   sendWatchInstructions,
   shouldAutoStartResourceWatches,
@@ -968,6 +969,8 @@ export async function routeMethod(
 
     case Methods.COPILOT_FORMAT_INSTRUCTION:
       return copilotFormatInstruction(p as CopilotFormatInstructionParams);
+    case Methods.PAIRING_CANDIDATES:
+      return pairingCandidates(p as PairingCandidatesParams);
     case Methods.PAIRING_CREATE:
       return pairingCreate(p as PairingCreateParams, authRuntime);
 

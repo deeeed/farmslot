@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
-import { requiresSecureRemoteUrl, type GatewayProfileKind } from './gateway-profile-kind';
+import type { GatewayProfileKind } from './gateway-profile-kind';
 
 import { isLegacyPresetGatewayProfile } from './gateway-profile-legacy';
 import {

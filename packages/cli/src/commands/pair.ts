@@ -49,7 +49,7 @@ function lanIPv4s(): string[] {
   return [...new Set(priv.length > 0 ? priv : all)];
 }
 
-/** Tailscale MagicDNS name for "from anywhere" access, or null when Tailscale is absent. */
+/** Parse MagicDNS name from `tailscale status --json` stdout. */
 export function parseTailscaleDnsNameFromStatus(stdout: string): string | null {
   // Tailscale present but unparseable status = treat as absent; pairing still
   // works over LAN. This is the one expected, recoverable miss, not a swallow.
