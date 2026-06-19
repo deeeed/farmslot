@@ -256,12 +256,18 @@ step_pair() {
     echo "  non-interactive — pair later with: farmslot up && farmslot pair"
   fi
   if [ -n "$pair_now" ]; then
+    if command -v tailscale >/dev/null 2>&1 && tailscale status --json >/dev/null 2>&1; then
+      echo "  Tailscale detected — QR will include a tailnet profile for phones signed into the same tailnet."
+    else
+      echo "  LAN pairing will work now. For away-from-LAN pairing, install and sign in to Tailscale on this Mac and phone, then run: farmslot pair"
+    fi
     FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" up
     # --gateway local: pair must mint codes for the gateway `up` just started,
     # not whatever profile happened to be active on a machine with prior config.
     FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" --gateway local pair
     echo ""
     echo "  Scan the QR above with the Farmslot companion app (App Store / Play Store)."
+    echo "  If the QR has a Tailscale profile, scan from a phone signed into the same tailnet."
     echo "  Stop the gateway anytime with: farmslot down"
   fi
 }

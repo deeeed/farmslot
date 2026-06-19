@@ -43,9 +43,9 @@ import {
 import {
   type GatewayProfile,
   type GatewayProfileAuthMode,
+  gatewayProfileKindUrlError,
   mobileGatewayProfileUrlError,
   readGatewayProfileSecret,
-  requiresSecureRemoteUrl,
 } from '../../lib/gateway-profiles';
 import { isStoreScreenshotMode } from '../../lib/store-screenshot-mode';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
@@ -444,8 +444,9 @@ export default function SettingsScreen() {
       kind: profileKind,
       authMode,
     };
-    if (requiresSecureRemoteUrl(profile)) {
-      Alert.alert('Use WSS for remote profiles', 'Remote and tailnet profiles must use wss://.');
+    const kindUrlError = gatewayProfileKindUrlError(profile);
+    if (kindUrlError) {
+      Alert.alert('Invalid profile kind', kindUrlError);
       return;
     }
     if (authMode !== 'none' && !authSecret.trim()) {
@@ -1127,8 +1128,8 @@ export default function SettingsScreen() {
               <Text style={styles.buttonText}>Add Profile from URL</Text>
             </Pressable>
             <Text style={styles.helperText}>
-              LAN profiles can use ws:// on your local network. Remote/tailnet profiles require
-              wss://; TLS termination can be handled by your port-forward/proxy setup.
+              LAN and tailnet profiles can use ws:// on trusted private networks. Remote profiles
+              require wss://; TLS termination can be handled by your port-forward/proxy setup.
             </Text>
           </View>
         </>

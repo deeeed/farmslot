@@ -7,9 +7,10 @@ import {
 } from '@farmslot/protocol';
 
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
+import { sortPairingExchangeUrls } from './gateway-pairing-urls';
+import { inferGatewayProfileKindFromUrl } from './gateway-profile-kind';
 import {
   type GatewayProfile,
-  type GatewayProfileKind,
   isMobileGatewayProfileUrl,
   profileSecretStorageKey,
 } from './gateway-profiles';
@@ -65,7 +66,9 @@ export function parseGatewayPairingQr(data: string): GatewayPairingQrPayload {
 export async function exchangeGatewayPairingQr(
   payload: GatewayPairingQrPayload,
 ): Promise<PairingExchangeResult['profile'][]> {
-  const exchangeUrls = uniqueUrls(payload.profiles.map((profile) => profile.url));
+  const exchangeUrls = sortPairingExchangeUrls(
+    uniqueUrls(payload.profiles.map((profile) => profile.url)),
+  );
   const results = await Promise.all(
     payload.profiles.map(async (profile) => {
       const result = await sendUnauthenticatedPairingExchangeWithFallback(
@@ -82,7 +85,7 @@ export function profileFromPairingResult(
   profile: PairingExchangeResult['profile'],
   profileId = profileIdForPairedProfile(profile),
 ): GatewayProfile {
-  const kind = inferProfileKind(profile.url);
+  const kind = inferGatewayProfileKindFromUrl(profile.url);
   return {
     id: profileId,
     name: profile.name,
@@ -125,14 +128,6 @@ function slugForProfileId(value: string): string {
     .replaceAll(/[^a-z0-9]+/g, '-')
     .replaceAll(/^-|-$/g, '');
   return slug || 'gateway';
-}
-
-function inferProfileKind(url: string): GatewayProfileKind {
-  if (url.startsWith('wss://')) {
-    if (url.includes('.ts.net') || url.includes('.tailnet-')) return 'tailnet';
-    return 'remote';
-  }
-  return 'lan';
 }
 
 async function sendUnauthenticatedPairingExchangeWithFallback(

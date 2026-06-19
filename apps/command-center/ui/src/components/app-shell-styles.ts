@@ -484,6 +484,37 @@ export function renderAppShellStyles(
         gap: 8px;
         margin-bottom: 16px;
       }
+      farm-app .pairing-detected {
+        display: grid;
+        gap: 6px;
+        margin: 12px 0 16px;
+      }
+      farm-app .pairing-detected > span {
+        color: ${colors.textMuted};
+        font-size: ${fonts.sizeXs};
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+      farm-app .pairing-detected-row {
+        background: ${colors.bgCard};
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      farm-app .pairing-detected-row strong,
+      farm-app .pairing-detected-row code {
+        display: block;
+      }
+      farm-app .pairing-detected-row strong {
+        color: ${colors.textPrimary};
+        font-size: ${fonts.sizeSm};
+      }
+      farm-app .pairing-detected-row code {
+        color: ${colors.textSecondary};
+        font-family: ${fonts.mono};
+        font-size: ${fonts.sizeXs};
+        overflow-wrap: anywhere;
+      }
       farm-app .pairing-status-grid div {
         background: ${colors.bgCard};
         border: 1px solid ${colors.bgCardHover};

@@ -7,6 +7,8 @@ import type {
   ChatSendIntent,
   FleetSummary,
   GitHubRateLimitPayload,
+  PairingCandidate,
+  PairingCandidatesResult,
   PairingCreateResult,
   Run,
   SlotStatus,
@@ -119,6 +121,8 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
+type PairingTarget = Pick<PairingCandidate, 'gatewayUrl' | 'kind' | 'profileName'>;
+
 const DEFAULT_PAIRING_PROFILE_NAME = 'Farmslot Remote';
 const DEFAULT_LAN_PAIRING_PROFILE_NAME = 'Local LAN';
 
@@ -163,6 +167,8 @@ export class FarmApp extends LitElement {
   @state() private pairingProfileName = DEFAULT_PAIRING_PROFILE_NAME;
   @state() private pairingLanGatewayUrl = resolveDefaultPairingGatewayUrl();
   @state() private pairingRemoteGatewayUrl = resolveDefaultRemotePairingGatewayUrl();
+  @state() private pairingDetectedTargets: PairingTarget[] = [];
+  @state() private pairingCandidateStatus = '';
   @state() private pairingQrDataUrl = '';
   @state() private pairingExpiresAt = '';
   @state() private pairingProfileCount = 0;
@@ -407,17 +413,48 @@ export class FarmApp extends LitElement {
   private openPairingPanel() {
     this.pairingOpen = true;
     this.pairingError = '';
+    this.pairingCandidateStatus = '';
     this.pairingQrDataUrl = '';
     this.pairingExpiresAt = '';
+    void this.refreshPairingCandidates();
   }
 
   private closePairingPanel() {
     this.pairingOpen = false;
   }
 
+  private async refreshPairingCandidates() {
+    try {
+      const port =
+        pairingCandidatePort(this.pairingLanGatewayUrl) ?? pairingCandidatePort(gateway.gatewayUrl);
+      const result = await gateway.request<PairingCandidatesResult>(Methods.PAIRING_CANDIDATES, {
+        ...(port ? { port } : {}),
+      });
+      this.pairingDetectedTargets = [...result.candidates]
+        .sort((a, b) => pairingCandidateRank(a) - pairingCandidateRank(b))
+        .map((candidate) => ({
+          gatewayUrl: candidate.gatewayUrl,
+          kind: candidate.kind,
+          profileName: candidate.profileName,
+        }));
+      const hasTailscale = result.candidates.some((candidate) => candidate.kind === 'tailnet');
+      this.pairingCandidateStatus = result.candidates.length
+        ? `Auto-detected ${result.candidates.length} gateway URL${result.candidates.length === 1 ? '' : 's'}${hasTailscale ? ', including Tailscale' : ''}.`
+        : 'No LAN/Tailscale gateway URLs auto-detected; use the fields below.';
+      if (!this.pairingLanGatewayUrl.trim()) {
+        this.pairingLanGatewayUrl =
+          result.candidates.find((candidate) => candidate.kind === 'lan')?.gatewayUrl ?? '';
+      }
+    } catch (err) {
+      this.pairingDetectedTargets = [];
+      this.pairingCandidateStatus = `Could not auto-detect LAN/Tailscale URLs: ${err instanceof Error ? err.message : 'unknown error'}`;
+    }
+  }
+
   private async createCompanionPairing(event?: Event) {
     event?.preventDefault();
     const targets = [
+      ...this.pairingDetectedTargets,
       {
         profileName: DEFAULT_LAN_PAIRING_PROFILE_NAME,
         gatewayUrl: this.pairingLanGatewayUrl.trim(),
@@ -801,6 +838,24 @@ export class FarmApp extends LitElement {
           </div>
 
           ${this.pairingError ? html`<div class="pairing-error">${this.pairingError}</div>` : ''}
+          ${this.pairingCandidateStatus
+            ? html`<div class="pairing-copy">${this.pairingCandidateStatus}</div>`
+            : ''}
+          ${this.pairingDetectedTargets.length
+            ? html`
+                <div class="pairing-detected">
+                  <span>Auto-included profiles</span>
+                  ${this.pairingDetectedTargets.map(
+                    (target) => html`
+                      <div class="pairing-detected-row">
+                        <strong>${target.profileName}</strong>
+                        <code>${target.gatewayUrl}</code>
+                      </div>
+                    `,
+                  )}
+                </div>
+              `
+            : ''}
 
           <div class="pairing-status-grid">
             <div>
@@ -980,6 +1035,20 @@ export class FarmApp extends LitElement {
       ${this.renderPairingPanel()}
     `;
   }
+}
+
+function pairingCandidatePort(url: string): number | undefined {
+  try {
+    const port = Number(new URL(url).port);
+    return Number.isFinite(port) && port > 0 ? port : undefined;
+  } catch {
+    // Editable/manual URLs may be incomplete while typing; no port hint is fine.
+    return undefined;
+  }
+}
+
+function pairingCandidateRank(candidate: Pick<PairingCandidate, 'kind'>): number {
+  return candidate.kind === 'tailnet' ? 0 : 1;
 }
 
 function resolveDefaultPairingGatewayUrl(): string {

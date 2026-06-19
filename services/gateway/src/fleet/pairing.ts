@@ -1,10 +1,16 @@
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { hostname, networkInterfaces } from 'node:os';
 
-import type {
-  PairingCreateParams,
-  PairingCreateResult,
-  PairingExchangeParams,
-  PairingExchangeResult,
+import {
+  type PairingCandidate,
+  type PairingCandidatesParams,
+  type PairingCandidatesResult,
+  type PairingCreateParams,
+  type PairingCreateResult,
+  type PairingExchangeParams,
+  type PairingExchangeResult,
+  parseTailscaleDnsNameFromStatus,
 } from '@farmslot/protocol';
 
 import type { GatewayAuthRuntime } from '../security/auth.js';
@@ -19,6 +25,51 @@ interface PairingRecord {
 const pairings = new Map<string, PairingRecord>();
 const DEFAULT_TTL_SECONDS = 120;
 const MAX_TTL_SECONDS = 600;
+
+export function pairingCandidates(params: PairingCandidatesParams = {}): PairingCandidatesResult {
+  const port = Number(params.port || process.env.GATEWAY_PORT || 7777);
+  return { candidates: reachablePairingCandidates(Number.isFinite(port) ? port : 7777) };
+}
+
+export function reachablePairingCandidates(port: number): PairingCandidate[] {
+  const host = hostname().replace(/\.local$/, '');
+  const candidates: PairingCandidate[] = lanIPv4s().map((ip) => ({
+    gatewayUrl: `ws://${ip}:${port}/ws`,
+    profileName: `${host} (LAN)`,
+    kind: 'lan',
+  }));
+  const tailnet = tailscaleDnsName();
+  if (tailnet) {
+    candidates.push({
+      gatewayUrl: `ws://${tailnet}:${port}/ws`,
+      profileName: `${host} (Tailscale)`,
+      kind: 'tailnet',
+    });
+  }
+  return candidates;
+}
+
+function tailscaleDnsName(): string | null {
+  const result = spawnSync('tailscale', ['status', '--json'], {
+    encoding: 'utf-8',
+    timeout: 4000,
+  });
+  if (result.error || result.status !== 0) return null;
+  return parseTailscaleDnsNameFromStatus(result.stdout);
+}
+
+function lanIPv4s(): string[] {
+  const all: string[] = [];
+  for (const list of Object.values(networkInterfaces())) {
+    for (const iface of list ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) all.push(iface.address);
+    }
+  }
+  const isPrivate = (ip: string): boolean =>
+    /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+  const priv = all.filter(isPrivate);
+  return [...new Set(priv.length > 0 ? priv : all)];
+}
 
 export function pairingCreate(
   params: PairingCreateParams,

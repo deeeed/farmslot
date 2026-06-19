@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
+import type { GatewayProfileKind } from './gateway-profile-kind';
 import { isLegacyPresetGatewayProfile } from './gateway-profile-legacy';
 import {
   isLegacyLocalhostGatewayUrl,
@@ -9,7 +10,7 @@ import {
   mobileGatewayProfileUrlError,
 } from './gateway-profile-validation';
 
-export type GatewayProfileKind = 'lan' | 'custom' | 'remote' | 'tailnet';
+export type { GatewayProfileKind } from './gateway-profile-kind';
 export type GatewayProfileAuthMode = 'none' | 'token' | 'password';
 
 export type GatewayProfile = {
@@ -64,12 +65,7 @@ export {
   mobileGatewayProfileUrlError,
 };
 
-export function requiresSecureRemoteUrl(profile: Pick<GatewayProfile, 'kind' | 'url'>): boolean {
-  return (
-    (profile.kind === 'remote' || profile.kind === 'tailnet') && !profile.url.startsWith('wss://')
-  );
-}
-
+export { gatewayProfileKindUrlError, requiresSecureRemoteUrl } from './gateway-profile-kind';
 export { isLegacyPresetGatewayProfile, isLegacyPresetGatewayUrl } from './gateway-profile-legacy';
 
 export function profileSecretStorageKey(profileId: string): string {

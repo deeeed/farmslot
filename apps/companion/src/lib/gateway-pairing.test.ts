@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
+import { sortPairingExchangeUrls } from './gateway-pairing-urls';
+import {
+  gatewayProfileKindUrlError,
+  inferGatewayProfileKindFromUrl,
+  requiresSecureRemoteUrl,
+} from './gateway-profile-kind';
 import {
   selectPreferredGatewayProfile as selectPreferredGatewayProfileFromSelection,
   sortGatewayProfilesForAutoConnect as sortGatewayProfilesForAutoConnectFromSelection,
@@ -67,4 +73,48 @@ test('profileFromPairingExchange keeps the QR mobile URL over gateway self URL',
   assert.equal(profile.url, 'wss://phone-reachable.example/ws');
   assert.equal(profile.authMode, 'token');
   assert.equal(profile.secret, 'secret-token');
+});
+
+test('sortPairingExchangeUrls tries Tailscale before LAN for QR exchange', () => {
+  assert.deepEqual(
+    sortPairingExchangeUrls([
+      'ws://192.168.0.18:7777/ws',
+      'ws://macwork.tail73dab7.ts.net:7777/ws',
+      'wss://farmslot.siteed.net/ws',
+    ]),
+    [
+      'ws://macwork.tail73dab7.ts.net:7777/ws',
+      'wss://farmslot.siteed.net/ws',
+      'ws://192.168.0.18:7777/ws',
+    ],
+  );
+});
+
+test('plain ws Tailscale MagicDNS is classified as tailnet', () => {
+  assert.equal(inferGatewayProfileKindFromUrl('ws://macbook.tailnet.ts.net:7777/ws'), 'tailnet');
+});
+
+test('tailnet detection requires the actual hostname to be in the tailnet namespace', () => {
+  assert.equal(inferGatewayProfileKindFromUrl('ws://evil.ts.net.attacker.example/ws'), 'lan');
+  assert.equal(inferGatewayProfileKindFromUrl('ws://foo.tailnet-x.evil.example/ws'), 'lan');
+});
+
+test('tailnet profiles may use ws while remote profiles still require wss', () => {
+  assert.equal(
+    requiresSecureRemoteUrl({ kind: 'tailnet', url: 'ws://macbook.tailnet.ts.net:7777/ws' }),
+    false,
+  );
+  assert.equal(requiresSecureRemoteUrl({ kind: 'remote', url: 'ws://gateway.example/ws' }), true);
+  assert.equal(requiresSecureRemoteUrl({ kind: 'remote', url: 'wss://gateway.example/ws' }), false);
+});
+
+test('tailnet manual profile kind requires a Tailscale MagicDNS URL', () => {
+  assert.equal(
+    gatewayProfileKindUrlError({ kind: 'tailnet', url: 'ws://gateway.example/ws' }),
+    'Tailnet profiles must use a Tailscale MagicDNS .ts.net URL.',
+  );
+  assert.equal(
+    gatewayProfileKindUrlError({ kind: 'tailnet', url: 'ws://macbook.tailnet.ts.net/ws' }),
+    null,
+  );
 });
