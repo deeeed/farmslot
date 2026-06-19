@@ -430,11 +430,13 @@ export class FarmApp extends LitElement {
       const result = await gateway.request<PairingCandidatesResult>(Methods.PAIRING_CANDIDATES, {
         ...(port ? { port } : {}),
       });
-      this.pairingDetectedTargets = result.candidates.map((candidate) => ({
-        gatewayUrl: candidate.gatewayUrl,
-        kind: candidate.kind,
-        profileName: candidate.profileName,
-      }));
+      this.pairingDetectedTargets = [...result.candidates]
+        .sort((a, b) => pairingCandidateRank(a) - pairingCandidateRank(b))
+        .map((candidate) => ({
+          gatewayUrl: candidate.gatewayUrl,
+          kind: candidate.kind,
+          profileName: candidate.profileName,
+        }));
       const hasTailscale = result.candidates.some((candidate) => candidate.kind === 'tailnet');
       this.pairingCandidateStatus = result.candidates.length
         ? `Auto-detected ${result.candidates.length} gateway URL${result.candidates.length === 1 ? '' : 's'}${hasTailscale ? ', including Tailscale' : ''}.`
@@ -1042,6 +1044,10 @@ function pairingCandidatePort(url: string): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+function pairingCandidateRank(candidate: Pick<PairingCandidate, 'kind'>): number {
+  return candidate.kind === 'tailnet' ? 0 : 1;
 }
 
 function resolveDefaultPairingGatewayUrl(): string {

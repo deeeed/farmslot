@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
+import { sortPairingExchangeUrls } from './gateway-pairing-urls';
 import {
   selectPreferredGatewayProfile as selectPreferredGatewayProfileFromSelection,
   sortGatewayProfilesForAutoConnect as sortGatewayProfilesForAutoConnectFromSelection,
@@ -68,6 +69,21 @@ test('profileFromPairingExchange keeps the QR mobile URL over gateway self URL',
   assert.equal(profile.url, 'wss://phone-reachable.example/ws');
   assert.equal(profile.authMode, 'token');
   assert.equal(profile.secret, 'secret-token');
+});
+
+test('sortPairingExchangeUrls tries Tailscale before LAN for QR exchange', () => {
+  assert.deepEqual(
+    sortPairingExchangeUrls([
+      'ws://192.168.0.18:7777/ws',
+      'ws://macwork.tail73dab7.ts.net:7777/ws',
+      'wss://farmslot.siteed.net/ws',
+    ]),
+    [
+      'ws://macwork.tail73dab7.ts.net:7777/ws',
+      'wss://farmslot.siteed.net/ws',
+      'ws://192.168.0.18:7777/ws',
+    ],
+  );
 });
 
 test('plain ws Tailscale MagicDNS is classified as tailnet', () => {

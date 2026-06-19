@@ -8,6 +8,7 @@ import {
 
 import { inferGatewayProfileKindFromUrl } from './gateway-profile-kind';
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
+import { sortPairingExchangeUrls } from './gateway-pairing-urls';
 import {
   type GatewayProfile,
   isMobileGatewayProfileUrl,
@@ -65,7 +66,9 @@ export function parseGatewayPairingQr(data: string): GatewayPairingQrPayload {
 export async function exchangeGatewayPairingQr(
   payload: GatewayPairingQrPayload,
 ): Promise<PairingExchangeResult['profile'][]> {
-  const exchangeUrls = uniqueUrls(payload.profiles.map((profile) => profile.url));
+  const exchangeUrls = sortPairingExchangeUrls(
+    uniqueUrls(payload.profiles.map((profile) => profile.url)),
+  );
   const results = await Promise.all(
     payload.profiles.map(async (profile) => {
       const result = await sendUnauthenticatedPairingExchangeWithFallback(
