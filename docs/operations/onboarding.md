@@ -27,6 +27,25 @@ What it does:
 
 Re-running repairs/updates; it never duplicates.
 
+## Pair the mobile companion
+
+Install ends with an optional **Pair your phone** step unless `FARMSLOT_MINIMAL`
+is set. It starts the local gateway and runs:
+
+```bash
+farmslot pair
+```
+
+The QR includes every reachable local LAN address. If Tailscale is installed,
+signed in, and MagicDNS is available on the Mac, it also includes a
+`ws://<machine>.<tailnet>.ts.net:<port>/ws` profile. Scan it from Companion
+Settings → Pair from QR. For away-from-LAN use, sign the phone into the same
+Tailnet before scanning; otherwise the LAN profile is still enough while the
+phone and Mac are on the same network.
+
+If Tailscale was not available during install, pair over LAN first and rerun
+`farmslot pair` after installing/signing into Tailscale on both devices.
+
 ## Add a project pack
 
 ```bash

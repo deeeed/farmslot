@@ -6,6 +6,7 @@ import {
   selectPreferredGatewayProfile as selectPreferredGatewayProfileFromSelection,
   sortGatewayProfilesForAutoConnect as sortGatewayProfilesForAutoConnectFromSelection,
 } from './gateway-profile-selection';
+import { inferGatewayProfileKindFromUrl, requiresSecureRemoteUrl } from './gateway-profile-kind';
 import type { GatewayProfile } from './gateway-profiles';
 
 test('sortGatewayProfilesForAutoConnect prefers remote-capable profiles before LAN fallback', () => {
@@ -67,4 +68,17 @@ test('profileFromPairingExchange keeps the QR mobile URL over gateway self URL',
   assert.equal(profile.url, 'wss://phone-reachable.example/ws');
   assert.equal(profile.authMode, 'token');
   assert.equal(profile.secret, 'secret-token');
+});
+
+test('plain ws Tailscale MagicDNS is classified as tailnet', () => {
+  assert.equal(inferGatewayProfileKindFromUrl('ws://macbook.tailnet.ts.net:7777/ws'), 'tailnet');
+});
+
+test('tailnet profiles may use ws while remote profiles still require wss', () => {
+  assert.equal(
+    requiresSecureRemoteUrl({ kind: 'tailnet', url: 'ws://macbook.tailnet.ts.net:7777/ws' }),
+    false,
+  );
+  assert.equal(requiresSecureRemoteUrl({ kind: 'remote', url: 'ws://gateway.example/ws' }), true);
+  assert.equal(requiresSecureRemoteUrl({ kind: 'remote', url: 'wss://gateway.example/ws' }), false);
 });

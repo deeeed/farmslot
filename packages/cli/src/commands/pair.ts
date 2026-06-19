@@ -25,7 +25,7 @@ interface PairingQrPayload {
   profiles: PairingCreateResult[];
 }
 
-interface ReachableAddress {
+export interface ReachableAddress {
   url: string;
   name: string;
 }
@@ -50,17 +50,12 @@ function lanIPv4s(): string[] {
 }
 
 /** Tailscale MagicDNS name for "from anywhere" access, or null when Tailscale is absent. */
-function tailscaleDnsName(): string | null {
-  const result = spawnSync('tailscale', ['status', '--json'], {
-    encoding: 'utf-8',
-    timeout: 4000,
-  });
-  if (result.error || result.status !== 0) return null;
+export function parseTailscaleDnsNameFromStatus(stdout: string): string | null {
   // Tailscale present but unparseable status = treat as absent; pairing still
   // works over LAN. This is the one expected, recoverable miss, not a swallow.
   let status: { Self?: { DNSName?: string } };
   try {
-    status = JSON.parse(result.stdout);
+    status = JSON.parse(stdout);
   } catch {
     return null;
   }
@@ -68,15 +63,32 @@ function tailscaleDnsName(): string | null {
   return dns && dns.length > 0 ? dns : null;
 }
 
-function reachableAddresses(port: string): ReachableAddress[] {
+/** Tailscale MagicDNS name for "from anywhere" access, or null when Tailscale is absent. */
+function tailscaleDnsName(): string | null {
+  const result = spawnSync('tailscale', ['status', '--json'], {
+    encoding: 'utf-8',
+    timeout: 4000,
+  });
+  if (result.error || result.status !== 0) return null;
+  return parseTailscaleDnsNameFromStatus(result.stdout);
+}
+
+export function reachableAddressesForPairing(
+  port: string,
+  lanIps: string[],
+  tailnet: string | null,
+): ReachableAddress[] {
   const host = hostname().replace(/\.local$/, '');
   const addresses: ReachableAddress[] = [];
-  for (const ip of lanIPv4s()) {
+  for (const ip of lanIps) {
     addresses.push({ url: `ws://${ip}:${port}/ws`, name: `${host} (LAN)` });
   }
-  const tailnet = tailscaleDnsName();
   if (tailnet) addresses.push({ url: `ws://${tailnet}:${port}/ws`, name: `${host} (Tailscale)` });
   return addresses;
+}
+
+function reachableAddresses(port: string): ReachableAddress[] {
+  return reachableAddressesForPairing(port, lanIPv4s(), tailscaleDnsName());
 }
 
 export function registerPairCommand(program: Command): void {
@@ -115,6 +127,16 @@ export function registerPairCommand(program: Command): void {
       output.write(`${bold('Scan with the Farmslot companion app')} (App Store / Play Store)\n\n`);
       for (const profile of profiles) {
         output.write(`  ${green('•')} ${profile.profileName}  ${cyan(profile.url)}\n`);
+      }
+      const hasTailscale = profiles.some((profile) => profile.profileName.includes('(Tailscale)'));
+      if (hasTailscale) {
+        output.write(
+          `${dim('  Tailscale detected — scan on any device signed into this tailnet.')}\n`,
+        );
+      } else {
+        output.write(
+          `${dim('  Tip: install and sign in to Tailscale on this Mac and phone, then re-run farmslot pair for away-from-LAN access.')}\n`,
+        );
       }
       output.write(`${dim(`  codes expire ${profiles[0]?.expiresAt ?? 'unknown'}`)}\n`);
     });
