@@ -2,7 +2,7 @@
 
 ## Source of truth
 
-- Status: Draft for evidence-first UX simplification
+- Status: Active evidence-first UX simplification
 - Last refreshed: 2026-06-19
 - Primary product surfaces: Mobile Companion review flow, evidence viewer, PR/diff context, worker terminal control.
 - Evidence reviewed: `docs/PRD-mobile-companion-canonical.md`, `docs/ROADMAP-next.md`, current Expo Router routes under `src/app`, run/evidence/diff/terminal feature modules, and existing screenshot/recipe harnesses.
@@ -75,7 +75,7 @@
 - Existing components to reuse:
   - `EvidenceReviewWorkspace`, `BeforeAfterPreview`, `MobileDiffViewer`, `XtermTerminalView`, `RunWorkspaceNav`.
 - New/changed components:
-  - Review package segmented tabs shared by run/family/PR/decision workspaces.
+  - `ReviewPackageTabs` segmented rail shared by run and decision workspaces.
   - Evidence-first review card for queue rows.
   - Sticky Review Actions bar (`Open diff`, `Terminal`, `Approve/Follow up` where available).
   - Advanced drawer/list for parity surfaces.

@@ -231,14 +231,21 @@ if [[ "${CAPTURE_ANDROID}" == "1" ]]; then
   capture_android
 fi
 
-cat >"${OUTPUT_DIR}/manifest.json" <<JSON
 {
-  "capturedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "variant": "${APP_VARIANT}",
-  "routes": [
-$(printf '    "%s"' "${ROUTES[@]}" | sed 's/ /,\n/g')
-  ]
-}
-JSON
+  printf '{\n'
+  printf '  "capturedAt": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '  "variant": "%s",\n' "${APP_VARIANT}"
+  printf '  "routes": [\n'
+  index=0
+  for route in "${ROUTES[@]}"; do
+    if (( index > 0 )); then
+      printf ',\n'
+    fi
+    printf '    "%s"' "${route}"
+    index=$((index + 1))
+  done
+  printf '\n  ]\n'
+  printf '}\n'
+} >"${OUTPUT_DIR}/manifest.json"
 
 echo "[ux-screenshots] wrote ${OUTPUT_DIR}"

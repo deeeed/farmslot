@@ -802,9 +802,10 @@ export default function RunsScreen() {
   const runScopeHeader = (
     <View style={styles.scopeBar}>
       <View style={styles.scopeTextBlock}>
-        <Text style={styles.scopeTitle}>{showAllRuns ? 'All runs' : 'Active runs'}</Text>
+        <Text style={styles.scopeTitle}>{showAllRuns ? 'Review history' : 'Review queue'}</Text>
         <Text style={styles.scopeMeta}>
-          {activeRuns.length} active · {filteredRuns.length} total
+          {activeRuns.length} active package{activeRuns.length === 1 ? '' : 's'} ·{' '}
+          {filteredRuns.length} total
           {hasFilters ? ' · filtered' : ''}
         </Text>
       </View>
@@ -816,11 +817,11 @@ export default function RunsScreen() {
           <Text
             style={[styles.scopeToggleText, runFilterCount > 0 && styles.scopeToggleTextActive]}
           >
-            {runFilterCount > 0 ? `Filters (${runFilterCount})` : 'Filters'}
+            {runFilterCount > 0 ? `Refine (${runFilterCount})` : 'Refine'}
           </Text>
         </Pressable>
         <Pressable style={styles.scopeToggle} onPress={() => setShowAllRuns((current) => !current)}>
-          <Text style={styles.scopeToggleText}>{showAllRuns ? 'Active only' : 'Show all'}</Text>
+          <Text style={styles.scopeToggleText}>{showAllRuns ? 'Active' : 'History'}</Text>
         </Pressable>
       </View>
     </View>

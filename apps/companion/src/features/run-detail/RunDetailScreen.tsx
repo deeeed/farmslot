@@ -27,8 +27,8 @@ import {
   type TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
 
+import { type ReviewPackageTabId, ReviewPackageTabs } from '../../components/ReviewPackageTabs';
 import { RunPipelineFull } from '../../components/RunPipeline';
-import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import {
   artifactsForRecipeRun,
   DECISION_EVIDENCE_RECIPE_RUN_PARAM,
@@ -37,12 +37,12 @@ import {
 } from '../../lib/artifact-url';
 import { diffArtifactCandidate } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
+import { isGatewayBackgroundPauseError } from '../../lib/recoverable-errors';
 import { runRefreshEventMatches } from '../../lib/run-refresh';
 import {
   runWorkspaceDiffValue,
   selectSlotCompareTarget,
   summarizeSlotWorkspaceGates,
-  summarizeSlotWorkspaceRetro,
 } from '../../lib/slot-workspace';
 import {
   effectiveTaskProgressForRun,
@@ -51,14 +51,7 @@ import {
 } from '../../lib/task-progress';
 import { baseStyles, colors, spacing } from '../../lib/theme';
 import { buildFailedStepDiagnosticDraft } from '../../lib/workspace-copilot';
-import {
-  selectPrimaryWorkspaceDecision,
-  selectReadyWorkspaceDecision,
-  selectRetrospectiveWorkspaceDecision,
-  selectReviewGateWorkspaceDecision,
-  workspaceDecisionKind,
-} from '../../lib/workspace-decisions';
-import { workspaceGateNavMeta, workspaceRetroNavMeta } from '../../lib/workspace-nav-meta';
+import { workspaceDecisionKind } from '../../lib/workspace-decisions';
 import {
   artifactFilterParamForArtifactPath,
   artifactFilterParamForWorkspaceNav,
@@ -68,7 +61,6 @@ import {
   shouldPreserveArtifactForRecipeContext,
   targetWorkspaceForArtifactRoute,
   targetWorkspaceRouteContextParams,
-  workspaceNavCurrentForRoute,
   workspaceRouteContextParams,
 } from '../../lib/workspace-navigation';
 import {
@@ -110,12 +102,13 @@ const STATUS_COLORS: Record<string, string> = {
 const RECIPE_COMPLETION_REFRESH_DELAY_MS = 5500;
 
 export default function RunDetailScreen() {
-  const { id, recipeRun, artifact, workspace, decisionKind } = useLocalSearchParams<{
+  const { id, recipeRun, artifact, workspace, decisionKind, packageTab } = useLocalSearchParams<{
     id: string;
     recipeRun?: string | string[];
     artifact?: string | string[];
     workspace?: string | string[];
     decisionKind?: string | string[];
+    packageTab?: string | string[];
   }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -145,6 +138,7 @@ export default function RunDetailScreen() {
     : (recipeRun ?? null);
   const requestedRecipeRunIdRef = useRef<string | null>(requestedRecipeRunId);
   const requestedArtifactPath = Array.isArray(artifact) ? (artifact[0] ?? '') : (artifact ?? '');
+  const requestedPackageTab = routeParamString(packageTab);
   const workspaceRouteContext = useMemo(
     () =>
       workspaceRouteContextParams(
@@ -244,12 +238,26 @@ export default function RunDetailScreen() {
     return client
       .request<RunGetResult>('run.get', { runId: id })
       .then((r) => setRun(r.run))
-      .catch((err: Error) => setError(`Failed to load run: ${err.message}`));
+      .catch((err: Error) => {
+        if (isGatewayBackgroundPauseError(err)) {
+          // Android route screenshots and app transitions can briefly pause the
+          // gateway while cached run data is still usable; keep review visible.
+          console.warn(`Run refresh paused: ${err.message}`);
+          return;
+        }
+        setError(`Failed to load run: ${err.message}`);
+      });
   }, [client, id]);
 
   useEffect(() => {
     void loadRun();
   }, [loadRun]);
+
+  const noteRecipeRunsUnavailable = useCallback((err: Error) => {
+    // Recipe artifacts are secondary context; route changes/background pauses can
+    // race the refresh without blocking the primary evidence/diff/terminal review.
+    console.warn(`Recipe runs unavailable: ${err.message}`);
+  }, []);
 
   const refreshRecipeState = useCallback(
     (recipeRequestId?: string) => {
@@ -259,30 +267,24 @@ export default function RunDetailScreen() {
       // artifact text cache.
       const selectionHint = recipeRequestId ? `live-run:${recipeRequestId}` : null;
       void loadRun();
-      void loadRecipeRuns(selectionHint).catch((err: Error) =>
-        setError(`Failed to load recipe runs: ${err.message}`),
-      );
+      void loadRecipeRuns(selectionHint).catch(noteRecipeRunsUnavailable);
       if (recipeRefreshTimerRef.current) clearTimeout(recipeRefreshTimerRef.current);
       recipeRefreshTimerRef.current = setTimeout(() => {
         recipeRefreshTimerRef.current = null;
         void loadRun();
-        void loadRecipeRuns(selectionHint).catch((err: Error) =>
-          setError(`Failed to load recipe runs: ${err.message}`),
-        );
+        void loadRecipeRuns(selectionHint).catch(noteRecipeRunsUnavailable);
       }, RECIPE_COMPLETION_REFRESH_DELAY_MS);
     },
-    [loadRecipeRuns, loadRun],
+    [loadRecipeRuns, loadRun, noteRecipeRunsUnavailable],
   );
 
   useEffect(() => {
-    loadRecipeRuns(requestedRecipeRunId).catch((err: Error) =>
-      setError(`Failed to load recipe runs: ${err.message}`),
-    );
-  }, [loadRecipeRuns, requestedRecipeRunId]);
+    loadRecipeRuns(requestedRecipeRunId).catch(noteRecipeRunsUnavailable);
+  }, [loadRecipeRuns, noteRecipeRunsUnavailable, requestedRecipeRunId]);
 
   useEffect(() => {
     if (!client || !id) return;
-    const handleRunEvent = (payload: unknown, reason: string) => {
+    const handleRunEvent = (payload: unknown, _reason: string) => {
       const event = payload as { run?: Run; runId?: string };
       if (!runRefreshEventMatches(id, event)) return;
       if (event.run?.id === id) {
@@ -291,9 +293,7 @@ export default function RunDetailScreen() {
       } else {
         void loadRun();
       }
-      loadRecipeRuns(requestedRecipeRunIdRef.current).catch((err: Error) =>
-        setError(`Failed to refresh recipe runs after ${reason}: ${err.message}`),
-      );
+      loadRecipeRuns(requestedRecipeRunIdRef.current).catch(noteRecipeRunsUnavailable);
     };
     const unsubscribers = [
       client.subscribe(Events.RUN_UPDATED, (payload) => handleRunEvent(payload, 'run.updated')),
@@ -496,49 +496,10 @@ export default function RunDetailScreen() {
     ['failed', 'done', 'cancelled'].includes(run.status) &&
     Boolean(client) &&
     connectionStatus === 'connected';
-  const primaryDecision = selectPrimaryWorkspaceDecision(run);
-  const readyDecision = selectReadyWorkspaceDecision(run);
-  const reviewGateDecision = selectReviewGateWorkspaceDecision(run);
-  const retroDecision = selectRetrospectiveWorkspaceDecision(run);
-  const readyGateForNav = workspaceGates.find((gate) => gate.label === 'Ready workspace') ?? null;
-  const reviewGateForNav =
-    workspaceGates.find(
-      (gate) => gate.label === 'Review workspace' || gate.label === 'No-change review',
-    ) ?? null;
-  const retroSummaryForNav = summarizeSlotWorkspaceRetro(run);
   const focusedArtifactPath = requestedArtifactPath.trim() || null;
   const focusedArtifactIsDiff = Boolean(
     focusedArtifactPath && diffArtifactCandidate([{ path: focusedArtifactPath }]),
   );
-  const workspaceNavProps = {
-    dense: true,
-    current: workspaceNavCurrentForRoute('run', workspaceRouteContext.workspace),
-    routeWorkspace: workspaceRouteContext.workspace,
-    routeDecisionKind: workspaceRouteContext.decisionKind,
-    decisionId: primaryDecision?.id ?? null,
-    decisionKind: workspaceDecisionKind(primaryDecision),
-    readyDecisionId: readyDecision?.id ?? null,
-    reviewDecisionId: reviewGateDecision?.id ?? null,
-    retroDecisionId: retroDecision?.id ?? null,
-    readyMeta: workspaceGateNavMeta(readyGateForNav),
-    reviewMeta: workspaceGateNavMeta(reviewGateForNav),
-    retroMeta: workspaceRetroNavMeta(retroSummaryForNav),
-    familyId: run.familyId,
-    project: run.project,
-    prNumber: run.prNumber,
-    prRepo: prRepoFromWorkspaceSource(run, run.prNumber ?? null),
-    recipeRunId: workspaceRecipeRunId,
-    recipeAvailable,
-    recipeArtifactCount: visibleRecipeArtifactCount,
-    diffAvailable: activeDiffValue !== '-',
-    artifactCount: runArtifactCount,
-    visualPairCount: compareTarget?.pairCount ?? 0,
-    compareArtifactPath: compareTarget?.artifactPath ?? null,
-    compareRecipeRunId: compareTarget?.recipeRunId,
-    artifactPath: focusedArtifactPath,
-    slotId: run.slotId,
-    runId: run.id,
-  };
   const openRunEvidenceArtifact = (
     artifactPath?: string,
     recipeRunId?: string | null,
@@ -576,6 +537,107 @@ export default function RunDetailScreen() {
       },
     });
   };
+  const reviewPackageActiveTab: ReviewPackageTabId =
+    requestedPackageTab === 'timeline' ? 'timeline' : 'evidence';
+  const openRunPackageTab = (tab: ReviewPackageTabId) => {
+    if (tab === 'diff') {
+      if (activeDiffValue === '-' && run.slotId) {
+        router.push({
+          pathname: '/diff/slot/[slotId]',
+          params: { slotId: run.slotId, ...diffRouteContext },
+        });
+        return;
+      }
+      router.push({
+        pathname: '/diff/[runId]',
+        params: {
+          runId: run.id,
+          ...diffRouteContext,
+          recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+        },
+      });
+      return;
+    }
+    if (tab === 'terminal') {
+      if (!run.slotId) return;
+      router.push({
+        pathname: '/terminal/[slotId]',
+        params: {
+          slotId: run.slotId,
+          ...targetRouteContext('terminal'),
+          runId: run.id,
+          details: '1',
+          recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+          ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+        },
+      });
+      return;
+    }
+    if (tab === 'files') {
+      router.push({
+        pathname: '/artifacts/[runId]',
+        params: {
+          runId: run.id,
+          ...targetRouteContext('artifacts'),
+          recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+          filter: artifactFilterParamForWorkspaceNav(
+            workspaceRecipeRunId && workspaceRecipeRunId !== DECISION_EVIDENCE_RECIPE_RUN_PARAM
+              ? 'recipe'
+              : 'review',
+          ),
+        },
+      });
+      return;
+    }
+    router.push({
+      pathname: '/run/[id]',
+      params: {
+        id: run.id,
+        ...(tab === 'timeline' ? { packageTab: 'timeline' } : {}),
+        recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+        ...(focusedArtifactPath ? { artifact: focusedArtifactPath } : {}),
+      },
+    });
+  };
+  const runReviewTabs = [
+    {
+      id: 'evidence' as const,
+      label: 'Evidence',
+      meta: `${compareTarget?.pairCount ?? 0} visual`,
+      icon: 'images-outline' as const,
+      onPress: () => openRunPackageTab('evidence'),
+    },
+    {
+      id: 'diff' as const,
+      label: 'Diff',
+      meta: activeDiffValue !== '-' ? activeDiffValue : run.slotId ? 'slot' : '-',
+      icon: 'git-compare-outline' as const,
+      disabled: activeDiffValue === '-' && !run.slotId,
+      onPress: () => openRunPackageTab('diff'),
+    },
+    {
+      id: 'timeline' as const,
+      label: 'Timeline',
+      meta: `${run.steps?.length ?? 0} steps`,
+      icon: 'pulse-outline' as const,
+      onPress: () => openRunPackageTab('timeline'),
+    },
+    {
+      id: 'terminal' as const,
+      label: 'Terminal',
+      meta: run.slotId ?? '-',
+      icon: 'terminal-outline' as const,
+      disabled: !run.slotId,
+      onPress: () => openRunPackageTab('terminal'),
+    },
+    {
+      id: 'files' as const,
+      label: 'Files',
+      meta: String((runArtifactCount ?? 0) + (visibleRecipeArtifactCount ?? 0)),
+      icon: 'folder-open-outline' as const,
+      onPress: () => openRunPackageTab('files'),
+    },
+  ];
 
   return (
     <View style={baseStyles.container}>
@@ -583,7 +645,11 @@ export default function RunDetailScreen() {
         pointerEvents={stickyNavVisible && navLayout !== null ? 'auto' : 'none'}
         style={[styles.stickyWorkspaceNav, stickyNavStyle]}
       >
-        <RunWorkspaceNav {...workspaceNavProps} />
+        <ReviewPackageTabs
+          active={reviewPackageActiveTab}
+          tabs={runReviewTabs}
+          summary={run.ticketOrPr}
+        />
       </Animated.View>
       <Animated.ScrollView
         onScroll={scrollHandler}
@@ -611,7 +677,11 @@ export default function RunDetailScreen() {
         </View>
 
         <View onLayout={rememberNavLayout}>
-          <RunWorkspaceNav {...workspaceNavProps} />
+          <ReviewPackageTabs
+            active={reviewPackageActiveTab}
+            tabs={runReviewTabs}
+            summary={run.ticketOrPr}
+          />
         </View>
 
         {focusedArtifactPath ? (
@@ -1001,117 +1071,122 @@ export default function RunDetailScreen() {
           </View>
         )}
 
-        {/* Step Timeline */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Pipeline</Text>
-          {(run.steps ?? []).length > 0 && (
-            <RunPipelineFull
-              steps={run.steps}
-              runStatus={run.status}
-              onStepPress={(_name, i) =>
-                setExpandedStep((current) => {
-                  const key = `${run.steps[i].name}-${i}`;
-                  return current === key ? null : key;
-                })
-              }
-            />
-          )}
-          {(run.steps ?? []).map((step, i) => (
-            <PipelineStepCard
-              key={`${step.name}-${i}`}
-              step={step}
-              index={i}
-              expanded={expandedStep === `${step.name}-${i}`}
-              allowReplay={replayAllowed && !replayingStepName}
-              replaying={replayingStepName === step.name}
-              onReplayStep={(skipPrepare) => confirmReplayStep(step.name, skipPrepare)}
-              onDiagnoseFailure={() => openFailedStepDiagnosis(step)}
-              onOpenArtifact={(artifactPath) => {
-                if (diffArtifactCandidate([{ path: artifactPath }])) {
+        {reviewPackageActiveTab === 'timeline' ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Timeline</Text>
+            {(run.steps ?? []).length > 0 && (
+              <RunPipelineFull
+                steps={run.steps}
+                runStatus={run.status}
+                onStepPress={(_name, i) =>
+                  setExpandedStep((current) => {
+                    const key = `${run.steps[i].name}-${i}`;
+                    return current === key ? null : key;
+                  })
+                }
+              />
+            )}
+            {(run.steps ?? []).map((step, i) => (
+              <PipelineStepCard
+                key={`${step.name}-${i}`}
+                step={step}
+                index={i}
+                expanded={expandedStep === `${step.name}-${i}`}
+                allowReplay={replayAllowed && !replayingStepName}
+                replaying={replayingStepName === step.name}
+                onReplayStep={(skipPrepare) => confirmReplayStep(step.name, skipPrepare)}
+                onDiagnoseFailure={() => openFailedStepDiagnosis(step)}
+                onOpenArtifact={(artifactPath) => {
+                  if (diffArtifactCandidate([{ path: artifactPath }])) {
+                    router.push({
+                      pathname: '/diff/[runId]',
+                      params: {
+                        runId: run.id,
+                        ...diffRouteContext,
+                        path: artifactPath,
+                        recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                      },
+                    });
+                    return;
+                  }
                   router.push({
-                    pathname: '/diff/[runId]',
+                    pathname: '/artifacts/[runId]',
                     params: {
                       runId: run.id,
-                      ...diffRouteContext,
-                      path: artifactPath,
+                      ...targetRouteContext(
+                        targetWorkspaceForArtifactRoute(
+                          DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                          artifactFilterParamForArtifactPath(artifactPath) ??
+                            artifactFilterParamForWorkspaceNav('review'),
+                        ),
+                      ),
                       recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                      artifact: artifactPath,
+                      filter:
+                        artifactFilterParamForArtifactPath(artifactPath) ??
+                        artifactFilterParamForWorkspaceNav('review'),
                     },
                   });
-                  return;
+                }}
+                onToggle={() =>
+                  setExpandedStep((current) =>
+                    current === `${step.name}-${i}` ? null : `${step.name}-${i}`,
+                  )
                 }
+              />
+            ))}
+          </View>
+        ) : null}
+
+        {/* Artifacts */}
+        {reviewPackageActiveTab === 'timeline' ? (
+          <>
+            <RecipeRunsSection
+              run={run}
+              client={client}
+              gatewayUrl={gatewayUrl}
+              artifactAuthHeaders={artifactAuthHeaders}
+              recipeRuns={recipeRuns}
+              selectedRecipeRunId={selectedRecipeRunId}
+              onSelectRecipeRun={handleSelectRecipeRun}
+              onViewArtifacts={(recipeRunId) =>
                 router.push({
                   pathname: '/artifacts/[runId]',
                   params: {
                     runId: run.id,
-                    ...targetRouteContext(
-                      targetWorkspaceForArtifactRoute(
-                        DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                        artifactFilterParamForArtifactPath(artifactPath) ??
-                          artifactFilterParamForWorkspaceNav('review'),
-                      ),
-                    ),
-                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                    artifact: artifactPath,
-                    filter:
-                      artifactFilterParamForArtifactPath(artifactPath) ??
-                      artifactFilterParamForWorkspaceNav('review'),
+                    ...targetRouteContext('recipe'),
+                    recipeRun: recipeRunId,
+                    filter: artifactFilterParamForWorkspaceNav('recipe'),
                   },
-                });
-              }}
-              onToggle={() =>
-                setExpandedStep((current) =>
-                  current === `${step.name}-${i}` ? null : `${step.name}-${i}`,
-                )
+                })
+              }
+              onOpenRecipeArtifact={(recipeRunId, artifactPath, filter) =>
+                openRunEvidenceArtifact(artifactPath, recipeRunId, filter)
+              }
+              onRecipeComplete={refreshRecipeState}
+            />
+
+            <ArtifactsSection
+              run={run}
+              gatewayUrl={gatewayUrl}
+              artifactAuthHeaders={artifactAuthHeaders}
+              onViewAll={() =>
+                router.push({
+                  pathname: '/artifacts/[runId]',
+                  params: {
+                    runId: run.id,
+                    ...targetRouteContext('artifacts'),
+                    recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+                    filter: artifactFilterParamForWorkspaceNav('review'),
+                  },
+                })
+              }
+              onOpenArtifact={(artifactPath) =>
+                openRunEvidenceArtifact(artifactPath, DECISION_EVIDENCE_RECIPE_RUN_PARAM)
               }
             />
-          ))}
-        </View>
-
-        {/* Artifacts */}
-        <RecipeRunsSection
-          run={run}
-          client={client}
-          gatewayUrl={gatewayUrl}
-          artifactAuthHeaders={artifactAuthHeaders}
-          recipeRuns={recipeRuns}
-          selectedRecipeRunId={selectedRecipeRunId}
-          onSelectRecipeRun={handleSelectRecipeRun}
-          onViewArtifacts={(recipeRunId) =>
-            router.push({
-              pathname: '/artifacts/[runId]',
-              params: {
-                runId: run.id,
-                ...targetRouteContext('recipe'),
-                recipeRun: recipeRunId,
-                filter: artifactFilterParamForWorkspaceNav('recipe'),
-              },
-            })
-          }
-          onOpenRecipeArtifact={(recipeRunId, artifactPath, filter) =>
-            openRunEvidenceArtifact(artifactPath, recipeRunId, filter)
-          }
-          onRecipeComplete={refreshRecipeState}
-        />
-
-        <ArtifactsSection
-          run={run}
-          gatewayUrl={gatewayUrl}
-          artifactAuthHeaders={artifactAuthHeaders}
-          onViewAll={() =>
-            router.push({
-              pathname: '/artifacts/[runId]',
-              params: {
-                runId: run.id,
-                ...targetRouteContext('artifacts'),
-                recipeRun: DECISION_EVIDENCE_RECIPE_RUN_PARAM,
-                filter: artifactFilterParamForWorkspaceNav('review'),
-              },
-            })
-          }
-          onOpenArtifact={(artifactPath) =>
-            openRunEvidenceArtifact(artifactPath, DECISION_EVIDENCE_RECIPE_RUN_PARAM)
-          }
-        />
+          </>
+        ) : null}
 
         {run.slotId && !isTerminalRunStatus(run.status) && (
           <View style={styles.section}>
@@ -1140,15 +1215,17 @@ export default function RunDetailScreen() {
         {error && <Text style={styles.errorText}>{error}</Text>}
 
         {/* Metrics */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Metrics</Text>
-          <View style={styles.metricsGrid}>
-            <MetricItem label="Nudges" value={String(run.metrics?.nudgeCount ?? 0)} />
-            <MetricItem label="Model" value={run.metrics?.model ?? '-'} />
-            <MetricItem label="Runner" value={run.metrics?.runner ?? '-'} />
-            <MetricItem label="Outcome" value={run.metrics?.outcome ?? '-'} />
+        {reviewPackageActiveTab === 'timeline' ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Metrics</Text>
+            <View style={styles.metricsGrid}>
+              <MetricItem label="Nudges" value={String(run.metrics?.nudgeCount ?? 0)} />
+              <MetricItem label="Model" value={run.metrics?.model ?? '-'} />
+              <MetricItem label="Runner" value={run.metrics?.runner ?? '-'} />
+              <MetricItem label="Outcome" value={run.metrics?.outcome ?? '-'} />
+            </View>
           </View>
-        </View>
+        ) : null}
       </Animated.ScrollView>
     </View>
   );

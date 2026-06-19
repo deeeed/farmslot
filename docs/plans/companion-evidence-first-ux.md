@@ -1,6 +1,6 @@
 # Companion Evidence-First UX Simplification Plan
 
-Status: Draft plan for the active Mobile Companion stabilization lane.
+Status: Active plan for the Mobile Companion evidence-first UX PR.
 Canonical scope: supports `docs/PRD-mobile-companion-canonical.md` and `docs/ROADMAP-next.md` operator UI/UX stabilization.
 Lifecycle: keep until the evidence-first mobile UX ships, then promote durable outcomes into the mobile PRD / implemented history and delete this plan.
 
@@ -25,6 +25,7 @@ New entrypoint:
 ```bash
 cd apps/companion
 yarn recipe:run:ux-baseline:android
+yarn recipe:run:ux-review-flow:android
 ```
 
 Baseline proof captured on Android from this branch:
@@ -50,7 +51,7 @@ Optional route context for deeper flows:
 
 ```bash
 UX_RUN_ID=<run-id> UX_SLOT_ID=<slot-id> UX_FAMILY_ID=<family-id> \
-  yarn recipe:run:ux-baseline:android
+  yarn recipe:run:ux-review-flow:android
 ```
 
 The first recipe captures default tabs. When IDs are provided, the script also captures run detail, evidence, diff, slot workspace, terminal, slot diff, and family workspace routes.
@@ -96,10 +97,23 @@ Tabs:
 
 Acceptance criteria:
 
-- Run detail opens to Evidence when visual artifacts exist.
-- Family retro and PR evidence use the same tab labels/order.
+- Run detail opens to Evidence by default.
+- Run and decision workspaces use the same tab labels/order.
 - Pipeline/JSON/supporting files are not visible until Timeline/Files/Advanced.
 - Sticky actions expose `Open diff` and `Terminal` when available.
+
+Slice 2 evidence captured on Android from this branch:
+
+```text
+Before: apps/companion/.agent/recipe-runs/ux-review-flow-android-2026-06-19T17-29-17-416Z/artifact-manifest.json
+After:  apps/companion/.agent/recipe-runs/ux-review-flow-android-2026-06-19T17-48-28-786Z/artifact-manifest.json
+```
+
+Result: run detail now shows an evidence-first `Review package` rail with
+Evidence, Diff, Timeline, Terminal, and Files actions. Pipeline, raw run
+artifacts, recipe groups, and metrics move behind Timeline/Files. Artifact and
+diff routes suppress transient Android background-pause refresh noise while
+retaining cached review content.
 
 ### Slice 3 — Evidence viewer upgrade
 
