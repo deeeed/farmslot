@@ -2,6 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 
+import { parseTailscaleDnsNameFromStatus } from '@farmslot/protocol';
+
 import type {
   PairingCandidate,
   PairingCandidatesParams,
@@ -46,17 +48,6 @@ export function reachablePairingCandidates(port: number): PairingCandidate[] {
     });
   }
   return candidates;
-}
-
-export function parseTailscaleDnsNameFromStatus(stdout: string): string | null {
-  let status: { Self?: { DNSName?: string } };
-  try {
-    status = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  const dns = status.Self?.DNSName?.replace(/\.$/, '');
-  return dns && dns.length > 0 ? dns : null;
 }
 
 function tailscaleDnsName(): string | null {

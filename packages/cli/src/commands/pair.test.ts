@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseTailscaleDnsNameFromStatus, reachableAddressesForPairing } from './pair.js';
+import { parseTailscaleDnsNameFromStatus } from '@farmslot/protocol';
+
+import { reachableAddressesForPairing } from './pair.js';
 
 test('parseTailscaleDnsNameFromStatus extracts MagicDNS without trailing dot', () => {
   assert.equal(

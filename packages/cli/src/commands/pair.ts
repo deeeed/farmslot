@@ -13,7 +13,7 @@ import { hostname, networkInterfaces } from 'node:os';
 import type { Command } from 'commander';
 import * as QRCode from 'qrcode';
 
-import type { PairingCreateResult } from '@farmslot/protocol';
+import { parseTailscaleDnsNameFromStatus, type PairingCreateResult } from '@farmslot/protocol';
 
 import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
@@ -49,21 +49,6 @@ function lanIPv4s(): string[] {
   return [...new Set(priv.length > 0 ? priv : all)];
 }
 
-/** Parse MagicDNS name from `tailscale status --json` stdout. */
-export function parseTailscaleDnsNameFromStatus(stdout: string): string | null {
-  // Tailscale present but unparseable status = treat as absent; pairing still
-  // works over LAN. This is the one expected, recoverable miss, not a swallow.
-  let status: { Self?: { DNSName?: string } };
-  try {
-    status = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  const dns = status.Self?.DNSName?.replace(/\.$/, '');
-  return dns && dns.length > 0 ? dns : null;
-}
-
-/** Tailscale MagicDNS name for "from anywhere" access, or null when Tailscale is absent. */
 function tailscaleDnsName(): string | null {
   const result = spawnSync('tailscale', ['status', '--json'], {
     encoding: 'utf-8',

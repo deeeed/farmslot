@@ -92,6 +92,7 @@ test('plain ws Tailscale MagicDNS is classified as tailnet', () => {
 
 test('tailnet detection requires the actual hostname to be in the tailnet namespace', () => {
   assert.equal(inferGatewayProfileKindFromUrl('ws://evil.ts.net.attacker.example/ws'), 'lan');
+  assert.equal(inferGatewayProfileKindFromUrl('ws://foo.tailnet-x.evil.example/ws'), 'lan');
 });
 
 test('tailnet profiles may use ws while remote profiles still require wss', () => {

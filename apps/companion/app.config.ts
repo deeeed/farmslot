@@ -142,6 +142,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           'Farmslot uses the microphone only when you tap Record to draft a worker instruction with on-device voice transcription.',
         NSCameraUsageDescription:
           'Farmslot uses the camera only when you scan a Command Center QR code to pair a gateway profile.',
+        NSAppTransportSecurity: {
+          NSAllowsArbitraryLoads: true,
+          NSAllowsLocalNetworking: true,
+        },
       },
     },
     android: {
@@ -196,7 +200,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       '@siteed/sherpa-onnx.rn',
       // Android writes this into generated native files at prebuild time; rerun prebuild if
       // changing METRO_PORT for Android. iOS gets the port dynamically via RCT_METRO_PORT.
-      ['./plugins/withMetroPort.cjs', { port: metroPort }],
+      ['./plugins/withMetroPort.cjs', { port: metroPort, usesCleartextTraffic: true }],
     ],
     updates: {
       url: `https://u.expo.dev/${env.EAS_PROJECT_ID}`,

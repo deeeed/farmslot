@@ -1,6 +1,7 @@
 export * from './agents/roles.js';
 export * from './contracts/index.js';
 export * from './integrations/github-ref.js';
+export * from './pairing/index.js';
 export * from './recipe/index.js';
 export * from './recipes/step-io.js';
 export * from './rpc/index.js';

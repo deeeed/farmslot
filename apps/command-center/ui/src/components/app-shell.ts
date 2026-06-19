@@ -1042,6 +1042,7 @@ function pairingCandidatePort(url: string): number | undefined {
     const port = Number(new URL(url).port);
     return Number.isFinite(port) && port > 0 ? port : undefined;
   } catch {
+    // Editable/manual URLs may be incomplete while typing; no port hint is fine.
     return undefined;
   }
 }

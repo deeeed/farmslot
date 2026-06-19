@@ -1,4 +1,4 @@
-import { isTailnetGatewayUrl } from './gateway-profile-kind';
+import { isTailnetGatewayUrl } from '@farmslot/protocol';
 
 export function sortPairingExchangeUrls(urls: string[]): string[] {
   return [...urls].sort((a, b) => pairingExchangeUrlRank(a) - pairingExchangeUrlRank(b));
