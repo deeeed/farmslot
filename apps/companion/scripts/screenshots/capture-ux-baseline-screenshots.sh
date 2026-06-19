@@ -39,12 +39,13 @@ IOS_DEVICE="${IOS_DEVICE:-booted}"
 ANDROID_SERIAL="${ANDROID_SERIAL:-${ADB_SERIAL:-}}"
 
 ROUTES=(
-  "01_active|runs"
-  "02_review_inbox|inbox"
-  "03_prs|prs"
-  "04_terminals|workers"
-  "05_fleet|fleet"
-  "06_settings|settings"
+  "01_review|runs"
+  "02_terminals|workers"
+  "03_advanced|advanced"
+  "04_settings|settings"
+  "05_raw_fleet|fleet"
+  "06_raw_prs|prs"
+  "07_raw_inbox|inbox"
 )
 
 if [[ -n "${UX_RUN_ID:-}" ]]; then

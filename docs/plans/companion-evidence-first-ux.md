@@ -75,6 +75,13 @@ Acceptance criteria:
 - Existing deep links keep working.
 - Before/after screenshots show fewer default tabs and less filter/header chrome.
 
+Slice 1 evidence captured on Android from this branch:
+
+```text
+Before: apps/companion/.agent/recipe-runs/ux-baseline-android-2026-06-19T16-14-54-212Z/artifact-manifest.json
+After:  apps/companion/.agent/recipe-runs/ux-baseline-android-2026-06-19T16-33-26-754Z/artifact-manifest.json
+```
+
 ### Slice 2 — Review package shell
 
 Goal: one shared detail model for run/family/PR/decision evidence.

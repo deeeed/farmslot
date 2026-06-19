@@ -1,29 +1,26 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import React, { useMemo } from 'react';
+import React from 'react';
 import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { FilterBar } from '../../components/FilterBar';
 import { colors } from '../../lib/theme';
-import { useDecisionStore } from '../../store/decisions';
-import { filterDecisions, useFilterStore } from '../../store/filters';
-import { useFleetStore } from '../../store/fleet';
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  const decisions = useDecisionStore((s) => s.decisions);
-  const fleet = useFleetStore((s) => s.fleet);
-  const filters = useFilterStore((s) => s.filters);
-  const filteredDecisionCount = useMemo(() => {
-    const slotById = new Map(
-      (fleet?.slots ?? []).map(
-        (slot) => [slot.slot, { project: slot.project, machine: slot.machine }] as const,
-      ),
-    );
-    return filterDecisions(decisions, filters, slotById).length;
-  }, [decisions, filters, fleet]);
+  const connectedHeader = (
+    <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
+      <ConnectionBanner />
+    </View>
+  );
+  const filteredHeader = (
+    <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
+      <ConnectionBanner />
+      <FilterBar />
+    </View>
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bgBase }}>
@@ -45,31 +42,22 @@ export default function TabLayout() {
         <Tabs.Screen
           name="runs"
           options={{
-            title: 'Active',
+            title: 'Review',
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="play-circle-outline" size={size} color={color} />
             ),
-            header: () => (
-              <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
-                <ConnectionBanner />
-                <FilterBar />
-              </View>
-            ),
+            header: () => connectedHeader,
           }}
         />
         <Tabs.Screen
           name="fleet"
           options={{
             title: 'Fleet',
+            href: null,
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="grid-outline" size={size} color={color} />
             ),
-            header: () => (
-              <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
-                <ConnectionBanner />
-                <FilterBar />
-              </View>
-            ),
+            header: () => filteredHeader,
           }}
         />
         <Tabs.Screen
@@ -79,27 +67,18 @@ export default function TabLayout() {
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="terminal-outline" size={size} color={color} />
             ),
-            header: () => (
-              <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
-                <ConnectionBanner />
-                <FilterBar />
-              </View>
-            ),
+            header: () => connectedHeader,
           }}
         />
         <Tabs.Screen
           name="prs"
           options={{
             title: 'PRs',
+            href: null,
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="git-pull-request-outline" size={size} color={color} />
             ),
-            header: () => (
-              <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
-                <ConnectionBanner />
-                <FilterBar />
-              </View>
-            ),
+            header: () => filteredHeader,
           }}
         />
         <Tabs.Screen
@@ -110,27 +89,28 @@ export default function TabLayout() {
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="chatbubble-ellipses-outline" size={size} color={color} />
             ),
-            header: () => (
-              <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
-                <ConnectionBanner />
-              </View>
-            ),
+            header: () => connectedHeader,
           }}
         />
         <Tabs.Screen
           name="inbox"
           options={{
             title: 'Inbox',
+            href: null,
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="mail-outline" size={size} color={color} />
             ),
-            tabBarBadge: filteredDecisionCount > 0 ? filteredDecisionCount : undefined,
-            header: () => (
-              <View style={{ paddingTop: insets.top, backgroundColor: colors.bgSurface }}>
-                <ConnectionBanner />
-                <FilterBar />
-              </View>
+            header: () => filteredHeader,
+          }}
+        />
+        <Tabs.Screen
+          name="advanced"
+          options={{
+            title: 'Advanced',
+            tabBarIcon: ({ color, size }) => (
+              <Ionicons name="ellipsis-horizontal-circle-outline" size={size} color={color} />
             ),
+            header: () => connectedHeader,
           }}
         />
         <Tabs.Screen

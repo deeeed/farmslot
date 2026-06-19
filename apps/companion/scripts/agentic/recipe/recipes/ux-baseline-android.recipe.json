@@ -30,34 +30,39 @@
               "label": "UX baseline route manifest"
             },
             {
-              "path": ".agent/ux-baseline-screenshots/android/01_active.png",
+              "path": ".agent/ux-baseline-screenshots/android/01_review.png",
               "type": "image",
-              "label": "Active runs tab baseline"
+              "label": "Review tab baseline"
             },
             {
-              "path": ".agent/ux-baseline-screenshots/android/02_review_inbox.png",
-              "type": "image",
-              "label": "Review inbox tab baseline"
-            },
-            {
-              "path": ".agent/ux-baseline-screenshots/android/03_prs.png",
-              "type": "image",
-              "label": "PRs tab baseline"
-            },
-            {
-              "path": ".agent/ux-baseline-screenshots/android/04_terminals.png",
+              "path": ".agent/ux-baseline-screenshots/android/02_terminals.png",
               "type": "image",
               "label": "Terminals tab baseline"
             },
             {
-              "path": ".agent/ux-baseline-screenshots/android/05_fleet.png",
+              "path": ".agent/ux-baseline-screenshots/android/03_advanced.png",
               "type": "image",
-              "label": "Fleet tab baseline"
+              "label": "Advanced hub baseline"
             },
             {
-              "path": ".agent/ux-baseline-screenshots/android/06_settings.png",
+              "path": ".agent/ux-baseline-screenshots/android/04_settings.png",
               "type": "image",
               "label": "Settings tab baseline"
+            },
+            {
+              "path": ".agent/ux-baseline-screenshots/android/05_raw_fleet.png",
+              "type": "image",
+              "label": "Raw fleet screen baseline"
+            },
+            {
+              "path": ".agent/ux-baseline-screenshots/android/06_raw_prs.png",
+              "type": "image",
+              "label": "Raw PR dashboard baseline"
+            },
+            {
+              "path": ".agent/ux-baseline-screenshots/android/07_raw_inbox.png",
+              "type": "image",
+              "label": "Raw decision inbox baseline"
             }
           ],
           "next": "done",
