@@ -254,9 +254,13 @@ export default function RunDetailScreen() {
   }, [loadRun]);
 
   const noteRecipeRunsUnavailable = useCallback((err: Error) => {
-    // Recipe artifacts are secondary context; route changes/background pauses can
-    // race the refresh without blocking the primary evidence/diff/terminal review.
-    console.warn(`Recipe runs unavailable: ${err.message}`);
+    if (isGatewayBackgroundPauseError(err)) {
+      // Recipe artifacts are secondary context; route changes/background pauses can
+      // race the refresh without blocking the primary evidence/diff/terminal review.
+      console.warn(`Recipe runs unavailable: ${err.message}`);
+      return;
+    }
+    setError(`Failed to load recipe runs: ${err.message}`);
   }, []);
 
   const refreshRecipeState = useCallback(
