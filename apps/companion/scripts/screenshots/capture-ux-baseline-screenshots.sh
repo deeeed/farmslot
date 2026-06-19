@@ -217,9 +217,6 @@ capture_android() {
     adb -s "${serial}" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
     adb -s "${serial}" shell wm dismiss-keyguard >/dev/null 2>&1 || true
     adb -s "${serial}" shell cmd statusbar collapse >/dev/null 2>&1 || true
-    adb -s "${serial}" shell input keyevent KEYCODE_MENU >/dev/null 2>&1 || true
-    adb -s "${serial}" shell input swipe 540 2100 540 300 400 >/dev/null 2>&1 || true
-    adb -s "${serial}" shell cmd statusbar collapse >/dev/null 2>&1 || true
   }
   assert_android_app_visible() {
     local focus

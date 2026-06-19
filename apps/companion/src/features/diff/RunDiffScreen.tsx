@@ -416,11 +416,18 @@ export default function DiffViewerScreen() {
       params: {
         runId,
         workspace: 'artifacts',
-        recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+        recipeRun:
+          priorityCompareRecipeRunId ?? workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
         ...(priorityVisualPair?.after.path ? { artifact: priorityVisualPair.after.path } : {}),
       },
     });
-  }, [priorityVisualPair?.after.path, router, runId, workspaceRecipeRunId]);
+  }, [
+    priorityCompareRecipeRunId,
+    priorityVisualPair?.after.path,
+    router,
+    runId,
+    workspaceRecipeRunId,
+  ]);
   const openTerminalFromDiff = useCallback(() => {
     if (!run?.slotId) return;
     router.push({
