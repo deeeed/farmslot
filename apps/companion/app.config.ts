@@ -143,8 +143,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         NSCameraUsageDescription:
           'Farmslot uses the camera only when you scan a Command Center QR code to pair a gateway profile.',
         NSAppTransportSecurity: {
-          NSAllowsArbitraryLoads: true,
           NSAllowsLocalNetworking: true,
+          NSExceptionDomains: {
+            'ts.net': {
+              NSIncludesSubdomains: true,
+              NSExceptionAllowsInsecureHTTPLoads: true,
+            },
+          },
         },
       },
     },

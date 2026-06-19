@@ -43,9 +43,9 @@ import {
 import {
   type GatewayProfile,
   type GatewayProfileAuthMode,
+  gatewayProfileKindUrlError,
   mobileGatewayProfileUrlError,
   readGatewayProfileSecret,
-  requiresSecureRemoteUrl,
 } from '../../lib/gateway-profiles';
 import { isStoreScreenshotMode } from '../../lib/store-screenshot-mode';
 import { baseStyles, colors, fonts, radii, spacing } from '../../lib/theme';
@@ -444,11 +444,9 @@ export default function SettingsScreen() {
       kind: profileKind,
       authMode,
     };
-    if (requiresSecureRemoteUrl(profile)) {
-      Alert.alert(
-        'Use WSS for remote profiles',
-        'Remote profiles must use wss://. Tailnet profiles may use ws:// inside Tailscale.',
-      );
+    const kindUrlError = gatewayProfileKindUrlError(profile);
+    if (kindUrlError) {
+      Alert.alert('Invalid profile kind', kindUrlError);
       return;
     }
     if (authMode !== 'none' && !authSecret.trim()) {

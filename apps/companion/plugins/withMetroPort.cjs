@@ -7,6 +7,10 @@ const { AndroidConfig, withAndroidManifest, withGradleProperties } = require('ex
  * Expo dev-client workflow.
  *
  * Also applies generic Android network policy that must survive prebuild.
+ * Android cannot scope cleartext exceptions to arbitrary LAN IPs discovered at
+ * runtime, so usesCleartextTraffic intentionally enables app-wide cleartext.
+ * Companion still validates remote profiles separately: non-LAN/non-tailnet
+ * remote profiles must use wss://.
  */
 module.exports = function withMetroPort(
   config,

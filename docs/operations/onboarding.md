@@ -41,7 +41,9 @@ signed in, and MagicDNS is available on the Mac, it also includes a
 `ws://<machine>.<tailnet>.ts.net:<port>/ws` profile. Scan it from Companion
 Settings → Pair from QR. For away-from-LAN use, sign the phone into the same
 Tailnet before scanning; otherwise the LAN profile is still enough while the
-phone and Mac are on the same network.
+phone and Mac are on the same network. Tailnet profiles use `ws://` because
+Tailscale encrypts traffic at the WireGuard layer; only scan them on devices
+that are signed into the expected tailnet.
 
 If Tailscale was not available during install, pair over LAN first and rerun
 `farmslot pair` after installing/signing into Tailscale on both devices.

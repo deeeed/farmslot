@@ -66,7 +66,7 @@ export {
   mobileGatewayProfileUrlError,
 };
 
-export { requiresSecureRemoteUrl } from './gateway-profile-kind';
+export { gatewayProfileKindUrlError, requiresSecureRemoteUrl } from './gateway-profile-kind';
 
 export { isLegacyPresetGatewayProfile, isLegacyPresetGatewayUrl } from './gateway-profile-legacy';
 

@@ -7,7 +7,11 @@ import {
   selectPreferredGatewayProfile as selectPreferredGatewayProfileFromSelection,
   sortGatewayProfilesForAutoConnect as sortGatewayProfilesForAutoConnectFromSelection,
 } from './gateway-profile-selection';
-import { inferGatewayProfileKindFromUrl, requiresSecureRemoteUrl } from './gateway-profile-kind';
+import {
+  gatewayProfileKindUrlError,
+  inferGatewayProfileKindFromUrl,
+  requiresSecureRemoteUrl,
+} from './gateway-profile-kind';
 import type { GatewayProfile } from './gateway-profiles';
 
 test('sortGatewayProfilesForAutoConnect prefers remote-capable profiles before LAN fallback', () => {
@@ -102,4 +106,15 @@ test('tailnet profiles may use ws while remote profiles still require wss', () =
   );
   assert.equal(requiresSecureRemoteUrl({ kind: 'remote', url: 'ws://gateway.example/ws' }), true);
   assert.equal(requiresSecureRemoteUrl({ kind: 'remote', url: 'wss://gateway.example/ws' }), false);
+});
+
+test('tailnet manual profile kind requires a Tailscale MagicDNS URL', () => {
+  assert.equal(
+    gatewayProfileKindUrlError({ kind: 'tailnet', url: 'ws://gateway.example/ws' }),
+    'Tailnet profiles must use a Tailscale MagicDNS .ts.net URL.',
+  );
+  assert.equal(
+    gatewayProfileKindUrlError({ kind: 'tailnet', url: 'ws://macbook.tailnet.ts.net/ws' }),
+    null,
+  );
 });
