@@ -44,6 +44,7 @@
     "recipe:dry-run": "farmslot-expo-recipe run --dry-run",
     "recipe:run": "farmslot-expo-recipe run",
     "recipe:run:bridge": "farmslot-expo-recipe run scripts/agentic/recipe/recipes/bridge-status.recipe.json",
+    "recipe:run:ux-baseline:android": "farmslot-expo-recipe run scripts/agentic/recipe/recipes/ux-baseline-android.recipe.json",
     "test:identity": "bash scripts/agentic/identity.test.sh",
     "quality": "yarn typecheck && yarn test:lib && yarn quality:structure:ci",
     "quality:structure": "node ../../scripts/quality/check-companion-structure.mjs",
