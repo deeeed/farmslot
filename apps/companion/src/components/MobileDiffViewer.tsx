@@ -33,6 +33,7 @@ interface MobileDiffViewerProps {
   fullHeight?: boolean;
   fetchHeaders?: ArtifactHttpHeaders;
   allowFullscreen?: boolean;
+  onOpenEvidence?: () => void;
 }
 
 const FILTERS: Array<{ id: DiffFileFilter; label: string }> = [
@@ -54,6 +55,7 @@ export function MobileDiffViewer({
   fullHeight = false,
   fetchHeaders = EMPTY_FETCH_HEADERS,
   allowFullscreen = true,
+  onOpenEvidence,
 }: MobileDiffViewerProps) {
   const insets = useSafeAreaInsets();
   const [loadedText, setLoadedText] = useState(diffText ?? '');
@@ -179,6 +181,11 @@ export function MobileDiffViewer({
           <Pressable style={styles.reviewButton} onPress={() => setFullscreenOpen(true)}>
             <Text style={styles.reviewButtonText}>Review diff</Text>
           </Pressable>
+          {onOpenEvidence ? (
+            <Pressable style={styles.evidenceButton} onPress={onOpenEvidence}>
+              <Text style={styles.evidenceButtonText}>Evidence</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {loading ? (
@@ -257,6 +264,7 @@ export function MobileDiffViewer({
               fullHeight
               fetchHeaders={fetchHeaders}
               allowFullscreen={false}
+              onOpenEvidence={onOpenEvidence}
             />
           </View>
         </Modal>
@@ -280,6 +288,11 @@ export function MobileDiffViewer({
             <Text style={styles.delText}>-{totals.deletions}</Text>
           </Text>
         </View>
+        {onOpenEvidence ? (
+          <Pressable style={styles.evidenceButton} onPress={onOpenEvidence}>
+            <Text style={styles.evidenceButtonText}>Evidence</Text>
+          </Pressable>
+        ) : null}
         <View style={styles.modeToggle}>
           {(['unified', 'compact'] as const).map((mode) => (
             <Pressable
@@ -524,6 +537,19 @@ const styles = StyleSheet.create({
   reviewButtonText: {
     color: '#fff',
     fontSize: fonts.sizeSm,
+    fontWeight: '900',
+  },
+  evidenceButton: {
+    backgroundColor: colors.bgInput,
+    borderColor: colors.accent + '66',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  evidenceButtonText: {
+    color: colors.accent,
+    fontSize: fonts.sizeXs,
     fontWeight: '900',
   },
   header: {
