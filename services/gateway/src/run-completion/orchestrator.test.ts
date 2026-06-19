@@ -659,6 +659,15 @@ test('publication review policy defaults and config preserve local-first review 
   assert.equal(effectiveRequiredReviewCount(autonomousDevPolicy), 0);
   assert.equal(independentReviewPolicySatisfied(autonomousDevPolicy, []), true);
 
+  const reviewedInteractiveDevPolicy = publicationReviewPolicyForRun(
+    makeRun({ flowType: 'dev', mode: 'interactive', devInteractiveProfile: 'reviewed' }),
+    {
+      publication_review: { dev: { minimum_independent_reviews: 1 } },
+    } satisfies Partial<RawProjectJson>,
+  );
+  assert.equal(reviewedInteractiveDevPolicy.minimumIndependentReviews, 1);
+  assert.equal(effectiveRequiredReviewCount(reviewedInteractiveDevPolicy), 1);
+
   const configuredDevPolicy = publicationReviewPolicyForRun(
     makeRun({ flowType: 'dev', mode: 'autonomous' }),
     {
