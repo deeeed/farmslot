@@ -2,7 +2,6 @@ import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 
 import type { GatewayProfileKind } from './gateway-profile-kind';
-
 import { isLegacyPresetGatewayProfile } from './gateway-profile-legacy';
 import {
   isLegacyLocalhostGatewayUrl,
@@ -67,7 +66,6 @@ export {
 };
 
 export { gatewayProfileKindUrlError, requiresSecureRemoteUrl } from './gateway-profile-kind';
-
 export { isLegacyPresetGatewayProfile, isLegacyPresetGatewayUrl } from './gateway-profile-legacy';
 
 export function profileSecretStorageKey(profileId: string): string {

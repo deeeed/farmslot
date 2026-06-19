@@ -2,16 +2,15 @@ import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 
-import { parseTailscaleDnsNameFromStatus } from '@farmslot/protocol';
-
-import type {
-  PairingCandidate,
-  PairingCandidatesParams,
-  PairingCandidatesResult,
-  PairingCreateParams,
-  PairingCreateResult,
-  PairingExchangeParams,
-  PairingExchangeResult,
+import {
+  type PairingCandidate,
+  type PairingCandidatesParams,
+  type PairingCandidatesResult,
+  type PairingCreateParams,
+  type PairingCreateResult,
+  type PairingExchangeParams,
+  type PairingExchangeResult,
+  parseTailscaleDnsNameFromStatus,
 } from '@farmslot/protocol';
 
 import type { GatewayAuthRuntime } from '../security/auth.js';

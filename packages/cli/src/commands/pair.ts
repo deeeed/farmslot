@@ -13,7 +13,7 @@ import { hostname, networkInterfaces } from 'node:os';
 import type { Command } from 'commander';
 import * as QRCode from 'qrcode';
 
-import { parseTailscaleDnsNameFromStatus, type PairingCreateResult } from '@farmslot/protocol';
+import { type PairingCreateResult, parseTailscaleDnsNameFromStatus } from '@farmslot/protocol';
 
 import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';

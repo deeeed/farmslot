@@ -4,14 +4,14 @@ import test from 'node:test';
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
 import { sortPairingExchangeUrls } from './gateway-pairing-urls';
 import {
-  selectPreferredGatewayProfile as selectPreferredGatewayProfileFromSelection,
-  sortGatewayProfilesForAutoConnect as sortGatewayProfilesForAutoConnectFromSelection,
-} from './gateway-profile-selection';
-import {
   gatewayProfileKindUrlError,
   inferGatewayProfileKindFromUrl,
   requiresSecureRemoteUrl,
 } from './gateway-profile-kind';
+import {
+  selectPreferredGatewayProfile as selectPreferredGatewayProfileFromSelection,
+  sortGatewayProfilesForAutoConnect as sortGatewayProfilesForAutoConnectFromSelection,
+} from './gateway-profile-selection';
 import type { GatewayProfile } from './gateway-profiles';
 
 test('sortGatewayProfilesForAutoConnect prefers remote-capable profiles before LAN fallback', () => {

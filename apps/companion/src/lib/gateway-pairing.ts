@@ -6,9 +6,9 @@ import {
   type ResponseFrame,
 } from '@farmslot/protocol';
 
-import { inferGatewayProfileKindFromUrl } from './gateway-profile-kind';
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
 import { sortPairingExchangeUrls } from './gateway-pairing-urls';
+import { inferGatewayProfileKindFromUrl } from './gateway-profile-kind';
 import {
   type GatewayProfile,
   isMobileGatewayProfileUrl,
