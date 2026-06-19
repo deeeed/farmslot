@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "title": "Companion Android review-flow UX screenshots",
-  "description": "Captures default and deep review-flow Mobile Companion Android screens for before/after UX review.",
+  "description": "Captures default and deep review-flow Mobile Companion Android screens for before/after UX review. Requires UX_RUN_ID, UX_SLOT_ID, and UX_FAMILY_ID.",
   "proofTargets": [
     {
       "id": "ux-baseline",
@@ -15,7 +15,7 @@
         "capture-baseline": {
           "action": "command",
           "intent": "Capture the current default Android Companion screens for before/after UX review.",
-          "cmd": "FARMSLOT_UX_SCREENSHOT_DIR=.agent/ux-baseline-screenshots bash scripts/screenshots/capture-ux-baseline-screenshots.sh --android-only",
+          "cmd": "FARMSLOT_UX_SCREENSHOT_DIR=.agent/ux-baseline-screenshots bash scripts/screenshots/capture-ux-baseline-screenshots.sh --android-only --review-flow",
           "timeout_ms": 240000,
           "next": "index-baseline",
           "proofTarget": "ux-baseline"

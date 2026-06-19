@@ -25,7 +25,6 @@ New entrypoint:
 ```bash
 cd apps/companion
 yarn recipe:run:ux-baseline:android
-yarn recipe:run:ux-review-flow:android
 ```
 
 Baseline proof captured on Android from this branch:
@@ -47,14 +46,16 @@ FARMSLOT_UX_SCREENSHOT_DIR=.agent/ux-baseline-screenshots \
   bash scripts/screenshots/capture-ux-baseline-screenshots.sh --android-only
 ```
 
-Optional route context for deeper flows:
+Route context for deeper flows:
 
 ```bash
 UX_RUN_ID=<run-id> UX_SLOT_ID=<slot-id> UX_FAMILY_ID=<family-id> \
   yarn recipe:run:ux-review-flow:android
 ```
 
-The first recipe captures default tabs. When IDs are provided, the script also captures run detail, evidence, diff, slot workspace, terminal, slot diff, and family workspace routes.
+The baseline recipe captures default tabs. The review-flow recipe requires
+route IDs and captures run detail, evidence, diff, slot workspace, terminal,
+slot diff, and family workspace routes.
 
 ## Feature slices
 
@@ -106,7 +107,7 @@ Slice 2 evidence captured on Android from this branch:
 
 ```text
 Before: apps/companion/.agent/recipe-runs/ux-review-flow-android-2026-06-19T17-29-17-416Z/artifact-manifest.json
-After:  apps/companion/.agent/recipe-runs/ux-review-flow-android-2026-06-19T17-48-28-786Z/artifact-manifest.json
+After:  apps/companion/.agent/recipe-runs/ux-review-flow-android-2026-06-19T18-19-55-275Z/artifact-manifest.json
 ```
 
 Result: run detail now shows an evidence-first `Review package` rail with

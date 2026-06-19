@@ -10,6 +10,7 @@ OPEN_DEV_CLIENT="${OPEN_DEV_CLIENT:-1}"
 START_METRO="${START_METRO:-1}"
 CAPTURE_IOS="${CAPTURE_IOS:-1}"
 CAPTURE_ANDROID="${CAPTURE_ANDROID:-1}"
+REQUIRE_REVIEW_FLOW_CONTEXT="${REQUIRE_REVIEW_FLOW_CONTEXT:-0}"
 
 case "${APP_VARIANT}" in
   development)
@@ -64,7 +65,7 @@ fi
 
 usage() {
   cat <<USAGE
-Usage: $(basename "$0") [--ios-only|--android-only|--no-metro]
+Usage: $(basename "$0") [--ios-only|--android-only|--no-metro|--review-flow]
 
 Captures current Companion UX baseline screenshots for design review.
 Output defaults to: ${OUTPUT_DIR}
@@ -73,6 +74,7 @@ Optional route context:
   UX_RUN_ID=<run id>       Capture run detail, evidence, and run diff routes.
   UX_SLOT_ID=<slot id>     Capture slot workspace, terminal, and slot diff routes.
   UX_FAMILY_ID=<family id> Capture family workspace route.
+  --review-flow            Require all route context IDs above.
 
 Environment overrides:
   METRO_PORT=${METRO_PORT}
@@ -102,6 +104,10 @@ while [[ $# -gt 0 ]]; do
       START_METRO=0
       shift
       ;;
+    --review-flow)
+      REQUIRE_REVIEW_FLOW_CONTEXT=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -113,6 +119,17 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${REQUIRE_REVIEW_FLOW_CONTEXT}" == "1" ]]; then
+  missing=()
+  [[ -n "${UX_RUN_ID:-}" ]] || missing+=("UX_RUN_ID")
+  [[ -n "${UX_SLOT_ID:-}" ]] || missing+=("UX_SLOT_ID")
+  [[ -n "${UX_FAMILY_ID:-}" ]] || missing+=("UX_FAMILY_ID")
+  if (( ${#missing[@]} > 0 )); then
+    echo "ERROR: --review-flow requires ${missing[*]}." >&2
+    exit 1
+  fi
+fi
 
 wait_for_port() {
   local port="$1"
