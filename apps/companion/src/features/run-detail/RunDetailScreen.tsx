@@ -128,6 +128,7 @@ export default function RunDetailScreen() {
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [replayingStepName, setReplayingStepName] = useState<string | null>(null);
   const recipeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recipeRunsRequestRef = useRef(0);
   const [navLayout, setNavLayout] = useState<WorkspaceStickyNavLayout | null>(null);
   const [stickyNavVisible, setStickyNavVisibleState] = useState(false);
   const stickyNavVisibleRef = useRef(false);
@@ -208,6 +209,8 @@ export default function RunDetailScreen() {
 
   const loadRecipeRuns = useCallback(
     (selectionHint: string | null) => {
+      const requestId = recipeRunsRequestRef.current + 1;
+      recipeRunsRequestRef.current = requestId;
       if (!client || !id) {
         setRecipeRunsLoaded(false);
         return Promise.resolve();
@@ -216,6 +219,7 @@ export default function RunDetailScreen() {
       return client
         .request<RunRecipeRunsForRunResult>('run.recipeRunsForRun', { runId: id })
         .then((result) => {
+          if (recipeRunsRequestRef.current !== requestId) return;
           setRecipeRuns(result.recipeRuns);
           setSelectedRecipeRunId(
             selectionHint === DECISION_EVIDENCE_RECIPE_RUN_PARAM
@@ -227,7 +231,13 @@ export default function RunDetailScreen() {
                 ),
           );
         })
-        .finally(() => setRecipeRunsLoaded(true));
+        .catch((err: Error) => {
+          if (recipeRunsRequestRef.current !== requestId) return;
+          throw err;
+        })
+        .finally(() => {
+          if (recipeRunsRequestRef.current === requestId) setRecipeRunsLoaded(true);
+        });
     },
     [client, id],
   );
