@@ -27,6 +27,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     variant: overrides.variant === undefined ? 'codex' : overrides.variant,
     flowType: overrides.flowType ?? 'fix-bug',
     mode: overrides.mode ?? 'interactive',
+    devInteractiveProfile: overrides.devInteractiveProfile,
     status: overrides.status ?? 'ci-watching',
     project: overrides.project ?? 'example-mobile-farm',
     ticketOrPr: overrides.ticketOrPr ?? 'PROJ-1',

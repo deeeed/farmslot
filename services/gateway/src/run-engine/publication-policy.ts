@@ -4,10 +4,29 @@ import type { RawProjectJson } from '../core/config.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 type PublicationReviewConfigSource = ProjectConfig | RawProjectJson | null | undefined;
-type LocalFirstRunInput = Pick<Run, 'flowType' | 'mode' | 'completionPolicy' | 'metrics'>;
+type LocalFirstRunInput = Pick<
+  Run,
+  'flowType' | 'mode' | 'completionPolicy' | 'devInteractiveProfile' | 'engineState' | 'metrics'
+>;
 
-function isLocalFirstPublicationCandidate(run: Pick<Run, 'flowType' | 'mode'>): boolean {
-  return run.flowType === 'fix-bug' || (run.flowType === 'dev' && run.mode === 'autonomous');
+function isReviewedInteractiveDevRun(
+  run: Pick<Run, 'flowType' | 'mode' | 'devInteractiveProfile' | 'engineState'>,
+): boolean {
+  if (run.flowType !== 'dev' || run.mode !== 'interactive') return false;
+  return (
+    run.devInteractiveProfile === 'reviewed' ||
+    run.engineState?.interactiveDev?.profile === 'reviewed'
+  );
+}
+
+function isLocalFirstPublicationCandidate(
+  run: Pick<Run, 'flowType' | 'mode' | 'devInteractiveProfile' | 'engineState'>,
+): boolean {
+  return (
+    run.flowType === 'fix-bug' ||
+    (run.flowType === 'dev' && run.mode === 'autonomous') ||
+    isReviewedInteractiveDevRun(run)
+  );
 }
 
 function localFirstPublicationApplies(run: LocalFirstRunInput): boolean {
