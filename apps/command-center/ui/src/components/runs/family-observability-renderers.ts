@@ -1,13 +1,15 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
-import type {
-  FamilyObservabilityArtifact,
-  FamilyObservabilityRunSummary,
-  FamilyObservabilitySnapshot,
-  PRStatus,
-  RelatedRunSummary,
+import {
+  type FamilyObservabilityArtifact,
+  type FamilyObservabilityRunSummary,
+  type FamilyObservabilitySnapshot,
+  githubPullUrl,
+  isRunEvidenceVideoArtifact,
+  parseGitHubRef,
+  type PRStatus,
+  type RelatedRunSummary,
 } from '@farmslot/protocol';
-import { githubPullUrl, parseGitHubRef } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 import { MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
@@ -19,7 +21,6 @@ import {
 import { flowColor, flowLabel, formatCreatedAt, runStatusColor } from './run-utils.js';
 
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
-const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
 
 export type FamilyEvidenceFilter = 'all' | 'before' | 'after' | 'setup' | 'videos';
 
@@ -63,7 +64,7 @@ function evidenceArtifactMatchesFilter(
   filter: Exclude<FamilyEvidenceFilter, 'all'>,
   context: Pick<FamilyEvidenceRenderContext, 'artifactKind'>,
 ): boolean {
-  if (filter === 'videos') return VIDEO_EXTS.test(artifact.path);
+  if (filter === 'videos') return isRunEvidenceVideoArtifact(artifact);
   return context.artifactKind(artifact) === filter;
 }
 
@@ -224,7 +225,7 @@ function renderFamilyEvidenceArtifact(
                 loading="lazy"
                 @error=${() => context.markArtifactBroken(artifact)}
               />`
-            : VIDEO_EXTS.test(artifact.path)
+            : isRunEvidenceVideoArtifact(artifact)
               ? html`<div class="artifact-video-preview">
                   <video
                     class="artifact-preview"

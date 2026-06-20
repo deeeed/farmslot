@@ -1,6 +1,7 @@
-import type {
-  FamilyObservabilityArtifact,
-  FamilyObservabilityRunSummary,
+import {
+  type FamilyObservabilityArtifact,
+  type FamilyObservabilityRunSummary,
+  isRunEvidenceVideoArtifact,
 } from '@farmslot/protocol';
 
 import { isAfterVisualArtifact, isBeforeVisualArtifact } from './artifact-url';
@@ -18,7 +19,6 @@ export type FamilyEvidenceKind = Exclude<FamilyEvidenceFilter, 'all' | 'videos'>
 
 export const MAX_FAMILY_EVIDENCE_GROUPS = 8;
 export const MAX_ARTIFACTS_PER_FAMILY_EVIDENCE_GROUP = 6;
-const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
 
 export interface FamilyEvidenceGroup {
   key: string;
@@ -70,7 +70,7 @@ export function familyArtifactKind(artifact: FamilyObservabilityArtifact): Famil
 export function isFamilyVideoArtifact(
   artifact: Pick<FamilyObservabilityArtifact, 'path'>,
 ): boolean {
-  return VIDEO_EXTS.test(artifact.path);
+  return isRunEvidenceVideoArtifact(artifact);
 }
 
 export function familyEvidenceKindLabel(kind: FamilyEvidenceKind): string {

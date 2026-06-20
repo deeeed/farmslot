@@ -98,6 +98,18 @@ const GATEWAY_BASE = gatewayHttpOrigin();
 const MD_CACHE_LIMIT = 50;
 const COPY_COMPARE_PROMPT = 'compare-prompt';
 
+function familyEvidenceFilterFromHash(): FamilyEvidenceFilter | null {
+  const query = window.location.hash.split('?')[1] ?? '';
+  const value = new URLSearchParams(query).get('evidence');
+  return value === 'all' ||
+    value === 'before' ||
+    value === 'after' ||
+    value === 'setup' ||
+    value === 'videos'
+    ? value
+    : null;
+}
+
 @customElement('family-observability')
 export class FamilyObservability extends FamilyObservabilityState {
   private _selectRun = (runId: string) => {
@@ -182,6 +194,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     super.connectedCallback();
     window.addEventListener('keydown', this._onModalKeyDown);
     window.addEventListener('hashchange', this._onHashChange);
+    this._applyEvidenceFilterFromHash();
     void this._loadSnapshot();
     this._fleetSlots = getState().fleet?.slots ?? [];
     this._prs = getState().prs ?? [];
@@ -246,7 +259,13 @@ export class FamilyObservability extends FamilyObservabilityState {
   private _onHashChange = () => {
     if (this._suppressDiffHashSync) return;
     this._applyDiffModalFromHash();
+    this._applyEvidenceFilterFromHash();
   };
+
+  private _applyEvidenceFilterFromHash(): void {
+    const filter = familyEvidenceFilterFromHash();
+    if (filter) this._evidenceFilter = filter;
+  }
 
   updated(changed: Map<string, unknown>): void {
     if (changed.has('familyId') || changed.has('snapshotOverride')) {

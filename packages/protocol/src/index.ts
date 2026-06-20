@@ -5,6 +5,7 @@ export * from './pairing/index.js';
 export * from './recipe/index.js';
 export * from './recipes/step-io.js';
 export * from './rpc/index.js';
+export * from './runs/evidence-summary.js';
 export * from './runs/family-iteration-ledger.js';
 export * from './runs/family-readiness.js';
 export * from './surfaces/command-center.js';
