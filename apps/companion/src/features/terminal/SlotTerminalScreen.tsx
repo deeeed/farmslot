@@ -136,6 +136,7 @@ import { useTerminalPrefsStore } from '../../store/terminal-prefs';
 import {
   type MobileTmuxActionMethod,
   TerminalFullscreenWorkspaceRail,
+  TerminalSteeringContextCard,
   TerminalWorkspaceCockpit,
   TmuxControlPanel,
 } from './components/slot-terminal-panels';
@@ -1733,6 +1734,15 @@ export default function TerminalScreen() {
               <Text style={[styles.liveBadgeText, { color: liveBadgeColor }]}>{streamLabel}</Text>
             </View>
           </View>
+
+          <TerminalSteeringContextCard
+            slotId={slotId} run={targetRun} fallbackRunId={runId}
+            streamLabel={streamLabel} liveBadgeColor={liveBadgeColor}
+            targetWarning={targetWarning} terminalInputDisabled={Boolean(terminalInputDisabledReason)}
+            voiceRecorderBusy={voiceRecorderBusy} onOpenTmux={() => setShowTerminalControls(true)}
+            onOpenContext={() => setShowTerminalOptions(true)} onOpenVoice={handleFloatingVoicePress}
+            onOpenKeyboard={() => { setAllowTerminalTouchKeyboard(true); setShowTerminalControls(true); }}
+          />
 
           {showTerminalOptions && (
             <View style={styles.terminalOptionsPanel}>

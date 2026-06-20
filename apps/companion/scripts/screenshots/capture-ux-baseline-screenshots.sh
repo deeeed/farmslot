@@ -211,7 +211,24 @@ capture_android() {
   fi
   local out_dir="${OUTPUT_DIR}/android"
   mkdir -p "${out_dir}"
+  ensure_android_awake() {
+    # Physical devices can stay on the notification shade or dim to black between
+    # route launches. Wake and collapse system chrome so screenshots prove the app.
+    adb -s "${serial}" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+    adb -s "${serial}" shell wm dismiss-keyguard >/dev/null 2>&1 || true
+    adb -s "${serial}" shell cmd statusbar collapse >/dev/null 2>&1 || true
+  }
+  assert_android_app_visible() {
+    local focus
+    focus="$(adb -s "${serial}" shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' || true)"
+    if printf '%s\n' "${focus}" | grep -q 'NotificationShade'; then
+      echo "ERROR: Android device is locked or showing NotificationShade; unlock it before capturing screenshots." >&2
+      printf '%s\n' "${focus}" >&2
+      return 1
+    fi
+  }
   echo "[ux-screenshots] launching Android ${ANDROID_PACKAGE} on ${serial}"
+  ensure_android_awake
   adb -s "${serial}" reverse "tcp:${METRO_PORT}" "tcp:${METRO_PORT}" >/dev/null
   adb -s "${serial}" shell am force-stop "${ANDROID_PACKAGE}" >/dev/null 2>&1 || true
   if [[ "${OPEN_DEV_CLIENT}" == "1" ]]; then
@@ -232,8 +249,11 @@ capture_android() {
     key="${spec%%|*}"
     route="${spec##*|}"
     echo "[ux-screenshots] Android ${key} (${route})"
+    ensure_android_awake
     adb -s "${serial}" shell am start -a android.intent.action.VIEW -d "${SCHEME}://${route}" "${ANDROID_PACKAGE}" >/dev/null
     sleep 3
+    ensure_android_awake
+    assert_android_app_visible
     adb -s "${serial}" exec-out screencap -p >"${out_dir}/${key}.png"
   done
 }

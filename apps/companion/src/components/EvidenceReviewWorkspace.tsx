@@ -84,6 +84,13 @@ export function EvidenceReviewWorkspace({
       })),
     [filteredArtifacts, gatewayUrl, runId],
   );
+  const evidenceSummary = useMemo(() => summarizeEvidenceCompleteness(artifacts, pairs.length), [
+    artifacts,
+    pairs.length,
+  ]);
+  const packageDiffArtifactPath = useMemo(() => diffArtifactCandidate(artifacts)?.path ?? null, [
+    artifacts,
+  ]);
   const visibleEvidenceFilters = useMemo(
     () => EVIDENCE_FILTERS.filter((filter) => filter.id === 'all' || artifactCounts[filter.id] > 0),
     [artifactCounts],
@@ -122,6 +129,14 @@ export function EvidenceReviewWorkspace({
 
   return (
     <View style={styles.workspace}>
+      <EvidenceCompletenessCard
+        summary={evidenceSummary}
+        onOpenDiff={
+          packageDiffArtifactPath && onOpenDiff
+            ? () => onOpenDiff(packageDiffArtifactPath)
+            : undefined
+        }
+      />
       {pairs.length > 0 && (
         <View style={styles.railSection}>
           <RailHeader
@@ -149,6 +164,11 @@ export function EvidenceReviewWorkspace({
                   onOpenArtifactWorkspace={
                     onOpenCompareArtifactWorkspace ?? onOpenArtifactWorkspace
                   }
+                  onOpenDiff={
+                    packageDiffArtifactPath && onOpenDiff
+                      ? () => onOpenDiff(packageDiffArtifactPath)
+                      : undefined
+                  }
                   authHeaders={authHeaders}
                   style={{ marginRight: spacing.md }}
                 />
@@ -156,6 +176,17 @@ export function EvidenceReviewWorkspace({
             ))}
           </ScrollView>
         </View>
+      )}
+
+      {pairs.length === 0 && (
+        <MissingEvidenceCard
+          summary={evidenceSummary}
+          onOpenDiff={
+            packageDiffArtifactPath && onOpenDiff
+              ? () => onOpenDiff(packageDiffArtifactPath)
+              : undefined
+          }
+        />
       )}
 
       <View style={styles.railSection}>
@@ -225,6 +256,116 @@ function sortReviewArtifacts(artifacts: ArtifactManifestEntry[]): ArtifactManife
   });
 }
 
+function summarizeEvidenceCompleteness(artifacts: ArtifactManifestEntry[], pairCount: number) {
+  const videos = artifacts.filter((artifact) => classifyArtifact(artifact) === 'video').length;
+  const visualArtifacts = artifacts.filter((artifact) => {
+    const type = classifyArtifact(artifact);
+    return type === 'image' || type === 'video';
+  }).length;
+  const hasDiff = Boolean(diffArtifactCandidate(artifacts));
+  const hasReviewReport = artifacts.some((artifact) => {
+    const path = artifact.path.toLowerCase();
+    const purpose = artifact.purpose.toLowerCase();
+    return purpose.includes('review') || purpose.includes('report') || path.includes('review');
+  });
+  const missing: string[] = [];
+  if (pairCount === 0) missing.push('before/after pair');
+  if (!hasDiff) missing.push('diff');
+  if (!hasReviewReport) missing.push('review report');
+  return {
+    pairCount,
+    videos,
+    visualArtifacts,
+    hasDiff,
+    hasReviewReport,
+    missing,
+  };
+}
+
+function EvidenceCompletenessCard({
+  summary,
+  onOpenDiff,
+}: {
+  summary: ReturnType<typeof summarizeEvidenceCompleteness>;
+  onOpenDiff?: () => void;
+}) {
+  return (
+    <View style={styles.completenessCard}>
+      <View style={styles.completenessHeader}>
+        <View style={styles.completenessTitleBlock}>
+          <Text style={styles.completenessEyebrow}>Evidence completeness</Text>
+          <Text style={styles.completenessTitle}>
+            {summary.missing.length === 0
+              ? 'Ready to review visually'
+              : `Missing ${summary.missing.join(', ')}`}
+          </Text>
+        </View>
+        {onOpenDiff ? (
+          <Pressable style={styles.completenessDiffButton} onPress={onOpenDiff}>
+            <Text style={styles.completenessDiffText}>Open diff</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={styles.completenessRail}>
+        <CompletenessPill label="Pairs" value={String(summary.pairCount)} ok={summary.pairCount > 0} />
+        <CompletenessPill label="Videos" value={String(summary.videos)} ok />
+        <CompletenessPill
+          label="Diff"
+          value={summary.hasDiff ? 'ready' : 'missing'}
+          ok={summary.hasDiff}
+        />
+        <CompletenessPill
+          label="Report"
+          value={summary.hasReviewReport ? 'ready' : 'missing'}
+          ok={summary.hasReviewReport}
+        />
+      </View>
+    </View>
+  );
+}
+
+function CompletenessPill({
+  label,
+  value,
+  ok,
+}: {
+  label: string;
+  value: string;
+  ok: boolean;
+}) {
+  const color = ok ? colors.statusOk : colors.statusWarn;
+  return (
+    <View style={[styles.completenessPill, { borderColor: color + '88' }]}>
+      <Text style={[styles.completenessPillLabel, { color }]}>{label}</Text>
+      <Text style={styles.completenessPillValue}>{value}</Text>
+    </View>
+  );
+}
+
+function MissingEvidenceCard({
+  summary,
+  onOpenDiff,
+}: {
+  summary: ReturnType<typeof summarizeEvidenceCompleteness>;
+  onOpenDiff?: () => void;
+}) {
+  return (
+    <View style={styles.missingEvidenceCard}>
+      <Text style={styles.missingEvidenceTitle}>No before → after pair found</Text>
+      <Text style={styles.missingEvidenceText}>
+        This package still has {summary.visualArtifacts} visual file
+        {summary.visualArtifacts === 1 ? '' : 's'}, but no paired before/after delta. Ask the
+        worker for paired screenshots or inspect the Files tab.
+      </Text>
+      {onOpenDiff ? (
+        <Pressable style={styles.missingEvidenceButton} onPress={onOpenDiff}>
+          <Text style={styles.missingEvidenceButtonText}>Review diff while evidence is missing</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 function RailHeader({
   title,
   subtitle,
@@ -256,6 +397,7 @@ function LargeComparisonCard({
   active,
   onOpenVisual,
   onOpenArtifactWorkspace,
+  onOpenDiff,
   style,
   authHeaders,
 }: {
@@ -263,6 +405,7 @@ function LargeComparisonCard({
   active: boolean;
   onOpenVisual: (uri: string) => void;
   onOpenArtifactWorkspace?: (artifact: ArtifactManifestEntry) => void;
+  onOpenDiff?: () => void;
   style?: object;
   authHeaders?: ArtifactHttpHeaders;
 }) {
@@ -307,6 +450,19 @@ function LargeComparisonCard({
         <Text style={styles.deltaChecklistHint}>
           Confirm the visible delta before approving, retrying, or dispatching follow-up work.
         </Text>
+        <View style={styles.deltaActionRow}>
+          <Pressable style={styles.deltaAction} onPress={() => onOpenVisual(pair.before.url)}>
+            <Text style={styles.deltaActionText}>Open before fullscreen</Text>
+          </Pressable>
+          <Pressable style={styles.deltaAction} onPress={() => onOpenVisual(pair.after.url)}>
+            <Text style={styles.deltaActionText}>Open after fullscreen</Text>
+          </Pressable>
+          {onOpenDiff ? (
+            <Pressable style={styles.deltaAction} onPress={onOpenDiff}>
+              <Text style={styles.deltaActionText}>Open diff</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
     </View>
   );
@@ -571,6 +727,9 @@ function EvidenceVideo({
         fullscreenOptions={{ enable: true }}
         contentFit="contain"
       />
+      <View pointerEvents="none" style={styles.videoPlayBadge}>
+        <Text style={styles.videoPlayText}>▶ Inline preview</Text>
+      </View>
       <Pressable style={styles.videoOpenButton} onPress={onOpen}>
         <Text style={styles.videoOpenText}>Open</Text>
       </Pressable>
@@ -589,6 +748,109 @@ function artifactDisplayName(artifact: ArtifactManifestEntry): string {
 const styles = StyleSheet.create({
   workspace: {
     gap: spacing.lg,
+  },
+  completenessCard: {
+    backgroundColor: colors.bgCard,
+    borderColor: colors.accent + '44',
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    gap: spacing.md,
+    padding: spacing.lg,
+  },
+  completenessHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+  },
+  completenessTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  completenessEyebrow: {
+    color: colors.accent,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  completenessTitle: {
+    color: colors.textPrimary,
+    fontSize: fonts.sizeMd,
+    fontWeight: '900',
+    marginTop: spacing.xs,
+  },
+  completenessDiffButton: {
+    backgroundColor: colors.accent + '22',
+    borderColor: colors.accent + '88',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  completenessDiffText: {
+    color: colors.accent,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+  },
+  completenessRail: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  completenessPill: {
+    backgroundColor: colors.bgInput,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    minWidth: 82,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  completenessPillLabel: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  completenessPillValue: {
+    color: colors.textPrimary,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+    marginTop: 2,
+    textTransform: 'uppercase',
+  },
+  missingEvidenceCard: {
+    backgroundColor: colors.statusWarn + '12',
+    borderColor: colors.statusWarn + '66',
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    gap: spacing.sm,
+    padding: spacing.lg,
+  },
+  missingEvidenceTitle: {
+    color: colors.statusWarn,
+    fontSize: fonts.sizeMd,
+    fontWeight: '900',
+  },
+  missingEvidenceText: {
+    color: colors.textSecondary,
+    fontSize: fonts.sizeSm,
+    lineHeight: 19,
+  },
+  missingEvidenceButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.statusWarn + '22',
+    borderColor: colors.statusWarn + '88',
+    borderRadius: 999,
+    borderWidth: 1,
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  missingEvidenceButtonText: {
+    color: colors.statusWarn,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
   },
   railSection: {
     gap: spacing.md,
@@ -683,6 +945,25 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeXs,
     lineHeight: 16,
   },
+  deltaActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  deltaAction: {
+    backgroundColor: colors.accent + '18',
+    borderColor: colors.accent + '55',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  deltaActionText: {
+    color: colors.accent,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+  },
   comparePane: {
     borderRadius: radii.md,
     borderWidth: 1,
@@ -732,6 +1013,22 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: fonts.sizeXs,
     fontWeight: '800',
+  },
+  videoPlayBadge: {
+    backgroundColor: 'rgba(0,0,0,0.62)',
+    borderColor: 'rgba(255,255,255,0.22)',
+    borderRadius: 999,
+    borderWidth: 1,
+    bottom: spacing.md,
+    left: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    position: 'absolute',
+  },
+  videoPlayText: {
+    color: '#fff',
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
   },
   documentPane: {
     width: '100%',

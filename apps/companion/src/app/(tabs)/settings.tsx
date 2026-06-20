@@ -1,7 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Asset } from 'expo-asset';
 import { type BarcodeScanningResult, CameraView, useCameraPermissions } from 'expo-camera';
-import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -95,7 +94,6 @@ async function smokeTestVoiceModel(modelId: string): Promise<string> {
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
-  const router = useRouter();
   const {
     gatewayUrl,
     profiles,
@@ -132,6 +130,7 @@ export default function SettingsScreen() {
   const [pairingInProgress, setPairingInProgress] = useState(false);
   const [pairingImportMessage, setPairingImportMessage] = useState<string | null>(null);
   const [advancedGatewaySetupOpen, setAdvancedGatewaySetupOpen] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [connectionTestInProgress, setConnectionTestInProgress] = useState(false);
   const [connectionTestStatus, setConnectionTestStatus] = useState<string | null>(null);
   const [connectionTestFailed, setConnectionTestFailed] = useState(false);
@@ -643,13 +642,6 @@ export default function SettingsScreen() {
         { paddingBottom: styles.content.padding + insets.bottom },
       ]}
     >
-      {!isStoreScreenshotMode ? (
-        <>
-          <AppEnvironmentCard />
-          <AppUpdateStatusCard />
-        </>
-      ) : null}
-
       <Text style={styles.sectionTitle}>Gateway Connection</Text>
 
       <View style={styles.statusRow}>
@@ -1136,13 +1128,6 @@ export default function SettingsScreen() {
       ) : null}
 
       <View style={styles.infoSection}>
-        <Text style={styles.sectionTitle}>Quick Links</Text>
-        <Pressable style={styles.linkButton} onPress={() => router.push('/(tabs)/prs')}>
-          <Text style={styles.linkText}>Pull Requests</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.infoSection}>
         <Text style={styles.sectionTitle}>Terminal</Text>
         <Text style={[baseStyles.textMuted, { marginBottom: spacing.sm }]}>
           tmux prefix used by the terminal control bar (Prev win, Next win, Split, etc.). Pick the
@@ -1178,6 +1163,35 @@ export default function SettingsScreen() {
           })}
         </View>
       </View>
+
+      {!isStoreScreenshotMode ? (
+        <View style={styles.infoSection}>
+          <View style={styles.diagnosticsHeader}>
+            <View style={styles.diagnosticsCopy}>
+              <Text style={[styles.sectionTitle, styles.diagnosticsTitle]}>
+                Advanced diagnostics
+              </Text>
+              <Text style={styles.helperTextNoMargin}>
+                Environment, update status, and raw troubleshooting live here so pairing stays first.
+              </Text>
+            </View>
+            <Pressable
+              style={styles.advancedToggle}
+              onPress={() => setDiagnosticsOpen((open) => !open)}
+            >
+              <Text style={styles.advancedToggleText}>
+                {diagnosticsOpen ? 'Hide' : 'Show'}
+              </Text>
+            </Pressable>
+          </View>
+          {diagnosticsOpen ? (
+            <View style={styles.diagnosticsCards}>
+              <AppEnvironmentCard />
+              <AppUpdateStatusCard />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={styles.infoSection}>
         <Text style={styles.sectionTitle}>About</Text>
@@ -1695,17 +1709,22 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.bgCard,
   },
-  linkButton: {
-    backgroundColor: colors.bgCard,
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.xl,
-    borderRadius: radii.md,
-    marginBottom: spacing.md,
+  diagnosticsHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
   },
-  linkText: {
-    color: colors.accent,
-    fontSize: fonts.sizeMd,
-    fontWeight: '600',
+  diagnosticsCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  diagnosticsTitle: {
+    marginBottom: spacing.sm,
+  },
+  diagnosticsCards: {
+    gap: spacing.lg,
+    marginTop: spacing.lg,
   },
   scannerContainer: {
     backgroundColor: '#000',

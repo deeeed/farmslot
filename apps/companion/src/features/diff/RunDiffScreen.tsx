@@ -410,6 +410,37 @@ export default function DiffViewerScreen() {
     }
     router.replace('/(tabs)/runs');
   }, [router]);
+  const openEvidenceFromDiff = useCallback(() => {
+    router.push({
+      pathname: '/artifacts/[runId]',
+      params: {
+        runId,
+        workspace: 'artifacts',
+        recipeRun:
+          priorityCompareRecipeRunId ?? workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+        ...(priorityVisualPair?.after.path ? { artifact: priorityVisualPair.after.path } : {}),
+      },
+    });
+  }, [
+    priorityCompareRecipeRunId,
+    priorityVisualPair?.after.path,
+    router,
+    runId,
+    workspaceRecipeRunId,
+  ]);
+  const openTerminalFromDiff = useCallback(() => {
+    if (!run?.slotId) return;
+    router.push({
+      pathname: '/terminal/[slotId]',
+      params: {
+        slotId: run.slotId,
+        workspace: 'terminal',
+        runId,
+        details: '1',
+        recipeRun: workspaceRecipeRunId ?? DECISION_EVIDENCE_RECIPE_RUN_PARAM,
+      },
+    });
+  }, [router, run?.slotId, runId, workspaceRecipeRunId]);
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={baseStyles.container}>
@@ -478,6 +509,55 @@ export default function DiffViewerScreen() {
           fallbackTaskProgress={fallbackTaskProgress}
           workspaceRouteContext={workspaceRouteContext}
         />
+        <View style={styles.evidenceBridgeCard}>
+          <View style={styles.evidenceBridgeHeader}>
+            <View style={styles.evidenceBridgeCopy}>
+              <Text style={styles.evidenceBridgeEyebrow}>Diff + evidence</Text>
+              <Text style={styles.evidenceBridgeTitle} numberOfLines={2}>
+                {run?.prNumber ? `PR #${run.prNumber}` : run?.ticketOrPr || runId}
+                {run?.status ? ` · ${run.status}` : ''}
+              </Text>
+              <Text style={styles.evidenceBridgeText}>
+                Keep the visual proof and code changes together while reviewing on mobile.
+              </Text>
+            </View>
+          </View>
+          <View style={styles.evidenceBridgeRail}>
+            <View style={styles.evidenceBridgeMetric}>
+              <Text style={styles.evidenceBridgeMetricLabel}>Visual pairs</Text>
+              <Text style={styles.evidenceBridgeMetricValue}>
+                {priorityVisualPairs.length}
+              </Text>
+            </View>
+            <View style={styles.evidenceBridgeMetric}>
+              <Text style={styles.evidenceBridgeMetricLabel}>Diff source</Text>
+              <Text style={styles.evidenceBridgeMetricValue}>
+                {diffUrl ? 'artifact' : canLoadWorkspaceDiff ? 'workspace' : 'missing'}
+              </Text>
+            </View>
+            <View style={styles.evidenceBridgeMetric}>
+              <Text style={styles.evidenceBridgeMetricLabel}>Repo</Text>
+              <Text style={styles.evidenceBridgeMetricValue} numberOfLines={1}>
+                {prRepoFromWorkspaceSource(run, run?.prNumber ?? null) ?? run?.project ?? '-'}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.evidenceBridgeActions}>
+            <Pressable style={styles.evidenceBridgeButton} onPress={openEvidenceFromDiff}>
+              <Text style={styles.evidenceBridgeButtonText}>Open evidence</Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.evidenceBridgeButton,
+                !run?.slotId && styles.evidenceBridgeButtonDisabled,
+              ]}
+              onPress={openTerminalFromDiff}
+              disabled={!run?.slotId}
+            >
+              <Text style={styles.evidenceBridgeButtonText}>Open terminal</Text>
+            </Pressable>
+          </View>
+        </View>
         {activeTaskProgress ? (
           <View style={styles.progressPanel}>
             <TaskProgressPanel
@@ -505,12 +585,14 @@ export default function DiffViewerScreen() {
             diffUrl={diffUrl}
             initialPath={focusedFilePath}
             fetchHeaders={artifactAuthHeaders}
+            onOpenEvidence={openEvidenceFromDiff}
           />
         ) : workspaceDiffSource ? (
           <MobileDiffViewer
             title={focusedFilePath ? `${focusedFilePath} · workspace` : 'Workspace diff'}
             diffText={workspaceDiffSource}
             initialPath={focusedFilePath}
+            onOpenEvidence={openEvidenceFromDiff}
           />
         ) : workspaceDiffLoading ? (
           <Text style={styles.emptyText}>Loading live workspace diff…</Text>

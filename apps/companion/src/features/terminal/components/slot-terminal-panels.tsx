@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
@@ -17,6 +18,7 @@ import {
 import { diffArtifactCandidate } from '../../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../../lib/pr-links';
 import { fallbackTaskProgressSummary, taskProgressPercent } from '../../../lib/task-progress';
+import { colors } from '../../../lib/theme';
 import { summarizeRunWorkspaceNavMeta } from '../../../lib/workspace-nav-meta';
 import {
   artifactFilterParamForArtifactPath,
@@ -32,6 +34,96 @@ import {
   type WorkspaceRouteContext,
 } from '../../../lib/workspace-navigation';
 import { slotTerminalStyles as styles } from '../styles/slot-terminal.styles';
+
+export function TerminalSteeringContextCard({
+  slotId,
+  run,
+  fallbackRunId,
+  streamLabel,
+  liveBadgeColor,
+  targetWarning,
+  terminalInputDisabled,
+  voiceRecorderBusy,
+  onOpenKeyboard,
+  onOpenTmux,
+  onOpenContext,
+  onOpenVoice,
+}: {
+  slotId?: string;
+  run: Run | null;
+  fallbackRunId?: string;
+  streamLabel: string;
+  liveBadgeColor: string;
+  targetWarning?: string | null;
+  terminalInputDisabled: boolean;
+  voiceRecorderBusy: boolean;
+  onOpenKeyboard: () => void;
+  onOpenTmux: () => void;
+  onOpenContext: () => void;
+  onOpenVoice: () => void;
+}) {
+  return (
+    <View style={styles.steeringContextCard}>
+      <View style={styles.steeringContextHeader}>
+        <View style={styles.steeringContextCopy}>
+          <Text style={styles.steeringContextEyebrow}>Contextual steering</Text>
+          <Text style={styles.steeringContextTitle} numberOfLines={2}>
+            {run?.ticketOrPr ?? fallbackRunId ?? slotId ?? 'Worker terminal'}
+          </Text>
+          <Text style={styles.steeringContextText} numberOfLines={2}>
+            {slotId ? `Connected to ${slotId}` : 'No slot selected'}
+            {run?.status ? ` · ${run.status}` : ''}
+            {run?.prNumber ? ` · PR #${run.prNumber}` : ''}
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.steeringStatusPill,
+            {
+              borderColor: liveBadgeColor + '88',
+              backgroundColor: liveBadgeColor + '16',
+            },
+          ]}
+        >
+          <Text style={[styles.steeringStatusText, { color: liveBadgeColor }]}>
+            {streamLabel}
+          </Text>
+        </View>
+      </View>
+      {targetWarning ? <Text style={styles.steeringWarningText}>{targetWarning}</Text> : null}
+      <View style={styles.steeringActionRail}>
+        <Pressable
+          style={styles.steeringActionButton}
+          onPress={onOpenKeyboard}
+          disabled={terminalInputDisabled}
+        >
+          <Ionicons name="keypad-outline" size={15} color={colors.accent} />
+          <Text style={styles.steeringActionText}>Keyboard</Text>
+        </Pressable>
+        <Pressable
+          style={styles.steeringActionButton}
+          onPress={onOpenTmux}
+          disabled={terminalInputDisabled}
+        >
+          <Ionicons name="albums-outline" size={15} color={colors.accent} />
+          <Text style={styles.steeringActionText}>Tmux</Text>
+        </Pressable>
+        <Pressable style={styles.steeringActionButton} onPress={onOpenContext}>
+          <Ionicons name="copy-outline" size={15} color={colors.accent} />
+          <Text style={styles.steeringActionText}>Context</Text>
+        </Pressable>
+        <Pressable
+          style={styles.steeringActionButton}
+          onPress={onOpenVoice}
+          disabled={voiceRecorderBusy}
+        >
+          <Ionicons name="mic-outline" size={15} color={colors.accent} />
+          <Text style={styles.steeringActionText}>Voice nudge</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
 
 export function TerminalWorkspaceCockpit({
   slotId,
