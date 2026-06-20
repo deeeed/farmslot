@@ -84,8 +84,27 @@ export function renderFamilyObservabilityPage(input: FamilyObservabilityPageInpu
       snapshot,
       renderFamilyDiffLink: input.renderFamilyDiffLink,
     })}
-    ${input.renderChangeLedger(snapshot)}
+    <div class="content-grid family-run-focus">
+      ${renderFamilyRunSelector({
+        snapshot,
+        selectedRun,
+        onSelectRun: input.onSelectRun,
+        onOpenSlot: input.onOpenSlot,
+        renderRunDiffLink: input.renderRunDiffLink,
+      })}
+
+      <section class="panel detail selected-run-focus">
+        <div class="panel-title">
+          ${selectedRun ? `Selected run · ${selectedRun.runId.slice(0, 8)}` : 'Run detail'}
+        </div>
+        ${selectedRun
+          ? input.renderRunDetail(selectedRun)
+          : html`<div class="muted">Select a run.</div>`}
+      </section>
+    </div>
+
     ${input.renderRunOutputComparisonSummary(snapshot, selectedRun)}
+    ${input.renderChangeLedger(snapshot)}
     ${renderFamilyEvalPackagePanel({
       snapshot,
       selectedExperimentKey: input.selectedExperimentKey,
@@ -117,25 +136,6 @@ export function renderFamilyObservabilityPage(input: FamilyObservabilityPageInpu
       <section class="panel">
         <div class="panel-title">Recipe</div>
         ${input.renderRecipePanel(selectedRun)}
-      </section>
-    </div>
-
-    <div class="content-grid lower">
-      ${renderFamilyRunSelector({
-        snapshot,
-        selectedRun,
-        onSelectRun: input.onSelectRun,
-        onOpenSlot: input.onOpenSlot,
-        renderRunDiffLink: input.renderRunDiffLink,
-      })}
-
-      <section class="panel detail">
-        <div class="panel-title">
-          ${selectedRun ? `Selected run · ${selectedRun.runId.slice(0, 8)}` : 'Run detail'}
-        </div>
-        ${selectedRun
-          ? input.renderRunDetail(selectedRun)
-          : html`<div class="muted">Select a run.</div>`}
       </section>
     </div>
 

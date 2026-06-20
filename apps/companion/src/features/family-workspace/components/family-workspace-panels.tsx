@@ -1,8 +1,9 @@
 import type React from 'react';
 import { Image, Pressable, ScrollView, Text, View } from 'react-native';
 
-import type {
-  FamilyChangeLedgerEntry,
+import {
+  buildFamilyIterationLedgerPresentation,
+  type FamilyChangeLedgerEntry,
   FamilyObservabilityArtifact,
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
@@ -679,6 +680,7 @@ export function FamilyChangeLedgerPanel({
   const summary = ledger.summary;
   const missingEntries = ledger.entries.filter((entry) => entry.missingData.length > 0);
   const visibleEntries = ledger.entries.slice(0, 5);
+  const iteration = buildFamilyIterationLedgerPresentation(snapshot);
   const runById = new Map(snapshot.runs.map((run) => [run.runId, run]));
   const contributionDelta = snapshot.diffStat.available
     ? `${snapshot.diffStat.files} files · +${snapshot.diffStat.additions} -${snapshot.diffStat.deletions}`
@@ -701,6 +703,13 @@ export function FamilyChangeLedgerPanel({
         </Pressable>
       </View>
       <View style={styles.ledgerMetricGrid}>
+        <Metric label="Iterations" value={String(iteration.summary.totalRuns)} compact />
+        <Metric label="Code deltas" value={String(iteration.summary.producedDiffRuns)} compact />
+        <Metric
+          label="Recipe/evidence"
+          value={`${iteration.summary.recipeRuns}/${iteration.summary.evidenceRuns}`}
+          compact
+        />
         <Metric
           label="Produced diffs"
           value={`${summary.runsWithContributionDiff}/${ledger.entries.length}`}
@@ -722,6 +731,70 @@ export function FamilyChangeLedgerPanel({
         <Metric label="Bugbots fixed" value={String(summary.bugbotFindingsAddressed)} compact />
         <Metric label="Human fixed" value={String(summary.humanCommentsAddressed)} compact />
         <Metric label="Missing data" value={String(missingEntries.length)} compact />
+      </View>
+      <View style={styles.iterationTimeline}>
+        {iteration.cards.slice(0, 5).map((card) => {
+          const entry = ledger.entries.find((candidate) => candidate.runId === card.runId);
+          const run = runById.get(card.runId);
+          const diffArtifactPath = entry ? primaryLedgerDiffPath(entry) : undefined;
+          return (
+            <View key={card.runId} style={styles.iterationCard}>
+              <View style={styles.iterationIndex}>
+                <Text style={styles.iterationIndexText}>{card.index}</Text>
+              </View>
+              <View style={styles.iterationBody}>
+                <View style={styles.iterationHeader}>
+                  <Text style={styles.iterationFlow}>{card.flowLabel}</Text>
+                  <Text style={styles.iterationRunId}>{card.shortRunId}</Text>
+                  <Text style={styles.iterationPr}>{card.prLabel}</Text>
+                </View>
+                <Text style={styles.iterationReason}>{card.reason}</Text>
+                <Text style={styles.iterationTitle} numberOfLines={2}>
+                  {card.title}
+                </Text>
+                <View style={styles.iterationSignalGrid}>
+                  <IterationSignal label="Diff" value={card.diffLabel} />
+                  <IterationSignal label="Reviewed input" value={card.reviewedInputLabel} />
+                  <IterationSignal label="Recipe" value={card.recipeLabel} />
+                  <IterationSignal label="Evidence" value={card.evidenceLabel} />
+                  <IterationSignal label="Review cause" value={card.reviewLabel} />
+                  <IterationSignal
+                    label="Ledger"
+                    value={card.missingLabel}
+                    warn={card.missingLabel !== 'complete'}
+                  />
+                </View>
+                <View style={styles.runActions}>
+                  <Pressable style={styles.inlineButton} onPress={() => onOpenRun(card.runId)}>
+                    <Text style={styles.inlineButtonText}>Run</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.inlineButton}
+                    onPress={() => onOpenArtifacts(card.runId)}
+                  >
+                    <Text style={styles.inlineButtonText}>Evidence</Text>
+                  </Pressable>
+                  {entry ? (
+                    <Pressable
+                      style={styles.inlineButton}
+                      onPress={() => onOpenDiff(entry, diffArtifactPath)}
+                    >
+                      <Text style={styles.inlineButtonText}>Diff</Text>
+                    </Pressable>
+                  ) : null}
+                  {run?.slotId ? (
+                    <Pressable
+                      style={styles.inlineButton}
+                      onPress={() => onOpenTerminal(run.slotId!, card.runId)}
+                    >
+                      <Text style={styles.inlineButtonText}>Terminal</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+            </View>
+          );
+        })}
       </View>
       <View style={styles.ledgerEntries}>
         {visibleEntries.map((entry) => {
@@ -807,6 +880,20 @@ export function FamilyChangeLedgerPanel({
           {ledger.entries.length - visibleEntries.length === 1 ? 'y' : 'ies'} in this family.
         </Text>
       ) : null}
+    </View>
+  );
+}
+
+function IterationSignal({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+  return (
+    <View style={styles.iterationSignal}>
+      <Text style={styles.iterationSignalLabel}>{label}</Text>
+      <Text
+        style={[styles.iterationSignalValue, warn ? styles.iterationSignalValueWarn : null]}
+        numberOfLines={2}
+      >
+        {value}
+      </Text>
     </View>
   );
 }

@@ -137,30 +137,18 @@ export function renderFamilyChangeLedger(
   const summary = ledger.summary;
   const missing = ledger.entries.filter((entry) => entry.missingData.length > 0);
   return html`
-    <section class="panel change-ledger">
+    <section class="panel change-ledger compact-ledger">
       <div class="panel-title">
-        Ledger details <span class="panel-hint">· durable diff and review signals</span>
+        Family ledger data <span class="panel-hint">· raw diff/review provenance</span>
       </div>
-      <div class="ledger-metrics">
+      <div class="iteration-summary compact">
         <div>
           <span class="muted">Produced-code deltas</span
           ><strong>${summary.runsWithContributionDiff}/${ledger.entries.length}</strong>
         </div>
         <div>
-          <span class="muted">Reviewed PR input snapshots</span
+          <span class="muted">Reviewed PR input</span
           ><strong>${summary.runsWithReviewInputDiff}/${ledger.entries.length}</strong>
-        </div>
-        <div>
-          <span class="muted">Empty reviewed inputs</span
-          ><strong>${summary.runsWithEmptyReviewInputDiff}</strong>
-        </div>
-        <div>
-          <span class="muted">Unavailable reviewed inputs</span
-          ><strong>${summary.runsWithUnavailableReviewInputDiff}</strong>
-        </div>
-        <div>
-          <span class="muted">Contribution delta</span
-          ><strong>${context.renderContributionDeltaLink(snapshot)}</strong>
         </div>
         <div>
           <span class="muted">Artifact data</span
@@ -170,90 +158,106 @@ export function renderFamilyChangeLedger(
           >
         </div>
         <div>
-          <span class="muted">Artifact types</span
-          ><strong>${familyBucketSummary(summary.artifactFootprint.byPurpose)}</strong>
+          <span class="muted">Review signals</span
+          ><strong
+            >bot ${summary.bugbotFindingsAddressed} · human
+            ${summary.humanCommentsAddressed}</strong
+          >
         </div>
         <div>
-          <span class="muted">File types</span
-          ><strong>${familyBucketSummary(summary.artifactFootprint.byExtension)}</strong>
-        </div>
-        <div>
-          <span class="muted">Bugbots addressed</span
-          ><strong>${summary.bugbotFindingsAddressed}</strong>
-        </div>
-        <div>
-          <span class="muted">Human reviewers requesting changes</span
-          ><strong>${summary.humanReviewersRequestingChanges}</strong>
-        </div>
-        <div>
-          <span class="muted">Human comments addressed</span
-          ><strong>${summary.humanCommentsAddressed}</strong>
+          <span class="muted">Family delta</span
+          ><strong>${context.renderContributionDeltaLink(snapshot)}</strong>
         </div>
         <div><span class="muted">Missing data</span><strong>${missing.length}</strong></div>
       </div>
-      <div class="ledger-entries">
-        ${ledger.entries.map(
-          (entry) => html`
-            <div class="ledger-entry">
-              <div class="ledger-entry-main">
-                <span class="badge" style=${`background:${flowColor(entry.flowType)}; color:#000`}
-                  >${flowLabel(entry.flowType)}</span
-                >
-                <strong>${entry.runId.slice(0, 8)}</strong>
-                <span class="muted">${familyLedgerTurnLabel(entry)}</span>
-                <span>${context.renderLedgerDiffLink(entry)}</span>
-                <span
-                  class="diff-scope-chip"
-                  title="Whether this link is the run output delta or the PR input snapshot reviewed by the run."
-                >
-                  ${ledgerDiffScopeLabel(entry)}
-                </span>
+      <details class="raw-ledger-details">
+        <summary>Show raw ledger rows and artifact buckets</summary>
+        <div class="ledger-metrics">
+          <div>
+            <span class="muted">Empty reviewed inputs</span
+            ><strong>${summary.runsWithEmptyReviewInputDiff}</strong>
+          </div>
+          <div>
+            <span class="muted">Unavailable reviewed inputs</span
+            ><strong>${summary.runsWithUnavailableReviewInputDiff}</strong>
+          </div>
+          <div>
+            <span class="muted">Artifact types</span
+            ><strong>${familyBucketSummary(summary.artifactFootprint.byPurpose)}</strong>
+          </div>
+          <div>
+            <span class="muted">File types</span
+            ><strong>${familyBucketSummary(summary.artifactFootprint.byExtension)}</strong>
+          </div>
+          <div>
+            <span class="muted">Human reviewers requesting changes</span
+            ><strong>${summary.humanReviewersRequestingChanges}</strong>
+          </div>
+        </div>
+        <div class="ledger-entries">
+          ${ledger.entries.map(
+            (entry) => html`
+              <div class="ledger-entry">
+                <div class="ledger-entry-main">
+                  <span class="badge" style=${`background:${flowColor(entry.flowType)}; color:#000`}
+                    >${flowLabel(entry.flowType)}</span
+                  >
+                  <strong>${entry.runId.slice(0, 8)}</strong>
+                  <span class="muted">${familyLedgerTurnLabel(entry)}</span>
+                  <span>${context.renderLedgerDiffLink(entry)}</span>
+                  <span
+                    class="diff-scope-chip"
+                    title="Whether this link is the run output delta or the PR input snapshot reviewed by the run."
+                  >
+                    ${ledgerDiffScopeLabel(entry)}
+                  </span>
+                </div>
+                <div class="ledger-entry-meta">
+                  ${entry.reviewSignals
+                    ? html`
+                        <span>bot fixed ${entry.reviewSignals.botAddressed}</span>
+                        <span
+                          >human reviewers
+                          ${entry.reviewSignals.humanReviewersRequestingChanges}</span
+                        >
+                        <span>human fixed ${entry.reviewSignals.humanCommentsAddressed}</span>
+                      `
+                    : nothing}
+                  ${context.renderLedgerArtifactPath(
+                    entry,
+                    entry.contributionDiff,
+                    'diff',
+                    'task-artifact',
+                  )}
+                  ${entry.inputDiff
+                    ? context.renderLedgerArtifactPath(
+                        entry,
+                        entry.inputDiff,
+                        'input-diff',
+                        'task-input',
+                      )
+                    : nothing}
+                  ${entry.legacyDiffFallback
+                    ? context.renderLedgerArtifactPath(
+                        entry,
+                        entry.legacyDiffFallback,
+                        'legacy-diff',
+                        'step-output',
+                      )
+                    : nothing}
+                  <span
+                    >data ${entry.artifactFootprint.count} files ·
+                    ${formatBytes(entry.artifactFootprint.bytes)}</span
+                  >
+                  ${entry.missingData.length
+                    ? html`<span class="warn">missing: ${entry.missingData.join(', ')}</span>`
+                    : nothing}
+                </div>
               </div>
-              <div class="ledger-entry-meta">
-                ${entry.reviewSignals
-                  ? html`
-                      <span>bot fixed ${entry.reviewSignals.botAddressed}</span>
-                      <span
-                        >human reviewers
-                        ${entry.reviewSignals.humanReviewersRequestingChanges}</span
-                      >
-                      <span>human fixed ${entry.reviewSignals.humanCommentsAddressed}</span>
-                    `
-                  : nothing}
-                ${context.renderLedgerArtifactPath(
-                  entry,
-                  entry.contributionDiff,
-                  'diff',
-                  'task-artifact',
-                )}
-                ${entry.inputDiff
-                  ? context.renderLedgerArtifactPath(
-                      entry,
-                      entry.inputDiff,
-                      'input-diff',
-                      'task-input',
-                    )
-                  : nothing}
-                ${entry.legacyDiffFallback
-                  ? context.renderLedgerArtifactPath(
-                      entry,
-                      entry.legacyDiffFallback,
-                      'legacy-diff',
-                      'step-output',
-                    )
-                  : nothing}
-                <span
-                  >data ${entry.artifactFootprint.count} files ·
-                  ${formatBytes(entry.artifactFootprint.bytes)}</span
-                >
-                ${entry.missingData.length
-                  ? html`<span class="warn">missing: ${entry.missingData.join(', ')}</span>`
-                  : nothing}
-              </div>
-            </div>
-          `,
-        )}
-      </div>
+            `,
+          )}
+        </div>
+      </details>
     </section>
   `;
 }

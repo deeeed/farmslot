@@ -345,6 +345,13 @@ export class FamilyObservability extends FamilyObservabilityState {
   private _openArtifact(artifact: FamilyObservabilityArtifact, event: Event) {
     event.stopPropagation();
     this._lightboxOverride = null;
+    const pair = this._pairForArtifact(artifact);
+    if (pair) {
+      this._lightboxPairIndex = pair.index;
+      this._lightboxMode = 'compare';
+      this._lightboxOpen = true;
+      return;
+    }
     const idx = this._visibleArtifacts.findIndex(
       (a) => a.runId === artifact.runId && a.path === artifact.path,
     );
