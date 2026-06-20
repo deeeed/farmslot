@@ -5,6 +5,7 @@ import {
   diffSelectionFromFamilyHash,
   evidenceFilterFromFamilyHash,
   familyDiffModalHash,
+  familyEvidenceFilterHash,
   familyRunHash,
   slotHistoryHashForRun,
 } from './family-observability-url-state.js';
@@ -21,6 +22,17 @@ test('evidenceFilterFromFamilyHash parses supported family evidence filters', ()
   assert.equal(evidenceFilterFromFamilyHash('#family/fam-1?run=abc&evidence=videos'), 'videos');
   assert.equal(evidenceFilterFromFamilyHash('#family/fam-1?run=abc&evidence=banana'), null);
   assert.equal(evidenceFilterFromFamilyHash('#runs?tab=history'), null);
+});
+
+test('familyEvidenceFilterHash updates evidence filter without dropping existing params', () => {
+  assert.equal(
+    familyEvidenceFilterHash('videos', '#family/fam-1?run=abc&machines=macwork'),
+    '#family/fam-1?run=abc&machines=macwork&evidence=videos',
+  );
+  assert.equal(
+    familyEvidenceFilterHash('all', '#family/fam-1?run=abc&evidence=videos'),
+    '#family/fam-1?run=abc',
+  );
 });
 
 test('slotHistoryHashForRun builds slot history navigation from a family run', () => {

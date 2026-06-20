@@ -26,7 +26,6 @@ import type { RecipeOutputPanel } from '../workspace/recipe-output-panel.js';
 import {
   familyArtifactCaption,
   familyArtifactKey,
-  familyArtifactKind,
   familyArtifactUrl,
 } from './family-observability-artifact-model.js';
 import {
@@ -91,6 +90,7 @@ import { renderFamilySelectedRunDetail } from './family-observability-selected-r
 import { FamilyObservabilityState } from './family-observability-state.js';
 import {
   evidenceFilterFromFamilyHash,
+  familyEvidenceFilterHash,
   familyRunHash,
   slotHistoryHashForRun,
 } from './family-observability-url-state.js';
@@ -108,7 +108,9 @@ export class FamilyObservability extends FamilyObservabilityState {
     this.selectedRunId = runId;
     void this._ensureFullRun(runId);
     if (!this.familyId) return;
-    const newHash = familyRunHash(this.familyId, runId);
+    const newHash = familyRunHash(this.familyId, runId, {
+      evidence: this._evidenceFilter === 'all' ? undefined : this._evidenceFilter,
+    });
     if (window.location.hash !== newHash) {
       history.replaceState(null, '', newHash);
     }
@@ -255,7 +257,7 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private _applyEvidenceFilterFromHash(): void {
     const filter = evidenceFilterFromFamilyHash();
-    if (filter) this._evidenceFilter = filter;
+    this._evidenceFilter = filter ?? 'all';
   }
 
   updated(changed: Map<string, unknown>): void {
@@ -803,9 +805,12 @@ export class FamilyObservability extends FamilyObservabilityState {
       evidenceFilter: this._evidenceFilter,
       evidenceGroups: (snapshot: FamilyObservabilitySnapshot) => this._evidenceGroups(snapshot),
       visibleEvidenceArtifacts: this._visibleEvidenceArtifacts,
-      artifactKind: (artifact: FamilyObservabilityArtifact) => familyArtifactKind(artifact),
       setEvidenceFilter: (filter: FamilyEvidenceFilter) => {
         this._evidenceFilter = filter;
+        const newHash = familyEvidenceFilterHash(filter);
+        if (window.location.hash !== newHash) {
+          history.replaceState(null, '', newHash);
+        }
       },
       artifactUrl: (artifact: FamilyObservabilityArtifact) =>
         familyArtifactUrl(GATEWAY_BASE, artifact),

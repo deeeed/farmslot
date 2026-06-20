@@ -33,6 +33,19 @@ export function evidenceFilterFromFamilyHash(
     : null;
 }
 
+export function familyEvidenceFilterHash(
+  filter: FamilyEvidenceFilter,
+  hash: string = location.hash,
+): string {
+  const { route, params } = parseHashRoute(hash);
+  if (filter === 'all') {
+    params.delete('evidence');
+  } else {
+    params.set('evidence', filter);
+  }
+  return buildHash(route, params);
+}
+
 export function slotHistoryHashForRun(slotId: string, runId: string): string {
   const params = new URLSearchParams({
     history: '1',
