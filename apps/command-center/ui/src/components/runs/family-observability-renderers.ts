@@ -16,20 +16,18 @@ import { MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
 
 import {
   type EvidenceGroup,
+  type FamilyEvidenceFilter,
+  filterFamilyEvidenceGroups,
   MAX_ARTIFACTS_PER_EVIDENCE_GROUP,
-  MAX_EVIDENCE_GROUPS,
 } from './family-observability-evidence.js';
 import { flowColor, flowLabel, formatCreatedAt, runStatusColor } from './run-utils.js';
 
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
 
-export type FamilyEvidenceFilter = 'all' | 'before' | 'after' | 'setup' | 'videos';
-
 export interface FamilyEvidenceRenderContext {
   evidenceFilter: FamilyEvidenceFilter;
   evidenceGroups(snapshot: FamilyObservabilitySnapshot): EvidenceGroup[];
   visibleEvidenceArtifacts: FamilyObservabilityArtifact[];
-  artifactKind(artifact: FamilyObservabilityArtifact): 'before' | 'after' | 'setup';
   setEvidenceFilter(filter: FamilyEvidenceFilter): void;
   artifactUrl(artifact: FamilyObservabilityArtifact): string;
   artifactCaption(artifact: FamilyObservabilityArtifact): string;
@@ -60,15 +58,6 @@ function evidenceFilterTitle(filter: FamilyEvidenceFilter): string {
   return 'Show all evidence';
 }
 
-function evidenceArtifactMatchesFilter(
-  artifact: FamilyObservabilityArtifact,
-  filter: Exclude<FamilyEvidenceFilter, 'all'>,
-  context: Pick<FamilyEvidenceRenderContext, 'artifactKind'>,
-): boolean {
-  if (filter === 'videos') return isRunEvidenceVideoArtifact(artifact);
-  return context.artifactKind(artifact) === filter;
-}
-
 export function renderFamilyEvidence(
   snapshot: FamilyObservabilitySnapshot,
   context: FamilyEvidenceRenderContext,
@@ -78,17 +67,7 @@ export function renderFamilyEvidence(
   }
   const allGroups = context.evidenceGroups(snapshot);
   const filter = context.evidenceFilter;
-  const groups =
-    filter === 'all'
-      ? allGroups.slice(0, MAX_EVIDENCE_GROUPS)
-      : allGroups
-          .map((group) => ({
-            ...group,
-            artifacts: group.artifacts.filter((artifact) =>
-              evidenceArtifactMatchesFilter(artifact, filter, context),
-            ),
-          }))
-          .filter((group) => group.artifacts.length > 0);
+  const groups = filterFamilyEvidenceGroups(allGroups, filter);
   const hiddenGroupCount =
     filter === 'all'
       ? Math.max(0, snapshot.evidence.length - context.visibleEvidenceArtifacts.length)

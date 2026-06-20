@@ -46,6 +46,8 @@ import {
 import {
   buildFamilyEvidenceGroups,
   type EvidenceGroup,
+  familyEvidenceArtifactsForFilter,
+  type FamilyEvidenceFilter,
   familyRunBadgeLabel,
   visibleFamilyEvidenceArtifacts,
 } from './family-observability-evidence.js';
@@ -83,10 +85,7 @@ import {
   renderFamilyConvergedPill,
   renderFamilyRecipeSection,
 } from './family-observability-recipe-section-renderers.js';
-import {
-  type FamilyEvidenceFilter,
-  renderFamilyEvidence,
-} from './family-observability-renderers.js';
+import { renderFamilyEvidence } from './family-observability-renderers.js';
 import { familyWarmSlotRerunCheck } from './family-observability-rerun-model.js';
 import { renderFamilySelectedRunDetail } from './family-observability-selected-run-renderers.js';
 import { FamilyObservabilityState } from './family-observability-state.js';
@@ -363,15 +362,17 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private _openArtifact(artifact: FamilyObservabilityArtifact, event: Event) {
     event.stopPropagation();
-    this._lightboxOverride = null;
+    const lightboxArtifacts = this._evidenceArtifactsForCurrentFilter;
+    this._lightboxOverride = lightboxArtifacts;
     const pair = this._pairForArtifact(artifact);
     if (pair) {
+      this._lightboxOverride = null;
       this._lightboxPairIndex = pair.index;
       this._lightboxMode = 'compare';
       this._lightboxOpen = true;
       return;
     }
-    const idx = this._visibleArtifacts.findIndex(
+    const idx = lightboxArtifacts.findIndex(
       (a) => a.runId === artifact.runId && a.path === artifact.path,
     );
     this._lightboxIndex = idx >= 0 ? idx : 0;
@@ -397,6 +398,13 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private get _visibleArtifacts(): FamilyObservabilityArtifact[] {
     return familyVisibleLightboxArtifacts(this._lightboxOverride, this._visibleEvidenceArtifacts);
+  }
+
+  private get _evidenceArtifactsForCurrentFilter(): FamilyObservabilityArtifact[] {
+    return familyEvidenceArtifactsForFilter(
+      this._evidenceGroups(this.snapshot),
+      this._evidenceFilter,
+    );
   }
 
   private get _lightboxItems() {

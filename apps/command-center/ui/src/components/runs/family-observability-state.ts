@@ -16,12 +16,12 @@ import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import type { LightboxPair } from '../shared/media-lightbox-types.js';
 
 import type { FamilyDiffModalState } from './family-observability-diff-modal.js';
+import type { FamilyEvidenceFilter } from './family-observability-evidence.js';
 import type { GradeDraft } from './family-observability-grading.js';
 import {
   FamilyImprovementProposalTracker,
   updateFamilyProposalError,
 } from './family-observability-improvement-proposals.js';
-import type { FamilyEvidenceFilter } from './family-observability-renderers.js';
 
 export abstract class FamilyObservabilityState extends LitElement {
   abstract _applyDiffModalFromHash(): void;
