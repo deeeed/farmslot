@@ -57,12 +57,14 @@ test('run evidence artifact collection discovers nested step output paths and de
           startedAt: '2026-06-20T00:00:00.000Z',
           completedAt: '2026-06-20T00:01:00.000Z',
           outputs: {
+            rawBeforeMetadata: 'artifacts/run.mov',
             artifactManifest: [
               { path: 'artifacts/after-checkout.png', purpose: 'after' },
               { path: 'artifacts/after-checkout.png', purpose: 'after' },
             ],
             recording: {
               path: 'artifacts/run.mov',
+              purpose: 'recipe-recording',
               type: 'video',
               sizeBytes: 123,
               sha256: 'abc123',
@@ -76,9 +78,10 @@ test('run evidence artifact collection discovers nested step output paths and de
 
   assert.deepEqual(
     artifacts.map((artifact) => artifact.path),
-    ['artifacts/after-checkout.png', 'artifacts/run.mov'],
+    ['artifacts/run.mov', 'artifacts/after-checkout.png'],
   );
   const recording = artifacts.find((artifact) => artifact.path === 'artifacts/run.mov');
+  assert.equal(recording?.purpose, 'recipe-recording');
   assert.equal(recording?.sizeBytes, 123);
   assert.equal(recording?.sha256, 'abc123');
 });

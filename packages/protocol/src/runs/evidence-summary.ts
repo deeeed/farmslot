@@ -146,7 +146,10 @@ function dedupeRunEvidenceArtifacts(entries: EvidenceManifestEntry[]): EvidenceM
       existing
         ? {
             ...entry,
-            purpose: existing.purpose,
+            purpose:
+              existing.purpose === 'artifact' && entry.purpose !== 'artifact'
+                ? entry.purpose
+                : existing.purpose,
             sizeBytes: existing.sizeBytes ?? entry.sizeBytes,
             sha256: existing.sha256 ?? entry.sha256,
           }
