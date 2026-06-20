@@ -21,6 +21,7 @@ import { gateway } from '../../gateway-client.js';
 import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
 import { colors, runnerColor } from '../../styles/theme-tokens.js';
 
+import { familyRunHash } from './family-observability-url-state.js';
 import {
   renderRunListManageBar,
   renderRunListSearchRow,
@@ -63,12 +64,6 @@ import {
 
 function shortId(id: string): string {
   return id.slice(0, 8);
-}
-
-function familyEvidenceRoute(run: Run, evidence?: string): string {
-  const params = new URLSearchParams({ run: run.id });
-  if (evidence) params.set('evidence', evidence);
-  return `#family/${run.familyId}?${params.toString()}`;
 }
 
 @customElement('run-list')
@@ -555,7 +550,7 @@ export class RunList extends RunListState {
             </span>
             <a
               class="ext-link"
-              href=${familyEvidenceRoute(run)}
+              href=${familyRunHash(run.familyId, run.id)}
               @click=${(e: Event) => e.stopPropagation()}
               >retrospective</a
             >
@@ -700,7 +695,7 @@ export class RunList extends RunListState {
         ${evidenceSummary.videoCount > 0
           ? html`<a
               class="evidence-signal video"
-              href=${familyEvidenceRoute(run, 'videos')}
+              href=${familyRunHash(run.familyId, run.id, { evidence: 'videos' })}
               title=${`${evidenceSummary.videoCount} video artifact${evidenceSummary.videoCount === 1 ? '' : 's'} available`}
               @click=${(e: Event) => e.stopPropagation()}
               >Video ${evidenceSummary.videoCount}</a
@@ -709,7 +704,7 @@ export class RunList extends RunListState {
         ${evidenceSummary.visualPairCount > 0
           ? html`<a
               class="evidence-signal compare"
-              href=${familyEvidenceRoute(run)}
+              href=${familyRunHash(run.familyId, run.id)}
               title=${`${evidenceSummary.visualPairCount} before/after pair${evidenceSummary.visualPairCount === 1 ? '' : 's'} available`}
               @click=${(e: Event) => e.stopPropagation()}
               >Compare ${evidenceSummary.visualPairCount}</a

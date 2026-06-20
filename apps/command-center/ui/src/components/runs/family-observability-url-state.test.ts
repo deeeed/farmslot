@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   diffSelectionFromFamilyHash,
+  evidenceFilterFromFamilyHash,
   familyDiffModalHash,
   familyRunHash,
   slotHistoryHashForRun,
@@ -10,6 +11,16 @@ import {
 
 test('familyRunHash preserves route shape and encodes run id', () => {
   assert.equal(familyRunHash('family-1', 'run id/1'), '#family/family-1?run=run+id%2F1');
+  assert.equal(
+    familyRunHash('family-1', 'run id/1', { evidence: 'videos' }),
+    '#family/family-1?run=run+id%2F1&evidence=videos',
+  );
+});
+
+test('evidenceFilterFromFamilyHash parses supported family evidence filters', () => {
+  assert.equal(evidenceFilterFromFamilyHash('#family/fam-1?run=abc&evidence=videos'), 'videos');
+  assert.equal(evidenceFilterFromFamilyHash('#family/fam-1?run=abc&evidence=banana'), null);
+  assert.equal(evidenceFilterFromFamilyHash('#runs?tab=history'), null);
 });
 
 test('slotHistoryHashForRun builds slot history navigation from a family run', () => {

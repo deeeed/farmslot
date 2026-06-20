@@ -89,25 +89,17 @@ import { renderFamilyEvidence } from './family-observability-renderers.js';
 import { familyWarmSlotRerunCheck } from './family-observability-rerun-model.js';
 import { renderFamilySelectedRunDetail } from './family-observability-selected-run-renderers.js';
 import { FamilyObservabilityState } from './family-observability-state.js';
-import { familyRunHash, slotHistoryHashForRun } from './family-observability-url-state.js';
+import {
+  evidenceFilterFromFamilyHash,
+  familyRunHash,
+  slotHistoryHashForRun,
+} from './family-observability-url-state.js';
 import type { SemanticPickerDetail } from './grade-semantic-picker.js';
 import { isSemanticChoice } from './grade-semantic-picker.js';
 
 const GATEWAY_BASE = gatewayHttpOrigin();
 const MD_CACHE_LIMIT = 50;
 const COPY_COMPARE_PROMPT = 'compare-prompt';
-
-function familyEvidenceFilterFromHash(): FamilyEvidenceFilter | null {
-  const query = window.location.hash.split('?')[1] ?? '';
-  const value = new URLSearchParams(query).get('evidence');
-  return value === 'all' ||
-    value === 'before' ||
-    value === 'after' ||
-    value === 'setup' ||
-    value === 'videos'
-    ? value
-    : null;
-}
 
 @customElement('family-observability')
 export class FamilyObservability extends FamilyObservabilityState {
@@ -262,7 +254,7 @@ export class FamilyObservability extends FamilyObservabilityState {
   };
 
   private _applyEvidenceFilterFromHash(): void {
-    const filter = familyEvidenceFilterFromHash();
+    const filter = evidenceFilterFromFamilyHash();
     if (filter) this._evidenceFilter = filter;
   }
 
