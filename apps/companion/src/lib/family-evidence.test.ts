@@ -7,6 +7,7 @@ import {
   buildFamilyEvidenceGroups,
   familyArtifactKind,
   filterFamilyEvidenceGroups,
+  isFamilyVideoArtifact,
   visibleFamilyEvidenceArtifacts,
 } from './family-evidence';
 
@@ -55,6 +56,7 @@ test('family evidence filters before after review diff recipe and setup artifact
   const evidence = [
     artifact('before-balance.png'),
     artifact('after-balance.png'),
+    artifact('recordings/e2e-flow.webm', { purpose: 'recipe-recording' }),
     artifact('reports/review.md', { purpose: 'review-report' }),
     artifact('inputs/diff.txt', { purpose: 'diff' }),
     artifact('recipe/output.json', { purpose: 'recipe-output' }),
@@ -65,6 +67,7 @@ test('family evidence filters before after review diff recipe and setup artifact
   assert.deepEqual(evidence.map(familyArtifactKind), [
     'before',
     'after',
+    'recipes',
     'review',
     'diffs',
     'recipes',
@@ -72,9 +75,11 @@ test('family evidence filters before after review diff recipe and setup artifact
   ]);
   assert.equal(filterFamilyEvidenceGroups(groups, 'before')[0].artifacts.length, 1);
   assert.equal(filterFamilyEvidenceGroups(groups, 'after')[0].artifacts.length, 1);
+  assert.equal(filterFamilyEvidenceGroups(groups, 'videos')[0].artifacts.length, 1);
   assert.equal(filterFamilyEvidenceGroups(groups, 'review')[0].artifacts.length, 1);
   assert.equal(filterFamilyEvidenceGroups(groups, 'diffs')[0].artifacts.length, 1);
-  assert.equal(filterFamilyEvidenceGroups(groups, 'recipes')[0].artifacts.length, 1);
+  assert.equal(filterFamilyEvidenceGroups(groups, 'recipes')[0].artifacts.length, 2);
   assert.equal(filterFamilyEvidenceGroups(groups, 'setup')[0].artifacts.length, 1);
+  assert.equal(isFamilyVideoArtifact(evidence[2]), true);
   assert.equal(visibleFamilyEvidenceArtifacts(groups).length, 6);
 });

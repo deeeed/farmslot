@@ -42,6 +42,7 @@ import {
   familyArtifactKind,
   type FamilyEvidenceFilter,
   filterFamilyEvidenceGroups,
+  isFamilyVideoArtifact,
 } from '../../lib/family-evidence';
 import { shouldRefreshFamilySnapshotForRunEvent } from '../../lib/family-refresh';
 import { collectFamilyRetrospectives } from '../../lib/family-retrospectives';
@@ -550,6 +551,7 @@ export function useFamilyWorkspaceController() {
       setup: (snapshot?.evidence ?? []).filter(
         (artifact) => familyArtifactKind(artifact) === 'setup',
       ).length,
+      videos: (snapshot?.evidence ?? []).filter(isFamilyVideoArtifact).length,
     }),
     [snapshot?.evidence],
   );

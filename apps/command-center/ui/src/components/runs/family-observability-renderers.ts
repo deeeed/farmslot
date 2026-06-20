@@ -21,7 +21,7 @@ import { flowColor, flowLabel, formatCreatedAt, runStatusColor } from './run-uti
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
 const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
 
-export type FamilyEvidenceFilter = 'all' | 'before' | 'after' | 'setup';
+export type FamilyEvidenceFilter = 'all' | 'before' | 'after' | 'setup' | 'videos';
 
 export interface FamilyEvidenceRenderContext {
   evidenceFilter: FamilyEvidenceFilter;
@@ -47,13 +47,24 @@ const FILTER_CHIPS: { label: string; value: FamilyEvidenceFilter }[] = [
   { label: 'Before', value: 'before' },
   { label: 'After', value: 'after' },
   { label: 'Setup', value: 'setup' },
+  { label: 'Videos', value: 'videos' },
 ];
 
 function evidenceFilterTitle(filter: FamilyEvidenceFilter): string {
   if (filter === 'before') return 'Baseline captures from main';
   if (filter === 'after') return 'Captures from the fix branch';
   if (filter === 'setup') return 'Orientation/setup shots';
+  if (filter === 'videos') return 'Recipe videos and screen recordings';
   return 'Show all evidence';
+}
+
+function evidenceArtifactMatchesFilter(
+  artifact: FamilyObservabilityArtifact,
+  filter: Exclude<FamilyEvidenceFilter, 'all'>,
+  context: Pick<FamilyEvidenceRenderContext, 'artifactKind'>,
+): boolean {
+  if (filter === 'videos') return VIDEO_EXTS.test(artifact.path);
+  return context.artifactKind(artifact) === filter;
 }
 
 export function renderFamilyEvidence(
@@ -71,8 +82,8 @@ export function renderFamilyEvidence(
       : allGroups
           .map((group) => ({
             ...group,
-            artifacts: group.artifacts.filter(
-              (artifact) => context.artifactKind(artifact) === filter,
+            artifacts: group.artifacts.filter((artifact) =>
+              evidenceArtifactMatchesFilter(artifact, filter, context),
             ),
           }))
           .filter((group) => group.artifacts.length > 0);

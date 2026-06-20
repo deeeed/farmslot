@@ -12,11 +12,13 @@ export type FamilyEvidenceFilter =
   | 'review'
   | 'diffs'
   | 'recipes'
-  | 'setup';
-export type FamilyEvidenceKind = Exclude<FamilyEvidenceFilter, 'all'>;
+  | 'setup'
+  | 'videos';
+export type FamilyEvidenceKind = Exclude<FamilyEvidenceFilter, 'all' | 'videos'>;
 
 export const MAX_FAMILY_EVIDENCE_GROUPS = 8;
 export const MAX_ARTIFACTS_PER_FAMILY_EVIDENCE_GROUP = 6;
+const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
 
 export interface FamilyEvidenceGroup {
   key: string;
@@ -63,6 +65,12 @@ export function familyArtifactKind(artifact: FamilyObservabilityArtifact): Famil
   if (isDiffEvidence(normalized)) return 'diffs';
   if (isReviewEvidence(normalized)) return 'review';
   return 'setup';
+}
+
+export function isFamilyVideoArtifact(
+  artifact: Pick<FamilyObservabilityArtifact, 'path'>,
+): boolean {
+  return VIDEO_EXTS.test(artifact.path);
 }
 
 export function familyEvidenceKindLabel(kind: FamilyEvidenceKind): string {
@@ -125,7 +133,11 @@ export function filterFamilyEvidenceGroups(
   return groups
     .map((group) => ({
       ...group,
-      artifacts: group.artifacts.filter((artifact) => familyArtifactKind(artifact) === filter),
+      artifacts: group.artifacts.filter((artifact) =>
+        filter === 'videos'
+          ? isFamilyVideoArtifact(artifact)
+          : familyArtifactKind(artifact) === filter,
+      ),
     }))
     .filter((group) => group.artifacts.length > 0);
 }
