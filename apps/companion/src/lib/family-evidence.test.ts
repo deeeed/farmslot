@@ -8,6 +8,7 @@ import {
   familyArtifactKind,
   filterFamilyEvidenceGroups,
   isFamilyVideoArtifact,
+  MAX_FAMILY_EVIDENCE_GROUPS,
   visibleFamilyEvidenceArtifacts,
 } from './family-evidence';
 
@@ -82,4 +83,23 @@ test('family evidence filters before after review diff recipe and setup artifact
   assert.equal(filterFamilyEvidenceGroups(groups, 'setup')[0].artifacts.length, 1);
   assert.equal(isFamilyVideoArtifact(evidence[2]), true);
   assert.equal(visibleFamilyEvidenceArtifacts(groups).length, 6);
+});
+
+test('family evidence filters search groups beyond the default visible cap', () => {
+  const evidence = Array.from({ length: MAX_FAMILY_EVIDENCE_GROUPS + 1 }, (_, index) =>
+    artifact(
+      index === MAX_FAMILY_EVIDENCE_GROUPS
+        ? `captures/2026-05-01_120000_older-video.webm`
+        : `captures/2026-05-${String(20 - index).padStart(2, '0')}_120000_after.png`,
+      { runId: `run-${index}`, purpose: index === MAX_FAMILY_EVIDENCE_GROUPS ? 'video' : 'after' },
+    ),
+  );
+  const groups = buildFamilyEvidenceGroups({ evidence }, () => null);
+
+  assert.equal(groups.length, MAX_FAMILY_EVIDENCE_GROUPS + 1);
+  assert.equal(filterFamilyEvidenceGroups(groups, 'all').length, MAX_FAMILY_EVIDENCE_GROUPS);
+  assert.equal(
+    filterFamilyEvidenceGroups(groups, 'videos')[0].artifacts[0].path,
+    evidence.at(-1)?.path,
+  );
 });

@@ -159,13 +159,13 @@ export function buildFamilyEvidenceGroups(
       capturedAtMs: batch?.capturedAtMs ?? null,
     });
   }
-  return [...groups.values()]
-    .sort((a, b) => (b.capturedAtMs ?? 0) - (a.capturedAtMs ?? 0))
-    .slice(0, MAX_EVIDENCE_GROUPS);
+  return [...groups.values()].sort((a, b) => (b.capturedAtMs ?? 0) - (a.capturedAtMs ?? 0));
 }
 
 export function visibleFamilyEvidenceArtifacts(
   groups: EvidenceGroup[],
 ): FamilyObservabilityArtifact[] {
-  return groups.flatMap((group) => group.artifacts.slice(0, MAX_ARTIFACTS_PER_EVIDENCE_GROUP));
+  return groups
+    .slice(0, MAX_EVIDENCE_GROUPS)
+    .flatMap((group) => group.artifacts.slice(0, MAX_ARTIFACTS_PER_EVIDENCE_GROUP));
 }

@@ -17,6 +17,7 @@ import { MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
 import {
   type EvidenceGroup,
   MAX_ARTIFACTS_PER_EVIDENCE_GROUP,
+  MAX_EVIDENCE_GROUPS,
 } from './family-observability-evidence.js';
 import { flowColor, flowLabel, formatCreatedAt, runStatusColor } from './run-utils.js';
 
@@ -79,7 +80,7 @@ export function renderFamilyEvidence(
   const filter = context.evidenceFilter;
   const groups =
     filter === 'all'
-      ? allGroups
+      ? allGroups.slice(0, MAX_EVIDENCE_GROUPS)
       : allGroups
           .map((group) => ({
             ...group,
