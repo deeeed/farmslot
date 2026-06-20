@@ -65,10 +65,13 @@ function collectRunEvidenceArtifactEntries(value: unknown, entries: EvidenceMani
           ? record.purpose
           : inferRunEvidenceArtifactPurpose(record.path),
       ...(typeof record.sizeBytes === 'number' ? { sizeBytes: record.sizeBytes } : {}),
+      ...(typeof record.sha256 === 'string' ? { sha256: record.sha256 } : {}),
     });
   }
   Object.entries(record)
-    .filter(([key]) => key !== 'path' && key !== 'purpose' && key !== 'sizeBytes')
+    .filter(
+      ([key]) => key !== 'path' && key !== 'purpose' && key !== 'sizeBytes' && key !== 'sha256',
+    )
     .forEach(([, item]) => collectRunEvidenceArtifactEntries(item, entries));
 }
 
@@ -135,7 +138,22 @@ function pathDirname(pathValue: string): string {
 }
 
 function dedupeRunEvidenceArtifacts(entries: EvidenceManifestEntry[]): EvidenceManifestEntry[] {
-  return [...new Map(entries.map((entry) => [entry.path, entry] as const)).values()];
+  const merged = new Map<string, EvidenceManifestEntry>();
+  for (const entry of entries) {
+    const existing = merged.get(entry.path);
+    merged.set(
+      entry.path,
+      existing
+        ? {
+            ...entry,
+            purpose: existing.purpose,
+            sizeBytes: existing.sizeBytes ?? entry.sizeBytes,
+            sha256: existing.sha256 ?? entry.sha256,
+          }
+        : entry,
+    );
+  }
+  return [...merged.values()];
 }
 
 function looksLikeRunEvidenceArtifactPath(value: string): boolean {
