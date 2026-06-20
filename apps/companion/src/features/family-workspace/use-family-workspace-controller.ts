@@ -43,6 +43,7 @@ import {
   type FamilyEvidenceFilter,
   filterFamilyEvidenceGroups,
   isFamilyVideoArtifact,
+  normalizeFamilyEvidenceFilterParam,
 } from '../../lib/family-evidence';
 import { shouldRefreshFamilySnapshotForRunEvent } from '../../lib/family-refresh';
 import { collectFamilyRetrospectives } from '../../lib/family-retrospectives';
@@ -99,8 +100,17 @@ import {
 } from './family-workspace-model';
 
 export function useFamilyWorkspaceController() {
-  const { familyId, project, runId, section, recipeRun, artifact, workspace, decisionKind } =
-    useLocalSearchParams<{
+  const {
+    familyId,
+    project,
+    runId,
+    section,
+    recipeRun,
+    artifact,
+    workspace,
+    decisionKind,
+    evidence,
+  } = useLocalSearchParams<{
       familyId: string;
       project?: string;
       runId?: string;
@@ -109,6 +119,7 @@ export function useFamilyWorkspaceController() {
       artifact?: string | string[];
       workspace?: string | string[];
       decisionKind?: string | string[];
+      evidence?: string | string[];
     }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -148,6 +159,7 @@ export function useFamilyWorkspaceController() {
   const requestedRecipeRunId = routeParamString(recipeRun).trim();
   const requestedArtifactPath = routeParamString(artifact).trim();
   const requestedSection = normalizeFamilySectionParam(section);
+  const requestedEvidenceFilter = normalizeFamilyEvidenceFilterParam(evidence);
   const workspaceRouteContext = useMemo(
     () =>
       workspaceRouteContextParams(
@@ -204,6 +216,14 @@ export function useFamilyWorkspaceController() {
       documentAbortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (requestedEvidenceFilter) {
+      setEvidenceFilter(requestedEvidenceFilter);
+    } else if (requestedSection === 'evidence') {
+      setEvidenceFilter('all');
+    }
+  }, [requestedEvidenceFilter, requestedSection]);
 
   const refreshFamilySnapshot = useCallback(
     async (reason: string) => {
