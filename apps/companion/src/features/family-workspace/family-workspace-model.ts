@@ -24,6 +24,7 @@ export const EVIDENCE_FILTERS: Array<{ id: FamilyEvidenceFilter; label: string }
   { id: 'all', label: 'All' },
   { id: 'before', label: 'Before' },
   { id: 'after', label: 'After' },
+  { id: 'videos', label: 'Videos' },
   { id: 'review', label: 'Review' },
   { id: 'diffs', label: 'Diffs' },
   { id: 'recipes', label: 'Recipes' },

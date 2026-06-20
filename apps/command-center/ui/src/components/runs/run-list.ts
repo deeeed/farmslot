@@ -7,10 +7,11 @@ import type {
   RunArchiveResult,
   RunBulkDeleteResult,
   RunCleanupResult,
+  RunEvidenceSummary,
   RunFamilyReadinessSummary,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
-import { Methods } from '@farmslot/protocol';
+import { Methods, summarizeRunEvidence } from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
 import '../shared/hydrating-placeholder.js';
@@ -20,6 +21,7 @@ import { gateway } from '../../gateway-client.js';
 import { getState, isHydrating, isPrLinkageMissing, subscribe } from '../../state.js';
 import { colors, runnerColor } from '../../styles/theme-tokens.js';
 
+import { familyRunHash } from './family-observability-url-state.js';
 import {
   renderRunListManageBar,
   renderRunListSearchRow,
@@ -476,6 +478,7 @@ export class RunList extends RunListState {
       (run.status === 'failed' &&
         !run.autoRecoveryDisabled &&
         (hasAutoRecoveryAttempt || Boolean(run.recoveryProposal)));
+    const evidenceSummary = summarizeRunEvidence(run);
     return html`
       <div
         class="run-card ${isSelected ? 'selected' : ''} ${this.manageMode ? 'manage-mode' : ''}"
@@ -547,10 +550,11 @@ export class RunList extends RunListState {
             </span>
             <a
               class="ext-link"
-              href=${`#family/${run.familyId}?run=${encodeURIComponent(run.id)}`}
+              href=${familyRunHash(run.familyId, run.id)}
               @click=${(e: Event) => e.stopPropagation()}
               >retrospective</a
             >
+            ${this.renderEvidenceSignals(run, evidenceSummary)}
             <span class="badge status-badge" style="--status-color:${sc}">${run.status}</span>
             ${disposition
               ? html`<span
@@ -681,6 +685,32 @@ export class RunList extends RunListState {
             : nothing}
         </div>
       </div>
+    `;
+  }
+
+  private renderEvidenceSignals(run: Run, evidenceSummary: RunEvidenceSummary) {
+    if (evidenceSummary.videoCount === 0 && evidenceSummary.visualPairCount === 0) return nothing;
+    return html`
+      <span class="evidence-signals" aria-label="Reviewable evidence">
+        ${evidenceSummary.videoCount > 0
+          ? html`<a
+              class="evidence-signal video"
+              href=${familyRunHash(run.familyId, run.id, { evidence: 'videos' })}
+              title=${`${evidenceSummary.videoCount} video artifact${evidenceSummary.videoCount === 1 ? '' : 's'} available`}
+              @click=${(e: Event) => e.stopPropagation()}
+              >Video ${evidenceSummary.videoCount}</a
+            >`
+          : nothing}
+        ${evidenceSummary.visualPairCount > 0
+          ? html`<a
+              class="evidence-signal compare"
+              href=${familyRunHash(run.familyId, run.id)}
+              title=${`${evidenceSummary.visualPairCount} before/after pair${evidenceSummary.visualPairCount === 1 ? '' : 's'} available`}
+              @click=${(e: Event) => e.stopPropagation()}
+              >Compare ${evidenceSummary.visualPairCount}</a
+            >`
+          : nothing}
+      </span>
     `;
   }
 

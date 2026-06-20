@@ -2,14 +2,48 @@ import type { FamilyObservabilityArtifact } from '@farmslot/protocol';
 
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 
+import type { FamilyEvidenceFilter } from './family-observability-evidence.js';
+
 export interface FamilyDiffSelection {
   runId: string | null;
   path: string | null;
 }
 
-export function familyRunHash(familyId: string, runId: string): string {
+export function familyRunHash(
+  familyId: string,
+  runId: string,
+  options: { evidence?: FamilyEvidenceFilter } = {},
+): string {
   const params = new URLSearchParams({ run: runId });
+  if (options.evidence) params.set('evidence', options.evidence);
   return buildHash(`family/${familyId}`, params);
+}
+
+export function evidenceFilterFromFamilyHash(
+  hash: string = location.hash,
+): FamilyEvidenceFilter | null {
+  const { params } = parseHashRoute(hash);
+  const value = params.get('evidence');
+  return value === 'all' ||
+    value === 'before' ||
+    value === 'after' ||
+    value === 'setup' ||
+    value === 'videos'
+    ? value
+    : null;
+}
+
+export function familyEvidenceFilterHash(
+  filter: FamilyEvidenceFilter,
+  hash: string = location.hash,
+): string {
+  const { route, params } = parseHashRoute(hash);
+  if (filter === 'all') {
+    params.delete('evidence');
+  } else {
+    params.set('evidence', filter);
+  }
+  return buildHash(route, params);
 }
 
 export function slotHistoryHashForRun(slotId: string, runId: string): string {

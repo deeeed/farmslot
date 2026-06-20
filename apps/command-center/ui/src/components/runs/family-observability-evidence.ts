@@ -1,10 +1,12 @@
-import type {
-  FamilyObservabilityArtifact,
-  FamilyObservabilityRunSummary,
-  FlowType,
-  RunLane,
+import {
+  type FamilyObservabilityArtifact,
+  type FamilyObservabilityRunSummary,
+  type FlowType,
+  isRunEvidenceVideoArtifact,
+  type RunLane,
 } from '@farmslot/protocol';
 
+import { artifactKind } from '../../utils/artifact-kind.js';
 import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 import type { LightboxItem, LightboxPair } from '../shared/media-lightbox-types.js';
 
@@ -14,7 +16,7 @@ import { flowLabel } from './run-utils.js';
 export const MAX_EVIDENCE_GROUPS = 8;
 export const MAX_ARTIFACTS_PER_EVIDENCE_GROUP = 6;
 
-const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
+export type FamilyEvidenceFilter = 'all' | 'before' | 'after' | 'setup' | 'videos';
 
 interface CaptureBatch {
   key: string;
@@ -109,7 +111,9 @@ export function buildFamilyLightboxPairs(
 ): LightboxPair[] {
   return buildBeforeAfterPairs(evidence).map((pair) => {
     const kind: 'image' | 'video' =
-      VIDEO_EXTS.test(pair.before.path) || VIDEO_EXTS.test(pair.after.path) ? 'video' : 'image';
+      isRunEvidenceVideoArtifact(pair.before) || isRunEvidenceVideoArtifact(pair.after)
+        ? 'video'
+        : 'image';
     return {
       before: toLightboxItem(pair.before),
       after: toLightboxItem(pair.after),
@@ -159,13 +163,44 @@ export function buildFamilyEvidenceGroups(
       capturedAtMs: batch?.capturedAtMs ?? null,
     });
   }
-  return [...groups.values()]
-    .sort((a, b) => (b.capturedAtMs ?? 0) - (a.capturedAtMs ?? 0))
-    .slice(0, MAX_EVIDENCE_GROUPS);
+  return [...groups.values()].sort((a, b) => (b.capturedAtMs ?? 0) - (a.capturedAtMs ?? 0));
 }
 
 export function visibleFamilyEvidenceArtifacts(
   groups: EvidenceGroup[],
 ): FamilyObservabilityArtifact[] {
-  return groups.flatMap((group) => group.artifacts.slice(0, MAX_ARTIFACTS_PER_EVIDENCE_GROUP));
+  return groups
+    .slice(0, MAX_EVIDENCE_GROUPS)
+    .flatMap((group) => group.artifacts.slice(0, MAX_ARTIFACTS_PER_EVIDENCE_GROUP));
+}
+
+export function evidenceArtifactMatchesFilter(
+  artifact: FamilyObservabilityArtifact,
+  filter: Exclude<FamilyEvidenceFilter, 'all'>,
+): boolean {
+  if (filter === 'videos') return isRunEvidenceVideoArtifact(artifact);
+  return artifactKind(artifact.path, artifact.purpose) === filter;
+}
+
+export function filterFamilyEvidenceGroups(
+  groups: readonly EvidenceGroup[],
+  filter: FamilyEvidenceFilter,
+): EvidenceGroup[] {
+  if (filter === 'all') return groups.slice(0, MAX_EVIDENCE_GROUPS);
+  return groups
+    .map((group) => ({
+      ...group,
+      artifacts: group.artifacts.filter((artifact) =>
+        evidenceArtifactMatchesFilter(artifact, filter),
+      ),
+    }))
+    .filter((group) => group.artifacts.length > 0);
+}
+
+export function familyEvidenceArtifactsForFilter(
+  groups: readonly EvidenceGroup[],
+  filter: FamilyEvidenceFilter,
+): FamilyObservabilityArtifact[] {
+  if (filter === 'all') return visibleFamilyEvidenceArtifacts([...groups]);
+  return filterFamilyEvidenceGroups(groups, filter).flatMap((group) => group.artifacts);
 }

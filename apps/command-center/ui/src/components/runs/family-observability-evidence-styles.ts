@@ -38,6 +38,69 @@ export const familyObservabilityEvidenceStyles = css`
     color: ${unsafeCSS(colors.accent)};
     border-color: ${unsafeCSS(colors.accent)}66;
   }
+  .evidence-compare-strip {
+    border: 1px solid ${unsafeCSS(colors.accent)}33;
+    border-radius: ${unsafeCSS(radii.md)};
+    background: ${unsafeCSS(colors.accent)}0a;
+    padding: ${unsafeCSS(spacing.sm)};
+    margin-bottom: ${unsafeCSS(spacing.sm)};
+  }
+  .evidence-compare-head {
+    display: flex;
+    justify-content: space-between;
+    gap: ${unsafeCSS(spacing.sm)};
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 12px;
+    margin-bottom: ${unsafeCSS(spacing.sm)};
+  }
+  .evidence-compare-head span {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  .evidence-compare-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: ${unsafeCSS(spacing.sm)};
+  }
+  .evidence-compare-card {
+    text-align: left;
+    border: 1px solid ${unsafeCSS(colors.accent)}44;
+    background: ${unsafeCSS(colors.bgSurface)};
+    border-radius: ${unsafeCSS(radii.sm)};
+    color: inherit;
+    font-family: inherit;
+    padding: ${unsafeCSS(spacing.sm)};
+    cursor: pointer;
+    display: grid;
+    gap: 4px;
+  }
+  .evidence-compare-card:hover {
+    border-color: ${unsafeCSS(colors.accent)};
+  }
+  .evidence-compare-card span {
+    color: ${unsafeCSS(colors.accent)};
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .evidence-compare-card strong {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .evidence-compare-card small {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+    line-height: 1.35;
+  }
+  .evidence-raw-details summary {
+    cursor: pointer;
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: ${unsafeCSS(spacing.sm)} 0;
+  }
   .evidence-groups {
     display: flex;
     flex-direction: column;
@@ -378,6 +441,11 @@ export const familyObservabilityEvidenceStyles = css`
   .run-item-title {
     font-weight: 600;
     margin-bottom: 4px;
+  }
+  .run-item-reason {
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 11px;
+    margin-bottom: 5px;
   }
   .run-item-meta {
     color: ${unsafeCSS(colors.textMuted)};

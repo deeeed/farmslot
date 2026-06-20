@@ -9,6 +9,7 @@ import type {
 import {
   buildFamilyEvidenceGroups,
   buildFamilyLightboxPairs,
+  familyEvidenceArtifactsForFilter,
   familyRunBadgeLabel,
   MAX_ARTIFACTS_PER_EVIDENCE_GROUP,
   MAX_EVIDENCE_GROUPS,
@@ -165,7 +166,7 @@ test('family run badge labels identify eval and comparison runs', () => {
   assert.equal(familyRunBadgeLabel(run({ lane: 'comparison', ticketOrPr: 'DEMO-2' })), 'COMPARE');
 });
 
-test('family evidence visibility caps groups and artifacts for stable render smoke output', () => {
+test('family evidence grouping retains overflow while default visibility caps render output', () => {
   const snapshot = {
     evidence: Array.from({ length: MAX_EVIDENCE_GROUPS + 2 }, (_, groupIndex) =>
       Array.from({ length: MAX_ARTIFACTS_PER_EVIDENCE_GROUP + 2 }, (_, artifactIndex) =>
@@ -184,9 +185,32 @@ test('family evidence visibility caps groups and artifacts for stable render smo
     run({ runId: a.runId, createdAt: '2026-05-14T12:00:00.000Z' }),
   );
 
-  assert.equal(groups.length, MAX_EVIDENCE_GROUPS);
+  assert.equal(groups.length, MAX_EVIDENCE_GROUPS + 2);
   assert.equal(
     visibleFamilyEvidenceArtifacts(groups).length,
     MAX_EVIDENCE_GROUPS * MAX_ARTIFACTS_PER_EVIDENCE_GROUP,
+  );
+});
+
+test('family evidence filter artifacts include matches beyond the default visible cap', () => {
+  const snapshot = {
+    evidence: Array.from({ length: MAX_EVIDENCE_GROUPS + 1 }, (_, index) =>
+      artifact(
+        index === MAX_EVIDENCE_GROUPS
+          ? 'captures/2026-05-01_120000_full-run.webm'
+          : `captures/2026-05-${String(20 - index).padStart(2, '0')}_120000_after.png`,
+        index === MAX_EVIDENCE_GROUPS ? 'video' : 'AFTER screenshot',
+        { runId: `run-${index}` },
+      ),
+    ),
+  };
+  const groups = buildFamilyEvidenceGroups(snapshot, (a) =>
+    run({ runId: a.runId, createdAt: '2026-05-14T12:00:00.000Z' }),
+  );
+
+  assert.equal(familyEvidenceArtifactsForFilter(groups, 'all').length, MAX_EVIDENCE_GROUPS);
+  assert.deepEqual(
+    familyEvidenceArtifactsForFilter(groups, 'videos').map((artifact) => artifact.path),
+    ['captures/2026-05-01_120000_full-run.webm'],
   );
 });

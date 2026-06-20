@@ -1,6 +1,7 @@
-import type {
-  FamilyObservabilityArtifact,
-  FamilyObservabilityRunSummary,
+import {
+  type FamilyObservabilityArtifact,
+  type FamilyObservabilityRunSummary,
+  isRunEvidenceVideoArtifact,
 } from '@farmslot/protocol';
 
 import { isAfterVisualArtifact, isBeforeVisualArtifact } from './artifact-url';
@@ -12,8 +13,9 @@ export type FamilyEvidenceFilter =
   | 'review'
   | 'diffs'
   | 'recipes'
-  | 'setup';
-export type FamilyEvidenceKind = Exclude<FamilyEvidenceFilter, 'all'>;
+  | 'setup'
+  | 'videos';
+export type FamilyEvidenceKind = Exclude<FamilyEvidenceFilter, 'all' | 'videos'>;
 
 export const MAX_FAMILY_EVIDENCE_GROUPS = 8;
 export const MAX_ARTIFACTS_PER_FAMILY_EVIDENCE_GROUP = 6;
@@ -65,6 +67,12 @@ export function familyArtifactKind(artifact: FamilyObservabilityArtifact): Famil
   return 'setup';
 }
 
+export function isFamilyVideoArtifact(
+  artifact: Pick<FamilyObservabilityArtifact, 'path'>,
+): boolean {
+  return isRunEvidenceVideoArtifact(artifact);
+}
+
 export function familyEvidenceKindLabel(kind: FamilyEvidenceKind): string {
   if (kind === 'before') return 'Before';
   if (kind === 'after') return 'After';
@@ -112,20 +120,22 @@ export function buildFamilyEvidenceGroups(
       capturedAtMs: batch?.capturedAtMs ?? null,
     });
   }
-  return [...groups.values()]
-    .sort((a, b) => (b.capturedAtMs ?? 0) - (a.capturedAtMs ?? 0))
-    .slice(0, MAX_FAMILY_EVIDENCE_GROUPS);
+  return [...groups.values()].sort((a, b) => (b.capturedAtMs ?? 0) - (a.capturedAtMs ?? 0));
 }
 
 export function filterFamilyEvidenceGroups(
   groups: FamilyEvidenceGroup[],
   filter: FamilyEvidenceFilter,
 ): FamilyEvidenceGroup[] {
-  if (filter === 'all') return groups;
+  if (filter === 'all') return groups.slice(0, MAX_FAMILY_EVIDENCE_GROUPS);
   return groups
     .map((group) => ({
       ...group,
-      artifacts: group.artifacts.filter((artifact) => familyArtifactKind(artifact) === filter),
+      artifacts: group.artifacts.filter((artifact) =>
+        filter === 'videos'
+          ? isFamilyVideoArtifact(artifact)
+          : familyArtifactKind(artifact) === filter,
+      ),
     }))
     .filter((group) => group.artifacts.length > 0);
 }
@@ -133,9 +143,9 @@ export function filterFamilyEvidenceGroups(
 export function visibleFamilyEvidenceArtifacts(
   groups: FamilyEvidenceGroup[],
 ): FamilyObservabilityArtifact[] {
-  return groups.flatMap((group) =>
-    group.artifacts.slice(0, MAX_ARTIFACTS_PER_FAMILY_EVIDENCE_GROUP),
-  );
+  return groups
+    .slice(0, MAX_FAMILY_EVIDENCE_GROUPS)
+    .flatMap((group) => group.artifacts.slice(0, MAX_ARTIFACTS_PER_FAMILY_EVIDENCE_GROUP));
 }
 
 function captureBatchFromPath(pathValue: string): CaptureBatch | null {

@@ -65,8 +65,18 @@ export const familyObservabilityLayoutStyles = css`
     grid-template-columns: 1.2fr 1fr;
     margin-bottom: ${unsafeCSS(spacing.lg)};
   }
-  .content-grid.lower {
-    grid-template-columns: 320px 1fr;
+  .content-grid.family-run-focus {
+    grid-template-columns: minmax(300px, 0.55fr) minmax(0, 1.45fr);
+    align-items: start;
+  }
+  .primary-run-selector {
+    position: sticky;
+    top: ${unsafeCSS(spacing.md)};
+    max-height: calc(100vh - 140px);
+    overflow: auto;
+  }
+  .selected-run-focus {
+    min-width: 0;
   }
   .metric-card,
   .panel {
@@ -361,6 +371,38 @@ export const familyObservabilityLayoutStyles = css`
   }
   .change-ledger {
     margin-bottom: ${unsafeCSS(spacing.lg)};
+  }
+  .raw-ledger-details {
+    margin-top: ${unsafeCSS(spacing.md)};
+  }
+  .raw-ledger-details summary {
+    color: ${unsafeCSS(colors.textMuted)};
+    cursor: pointer;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .iteration-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: ${unsafeCSS(spacing.sm)};
+    margin-top: ${unsafeCSS(spacing.sm)};
+  }
+  .iteration-summary div {
+    background: ${unsafeCSS(colors.accent)}0d;
+    border: 1px solid ${unsafeCSS(colors.accent)}33;
+    border-radius: ${unsafeCSS(radii.sm)};
+    display: grid;
+    gap: 3px;
+    padding: ${unsafeCSS(spacing.sm)};
+  }
+  .iteration-summary strong {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-size: 16px;
+  }
+  .iteration-summary small {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
   }
   .ledger-metrics {
     display: grid;

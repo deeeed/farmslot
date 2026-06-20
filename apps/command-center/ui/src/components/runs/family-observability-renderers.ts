@@ -1,33 +1,33 @@
 import { html, nothing, type TemplateResult } from 'lit';
 
-import type {
-  FamilyObservabilityArtifact,
-  FamilyObservabilityRunSummary,
-  FamilyObservabilitySnapshot,
-  PRStatus,
-  RelatedRunSummary,
+import {
+  type FamilyObservabilityArtifact,
+  type FamilyObservabilityRunSummary,
+  type FamilyObservabilitySnapshot,
+  githubPullUrl,
+  isRunEvidenceVideoArtifact,
+  parseGitHubRef,
+  type PRStatus,
+  type RelatedRunSummary,
 } from '@farmslot/protocol';
-import { githubPullUrl, parseGitHubRef } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 import { MARKDOWN_EXTS } from '../../utils/artifact-file-types.js';
 
 import {
   type EvidenceGroup,
+  type FamilyEvidenceFilter,
+  filterFamilyEvidenceGroups,
   MAX_ARTIFACTS_PER_EVIDENCE_GROUP,
 } from './family-observability-evidence.js';
 import { flowColor, flowLabel, formatCreatedAt, runStatusColor } from './run-utils.js';
 
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif)$/i;
-const VIDEO_EXTS = /\.(mp4|mov|webm)$/i;
-
-export type FamilyEvidenceFilter = 'all' | 'before' | 'after' | 'setup';
 
 export interface FamilyEvidenceRenderContext {
   evidenceFilter: FamilyEvidenceFilter;
   evidenceGroups(snapshot: FamilyObservabilitySnapshot): EvidenceGroup[];
   visibleEvidenceArtifacts: FamilyObservabilityArtifact[];
-  artifactKind(artifact: FamilyObservabilityArtifact): 'before' | 'after' | 'setup';
   setEvidenceFilter(filter: FamilyEvidenceFilter): void;
   artifactUrl(artifact: FamilyObservabilityArtifact): string;
   artifactCaption(artifact: FamilyObservabilityArtifact): string;
@@ -47,12 +47,14 @@ const FILTER_CHIPS: { label: string; value: FamilyEvidenceFilter }[] = [
   { label: 'Before', value: 'before' },
   { label: 'After', value: 'after' },
   { label: 'Setup', value: 'setup' },
+  { label: 'Videos', value: 'videos' },
 ];
 
 function evidenceFilterTitle(filter: FamilyEvidenceFilter): string {
   if (filter === 'before') return 'Baseline captures from main';
   if (filter === 'after') return 'Captures from the fix branch';
   if (filter === 'setup') return 'Orientation/setup shots';
+  if (filter === 'videos') return 'Recipe videos and screen recordings';
   return 'Show all evidence';
 }
 
@@ -65,26 +67,16 @@ export function renderFamilyEvidence(
   }
   const allGroups = context.evidenceGroups(snapshot);
   const filter = context.evidenceFilter;
-  const groups =
-    filter === 'all'
-      ? allGroups
-      : allGroups
-          .map((group) => ({
-            ...group,
-            artifacts: group.artifacts.filter(
-              (artifact) => context.artifactKind(artifact) === filter,
-            ),
-          }))
-          .filter((group) => group.artifacts.length > 0);
+  const groups = filterFamilyEvidenceGroups(allGroups, filter);
   const hiddenGroupCount =
     filter === 'all'
       ? Math.max(0, snapshot.evidence.length - context.visibleEvidenceArtifacts.length)
       : 0;
+  const compareCards = familyEvidenceCompareCards(groups, context);
   return html`
     <div class="evidence-provenance-note">
-      Evidence is grouped by producing run and capture batch. This previews evidence artifacts only;
-      use “Parent vs candidate output” above for artifact/data file totals when a same-family
-      comparison exists.
+      Evidence is grouped by producing run and capture batch. Before/after pairs open in the shared
+      side-by-side viewer; raw artifact groups stay collapsed to keep the family page scannable.
     </div>
     <div class="evidence-filter-row">
       ${FILTER_CHIPS.map(
@@ -99,40 +91,93 @@ export function renderFamilyEvidence(
         `,
       )}
     </div>
-    <div class="evidence-groups">
-      ${groups.length === 0
-        ? html`<div class="muted">No artifacts match the current filter.</div>`
-        : nothing}
-      ${groups.map((group) => {
-        const visibleArtifacts = group.artifacts.slice(0, MAX_ARTIFACTS_PER_EVIDENCE_GROUP);
-        const hiddenArtifacts = group.artifacts.length - visibleArtifacts.length;
-        return html`
-          <div class="evidence-group ${group.capturedBeforeRun ? 'carried' : ''}">
-            <div class="evidence-group-header">
-              <div>
-                <div class="evidence-group-title">${group.title}</div>
-                <div class="evidence-group-meta">${group.subtitle}</div>
-              </div>
-              <span class="evidence-group-count">${group.artifacts.length}</span>
+    ${compareCards.length > 0
+      ? html`
+          <div class="evidence-compare-strip">
+            <div class="evidence-compare-head">
+              <strong>Before/after comparisons</strong>
+              <span>${compareCards.length} pair${compareCards.length === 1 ? '' : 's'}</span>
             </div>
-            <div class="evidence-grid">
-              ${visibleArtifacts.map((artifact) =>
-                renderFamilyEvidenceArtifact(artifact, group, context),
+            <div class="evidence-compare-grid">
+              ${compareCards.slice(0, 8).map(
+                ({ artifact, group, index }) => html`
+                  <button
+                    class="evidence-compare-card"
+                    @click=${(event: Event) => context.openCompare(index, event)}
+                  >
+                    <span>Compare</span>
+                    <strong>${artifact.path.split('/').pop() ?? artifact.path}</strong>
+                    <small>${group.title} · run ${artifact.runId.slice(0, 8)}</small>
+                  </button>
+                `,
               )}
             </div>
-            ${hiddenArtifacts > 0
-              ? html`<div class="evidence-group-more">+${hiddenArtifacts} more in this batch</div>`
+            ${compareCards.length > 8
+              ? html`<div class="evidence-group-more">+${compareCards.length - 8} more pairs</div>`
               : nothing}
           </div>
-        `;
-      })}
-      ${hiddenGroupCount > 0 && filter === 'all'
-        ? html`<div class="evidence-group-more">
-            +${hiddenGroupCount} more artifacts hidden by evidence display limits
-          </div>`
-        : nothing}
-    </div>
+        `
+      : nothing}
+    <details class="evidence-raw-details">
+      <summary>Show raw artifact groups</summary>
+      <div class="evidence-groups">
+        ${groups.length === 0
+          ? html`<div class="muted">No artifacts match the current filter.</div>`
+          : nothing}
+        ${groups.map((group) => {
+          const visibleArtifacts = group.artifacts.slice(0, MAX_ARTIFACTS_PER_EVIDENCE_GROUP);
+          const hiddenArtifacts = group.artifacts.length - visibleArtifacts.length;
+          return html`
+            <div class="evidence-group ${group.capturedBeforeRun ? 'carried' : ''}">
+              <div class="evidence-group-header">
+                <div>
+                  <div class="evidence-group-title">${group.title}</div>
+                  <div class="evidence-group-meta">${group.subtitle}</div>
+                </div>
+                <span class="evidence-group-count">${group.artifacts.length}</span>
+              </div>
+              <div class="evidence-grid">
+                ${visibleArtifacts.map((artifact) =>
+                  renderFamilyEvidenceArtifact(artifact, group, context),
+                )}
+              </div>
+              ${hiddenArtifacts > 0
+                ? html`<div class="evidence-group-more">
+                    +${hiddenArtifacts} more in this batch
+                  </div>`
+                : nothing}
+            </div>
+          `;
+        })}
+        ${hiddenGroupCount > 0 && filter === 'all'
+          ? html`<div class="evidence-group-more">
+              +${hiddenGroupCount} more artifacts hidden by evidence display limits
+            </div>`
+          : nothing}
+      </div>
+    </details>
   `;
+}
+
+function familyEvidenceCompareCards(
+  groups: readonly EvidenceGroup[],
+  context: FamilyEvidenceRenderContext,
+): Array<{ artifact: FamilyObservabilityArtifact; group: EvidenceGroup; index: number }> {
+  const seen = new Set<number>();
+  const cards: Array<{
+    artifact: FamilyObservabilityArtifact;
+    group: EvidenceGroup;
+    index: number;
+  }> = [];
+  for (const group of groups) {
+    for (const artifact of group.artifacts) {
+      const pair = context.pairForArtifact(artifact);
+      if (!pair || seen.has(pair.index)) continue;
+      seen.add(pair.index);
+      cards.push({ artifact, group, index: pair.index });
+    }
+  }
+  return cards;
 }
 
 function renderFamilyEvidenceArtifact(
@@ -160,7 +205,7 @@ function renderFamilyEvidenceArtifact(
                 loading="lazy"
                 @error=${() => context.markArtifactBroken(artifact)}
               />`
-            : VIDEO_EXTS.test(artifact.path)
+            : isRunEvidenceVideoArtifact(artifact)
               ? html`<div class="artifact-video-preview">
                   <video
                     class="artifact-preview"

@@ -26,7 +26,6 @@ import type { RecipeOutputPanel } from '../workspace/recipe-output-panel.js';
 import {
   familyArtifactCaption,
   familyArtifactKey,
-  familyArtifactKind,
   familyArtifactUrl,
 } from './family-observability-artifact-model.js';
 import {
@@ -46,6 +45,8 @@ import {
 import {
   buildFamilyEvidenceGroups,
   type EvidenceGroup,
+  familyEvidenceArtifactsForFilter,
+  type FamilyEvidenceFilter,
   familyRunBadgeLabel,
   visibleFamilyEvidenceArtifacts,
 } from './family-observability-evidence.js';
@@ -83,14 +84,16 @@ import {
   renderFamilyConvergedPill,
   renderFamilyRecipeSection,
 } from './family-observability-recipe-section-renderers.js';
-import {
-  type FamilyEvidenceFilter,
-  renderFamilyEvidence,
-} from './family-observability-renderers.js';
+import { renderFamilyEvidence } from './family-observability-renderers.js';
 import { familyWarmSlotRerunCheck } from './family-observability-rerun-model.js';
 import { renderFamilySelectedRunDetail } from './family-observability-selected-run-renderers.js';
 import { FamilyObservabilityState } from './family-observability-state.js';
-import { familyRunHash, slotHistoryHashForRun } from './family-observability-url-state.js';
+import {
+  evidenceFilterFromFamilyHash,
+  familyEvidenceFilterHash,
+  familyRunHash,
+  slotHistoryHashForRun,
+} from './family-observability-url-state.js';
 import type { SemanticPickerDetail } from './grade-semantic-picker.js';
 import { isSemanticChoice } from './grade-semantic-picker.js';
 
@@ -105,7 +108,9 @@ export class FamilyObservability extends FamilyObservabilityState {
     this.selectedRunId = runId;
     void this._ensureFullRun(runId);
     if (!this.familyId) return;
-    const newHash = familyRunHash(this.familyId, runId);
+    const newHash = familyRunHash(this.familyId, runId, {
+      evidence: this._evidenceFilter === 'all' ? undefined : this._evidenceFilter,
+    });
     if (window.location.hash !== newHash) {
       history.replaceState(null, '', newHash);
     }
@@ -182,6 +187,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     super.connectedCallback();
     window.addEventListener('keydown', this._onModalKeyDown);
     window.addEventListener('hashchange', this._onHashChange);
+    this._applyEvidenceFilterFromHash();
     void this._loadSnapshot();
     this._fleetSlots = getState().fleet?.slots ?? [];
     this._prs = getState().prs ?? [];
@@ -246,7 +252,13 @@ export class FamilyObservability extends FamilyObservabilityState {
   private _onHashChange = () => {
     if (this._suppressDiffHashSync) return;
     this._applyDiffModalFromHash();
+    this._applyEvidenceFilterFromHash();
   };
+
+  private _applyEvidenceFilterFromHash(): void {
+    const filter = evidenceFilterFromFamilyHash();
+    this._evidenceFilter = filter ?? 'all';
+  }
 
   updated(changed: Map<string, unknown>): void {
     if (changed.has('familyId') || changed.has('snapshotOverride')) {
@@ -344,8 +356,17 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private _openArtifact(artifact: FamilyObservabilityArtifact, event: Event) {
     event.stopPropagation();
-    this._lightboxOverride = null;
-    const idx = this._visibleArtifacts.findIndex(
+    const lightboxArtifacts = this._evidenceArtifactsForCurrentFilter;
+    this._lightboxOverride = lightboxArtifacts;
+    const pair = this._pairForArtifact(artifact);
+    if (pair) {
+      this._lightboxOverride = null;
+      this._lightboxPairIndex = pair.index;
+      this._lightboxMode = 'compare';
+      this._lightboxOpen = true;
+      return;
+    }
+    const idx = lightboxArtifacts.findIndex(
       (a) => a.runId === artifact.runId && a.path === artifact.path,
     );
     this._lightboxIndex = idx >= 0 ? idx : 0;
@@ -371,6 +392,13 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private get _visibleArtifacts(): FamilyObservabilityArtifact[] {
     return familyVisibleLightboxArtifacts(this._lightboxOverride, this._visibleEvidenceArtifacts);
+  }
+
+  private get _evidenceArtifactsForCurrentFilter(): FamilyObservabilityArtifact[] {
+    return familyEvidenceArtifactsForFilter(
+      this._evidenceGroups(this.snapshot),
+      this._evidenceFilter,
+    );
   }
 
   private get _lightboxItems() {
@@ -777,9 +805,12 @@ export class FamilyObservability extends FamilyObservabilityState {
       evidenceFilter: this._evidenceFilter,
       evidenceGroups: (snapshot: FamilyObservabilitySnapshot) => this._evidenceGroups(snapshot),
       visibleEvidenceArtifacts: this._visibleEvidenceArtifacts,
-      artifactKind: (artifact: FamilyObservabilityArtifact) => familyArtifactKind(artifact),
       setEvidenceFilter: (filter: FamilyEvidenceFilter) => {
         this._evidenceFilter = filter;
+        const newHash = familyEvidenceFilterHash(filter);
+        if (window.location.hash !== newHash) {
+          history.replaceState(null, '', newHash);
+        }
       },
       artifactUrl: (artifact: FamilyObservabilityArtifact) =>
         familyArtifactUrl(GATEWAY_BASE, artifact),

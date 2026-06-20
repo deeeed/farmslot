@@ -400,6 +400,33 @@ export const runListStyles = css`
     color: var(--status-color, ${unsafeCSS(colors.textMuted)});
     background: transparent;
   }
+  .evidence-signals {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .evidence-signal {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+    border: 1px solid ${unsafeCSS(colors.statusOk)}66;
+    color: ${unsafeCSS(colors.statusOk)};
+    background: ${unsafeCSS(colors.statusOk)}12;
+  }
+  .evidence-signal:hover {
+    background: ${unsafeCSS(colors.statusOk)}22;
+  }
+  .evidence-signal.video {
+    border-color: ${unsafeCSS(colors.accent)}66;
+    color: ${unsafeCSS(colors.accent)};
+    background: ${unsafeCSS(colors.accent)}12;
+  }
+  .evidence-signal.video:hover {
+    background: ${unsafeCSS(colors.accent)}22;
+  }
   .step-detail {
     font-size: 10px;
     color: ${unsafeCSS(colors.textMuted)};

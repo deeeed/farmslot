@@ -1,9 +1,10 @@
-import type { RecipeRunArtifactGroup, Run } from '@farmslot/protocol';
-
 import {
-  type GatewayHttpAuthHeaders,
-  gatewayResourceSource,
-} from './gateway-http-auth';
+  isRunEvidenceVideoArtifact,
+  type RecipeRunArtifactGroup,
+  type Run,
+} from '@farmslot/protocol';
+
+import { type GatewayHttpAuthHeaders, gatewayResourceSource } from './gateway-http-auth';
 
 export const DECISION_EVIDENCE_RECIPE_RUN_PARAM = 'decision-evidence';
 export const CURRENT_ARTIFACTS_RECIPE_RUN_PARAM = 'current-artifacts';
@@ -139,7 +140,6 @@ function wsToHttpBase(wsUrl: string): string {
 }
 
 const IMAGE_EXTS = /\.(png|jpg|jpeg|gif|svg|webp)$/i;
-const VIDEO_EXTS = /\.(mp4|webm|mov)$/i;
 const DOC_EXTS = /\.(md|txt|json)$/i;
 const NEUTRAL_VISUAL_PURPOSES = new Set([
   'image',
@@ -185,7 +185,7 @@ export function classifyArtifact(
   if (purpose === 'screenshot' || purpose === 'image') return 'image';
   if (purpose === 'video') return 'video';
   if (IMAGE_EXTS.test(path)) return 'image';
-  if (VIDEO_EXTS.test(path)) return 'video';
+  if (isRunEvidenceVideoArtifact({ path })) return 'video';
   return 'other';
 }
 
@@ -193,7 +193,7 @@ export function inferArtifactPurpose(path: string): string {
   const normalized = path.toLowerCase();
   if (/\.(diff|patch)$/.test(normalized)) return 'diff';
   if (normalized.includes('screenshot')) return 'screenshot';
-  if (VIDEO_EXTS.test(path)) return 'video';
+  if (isRunEvidenceVideoArtifact({ path })) return 'video';
   if (IMAGE_EXTS.test(path)) return 'image';
   if (/diff[_-]?stat/i.test(normalized)) return 'diff-stat';
   if (/\/diff\.(txt|md)$/i.test(normalized)) return 'diff';
@@ -245,7 +245,11 @@ function looksLikeArtifactEntry(record: Record<string, unknown>): boolean {
 }
 
 function looksLikeArtifactPath(value: string): boolean {
-  return /\.(png|jpe?g|webp|gif|svg|mp4|mov|webm|md|json|txt|diff|patch)$/i.test(value);
+  return (
+    IMAGE_EXTS.test(value) ||
+    isRunEvidenceVideoArtifact({ path: value }) ||
+    /\.(md|json|txt|diff|patch)$/i.test(value)
+  );
 }
 
 export function artifactPathsToManifest(paths: string[]): ArtifactManifestEntry[] {

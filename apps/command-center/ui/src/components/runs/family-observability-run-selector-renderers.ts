@@ -4,6 +4,7 @@ import type {
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
 } from '@farmslot/protocol';
+import { buildFamilyIterationLedgerPresentation } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -36,10 +37,20 @@ interface FamilyRunSelectorRenderOptions {
 }
 
 export function renderFamilyRunSelector(options: FamilyRunSelectorRenderOptions) {
+  const iteration = buildFamilyIterationLedgerPresentation(options.snapshot);
+  const runsById = new Map(options.snapshot.runs.map((run) => [run.runId, run]));
+  const cardsByRunId = new Map(iteration.cards.map((card) => [card.runId, card]));
+  const orderedRuns = iteration.cards
+    .map((card) => runsById.get(card.runId))
+    .filter((run): run is FamilyObservabilityRunSummary => Boolean(run));
   return html`
-    <section class="panel timeline">
-      <div class="panel-title">Run selector</div>
-      ${options.snapshot.runs.map((run) => renderFamilyRunSelectorItem(options, run))}
+    <section class="panel timeline primary-run-selector">
+      <div class="panel-title">
+        Run selector <span class="panel-hint">· pick an iteration to inspect</span>
+      </div>
+      ${orderedRuns.map((run) =>
+        renderFamilyRunSelectorItem(options, run, cardsByRunId.get(run.runId)?.reason),
+      )}
     </section>
   `;
 }
@@ -47,6 +58,7 @@ export function renderFamilyRunSelector(options: FamilyRunSelectorRenderOptions)
 function renderFamilyRunSelectorItem(
   options: FamilyRunSelectorRenderOptions,
   run: FamilyObservabilityRunSummary,
+  reason: string | undefined,
 ) {
   const selected = options.selectedRun?.runId === run.runId;
   const flow = runBadgeColor(run);
@@ -93,6 +105,7 @@ function renderFamilyRunSelectorItem(
         ${modelDrift ? html`<span class="badge warn">Model drift</span>` : nothing}
       </div>
       <div class="run-item-title">${run.summary ?? run.ticketOrPr}</div>
+      ${reason ? html`<div class="run-item-reason">${reason}</div>` : nothing}
       <div class="run-item-meta">
         ${run.runId.slice(0, 8)} · ${formatCreatedAt(run.createdAt)} ·
         ${run.slotId ? renderSlotInlineLink(run.slotId, options.onOpenSlot) : html`slot unknown`} ·
