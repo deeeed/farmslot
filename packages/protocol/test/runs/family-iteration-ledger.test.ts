@@ -162,6 +162,35 @@ test('iteration ledger presents the root task before follow-up ledger entries', 
   assert.equal(presentation.cards[1].reviewedInputLabel, '3 files · +40 -5');
 });
 
+test('iteration ledger appends fallback cards when ledger entries are partial', () => {
+  const root = makeLedgerEntry({
+    runId: 'root-run-12345678',
+    parentRunId: null,
+    flowType: 'dev',
+    createdAt: '2026-06-18T12:00:00.000Z',
+  });
+  const missingFromLedger = makeRun({
+    runId: 'followup-12345678',
+    parentRunId: root.runId,
+    flowType: 'pr-complete',
+    createdAt: '2026-06-18T16:00:00.000Z',
+    diffStat: { available: true, files: 4, additions: 8, deletions: 2 },
+  });
+
+  const presentation = buildFamilyIterationLedgerPresentation(
+    makeSnapshot(
+      [makeRun({ runId: root.runId, parentRunId: null, flowType: 'dev' }), missingFromLedger],
+      [root],
+    ),
+  );
+
+  assert.deepEqual(
+    presentation.cards.map((card) => card.runId),
+    [root.runId, missingFromLedger.runId],
+  );
+  assert.equal(presentation.cards[1].diffLabel, '4 files · +8 -2');
+});
+
 test('iteration ledger calls out CI-driven follow-ups', () => {
   const root = makeLedgerEntry({ runId: 'root-run-12345678' });
   const followUp = makeLedgerEntry({

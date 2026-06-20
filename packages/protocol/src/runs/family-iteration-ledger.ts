@@ -43,9 +43,11 @@ export function buildFamilyIterationLedgerPresentation(
 ): FamilyIterationLedgerPresentation {
   const ledgerEntries = snapshot.familyChangeLedger?.entries ?? [];
   const runsById = new Map(snapshot.runs.map((run) => [run.runId, run]));
-  const sourceEntries =
-    ledgerEntries.length > 0 ? ledgerEntries : snapshot.runs.map(fallbackLedgerEntryForRun);
-  const orderedEntries = [...sourceEntries].sort(compareIterations);
+  const ledgerRunIds = new Set(ledgerEntries.map((entry) => entry.runId));
+  const fallbackEntries = snapshot.runs
+    .filter((run) => !ledgerRunIds.has(run.runId))
+    .map(fallbackLedgerEntryForRun);
+  const orderedEntries = [...ledgerEntries, ...fallbackEntries].sort(compareIterations);
   const cards = orderedEntries.map((entry, index) =>
     buildFamilyIterationCard(entry, runsById.get(entry.runId), index),
   );
