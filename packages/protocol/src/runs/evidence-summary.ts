@@ -67,7 +67,9 @@ function collectRunEvidenceArtifactEntries(value: unknown, entries: EvidenceMani
       ...(typeof record.sizeBytes === 'number' ? { sizeBytes: record.sizeBytes } : {}),
     });
   }
-  Object.values(record).forEach((item) => collectRunEvidenceArtifactEntries(item, entries));
+  Object.entries(record)
+    .filter(([key]) => key !== 'path' && key !== 'purpose' && key !== 'sizeBytes')
+    .forEach(([, item]) => collectRunEvidenceArtifactEntries(item, entries));
 }
 
 function looksLikeRunEvidenceArtifactEntry(record: Record<string, unknown>): boolean {

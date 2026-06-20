@@ -987,8 +987,8 @@ export default function FamilyWorkspaceScreen() {
               ))}
             </View>
             <Text style={styles.evidenceNote}>
-              Grouped by producing run and capture batch. Before/after, video, review, diff, and
-              recipe filters mirror the Command Center family evidence workspace.
+              Grouped by producing run and capture batch. Before/after and video filters match
+              Command Center; review, diff, and recipe are mobile quick filters.
             </Text>
             {snapshot.evidence.length === 0 ? (
               <Text style={baseStyles.textMuted}>No family evidence artifacts found.</Text>

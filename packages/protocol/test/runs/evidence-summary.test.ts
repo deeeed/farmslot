@@ -61,7 +61,7 @@ test('run evidence artifact collection discovers nested step output paths and de
               { path: 'artifacts/after-checkout.png', purpose: 'after' },
               { path: 'artifacts/after-checkout.png', purpose: 'after' },
             ],
-            recording: { path: 'artifacts/run.mov', type: 'video' },
+            recording: { path: 'artifacts/run.mov', type: 'video', sizeBytes: 123 },
           },
         },
       ],
@@ -72,6 +72,7 @@ test('run evidence artifact collection discovers nested step output paths and de
     artifacts.map((artifact) => artifact.path),
     ['artifacts/after-checkout.png', 'artifacts/run.mov'],
   );
+  assert.equal(artifacts.find((artifact) => artifact.path === 'artifacts/run.mov')?.sizeBytes, 123);
 });
 
 test('run evidence summary includes selected live recipe context artifacts', () => {
