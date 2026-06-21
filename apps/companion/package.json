@@ -36,7 +36,7 @@
     "release:production": "bash scripts/release/release.sh --variant production",
     "submit:preview": "bash scripts/release/release.sh --variant preview --skip-update --skip-build --submit",
     "submit:production": "bash scripts/release/release.sh --variant production --skip-update --skip-build --submit",
-    "eas-build-pre-install": "bash scripts/build/eas-build-pre-install.sh",
+    "eas-build-pre-install": "bash scripts/eas-build-pre-install.sh",
     "recipe": "farmslot-expo-recipe",
     "recipe:manifest": "farmslot-expo-recipe manifest",
     "recipe:doctor": "farmslot-expo-recipe doctor",
