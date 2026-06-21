@@ -23,6 +23,7 @@ import { diffArtifactCandidate } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import {
   type RunEvidenceSignal,
+  runEvidenceSignalRouteTarget,
   summarizeRunEvidenceSignals,
 } from '../../lib/run-evidence-signals';
 import {
@@ -374,16 +375,15 @@ function RunEvidenceSignals({ run, compact = false }: { run: Run; compact?: bool
   if (signals.length === 0) return null;
 
   const openSignal = (signal: RunEvidenceSignal) => {
-    const section = signal.kind === 'compare' ? 'compare' : 'evidence';
+    const target = runEvidenceSignalRouteTarget(signal);
     router.push({
       pathname: '/family/[familyId]',
       params: {
         familyId: run.familyId,
         project: run.project,
         runId: run.id,
-        ...familySectionRouteContextParams(section),
-        section,
-        ...(signal.kind === 'video' ? { evidence: 'videos' } : {}),
+        ...familySectionRouteContextParams(target.section),
+        ...target,
       },
     });
   };

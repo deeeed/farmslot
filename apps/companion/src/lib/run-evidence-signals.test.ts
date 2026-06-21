@@ -4,7 +4,11 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import { normalizeFamilyEvidenceFilterParam } from './family-evidence';
-import { runEvidenceSignals, summarizeRunEvidenceSignals } from './run-evidence-signals';
+import {
+  runEvidenceSignalRouteTarget,
+  runEvidenceSignals,
+  summarizeRunEvidenceSignals,
+} from './run-evidence-signals';
 
 test('runEvidenceSignals exposes video and compare signal labels', () => {
   assert.deepEqual(runEvidenceSignals({ artifactCount: 4, videoCount: 1, visualPairCount: 2 }), [
@@ -22,6 +26,15 @@ test('runEvidenceSignals exposes video and compare signal labels', () => {
     },
   ]);
   assert.deepEqual(runEvidenceSignals({ artifactCount: 0, videoCount: 0, visualPairCount: 0 }), []);
+});
+
+
+test('runEvidenceSignalRouteTarget maps signal chips to family workspace route params', () => {
+  assert.deepEqual(runEvidenceSignalRouteTarget({ kind: 'video' }), {
+    section: 'evidence',
+    evidence: 'videos',
+  });
+  assert.deepEqual(runEvidenceSignalRouteTarget({ kind: 'compare' }), { section: 'compare' });
 });
 
 test('summarizeRunEvidenceSignals uses shared protocol evidence parsing', () => {

@@ -13,6 +13,19 @@ export interface RunEvidenceSignal {
   title: string;
 }
 
+export interface RunEvidenceSignalRouteTarget {
+  section: 'compare' | 'evidence';
+  evidence?: 'videos';
+}
+
+export function runEvidenceSignalRouteTarget(
+  signal: Pick<RunEvidenceSignal, 'kind'>,
+): RunEvidenceSignalRouteTarget {
+  return signal.kind === 'compare'
+    ? { section: 'compare' }
+    : { section: 'evidence', evidence: 'videos' };
+}
+
 export function summarizeRunEvidenceSignals(
   run: Pick<Run, 'decisions' | 'steps' | 'liveRecipeContext'>,
 ): RunEvidenceSignal[] {
