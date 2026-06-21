@@ -17,6 +17,26 @@ export type FamilyEvidenceFilter =
   | 'videos';
 export type FamilyEvidenceKind = Exclude<FamilyEvidenceFilter, 'all' | 'videos'>;
 
+export function normalizeFamilyEvidenceFilterParam(
+  value: string | string[] | null | undefined,
+): FamilyEvidenceFilter | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const normalized = raw?.trim().toLowerCase();
+  if (
+    normalized === 'all' ||
+    normalized === 'before' ||
+    normalized === 'after' ||
+    normalized === 'review' ||
+    normalized === 'diffs' ||
+    normalized === 'recipes' ||
+    normalized === 'setup' ||
+    normalized === 'videos'
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
 export const MAX_FAMILY_EVIDENCE_GROUPS = 8;
 export const MAX_ARTIFACTS_PER_FAMILY_EVIDENCE_GROUP = 6;
 

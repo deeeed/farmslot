@@ -22,6 +22,11 @@ import {
 import { diffArtifactCandidate } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import {
+  type RunEvidenceSignal,
+  runEvidenceSignalRouteTarget,
+  summarizeRunEvidenceSignals,
+} from '../../lib/run-evidence-signals';
+import {
   groupRunsByFamily,
   type RunFamilyGroup,
   selectRecentRunFamilyGroups,
@@ -220,6 +225,7 @@ function RunCard({
             />
           </View>
         ) : null}
+        <RunEvidenceSignals run={run} />
         <View style={styles.quickActionRow}>
           <RunQuickAction
             label="Family"
@@ -359,6 +365,52 @@ function RunCard({
           ) : null}
         </View>
       </Pressable>
+    </View>
+  );
+}
+
+function RunEvidenceSignals({ run, compact = false }: { run: Run; compact?: boolean }) {
+  const router = useRouter();
+  const signals = summarizeRunEvidenceSignals(run);
+  if (signals.length === 0) return null;
+
+  const openSignal = (signal: RunEvidenceSignal) => {
+    const target = runEvidenceSignalRouteTarget(signal);
+    router.push({
+      pathname: '/family/[familyId]',
+      params: {
+        familyId: run.familyId,
+        project: run.project,
+        runId: run.id,
+        ...familySectionRouteContextParams(target.section),
+        ...target,
+      },
+    });
+  };
+
+  return (
+    <View style={[styles.evidenceSignalRow, compact && styles.evidenceSignalRowCompact]}>
+      <Text style={styles.evidenceSignalEyebrow}>Review signals</Text>
+      {signals.map((signal) => (
+        <Pressable
+          key={signal.kind}
+          accessibilityLabel={signal.title}
+          style={[
+            styles.evidenceSignalChip,
+            signal.kind === 'video' ? styles.videoSignalChip : styles.compareSignalChip,
+          ]}
+          onPress={() => openSignal(signal)}
+        >
+          <Text
+            style={[
+              styles.evidenceSignalText,
+              signal.kind === 'video' ? styles.videoSignalText : styles.compareSignalText,
+            ]}
+          >
+            {signal.label}
+          </Text>
+        </Pressable>
+      ))}
     </View>
   );
 }
@@ -553,6 +605,7 @@ function RecentFamilyShortcut({
           />
         </View>
       ) : null}
+      <RunEvidenceSignals run={run} compact />
       <View style={styles.quickActionRow}>
         {run.slotId ? (
           <>
@@ -1201,6 +1254,46 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginTop: spacing.md,
     padding: spacing.xs,
+  },
+  evidenceSignalRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  evidenceSignalRowCompact: {
+    marginTop: spacing.sm,
+  },
+  evidenceSignalEyebrow: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  evidenceSignalChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  videoSignalChip: {
+    backgroundColor: colors.statusWarn + '18',
+    borderColor: colors.statusWarn + '66',
+  },
+  compareSignalChip: {
+    backgroundColor: colors.accent + '18',
+    borderColor: colors.accent + '66',
+  },
+  evidenceSignalText: {
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+  },
+  videoSignalText: {
+    color: colors.statusWarn,
+  },
+  compareSignalText: {
+    color: colors.accent,
   },
   runBadgeRow: {
     alignItems: 'center',
