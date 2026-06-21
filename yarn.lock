@@ -4438,9 +4438,9 @@ __metadata:
     "@react-native/metro-config": "npm:^0.85.3"
     "@shopify/flash-list": "npm:2.0.2"
     "@shopify/react-native-skia": "npm:2.6.2"
-    "@siteed/audio-studio": "npm:3.2.1-beta.3"
+    "@siteed/audio-studio": "npm:3.2.1"
     "@siteed/audio-ui": "npm:1.1.2-beta.0"
-    "@siteed/sherpa-onnx.rn": "npm:1.3.1-beta.1"
+    "@siteed/sherpa-onnx.rn": "npm:1.3.1"
     "@types/babel__core": "npm:^7"
     "@types/node": "npm:^25.9.1"
     "@types/react": "npm:~19.2.10"
@@ -6333,15 +6333,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@siteed/audio-studio@npm:3.2.1-beta.3":
-  version: 3.2.1-beta.3
-  resolution: "@siteed/audio-studio@npm:3.2.1-beta.3"
+"@siteed/audio-studio@npm:3.2.1":
+  version: 3.2.1
+  resolution: "@siteed/audio-studio@npm:3.2.1"
   peerDependencies:
     "@expo/config-plugins": ">=7.0.0"
     expo: ">=52.0.0"
     react: "*"
     react-native: "*"
-  checksum: 10c0/d8c80abe098bd8b4b55bf1b43c50e906079f3f674f5e424606d66b1bbdb44cecf550a8f4bc893634c5b1af8e6997ac1147cf199a827aeadbae6a4c25b23c62fc
+  checksum: 10c0/623b6e5cded3c66239aa9c5d932e6de49dbe96bbf68244e061d97dac49ec8eab0cfcac164b4e9c61aed98e0efed86ce2c89183d21ce1ace8b5f9204c1e4d5be6
   languageName: node
   linkType: hard
 
@@ -6361,9 +6361,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@siteed/sherpa-onnx.rn@npm:1.3.1-beta.1":
-  version: 1.3.1-beta.1
-  resolution: "@siteed/sherpa-onnx.rn@npm:1.3.1-beta.1"
+"@siteed/sherpa-onnx.rn@npm:1.3.1":
+  version: 1.3.1
+  resolution: "@siteed/sherpa-onnx.rn@npm:1.3.1"
   dependencies:
     "@expo/config-plugins": "npm:~56.0.8"
     adm-zip: "npm:^0.5.16"
@@ -6372,7 +6372,7 @@ __metadata:
   peerDependencies:
     react: "*"
     react-native: "*"
-  checksum: 10c0/7fbd79f3ef1bf0c9f32dee1d3f0646ee5658a53866feeec373d8fc84ff321b4e1e865d274a98549118558867e4db336007f7be30a51da327a529577d5c9035fa
+  checksum: 10c0/e3213cd9281759078ab5f6a3e3241f58264425929314baa87414c366677d3d0ad5545d588faee3407c3fc0c1eacf768774080448c756ceb667d9925e5cd6ada5
   languageName: node
   linkType: hard
 

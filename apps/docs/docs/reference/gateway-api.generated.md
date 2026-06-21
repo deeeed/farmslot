@@ -149,6 +149,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `nodes.deploy`                       | nodes        | bounded-write | —      | —      | Nodes Deploy gateway method.                       |
 | `nodes.list`                         | nodes        | read-only     | —      | —      | Nodes List gateway method.                         |
 | `operator.snapshot`                  | operator     | bounded-write | —      | —      | Operator Snapshot gateway method.                  |
+| `pairing.candidates`                 | pairing      | bounded-write | —      | —      | Pairing Candidates gateway method.                 |
 | `pairing.create`                     | pairing      | bounded-write | —      | —      | Pairing Create gateway method.                     |
 | `pairing.exchange`                   | pairing      | bounded-write | —      | —      | Pairing Exchange gateway method.                   |
 | `pr.addComment`                      | pr           | bounded-write | —      | —      | Pr AddComment gateway method.                      |
