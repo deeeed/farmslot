@@ -10,6 +10,18 @@ It is not intended to replicate every desktop workflow. The target scope is to k
 
 <img class="product-image" src="/img/demos/companion-mobile-supervision.png" alt="Mobile Companion showing active runs, proof artifacts, slot details, and terminal actions" />
 
+## Try it
+
+Mobile Companion is in early testing. Android access is managed through Google Play testing for `net.siteed.farmslot`; iOS access is managed through TestFlight for the Farmslot app.
+
+If you want access, message Arthur with:
+
+1. your platform: Android, iOS, or both;
+2. the email tied to your Google Play or Apple ID;
+3. whether you want LAN-only pairing or Tailscale pairing.
+
+After access is enabled, install Companion, open Command Center, choose **Gateway connection → Generate QR**, then scan it from Companion **Settings → Pair QR**.
+
 ## Target scope
 
 - Read-heavy fleet and active-run visibility.
