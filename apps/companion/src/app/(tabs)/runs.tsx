@@ -786,7 +786,6 @@ export default function RunsScreen() {
     void initRunFilters();
   }, [initRunFilters]);
 
-
   const slotById = useMemo(
     () =>
       new Map(
