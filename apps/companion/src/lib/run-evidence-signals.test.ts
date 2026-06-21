@@ -28,7 +28,6 @@ test('runEvidenceSignals exposes video and compare signal labels', () => {
   assert.deepEqual(runEvidenceSignals({ artifactCount: 0, videoCount: 0, visualPairCount: 0 }), []);
 });
 
-
 test('runEvidenceSignalRouteTarget maps signal chips to family workspace route params', () => {
   assert.deepEqual(runEvidenceSignalRouteTarget({ kind: 'video' }), {
     section: 'evidence',
