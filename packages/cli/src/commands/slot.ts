@@ -14,6 +14,7 @@ import { resolveContext } from '../context.js';
 import { formatSlotCheck } from '../formatters/slot.js';
 import { withProgress } from '../progress.js';
 import { resolveCurrentSlot, resolveSlotId } from '../slot-context.js';
+
 import { resolveSlotPrepareGatewayTimeoutMs } from './slot-prepare-timeout.js';
 
 interface PrepareOptions {
