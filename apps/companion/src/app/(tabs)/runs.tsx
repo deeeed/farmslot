@@ -22,8 +22,8 @@ import {
 import { diffArtifactCandidate } from '../../lib/diff';
 import { prRepoFromWorkspaceSource } from '../../lib/pr-links';
 import {
-  summarizeRunEvidenceSignals,
   type RunEvidenceSignal,
+  summarizeRunEvidenceSignals,
 } from '../../lib/run-evidence-signals';
 import {
   groupRunsByFamily,

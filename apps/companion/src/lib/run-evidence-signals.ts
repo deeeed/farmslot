@@ -1,7 +1,7 @@
 import {
-  summarizeRunEvidence,
   type Run,
   type RunEvidenceSummary,
+  summarizeRunEvidence,
 } from '@farmslot/protocol';
 
 export type RunEvidenceSignalKind = 'video' | 'compare';
