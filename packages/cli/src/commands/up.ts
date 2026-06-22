@@ -189,8 +189,12 @@ async function up(port: number, output: OutputContext): Promise<void> {
       await verifyTokenAuth(port, token, output);
       const localActive = registerLocalProfile(port, token);
       output.write(`${green('gateway already running')} ${dim(`pid ${existingPid}`)}\n`);
+      output.write(`  ${dim('dashboard')}  ${cyan(`http://localhost:${port}`)}\n`);
       output.write(
-        `  ${dim('next')}  ${bold(pairHint(localActive))} ${dim('(pair your phone)')}\n`,
+        `  ${dim('token')}      ${token} ${dim('(paste into the dashboard to log in)')}\n`,
+      );
+      output.write(
+        `  ${dim('next')}       ${bold(pairHint(localActive))} ${dim('(pair your phone)')}\n`,
       );
       return;
     }
@@ -267,6 +271,7 @@ async function up(port: number, output: OutputContext): Promise<void> {
       port,
       url: `ws://localhost:${port}`,
       profile: LOCAL_PROFILE,
+      token,
       pairCommand: pairHint(localActive),
       dashboard: dashboardBuilt ? `http://localhost:${port}` : null,
     });
@@ -275,6 +280,9 @@ async function up(port: number, output: OutputContext): Promise<void> {
   output.write(`${green('gateway up')} ${dim(`pid ${child.pid}`)}\n`);
   if (dashboardBuilt) {
     output.write(`  ${dim('dashboard')}  ${cyan(`http://localhost:${port}`)}\n`);
+    output.write(
+      `  ${dim('token')}      ${token} ${dim('(paste into the dashboard to log in)')}\n`,
+    );
   } else {
     output.write(
       `  ${dim('dashboard')}  ${dim('not built — run: yarn --cwd apps/command-center/ui build')}\n`,
