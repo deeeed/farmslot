@@ -242,26 +242,42 @@ step_doctor() {
 # app for tmux control on the go. Reads y/n from /dev/tty so a piped `curl | bash`
 # can still prompt; a non-interactive install (CI, no tty) skips without hanging.
 step_pair() {
-  bold "── Pair your phone ──"
-  local pair_now="" reply
+  bold "── Start it up ──"
+  local start_now="" pair_now="" reply
   if [ -n "${FARMSLOT_MINIMAL:-}" ]; then
-    echo "  skipped (FARMSLOT_MINIMAL) — pair later with: farmslot up && farmslot pair"
+    echo "  skipped (FARMSLOT_MINIMAL) — start later with: farmslot up  (then 'farmslot pair' for phone)"
+    return
   elif [ "${FARMSLOT_PAIR:-}" = "1" ]; then
-    pair_now="yes"
+    start_now="yes"; pair_now="yes"
   elif [ -r /dev/tty ]; then
-    printf '  Start the gateway and pair the Farmslot mobile app now? [Y/n] ' >/dev/tty
+    # Command Center (web dashboard) first — what most people use.
+    printf '  Start the Command Center (web dashboard) now? [Y/n] ' >/dev/tty
     read -r reply </dev/tty || reply=""
-    case "$reply" in [Nn]*) ;; *) pair_now="yes" ;; esac
+    case "$reply" in [Nn]*) ;; *) start_now="yes" ;; esac
+    # Phone pairing is optional and OFF by default — only offered if the dashboard is starting.
+    if [ -n "$start_now" ]; then
+      printf '  Optional: also pair the mobile app to control agents from your phone? [y/N] ' >/dev/tty
+      read -r reply </dev/tty || reply=""
+      case "$reply" in [Yy]*) pair_now="yes" ;; esac
+    fi
   else
-    echo "  non-interactive — pair later with: farmslot up && farmslot pair"
+    echo "  non-interactive — start later with: farmslot up  (then 'farmslot pair' for phone)"
+    return
   fi
+
+  if [ -n "$start_now" ]; then
+    FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" up
+  else
+    echo "  Nothing started — run 'farmslot up' when ready (it prints the Command Center URL)."
+    return
+  fi
+
   if [ -n "$pair_now" ]; then
     if command -v tailscale >/dev/null 2>&1 && tailscale status --json >/dev/null 2>&1; then
       echo "  Tailscale detected — QR will include a tailnet profile for phones signed into the same tailnet."
     else
       echo "  LAN pairing will work now. For away-from-LAN pairing, install and sign in to Tailscale on this Mac and phone, then run: farmslot pair"
     fi
-    FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" up
     # --gateway local: pair must mint codes for the gateway `up` just started,
     # not whatever profile happened to be active on a machine with prior config.
     FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" --gateway local pair
@@ -269,6 +285,8 @@ step_pair() {
     echo "  Scan the QR above with the Farmslot companion app (App Store / Play Store)."
     echo "  If the QR has a Tailscale profile, scan from a phone signed into the same tailnet."
     echo "  Stop the gateway anytime with: farmslot down"
+  else
+    echo "  Pair your phone later anytime with: farmslot pair"
   fi
 }
 
