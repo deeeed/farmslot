@@ -13,6 +13,7 @@ import type {
   RunStatus,
 } from '@farmslot/protocol';
 
+import { summarizeAgentContexts } from '../agents/contexts.js';
 import {
   execOnSlot,
   expandHook,
@@ -30,7 +31,6 @@ import {
   renderFixtureTemplate,
   type SlotVars,
 } from '../core/index.js';
-import { summarizeAgentContexts } from '../agents/contexts.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { runnerProcessPatternSource } from '../runners/registry.js';

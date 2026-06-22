@@ -10,7 +10,6 @@ if (!taskDir) {
   process.exit(2);
 }
 
-const artifactsDir = path.join(taskDir, 'artifacts');
 const issues = [];
 const mediaExt = /\.(png|jpe?g|gif|mp4|mov|webm)$/i;
 const internalArtifactPath = /^artifacts\/(?:runtime-launch|runner-blockers)\//;
@@ -88,7 +87,6 @@ function addRef(refs, value) {
   }
   refs.add(normalized);
 }
-
 
 function validateRecipeQualityArtifact() {
   const text = readText('artifacts/recipe-quality.json');

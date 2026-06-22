@@ -7,8 +7,8 @@ import test from 'node:test';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 
 import {
-  backfillLegacySafetyTier,
   archiveRun,
+  backfillLegacySafetyTier,
   cleanupRuns,
   createRun,
   deleteRun,
