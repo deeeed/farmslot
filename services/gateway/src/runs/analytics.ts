@@ -205,7 +205,9 @@ export function buildAnalyticsRecord(
 
   return {
     schemaVersion: ANALYTICS_RECORD_SCHEMA_VERSION,
-    ts: run.completedAt ?? run.updatedAt,
+    // Deterministic fallback chain (no new Date() — keeps this builder pure). updatedAt is
+    // always set on a real Run, so this never produces an empty ts in practice.
+    ts: run.completedAt ?? run.updatedAt ?? run.createdAt,
     runId: run.id,
     familyId: run.familyId,
     project: run.project,
@@ -252,10 +254,12 @@ export async function readAllAnalyticsRecords(): Promise<AnalyticsReadResult> {
   let files: string[];
   try {
     files = await readdir(analyticsDir());
-  } catch {
-    // Sink not created yet (no terminal runs emitted) — an empty corpus is a valid state,
-    // not an error. Any other readdir failure would surface on the subsequent readFile.
-    return { records: [], parseFailures: 0 };
+  } catch (err) {
+    // A missing dir means the sink hasn't been created yet (no terminal runs emitted) — an
+    // empty corpus is a valid state. Only ENOENT is swallowed; any other failure (permissions,
+    // I/O) must surface rather than masquerade as "no analytics".
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { records: [], parseFailures: 0 };
+    throw err;
   }
   const records: RunAnalyticsRecord[] = [];
   let parseFailures = 0;
@@ -264,13 +268,24 @@ export async function readAllAnalyticsRecords(): Promise<AnalyticsReadResult> {
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
       if (!trimmed) continue;
+      let record: RunAnalyticsRecord;
       try {
-        records.push(JSON.parse(trimmed) as RunAnalyticsRecord);
+        record = JSON.parse(trimmed) as RunAnalyticsRecord;
       } catch {
         // A single corrupt line (partial append, manual edit) must not blind the whole
         // corpus. Count it so the query surface can report degraded coverage.
         parseFailures++;
+        continue;
       }
+      // Forward-compat: skip records written by a newer schema than this build understands,
+      // rather than mis-reading a changed shape. Safe while only version 1 exists.
+      if (
+        typeof record.schemaVersion === 'number' &&
+        record.schemaVersion > ANALYTICS_RECORD_SCHEMA_VERSION
+      ) {
+        continue;
+      }
+      records.push(record);
     }
   }
   return { records, parseFailures };
@@ -452,28 +467,23 @@ export function emitAnalyticsForTerminalRun(
 ): Promise<void> | null {
   if (!isTerminalRunStatus(run.status)) return null;
   if (run.analyticsEmittedAt) return null;
+  let record: RunAnalyticsRecord;
   try {
-    // buildAnalyticsRecord runs synchronously here — keep it inside the try so a malformed
-    // run can't throw out of updateRun/archiveRun/deleteRun and break run completion/eviction.
-    const record = buildAnalyticsRecord(run, opts);
-    // Set the flag only after a record builds successfully, so a build failure leaves the
-    // run un-emitted and recoverable via analyticsBackfill.
-    run.analyticsEmittedAt = run.completedAt ?? run.updatedAt ?? new Date().toISOString();
-    // Returns a promise that resolves after the append attempt and never rejects (failures are
-    // logged). Eviction paths (archiveRun/deleteRun) AWAIT it so a run is never removed from the
-    // store before its record lands; updateRun fires it and forgets (the run stays in the store,
-    // so a dropped append is recoverable via backfill).
-    return appendAnalyticsRecord(record).catch((err) => {
-      console.warn(
-        `[analytics] failed to write record for run ${run.id}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
+    // buildAnalyticsRecord runs synchronously — keep it inside the try so a malformed run can't
+    // throw out of updateRun/archiveRun/deleteRun. A build failure leaves the run un-emitted
+    // (flag unset) and recoverable via analyticsBackfill.
+    record = buildAnalyticsRecord(run, opts);
   } catch (err) {
-    // Best-effort telemetry: building/scheduling the record must never break run completion
-    // or eviction. Log and continue; the run stays un-emitted and backfill can recover it.
     console.warn(
-      `[analytics] failed to emit record for run ${run.id}: ${err instanceof Error ? err.message : String(err)}`,
+      `[analytics] failed to build record for run ${run.id}: ${err instanceof Error ? err.message : String(err)}`,
     );
     return null;
   }
+  // Set the flag only after the record builds successfully.
+  run.analyticsEmittedAt = run.completedAt ?? run.updatedAt ?? new Date().toISOString();
+  // Returns the append promise, which REJECTS on a sink-write failure. Callers decide:
+  //  - updateRun fires-and-forgets (the run stays in the store → recoverable via backfill),
+  //  - eviction paths (archiveRun/deleteRun) await it and skip eviction on rejection so a run
+  //    is never pruned before its record is durably written.
+  return appendAnalyticsRecord(record);
 }

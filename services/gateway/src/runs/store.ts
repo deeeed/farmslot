@@ -690,8 +690,13 @@ export function updateRun(id: string, partial: Partial<Run>): Run {
   // so the persist below captures the idempotency flag; the append itself is background.
   if (isTerminalRunStatus(run.status) && run.completedAt) {
     // Fire-and-forget: the run stays in the store, so a dropped append is recoverable via
-    // analyticsBackfill. Eviction paths (archive/delete) await instead.
-    void emitAnalyticsForTerminalRun(run);
+    // analyticsBackfill. Swallow-with-log here is deliberate — a telemetry write must not break
+    // run completion. Eviction paths (archive/delete) await + skip eviction on failure instead.
+    emitAnalyticsForTerminalRun(run)?.catch((err) => {
+      console.warn(
+        `[run-store] analytics append failed for ${id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   }
   persistRunBackground(run, 'update');
   return run;
@@ -732,11 +737,21 @@ export async function deleteRun(id: string): Promise<boolean> {
   if (run.decisions?.some((d) => d.type === 'improvement' && !d.resolvedAt)) {
     console.warn(`[run-store] deleting run ${id} with unresolved improvement decision(s)`);
   }
-  // Catch-all: capture analytics before the run leaves the store, in case it reached a
-  // terminal state without ever flowing through updateRun with a completedAt set. Await the
-  // append here — once deleted the run is gone from the store, so a fire-and-forget failure
-  // would be unrecoverable.
-  await emitAnalyticsForTerminalRun(run);
+  // Catch-all: write analytics before the run leaves the store, in case it reached a terminal
+  // state without flowing through updateRun with a completedAt set. Await the append and DON'T
+  // delete if it fails — a deleted run is gone from the store and unrecoverable by backfill.
+  const deleteEmit = emitAnalyticsForTerminalRun(run);
+  if (deleteEmit) {
+    try {
+      await deleteEmit;
+    } catch (err) {
+      run.analyticsEmittedAt = undefined; // allow a later retry to re-append
+      console.warn(
+        `[run-store] keeping run ${id}: analytics append failed before delete: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
+  }
   runs.delete(id);
   try {
     await unlink(path.join(RUNS_DIR, `${id}.json`));
@@ -755,10 +770,21 @@ export async function archiveRun(id: string): Promise<boolean> {
     throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
   }
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
-  // Catch-all: ensure the analytics record is written before the run is evicted from the live
-  // store. Await here — backfill scans the live store, not the archive, so a fire-and-forget
-  // failure during archive would be unrecoverable.
-  await emitAnalyticsForTerminalRun(run);
+  // Catch-all: write the analytics record before the run is evicted. Await it and DON'T archive
+  // if it fails — backfill scans the live store, not the archive, so an evicted run with no sink
+  // record would be unrecoverable.
+  const archiveEmit = emitAnalyticsForTerminalRun(run);
+  if (archiveEmit) {
+    try {
+      await archiveEmit;
+    } catch (err) {
+      run.analyticsEmittedAt = undefined; // allow a later retry to re-append
+      console.warn(
+        `[run-store] keeping run ${id}: analytics append failed before archive: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
+  }
   runs.delete(id);
   await mkdir(ARCHIVE_DIR, { recursive: true });
   const src = path.join(RUNS_DIR, `${id}.json`);

@@ -97,7 +97,10 @@ export interface RunAnalyticsRecord {
   ciResult: string | null;
   ciPollCount: number | null;
   ciInlineFixAttempts: number | null;
-  /** Distinct human reviewers who requested changes, when captured. */
+  /**
+   * Distinct human reviewers who requested changes, when captured. Forward-capture only: stored
+   * per-run but not yet rolled up in AnalyticsQueryResult — reserved for the review-signals lane.
+   */
   humanReviewersRequestingChanges: number | null;
   hostLoad: HostLoadSnapshot | null;
   /** Compact template identity for grouping; null when no provenance was captured. */
