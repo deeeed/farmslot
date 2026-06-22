@@ -192,16 +192,30 @@ step_clone() {
 }
 
 step_node() {
-  local required_node node_version
+  local required_node node_version recommended_node
+  # Hard floor = engines.node in package.json (the minimum we support).
   required_node="$(sed -n 's/.*"node": *"\([^"]*\)".*/\1/p' "${CLONE}/package.json" | head -1)"
+  # Recommended = .tool-versions (what maintainers run; newer is better).
+  recommended_node="$(sed -n 's/^nodejs \([0-9.]*\).*/\1/p' "${CLONE}/.tool-versions" 2>/dev/null | head -1)"
   node_version="$(node --version | tr -d 'v')"
   node -e "
 const min = ('${required_node}'.match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/) || []).slice(1).map(n => Number(n || 0));
 const cur = '${node_version}'.split('.').map(Number);
 if (!min.length) process.exit(0);
 for (let i = 0; i < 3; i++) { if (cur[i] !== min[i]) process.exit(cur[i] > min[i] ? 0 : 1); }
-" || fail "node ${node_version} does not satisfy required ${required_node}" "upgrade node (see .tool-versions)"
-  green "  [OK] node ${node_version} satisfies ${required_node}"
+" || fail "node ${node_version} is below the minimum ${required_node}" "upgrade node — newer is better; asdf: asdf install nodejs ${recommended_node:-latest}, or nvm install --lts (see .tool-versions)"
+  # Below the recommended version is fine — warn, don't block. Lets devs reuse an
+  # existing LTS (e.g. the one their product repos pin) instead of forcing a switch.
+  if [ -n "$recommended_node" ] && ! node -e "
+const rec = '${recommended_node}'.split('.').map(Number);
+const cur = '${node_version}'.split('.').map(Number);
+for (let i = 0; i < 3; i++) { const a = cur[i] || 0, b = rec[i] || 0; if (a !== b) process.exit(a > b ? 0 : 1); }
+" 2>/dev/null; then
+    printf '\033[0;33m  [WARN] node %s works (>= %s), but %s+ is recommended — newer is better; see .tool-versions\033[0m\n' \
+      "$node_version" "$required_node" "$recommended_node"
+  else
+    green "  [OK] node ${node_version} (>= ${required_node})"
+  fi
 }
 
 step_cli() {
