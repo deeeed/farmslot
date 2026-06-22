@@ -650,7 +650,7 @@ describe('grok runner', () => {
     assert.equal(runnerSupportsTmuxNudges('grok'), true);
     assert.equal(runnerContinueCommand('grok'), null);
     assert.equal(getRunnerDefinition('grok').requiresBusyComposerPoll, false);
-    assert.equal(runnerPersistsSessionFiles('grok'), false);
+    assert.equal(runnerPersistsSessionFiles('grok'), true);
   });
 
   it('recognizes Grok TUI waiting lines as nudge opportunities', () => {
@@ -702,9 +702,10 @@ describe('custom runner fallback behavior', () => {
 });
 
 describe('persistsSessionFiles capability', () => {
-  it('returns true for claude and codex (they write resumable session files)', () => {
+  it('returns true for runners with durable usage/session files', () => {
     assert.equal(runnerPersistsSessionFiles('claude'), true);
     assert.equal(runnerPersistsSessionFiles('codex'), true);
+    assert.equal(runnerPersistsSessionFiles('grok'), true);
   });
 
   it('returns false for runners without disk-backed session state', () => {

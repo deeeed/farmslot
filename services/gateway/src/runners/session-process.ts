@@ -17,6 +17,7 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 from time import time
+from urllib.parse import quote
 repo = ${JSON.stringify(repo)}
 runner = ${JSON.stringify(runner)}
 home = Path.home()
@@ -24,7 +25,21 @@ paths = []
 if runner == 'claude':
     session_dir = home / '.claude' / 'projects' / repo.replace('/', '-')
     if session_dir.is_dir():
-        paths = [str(p) for p in session_dir.glob('*.jsonl')]
+        paths = [str(p) for p in sorted(session_dir.glob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)]
+elif runner == 'grok':
+    sessions_dir = home / '.grok' / 'sessions' / quote(repo, safe='')
+    if sessions_dir.is_dir():
+        cutoff = time() - (7 * 24 * 60 * 60)
+        for summary_path in sorted(sessions_dir.glob('*/summary.json'), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                if summary_path.stat().st_mtime < cutoff:
+                    continue
+                summary = json.loads(summary_path.read_text())
+                if summary.get('info', {}).get('cwd') == repo:
+                    paths.append(str(summary_path.parent))
+            except Exception:
+                # Grok writes summary.json at runtime; skip partial/unreadable files during discovery.
+                continue
 else:
     sessions_root = home / '.codex' / 'sessions'
     if sessions_root.is_dir():
@@ -42,6 +57,7 @@ else:
                     paths.append(str(path))
                 seen += 1
             except Exception:
+                # Codex session discovery scans CLI-owned files; skip malformed/non-session files.
                 continue
 print(json.dumps(paths))
 PY`;
@@ -62,7 +78,9 @@ export async function captureRunnerSessionMetadata(
     const afterPaths = await listRunnerSessionFiles(vars, runner);
     const before = new Set(beforePaths);
     const fresh = afterPaths.filter((p) => !before.has(p));
-    const chosen = fresh[0] ?? afterPaths[afterPaths.length - 1] ?? null;
+    // Session discovery returns newest-first for every persisted runner.
+    // If no new path appears, fall back to the newest known path, not the oldest.
+    const chosen = fresh[0] ?? afterPaths[0] ?? null;
     if (chosen) {
       return {
         runnerSessionPath: chosen,
