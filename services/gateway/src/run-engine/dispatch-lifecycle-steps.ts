@@ -7,6 +7,7 @@ import { dispatchExecute, nudgeDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import { runnerNeedsPostLaunchPrompt } from '../runners/registry.js';
+import { captureHostLoadSnapshot } from '../runs/analytics.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
@@ -47,6 +48,10 @@ export async function executePrepareStep(
   } = context;
   const current = await normalizeEvalReplayForTaskWrite(runId, getRun(runId)!);
   if (!current.slotId) throw new Error('No slot assigned');
+  // Machine-pressure snapshot at prepare start — the analytics emitter reads this from
+  // prepare.outputs.hostLoad. Threaded through every outputs rebuild below so it survives
+  // a prepare failure (the failed-run analytics record still carries the load context).
+  const hostLoad = captureHostLoadSnapshot(current.slotId);
   // pr-complete and merge-main flows leave the merge to the worker so it
   // can resolve conflicts in-session. Only review-pr auto-merges in prepare
   // (and aborts on conflict) — reviewer flow doesn't fix code.
@@ -76,7 +81,7 @@ export async function executePrepareStep(
   }
   if (skipPrepare) {
     console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (operator skip)`);
-    return { inputs, outputs: { skipped: true, reason: 'operator-skip' } };
+    return { inputs, outputs: { skipped: true, reason: 'operator-skip', hostLoad } };
   }
 
   // Build cliCommand early so it's available on failure too. startRef is
@@ -90,7 +95,7 @@ export async function executePrepareStep(
   const cliCommand = `farmslot slot prepare ${current.slotId}${current.branch ? ` --branch ${current.branch}` : ''}${mergeMain ? ' --merge-main' : ''}${current.flowType ? ` --flow-type ${current.flowType}` : ''}${current.app ? ` --app ${current.app}` : ''}${current.startRef ? ` --start-ref ${current.startRef.requestedRef}` : ''}${current.prepareProfile ? ` --prepare-profile ${current.prepareProfile}` : ''}${prepareVars ? ' --var watch=off' : ''}`;
 
   // Stash partial I/O before the potentially-failing call
-  stepPartialIO.set(runId, { inputs, outputs: { cliCommand } });
+  stepPartialIO.set(runId, { inputs, outputs: { cliCommand, hostLoad } });
 
   // Collect sub-step events and broadcast live progress
   const collector = createSubStepCollector();
@@ -102,7 +107,11 @@ export async function executePrepareStep(
     if (p?.name) {
       // Named step events are infrequent — safe to snapshot + broadcast
       const lo = collector.getLastOutput();
-      const outputs: Record<string, unknown> = { cliCommand, subSteps: collector.snapshot() };
+      const outputs: Record<string, unknown> = {
+        cliCommand,
+        hostLoad,
+        subSteps: collector.snapshot(),
+      };
       if (lo) outputs.lastOutput = lo;
       updateRunStep(runId, 'prepare', { detail: p.detail || p.name, outputs });
       stepPartialIO.set(runId, { inputs, outputs });
@@ -222,6 +231,7 @@ export async function executePrepareStep(
     outputs: {
       success: true,
       subSteps: collector.finish(),
+      hostLoad,
       machine,
       platform,
       isLocal: local,

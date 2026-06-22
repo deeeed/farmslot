@@ -191,6 +191,10 @@ export const Methods = {
   RUN_BULK_DELETE: 'run.bulkDelete',
   RUN_CLEANUP: 'run.cleanup',
   RUN_BACKFILL_SUMMARIES: 'run.backfillSummaries',
+
+  // Pipeline-ops analytics (read-only over the decoupled analytics sink)
+  ANALYTICS_QUERY: 'analytics.query',
+  ANALYTICS_BACKFILL: 'analytics.backfill',
   EVAL_EXPERIMENT_CREATE: 'eval.experiment.create',
   EVAL_TRIAL_START: 'eval.trial.start',
   EVAL_TRIAL_RESULT_GET: 'eval.trial.result.get',

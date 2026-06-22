@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 
+import { registerAnalyticsCommand } from './commands/analytics.js';
 import { registerAuthCommands } from './commands/auth.js';
 import { registerCompletionCommand } from './commands/completion.js';
 import { registerConfigCommand } from './commands/config.js';
@@ -48,6 +49,7 @@ registerWorkspaceCommand(program);
 registerProjectCommand(program);
 registerUpdateCommand(program);
 registerAuthCommands(program);
+registerAnalyticsCommand(program);
 
 // parseAsync: async command actions (update) must reject through commander,
 // not become unhandled rejections.

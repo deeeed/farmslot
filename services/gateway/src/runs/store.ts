@@ -16,6 +16,7 @@ import {
   DEFAULT_DEV_INTERACTIVE_PROFILE,
   FLOW_STEPS,
   type FlowType,
+  isTerminalRunStatus,
   primaryRoleForFlow,
   prNumberFromRunInput,
   type Run,
@@ -36,6 +37,8 @@ import {
   runnerDefaultModel,
   runnerDefaultSafetyTier,
 } from '../runners/registry.js';
+
+import { emitAnalyticsForTerminalRun } from './analytics.js';
 
 // ADR-023 shipped 2026-04-20. Runs persisted before this date have no
 // safetyTier field and were executed under the pre-refactor hardcoded
@@ -682,6 +685,12 @@ export function updateRun(id: string, partial: Partial<Run>): Run {
   ) {
     invalidateLiveRecipeContextMemo(id);
   }
+  // Emit the terminal analytics record once the run has both a terminal status and a
+  // completedAt (so wall-clock is accurate). Sets run.analyticsEmittedAt synchronously
+  // so the persist below captures the idempotency flag; the append itself is background.
+  if (isTerminalRunStatus(run.status) && run.completedAt) {
+    emitAnalyticsForTerminalRun(run);
+  }
   persistRunBackground(run, 'update');
   return run;
 }
@@ -721,6 +730,9 @@ export async function deleteRun(id: string): Promise<boolean> {
   if (run.decisions?.some((d) => d.type === 'improvement' && !d.resolvedAt)) {
     console.warn(`[run-store] deleting run ${id} with unresolved improvement decision(s)`);
   }
+  // Catch-all: capture analytics before the run leaves the store, in case it reached a
+  // terminal state without ever flowing through updateRun with a completedAt set.
+  emitAnalyticsForTerminalRun(run);
   runs.delete(id);
   try {
     await unlink(path.join(RUNS_DIR, `${id}.json`));
@@ -739,6 +751,9 @@ export async function archiveRun(id: string): Promise<boolean> {
     throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
   }
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
+  // Catch-all: ensure the analytics record exists before the run JSON is moved out of
+  // the live store, so archived/deleted runs are never lost to the analytics corpus.
+  emitAnalyticsForTerminalRun(run);
   runs.delete(id);
   await mkdir(ARCHIVE_DIR, { recursive: true });
   const src = path.join(RUNS_DIR, `${id}.json`);
