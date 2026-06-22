@@ -1,10 +1,10 @@
 // index.ts — Gateway daemon entry point
 // Starts HTTP + WebSocket server on port 7777
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import os from 'node:os';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 import { type EvalTrialStartParams, Events, primaryRoleForFlow } from '@farmslot/protocol';
 
@@ -70,6 +70,40 @@ import { broadcast, broadcastEvent, createWebSocketServer } from './server.js';
 import { handleGitHubWebhook, handleJiraWebhook } from './webhook.js';
 
 const PORT = Number(process.env.GATEWAY_PORT) || 7777;
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // ESRCH means stale lock; EPERM still means a live process owns the PID.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function acquireGatewaySingletonLock(): () => void {
+  const lockPath = resolve(farmslotRoot, '.runs', `gateway-${PORT}.pid`);
+  mkdirSync(dirname(lockPath), { recursive: true });
+
+  if (existsSync(lockPath)) {
+    const existingPid = Number(readFileSync(lockPath, 'utf-8').trim());
+    if (Number.isInteger(existingPid) && existingPid > 0 && existingPid !== process.pid) {
+      if (processIsAlive(existingPid)) {
+        throw new Error(
+          `Gateway already running for ${farmslotRoot} on port ${PORT} (pid ${existingPid}). ` +
+            `Stop the stale gateway before starting another instance to avoid split-brain run state.`,
+        );
+      }
+    }
+  }
+
+  writeFileSync(lockPath, `${process.pid}\n`, 'utf-8');
+  return () => {
+    if (!existsSync(lockPath)) return;
+    const lockedPid = Number(readFileSync(lockPath, 'utf-8').trim());
+    if (lockedPid === process.pid) unlinkSync(lockPath);
+  };
+}
 const ENABLE_BRANCH_WATCHERS =
   process.env.FARMSLOT_BRANCH_WATCHERS === '1' || process.env.FARMSLOT_BRANCH_WATCHERS === 'true';
 const ENABLE_LOCAL_HEALTH_POLL =
@@ -80,6 +114,17 @@ const STARTUP_BRANCH_PREWARM =
   process.env.FARMSLOT_STARTUP_BRANCH_PREWARM === 'true';
 
 async function main(): Promise<void> {
+  const releaseGatewaySingletonLock = acquireGatewaySingletonLock();
+  process.once('exit', releaseGatewaySingletonLock);
+  process.once('SIGINT', () => {
+    releaseGatewaySingletonLock();
+    process.exit(130);
+  });
+  process.once('SIGTERM', () => {
+    releaseGatewaySingletonLock();
+    process.exit(143);
+  });
+
   // Load env files from farmslot root — force-override existing env vars
   // (Node --env-file won't override, causing stale values after tsx watch reload).
   // .env.local-auth holds FARMSLOT_GATEWAY_TOKEN; without it the gateway falls

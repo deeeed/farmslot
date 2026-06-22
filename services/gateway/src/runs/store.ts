@@ -9,6 +9,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import {
   type AgentContext,
+  type AgentContextStatus,
   agentContextTaskFile,
   agentRoleLabel,
   contextIdFor,
@@ -129,6 +130,15 @@ function stepsForFlow(flowType: FlowType): RunStep[] {
   return steps.map((name) => ({ name, status: 'pending' as RunStepStatus }));
 }
 
+function inferredRunStartedAt(run: Pick<Run, 'steps' | 'createdAt'>): string {
+  return (
+    run.steps
+      .map((step) => step.startedAt)
+      .filter((startedAt): startedAt is string => typeof startedAt === 'string' && startedAt.length > 0)
+      .sort()[0] ?? run.createdAt
+  );
+}
+
 function initialAgentContextsForRun(
   run: Pick<
     Run,
@@ -150,7 +160,7 @@ function initialAgentContextsForRun(
       id: contextIdFor(role),
       role,
       label: agentRoleLabel(role),
-      status: run.status === 'paused' ? 'waiting' : 'working',
+      status: agentContextStatusFromRunStatus(run.status),
       slotId: run.slotId,
       runId: run.id,
       taskFile,
@@ -164,6 +174,41 @@ function initialAgentContextsForRun(
       updatedAt: run.updatedAt,
     },
   ];
+}
+
+function agentContextStatusFromRunStatus(status: Run['status']): AgentContextStatus {
+  if (status === 'done') return 'complete';
+  if (status === 'failed' || status === 'cancelled') return 'failed';
+  if (status === 'blocked') return 'blocked';
+  if (status === 'paused') return 'waiting';
+  return 'working';
+}
+
+function syncPrimaryAgentContextStatus(
+  run: Run,
+  previousStatus: Run['status'],
+  now: string,
+  force = false,
+): void {
+  if ((!force && run.status === previousStatus) || !run.agentContexts?.length) return;
+  const role = primaryRoleForFlow(run.flowType);
+  const index = run.agentContexts.findIndex((ctx) => ctx.role === role);
+  if (index === -1) return;
+
+  const status = agentContextStatusFromRunStatus(run.status);
+  const terminalStatuses: ReadonlySet<AgentContextStatus> = new Set([
+    'complete',
+    'failed',
+    'blocked',
+    'idle',
+  ]);
+  const completedAt = terminalStatuses.has(status) ? (run.completedAt ?? now) : undefined;
+  run.agentContexts[index] = {
+    ...run.agentContexts[index],
+    status,
+    updatedAt: now,
+    ...(completedAt ? { completedAt } : { completedAt: undefined }),
+  };
 }
 
 async function ensureDir(): Promise<void> {
@@ -312,6 +357,10 @@ export async function loadAllRuns(): Promise<void> {
         run.safetyTier = legacyTier;
         changed = true;
       }
+      if (!run.startedAt && ACTIVE_STATUSES.has(run.status)) {
+        run.startedAt = inferredRunStartedAt(run);
+        changed = true;
+      }
       if (run.agentContexts === undefined && ACTIVE_STATUSES.has(run.status)) {
         const agentContexts = initialAgentContextsForRun(run);
         if (agentContexts) {
@@ -448,6 +497,7 @@ export function createRun(params: RunCreateParams): Run {
     engineState,
     ticketData: params.ticketData,
     createdAt: now,
+    startedAt: now,
     updatedAt: now,
   };
   run.agentContexts = initialAgentContextsForRun(run);
@@ -587,6 +637,9 @@ export function listRuns(filter?: ListRunsFilter): { runs: Run[]; totalCount: nu
 export function updateRun(id: string, partial: Partial<Run>): Run {
   const run = runs.get(id);
   if (!run) throw new Error(`Run not found: ${id}`);
+  const previousStatus = run.status;
+  const statusProvided = Object.prototype.hasOwnProperty.call(partial, 'status');
+  const updatedAt = new Date().toISOString();
 
   const shouldInvalidateRecipeRunGroups =
     (Object.prototype.hasOwnProperty.call(partial, 'liveRecipeContext') &&
@@ -595,7 +648,8 @@ export function updateRun(id: string, partial: Partial<Run>): Run {
       partial.taskFile !== run.taskFile) ||
     (Object.prototype.hasOwnProperty.call(partial, 'slotId') && partial.slotId !== run.slotId) ||
     (Object.prototype.hasOwnProperty.call(partial, 'project') && partial.project !== run.project);
-  Object.assign(run, partial, { updatedAt: new Date().toISOString() });
+  Object.assign(run, partial, { updatedAt });
+  syncPrimaryAgentContextStatus(run, previousStatus, updatedAt, statusProvided);
   if (shouldInvalidateRecipeRunGroups) {
     invalidateRecipeRunGroupCache(id);
   }
@@ -684,15 +738,18 @@ export async function archiveRun(id: string): Promise<boolean> {
   if (ACTIVE_STATUSES.has(run.status)) {
     throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
   }
+  const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
   runs.delete(id);
   await mkdir(ARCHIVE_DIR, { recursive: true });
   const src = path.join(RUNS_DIR, `${id}.json`);
   const dst = path.join(ARCHIVE_DIR, `${id}.json`);
   try {
+    await writeFile(src, JSON.stringify(archivedRun, null, 2), 'utf-8');
     await rename(src, dst);
   } catch {
-    // If rename fails (file missing), write directly to archive
-    await writeFile(dst, JSON.stringify(run, null, 2), 'utf-8');
+    // If the source disappeared between cache lookup and archive, persist the
+    // stamped record directly so archived views still know it is hidden.
+    await writeFile(dst, JSON.stringify(archivedRun, null, 2), 'utf-8');
   }
   return true;
 }

@@ -22,6 +22,8 @@ import {
 } from '../core/tmux.js';
 import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
+import { classifyRunnerPaneStateBestEffort } from './pane-classifier.js';
+
 /**
  * Env prefix for worker sessions.
  *
@@ -143,11 +145,11 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     id: 'cursor',
     defaultLaunchMode: 'interactive',
     processMatchers: ['(^|/)(cursor-)?agent($| )'],
-    // Cursor Agent's normal Farmslot path is the interactive TUI. Launch it
-    // without an argv task prompt, then send the task after the live composer is
-    // ready so operators can inspect and steer the pane.
+    // Cursor Agent v2026.06.19 leaves tmux-injected prompts buffered/reset at
+    // the "Run Everything" composer. Passing the task as argv starts the same
+    // steerable TUI turn without the fragile post-launch key path.
     supportsInteractivePrompt: true,
-    needsPostLaunchPrompt: true,
+    needsPostLaunchPrompt: false,
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -626,7 +628,7 @@ function paneLineLooksShellPrompt(line: string): boolean {
 
 function runnerPaneShowsCurrentInteractiveProgress(pane: string, runnerId?: string | null): boolean {
   const runner = normalizeRunner(runnerId);
-  if (runner !== 'cursor' && runner !== 'grok') return false;
+  if (runner !== 'cursor' && runner !== 'grok' && runner !== 'claude') return false;
   const tail = pane
     .split('\n')
     .map((line) => line.trim())
@@ -635,9 +637,14 @@ function runnerPaneShowsCurrentInteractiveProgress(pane: string, runnerId?: stri
   let progressIndex = -1;
   for (let i = tail.length - 1; i >= 0; i--) {
     if (
-      /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running|Starting session)\b(?:\s+\d+\s+tokens)?/i.test(
-        tail[i] ?? '',
-      ) ||
+      (runner === 'claude'
+        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing)[…\.]?/i.test(
+            tail[i] ?? '',
+          ) ||
+          /running in the background|esc to interrupt/i.test(tail[i] ?? '')
+        : /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running|Starting session)\b(?:\s+\d+\s+tokens)?/i.test(
+            tail[i] ?? '',
+          )) ||
       /\b(Thinking|Thought)\b/i.test(tail[i] ?? '')
     ) {
       progressIndex = i;
@@ -646,6 +653,17 @@ function runnerPaneShowsCurrentInteractiveProgress(pane: string, runnerId?: stri
   }
   if (progressIndex === -1) return false;
   return !tail.slice(progressIndex + 1).some((line) => paneLineLooksShellPrompt(line));
+}
+
+export function runnerPaneShowsTaskAlreadyRunning(
+  pane: string,
+  message: string,
+  marker: string,
+  runnerId?: string | null,
+): boolean {
+  if (!runnerPaneShowsCurrentInteractiveProgress(pane, runnerId)) return false;
+  const tail = paneTailText(pane, 80);
+  return runnerPaneContainsInstruction(tail, message) || Boolean(marker && tail.includes(marker));
 }
 
 export function runnerPaneShowsPromptAccepted(
@@ -741,13 +759,19 @@ export function runnerPaneHasBufferedInstruction(
 export function runnerBufferedInstructionSubmitKey(
   pane: string,
   runnerId?: string | null,
-): 'Enter' | 'Tab' {
+): 'Enter' | 'Tab' | 'C-m' {
   // Codex's TUI shows "tab to queue message" while the current turn/hooks are
   // still busy. In that state a bare Enter does not submit the visible composer
   // text; it leaves dispatch with a false "prompt delivery failed" even though
   // the prompt is clearly buffered. Use the key the TUI explicitly requests.
   if (normalizeRunner(runnerId) === 'codex' && /tab to queue message/i.test(pane)) {
     return 'Tab';
+  }
+  // Cursor Agent v2026.06.19 renders a "Run Everything" composer where tmux's
+  // named Enter key can leave the prompt buffered. A carriage return submits
+  // the exact same visible prompt reliably.
+  if (normalizeRunner(runnerId) === 'cursor') {
+    return 'C-m';
   }
   return 'Enter';
 }
@@ -825,6 +849,34 @@ async function submitRunnerInstruction(
     `[${logPrefix}] instruction still appears pending in ${target} after submit verification`,
   );
   return false;
+}
+
+async function waitForStableIdlePaneAfterClassifierAction(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  opts: { timeoutMs: number; pollIntervalMs: number; stabilityPolls: number },
+): Promise<string | null> {
+  const deadline = Date.now() + opts.timeoutMs;
+  let lastPane = '';
+  let stableCount = 0;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, opts.pollIntervalMs));
+    const pane = await captureTmuxPane(vars, target, 90);
+    if (!runnerPaneLooksIdle(pane.split('\n'), runner)) {
+      stableCount = 0;
+      lastPane = '';
+      continue;
+    }
+    if (pane === lastPane) {
+      stableCount += 1;
+      if (stableCount >= opts.stabilityPolls) return pane;
+    } else {
+      stableCount = 1;
+      lastPane = pane;
+    }
+  }
+  return null;
 }
 
 export async function sendRunnerInstructionSafely(
@@ -980,6 +1032,12 @@ export async function sendRunnerPostLaunchPrompt(
           `Prompt delivery aborted before the ${readyTimeoutMs / 1000}s readiness timeout.`,
       );
     }
+    if (runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner)) {
+      console.log(
+        `[${logPrefix}] prompt already executing in ${target}; skipping duplicate post-launch send`,
+      );
+      return;
+    }
     if (!runnerPaneLooksIdle(pane.split('\n'), runner)) {
       stableCount = 0;
       lastPane = '';
@@ -997,13 +1055,88 @@ export async function sendRunnerPostLaunchPrompt(
     }
   }
 
+  let timeoutPaneForFailure = '';
+  let classifierForFailure: Awaited<ReturnType<typeof classifyRunnerPaneStateBestEffort>> | null =
+    null;
   if (!ready) {
-    const timeoutPane = (
+    timeoutPaneForFailure = (
       await execOnSlot(
         vars,
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
       )
     ).stdout;
+    classifierForFailure = await classifyRunnerPaneStateBestEffort({
+      runner,
+      target,
+      pane: timeoutPaneForFailure,
+      expected: 'post-launch prompt ready for task delivery',
+    });
+    if (classifierForFailure.confidence >= 0.8 && classifierForFailure.state === 'ready') {
+      console.log(
+        `[${logPrefix}] pane classifier accepted ${target} as ready: ${classifierForFailure.reason}`,
+      );
+      ready = true;
+      lastPane = timeoutPaneForFailure;
+    }
+    if (
+      !ready &&
+      classifierForFailure.confidence >= 0.8 &&
+      (classifierForFailure.suggestedAction === 'send_enter' ||
+        classifierForFailure.suggestedAction === 'send_ctrl_m') &&
+      (classifierForFailure.state === 'command_not_submitted' ||
+        classifierForFailure.state === 'prompt_buffered')
+    ) {
+      const key = classifierForFailure.suggestedAction === 'send_ctrl_m' ? 'C-m' : 'Enter';
+      console.log(
+        `[${logPrefix}] pane classifier suggested ${key} for ${target}: ${classifierForFailure.reason}`,
+      );
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${key} 2>/dev/null`),
+      );
+      const recoveredPane = await waitForStableIdlePaneAfterClassifierAction(vars, target, runner, {
+        timeoutMs: Math.min(30_000, Math.max(readyTimeoutMs, 5_000)),
+        pollIntervalMs,
+        stabilityPolls,
+      });
+      if (recoveredPane) {
+        ready = true;
+        lastPane = recoveredPane;
+      } else {
+        timeoutPaneForFailure = (
+          await execOnSlot(
+            vars,
+            tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
+          )
+        ).stdout;
+        classifierForFailure = await classifyRunnerPaneStateBestEffort({
+          runner,
+          target,
+          pane: timeoutPaneForFailure,
+          expected: 'post-launch prompt ready for task delivery after classifier action',
+        });
+      }
+    }
+  }
+
+  if (!ready) {
+    const timeoutPane =
+      timeoutPaneForFailure ||
+      (
+        await execOnSlot(
+          vars,
+          tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
+        )
+      ).stdout;
+    const classifier =
+      classifierForFailure ??
+      (await classifyRunnerPaneStateBestEffort({
+        runner,
+        target,
+        pane: timeoutPane,
+        expected: 'post-launch prompt ready for task delivery',
+      }));
+    const classifierJson = JSON.stringify(classifier);
     let snapshotNote = '';
     if (opts.blockerSnapshotPath) {
       try {
@@ -1015,8 +1148,9 @@ export async function sendRunnerPostLaunchPrompt(
             `target=${target}`,
             `repo=${vars.remoteRepo}`,
             'kind=ready-timeout',
-            `summary=${runner} did not reach a stable ready state before prompt delivery timed out.`,
+            `summary=runner launch did not reach a stable ready state before prompt delivery timed out.`,
             `capturedAt=${new Date().toISOString()}`,
+            `classifier=${classifierJson}`,
             '',
             timeoutPane,
           ].join('\n'),
@@ -1027,7 +1161,8 @@ export async function sendRunnerPostLaunchPrompt(
       }
     }
     throw new Error(
-      `${runner} did not reach a stable ready state within ${readyTimeoutMs / 1000}s in tmux target ${target}. ` +
+      `Runner launch (${runner}) did not reach a stable ready state within ${readyTimeoutMs / 1000}s in tmux target ${target}. ` +
+        `Pane classifier: ${classifier.state}/${classifier.confidence} action=${classifier.suggestedAction} (${classifier.reason}). ` +
         `Prompt delivery aborted to avoid sending into a half-booted runner TUI.${snapshotNote}\n` +
         `Last pane content:\n${timeoutPane}`,
     );

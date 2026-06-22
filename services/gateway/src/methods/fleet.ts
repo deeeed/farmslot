@@ -5,7 +5,13 @@ import { existsSync } from 'node:fs';
 import { readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { FleetStatusParams, FleetStatusResult } from '@farmslot/protocol';
+import type {
+  AgentContextSummary,
+  FleetStatusParams,
+  FleetStatusResult,
+  Run,
+  RunStatus,
+} from '@farmslot/protocol';
 
 import {
   execOnSlot,
@@ -24,9 +30,11 @@ import {
   renderFixtureTemplate,
   type SlotVars,
 } from '../core/index.js';
+import { summarizeAgentContexts } from '../agents/contexts.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { runnerProcessPatternSource } from '../runners/registry.js';
+import { listRuns } from '../runs/store.js';
 
 const statusFile = path.join(farmslotRoot, '.farm-status.json');
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
@@ -73,10 +81,108 @@ interface PreviousSlotStatus {
   current_family_id?: string | null;
   current_lane?: string | null;
   current_variant?: string | null;
+  agent_contexts?: AgentContextSummary[] | null;
   dispatched_at?: string | null;
   completed_at?: string | null;
   runner?: string | null;
   model?: string | null;
+}
+
+type RefreshSlotRow = ReturnType<typeof buildRefreshSlotRow>;
+
+const ACTIVE_SLOT_STATUS_PRIORITY: Partial<Record<RunStatus, number>> = {
+  created: 1,
+  grading: 1,
+  'writing-task': 1,
+  'slot-finding': 1,
+  preparing: 4,
+  dispatching: 5,
+  monitoring: 6,
+  'self-reviewing': 5,
+  completing: 5,
+  'human-gating': 4,
+  'ci-watching': 3,
+  paused: 2,
+  blocked: 2,
+};
+
+function activeRunPriority(run: Run): number {
+  return ACTIVE_SLOT_STATUS_PRIORITY[run.status] ?? 0;
+}
+
+function activeSlotPhaseForRun(status: RunStatus): {
+  lifecycle: string;
+  phase: string | null;
+  agent: 'idle' | 'working';
+} {
+  switch (status) {
+    case 'preparing':
+    case 'created':
+    case 'grading':
+    case 'writing-task':
+    case 'slot-finding':
+      return { lifecycle: 'busy', phase: 'preparing', agent: 'idle' };
+    case 'dispatching':
+      return { lifecycle: 'busy', phase: 'dispatching', agent: 'idle' };
+    case 'human-gating':
+      return { lifecycle: 'busy', phase: 'review-gate', agent: 'idle' };
+    case 'ci-watching':
+      return { lifecycle: 'held', phase: 'ci-watch', agent: 'idle' };
+    case 'paused':
+    case 'blocked':
+      return { lifecycle: 'held', phase: 'pr-watch', agent: 'idle' };
+    default:
+      return { lifecycle: 'busy', phase: 'working', agent: 'working' };
+  }
+}
+
+function taskFileRefFromRun(run: Run): string | null {
+  if (!run.taskFile) return null;
+  const marker = `${path.sep}tasks${path.sep}`;
+  const index = run.taskFile.indexOf(marker);
+  return index === -1 ? run.taskFile : run.taskFile.slice(index + marker.length).replace(/\\/g, '/');
+}
+
+function newestActiveRunForSlot(runs: Run[], slotId: string): Run | null {
+  const candidates = runs.filter((run) => run.slotId === slotId);
+  if (candidates.length === 0) return null;
+  return candidates.sort((a, b) => {
+    const priorityDiff = activeRunPriority(b) - activeRunPriority(a);
+    if (priorityDiff !== 0) return priorityDiff;
+    return Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt);
+  })[0];
+}
+
+export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
+  row: T,
+  activeRun: Run | null,
+): T {
+  if (!activeRun) return row;
+  const activeState = activeSlotPhaseForRun(activeRun.status);
+  return {
+    ...row,
+    lifecycle: activeState.lifecycle,
+    phase: activeState.phase,
+    agent: activeState.agent,
+    dispatchable: false,
+    task_id: row.task_id ?? activeRun.ticketOrPr,
+    task_file: row.task_file ?? taskFileRefFromRun(activeRun),
+    current_run_id: activeRun.id,
+    current_flow_type: activeRun.flowType,
+    current_ticket_or_pr: activeRun.ticketOrPr,
+    current_mode: activeRun.mode,
+    current_family_id: activeRun.familyId,
+    current_lane: activeRun.lane,
+    current_variant: activeRun.variant ?? null,
+    agent_contexts:
+      activeRun.agentContexts && activeRun.agentContexts.length > 0
+        ? summarizeAgentContexts(activeRun)
+        : row.agent_contexts,
+    dispatched_at: row.dispatched_at ?? activeRun.createdAt.replace(/\.\d{3}Z$/, 'Z'),
+    completed_at: null,
+    runner: activeRun.metrics.runner ?? row.runner,
+    model: activeRun.metrics.model ?? row.model,
+  };
 }
 
 export async function fleetRefresh(): Promise<FleetStatusResult> {
@@ -125,100 +231,13 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
 
   // 6. Build final JSON and write
   const checkedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-  const slots = results.map((r) => {
-    const prev = prevSlots[r.slot] ?? {};
-
-    // Map pool mode + old lifecycle values to new 5-state model.
-    let lifecycle: string;
-    let phase: string | null = (prev.phase as string | null) ?? null;
-    let warm: boolean = (prev.warm as boolean | undefined) ?? false;
-    const prevLifecycle = prev.lifecycle as string | undefined;
-    if (r.mode === 'disabled') {
-      lifecycle = 'disabled';
-      phase = null;
-    } else if (r.mode === 'custom') {
-      lifecycle = 'manual';
-      phase = null;
-    } else if (
-      prevLifecycle === 'custom' ||
-      prevLifecycle === 'disabled' ||
-      prevLifecycle === 'manual'
-    ) {
-      lifecycle = 'ready';
-      phase = null;
-    } else {
-      // Migrate old lifecycle values to new model
-      switch (prevLifecycle) {
-        case 'released':
-          lifecycle = 'ready';
-          phase = null;
-          warm = false;
-          break;
-        case 'preparing':
-          lifecycle = 'busy';
-          phase = 'preparing';
-          break;
-        case 'dispatching':
-          lifecycle = 'busy';
-          phase = 'dispatching';
-          break;
-        case 'working':
-          lifecycle = 'busy';
-          phase = 'working';
-          break;
-        case 'releasing':
-          lifecycle = 'busy';
-          phase = 'releasing';
-          break;
-        case 'review-gate':
-          lifecycle = 'busy';
-          phase = 'review-gate';
-          break;
-        case 'ci-watch':
-          lifecycle = 'held';
-          phase = 'ci-watch';
-          break;
-        default:
-          lifecycle = prevLifecycle ?? 'ready';
-          break;
-      }
-    }
-
-    return {
-      slot: r.slot,
-      machine: r.machine,
-      platform: r.platform,
-      project: r.project,
-      ssh: r.ssh,
-      dev: r.dev,
-      devserver: r.devserver,
-      device: r.device,
-      cdp: r.cdp,
-      fixtures: r.fixtures,
-      branch: r.branch,
-      agent: r.agent,
-      enabled: r.enabled,
-      mode: r.mode,
-      dispatchable: r.dispatchable,
-      lifecycle,
-      phase,
-      warm,
-      task_id: prev.task_id ?? null,
-      task_file: prev.task_file ?? null,
-      current_run_id: prev.current_run_id ?? null,
-      current_flow_type: prev.current_flow_type ?? null,
-      current_ticket_or_pr: prev.current_ticket_or_pr ?? null,
-      current_mode: prev.current_mode ?? null,
-      current_family_id: prev.current_family_id ?? null,
-      current_lane: prev.current_lane ?? null,
-      current_variant: prev.current_variant ?? null,
-      dispatched_at: prev.dispatched_at ?? null,
-      completed_at: prev.completed_at ?? null,
-      runner: prev.runner ?? null,
-      model: prev.model ?? null,
-      ...(r.resources ? { resources: r.resources } : {}),
-    };
-  });
+  const activeRuns = listRuns({ active: true }).runs;
+  const slots = results.map((r) =>
+    reconcileRefreshSlotRowWithActiveRun(
+      buildRefreshSlotRow(r, prevSlots[r.slot] ?? {}),
+      newestActiveRunForSlot(activeRuns, r.slot),
+    ),
+  );
 
   const tmpFile = `${statusFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   await writeFile(tmpFile, JSON.stringify({ checked_at: checkedAt, slots }, null, 2) + '\n');
@@ -226,6 +245,100 @@ async function runFleetRefresh(): Promise<FleetStatusResult> {
 
   const fleet = await loadFleetStatus(true);
   return { fleet };
+}
+
+function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
+  // Map pool mode + old lifecycle values to new 5-state model.
+  let lifecycle: string;
+  let phase: string | null = (prev.phase as string | null) ?? null;
+  let warm: boolean = (prev.warm as boolean | undefined) ?? false;
+  const prevLifecycle = prev.lifecycle as string | undefined;
+  if (r.mode === 'disabled') {
+    lifecycle = 'disabled';
+    phase = null;
+  } else if (r.mode === 'custom') {
+    lifecycle = 'manual';
+    phase = null;
+  } else if (
+    prevLifecycle === 'custom' ||
+    prevLifecycle === 'disabled' ||
+    prevLifecycle === 'manual'
+  ) {
+    lifecycle = 'ready';
+    phase = null;
+  } else {
+    // Migrate old lifecycle values to new model
+    switch (prevLifecycle) {
+      case 'released':
+        lifecycle = 'ready';
+        phase = null;
+        warm = false;
+        break;
+      case 'preparing':
+        lifecycle = 'busy';
+        phase = 'preparing';
+        break;
+      case 'dispatching':
+        lifecycle = 'busy';
+        phase = 'dispatching';
+        break;
+      case 'working':
+        lifecycle = 'busy';
+        phase = 'working';
+        break;
+      case 'releasing':
+        lifecycle = 'busy';
+        phase = 'releasing';
+        break;
+      case 'review-gate':
+        lifecycle = 'busy';
+        phase = 'review-gate';
+        break;
+      case 'ci-watch':
+        lifecycle = 'held';
+        phase = 'ci-watch';
+        break;
+      default:
+        lifecycle = prevLifecycle ?? 'ready';
+        break;
+    }
+  }
+
+  return {
+    slot: r.slot,
+    machine: r.machine,
+    platform: r.platform,
+    project: r.project,
+    ssh: r.ssh,
+    dev: r.dev,
+    devserver: r.devserver,
+    device: r.device,
+    cdp: r.cdp,
+    fixtures: r.fixtures,
+    branch: r.branch,
+    agent: r.agent,
+    enabled: r.enabled,
+    mode: r.mode,
+    dispatchable: r.dispatchable,
+    lifecycle,
+    phase,
+    warm,
+    task_id: prev.task_id ?? null,
+    task_file: prev.task_file ?? null,
+    current_run_id: prev.current_run_id ?? null,
+    current_flow_type: prev.current_flow_type ?? null,
+    current_ticket_or_pr: prev.current_ticket_or_pr ?? null,
+    current_mode: prev.current_mode ?? null,
+    current_family_id: prev.current_family_id ?? null,
+    current_lane: prev.current_lane ?? null,
+    current_variant: prev.current_variant ?? null,
+    agent_contexts: prev.agent_contexts ?? undefined,
+    dispatched_at: prev.dispatched_at ?? null,
+    completed_at: prev.completed_at ?? null,
+    runner: prev.runner ?? null,
+    model: prev.model ?? null,
+    ...(r.resources ? { resources: r.resources } : {}),
+  };
 }
 
 async function mapWithConcurrency<T, R>(

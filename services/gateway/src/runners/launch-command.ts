@@ -29,7 +29,8 @@ export function buildCursorAgentLaunch(options: {
     options.model && options.model !== 'unknown' ? options.model : DEFAULT_CURSOR_MODEL;
   const flagList = runnerFlagsForTier('cursor', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
-  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment} --model ${effectiveModel}`;
+  const prompt = options.prompt.trim() ? ` ${shellQuote(options.prompt)}` : '';
+  return `cd ${shellQuote(options.repo)} && ${options.binary}${flagFragment} --model ${effectiveModel}${prompt}`;
 }
 
 export function resolveCursorAgentBinary(preferred?: string | null): string {

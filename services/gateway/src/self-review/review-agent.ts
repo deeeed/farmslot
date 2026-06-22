@@ -216,6 +216,7 @@ export async function runReviewAgent(
           readyTimeoutMs: 60_000,
           maxAttempts: 5,
           blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
+          signalPath: `${taskDir}/SELF-REVIEW-SIGNAL.json`,
         },
       );
     }

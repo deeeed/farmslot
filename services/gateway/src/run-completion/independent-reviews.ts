@@ -98,6 +98,7 @@ export async function materializeIndependentReviewArtifacts(
         : out.verdict === 'blocked'
           ? 'failed'
           : 'pending';
+  if (verdict === 'pending' && step.status !== 'running') return [];
   const issues = Array.isArray(out.issues)
     ? (out.issues as NonNullable<IndependentReviewStatus['issues']>)
     : [];

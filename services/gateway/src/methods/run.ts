@@ -121,10 +121,20 @@ export function assertDuplicateRunAllowed(
     throw new Error('Comparison lane duplicates require an explicit familyId.');
   }
   const conflicting = sameTicket.find(
-    (r) =>
-      r.lane !== 'comparison' ||
-      r.familyId !== params.familyId ||
-      (r.variant ?? null) === (params.variant ?? null),
+    (r) => {
+      if (r.lane === 'comparison') {
+        return r.familyId !== params.familyId || (r.variant ?? null) === (params.variant ?? null);
+      }
+      if (
+        r.lane === 'production' &&
+        (r.id === params.familyId ||
+          r.id === params.parentRunId ||
+          (r.familyId === params.familyId && r.id === r.familyId))
+      ) {
+        return false;
+      }
+      return true;
+    },
   );
   if (conflicting) {
     throw new Error(

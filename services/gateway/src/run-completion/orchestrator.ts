@@ -415,6 +415,7 @@ export async function prepareCompletionPackage(
     priorEvidenceManifest?: ArtifactRef[];
     stampReviews?: boolean;
     requireArtifactMirror?: boolean;
+    headSha?: string;
   },
 ): Promise<PrepareCompletionPackageResult> {
   const before = getRun(runId);
@@ -443,7 +444,15 @@ export async function prepareCompletionPackage(
     options?.reviewDepth ?? run.engineState?.publishGate?.reviewDepth,
   );
   const materializedReviews = await materializeIndependentReviewArtifacts(run);
-  const priorReviews = run.engineState?.publishGate?.independentReviews ?? [];
+  const selfReviewStep = run.steps.find((step) => step.name === 'self-review');
+  const priorReviews = (run.engineState?.publishGate?.independentReviews ?? []).filter(
+    (review) =>
+      !(
+        inferReviewSourceKind(review) === 'self-review' &&
+        review.verdict === 'pending' &&
+        selfReviewStep?.status !== 'running'
+      ),
+  );
   // Composite (sourceKind, loopNumber) key — defense in depth so two streams
   // can't collide even if a future caller bypasses the source helpers. The id
   // alone was the prior key and silently dropped entries on collision.
@@ -483,7 +492,7 @@ export async function prepareCompletionPackage(
   );
   independentReviews = await augmentIndependentReviewAttemptsFromArtifacts(run, independentReviews);
   const target = options?.publicationTarget ?? defaultPublicationTarget(run);
-  const headSha = await requireSnapshotHeadSha(run);
+  const headSha = options?.headSha ?? (await requireSnapshotHeadSha(run));
   const branch = run.branch ?? before.branch ?? '';
   const packageId = `pkg-${run.id.slice(0, 8)}-${Date.now().toString(36)}`;
   const artifactPath = 'artifacts/pr-package.json';
@@ -493,7 +502,9 @@ export async function prepareCompletionPackage(
     runEvidenceManifest,
     options?.priorEvidenceManifest,
   );
-  const draftBodyArtifacts = mergeEvidenceManifestArtifactRefs(artifacts, runEvidenceManifest);
+  const draftBodyArtifacts = evidenceManifest.length
+    ? evidenceManifest
+    : mergeEvidenceManifestArtifactRefs(artifacts, runEvidenceManifest);
   const basePackage: Omit<ReadyGatePrPackage, 'packageHash'> = {
     id: packageId,
     artifactPath,

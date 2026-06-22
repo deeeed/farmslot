@@ -26,6 +26,11 @@ test('run create builds params from a GitHub/Jira ticket source', () => {
       mode: undefined,
       model: undefined,
       app: undefined,
+      familyId: undefined,
+      parentRunId: undefined,
+      familyRootTicketOrPr: undefined,
+      lane: undefined,
+      variant: undefined,
     },
   );
 });
@@ -48,6 +53,46 @@ test('run create builds params from an existing task file source', () => {
       runner: undefined,
       model: undefined,
       app: undefined,
+      familyId: undefined,
+      parentRunId: undefined,
+      familyRootTicketOrPr: undefined,
+      lane: undefined,
+      variant: undefined,
+    },
+  );
+});
+
+test('run create forwards comparison lineage metadata', () => {
+  assert.deepEqual(
+    buildRunCreateParams({
+      project: 'audiolab-farm',
+      flowType: 'dev',
+      ticket: 'DEMO-414',
+      slot: 'mini-audiolab-1',
+      runner: 'codex',
+      model: 'gpt-5.5',
+      familyId: 'family-1',
+      parentRunId: 'parent-1',
+      familyRootTicketOrPr: 'DEMO-414',
+      lane: 'comparison',
+      variant: 'comparison-codex',
+    }),
+    {
+      project: 'audiolab-farm',
+      flowType: 'dev',
+      ticketOrPr: 'DEMO-414',
+      slotId: 'mini-audiolab-1',
+      runner: 'codex',
+      model: 'gpt-5.5',
+      skipPrepare: undefined,
+      prepareProfile: undefined,
+      mode: undefined,
+      app: undefined,
+      familyId: 'family-1',
+      parentRunId: 'parent-1',
+      familyRootTicketOrPr: 'DEMO-414',
+      lane: 'comparison',
+      variant: 'comparison-codex',
     },
   );
 });

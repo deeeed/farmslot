@@ -32,6 +32,24 @@ test('terminalWorkerSignalFromRaw parses only terminal worker signals', () => {
   );
 });
 
+test('done-partial worker signals normalize to blocked partial terminal signals', () => {
+  const signal = terminalWorkerSignalFromRaw(
+    JSON.stringify({
+      status: 'done-partial',
+      outcome: 'blocked-external-runtime-gap',
+      reason: 'capture-helper screenshot failed',
+      timestamp: '2026-06-22T09:47:23Z',
+    }),
+  );
+
+  assert.equal(signal?.status, 'blocked');
+  assert.equal(signal?.outcome, 'partial');
+  assert.equal(signal?.disposition, 'blocked');
+  assert.match(signal?.reason ?? '', /blocked-external-runtime-gap/);
+  assert.match(signal?.reason ?? '', /capture-helper screenshot failed/);
+  assert.equal(isTerminalWorkerSignal(signal!), true);
+});
+
 test('signal freshness compares against durable context floors', () => {
   const signal = { status: 'complete' as const, timestamp: '2026-05-05T01:08:16Z' };
 

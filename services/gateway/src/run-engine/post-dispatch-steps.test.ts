@@ -5,9 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { writeResultPackageManifest } from '../evals/package-store.js';
-import { createRun } from '../runs/store.js';
+import { createRun, updateRun } from '../runs/store.js';
 
 import {
+  executeHumanGateStep,
   executeSelfReviewStep,
   readyGateReviewSubjectMatches,
   shouldSkipRetrospectiveAtComplete,
@@ -40,6 +41,57 @@ test('complete-step retrospective gating defers only CI-watch flows', () => {
     false,
     'review-pr has human-gate but no CI-watch, so complete is terminal',
   );
+});
+
+
+
+test('human-gate can approve a prepared local-first package after the slot was released', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'example-mobile-farm',
+    ticketOrPr: 'PROJ-READY',
+    runner: 'grok',
+    engineState: {
+      publishGate: {
+        publicationTarget: 'ready',
+        publicationStatus: 'not_published',
+      },
+    },
+  });
+  updateRun(run.id, { slotId: null });
+  t.after(async () => {
+    await deleteTestRunIfPresent(run.id);
+  });
+
+  let markedSlot = false;
+  const io = await executeHumanGateStep(run.id, {
+    activeMonitors: new Map(),
+    blockedRunError: (message, reason) => new Error(`${reason}: ${message}`),
+    broadcastFn: () => {
+      markedSlot = true;
+    },
+    createEngineDecision: async () => 'decision-1',
+    executeNoChangeGate: async () => {},
+    executePublishGateReviewPlan: async () => {
+      throw new Error('static ready gate should not request a live review slot');
+    },
+    executeReadyGate: async () => 'ready',
+    executeReviewGate: async () => {},
+    getDiffStat: async () => ({ files: 1, additions: 2, deletions: 0 }),
+    interactiveLightweightSkipOutputs: () => ({ outputs: { skipped: true } }),
+    isHumanGateEnabled: async () => true,
+    latestResolvedHumanGateDecision: () => undefined,
+    monitorTerminalError: ({ reason }) => new Error(reason),
+    refreshRunLinks: async () => {},
+    reviewPlanFromSelection: () => [],
+    stepPartialIO: new Map(),
+  });
+
+  assert.equal(markedSlot, false, 'released-slot human gate must not mutate fleet state');
+  assert.deepEqual(io.inputs, { gateType: 'ready', gateEnabled: true, forced: false });
+  assert.equal(io.outputs?.resolvedAction, null);
+  assert.equal(typeof io.outputs?.waitDurationMs, 'number');
 });
 
 test('readyGateReviewSubjectMatches ignores review-loop metadata but rejects subject drift', () => {

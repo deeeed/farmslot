@@ -1,5 +1,6 @@
 // Shared utilities for run components — status colors, duration formatting, flow labels
 import type {
+  ArtifactRef,
   FamilyChangeLedgerEntry,
   FamilyObservabilityArtifact,
   FlowType,
@@ -11,7 +12,12 @@ import type {
   RunStepStatus,
   WorkerTerminalDisposition,
 } from '@farmslot/protocol';
-import { buildFamilySummary, githubPullUrl, parseGitHubRef } from '@farmslot/protocol';
+import {
+  buildFamilySummary,
+  githubPullUrl,
+  isPublishEvidenceArtifact,
+  parseGitHubRef,
+} from '@farmslot/protocol';
 import { flowColor as _flowColor, flowLabel as _flowLabel } from '@farmslot/theme';
 
 import { colors } from '../../styles/theme-tokens.js';
@@ -332,6 +338,29 @@ export function canCompareRuns(a: Run, b: Run): boolean {
 export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifact[] {
   const seen = new Set<string>();
   const artifacts: FamilyObservabilityArtifact[] = [];
+  const packageEvidence = latestPublishPackageEvidence(run);
+  const packageEvidencePaths = new Set(packageEvidence.map((artifact) => artifact.path));
+
+  const add = (artifact: FamilyObservabilityArtifact) => {
+    const key = `${artifact.stepName ?? artifact.source}:${artifact.path}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    artifacts.push(artifact);
+  };
+
+  for (const artifact of packageEvidence) {
+    add({
+      runId: run.id,
+      familyId: run.familyId,
+      stepName: 'publish-gate',
+      path: artifact.path,
+      purpose: artifact.purpose,
+      sizeBytes: artifact.sizeBytes,
+      sha256: artifact.sha256,
+      maxFps: artifact.maxFps,
+      source: 'task-artifact',
+    });
+  }
 
   for (const step of run.steps) {
     const rawArtifacts = step.outputs?.artifacts;
@@ -347,18 +376,17 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
         maxFps?: unknown;
       };
       if (typeof row.path !== 'string' || !row.path.trim()) continue;
-      const key = `${step.name}:${row.path}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      artifacts.push({
+      const purpose =
+        typeof row.purpose === 'string' && row.purpose.trim()
+          ? row.purpose
+          : purposeForArtifactPath(row.path);
+      if (!isRunEvidenceArtifact({ path: row.path, purpose }, packageEvidencePaths)) continue;
+      add({
         runId: run.id,
         familyId: run.familyId,
         stepName: step.name,
         path: row.path,
-        purpose:
-          typeof row.purpose === 'string' && row.purpose.trim()
-            ? row.purpose
-            : purposeForArtifactPath(row.path),
+        purpose,
         sizeBytes: typeof row.sizeBytes === 'number' ? row.sizeBytes : undefined,
         sha256: typeof row.sha256 === 'string' ? row.sha256 : undefined,
         maxFps:
@@ -369,6 +397,41 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
   }
 
   return artifacts;
+}
+
+function latestPublishPackageEvidence(run: Run): ArtifactRef[] {
+  const decisions = [...(run.decisions ?? [])].reverse();
+  for (const decision of decisions) {
+    const payload = decision.payload as {
+      prPackage?: { evidenceManifest?: ArtifactRef[] };
+      artifactManifest?: ArtifactRef[];
+    } | null;
+    const evidence = payload?.prPackage?.evidenceManifest;
+    if (Array.isArray(evidence) && evidence.length > 0) return evidence;
+    const artifactManifest = payload?.artifactManifest;
+    if (Array.isArray(artifactManifest) && artifactManifest.length > 0) {
+      return artifactManifest.filter(isPublishEvidenceArtifact);
+    }
+  }
+  return [];
+}
+
+function isRunEvidenceArtifact(
+  artifact: Pick<ArtifactRef, 'path' | 'purpose'>,
+  packageEvidencePaths: Set<string>,
+): boolean {
+  const normalizedPath = artifact.path.replace(/\\/g, '/');
+  if (/^artifacts\/(runtime-launch|runner-blockers)\//.test(normalizedPath)) return false;
+  if (packageEvidencePaths.has(artifact.path)) return false;
+  if (packageEvidencePaths.size > 0 && isPublishEvidenceArtifact(artifact)) return false;
+  const basename = normalizedPath.split('/').pop()?.toLowerCase() ?? '';
+  return (
+    basename === 'report.md' ||
+    basename === 'recipe-coverage.md' ||
+    basename === 'recipe-quality.json' ||
+    basename === 'evidence-manifest.json' ||
+    isPublishEvidenceArtifact(artifact)
+  );
 }
 
 function purposeForArtifactPath(path: string): string {

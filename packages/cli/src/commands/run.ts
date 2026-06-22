@@ -103,6 +103,11 @@ export interface RunCreateCliOptions {
   runner?: string;
   model?: string;
   app?: string;
+  familyId?: string;
+  parentRunId?: string;
+  familyRootTicketOrPr?: string;
+  lane?: string;
+  variant?: string;
 }
 
 export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, unknown> {
@@ -121,6 +126,11 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     runner: opts.runner || undefined,
     model: opts.model || undefined,
     app: opts.app || undefined,
+    familyId: opts.familyId || undefined,
+    parentRunId: opts.parentRunId || undefined,
+    familyRootTicketOrPr: opts.familyRootTicketOrPr || undefined,
+    lane: opts.lane || undefined,
+    variant: opts.variant || undefined,
   };
 
   if (opts.task) {
@@ -168,6 +178,11 @@ export function registerRunCommand(program: Command): void {
     )
     .option('--model <name>', 'Model override')
     .option('--app <path>', 'Project-specific app selector, e.g. apps/sherpa-voice')
+    .option('--family-id <id>', 'Run family id for comparison/follow-up lineage')
+    .option('--parent-run-id <id>', 'Parent run id for explicit lineage')
+    .option('--family-root-ticket-or-pr <ref>', 'Family root ticket/PR label')
+    .option('--lane <lane>', 'Run lane (production, validation, comparison)')
+    .option('--variant <name>', 'Run variant, required for comparison siblings')
     .action(async (opts: RunCreateCliOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       try {

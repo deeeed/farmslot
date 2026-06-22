@@ -692,7 +692,24 @@ test('runInteractiveDevResolve links PR-complete handoff and closes parent ci-wa
   assert.equal(child.ticketOrPr, 'example-org/example-mobile#123456');
 });
 
-test('comparison duplicates are blocked when existing active run is production lane', () => {
+test('comparison duplicates are allowed against their explicit production source run', () => {
+  assert.doesNotThrow(() =>
+    assertDuplicateRunAllowed(
+      {
+        ticketOrPr: 'PROJ-1',
+        project: 'example-mobile-farm',
+        flowType: 'dev',
+        lane: 'comparison',
+        variant: 'codex',
+        familyId: 'source-run',
+        parentRunId: 'source-run',
+      },
+      [makeRun({ id: 'source-run', lane: 'production', variant: null, familyId: 'source-run' })],
+    ),
+  );
+});
+
+test('comparison duplicates are blocked when existing active production run is not the source', () => {
   assert.throws(
     () =>
       assertDuplicateRunAllowed(

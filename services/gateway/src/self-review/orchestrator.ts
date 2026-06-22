@@ -91,6 +91,36 @@ const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min for worker to fix
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
+export function resolveSelfReviewRunnerModel(
+  workerRunner: string,
+  workerModel: string | undefined,
+  config: { runner?: string; model?: string },
+  options: Pick<SelfReviewOptions, 'reviewRunner' | 'model'> = {},
+): { reviewRunner: string; model: string; crossRunner: boolean } {
+  const normalizedWorkerRunner = normalizeRunner(workerRunner);
+  const optionRunner = options.reviewRunner?.trim();
+  const configRunner = config.runner?.trim();
+  const explicitRunner =
+    optionRunner && optionRunner !== 'same'
+      ? normalizeRunner(optionRunner)
+      : configRunner && configRunner !== 'same'
+        ? normalizeRunner(configRunner)
+        : null;
+  const reviewRunner = explicitRunner ?? normalizedWorkerRunner;
+  const model =
+    options.model?.trim() ||
+    (explicitRunner ? (config.model ?? runnerDefaultModel(reviewRunner)) : null) ||
+    workerModel ||
+    config.model ||
+    'unknown';
+
+  return {
+    reviewRunner,
+    model,
+    crossRunner: reviewRunner !== normalizedWorkerRunner,
+  };
+}
+
 export function initSelfReview(broadcast: BroadcastFn): void {
   initSelfReviewProgress(broadcast);
 }
@@ -113,17 +143,11 @@ export async function executeSelfReview(
 
   const vars = await loadSlotVars(slotId);
   const workerRunner = normalizeRunner(run.metrics.runner);
-  const overrideRunner =
-    options.reviewRunner && options.reviewRunner !== 'same'
-      ? normalizeRunner(options.reviewRunner)
-      : null;
-  const reviewRunner = normalizeRunner(overrideRunner ?? config.runner ?? workerRunner);
-  const model =
-    options.model?.trim() ||
-    (overrideRunner ? runnerDefaultModel(reviewRunner) : null) ||
-    (config.runner
-      ? (config.model ?? run.metrics.model ?? 'unknown')
-      : (run.metrics.model ?? config.model ?? 'unknown'));
+  const {
+    reviewRunner,
+    model,
+    crossRunner: isCrossRunnerReview,
+  } = resolveSelfReviewRunnerModel(workerRunner, run.metrics.model ?? undefined, config, options);
   const maxRetries = Math.max(0, Math.min(5, options.maxRetries ?? config.max_retries ?? 1));
   const validationDepth = options.validationDepth ?? 'full-live';
   const artifactScope = options.artifactScope ?? null;
@@ -157,7 +181,7 @@ export async function executeSelfReview(
       usage: recoveredFixResult.attempts?.at(-1)?.usage,
       runner: reviewRunner,
       model,
-      crossRunner: reviewRunner !== workerRunner,
+      crossRunner: isCrossRunnerReview,
     };
 
   // First review pass
@@ -207,7 +231,7 @@ export async function executeSelfReview(
       timeline: result.timeline,
       runner: reviewRunner,
       model,
-      crossRunner: reviewRunner !== workerRunner,
+      crossRunner: isCrossRunnerReview,
       retryCount: 0,
       durationMs: Date.now() - start,
     };
@@ -234,7 +258,7 @@ export async function executeSelfReview(
     usage: retryResult.attempts?.at(-1)?.usage,
     runner: reviewRunner,
     model,
-    crossRunner: reviewRunner !== workerRunner,
+    crossRunner: isCrossRunnerReview,
   };
 }
 
@@ -976,15 +1000,8 @@ async function waitForWorkerSignal(
     try {
       const raw = await readOptionalSlotFile(vars, signalPath);
       if (!raw || raw === baseline) continue;
-      const signal = JSON.parse(raw) as WorkerSignal;
-      if (
-        signal.status === 'complete' ||
-        signal.status === 'failed' ||
-        signal.status === 'done' ||
-        signal.status === 'blocked'
-      ) {
-        return signal;
-      }
+      const signal = terminalWorkerSignalFromRaw(raw);
+      if (signal) return signal;
     } catch (err) {
       console.warn(`[self-review] failed to parse ${signalPath}: ${(err as Error).message}`);
     }

@@ -94,9 +94,10 @@ export async function buildPackageEvidenceManifest(
       artifactPathOmitted(artifact.path, omittedEvidenceKeys)
     )
       continue;
+    const publishableEvidence = isPublishEvidenceArtifact(artifact) || manifestReferenced;
+    if (!publishableEvidence) continue;
     if (
       explicitPublishEvidenceKeys &&
-      isPublishEvidenceArtifact(artifact) &&
       !manifestReferenced &&
       !artifactPathMatchesEvidenceSet(artifact.path, explicitPublishEvidenceKeys)
     ) {

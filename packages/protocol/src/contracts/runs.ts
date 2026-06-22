@@ -997,7 +997,11 @@ export interface Run {
   decisions: RunDecision[];
   metrics: RunMetrics;
   createdAt: string;
+  /** Timestamp when the supervised run lifecycle started. */
+  startedAt?: string;
   updatedAt: string;
+  /** Present on archived run records so archive-aware readers can suppress them from active timelines. */
+  archivedAt?: string;
   ticketData?: RunTicketData;
   grade?: RunGrade;
   humanGrade?: HumanGrade;

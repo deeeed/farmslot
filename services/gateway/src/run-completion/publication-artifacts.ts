@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ArtifactRef, Run } from '@farmslot/protocol';
@@ -682,6 +682,19 @@ export async function postProcessPRBody(
 
 // ─── Artifact scanning ───
 
+const SCAN_ARTIFACT_TOP_LEVEL_EXCLUDES = new Set([
+  // Runtime browser profiles and build outputs are useful for launching a
+  // recipe but are never intentional review evidence. Scanning them makes
+  // PR previews noisy and can add thousands of irrelevant files.
+  'runtime-launch',
+]);
+
+function shouldScanArtifactPath(relativePath: string): boolean {
+  const normalized = relativePath.replaceAll('\\', '/');
+  const [topLevel] = normalized.split('/');
+  return Boolean(topLevel) && !SCAN_ARTIFACT_TOP_LEVEL_EXCLUDES.has(topLevel);
+}
+
 export async function scanArtifacts(taskDir: string): Promise<ArtifactRef[]> {
   const artifactsDir = path.join(taskDir, 'artifacts');
   if (!existsSync(artifactsDir)) return [];
@@ -691,15 +704,22 @@ export async function scanArtifacts(taskDir: string): Promise<ArtifactRef[]> {
     let entries: string[];
     try {
       entries = await readdir(dir);
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[artifacts] failed to read artifact directory ${dir}: ${(err as Error).message.slice(0, 200)}`,
+      );
       return;
     }
     for (const name of entries) {
+      if (name === '.DS_Store' || name.startsWith('.')) continue;
+      const relativePath = `${prefix}${name}`;
+      if (!shouldScanArtifactPath(relativePath)) continue;
       const full = path.join(dir, name);
       try {
-        const s = await stat(full);
+        const s = await lstat(full);
+        if (s.isSymbolicLink()) continue;
         if (s.isDirectory()) {
-          await walk(full, `${prefix}${name}/`);
+          await walk(full, `${relativePath}/`);
         } else if (s.isFile()) {
           let sha256: string | undefined;
           try {
@@ -709,21 +729,19 @@ export async function scanArtifacts(taskDir: string): Promise<ArtifactRef[]> {
             console.debug('[artifacts] sha256 failed for', full, err);
           }
           refs.push({
-            path: `artifacts/${prefix}${name}`,
-            purpose: inferArtifactPurpose(`${prefix}${name}`),
+            path: `artifacts/${relativePath}`,
+            purpose: inferArtifactPurpose(relativePath),
             sizeBytes: s.size,
             sha256,
           });
         }
-      } catch {
-        /* skip unreadable files */
+      } catch (err) {
+        console.warn(
+          `[artifacts] failed to inspect artifact ${full}: ${(err as Error).message.slice(0, 200)}`,
+        );
       }
     }
   }
-  try {
-    await walk(artifactsDir, '');
-  } catch {
-    /* non-fatal */
-  }
+  await walk(artifactsDir, '');
   return refs;
 }

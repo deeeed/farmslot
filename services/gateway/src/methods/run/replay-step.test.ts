@@ -147,6 +147,61 @@ test('runReplayStep moves terminal runs back to the active replay phase immediat
   assert.equal(emittedStatuses[0], 'dispatching');
 });
 
+test('runReplayStep normalizes stale earlier steps when replaying from a later step', async (t) => {
+  const taskFile = '/tmp/farmslot-stale-monitor-task/TASK.md';
+  const run = createRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  updateRun(run.id, {
+    status: 'blocked',
+    error: 'monitor timed out',
+    taskFile,
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot' ||
+      step.name === 'write-task' ||
+      step.name === 'prepare' ||
+      step.name === 'dispatch'
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'monitor'
+          ? { ...step, status: 'running', startedAt: '2026-06-22T12:00:00.000Z' }
+          : step.name === 'self-review'
+            ? { ...step, status: 'failed', detail: 'retry requested' }
+            : step,
+    ),
+  });
+  const emittedStatuses: string[] = [];
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await runReplayStep(
+    { runId: run.id, stepName: 'self-review', triggeredBy: 'operator' },
+    (event, payload) => {
+      if (event === Events.RUN_UPDATED) {
+        emittedStatuses.push((payload as { run: { status: string } }).run.status);
+      }
+    },
+  );
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.steps.find((step) => step.name === 'monitor')?.status, 'done');
+  assert.equal(
+    replayed.steps.find((step) => step.name === 'monitor')?.outputs
+      ?.replayPrerequisiteNormalized,
+    true,
+  );
+  assert.equal(replayed.steps.find((step) => step.name === 'self-review')?.status, 'running');
+  assert.equal(emittedStatuses[0], 'self-reviewing');
+});
+
 test('runReplayStep clears stale decisions when replaying task generation', async (t) => {
   const taskFile = '/tmp/farmslot-stale-task/TASK.md';
   const run = createRun({

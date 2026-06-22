@@ -95,6 +95,51 @@ function repairQueuedPromptDispatchFalseNegative(runId: string): void {
   });
 }
 
+function normalizeReplayPrerequisites(
+  runId: string,
+  existing: NonNullable<ReturnType<typeof getRun>>,
+  flowSteps: readonly string[] | undefined,
+  targetIdx: number,
+  replayStepName: string,
+): void {
+  if (!flowSteps || targetIdx <= 0) return;
+  const now = new Date().toISOString();
+  for (let i = 0; i < targetIdx; i++) {
+    const stepName = flowSteps[i];
+    const prior = existing.steps.find((candidate) => candidate.name === stepName);
+    if (!prior || prior.status === 'done' || prior.status === 'pending') continue;
+    updateRunStep(runId, stepName, {
+      status: 'done',
+      completedAt: prior.completedAt ?? now,
+      detail: `Normalized stale ${prior.status} prerequisite before replay from ${replayStepName}`,
+      outputs: {
+        ...(prior.outputs ?? {}),
+        replayPrerequisiteNormalized: true,
+        normalizedFromStatus: prior.status,
+        normalizedForReplayStep: replayStepName,
+      },
+    });
+  }
+}
+
+function recoverReplaySlotId(
+  existing: NonNullable<ReturnType<typeof getRun>>,
+  targetIdx: number,
+  prepareIdx: number,
+): string | null {
+  if (existing.slotId) return existing.slotId;
+  if (targetIdx < 0 || prepareIdx < 0 || targetIdx < prepareIdx) return null;
+  const preferredRoles = ['self-review-fix', 'self-review', 'dev'];
+  for (const role of preferredRoles) {
+    const context = existing.agentContexts
+      ?.slice()
+      .reverse()
+      .find((candidate) => candidate.role === role && candidate.slotId);
+    if (context?.slotId) return context.slotId;
+  }
+  return existing.agentContexts?.find((candidate) => candidate.slotId)?.slotId ?? null;
+}
+
 export async function runReplayStep(
   params: RunReplayStepParams,
   emit: Emit,
@@ -159,6 +204,7 @@ export async function runReplayStep(
   if (replayStepName === PS.MONITOR && isQueuedPromptDispatchFalseNegative(existing)) {
     repairQueuedPromptDispatchFalseNegative(params.runId);
   }
+  normalizeReplayPrerequisites(params.runId, existing, flowSteps, targetIdx, replayStepName);
 
   // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
   // Do this only after replay entry validation so rejected replays do not leave a
@@ -187,15 +233,19 @@ export async function runReplayStep(
     replayTaskFile = null;
     updateRun(params.runId, { taskFile: null });
     console.log(`[run] replay from ${replayStepName} — cleared taskFile for regeneration`);
-  } else if (existing.slotId) {
-    // Re-claim the slot (engine released it on failure)
-    try {
-      const { updateSlotStatus } = await import('../../core/index.js');
-      await updateSlotStatus(existing.slotId, { lifecycle: 'preparing', agent: 'orchestrator' });
-      console.log(`[run] replay from ${replayStepName} — re-claimed slot ${existing.slotId}`);
-    } catch (err) {
-      console.warn(`[run] slot re-claim failed (${(err as Error).message}), clearing slotId`);
-      updateRun(params.runId, { slotId: null });
+  } else {
+    const replaySlotId = recoverReplaySlotId(existing, targetIdx, prepareIdx);
+    if (replaySlotId) {
+      updateRun(params.runId, { slotId: replaySlotId });
+      // Re-claim the slot (engine released it on failure)
+      try {
+        const { updateSlotStatus } = await import('../../core/index.js');
+        await updateSlotStatus(replaySlotId, { lifecycle: 'preparing', agent: 'orchestrator' });
+        console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
+      } catch (err) {
+        console.warn(`[run] slot re-claim failed (${(err as Error).message}), clearing slotId`);
+        updateRun(params.runId, { slotId: null });
+      }
     }
   }
 
