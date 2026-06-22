@@ -686,8 +686,10 @@ export function updateRun(id: string, partial: Partial<Run>): Run {
     invalidateLiveRecipeContextMemo(id);
   }
   // Emit the terminal analytics record once the run has both a terminal status and a
-  // completedAt (so wall-clock is accurate). Sets run.analyticsEmittedAt synchronously
-  // so the persist below captures the idempotency flag; the append itself is background.
+  // completedAt (so wall-clock is accurate). emitAnalyticsForTerminalRun sets
+  // run.analyticsEmittedAt only after the append durably succeeds (not synchronously), so the
+  // flag means "written". A second updateRun within the append window may append a duplicate
+  // line; that is deduped by runId at query time and is harmless.
   if (isTerminalRunStatus(run.status) && run.completedAt) {
     // Fire-and-forget: the run stays in the store, so a dropped append is recoverable via
     // analyticsBackfill. Swallow-with-log here is deliberate — a telemetry write must not break

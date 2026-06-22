@@ -453,13 +453,15 @@ export function aggregateAnalytics(
 }
 
 /**
- * Emit the analytics record for a run that has just reached a terminal state.
- * Idempotent via `run.analyticsEmittedAt`: the caller (updateRun / archiveRun / deleteRun)
- * sets the flag synchronously so the in-flight persist captures it; we append in the
- * background. Returns true when a record was emitted on this call.
+ * Emit the analytics record for a run that has just reached a terminal state. Returns the append
+ * promise (which rejects on a sink-write failure), or null when nothing was emitted (non-terminal,
+ * already emitted, or a build failure).
  *
- * Analytics is best-effort telemetry: a sink write failure is logged but must never break
- * run completion or eviction, hence the .catch that logs instead of rethrowing.
+ * `run.analyticsEmittedAt` is set only after the append durably succeeds, so it means "written",
+ * not "attempted". Callers choose how to treat the promise: updateRun fires-and-forgets (a dropped
+ * append leaves the run un-flagged and recoverable via backfill); archiveRun/deleteRun await it and
+ * skip eviction on rejection so a run is never pruned before its record lands. A second emit within
+ * the append window can write a duplicate line — harmless, since the query layer dedups by runId.
  */
 export function emitAnalyticsForTerminalRun(
   run: Run,

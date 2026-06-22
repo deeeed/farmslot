@@ -3,6 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -232,6 +233,24 @@ test('aggregateAnalytics dedups duplicate runId records (latest wins)', () => {
   assert.equal(res.scannedRuns, 1);
   assert.equal(res.byStatus.failed, 1);
   assert.equal(res.byStatus.done, undefined);
+});
+
+test('readAllAnalyticsRecords skips future-schema records and counts corrupt lines', async () => {
+  const dir = process.env.FARMSLOT_ANALYTICS_DIR as string;
+  await mkdir(dir, { recursive: true });
+  const lines = [
+    JSON.stringify(buildAnalyticsRecord(makeRun({ id: 'schema-cur' }))), // current schema
+    JSON.stringify({
+      ...buildAnalyticsRecord(makeRun({ id: 'schema-future' })),
+      schemaVersion: 999,
+    }),
+    '{ not valid json', // corrupt
+  ];
+  await writeFile(path.join(dir, 'events-2099-01.ndjson'), `${lines.join('\n')}\n`, 'utf-8');
+  const { records, parseFailures } = await readAllAnalyticsRecords();
+  assert.ok(records.some((r) => r.runId === 'schema-cur'));
+  assert.ok(!records.some((r) => r.runId === 'schema-future')); // newer schema skipped
+  assert.ok(parseFailures >= 1); // corrupt line counted, not thrown
 });
 
 test('percentile uses nearest-rank (no high bias for small n)', () => {
