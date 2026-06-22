@@ -701,7 +701,7 @@ export async function executeCompleteStep(
       requireArtifactMirror: true,
     });
     const noopEmit = () => {};
-    await slotRelease({ slotId: current.slotId, keepWork: true }, noopEmit);
+    await slotRelease({ slotId: current.slotId, keepWork: true, detachRuns: false }, noopEmit);
     const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
     return {
       inputs,
@@ -759,7 +759,7 @@ export async function executeCompleteStep(
   } else {
     // No CI watch (review-pr) or no PR found — release slot
     const noopEmit = () => {};
-    await slotRelease({ slotId: current.slotId, keepWork: true }, noopEmit);
+    await slotRelease({ slotId: current.slotId, keepWork: true, detachRuns: false }, noopEmit);
     slotDisposition = 'released';
   }
   const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;

@@ -112,7 +112,7 @@ export async function executeFinalizeStep(
   try {
     if (noCodeDisposition) {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true }, noopEmit);
+      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
     } else {
       await markSlotHeld(current.slotId, 'ci-watch');
     }
