@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFile, unlink } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 
 import {
+  archiveRun,
   backfillLegacySafetyTier,
   cleanupRuns,
   createRun,
@@ -61,6 +65,17 @@ test('createRun assigns canonical family defaults for root runs', async (t) => {
   assert.equal(run.familyId, run.id);
   assert.equal(run.parentRunId, null);
   assert.equal(run.familyRootTicketOrPr, run.ticketOrPr);
+});
+
+test('createRun records lifecycle startedAt for run detail telemetry', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-started-at`,
+  });
+  t.after(() => cleanupRun(run.id));
+
+  assert.equal(run.startedAt, run.createdAt);
 });
 
 test('createRun preserves explicit lineage for follow-up runs', async (t) => {
@@ -329,6 +344,40 @@ test('createRun does not seed agent context with orchestrator-absolute taskFile'
   assert.equal(run.agentContexts?.[0]?.signalFile, null);
 });
 
+test('updateRun keeps primary agent context status aligned with blocked runs', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blocked-context`,
+    runner: 'codex',
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+
+  assert.equal(run.agentContexts?.[0]?.status, 'working');
+
+  const blocked = updateRun(run.id, {
+    status: 'blocked',
+    completedAt: '2026-06-22T10:00:00.000Z',
+    error: 'blocked for validation',
+  });
+
+  assert.equal(blocked.agentContexts?.[0]?.status, 'blocked');
+  assert.equal(blocked.agentContexts?.[0]?.completedAt, '2026-06-22T10:00:00.000Z');
+
+  const resumed = updateRun(run.id, { status: 'monitoring', completedAt: undefined });
+  assert.equal(resumed.agentContexts?.[0]?.status, 'working');
+  assert.equal(resumed.agentContexts?.[0]?.completedAt, undefined);
+
+  const reblocked = updateRun(run.id, {
+    status: 'blocked',
+    completedAt: '2026-06-22T10:01:00.000Z',
+  });
+  reblocked.agentContexts![0].status = 'working';
+  const repaired = updateRun(run.id, { status: 'blocked' });
+  assert.equal(repaired.agentContexts?.[0]?.status, 'blocked');
+});
+
 test('listRuns uses higher default limit for family queries', async (t) => {
   const ids: string[] = [];
   const root = createRun({
@@ -356,6 +405,41 @@ test('listRuns uses higher default limit for family queries', async (t) => {
   });
 
   assert.equal(listRuns({ familyId: root.familyId }).runs.length, 251);
+});
+
+test('archiveRun stamps archivedAt before moving terminal runs out of active timelines', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-archive`,
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    completedAt: new Date().toISOString(),
+    error: 'superseded baseline',
+  });
+
+  const archivedPath = path.join(
+    os.tmpdir(),
+    `farmslot-test-runs-${process.pid}`,
+    'archive',
+    `${run.id}.json`,
+  );
+  t.after(() =>
+    unlink(archivedPath).catch(() => {
+      // Best-effort test cleanup; absence means archiveRun already failed loudly above.
+    }),
+  );
+
+  assert.equal(await archiveRun(run.id), true);
+  assert.equal(getRun(run.id), undefined);
+  assert.equal(
+    listRuns({ familyId: run.familyId }).runs.some((candidate) => candidate.id === run.id),
+    false,
+  );
+
+  const archived = JSON.parse(await readFile(archivedPath, 'utf-8')) as { archivedAt?: string };
+  assert.match(archived.archivedAt ?? '', /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test('isSyntheticLeak detects completed fixture runs without touching real run shapes', async (t) => {

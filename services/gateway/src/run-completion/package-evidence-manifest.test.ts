@@ -27,3 +27,28 @@ test('buildPackageEvidenceManifest honors curated explicit publish set and omiss
     ['artifacts/after-ac1.png', 'artifacts/before-ac1.png', 'artifacts/evidence-selected.png'],
   );
 });
+
+test('buildPackageEvidenceManifest keeps only publishable or manifest-referenced evidence', async () => {
+  const artifacts: ArtifactRef[] = [
+    { path: 'artifacts/report.md', purpose: 'report' },
+    { path: 'artifacts/runtime-launch/chrome-profile/Local State', purpose: 'other' },
+    { path: 'artifacts/runtime-launch/runtime-dist/app.js', purpose: 'script' },
+    { path: 'artifacts/recipe-run/ac1.png', purpose: 'screenshot' },
+    { path: 'artifacts/recipe-run/debug-extra.png', purpose: 'screenshot' },
+  ];
+
+  const manifest = await buildPackageEvidenceManifest(null, artifacts, {
+    version: 1,
+    preferred_mode: 'screenshots',
+    before_after_pairs: [],
+    standalone: [
+      { label: 'AC1', file: 'recipe-run/ac1.png' },
+    ],
+    omit: [],
+  });
+
+  assert.deepEqual(
+    manifest.map((artifact) => artifact.path),
+    ['artifacts/recipe-run/ac1.png'],
+  );
+});

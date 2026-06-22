@@ -10,7 +10,7 @@ import type {
 export interface WorkerSignal {
   role?: AgentRole;
   contextId?: string;
-  status: 'running' | 'blocked' | 'complete' | 'failed' | 'done';
+  status: 'running' | 'blocked' | 'complete' | 'failed' | 'done' | 'done-partial';
   outcome?: 'success' | 'failure' | 'partial';
   disposition?: WorkerTerminalDisposition;
   evidence?: WorkerTerminalEvidence;

@@ -80,7 +80,7 @@ export async function executeCIWatchStep(
     );
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true }, noopEmit);
+      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
     } catch (err) {
       console.warn(
         `[run-engine] slot release after no-code ci-watch skip failed: ${(err as Error).message}`,
@@ -109,7 +109,7 @@ export async function executeCIWatchStep(
     );
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true }, noopEmit);
+      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
     } catch (err) {
       console.warn(
         `[run-engine] slot release after artifact-only ci-watch skip failed: ${(err as Error).message}`,
@@ -138,7 +138,7 @@ export async function executeCIWatchStep(
     );
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true }, noopEmit);
+      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
     } catch (err) {
       console.warn(
         `[run-engine] slot release after unpublished ci-watch skip failed: ${(err as Error).message}`,
@@ -173,7 +173,7 @@ export async function executeCIWatchStep(
     console.log(`[run-engine] run ${runId.slice(0, 8)} — ci disabled, skipping ci-watch`);
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true }, noopEmit);
+      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
     } catch (err) {
       console.warn(
         `[run-engine] slot release after disabled ci-watch skip failed: ${(err as Error).message}`,
@@ -216,7 +216,7 @@ export async function executeCIWatchStep(
     console.warn(`[run-engine] run ${runId.slice(0, 8)} — no PR number, skipping ci-watch`);
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true }, noopEmit);
+      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
     } catch (err) {
       console.warn(
         `[run-engine] slot release after no-pr ci-watch skip failed: ${(err as Error).message}`,
@@ -356,7 +356,7 @@ export async function executeCIWatchStep(
     // Release slot
     try {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true }, noopEmit);
+      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
     } catch (err) {
       console.warn(`[run-engine] slot release after ci-watch failed: ${(err as Error).message}`);
     }

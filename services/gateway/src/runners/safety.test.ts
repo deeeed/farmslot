@@ -373,26 +373,30 @@ describe('runnerFlagsForTier — grok', () => {
 });
 
 describe('buildCursorAgentLaunch', () => {
-  it('defaults to composer-2.5 and sandboxed flags without embedding the task prompt', () => {
+  it('defaults to composer-2.5 and sandboxed flags with an argv task prompt', () => {
     const cmd = buildCursorAgentLaunch({
       binary: 'cursor-agent',
       model: null,
       prompt: 'hi',
       repo: '/tmp/repo',
     });
-    assert.equal(cmd, "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5");
-    assert.doesNotMatch(cmd, /hi/);
+    assert.equal(
+      cmd,
+      "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'hi'",
+    );
   });
 
-  it('ignores prompt text because Cursor receives tasks after TUI readiness', () => {
+  it('shell-quotes prompt text for Cursor argv launch', () => {
     const cmd = buildCursorAgentLaunch({
       binary: 'cursor-agent',
       model: 'composer-2.5',
       prompt: "read Bob's task",
       repo: '/tmp/repo',
     });
-    assert.equal(cmd, "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5");
-    assert.doesNotMatch(cmd, /Bob/);
+    assert.equal(
+      cmd,
+      "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'read Bob'\\''s task'",
+    );
   });
 
   it('omits prompt argument when prompt is empty', () => {

@@ -15,6 +15,8 @@ import { formatSlotCheck } from '../formatters/slot.js';
 import { withProgress } from '../progress.js';
 import { resolveCurrentSlot, resolveSlotId } from '../slot-context.js';
 
+import { resolveSlotPrepareGatewayTimeoutMs } from './slot-prepare-timeout.js';
+
 interface PrepareOptions {
   branch?: string;
   mergeMain?: boolean;
@@ -140,7 +142,9 @@ export function registerSlotCommand(program: Command): void {
       {} as Record<string, string>,
     )
     .action(async (id: string | undefined, opts: PrepareOptions, cmd: Command) => {
-      const { client, output } = resolveContext(cmd);
+      const { client, output } = resolveContext(cmd, {
+        timeout: resolveSlotPrepareGatewayTimeoutMs(cmd.optsWithGlobals().timeout),
+      });
       try {
         const slotId = resolveSlotId(id);
         const vars: Record<string, string> = opts.var ?? {};

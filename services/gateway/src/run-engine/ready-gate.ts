@@ -490,7 +490,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
         recipeCoverage,
       })
     ).artifact,
-    artifactManifest,
+    artifactManifest: preparedPackage?.evidenceManifest ?? artifactManifest,
     selfReviewVerdict,
     selfReviewSummary,
     workerLearnings,

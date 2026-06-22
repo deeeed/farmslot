@@ -489,7 +489,6 @@ export async function executeHumanGateStep(
     reviewPlanFromSelection,
   } = context;
   const current = getRun(runId)!;
-  if (!current.slotId) throw new Error('No slot assigned');
   const gateType = current.flowType === 'review-pr' ? 'review' : 'ready';
   const noChangeGate = shouldForceNoChangeHumanGate(current);
   const publicationApprovalGate = requiresPublicationApproval(current);
@@ -539,8 +538,10 @@ export async function executeHumanGateStep(
   }
 
   // Update slot lifecycle so UI shows the slot is waiting for review
-  await markSlotBusy(current.slotId, 'review-gate');
-  broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+  if (current.slotId) {
+    await markSlotBusy(current.slotId, 'review-gate');
+    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+  }
 
   // Track wait duration
   const gateStart = Date.now();
@@ -554,6 +555,9 @@ export async function executeHumanGateStep(
     if (publicationApprovalGate) {
       const initialPlan = getRun(runId)?.engineState?.publishGate?.pendingReviewPlan ?? [];
       if (initialPlan.length) {
+        const dispatchReviewSlotId = current.slotId;
+        if (!dispatchReviewSlotId)
+          throw new Error('No slot assigned — cannot run dispatch publish-gate reviews');
         const dispatchPlan = initialPlan.slice(0, MAX_PUBLISH_GATE_REVIEW_LOOPS);
         const beforeDispatchReviews = getRun(runId)!;
         updateRun(runId, {
@@ -565,7 +569,7 @@ export async function executeHumanGateStep(
             },
           },
         });
-        await executePublishGateReviewPlan(runId, current.slotId, dispatchPlan, 'dispatch');
+        await executePublishGateReviewPlan(runId, dispatchReviewSlotId, dispatchPlan, 'dispatch');
         const diffStat = await getDiffStat(getRun(runId)!);
         await prepareCompletionPackage(runId, {
           diffStat,
@@ -598,6 +602,16 @@ export async function executeHumanGateStep(
           : reviewPlanFromSelection(latestGateDecision?.selectionData);
         const remainingBudget = Math.max(0, MAX_PUBLISH_GATE_REVIEW_LOOPS - reviewRequestLoops);
         const boundedPlan = plan.slice(0, remainingBudget);
+        if (!boundedPlan.length) {
+          gateAction = await executeReadyGate(runId);
+          continue;
+        }
+        const reviewSlotId = current.slotId;
+        if (!reviewSlotId)
+          throw blockedRunError(
+            'Publication gate requested extra review but no slot is assigned',
+            gateAction,
+          );
         reviewRequestLoops += boundedPlan.length;
         updateRun(runId, {
           engineState: {
@@ -610,7 +624,7 @@ export async function executeHumanGateStep(
         });
         const newReviewIds = await executePublishGateReviewPlan(
           runId,
-          current.slotId,
+          reviewSlotId,
           boundedPlan,
           'human-gate',
         );
@@ -635,8 +649,10 @@ export async function executeHumanGateStep(
   const waitDurationMs = Date.now() - gateStart;
 
   // Restore slot lifecycle after gate resolution
-  await markSlotBusy(current.slotId, 'working');
-  broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+  if (current.slotId) {
+    await markSlotBusy(current.slotId, 'working');
+    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+  }
 
   const after = getRun(runId)!;
   const lastDecision = after.decisions[after.decisions.length - 1];
@@ -685,7 +701,7 @@ export async function executeCompleteStep(
       requireArtifactMirror: true,
     });
     const noopEmit = () => {};
-    await slotRelease({ slotId: current.slotId, keepWork: true }, noopEmit);
+    await slotRelease({ slotId: current.slotId, keepWork: true, detachRuns: false }, noopEmit);
     const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
     return {
       inputs,
@@ -743,7 +759,7 @@ export async function executeCompleteStep(
   } else {
     // No CI watch (review-pr) or no PR found — release slot
     const noopEmit = () => {};
-    await slotRelease({ slotId: current.slotId, keepWork: true }, noopEmit);
+    await slotRelease({ slotId: current.slotId, keepWork: true, detachRuns: false }, noopEmit);
     slotDisposition = 'released';
   }
   const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;

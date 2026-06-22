@@ -6,6 +6,7 @@ import type { SelfReviewIssue, WorkerSignal } from '@farmslot/protocol';
 import { parseSelfReviewIssueBullets } from './issues.js';
 import {
   canRecoverSelfReviewFixPass,
+  resolveSelfReviewRunnerModel,
   runSelfReviewRetryLoop,
   type SelfReviewRetryDeps,
 } from './orchestrator.js';
@@ -73,6 +74,30 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
     canRecoverSelfReviewFixPass({ ...current, signalFile: null }, 'tasks/foo'),
     false,
     'legacy contexts without the scoped signal path are not valid recovery state',
+  );
+});
+
+test('resolveSelfReviewRunnerModel keeps self-review on the worker runner by default', () => {
+  assert.deepEqual(
+    resolveSelfReviewRunnerModel(
+      'cursor',
+      'composer-2.5',
+      { runner: 'same', model: 'opus' },
+      {},
+    ),
+    { reviewRunner: 'cursor', model: 'composer-2.5', crossRunner: false },
+  );
+});
+
+test('resolveSelfReviewRunnerModel supports explicit cross-runner review overrides', () => {
+  assert.deepEqual(
+    resolveSelfReviewRunnerModel(
+      'cursor',
+      'composer-2.5',
+      { runner: 'same', model: 'opus' },
+      { reviewRunner: 'claude' },
+    ),
+    { reviewRunner: 'claude', model: 'opus', crossRunner: true },
   );
 });
 

@@ -329,37 +329,45 @@ export function debugSelfReviewLog(message?: unknown, ...optionalParams: unknown
   if (isDebugSelfReview()) console.log(message, ...optionalParams);
 }
 
+export function tmuxListSelfReviewWindowIdsSnippet(session: string): string {
+  return `list-windows -t ${shellQuote(session)} -F '#{?#{==:#{window_name},${REVIEW_WINDOW}},#{window_id},}' 2>/dev/null | grep -E '^@' || true`;
+}
+
 export async function killSelfReviewWindow(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
   reason: string,
 ): Promise<void> {
-  const target = `${session}:${REVIEW_WINDOW}`;
-  const exists = await execOnSlot(
-    vars,
-    tmuxShellSnippet(
-      `list-panes -t ${shellQuote(target)} -F '#{pane_index}' 2>/dev/null | head -1`,
-    ),
-  );
-  if (exists.exitCode !== 0 || !exists.stdout.trim()) {
-    debugSelfReviewLog(`[self-review] ${reason}: no existing ${target} window`);
+  const ids = await execOnSlot(vars, tmuxShellSnippet(tmuxListSelfReviewWindowIdsSnippet(session)));
+  const windowIds = ids.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (ids.exitCode !== 0 || windowIds.length === 0) {
+    debugSelfReviewLog(`[self-review] ${reason}: no existing ${session}:${REVIEW_WINDOW} window`);
     return;
   }
-  const killed = await execOnSlot(
-    vars,
-    tmuxShellSnippet(`kill-window -t ${shellQuote(target)} 2>&1`),
-  );
-  if (killed.exitCode !== 0) {
-    const message = `${killed.stderr}\n${killed.stdout}`;
-    if (/can't find|can't find window|no such|not found/i.test(message)) {
-      debugSelfReviewLog(`[self-review] ${reason}: ${target} disappeared before cleanup completed`);
-      return;
-    }
-    throw new Error(
-      `Failed to kill self-review window ${target}: ${killed.stderr || killed.stdout || `exit ${killed.exitCode}`}`,
+  for (const windowId of windowIds) {
+    const killed = await execOnSlot(
+      vars,
+      tmuxShellSnippet(`kill-window -t ${shellQuote(windowId)} 2>&1`),
     );
+    if (killed.exitCode !== 0) {
+      const message = `${killed.stderr}\n${killed.stdout}`;
+      if (/can't find|can't find window|no such|not found/i.test(message)) {
+        debugSelfReviewLog(
+          `[self-review] ${reason}: ${windowId} disappeared before cleanup completed`,
+        );
+        continue;
+      }
+      throw new Error(
+        `Failed to kill self-review window ${windowId}: ${killed.stderr || killed.stdout || `exit ${killed.exitCode}`}`,
+      );
+    }
   }
-  debugSelfReviewLog(`[self-review] ${reason}: killed ${target}`);
+  debugSelfReviewLog(
+    `[self-review] ${reason}: killed ${windowIds.length} ${session}:${REVIEW_WINDOW} window(s)`,
+  );
 }
 
 export async function removeSlotFiles(

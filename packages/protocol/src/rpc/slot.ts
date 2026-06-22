@@ -71,6 +71,11 @@ export interface SlotReleaseParams {
   forceReset?: boolean;
   killTmux?: boolean;
   /**
+   * Detach active run ownership for explicit operator release. Internal run-engine
+   * warm releases keep this false so finalize/CI steps can still read the slot.
+   */
+  detachRuns?: boolean;
+  /**
    * Optional client-scoped progress id. Slot action UIs pre-allocate this so
    * release/recycle progress can render through the same script.output /
    * script.complete stream as other long-running slot actions.

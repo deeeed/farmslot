@@ -74,7 +74,25 @@ export type WorkerSignalNormalizationResult =
   | { ok: false; reason: string };
 
 export function normalizeWorkerSignal(signal: WorkerSignal): WorkerSignalNormalizationResult {
-  if (!signal.status) return { ok: false, reason: 'missing status' };
+  const rawStatus = String((signal as { status?: unknown }).status ?? '');
+  if (!rawStatus) return { ok: false, reason: 'missing status' };
+
+  if (rawStatus === 'done-partial') {
+    const rawOutcome = (signal as { outcome?: unknown }).outcome;
+    const outcomeReason =
+      typeof rawOutcome === 'string' && rawOutcome !== 'partial' ? rawOutcome : null;
+    return {
+      ok: true,
+      signal: {
+        ...signal,
+        status: 'blocked',
+        outcome: 'partial',
+        disposition: 'blocked',
+        reason: [outcomeReason, signal.reason].filter(Boolean).join(': '),
+      },
+      warning: 'normalized legacy done-partial worker signal to blocked/partial',
+    };
+  }
 
   const status = signal.status;
   if (!['running', 'blocked', 'complete', 'failed', 'done'].includes(status)) {

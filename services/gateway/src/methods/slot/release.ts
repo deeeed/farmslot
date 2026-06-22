@@ -43,6 +43,7 @@ import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 
 import { slotPrepare } from './prepare.js';
+import { detachRunsForReleasedSlot } from './release-run-ownership.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';
 
 export async function slotRelease(
@@ -66,6 +67,7 @@ export async function slotRelease(
   const keepWork = params.keepWork ?? false;
   const skipArtifacts = params.skipArtifacts ?? false;
   const forceReset = params.forceReset ?? false;
+  const detachRuns = params.detachRuns ?? true;
   const requestId = params.requestId ?? `release-${randomUUID()}`;
   const startTime = Date.now();
 
@@ -324,6 +326,12 @@ export async function slotRelease(
     }
   } else {
     await resetSlot(params.slotId);
+  }
+  if (detachRuns) {
+    const detachedRunIds = detachRunsForReleasedSlot(params.slotId, emit);
+    if (detachedRunIds.length > 0) {
+      step('runs', `Detached ${detachedRunIds.length} run(s) from released slot`);
+    }
   }
 
   emit('slot.release.done', { requestId, slotId: params.slotId, keepWarm });

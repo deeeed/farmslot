@@ -95,6 +95,69 @@ function repairQueuedPromptDispatchFalseNegative(runId: string): void {
   });
 }
 
+function normalizeReplayPrerequisites(
+  runId: string,
+  existing: NonNullable<ReturnType<typeof getRun>>,
+  flowSteps: readonly string[] | undefined,
+  targetIdx: number,
+  replayStepName: string,
+): void {
+  if (!flowSteps || targetIdx <= 0) return;
+  const now = new Date().toISOString();
+  for (let i = 0; i < targetIdx; i++) {
+    const stepName = flowSteps[i];
+    const prior = existing.steps.find((candidate) => candidate.name === stepName);
+    if (!prior || prior.status === 'done' || prior.status === 'pending') continue;
+    updateRunStep(runId, stepName, {
+      status: 'done',
+      completedAt: prior.completedAt ?? now,
+      detail: `Normalized stale ${prior.status} prerequisite before replay from ${replayStepName}`,
+      outputs: {
+        ...(prior.outputs ?? {}),
+        replayPrerequisiteNormalized: true,
+        normalizedFromStatus: prior.status,
+        normalizedForReplayStep: replayStepName,
+      },
+    });
+  }
+}
+
+function recoverReplaySlotId(
+  existing: NonNullable<ReturnType<typeof getRun>>,
+  targetIdx: number,
+  prepareIdx: number,
+): string | null {
+  if (existing.slotId) return existing.slotId;
+  if (targetIdx < 0 || prepareIdx < 0 || targetIdx < prepareIdx) return null;
+  const preferredRoles = ['self-review-fix', 'self-review', 'dev'];
+  for (const role of preferredRoles) {
+    const context = existing.agentContexts
+      ?.slice()
+      .reverse()
+      .find((candidate) => candidate.role === role && candidate.slotId);
+    if (context?.slotId) return context.slotId;
+  }
+  return existing.agentContexts?.find((candidate) => candidate.slotId)?.slotId ?? null;
+}
+
+type SlotReclaimCheck =
+  | { ok: true }
+  | { ok: false; reason: 'owned-by-other'; owner: string }
+  | { ok: false; reason: 'not-reclaimable'; lifecycle: string };
+
+export function replaySlotReclaimCheck(
+  slot: Readonly<Record<string, unknown>>,
+  runId: string,
+): SlotReclaimCheck {
+  const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
+  if (owner && owner !== runId) return { ok: false, reason: 'owned-by-other', owner };
+
+  const lifecycle = typeof slot.lifecycle === 'string' ? slot.lifecycle : '';
+  if (owner === runId) return { ok: true };
+  if (lifecycle === '' || lifecycle === 'ready' || lifecycle === 'released') return { ok: true };
+  return { ok: false, reason: 'not-reclaimable', lifecycle };
+}
+
 export async function runReplayStep(
   params: RunReplayStepParams,
   emit: Emit,
@@ -159,6 +222,7 @@ export async function runReplayStep(
   if (replayStepName === PS.MONITOR && isQueuedPromptDispatchFalseNegative(existing)) {
     repairQueuedPromptDispatchFalseNegative(params.runId);
   }
+  normalizeReplayPrerequisites(params.runId, existing, flowSteps, targetIdx, replayStepName);
 
   // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
   // Do this only after replay entry validation so rejected replays do not leave a
@@ -167,6 +231,7 @@ export async function runReplayStep(
   bumpRunGeneration(params.runId);
 
   let replayTaskFile = existing.taskFile ?? null;
+  let effectiveSlotId = existing.slotId;
 
   if (targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx > writeTaskIdx && !replayTaskFile) {
     const writeTaskStep = existing.steps.find((candidate) => candidate.name === PS.WRITE_TASK);
@@ -180,6 +245,7 @@ export async function runReplayStep(
   // If replaying from find-slot or earlier, clear slot so it picks fresh
   if (targetIdx >= 0 && targetIdx <= findSlotIdx) {
     replayTaskFile = null;
+    effectiveSlotId = null;
     updateRun(params.runId, { slotId: null, taskFile: null });
     console.log(`[run] replay from ${replayStepName} — cleared slotId + taskFile for re-selection`);
   } else if (targetIdx >= 0 && targetIdx <= writeTaskIdx) {
@@ -187,15 +253,44 @@ export async function runReplayStep(
     replayTaskFile = null;
     updateRun(params.runId, { taskFile: null });
     console.log(`[run] replay from ${replayStepName} — cleared taskFile for regeneration`);
-  } else if (existing.slotId) {
-    // Re-claim the slot (engine released it on failure)
-    try {
-      const { updateSlotStatus } = await import('../../core/index.js');
-      await updateSlotStatus(existing.slotId, { lifecycle: 'preparing', agent: 'orchestrator' });
-      console.log(`[run] replay from ${replayStepName} — re-claimed slot ${existing.slotId}`);
-    } catch (err) {
-      console.warn(`[run] slot re-claim failed (${(err as Error).message}), clearing slotId`);
-      updateRun(params.runId, { slotId: null });
+  } else {
+    const replaySlotId = recoverReplaySlotId(existing, targetIdx, prepareIdx);
+    if (replaySlotId) {
+      // Re-claim only when the slot is free or still owned by this run. A released run
+      // can keep stale agentContext.slotId history after its slot is reassigned; blindly
+      // writing slot status here would steal that physical worker from the new run.
+      try {
+        const { updateSlotStatusIf } = await import('../../core/index.js');
+        const claimed = await updateSlotStatusIf(
+          replaySlotId,
+          (slot) => replaySlotReclaimCheck(slot, params.runId).ok,
+          {
+            lifecycle: 'busy',
+            phase: 'preparing',
+            agent: 'orchestrator',
+            current_run_id: params.runId,
+            current_flow_type: existing.flowType || null,
+            current_ticket_or_pr: existing.ticketOrPr,
+            current_mode: existing.mode ?? null,
+            current_family_id: existing.familyId ?? null,
+            current_lane: existing.lane ?? null,
+            current_variant: existing.variant ?? null,
+          },
+        );
+        if (!claimed) {
+          updateRun(params.runId, { slotId: null });
+          throw new Error(
+            `slot ${replaySlotId} is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
+          );
+        }
+        effectiveSlotId = replaySlotId;
+        updateRun(params.runId, { slotId: replaySlotId });
+        console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
+      } catch (err) {
+        console.warn(`[run] slot re-claim failed (${(err as Error).message}), clearing slotId`);
+        updateRun(params.runId, { slotId: null });
+        throw err;
+      }
     }
   }
 
@@ -221,7 +316,7 @@ export async function runReplayStep(
 
   // Replaying from self-review or later must clear nested-loop artifacts and active task variants.
   if (
-    existing.slotId &&
+    effectiveSlotId &&
     existing.taskFile &&
     targetIdx >= 0 &&
     selfReviewIdx >= 0 &&
@@ -235,7 +330,7 @@ export async function runReplayStep(
         getOrchestratorTaskRoot,
         resolveTaskRelDir,
       } = await import('../../core/config.js');
-      const vars = await loadSlotVars(existing.slotId);
+      const vars = await loadSlotVars(effectiveSlotId);
       const pv = await loadProjectVars(existing.project).catch(() => null);
       const taskRelDir = resolveTaskRelDir(
         existing.taskFile,
@@ -283,7 +378,7 @@ export async function runReplayStep(
     targetIdx >= prepareIdx &&
     targetIdx <= monitorIdx;
 
-  if (replaysWorkerLaunch && existing.slotId && existing.taskFile) {
+  if (replaysWorkerLaunch && effectiveSlotId && existing.taskFile) {
     try {
       const {
         loadSlotVars,
@@ -292,7 +387,7 @@ export async function runReplayStep(
         getOrchestratorTaskRoot,
         resolveTaskRelDir,
       } = await import('../../core/config.js');
-      const vars = await loadSlotVars(existing.slotId);
+      const vars = await loadSlotVars(effectiveSlotId);
       const pv = await loadProjectVars(existing.project).catch(() => null);
       const taskRelDir = resolveTaskRelDir(
         existing.taskFile,

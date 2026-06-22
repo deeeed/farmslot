@@ -56,3 +56,25 @@ test('materializeIndependentReviewArtifacts coalesces self-review retry attempts
     'artifacts/review-loop-2/self-review.md',
   ]);
 });
+
+test('materializeIndependentReviewArtifacts does not create stale pending review for completed step without verdict', async () => {
+  const run = makeRun({
+    steps: [
+      {
+        name: 'self-review',
+        status: 'done',
+        startedAt: '2026-04-25T00:00:00.000Z',
+        completedAt: '2026-04-25T00:05:00.000Z',
+        outputs: {
+          replayPrerequisiteNormalized: true,
+          normalizedFromStatus: 'running',
+          normalizedForReplayStep: 'complete',
+        },
+      },
+    ],
+  });
+
+  const reviews = await materializeIndependentReviewArtifacts(run);
+
+  assert.deepEqual(reviews, []);
+});

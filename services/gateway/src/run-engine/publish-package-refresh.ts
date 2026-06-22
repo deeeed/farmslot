@@ -187,7 +187,8 @@ export async function refreshPublishPackage(params: {
     selectedEvidenceKeys: selectedBefore,
     priorEvidenceManifest: oldPayload.prPackage?.evidenceManifest,
     stampReviews: false,
-    requireArtifactMirror: true,
+    requireArtifactMirror: Boolean(run.slotId),
+    headSha: run.slotId ? undefined : oldPayload.prPackage?.headSha,
   });
   const refreshedRun = getRun(params.runId)!;
   const prPackage = prepared.prPackage;

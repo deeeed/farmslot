@@ -357,6 +357,17 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     getRun(run.id)!.engineState?.publishGate?.independentReviews?.[0]?.reviewedReviewSubjectHash,
     oldReviewSubjectHash,
   );
+
+  updateRun(run.id, { slotId: null });
+  const releasedPayload = getRun(run.id)!.decisions[0].payload as ReadyGatePayload;
+  const released = await refreshPublishPackage({
+    runId: run.id,
+    decisionId: decision.id,
+    selectedEvidenceKeys: releasedPayload.prPackage!.selectedEvidenceKeys!,
+    publicationTarget: 'draft',
+  });
+  assert.equal(released.packageHeadSha, headSha);
+  assert.deepEqual(released.droppedEvidenceKeys, []);
 });
 test('refreshPublishPackage fails closed when worker artifacts cannot be mirrored', async (t) => {
   const testId = `refresh-package-fail-${process.pid}-${Date.now()}`;

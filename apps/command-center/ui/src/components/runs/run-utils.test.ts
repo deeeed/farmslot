@@ -199,6 +199,71 @@ test('collectRunEvidenceArtifacts normalizes complete-step artifacts for replay 
   );
 });
 
+test('collectRunEvidenceArtifacts prefers curated package evidence and drops runtime internals', () => {
+  const artifacts = collectRunEvidenceArtifacts(
+    makeRun({
+      id: 'run-package',
+      familyId: 'family-package',
+      decisions: [
+        {
+          id: 'gate-1',
+          type: 'engine_human_gate',
+          title: 'Ready',
+          description: 'Ready',
+          createdAt: '2026-04-15T00:00:00.000Z',
+          actions: [],
+          payload: {
+            kind: 'ready',
+            prPackage: {
+              evidenceManifest: [
+                { path: 'artifacts/recipe-run/after.png', purpose: 'screenshot', sizeBytes: 456 },
+              ],
+            },
+          } as unknown as Run['decisions'][number]['payload'],
+        },
+      ],
+      steps: [
+        {
+          name: 'complete',
+          status: 'done',
+          outputs: {
+            artifacts: [
+              { path: 'artifacts/report.md', purpose: 'report', sizeBytes: 123 },
+              { path: 'artifacts/recipe-run/after.png', purpose: 'screenshot', sizeBytes: 456 },
+              { path: 'artifacts/recipe-run/debug.png', purpose: 'screenshot', sizeBytes: 789 },
+              { path: 'artifacts/runtime-launch/chrome-profile/Local State', purpose: 'other' },
+              { path: 'artifacts/runner-blockers/self-review-launch.txt', purpose: 'other' },
+            ],
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(
+    artifacts.map((artifact) => ({
+      path: artifact.path,
+      purpose: artifact.purpose,
+      stepName: artifact.stepName,
+      source: artifact.source,
+    })),
+    [
+      {
+        path: 'artifacts/recipe-run/after.png',
+        purpose: 'screenshot',
+        stepName: 'publish-gate',
+        source: 'task-artifact',
+      },
+      {
+        path: 'artifacts/report.md',
+        purpose: 'report',
+        stepName: 'complete',
+        source: 'step-output',
+      },
+    ],
+  );
+});
+
 test('eval candidate runs display as eval without adding a flow type', () => {
   const evalRun = makeRun({
     flowType: 'dev',

@@ -20,6 +20,7 @@ import {
   runnerPaneLooksIdle,
   runnerPaneShouldSubmitExistingInstruction,
   runnerPaneShowsPromptAccepted,
+  runnerPaneShowsTaskAlreadyRunning,
   runnerPaneShowsWorkspaceTrustPrompt,
   runnerPersistsSessionFiles,
   runnerProcessPattern,
@@ -147,7 +148,7 @@ describe('cursor runner', () => {
   });
 
   it('treats the normal Cursor Agent TUI as steerable through tmux', () => {
-    assert.equal(runnerNeedsPostLaunchPrompt('cursor'), true);
+    assert.equal(runnerNeedsPostLaunchPrompt('cursor'), false);
     assert.equal(runnerSupportsInteractivePrompt('cursor'), true);
     assert.equal(runnerSupportsTmuxNudges('cursor'), true);
     assert.equal(runnerContinueCommand('cursor'), null);
@@ -389,6 +390,31 @@ describe('cursor runner', () => {
     );
   });
 
+  it('recognizes a Claude self-review task that is already executing during readiness wait', () => {
+    const message =
+      'Read .task/feat/tat-3215-0622-110508/SELF-REVIEW.md and execute all steps. Mark each checkbox as you complete it.';
+    const pane = `
+⏺ Update(.task/feat/tat-3215-0622-110508/SELF-REVIEW.md)
+  ⎿  Added 1 line, removed 1 line
+
+⏺ Bash(git diff main...HEAD --stat)
+  ⎿  Running…
+
+✻ Spinning… (28s · ↓ 643 tokens)
+
+───────────────────────────────────────────────────────────────────────────────
+❯
+───────────────────────────────────────────────────────────────────────────────
+  fs · Opus 4.8 · ctx:5%
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
+`;
+
+    assert.equal(
+      runnerPaneShowsTaskAlreadyRunning(pane, message, 'SELF-REVIEW.md', 'claude'),
+      true,
+    );
+  });
+
   it('accepts post-launch prompt delivery when the runner queues it for the next tool call', () => {
     const message =
       'Read temp/tasks/feat/tat-3307-0609-103547/TASK.md and execute all steps. Mark each checkbox as you complete it.';
@@ -418,6 +444,20 @@ describe('cursor runner', () => {
 
     assert.equal(runnerBufferedInstructionSubmitKey(pane, 'codex'), 'Tab');
     assert.equal(runnerBufferedInstructionSubmitKey(pane, 'claude'), 'Enter');
+  });
+
+  it('uses carriage return to submit buffered Cursor Run Everything prompts', () => {
+    const pane = `
+  Cursor Agent
+  v2026.06.19-20-24-33-653a7fb
+
+  → Read .task/feat/tat-3215-comparison-cursor-0622-132834/TASK.md and
+    execute all steps. Mark each checkbox as you complete it.
+
+  Composer 2.5                                                  Run Everything
+`;
+
+    assert.equal(runnerBufferedInstructionSubmitKey(pane, 'cursor'), 'C-m');
   });
 
   it('submits instead of duplicating a post-launch prompt when Cursor already shows the TASK marker', () => {
@@ -916,7 +956,10 @@ describe('buildLaunchCommand', () => {
     it('falls back to bare `cursor-agent` on PATH when no cursor_path is configured', () => {
       const vars = makeVars({ dispatchCmd: '', cursorPath: '' });
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
-      assert.equal(cmd, "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5");
+      assert.equal(
+        cmd,
+        "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'",
+      );
     });
 
     it('falls back to inline Cursor Agent launcher with composer-2.5 default model', () => {
@@ -924,9 +967,9 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'cursor', null, PROMPT);
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model composer-2.5",
+        "cd '/tmp/repo' && /usr/local/bin/cursor-agent --sandbox enabled --model composer-2.5 'Read TASK.md and execute.'",
       );
-      assert.doesNotMatch(cmd, /Read TASK/);
+      assert.match(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
       assert.doesNotMatch(cmd, /--trust/);
       assert.doesNotMatch(cmd, /--force/);
@@ -941,9 +984,9 @@ describe('buildLaunchCommand', () => {
       });
       assert.equal(
         cmd,
-        "cd '/tmp/repo' && /opt/cursor/bin/agent --force --sandbox enabled --model sonnet-4",
+        "cd '/tmp/repo' && /opt/cursor/bin/agent --force --sandbox enabled --model sonnet-4 'Read TASK.md and execute.'",
       );
-      assert.doesNotMatch(cmd, /Read TASK/);
+      assert.match(cmd, /Read TASK/);
       assert.doesNotMatch(cmd, /--print/);
       assert.doesNotMatch(cmd, /--trust/);
     });
@@ -957,9 +1000,9 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /cd \/tmp\/repo && \/usr\/local\/bin\/cursor-agent --force --sandbox disabled --model composer-2.5$/,
+        /cd \/tmp\/repo && \/usr\/local\/bin\/cursor-agent --force --sandbox disabled --model composer-2.5 Read TASK\.md and execute\.$/,
       );
-      assert.doesNotMatch(cmd, /Read TASK\.md and execute\./);
+      assert.match(cmd, /Read TASK\.md and execute\./);
       assert.doesNotMatch(cmd, /CLAUDECODE/);
     });
   });

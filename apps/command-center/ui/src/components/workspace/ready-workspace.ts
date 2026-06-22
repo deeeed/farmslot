@@ -303,9 +303,15 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
 
   private _renderSelectedRecipeRunArtifacts(payload: ReadyGatePayload) {
     const group = this._selectedRecipeRun();
-    const artifacts = this._selectedRecipeRunArtifacts().filter((artifact) =>
-      MEDIA_EXTS.test(artifact.path),
+    const selectedArtifacts = this._selectedRecipeRunArtifacts();
+    const packageEvidencePaths = new Set(
+      payload.prPackage?.evidenceManifest?.map((artifact) => artifact.path) ?? [],
     );
+    const artifacts = selectedArtifacts.filter((artifact) => {
+      if (packageEvidencePaths.size > 0) return packageEvidencePaths.has(artifact.path);
+      if (/^artifacts\/(runtime-launch|runner-blockers)\//.test(artifact.path)) return false;
+      return MEDIA_EXTS.test(artifact.path);
+    });
     return renderReadySelectedRecipeRunArtifacts({
       group,
       artifacts,
