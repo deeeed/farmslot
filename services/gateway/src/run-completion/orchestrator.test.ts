@@ -419,8 +419,6 @@ test('assertReadyGatePackageInputsCurrent rejects mutable body and manifest drif
     });
     const sha256 = createHash('sha256').update(imageBytes).digest('hex');
     const videoSha256 = createHash('sha256').update(videoBytes).digest('hex');
-    const manifestSha256 = createHash('sha256').update(manifestText).digest('hex');
-    const prDescriptionSha256 = createHash('sha256').update(prDescription).digest('hex');
     const draftBody = await buildDraftPrBody(run, null, [
       { path: 'artifacts/after-ac1.png', purpose: 'screenshot', sizeBytes: imageBytes.length },
       { path: 'artifacts/after.mp4', purpose: 'video', sizeBytes: videoBytes.length },
@@ -447,12 +445,6 @@ test('assertReadyGatePackageInputsCurrent rejects mutable body and manifest drif
       draftBody,
       evidenceManifest: [
         {
-          path: 'artifacts/pr-description.md',
-          purpose: 'pr-description',
-          sizeBytes: Buffer.byteLength(prDescription),
-          sha256: prDescriptionSha256,
-        },
-        {
           path: 'artifacts/after-ac1.png',
           purpose: 'screenshot',
           sizeBytes: imageBytes.length,
@@ -463,12 +455,6 @@ test('assertReadyGatePackageInputsCurrent rejects mutable body and manifest drif
           purpose: 'video-after',
           sizeBytes: videoBytes.length,
           sha256: videoSha256,
-        },
-        {
-          path: 'artifacts/evidence-manifest.json',
-          purpose: 'evidence-manifest',
-          sizeBytes: Buffer.byteLength(manifestText),
-          sha256: manifestSha256,
         },
       ],
       selectedEvidenceKeys: ['artifacts/after-ac1.png'],

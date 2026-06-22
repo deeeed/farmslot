@@ -199,8 +199,6 @@ test('collectRunEvidenceArtifacts normalizes complete-step artifacts for replay 
   );
 });
 
-
-
 test('collectRunEvidenceArtifacts prefers curated package evidence and drops runtime internals', () => {
   const artifacts = collectRunEvidenceArtifacts(
     makeRun({
@@ -265,7 +263,6 @@ test('collectRunEvidenceArtifacts prefers curated package evidence and drops run
     ],
   );
 });
-
 
 test('eval candidate runs display as eval without adding a flow type', () => {
   const evalRun = makeRun({
