@@ -1,7 +1,15 @@
 // index.ts — Gateway daemon entry point
 // Starts HTTP + WebSocket server on port 7777
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -85,24 +93,46 @@ function acquireGatewaySingletonLock(): () => void {
   const lockPath = resolve(farmslotRoot, '.runs', `gateway-${PORT}.pid`);
   mkdirSync(dirname(lockPath), { recursive: true });
 
-  if (existsSync(lockPath)) {
-    const existingPid = Number(readFileSync(lockPath, 'utf-8').trim());
-    if (Number.isInteger(existingPid) && existingPid > 0 && existingPid !== process.pid) {
-      if (processIsAlive(existingPid)) {
-        throw new Error(
-          `Gateway already running for ${farmslotRoot} on port ${PORT} (pid ${existingPid}). ` +
-            `Stop the stale gateway before starting another instance to avoid split-brain run state.`,
-        );
+  for (;;) {
+    let fd: number | null = null;
+    try {
+      fd = openSync(lockPath, 'wx');
+      writeFileSync(fd, `${process.pid}\n`, 'utf-8');
+      return () => {
+        if (!existsSync(lockPath)) return;
+        const lockedPid = Number(readFileSync(lockPath, 'utf-8').trim());
+        if (lockedPid === process.pid) unlinkSync(lockPath);
+      };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EEXIST') throw err;
+
+      let existingPid = NaN;
+      try {
+        existingPid = Number(readFileSync(lockPath, 'utf-8').trim());
+      } catch (readErr) {
+        if ((readErr as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw readErr;
       }
+      if (Number.isInteger(existingPid) && existingPid > 0 && existingPid !== process.pid) {
+        if (processIsAlive(existingPid)) {
+          throw new Error(
+            `Gateway already running for ${farmslotRoot} on port ${PORT} (pid ${existingPid}). ` +
+              `Stop the stale gateway before starting another instance to avoid split-brain run state.`,
+          );
+        }
+      }
+      // Existing lock is stale or malformed. Remove it and retry the atomic create;
+      // if another process wins the race, the next openSync('wx') sees EEXIST.
+      try {
+        unlinkSync(lockPath);
+      } catch (unlinkErr) {
+        if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') throw unlinkErr;
+      }
+    } finally {
+      if (fd !== null) closeSync(fd);
     }
   }
-
-  writeFileSync(lockPath, `${process.pid}\n`, 'utf-8');
-  return () => {
-    if (!existsSync(lockPath)) return;
-    const lockedPid = Number(readFileSync(lockPath, 'utf-8').trim());
-    if (lockedPid === process.pid) unlinkSync(lockPath);
-  };
 }
 const ENABLE_BRANCH_WATCHERS =
   process.env.FARMSLOT_BRANCH_WATCHERS === '1' || process.env.FARMSLOT_BRANCH_WATCHERS === 'true';

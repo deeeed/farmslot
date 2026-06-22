@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { scanArtifacts } from './publication-artifacts.js';
+import { collectUploadableMediaFiles, scanArtifacts } from './publication-artifacts.js';
 
 test('scanArtifacts excludes runtime launch and runner blocker internals from reviewable manifests', async () => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-scan-artifacts-'));
@@ -25,6 +25,23 @@ test('scanArtifacts excludes runtime launch and runner blocker internals from re
       artifacts.map((artifact) => artifact.path).sort(),
       ['artifacts/recipe-run/after.png', 'artifacts/report.md'],
     );
+  } finally {
+    await rm(taskDir, { recursive: true, force: true });
+  }
+});
+
+test('collectUploadableMediaFiles excludes runtime launch and runner blocker media', async () => {
+  const taskDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-upload-artifacts-'));
+  try {
+    const artifactsDir = path.join(taskDir, 'artifacts');
+    await mkdir(path.join(artifactsDir, 'runtime-launch/chrome-profile'), { recursive: true });
+    await mkdir(path.join(artifactsDir, 'runner-blockers'), { recursive: true });
+    await mkdir(path.join(artifactsDir, 'recipe-run'), { recursive: true });
+    await writeFile(path.join(artifactsDir, 'runtime-launch/chrome-profile/cache.png'), 'png');
+    await writeFile(path.join(artifactsDir, 'runner-blockers/pane.png'), 'png');
+    await writeFile(path.join(artifactsDir, 'recipe-run/after.png'), 'png');
+
+    assert.deepEqual(await collectUploadableMediaFiles(artifactsDir), ['recipe-run/after.png']);
   } finally {
     await rm(taskDir, { recursive: true, force: true });
   }

@@ -231,6 +231,7 @@ export async function runReplayStep(
   bumpRunGeneration(params.runId);
 
   let replayTaskFile = existing.taskFile ?? null;
+  let effectiveSlotId = existing.slotId;
 
   if (targetIdx >= 0 && writeTaskIdx >= 0 && targetIdx > writeTaskIdx && !replayTaskFile) {
     const writeTaskStep = existing.steps.find((candidate) => candidate.name === PS.WRITE_TASK);
@@ -244,6 +245,7 @@ export async function runReplayStep(
   // If replaying from find-slot or earlier, clear slot so it picks fresh
   if (targetIdx >= 0 && targetIdx <= findSlotIdx) {
     replayTaskFile = null;
+    effectiveSlotId = null;
     updateRun(params.runId, { slotId: null, taskFile: null });
     console.log(`[run] replay from ${replayStepName} — cleared slotId + taskFile for re-selection`);
   } else if (targetIdx >= 0 && targetIdx <= writeTaskIdx) {
@@ -281,6 +283,7 @@ export async function runReplayStep(
             `slot ${replaySlotId} is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
           );
         }
+        effectiveSlotId = replaySlotId;
         updateRun(params.runId, { slotId: replaySlotId });
         console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
       } catch (err) {
@@ -313,7 +316,7 @@ export async function runReplayStep(
 
   // Replaying from self-review or later must clear nested-loop artifacts and active task variants.
   if (
-    existing.slotId &&
+    effectiveSlotId &&
     existing.taskFile &&
     targetIdx >= 0 &&
     selfReviewIdx >= 0 &&
@@ -327,7 +330,7 @@ export async function runReplayStep(
         getOrchestratorTaskRoot,
         resolveTaskRelDir,
       } = await import('../../core/config.js');
-      const vars = await loadSlotVars(existing.slotId);
+      const vars = await loadSlotVars(effectiveSlotId);
       const pv = await loadProjectVars(existing.project).catch(() => null);
       const taskRelDir = resolveTaskRelDir(
         existing.taskFile,
@@ -375,7 +378,7 @@ export async function runReplayStep(
     targetIdx >= prepareIdx &&
     targetIdx <= monitorIdx;
 
-  if (replaysWorkerLaunch && existing.slotId && existing.taskFile) {
+  if (replaysWorkerLaunch && effectiveSlotId && existing.taskFile) {
     try {
       const {
         loadSlotVars,
@@ -384,7 +387,7 @@ export async function runReplayStep(
         getOrchestratorTaskRoot,
         resolveTaskRelDir,
       } = await import('../../core/config.js');
-      const vars = await loadSlotVars(existing.slotId);
+      const vars = await loadSlotVars(effectiveSlotId);
       const pv = await loadProjectVars(existing.project).catch(() => null);
       const taskRelDir = resolveTaskRelDir(
         existing.taskFile,

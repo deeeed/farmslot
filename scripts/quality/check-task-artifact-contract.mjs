@@ -13,6 +13,7 @@ if (!taskDir) {
 const artifactsDir = path.join(taskDir, 'artifacts');
 const issues = [];
 const mediaExt = /\.(png|jpe?g|gif|mp4|mov|webm)$/i;
+const internalArtifactPath = /^artifacts\/(?:runtime-launch|runner-blockers)\//;
 const allowedManifestKeys = new Set([
   'version',
   'preferred_mode',
@@ -80,7 +81,12 @@ function normalizeArtifactPath(value) {
 
 function addRef(refs, value) {
   const normalized = normalizeArtifactPath(value);
-  if (normalized) refs.add(normalized);
+  if (!normalized) return;
+  if (internalArtifactPath.test(normalized)) {
+    issues.push(`evidence-manifest references internal artifact: ${normalized}`);
+    return;
+  }
+  refs.add(normalized);
 }
 
 
