@@ -479,11 +479,14 @@ export function emitAnalyticsForTerminalRun(
     );
     return null;
   }
-  // Set the flag only after the record builds successfully.
-  run.analyticsEmittedAt = run.completedAt ?? run.updatedAt ?? new Date().toISOString();
-  // Returns the append promise, which REJECTS on a sink-write failure. Callers decide:
-  //  - updateRun fires-and-forgets (the run stays in the store → recoverable via backfill),
+  // Mark the run emitted ONLY after the append durably succeeds — `analyticsEmittedAt` means
+  // "written", not "attempted". A failed append therefore leaves the run un-flagged, so the
+  // eviction paths re-attempt and `analyticsBackfill` can still recover it. The returned promise
+  // REJECTS on a sink-write failure; callers decide:
+  //  - updateRun fires-and-forgets (the run stays in the store → recoverable),
   //  - eviction paths (archiveRun/deleteRun) await it and skip eviction on rejection so a run
   //    is never pruned before its record is durably written.
-  return appendAnalyticsRecord(record);
+  return appendAnalyticsRecord(record).then(() => {
+    run.analyticsEmittedAt = run.completedAt ?? run.updatedAt ?? run.createdAt;
+  });
 }
