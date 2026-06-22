@@ -689,7 +689,9 @@ export function updateRun(id: string, partial: Partial<Run>): Run {
   // completedAt (so wall-clock is accurate). Sets run.analyticsEmittedAt synchronously
   // so the persist below captures the idempotency flag; the append itself is background.
   if (isTerminalRunStatus(run.status) && run.completedAt) {
-    emitAnalyticsForTerminalRun(run);
+    // Fire-and-forget: the run stays in the store, so a dropped append is recoverable via
+    // analyticsBackfill. Eviction paths (archive/delete) await instead.
+    void emitAnalyticsForTerminalRun(run);
   }
   persistRunBackground(run, 'update');
   return run;
@@ -731,8 +733,10 @@ export async function deleteRun(id: string): Promise<boolean> {
     console.warn(`[run-store] deleting run ${id} with unresolved improvement decision(s)`);
   }
   // Catch-all: capture analytics before the run leaves the store, in case it reached a
-  // terminal state without ever flowing through updateRun with a completedAt set.
-  emitAnalyticsForTerminalRun(run);
+  // terminal state without ever flowing through updateRun with a completedAt set. Await the
+  // append here — once deleted the run is gone from the store, so a fire-and-forget failure
+  // would be unrecoverable.
+  await emitAnalyticsForTerminalRun(run);
   runs.delete(id);
   try {
     await unlink(path.join(RUNS_DIR, `${id}.json`));
@@ -751,9 +755,10 @@ export async function archiveRun(id: string): Promise<boolean> {
     throw new Error(`Cannot archive active run ${id} (status=${run.status})`);
   }
   const archivedRun: Run = { ...run, archivedAt: new Date().toISOString() };
-  // Catch-all: ensure the analytics record exists before the run JSON is moved out of
-  // the live store, so archived/deleted runs are never lost to the analytics corpus.
-  emitAnalyticsForTerminalRun(run);
+  // Catch-all: ensure the analytics record is written before the run is evicted from the live
+  // store. Await here — backfill scans the live store, not the archive, so a fire-and-forget
+  // failure during archive would be unrecoverable.
+  await emitAnalyticsForTerminalRun(run);
   runs.delete(id);
   await mkdir(ARCHIVE_DIR, { recursive: true });
   const src = path.join(RUNS_DIR, `${id}.json`);

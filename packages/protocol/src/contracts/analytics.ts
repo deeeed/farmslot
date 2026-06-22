@@ -13,8 +13,9 @@ import type { FlowType, RunLane, RunStatus } from './runs.js';
 export const ANALYTICS_RECORD_SCHEMA_VERSION = 1;
 
 /**
- * Normalized cause for a non-`done` terminal run. `operator-cancelled` / `human-blocked`
- * describe non-error terminals; the rest describe genuine step failures.
+ * Normalized cause for a non-`done` terminal run. `operator-cancelled` describes a cancelled
+ * terminal; the rest describe genuine step failures. (`blocked` is non-terminal in this system —
+ * a blocked run emits when it later resolves to done/failed/cancelled — so it has no reason code.)
  */
 export type FailureReason =
   | 'merge-conflict'
@@ -28,7 +29,6 @@ export type FailureReason =
   | 'test'
   | 'timeout'
   | 'operator-cancelled'
-  | 'human-blocked'
   | 'unknown';
 
 export const FAILURE_REASONS: readonly FailureReason[] = [
@@ -43,7 +43,6 @@ export const FAILURE_REASONS: readonly FailureReason[] = [
   'test',
   'timeout',
   'operator-cancelled',
-  'human-blocked',
   'unknown',
 ];
 

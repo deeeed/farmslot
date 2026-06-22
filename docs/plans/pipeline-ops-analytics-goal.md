@@ -57,7 +57,9 @@ The embedded `steps` array gives full per-step granularity inside each per-run r
 
 ### 3. Emitter
 
-Fires at the run's terminal transition (done / failed / blocked / cancelled) in the run engine, writing exactly one record. Failure attribution (failing step + reason code) is computed here from the run's step states.
+Fires at the run's terminal transition (done / failed / cancelled — the canonical `TERMINAL_RUN_STATUSES`) in the run engine, writing exactly one record. `blocked` is non-terminal (a paused, human-gated state): a blocked run emits when it later resolves to done/failed/cancelled, so no analytics is lost. Failure attribution (failing step + reason code) is computed here from the run's step states.
+
+Durability: `updateRun` fires the append and forgets — the run stays in the store, so a dropped append is recoverable by re-running `analytics.backfill` (which dedups on actual sink presence, not the emitted flag). The eviction paths (`archiveRun`/`deleteRun`) await the append before removing the run, since an evicted run can no longer be backfilled.
 
 ### 4. Forward-capture additions (minimal, additive)
 
@@ -92,7 +94,7 @@ A one-time read-only pass over current live runs seeds the sink (timing, duratio
 ## Acceptance criteria
 
 - One analytics record is emitted per terminal run, before any run-history pruning, and survives deletion of the run JSON.
-- Failed/blocked/cancelled runs produce records with a populated `failedStep` + `failureReason`.
+- Failed/cancelled runs produce records with a populated `failedStep` + `failureReason`.
 - The dashboard renders the bottleneck map (per-step P50/P90/max), wall-vs-idle split, failure rate by step, self-review and CI loop distributions, and nudge rate — each filterable by project, host, flow, runner, model, and time.
 - Analytics continue to function after failed runs are pruned from run history.
 - No tokens/cost surfaces are shown until extraction is hardened.

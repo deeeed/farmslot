@@ -136,16 +136,18 @@ test('sink append + read round-trips', async () => {
   assert.ok(records.some((r) => r.runId === 'rt-1'));
 });
 
-test('emit is idempotent via analyticsEmittedAt', () => {
+test('emit is idempotent via analyticsEmittedAt', async () => {
   const run = makeRun({ id: 'idem-1' });
-  assert.equal(emitAnalyticsForTerminalRun(run), true);
+  const first = emitAnalyticsForTerminalRun(run);
+  assert.ok(first); // returns an awaitable append promise on first emit
+  await first;
   assert.ok(run.analyticsEmittedAt);
-  assert.equal(emitAnalyticsForTerminalRun(run), false);
+  assert.equal(emitAnalyticsForTerminalRun(run), null); // already emitted
 });
 
 test('non-terminal run is not emitted', () => {
   const run = makeRun({ id: 'active-1', status: 'monitoring', completedAt: undefined });
-  assert.equal(emitAnalyticsForTerminalRun(run), false);
+  assert.equal(emitAnalyticsForTerminalRun(run), null);
   assert.equal(run.analyticsEmittedAt, undefined);
 });
 

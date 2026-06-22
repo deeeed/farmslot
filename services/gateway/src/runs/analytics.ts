@@ -117,7 +117,6 @@ const REASON_PATTERNS: ReadonlyArray<[RegExp, FailureReason]> = [
  */
 function classifyFailureReason(run: Run, failedStep: string | null): FailureReason {
   if (run.status === 'cancelled') return 'operator-cancelled';
-  if (run.status === 'blocked') return 'human-blocked';
   // Explicit reason recorded on the failing step wins over heuristics.
   const explicit = (run.steps ?? []).find((s) => s.name === failedStep)?.outputs?.failureReason;
   if (typeof explicit === 'string') return explicit as FailureReason;
@@ -447,9 +446,12 @@ export function aggregateAnalytics(
  * Analytics is best-effort telemetry: a sink write failure is logged but must never break
  * run completion or eviction, hence the .catch that logs instead of rethrowing.
  */
-export function emitAnalyticsForTerminalRun(run: Run, opts?: { backfilled?: boolean }): boolean {
-  if (!isTerminalRunStatus(run.status)) return false;
-  if (run.analyticsEmittedAt) return false;
+export function emitAnalyticsForTerminalRun(
+  run: Run,
+  opts?: { backfilled?: boolean },
+): Promise<void> | null {
+  if (!isTerminalRunStatus(run.status)) return null;
+  if (run.analyticsEmittedAt) return null;
   try {
     // buildAnalyticsRecord runs synchronously here — keep it inside the try so a malformed
     // run can't throw out of updateRun/archiveRun/deleteRun and break run completion/eviction.
@@ -457,18 +459,21 @@ export function emitAnalyticsForTerminalRun(run: Run, opts?: { backfilled?: bool
     // Set the flag only after a record builds successfully, so a build failure leaves the
     // run un-emitted and recoverable via analyticsBackfill.
     run.analyticsEmittedAt = run.completedAt ?? run.updatedAt ?? new Date().toISOString();
-    appendAnalyticsRecord(record).catch((err) => {
+    // Returns a promise that resolves after the append attempt and never rejects (failures are
+    // logged). Eviction paths (archiveRun/deleteRun) AWAIT it so a run is never removed from the
+    // store before its record lands; updateRun fires it and forgets (the run stays in the store,
+    // so a dropped append is recoverable via backfill).
+    return appendAnalyticsRecord(record).catch((err) => {
       console.warn(
         `[analytics] failed to write record for run ${run.id}: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
-    return true;
   } catch (err) {
     // Best-effort telemetry: building/scheduling the record must never break run completion
     // or eviction. Log and continue; the run stays un-emitted and backfill can recover it.
     console.warn(
       `[analytics] failed to emit record for run ${run.id}: ${err instanceof Error ? err.message : String(err)}`,
     );
-    return false;
+    return null;
   }
 }

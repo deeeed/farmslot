@@ -43,8 +43,10 @@ export async function analyticsBackfill(): Promise<AnalyticsBackfillResult> {
       continue;
     }
     await appendAnalyticsRecord(buildAnalyticsRecord(run, { backfilled: true }));
-    // Persist the idempotency flag so the live emitter won't re-emit this run later.
-    // updateRun's emit hook is a no-op here: analyticsEmittedAt is now set.
+    // Persist the idempotency flag so a later updateRun on this run won't append a duplicate
+    // sink line. updateRun's emit hook is a no-op here (analyticsEmittedAt is now set). This is
+    // one updateRun per seeded run — acceptable for a one-time operator command; query-time
+    // dedup-by-runId is the safety net if a duplicate is ever written anyway.
     updateRun(run.id, { analyticsEmittedAt: run.completedAt ?? run.updatedAt });
     seen.add(run.id);
     written++;
