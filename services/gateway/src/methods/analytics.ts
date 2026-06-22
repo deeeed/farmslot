@@ -36,7 +36,9 @@ export async function analyticsBackfill(): Promise<AnalyticsBackfillResult> {
   for (const run of getAllRuns()) {
     if (!isTerminalRunStatus(run.status)) continue;
     scanned++;
-    if (seen.has(run.id) || run.analyticsEmittedAt) {
+    // Dedup on actual sink presence, not the analyticsEmittedAt flag: a run whose live emit set
+    // the flag but failed to write (disk error) is absent from `seen`, so backfill recovers it.
+    if (seen.has(run.id)) {
       skipped++;
       continue;
     }

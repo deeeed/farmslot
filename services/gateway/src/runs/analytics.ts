@@ -90,9 +90,10 @@ export function captureHostLoadSnapshot(slotId: string | null): HostLoadSnapshot
 
 /** The step a non-done run was sitting on: an explicitly failed step, else the last running one. */
 function failingStep(run: Run): string | null {
-  const failed = run.steps.find((s) => s.status === 'failed');
+  const steps = run.steps ?? [];
+  const failed = steps.find((s) => s.status === 'failed');
   if (failed) return failed.name;
-  const running = [...run.steps].reverse().find((s) => s.status === 'running');
+  const running = [...steps].reverse().find((s) => s.status === 'running');
   return running ? running.name : null;
 }
 
@@ -118,7 +119,7 @@ function classifyFailureReason(run: Run, failedStep: string | null): FailureReas
   if (run.status === 'cancelled') return 'operator-cancelled';
   if (run.status === 'blocked') return 'human-blocked';
   // Explicit reason recorded on the failing step wins over heuristics.
-  const explicit = run.steps.find((s) => s.name === failedStep)?.outputs?.failureReason;
+  const explicit = (run.steps ?? []).find((s) => s.name === failedStep)?.outputs?.failureReason;
   if (typeof explicit === 'string') return explicit as FailureReason;
   const haystack = `${run.error ?? ''} ${failedStep ?? ''}`;
   for (const [pattern, reason] of REASON_PATTERNS) {
@@ -128,7 +129,7 @@ function classifyFailureReason(run: Run, failedStep: string | null): FailureReas
 }
 
 function selfReviewLoopCount(run: Run): number | null {
-  const attempts = run.steps.find((s) => s.name === 'self-review')?.outputs?.attempts;
+  const attempts = (run.steps ?? []).find((s) => s.name === 'self-review')?.outputs?.attempts;
   return Array.isArray(attempts) ? attempts.length : null;
 }
 
@@ -141,7 +142,7 @@ function ciOutputs(run: Run): {
   pollCount: number | null;
   inlineFix: number | null;
 } {
-  const o = run.steps.find((s) => s.name === 'ci-watch')?.outputs;
+  const o = (run.steps ?? []).find((s) => s.name === 'ci-watch')?.outputs;
   if (!o) return { result: null, pollCount: null, inlineFix: null };
   return {
     result: typeof o.result === 'string' ? o.result : null,
@@ -151,7 +152,7 @@ function ciOutputs(run: Run): {
 }
 
 function hostLoadFromRun(run: Run): HostLoadSnapshot | null {
-  const raw = run.steps.find((s) => s.name === 'prepare')?.outputs?.hostLoad;
+  const raw = (run.steps ?? []).find((s) => s.name === 'prepare')?.outputs?.hostLoad;
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   if (numberOrNull(r.load1) == null) return null;
@@ -163,7 +164,7 @@ function hostLoadFromRun(run: Run): HostLoadSnapshot | null {
 }
 
 function humanReviewersRequestingChanges(run: Run): number | null {
-  const retro = run.decisions.find((d) => d.payload?.kind === 'retrospective')?.payload;
+  const retro = (run.decisions ?? []).find((d) => d.payload?.kind === 'retrospective')?.payload;
   if (retro && retro.kind === 'retrospective') {
     return numberOrNull(retro.commentsTriageSummary?.humanReviewersRequestingChanges);
   }
@@ -181,7 +182,7 @@ export function buildAnalyticsRecord(
   run: Run,
   opts?: { backfilled?: boolean },
 ): RunAnalyticsRecord {
-  const steps = run.steps.map((s) => ({
+  const steps = (run.steps ?? []).map((s) => ({
     name: s.name,
     status: s.status,
     startedAt: s.startedAt,
@@ -214,16 +215,16 @@ export function buildAnalyticsRecord(
     flowType: run.flowType,
     lane: run.lane,
     variant: run.variant ?? null,
-    runner: run.metrics.runner,
-    model: run.metrics.model,
+    runner: run.metrics?.runner ?? null,
+    model: run.metrics?.model ?? null,
     status: run.status,
-    outcome: run.metrics.outcome ?? null,
+    outcome: run.metrics?.outcome ?? null,
     failedStep,
     failureReason,
     steps,
     wallMs,
     idleMs,
-    nudgeCount: run.metrics.nudgeCount ?? 0,
+    nudgeCount: run.metrics?.nudgeCount ?? 0,
     selfReviewLoops: selfReviewLoopCount(run),
     ciResult: ci.result,
     ciPollCount: ci.pollCount,
@@ -280,8 +281,9 @@ export async function readAllAnalyticsRecords(): Promise<AnalyticsReadResult> {
 
 function percentile(sorted: number[], p: number): number | null {
   if (!sorted.length) return null;
-  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
-  return sorted[idx];
+  // Standard nearest-rank: ceil(p/100 * n) as a 1-based rank, clamped to [1, n].
+  const rank = Math.min(sorted.length, Math.max(1, Math.ceil((p / 100) * sorted.length)));
+  return sorted[rank - 1];
 }
 
 function durationStats(values: number[]): DurationStats {
@@ -327,7 +329,13 @@ export function aggregateAnalytics(
   generatedAt: string,
   parseFailures = 0,
 ): AnalyticsQueryResult {
-  const matched = all.filter((r) => matchesFilter(r, params));
+  // Dedup by runId, keeping the last record seen (files read oldest→newest, append order within
+  // a file is chronological → last wins). Guards against a rare crash-window double-emit and
+  // makes a replayed run (terminal more than once) count exactly once.
+  const latestByRun = new Map<string, RunAnalyticsRecord>();
+  for (const r of all) latestByRun.set(r.runId, r);
+  const records = [...latestByRun.values()];
+  const matched = records.filter((r) => matchesFilter(r, params));
 
   const byStatus: Record<string, number> = {};
   const byModel: Record<string, number> = {};
@@ -393,12 +401,12 @@ export function aggregateAnalytics(
 
   // Dimensions reflect the full scanned corpus so UI filter dropdowns offer every value.
   const distinct = (pick: (r: RunAnalyticsRecord) => string | null) =>
-    [...new Set(all.map(pick).filter((v): v is string => !!v))].sort();
+    [...new Set(records.map(pick).filter((v): v is string => !!v))].sort();
 
   return {
     generatedAt,
     matchedRuns: matched.length,
-    scannedRuns: all.length,
+    scannedRuns: records.length,
     parseFailures,
     byStatus,
     byModel,
@@ -442,11 +450,25 @@ export function aggregateAnalytics(
 export function emitAnalyticsForTerminalRun(run: Run, opts?: { backfilled?: boolean }): boolean {
   if (!isTerminalRunStatus(run.status)) return false;
   if (run.analyticsEmittedAt) return false;
-  run.analyticsEmittedAt = run.completedAt ?? run.updatedAt ?? new Date().toISOString();
-  appendAnalyticsRecord(buildAnalyticsRecord(run, opts)).catch((err) => {
+  try {
+    // buildAnalyticsRecord runs synchronously here — keep it inside the try so a malformed
+    // run can't throw out of updateRun/archiveRun/deleteRun and break run completion/eviction.
+    const record = buildAnalyticsRecord(run, opts);
+    // Set the flag only after a record builds successfully, so a build failure leaves the
+    // run un-emitted and recoverable via analyticsBackfill.
+    run.analyticsEmittedAt = run.completedAt ?? run.updatedAt ?? new Date().toISOString();
+    appendAnalyticsRecord(record).catch((err) => {
+      console.warn(
+        `[analytics] failed to write record for run ${run.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+    return true;
+  } catch (err) {
+    // Best-effort telemetry: building/scheduling the record must never break run completion
+    // or eviction. Log and continue; the run stays un-emitted and backfill can recover it.
     console.warn(
-      `[analytics] failed to write record for run ${run.id}: ${err instanceof Error ? err.message : String(err)}`,
+      `[analytics] failed to emit record for run ${run.id}: ${err instanceof Error ? err.message : String(err)}`,
     );
-  });
-  return true;
+    return false;
+  }
 }

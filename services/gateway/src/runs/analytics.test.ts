@@ -193,3 +193,58 @@ test('aggregateAnalytics computes bottleneck, failures, filters, and dimensions'
   assert.equal(filtered.scannedRuns, 3);
   assert.deepEqual(filtered.dimensions.projects, ['p1', 'p2']);
 });
+
+test('buildAnalyticsRecord tolerates a malformed run (missing steps/decisions/metrics)', () => {
+  const bad = {
+    id: 'bad-1',
+    status: 'failed',
+    project: 'p',
+    flowType: 'fix-bug',
+    lane: 'production',
+    slotId: null,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(1000).toISOString(),
+    completedAt: new Date(1000).toISOString(),
+  } as unknown as Run;
+  const rec = buildAnalyticsRecord(bad);
+  assert.equal(rec.runId, 'bad-1');
+  assert.equal(rec.nudgeCount, 0);
+  assert.deepEqual(rec.steps, []);
+  // The emit hook must never throw out of updateRun/archiveRun/deleteRun.
+  assert.doesNotThrow(() => emitAnalyticsForTerminalRun(bad));
+});
+
+test('aggregateAnalytics dedups duplicate runId records (latest wins)', () => {
+  const base = Date.parse('2026-06-22T10:00:00.000Z');
+  const first = buildAnalyticsRecord(makeRun({ id: 'dup', status: 'done' }));
+  const second = buildAnalyticsRecord(
+    makeRun({
+      id: 'dup',
+      status: 'failed',
+      steps: [step('prepare', 'failed', base, base + 1000)],
+      completedAt: new Date(base + 1000).toISOString(),
+    }),
+  );
+  const res = aggregateAnalytics([first, second], {}, '2026-06-22T00:00:00.000Z');
+  assert.equal(res.matchedRuns, 1);
+  assert.equal(res.scannedRuns, 1);
+  assert.equal(res.byStatus.failed, 1);
+  assert.equal(res.byStatus.done, undefined);
+});
+
+test('percentile uses nearest-rank (no high bias for small n)', () => {
+  const base = Date.parse('2026-06-22T10:00:00.000Z');
+  const recs = [10, 20, 30, 40].map((d, i) =>
+    buildAnalyticsRecord(
+      makeRun({
+        id: `pct-${i}`,
+        steps: [step('monitor', 'done', base, base + d)],
+        completedAt: new Date(base + d).toISOString(),
+      }),
+    ),
+  );
+  const res = aggregateAnalytics(recs, {}, '2026-06-22T00:00:00.000Z');
+  const monitor = res.bottleneck.find((b) => b.step === 'monitor');
+  // nearest-rank p50 of [10,20,30,40] = rank ceil(0.5*4)=2 → 20 (not 30).
+  assert.equal(monitor?.stats.p50, 20);
+});
