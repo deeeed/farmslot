@@ -140,6 +140,24 @@ function recoverReplaySlotId(
   return existing.agentContexts?.find((candidate) => candidate.slotId)?.slotId ?? null;
 }
 
+type SlotReclaimCheck =
+  | { ok: true }
+  | { ok: false; reason: 'owned-by-other'; owner: string }
+  | { ok: false; reason: 'not-reclaimable'; lifecycle: string };
+
+export function replaySlotReclaimCheck(
+  slot: Readonly<Record<string, unknown>>,
+  runId: string,
+): SlotReclaimCheck {
+  const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
+  if (owner && owner !== runId) return { ok: false, reason: 'owned-by-other', owner };
+
+  const lifecycle = typeof slot.lifecycle === 'string' ? slot.lifecycle : '';
+  if (owner === runId) return { ok: true };
+  if (lifecycle === '' || lifecycle === 'ready' || lifecycle === 'released') return { ok: true };
+  return { ok: false, reason: 'not-reclaimable', lifecycle };
+}
+
 export async function runReplayStep(
   params: RunReplayStepParams,
   emit: Emit,
@@ -236,15 +254,39 @@ export async function runReplayStep(
   } else {
     const replaySlotId = recoverReplaySlotId(existing, targetIdx, prepareIdx);
     if (replaySlotId) {
-      updateRun(params.runId, { slotId: replaySlotId });
-      // Re-claim the slot (engine released it on failure)
+      // Re-claim only when the slot is free or still owned by this run. A released run
+      // can keep stale agentContext.slotId history after its slot is reassigned; blindly
+      // writing slot status here would steal that physical worker from the new run.
       try {
-        const { updateSlotStatus } = await import('../../core/index.js');
-        await updateSlotStatus(replaySlotId, { lifecycle: 'preparing', agent: 'orchestrator' });
+        const { updateSlotStatusIf } = await import('../../core/index.js');
+        const claimed = await updateSlotStatusIf(
+          replaySlotId,
+          (slot) => replaySlotReclaimCheck(slot, params.runId).ok,
+          {
+            lifecycle: 'busy',
+            phase: 'preparing',
+            agent: 'orchestrator',
+            current_run_id: params.runId,
+            current_flow_type: existing.flowType || null,
+            current_ticket_or_pr: existing.ticketOrPr,
+            current_mode: existing.mode ?? null,
+            current_family_id: existing.familyId ?? null,
+            current_lane: existing.lane ?? null,
+            current_variant: existing.variant ?? null,
+          },
+        );
+        if (!claimed) {
+          updateRun(params.runId, { slotId: null });
+          throw new Error(
+            `slot ${replaySlotId} is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
+          );
+        }
+        updateRun(params.runId, { slotId: replaySlotId });
         console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
       } catch (err) {
         console.warn(`[run] slot re-claim failed (${(err as Error).message}), clearing slotId`);
         updateRun(params.runId, { slotId: null });
+        throw err;
       }
     }
   }

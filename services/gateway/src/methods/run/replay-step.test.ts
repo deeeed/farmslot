@@ -5,7 +5,26 @@ import { Events, type RunDecision } from '@farmslot/protocol';
 
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
-import { runReplayStep } from './replay-step.js';
+import { replaySlotReclaimCheck, runReplayStep } from './replay-step.js';
+
+test('replaySlotReclaimCheck rejects slots owned by another active run', () => {
+  assert.deepEqual(replaySlotReclaimCheck({ current_run_id: 'run-b', lifecycle: 'busy' }, 'run-a'), {
+    ok: false,
+    reason: 'owned-by-other',
+    owner: 'run-b',
+  });
+  assert.deepEqual(replaySlotReclaimCheck({ current_run_id: 'run-a', lifecycle: 'busy' }, 'run-a'), {
+    ok: true,
+  });
+  assert.deepEqual(replaySlotReclaimCheck({ current_run_id: null, lifecycle: 'ready' }, 'run-a'), {
+    ok: true,
+  });
+  assert.deepEqual(replaySlotReclaimCheck({ current_run_id: null, lifecycle: 'busy' }, 'run-a'), {
+    ok: false,
+    reason: 'not-reclaimable',
+    lifecycle: 'busy',
+  });
+});
 
 test('runReplayStep rejects non-authorized triggeredBy actor before replay', async (t) => {
   const run = createRun({

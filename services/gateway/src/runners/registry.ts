@@ -851,18 +851,27 @@ async function submitRunnerInstruction(
   return false;
 }
 
-async function waitForStableIdlePaneAfterClassifierAction(
+type ClassifierActionRecovery =
+  | { kind: 'ready'; pane: string }
+  | { kind: 'task-accepted'; pane: string };
+
+async function waitForPaneAfterClassifierAction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
+  message: string,
+  marker: string,
   opts: { timeoutMs: number; pollIntervalMs: number; stabilityPolls: number },
-): Promise<string | null> {
+): Promise<ClassifierActionRecovery | null> {
   const deadline = Date.now() + opts.timeoutMs;
   let lastPane = '';
   let stableCount = 0;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, opts.pollIntervalMs));
     const pane = await captureTmuxPane(vars, target, 90);
+    if (runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner)) {
+      return { kind: 'task-accepted', pane };
+    }
     if (!runnerPaneLooksIdle(pane.split('\n'), runner)) {
       stableCount = 0;
       lastPane = '';
@@ -870,7 +879,7 @@ async function waitForStableIdlePaneAfterClassifierAction(
     }
     if (pane === lastPane) {
       stableCount += 1;
-      if (stableCount >= opts.stabilityPolls) return pane;
+      if (stableCount >= opts.stabilityPolls) return { kind: 'ready', pane };
     } else {
       stableCount = 1;
       lastPane = pane;
@@ -1094,14 +1103,27 @@ export async function sendRunnerPostLaunchPrompt(
         vars,
         tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${key} 2>/dev/null`),
       );
-      const recoveredPane = await waitForStableIdlePaneAfterClassifierAction(vars, target, runner, {
-        timeoutMs: Math.min(30_000, Math.max(readyTimeoutMs, 5_000)),
-        pollIntervalMs,
-        stabilityPolls,
-      });
-      if (recoveredPane) {
+      const recovered = await waitForPaneAfterClassifierAction(
+        vars,
+        target,
+        runner,
+        message,
+        marker,
+        {
+          timeoutMs: Math.min(30_000, Math.max(readyTimeoutMs, 5_000)),
+          pollIntervalMs,
+          stabilityPolls,
+        },
+      );
+      if (recovered?.kind === 'task-accepted') {
+        console.log(
+          `[${logPrefix}] pane classifier submitted the buffered task in ${target}; skipping duplicate post-launch send`,
+        );
+        return;
+      }
+      if (recovered?.kind === 'ready') {
         ready = true;
-        lastPane = recoveredPane;
+        lastPane = recovered.pane;
       } else {
         timeoutPaneForFailure = (
           await execOnSlot(

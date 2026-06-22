@@ -687,6 +687,9 @@ const SCAN_ARTIFACT_TOP_LEVEL_EXCLUDES = new Set([
   // recipe but are never intentional review evidence. Scanning them makes
   // PR previews noisy and can add thousands of irrelevant files.
   'runtime-launch',
+  // Runner launch diagnostics are useful for debugging the orchestrator, but
+  // they can contain pane snapshots/prompts and should not be proposed as PR evidence.
+  'runner-blockers',
 ]);
 
 function shouldScanArtifactPath(relativePath: string): boolean {
