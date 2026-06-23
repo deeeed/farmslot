@@ -367,6 +367,8 @@ export interface AddResult {
   pack: PackJson;
   action: 'add' | 'noop' | 'repair';
   slots: string[];
+  /** Per-project install failures (resilient add continued past them); empty = clean. */
+  failures: string[];
 }
 
 /**
@@ -513,112 +515,150 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
 
   if (mutate) runPackHook(pack, 'pre_add', packDir, ws, progress);
 
-  const allSlots: string[] = [];
-  const projects: string[] = [];
+  // Resilient install: a failure building one project's slots (e.g. the iOS
+  // mobile build on a machine without Xcode) must NOT block the remaining
+  // projects in the pack. Failures are collected per project, surfaced at the
+  // end, and left for the repair path to retry — they never abort the pack.
+  const projects = pack.projects.map(projectName);
+  const allSlots = pack.projects.flatMap((proj) => {
+    const short = projectShortName(proj);
+    return Array.from({ length: proj.slots }, (_, i) => `${pool.machine}-${short}-${i + 1}`);
+  });
+  const failures: string[] = [];
 
+  // Slot-id ownership conflicts are config errors the resilient loop must NOT
+  // swallow as a per-project failure (repair can't heal them) — fail fast here,
+  // before any mutation, so they abort the whole add with a clear message.
   for (const proj of pack.projects) {
-    const registered = mutate
-      ? registerProject(proj, packDir, ws, claimedState, pack.name, progress)
-      : readRegisteredProject(proj, ws);
-    projects.push(registered.name);
-
-    for (let n = 1; n <= registered.slots; n++) {
-      const slotId = `${pool.machine}-${registered.short}-${n}`;
-      const session = `${registered.short}-${n}`;
-      allSlots.push(slotId);
-
-      // Fail fast when the slot id is already taken by anything this project
-      // does not own — another pack's project, or a hand-created slot with no
-      // project field (adopting it would run lifecycle scripts against it).
+    const name = projectName(proj);
+    const short = projectShortName(proj);
+    for (let n = 1; n <= proj.slots; n++) {
+      const slotId = `${pool.machine}-${short}-${n}`;
       const existing = pool.slots.find((s) => s.id === slotId);
-      if (existing && existing.project !== registered.name) {
+      if (existing && existing.project !== name) {
         throw new AddError(
           `slot ${slotId} already belongs to ${existing.project ? `project '${existing.project}'` : 'an operator-defined slot (no project field)'} — set a distinct 'short' in pack.json or remove the conflicting slot`,
         );
       }
-      // Honor an operator-repointed slot repo; default for new slots.
-      const repoPath = existing?.repo ?? join(ws.reposDir, `${registered.short}-${n}`);
-
-      if (mutate) {
-        cloneSlotRepo(registered.repoUrl, repoPath, progress);
-
-        const added = registerSlot(pool, {
-          id: slotId,
-          project: registered.name,
-          platform: registered.platform,
-          repo: repoPath,
-          session,
-          branch: registered.defaultBranch,
-          resources: {
-            'dev-server': { port: allocatePort(pool) },
-            ...defaultResources(registered.platform, registered.short, n, pool),
-          },
-        });
-        if (added) {
-          writePool(poolPath, pool);
-          progress.step({ label: `slot ${slotId} registered`, detail: state.pool_file });
-        } else if (existing) {
-          // Backfill platform resources missing on slots created before
-          // defaultResources existed. Merge-only: user-edited values win.
-          const defaults = defaultResources(registered.platform, registered.short, n, pool);
-          const backfill = Object.fromEntries(
-            Object.entries(defaults).filter(([key]) => !existing.resources?.[key]),
-          );
-          if (Object.keys(backfill).length > 0) {
-            existing.resources = { ...backfill, ...existing.resources };
-            writePool(poolPath, pool);
-            progress.step({
-              label: `slot ${slotId} resources backfilled`,
-              detail: Object.keys(backfill).join(', '),
-            });
-          } else {
-            progress.info(`slot ${slotId} already in pool — left untouched`);
-          }
-        }
-
-        // Existing lifecycle scripts own fixtures, setup, and hook expansion;
-        // never reimplement them.
-        run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], {
-          cwd: ws.farmslotDir,
-          stdio: childStdio(progress),
-        });
-        progress.step({ label: `slot ${slotId} fixtures synced` });
-        run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
-          cwd: ws.farmslotDir,
-          stdio: childStdio(progress),
-        });
-        progress.step({ label: `slot ${slotId} setup complete` });
-
-        if (registered.preflight) {
-          run('bash', ['scripts/run-project-hook.sh', slotId, 'preflight'], {
-            cwd: ws.farmslotDir,
-            stdio: childStdio(progress),
-          });
-          progress.step({ label: `slot ${slotId} preflight hook ran` });
-        }
-      }
-
-      run('bash', ['scripts/preflight-slot.sh', slotId], {
-        cwd: ws.farmslotDir,
-        stdio: childStdio(progress),
-      });
-      progress.step({ label: `slot ${slotId} validated (preflight + health)` });
     }
   }
 
-  if (mutate) runPackHook(pack, 'post_add', packDir, ws, progress);
-  if (pack.hooks?.smoke) {
-    runPackHook(pack, 'smoke', packDir, ws, progress);
-    progress.step({ label: `pack ${pack.name} smoke check passed` });
+  for (const proj of pack.projects) {
+    const projName = projectName(proj);
+    try {
+      const registered = mutate
+        ? registerProject(proj, packDir, ws, claimedState, pack.name, progress)
+        : readRegisteredProject(proj, ws);
+
+      for (let n = 1; n <= registered.slots; n++) {
+        const slotId = `${pool.machine}-${registered.short}-${n}`;
+        const session = `${registered.short}-${n}`;
+
+        // Conflicts were already rejected by the pre-pass above; here `existing`
+        // is this project's own slot (re-add/repair) or absent.
+        const existing = pool.slots.find((s) => s.id === slotId);
+        // Honor an operator-repointed slot repo; default for new slots.
+        const repoPath = existing?.repo ?? join(ws.reposDir, `${registered.short}-${n}`);
+
+        if (mutate) {
+          cloneSlotRepo(registered.repoUrl, repoPath, progress);
+
+          const added = registerSlot(pool, {
+            id: slotId,
+            project: registered.name,
+            platform: registered.platform,
+            repo: repoPath,
+            session,
+            branch: registered.defaultBranch,
+            resources: {
+              'dev-server': { port: allocatePort(pool) },
+              ...defaultResources(registered.platform, registered.short, n, pool),
+            },
+          });
+          if (added) {
+            writePool(poolPath, pool);
+            progress.step({ label: `slot ${slotId} registered`, detail: state.pool_file });
+          } else if (existing) {
+            // Backfill platform resources missing on slots created before
+            // defaultResources existed. Merge-only: user-edited values win.
+            const defaults = defaultResources(registered.platform, registered.short, n, pool);
+            const backfill = Object.fromEntries(
+              Object.entries(defaults).filter(([key]) => !existing.resources?.[key]),
+            );
+            if (Object.keys(backfill).length > 0) {
+              existing.resources = { ...backfill, ...existing.resources };
+              writePool(poolPath, pool);
+              progress.step({
+                label: `slot ${slotId} resources backfilled`,
+                detail: Object.keys(backfill).join(', '),
+              });
+            } else {
+              progress.info(`slot ${slotId} already in pool — left untouched`);
+            }
+          }
+
+          // Existing lifecycle scripts own fixtures, setup, and hook expansion;
+          // never reimplement them.
+          run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], {
+            cwd: ws.farmslotDir,
+            stdio: childStdio(progress),
+          });
+          progress.step({ label: `slot ${slotId} fixtures synced` });
+          run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
+            cwd: ws.farmslotDir,
+            stdio: childStdio(progress),
+          });
+          progress.step({ label: `slot ${slotId} setup complete` });
+
+          if (registered.preflight) {
+            run('bash', ['scripts/run-project-hook.sh', slotId, 'preflight'], {
+              cwd: ws.farmslotDir,
+              stdio: childStdio(progress),
+            });
+            progress.step({ label: `slot ${slotId} preflight hook ran` });
+          }
+        }
+
+        run('bash', ['scripts/preflight-slot.sh', slotId], {
+          cwd: ws.farmslotDir,
+          stdio: childStdio(progress),
+        });
+        progress.step({ label: `slot ${slotId} validated (preflight + health)` });
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      // failures[] feeds a one-line-per-project CLI summary — keep it scannable;
+      // the full (possibly multi-line) error goes to progress.info below.
+      failures.push(`${projName}: ${detail.split('\n')[0]}`);
+      progress.info(`project ${projName} failed — continuing with remaining projects: ${detail}`);
+    }
   }
 
+  // Pack-level finalization assumes every project installed; skip it (and the
+  // smoke gate) on a partial install so hooks never run against missing slots
+  // and one project's failure doesn't fail the smoke check for the others.
+  if (failures.length === 0) {
+    if (mutate) runPackHook(pack, 'post_add', packDir, ws, progress);
+    if (pack.hooks?.smoke) {
+      runPackHook(pack, 'smoke', packDir, ws, progress);
+      progress.step({ label: `pack ${pack.name} smoke check passed` });
+    }
+  } else {
+    progress.info(
+      `pack ${pack.name}: ${failures.length} project(s) failed — skipped post_add/smoke; re-run \`farmslot project add\` to retry the failed slots`,
+    );
+  }
+
+  // Leave the content hash empty on a partial install so the next add is a full
+  // repair (re-runs preflight for the failed slots) instead of a verify-only
+  // no-op. A clean install stamps the real hash so re-runs stay verify-only.
   const newState: WorkspaceState = {
     ...claimedState,
     packs: {
       ...claimedState.packs,
       [pack.name]: {
         source: isGitUrl(source) ? source : resolve(source),
-        hash,
+        hash: failures.length === 0 ? hash : '',
         projects,
         slots: allSlots,
       },
@@ -626,5 +666,5 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
   };
   writeState(ws, newState);
 
-  return { pack, action, slots: allSlots };
+  return { pack, action, slots: allSlots, failures };
 }

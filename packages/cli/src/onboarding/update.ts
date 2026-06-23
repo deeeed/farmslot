@@ -189,7 +189,12 @@ export async function farmslotUpdate(
         childOutputToStderr: progress.childOutputToStderr,
       },
     );
-    packs[name] = { ...packs[name], hash };
+    // A partial install marks the pack hash empty so the follow-up `project add`
+    // repairs the half-built slots. `update` only refreshes pack content — it
+    // can't complete a slot build — so it must preserve that empty marker rather
+    // than stamp the real hash (which would make the next add a no-op and strand
+    // the half-built slot).
+    packs[name] = { ...packs[name], hash: packState.hash === '' ? '' : hash };
     packsSynced.push(name);
     progress.step(
       `pack ${name} re-synced (project defs re-registered)`,
