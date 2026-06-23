@@ -250,6 +250,8 @@ for (const [name, actual, expected] of [
       archive: Methods.RUN_ARCHIVE,
       bulkDelete: Methods.RUN_BULK_DELETE,
       cleanup: Methods.RUN_CLEANUP,
+      setTags: Methods.RUN_TAGS_SET,
+      listTags: Methods.RUN_TAGS_LIST,
       backfillSummaries: Methods.RUN_BACKFILL_SUMMARIES,
       recipeRunsForSlot: Methods.RUN_RECIPE_RUNS_FOR_SLOT,
       recipeRunsForRun: Methods.RUN_RECIPE_RUNS_FOR_RUN,
