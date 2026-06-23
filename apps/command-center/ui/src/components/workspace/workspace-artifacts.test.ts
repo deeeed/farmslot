@@ -155,6 +155,22 @@ test('before/after acceptance criteria fallback chooses the most specific duplic
   );
 });
 
+test('before/after pairing falls back to a shared baseline before with AC-specific after captures', () => {
+  assert.deepEqual(
+    buildBeforeAfterPairs([
+      { path: 'artifacts/before-autoclose-baseline.png', purpose: 'screenshot' },
+      { path: 'artifacts/probe-run/before-autoclose-baseline.png', purpose: 'screenshot' },
+      { path: 'artifacts/after-ac1-default-signs.png', purpose: 'screenshot' },
+      { path: 'artifacts/after-ac2-tp-filled-plus.png', purpose: 'screenshot' },
+      { path: 'artifacts/recipe-run/after-ac1-default-signs.png', purpose: 'screenshot' },
+    ]).map((pair) => [pair.stem, pair.before.path, pair.after.path]),
+    [
+      ['ac1', 'artifacts/before-autoclose-baseline.png', 'artifacts/after-ac1-default-signs.png'],
+      ['ac2', 'artifacts/before-autoclose-baseline.png', 'artifacts/after-ac2-tp-filled-plus.png'],
+    ],
+  );
+});
+
 test('workspaceArtifactType classifies filters and labels', () => {
   assert.equal(workspaceArtifactType({ path: 'shots/home.png', purpose: 'Screenshot' }), 'image');
   assert.equal(workspaceArtifactType({ path: 'video/demo.webm', purpose: 'Recording' }), 'video');

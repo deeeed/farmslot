@@ -135,5 +135,58 @@ export function buildBeforeAfterPairs<T extends PairableArtifact>(
     (s): s is { before: T; after: T; stem: string; beforeCount: number; afterCount: number } =>
       s.before != null && s.after != null && s.beforeCount >= 1 && s.afterCount >= 1,
   );
-  return [...exactPairs, ...acPairs];
+  const pairedAfterAcFallback = new Set(acPairs.flatMap((pair) => [pair.before.path, pair.after.path]));
+  const sharedBaselinePairs = buildSharedBaselinePairs(artifacts, pairedPaths, pairedAfterAcFallback);
+  return [...exactPairs, ...acPairs, ...sharedBaselinePairs];
+}
+
+function sharedBaselineSpecificity(path: string): number {
+  const base = path.split('/').pop() ?? path;
+  let score = 0;
+  if (/baseline/i.test(base)) score += 100;
+  score -= path.split('/').length;
+  return score;
+}
+
+/**
+ * Recipes often capture one shared setup screenshot (e.g. before-autoclose-baseline)
+ * and AC-specific after screenshots without per-AC before files. Pair those after
+ * captures with the shared baseline when no exact or AC-specific before exists.
+ */
+function buildSharedBaselinePairs<T extends PairableArtifact>(
+  artifacts: T[],
+  exactPairedPaths: Set<string>,
+  acPairedPaths: Set<string>,
+): BeforeAfterPair<T>[] {
+  const blockedPaths = new Set([...exactPairedPaths, ...acPairedPaths]);
+  const beforeCandidates = artifacts.filter((artifact) => {
+    if (blockedPaths.has(artifact.path)) return false;
+    if (artifactKind(artifact.path, artifact.purpose) !== 'before') return false;
+    return acceptanceCriteriaKey(artifact.path) == null;
+  });
+  if (beforeCandidates.length === 0) return [];
+
+  const sharedBefore = beforeCandidates.reduce((best, candidate) =>
+    sharedBaselineSpecificity(candidate.path) > sharedBaselineSpecificity(best.path)
+      ? candidate
+      : best,
+  );
+
+  const afterByAc = new Map<string, T>();
+  for (const artifact of artifacts) {
+    if (blockedPaths.has(artifact.path)) continue;
+    if (artifactKind(artifact.path, artifact.purpose) !== 'after') continue;
+    const acKey = acceptanceCriteriaKey(artifact.path);
+    if (!acKey) continue;
+    const existing = afterByAc.get(acKey);
+    if (!existing || acPairSpecificity(artifact.path) > acPairSpecificity(existing.path)) {
+      afterByAc.set(acKey, artifact);
+    }
+  }
+
+  return [...afterByAc.entries()].map(([acKey, after]) => ({
+    before: sharedBefore,
+    after,
+    stem: acKey,
+  }));
 }

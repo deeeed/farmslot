@@ -78,7 +78,8 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
           `}
       <div class="rdy-bottom" style="flex: ${packageGate ? 1 : 100 - input.splitPct} 1 0%">
         ${input.payload.prPackage ? html`${input.renderPackagePanel()} ${reportEvidence}` : nothing}
-        ${input.renderTabBar()} ${input.renderTabContent()}
+        ${input.renderTabBar()}
+        <div class="rdy-tab-pane-host">${input.renderTabContent()}</div>
       </div>
     </div>
     <media-lightbox

@@ -55,6 +55,7 @@ export function dedupeWorkspaceEvidenceArtifacts(artifacts: readonly ArtifactRef
 export function renderWorkspaceEvidencePreview(input: {
   title: string;
   subtitle?: string;
+  hideHeader?: boolean;
   items: WorkspaceEvidencePreviewItem[];
   totalCount?: number;
   overflowHint?: string;
@@ -73,10 +74,12 @@ export function renderWorkspaceEvidencePreview(input: {
         style="display:flex; align-items:flex-start; justify-content:space-between; gap:${spacing.sm}; margin-bottom:${spacing.sm};"
       >
         <div style="display:flex; flex-direction:column; gap:2px; min-width:0;">
-          <span
-            style="font-size:${fonts.sizeXs}; text-transform:uppercase; letter-spacing:0.08em; color:${colors.textMuted}; font-weight:700;"
-            >${input.title}</span
-          >
+          ${!input.hideHeader
+            ? html`<span
+                style="font-size:${fonts.sizeXs}; text-transform:uppercase; letter-spacing:0.08em; color:${colors.textMuted}; font-weight:700;"
+                >${input.title}</span
+              >`
+            : nothing}
           ${input.subtitle
             ? html`<span
                 style="font-size:${fonts.sizeXs}; color:${colors.textSecondary}; line-height:1.45;"

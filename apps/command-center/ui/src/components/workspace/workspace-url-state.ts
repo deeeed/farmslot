@@ -18,6 +18,7 @@ export interface ReadyWorkspaceHashState {
   diffArtifact?: string;
   lightboxIndex?: number;
   lightboxRecipeRunId?: string;
+  recipePackageEvidenceCollapsed?: boolean;
 }
 
 export interface ReadyWorkspaceHashWriteState {
@@ -27,6 +28,7 @@ export interface ReadyWorkspaceHashWriteState {
   diffArtifact?: string;
   lightboxIndex?: number;
   lightboxRecipeRunId?: string;
+  recipePackageEvidenceCollapsed?: boolean;
 }
 
 export interface ReviewWorkspaceHashState {
@@ -80,6 +82,7 @@ export function parseReadyWorkspaceHashState(
     lightboxIndex: nonNegativeFiniteParam(params, 'lightboxIndex'),
     lightboxRecipeRunId:
       nonEmptyParam(params, 'lightboxRecipeRunId') ?? nonEmptyParam(params, 'recipeRun'),
+    recipePackageEvidenceCollapsed: params.get('evidencePreview') === 'collapsed',
   };
 }
 
@@ -117,6 +120,9 @@ export function readyWorkspaceHashWithState(
     params.delete('lightboxIndex');
     params.delete('lightboxRecipeRunId');
   }
+
+  if (state.recipePackageEvidenceCollapsed) params.set('evidencePreview', 'collapsed');
+  else params.delete('evidencePreview');
 
   return buildHash(route, params);
 }

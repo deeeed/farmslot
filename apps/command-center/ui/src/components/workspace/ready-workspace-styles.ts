@@ -347,6 +347,19 @@ export function readyWorkspaceLightStyles(): string {
       ready-workspace .rdy-bottom {
         display: flex; flex-direction: column; min-height: 100px; overflow: hidden;
       }
+      ready-workspace .rdy-package-evidence-section {
+        flex-shrink: 0;
+      }
+      ready-workspace .rdy-package-evidence-collapsed-hint {
+        padding: 0 ${spacing.sm} ${spacing.sm};
+      }
+      ready-workspace .rdy-tab-pane-host {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
       ready-workspace .rdy-tab-bar {
         display: flex; gap: 1px; background: ${colors.bgCard};
         border-bottom: 1px solid #2a2a44; padding: 2px ${spacing.sm}; flex-shrink: 0;

@@ -319,6 +319,11 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     return renderReadySelectedRecipeRunArtifacts({
       group,
       artifacts,
+      evidenceCollapsed: this._recipePackageEvidenceCollapsed,
+      toggleEvidenceCollapsed: () => {
+        this._recipePackageEvidenceCollapsed = !this._recipePackageEvidenceCollapsed;
+        this._syncViewStateToHash();
+      },
       openCompare: (selectedGroup, scopedArtifacts) => {
         this._lightboxRecipeRunId = selectedGroup.id;
         this._lightboxScopePaths = scopedArtifacts.map((artifact) => artifact.path);
