@@ -126,6 +126,20 @@ test('failure attribution: explicit reason on step outputs wins over heuristic',
   assert.equal(rec.failureReason, 'dep-install');
 });
 
+test('failure attribution: invalid explicit reason falls back to heuristic, not the stray value', () => {
+  const base = Date.parse('2026-06-22T10:00:00.000Z');
+  const rec = buildAnalyticsRecord(
+    makeRun({
+      status: 'failed',
+      error: 'metro bundler hung',
+      steps: [step('prepare', 'failed', base, base + 30_000, { failureReason: 'not-a-real-code' })],
+      completedAt: new Date(base + 30_000).toISOString(),
+    }),
+  );
+  // The stray code is rejected; classification falls through to the keyword heuristic.
+  assert.equal(rec.failureReason, 'metro-timeout');
+});
+
 test('cancelled run is attributed operator-cancelled', () => {
   const rec = buildAnalyticsRecord(makeRun({ status: 'cancelled' }));
   assert.equal(rec.failureReason, 'operator-cancelled');

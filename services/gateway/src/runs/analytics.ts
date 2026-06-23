@@ -7,6 +7,7 @@ import {
   type AnalyticsQueryParams,
   type AnalyticsQueryResult,
   type DurationStats,
+  FAILURE_REASONS,
   type FailureReason,
   type HostLoadSnapshot,
   isTerminalRunStatus,
@@ -117,9 +118,12 @@ const REASON_PATTERNS: ReadonlyArray<[RegExp, FailureReason]> = [
  */
 function classifyFailureReason(run: Run, failedStep: string | null): FailureReason {
   if (run.status === 'cancelled') return 'operator-cancelled';
-  // Explicit reason recorded on the failing step wins over heuristics.
+  // Explicit reason recorded on the failing step wins over heuristics — but only if it's a known
+  // code, so a stray string in step outputs can't escape the normalized enum.
   const explicit = (run.steps ?? []).find((s) => s.name === failedStep)?.outputs?.failureReason;
-  if (typeof explicit === 'string') return explicit as FailureReason;
+  if (typeof explicit === 'string' && (FAILURE_REASONS as readonly string[]).includes(explicit)) {
+    return explicit as FailureReason;
+  }
   const haystack = `${run.error ?? ''} ${failedStep ?? ''}`;
   for (const [pattern, reason] of REASON_PATTERNS) {
     if (pattern.test(haystack)) return reason;
