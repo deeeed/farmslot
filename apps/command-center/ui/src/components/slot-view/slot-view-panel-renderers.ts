@@ -3,6 +3,7 @@ import { html, nothing } from 'lit';
 import { agentRoleShortLabel } from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { activateRunOnSlot } from '../runs/run-detail-actions.js';
 import { buildRerunAlongsideHref, canReplayRunSteps } from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
@@ -605,6 +606,23 @@ export function renderSlotViewBody(
                                 >
                                   Re-run alongside →
                                 </a>
+                              `
+                            : nothing}
+                          ${view._linkedRun.slotId
+                            ? html`
+                                <button
+                                  class="sv-run-action accent"
+                                  title="Re-bind this run onto ${view._linkedRun
+                                    .slotId} and re-drive prepare+dispatch with the cheapest warm profile. No new run is created."
+                                  @click=${() =>
+                                    view._linkedRun &&
+                                    activateRunOnSlot(
+                                      view._linkedRun.id,
+                                      view._linkedRun.slotId ?? '',
+                                    )}
+                                >
+                                  Activate on slot →
+                                </button>
                               `
                             : nothing}
                         </div>

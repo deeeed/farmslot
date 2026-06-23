@@ -177,6 +177,7 @@ export const Methods = {
   RUN_PAUSE: 'run.pause',
   RUN_RESUME: 'run.resume',
   RUN_REPLAY_STEP: 'run.replayStep',
+  RUN_ACTIVATE_ON_SLOT: 'run.activateOnSlot',
   RUN_AUTO_RECOVERY_STOP: 'run.autoRecovery.stop',
   RUN_CI_WATCH_POKE: 'run.ciWatch.poke',
   RUN_REFRESH_REVIEW_GATE: 'run.refreshReviewGate',

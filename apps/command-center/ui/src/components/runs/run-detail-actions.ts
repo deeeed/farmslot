@@ -246,3 +246,22 @@ export function resolveSlotPick(
   context.setSelectedSlotId(null);
   context.setResetBranch(false);
 }
+
+/**
+ * Re-bind an existing run onto a slot and re-drive prepare→dispatch with the
+ * cheapest warm profile (ADR-024 Activate-on-Slot). Shared by run-detail,
+ * slot-view, and the slot-history modal so all three entry points behave
+ * identically — no new run is created.
+ */
+export async function activateRunOnSlot(runId: string, slotId: string): Promise<void> {
+  if (!slotId) return;
+  try {
+    await gateway.request(Methods.RUN_ACTIVATE_ON_SLOT, {
+      runId,
+      slotId,
+      prepareProfile: 'attach',
+    });
+  } catch (err) {
+    alert(`Activate on ${slotId} failed: ${(err as Error).message}`);
+  }
+}

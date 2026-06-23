@@ -5,6 +5,7 @@ import { Methods, type SlotRunHistoryEntry, type SlotRunHistoryResult } from '@f
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { activateRunOnSlot } from '../runs/run-detail-actions.js';
 import { formatCreatedAt, formatDuration, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 
@@ -342,6 +343,11 @@ export class SlotHistoryModal extends LitElement {
     this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
   }
 
+  private _activate(runId: string) {
+    void activateRunOnSlot(runId, this.slotId);
+    this._close();
+  }
+
   private async _load() {
     const token = Symbol('slot-history-load');
     this._loadToken = token;
@@ -569,6 +575,16 @@ export class SlotHistoryModal extends LitElement {
                 </div>
                 <div class="shm-actions">
                   <a class="shm-link" href=${`#${routeForRun({ id: run.runId })}`}>Open run</a>
+                  ${this.slotId
+                    ? html`<button
+                        class="shm-retry"
+                        title="Re-bind this run onto ${this
+                          .slotId} and re-drive prepare+dispatch with the cheapest warm profile. No new run is created."
+                        @click=${() => this._activate(run.runId)}
+                      >
+                        Reload on this slot →
+                      </button>`
+                    : nothing}
                 </div>
               </div>
             `
@@ -598,9 +614,10 @@ export class SlotHistoryModal extends LitElement {
           </div>
           <div class="shm-body">
             <div class="shm-note">
-              This reads existing retained run records only. Recorded task/artifact paths may no
-              longer exist if files were cleaned. It does not resume, relaunch, delete, archive, or
-              change retention.
+              Retained run records for this slot. "Reload on this slot" re-binds a run and re-drives
+              prepare+dispatch with the cheapest warm profile (no new run); recorded task/artifact
+              paths may be stale if files were cleaned. It does not delete, archive, or change
+              retention.
             </div>
             ${!this._slotExists
               ? html`<div class="shm-state error">
