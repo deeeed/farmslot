@@ -17,6 +17,7 @@ import {
   FLOW_STEPS,
   type FlowType,
   isTerminalRunStatus,
+  normalizeRunTags,
   primaryRoleForFlow,
   prNumberFromRunInput,
   type Run,
@@ -137,7 +138,9 @@ function inferredRunStartedAt(run: Pick<Run, 'steps' | 'createdAt'>): string {
   return (
     run.steps
       .map((step) => step.startedAt)
-      .filter((startedAt): startedAt is string => typeof startedAt === 'string' && startedAt.length > 0)
+      .filter(
+        (startedAt): startedAt is string => typeof startedAt === 'string' && startedAt.length > 0,
+      )
       .sort()[0] ?? run.createdAt
   );
 }
@@ -531,6 +534,7 @@ export interface ListRunsFilter {
   dateFrom?: string;
   dateTo?: string;
   search?: string;
+  tags?: string[];
   sort?: 'newest' | 'oldest' | 'duration' | 'grade';
 }
 
@@ -605,8 +609,18 @@ export function listRuns(filter?: ListRunsFilter): { runs: Run[]; totalCount: nu
   if (filter?.search) {
     const q = filter.search.toLowerCase();
     result = result.filter(
-      (r) => r.ticketOrPr.toLowerCase().includes(q) || r.summary?.toLowerCase().includes(q),
+      (r) =>
+        r.ticketOrPr.toLowerCase().includes(q) ||
+        Boolean(r.summary?.toLowerCase().includes(q)) ||
+        Boolean(r.tags?.some((tag) => tag.includes(q))),
     );
+  }
+  const tagFilter = normalizeRunTags(filter?.tags);
+  if (tagFilter.length > 0) {
+    result = result.filter((r) => {
+      const runTags = new Set(normalizeRunTags(r.tags));
+      return tagFilter.every((tag) => runTags.has(tag));
+    });
   }
 
   const totalCount = result.length;
@@ -633,8 +647,23 @@ export function listRuns(filter?: ListRunsFilter): { runs: Run[]; totalCount: nu
   }
 
   const limit =
-    filter?.limit ?? (filter?.familyId || filter?.prNumber != null ? result.length : 500);
+    filter?.limit ??
+    (filter?.familyId || filter?.prNumber != null || normalizeRunTags(filter?.tags).length > 0
+      ? result.length
+      : 500);
   return { runs: result.slice(0, limit), totalCount };
+}
+
+export function listRunTags(): Array<{ tag: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const run of runs.values()) {
+    for (const tag of normalizeRunTags(run.tags)) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
 
 export function updateRun(id: string, partial: Partial<Run>): Run {
@@ -791,13 +820,17 @@ export async function archiveRun(id: string): Promise<boolean> {
   await mkdir(ARCHIVE_DIR, { recursive: true });
   const src = path.join(RUNS_DIR, `${id}.json`);
   const dst = path.join(ARCHIVE_DIR, `${id}.json`);
+  // Write the stamped archive record directly to the archive destination. A
+  // pending background persist from the terminal status update may still be
+  // racing on src; renaming src could move that stale pre-archive JSON and lose
+  // archivedAt. Direct dst write makes the archived record authoritative.
+  await writeFile(dst, JSON.stringify(archivedRun, null, 2), 'utf-8');
   try {
-    await writeFile(src, JSON.stringify(archivedRun, null, 2), 'utf-8');
-    await rename(src, dst);
-  } catch {
-    // If the source disappeared between cache lookup and archive, persist the
-    // stamped record directly so archived views still know it is hidden.
-    await writeFile(dst, JSON.stringify(archivedRun, null, 2), 'utf-8');
+    await unlink(src);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    // Source absence is expected when the run file was already removed or never
+    // persisted before archive; dst above is the durable archived copy.
   }
   return true;
 }

@@ -12,6 +12,7 @@ export interface RunsHashState {
   lane?: string;
   sort?: string;
   q?: string;
+  tag?: string;
   family?: string;
 }
 
@@ -22,6 +23,7 @@ const RUNS_HASH_KEYS: (keyof RunsHashState)[] = [
   'lane',
   'sort',
   'q',
+  'tag',
   'family',
 ];
 

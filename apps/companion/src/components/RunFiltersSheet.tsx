@@ -71,7 +71,7 @@ function ChipRow<T extends string>({
 
 export function RunFiltersSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const insets = useSafeAreaInsets();
-  const { filters, setFlow, setLane, setSort, setSearch, clearAll, activeCount } =
+  const { filters, setFlow, setLane, setSort, setSearch, setTag, clearAll, activeCount } =
     useRunFilterStore();
   const count = activeCount();
 
@@ -106,7 +106,20 @@ export function RunFiltersSheet({ open, onClose }: { open: boolean; onClose: () 
                 style={styles.searchInput}
                 value={filters.search}
                 onChangeText={setSearch}
-                placeholder="Ticket, PR, or summary..."
+                placeholder="Ticket, PR, summary, or tag..."
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Tag</Text>
+              <TextInput
+                style={styles.searchInput}
+                value={filters.tag}
+                onChangeText={setTag}
+                placeholder="demo, launch, regression..."
                 placeholderTextColor={colors.textMuted}
                 autoCapitalize="none"
                 autoCorrect={false}

@@ -40,6 +40,7 @@ import {
   type RunReplayStepParams,
   type RunResolveDecisionParams,
   type RunResumeParams,
+  type RunTagsSetParams,
   type SlotRunHistoryParams,
 } from '@farmslot/protocol';
 
@@ -68,6 +69,8 @@ import {
   runDelete,
   runGetGrade,
   runGrade,
+  runListTags,
+  runSetTags,
 } from '../methods/run/admin.js';
 import {
   runForSlot,
@@ -196,6 +199,10 @@ export async function routeRunMethod(
       return handled(runBulkDelete(p as RunBulkDeleteParams, emit));
     case Methods.RUN_CLEANUP:
       return handled(runCleanup(p as RunCleanupParams));
+    case Methods.RUN_TAGS_SET:
+      return handled(runSetTags(p as RunTagsSetParams, emit));
+    case Methods.RUN_TAGS_LIST:
+      return handled(runListTags());
     case Methods.RUN_BACKFILL_SUMMARIES:
       return handled(runBackfillSummaries(p as RunBackfillSummariesParams, emit));
     case Methods.EVAL_EXPERIMENT_CREATE:

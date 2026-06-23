@@ -864,6 +864,7 @@ export function mockRuns(): Run[] {
       slotId: 'runner-local-mobile-1',
       branch: 'fix/proj-2501',
       taskFile: 'tasks/PROJ-2501.md',
+      tags: ['demo', 'mobile'],
       steps: [
         {
           name: 'grade',

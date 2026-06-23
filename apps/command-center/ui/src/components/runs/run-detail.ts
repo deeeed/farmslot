@@ -15,6 +15,7 @@ import { Events, Methods } from '@farmslot/protocol';
 
 import './step-inspector.js';
 import './run-pipeline-mini.js';
+import './run-tag-editor.js';
 import '../shared/media-lightbox.js';
 import '../shared/step-artifacts.js';
 import '../workspace/review-workspace.js';
@@ -679,6 +680,7 @@ export class RunDetail extends RunDetailState {
       _confirmForceComplete: (runId) => this._confirmForceComplete(runId),
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
+      _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _togglePinnedSlot: (slotId) => {
         togglePinnedSlot(slotId);
         this.requestUpdate();
@@ -720,6 +722,10 @@ export class RunDetail extends RunDetailState {
         this._showTerminal = !this._showTerminal;
       },
     });
+  }
+
+  private async _setRunTags(run: Run, tags: string[]) {
+    await gateway.request(Methods.RUN_TAGS_SET, { runId: run.id, tags });
   }
 
   private renderGateSection(run: Run) {

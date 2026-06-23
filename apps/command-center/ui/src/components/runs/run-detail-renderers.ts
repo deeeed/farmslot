@@ -8,7 +8,7 @@ import type {
   Run,
   RunGrade,
 } from '@farmslot/protocol';
-import { modelsMatch } from '@farmslot/protocol';
+import { modelsMatch, normalizeRunTags } from '@farmslot/protocol';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
@@ -58,6 +58,7 @@ export interface RunDetailViewContext {
   _confirmForceComplete: (runId: string) => void;
   _requestCopilotRunDiagnosis: (run: Run) => void;
   _buildRerunAlongsideHref: (run: Run) => string;
+  _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;
   _togglePinnedSlot: (slotId: string) => void;
   _renderInteractiveDevGate: (run: Run) => unknown;
   _currentCiStatus: (run: Run) => CiCheckUpdatedPayload | null;
@@ -353,6 +354,14 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             )}</span
           >`
         : nothing}
+      <run-tag-editor
+        .tags=${normalizeRunTags(r.tags)}
+        .disabled=${actionsBlocked}
+        .saveTags=${(tags: string[]) => ctx._setRunTags(r, tags)}
+        .filterTag=${(tag: string) => {
+          location.hash = `runs?tag=${encodeURIComponent(tag)}`;
+        }}
+      ></run-tag-editor>
       ${r.status === 'ci-watching'
         ? html`
             <button

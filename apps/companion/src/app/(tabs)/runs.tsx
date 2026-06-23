@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { isTerminalRunStatus, type Run } from '@farmslot/protocol';
+import { isTerminalRunStatus, normalizeRunTags, type Run } from '@farmslot/protocol';
 import { FLOW_COLORS, FLOW_LABELS, RUNNER_COLORS } from '@farmslot/theme';
 
 import { BeforeAfterPreview } from '../../components/BeforeAfterPreview';
@@ -191,6 +191,15 @@ function RunCard({
         <Text style={styles.ticketText} numberOfLines={1}>
           {run.ticketOrPr}
         </Text>
+        {normalizeRunTags(run.tags).length > 0 ? (
+          <View style={styles.tagRow}>
+            {normalizeRunTags(run.tags).map((tag) => (
+              <Text key={tag} style={styles.tagChip}>
+                #{tag}
+              </Text>
+            ))}
+          </View>
+        ) : null}
         <View style={styles.metaRow}>
           {run.slotId && <Text style={baseStyles.textMuted}>{run.slotId}</Text>}
           {run.metrics?.durationMs != null && (
@@ -811,13 +820,18 @@ export default function RunsScreen() {
     if (runFilters.lane) {
       result = result.filter((r) => r.lane === runFilters.lane);
     }
+    if (runFilters.tag.trim()) {
+      const [tag] = normalizeRunTags([runFilters.tag]);
+      result = tag ? result.filter((r) => normalizeRunTags(r.tags).includes(tag)) : result;
+    }
     if (runFilters.search.trim()) {
       const q = runFilters.search.trim().toLowerCase();
       result = result.filter(
         (r) =>
           r.ticketOrPr.toLowerCase().includes(q) ||
           (r.summary ?? '').toLowerCase().includes(q) ||
-          (r.slotId ?? '').toLowerCase().includes(q),
+          (r.slotId ?? '').toLowerCase().includes(q) ||
+          normalizeRunTags(r.tags).some((tag) => tag.includes(q)),
       );
     }
     if (runFilters.sort === 'oldest') {
@@ -1325,6 +1339,23 @@ const styles = StyleSheet.create({
     fontSize: fonts.sizeMd,
     fontWeight: '600',
     marginTop: spacing.md,
+  },
+  tagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  tagChip: {
+    backgroundColor: colors.accent + '18',
+    borderColor: colors.accent + '55',
+    borderRadius: 999,
+    borderWidth: 1,
+    color: colors.accent,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
   },
   metaRow: {
     flexDirection: 'row',

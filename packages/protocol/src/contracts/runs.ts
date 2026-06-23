@@ -957,6 +957,30 @@ export interface IntelligenceActionsSummary {
   metadata: { parseFailures: number; shapeDriftFailures: number };
 }
 
+export const RUN_TAG_MAX_COUNT = 20;
+export const RUN_TAG_MAX_LENGTH = 40;
+
+export function normalizeRunTag(value: string): string {
+  return value
+    .trim()
+    .replace(/^#+/, '')
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, RUN_TAG_MAX_LENGTH);
+}
+
+export function normalizeRunTags(values: readonly string[] | undefined | null): string[] {
+  if (!values?.length) return [];
+  const tags = new Set<string>();
+  for (const raw of values) {
+    const tag = normalizeRunTag(String(raw));
+    if (tag) tags.add(tag);
+    if (tags.size >= RUN_TAG_MAX_COUNT) break;
+  }
+  return [...tags].sort((a, b) => a.localeCompare(b));
+}
+
 export interface Run {
   id: string;
   familyId: string;
@@ -1006,6 +1030,8 @@ export interface Run {
   grade?: RunGrade;
   humanGrade?: HumanGrade;
   links?: RunLink[];
+  /** Operator-curated labels for demo/review collections. Normalized with normalizeRunTags. */
+  tags?: string[];
   summary?: string; // LLM-generated 1-line description
   reviewTier?: string; // forced tier for review-pr: '' (auto — LLM picks strategy) | 'light' (→ smoke) | 'standard' (→ smoke|targeted) | 'full' (→ targeted|full-qa)
   safetyTier?: SafetyTier; // runner execution safety tier (ADR-023). undefined on legacy runs.

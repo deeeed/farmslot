@@ -57,6 +57,7 @@ export interface RunListSearchContext<
   Sort extends string,
 > {
   searchQuery: string;
+  tagFilter: string;
   flowFilter: Flow;
   laneFilter: Lane;
   sortBy: Sort;
@@ -66,6 +67,7 @@ export interface RunListSearchContext<
   laneOptions: Option<Lane>[];
   sortOptions: Option<Sort>[];
   setSearchQuery: (value: string) => void;
+  setTagFilter: (value: string) => void;
   setFlowFilter: (value: Flow) => void;
   setLaneFilter: (value: Lane) => void;
   setSortBy: (value: Sort) => void;
@@ -81,10 +83,22 @@ export function renderRunListSearchRow<
       <input
         class="search-input"
         type="text"
-        placeholder="Search ticket/PR..."
+        placeholder="Search ticket/PR/tag..."
         .value=${ctx.searchQuery}
         @input=${(event: Event) => {
           ctx.setSearchQuery((event.target as HTMLInputElement).value);
+        }}
+      />
+      <input
+        class="tag-input"
+        type="text"
+        placeholder="Tag filter..."
+        .value=${ctx.tagFilter}
+        @change=${(event: Event) => {
+          ctx.setTagFilter((event.target as HTMLInputElement).value);
+        }}
+        @keydown=${(event: KeyboardEvent) => {
+          if (event.key === 'Enter') ctx.setTagFilter((event.target as HTMLInputElement).value);
         }}
       />
       <select
@@ -135,9 +149,11 @@ export interface RunListStatusFilterContext<Status extends string> {
   statusFilter: Status;
   statusPills: Option<Status>[];
   familyFilter: string;
+  tagFilter: string;
   actionInProgress: boolean;
   setStatusFilter: (value: Status) => void;
   clearFamilyFilter: () => void;
+  clearTagFilter: () => void;
   startCleanup: () => void | Promise<void>;
   shortId: (id: string) => string;
 }
@@ -163,6 +179,11 @@ export function renderRunListStatusFilter<Status extends string>(
             <button class="pill active" @click=${ctx.clearFamilyFilter}>
               Family ${ctx.shortId(ctx.familyFilter)} ×
             </button>
+          `
+        : nothing}
+      ${ctx.tagFilter
+        ? html`
+            <button class="pill active" @click=${ctx.clearTagFilter}>Tag ${ctx.tagFilter} ×</button>
           `
         : nothing}
       <button
