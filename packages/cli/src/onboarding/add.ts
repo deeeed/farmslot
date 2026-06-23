@@ -526,6 +526,23 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
   });
   const failures: string[] = [];
 
+  // Slot-id ownership conflicts are config errors the resilient loop must NOT
+  // swallow as a per-project failure (repair can't heal them) — fail fast here,
+  // before any mutation, so they abort the whole add with a clear message.
+  for (const proj of pack.projects) {
+    const name = projectName(proj);
+    const short = projectShortName(proj);
+    for (let n = 1; n <= proj.slots; n++) {
+      const slotId = `${pool.machine}-${short}-${n}`;
+      const existing = pool.slots.find((s) => s.id === slotId);
+      if (existing && existing.project !== name) {
+        throw new AddError(
+          `slot ${slotId} already belongs to ${existing.project ? `project '${existing.project}'` : 'an operator-defined slot (no project field)'} — set a distinct 'short' in pack.json or remove the conflicting slot`,
+        );
+      }
+    }
+  }
+
   for (const proj of pack.projects) {
     const projName = projectName(proj);
     try {
@@ -537,15 +554,9 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
         const slotId = `${pool.machine}-${registered.short}-${n}`;
         const session = `${registered.short}-${n}`;
 
-        // Fail fast when the slot id is already taken by anything this project
-        // does not own — another pack's project, or a hand-created slot with no
-        // project field (adopting it would run lifecycle scripts against it).
+        // Conflicts were already rejected by the pre-pass above; here `existing`
+        // is this project's own slot (re-add/repair) or absent.
         const existing = pool.slots.find((s) => s.id === slotId);
-        if (existing && existing.project !== registered.name) {
-          throw new AddError(
-            `slot ${slotId} already belongs to ${existing.project ? `project '${existing.project}'` : 'an operator-defined slot (no project field)'} — set a distinct 'short' in pack.json or remove the conflicting slot`,
-          );
-        }
         // Honor an operator-repointed slot repo; default for new slots.
         const repoPath = existing?.repo ?? join(ws.reposDir, `${registered.short}-${n}`);
 
@@ -616,7 +627,9 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
       }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      failures.push(`${projName}: ${detail}`);
+      // failures[] feeds a one-line-per-project CLI summary — keep it scannable;
+      // the full (possibly multi-line) error goes to progress.info below.
+      failures.push(`${projName}: ${detail.split('\n')[0]}`);
       progress.info(`project ${projName} failed — continuing with remaining projects: ${detail}`);
     }
   }
