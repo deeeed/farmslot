@@ -526,6 +526,36 @@ Keep `flowType:'pr-complete'` as the single PR follow-up flow and use `mode` for
 
 The dispatch UI defaults ordinary PR-complete dispatches to autonomous and exposes interactive re-entry through the task-template selector (for example `pr-complete-interactive.md`). The task template, not a separate Mode selector, is the operator-facing autonomy choice. This narrows ADR-018's visible dispatch toggle while preserving ADR-018's `Run.mode` semantics.
 
+## Addendum: Activate-on-Slot — Warm Reuse of a Prior/Sibling Run
+
+**Added:** 2026-06-23
+
+### Problem
+
+§7 and the branch-affinity nudge addendum cover reusing a *busy* slot mid-task. They do not cover the common operator move of switching between *hot* runs that share a ticket — a `dev` run, its `pr-complete` follow-ups, and `comparison`-lane / publish-gate siblings. Re-engaging a prior or sibling run requires a fresh `run.create` + dispatch even when a warm slot already holds the branch, because slot history (`run/slot-history.ts`) is read-only. The rebuild cost itself is already solved by ADR-037 prepare profiles — the default `ensure-js-runtime` profile does a warm branch switch with no clean rebuild (mobile `--preflight-mode fast`, extension incremental webpack-watch) — so the missing piece is orchestration, not rebuild avoidance.
+
+Verified case (2026-06-23): family `TAT-3382` ran `dev → pr-complete → pr-complete` on one branch, all reusing `macwork-mme-1`; re-engaging the prior run still went through a fresh dispatch.
+
+### Decision
+
+Add an operator action `run.activateOnSlot(runId, slotId?)` that makes an *existing* run live on a slot without a fresh `run.create`:
+
+- It **re-binds the existing run record** to the chosen slot — the run stays the system of record, unlike the nudge path which creates a new run and stomps `current_run_id`.
+- It selects the **cheapest viable prepare profile** via the existing ADR-037 `requires`/`fallback` chain (`attach` when the slot is already on the run's branch and healthy → `ensure-js-runtime` when warm with current deps → `full` otherwise).
+- It honors `allowedSlots` and existing affinity scoring; with no slot specified it prefers the warm slot holding the run's branch/family and falls through transparently to any allowed slot.
+
+Extend `findAffinitySlot` (`methods/dispatch/preview.ts:88`) eligibility so a recently `released` slot still on the run's branch/family is a reuse candidate, not only `held` — switching back to a just-released slot should not re-pay a cold pick.
+
+### Constraints
+
+- Comparison-lane scrub rules from §7 still apply between distinct sibling identities; activate does not introduce a cross-identity reuse exception.
+- Activate depends on the run's delta being centralized. PR-flow branches are already on the remote; artifact-only/comparison branches are local-only today and are made portable separately (see ADR-030 Follow-Up #8).
+
+### Out of scope
+
+- Auto-activate without operator confirmation; cross-PR activation.
+- Holding multiple hot branches per slot (worktree-per-branch) and a per-SHA build cache — unnecessary under the delta-only model, where only the branch delta is run-specific.
+
 ## References
 
 - ADR-013: gateway-mediated orchestration
