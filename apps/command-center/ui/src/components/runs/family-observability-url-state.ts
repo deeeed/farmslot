@@ -2,7 +2,39 @@ import type { FamilyObservabilityArtifact } from '@farmslot/protocol';
 
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 
+import type { CompareTab } from './family-observability-comparison-renderers.js';
 import type { FamilyEvidenceFilter } from './family-observability-evidence.js';
+
+const COMPARE_TABS: CompareTab[] = ['leaderboard', 'matrix', 'evidence', 'cards'];
+
+export interface FamilyCompareView {
+  tab: CompareTab | null;
+  sortKey: string | null;
+}
+
+export function compareViewFromFamilyHash(hash: string = location.hash): FamilyCompareView {
+  const { params } = parseHashRoute(hash);
+  const tab = params.get('cmpTab');
+  const sortKey = params.get('cmpSort');
+  return {
+    tab: COMPARE_TABS.includes(tab as CompareTab) ? (tab as CompareTab) : null,
+    sortKey: sortKey || null,
+  };
+}
+
+export function familyCompareViewHash(
+  tab: CompareTab,
+  sortKey: string,
+  hash: string = location.hash,
+): string {
+  const { route, params } = parseHashRoute(hash);
+  // 'leaderboard' + 'score' are the defaults — omit them so shared links stay clean.
+  if (tab === 'leaderboard') params.delete('cmpTab');
+  else params.set('cmpTab', tab);
+  if (sortKey === 'score') params.delete('cmpSort');
+  else params.set('cmpSort', sortKey);
+  return buildHash(route, params);
+}
 
 export interface FamilyDiffSelection {
   runId: string | null;

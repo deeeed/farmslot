@@ -10,7 +10,7 @@ import type {
   Run,
   RunDecision,
 } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
+import { Events, isRunEvidenceVideoArtifact, Methods } from '@farmslot/protocol';
 
 import '../shared/media-lightbox.js';
 import '../shared/diff-viewer-modal.js';
@@ -33,6 +33,7 @@ import {
   familyCopilotCompareRequest,
   familyRunLabel,
 } from './family-observability-compare-model.js';
+import type { CompareTab } from './family-observability-comparison-renderers.js';
 import { createFamilyDiffLinkRenderers } from './family-observability-diff-link-renderers.js';
 import {
   familyArtifactForDiffSelection,
@@ -50,6 +51,7 @@ import {
   familyRunBadgeLabel,
   visibleFamilyEvidenceArtifacts,
 } from './family-observability-evidence.js';
+import { buildEvidenceComparisonMatrix } from './family-observability-evidence-matrix.js';
 import { familyObservabilityEvidenceStyles } from './family-observability-evidence-styles.js';
 import {
   createGradeDraft,
@@ -89,7 +91,9 @@ import { familyWarmSlotRerunCheck } from './family-observability-rerun-model.js'
 import { renderFamilySelectedRunDetail } from './family-observability-selected-run-renderers.js';
 import { FamilyObservabilityState } from './family-observability-state.js';
 import {
+  compareViewFromFamilyHash,
   evidenceFilterFromFamilyHash,
+  familyCompareViewHash,
   familyEvidenceFilterHash,
   familyRunHash,
   slotHistoryHashForRun,
@@ -188,6 +192,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     window.addEventListener('keydown', this._onModalKeyDown);
     window.addEventListener('hashchange', this._onHashChange);
     this._applyEvidenceFilterFromHash();
+    this._applyCompareViewFromHash();
     void this._loadSnapshot();
     this._fleetSlots = getState().fleet?.slots ?? [];
     this._prs = getState().prs ?? [];
@@ -243,6 +248,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     this._copyFeedback.clear();
     this._mdPreviewCache.clear();
     this._pairsCache = null;
+    this._evidenceMatrixCache = null;
     this._fullRuns = new Map();
     this._fullRunLoading = new Set();
     this._fullRunError = new Map();
@@ -253,6 +259,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     if (this._suppressDiffHashSync) return;
     this._applyDiffModalFromHash();
     this._applyEvidenceFilterFromHash();
+    this._applyCompareViewFromHash();
   };
 
   private _applyEvidenceFilterFromHash(): void {
@@ -356,6 +363,9 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private _openArtifact(artifact: FamilyObservabilityArtifact, event: Event) {
     event.stopPropagation();
+    // Drop any cross-run evidence pair so this snapshot-driven open can't pick
+    // up a stale override via the _pairs getter.
+    this._lightboxPairOverride = null;
     const lightboxArtifacts = this._evidenceArtifactsForCurrentFilter;
     this._lightboxOverride = lightboxArtifacts;
     const pair = this._pairForArtifact(artifact);
@@ -377,6 +387,7 @@ export class FamilyObservability extends FamilyObservabilityState {
   private _openStepArtifact(artifacts: FamilyObservabilityArtifact[], index: number, event: Event) {
     event.preventDefault();
     event.stopPropagation();
+    this._lightboxPairOverride = null;
     this._lightboxOverride = artifacts;
     this._lightboxIndex = index;
     this._lightboxMode = 'single';
@@ -385,6 +396,7 @@ export class FamilyObservability extends FamilyObservabilityState {
 
   private _openCompare(pairIndex: number, event: Event) {
     event.stopPropagation();
+    this._lightboxPairOverride = null;
     this._lightboxPairIndex = pairIndex;
     this._lightboxMode = 'compare';
     this._lightboxOpen = true;
@@ -406,11 +418,71 @@ export class FamilyObservability extends FamilyObservabilityState {
   }
 
   private get _pairs(): LightboxPair[] {
+    if (this._lightboxPairOverride) return this._lightboxPairOverride;
     if (this._pairsCache && this._pairsCache.source === this.snapshot)
       return this._pairsCache.pairs;
     const pairs = familyLightboxPairsForSnapshot(GATEWAY_BASE, this.snapshot);
     this._pairsCache = { source: this.snapshot, pairs };
     return pairs;
+  }
+
+  private get _evidenceMatrix() {
+    if (this._evidenceMatrixCache && this._evidenceMatrixCache.source === this.snapshot)
+      return this._evidenceMatrixCache.matrix;
+    const matrix = buildEvidenceComparisonMatrix(this.snapshot);
+    this._evidenceMatrixCache = { source: this.snapshot, matrix };
+    return matrix;
+  }
+
+  private _onSelectCompareTab(tab: CompareTab): void {
+    this._compareTab = tab;
+    this._syncCompareViewHash();
+  }
+
+  private _onSortCompare(sortKey: string): void {
+    this._compareSortKey = sortKey;
+    this._syncCompareViewHash();
+  }
+
+  private _syncCompareViewHash(): void {
+    const newHash = familyCompareViewHash(this._compareTab, this._compareSortKey);
+    if (window.location.hash !== newHash) history.replaceState(null, '', newHash);
+  }
+
+  private _applyCompareViewFromHash(): void {
+    const view = compareViewFromFamilyHash();
+    this._compareTab = view.tab ?? 'leaderboard';
+    this._compareSortKey = view.sortKey ?? 'score';
+  }
+
+  // Cross-run evidence stepping reuses the single-mode override viewer: the
+  // artifacts are one screen captured across sibling runs, in column order.
+  private _openEvidenceCell(artifacts: FamilyObservabilityArtifact[], index: number): void {
+    this._lightboxPairOverride = null;
+    this._lightboxOverride = artifacts;
+    this._lightboxIndex = index;
+    this._lightboxMode = 'single';
+    this._lightboxOpen = true;
+  }
+
+  // Overlay two lanes' captures of the same screen via the existing before/after
+  // slider — run A becomes "before", run B "after".
+  private _compareEvidencePair(
+    a: FamilyObservabilityArtifact,
+    b: FamilyObservabilityArtifact,
+  ): void {
+    const [beforeItem, afterItem] = familyLightboxItemsForArtifacts(
+      GATEWAY_BASE,
+      [a, b],
+      this.snapshot,
+    );
+    const kind: 'image' | 'video' =
+      isRunEvidenceVideoArtifact(a) || isRunEvidenceVideoArtifact(b) ? 'video' : 'image';
+    this._lightboxOverride = null;
+    this._lightboxPairOverride = [{ before: beforeItem, after: afterItem, stem: '', kind }];
+    this._lightboxPairIndex = 0;
+    this._lightboxMode = 'compare';
+    this._lightboxOpen = true;
   }
 
   private _pairForArtifact(artifact: FamilyObservabilityArtifact): { index: number } | null {
@@ -513,6 +585,9 @@ export class FamilyObservability extends FamilyObservabilityState {
       reportLoading: this.reportLoading,
       selectedExperimentKey: this._selectedExperimentKey,
       copiedPrompt: this._copiedAction === COPY_COMPARE_PROMPT,
+      compareTab: this._compareTab,
+      compareSortKey: this._compareSortKey,
+      evidenceMatrix: this._evidenceMatrix,
       pairCount: this._pairs.length,
       lightboxItems: this._lightboxItems,
       lightboxPairs: this._pairs,
@@ -584,6 +659,11 @@ export class FamilyObservability extends FamilyObservabilityState {
       onAskCopilot: (targetSnapshot) => this._askCopilotToCompare(targetSnapshot),
       onCopyPrompt: (targetSnapshot) => this._copyCrossComparePrompt(targetSnapshot),
       onSelectRun: (runId) => this._selectRun(runId),
+      onSelectCompareTab: (tab) => this._onSelectCompareTab(tab),
+      onSortCompare: (sortKey) => this._onSortCompare(sortKey),
+      onOpenEvidenceCell: (artifacts, index) => this._openEvidenceCell(artifacts, index),
+      onCompareEvidencePair: (a, b) => this._compareEvidencePair(a, b),
+      evidenceThumbUrl: (artifact) => familyArtifactUrl(GATEWAY_BASE, artifact),
       onOpenSlot: (slotId, event) => {
         event.stopPropagation();
         location.hash = `slot/${slotId}`;
@@ -591,6 +671,7 @@ export class FamilyObservability extends FamilyObservabilityState {
       onLightboxClose: () => {
         this._lightboxOpen = false;
         this._lightboxOverride = null;
+        this._lightboxPairOverride = null;
       },
       onLightboxNavigate: (index) => {
         this._lightboxIndex = index;

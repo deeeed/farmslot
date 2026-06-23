@@ -15,7 +15,9 @@ import type { MdFetchEntry } from '../../utils/markdown.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import type { LightboxPair } from '../shared/media-lightbox-types.js';
 
+import type { CompareTab } from './family-observability-comparison-renderers.js';
 import type { FamilyDiffModalState } from './family-observability-diff-modal.js';
+import type { EvidenceMatrix } from './family-observability-evidence-matrix.js';
 import type { FamilyEvidenceFilter } from './family-observability-evidence.js';
 import type { GradeDraft } from './family-observability-grading.js';
 import {
@@ -48,6 +50,11 @@ export abstract class FamilyObservabilityState extends LitElement {
   @state() _lightboxOverride: FamilyObservabilityArtifact[] | null = null;
   @state() _lightboxMode: 'single' | 'compare' = 'single';
   @state() _lightboxPairIndex = 0;
+  // Cross-run evidence compare builds a pair that isn't part of the snapshot's
+  // before/after pairs, so the override feeds it straight into compare mode.
+  @state() _lightboxPairOverride: LightboxPair[] | null = null;
+  @state() _compareTab: CompareTab = 'leaderboard';
+  @state() _compareSortKey = 'score';
   @state() _fleetSlots: SlotStatus[] = [];
   @state() _prs: PRStatus[] = [];
   @state() _showRerunOutput = false;
@@ -76,6 +83,10 @@ export abstract class FamilyObservabilityState extends LitElement {
   _pairsCache: {
     source: FamilyObservabilitySnapshot | null;
     pairs: LightboxPair[];
+  } | null = null;
+  _evidenceMatrixCache: {
+    source: FamilyObservabilitySnapshot | null;
+    matrix: EvidenceMatrix;
   } | null = null;
   _unsubState?: () => void;
   _unsubGateway?: () => void;
