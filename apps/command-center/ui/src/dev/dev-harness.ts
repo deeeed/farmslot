@@ -43,6 +43,7 @@ import '../components/slot-view/slot-history-modal.js';
 import '../components/stream-feed/stream-feed.js';
 import '../components/runs/run-list.js';
 import '../components/runs/run-detail.js';
+import '../components/runs/run-tag-editor.js';
 import '../components/runs/run-pipeline.js';
 import '../components/config/llm-config.js';
 import './improvement-dev.js';
@@ -138,6 +139,7 @@ type DevRoute =
   | 'stream-feed'
   | 'runs'
   | 'run-detail'
+  | 'run-tag-editor'
   | 'pipeline'
   | 'pipeline-mini'
   | 'flow-graph'
@@ -189,6 +191,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string }> = [
   { route: 'stream-feed', label: 'Stream Feed' },
   { route: 'runs', label: 'Runs' },
   { route: 'run-detail', label: 'Run Detail' },
+  { route: 'run-tag-editor', label: 'Run Tag Editor' },
   { route: 'pipeline', label: 'Pipeline' },
   { route: 'pipeline-mini', label: 'Pipeline Mini' },
   { route: 'flow-graph', label: 'Flow Graph' },
@@ -294,6 +297,7 @@ export class DevHarness extends LitElement {
       'stream-feed',
       'runs',
       'run-detail',
+      'run-tag-editor',
       'pipeline',
       'pipeline-mini',
       'flow-graph',
@@ -408,6 +412,8 @@ export class DevHarness extends LitElement {
         return this.renderRuns();
       case 'run-detail':
         return this.renderRunDetail();
+      case 'run-tag-editor':
+        return this.renderRunTagEditor();
       case 'pipeline':
         return this.renderPipeline();
       case 'pipeline-mini':
@@ -1690,6 +1696,40 @@ All checks passed.`;
         style="height: calc(100vh - 200px); border: 1px solid ${colors.bgCard}; border-radius: 8px; overflow: hidden"
       >
         <run-detail .runId=${run.id} .mockRun=${run} mock-data></run-detail>
+      </div>
+    `;
+  }
+
+  private renderRunTagEditor() {
+    return html`
+      <p class="section-label">Run tag editor states</p>
+      <div class="card-grid">
+        <div class="index-card">
+          <h3>Tagged run</h3>
+          <run-tag-editor
+            .tags=${['demo', 'onboarding']}
+            .saveTags=${async () => undefined}
+            .filterTag=${(tag: string) => {
+              location.hash = `runs?tag=${encodeURIComponent(tag)}`;
+            }}
+          ></run-tag-editor>
+        </div>
+        <div class="index-card">
+          <h3>Empty run</h3>
+          <run-tag-editor .tags=${[]} .saveTags=${async () => undefined}></run-tag-editor>
+        </div>
+        <div class="index-card">
+          <h3>Read-only</h3>
+          <run-tag-editor .tags=${['release-demo']} .filterTag=${() => undefined}></run-tag-editor>
+        </div>
+        <div class="index-card">
+          <h3>Disabled actions</h3>
+          <run-tag-editor
+            .tags=${['blocked']}
+            .disabled=${true}
+            .saveTags=${async () => undefined}
+          ></run-tag-editor>
+        </div>
       </div>
     `;
   }

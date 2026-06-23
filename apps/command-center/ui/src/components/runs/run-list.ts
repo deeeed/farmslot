@@ -14,6 +14,7 @@ import type {
 import { Methods, normalizeRunTags, summarizeRunEvidence } from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
+import './run-tag-editor.js';
 import '../shared/hydrating-placeholder.js';
 import '../queue/dispatch-queue-panel.js';
 
@@ -737,46 +738,25 @@ export class RunList extends RunListState {
     `;
   }
 
-  private async setRunTags(run: Run, raw: string) {
-    const tags = normalizeRunTags(raw.split(','));
+  private async setRunTags(run: Run, tags: string[]) {
     await gateway.request(Methods.RUN_TAGS_SET, { runId: run.id, tags });
+    await this.refreshTagFilter();
+  }
+
+  private filterByTag(tag: string) {
+    this.tagFilter = tag;
+    if (this.tab === 'active') this.tab = 'all';
+    void this.refreshTagFilter();
+    this._persistHashState();
   }
 
   private renderRunTags(run: Run) {
-    const tags = normalizeRunTags(run.tags);
     return html`
-      ${tags.map(
-        (tag) =>
-          html`<button
-            class="badge status-badge tag-badge"
-            style="--status-color:${colors.accent}"
-            title="Filter by tag ${tag}"
-            @click=${(e: Event) => {
-              e.stopPropagation();
-              this.tagFilter = tag;
-              if (this.tab === 'active') this.tab = 'all';
-              void this.refreshTagFilter();
-              this._persistHashState();
-            }}
-          >
-            #${tag}
-          </button>`,
-      )}
-      <button
-        class="inline-action"
-        title="Edit comma-separated run tags"
-        @click=${(e: Event) => {
-          e.stopPropagation();
-          const raw = window.prompt('Tags (comma-separated)', tags.join(', '));
-          if (raw === null) return;
-          void this.setRunTags(run, raw).catch((err) => {
-            console.error('[run-list] tag update failed:', err);
-            alert(`Tag update failed: ${(err as Error).message}`);
-          });
-        }}
-      >
-        ${tags.length ? 'Edit tags' : '+ Tag'}
-      </button>
+      <run-tag-editor
+        .tags=${normalizeRunTags(run.tags)}
+        .saveTags=${(tags: string[]) => this.setRunTags(run, tags)}
+        .filterTag=${(tag: string) => this.filterByTag(tag)}
+      ></run-tag-editor>
     `;
   }
 

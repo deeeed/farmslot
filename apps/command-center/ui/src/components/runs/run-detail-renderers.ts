@@ -58,7 +58,7 @@ export interface RunDetailViewContext {
   _confirmForceComplete: (runId: string) => void;
   _requestCopilotRunDiagnosis: (run: Run) => void;
   _buildRerunAlongsideHref: (run: Run) => string;
-  _setRunTags: (run: Run, raw: string) => void | Promise<void>;
+  _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;
   _togglePinnedSlot: (slotId: string) => void;
   _renderInteractiveDevGate: (run: Run) => unknown;
   _currentCiStatus: (run: Run) => CiCheckUpdatedPayload | null;
@@ -354,24 +354,14 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             )}</span
           >`
         : nothing}
-      ${normalizeRunTags(r.tags).map(
-        (tag) =>
-          html`<a class="status-badge" href="#runs?tag=${encodeURIComponent(tag)}">#${tag}</a>`,
-      )}
-      <button
-        class="gate-action-btn"
-        style="border-color:${colors.accent}; color:${colors.accent}; padding:4px 12px; font-size:11px"
-        title="Edit comma-separated run tags"
-        ?disabled=${actionsBlocked}
-        @click=${() => {
-          const tags = normalizeRunTags(r.tags);
-          const raw = window.prompt('Tags (comma-separated)', tags.join(', '));
-          if (raw === null) return;
-          void ctx._setRunTags(r, raw);
+      <run-tag-editor
+        .tags=${normalizeRunTags(r.tags)}
+        .disabled=${actionsBlocked}
+        .saveTags=${(tags: string[]) => ctx._setRunTags(r, tags)}
+        .filterTag=${(tag: string) => {
+          location.hash = `runs?tag=${encodeURIComponent(tag)}`;
         }}
-      >
-        ${normalizeRunTags(r.tags).length ? 'Edit tags' : '+ Tag'}
-      </button>
+      ></run-tag-editor>
       ${r.status === 'ci-watching'
         ? html`
             <button

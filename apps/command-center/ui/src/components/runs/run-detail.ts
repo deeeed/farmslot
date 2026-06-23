@@ -11,10 +11,11 @@ import type {
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { Events, Methods, normalizeRunTags } from '@farmslot/protocol';
+import { Events, Methods } from '@farmslot/protocol';
 
 import './step-inspector.js';
 import './run-pipeline-mini.js';
+import './run-tag-editor.js';
 import '../shared/media-lightbox.js';
 import '../shared/step-artifacts.js';
 import '../workspace/review-workspace.js';
@@ -723,16 +724,8 @@ export class RunDetail extends RunDetailState {
     });
   }
 
-  private async _setRunTags(run: Run, raw: string) {
-    try {
-      await gateway.request(Methods.RUN_TAGS_SET, {
-        runId: run.id,
-        tags: normalizeRunTags(raw.split(',')),
-      });
-    } catch (err) {
-      console.error('[run-detail] tag update failed:', err);
-      alert(`Tag update failed: ${(err as Error).message}`);
-    }
+  private async _setRunTags(run: Run, tags: string[]) {
+    await gateway.request(Methods.RUN_TAGS_SET, { runId: run.id, tags });
   }
 
   private renderGateSection(run: Run) {

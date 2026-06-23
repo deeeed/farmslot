@@ -40,7 +40,7 @@ export const useRunFilterStore = create<RunFilterStore>((set, get) => ({
       if (raw) {
         const parsed = JSON.parse(raw);
         set({
-          filters: { ...DEFAULTS, ...parsed, search: '', tag: '' },
+          filters: { ...DEFAULTS, ...parsed, search: '' },
           initialized: true,
         });
       } else {
