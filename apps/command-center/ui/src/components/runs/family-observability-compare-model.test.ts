@@ -9,8 +9,8 @@ import type {
 
 import {
   buildComparisonLeaderboard,
-  comparisonRuns,
   COMPARE_SORT_SCORE,
+  comparisonRuns,
   crossComparePrompt,
   familyCopilotCompareRequest,
   familyRunLabel,

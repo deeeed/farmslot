@@ -8,8 +8,8 @@ import type {
 
 import {
   buildComparisonLeaderboard,
-  type CompareLeaderboard,
   COMPARE_SORT_SCORE,
+  type CompareLeaderboard,
   comparisonRuns,
   familyRunLabel,
 } from './family-observability-compare-model.js';

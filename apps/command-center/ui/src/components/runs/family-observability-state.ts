@@ -17,8 +17,8 @@ import type { LightboxPair } from '../shared/media-lightbox-types.js';
 
 import type { CompareTab } from './family-observability-comparison-renderers.js';
 import type { FamilyDiffModalState } from './family-observability-diff-modal.js';
-import type { EvidenceMatrix } from './family-observability-evidence-matrix.js';
 import type { FamilyEvidenceFilter } from './family-observability-evidence.js';
+import type { EvidenceMatrix } from './family-observability-evidence-matrix.js';
 import type { GradeDraft } from './family-observability-grading.js';
 import {
   FamilyImprovementProposalTracker,
