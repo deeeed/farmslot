@@ -189,6 +189,9 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
       }
       if (hashState.lightboxIndex !== undefined) this._lightboxIndex = hashState.lightboxIndex;
       this._lightboxRecipeRunId = hashState.lightboxRecipeRunId ?? null;
+      if (hashState.recipePackageEvidenceCollapsed !== undefined) {
+        this._recipePackageEvidenceCollapsed = hashState.recipePackageEvidenceCollapsed;
+      }
     } finally {
       this._suppressHashSync = false;
     }
@@ -199,6 +202,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     const nextState: ReadyWorkspaceHashWriteState = {
       tab: this._activeTab,
       file: this._selectedFile || undefined,
+      recipePackageEvidenceCollapsed: this._recipePackageEvidenceCollapsed || undefined,
     };
     if (this._diffModalOpen) {
       nextState.modal = 'diff';

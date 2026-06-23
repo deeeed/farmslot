@@ -18,6 +18,7 @@ export interface ReadyWorkspaceHashState {
   diffArtifact?: string;
   lightboxIndex?: number;
   lightboxRecipeRunId?: string;
+  recipePackageEvidenceCollapsed?: boolean;
 }
 
 export interface ReadyWorkspaceHashWriteState {
@@ -27,6 +28,7 @@ export interface ReadyWorkspaceHashWriteState {
   diffArtifact?: string;
   lightboxIndex?: number;
   lightboxRecipeRunId?: string;
+  recipePackageEvidenceCollapsed?: boolean;
 }
 
 export interface ReviewWorkspaceHashState {
@@ -72,7 +74,7 @@ export function parseReadyWorkspaceHashState(
   hash: string = location.hash,
 ): ReadyWorkspaceHashState {
   const { params } = parseHashRoute(hash);
-  return {
+  const state: ReadyWorkspaceHashState = {
     tab: readyWorkspaceTab(params.get('tab')),
     file: nonEmptyParam(params, 'file'),
     modal: readyWorkspaceModal(params.get('modal')),
@@ -81,6 +83,10 @@ export function parseReadyWorkspaceHashState(
     lightboxRecipeRunId:
       nonEmptyParam(params, 'lightboxRecipeRunId') ?? nonEmptyParam(params, 'recipeRun'),
   };
+  if (params.get('evidencePreview') === 'collapsed') {
+    state.recipePackageEvidenceCollapsed = true;
+  }
+  return state;
 }
 
 export function readyWorkspaceHashWithState(
@@ -117,6 +123,9 @@ export function readyWorkspaceHashWithState(
     params.delete('lightboxIndex');
     params.delete('lightboxRecipeRunId');
   }
+
+  if (state.recipePackageEvidenceCollapsed) params.set('evidencePreview', 'collapsed');
+  else params.delete('evidencePreview');
 
   return buildHash(route, params);
 }

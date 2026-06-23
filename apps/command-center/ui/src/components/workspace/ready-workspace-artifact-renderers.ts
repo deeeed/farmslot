@@ -4,6 +4,7 @@ import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
 
 import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 import { formatBytes } from '../../utils/format.js';
+import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
 
 import {
   type ArtifactFilter,
@@ -28,6 +29,8 @@ import {
 export interface ReadySelectedRecipeRunArtifactsContext {
   group: RecipeRunArtifactGroup | null;
   artifacts: ArtifactRef[];
+  evidenceCollapsed: boolean;
+  toggleEvidenceCollapsed: () => void;
   openCompare: (group: RecipeRunArtifactGroup, artifacts: ArtifactRef[]) => void;
   artifactUrl: (group: RecipeRunArtifactGroup, artifact: ArtifactRef) => string;
   openArtifact: (
@@ -44,44 +47,57 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
   const previewArtifacts = displayArtifacts.slice(0, 12);
   const hiddenCount = displayArtifacts.length - previewArtifacts.length;
   const pairCount = buildBeforeAfterPairs(displayArtifacts).length;
+  const sectionLabel = `${group.label} evidence`;
   return html`
-    <section class="rdy-quality-card">
-      <div class="rdy-learnings-header">
-        ${group.label} artifacts
-        <span class="rdy-review-card-meta">${group.status}</span>
-      </div>
-      <div class="rdy-artifact-toolbar">
-        <span class="rdy-review-card-meta">
-          ${group.groupKind === 'live-run'
-            ? 'Latest live run output'
-            : group.groupKind === 'latest-valid'
-              ? 'Latest passing evidence'
-              : 'Current package artifacts'}
-        </span>
-        ${pairCount
-          ? html`
-              <button
-                class="rdy-artifact-filter compare"
-                @click=${() => ctx.openCompare(group, displayArtifacts)}
-              >
-                Compare ${pairCount} before/after
-              </button>
-            `
-          : nothing}
-      </div>
-      ${renderWorkspaceEvidencePreview({
-        title: `${group.label} evidence`,
-        subtitle: 'Local screenshot/video artifacts exactly as the gate will use them.',
-        totalCount: displayArtifacts.length,
-        overflowHint: `+${hiddenCount} more artifact${
-          hiddenCount === 1 ? '' : 's'
-        } in the full artifact grid below.`,
-        items: previewArtifacts.map((artifact) => ({
-          artifact,
-          url: ctx.artifactUrl(group, artifact),
-          open: () => ctx.openArtifact(group, artifact, displayArtifacts),
-        })),
-      })}
+    <section class="rdy-quality-card rdy-package-evidence-section">
+      ${renderCollapsibleSectionHeader(
+        sectionLabel,
+        ctx.evidenceCollapsed,
+        ctx.toggleEvidenceCollapsed,
+      )}
+      ${ctx.evidenceCollapsed
+        ? html`<div class="rdy-review-card-meta rdy-package-evidence-collapsed-hint">
+            ${displayArtifacts.length} artifact${displayArtifacts.length === 1 ? '' : 's'} hidden —
+            expand to preview
+            screenshots${pairCount
+              ? html` or compare ${pairCount} before/after pair${pairCount === 1 ? '' : 's'}`
+              : nothing}.
+          </div>`
+        : html`
+            <div class="rdy-artifact-toolbar">
+              <span class="rdy-review-card-meta">
+                ${group.groupKind === 'live-run'
+                  ? 'Latest live run output'
+                  : group.groupKind === 'latest-valid'
+                    ? 'Latest passing evidence'
+                    : 'Current package artifacts'}
+              </span>
+              ${pairCount
+                ? html`
+                    <button
+                      class="rdy-artifact-filter compare"
+                      @click=${() => ctx.openCompare(group, displayArtifacts)}
+                    >
+                      Compare ${pairCount} before/after
+                    </button>
+                  `
+                : nothing}
+            </div>
+            ${renderWorkspaceEvidencePreview({
+              title: sectionLabel,
+              hideHeader: true,
+              subtitle: 'Local screenshot/video artifacts exactly as the gate will use them.',
+              totalCount: displayArtifacts.length,
+              overflowHint: `+${hiddenCount} more artifact${
+                hiddenCount === 1 ? '' : 's'
+              } in the full artifact grid below.`,
+              items: previewArtifacts.map((artifact) => ({
+                artifact,
+                url: ctx.artifactUrl(group, artifact),
+                open: () => ctx.openArtifact(group, artifact, displayArtifacts),
+              })),
+            })}
+          `}
     </section>
   `;
 }

@@ -54,6 +54,7 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @state() _legacyTaskPromptError = '';
   _nextReviewLoopId = 2;
   @state() _packagePanelExpanded = false;
+  @state() _recipePackageEvidenceCollapsed = false;
   @state() _defaultPackageTabSelected = false;
   @state() _artifactFilter: ArtifactFilter = 'all';
   @state() _artifactTypeFilter: ArtifactTypeFilter = 'all';

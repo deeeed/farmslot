@@ -78,6 +78,10 @@ function acPairSpecificity(path: string): number {
   return stripStageMarkers(noExt).replace(/[-_.]origin$/i, '').length;
 }
 
+function scopedArtifactKey(artifact: Pick<PairableArtifact, 'path' | 'runId'>): string {
+  return `${artifact.runId ?? ''}::${artifact.path}`;
+}
+
 export function buildBeforeAfterPairs<T extends PairableArtifact>(
   artifacts: T[],
 ): BeforeAfterPair<T>[] {
@@ -135,5 +139,72 @@ export function buildBeforeAfterPairs<T extends PairableArtifact>(
     (s): s is { before: T; after: T; stem: string; beforeCount: number; afterCount: number } =>
       s.before != null && s.after != null && s.beforeCount >= 1 && s.afterCount >= 1,
   );
-  return [...exactPairs, ...acPairs];
+  const scopedPairedArtifacts = new Set(
+    [...exactPairs, ...acPairs].flatMap((pair) => [
+      scopedArtifactKey(pair.before),
+      scopedArtifactKey(pair.after),
+    ]),
+  );
+  const sharedBaselinePairs = buildSharedBaselinePairs(artifacts, scopedPairedArtifacts);
+  return [...exactPairs, ...acPairs, ...sharedBaselinePairs];
+}
+
+function sharedBaselineSpecificity(path: string): number {
+  const base = path.split('/').pop() ?? path;
+  let score = 0;
+  if (/baseline/i.test(base)) score += 100;
+  score -= path.split('/').length;
+  return score;
+}
+
+/**
+ * Recipes often capture one shared setup screenshot (e.g. before-autoclose-baseline)
+ * and AC-specific after screenshots without per-AC before files. Pair those after
+ * captures with the shared baseline when no exact or AC-specific before exists.
+ */
+function buildSharedBaselinePairs<T extends PairableArtifact>(
+  artifacts: T[],
+  scopedPairedArtifacts: Set<string>,
+): BeforeAfterPair<T>[] {
+  const beforeByScope = new Map<string, T[]>();
+  for (const artifact of artifacts) {
+    if (scopedPairedArtifacts.has(scopedArtifactKey(artifact))) continue;
+    if (artifactKind(artifact.path, artifact.purpose) !== 'before') continue;
+    if (acceptanceCriteriaKey(artifact.path) !== null) continue;
+    const { ext } = filenameStem(artifact.path);
+    const scopeKey = `${artifact.runId ?? ''}::${ext}`;
+    const candidates = beforeByScope.get(scopeKey) ?? [];
+    candidates.push(artifact);
+    beforeByScope.set(scopeKey, candidates);
+  }
+
+  const pairs: BeforeAfterPair<T>[] = [];
+  for (const [scopeKey, beforeCandidates] of beforeByScope) {
+    const sharedBefore = beforeCandidates.reduce((best, candidate) =>
+      sharedBaselineSpecificity(candidate.path) > sharedBaselineSpecificity(best.path)
+        ? candidate
+        : best,
+    );
+
+    const afterByAc = new Map<string, T>();
+    for (const artifact of artifacts) {
+      if (scopedPairedArtifacts.has(scopedArtifactKey(artifact))) continue;
+      if (artifactKind(artifact.path, artifact.purpose) !== 'after') continue;
+      const acKey = acceptanceCriteriaKey(artifact.path);
+      if (!acKey) continue;
+      const { ext } = filenameStem(artifact.path);
+      const artifactScope = `${artifact.runId ?? ''}::${ext}`;
+      if (artifactScope !== scopeKey) continue;
+      const existing = afterByAc.get(acKey);
+      if (!existing || acPairSpecificity(artifact.path) > acPairSpecificity(existing.path)) {
+        afterByAc.set(acKey, artifact);
+      }
+    }
+
+    for (const [acKey, after] of afterByAc) {
+      pairs.push({ before: sharedBefore, after, stem: acKey });
+    }
+  }
+
+  return pairs;
 }
