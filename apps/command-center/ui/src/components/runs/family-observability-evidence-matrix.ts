@@ -2,6 +2,7 @@ import {
   type FamilyObservabilityArtifact,
   type FamilyObservabilitySnapshot,
   isRunEvidenceVideoArtifact,
+  isRunEvidenceVisualArtifact,
 } from '@farmslot/protocol';
 
 import { artifactKind } from '../../utils/artifact-kind.js';
@@ -79,7 +80,10 @@ interface ScreenGroup {
   perRun: Map<string, RunScreenCaptures>;
 }
 
-const EMPTY_MATRIX: EvidenceMatrix = { runs: [], rows: [], uncompared: [] };
+// Fresh object per call — never a shared singleton a caller could mutate.
+function emptyMatrix(): EvidenceMatrix {
+  return { runs: [], rows: [], uncompared: [] };
+}
 
 function humanizeStem(stem: string): string {
   return stem.replace(/[-_.]+/g, ' ').trim() || stem;
@@ -87,10 +91,6 @@ function humanizeStem(stem: string): string {
 
 function cellKind(artifact: FamilyObservabilityArtifact): 'image' | 'video' {
   return isRunEvidenceVideoArtifact(artifact) ? 'video' : 'image';
-}
-
-function isVisualArtifact(path: string): boolean {
-  return /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(path) || isRunEvidenceVideoArtifact({ path });
 }
 
 /** Which capture slot an artifact fills, so we can prefer after > before > other. */
@@ -102,15 +102,15 @@ function captureSlot(artifact: FamilyObservabilityArtifact): keyof RunScreenCapt
 export function buildEvidenceComparisonMatrix(
   snapshot: Pick<FamilyObservabilitySnapshot, 'runs' | 'evidence'> | null,
 ): EvidenceMatrix {
-  if (!snapshot) return EMPTY_MATRIX;
+  if (!snapshot) return emptyMatrix();
   const runs = comparisonRuns(snapshot);
-  if (runs.length < 2) return EMPTY_MATRIX;
+  if (runs.length < 2) return emptyMatrix();
 
   const runIds = new Set(runs.map((run) => run.runId));
   // screenKey -> { displayStem, runId -> { before, after } }
   const byScreen = new Map<string, ScreenGroup>();
   for (const artifact of snapshot.evidence ?? []) {
-    if (!isVisualArtifact(artifact.path)) continue;
+    if (!isRunEvidenceVisualArtifact(artifact)) continue;
     const runId = artifact.sourceRunId ?? artifact.runId;
     if (!runIds.has(runId)) continue;
     const stem = artifactStem(artifact.path);

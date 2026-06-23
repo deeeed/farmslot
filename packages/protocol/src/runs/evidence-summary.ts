@@ -42,6 +42,16 @@ export function isRunEvidenceVideoArtifact(entry: Pick<EvidenceManifestEntry, 'p
   return /\.(mp4|mov|m4v|webm)$/i.test(entry.path);
 }
 
+export function isRunEvidenceImageArtifact(entry: Pick<EvidenceManifestEntry, 'path'>): boolean {
+  return /\.(png|jpe?g|gif|webp|avif|bmp|svg|heic|heif|tiff?)$/i.test(entry.path);
+}
+
+/** Canonical "is this evidence displayable" check — image or video. Single
+ * source of truth for visual evidence formats across gateway and UI surfaces. */
+export function isRunEvidenceVisualArtifact(entry: Pick<EvidenceManifestEntry, 'path'>): boolean {
+  return isRunEvidenceImageArtifact(entry) || isRunEvidenceVideoArtifact(entry);
+}
+
 function collectRunEvidenceArtifactEntries(value: unknown, entries: EvidenceManifestEntry[]): void {
   if (value == null) return;
   if (typeof value === 'string') {
@@ -101,10 +111,6 @@ function countRunEvidenceVisualPairs(entries: EvidenceManifestEntry[]): number {
     buckets.set(key, bucket);
   }
   return [...buckets.values()].filter((bucket) => bucket.before && bucket.after).length;
-}
-
-function isRunEvidenceVisualArtifact(entry: EvidenceManifestEntry): boolean {
-  return /\.(png|jpe?g|gif|webp|mp4|mov|m4v|webm)$/i.test(entry.path);
 }
 
 function runEvidenceVisualArtifactKind(entry: EvidenceManifestEntry): 'before' | 'after' | null {
