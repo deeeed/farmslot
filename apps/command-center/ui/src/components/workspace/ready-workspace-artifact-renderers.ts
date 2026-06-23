@@ -50,11 +50,16 @@ export function renderReadySelectedRecipeRunArtifacts(ctx: ReadySelectedRecipeRu
   const sectionLabel = `${group.label} evidence`;
   return html`
     <section class="rdy-quality-card rdy-package-evidence-section">
-      ${renderCollapsibleSectionHeader(sectionLabel, ctx.evidenceCollapsed, ctx.toggleEvidenceCollapsed)}
+      ${renderCollapsibleSectionHeader(
+        sectionLabel,
+        ctx.evidenceCollapsed,
+        ctx.toggleEvidenceCollapsed,
+      )}
       ${ctx.evidenceCollapsed
         ? html`<div class="rdy-review-card-meta rdy-package-evidence-collapsed-hint">
             ${displayArtifacts.length} artifact${displayArtifacts.length === 1 ? '' : 's'} hidden —
-            expand to preview screenshots${pairCount
+            expand to preview
+            screenshots${pairCount
               ? html` or compare ${pairCount} before/after pair${pairCount === 1 ? '' : 's'}`
               : nothing}.
           </div>`

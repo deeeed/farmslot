@@ -117,7 +117,11 @@ test('ready workspace lightbox pairs shared baseline before with AC after captur
     pairs.map((pair) => [pair.stem, pair.before.path, pair.after.path]),
     [
       ['ac1', 'artifacts/before-autoclose-baseline.png', 'artifacts/after-ac1-default-signs.png'],
-      ['ac6', 'artifacts/before-autoclose-baseline.png', 'artifacts/after-ac6-negative-tp-trigger.png'],
+      [
+        'ac6',
+        'artifacts/before-autoclose-baseline.png',
+        'artifacts/after-ac6-negative-tp-trigger.png',
+      ],
     ],
   );
 });

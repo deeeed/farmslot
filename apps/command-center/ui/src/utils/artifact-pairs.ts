@@ -78,6 +78,10 @@ function acPairSpecificity(path: string): number {
   return stripStageMarkers(noExt).replace(/[-_.]origin$/i, '').length;
 }
 
+function scopedArtifactKey(artifact: Pick<PairableArtifact, 'path' | 'runId'>): string {
+  return `${artifact.runId ?? ''}::${artifact.path}`;
+}
+
 export function buildBeforeAfterPairs<T extends PairableArtifact>(
   artifacts: T[],
 ): BeforeAfterPair<T>[] {
@@ -135,8 +139,13 @@ export function buildBeforeAfterPairs<T extends PairableArtifact>(
     (s): s is { before: T; after: T; stem: string; beforeCount: number; afterCount: number } =>
       s.before != null && s.after != null && s.beforeCount >= 1 && s.afterCount >= 1,
   );
-  const pairedAfterAcFallback = new Set(acPairs.flatMap((pair) => [pair.before.path, pair.after.path]));
-  const sharedBaselinePairs = buildSharedBaselinePairs(artifacts, pairedPaths, pairedAfterAcFallback);
+  const scopedPairedArtifacts = new Set(
+    [...exactPairs, ...acPairs].flatMap((pair) => [
+      scopedArtifactKey(pair.before),
+      scopedArtifactKey(pair.after),
+    ]),
+  );
+  const sharedBaselinePairs = buildSharedBaselinePairs(artifacts, scopedPairedArtifacts);
   return [...exactPairs, ...acPairs, ...sharedBaselinePairs];
 }
 
@@ -155,13 +164,11 @@ function sharedBaselineSpecificity(path: string): number {
  */
 function buildSharedBaselinePairs<T extends PairableArtifact>(
   artifacts: T[],
-  exactPairedPaths: Set<string>,
-  acPairedPaths: Set<string>,
+  scopedPairedArtifacts: Set<string>,
 ): BeforeAfterPair<T>[] {
-  const blockedPaths = new Set([...exactPairedPaths, ...acPairedPaths]);
   const beforeByScope = new Map<string, T[]>();
   for (const artifact of artifacts) {
-    if (blockedPaths.has(artifact.path)) continue;
+    if (scopedPairedArtifacts.has(scopedArtifactKey(artifact))) continue;
     if (artifactKind(artifact.path, artifact.purpose) !== 'before') continue;
     if (acceptanceCriteriaKey(artifact.path) !== null) continue;
     const { ext } = filenameStem(artifact.path);
@@ -181,7 +188,7 @@ function buildSharedBaselinePairs<T extends PairableArtifact>(
 
     const afterByAc = new Map<string, T>();
     for (const artifact of artifacts) {
-      if (blockedPaths.has(artifact.path)) continue;
+      if (scopedPairedArtifacts.has(scopedArtifactKey(artifact))) continue;
       if (artifactKind(artifact.path, artifact.purpose) !== 'after') continue;
       const acKey = acceptanceCriteriaKey(artifact.path);
       if (!acKey) continue;
