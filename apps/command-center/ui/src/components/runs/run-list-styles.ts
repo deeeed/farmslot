@@ -121,6 +121,7 @@ export const runListStyles = css`
     margin-bottom: ${unsafeCSS(spacing.md)};
     flex-wrap: wrap;
   }
+  .tag-input,
   .search-input {
     flex: 1;
     min-width: 180px;
@@ -134,9 +135,11 @@ export const runListStyles = css`
     font-size: 12px;
     outline: none;
   }
+  .tag-input::placeholder,
   .search-input::placeholder {
     color: ${unsafeCSS(colors.textMuted)};
   }
+  .tag-input:focus,
   .search-input:focus {
     border-color: ${unsafeCSS(colors.accent)}66;
   }

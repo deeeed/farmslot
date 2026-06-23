@@ -58,6 +58,7 @@ const SORT_VALUES: SortOption[] = SORT_OPTIONS.map((o) => o.value);
 
 export abstract class RunListState extends LitElement {
   abstract refreshFamilyFilter(): Promise<void>;
+  abstract refreshTagFilter(): Promise<void>;
 
   @state() runs: Run[] = [];
   @state() prs: PRStatus[] = [];
@@ -71,6 +72,9 @@ export abstract class RunListState extends LitElement {
   @state() flowFilter: FlowType | '' = '';
   @state() laneFilter: RunLane | '' = '';
   @state() familyFilter = '';
+  @state() tagFilter = '';
+  @state() tagRuns: Run[] | null = null;
+  @state() tagRunsError: string | null = null;
   @state() familyRuns: Run[] | null = null;
   @state() familyRunsError: string | null = null;
   @state() sortBy: SortOption = 'newest';
@@ -87,11 +91,17 @@ export abstract class RunListState extends LitElement {
     if (!raw.startsWith('runs')) return;
     const parsed = parseRunsHashState();
     const familyChanged = (parsed.family ?? '') !== this.familyFilter;
+    const tagChanged = (parsed.tag ?? '') !== this.tagFilter;
     this.familyFilter = parsed.family ?? '';
+    this.tagFilter = parsed.tag ?? '';
     // Derive allow-lists from the existing OPTION arrays so adding a new
     // FlowType / RunLane / SortOption automatically extends the URL allow-list
     // (and the dropdown), instead of silently dropping unknown values.
-    this.tab = TAB_VALUES.includes(parsed.tab as TabFilter) ? (parsed.tab as TabFilter) : 'active';
+    this.tab = TAB_VALUES.includes(parsed.tab as TabFilter)
+      ? (parsed.tab as TabFilter)
+      : parsed.tag
+        ? 'all'
+        : 'active';
     this.statusFilter = STATUS_VALUES.includes(parsed.status as StatusFilter)
       ? (parsed.status as StatusFilter)
       : 'all';
@@ -104,6 +114,7 @@ export abstract class RunListState extends LitElement {
       : 'newest';
     this.searchQuery = parsed.q ?? '';
     if (familyChanged) void this.refreshFamilyFilter();
+    if (tagChanged) void this.refreshTagFilter();
   };
 
   _persistHashState() {
@@ -114,6 +125,7 @@ export abstract class RunListState extends LitElement {
       lane: this.laneFilter || '',
       sort: this.sortBy !== 'newest' ? this.sortBy : '',
       q: this.searchQuery || '',
+      tag: this.tagFilter || '',
       family: this.familyFilter || '',
     });
   }

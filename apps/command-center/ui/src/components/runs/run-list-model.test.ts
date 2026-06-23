@@ -32,6 +32,8 @@ function filter(overrides: Partial<Parameters<typeof filterRunList>[0]> = {}): r
   return filterRunList({
     familyFilter: '',
     familyRuns: null,
+    tagFilter: '',
+    tagRuns: null,
     runs: [],
     globalFilters: { projects: [], machines: [] },
     tab: 'all',
@@ -129,5 +131,19 @@ test('filterRunList sorts by oldest, duration, and grade', () => {
   assert.deepEqual(
     filter({ runs: [low, high, mid], sortBy: 'grade' }).map((item) => item.id),
     ['high', 'mid', 'low'],
+  );
+});
+
+test('filterRunList applies exact tag filters and includes tags in text search', () => {
+  const demo = run('demo', { tags: ['demo', 'launch-review'] });
+  const other = run('other', { tags: ['regression'] });
+
+  assert.deepEqual(
+    filter({ runs: [demo, other], tagFilter: 'demo' }).map((item) => item.id),
+    ['demo'],
+  );
+  assert.deepEqual(
+    filter({ runs: [demo, other], searchQuery: 'launch' }).map((item) => item.id),
+    ['demo'],
   );
 });

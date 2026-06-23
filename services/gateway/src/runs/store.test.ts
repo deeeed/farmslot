@@ -545,3 +545,34 @@ test('createRun preserves selected worker template version', async (t) => {
 
   assert.deepEqual(run.taskTemplate, { fileName: 'fix-bug-v2.md', variant: 'v2' });
 });
+
+test('listRuns supports normalized tag filtering and tag search', async (t) => {
+  const demo = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-demo-tag`,
+  });
+  const other = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-other-tag`,
+  });
+  t.after(async () => {
+    await cleanupRun(demo.id);
+    await cleanupRun(other.id);
+  });
+
+  updateRun(demo.id, { tags: ['demo', 'launch-review'] });
+  updateRun(other.id, { tags: ['regression'] });
+
+  assert.deepEqual(
+    listRuns({ tags: ['Demo'] }).runs.map((run) => run.id),
+    [demo.id],
+  );
+  assert.deepEqual(
+    listRuns({ search: 'launch', limit: 10 })
+      .runs.filter((run) => [demo.id, other.id].includes(run.id))
+      .map((run) => run.id),
+    [demo.id],
+  );
+});

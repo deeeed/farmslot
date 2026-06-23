@@ -10,10 +10,11 @@ export interface RunFilters {
   lane: LaneFilter;
   sort: SortOption;
   search: string;
+  tag: string;
 }
 
 const STORAGE_KEY = '@farmslot:runFilters';
-const DEFAULTS: RunFilters = { flow: '', lane: '', sort: 'newest', search: '' };
+const DEFAULTS: RunFilters = { flow: '', lane: '', sort: 'newest', search: '', tag: '' };
 
 interface RunFilterStore {
   filters: RunFilters;
@@ -23,6 +24,7 @@ interface RunFilterStore {
   setLane: (lane: LaneFilter) => void;
   setSort: (sort: SortOption) => void;
   setSearch: (search: string) => void;
+  setTag: (tag: string) => void;
   clearAll: () => void;
   activeCount: () => number;
 }
@@ -38,7 +40,7 @@ export const useRunFilterStore = create<RunFilterStore>((set, get) => ({
       if (raw) {
         const parsed = JSON.parse(raw);
         set({
-          filters: { ...DEFAULTS, ...parsed, search: '' },
+          filters: { ...DEFAULTS, ...parsed, search: '', tag: '' },
           initialized: true,
         });
       } else {
@@ -72,26 +74,33 @@ export const useRunFilterStore = create<RunFilterStore>((set, get) => ({
     set({ filters: { ...get().filters, search } });
   },
 
+  setTag: (tag) => {
+    const next = { ...get().filters, tag };
+    set({ filters: next });
+    void persist(next);
+  },
+
   clearAll: () => {
     set({ filters: DEFAULTS });
     void persist(DEFAULTS);
   },
 
   activeCount: () => {
-    const { flow, lane, sort, search } = get().filters;
+    const { flow, lane, sort, search, tag } = get().filters;
     let count = 0;
     if (flow) count++;
     if (lane) count++;
     if (sort !== 'newest') count++;
     if (search.trim()) count++;
+    if (tag.trim()) count++;
     return count;
   },
 }));
 
 async function persist(filters: RunFilters) {
   try {
-    const { flow, lane, sort } = filters;
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ flow, lane, sort }));
+    const { flow, lane, sort, tag } = filters;
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ flow, lane, sort, tag }));
   } catch (err) {
     console.debug('[run-filters] persist failed:', err);
   }

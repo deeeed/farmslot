@@ -24,6 +24,8 @@ export function runGradeColor(semantic: string): string {
 export interface FilterRunListInput {
   familyFilter: string;
   familyRuns: readonly Run[] | null;
+  tagFilter: string;
+  tagRuns: readonly Run[] | null;
   runs: readonly Run[];
   globalFilters: GlobalFilters;
   tab: TabFilter;
@@ -35,7 +37,11 @@ export interface FilterRunListInput {
 }
 
 export function filterRunList(input: FilterRunListInput): readonly Run[] {
-  let result: readonly Run[] = input.familyFilter ? (input.familyRuns ?? []) : input.runs;
+  let result: readonly Run[] = input.familyFilter
+    ? (input.familyRuns ?? [])
+    : input.tagFilter
+      ? (input.tagRuns ?? input.runs)
+      : input.runs;
   if (input.globalFilters.projects.length > 0) {
     result = result.filter((run) => input.globalFilters.projects.includes(run.project));
   }
@@ -57,13 +63,18 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
   if (input.familyFilter) {
     result = result.filter((run) => run.familyId === input.familyFilter);
   }
+  const tag = input.tagFilter.trim().toLowerCase();
+  if (tag) {
+    result = result.filter((run) => run.tags?.some((candidate) => candidate === tag));
+  }
   const query = input.searchQuery.trim().toLowerCase();
   if (query) {
     result = result.filter(
       (run) =>
         run.ticketOrPr.toLowerCase().includes(query) ||
         Boolean(run.summary?.toLowerCase().includes(query)) ||
-        Boolean(dispositionLabel(run.metrics.disposition).includes(query)),
+        Boolean(dispositionLabel(run.metrics.disposition).includes(query)) ||
+        Boolean(run.tags?.some((tag) => tag.includes(query))),
     );
   }
   switch (input.sortBy) {

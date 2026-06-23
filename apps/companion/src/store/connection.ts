@@ -239,7 +239,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           });
 
         client
-          .request<RunListResult>(Methods.RUN_LIST, { limit: 30 })
+          .request<RunListResult>(Methods.RUN_LIST, { limit: 1000 })
           .then((result) => {
             useRunStore.getState().setRuns(result.runs);
             set({ lastSyncError: null });

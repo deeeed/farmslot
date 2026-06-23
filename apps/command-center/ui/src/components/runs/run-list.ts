@@ -11,7 +11,7 @@ import type {
   RunFamilyReadinessSummary,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
-import { Methods, summarizeRunEvidence } from '@farmslot/protocol';
+import { Methods, normalizeRunTags, summarizeRunEvidence } from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
 import '../shared/hydrating-placeholder.js';
@@ -103,6 +103,32 @@ export class RunList extends RunListState {
     window.removeEventListener('hashchange', this._onHashChange);
   }
 
+  async refreshTagFilter() {
+    if (!this.tagFilter) {
+      this.tagRuns = null;
+      this.tagRunsError = null;
+      return;
+    }
+    try {
+      const [tag] = normalizeRunTags([this.tagFilter]);
+      if (!tag) {
+        this.tagFilter = '';
+        this.tagRuns = null;
+        this.tagRunsError = null;
+        return;
+      }
+      const res = await gateway.request<{ runs: Run[] }>(Methods.RUN_LIST, { tags: [tag] });
+      this.tagFilter = tag;
+      this.tagRuns = res.runs ?? [];
+      this.tagRunsError = null;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[run-list] failed to refresh tag ${this.tagFilter}:`, err);
+      this.tagRuns = [];
+      this.tagRunsError = message;
+    }
+  }
+
   async refreshFamilyFilter() {
     if (!this.familyFilter) {
       this.familyRuns = null;
@@ -134,6 +160,8 @@ export class RunList extends RunListState {
     return filterRunList({
       familyFilter: this.familyFilter,
       familyRuns: this.familyRuns,
+      tagFilter: this.tagFilter,
+      tagRuns: this.tagRuns,
       runs: this.runs,
       globalFilters: this.globalFilters,
       tab: this.tab,
@@ -333,6 +361,7 @@ export class RunList extends RunListState {
       })}
       ${renderRunListSearchRow({
         searchQuery: this.searchQuery,
+        tagFilter: this.tagFilter,
         flowFilter: this.flowFilter,
         laneFilter: this.laneFilter,
         sortBy: this.sortBy,
@@ -343,6 +372,13 @@ export class RunList extends RunListState {
         sortOptions: SORT_OPTIONS,
         setSearchQuery: (value) => {
           this.searchQuery = value;
+          this._persistHashState();
+        },
+        setTagFilter: (value) => {
+          const [tag] = normalizeRunTags([value]);
+          this.tagFilter = tag ?? '';
+          if (this.tagFilter && this.tab === 'active') this.tab = 'all';
+          void this.refreshTagFilter();
           this._persistHashState();
         },
         setFlowFilter: (value) => {
@@ -363,6 +399,7 @@ export class RunList extends RunListState {
             statusFilter: this.statusFilter,
             statusPills: STATUS_PILLS,
             familyFilter: this.familyFilter,
+            tagFilter: this.tagFilter,
             actionInProgress: this.actionInProgress,
             setStatusFilter: (value) => {
               this.statusFilter = value;
@@ -372,6 +409,12 @@ export class RunList extends RunListState {
               this.familyFilter = '';
               this.familyRuns = null;
               this.familyRunsError = null;
+              this._persistHashState();
+            },
+            clearTagFilter: () => {
+              this.tagFilter = '';
+              this.tagRuns = null;
+              this.tagRunsError = null;
               this._persistHashState();
             },
             startCleanup: () => this.startCleanup(),
@@ -396,6 +439,11 @@ export class RunList extends RunListState {
       ${this.familyRunsError
         ? html`<div class="rehydrating-banner">
             Family ${this.familyFilter} fetch failed: ${this.familyRunsError}
+          </div>`
+        : nothing}
+      ${this.tagRunsError
+        ? html`<div class="rehydrating-banner">
+            Tag ${this.tagFilter} fetch failed: ${this.tagRunsError}
           </div>`
         : nothing}
       ${this.bootstrapFailed && this.runs.length > 0
@@ -536,6 +584,7 @@ export class RunList extends RunListState {
                   >variant:${run.variant}</span
                 >`
               : nothing}
+            ${this.renderRunTags(run)}
             <span
               class="badge status-badge"
               style="--status-color:${colors.textMuted}"
@@ -685,6 +734,49 @@ export class RunList extends RunListState {
             : nothing}
         </div>
       </div>
+    `;
+  }
+
+  private async setRunTags(run: Run, raw: string) {
+    const tags = normalizeRunTags(raw.split(','));
+    await gateway.request(Methods.RUN_TAGS_SET, { runId: run.id, tags });
+  }
+
+  private renderRunTags(run: Run) {
+    const tags = normalizeRunTags(run.tags);
+    return html`
+      ${tags.map(
+        (tag) =>
+          html`<button
+            class="badge status-badge tag-badge"
+            style="--status-color:${colors.accent}"
+            title="Filter by tag ${tag}"
+            @click=${(e: Event) => {
+              e.stopPropagation();
+              this.tagFilter = tag;
+              if (this.tab === 'active') this.tab = 'all';
+              void this.refreshTagFilter();
+              this._persistHashState();
+            }}
+          >
+            #${tag}
+          </button>`,
+      )}
+      <button
+        class="inline-action"
+        title="Edit comma-separated run tags"
+        @click=${(e: Event) => {
+          e.stopPropagation();
+          const raw = window.prompt('Tags (comma-separated)', tags.join(', '));
+          if (raw === null) return;
+          void this.setRunTags(run, raw).catch((err) => {
+            console.error('[run-list] tag update failed:', err);
+            alert(`Tag update failed: ${(err as Error).message}`);
+          });
+        }}
+      >
+        ${tags.length ? 'Edit tags' : '+ Tag'}
+      </button>
     `;
   }
 

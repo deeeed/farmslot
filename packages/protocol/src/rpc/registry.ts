@@ -193,6 +193,8 @@ export const Methods = {
   RUN_ARCHIVE: 'run.archive',
   RUN_BULK_DELETE: 'run.bulkDelete',
   RUN_CLEANUP: 'run.cleanup',
+  RUN_TAGS_SET: 'run.tags.set',
+  RUN_TAGS_LIST: 'run.tags.list',
   RUN_BACKFILL_SUMMARIES: 'run.backfillSummaries',
 
   // Pipeline-ops analytics (read-only over the decoupled analytics sink)

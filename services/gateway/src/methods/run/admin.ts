@@ -5,6 +5,7 @@ import {
   Events,
   type HumanGrade,
   isTerminalRunStatus,
+  normalizeRunTags,
   type Run,
   type RunArchiveParams,
   type RunArchiveResult,
@@ -18,6 +19,9 @@ import {
   type RunGetGradeResult,
   type RunGradeParams,
   type RunGradeResult,
+  type RunTagsListResult,
+  type RunTagsSetParams,
+  type RunTagsSetResult,
 } from '@farmslot/protocol';
 
 import {
@@ -27,10 +31,24 @@ import {
   deleteRun as storeDeleteRun,
   getRun,
   listRuns,
+  listRunTags as storeListRunTags,
   updateRun,
 } from '../../runs/store.js';
 
 type Emit = (event: string, payload: unknown) => void;
+
+export function runSetTags(params: RunTagsSetParams, emit: Emit): RunTagsSetResult {
+  const existing = getRun(params.runId);
+  if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  const tags = normalizeRunTags(params.tags);
+  const run = updateRun(params.runId, { tags });
+  emit(Events.RUN_UPDATED, { run });
+  return { run };
+}
+
+export function runListTags(): RunTagsListResult {
+  return { tags: storeListRunTags() };
+}
 
 export function runGrade(params: RunGradeParams, emit: Emit): RunGradeResult {
   const existing = getRun(params.runId);

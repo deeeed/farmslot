@@ -11,7 +11,7 @@ import type {
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
+import { Events, Methods, normalizeRunTags } from '@farmslot/protocol';
 
 import './step-inspector.js';
 import './run-pipeline-mini.js';
@@ -679,6 +679,7 @@ export class RunDetail extends RunDetailState {
       _confirmForceComplete: (runId) => this._confirmForceComplete(runId),
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
+      _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _togglePinnedSlot: (slotId) => {
         togglePinnedSlot(slotId);
         this.requestUpdate();
@@ -720,6 +721,18 @@ export class RunDetail extends RunDetailState {
         this._showTerminal = !this._showTerminal;
       },
     });
+  }
+
+  private async _setRunTags(run: Run, raw: string) {
+    try {
+      await gateway.request(Methods.RUN_TAGS_SET, {
+        runId: run.id,
+        tags: normalizeRunTags(raw.split(',')),
+      });
+    } catch (err) {
+      console.error('[run-detail] tag update failed:', err);
+      alert(`Tag update failed: ${(err as Error).message}`);
+    }
   }
 
   private renderGateSection(run: Run) {
