@@ -43,12 +43,20 @@ export function registerProjectCommand(program: Command): void {
             pack: result.pack.name,
             action: result.action,
             slots: result.slots,
+            failures: result.failures,
             notes: infos,
             doctor: report,
           });
         } else {
           output.write(`\n${bold(`pack ${result.pack.name}: ${result.action}`)}\n`);
           output.write(`  ${green('✓')} slots: ${result.slots.join(', ')}\n`);
+          if (result.failures.length > 0) {
+            output.write(`\n${red('Projects that failed to install (others continued):')}\n`);
+            for (const f of result.failures) output.write(`  ${red('✗')} ${f}\n`);
+            output.write(
+              `${dim('Fix the cause, then re-run `farmslot project add` to retry just the failed slots.')}\n`,
+            );
+          }
           if (result.pack.action_sheet) {
             output.write(`\n${bold('Next steps')}\n${result.pack.action_sheet}\n`);
           }
@@ -68,7 +76,10 @@ export function registerProjectCommand(program: Command): void {
               : `${red('doctor: checks failed')}\n`,
           );
         }
-        if (!report.ok) process.exit(1);
+        // A partial install must exit non-zero even if doctor passes: a failure
+        // after the slot was registered in the pool leaves doctor's slot-in-pool
+        // check green, so failures[] is the authoritative partial-failure signal.
+        if (!report.ok || result.failures.length > 0) process.exit(1);
       } catch (err) {
         output.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
