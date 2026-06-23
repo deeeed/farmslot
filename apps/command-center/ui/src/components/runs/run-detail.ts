@@ -33,6 +33,7 @@ import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 import {
+  activateRunOnSlot,
   confirmForceComplete,
   confirmRunDecision,
   jumpToSuccessorWhenAvailable,
@@ -680,6 +681,7 @@ export class RunDetail extends RunDetailState {
       _confirmForceComplete: (runId) => this._confirmForceComplete(runId),
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
+      _activateOnSlot: (run) => activateRunOnSlot(run.id, run.slotId ?? ''),
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _togglePinnedSlot: (slotId) => {
         togglePinnedSlot(slotId);

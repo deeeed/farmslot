@@ -8,7 +8,7 @@ import type {
   Run,
   RunGrade,
 } from '@farmslot/protocol';
-import { modelsMatch, normalizeRunTags } from '@farmslot/protocol';
+import { canActivateRunOnSlot, modelsMatch, normalizeRunTags } from '@farmslot/protocol';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
@@ -58,6 +58,7 @@ export interface RunDetailViewContext {
   _confirmForceComplete: (runId: string) => void;
   _requestCopilotRunDiagnosis: (run: Run) => void;
   _buildRerunAlongsideHref: (run: Run) => string;
+  _activateOnSlot: (run: Run) => void | Promise<void>;
   _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;
   _togglePinnedSlot: (slotId: string) => void;
   _renderInteractiveDevGate: (run: Run) => unknown;
@@ -394,6 +395,19 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             >
               Re-run alongside →
             </a>
+          `
+        : nothing}
+      ${r.slotId && canActivateRunOnSlot(r.status)
+        ? html`
+            <button
+              class="gate-action-btn"
+              style="border:1px solid ${colors.accent}; color:${colors.accent}; padding:4px 12px; font-size:11px; border-radius:3px"
+              title="Re-bind this run onto ${r.slotId} and re-drive prepare+dispatch with the cheapest warm profile (attach → falls back to the project warm default). No new run is created."
+              ?disabled=${actionsBlocked}
+              @click=${() => ctx._activateOnSlot(r)}
+            >
+              Activate on ${r.slotId} →
+            </button>
           `
         : nothing}
       ${r.status === 'failed'

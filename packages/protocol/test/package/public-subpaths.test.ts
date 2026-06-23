@@ -234,6 +234,7 @@ for (const [name, actual, expected] of [
       pause: Methods.RUN_PAUSE,
       resume: Methods.RUN_RESUME,
       replayStep: Methods.RUN_REPLAY_STEP,
+      activateOnSlot: Methods.RUN_ACTIVATE_ON_SLOT,
       autoRecoveryStop: Methods.RUN_AUTO_RECOVERY_STOP,
       ciWatchPoke: Methods.RUN_CI_WATCH_POKE,
       refreshReviewGate: Methods.RUN_REFRESH_REVIEW_GATE,

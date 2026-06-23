@@ -25,6 +25,7 @@ export const RunMethods = {
   pause: Methods.RUN_PAUSE,
   resume: Methods.RUN_RESUME,
   replayStep: Methods.RUN_REPLAY_STEP,
+  activateOnSlot: Methods.RUN_ACTIVATE_ON_SLOT,
   autoRecoveryStop: Methods.RUN_AUTO_RECOVERY_STOP,
   ciWatchPoke: Methods.RUN_CI_WATCH_POKE,
   refreshReviewGate: Methods.RUN_REFRESH_REVIEW_GATE,
@@ -272,6 +273,23 @@ export interface IntelligenceActionsSummaryResult {
 }
 
 export interface RunReplayStepResult {
+  run: Run;
+}
+
+/**
+ * Re-bind an existing run onto a slot and re-drive PREPARE→DISPATCH with the
+ * cheapest warm prepare profile, instead of creating a fresh run (ADR-024
+ * Activate-on-Slot addendum). Used to switch between hot runs across slots.
+ */
+export interface RunActivateOnSlotParams {
+  runId: string;
+  /** Target slot. Defaults to the run's current `slotId` when omitted. */
+  slotId?: string;
+  /** Prepare profile for the re-bind; defaults to `attach` (cheapest warm reuse). */
+  prepareProfile?: string;
+}
+
+export interface RunActivateOnSlotResult {
   run: Run;
 }
 

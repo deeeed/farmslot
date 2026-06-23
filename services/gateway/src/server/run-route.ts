@@ -12,6 +12,7 @@ import {
   type FamilyReportGenerateParams,
   type IntelligenceActionsSummaryParams,
   Methods,
+  type RunActivateOnSlotParams,
   type RunArchiveParams,
   type RunAutoRecoveryStopParams,
   type RunBulkDeleteParams,
@@ -80,6 +81,7 @@ import {
   runRecipeRunsForSlot,
 } from '../methods/run/context.js';
 import {
+  runActivateOnSlot,
   runAutoRecoveryStop,
   runCIWatchPoke,
   runRefreshMirror,
@@ -171,6 +173,8 @@ export async function routeRunMethod(
     }
     case Methods.RUN_REPLAY_STEP:
       return handled(runReplayStep(p as RunReplayStepParams, emit));
+    case Methods.RUN_ACTIVATE_ON_SLOT:
+      return handled(runActivateOnSlot(p as RunActivateOnSlotParams, emit));
     case Methods.RUN_AUTO_RECOVERY_STOP:
       return handled(runAutoRecoveryStop(p as RunAutoRecoveryStopParams, emit));
     case Methods.RUN_CI_WATCH_POKE:
