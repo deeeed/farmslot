@@ -6,17 +6,21 @@ import test from 'node:test';
 
 import { collectUploadableMediaFiles, scanArtifacts } from './publication-artifacts.js';
 
-test('scanArtifacts excludes runtime launch and runner blocker internals from reviewable manifests', async () => {
+test('scanArtifacts excludes internal launch artifacts from reviewable manifests', async () => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-scan-artifacts-'));
   try {
+    await mkdir(path.join(taskDir, 'artifacts/harness-launch'), { recursive: true });
     await mkdir(path.join(taskDir, 'artifacts/runtime-launch/chrome-profile'), { recursive: true });
     await mkdir(path.join(taskDir, 'artifacts/runtime-launch/runtime-dist'), { recursive: true });
+    await mkdir(path.join(taskDir, 'artifacts/runtime-relaunch/runtime-dist'), { recursive: true });
     await mkdir(path.join(taskDir, 'artifacts/recipe-run'), { recursive: true });
     await mkdir(path.join(taskDir, 'artifacts/runner-blockers'), { recursive: true });
     await writeFile(path.join(taskDir, 'artifacts/report.md'), 'ok');
     await writeFile(path.join(taskDir, 'artifacts/recipe-run/after.png'), 'png');
+    await writeFile(path.join(taskDir, 'artifacts/harness-launch/summary.json'), '{}');
     await writeFile(path.join(taskDir, 'artifacts/runtime-launch/chrome-profile/Local State'), '{}');
     await writeFile(path.join(taskDir, 'artifacts/runtime-launch/runtime-dist/app.js'), 'bundle');
+    await writeFile(path.join(taskDir, 'artifacts/runtime-relaunch/runtime-dist/app.js'), 'bundle');
     await writeFile(path.join(taskDir, 'artifacts/runner-blockers/self-review-launch.txt'), 'pane');
 
     const artifacts = await scanArtifacts(taskDir);
@@ -30,14 +34,18 @@ test('scanArtifacts excludes runtime launch and runner blocker internals from re
   }
 });
 
-test('collectUploadableMediaFiles excludes runtime launch and runner blocker media', async () => {
+test('collectUploadableMediaFiles excludes internal launch artifact media', async () => {
   const taskDir = await mkdtemp(path.join(os.tmpdir(), 'farmslot-upload-artifacts-'));
   try {
     const artifactsDir = path.join(taskDir, 'artifacts');
+    await mkdir(path.join(artifactsDir, 'harness-launch'), { recursive: true });
     await mkdir(path.join(artifactsDir, 'runtime-launch/chrome-profile'), { recursive: true });
+    await mkdir(path.join(artifactsDir, 'runtime-relaunch/chrome-profile'), { recursive: true });
     await mkdir(path.join(artifactsDir, 'runner-blockers'), { recursive: true });
     await mkdir(path.join(artifactsDir, 'recipe-run'), { recursive: true });
+    await writeFile(path.join(artifactsDir, 'harness-launch/debug.png'), 'png');
     await writeFile(path.join(artifactsDir, 'runtime-launch/chrome-profile/cache.png'), 'png');
+    await writeFile(path.join(artifactsDir, 'runtime-relaunch/chrome-profile/cache.png'), 'png');
     await writeFile(path.join(artifactsDir, 'runner-blockers/pane.png'), 'png');
     await writeFile(path.join(artifactsDir, 'recipe-run/after.png'), 'png');
 

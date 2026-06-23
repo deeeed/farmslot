@@ -1,3 +1,5 @@
+import { INTERNAL_RUN_ARTIFACT_TOP_LEVELS } from '@farmslot/protocol';
+
 export const GATEWAY_OWNED_DIFF_ARTIFACTS = ['diff.txt', 'diff-stat.json'] as const;
 export const GATEWAY_OWNED_RUN_ARTIFACTS = ['session-metrics.json'] as const;
 export const GATEWAY_OWNED_EVAL_ARTIFACTS = [
@@ -5,7 +7,12 @@ export const GATEWAY_OWNED_EVAL_ARTIFACTS = [
   'packages/reference.result-package.json',
   'packages/candidate.result-package.json',
 ] as const;
+// Runtime/browser launch outputs, harness boot diagnostics, and runner launch
+// snapshots are useful while a run is executing, but are not publishable review
+// evidence and can add thousands of irrelevant files to package previews.
+export const INTERNAL_ARTIFACT_COPY_EXCLUDES = INTERNAL_RUN_ARTIFACT_TOP_LEVELS;
 export const WORKER_ARTIFACT_COPY_EXCLUDES = [
+  ...INTERNAL_ARTIFACT_COPY_EXCLUDES,
   'recipe-runs',
   // Raw recipe-runner screenshot spool. Curated screenshots are promoted to
   // top-level evidence files and described by evidence-manifest.json; copying
@@ -16,6 +23,7 @@ export const WORKER_ARTIFACT_COPY_EXCLUDES = [
 ] as const;
 
 export const REVIEW_GATE_ARTIFACT_COPY_EXCLUDES = [
+  ...INTERNAL_ARTIFACT_COPY_EXCLUDES,
   'recipe-runs',
   // Unlike publication copyback, review gates must keep the review recipe's
   // generated screenshots available for visual inspection beside review.md.

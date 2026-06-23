@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  INTERNAL_ARTIFACT_COPY_EXCLUDES,
   isGatewayOwnedArtifactMirrorEntry,
   isGatewayOwnedArtifactPath,
   REVIEW_GATE_ARTIFACT_COPY_EXCLUDES,
@@ -30,4 +31,11 @@ test('review artifact copy keeps generated screenshots while publication copy ex
     (REVIEW_GATE_ARTIFACT_COPY_EXCLUDES as readonly string[]).includes('screenshots'),
     false,
   );
+});
+
+test('artifact copy policies reject internal runtime directories', () => {
+  for (const name of INTERNAL_ARTIFACT_COPY_EXCLUDES) {
+    assert.equal((WORKER_ARTIFACT_COPY_EXCLUDES as readonly string[]).includes(name), true);
+    assert.equal((REVIEW_GATE_ARTIFACT_COPY_EXCLUDES as readonly string[]).includes(name), true);
+  }
 });

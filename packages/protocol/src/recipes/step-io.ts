@@ -89,6 +89,28 @@ export interface ArtifactRef {
 
 const PUBLISH_EVIDENCE_MEDIA_EXTS = /\.(png|jpg|jpeg|gif|mp4|mov|webm)$/i;
 
+export const INTERNAL_RUN_ARTIFACT_TOP_LEVELS = [
+  'harness-launch',
+  'harness-relaunch',
+  'harness-relaunch-node20',
+  'runner-blockers',
+  'runtime-launch',
+  'runtime-relaunch',
+] as const;
+
+const INTERNAL_RUN_ARTIFACT_TOP_LEVEL_SET = new Set<string>(INTERNAL_RUN_ARTIFACT_TOP_LEVELS);
+
+export function isInternalRunArtifactTopLevel(name: string): boolean {
+  return INTERNAL_RUN_ARTIFACT_TOP_LEVEL_SET.has(name);
+}
+
+export function isInternalRunArtifactPath(artifactPath: string): boolean {
+  const normalized = artifactPath.replace(/\\/g, '/').replace(/^\.\/+/g, '');
+  const segments = normalized.split('/').filter(Boolean);
+  const topLevel = segments[0] === 'artifacts' ? segments[1] : segments[0];
+  return typeof topLevel === 'string' && isInternalRunArtifactTopLevel(topLevel);
+}
+
 export function isPublishEvidenceArtifact(
   artifact: Pick<ArtifactRef, 'path' | 'purpose'>,
 ): boolean {
@@ -96,6 +118,7 @@ export function isPublishEvidenceArtifact(
   return (
     PUBLISH_EVIDENCE_MEDIA_EXTS.test(artifact.path) &&
     artifact.purpose?.toLowerCase() !== 'debug-screenshot' &&
+    !isInternalRunArtifactPath(normalizedPath) &&
     !/(^|\/)screenshots\//.test(normalizedPath)
   );
 }
