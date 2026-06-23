@@ -67,6 +67,22 @@ test('artifact scan filters skip hidden files and allow referenced files under e
     false,
   );
   assert.equal(
+    shouldIncludeArtifactFile(
+      'runtime-relaunch/chrome-profile/cache.png',
+      excludedTopLevel,
+      includedRelativePaths,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldIncludeArtifactFile(
+      'harness-launch/summary.json',
+      excludedTopLevel,
+      includedRelativePaths,
+    ),
+    false,
+  );
+  assert.equal(
     shouldIncludeArtifactFile('screenshots/after.png', excludedTopLevel, includedRelativePaths),
     true,
   );

@@ -130,6 +130,11 @@ test('slotCopyDir worker artifact policy preserves gateway-owned diff artifacts'
   const sourceDir = path.join(root, 'slot-artifacts');
   const destDir = path.join(root, 'gateway-artifacts');
   await mkdir(path.join(sourceDir, 'recipe-runs'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'harness-launch'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'harness-relaunch'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'runtime-launch', 'chrome-profile'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'runtime-relaunch', 'chrome-profile'), { recursive: true });
+  await mkdir(path.join(sourceDir, 'runner-blockers'), { recursive: true });
   await mkdir(path.join(sourceDir, 'screenshots'), { recursive: true });
   await mkdir(path.join(sourceDir, 'packages'), { recursive: true });
   await mkdir(path.join(destDir, 'packages'), { recursive: true });
@@ -149,6 +154,23 @@ test('slotCopyDir worker artifact policy preserves gateway-owned diff artifacts'
   );
   await writeFile(path.join(sourceDir, 'report.md'), 'worker report', 'utf-8');
   await writeFile(path.join(sourceDir, 'recipe-runs', 'stale.json'), '{}', 'utf-8');
+  await writeFile(path.join(sourceDir, 'harness-launch', 'summary.json'), '{}', 'utf-8');
+  await writeFile(path.join(sourceDir, 'harness-relaunch', 'summary.json'), '{}', 'utf-8');
+  await writeFile(
+    path.join(sourceDir, 'runtime-launch', 'chrome-profile', 'Preferences'),
+    '{}',
+    'utf-8',
+  );
+  await writeFile(
+    path.join(sourceDir, 'runtime-relaunch', 'chrome-profile', 'Preferences'),
+    '{}',
+    'utf-8',
+  );
+  await writeFile(
+    path.join(sourceDir, 'runner-blockers', 'self-review-launch.txt'),
+    'pane failed',
+    'utf-8',
+  );
   await writeFile(path.join(sourceDir, 'screenshots', 'debug.png'), 'debug', 'utf-8');
   await mkdir(path.join(sourceDir, 'recipe-harness', 'source', 'checkout'), { recursive: true });
   await mkdir(path.join(sourceDir, 'recipe-harness', 'verify'), { recursive: true });
@@ -205,6 +227,11 @@ test('slotCopyDir worker artifact policy preserves gateway-owned diff artifacts'
     '{"ok":true}',
   );
   assert.equal(existsSync(path.join(destDir, 'recipe-runs')), false);
+  assert.equal(existsSync(path.join(destDir, 'harness-launch')), false);
+  assert.equal(existsSync(path.join(destDir, 'harness-relaunch')), false);
+  assert.equal(existsSync(path.join(destDir, 'runtime-launch')), false);
+  assert.equal(existsSync(path.join(destDir, 'runtime-relaunch')), false);
+  assert.equal(existsSync(path.join(destDir, 'runner-blockers')), false);
   assert.equal(existsSync(path.join(destDir, 'screenshots')), false);
 });
 

@@ -4,7 +4,11 @@
 import { nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
-import type { ArtifactRef, ReadyGatePayload } from '@farmslot/protocol';
+import {
+  isInternalRunArtifactPath,
+  type ArtifactRef,
+  type ReadyGatePayload,
+} from '@farmslot/protocol';
 
 import '../diff-viewer/diff-review.js';
 import '../recipe-graph/recipe-graph.js';
@@ -309,7 +313,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
     );
     const artifacts = selectedArtifacts.filter((artifact) => {
       if (packageEvidencePaths.size > 0) return packageEvidencePaths.has(artifact.path);
-      if (/^artifacts\/(runtime-launch|runner-blockers)\//.test(artifact.path)) return false;
+      if (isInternalRunArtifactPath(artifact.path)) return false;
       return MEDIA_EXTS.test(artifact.path);
     });
     return renderReadySelectedRecipeRunArtifacts({

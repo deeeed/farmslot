@@ -15,6 +15,7 @@ import type {
 import {
   buildFamilySummary,
   githubPullUrl,
+  isInternalRunArtifactPath,
   isPublishEvidenceArtifact,
   parseGitHubRef,
 } from '@farmslot/protocol';
@@ -421,7 +422,7 @@ function isRunEvidenceArtifact(
   packageEvidencePaths: Set<string>,
 ): boolean {
   const normalizedPath = artifact.path.replace(/\\/g, '/');
-  if (/^artifacts\/(runtime-launch|runner-blockers)\//.test(normalizedPath)) return false;
+  if (isInternalRunArtifactPath(normalizedPath)) return false;
   if (packageEvidencePaths.has(artifact.path)) return false;
   if (packageEvidencePaths.size > 0 && isPublishEvidenceArtifact(artifact)) return false;
   const basename = normalizedPath.split('/').pop()?.toLowerCase() ?? '';

@@ -1,5 +1,7 @@
 // live-recipe-artifact-filters.ts — Artifact path normalization and scan filters for live recipe context.
 
+import { INTERNAL_RUN_ARTIFACT_TOP_LEVELS } from '@farmslot/protocol';
+
 export interface ArtifactScanOptions {
   excludeTopLevel?: string[];
   includeRelativePaths?: string[];
@@ -82,7 +84,10 @@ export function artifactScanFilters(options: ArtifactScanOptions): {
   includedRelativePaths: Set<string>;
 } {
   return {
-    excludedTopLevel: new Set(options.excludeTopLevel ?? []),
+    excludedTopLevel: new Set([
+      ...INTERNAL_RUN_ARTIFACT_TOP_LEVELS,
+      ...(options.excludeTopLevel ?? []),
+    ]),
     includedRelativePaths: new Set(
       (options.includeRelativePaths ?? []).flatMap((value) => {
         const normalized = normalizeArtifactRelativePath(value);

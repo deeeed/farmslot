@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { ArtifactRef, Run } from '@farmslot/protocol';
 
 import { getProjectField, loadProjectVars } from '../core/config.js';
+import { INTERNAL_ARTIFACT_COPY_EXCLUDES } from '../core/artifact-copy-policy.js';
 import {
   execLocal,
   farmslotRoot,
@@ -689,15 +690,7 @@ export async function postProcessPRBody(
 
 // ─── Artifact scanning ───
 
-const SCAN_ARTIFACT_TOP_LEVEL_EXCLUDES = new Set([
-  // Runtime browser profiles and build outputs are useful for launching a
-  // recipe but are never intentional review evidence. Scanning them makes
-  // PR previews noisy and can add thousands of irrelevant files.
-  'runtime-launch',
-  // Runner launch diagnostics are useful for debugging the orchestrator, but
-  // they can contain pane snapshots/prompts and should not be proposed as PR evidence.
-  'runner-blockers',
-]);
+const SCAN_ARTIFACT_TOP_LEVEL_EXCLUDES = new Set<string>(INTERNAL_ARTIFACT_COPY_EXCLUDES);
 
 function shouldScanArtifactPath(relativePath: string): boolean {
   const normalized = relativePath.replaceAll('\\', '/');

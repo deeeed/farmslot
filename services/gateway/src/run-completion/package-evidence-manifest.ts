@@ -3,7 +3,11 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { type ArtifactRef, isPublishEvidenceArtifact } from '@farmslot/protocol';
+import {
+  type ArtifactRef,
+  isInternalRunArtifactPath,
+  isPublishEvidenceArtifact,
+} from '@farmslot/protocol';
 
 import { isGatewayOwnedArtifactPath } from '../core/artifact-copy-policy.js';
 
@@ -91,6 +95,7 @@ export async function buildPackageEvidenceManifest(
     if (
       PACKAGE_OUTPUT_ARTIFACT_PATHS.has(artifact.path) ||
       isGatewayOwnedArtifactPath(artifact.path) ||
+      isInternalRunArtifactPath(artifact.path) ||
       artifactPathOmitted(artifact.path, omittedEvidenceKeys)
     )
       continue;
