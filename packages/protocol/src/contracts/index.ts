@@ -1,4 +1,5 @@
 export * from './agents.js';
+export * from './analytics.js';
 export * from './backlog.js';
 export * from './chat.js';
 export * from './common.js';

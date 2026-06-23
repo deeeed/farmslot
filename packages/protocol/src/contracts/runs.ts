@@ -1037,6 +1037,12 @@ export interface Run {
   recoveryAttempts?: RunReplayStep[];
   recoveryProposal?: RunRecoveryRuntimeProposal;
   autoRecoveryDisabled?: boolean;
+  /**
+   * Set once when the run's terminal analytics record has been written to the
+   * decoupled analytics sink. Guards emit-once idempotency across the updateRun
+   * hook and the archive/delete catch-alls (see runs/analytics.ts).
+   */
+  analyticsEmittedAt?: string;
 }
 
 export function isLightweightInteractiveDevRun(

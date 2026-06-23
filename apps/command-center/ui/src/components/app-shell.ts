@@ -34,6 +34,7 @@ import './runs/run-pipeline-mini.js';
 import './runs/run-compare.js';
 import './runs/family-observability.js';
 import './intelligence-audit/intelligence-incidents-panel.js';
+import './analytics/analytics-panel.js';
 import './evals/eval-cockpit.js';
 import './finetune/finetune-page.js';
 import './device-grid/device-grid.js';
@@ -82,6 +83,7 @@ type Route =
   | 'evals'
   | 'finetune'
   | 'intelligence'
+  | 'analytics'
   | 'config'
   | 'slot'
   | 'dev';
@@ -115,6 +117,7 @@ const NAV_ITEMS: NavItem[] = [
   { route: 'decisions', icon: '?', label: 'Decisions' },
   { route: 'runs', icon: '@', label: 'Runs' },
   { route: 'intelligence', icon: 'i', label: 'Intelligence' },
+  { route: 'analytics', icon: '^', label: 'Analytics' },
   { route: 'evals', icon: '$', label: 'Evals' },
   { route: 'finetune', icon: '%', label: 'Finetune' },
   { route: 'config', icon: '~', label: 'Config' },
@@ -372,6 +375,7 @@ export class FarmApp extends LitElement {
       'evals',
       'finetune',
       'intelligence',
+      'analytics',
       'config',
     ];
     this.route = valid.includes(hash as Route) ? (hash as Route) : 'fleet';
@@ -798,6 +802,8 @@ export class FarmApp extends LitElement {
         return html`<finetune-page></finetune-page>`;
       case 'intelligence':
         return html`<intelligence-incidents-panel></intelligence-incidents-panel>`;
+      case 'analytics':
+        return html`<analytics-panel></analytics-panel>`;
       case 'config':
         return html`<config-panel .initialPath=${this.configParam}></config-panel>`;
       case 'slot':

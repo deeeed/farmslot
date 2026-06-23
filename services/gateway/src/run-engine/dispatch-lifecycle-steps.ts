@@ -7,6 +7,7 @@ import { dispatchExecute, nudgeDispatch } from '../methods/dispatch.js';
 import { slotPrepare } from '../methods/slot.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import { runnerNeedsPostLaunchPrompt } from '../runners/registry.js';
+import { captureHostLoadSnapshot } from '../runs/analytics.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
@@ -79,6 +80,12 @@ export async function executePrepareStep(
     return { inputs, outputs: { skipped: true, reason: 'operator-skip' } };
   }
 
+  // Machine-pressure snapshot at prepare start — the analytics emitter reads this from
+  // prepare.outputs.hostLoad. Captured only once prepare actually runs (skip-prepare does no
+  // work, so there's no cost to correlate load against). Threaded through every outputs rebuild
+  // below so it survives a prepare failure.
+  const hostLoad = captureHostLoadSnapshot(current.slotId);
+
   // Build cliCommand early so it's available on failure too. startRef is
   // passed through the internal prepare options below, but include it in
   // the recorded command string so replay validation can prove the slot did
@@ -90,7 +97,7 @@ export async function executePrepareStep(
   const cliCommand = `farmslot slot prepare ${current.slotId}${current.branch ? ` --branch ${current.branch}` : ''}${mergeMain ? ' --merge-main' : ''}${current.flowType ? ` --flow-type ${current.flowType}` : ''}${current.app ? ` --app ${current.app}` : ''}${current.startRef ? ` --start-ref ${current.startRef.requestedRef}` : ''}${current.prepareProfile ? ` --prepare-profile ${current.prepareProfile}` : ''}${prepareVars ? ' --var watch=off' : ''}`;
 
   // Stash partial I/O before the potentially-failing call
-  stepPartialIO.set(runId, { inputs, outputs: { cliCommand } });
+  stepPartialIO.set(runId, { inputs, outputs: { cliCommand, hostLoad } });
 
   // Collect sub-step events and broadcast live progress
   const collector = createSubStepCollector();
@@ -102,7 +109,11 @@ export async function executePrepareStep(
     if (p?.name) {
       // Named step events are infrequent — safe to snapshot + broadcast
       const lo = collector.getLastOutput();
-      const outputs: Record<string, unknown> = { cliCommand, subSteps: collector.snapshot() };
+      const outputs: Record<string, unknown> = {
+        cliCommand,
+        hostLoad,
+        subSteps: collector.snapshot(),
+      };
       if (lo) outputs.lastOutput = lo;
       updateRunStep(runId, 'prepare', { detail: p.detail || p.name, outputs });
       stepPartialIO.set(runId, { inputs, outputs });
@@ -222,6 +233,7 @@ export async function executePrepareStep(
     outputs: {
       success: true,
       subSteps: collector.finish(),
+      hostLoad,
       machine,
       platform,
       isLocal: local,

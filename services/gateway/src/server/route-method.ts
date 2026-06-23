@@ -3,6 +3,7 @@
 import { WebSocket } from 'ws';
 
 import {
+  type AnalyticsQueryParams,
   type BacklogAutoDispatchTickParams,
   type BacklogCreateParams,
   type BacklogDeleteParams,
@@ -154,6 +155,7 @@ import {
 } from '../fleet/resource-manager.js';
 import { slotCleanup } from '../fleet/slot-cleanup.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { analyticsBackfill, analyticsQuery } from '../methods/analytics.js';
 import {
   backlogAutoDispatchTick,
   backlogCreate,
@@ -452,6 +454,12 @@ export async function routeMethod(
       return backlogAutoDispatchTick((p ?? {}) as BacklogAutoDispatchTickParams);
     case Methods.BACKLOG_UPCOMING:
       return backlogUpcoming((p ?? {}) as BacklogUpcomingParams);
+
+    // Pipeline-ops analytics
+    case Methods.ANALYTICS_QUERY:
+      return analyticsQuery((p ?? {}) as AnalyticsQueryParams);
+    case Methods.ANALYTICS_BACKFILL:
+      return analyticsBackfill();
 
     // Terminal
     case Methods.TERMINAL_SUBSCRIBE: {
