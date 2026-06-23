@@ -233,7 +233,10 @@ test('collectRunEvidenceArtifacts prefers curated package evidence and drops run
               { path: 'artifacts/recipe-run/debug.png', purpose: 'screenshot', sizeBytes: 789 },
               { path: 'artifacts/harness-launch/debug.png', purpose: 'screenshot' },
               { path: 'artifacts/runtime-launch/chrome-profile/Local State', purpose: 'other' },
-              { path: 'artifacts/runtime-relaunch/chrome-profile/cache.png', purpose: 'screenshot' },
+              {
+                path: 'artifacts/runtime-relaunch/chrome-profile/cache.png',
+                purpose: 'screenshot',
+              },
               { path: 'artifacts/runner-blockers/self-review-launch.txt', purpose: 'other' },
             ],
           },
