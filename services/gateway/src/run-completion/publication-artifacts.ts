@@ -5,8 +5,8 @@ import path from 'node:path';
 
 import type { ArtifactRef, Run } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars } from '../core/config.js';
 import { INTERNAL_ARTIFACT_COPY_EXCLUDES } from '../core/artifact-copy-policy.js';
+import { getProjectField, loadProjectVars } from '../core/config.js';
 import {
   execLocal,
   farmslotRoot,
