@@ -95,3 +95,41 @@ test('artifact scan filters skip hidden files and allow referenced files under e
     false,
   );
 });
+
+test('internal artifact roots cannot be re-included by evidence manifest refs', () => {
+  const { excludedTopLevel, includedRelativePaths } = artifactScanFilters({
+    includeRelativePaths: [
+      'runtime-relaunch/chrome-profile/cache.png',
+      'artifacts/harness-launch/debug.png',
+    ],
+  });
+
+  assert.equal(
+    shouldVisitArtifactDirectory('runtime-relaunch', excludedTopLevel, includedRelativePaths),
+    false,
+  );
+  assert.equal(
+    shouldVisitArtifactDirectory(
+      'runtime-relaunch/chrome-profile',
+      excludedTopLevel,
+      includedRelativePaths,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldIncludeArtifactFile(
+      'runtime-relaunch/chrome-profile/cache.png',
+      excludedTopLevel,
+      includedRelativePaths,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldIncludeArtifactFile(
+      'artifacts/harness-launch/debug.png',
+      excludedTopLevel,
+      includedRelativePaths,
+    ),
+    false,
+  );
+});

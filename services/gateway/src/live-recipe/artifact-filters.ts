@@ -1,6 +1,6 @@
 // live-recipe-artifact-filters.ts — Artifact path normalization and scan filters for live recipe context.
 
-import { INTERNAL_RUN_ARTIFACT_TOP_LEVELS } from '@farmslot/protocol';
+import { INTERNAL_RUN_ARTIFACT_TOP_LEVELS, isInternalRunArtifactPath } from '@farmslot/protocol';
 
 export interface ArtifactScanOptions {
   excludeTopLevel?: string[];
@@ -106,11 +106,17 @@ function isExcludedRelativePath(relativePath: string, excludedTopLevel: Set<stri
   return Boolean(topLevel && excludedTopLevel.has(topLevel));
 }
 
+function isInternalRelativePath(relativePath: string): boolean {
+  const normalized = normalizeArtifactRelativePath(relativePath);
+  return Boolean(normalized && isInternalRunArtifactPath(normalized));
+}
+
 export function shouldVisitArtifactDirectory(
   relativePath: string,
   excludedTopLevel: Set<string>,
   includedRelativePaths: Set<string>,
 ): boolean {
+  if (isInternalRelativePath(relativePath)) return false;
   if (!isExcludedRelativePath(relativePath, excludedTopLevel)) return true;
   const prefix = `${normalizeArtifactRelativePath(relativePath)}/`;
   return [...includedRelativePaths].some((includedPath) => includedPath.startsWith(prefix));
@@ -123,6 +129,7 @@ export function shouldIncludeArtifactFile(
 ): boolean {
   const normalized = normalizeArtifactRelativePath(relativePath);
   if (!normalized) return false;
+  if (isInternalRunArtifactPath(normalized)) return false;
   if (!isExcludedRelativePath(normalized, excludedTopLevel)) return true;
   return includedRelativePaths.has(normalized);
 }

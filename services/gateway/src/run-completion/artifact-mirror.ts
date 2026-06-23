@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 
-import { DEFAULT_TASK_DIR, type Run } from '@farmslot/protocol';
+import { DEFAULT_TASK_DIR, isInternalRunArtifactPath, type Run } from '@farmslot/protocol';
 
 import { removeStaleArtifactDirectory } from '../core/artifact-cleanup.js';
 import {
@@ -83,6 +83,9 @@ async function copyEvidenceManifestReferencedArtifacts(
   const manifestPaths = evidenceManifestArtifactPaths(manifest);
   let copied = 0;
   for (const artifactPath of manifestPaths) {
+    if (isInternalRunArtifactPath(artifactPath)) {
+      throw new Error(`evidence-manifest references internal artifact: ${artifactPath}`);
+    }
     const relativePath = artifactPath.slice('artifacts/'.length);
     const workerPath = path.join(workerArtifactsDir, relativePath);
     if (!(await slotFileExists(vars, workerPath))) {

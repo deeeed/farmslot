@@ -312,8 +312,8 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       payload.prPackage?.evidenceManifest?.map((artifact) => artifact.path) ?? [],
     );
     const artifacts = selectedArtifacts.filter((artifact) => {
-      if (packageEvidencePaths.size > 0) return packageEvidencePaths.has(artifact.path);
       if (isInternalRunArtifactPath(artifact.path)) return false;
+      if (packageEvidencePaths.size > 0) return packageEvidencePaths.has(artifact.path);
       return MEDIA_EXTS.test(artifact.path);
     });
     return renderReadySelectedRecipeRunArtifacts({

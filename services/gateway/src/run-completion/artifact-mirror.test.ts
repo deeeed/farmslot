@@ -120,6 +120,66 @@ test('shouldClearLocalRecipeRunCache only clears when the worker pointer is trul
   );
 });
 
+test('refreshArtifactMirror rejects evidence-manifest references to internal artifacts', async (t) => {
+  const testId = `mirror-internal-manifest-${process.pid}-${Date.now()}`;
+  const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
+  const workerRepo = await mkdtemp(path.join(tmpdir(), `${testId}-worker-`));
+  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
+  const taskRelDir = `test/${testId}`;
+  const taskDir = path.join(taskRoot, taskRelDir);
+  const taskFile = path.join(taskDir, 'TASK.md');
+  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);
+  const slotId = `${testId}-slot`;
+  t.after(async () => {
+    await rm(taskDir, { recursive: true, force: true });
+    await rm(workerRepo, { recursive: true, force: true });
+    await rm(poolFile, { force: true });
+  });
+
+  await mkdir(path.join(workerTaskDir, 'artifacts/runtime-relaunch/chrome-profile'), {
+    recursive: true,
+  });
+  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+  await writeFile(taskFile, '# mirror test\n');
+  await writeFile(path.join(workerTaskDir, 'TASK.md'), '# mirror test\n');
+  await writeFile(
+    path.join(workerTaskDir, 'artifacts/evidence-manifest.json'),
+    JSON.stringify({
+      version: 1,
+      standalone: [{ label: 'Internal', file: 'runtime-relaunch/chrome-profile/cache.png' }],
+    }),
+  );
+  await writeFile(
+    path.join(workerTaskDir, 'artifacts/runtime-relaunch/chrome-profile/cache.png'),
+    'png',
+  );
+  await writeFile(
+    poolFile,
+    JSON.stringify(
+      {
+        machine: 'localhost',
+        project: 'farmslot-farm',
+        platform: 'cli',
+        os: 'darwin',
+        host: 'localhost',
+        ssh_user: userInfo().username,
+        slots: [{ id: slotId, enabled: true, repo: workerRepo, session: slotId }],
+      },
+      null,
+      2,
+    ),
+  );
+
+  await assert.rejects(
+    () => refreshArtifactMirror(makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile })),
+    /evidence-manifest references internal artifact: artifacts\/runtime-relaunch\/chrome-profile\/cache\.png/,
+  );
+  assert.equal(
+    existsSync(path.join(taskDir, 'artifacts/runtime-relaunch/chrome-profile/cache.png')),
+    false,
+  );
+});
+
 test('pruneRecipeRunHistory skips symlinked recipe run entries', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-run-completion-'));
   t.after(() => rm(root, { recursive: true, force: true }));
