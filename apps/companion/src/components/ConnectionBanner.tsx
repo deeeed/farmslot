@@ -4,9 +4,60 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors, fonts, spacing } from '../lib/theme';
 import { useConnectionStore } from '../store/connection';
+import { useRunStore } from '../store/runs';
 
 interface ConnectionBannerProps {
   compact?: boolean;
+}
+
+type BannerTone = 'connected' | 'connecting' | 'syncError' | 'disconnected';
+
+interface BannerContent {
+  title: string;
+  detail: string;
+  tone: BannerTone;
+}
+
+function resolveBannerContent(
+  status: ReturnType<typeof useConnectionStore.getState>['status'],
+  lastSyncError: string | null,
+  runsSyncMessage: string | null,
+  gatewayUrl: string,
+  activeProfileAuthMode: string,
+): BannerContent | null {
+  if (status === 'disconnected') {
+    return {
+      title: 'Disconnected from gateway',
+      detail: 'Tap to open connection settings',
+      tone: 'disconnected',
+    };
+  }
+  if (status === 'connecting') {
+    return {
+      title: 'Connecting to gateway…',
+      detail: 'Waiting for authentication',
+      tone: 'connecting',
+    };
+  }
+  if (runsSyncMessage) {
+    return {
+      title: runsSyncMessage,
+      detail: 'Gateway is connected — downloading run data',
+      tone: 'connecting',
+    };
+  }
+  if (lastSyncError) {
+    return {
+      title: lastSyncError,
+      detail: 'Gateway is connected — data sync failed. Tap for settings.',
+      tone: 'syncError',
+    };
+  }
+  return {
+    title: `Connected · ${gatewayUrl}`,
+    detail: activeProfileAuthMode !== 'none' ? `${activeProfileAuthMode} auth` : 'Ready',
+    tone: 'connected',
+  };
 }
 
 export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
@@ -17,26 +68,29 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
   const profiles = useConnectionStore((s) => s.profiles);
   const activeProfileId = useConnectionStore((s) => s.activeProfileId);
   const activeProfileAuthMode = useConnectionStore((s) => s.activeProfileAuthMode);
+  const activeLoading = useRunStore((s) => s.activeLoading);
+  const historyLoading = useRunStore((s) => s.historyLoading);
 
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.id === activeProfileId) ?? null,
     [activeProfileId, profiles],
   );
-  const isConnecting = status === 'connecting';
-  const isSyncError = status === 'connected' && Boolean(lastSyncError);
-  const isConnected = status === 'connected' && !lastSyncError;
-  if (isConnected) return null;
+  const runsSyncMessage = historyLoading
+    ? 'Downloading run history…'
+    : activeLoading
+      ? 'Downloading active runs…'
+      : null;
 
-  const connectionTitle = isConnected
-    ? `Connected · ${activeProfile?.name ?? 'Custom gateway'}`
-    : isSyncError
-      ? lastSyncError
-      : isConnecting
-        ? 'Connecting to gateway...'
-        : 'Disconnected from gateway';
-  const connectionDetail = isConnected
-    ? `${gatewayUrl}${activeProfileAuthMode !== 'none' ? ` · ${activeProfileAuthMode} auth` : ''}`
-    : 'Tap to open connection settings';
+  const banner = resolveBannerContent(
+    status,
+    lastSyncError,
+    runsSyncMessage,
+    activeProfile?.name ?? gatewayUrl,
+    activeProfileAuthMode ?? 'none',
+  );
+
+  if (!banner || banner.tone === 'connected') return null;
+
   const onPress = () => {
     router.push('/settings');
   };
@@ -46,13 +100,11 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
       style={[
         styles.banner,
         compact && styles.compactBanner,
-        isConnected
-          ? styles.connected
-          : isSyncError
+        banner.tone === 'connecting'
+          ? styles.connecting
+          : banner.tone === 'syncError'
             ? styles.syncError
-            : isConnecting
-              ? styles.connecting
-              : styles.disconnected,
+            : styles.disconnected,
       ]}
       onPress={onPress}
     >
@@ -61,21 +113,22 @@ export function ConnectionBanner({ compact = false }: ConnectionBannerProps) {
           style={[
             styles.statusDot,
             {
-              backgroundColor: isConnected
-                ? colors.statusOk
-                : isConnecting
+              backgroundColor:
+                banner.tone === 'connecting'
                   ? colors.statusWarn
-                  : colors.statusFail,
+                  : banner.tone === 'syncError'
+                    ? colors.statusWarn
+                    : colors.statusFail,
             },
           ]}
         />
         <View style={styles.textBlock}>
-          <Text style={styles.text} numberOfLines={1}>
-            {connectionTitle}
+          <Text style={styles.text} numberOfLines={2}>
+            {banner.title}
           </Text>
           {!compact && (
-            <Text style={styles.detailText} numberOfLines={1}>
-              {connectionDetail}
+            <Text style={styles.detailText} numberOfLines={2}>
+              {banner.detail}
             </Text>
           )}
         </View>
@@ -92,9 +145,6 @@ const styles = StyleSheet.create({
   },
   compactBanner: {
     paddingVertical: spacing.xs,
-  },
-  connected: {
-    backgroundColor: colors.statusOk + '18',
   },
   connecting: {
     backgroundColor: colors.statusWarn + '30',
