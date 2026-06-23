@@ -220,6 +220,11 @@
       "import": "./dist/rpc/fs.js",
       "default": "./dist/rpc/fs.js"
     },
+    "./rpc/gateway": {
+      "types": "./dist/rpc/gateway.d.ts",
+      "import": "./dist/rpc/gateway.js",
+      "default": "./dist/rpc/gateway.js"
+    },
     "./rpc/git": {
       "types": "./dist/rpc/git.d.ts",
       "import": "./dist/rpc/git.js",
