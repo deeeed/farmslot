@@ -1,5 +1,7 @@
 import {
+  canActivateRunOnSlot,
   Events,
+  FLOW_STEPS,
   PipelineSteps,
   type RunActivateOnSlotParams,
   type RunActivateOnSlotResult,
@@ -91,6 +93,22 @@ export async function runActivateOnSlot(
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
 
+  // Activate re-drives from PREPARE; flows without a PREPARE step (e.g. merge-main)
+  // have no prepare step object to replay and cannot be re-bound this way.
+  if (!FLOW_STEPS[run.flowType]?.includes(PipelineSteps.PREPARE)) {
+    throw new Error(
+      `Cannot activate run ${params.runId.slice(0, 8)}: flow '${run.flowType}' has no PREPARE step.`,
+    );
+  }
+
+  // Only terminal/blocked runs are re-bindable — re-driving an active run would
+  // kill its live worker mid-task.
+  if (!canActivateRunOnSlot(run.status)) {
+    throw new Error(
+      `Run ${params.runId.slice(0, 8)} is currently ${run.status}; wait for it to finish or cancel it before activating it on a slot.`,
+    );
+  }
+
   const targetSlot = params.slotId?.trim() || run.slotId;
   if (!targetSlot) {
     throw new Error(
@@ -118,7 +136,11 @@ export async function runActivateOnSlot(
   // Operator-authorized re-bind: claim the slot for this run so the replay re-claim
   // (replaySlotReclaimCheck owner===runId) passes. The prior run is left untouched —
   // its monitor owns its own lifecycle (ADR-024 §7 nudge precedent).
+  // Operator-authorized re-bind: claim the slot for this run so the replay re-claim
+  // (replaySlotReclaimCheck owner===runId) passes. The prior run is left untouched —
+  // its monitor owns its own lifecycle (ADR-024 §7 nudge precedent).
   const priorRunId = slot.currentRunId ?? null;
+  const priorSlotId = run.slotId;
   console.log(
     `[run] activate-on-slot slot=${targetSlot} reassigning current_run_id ${
       priorRunId ? priorRunId.slice(0, 8) : '-'
@@ -130,13 +152,22 @@ export async function runActivateOnSlot(
   // Re-drive PREPARE→DISPATCH for the existing run with the cheapest warm profile.
   // runReplayStep persists prepareProfile, re-claims the slot, resets PREPARE-onward,
   // and re-enters the engine; `attach` falls back to the project warm default (ADR-037).
-  return runReplayStep(
-    {
-      runId: params.runId,
-      stepName: PipelineSteps.PREPARE,
-      prepareProfile: params.prepareProfile ?? 'attach',
-      triggeredBy: 'operator',
-    },
-    emit,
-  );
+  // It can throw synchronously (ticket validation, step-not-found, slot reclaim) — roll
+  // back the operator re-bind so a failed activate never strands the slot assigned to a
+  // run that never re-drove.
+  try {
+    return await runReplayStep(
+      {
+        runId: params.runId,
+        stepName: PipelineSteps.PREPARE,
+        prepareProfile: params.prepareProfile ?? 'attach',
+        triggeredBy: 'operator',
+      },
+      emit,
+    );
+  } catch (err) {
+    await updateSlotStatus(targetSlot, { current_run_id: priorRunId });
+    updateRun(params.runId, { slotId: priorSlotId });
+    throw err;
+  }
 }

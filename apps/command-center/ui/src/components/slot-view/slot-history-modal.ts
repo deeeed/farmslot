@@ -1,7 +1,12 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
-import { Methods, type SlotRunHistoryEntry, type SlotRunHistoryResult } from '@farmslot/protocol';
+import {
+  canActivateRunOnSlot,
+  Methods,
+  type SlotRunHistoryEntry,
+  type SlotRunHistoryResult,
+} from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -343,8 +348,8 @@ export class SlotHistoryModal extends LitElement {
     this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
   }
 
-  private _activate(runId: string) {
-    void activateRunOnSlot(runId, this.slotId);
+  private async _activate(runId: string) {
+    await activateRunOnSlot(runId, this.slotId);
     this._close();
   }
 
@@ -575,7 +580,7 @@ export class SlotHistoryModal extends LitElement {
                 </div>
                 <div class="shm-actions">
                   <a class="shm-link" href=${`#${routeForRun({ id: run.runId })}`}>Open run</a>
-                  ${this.slotId
+                  ${this.slotId && canActivateRunOnSlot(run.status)
                     ? html`<button
                         class="shm-retry"
                         title="Re-bind this run onto ${this

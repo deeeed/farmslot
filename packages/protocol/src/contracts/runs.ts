@@ -32,6 +32,18 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
   return TERMINAL_RUN_STATUSES.includes(status);
 }
 
+/**
+ * Runs eligible for activate-on-slot re-bind (ADR-024 §7 addendum): terminal
+ * runs plus `blocked` (a run parked at a gate the operator can re-engage).
+ * Active runs (preparing/dispatching/monitoring/…) and `created` are excluded —
+ * re-driving them from PREPARE would kill a live worker or pre-empt normal
+ * dispatch. Shared by the gateway guard and all UI entry points so the
+ * server and client agree on which runs show/accept the action.
+ */
+export function canActivateRunOnSlot(status: RunStatus): boolean {
+  return isTerminalRunStatus(status) || status === 'blocked';
+}
+
 export type RunStepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
 export interface RunStep {

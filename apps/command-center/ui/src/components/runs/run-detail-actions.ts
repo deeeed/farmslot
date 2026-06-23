@@ -254,7 +254,10 @@ export function resolveSlotPick(
  * identically — no new run is created.
  */
 export async function activateRunOnSlot(runId: string, slotId: string): Promise<void> {
-  if (!slotId) return;
+  if (!slotId) {
+    console.warn(`activateRunOnSlot: ignoring run ${runId.slice(0, 8)} — no target slotId`);
+    return;
+  }
   try {
     await gateway.request(Methods.RUN_ACTIVATE_ON_SLOT, {
       runId,

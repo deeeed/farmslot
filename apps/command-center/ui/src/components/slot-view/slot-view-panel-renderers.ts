@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit';
 
-import { agentRoleShortLabel } from '@farmslot/protocol';
+import { agentRoleShortLabel, canActivateRunOnSlot } from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { activateRunOnSlot } from '../runs/run-detail-actions.js';
@@ -608,7 +608,7 @@ export function renderSlotViewBody(
                                 </a>
                               `
                             : nothing}
-                          ${view._linkedRun.slotId
+                          ${view._linkedRun.slotId && canActivateRunOnSlot(view._linkedRun.status)
                             ? html`
                                 <button
                                   class="sv-run-action accent"

@@ -8,7 +8,7 @@ import type {
   Run,
   RunGrade,
 } from '@farmslot/protocol';
-import { modelsMatch, normalizeRunTags } from '@farmslot/protocol';
+import { canActivateRunOnSlot, modelsMatch, normalizeRunTags } from '@farmslot/protocol';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
@@ -397,11 +397,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             </a>
           `
         : nothing}
-      ${r.slotId &&
-      (r.status === 'done' ||
-        r.status === 'failed' ||
-        r.status === 'cancelled' ||
-        r.status === 'blocked')
+      ${r.slotId && canActivateRunOnSlot(r.status)
         ? html`
             <button
               class="gate-action-btn"
