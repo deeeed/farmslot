@@ -48,10 +48,6 @@ export async function executePrepareStep(
   } = context;
   const current = await normalizeEvalReplayForTaskWrite(runId, getRun(runId)!);
   if (!current.slotId) throw new Error('No slot assigned');
-  // Machine-pressure snapshot at prepare start — the analytics emitter reads this from
-  // prepare.outputs.hostLoad. Threaded through every outputs rebuild below so it survives
-  // a prepare failure (the failed-run analytics record still carries the load context).
-  const hostLoad = captureHostLoadSnapshot(current.slotId);
   // pr-complete and merge-main flows leave the merge to the worker so it
   // can resolve conflicts in-session. Only review-pr auto-merges in prepare
   // (and aborts on conflict) — reviewer flow doesn't fix code.
@@ -81,8 +77,14 @@ export async function executePrepareStep(
   }
   if (skipPrepare) {
     console.log(`[run-engine] skipping prepare for ${runId.slice(0, 8)} (operator skip)`);
-    return { inputs, outputs: { skipped: true, reason: 'operator-skip', hostLoad } };
+    return { inputs, outputs: { skipped: true, reason: 'operator-skip' } };
   }
+
+  // Machine-pressure snapshot at prepare start — the analytics emitter reads this from
+  // prepare.outputs.hostLoad. Captured only once prepare actually runs (skip-prepare does no
+  // work, so there's no cost to correlate load against). Threaded through every outputs rebuild
+  // below so it survives a prepare failure.
+  const hostLoad = captureHostLoadSnapshot(current.slotId);
 
   // Build cliCommand early so it's available on failure too. startRef is
   // passed through the internal prepare options below, but include it in
