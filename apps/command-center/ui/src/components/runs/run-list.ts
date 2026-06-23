@@ -880,17 +880,27 @@ export class RunList extends RunListState {
                 </button>
               `
             : nothing}
-          ${comparePair
+          ${group.comparisonCount >= 2
             ? html`
                 <a
                   class="family-link"
-                  href=${`#runs/compare?a=${comparePair[0].id}&b=${comparePair[1].id}`}
+                  href=${`#family/${group.familyId}`}
                   @click=${(e: Event) => e.stopPropagation()}
                 >
-                  compare latest siblings
+                  compare ${group.comparisonCount} runs
                 </a>
               `
-            : nothing}
+            : comparePair
+              ? html`
+                  <a
+                    class="family-link"
+                    href=${`#runs/compare?a=${comparePair[0].id}&b=${comparePair[1].id}`}
+                    @click=${(e: Event) => e.stopPropagation()}
+                  >
+                    compare latest siblings
+                  </a>
+                `
+              : nothing}
         </div>
         ${this.renderFamilySummaryRow(group, familyPR)}
         ${group.runs.map((run) => this.renderCard(run, showCheckbox))}

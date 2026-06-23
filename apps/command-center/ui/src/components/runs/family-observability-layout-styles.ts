@@ -163,6 +163,181 @@ export const familyObservabilityLayoutStyles = css`
     margin-top: 4px;
     line-height: 1.4;
   }
+  .compare-tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}22;
+    margin-bottom: ${unsafeCSS(spacing.md)};
+  }
+  .compare-tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: ${unsafeCSS(colors.textMuted)};
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .compare-tab.active {
+    color: ${unsafeCSS(colors.accent)};
+    border-bottom-color: ${unsafeCSS(colors.accent)};
+  }
+  .compare-table-scroll {
+    overflow-x: auto;
+  }
+  .compare-leaderboard,
+  .compare-matrix,
+  .compare-evidence {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 11px;
+  }
+  .compare-leaderboard th,
+  .compare-leaderboard td,
+  .compare-matrix th,
+  .compare-matrix td,
+  .compare-evidence th,
+  .compare-evidence td {
+    border: 1px solid ${unsafeCSS(colors.textMuted)}1a;
+    padding: 6px 9px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .compare-leaderboard th,
+  .compare-matrix th,
+  .compare-evidence th {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .compare-leaderboard td.num,
+  .compare-leaderboard th.num,
+  .compare-matrix td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  th.sortable {
+    cursor: pointer;
+  }
+  th.sorted {
+    color: ${unsafeCSS(colors.accent)};
+  }
+  .sort-caret {
+    margin-left: 3px;
+  }
+  .compare-leaderboard tbody tr {
+    cursor: pointer;
+  }
+  .compare-leaderboard tbody tr:hover {
+    background: ${unsafeCSS(colors.accent)}0c;
+  }
+  .compare-leaderboard tbody tr.selected,
+  .compare-matrix th.run-head.selected {
+    background: ${unsafeCSS(colors.accent)}1a;
+  }
+  td.winner {
+    color: ${unsafeCSS(colors.statusOk)};
+    font-weight: 700;
+  }
+  .winner-dot {
+    margin-left: 4px;
+    font-size: 8px;
+    vertical-align: middle;
+  }
+  .rank {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  .lane-label {
+    font-weight: 700;
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+  .lane-sub {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+    margin-top: 2px;
+  }
+  .compare-matrix td.metric-head,
+  .compare-evidence td.metric-head {
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .compare-matrix th.run-head,
+  .compare-evidence th.run-head {
+    cursor: pointer;
+    text-align: center;
+  }
+  .compare-evidence-hint {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 11px;
+    margin-bottom: ${unsafeCSS(spacing.sm)};
+    line-height: 1.4;
+  }
+  .evidence-target {
+    font-weight: 700;
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+  td.evidence-cell {
+    text-align: center;
+    padding: 4px;
+  }
+  td.evidence-cell.empty {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+  .evidence-thumb {
+    border: 1px solid ${unsafeCSS(colors.textMuted)}33;
+    border-radius: ${unsafeCSS(radii.sm)};
+    background: ${unsafeCSS(colors.bgSurface)};
+    padding: 0;
+    cursor: pointer;
+    overflow: hidden;
+    display: inline-flex;
+    width: 120px;
+    height: 76px;
+    align-items: center;
+    justify-content: center;
+  }
+  .evidence-thumb:hover {
+    border-color: ${unsafeCSS(colors.accent)};
+  }
+  .evidence-thumb img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+  }
+  .evidence-video {
+    color: ${unsafeCSS(colors.accent)};
+    font-size: 22px;
+  }
+  td.overlay-cell {
+    text-align: center;
+  }
+  .action-btn.small {
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .uncompared-evidence {
+    margin-top: ${unsafeCSS(spacing.md)};
+    border-top: 1px solid ${unsafeCSS(colors.textMuted)}22;
+    padding-top: ${unsafeCSS(spacing.sm)};
+  }
+  .uncompared-title {
+    font-weight: 700;
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+  .uncompared-run {
+    margin-top: ${unsafeCSS(spacing.sm)};
+  }
+  .uncompared-thumbs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
   .comparison-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

@@ -10,8 +10,12 @@ import type {
 
 import type { LightboxItem, LightboxPair } from '../shared/media-lightbox-types.js';
 
-import { renderFamilyComparisonPanel } from './family-observability-comparison-renderers.js';
+import {
+  type CompareTab,
+  renderFamilyComparisonPanel,
+} from './family-observability-comparison-renderers.js';
 import { renderFamilyEvalPackagePanel } from './family-observability-eval-package-renderers.js';
+import type { EvidenceMatrix } from './family-observability-evidence-matrix.js';
 import { renderRelatedByTicket } from './family-observability-renderers.js';
 import { renderFamilyReportPanel } from './family-observability-report-renderers.js';
 import { renderFamilyRunSelector } from './family-observability-run-selector-renderers.js';
@@ -31,6 +35,9 @@ export interface FamilyObservabilityPageInput {
   reportLoading: boolean;
   selectedExperimentKey: string;
   copiedPrompt: boolean;
+  compareTab: CompareTab;
+  compareSortKey: string;
+  evidenceMatrix: EvidenceMatrix;
   pairCount: number;
   lightboxItems: LightboxItem[];
   lightboxPairs: LightboxPair[];
@@ -61,6 +68,11 @@ export interface FamilyObservabilityPageInput {
   onAskCopilot: (snapshot: FamilyObservabilitySnapshot) => void;
   onCopyPrompt: (snapshot: FamilyObservabilitySnapshot) => void;
   onSelectRun: (runId: string) => void;
+  onSelectCompareTab: (tab: CompareTab) => void;
+  onSortCompare: (sortKey: string) => void;
+  onOpenEvidenceCell: (artifacts: FamilyObservabilityArtifact[], index: number) => void;
+  onCompareEvidencePair: (a: FamilyObservabilityArtifact, b: FamilyObservabilityArtifact) => void;
+  evidenceThumbUrl: (artifact: FamilyObservabilityArtifact) => string;
   onOpenSlot: (slotId: string, event: Event) => void;
   onLightboxClose: () => void;
   onLightboxNavigate: (index: number) => void;
@@ -115,9 +127,17 @@ export function renderFamilyObservabilityPage(input: FamilyObservabilityPageInpu
       snapshot,
       selectedRunId: input.selectedRunId,
       copiedPrompt: input.copiedPrompt,
+      compareTab: input.compareTab,
+      compareSortKey: input.compareSortKey,
+      evidenceMatrix: input.evidenceMatrix,
       onAskCopilot: input.onAskCopilot,
       onCopyPrompt: input.onCopyPrompt,
       onSelectRun: input.onSelectRun,
+      onSelectCompareTab: input.onSelectCompareTab,
+      onSortCompare: input.onSortCompare,
+      onOpenEvidenceCell: input.onOpenEvidenceCell,
+      onCompareEvidencePair: input.onCompareEvidencePair,
+      evidenceThumbUrl: input.evidenceThumbUrl,
       renderRunDiffLink: input.renderRunDiffLink,
     })}
 

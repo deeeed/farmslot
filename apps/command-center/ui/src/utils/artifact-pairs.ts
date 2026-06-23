@@ -44,7 +44,17 @@ function filenameStem(path: string): {
   return { base, ext, stem, stemForKey };
 }
 
-function acceptanceCriteriaKey(path: string): string | null {
+/**
+ * Normalized comparison key for an evidence artifact — filename without
+ * extension, before/after markers, or leading `evidence-`. Shared by
+ * before/after pairing and the cross-run evidence matrix so the same logical
+ * screen lines up across sibling runs.
+ */
+export function artifactStem(path: string): string {
+  return filenameStem(path).stemForKey.toLowerCase();
+}
+
+export function acceptanceCriteriaKey(path: string): string | null {
   const base = path.split('/').pop()?.toLowerCase() ?? '';
   const match = base.match(/(?:^|[-_.])(ac\d+)(?:[-_.]|$)/i);
   return match?.[1]?.toLowerCase() ?? null;

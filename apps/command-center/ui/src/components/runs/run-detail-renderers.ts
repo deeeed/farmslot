@@ -273,6 +273,10 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const sc = runStatusColor(r.status);
   const disposition = dispositionLabel(r.metrics.disposition);
   const suggestedComparePartner = pickComparisonPartner(r, ctx.siblings);
+  // ctx.siblings excludes the current run, so add it back when it is itself a
+  // comparison lane to get the family's full comparison-lane count.
+  const comparisonLaneCount =
+    ctx.siblings.filter((s) => s.lane === 'comparison').length + (r.lane === 'comparison' ? 1 : 0);
   const actionsBlocked = ctx._actionsBlocked();
   const prLink = prLinkForRun(r);
 
@@ -633,6 +637,13 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
                     style="color:${colors.accent}; text-decoration:none"
                     >retrospective</a
                   >`
+                : nothing}${comparisonLaneCount >= 2
+                ? html` ·
+                    <a
+                      href="#family/${r.familyId}?run=${encodeURIComponent(r.id)}"
+                      style="color:${colors.accent}; text-decoration:none"
+                      >compare ${comparisonLaneCount} lanes</a
+                    >`
                 : nothing}
               ${ctx.siblings.map(
                 (s, i) =>
