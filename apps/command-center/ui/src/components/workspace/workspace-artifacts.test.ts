@@ -171,6 +171,37 @@ test('before/after pairing falls back to a shared baseline before with AC-specif
   );
 });
 
+test('shared baseline pairing stays scoped by runId and media extension', () => {
+  assert.deepEqual(
+    buildBeforeAfterPairs([
+      {
+        path: 'artifacts/run-a/before-baseline.png',
+        purpose: 'screenshot',
+        runId: 'run-a',
+      },
+      {
+        path: 'artifacts/run-b/before-baseline.png',
+        purpose: 'screenshot',
+        runId: 'run-b',
+      },
+      {
+        path: 'artifacts/run-a/after-ac1-proof.png',
+        purpose: 'screenshot',
+        runId: 'run-a',
+      },
+      {
+        path: 'artifacts/run-b/after-ac1-proof.png',
+        purpose: 'screenshot',
+        runId: 'run-b',
+      },
+    ]).map((pair) => [pair.before.path, pair.after.path, pair.stem]),
+    [
+      ['artifacts/run-a/before-baseline.png', 'artifacts/run-a/after-ac1-proof.png', 'ac1'],
+      ['artifacts/run-b/before-baseline.png', 'artifacts/run-b/after-ac1-proof.png', 'ac1'],
+    ],
+  );
+});
+
 test('workspaceArtifactType classifies filters and labels', () => {
   assert.equal(workspaceArtifactType({ path: 'shots/home.png', purpose: 'Screenshot' }), 'image');
   assert.equal(workspaceArtifactType({ path: 'video/demo.webm', purpose: 'Recording' }), 'video');

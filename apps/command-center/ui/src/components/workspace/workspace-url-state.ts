@@ -74,7 +74,7 @@ export function parseReadyWorkspaceHashState(
   hash: string = location.hash,
 ): ReadyWorkspaceHashState {
   const { params } = parseHashRoute(hash);
-  return {
+  const state: ReadyWorkspaceHashState = {
     tab: readyWorkspaceTab(params.get('tab')),
     file: nonEmptyParam(params, 'file'),
     modal: readyWorkspaceModal(params.get('modal')),
@@ -82,8 +82,11 @@ export function parseReadyWorkspaceHashState(
     lightboxIndex: nonNegativeFiniteParam(params, 'lightboxIndex'),
     lightboxRecipeRunId:
       nonEmptyParam(params, 'lightboxRecipeRunId') ?? nonEmptyParam(params, 'recipeRun'),
-    recipePackageEvidenceCollapsed: params.get('evidencePreview') === 'collapsed',
   };
+  if (params.get('evidencePreview') === 'collapsed') {
+    state.recipePackageEvidenceCollapsed = true;
+  }
+  return state;
 }
 
 export function readyWorkspaceHashWithState(

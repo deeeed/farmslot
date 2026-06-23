@@ -159,34 +159,45 @@ function buildSharedBaselinePairs<T extends PairableArtifact>(
   acPairedPaths: Set<string>,
 ): BeforeAfterPair<T>[] {
   const blockedPaths = new Set([...exactPairedPaths, ...acPairedPaths]);
-  const beforeCandidates = artifacts.filter((artifact) => {
-    if (blockedPaths.has(artifact.path)) return false;
-    if (artifactKind(artifact.path, artifact.purpose) !== 'before') return false;
-    return acceptanceCriteriaKey(artifact.path) == null;
-  });
-  if (beforeCandidates.length === 0) return [];
-
-  const sharedBefore = beforeCandidates.reduce((best, candidate) =>
-    sharedBaselineSpecificity(candidate.path) > sharedBaselineSpecificity(best.path)
-      ? candidate
-      : best,
-  );
-
-  const afterByAc = new Map<string, T>();
+  const beforeByScope = new Map<string, T[]>();
   for (const artifact of artifacts) {
     if (blockedPaths.has(artifact.path)) continue;
-    if (artifactKind(artifact.path, artifact.purpose) !== 'after') continue;
-    const acKey = acceptanceCriteriaKey(artifact.path);
-    if (!acKey) continue;
-    const existing = afterByAc.get(acKey);
-    if (!existing || acPairSpecificity(artifact.path) > acPairSpecificity(existing.path)) {
-      afterByAc.set(acKey, artifact);
+    if (artifactKind(artifact.path, artifact.purpose) !== 'before') continue;
+    if (acceptanceCriteriaKey(artifact.path) !== null) continue;
+    const { ext } = filenameStem(artifact.path);
+    const scopeKey = `${artifact.runId ?? ''}::${ext}`;
+    const candidates = beforeByScope.get(scopeKey) ?? [];
+    candidates.push(artifact);
+    beforeByScope.set(scopeKey, candidates);
+  }
+
+  const pairs: BeforeAfterPair<T>[] = [];
+  for (const [scopeKey, beforeCandidates] of beforeByScope) {
+    const sharedBefore = beforeCandidates.reduce((best, candidate) =>
+      sharedBaselineSpecificity(candidate.path) > sharedBaselineSpecificity(best.path)
+        ? candidate
+        : best,
+    );
+
+    const afterByAc = new Map<string, T>();
+    for (const artifact of artifacts) {
+      if (blockedPaths.has(artifact.path)) continue;
+      if (artifactKind(artifact.path, artifact.purpose) !== 'after') continue;
+      const acKey = acceptanceCriteriaKey(artifact.path);
+      if (!acKey) continue;
+      const { ext } = filenameStem(artifact.path);
+      const artifactScope = `${artifact.runId ?? ''}::${ext}`;
+      if (artifactScope !== scopeKey) continue;
+      const existing = afterByAc.get(acKey);
+      if (!existing || acPairSpecificity(artifact.path) > acPairSpecificity(existing.path)) {
+        afterByAc.set(acKey, artifact);
+      }
+    }
+
+    for (const [acKey, after] of afterByAc) {
+      pairs.push({ before: sharedBefore, after, stem: acKey });
     }
   }
 
-  return [...afterByAc.entries()].map(([acKey, after]) => ({
-    before: sharedBefore,
-    after,
-    stem: acKey,
-  }));
+  return pairs;
 }
