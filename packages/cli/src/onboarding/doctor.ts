@@ -1,5 +1,6 @@
 // onboarding/doctor.ts — health checks for an installed farmslot workspace.
 // Standalone `farmslot doctor`; install.sh / project add / update all end with it.
+import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
@@ -334,6 +335,78 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
   return { title: 'CLI', checks };
 }
 
+/** Run git in `cwd`, returning trimmed stdout, or null on any non-zero exit. */
+function gitOut(cwd: string, args: string[]): string | null {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf-8' });
+  if (result.status !== 0) return null;
+  return result.stdout.trim();
+}
+
+/**
+ * Update freshness: is the clone behind origin's default branch? This is the
+ * `farmslot update` signal (no semver stream — update = fetch + reset to origin).
+ * Doctor does NOT fetch (kept fast and offline-safe); it compares against the
+ * last-fetched remote-tracking ref. Behind is advice (WARN), never a failure —
+ * the live Command Center banner does the network check.
+ */
+function updatesSection(ws: Workspace | null): DoctorSection {
+  if (!ws) {
+    return {
+      title: 'Updates',
+      checks: [{ name: 'up to date', ok: true, warn: true, detail: 'skipped (dev checkout mode)' }],
+    };
+  }
+  const clone = ws.farmslotDir;
+  if (gitOut(clone, ['rev-parse', '--is-inside-work-tree']) !== 'true') {
+    return {
+      title: 'Updates',
+      checks: [
+        {
+          name: 'up to date',
+          ok: true,
+          warn: true,
+          detail: 'farmslot clone is not a git checkout',
+          hint: 're-run install.sh',
+        },
+      ],
+    };
+  }
+  const head = gitOut(clone, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+  const branch = head ? head.replace(/^origin\//, '') : 'main';
+  const remoteRef = `origin/${branch}`;
+  if (gitOut(clone, ['rev-parse', '--verify', '--quiet', remoteRef]) === null) {
+    return {
+      title: 'Updates',
+      checks: [
+        {
+          name: 'up to date',
+          ok: true,
+          warn: true,
+          detail: `no ${remoteRef} tracking ref yet`,
+          hint: 'run: farmslot update',
+        },
+      ],
+    };
+  }
+  const behindRaw = gitOut(clone, ['rev-list', '--count', `HEAD..${remoteRef}`]);
+  const behind = behindRaw ? Number.parseInt(behindRaw, 10) || 0 : 0;
+  return {
+    title: 'Updates',
+    checks: [
+      {
+        name: 'up to date',
+        ok: true,
+        warn: behind > 0,
+        detail:
+          behind > 0
+            ? `${behind} commit${behind === 1 ? '' : 's'} behind ${remoteRef} (as of last fetch)`
+            : `up to date with ${remoteRef} (as of last fetch)`,
+        hint: behind > 0 ? 'run: farmslot update' : undefined,
+      },
+    ],
+  };
+}
+
 /**
  * Gateway profile health (ADR-036). A down remote gateway or a not-yet-logged-in
  * profile is advice (WARN), not a broken local install; only an unreadable
@@ -414,6 +487,7 @@ export async function runDoctor(ws: Workspace | null): Promise<DoctorReport> {
     poolSection(ws, state),
     packSection(ws, state),
     cliSection(ws, state),
+    updatesSection(ws),
     await gatewaySection(),
   ];
   return { sections, ok: sections.every((s) => s.checks.every((c) => c.ok)) };

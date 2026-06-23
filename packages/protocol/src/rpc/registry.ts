@@ -1,5 +1,8 @@
 // RPC method name constants. Keep values stable: they are the public JSON-RPC contract.
 export const Methods = {
+  // Gateway self-status
+  GATEWAY_STATUS: 'gateway.status',
+
   // Fleet
   FLEET_STATUS: 'fleet.status',
   FLEET_REFRESH: 'fleet.refresh',

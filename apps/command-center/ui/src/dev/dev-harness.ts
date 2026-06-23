@@ -9,6 +9,7 @@ import type {
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
   FleetStatus,
+  GatewayUpdateStatus,
   ProjectConfig,
   PRStatus,
   QueueItem,
@@ -69,6 +70,7 @@ import './config-dev.js';
 import '../components/recipe-graph/recipe-graph.js';
 import '../components/slot-actions/slot-actions-panel.js';
 import '../components/slot-actions/slot-actions-modal.js';
+import '../components/shared/update-banner.js';
 
 import { buildCaseCatalog, catalogItemFromManual } from '../components/evals/eval-suite-helpers.js';
 import type { StreamFeed } from '../components/stream-feed/stream-feed.js';
@@ -157,6 +159,7 @@ type DevRoute =
   | 'eval-cockpit'
   | 'intelligence-audit'
   | 'intelligence-incidents'
+  | 'update-banner'
   | 'index';
 
 const DEV_ROUTES: Array<{ route: DevRoute; label: string }> = [
@@ -207,6 +210,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string }> = [
   { route: 'eval-cockpit', label: 'Eval Cockpit' },
   { route: 'intelligence-audit', label: 'Intelligence Audit' },
   { route: 'intelligence-incidents', label: 'Intelligence Incidents (new)' },
+  { route: 'update-banner', label: 'Update Banner' },
 ];
 
 @customElement('dev-harness')
@@ -310,6 +314,7 @@ export class DevHarness extends LitElement {
       'eval-cockpit',
       'intelligence-audit',
       'intelligence-incidents',
+      'update-banner',
     ];
     const next = valid.includes(hash as DevRoute) ? (hash as DevRoute) : 'index';
     // Cleanup mock sources when navigating away from stream-feed
@@ -445,9 +450,40 @@ export class DevHarness extends LitElement {
         return this.renderIntelligenceIncidents();
       case 'eval-cockpit':
         return this.renderEvalCockpit();
+      case 'update-banner':
+        return this.renderUpdateBanner();
       default:
         return this.renderIndex();
     }
+  }
+
+  private renderUpdateBanner() {
+    const behind: GatewayUpdateStatus = {
+      updateAvailable: true,
+      commitsBehind: 7,
+      commitsAhead: 0,
+      branch: 'main',
+      localSha: 'a1b2c3d',
+      remoteSha: 'e4f5a6b',
+      lastChecked: '2026-06-23T10:00:00.000Z',
+      updateCommand: 'farmslot update',
+      error: null,
+    };
+    const upToDate: GatewayUpdateStatus = { ...behind, updateAvailable: false, commitsBehind: 0 };
+    return html`
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div>
+          <div style="color:#888;font:0.7rem monospace;padding:4px 16px">update available</div>
+          <update-banner .status=${behind}></update-banner>
+        </div>
+        <div>
+          <div style="color:#888;font:0.7rem monospace;padding:4px 16px">
+            up to date (renders nothing)
+          </div>
+          <update-banner .status=${upToDate}></update-banner>
+        </div>
+      </div>
+    `;
   }
 
   private renderEvalCockpit() {

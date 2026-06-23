@@ -6,6 +6,8 @@ import type {
   ChatClientContext,
   ChatSendIntent,
   FleetSummary,
+  GatewayStatusResult,
+  GatewayUpdateStatus,
   GitHubRateLimitPayload,
   PairingCandidate,
   PairingCandidatesResult,
@@ -21,6 +23,7 @@ import { Events, Methods } from '@farmslot/protocol';
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
 import './shared/hydrating-placeholder.js';
+import './shared/update-banner.js';
 import './fleet-map/fleet-canvas.js';
 import './terminal/split-view.js';
 import './dispatch/dispatch-wizard.js';
@@ -124,6 +127,10 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
+// Remembers which remote SHA the operator dismissed, so a newer update re-shows.
+const UPDATE_DISMISS_KEY = 'farmslot:update-banner-dismissed-sha';
+// Re-poll gateway freshness hourly; the gateway itself caches the git fetch.
+const UPDATE_POLL_MS = 60 * 60_000;
 type PairingTarget = Pick<PairingCandidate, 'gatewayUrl' | 'kind' | 'profileName'>;
 
 const DEFAULT_PAIRING_PROFILE_NAME = 'Farmslot Remote';
@@ -144,6 +151,8 @@ export class FarmApp extends LitElement {
   @state() private connection: ConnectionState = 'disconnected';
   @state() private hydrated = false;
   @state() private githubQuota: GitHubRateLimitPayload | null = null;
+  @state() private updateStatus: GatewayUpdateStatus | null = null;
+  @state() private updateDismissedSha: string | null = localStorage.getItem(UPDATE_DISMISS_KEY);
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
   @state() private runs: Run[] = [];
@@ -181,6 +190,8 @@ export class FarmApp extends LitElement {
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
   private tmuxWorkerRefreshTimer?: ReturnType<typeof setInterval>;
   private unsubTmuxWorkerUpdated?: () => void;
+  private unsubConnForUpdate?: () => void;
+  private updatePollTimer?: ReturnType<typeof setInterval>;
 
   // Light DOM so Monaco/diff2html CSS from document.head reaches all children
   protected override createRenderRoot() {
@@ -210,6 +221,15 @@ export class FarmApp extends LitElement {
           payload.result.workers ?? payload.result.nodes.flatMap((node) => node.workers);
       },
     );
+    // Update freshness needs an open socket, so check on each (re)connect plus a
+    // slow background poll. checkForUpdate tolerates a closed socket on its own.
+    this.unsubConnForUpdate = gateway.onConnectionChange((s) => {
+      if (s === 'connected') void this.checkForUpdate();
+    });
+    void this.checkForUpdate();
+    this.updatePollTimer = setInterval(() => {
+      void this.checkForUpdate();
+    }, UPDATE_POLL_MS);
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
   }
@@ -226,7 +246,9 @@ export class FarmApp extends LitElement {
     );
     window.removeEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
     if (this.tmuxWorkerRefreshTimer) clearInterval(this.tmuxWorkerRefreshTimer);
+    if (this.updatePollTimer) clearInterval(this.updatePollTimer);
     this.unsubTmuxWorkerUpdated?.();
+    this.unsubConnForUpdate?.();
     this.unsub?.();
   }
 
@@ -249,6 +271,41 @@ export class FarmApp extends LitElement {
       // Worker telemetry is optional/recoverable. Keep pins visible, but downgrade activity to unknown.
       console.warn('[app-shell] pinned slot worker telemetry unavailable', err);
       this.tmuxWorkers = [];
+    }
+  }
+
+  private async checkForUpdate(): Promise<void> {
+    try {
+      const result = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS);
+      this.updateStatus = result.update;
+    } catch (err) {
+      // Advisory only: a closed socket or timeout just means no fresh reading this
+      // cycle. We deliberately keep the last updateStatus rather than clearing it —
+      // an update that was available is still available while the gateway is briefly
+      // unreachable, and nulling it would flicker the banner on every reconnect. The
+      // next connect/poll re-checks and replaces it; never block the shell on this.
+      console.warn('[app-shell] gateway update status unavailable', err);
+    }
+  }
+
+  private renderUpdateBanner() {
+    const s = this.updateStatus;
+    if (!s || !s.updateAvailable) return nothing;
+    if (s.remoteSha && s.remoteSha === this.updateDismissedSha) return nothing;
+    return html`<update-banner
+      .status=${s}
+      @dismiss=${() => this.dismissUpdateBanner()}
+    ></update-banner>`;
+  }
+
+  private dismissUpdateBanner() {
+    const sha = this.updateStatus?.remoteSha;
+    if (sha) {
+      this.updateDismissedSha = sha;
+      localStorage.setItem(UPDATE_DISMISS_KEY, sha);
+    } else {
+      // No remote SHA to key dismissal on — hide for this session only.
+      this.updateStatus = null;
     }
   }
 
@@ -1015,6 +1072,7 @@ export class FarmApp extends LitElement {
           : ''}
       </nav>
       <div class="fa-main">
+        ${this.renderUpdateBanner()}
         <fleet-summary-bar
           .summary=${this.summary}
           .connection=${this.connection}
