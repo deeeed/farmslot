@@ -10,6 +10,7 @@ export * from './dispatch.js';
 export * from './eval.js';
 export * from './fleet.js';
 export * from './fs.js';
+export * from './gateway.js';
 export * from './git.js';
 export * from './intelligence.js';
 export * from './nodes.js';

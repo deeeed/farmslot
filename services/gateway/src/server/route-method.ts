@@ -62,6 +62,7 @@ import {
   type FsRenameParams,
   type FsRevealParams,
   type FsWriteParams,
+  type GatewayStatusParams,
   type GitBranchDiffParams,
   type GitDiffParams,
   type GitDiscardParams,
@@ -229,6 +230,7 @@ import {
   fleetRefreshSlots,
   fleetRefreshSlotsCancel,
 } from '../methods/fleet-refresh.js';
+import { gatewayStatus } from '../methods/gateway-status.js';
 import {
   gitBranchDiff,
   gitDiff,
@@ -383,6 +385,10 @@ export async function routeMethod(
   if (runRoute.handled) return runRoute.value;
 
   switch (method) {
+    // Gateway self-status
+    case Methods.GATEWAY_STATUS:
+      return gatewayStatus(p as GatewayStatusParams);
+
     // Fleet
     case Methods.FLEET_STATUS:
       return fleetStatus(p as FleetStatusParams);
