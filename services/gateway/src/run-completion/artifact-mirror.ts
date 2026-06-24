@@ -72,6 +72,8 @@ export async function pushRunRecipeToSlot(
   }
   const localFlowsDir = path.join(localArtifactsDir, 'recipe-flows');
   if (existsSync(localFlowsDir)) {
+    // recipe-flows/ is a flat directory of *.json flow files today; nested
+    // subdirectories (none currently produced) are intentionally skipped.
     for (const name of await readdir(localFlowsDir)) {
       const full = path.join(localFlowsDir, name);
       if (!(await lstat(full)).isFile()) continue;

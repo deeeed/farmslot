@@ -38,8 +38,8 @@ import {
   resolveStartRefInRepo,
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
-import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
 import { pushRunRecipeToSlot } from '../../run-completion/artifact-mirror.js';
+import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
 import { getRun } from '../../runs/store.js';
 
 import { runHealthCheck } from './check.js';
@@ -1060,6 +1060,16 @@ async function slotPrepareInner(
   // never stomp a slot another run already owns (a free or self-owned slot is
   // the only safe target).
   if (params.bindRunId) {
+    // A run can only be bound to a slot in its own project — a slot can only
+    // check out branches for its own repo, and the recipe sync below writes into
+    // that repo's task tree. The UI already scopes the loader by project; this
+    // guards the direct-RPC path so a hand-crafted call can't cross-write.
+    const boundRun = getRun(params.bindRunId);
+    if (boundRun && boundRun.project !== vars.projectName) {
+      throw new Error(
+        `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: run project '${boundRun.project}' does not match slot project '${vars.projectName}'.`,
+      );
+    }
     const bound = await updateSlotStatusIf(
       params.slotId,
       // Never re-bind a slot with a live worker. Otherwise a free or self-owned
@@ -1078,7 +1088,6 @@ async function slotPrepareInner(
     // Materialize the run's recipe workflows on this slot so a loaded run can be
     // replayed here (local or remote). Only execution inputs are synced — no
     // evidence — so it stays lightweight.
-    const boundRun = getRun(params.bindRunId);
     if (boundRun) {
       await pushRunRecipeToSlot(boundRun, vars);
     }
