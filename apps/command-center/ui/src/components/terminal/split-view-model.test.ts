@@ -19,6 +19,7 @@ import {
   parseWatchItems,
   parseWorkerRefs,
   selectActiveRunSlotIds,
+  slotHasActiveRunTerminal,
   tmuxRefTitle,
   watchEntryDescription,
   workerDescription,
@@ -169,18 +170,36 @@ test('selectActiveRunSlotIds ignores stale manual task files without live worker
       currentRunId: 'run-mme-1',
       deviceName: 'mme-1',
     }),
+    makeSlot('macwork-mme-2', {
+      project: 'metamask-extension-farm',
+      platform: 'chrome-extension',
+      lifecycle: 'busy',
+      phase: 'working',
+      agent: 'idle',
+      currentRunId: 'run-mme-2',
+      deviceName: 'mme-2',
+    }),
   ];
   const runs = [
     makeRun('run-mm-3', {
       slotId: 'macwork-mm-3',
       status: 'self-reviewing',
       ticketOrPr: 'TAT-3393',
+      updatedAt: '2026-06-24T18:00:00.000Z',
     }),
     makeRun('run-mme-1', {
       slotId: 'macwork-mme-1',
       project: 'metamask-extension-farm',
       status: 'self-reviewing',
       ticketOrPr: 'TAT-3394',
+      updatedAt: '2026-06-24T17:00:00.000Z',
+    }),
+    makeRun('run-mme-2', {
+      slotId: 'macwork-mme-2',
+      project: 'metamask-extension-farm',
+      status: 'self-reviewing',
+      ticketOrPr: 'TAT-3407',
+      updatedAt: '2026-06-24T19:00:00.000Z',
     }),
   ];
   const filters = {
@@ -188,7 +207,11 @@ test('selectActiveRunSlotIds ignores stale manual task files without live worker
     machines: ['macwork'],
   };
 
-  assert.deepEqual(selectActiveRunSlotIds(slots, runs, filters), ['macwork-mm-3', 'macwork-mme-1']);
+  assert.deepEqual(selectActiveRunSlotIds(slots, runs, filters), [
+    'macwork-mme-2',
+    'macwork-mm-3',
+    'macwork-mme-1',
+  ]);
 });
 
 test('selectActiveRunSlotIds keeps active manual slots only when the worker is live', () => {
@@ -205,6 +228,49 @@ test('selectActiveRunSlotIds keeps active manual slots only when the worker is l
 
   assert.equal(isActiveRunTerminalSlot(manualWorking, []), true);
   assert.equal(isActiveRunTerminalSlot(manualIdle, []), false);
+});
+
+test('selectActiveRunSlotIds includes monitoring and completing runs and sorts monitoring first', () => {
+  const slots = [
+    makeSlot('macwork-mm-4', {
+      lifecycle: 'busy',
+      phase: 'working',
+      currentRunId: 'run-mm-4',
+    }),
+    makeSlot('macwork-mm-5', {
+      lifecycle: 'busy',
+      phase: 'working',
+      currentRunId: 'run-mm-5',
+    }),
+  ];
+  const runs = [
+    makeRun('run-mm-4', {
+      slotId: 'macwork-mm-4',
+      status: 'completing',
+      updatedAt: '2026-06-24T20:00:00.000Z',
+    }),
+    makeRun('run-mm-5', {
+      slotId: 'macwork-mm-5',
+      status: 'monitoring',
+      updatedAt: '2026-06-24T12:00:00.000Z',
+    }),
+  ];
+
+  assert.deepEqual(selectActiveRunSlotIds(slots, runs, { projects: [], machines: [] }), [
+    'macwork-mm-5',
+    'macwork-mm-4',
+  ]);
+});
+
+test('slotHasActiveRunTerminal falls back to fleet phase when run list lags', () => {
+  const slot = makeSlot('macwork-mm-3', {
+    lifecycle: 'busy',
+    phase: 'working',
+    currentRunId: 'run-mm-3',
+  });
+
+  assert.equal(slotHasActiveRunTerminal(slot, new Map()), true);
+  assert.equal(isActiveRunTerminalSlot(slot, [], new Map()), true);
 });
 
 test('selectActiveRunSlotIds excludes held blocked runs and respects global filters', () => {

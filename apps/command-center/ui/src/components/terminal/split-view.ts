@@ -4,6 +4,7 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import type {
   FleetStatus,
+  RunListResult,
   SlotStatus,
   TmuxWorkerInventoryUpdatedPayload,
   TmuxWorkerListResult,
@@ -515,14 +516,17 @@ export class TerminalSplitView extends LitElement {
 
   private async _showActiveRuns() {
     try {
-      const result = await gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {});
-      const state = getState();
+      const [fleetResult, runResult] = await Promise.all([
+        gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {}),
+        gateway.request<RunListResult>(Methods.RUN_LIST, { active: true, limit: 1000 }),
+      ]);
       const activeRuns = selectActiveRunSlotIds(
-        result.fleet.slots,
-        state.runs ?? [],
+        fleetResult.fleet.slots,
+        runResult.runs ?? [],
         this._globalFilters,
       );
-      this._selectedSlots = activeRuns.slice(0, 8);
+      this._selectedSlots = activeRuns;
+      this._selectedWorkers = [];
       this._layout = 'auto';
       this._expandedSlot = null;
       this._save();
