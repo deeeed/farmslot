@@ -28,6 +28,11 @@ import { Events, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import {
+  type PrepareProfileOption,
+  projectPrepareProfiles,
+} from '../dispatch/dispatch-wizard-draft.js';
+import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 
@@ -63,6 +68,18 @@ export class SlotActionsPanel extends LitElement {
   @state() private _activeActionId = '';
   /** Captured from a safe-mode refresh that aborted; gates the inline Force Refresh button. */
   @state() private _lastRefreshReason: 'dirty' | 'stale' | undefined = undefined;
+  /** Branch the "switch branch (warm)" form targets. Empty until the user types
+   * or the form is opened (prefilled from the slot's current branch). */
+  @state() private _switchBranch = '';
+  /** Prepare profile for the warm branch switch — defaults to the cheapest
+   * (`attach`: checkout-only, no rebuild, devserver stays warm). */
+  @state() private _switchProfile = 'attach';
+  /** Whether the switch-branch form is expanded. */
+  @state() private _switchOpen = false;
+  /** Prepare profiles for the switch-branch profile select (ADR-037), lazily
+   * loaded from project config when a slot is known. */
+  @state() private _prepareProfiles: PrepareProfileOption[] = [];
+  private _profilesLoadedFor = '';
 
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
@@ -145,8 +162,32 @@ export class SlotActionsPanel extends LitElement {
         {},
       );
       this._slot = fleet.fleet.slots.find((s) => s.slot === this.slotId) ?? null;
+      void this._loadPrepareProfiles();
     } catch (err) {
       console.warn('[slot-actions-panel] fleet.status failed:', err);
+    }
+  }
+
+  private async _loadPrepareProfiles() {
+    const project = this._slot?.project ?? '';
+    if (!project || this._profilesLoadedFor === project) return;
+    this._profilesLoadedFor = project;
+    try {
+      this._prepareProfiles = projectPrepareProfiles(await requestProjectConfigs(), project);
+      // Reconcile the selected profile to a value the project actually offers.
+      // Prefer the cheap `attach` profile; otherwise fall back to the project
+      // default (or first) so the select never shows a stale/unknown value.
+      const names = this._prepareProfiles.map((p) => p.name);
+      if (names.length > 0 && !names.includes(this._switchProfile)) {
+        this._switchProfile = names.includes('attach')
+          ? 'attach'
+          : (this._prepareProfiles.find((p) => p.isDefault)?.name ?? names[0]!);
+      }
+    } catch (err) {
+      // Profiles only populate the optional select. On failure the select stays
+      // hidden (_prepareProfiles stays []) and the default 'attach' value is
+      // sent as-is — the switch form still works.
+      console.warn('[slot-actions-panel] prepare profiles load failed:', err);
     }
   }
 
@@ -241,6 +282,30 @@ export class SlotActionsPanel extends LitElement {
     this._confirm('cleanup', () =>
       this._runAction(Methods.SLOT_CLEANUP, { slotId: this.slotId, reason: 'manual' }, 'cleanup'),
     );
+
+  private _toggleSwitchForm = () => {
+    this._switchOpen = !this._switchOpen;
+    // Prefill the branch input from the slot's current branch on first open.
+    if (this._switchOpen && !this._switchBranch) {
+      this._switchBranch = this._slot?.branch ?? '';
+    }
+  };
+
+  // Warm branch switch: re-uses slot.prepare with a chosen branch + the cheap
+  // `attach` profile (checkout-only, no merge-main, no rebuild, devserver stays
+  // up so Metro/webpack hot-reload). Lets a limited-slot node serve several
+  // branches in turn without a full prepare.
+  private _runBranchSwitch = () => {
+    const branch = this._switchBranch.trim();
+    if (!branch) return;
+    this._confirm('switch-branch', () =>
+      this._runAction(
+        Methods.SLOT_PREPARE,
+        { slotId: this.slotId, branch, prepareProfile: this._switchProfile || 'attach' },
+        'switch-branch',
+      ),
+    );
+  };
 
   // ── Configured project.json slot_actions ──
 
@@ -475,7 +540,7 @@ export class SlotActionsPanel extends LitElement {
         id: 'refresh',
         label: 'Refresh main',
         style: 'primary',
-        desc: 'fetch origin --prune, then reset main to origin. No deps install. Idle slot ends up dispatch-ready on latest.',
+        desc: 'fetch latest main, then reset main to origin. No deps install. Idle slot ends up dispatch-ready on latest.',
         confirmLabel: 'Confirm Refresh?',
         onClick: () => this._refresh(false),
       },
@@ -520,6 +585,69 @@ export class SlotActionsPanel extends LitElement {
         onClick: () => this._cleanup(),
       },
     ];
+  }
+
+  private _renderSwitchBranchForm() {
+    // Only meaningful when the slot can be prepared (idle/ready). A busy/held
+    // slot is gated out exactly like the Prepare action.
+    if (!this._actionAvailability('prepare').available) return nothing;
+    const running = this._running && this._activeActionId === 'switch-branch';
+    const confirming = this._pendingConfirm === 'switch-branch';
+    return html`
+      <div class="sap-section-label">
+        <button class="sap-switch-toggle" @click=${this._toggleSwitchForm}>
+          ${this._switchOpen ? '▾' : '▸'} Switch branch (warm)
+        </button>
+      </div>
+      ${this._switchOpen
+        ? html`
+            <div class="sap-switch-form">
+              <div class="sap-switch-row">
+                <input
+                  class="sap-switch-input"
+                  .value=${this._switchBranch}
+                  placeholder="branch to check out"
+                  ?disabled=${this._running}
+                  @input=${(e: Event) =>
+                    (this._switchBranch = (e.target as HTMLInputElement).value)}
+                />
+                ${this._prepareProfiles.length > 0
+                  ? html`
+                      <select
+                        class="sap-switch-select"
+                        .value=${this._switchProfile}
+                        ?disabled=${this._running}
+                        @change=${(e: Event) =>
+                          (this._switchProfile = (e.target as HTMLSelectElement).value)}
+                      >
+                        ${this._prepareProfiles.map(
+                          (p) => html`<option value=${p.name}>${p.label}</option>`,
+                        )}
+                      </select>
+                    `
+                  : nothing}
+                <button
+                  class="sap-btn ${confirming ? 'confirming' : ''} ${running ? 'running' : ''}"
+                  ?disabled=${this._running || !this._switchBranch.trim()}
+                  @click=${this._runBranchSwitch}
+                >
+                  ${running ? 'Switching…' : confirming ? 'Confirm switch?' : 'Switch branch'}
+                </button>
+              </div>
+              ${this._slot?.currentRunId
+                ? html`<div class="sap-switch-warn">
+                    ⚠ Slot is bound to run ${this._slot.currentRunId.slice(0, 8)} — switching
+                    changes its checked-out branch.
+                  </div>`
+                : nothing}
+              <div class="sap-action-desc">
+                Checkout-only via the chosen profile — no merge-main, no reinstall. Dev server
+                stays warm and hot-reloads.
+              </div>
+            </div>
+          `
+        : nothing}
+    `;
   }
 
   override render() {
@@ -669,6 +797,56 @@ export class SlotActionsPanel extends LitElement {
         slot-actions-panel .sap-custom-row .sap-btn {
           width: auto;
         }
+        slot-actions-panel .sap-switch-toggle {
+          background: none;
+          border: none;
+          padding: 0;
+          color: ${colors.textMuted};
+          font-family: ${fonts.mono};
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          cursor: pointer;
+        }
+        slot-actions-panel .sap-switch-toggle:hover {
+          color: ${colors.accent};
+        }
+        slot-actions-panel .sap-switch-form {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          padding: 0 ${spacing.md} ${spacing.sm};
+        }
+        slot-actions-panel .sap-switch-row {
+          display: flex;
+          gap: ${spacing.xs};
+          align-items: center;
+          flex-wrap: wrap;
+        }
+        slot-actions-panel .sap-switch-input,
+        slot-actions-panel .sap-switch-select {
+          background: ${colors.bgCard};
+          color: ${colors.textPrimary};
+          border: 1px solid #2a2a44;
+          border-radius: ${radii.sm};
+          padding: 6px 8px;
+          font-family: ${fonts.mono};
+          font-size: ${fonts.sizeXs};
+        }
+        slot-actions-panel .sap-switch-input {
+          flex: 1 1 160px;
+          min-width: 120px;
+        }
+        slot-actions-panel .sap-switch-row .sap-btn {
+          width: auto;
+          flex: 0 0 auto;
+        }
+        slot-actions-panel .sap-switch-warn {
+          color: ${colors.statusWarn};
+          font-family: ${fonts.mono};
+          font-size: ${fonts.sizeXs};
+          line-height: 1.4;
+        }
         slot-actions-panel .sap-output {
           margin: ${spacing.sm} ${spacing.md};
           padding: ${spacing.sm};
@@ -692,7 +870,7 @@ export class SlotActionsPanel extends LitElement {
         }
       </style>
 
-      ${this._renderStatusBanner()}
+      ${this._renderStatusBanner()} ${this._renderSwitchBranchForm()}
       ${available.length > 0
         ? html`
             <div class="sap-section-label">Available actions</div>

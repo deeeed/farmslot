@@ -61,6 +61,12 @@ export interface SlotPrepareParams {
    * a timestamp is used so window names stay unique across concurrent prepares.
    */
   runId?: string;
+  /**
+   * Operator-driven warm switch: when set, the slot's `current_run_id` is bound
+   * to this run after a successful prepare, so resume / recipe-replay target it.
+   * Pure association — no pipeline re-drive, unlike run.activateOnSlot.
+   */
+  bindRunId?: string;
 }
 
 export interface SlotReleaseParams {

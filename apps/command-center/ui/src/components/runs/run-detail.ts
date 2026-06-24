@@ -41,6 +41,7 @@ import {
   resolveBranchNudgePick,
   resolveInteractiveDevAction,
   resolveSlotPick,
+  switchSlotToRunBranch,
 } from './run-detail-actions.js';
 import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
 import { renderRunGateSection } from './run-detail-decision-renderers.js';
@@ -682,6 +683,8 @@ export class RunDetail extends RunDetailState {
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
       _activateOnSlot: (run) => activateRunOnSlot(run.id, run.slotId ?? ''),
+      _switchSlotToRunBranch: (run) =>
+        switchSlotToRunBranch(run.id, run.slotId ?? '', run.branch ?? null),
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _togglePinnedSlot: (slotId) => {
         togglePinnedSlot(slotId);

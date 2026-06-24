@@ -23,6 +23,7 @@ import {
   slotWriteFile,
   slotWriteFiles,
   updateSlotStatus,
+  updateSlotStatusIf,
 } from '../../core/index.js';
 import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
@@ -1049,6 +1050,25 @@ async function slotPrepareInner(
       }
     }
     step('health', `Health check — ${healthValue}`);
+  }
+
+  // Operator-driven warm switch: bind this run to the slot so resume / recipe
+  // replay target it (the recipe-rerun gate accepts a slot whose current_run_id
+  // is this run and which is not mid-worker). Pure association — no pipeline
+  // re-drive, unlike run.activateOnSlot. Compare-and-set so a direct RPC can
+  // never stomp a slot another run already owns (a free or self-owned slot is
+  // the only safe target).
+  if (params.bindRunId) {
+    const bound = await updateSlotStatusIf(
+      params.slotId,
+      (slot) => !slot.current_run_id || slot.current_run_id === params.bindRunId,
+      { current_run_id: params.bindRunId },
+    );
+    if (!bound) {
+      throw new Error(
+        `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: slot is owned by another run.`,
+      );
+    }
   }
 
   emit('slot.prepare.done', { slotId: params.slotId, prepared: true });
