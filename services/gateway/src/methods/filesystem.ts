@@ -28,9 +28,9 @@ import {
 
 import {
   getOrchestratorTaskRoot,
-  getProjectField,
   loadProjectVars,
   loadSlotVars,
+  resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
 import { farmslotRoot } from '../core/index.js';
@@ -238,7 +238,7 @@ async function resolveRemoteTaskArtifactsRoot(run: Run): Promise<string | null> 
         : null);
     if (taskRelDir === null) return null;
     const taskDirName = projectVars
-      ? getProjectField(projectVars.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+      ? resolveProjectTaskDirName(projectVars.projectJson)
       : DEFAULT_TASK_DIR;
     return path.join(slotVars.remoteRepo, taskDirName, taskRelDir, 'artifacts');
   } catch {

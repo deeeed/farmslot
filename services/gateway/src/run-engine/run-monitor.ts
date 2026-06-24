@@ -6,7 +6,6 @@ import { randomUUID } from 'node:crypto';
 import {
   type AgentContext,
   type AgentRole,
-  DEFAULT_TASK_DIR,
   Events,
   FLOW_STEPS,
   type MonitorSnapshot,
@@ -22,9 +21,9 @@ import {
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
 import {
   getOrchestratorTaskRoot,
-  getProjectField,
   loadProjectVars,
   loadSlotVars,
+  resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
@@ -222,7 +221,7 @@ async function resolveSignalJsonPathForRun(
 ): Promise<string | undefined> {
   const vars = await loadSlotVars(slotId);
   const pv = await loadProjectVars(vars.projectName);
-  const taskDir = getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR;
+  const taskDir = resolveProjectTaskDirName(pv.projectJson);
   const orchRoot = getOrchestratorTaskRoot(run.project, pv.projectJson);
   const taskFile = run.taskFile ? (resolveTaskRelDir(run.taskFile, orchRoot) ?? '') : '';
   if (monitorContext?.signalFile) {

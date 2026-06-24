@@ -395,7 +395,7 @@ for s in data.get('slots', []):
   elif [ -z "$task_rel" ]; then
     info "No task_file in farm-status — skipping artifact collection"
   else
-    local worker_task_dir="${REMOTE_REPO}/.task/${task_rel}"
+    local worker_task_dir="${REMOTE_REPO}/${WORKER_TASK_DIR_NAME:-${ARTIFACT_DIR:-.task}}/${task_rel}"
     local worker_artifacts="${worker_task_dir}/artifacts/"
     local orch_task_dir="${PROJECTS_DIR}/${PROJECT_NAME}/tasks/${task_rel}"
 
@@ -431,8 +431,8 @@ for s in data.get('slots', []):
   header "Clean"
   if [ -n "$task_rel" ]; then
     run_on "$HOST" "$MACHINE" "$SSH_USER" \
-      "rm -rf '${REMOTE_REPO}/.task/${task_rel}'" 2>/dev/null || true
-    pass "Task dir .task/${task_rel} cleaned"
+      "rm -rf '${REMOTE_REPO}/${WORKER_TASK_DIR_NAME:-${ARTIFACT_DIR:-.task}}/${task_rel}'" 2>/dev/null || true
+    pass "Task dir ${WORKER_TASK_DIR_NAME:-${ARTIFACT_DIR:-.task}}/${task_rel} cleaned"
   else
     info "No task_rel — nothing to clean"
   fi
@@ -531,7 +531,7 @@ PROJECTS_DIR="${PROJECTS_DIR:-${FARMSLOT_ROOT}/projects}"
 # ── load_project_config ──────────────────────────────────────────────
 # Reads project.json for the slot's project. Sets:
 #   PROJECT_NAME, PROJECT_CONFIG, PROJECT_FIXTURES_DIR, PROJECT_TEMPLATES_DIR, PROJECT_JSON
-#   RUNTIME_DIR (default: .agent), ARTIFACT_DIR (default: .task), RECIPE_DIR (default: RUNTIME_DIR/recipes)
+#   RUNTIME_DIR (default: .agent), ARTIFACT_DIR (default: .task), WORKER_TASK_DIR_NAME, RECIPE_DIR (default: RUNTIME_DIR/recipes)
 # Requires "project" field in pool JSON.
 load_project_config() {
   PROJECT_NAME=$(parse_slot "d['slot'].get('project') or d.get('project', '')")
@@ -553,6 +553,10 @@ load_project_config() {
   ARTIFACT_DIR="${ARTIFACT_DIR:-.task}"
   RECIPE_DIR=$(get_project_field "paths.recipe_dir")
   RECIPE_DIR="${RECIPE_DIR:-${RUNTIME_DIR}/recipes}"
+
+  # Worker task root: task_dir overrides paths.artifact_dir (matches gateway resolveProjectTaskDirName).
+  WORKER_TASK_DIR_NAME=$(get_project_field "task_dir")
+  WORKER_TASK_DIR_NAME="${WORKER_TASK_DIR_NAME:-${ARTIFACT_DIR}}"
 
   # Resolve reference repos from project.json
   MOBILE_REPO=""

@@ -8,7 +8,6 @@ import path from 'node:path';
 
 import {
   type ArtifactRef,
-  DEFAULT_TASK_DIR,
   type FlowType,
   isLightweightInteractiveDevRun,
   type Run,
@@ -17,7 +16,7 @@ import {
   type TemplateProvenance,
 } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import { getProjectField, loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { expandTemplate } from '../core/hooks.js';
 import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
 import {
@@ -645,7 +644,7 @@ export async function writeTaskFile(
     TICKET_TITLE: ticket.title,
     BRANCH: branch,
     PR_NUMBER: '',
-    TASK_DIR: `${getProjectField(projectVars.projectJson, 'task_dir') || DEFAULT_TASK_DIR}/${taskRelDir}`,
+    TASK_DIR: `${resolveProjectTaskDirName(projectVars.projectJson)}/${taskRelDir}`,
     SESSION: slotVars.session,
     REPO: slotVars.remoteRepo,
     PLATFORM: slotVars.platform,

@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 
+import { resolveProjectTaskDirName } from '../core/config.js';
 import { execOnSlot, getProjectField, type RawProjectJson, type SlotVars } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -214,7 +215,7 @@ export async function cleanupSlotStorage(
   projectJson: RawProjectJson,
   options: SlotStorageCleanupOptions = {},
 ): Promise<SlotStorageCleanupResult> {
-  const taskDirName = getProjectField(projectJson, 'task_dir') || DEFAULT_TASK_DIR;
+  const taskDirName = resolveProjectTaskDirName(projectJson);
   const artifactDirName = getProjectField(projectJson, 'paths.artifact_dir') || taskDirName;
   const runtimeDirName = getProjectField(projectJson, 'paths.runtime_dir') || '.agent';
   const command = buildSlotStorageCleanupCommand({

@@ -326,8 +326,8 @@ export async function runReplayStep(
       const {
         loadSlotVars,
         loadProjectVars,
-        getProjectField,
         getOrchestratorTaskRoot,
+        resolveProjectTaskDirName,
         resolveTaskRelDir,
       } = await import('../../core/config.js');
       const vars = await loadSlotVars(effectiveSlotId);
@@ -338,7 +338,7 @@ export async function runReplayStep(
       );
       if (taskRelDir !== null) {
         const taskDirName = pv
-          ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+          ? resolveProjectTaskDirName(pv.projectJson)
           : DEFAULT_TASK_DIR;
         const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
         const preserveSelfReviewFix =
@@ -383,8 +383,8 @@ export async function runReplayStep(
       const {
         loadSlotVars,
         loadProjectVars,
-        getProjectField,
         getOrchestratorTaskRoot,
+        resolveProjectTaskDirName,
         resolveTaskRelDir,
       } = await import('../../core/config.js');
       const vars = await loadSlotVars(effectiveSlotId);
@@ -395,7 +395,7 @@ export async function runReplayStep(
       );
       if (taskRelDir !== null) {
         const taskDirName = pv
-          ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+          ? resolveProjectTaskDirName(pv.projectJson)
           : DEFAULT_TASK_DIR;
         const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
         await execOnSlot(

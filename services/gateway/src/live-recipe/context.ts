@@ -17,9 +17,9 @@ import {
 
 import {
   getOrchestratorTaskRoot,
-  getProjectField,
   loadProjectVars,
   loadSlotVars,
+  resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
 import {
@@ -670,7 +670,7 @@ export async function resolveWorkerTaskDir(run: LiveRecipeReadCtx): Promise<stri
     const taskRelDir = resolveTaskRelDir(run.taskFile, orchRoot);
     if (taskRelDir === null) return null;
     const taskDirName = pv
-      ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+      ? resolveProjectTaskDirName(pv.projectJson)
       : DEFAULT_TASK_DIR;
     return path.join(vars.remoteRepo, taskDirName, taskRelDir);
   } catch {

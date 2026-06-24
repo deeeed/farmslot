@@ -12,9 +12,9 @@ import {
 } from '../core/artifact-copy-policy.js';
 import {
   getOrchestratorTaskRoot,
-  getProjectField,
   loadProjectVars,
   loadSlotVars,
+  resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
 import {
@@ -58,7 +58,7 @@ export async function pushRunRecipeToSlot(
   );
   if (taskRelDir === null) return 0;
   const taskDirName = pv
-    ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+    ? resolveProjectTaskDirName(pv.projectJson)
     : DEFAULT_TASK_DIR;
   const localArtifactsDir = path.join(path.dirname(run.taskFile), 'artifacts');
   const workerArtifactsDir = path.join(vars.remoteRepo, taskDirName, taskRelDir, 'artifacts');
@@ -170,7 +170,7 @@ export async function refreshArtifactMirror(run: Run): Promise<number> {
   if (taskRelDir === null) return 0;
 
   const taskDirName = pv
-    ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+    ? resolveProjectTaskDirName(pv.projectJson)
     : DEFAULT_TASK_DIR;
   const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
   const workerArtifactsDir = path.join(workerTaskDir, 'artifacts');

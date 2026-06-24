@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { DEFAULT_TASK_DIR } from '@farmslot/protocol';
 
-import { getProjectField, loadSlotVars } from '../core/config.js';
+import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { execLocal, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import {
@@ -23,7 +23,7 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
     const vars = await loadSlotVars(run.slotId);
     const pv = await loadProjectVarsOrNull(run.project, 'run recovery', run.id);
     const taskDirName = pv
-      ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+      ? resolveProjectTaskDirName(pv.projectJson)
       : DEFAULT_TASK_DIR;
 
     const taskDir = path.dirname(run.taskFile);

@@ -161,8 +161,8 @@
     },
     "task_dir": {
       "type": "string",
-      "description": "Task file directory relative to worker repo root. Overrides the default '.task'.",
-      "examples": ["temp/.task", ".task"]
+      "description": "Worker-repo task root relative to the slot clone. Overrides paths.artifact_dir when both are set. Gateway and bash lifecycle scripts fall back to paths.artifact_dir, then '.task'.",
+      "examples": ["temp/tasks", ".task"]
     },
     "apps": {
       "type": "array",
@@ -184,9 +184,9 @@
         },
         "artifact_dir": {
           "type": "string",
-          "description": "Base directory for task files and artifacts on the worker. Each task gets .task/<flow>/<id>/ with artifacts/ inside.",
+          "description": "Base directory for task files and artifacts on the worker (hook expansion {{artifact_dir}}). Used as the worker task root when task_dir is unset.",
           "default": ".task",
-          "examples": [".task"]
+          "examples": [".task", "temp/tasks"]
         },
         "recipe_dir": {
           "type": "string",

@@ -5,7 +5,6 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 import {
-  DEFAULT_TASK_DIR,
   Events,
   isRecord,
   type LiveRecipeContext,
@@ -33,6 +32,7 @@ import {
   loadSlotVars,
   type ProjectVars,
   type RawProjectJson,
+  resolveProjectTaskDirName,
   resolveTaskRelDir,
   type SlotVars,
 } from '../core/config.js';
@@ -381,7 +381,7 @@ function resolveWorkerTaskDir(
   const relPath = resolveTaskRelDir(run.taskFile, orchRoot);
   if (relPath === null) return null;
   const taskDirName =
-    (getProjectField(projectJson, 'task_dir') as string | undefined) || DEFAULT_TASK_DIR;
+    resolveProjectTaskDirName(projectJson);
   return path.join(slotVars.remoteRepo, taskDirName, relPath);
 }
 

@@ -13,7 +13,11 @@ import {
   type RunDecision,
 } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import {
+  loadProjectVars,
+  loadSlotVars,
+  resolveProjectTaskDirName,
+} from '../core/config.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { getFamilyRuns } from '../family-observability/context.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
@@ -46,7 +50,7 @@ export async function readWorkerReport(run: Run): Promise<string | null> {
       if (taskRelDir) {
         const pv = await loadProjectVars(run.project).catch(() => null);
         const taskDirName = pv
-          ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+          ? resolveProjectTaskDirName(pv.projectJson)
           : DEFAULT_TASK_DIR;
         for (const fileName of candidates) {
           const workerReport = path.join(

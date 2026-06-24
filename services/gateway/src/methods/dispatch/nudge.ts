@@ -5,7 +5,6 @@ import path from 'node:path';
 import {
   type AgentContextTarget,
   agentRoleWindow,
-  DEFAULT_TASK_DIR,
   type FlowType,
   primaryRoleForFlow,
 } from '@farmslot/protocol';
@@ -15,13 +14,13 @@ import {
   execLocal,
   execOnSlot,
   farmslotRoot,
-  getProjectField,
   isLocal,
   loadProjectVars,
   loadSlotVars,
   markSlotBusy,
   type RawProjectJson,
   readSlotField,
+  resolveProjectTaskDirName,
   updateSlotStatus,
 } from '../../core/index.js';
 import {
@@ -255,7 +254,7 @@ export async function nudgeDispatch(
     throw new Error(`Runner '${runner}' on slot ${params.slotId} does not support tmux nudges`);
   }
 
-  const taskDirName = getProjectField(projectJson, 'task_dir') || DEFAULT_TASK_DIR;
+  const taskDirName = resolveProjectTaskDirName(projectJson);
   const workerTaskDir = `${taskDirName}/${flowSubdir}/${taskFolderId}`;
   const workerTaskAbs = `${vars.remoteRepo}/${workerTaskDir}`;
 

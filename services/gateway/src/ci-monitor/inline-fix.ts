@@ -4,7 +4,6 @@ import path from 'node:path';
 import {
   type BotComment,
   type CIWatchFixProgress,
-  DEFAULT_TASK_DIR,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -13,7 +12,12 @@ import {
   resolveAgentTarget,
   upsertAgentContext,
 } from '../agents/contexts.js';
-import { farmslotRoot, getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
+import {
+  farmslotRoot,
+  loadProjectVars,
+  loadSlotVars,
+  resolveProjectTaskDirName,
+} from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
 import { ghRequest } from '../integrations/github-client.js';
@@ -202,7 +206,7 @@ async function resolveSlotTaskDir(runId: string, project: string): Promise<strin
     const run = getRun(runId);
     if (!run) return null;
     const pv = await loadProjectVars(project);
-    const taskDir = getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR;
+    const taskDir = resolveProjectTaskDirName(pv.projectJson);
     const taskFile = run.taskFile?.split('/tasks/')[1]?.replace('/TASK.md', '') ?? '';
     if (!taskFile) return null;
     return `${taskDir}/${taskFile}`;

@@ -14,6 +14,7 @@ POOL_DIR="${PROJECT_DIR}/pool"
 
 source "${SCRIPT_DIR}/lib/slot-common.sh"
 load_slot_vars "$SLOT_ID"
+load_project_config || true
 
 banner "=== Monitor: ${SLOT_ID} on ${MACHINE} (${PLATFORM}) ==="
 echo ""
@@ -21,7 +22,7 @@ echo ""
 # ── 1. TASK.md status ───────────────────────────────────────────────
 header "TASK status"
 TASK_HEAD=$(run_on "$HOST" "$MACHINE" "$SSH_USER" \
-  "find '${REMOTE_REPO}/.task' -name TASK.md -type f 2>/dev/null | head -1 | xargs head -20 2>/dev/null" 2>/dev/null || true)
+  "find '${REMOTE_REPO}/${WORKER_TASK_DIR_NAME:-${ARTIFACT_DIR:-.task}}' -name TASK.md -type f 2>/dev/null | head -1 | xargs head -20 2>/dev/null" 2>/dev/null || true)
 
 if [ -z "$TASK_HEAD" ]; then
   info "No TASK.md found — slot may be idle"

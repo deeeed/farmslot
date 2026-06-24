@@ -6,7 +6,6 @@ import {
   type AgentRole,
   agentRoleWindow,
   DEFAULT_BRANCH,
-  DEFAULT_TASK_DIR,
   type SlotReleaseParams,
 } from '@farmslot/protocol';
 
@@ -27,6 +26,7 @@ import {
   type RawProjectJson,
   readSlotField,
   resetSlot,
+  resolveProjectTaskDirName,
   type SlotVars,
   updateSlotStatus,
 } from '../../core/index.js';
@@ -167,7 +167,7 @@ export async function slotRelease(
   }
 
   // 3. Collect artifacts + clean task files + git reset
-  const taskDirName = getProjectField(projectJson, 'task_dir') || DEFAULT_TASK_DIR;
+  const taskDirName = resolveProjectTaskDirName(projectJson);
   if (!keepWork) {
     // Read task_file from status
     const taskRel = (await readSlotField(params.slotId, 'task_file')) as string | null;
