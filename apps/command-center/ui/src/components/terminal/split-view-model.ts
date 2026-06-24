@@ -1,9 +1,22 @@
 import type {
+  Run,
+  RunStatus,
+  SlotStatus,
   TmuxWorkerRef,
   TmuxWorkerSummary,
   TmuxWorkerWatchEntry,
   TmuxWorkerWatchItem,
 } from '@farmslot/protocol';
+
+import type { GlobalFilters } from '../../state.js';
+import { isSidebarActiveRun } from '../app-shell-nav-model.js';
+
+/** Run phases where the slot worker pane should be open in a terminal grid. */
+const ACTIVE_RUN_TERMINAL_STATUSES = new Set<RunStatus>([
+  'monitoring',
+  'self-reviewing',
+  'completing',
+]);
 
 export type LayoutMode = 'auto' | '1x1' | '2x1' | '2x2' | '3x2' | '4x2';
 
@@ -139,4 +152,52 @@ export function isFarmslotWatchEntry(entry: TmuxWorkerWatchEntry): boolean {
   return entry.worker
     ? isFarmslotWorker(entry.worker)
     : Boolean(entry.item.linkedSlotId || entry.item.linkedRunId || entry.item.linkedFamilyId);
+}
+
+export function filterSlotsByGlobalFilters(
+  slots: readonly SlotStatus[],
+  filters: GlobalFilters,
+): SlotStatus[] {
+  const { projects, machines } = filters;
+  return slots.filter((slot) => {
+    if (projects.length > 0 && !projects.includes(slot.project)) return false;
+    if (machines.length > 0 && !machines.includes(slot.machine)) return false;
+    return true;
+  });
+}
+
+function runById(runs: readonly Run[]): Map<string, Run> {
+  return new Map(runs.map((run) => [run.id, run]));
+}
+
+function slotHasActiveRunTerminal(slot: SlotStatus, runsById: Map<string, Run>): boolean {
+  if (!slot.currentRunId) return false;
+  const run = runsById.get(slot.currentRunId);
+  if (run) return ACTIVE_RUN_TERMINAL_STATUSES.has(run.status);
+  return slot.lifecycle === 'busy' && slot.phase === 'working';
+}
+
+export function isActiveRunTerminalSlot(slot: SlotStatus, runs: readonly Run[]): boolean {
+  const runsById = runById(runs);
+  if (slot.lifecycle === 'manual') {
+    return Boolean(slot.taskFile && slot.agent === 'working');
+  }
+  if (slot.lifecycle === 'disabled' || slot.lifecycle === 'held') return false;
+
+  for (const run of runs) {
+    if (run.slotId !== slot.slot || !isSidebarActiveRun(run)) continue;
+    if (ACTIVE_RUN_TERMINAL_STATUSES.has(run.status)) return true;
+  }
+
+  return slotHasActiveRunTerminal(slot, runsById);
+}
+
+export function selectActiveRunSlotIds(
+  slots: readonly SlotStatus[],
+  runs: readonly Run[],
+  filters: GlobalFilters,
+): string[] {
+  return filterSlotsByGlobalFilters(slots, filters)
+    .filter((slot) => isActiveRunTerminalSlot(slot, runs))
+    .map((slot) => slot.slot);
 }
