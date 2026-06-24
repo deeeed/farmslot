@@ -9,6 +9,7 @@ import {
   isHttpFetchForbiddenPort,
   isMockModeProject,
   loadProjectVars,
+  resolveProjectTaskDirName,
   resolveTaskRelDir,
   validatePrepareConfig,
 } from './config.js';
@@ -40,6 +41,18 @@ test('getOrchestratorTaskRoot uses projects path for normal projects', () => {
     getOrchestratorTaskRoot('example-mobile-farm', {} as any),
     path.join(farmslotRoot, 'projects', 'example-mobile-farm', 'tasks'),
   );
+});
+
+test('resolveProjectTaskDirName prefers task_dir then paths.artifact_dir then default', () => {
+  assert.equal(
+    resolveProjectTaskDirName({ task_dir: 'custom/tasks', paths: { artifact_dir: 'temp/tasks' } } as any),
+    'custom/tasks',
+  );
+  assert.equal(
+    resolveProjectTaskDirName({ paths: { artifact_dir: 'temp/tasks' } } as any),
+    'temp/tasks',
+  );
+  assert.equal(resolveProjectTaskDirName({} as any), '.task');
 });
 
 test('resolveTaskRelDir derives task-relative directories from task roots', () => {

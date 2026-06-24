@@ -44,6 +44,7 @@ import './device-grid/device-grid.js';
 import './chat/chat-panel.js';
 import './config/config-panel.js';
 
+import { COMMAND_CENTER_APP_VERSION } from '../build-info.js';
 import type { ConnectionState } from '../gateway-client.js';
 import { gateway } from '../gateway-client.js';
 import {
@@ -307,6 +308,24 @@ export class FarmApp extends LitElement {
       // No remote SHA to key dismissal on — hide for this session only.
       this.updateStatus = null;
     }
+  }
+
+  private renderVersionFooter() {
+    const version = COMMAND_CENTER_APP_VERSION;
+    const sha = this.updateStatus?.localSha;
+    const branch = this.updateStatus?.branch;
+    const identity = sha ? `${sha}${branch ? ` · ${branch}` : ''}` : '…';
+    const title = `Command Center v${version}${sha ? ` · ${identity}` : ''}`;
+    const line = this._sidebarExpanded ? `v${version} · ${identity}` : `v${version}`;
+
+    return html`
+      <div
+        class="fa-version-footer ${this._sidebarExpanded ? '' : 'fa-version-footer--compact'}"
+        title=${title}
+      >
+        ${line}
+      </div>
+    `;
   }
 
   private onGlobalKeyDown = (e: KeyboardEvent) => {
@@ -1054,6 +1073,7 @@ export class FarmApp extends LitElement {
         )}
         <div class="fa-sidebar-resize" @pointerdown=${this.onSidebarResizeStart}></div>
         <div style="flex:1"></div>
+        ${this.renderVersionFooter()}
         <button
           class="fa-nav-btn ${this.chatOpen ? 'active' : ''}"
           title="Co-Pilot (Cmd+K)"

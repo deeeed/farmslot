@@ -10,10 +10,10 @@ import {
 } from '@farmslot/protocol';
 
 import {
-  getProjectField,
   loadProjectVars,
   loadSlotVars,
   type RawProjectJson,
+  resolveProjectTaskDirName,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { expandHook } from '../core/hooks.js';
@@ -339,7 +339,7 @@ export async function executeEvalHarnessLifecycle(
   const taskDir = workerTaskDir(
     taskFile,
     vars.remoteRepo,
-    getProjectField(projectVars.projectJson, 'task_dir') || DEFAULT_TASK_DIR,
+    resolveProjectTaskDirName(projectVars.projectJson),
   );
   const harnessArtifactsDir = path.join(taskDir, 'artifacts', 'recipe-harness');
   const logPath = path.join(harnessArtifactsDir, `${phase}.log`);

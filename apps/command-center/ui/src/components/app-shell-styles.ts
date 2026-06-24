@@ -215,6 +215,22 @@ export function renderAppShellStyles(
       farm-app .fa-sidebar-resize:hover {
         background: ${colors.accent}33;
       }
+      farm-app .fa-version-footer {
+        margin: 0 6px 4px;
+        padding: 0 8px 4px;
+        color: ${colors.textMuted};
+        font-family: ${fonts.mono};
+        font-size: 10px;
+        line-height: 1.2;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        user-select: text;
+      }
+      farm-app .fa-version-footer--compact {
+        padding: 0 4px 4px;
+        text-align: center;
+      }
       farm-app .fa-active-runs {
         margin: 2px 6px 8px;
         padding: 6px;

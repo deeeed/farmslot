@@ -15,7 +15,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-import { farmslotRoot, getProjectField } from '../core/config.js';
+import { farmslotRoot, getProjectField, resolveProjectTaskDirName } from '../core/config.js';
 import { fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js';
@@ -286,7 +286,7 @@ export async function executeReviewGate(runId: string): Promise<void> {
       ? current.taskFile.split('/tasks/')[1].replace('/TASK.md', '')
       : null;
     const taskDirName = pv?.projectJson
-      ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+      ? resolveProjectTaskDirName(pv.projectJson)
       : DEFAULT_TASK_DIR;
     const resolvedDecision = current.decisions.find(
       (d) => d.type === 'engine_review_posting' && d.resolvedAction === 'post',

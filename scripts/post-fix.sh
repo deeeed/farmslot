@@ -64,7 +64,7 @@ for s in data.get('slots', []):
     echo "ERROR: No task_file in farm-status for ${SLOT_ID} and no --task-dir provided"
     exit 1
   fi
-  ARTIFACT_BASE="${REMOTE_REPO}/.task/${TASK_REL}/artifacts"
+  ARTIFACT_BASE="${REMOTE_REPO}/${WORKER_TASK_DIR_NAME:-${ARTIFACT_DIR:-.task}}/${TASK_REL}/artifacts"
 fi
 
 # ── Read artifacts ────────────────────────────────────────────────

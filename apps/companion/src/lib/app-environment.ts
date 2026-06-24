@@ -22,12 +22,23 @@ export interface CompanionEnvironment {
   appDisplayName: string;
   appAccentColor: string;
   appVersion: string;
+  nativeBuildVersion: string;
   gatewayUrl: string;
   remoteGatewayUrl: string;
   metroPort: string;
   updateUrl: string;
   runtimeVersion: string;
   isProduction: boolean;
+}
+
+export function formatCompanionVersionSubtitle(env: CompanionEnvironment): string {
+  const parts = [`v${env.appVersion}`, env.appVariant];
+  if (env.nativeBuildVersion) {
+    parts.push(`build ${env.nativeBuildVersion}`);
+  } else if (env.runtimeVersion !== 'unset' && !env.runtimeVersion.startsWith('policy:')) {
+    parts.push(`runtime ${env.runtimeVersion}`);
+  }
+  return parts.join(' · ');
 }
 
 export function getCompanionEnvironment(): CompanionEnvironment {
@@ -43,6 +54,7 @@ export function getCompanionEnvironment(): CompanionEnvironment {
     appDisplayName: extra?.appDisplayName ?? expoConfig?.name ?? 'Farmslot',
     appAccentColor: extra?.appAccentColor ?? colors.accent,
     appVersion: expoConfig?.version ?? 'unknown',
+    nativeBuildVersion: Constants.nativeBuildVersion ?? '',
     gatewayUrl: extra?.gatewayUrl ?? 'unset',
     remoteGatewayUrl: extra?.remoteGatewayUrl ?? 'unset',
     metroPort: extra?.metroPort == null ? 'unknown' : String(extra.metroPort),

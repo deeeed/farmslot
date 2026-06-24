@@ -1,5 +1,12 @@
+import { readFileSync } from 'node:fs';
+
 import { resolve } from 'path';
 import { defineConfig } from 'vite';
+
+const uiPackage = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')) as {
+  version?: string;
+};
+const appVersion = uiPackage.version ?? 'dev';
 
 const gatewayPort = Number(process.env.GATEWAY_PORT) || 7777;
 const gatewayHost = process.env.GATEWAY_PROXY_HOST || process.env.GATEWAY_HOST || '127.0.0.1';
@@ -8,6 +15,9 @@ const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
 
 export default defineConfig({
   root: resolve(__dirname),
+  define: {
+    __FARMSLOT_APP_VERSION__: JSON.stringify(appVersion),
+  },
   resolve: {
     alias: {
       '@farmslot/protocol': resolve(__dirname, '../../../packages/protocol/src'),

@@ -6,9 +6,9 @@ import { DEFAULT_TASK_DIR, type ReviewValidationDepth } from '@farmslot/protocol
 
 import {
   getOrchestratorTaskRoot,
-  getProjectField,
   loadProjectVars,
   loadSlotVars,
+  resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
 import { getRun } from '../runs/store.js';
@@ -135,7 +135,7 @@ export async function resolveWorkerTaskDir(
   if (!taskFile) return null;
   const pv = await loadProjectVars(project).catch(() => null);
   const taskDirName = pv
-    ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+    ? resolveProjectTaskDirName(pv.projectJson)
     : DEFAULT_TASK_DIR;
 
   const orchRoot = pv ? getOrchestratorTaskRoot(project, pv.projectJson) : null;

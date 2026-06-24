@@ -4,6 +4,7 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import type {
   FleetStatus,
+  RunListResult,
   SlotStatus,
   TmuxWorkerInventoryUpdatedPayload,
   TmuxWorkerListResult,
@@ -32,6 +33,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned, togglePinnedSlot } from '../../utils/pinned-slots.js';
 
 import {
+  filterSlotsByGlobalFilters,
   isFarmslotWatchEntry,
   isFarmslotWorker,
   isWorkerPaneFilter,
@@ -39,6 +41,7 @@ import {
   type LayoutMode,
   parseWatchItems,
   parseWorkerRefs,
+  selectActiveRunSlotIds,
   STORAGE_KEY,
   type TerminalPane,
   watchEntryDescription,
@@ -459,12 +462,7 @@ export class TerminalSplitView extends LitElement {
   }
 
   private _applyFilters(slots: SlotStatus[]): SlotStatus[] {
-    const { projects, machines } = this._globalFilters;
-    return slots.filter((s) => {
-      if (projects.length > 0 && !projects.includes(s.project)) return false;
-      if (machines.length > 0 && !machines.includes(s.machine)) return false;
-      return true;
-    });
+    return filterSlotsByGlobalFilters(slots, this._globalFilters);
   }
 
   private _currentRunIdForSlot(slotId: string): string {
@@ -516,24 +514,24 @@ export class TerminalSplitView extends LitElement {
     }
   }
 
-  private async _showAllWorking() {
+  private async _showActiveRuns() {
     try {
-      const result = await gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {});
-      const filtered = this._applyFilters(result.fleet.slots);
-      const IDLE_AGENT_VALUES = new Set(['idle', 'no-tmux', '-', '']);
-      const working = filtered
-        .filter(
-          (s) =>
-            !IDLE_AGENT_VALUES.has((s.agent ?? '') as string) ||
-            (s.lifecycle === 'manual' && !!s.taskFile),
-        )
-        .map((s) => s.slot);
-      this._selectedSlots = working.slice(0, 8);
+      const [fleetResult, runResult] = await Promise.all([
+        gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {}),
+        gateway.request<RunListResult>(Methods.RUN_LIST, { active: true, limit: 1000 }),
+      ]);
+      const activeRuns = selectActiveRunSlotIds(
+        fleetResult.fleet.slots,
+        runResult.runs ?? [],
+        this._globalFilters,
+      );
+      this._selectedSlots = activeRuns;
+      this._selectedWorkers = [];
       this._layout = 'auto';
       this._expandedSlot = null;
       this._save();
     } catch (err) {
-      console.warn('[terminal-split-view] failed to open all working slots', err);
+      console.warn('[terminal-split-view] failed to open active run slots', err);
     }
   }
 
@@ -823,7 +821,7 @@ export class TerminalSplitView extends LitElement {
         ${!this._expandedSlot && slotsToShow.length < max
           ? html` <button class="layout-btn" @click=${this._addSlotSelector}>+</button> `
           : ''}
-        <button class="layout-btn" @click=${this._showAllWorking}>All Working</button>
+        <button class="layout-btn" @click=${this._showActiveRuns}>Active Runs</button>
         <button class="layout-btn" @click=${this._openWatchlist}>Open Watchlist</button>
         <div class="layout-btns">
           ${(['auto', '1x1', '2x1', '2x2', '3x2', '4x2'] as LayoutMode[]).map(

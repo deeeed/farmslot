@@ -8,7 +8,6 @@ import {
   type AgentRole,
   agentRoleWindow,
   DEFAULT_CLAUDE_MODEL,
-  DEFAULT_TASK_DIR,
   type DispatchExecuteParams,
   primaryRoleForFlow,
 } from '@farmslot/protocol';
@@ -27,6 +26,7 @@ import {
   type RawProjectJson,
   readSlotField,
   resetSlot,
+  resolveProjectTaskDirName,
   updateSlotStatus,
 } from '../../core/index.js';
 import {
@@ -776,7 +776,7 @@ export async function dispatchExecute(
 
   // 3. Copy task to worker
   step('copy', 'Copying task files...');
-  const taskDirName = getProjectField(projectJson, 'task_dir') || DEFAULT_TASK_DIR;
+  const taskDirName = resolveProjectTaskDirName(projectJson);
   const workerTaskDir = `${taskDirName}/${flowSubdir}/${taskFolderId}`;
   const workerTaskAbs = `${vars.remoteRepo}/${workerTaskDir}`;
 

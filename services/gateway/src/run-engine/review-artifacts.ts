@@ -9,7 +9,7 @@ import {
   REVIEW_GATE_ARTIFACT_COPY_EXCLUDES,
   WORKER_ARTIFACT_COPY_RELATIVE_EXCLUDES,
 } from '../core/artifact-copy-policy.js';
-import { getProjectField, loadSlotVars } from '../core/config.js';
+import { loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotCopyDir, slotCopyFile, slotFileExists, slotListDir } from '../core/slot-io.js';
 import { getRun } from '../runs/store.js';
 
@@ -74,7 +74,7 @@ export async function copyWorkerArtifacts(runId: string): Promise<void> {
 
   const pv = await loadProjectVarsOrNull(run.project, 'worker artifact copy', run.id);
   const taskDirName = pv
-    ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+    ? resolveProjectTaskDirName(pv.projectJson)
     : DEFAULT_TASK_DIR;
   const workerTaskDir = path.join(vars.remoteRepo, taskDirName, taskRelDir);
   const localArtifactsDir = path.join(taskDir, 'artifacts');

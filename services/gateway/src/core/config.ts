@@ -812,6 +812,15 @@ export function getProjectFieldRaw(projectJson: RawProjectJson, dotpath: string)
   return current;
 }
 
+/** Worker-repo task root: `task_dir` overrides `paths.artifact_dir`, then protocol default. */
+export function resolveProjectTaskDirName(projectJson: RawProjectJson): string {
+  const explicit = getProjectField(projectJson, 'task_dir');
+  if (explicit) return explicit;
+  const artifactDir = getProjectField(projectJson, 'paths.artifact_dir');
+  if (artifactDir) return artifactDir;
+  return DEFAULT_TASK_DIR;
+}
+
 export function isMockModeProject(projectJson?: RawProjectJson | null): boolean {
   return Boolean(projectJson?.external?.mock_mode);
 }
@@ -860,7 +869,7 @@ export async function resolveTaskPaths(slotId: string, taskFile: string): Promis
   let taskDirName = DEFAULT_TASK_DIR;
   try {
     const pv = await loadProjectVars(vars.projectName);
-    taskDirName = getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR;
+    taskDirName = resolveProjectTaskDirName(pv.projectJson);
   } catch {
     /* use default */
   }
