@@ -311,6 +311,181 @@ test('runReplayStep forces eval worker replays through prepare to reinstall harn
   assert.equal(replayed.recoveryAttempts?.at(-1)?.stepName, 'prepare');
 });
 
+test('runReplayStep restores skipPrepare for chained follow-ups when the flag was already cleared', async (t) => {
+  const parent = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'example-org/example-browser#123456',
+    familyId: parent.id,
+    parentRunId: parent.id,
+    familyRootTicketOrPr: parent.ticketOrPr,
+    slotId: 'runner-browser-1',
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'prepare failed',
+    engineState: { flags: { warmRecovery: true } },
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot'
+        ? { ...step, status: 'done' }
+        : step.name === 'write-task' || step.name === 'prepare'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    for (const id of [run.id, parent.id]) {
+      if (getRun(id)) {
+        updateRun(id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(id);
+      }
+    }
+  });
+
+  await runReplayStep({ runId: run.id, stepName: 'write-task', triggeredBy: 'operator' }, () => {});
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.engineState?.flags?.skipPrepare, true);
+  assert.equal(replayed.engineState?.flags?.warmRecovery, true);
+});
+
+test('runReplayStep clears skipPrepare when chained follow-up replays from find-slot', async (t) => {
+  const parent = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'example-org/example-browser#123456',
+    familyId: parent.id,
+    parentRunId: parent.id,
+    familyRootTicketOrPr: parent.ticketOrPr,
+    slotId: 'runner-browser-1',
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'find-slot failed',
+    engineState: { flags: { skipPrepare: true } },
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot' ? { ...step, status: 'failed' } : step,
+    ),
+  });
+
+  t.after(async () => {
+    for (const id of [run.id, parent.id]) {
+      if (getRun(id)) {
+        updateRun(id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(id);
+      }
+    }
+  });
+
+  await runReplayStep({ runId: run.id, stepName: 'find-slot', triggeredBy: 'operator' }, () => {});
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.slotId, null);
+  assert.equal(replayed.engineState?.flags?.skipPrepare, undefined);
+});
+
+test('runReplayStep preserves skipPrepare for review-pr chained follow-up replays', async (t) => {
+  const parent = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const run = createRun({
+    flowType: 'review-pr',
+    project: 'farmslot-farm',
+    ticketOrPr: 'example-org/example-browser#123456',
+    familyId: parent.id,
+    parentRunId: parent.id,
+    familyRootTicketOrPr: parent.ticketOrPr,
+    slotId: 'runner-browser-1',
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'write-task failed',
+    engineState: { flags: { skipPrepare: true } },
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot'
+        ? { ...step, status: 'done' }
+        : step.name === 'write-task'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    for (const id of [run.id, parent.id]) {
+      if (getRun(id)) {
+        updateRun(id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(id);
+      }
+    }
+  });
+
+  await runReplayStep({ runId: run.id, stepName: 'write-task', triggeredBy: 'operator' }, () => {});
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.engineState?.flags?.skipPrepare, true);
+});
+
+test('runReplayStep preserves skipPrepare for CI-watch chained follow-up replays', async (t) => {
+  const parent = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'example-org/example-browser#123456',
+    familyId: parent.id,
+    parentRunId: parent.id,
+    familyRootTicketOrPr: parent.ticketOrPr,
+    slotId: 'runner-browser-1',
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'write-task failed',
+    engineState: { flags: { skipPrepare: true } },
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot'
+        ? { ...step, status: 'done' }
+        : step.name === 'write-task'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    for (const id of [run.id, parent.id]) {
+      if (getRun(id)) {
+        updateRun(id, { status: 'failed', completedAt: new Date().toISOString() });
+        await deleteRun(id);
+      }
+    }
+  });
+
+  await runReplayStep({ runId: run.id, stepName: 'write-task', triggeredBy: 'operator' }, () => {});
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.engineState?.flags?.skipPrepare, true);
+  assert.equal(replayed.engineState?.flags?.nudgeReuse, undefined);
+});
+
 test('runReplayStep preserves resolved publish approvals for post-gate publish retries', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

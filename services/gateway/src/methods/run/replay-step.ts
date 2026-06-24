@@ -13,6 +13,7 @@ import {
 
 import { execOnSlot } from '../../core/exec.js';
 import { shellQuote } from '../../core/tmux.js';
+import { isFollowUpFlow } from '../../family-observability/context.js';
 import {
   bumpRunGeneration,
   cancelRunEngine,
@@ -302,15 +303,35 @@ export async function runReplayStep(
   // the slot from a known state rather than rely on the original busy-worker assumption.
   // Regression introduced by PR #41 (d2442088, 2026-05-01); replays of pre-PR runs always
   // worked because every DISPATCH was fresh.
+  //
+  // CI-watch chained follow-ups (parentRunId + pr-complete/review-pr/merge-main) set
+  // skipPrepare because the parent just finished on a keep-warm slot. Clearing that flag
+  // on write-task replay forces a full PREPARE and tears down the hot workspace the chain
+  // was meant to reuse — preserve it; only nudgeReuse is always stale after replay.
+  const isChainedFollowUp =
+    Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
+  const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
+  const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
   if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
     const newFlags = { ...existing.engineState.flags };
     delete newFlags.nudgeReuse;
-    delete newFlags.skipPrepare;
+    if (!keepHotSlotSkipPrepare) {
+      delete newFlags.skipPrepare;
+    }
+    const currentEngineState = getRun(params.runId)?.engineState ?? existing.engineState;
     updateRun(params.runId, {
-      engineState: { ...existing.engineState, flags: newFlags },
+      engineState: { ...currentEngineState, flags: newFlags },
     });
     console.log(
-      `[run] replay from ${replayStepName} — cleared nudgeReuse/skipPrepare flags (fresh dispatch)`,
+      keepHotSlotSkipPrepare
+        ? `[run] replay from ${replayStepName} — cleared nudgeReuse; preserved skipPrepare (CI-watch chained follow-up)`
+        : `[run] replay from ${replayStepName} — cleared nudgeReuse/skipPrepare flags (fresh dispatch)`,
+    );
+  } else if (keepHotSlotSkipPrepare && willRerunPrepare) {
+    // Prior replay may have already cleared skipPrepare — restore hot-slot semantics.
+    setRunFlags(params.runId, { skipPrepare: true });
+    console.log(
+      `[run] replay from ${replayStepName} — restored skipPrepare (CI-watch chained follow-up)`,
     );
   }
 
