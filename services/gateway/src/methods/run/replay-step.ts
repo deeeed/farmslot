@@ -311,21 +311,23 @@ export async function runReplayStep(
   const isChainedFollowUp =
     Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
   const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
+  const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
   if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
     const newFlags = { ...existing.engineState.flags };
     delete newFlags.nudgeReuse;
-    if (!isChainedFollowUp) {
+    if (!keepHotSlotSkipPrepare) {
       delete newFlags.skipPrepare;
     }
+    const currentEngineState = getRun(params.runId)?.engineState ?? existing.engineState;
     updateRun(params.runId, {
-      engineState: { ...existing.engineState, flags: newFlags },
+      engineState: { ...currentEngineState, flags: newFlags },
     });
     console.log(
-      isChainedFollowUp
+      keepHotSlotSkipPrepare
         ? `[run] replay from ${replayStepName} — cleared nudgeReuse; preserved skipPrepare (CI-watch chained follow-up)`
         : `[run] replay from ${replayStepName} — cleared nudgeReuse/skipPrepare flags (fresh dispatch)`,
     );
-  } else if (isChainedFollowUp && existing.slotId && willRerunPrepare) {
+  } else if (keepHotSlotSkipPrepare && willRerunPrepare) {
     // Prior replay may have already cleared skipPrepare — restore hot-slot semantics.
     setRunFlags(params.runId, { skipPrepare: true });
     console.log(
