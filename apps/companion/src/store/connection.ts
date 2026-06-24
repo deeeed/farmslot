@@ -229,12 +229,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       if (status !== 'connected') {
         usePRStore.getState().setLoading(false);
         useRunStore.getState().setActiveLoading(false);
-        useRunStore.getState().setHistoryLoading(false);
+        useRunStore.getState().resetHistorySync();
       }
 
       // Fetch all state on connect/reconnect
       if (status === 'connected') {
         useFleetStore.getState().setLoading(true);
+        useRunStore.getState().resetHistorySync();
         useRunStore.getState().setActiveLoading(true);
         client
           .request<FleetStatusResult>(Methods.FLEET_STATUS)
@@ -431,13 +432,16 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     const { client, status } = get();
     if (!client || status !== 'connected') return;
     const runStore = useRunStore.getState();
-    if (runStore.historyLoaded || runStore.historyLoading) return;
+    if (runStore.activeLoading || runStore.historyLoaded || runStore.historyLoading) return;
 
     runStore.setHistoryLoading(true);
     try {
       const runs = await fetchRecentRunHistory(client);
       useRunStore.getState().mergeRuns(runs);
-      set({ lastSyncError: null });
+      set((state) => ({
+        lastSyncError:
+          state.lastSyncError?.startsWith('Failed to download run history:') ? null : state.lastSyncError,
+      }));
     } catch (err) {
       useRunStore.getState().setHistoryLoading(false);
       set({

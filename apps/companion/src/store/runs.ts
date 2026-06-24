@@ -13,8 +13,7 @@ interface RunStore {
   mergeRuns: (runs: Run[]) => void;
   setActiveLoading: (loading: boolean) => void;
   setHistoryLoading: (loading: boolean) => void;
-  markHistoryLoaded: () => void;
-  resetSync: () => void;
+  resetHistorySync: () => void;
   upsertRun: (run: Run) => void;
   removeRun: (id: string) => void;
 }
@@ -25,7 +24,13 @@ export const useRunStore = create<RunStore>((set, get) => ({
   historyLoading: false,
   historyLoaded: false,
 
-  setRuns: (runs) => set({ runs, activeLoading: false }),
+  setRuns: (runs) =>
+    set({
+      runs,
+      activeLoading: false,
+      historyLoading: false,
+      historyLoaded: false,
+    }),
 
   mergeRuns: (runs) => {
     set({
@@ -37,15 +42,7 @@ export const useRunStore = create<RunStore>((set, get) => ({
 
   setActiveLoading: (activeLoading) => set({ activeLoading }),
   setHistoryLoading: (historyLoading) => set({ historyLoading }),
-  markHistoryLoaded: () => set({ historyLoaded: true, historyLoading: false }),
-  resetSync: () =>
-    set({
-      runs: [],
-      activeLoading: false,
-      historyLoading: false,
-      historyLoaded: false,
-    }),
-
+  resetHistorySync: () => set({ historyLoading: false, historyLoaded: false }),
 
   upsertRun: (run) => {
     const { runs } = get();

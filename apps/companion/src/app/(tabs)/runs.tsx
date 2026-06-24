@@ -804,6 +804,11 @@ export default function RunsScreen() {
     void syncRunHistory();
   }, [syncRunHistory]);
 
+  useEffect(() => {
+    if (status !== 'connected' || !showAllRuns || activeLoading) return;
+    void syncRunHistory();
+  }, [activeLoading, showAllRuns, status, syncRunHistory]);
+
   const toggleHistoryScope = useCallback(() => {
     if (showAllRuns) {
       setShowAllRuns(false);
@@ -917,14 +922,6 @@ export default function RunsScreen() {
     </View>
   );
 
-  const runsSyncBanner =
-    status === 'connected' && runsSyncMessage ? (
-      <View style={styles.syncBanner}>
-        <ActivityIndicator size="small" color={colors.accent} />
-        <Text style={styles.syncBannerText}>{runsSyncMessage}</Text>
-      </View>
-    ) : null;
-
   const renderRow = useCallback(
     ({ item }: { item: RunsListRow }) =>
       item.kind === 'family' ? (
@@ -950,7 +947,6 @@ export default function RunsScreen() {
   return (
     <View style={baseStyles.container}>
       {status === 'connected' ? runScopeHeader : null}
-      {runsSyncBanner}
       {runRows.length === 0 ? (
         status === 'connected' && runsSyncMessage ? (
           <View style={[styles.emptyContainer, { paddingBottom: insets.bottom }]}>
@@ -1010,21 +1006,6 @@ export default function RunsScreen() {
 
 const styles = StyleSheet.create({
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: spacing.md },
-  syncBanner: {
-    alignItems: 'center',
-    backgroundColor: colors.bgSurface,
-    borderBottomColor: colors.bgCard,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-  },
-  syncBannerText: {
-    color: colors.textSecondary,
-    flex: 1,
-    fontSize: fonts.sizeSm,
-  },
   syncEmptyText: {
     marginTop: spacing.sm,
     textAlign: 'center',
