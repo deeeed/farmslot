@@ -1544,7 +1544,7 @@ All checks passed.`;
         Load run modal — browse this project's runs and warm-switch this slot onto one
       </p>
       <slot-load-run-modal
-        slot-id="macwork-mme-1"
+        slot-id="dev-harness-slot"
         .project=${'example-mobile'}
         .open=${true}
         .runsOverride=${runs}
