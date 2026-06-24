@@ -11,7 +11,6 @@ import {
   type PRUpdatedPayload,
   type Run,
   type RunDecision,
-  type RunListResult,
   type SlotStatus,
 } from '@farmslot/protocol';
 
@@ -40,6 +39,10 @@ import {
   seedPresetGatewayProfileSecrets,
   writeGatewayProfileSecret,
 } from '../lib/gateway-profiles';
+import {
+  fetchActiveRuns,
+  fetchRecentRunHistory,
+} from '../lib/gateway-run-sync';
 import { notifyDecision, notifyRunCompleted, notifyViolation } from '../lib/notifications';
 
 import { useDecisionStore } from './decisions';
@@ -79,6 +82,7 @@ interface ConnectionStore {
   deleteProfile: (profileId: string) => Promise<void>;
   connect: () => void;
   disconnect: () => void;
+  syncRunHistory: () => Promise<void>;
 }
 
 export const useConnectionStore = create<ConnectionStore>((set, get) => ({
@@ -222,11 +226,17 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         status,
         lastConnectedAt: status === 'connected' ? Date.now() : get().lastConnectedAt,
       });
-      if (status !== 'connected') usePRStore.getState().setLoading(false);
+      if (status !== 'connected') {
+        usePRStore.getState().setLoading(false);
+        useRunStore.getState().setActiveLoading(false);
+        useRunStore.getState().resetHistorySync();
+      }
 
       // Fetch all state on connect/reconnect
       if (status === 'connected') {
         useFleetStore.getState().setLoading(true);
+        useRunStore.getState().resetHistorySync();
+        useRunStore.getState().setActiveLoading(true);
         client
           .request<FleetStatusResult>(Methods.FLEET_STATUS)
           .then((result) => {
@@ -238,13 +248,21 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
             useFleetStore.getState().setLoading(false);
           });
 
-        client
-          .request<RunListResult>(Methods.RUN_LIST, { limit: 1000 })
-          .then((result) => {
-            useRunStore.getState().setRuns(result.runs);
-            set({ lastSyncError: null });
+        fetchActiveRuns(client)
+          .then((runs) => {
+            useRunStore.getState().setRuns(runs);
+            set((state) => ({
+              lastSyncError:
+                state.lastSyncError?.startsWith('Failed to refresh runs:') ||
+                state.lastSyncError?.startsWith('Failed to download run history:')
+                  ? null
+                  : state.lastSyncError,
+            }));
           })
-          .catch((err: Error) => set({ lastSyncError: `Failed to refresh runs: ${err.message}` }));
+          .catch((err: Error) => {
+            useRunStore.getState().setActiveLoading(false);
+            set({ lastSyncError: `Failed to refresh runs: ${err.message}` });
+          });
 
         client
           .request<DecisionListResult>(Methods.DECISION_LIST)
@@ -408,6 +426,28 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
   disconnect: () => {
     get().client?.disconnect();
+  },
+
+  syncRunHistory: async () => {
+    const { client, status } = get();
+    if (!client || status !== 'connected') return;
+    const runStore = useRunStore.getState();
+    if (runStore.activeLoading || runStore.historyLoaded || runStore.historyLoading) return;
+
+    runStore.setHistoryLoading(true);
+    try {
+      const runs = await fetchRecentRunHistory(client);
+      useRunStore.getState().mergeRuns(runs);
+      set((state) => ({
+        lastSyncError:
+          state.lastSyncError?.startsWith('Failed to download run history:') ? null : state.lastSyncError,
+      }));
+    } catch (err) {
+      useRunStore.getState().setHistoryLoading(false);
+      set({
+        lastSyncError: `Failed to download run history: ${(err as Error).message}`,
+      });
+    }
   },
 }));
 
