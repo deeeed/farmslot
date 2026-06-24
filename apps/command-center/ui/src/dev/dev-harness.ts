@@ -40,6 +40,7 @@ import '../components/workspace/metro-log-viewer.js';
 import '../components/workspace/slot-workspace.js';
 import '../components/slot-view/slot-view.js';
 import '../components/slot-view/slot-history-modal.js';
+import '../components/slot-view/slot-load-run-modal.js';
 import '../components/stream-feed/stream-feed.js';
 import '../components/runs/run-list.js';
 import '../components/runs/run-detail.js';
@@ -132,6 +133,7 @@ type DevRoute =
   | 'workspace'
   | 'slot-view'
   | 'slot-history'
+  | 'slot-load-run'
   | 'recipe-provenance-matrix'
   | 'dispatch-wizard'
   | 'dispatch-queue'
@@ -184,6 +186,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string }> = [
   { route: 'workspace', label: 'Workspace' },
   { route: 'slot-view', label: 'Slot View' },
   { route: 'slot-history', label: 'Slot History' },
+  { route: 'slot-load-run', label: 'Slot Load Run' },
   { route: 'recipe-provenance-matrix', label: 'Recipe Provenance Matrix' },
   { route: 'dispatch-wizard', label: 'Dispatch Wizard' },
   { route: 'dispatch-queue', label: 'Dispatch Queue' },
@@ -290,6 +293,7 @@ export class DevHarness extends LitElement {
       'workspace',
       'slot-view',
       'slot-history',
+      'slot-load-run',
       'recipe-provenance-matrix',
       'dispatch-wizard',
       'dispatch-queue',
@@ -398,6 +402,8 @@ export class DevHarness extends LitElement {
         return this.renderSlotView();
       case 'slot-history':
         return this.renderSlotHistory();
+      case 'slot-load-run':
+        return this.renderSlotLoadRun();
       case 'recipe-provenance-matrix':
         return this.renderRecipeProvenanceMatrix();
       case 'dispatch-wizard':
@@ -1462,6 +1468,90 @@ All checks passed.`;
           this.route = 'slot-view';
         }}
       ></slot-history-modal>
+    `;
+  }
+
+  private renderSlotLoadRun() {
+    const nowIso = (offsetMin: number) => new Date(Date.now() - offsetMin * 60_000).toISOString();
+    const buildRun = (over: Partial<Run> & Pick<Run, 'id' | 'status'>): Run => ({
+      familyId: over.id,
+      lane: 'production',
+      flowType: 'fix-bug',
+      project: 'example-mobile',
+      ticketOrPr: 'PROJ-0000',
+      slotId: null,
+      branch: 'fix/example',
+      taskFile: null,
+      steps: [],
+      decisions: [],
+      metrics: { nudgeCount: 0, model: 'sonnet', runner: 'claude' },
+      createdAt: nowIso(120),
+      updatedAt: nowIso(60),
+      ...over,
+    });
+    const runs: Run[] = [
+      buildRun({
+        id: 'load-run-done-1',
+        status: 'done',
+        project: 'example-mobile',
+        ticketOrPr: 'PROJ-2501',
+        branch: 'fix/proj-2501-keychain',
+        summary: 'Fix secure keychain unlock race on cold start',
+        metrics: { nudgeCount: 1, model: 'sonnet', runner: 'claude' },
+      }),
+      buildRun({
+        id: 'load-run-blocked-2',
+        status: 'blocked',
+        flowType: 'pr-complete',
+        project: 'example-mobile',
+        ticketOrPr: 'example-org/example-mobile#812',
+        branch: 'fix/mobile-popup-flicker',
+        summary: 'Resolve popup flicker after wallet unlock',
+        metrics: { nudgeCount: 0, model: 'gpt-5.5', runner: 'codex' },
+      }),
+      buildRun({
+        id: 'load-run-failed-3',
+        status: 'failed',
+        flowType: 'review-pr',
+        project: 'example-mobile',
+        ticketOrPr: 'example-org/example-mobile#29373',
+        branch: 'feature/perps-reuse-worker',
+        summary: 'Review perps worker reuse during dispatch',
+        metrics: { nudgeCount: 2, model: 'sonnet', runner: 'claude' },
+      }),
+      buildRun({
+        id: 'load-run-monitoring-4',
+        status: 'monitoring',
+        project: 'example-mobile',
+        ticketOrPr: 'PROJ-2610',
+        branch: 'fix/proj-2610-balance',
+        summary: 'Mid-pipeline run — Load disabled (still monitoring)',
+        metrics: { nudgeCount: 0, model: 'sonnet', runner: 'claude' },
+      }),
+      buildRun({
+        id: 'load-run-nobranch-5',
+        status: 'cancelled',
+        flowType: 'dev',
+        project: 'example-mobile',
+        ticketOrPr: 'MANUAL-000007',
+        branch: null,
+        summary: 'No-branch run — Load disabled (nothing to check out)',
+        metrics: { nudgeCount: 0, model: 'sonnet', runner: 'claude' },
+      }),
+    ];
+    return html`
+      <p class="section-label">
+        Load run modal — browse this project's runs and warm-switch this slot onto one
+      </p>
+      <slot-load-run-modal
+        slot-id="dev-harness-slot"
+        .project=${'example-mobile'}
+        .open=${true}
+        .runsOverride=${runs}
+        @close=${() => {
+          this.route = 'slot-view';
+        }}
+      ></slot-load-run-modal>
     `;
   }
 

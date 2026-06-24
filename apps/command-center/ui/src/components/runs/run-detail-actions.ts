@@ -268,3 +268,40 @@ export async function activateRunOnSlot(runId: string, slotId: string): Promise<
     alert(`Activate on ${slotId} failed: ${(err as Error).message}`);
   }
 }
+
+/**
+ * Warm-switch a slot onto this run's branch and bind the run to it, then open
+ * slot-view. Re-uses slot.prepare with the cheap `attach` profile (checkout
+ * only — no merge-main, no reinstall; dev server stays warm and hot-reloads).
+ * Unlike activateRunOnSlot this does NOT re-drive the run pipeline, so the run
+ * record is left intact; the recipe-replay button in slot-view becomes
+ * available because the slot is bound to this run.
+ */
+export async function switchSlotToRunBranch(
+  runId: string,
+  slotId: string,
+  branch: string | null,
+  // `rebind` lets the slot-side run loader take over a slot currently bound to a
+  // different (idle) run. The run-detail button targets the run's own slot, so
+  // it leaves this false.
+  rebind = false,
+): Promise<void> {
+  if (!slotId || !branch) {
+    throw new Error(
+      `Cannot switch ${slotId || '(no slot)'}: run ${runId.slice(0, 8)} has no branch`,
+    );
+  }
+  // Throws on failure — callers surface it in-context (inline in the run loader,
+  // a guarded catch on the run-detail button) rather than a browser alert.
+  await gateway.request(Methods.SLOT_PREPARE, {
+    slotId,
+    branch,
+    prepareProfile: 'attach',
+    // runId labels the tmux prepare window; bindRunId writes current_run_id
+    // after a successful prepare so resume / recipe-replay target this run.
+    bindRunId: runId,
+    runId,
+    rebind,
+  });
+  window.location.hash = `#slot/${slotId}`;
+}

@@ -133,6 +133,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _linkedRun: Run | null = null;
   @state() _historyOpen = false;
   @state() _historyRunId = '';
+  @state() _loadRunOpen = false;
   @state() _manualToggling = false;
   @state() _sidebarOpen = true;
   @state() _terminalOpen = true;

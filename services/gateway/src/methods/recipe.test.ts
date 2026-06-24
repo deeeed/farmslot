@@ -411,6 +411,16 @@ test('canRecipeRerunOnSlot allows warm review-gate and held slots for the reques
     canRecipeRerunOnSlot({ currentRunId: 'run-1', lifecycle: 'held', phase: 'pr-watch' }, 'run-1'),
     true,
   );
+  // A freshly-prepared/idle slot bound to the run after a warm branch switch is accepted.
+  assert.equal(
+    canRecipeRerunOnSlot({ currentRunId: 'run-1', lifecycle: 'ready' }, 'run-1'),
+    true,
+  );
+  // ...but a bound slot that is mid-worker (busy) is still rejected.
+  assert.equal(
+    canRecipeRerunOnSlot({ currentRunId: 'run-1', lifecycle: 'busy', phase: 'working' }, 'run-1'),
+    false,
+  );
 });
 
 test('canRecipeRerunOnSlot accepts review-gate slots when currentRunId is missing but run owns the slot', () => {

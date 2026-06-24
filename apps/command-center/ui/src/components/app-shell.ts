@@ -18,7 +18,7 @@ import type {
   TmuxWorkerListResult,
   TmuxWorkerSummary,
 } from '@farmslot/protocol';
-import { Events, Methods } from '@farmslot/protocol';
+import { Events, isTerminalRunStatus, Methods } from '@farmslot/protocol';
 
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
@@ -693,10 +693,18 @@ export class FarmApp extends LitElement {
     return `${worker.status.label} · ${signal}${attention}`;
   }
 
-  private pinnedSlotRun(slotId: string, currentRunId?: string | null): Run | null {
+  private pinnedSlotRun(
+    slotId: string,
+    currentRunId?: string | null,
+    slotBusy = false,
+  ): Run | null {
     if (currentRunId) {
       const current = this.runs.find((candidate) => candidate.id === currentRunId);
-      if (current) return current;
+      // During a slot's run transition, current_run_id can still point at the
+      // PREVIOUS (terminal) run while the slot is already busy preparing the
+      // next one. Rendering that done run's "complete" pipeline on a busy slot
+      // is misleading, so skip it and fall through to the active-run match.
+      if (current && !(slotBusy && isTerminalRunStatus(current.status))) return current;
     }
     if (this.route === 'run') {
       const selected = this.runs.find(
@@ -712,7 +720,7 @@ export class FarmApp extends LitElement {
 
   private renderPinnedSlotShortcut(pin: PinnedSlotPreference) {
     const slot = this.fleetSlots.find((candidate) => candidate.slot === pin.slotId);
-    const run = this.pinnedSlotRun(pin.slotId, slot?.currentRunId);
+    const run = this.pinnedSlotRun(pin.slotId, slot?.currentRunId, slot?.lifecycle === 'busy');
     const selected = this.route === 'slot' && pin.slotId === this.slotParam;
     const worker = this.tmuxWorkerForSlot(slot);
     const displayLabel = pin.label?.trim() || pin.slotId;

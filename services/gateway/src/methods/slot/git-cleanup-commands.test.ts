@@ -9,6 +9,7 @@ import {
   CLEAR_INDEX_FLAGS_COMMAND,
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
+  REFRESH_REMOTE_REF_LOCKS_COMMAND,
 } from './git-cleanup-commands.js';
 
 function runBash(command: string, cwd?: string) {
@@ -129,5 +130,68 @@ test('REFRESH_INDEX_AND_UNLOCK_COMMAND does not remove a lock owned by a process
 
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, /REFRESH_RAN/);
+  assert.doesNotMatch(result.stdout, /RM_CALLED/);
+});
+
+test('REFRESH_REMOTE_REF_LOCKS_COMMAND removes old unowned remote ref locks', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `ROOT=$(mktemp -d)
+      trap 'command rm -rf "$ROOT"' EXIT
+      mkdir -p "$ROOT/origin/feature"
+      touch "$ROOT/origin/feature/stale.lock" "$ROOT/packed-refs.lock"
+      git() {
+        if [ "$1" = rev-parse ] && [ "$2" = --git-path ]; then
+          case "$3" in
+            refs/remotes/origin) echo "$ROOT/origin"; return 0 ;;
+            packed-refs.lock) echo "$ROOT/packed-refs.lock"; return 0 ;;
+          esac
+        fi
+        command git "$@";
+      }
+      date() { echo 100; }
+      stat() { echo 0; }
+      lsof() { return 1; }
+      eval "$CMD"
+      test ! -e "$ROOT/origin/feature/stale.lock"
+      test ! -e "$ROOT/packed-refs.lock"`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: REFRESH_REMOTE_REF_LOCKS_COMMAND } },
+  );
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
+test('REFRESH_REMOTE_REF_LOCKS_COMMAND leaves owned remote ref locks in place', () => {
+  const result = spawnSync(
+    'bash',
+    [
+      '-c',
+      `ROOT=$(mktemp -d)
+      trap 'command rm -rf "$ROOT"' EXIT
+      mkdir -p "$ROOT/origin/feature"
+      touch "$ROOT/origin/feature/live.lock"
+      git() {
+        if [ "$1" = rev-parse ] && [ "$2" = --git-path ]; then
+          case "$3" in
+            refs/remotes/origin) echo "$ROOT/origin"; return 0 ;;
+            packed-refs.lock) echo "$ROOT/packed-refs.lock"; return 0 ;;
+          esac
+        fi
+        command git "$@";
+      }
+      date() { echo 100; }
+      stat() { echo 0; }
+      lsof() { return 0; }
+      rm() { echo RM_CALLED; return 0; }
+      eval "$CMD"
+      test -e "$ROOT/origin/feature/live.lock"`,
+    ],
+    { encoding: 'utf8', env: { ...process.env, CMD: REFRESH_REMOTE_REF_LOCKS_COMMAND } },
+  );
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.doesNotMatch(result.stdout, /RM_CALLED/);
 });

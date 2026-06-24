@@ -23,6 +23,7 @@ import {
   slotWriteFile,
   slotWriteFiles,
   updateSlotStatus,
+  updateSlotStatusIf,
 } from '../../core/index.js';
 import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
@@ -37,6 +38,7 @@ import {
   resolveStartRefInRepo,
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
+import { pushRunRecipeToSlot } from '../../run-completion/artifact-mirror.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
 import { getRun } from '../../runs/store.js';
 
@@ -1049,6 +1051,53 @@ async function slotPrepareInner(
       }
     }
     step('health', `Health check — ${healthValue}`);
+  }
+
+  // Operator-driven warm switch: bind this run to the slot so resume / recipe
+  // replay target it (the recipe-rerun gate accepts a slot whose current_run_id
+  // is this run and which is not mid-worker). Pure association — no pipeline
+  // re-drive, unlike run.activateOnSlot. Compare-and-set so a direct RPC can
+  // never stomp a slot another run already owns (a free or self-owned slot is
+  // the only safe target).
+  if (params.bindRunId) {
+    // A run can only be bound to a slot in its own project — a slot can only
+    // check out branches for its own repo, and the recipe sync below writes into
+    // that repo's task tree. The UI already scopes the loader by project; this
+    // guards the direct-RPC path so a hand-crafted call can't cross-write.
+    const boundRun = getRun(params.bindRunId);
+    if (boundRun && boundRun.project !== vars.projectName) {
+      throw new Error(
+        `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: run project '${boundRun.project}' does not match slot project '${vars.projectName}'.`,
+      );
+    }
+    const bound = await updateSlotStatusIf(
+      params.slotId,
+      // Never re-bind a slot with a live worker. Otherwise a free or self-owned
+      // slot always binds; a slot owned by a different (idle) run binds only
+      // when the operator explicitly requested a rebind (slot-side run loader).
+      (slot) =>
+        slot.agent !== 'working' &&
+        (params.rebind || !slot.current_run_id || slot.current_run_id === params.bindRunId),
+      { current_run_id: params.bindRunId },
+    );
+    if (!bound) {
+      throw new Error(
+        `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: slot is busy or owned by another run (pass rebind to take over an idle slot).`,
+      );
+    }
+    // Materialize the run's recipe workflows on this slot so a loaded run can be
+    // replayed here (local or remote). Only execution inputs are synced — no
+    // evidence — so it stays lightweight.
+    if (boundRun) {
+      await pushRunRecipeToSlot(boundRun, vars);
+    }
+  }
+
+  // Keep the cached slot.branch truthful: prepare just put HEAD on `branch`, so
+  // persist it. Otherwise the cache only refreshes on a full deep slot-check and
+  // drifts after a cheap warm switch (state-on-write).
+  if (branch) {
+    await updateSlotStatus(params.slotId, { branch });
   }
 
   emit('slot.prepare.done', { slotId: params.slotId, prepared: true });

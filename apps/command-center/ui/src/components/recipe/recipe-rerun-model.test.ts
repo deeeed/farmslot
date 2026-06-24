@@ -55,3 +55,25 @@ test('canSlotAcceptRecipeRerun accepts held current-run slots', () => {
     true,
   );
 });
+
+test('canSlotAcceptRecipeRerun accepts a run-bound slot after a warm branch switch', () => {
+  // Operator switched a warm slot to this run's branch (not at review-gate, not
+  // held) — bound to the run and idle, so a recipe replay is allowed.
+  assert.equal(
+    canSlotAcceptRecipeRerun(
+      { slot: 'slot-1', currentRunId: 'run-1', phase: null, lifecycle: 'ready' },
+      { id: 'run-1', slotId: 'slot-1' },
+    ),
+    true,
+  );
+});
+
+test('canSlotAcceptRecipeRerun rejects a run-bound slot that is mid-worker (busy)', () => {
+  assert.equal(
+    canSlotAcceptRecipeRerun(
+      { slot: 'slot-1', currentRunId: 'run-1', phase: 'dispatch', lifecycle: 'busy' },
+      { id: 'run-1', slotId: 'slot-1' },
+    ),
+    false,
+  );
+});
