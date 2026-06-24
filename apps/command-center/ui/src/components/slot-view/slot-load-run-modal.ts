@@ -13,6 +13,10 @@ const DEFAULT_LIMIT = 200;
 @customElement('slot-load-run-modal')
 export class SlotLoadRunModal extends LitElement {
   @property({ attribute: 'slot-id' }) slotId = '';
+  /** Slot's project — the loader only lists runs from this project, because a
+   * slot can only check out branches for its own repo (a mobile slot can't run
+   * an extension branch). */
+  @property() project = '';
   @property({ type: Boolean }) open = false;
   /** Dev harness escape hatch: when provided, no gateway call is made. */
   @property({ attribute: false }) runsOverride?: Run[];
@@ -22,9 +26,12 @@ export class SlotLoadRunModal extends LitElement {
   @state() private _runs: Run[] = [];
   @state() private _totalCount = 0;
   @state() private _search = '';
-  @state() private _projectFilter = '';
   @state() private _statusFilter = '';
   @state() private _pendingConfirm = '';
+  /** In-flight + error state for a "Load onto slot" action, shown inline (no
+   * browser alert) so a failed load is explained right in the modal. */
+  @state() private _actionBusy = false;
+  @state() private _actionError = '';
   private _loadToken = Symbol('slot-load-run-load');
   private _confirmTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -273,12 +280,11 @@ export class SlotLoadRunModal extends LitElement {
     const token = Symbol('slot-load-run-load');
     this._loadToken = token;
     this._error = '';
-    // Reset filters + any half-armed confirm so each open starts from a clean
-    // full list rather than a stale narrow view from the previous session.
+    // Reset filters + any half-armed confirm/error so each open starts clean.
     this._search = '';
-    this._projectFilter = '';
     this._statusFilter = '';
     this._pendingConfirm = '';
+    this._actionError = '';
 
     if (this.runsOverride) {
       this._runs = this.runsOverride;
@@ -289,8 +295,11 @@ export class SlotLoadRunModal extends LitElement {
 
     this._loading = true;
     try {
+      // Scope to the slot's project — a slot can only check out branches for its
+      // own repo, so loading another project's run could never work.
       const result = await gateway.request<RunListResult>(Methods.RUN_LIST, {
         limit: DEFAULT_LIMIT,
+        ...(this.project ? { project: this.project } : {}),
       });
       if (token !== this._loadToken) return;
       this._runs = result.runs;
@@ -303,10 +312,6 @@ export class SlotLoadRunModal extends LitElement {
     }
   }
 
-  private _projects(): string[] {
-    return [...new Set(this._runs.map((run) => run.project))].sort((a, b) => a.localeCompare(b));
-  }
-
   private _statuses(): string[] {
     return [...new Set(this._runs.map((run) => run.status))].sort((a, b) => a.localeCompare(b));
   }
@@ -314,7 +319,9 @@ export class SlotLoadRunModal extends LitElement {
   private _filtered(): Run[] {
     const query = this._search.trim().toLowerCase();
     return this._runs.filter((run) => {
-      if (this._projectFilter && run.project !== this._projectFilter) return false;
+      // Defensive: the fetch is already project-scoped, but guard the override
+      // path (dev harness) and any stale data too.
+      if (this.project && run.project !== this.project) return false;
       if (this._statusFilter && run.status !== this._statusFilter) return false;
       if (query) {
         const haystack = [run.ticketOrPr, run.summary ?? '', run.branch ?? '']
@@ -336,14 +343,25 @@ export class SlotLoadRunModal extends LitElement {
     return '';
   }
 
-  private _onLoadClick(run: Run) {
+  private async _onLoadClick(run: Run) {
     const reason = this._loadReason(run);
-    if (reason) return;
+    if (reason || this._actionBusy) return;
     if (this._pendingConfirm === run.id) {
       if (this._confirmTimer) clearTimeout(this._confirmTimer);
-      this._pendingConfirm = '';
-      void switchSlotToRunBranch(run.id, this.slotId, run.branch, true);
-      this._close();
+      this._actionError = '';
+      this._actionBusy = true;
+      // Keep _pendingConfirm set during the await so the row shows "Loading…".
+      try {
+        await switchSlotToRunBranch(run.id, this.slotId, run.branch, true);
+        // Success navigates to the slot view — close the modal.
+        this._close();
+      } catch (err) {
+        // Surface inline (no browser alert); keep the modal open to retry.
+        this._actionError = `Load failed: ${err instanceof Error ? err.message : String(err)}`;
+      } finally {
+        this._actionBusy = false;
+        this._pendingConfirm = '';
+      }
       return;
     }
     if (this._confirmTimer) clearTimeout(this._confirmTimer);
@@ -389,11 +407,16 @@ export class SlotLoadRunModal extends LitElement {
           ${loadable
             ? html`<button
                 class="slrm-load ${confirming ? 'confirm' : ''}"
+                ?disabled=${this._actionBusy}
                 title="Warm-switch ${this
                   .slotId} onto this run's branch and bind the run. No new run is created."
                 @click=${() => this._onLoadClick(run)}
               >
-                ${confirming ? 'Confirm?' : `Load onto ${this.slotId} →`}
+                ${this._actionBusy && confirming
+                  ? 'Loading…'
+                  : confirming
+                    ? 'Confirm?'
+                    : `Load onto ${this.slotId} →`}
               </button>`
             : html`<button class="slrm-load" disabled title=${disabledTitle}>
                 Load onto ${this.slotId} →
@@ -418,7 +441,8 @@ export class SlotLoadRunModal extends LitElement {
             <div>
               <div class="slrm-title">Load run onto ${this.slotId || 'unknown slot'}</div>
               <div class="slrm-subtitle">
-                Browse all runs and warm-switch this slot onto a run's branch.
+                ${this.project ? `${this.project} runs` : 'Runs'} — warm-switch this slot onto a
+                run's branch.
               </div>
             </div>
             <button class="slrm-close" @click=${this._close}>Close (Esc)</button>
@@ -429,6 +453,9 @@ export class SlotLoadRunModal extends LitElement {
               (checkout only — no merge-main, no reinstall) and binds the run so resume / recipe
               replay target it. It does not re-drive the run pipeline and creates no new run.
             </div>
+            ${this._actionError
+              ? html`<div class="slrm-state error">${this._actionError}</div>`
+              : nothing}
             ${this._loading
               ? html`<div class="slrm-state">Loading runs…</div>`
               : this._error
@@ -453,25 +480,6 @@ export class SlotLoadRunModal extends LitElement {
                             this._search = (event.target as HTMLInputElement).value;
                           }}
                         />
-                        <select
-                          class="slrm-select"
-                          @change=${(event: Event) => {
-                            this._projectFilter = (event.target as HTMLSelectElement).value;
-                          }}
-                        >
-                          <option value="" ?selected=${this._projectFilter === ''}>
-                            All projects
-                          </option>
-                          ${this._projects().map(
-                            (project) =>
-                              html`<option
-                                value=${project}
-                                ?selected=${this._projectFilter === project}
-                              >
-                                ${project}
-                              </option>`,
-                          )}
-                        </select>
                         <select
                           class="slrm-select"
                           @change=${(event: Event) => {

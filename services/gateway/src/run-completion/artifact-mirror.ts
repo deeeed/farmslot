@@ -27,6 +27,7 @@ import {
   slotFileExists,
   slotListDir,
   slotReadFile,
+  slotWriteFiles,
 } from '../core/slot-io.js';
 import {
   invalidateArtifactTextCache,
@@ -35,6 +36,58 @@ import {
 
 import { type EvidenceManifest, evidenceManifestArtifactPaths } from './evidence-manifest.js';
 import { readEvidenceManifest } from './publication-artifacts.js';
+
+// Push ONLY the executable recipe workflows (recipe.json + recipe-flows/) from
+// the gateway-owned mirror to a slot's worker task dir, so a run loaded onto
+// the slot (slot-side run loader / activate) can be replayed there. Evidence
+// (screenshots/videos) is intentionally NOT synced — only what execution needs,
+// so this stays lightweight (a handful of small JSON files). The slot-io layer
+// handles local and remote nodes transparently. Best-effort by nature: a run
+// with no mirrored recipe simply has nothing to push (existsSync guards), so
+// the recipe-replay gate then accurately reports it as unavailable; real IO
+// failures propagate to the caller rather than being swallowed.
+export async function pushRunRecipeToSlot(
+  run: Run,
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+): Promise<number> {
+  if (!run.taskFile) return 0;
+  const pv = await loadProjectVars(run.project).catch(() => null);
+  const taskRelDir = resolveTaskRelDir(
+    run.taskFile,
+    getOrchestratorTaskRoot(run.project, pv?.projectJson ?? null),
+  );
+  if (taskRelDir === null) return 0;
+  const taskDirName = pv
+    ? getProjectField(pv.projectJson, 'task_dir') || DEFAULT_TASK_DIR
+    : DEFAULT_TASK_DIR;
+  const localArtifactsDir = path.join(path.dirname(run.taskFile), 'artifacts');
+  const workerArtifactsDir = path.join(vars.remoteRepo, taskDirName, taskRelDir, 'artifacts');
+
+  // One batch write (base64) — slotWriteFiles creates parent dirs, so it works
+  // even when the slot has never run this task (no temp/tasks/.../artifacts/ yet).
+  const files: Array<{ path: string; content: string }> = [];
+  const localRecipe = path.join(localArtifactsDir, 'recipe.json');
+  if (existsSync(localRecipe)) {
+    files.push({ path: 'recipe.json', content: (await readFile(localRecipe)).toString('base64') });
+  }
+  const localFlowsDir = path.join(localArtifactsDir, 'recipe-flows');
+  if (existsSync(localFlowsDir)) {
+    for (const name of await readdir(localFlowsDir)) {
+      const full = path.join(localFlowsDir, name);
+      if (!(await lstat(full)).isFile()) continue;
+      files.push({
+        path: path.join('recipe-flows', name),
+        content: (await readFile(full)).toString('base64'),
+      });
+    }
+  }
+  if (files.length === 0) return 0;
+  await slotWriteFiles(vars, workerArtifactsDir, files);
+  console.log(
+    `[run-completion] synced recipe workflows (${files.length} file(s)) to ${vars.slotId} for run ${run.id.slice(0, 8)}`,
+  );
+  return files.length;
+}
 
 export function shouldClearLocalRecipeRunCache(
   workerPointerExists: boolean,

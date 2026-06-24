@@ -1503,9 +1503,9 @@ All checks passed.`;
         id: 'load-run-blocked-2',
         status: 'blocked',
         flowType: 'pr-complete',
-        project: 'example-browser',
-        ticketOrPr: 'example-org/example-extension#812',
-        branch: 'fix/ext-popup-flicker',
+        project: 'example-mobile',
+        ticketOrPr: 'example-org/example-mobile#812',
+        branch: 'fix/mobile-popup-flicker',
         summary: 'Resolve popup flicker after wallet unlock',
         metrics: { nudgeCount: 0, model: 'gpt-5.5', runner: 'codex' },
       }),
@@ -1532,7 +1532,7 @@ All checks passed.`;
         id: 'load-run-nobranch-5',
         status: 'cancelled',
         flowType: 'dev',
-        project: 'example-browser',
+        project: 'example-mobile',
         ticketOrPr: 'MANUAL-000007',
         branch: null,
         summary: 'No-branch run — Load disabled (nothing to check out)',
@@ -1541,10 +1541,11 @@ All checks passed.`;
     ];
     return html`
       <p class="section-label">
-        Load run modal — browse all runs and warm-switch this slot onto one
+        Load run modal — browse this project's runs and warm-switch this slot onto one
       </p>
       <slot-load-run-modal
         slot-id="macwork-mme-1"
+        .project=${'example-mobile'}
         .open=${true}
         .runsOverride=${runs}
         @close=${() => {

@@ -684,7 +684,11 @@ export class RunDetail extends RunDetailState {
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
       _activateOnSlot: (run) => activateRunOnSlot(run.id, run.slotId ?? ''),
       _switchSlotToRunBranch: (run) =>
-        switchSlotToRunBranch(run.id, run.slotId ?? '', run.branch ?? null),
+        switchSlotToRunBranch(run.id, run.slotId ?? '', run.branch ?? null).catch((err) => {
+          // Targets the run's own slot (compatible, recipe present) so failure
+          // is rare; surface it without an alert.
+          console.error('[run-detail] switch slot to run branch failed:', err);
+        }),
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _togglePinnedSlot: (slotId) => {
         togglePinnedSlot(slotId);

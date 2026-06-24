@@ -39,6 +39,7 @@ import {
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
+import { pushRunRecipeToSlot } from '../../run-completion/artifact-mirror.js';
 import { getRun } from '../../runs/store.js';
 
 import { runHealthCheck } from './check.js';
@@ -1073,6 +1074,13 @@ async function slotPrepareInner(
       throw new Error(
         `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: slot is busy or owned by another run (pass rebind to take over an idle slot).`,
       );
+    }
+    // Materialize the run's recipe workflows on this slot so a loaded run can be
+    // replayed here (local or remote). Only execution inputs are synced — no
+    // evidence — so it stays lightweight.
+    const boundRun = getRun(params.bindRunId);
+    if (boundRun) {
+      await pushRunRecipeToSlot(boundRun, vars);
     }
   }
 

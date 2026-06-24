@@ -875,6 +875,7 @@ export class SlotView extends SlotViewRecipePresenter {
       ></slot-history-modal>
       <slot-load-run-modal
         slot-id=${this.slotId}
+        .project=${this._slot?.project ?? ''}
         .open=${this._loadRunOpen}
         @close=${() => {
           this._loadRunOpen = false;

@@ -287,24 +287,21 @@ export async function switchSlotToRunBranch(
   rebind = false,
 ): Promise<void> {
   if (!slotId || !branch) {
-    console.warn(
-      `switchSlotToRunBranch: ignoring run ${runId.slice(0, 8)} — missing slot or branch`,
+    throw new Error(
+      `Cannot switch ${slotId || '(no slot)'}: run ${runId.slice(0, 8)} has no branch`,
     );
-    return;
   }
-  try {
-    await gateway.request(Methods.SLOT_PREPARE, {
-      slotId,
-      branch,
-      prepareProfile: 'attach',
-      // runId labels the tmux prepare window; bindRunId writes current_run_id
-      // after a successful prepare so resume / recipe-replay target this run.
-      bindRunId: runId,
-      runId,
-      rebind,
-    });
-    window.location.hash = `#slot/${slotId}`;
-  } catch (err) {
-    alert(`Switch ${slotId} to ${branch} failed: ${(err as Error).message}`);
-  }
+  // Throws on failure — callers surface it in-context (inline in the run loader,
+  // a guarded catch on the run-detail button) rather than a browser alert.
+  await gateway.request(Methods.SLOT_PREPARE, {
+    slotId,
+    branch,
+    prepareProfile: 'attach',
+    // runId labels the tmux prepare window; bindRunId writes current_run_id
+    // after a successful prepare so resume / recipe-replay target this run.
+    bindRunId: runId,
+    runId,
+    rebind,
+  });
+  window.location.hash = `#slot/${slotId}`;
 }
