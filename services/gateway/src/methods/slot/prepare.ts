@@ -1061,12 +1061,17 @@ async function slotPrepareInner(
   if (params.bindRunId) {
     const bound = await updateSlotStatusIf(
       params.slotId,
-      (slot) => !slot.current_run_id || slot.current_run_id === params.bindRunId,
+      // Never re-bind a slot with a live worker. Otherwise a free or self-owned
+      // slot always binds; a slot owned by a different (idle) run binds only
+      // when the operator explicitly requested a rebind (slot-side run loader).
+      (slot) =>
+        slot.agent !== 'working' &&
+        (params.rebind || !slot.current_run_id || slot.current_run_id === params.bindRunId),
       { current_run_id: params.bindRunId },
     );
     if (!bound) {
       throw new Error(
-        `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: slot is owned by another run.`,
+        `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: slot is busy or owned by another run (pass rebind to take over an idle slot).`,
       );
     }
   }

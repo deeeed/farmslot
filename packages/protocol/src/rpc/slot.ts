@@ -64,9 +64,17 @@ export interface SlotPrepareParams {
   /**
    * Operator-driven warm switch: when set, the slot's `current_run_id` is bound
    * to this run after a successful prepare, so resume / recipe-replay target it.
-   * Pure association — no pipeline re-drive, unlike run.activateOnSlot.
+   * Pure association — no pipeline re-drive, unlike run.activateOnSlot. By
+   * default the bind only applies to a free or self-owned slot; pass `rebind`
+   * to take over a slot currently bound to a different (non-working) run.
    */
   bindRunId?: string;
+  /**
+   * Allow `bindRunId` to take over a slot currently bound to a different run
+   * (operator picked this run from the slot-side loader). A slot with a live
+   * worker (`agent === 'working'`) is never re-bound, even with this set.
+   */
+  rebind?: boolean;
 }
 
 export interface SlotReleaseParams {

@@ -129,6 +129,15 @@ export function renderSlotViewHeader(
             >
               History
             </button>
+            <button
+              class="sv-run-ctrl"
+              @click=${() => {
+                view._loadRunOpen = true;
+              }}
+              title="Browse all runs and warm-switch this slot onto one"
+            >
+              Load run →
+            </button>
           `
         : nothing}
       ${view._prNumber && view._prRepo

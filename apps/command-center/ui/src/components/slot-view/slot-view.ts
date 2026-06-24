@@ -20,6 +20,7 @@ import '../resources/resource-panel.js';
 import '../config/slot-toggle.js';
 import '../slot-actions/slot-actions-panel.js';
 import './slot-history-modal.js';
+import './slot-load-run-modal.js';
 import '../runs/run-pipeline.js';
 import '../runs/step-inspector.js';
 import '../workspace/review-workspace.js';
@@ -872,6 +873,13 @@ export class SlotView extends SlotViewRecipePresenter {
           this._syncUrlState();
         }}
       ></slot-history-modal>
+      <slot-load-run-modal
+        slot-id=${this.slotId}
+        .open=${this._loadRunOpen}
+        @close=${() => {
+          this._loadRunOpen = false;
+        }}
+      ></slot-load-run-modal>
     `;
   }
 }

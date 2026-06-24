@@ -281,6 +281,10 @@ export async function switchSlotToRunBranch(
   runId: string,
   slotId: string,
   branch: string | null,
+  // `rebind` lets the slot-side run loader take over a slot currently bound to a
+  // different (idle) run. The run-detail button targets the run's own slot, so
+  // it leaves this false.
+  rebind = false,
 ): Promise<void> {
   if (!slotId || !branch) {
     console.warn(
@@ -297,6 +301,7 @@ export async function switchSlotToRunBranch(
       // after a successful prepare so resume / recipe-replay target this run.
       bindRunId: runId,
       runId,
+      rebind,
     });
     window.location.hash = `#slot/${slotId}`;
   } catch (err) {
