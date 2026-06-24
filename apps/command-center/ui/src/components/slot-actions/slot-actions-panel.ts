@@ -641,8 +641,8 @@ export class SlotActionsPanel extends LitElement {
                   </div>`
                 : nothing}
               <div class="sap-action-desc">
-                Checkout-only via the chosen profile — no merge-main, no reinstall. Dev server
-                stays warm and hot-reloads.
+                Checkout-only via the chosen profile — no merge-main, no reinstall. Dev server stays
+                warm and hot-reloads.
               </div>
             </div>
           `
