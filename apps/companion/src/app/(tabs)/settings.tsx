@@ -20,6 +20,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import voiceAsrTestClipAssetModule from '../../../assets/asr/voice-command-status.wav';
 import { AppEnvironmentCard } from '../../components/AppEnvironmentCard';
 import { AppUpdateStatusCard } from '../../components/AppUpdateStatusCard';
+import { AppVersionBanner } from '../../components/AppVersionBanner';
 import {
   microphonePermissionIsBlocked,
   microphonePermissionSetupState,
@@ -642,6 +643,8 @@ export default function SettingsScreen() {
         { paddingBottom: styles.content.padding + insets.bottom },
       ]}
     >
+      <AppVersionBanner />
+
       <Text style={styles.sectionTitle}>Gateway Connection</Text>
 
       <View style={styles.statusRow}>
