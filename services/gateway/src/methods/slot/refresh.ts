@@ -303,6 +303,9 @@ export async function slotRefresh(
       },
       {
         lifecycle: 'ready',
+        // Refresh just reset HEAD to the default branch — persist it so the
+        // cached slot.branch doesn't drift from the repo (state-on-write).
+        branch: defaultBranch,
         last_error_at: null,
         last_error_msg: null,
       },

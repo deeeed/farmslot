@@ -1093,6 +1093,13 @@ async function slotPrepareInner(
     }
   }
 
+  // Keep the cached slot.branch truthful: prepare just put HEAD on `branch`, so
+  // persist it. Otherwise the cache only refreshes on a full deep slot-check and
+  // drifts after a cheap warm switch (state-on-write).
+  if (branch) {
+    await updateSlotStatus(params.slotId, { branch });
+  }
+
   emit('slot.prepare.done', { slotId: params.slotId, prepared: true });
   return {
     prepared: true,
