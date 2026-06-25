@@ -1,7 +1,7 @@
 # Worker: Feature — {{TICKET_ID}}
 
 > **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` with status updates.
-> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (1-based). The final item can add `--status complete --outcome success`.
+> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. The final item can add `--status complete --outcome success`.
 
 ---
 

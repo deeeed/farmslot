@@ -62,7 +62,7 @@ interface WorkerSignalChecklistTiming {
 }
 
 interface WorkerSignalChecklistEvent {
-  index: number;
+  stepNumber: number;
   label: string;
   checkedAt: string;
 }
@@ -96,7 +96,7 @@ may include it when their instructions ask them to record checklist timing, but 
 missing field must never block completion.
 
 Farmslot-rendered tasks include a tiny `mark` helper beside `TASK.md`. Workers
-should run `{{TASK_DIR}}/mark N` after completing checklist item `N` (1-based).
+should run `{{TASK_DIR}}/mark N` after completing checklist item `N` (using the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`.
 For the terminal item, append status flags, for example:
 
 ```bash
@@ -119,12 +119,12 @@ Each event records the moment a checklist item changed from unchecked to checked
     "source": "CHECKLIST.md",
     "events": [
       {
-        "index": 0,
+        "stepNumber": 1,
         "label": "Run focused validation",
         "checkedAt": "2026-06-25T10:00:00Z"
       },
       {
-        "index": 1,
+        "stepNumber": 2,
         "label": "Capture before/after evidence",
         "checkedAt": "2026-06-25T10:04:30Z"
       }
@@ -134,11 +134,10 @@ Each event records the moment a checklist item changed from unchecked to checked
 }
 ```
 
-Consumers derive per-step duration from event order and timestamps. The `mark`
-helper accepts 1-based checklist numbers for worker ergonomics, then stores
-`index` as zero-based in the parsed checklist at the time the worker checked
-the item. `label` is copied so analytics still makes sense if the markdown
-later changes.
+Consumers derive per-step duration from event order and timestamps. `stepNumber`
+matches the worker-facing `mark N` command, so agents and humans do not need
+to translate between 1-based commands and zero-based indexes. `label` is copied
+so analytics still makes sense if the markdown later changes.
 
 Checklist timing must stay compact. If a run needs high-volume command/tool
 telemetry, write a separate append-only observability stream and aggregate it

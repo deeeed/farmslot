@@ -21,6 +21,7 @@ assert.match(readFileSync(task, 'utf8'), /- \[x\] First gate/);
 let parsed = JSON.parse(readFileSync(signal, 'utf8'));
 assert.equal(parsed.status, 'running');
 assert.equal(parsed.checklistTiming.events.length, 1);
+assert.equal(parsed.checklistTiming.events[0].stepNumber, 1);
 assert.equal(parsed.checklistTiming.events[0].label, 'First gate');
 
 result = spawnSync(
@@ -33,6 +34,7 @@ parsed = JSON.parse(readFileSync(signal, 'utf8'));
 assert.equal(parsed.status, 'complete');
 assert.equal(parsed.outcome, 'success');
 assert.equal(parsed.checklistTiming.events.length, 2);
+assert.equal(parsed.checklistTiming.events[1].stepNumber, 2);
 assert.equal(parsed.checklistTiming.events[1].label, 'Second gate validate');
 
 
@@ -40,3 +42,8 @@ result = spawnSync(process.execPath, [helper, task, signal, '1', '--status', 'co
   encoding: 'utf8',
 });
 assert.equal(result.status, 2);
+
+
+result = spawnSync(process.execPath, [helper, task, signal, '--help'], { encoding: 'utf8' });
+assert.equal(result.status, 0);
+assert.match(result.stdout, /Use the visible 1-based checklist step number/);

@@ -92,7 +92,7 @@ test('normalizeWorkerSignal preserves optional checklist timing metadata', () =>
       source: 'CHECKLIST.md',
       events: [
         {
-          index: 0,
+          stepNumber: 1,
           label: 'Run focused validation',
           checkedAt: '2026-06-25T10:00:00Z',
         },

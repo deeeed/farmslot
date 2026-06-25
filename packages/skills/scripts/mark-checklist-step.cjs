@@ -2,14 +2,39 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-function usage() {
-  console.error(
-    'usage: mark-checklist-step <TASK.md|CHECKLIST.md> <SIGNAL.json> <step-number> [--status running|complete|blocked|failed|done] [--outcome success|partial|failure] [--disposition fixed|blocked|failed|already_fixed|not_reproducible] [--reason text]',
+const usageLine =
+  'usage: mark <step-number> [--status running|complete|blocked|failed|done] [--outcome success|partial|failure] [--disposition fixed|blocked|failed|already_fixed|not_reproducible] [--reason text]';
+
+function printHelp() {
+  console.log(
+    [
+      usageLine,
+      '',
+      'Marks one TASK.md/CHECKLIST.md checkbox complete and records a compact checklistTiming event in SIGNAL.json.',
+      'Use the visible 1-based checklist step number: ./mark 1, ./mark 2, ...',
+      'Safe to rerun: an already-recorded step is not duplicated.',
+      'Final step example: ./mark 15 --status complete --outcome success',
+    ].join('\n'),
   );
+}
+
+function usage() {
+  console.error(usageLine);
+  console.error('run ./mark --help for details');
   process.exit(2);
 }
 
-const [taskPath, signalPath, stepRaw, ...rest] = process.argv.slice(2);
+const args = process.argv.slice(2);
+if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
+  printHelp();
+  process.exit(0);
+}
+
+const [taskPath, signalPath, stepRaw, ...rest] = args;
+if (stepRaw === '--help' || stepRaw === '-h') {
+  printHelp();
+  process.exit(0);
+}
 if (!taskPath || !signalPath || !stepRaw) usage();
 const stepNumber = Number(stepRaw);
 if (!Number.isInteger(stepNumber) || stepNumber < 1) usage();
@@ -80,7 +105,7 @@ for (let i = 0; i < lines.length; i += 1) {
   if (seen !== stepNumber) continue;
   const label = stripLabel(match[4]);
   if (match[2] === ' ') lines[i] = `${match[1]}x${match[3]}${match[4]}`;
-  target = { index: stepNumber - 1, label };
+  target = { stepNumber, label };
   break;
 }
 
@@ -99,8 +124,14 @@ const timing =
     ? signal.checklistTiming
     : { schemaVersion: 1, source: path.basename(taskPath), events: [] };
 const events = Array.isArray(timing.events) ? timing.events : [];
-if (!events.some((event) => event && event.index === target.index)) {
-  events.push({ index: target.index, label: target.label, checkedAt: now });
+if (
+  !events.some(
+    (event) =>
+      event &&
+      (event.stepNumber === target.stepNumber || event.index === target.stepNumber - 1),
+  )
+) {
+  events.push({ stepNumber: target.stepNumber, label: target.label, checkedAt: now });
 }
 
 const next = {
