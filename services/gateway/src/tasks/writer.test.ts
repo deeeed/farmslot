@@ -11,9 +11,9 @@ import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
 import {
   applyArtifactOnlyTaskPolicy,
   buildTaskFolderPrefix,
+  checklistMarkerHelperPath,
   buildTemplateProvenance,
   COMMENT_SUMMARY_MAX_ROWS,
-  CHECKLIST_MARKER_INPUT,
   type CommentRow,
   findTaskDirCollisions,
   formatPrTitleSuffix,
@@ -22,6 +22,7 @@ import {
   TEMPLATE_PROVENANCE_INPUT,
   writeTaskFile,
 } from './writer.js';
+import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 
 test('buildTaskFolderPrefix keeps production collisions ticket-scoped', () => {
   assert.equal(buildTaskFolderPrefix('PROJ-1234'), 'proj-1234-');
@@ -397,6 +398,14 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   assert.equal(provenance.templateName, 'dev-interactive.md');
   assert.equal(typeof provenance.contentHash, 'string');
   await access(path.join(path.dirname(taskA), CHECKLIST_MARKER_INPUT));
+});
+
+
+test('checklistMarkerHelperPath keeps remote helper shell-expandable', () => {
+  assert.equal(
+    checklistMarkerHelperPath('~/farmslot-node'),
+    '$HOME/farmslot-node/packages/skills/scripts/mark-checklist-step.cjs',
+  );
 });
 
 test('renderCommentSummary returns placeholder when no rows — worker still re-fetches', () => {

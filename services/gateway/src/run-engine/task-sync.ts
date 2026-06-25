@@ -13,6 +13,8 @@ import {
 } from '../live-recipe/context.js';
 import { getRun } from '../runs/store.js';
 
+import { copyPreparedTaskRootSidecars } from '../tasks/sidecars.js';
+
 import { loadProjectVarsOrNull } from './project-vars.js';
 
 export async function copyTaskFilesToSlot(runId: string): Promise<void> {
@@ -34,6 +36,13 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
     if (isLocal(vars.host, vars.machine)) {
       await mkdir(workerTaskAbs, { recursive: true });
       await copyFile(run.taskFile, path.join(workerTaskAbs, 'TASK.md'));
+      await copyPreparedTaskRootSidecars({
+        taskDir,
+        workerTaskAbs,
+        host: vars.host,
+        machine: vars.machine,
+        sshTarget: vars.sshTarget,
+      });
       for (const subdir of ['assets', 'inputs', 'artifacts']) {
         const localDir = path.join(taskDir, subdir);
         if (existsSync(localDir)) {
@@ -63,6 +72,13 @@ export async function copyTaskFilesToSlot(runId: string): Promise<void> {
           `scp TASK.md to ${sshTarget}:${workerTaskAbs} failed: ${scpRes.stderr.trim() || scpRes.stdout.trim() || `exit ${scpRes.exitCode}`}`,
         );
       }
+      await copyPreparedTaskRootSidecars({
+        taskDir,
+        workerTaskAbs,
+        host: vars.host,
+        machine: vars.machine,
+        sshTarget,
+      });
       for (const subdir of ['assets', 'inputs', 'artifacts']) {
         const localDir = path.join(taskDir, subdir);
         if (!existsSync(localDir)) continue;

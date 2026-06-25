@@ -36,7 +36,7 @@ export interface WorkerSignalChecklistTiming {
 }
 
 export interface WorkerSignalChecklistEvent {
-  /** Zero-based checklist item index in the parsed task/checklist at the time it was checked. */
+  /** Zero-based checklist item index; the mark helper accepts 1-based step numbers. */
   index: number;
   /** Human-readable checklist text, copied for resilience if the markdown later changes. */
   label: string;

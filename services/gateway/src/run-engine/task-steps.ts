@@ -27,12 +27,8 @@ import {
   selectRecipeStrategy,
 } from '../intelligence/engine.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
-import {
-  CHECKLIST_MARKER_INPUT,
-  TaskCollisionError,
-  TEMPLATE_PROVENANCE_INPUT,
-  writeTaskFile,
-} from '../tasks/writer.js';
+import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
+import { TaskCollisionError, TEMPLATE_PROVENANCE_INPUT, writeTaskFile } from '../tasks/writer.js';
 
 import { requiresCollisionPrecheck } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';

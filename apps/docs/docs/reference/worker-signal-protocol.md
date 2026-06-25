@@ -134,9 +134,11 @@ Each event records the moment a checklist item changed from unchecked to checked
 }
 ```
 
-Consumers derive per-step duration from event order and timestamps. The `index`
-is zero-based in the parsed checklist at the time the worker checked the item;
-`label` is copied so analytics still makes sense if the markdown later changes.
+Consumers derive per-step duration from event order and timestamps. The `mark`
+helper accepts 1-based checklist numbers for worker ergonomics, then stores
+`index` as zero-based in the parsed checklist at the time the worker checked
+the item. `label` is copied so analytics still makes sense if the markdown
+later changes.
 
 Checklist timing must stay compact. If a run needs high-volume command/tool
 telemetry, write a separate append-only observability stream and aggregate it

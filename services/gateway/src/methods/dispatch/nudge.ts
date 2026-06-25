@@ -35,6 +35,7 @@ import {
   runnerSupportsTmuxNudges,
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
+import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, watchContext, watchSlot } from '../../tasks/watcher.js';
 
 import { ensureWorkerRoleTarget, waitForRunnerProcessExit } from './execute.js';
@@ -267,6 +268,15 @@ export async function nudgeDispatch(
     await execLocal(
       `scp -q ${shellQuote(taskFilePath)} ${shellQuote(`${vars.sshTarget}:${workerTaskAbs}/TASK.md`)}`,
     );
+  }
+  for (const sidecar of await copyPreparedTaskRootSidecars({
+    taskDir,
+    workerTaskAbs,
+    host: vars.host,
+    machine: vars.machine,
+    sshTarget: vars.sshTarget,
+  })) {
+    step('copy', `${sidecar} copied`);
   }
   for (const subdir of ['assets', 'inputs', 'artifacts']) {
     const localDir = path.join(taskDir, subdir);

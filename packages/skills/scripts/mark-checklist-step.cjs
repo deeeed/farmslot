@@ -14,6 +14,16 @@ if (!taskPath || !signalPath || !stepRaw) usage();
 const stepNumber = Number(stepRaw);
 if (!Number.isInteger(stepNumber) || stepNumber < 1) usage();
 
+const allowedStatus = new Set(['running', 'complete', 'blocked', 'failed', 'done']);
+const allowedOutcome = new Set(['success', 'partial', 'failure']);
+const allowedDisposition = new Set([
+  'fixed',
+  'blocked',
+  'failed',
+  'already_fixed',
+  'not_reproducible',
+]);
+
 const opts = {};
 for (let i = 0; i < rest.length; i += 1) {
   const key = rest[i];
@@ -22,6 +32,10 @@ for (let i = 0; i < rest.length; i += 1) {
   opts[key.slice(2)] = value;
   i += 1;
 }
+
+if (opts.status && !allowedStatus.has(opts.status)) usage();
+if (opts.outcome && !allowedOutcome.has(opts.outcome)) usage();
+if (opts.disposition && !allowedDisposition.has(opts.disposition)) usage();
 
 function atomicWrite(file, content, mode) {
   const dir = path.dirname(file);

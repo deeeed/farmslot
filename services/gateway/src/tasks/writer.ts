@@ -42,6 +42,7 @@ import {
   assertArtifactOnlyTaskGuard,
   evaluateArtifactOnlyTaskGuard,
 } from './artifact-only-guard.js';
+import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 
 // Remote deployment dir — kept in sync with REMOTE_AGENT_DIR in core/hooks.ts
@@ -51,7 +52,6 @@ const localHostname = os.hostname().replace(/\.local$/, '');
 export { FLOW_TO_TEMPLATE } from './worker-template-options.js';
 
 export const TEMPLATE_PROVENANCE_INPUT = 'inputs/template-provenance.json';
-export const CHECKLIST_MARKER_INPUT = 'mark';
 
 /** Error thrown when a task dir collision is detected */
 export class TaskCollisionError extends Error {
@@ -913,9 +913,16 @@ export async function writeTaskFile(
   return taskFilePath;
 }
 
+export function checklistMarkerHelperPath(farmslotDirForSlot: string): string {
+  return `${farmslotDirForSlot}/packages/skills/scripts/mark-checklist-step.cjs`.replace(
+    /^~(?=\/)/,
+    '$HOME',
+  );
+}
+
 async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: string): Promise<void> {
   const markerPath = path.join(taskAbsDir, CHECKLIST_MARKER_INPUT);
-  const helperPath = `${farmslotDirForSlot}/packages/skills/scripts/mark-checklist-step.cjs`;
+  const helperPath = checklistMarkerHelperPath(farmslotDirForSlot);
   await writeFile(
     markerPath,
     [
