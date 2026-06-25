@@ -92,6 +92,47 @@ test('runReplayStep does not open a recovery attempt before replay validation pa
   assert.equal(getRun(badTicketRun.id)?.recoveryAttempts?.length ?? 0, 0);
 });
 
+test('runReplayStep allows chained PR-bound replays when prNumber is already linked', async (t) => {
+  const run = createRun({
+    flowType: 'merge-main',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-3398',
+    prNumber: 3398,
+  });
+  const doneBeforeCiWatch = new Set([
+    'write-task',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+    'finalize',
+  ]);
+  updateRun(run.id, {
+    status: 'cancelled',
+    completedAt: new Date().toISOString(),
+    error: 'Cancelled by user',
+    steps: run.steps.map((step) =>
+      step.name === 'ci-watch'
+        ? { ...step, status: 'skipped', completedAt: new Date().toISOString() }
+        : doneBeforeCiWatch.has(step.name)
+          ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+  );
+  assert.equal(getRun(run.id)?.status, 'ci-watching');
+});
+
 test('runReplayStep restores taskFile from completed write-task output for downstream replays', async (t) => {
   const taskFile = '/tmp/farmslot-task/TASK.md';
   const run = createRun({

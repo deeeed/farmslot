@@ -4,8 +4,10 @@ import {
   DEFAULT_TASK_DIR,
   Events,
   FLOW_STEPS,
+  type FlowType,
   isInteractiveDevRun,
   PipelineSteps as PS,
+  PR_BOUND_FLOW_TYPES,
   type RunReplayStepParams,
   type RunReplayStepResult,
   type RunStatus,
@@ -178,9 +180,14 @@ export async function runReplayStep(
   // shape, retrying will hit the same error every time. Fail loudly at the entry so
   // the user understands the run is unrecoverable and needs to be recreated with a
   // correct reference (rather than seeing the same deep "write-task" error repeatedly).
+  const chainedPrReplay =
+    PR_BOUND_FLOW_TYPES.has(existing.flowType as FlowType) &&
+    existing.prNumber != null &&
+    existing.prNumber > 0;
   if (
     !isInternalArtifactOnlyEvalTicket(existing) &&
-    !(isInteractiveDevRun(existing) && isLocalDevRef(existing.ticketOrPr))
+    !(isInteractiveDevRun(existing) && isLocalDevRef(existing.ticketOrPr)) &&
+    !chainedPrReplay
   ) {
     try {
       validateTicketRef(existing.ticketOrPr, existing.flowType);
