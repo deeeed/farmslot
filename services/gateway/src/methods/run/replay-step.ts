@@ -177,14 +177,26 @@ export async function runReplayStep(
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
   const triggeredBy = params.triggeredBy ?? 'operator';
 
+  const flowSteps = FLOW_STEPS[existing.flowType];
+  const writeTaskIdx = flowSteps ? flowSteps.indexOf(PS.WRITE_TASK) : -1;
+  const replayTargetIdx = flowSteps
+    ? flowSteps.indexOf(params.stepName as (typeof flowSteps)[number])
+    : -1;
+  const replayWouldRegenerateTask =
+    writeTaskIdx >= 0 && replayTargetIdx >= 0 && replayTargetIdx <= writeTaskIdx;
+
   // Pre-flight validation: if the stored ticketOrPr doesn't match the flow's expected
   // shape, retrying will hit the same error every time. Fail loudly at the entry so
   // the user understands the run is unrecoverable and needs to be recreated with a
   // correct reference (rather than seeing the same deep "write-task" error repeatedly).
   // Chained follow-ups (merge-main, pr-complete) keep the Jira key in ticketOrPr
   // while prNumber holds the linked PR — same split fetchPRData uses at runtime.
+  // Only skip validation for post-write-task replays: write-task still derives PR vars
+  // from ticketOrPr and would mis-hydrate tasks if we bypassed on earlier steps.
   const chainedPrReplay =
-    PR_BOUND_FLOW_TYPES.has(existing.flowType as FlowType) && hasValidPrNumber(existing);
+    PR_BOUND_FLOW_TYPES.has(existing.flowType as FlowType) &&
+    hasValidPrNumber(existing) &&
+    !replayWouldRegenerateTask;
   if (
     !isInternalArtifactOnlyEvalTicket(existing) &&
     !(isInteractiveDevRun(existing) && isLocalDevRef(existing.ticketOrPr)) &&
@@ -200,11 +212,9 @@ export async function runReplayStep(
     }
   }
 
-  const flowSteps = FLOW_STEPS[existing.flowType];
   let replayStepName = params.stepName;
-  let targetIdx = flowSteps ? flowSteps.indexOf(params.stepName as (typeof flowSteps)[number]) : -1;
+  let targetIdx = replayTargetIdx;
   const findSlotIdx = flowSteps ? flowSteps.indexOf(PS.FIND_SLOT) : -1;
-  const writeTaskIdx = flowSteps ? flowSteps.indexOf(PS.WRITE_TASK) : -1;
   const prepareIdx = flowSteps ? flowSteps.indexOf(PS.PREPARE) : -1;
   const monitorIdx = flowSteps ? flowSteps.indexOf(PS.MONITOR) : -1;
   const selfReviewIdx = flowSteps ? flowSteps.indexOf(PS.SELF_REVIEW) : -1;

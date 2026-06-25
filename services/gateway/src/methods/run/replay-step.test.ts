@@ -111,6 +111,27 @@ test('runReplayStep still rejects PR-bound replays without a linked prNumber', a
   );
 });
 
+test('runReplayStep still rejects write-task replay for chained PR-bound runs with Jira ticketOrPr', async (t) => {
+  const run = createRun({
+    flowType: 'merge-main',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-3398',
+    prNumber: 3398,
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runReplayStep({ runId: run.id, stepName: 'write-task', triggeredBy: 'operator' }, () => {}),
+    /Cannot replay run:/,
+  );
+});
+
 test('runReplayStep allows chained PR-bound replays when prNumber is already linked', async (t) => {
   const run = createRun({
     flowType: 'merge-main',
