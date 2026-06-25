@@ -1,6 +1,6 @@
 import { PipelineSteps, type Run } from '@farmslot/protocol';
 
-import { killSlotAgents } from '../methods/slot.js';
+import { killSlotAgents } from '../methods/slot/release.js';
 import { listRuns } from '../runs/store.js';
 
 import { requiresPublicationApproval } from './publication-policy.js';
