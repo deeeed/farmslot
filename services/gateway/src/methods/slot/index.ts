@@ -23,5 +23,6 @@ export {
   buildKillRoleWindowCommand,
   killAgentInSession,
   killAllAgentWindows,
+  killSlotAgents,
   slotRelease,
 } from './release.js';

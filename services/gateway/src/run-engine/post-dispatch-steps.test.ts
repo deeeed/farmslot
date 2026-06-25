@@ -45,7 +45,7 @@ test('complete-step retrospective gating defers only CI-watch flows', () => {
 
 
 
-test('human-gate can approve a prepared local-first package after the slot was released', async (t) => {
+test('human-gate can approve a prepared local-first package when slot was detached (replay)', async (t) => {
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',

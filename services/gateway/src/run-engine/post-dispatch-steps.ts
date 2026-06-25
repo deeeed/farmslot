@@ -537,9 +537,10 @@ export async function executeHumanGateStep(
     return { inputs, outputs: { skipped: true, reason: 'disabled' } };
   }
 
-  // Update slot lifecycle so UI shows the slot is waiting for review
+  // Update slot lifecycle so UI shows the slot is waiting for review while the
+  // worker runner stays attachable for operator Q&A.
   if (current.slotId) {
-    await markSlotBusy(current.slotId, 'review-gate');
+    await markSlotBusy(current.slotId, 'review-gate', 'working');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
   }
 
@@ -648,9 +649,9 @@ export async function executeHumanGateStep(
 
   const waitDurationMs = Date.now() - gateStart;
 
-  // Restore slot lifecycle after gate resolution
+  // Restore slot lifecycle after gate resolution; worker stays alive until finalize.
   if (current.slotId) {
-    await markSlotBusy(current.slotId, 'working');
+    await markSlotBusy(current.slotId, 'working', 'working');
     broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
   }
 
@@ -700,9 +701,11 @@ export async function executeCompleteStep(
       diffStat,
       requireArtifactMirror: true,
     });
-    const noopEmit = () => {};
-    await slotRelease({ slotId: current.slotId, keepWork: true, detachRuns: false }, noopEmit);
-    const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
+    // Hold the slot and keep the worker tmux session alive through HUMAN_GATE so
+    // operators can attach and ask why/how questions before publication.
+    await markSlotBusy(current.slotId, 'review-gate', 'working');
+    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    const cliCommand = `farmslot slot check ${current.slotId}`;
     return {
       inputs,
       outputs: {
@@ -713,7 +716,7 @@ export async function executeCompleteStep(
         prTitleUpdated: false,
         prMarkedReady: false,
         retrospectiveCreated: false,
-        slotDisposition: 'released',
+        slotDisposition: 'gate-held',
         artifacts: prepared.completion.artifacts,
         cliCommand,
         diffStat,

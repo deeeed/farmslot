@@ -85,6 +85,11 @@ export interface SlotReleaseParams {
   forceReset?: boolean;
   killTmux?: boolean;
   /**
+   * Skip killing tmux role windows and runner processes. Used when the run-engine
+   * holds the slot through a human gate and defers agent teardown to finalize.
+   */
+  preserveAgents?: boolean;
+  /**
    * Detach active run ownership for explicit operator release. Internal run-engine
    * warm releases keep this false so finalize/CI steps can still read the slot.
    */
