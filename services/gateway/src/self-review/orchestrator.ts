@@ -24,11 +24,19 @@ import {
   resolveAgentTarget,
   upsertAgentContext,
 } from '../agents/contexts.js';
-import { loadProjectVars, loadSlotVars } from '../core/config.js';
+import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  respawnTmuxWindowWithCommand,
+  shellQuote,
+  TMUX_WINDOW_RESPAWN_SETTLE_MS,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import { buildLaunchCommand } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+} from '../runners/launch-command.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
@@ -831,15 +839,7 @@ async function sendFeedbackToWorker(
     );
   }
 
-  // Resolve runtimeDir
-  let runtimeDir = '.agent';
-  try {
-    const pv = await loadProjectVars(project);
-    runtimeDir = pv.runtimeDir || '.agent';
-  } catch (err) {
-    // Recoverable: runtimeDir defaults to '.agent' above.
-    console.warn(`[self-review] runtime dir fallback for ${project}: ${(err as Error).message}`);
-  }
+  const runtimeDir = await resolveProjectRuntimeDir(project);
 
   const replacements: Record<string, string> = {
     TASK_DIR: taskDir,
@@ -865,8 +865,16 @@ async function sendFeedbackToWorker(
   // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: `${taskDir}/SELF-REVIEW-FIX.md` });
   const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
-  const workerTarget = primaryTarget.target;
   const session = primaryTarget.session;
+  const roleWindowName =
+    getRun(runId)?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run?.flowType))
+      ?.target?.window ?? null;
+  const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+    vars,
+    session,
+    primaryTarget.target,
+    roleWindowName,
+  );
   // Derive the window name from the primary worker's target so resolveAgentTarget
   // can route back to the correct pane if the stored context is used.
   const workerWindowSep = workerTarget.indexOf(':');
@@ -908,28 +916,28 @@ async function relaunchWorkerForFix(
   runId: string,
 ): Promise<boolean> {
   const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
+  const parentRun = getRun(runId);
+  const roleWindowName =
+    parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
+      ?.target?.window ?? null;
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
     vars,
     resolved.session,
     resolved.target,
+    roleWindowName,
   );
   const prompt = 'Continue working on the current TASK.md and self-review fix feedback.';
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
-  const parentSafetyTier = getRun(runId)?.safetyTier;
+  const parentSafetyTier = parentRun?.safetyTier;
+  const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
-    effort: getRun(runId)?.effort,
+    effort: parentRun?.effort,
     safetyTier: parentSafetyTier,
+    runtimeDir,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
-  const sendResult = await execOnSlot(
-    vars,
-    tmuxSendTextCommand(workerTarget, launchCmd, { enter: true }),
-  );
-  if (sendResult.exitCode !== 0) {
-    throw new Error(
-      `Failed to relaunch worker in ${workerTarget}: ${sendResult.stderr || sendResult.stdout || `exit ${sendResult.exitCode}`}`,
-    );
-  }
+  await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd);
+  await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
   const run = getRun(runId);
   const workerRole = resolved.role ?? primaryRoleForFlow(run?.flowType);
   const windowSeparator = workerTarget.indexOf(':');
@@ -954,7 +962,7 @@ async function relaunchWorkerForFix(
     return true;
   }
 
-  const readyTimeout = 60_000;
+  const readyTimeout = RUNNER_LAUNCH_READY_TIMEOUT_MS;
   const readyStart = Date.now();
   while (Date.now() - readyStart < readyTimeout) {
     await new Promise((r) => setTimeout(r, 2000));

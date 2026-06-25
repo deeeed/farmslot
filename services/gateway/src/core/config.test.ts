@@ -9,6 +9,7 @@ import {
   isHttpFetchForbiddenPort,
   isMockModeProject,
   loadProjectVars,
+  resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
   resolveTaskRelDir,
   validatePrepareConfig,
@@ -335,4 +336,13 @@ test('loadProjectVars validates the prepare block', async (t) => {
     }),
   );
   await assert.rejects(() => loadProjectVars(project), /declares requires but no fallback profile/);
+});
+
+test('resolveProjectRuntimeDir reads paths.runtime_dir from project.json', async () => {
+  assert.equal(
+    await resolveProjectRuntimeDir('metamask-mobile-farm'),
+    'temp/recipe/runtime',
+  );
+  assert.equal(await resolveProjectRuntimeDir(null), '.agent');
+  assert.equal(await resolveProjectRuntimeDir('missing-project-xyz'), '.agent');
 });

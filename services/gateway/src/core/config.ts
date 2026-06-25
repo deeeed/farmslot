@@ -466,6 +466,17 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   return value;
 }
 
+/** Project runtime dir for runner observability and hook installs (defaults to `.agent`). */
+export async function resolveProjectRuntimeDir(project?: string | null): Promise<string> {
+  if (!project?.trim()) return '.agent';
+  try {
+    const pv = await loadProjectVars(project);
+    return pv.runtimeDir || '.agent';
+  } catch {
+    return '.agent';
+  }
+}
+
 export function validatePublicationReviewConfig(
   projectJson: RawProjectJson,
   projectConfig: string,

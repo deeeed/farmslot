@@ -43,6 +43,7 @@ import {
 import {
   assertRunnerLaunchPrerequisites,
   buildLaunchCommand,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../../runners/launch-command.js';
 import {
   normalizeRunner,
@@ -1009,6 +1010,7 @@ export async function dispatchExecute(
         'TASK.md',
         'dispatch',
         {
+          readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
           blockerSnapshotPath: `${workerTaskDir}/artifacts/runner-blockers/dispatch-launch.txt`,
           signalPath: `${workerTaskDir}/SIGNAL.json`,
         },

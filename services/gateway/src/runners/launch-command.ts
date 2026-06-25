@@ -18,6 +18,13 @@ import {
 
 const CODEX_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
 
+/**
+ * How long post-launch prompt delivery waits for an interactive runner TUI to
+ * reach a stable idle composer. Claude launches also run observability install
+ * first, so cold starts routinely exceed the legacy 30–60s window.
+ */
+export const RUNNER_LAUNCH_READY_TIMEOUT_MS = 120_000;
+
 export function buildCursorAgentLaunch(options: {
   binary: string;
   model?: string | null;

@@ -13,16 +13,20 @@ import {
 } from '@farmslot/protocol';
 
 import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.js';
-import { loadSlotVars } from '../core/config.js';
+import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
   resolveTmuxSession,
+  respawnTmuxWindowWithCommand,
   shellQuote,
-  tmuxSendTextCommand,
+  TMUX_WINDOW_RESPAWN_SETTLE_MS,
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import { buildLaunchCommand } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+} from '../runners/launch-command.js';
 import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
@@ -171,23 +175,20 @@ export async function runReviewAgent(
 
     // 4. Launch review agent in the review window. Inherit the run's safety
     // tier (ADR-023) so the review agent runs with the same posture as the worker.
-    const parentSafetyTier = getRun(_runId)?.safetyTier;
+    const parentRun = getRun(_runId);
+    const parentSafetyTier = parentRun?.safetyTier;
+    const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
     let launchCmd = buildLaunchCommand(vars, runner, model, taskPrompt, {
       taskFile: taskMdPath,
-      effort: getRun(_runId)?.effort,
+      effort: parentRun?.effort,
       safetyTier: parentSafetyTier,
+      runtimeDir,
     });
     launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
-    debugSelfReviewLog(`[self-review] launching (${runner}): ${launchCmd}`);
-    const launchResult = await execOnSlot(
-      vars,
-      tmuxSendTextCommand(`${session}:${REVIEW_WINDOW}`, launchCmd, { enter: true }),
-    );
-    if (launchResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to launch self-review worker in ${session}:${REVIEW_WINDOW}: ${launchResult.stderr || launchResult.stdout || `exit ${launchResult.exitCode}`}`,
-      );
-    }
+    const reviewTarget = `${session}:${REVIEW_WINDOW}`;
+    debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
+    await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd);
+    await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
     sessionMeta = await bestEffortCaptureRunnerSessionMetadata(
       vars,
       runner,
@@ -207,13 +208,13 @@ export async function runReviewAgent(
     if (runnerNeedsPostLaunchPrompt(runner)) {
       await sendRunnerPostLaunchPrompt(
         vars,
-        `${session}:${REVIEW_WINDOW}`,
+        reviewTarget,
         runner,
         taskPrompt,
         'SELF-REVIEW.md',
         'self-review',
         {
-          readyTimeoutMs: 60_000,
+          readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
           maxAttempts: 5,
           blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
           signalPath: `${taskDir}/SELF-REVIEW-SIGNAL.json`,

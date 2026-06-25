@@ -8,6 +8,7 @@ import {
   getOrchestratorTaskRoot,
   loadProjectVars,
   loadSlotVars,
+  resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
@@ -60,12 +61,10 @@ export async function expandSelfReviewTemplate(
   }
 
   // Resolve runtimeDir and mobile reference repo path from project vars
-  let runtimeDir = '.agent';
+  const runtimeDir = await resolveProjectRuntimeDir(project);
   let mobileRepo = '';
   try {
     const pv = await loadProjectVars(project);
-    runtimeDir = pv.runtimeDir || '.agent';
-
     const parentDir = path.dirname(vars.remoteRepo);
     const refName = pv.projectJson.reference_repos?.mobile?.local_name;
     const candidates = refName

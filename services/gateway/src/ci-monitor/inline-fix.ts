@@ -16,13 +16,17 @@ import {
   farmslotRoot,
   loadProjectVars,
   loadSlotVars,
+  resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import { buildLaunchCommand } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+} from '../runners/launch-command.js';
 import {
   normalizeRunner,
   resolvePrimaryWorkerTarget,
@@ -130,9 +134,11 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
 
   const prompt = 'Continue working on the current TASK.md and CI follow-up fixes.';
   // Inherit parent run's safety tier (ADR-023) so CI-watch relaunch keeps the posture.
+  const runtimeDir = await resolveProjectRuntimeDir(run.project);
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
     effort: run.effort,
     safetyTier: run.safetyTier,
+    runtimeDir,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 
@@ -142,7 +148,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     return true;
   }
 
-  const readyTimeout = 60_000;
+  const readyTimeout = RUNNER_LAUNCH_READY_TIMEOUT_MS;
   const readyStart = Date.now();
   while (Date.now() - readyStart < readyTimeout) {
     await new Promise((r) => setTimeout(r, 2000));
