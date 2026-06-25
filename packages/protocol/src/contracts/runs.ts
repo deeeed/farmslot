@@ -398,6 +398,21 @@ export interface ReadyGatePayload {
     body?: string;
     selectedEvidenceKeys?: string[];
   };
+  /**
+   * Audit trail for the human evidence-refresh publish override
+   * (`approve-publish-evidence-refresh`). Recorded when an operator carries a
+   * stale-by-evidence-drift pass verdict forward onto the current package
+   * without a re-review. Absent on every other approval path.
+   */
+  evidenceRefreshOverride?: EvidenceRefreshOverrideRecord;
+}
+
+export interface EvidenceRefreshOverrideRecord {
+  at: string;
+  operator: string | null;
+  restampedReviewIds: string[];
+  oldReviewSubjectHashes: string[];
+  newReviewSubjectHash: string;
 }
 
 export interface NoChangeGatePayload {

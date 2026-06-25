@@ -25,6 +25,7 @@ import { getRun, updateRun } from '../runs/store.js';
 
 import { latestResolvedHumanGateDecision } from './decision-replay.js';
 import {
+  buildEvidenceRefreshAction,
   countStalePublicationReviews,
   reviewFinalSnapshotMatchesPreparedPackage,
   stampPublishGateReviewStatusForPackage,
@@ -213,10 +214,18 @@ export async function refreshPublishPackage(params: {
       : 0;
   const reviewSatisfied =
     independentReviewPolicySatisfied(reviewDepth, independentReviews) && staleReviewCount === 0;
+  // Offer the human evidence-refresh override only when the refresh regenerated
+  // evidence digests but the reviewed HEAD is unchanged — never on code drift.
+  const evidenceRefreshAction = buildEvidenceRefreshAction(
+    independentReviews,
+    prPackage,
+    reviewDepth,
+  );
   const actions: DecisionAction[] = [
     ...(reviewSatisfied
       ? [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }]
       : []),
+    ...(evidenceRefreshAction ? [evidenceRefreshAction] : []),
     { id: 'hold', label: 'Hold', style: 'secondary' },
     { id: 'request-extra-review', label: 'Request Extra Review', style: 'secondary' },
     { id: 'request-cross-runner-review', label: 'Request External Review', style: 'secondary' },

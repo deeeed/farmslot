@@ -1,4 +1,5 @@
 import type {
+  DecisionAction,
   EvidenceManifestEntry,
   IndependentReviewAttempt,
   IndependentReviewStatus,
@@ -22,6 +23,30 @@ import type { SelfReviewResult } from '../self-review/orchestrator.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { publicationReviewPolicyForRun } from './publication-policy.js';
+
+/**
+ * Human override action surfaced on the publish gate when staleness is caused
+ * purely by evidence/subject drift while the reviewed HEAD still matches the
+ * prepared package. Carries the prior pass verdict forward instead of forcing a
+ * needless re-review. Never offered when the reviewed code actually changed.
+ */
+export const APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION = 'approve-publish-evidence-refresh';
+
+/**
+ * Action ids that approve a local-first publication at the human ready/publish
+ * gate. Shared so the engine loop exit, finalize guard, decision replay, and the
+ * resolve freshness check all recognize the same set rather than scattering
+ * string literals that drift apart.
+ */
+export const PUBLISH_APPROVAL_ACTIONS: ReadonlySet<string> = new Set([
+  'approve-publish',
+  APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  'ready',
+]);
+
+export function isPublishApprovalAction(actionId: string | null | undefined): boolean {
+  return PUBLISH_APPROVAL_ACTIONS.has(actionId ?? '');
+}
 
 export function isOwnPrApprovalError(err: unknown): boolean {
   const maybeRecord = err as { message?: unknown; stdout?: unknown; stderr?: unknown };
@@ -303,6 +328,37 @@ export function reviewFinalSnapshotMatchesPreparedPackage(
   return Boolean(preparedPackage.headSha && snapshot.headSha === preparedPackage.headSha);
 }
 
+/**
+ * Per-review staleness diagnosis against the prepared package's review subject.
+ * `headDrift` means the review certified a different (or missing) HEAD SHA than
+ * the prepared package — a real code change that mandates re-review.
+ * `subjectDrift` means the reviewed subject hash no longer matches — typically
+ * caused by an evidence/package refresh that regenerated artifact digests even
+ * though the reviewed code (HEAD) is unchanged. The two reasons are kept
+ * separate so the human evidence-refresh override can target subject-only drift.
+ */
+interface PublicationReviewStaleness {
+  stale: boolean;
+  headDrift: boolean;
+  subjectDrift: boolean;
+}
+
+function diagnosePublicationReviewStaleness(
+  review: IndependentReviewStatus,
+  packageReviewSubjectHash: string,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha'>,
+): PublicationReviewStaleness {
+  const snapshot = review.reviewSnapshot;
+  const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
+  const reviewedSubjectHash = review.reviewedReviewSubjectHash ?? null;
+  const subjectDrift = reviewedSubjectHash !== packageReviewSubjectHash;
+  const headDrift =
+    !reviewedHeadSha ||
+    reviewedHeadSha !== preparedPackage.headSha ||
+    (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable'));
+  return { stale: headDrift || subjectDrift, headDrift, subjectDrift };
+}
+
 export function countStalePublicationReviews(
   independentReviews: IndependentReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
@@ -327,18 +383,163 @@ export function countStalePublicationReviews(
       reviewCertifiesApprovedHeadAfterFix(review, preparedPackage) &&
       (!options?.requireCrossRunnerCertification || review.crossRunner),
   );
-  return independentReviews.filter((review) => {
-    const snapshot = review.reviewSnapshot;
-    const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
-    const reviewedSubjectHash = review.reviewedReviewSubjectHash ?? null;
-    const subjectDrift = reviewedSubjectHash !== packageReviewSubjectHash;
-    const stale =
-      !reviewedHeadSha ||
-      reviewedHeadSha !== preparedPackage.headSha ||
-      subjectDrift ||
-      (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable'));
-    return stale && !certifiedByFreshFixLoop;
-  }).length;
+  return independentReviews.filter(
+    (review) =>
+      diagnosePublicationReviewStaleness(review, packageReviewSubjectHash, preparedPackage).stale &&
+      !certifiedByFreshFixLoop,
+  ).length;
+}
+
+interface StaleApprovalClassification {
+  /** Stale approving reviews caused purely by subject/evidence drift (HEAD unchanged). */
+  evidenceOnly: IndependentReviewStatus[];
+  /** A stale approving review certified a different/missing HEAD — a real code change. */
+  hasHeadDriftedApproval: boolean;
+}
+
+/**
+ * Single source of truth for "which stale approving reviews are evidence-only".
+ * Partitions stale approving reviews (verdict pass, no unresolved, cross-runner
+ * satisfied) into those caused purely by subject/evidence drift on a still-
+ * matching HEAD and those that are HEAD-drifted (real code change). Returns null
+ * when the package has no review subject hash to compare against. Both the
+ * override-availability check and the restamp consume this so their eligibility
+ * criteria can never drift apart, and each review is diagnosed exactly once.
+ */
+function classifyStaleApprovingReviews(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  options?: { requireCrossRunnerCertification?: boolean },
+): StaleApprovalClassification | null {
+  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
+  if (!packageReviewSubjectHash) return null;
+  const evidenceOnly: IndependentReviewStatus[] = [];
+  let hasHeadDriftedApproval = false;
+  for (const review of independentReviews) {
+    if (review.verdict !== 'pass' || review.unresolvedCount !== 0) continue;
+    if (options?.requireCrossRunnerCertification && !review.crossRunner) continue;
+    const diagnosis = diagnosePublicationReviewStaleness(
+      review,
+      packageReviewSubjectHash,
+      preparedPackage,
+    );
+    if (!diagnosis.stale) continue;
+    if (diagnosis.subjectDrift && !diagnosis.headDrift) evidenceOnly.push(review);
+    else hasHeadDriftedApproval = true;
+  }
+  return { evidenceOnly, hasHeadDriftedApproval };
+}
+
+/**
+ * True when the publish gate is blocked purely by evidence/subject drift on the
+ * prepared package while the reviewed HEAD still matches — i.e. a package
+ * refresh regenerated evidence digests but the reviewed code is unchanged. In
+ * that case the operator may use the `approve-publish-evidence-refresh`
+ * override to carry the prior pass verdict forward without a needless re-review.
+ *
+ * Returns false (override unavailable) when any stale approving review is stale
+ * due to HEAD drift (real code change) or when no stale approving review exists.
+ */
+export function staleReviewsAreEvidenceOnly(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  options?: { requireCrossRunnerCertification?: boolean },
+): boolean {
+  const classification = classifyStaleApprovingReviews(
+    independentReviews,
+    preparedPackage,
+    options,
+  );
+  return (
+    !!classification &&
+    classification.evidenceOnly.length > 0 &&
+    !classification.hasHeadDriftedApproval
+  );
+}
+
+/**
+ * Throw the standard error when the human evidence-refresh override is not
+ * available (staleness is not evidence-only — reviewed code changed). Shared by
+ * the ready-gate resolve path and the run.resolveDecision freshness guard so
+ * both reject a stale-code override with identical semantics.
+ */
+export function assertEvidenceRefreshOverrideAvailable(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  reviewDepth: ReviewDepthPolicy,
+): void {
+  if (
+    !staleReviewsAreEvidenceOnly(independentReviews, preparedPackage, {
+      requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
+    })
+  ) {
+    throw new Error(
+      'Evidence-refresh override unavailable: reviewed code changed; re-review before publishing',
+    );
+  }
+}
+
+/**
+ * The `approve-publish-evidence-refresh` gate action when the override is
+ * available for the prepared package, otherwise null. Shared by the ready-gate
+ * and package-refresh action builders so the precondition and button label stay
+ * defined in one place.
+ */
+export function buildEvidenceRefreshAction(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  reviewDepth: ReviewDepthPolicy,
+): DecisionAction | null {
+  if (
+    !staleReviewsAreEvidenceOnly(independentReviews, preparedPackage, {
+      requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
+    })
+  ) {
+    return null;
+  }
+  return {
+    id: APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+    label: 'Publish Anyway (code unchanged)',
+    style: 'primary',
+  };
+}
+
+/**
+ * Carry the prior pass verdict forward when the operator uses the human
+ * evidence-refresh override: restamp every evidence-only stale approving review
+ * onto the package's current subject/HEAD so the standard publication-review
+ * policy reads them as fresh. Eligibility comes from the shared
+ * `classifyStaleApprovingReviews`; stamping reuses
+ * `stampPublishGateReviewStatusForPackage` (identical to the automatic refresh
+ * path), gated behind the explicit human override.
+ */
+export function restampStaleApprovingReviewsForEvidenceRefresh(
+  independentReviews: IndependentReviewStatus[],
+  approvedPackage: ReadyGatePrPackage,
+  options?: { requireCrossRunnerCertification?: boolean },
+): {
+  reviews: IndependentReviewStatus[];
+  restampedIds: string[];
+  oldReviewSubjectHashes: string[];
+} {
+  const restampedIds: string[] = [];
+  const oldReviewSubjectHashes: string[] = [];
+  const classification = classifyStaleApprovingReviews(
+    independentReviews,
+    approvedPackage,
+    options,
+  );
+  if (!classification) {
+    return { reviews: independentReviews, restampedIds, oldReviewSubjectHashes };
+  }
+  const evidenceOnlyIds = new Set(classification.evidenceOnly.map((review) => review.id));
+  const reviews = independentReviews.map((review) => {
+    if (!evidenceOnlyIds.has(review.id)) return review;
+    restampedIds.push(review.id);
+    oldReviewSubjectHashes.push(review.reviewedReviewSubjectHash ?? '');
+    return stampPublishGateReviewStatusForPackage(review, approvedPackage);
+  });
+  return { reviews, restampedIds, oldReviewSubjectHashes };
 }
 
 function freshPublicationReviewCountSatisfied(

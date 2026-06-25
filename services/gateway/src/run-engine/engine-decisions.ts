@@ -74,6 +74,9 @@ function autoResolveEngineDecision(
   if (reason === 'review_posting' && ids.has('dismiss')) return 'dismiss';
   if (reason === 'human_gate') {
     // Publication-approval runs must wait for a human decision — never auto-resolve.
+    // The evidence-refresh override is publication-only, so it is unreachable
+    // here by construction (the early return above fires first); it is still
+    // recognized as an approval everywhere a human resolves the gate.
     if (requiresPublicationApproval(run)) return null;
     if (ids.has('approve-publish')) return 'approve-publish';
     if (ids.has('ready')) return 'ready';

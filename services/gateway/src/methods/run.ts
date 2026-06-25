@@ -46,7 +46,10 @@ import {
 import { buildCIWatchChainedRunParams } from '../run-engine/ci-watch-chain.js';
 import { resolveEngineDecision } from '../run-engine/engine-decisions.js';
 import {
+  APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
+  isPublishApprovalAction,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
 import {
@@ -56,6 +59,7 @@ import {
   setRunFlags,
   startRun,
 } from '../run-engine/orchestrator.js';
+import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import {
   readFreshTerminalSignalForRun,
   resolveMonitorDecision,
@@ -823,7 +827,7 @@ async function assertReadyPublishResolveIsFresh(
   decision: Run['decisions'][number],
   params: RunResolveDecisionParams,
 ): Promise<void> {
-  if (params.actionId !== 'approve-publish' && params.actionId !== 'ready') return;
+  if (!isPublishApprovalAction(params.actionId)) return;
   const payload = decision.payload as ReadyGatePayload | undefined;
   const prPackage: ReadyGatePrPackage | undefined =
     payload?.kind === 'ready' ? payload.prPackage : undefined;
@@ -843,7 +847,19 @@ async function assertReadyPublishResolveIsFresh(
   const decisionWithSelection = { ...decision, selectionData: params.selectionData };
   verifyReadyGatePackageHash(currentPackage);
   validatePackageApprovalSelection(currentPackage, decisionWithSelection);
-  assertPublicationReviewPolicySatisfied(run, currentPackage);
+  if (params.actionId === APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION) {
+    // The override restamps stale reviews later in executeReadyGate, so the
+    // policy is not yet satisfied here. Gate the resolve on the override's
+    // precondition instead: staleness must be evidence-only (HEAD unchanged).
+    const reviewDepth = currentPackage.reviewDepth ?? publicationReviewPolicyForRun(run);
+    assertEvidenceRefreshOverrideAvailable(
+      run.engineState?.publishGate?.independentReviews ?? [],
+      currentPackage,
+      reviewDepth,
+    );
+  } else {
+    assertPublicationReviewPolicySatisfied(run, currentPackage);
+  }
   await verifyReadyGateSelectedEvidenceFiles(
     run,
     currentPackage,

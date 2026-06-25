@@ -1,6 +1,13 @@
 import type { DecisionAction, FlowType, RunDecision } from '@farmslot/protocol';
 
-const HUMAN_GATE_APPROVAL_ACTIONS = new Set(['approve-publish', 'ready', 'post']);
+import { APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION } from './gate-policy.js';
+
+const HUMAN_GATE_APPROVAL_ACTIONS = new Set([
+  'approve-publish',
+  APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  'ready',
+  'post',
+]);
 const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set([
   'request-extra-review',
   'request-cross-runner-review',

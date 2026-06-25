@@ -1,14 +1,36 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { IndependentReviewStatus } from '@farmslot/protocol';
+
 import {
   buildNoChangeGateInputs,
   isOwnPrApprovalError,
   noChangeDispositionLabel,
   noChangeRejectionMessage,
   shouldForceNoChangeHumanGate,
+  staleReviewsAreEvidenceOnly,
 } from './gate-policy.js';
-import { makeRun } from './test-fixtures.js';
+import { makeReadyGatePackage, makeRun } from './test-fixtures.js';
+
+function makeApprovingReview(
+  overrides: Partial<IndependentReviewStatus> = {},
+): IndependentReviewStatus {
+  return {
+    id: overrides.id ?? 'review-1',
+    source: overrides.source ?? 'human-gate',
+    crossRunner: overrides.crossRunner ?? false,
+    loopNumber: overrides.loopNumber ?? 1,
+    verdict: overrides.verdict ?? 'pass',
+    unresolvedCount: overrides.unresolvedCount ?? 0,
+    reviewedHeadSha: 'reviewedHeadSha' in overrides ? overrides.reviewedHeadSha : 'abc1234',
+    reviewedReviewSubjectHash:
+      'reviewedReviewSubjectHash' in overrides
+        ? overrides.reviewedReviewSubjectHash
+        : 'subject-old',
+    ...overrides,
+  };
+}
 
 test('isOwnPrApprovalError detects GitHub self-approval failures', () => {
   assert.equal(
@@ -143,4 +165,93 @@ test('noChangeRejectionMessage formats reject-retry vs mark-blocked', () => {
     noChangeRejectionMessage('mark-blocked', 'JIRA-42'),
     'No-change result marked blocked; insufficient evidence for JIRA-42',
   );
+});
+
+test('staleReviewsAreEvidenceOnly is true for subject drift with matching HEAD', () => {
+  const preparedPackage = makeReadyGatePackage({
+    headSha: 'abc1234',
+    reviewSubjectHash: 'subject-new',
+  });
+  const reviews = [
+    makeApprovingReview({ reviewedHeadSha: 'abc1234', reviewedReviewSubjectHash: 'subject-old' }),
+  ];
+  assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), true);
+});
+
+test('staleReviewsAreEvidenceOnly is false when reviewed HEAD differs (code changed)', () => {
+  const preparedPackage = makeReadyGatePackage({
+    headSha: 'def5678',
+    reviewSubjectHash: 'subject-new',
+  });
+  const reviews = [
+    makeApprovingReview({ reviewedHeadSha: 'abc1234', reviewedReviewSubjectHash: 'subject-old' }),
+  ];
+  assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), false);
+});
+
+test('staleReviewsAreEvidenceOnly is false when no stale approving review exists', () => {
+  const preparedPackage = makeReadyGatePackage({
+    headSha: 'abc1234',
+    reviewSubjectHash: 'subject-current',
+  });
+  // Review already certifies the current subject + HEAD — nothing stale to carry forward.
+  const fresh = [
+    makeApprovingReview({
+      reviewedHeadSha: 'abc1234',
+      reviewedReviewSubjectHash: 'subject-current',
+    }),
+  ];
+  assert.equal(staleReviewsAreEvidenceOnly(fresh, preparedPackage), false);
+  // No approving review at all (only an issues verdict) — override unavailable.
+  const failing = [
+    makeApprovingReview({
+      verdict: 'issues',
+      unresolvedCount: 2,
+      reviewedReviewSubjectHash: 'subject-old',
+    }),
+  ];
+  assert.equal(staleReviewsAreEvidenceOnly(failing, preparedPackage), false);
+});
+
+test('staleReviewsAreEvidenceOnly is false when any stale approving review is HEAD-drifted', () => {
+  const preparedPackage = makeReadyGatePackage({
+    headSha: 'abc1234',
+    reviewSubjectHash: 'subject-new',
+  });
+  const reviews = [
+    makeApprovingReview({
+      id: 'review-1',
+      reviewedHeadSha: 'abc1234',
+      reviewedReviewSubjectHash: 'subject-old',
+    }),
+    makeApprovingReview({
+      id: 'review-2',
+      reviewedHeadSha: 'def5678',
+      reviewedReviewSubjectHash: 'subject-old',
+    }),
+  ];
+  assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), false);
+});
+
+test('staleReviewsAreEvidenceOnly respects cross-runner certification requirement', () => {
+  const preparedPackage = makeReadyGatePackage({
+    headSha: 'abc1234',
+    reviewSubjectHash: 'subject-new',
+  });
+  // Only a same-runner stale approval exists; with cross-runner required there is
+  // no eligible stale approving review, so the override stays unavailable.
+  const reviews = [
+    makeApprovingReview({
+      crossRunner: false,
+      reviewedHeadSha: 'abc1234',
+      reviewedReviewSubjectHash: 'subject-old',
+    }),
+  ];
+  assert.equal(
+    staleReviewsAreEvidenceOnly(reviews, preparedPackage, {
+      requireCrossRunnerCertification: true,
+    }),
+    false,
+  );
+  assert.equal(staleReviewsAreEvidenceOnly(reviews, preparedPackage), true);
 });
