@@ -52,7 +52,6 @@ import {
   isPublishApprovalAction,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
-import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import {
   applyChainedRunEngineFlags,
   bumpRunGeneration,
@@ -60,6 +59,7 @@ import {
   setRunFlags,
   startRun,
 } from '../run-engine/orchestrator.js';
+import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import {
   readFreshTerminalSignalForRun,
   resolveMonitorDecision,
