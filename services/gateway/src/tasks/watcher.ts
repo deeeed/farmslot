@@ -584,6 +584,7 @@ async function handleSignalChange(key: string, content?: string): Promise<void> 
       `[task-watcher] signal from ${key}: role=${bound.role ?? '-'} status=${signal.status} outcome=${signal.outcome ?? '-'} step=${signal.step ?? '-'}`,
     );
     emitSignal(sw.slotId, sw.runId, bound.signal, bound.role, bound.contextId);
+    await computeAndEmit(key);
   } catch (err) {
     console.log(`[task-watcher] error reading signal file for ${key}: ${(err as Error).message}`);
   }

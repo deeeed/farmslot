@@ -1,6 +1,7 @@
 # Worker: Merge-Main
 
 > **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` with status updates.
+> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. The final item can add `--status complete --outcome success`.
 
 ---
 
@@ -30,4 +31,4 @@ STATUS: pending
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
 - [ ] **7. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: conflicts resolved, files changed, validation results.
-- [ ] **8. Update status and signal** — set `STATUS: done`, then run: `echo '{"status":"complete","outcome":"success","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > {{TASK_DIR}}/SIGNAL.json`
+- [ ] **8. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark 8 --status complete --outcome success`

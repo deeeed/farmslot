@@ -98,6 +98,26 @@ All "Hook JSONL" rows below are written by **Farmslot-owned hook scripts** decla
 | Is a tool active? Which one?                         | Hook JSONL: most recent `PreToolUse` without matching `PostToolUse`                                                                                                 | none                              |
 | Did the worker reach a task milestone?               | Extended `SIGNAL.json` (`phase: 'busy'` / `'idle'` / `'done'`) written by **worker** task template — separate from runner-process events                            | existing `SIGNAL.json` shape      |
 
+### Addendum: checklist timing stays task-owned (2026-06-25)
+
+`SIGNAL.json` may carry compact, optional checklist timing metadata because a
+checklist item being marked complete is task-template truth, not runner-process
+truth. The canonical reader-facing contract now lives in the Docusaurus
+[Worker signal protocol](../../apps/docs/docs/reference/worker-signal-protocol.md).
+
+The extension is intentionally low-volume: `checklistTiming.events[]` records
+the zero-based checklist index, copied label, and checked-at timestamp for items
+the worker marked complete. Gateway analytics can derive per-step duration from
+that event order without parsing terminal output.
+
+This does **not** move runner/tool observability into `SIGNAL.json`. Tool names,
+turn boundaries, token usage, command timings, and high-volume command/tool
+events remain owned by Farmslot hook/statusline streams under
+`{{runtime_dir}}/.observability/` and the node/gateway worker inventory path.
+If future analytics needs raw or near-raw command usage, it must use a separate
+append-only observability stream and aggregate that stream into analytics
+records rather than expanding `SIGNAL.json` into a log sink.
+
 ### Prompt digest contract
 
 `runnerPromptDigest = sha1(instructionNeedle(prompt)).slice(0, 16)` where `instructionNeedle` lives at `services/gateway/src/runners.ts:700-702`. Renamed from `promptHash` because that identifier is already in use at `apps/command-center/ui/src/components/evals/eval-cockpit-model.ts:73,240` for eval-template identity — different domain, different lifecycle.

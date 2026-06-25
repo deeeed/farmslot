@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -8,10 +8,12 @@ import type { Run } from '@farmslot/protocol';
 import { farmslotRoot } from '../projects/repo-root.js';
 
 import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
+import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import {
   applyArtifactOnlyTaskPolicy,
   buildTaskFolderPrefix,
   buildTemplateProvenance,
+  checklistMarkerHelperPath,
   COMMENT_SUMMARY_MAX_ROWS,
   type CommentRow,
   findTaskDirCollisions,
@@ -395,6 +397,15 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   ) as { contentHash?: string; templateName?: string };
   assert.equal(provenance.templateName, 'dev-interactive.md');
   assert.equal(typeof provenance.contentHash, 'string');
+  await access(path.join(path.dirname(taskA), CHECKLIST_MARKER_INPUT));
+});
+
+
+test('checklistMarkerHelperPath keeps remote helper shell-expandable', () => {
+  assert.equal(
+    checklistMarkerHelperPath('~/farmslot-node'),
+    '$HOME/farmslot-node/packages/skills/scripts/mark-checklist-step.cjs',
+  );
 });
 
 test('renderCommentSummary returns placeholder when no rows — worker still re-fetches', () => {

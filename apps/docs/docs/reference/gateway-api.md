@@ -25,7 +25,7 @@ The public surface should be understood through capabilities, not by reading eve
 
 ## Worker status surfaces
 
-Use `worker.signal` only for task-template semantics from `SIGNAL.json` (completion, blocked state, phase). Runner process activity is exposed through tmux-worker inventory rows: `tmux.worker.list` returns attachable panes with a `status.source` such as `hook`, `statusline`, `task-file`, or `tmux`; `tmux.worker.inventory.updated` broadcasts the same list shape when a node observes a changed pane/status snapshot. This keeps run completion signals separate from terminal/runner liveness.
+Use `worker.signal` only for task-template semantics from [`SIGNAL.json`](worker-signal-protocol.md) (completion, blocked state, phase, and optional checklist timing). Runner process activity is exposed through tmux-worker inventory rows: `tmux.worker.list` returns attachable panes with a `status.source` such as `hook`, `statusline`, `task-file`, or `tmux`; `tmux.worker.inventory.updated` broadcasts the same list shape when a node observes a changed pane/status snapshot. This keeps run completion signals separate from terminal/runner liveness.
 
 Worker rows may set `status.requiresAttention` with an `attentionReason` such as `waiting`, `idle`, or `stale-signal`. Clients can use that runner-neutral flag to highlight pinned slots or watchlist panes without parsing Claude/Codex/Cursor-specific output. Plain tmux-only idle panes do not set this flag because that would be a fragile inference.
 

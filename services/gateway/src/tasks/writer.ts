@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -16,7 +16,12 @@ import {
   type TemplateProvenance,
 } from '@farmslot/protocol';
 
-import { getProjectField, loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
+import {
+  getProjectField,
+  loadProjectVars,
+  loadSlotVars,
+  resolveProjectTaskDirName,
+} from '../core/config.js';
 import { expandTemplate } from '../core/hooks.js';
 import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
 import {
@@ -37,6 +42,7 @@ import {
   assertArtifactOnlyTaskGuard,
   evaluateArtifactOnlyTaskGuard,
 } from './artifact-only-guard.js';
+import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 
 // Remote deployment dir — kept in sync with REMOTE_AGENT_DIR in core/hooks.ts
@@ -855,6 +861,7 @@ export async function writeTaskFile(
     assertArtifactOnlyTaskGuard(finalContent);
   }
   await writeFile(taskFilePath, finalContent, 'utf-8');
+  await writeChecklistMarker(taskAbsDir, farmslotDirForSlot);
 
   // Write template provenance as inputs/template-provenance.json
   await writeFile(
@@ -904,6 +911,32 @@ export async function writeTaskFile(
 
   console.log(`[task-writer] wrote ${taskFilePath}`);
   return taskFilePath;
+}
+
+export function checklistMarkerHelperPath(farmslotDirForSlot: string): string {
+  return `${farmslotDirForSlot}/packages/skills/scripts/mark-checklist-step.cjs`.replace(
+    /^~(?=\/)/,
+    '$HOME',
+  );
+}
+
+async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: string): Promise<void> {
+  const markerPath = path.join(taskAbsDir, CHECKLIST_MARKER_INPUT);
+  const helperPath = checklistMarkerHelperPath(farmslotDirForSlot);
+  await writeFile(
+    markerPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+      'TASK="$DIR/TASK.md"',
+      '[ ! -f "$DIR/CHECKLIST.md" ] || TASK="$DIR/CHECKLIST.md"',
+      `node ${JSON.stringify(helperPath)} "$TASK" "$DIR/SIGNAL.json" "$@"`,
+      '',
+    ].join('\n'),
+    'utf-8',
+  );
+  await chmod(markerPath, 0o755);
 }
 
 /**

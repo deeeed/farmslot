@@ -57,6 +57,7 @@ import {
   isRunnerAliveUnderPane,
   listRunnerSessionFiles,
 } from '../../runners/session-process.js';
+import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';
 
@@ -789,6 +790,15 @@ export async function dispatchExecute(
     await execLocal(`scp -q '${taskFilePath}' '${vars.sshTarget}:${workerTaskAbs}/TASK.md'`);
   }
   step('copy', `TASK.md copied to ${workerTaskDir}/TASK.md`);
+  for (const sidecar of await copyPreparedTaskRootSidecars({
+    taskDir,
+    workerTaskAbs,
+    host: vars.host,
+    machine: vars.machine,
+    sshTarget: vars.sshTarget,
+  })) {
+    step('copy', `${sidecar} copied`);
+  }
 
   // Copy assets/, inputs/, artifacts/ if they exist
   for (const subdir of ['assets', 'inputs', 'artifacts']) {

@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
+    "farmslot-checklist": "./bin/farmslot-checklist.mjs",
     "farmslot-skills": "./bin/farmslot-skills.mjs"
   },
   "exports": {
@@ -18,7 +19,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
-    "test": "node test/prepare-cooking-run.test.cjs && node test/run-cooking-lane.test.cjs && node test/validator-loop.test.cjs && node test/package-exports.test.cjs",
+    "test": "node test/mark-checklist-step.test.cjs && node test/prepare-cooking-run.test.cjs && node test/run-cooking-lane.test.cjs && node test/validator-loop.test.cjs && node test/package-exports.test.cjs",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\"",

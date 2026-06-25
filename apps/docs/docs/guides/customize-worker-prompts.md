@@ -79,6 +79,8 @@ Farmslot does not need a custom parser for every project. The gateway can derive
 ## Signal file
 
 Workers write a signal file beside the rendered task. This gives the gateway a runner-neutral completion path even when terminal text is noisy.
+See the canonical [Worker signal protocol](../reference/worker-signal-protocol.md) for the full schema, freshness rules, compatibility policy, and optional checklist timing extension.
+Rendered tasks also include a `mark` helper, so templates can tell workers: after completing checklist item `N`, run `{{TASK_DIR}}/mark N` using the visible 1-based step number; if unsure, run `{{TASK_DIR}}/mark --help`; for the final item, add `--status complete --outcome success`.
 
 ```json
 {
@@ -105,7 +107,7 @@ Useful `status` values are:
 | `complete` / `done` | Worker finished the requested flow.                                                        |
 | `failed`            | Worker reached a terminal failure.                                                         |
 
-The signal file should be used for terminal state. Ongoing progress should remain visible in the markdown checklist so the operator can inspect the task file and understand what happened.
+The signal file should be used for terminal state and compact task metadata. Ongoing progress should remain visible in the markdown checklist so the operator can inspect the task file and understand what happened. High-volume command/tool telemetry belongs in runner observability streams, not in `SIGNAL.json`.
 
 ## Template variables
 

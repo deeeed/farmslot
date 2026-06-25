@@ -1,6 +1,7 @@
 # Worker: Feature — {{TICKET_ID}}
 
 > **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` with status updates.
+> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. The final item can add `--status complete --outcome success`.
 
 ---
 
@@ -58,6 +59,6 @@ STATUS: pending
   ```
 - [ ] **13. Write report and signal** — create `{{TASK_DIR}}/artifacts/report.md` with files changed, implementation summary, local review notes, screenshots/assets to validate, and test results; update `STATUS: done`, then write the completion signal:
   ```bash
-  echo '{"status":"complete","outcome":"success","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > "{{TASK_DIR}}/SIGNAL.json"
+  {{TASK_DIR}}/mark 13 --status complete --outcome success
   ```
   **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.

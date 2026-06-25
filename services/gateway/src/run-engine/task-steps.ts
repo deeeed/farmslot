@@ -27,6 +27,7 @@ import {
   selectRecipeStrategy,
 } from '../intelligence/engine.js';
 import { getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
+import { CHECKLIST_MARKER_INPUT } from '../tasks/sidecars.js';
 import { TaskCollisionError, TEMPLATE_PROVENANCE_INPUT, writeTaskFile } from '../tasks/writer.js';
 
 import { requiresCollisionPrecheck } from './decision-replay.js';
@@ -342,6 +343,7 @@ export async function executeWriteTaskStep(
     if (templateProvenance) updateRun(runId, { templateProvenance });
     const artifacts: ArtifactRef[] = [
       { path: 'TASK.md', purpose: 'task-md' },
+      { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
       { path: TEMPLATE_PROVENANCE_INPUT, purpose: 'template-provenance' },
     ];
     const inputArtifacts = await captureReviewInputArtifactsForRun(current);
@@ -481,6 +483,7 @@ export async function executeWriteTaskStep(
     const afterWrite = getRun(runId)!;
     const artifacts: ArtifactRef[] = [
       { path: 'TASK.md', purpose: 'task-md' },
+      { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
       { path: TEMPLATE_PROVENANCE_INPUT, purpose: 'template-provenance' },
     ];
     if (afterWrite.ticketData)

@@ -61,7 +61,7 @@ If an interactive slot exists, do not stop after pasting or emitting JSON in cha
 
 The harness order is mandatory.
 Do not silently batch or skip steps.
-Mark each completed checklist step `[x]` immediately. Do not batch checkbox updates.
+Mark each completed checklist step immediately. If the run-local task has a `mark` helper, use `./mark N` (1-based); otherwise change `[ ]` to `[x]` yourself. Do not batch checkbox updates.
 
 ## Output Contract
 
