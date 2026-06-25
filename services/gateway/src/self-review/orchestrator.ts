@@ -287,6 +287,7 @@ export interface SelfReviewRetryDeps {
   isWorkerAlive: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
     runner: string,
+    runId?: string,
   ) => Promise<boolean>;
   relaunchWorkerForFix: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -400,10 +401,10 @@ export async function runSelfReviewRetryLoop({
     debugSelfReviewLog(
       `[self-review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
     );
-    let workerAlive = await deps.isWorkerAlive(vars, workerRunner);
+    let workerAlive = await deps.isWorkerAlive(vars, workerRunner, runId);
     if (!workerAlive) {
       debugSelfReviewLog(
-        `[self-review] run ${runId.slice(0, 8)} — worker exited, re-launching in window 0`,
+        `[self-review] run ${runId.slice(0, 8)} — worker exited, re-launching primary worker`,
       );
       const run = deps.getRun(runId);
       workerAlive = await deps.relaunchWorkerForFix(
