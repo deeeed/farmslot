@@ -127,8 +127,7 @@ const events = Array.isArray(timing.events) ? timing.events : [];
 if (
   !events.some(
     (event) =>
-      event &&
-      (event.stepNumber === target.stepNumber || event.index === target.stepNumber - 1),
+      event && (event.stepNumber === target.stepNumber || event.index === target.stepNumber - 1),
   )
 ) {
   events.push({ stepNumber: target.stepNumber, label: target.label, checkedAt: now });

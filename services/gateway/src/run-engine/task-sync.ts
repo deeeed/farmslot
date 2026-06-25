@@ -12,7 +12,6 @@ import {
   invalidateLiveRecipeContextMemo,
 } from '../live-recipe/context.js';
 import { getRun } from '../runs/store.js';
-
 import { copyPreparedTaskRootSidecars } from '../tasks/sidecars.js';
 
 import { loadProjectVarsOrNull } from './project-vars.js';

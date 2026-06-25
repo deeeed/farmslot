@@ -37,12 +37,10 @@ assert.equal(parsed.checklistTiming.events.length, 2);
 assert.equal(parsed.checklistTiming.events[1].stepNumber, 2);
 assert.equal(parsed.checklistTiming.events[1].label, 'Second gate validate');
 
-
 result = spawnSync(process.execPath, [helper, task, signal, '1', '--status', 'complet'], {
   encoding: 'utf8',
 });
 assert.equal(result.status, 2);
-
 
 result = spawnSync(process.execPath, [helper, task, signal, '--help'], { encoding: 'utf8' });
 assert.equal(result.status, 0);

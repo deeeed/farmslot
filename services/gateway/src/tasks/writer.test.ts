@@ -8,11 +8,12 @@ import type { Run } from '@farmslot/protocol';
 import { farmslotRoot } from '../projects/repo-root.js';
 
 import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
+import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import {
   applyArtifactOnlyTaskPolicy,
   buildTaskFolderPrefix,
-  checklistMarkerHelperPath,
   buildTemplateProvenance,
+  checklistMarkerHelperPath,
   COMMENT_SUMMARY_MAX_ROWS,
   type CommentRow,
   findTaskDirCollisions,
@@ -22,7 +23,6 @@ import {
   TEMPLATE_PROVENANCE_INPUT,
   writeTaskFile,
 } from './writer.js';
-import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 
 test('buildTaskFolderPrefix keeps production collisions ticket-scoped', () => {
   assert.equal(buildTaskFolderPrefix('PROJ-1234'), 'proj-1234-');
