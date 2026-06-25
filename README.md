@@ -1,5 +1,7 @@
 # farmslot
 
+[![GitHub stars](https://img.shields.io/github/stars/deeeed/farmslot?style=flat&color=yellow)](https://github.com/deeeed/farmslot/stargazers)
+
 Project-agnostic orchestration for dispatching autonomous coding agents to a fleet of machines.
 
 **Install with one command:**
@@ -8,7 +10,7 @@ Project-agnostic orchestration for dispatching autonomous coding agents to a fle
 curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | bash
 ```
 
-Checks prerequisites, sets up `~/dev/farmslot-workspace/`, and ends with a green `farmslot doctor` — nothing is auto-installed without telling you. [Getting started →](https://farmslot.io/docs/guides/getting-started)
+Checks prerequisites, sets up `~/dev/farmslot-workspace/`, and ends with a green `farmslot doctor` — nothing is auto-installed without telling you. If you have [GitHub CLI](https://cli.github.com/) signed in, the installer may ask once to star the repo (`gh repo star deeeed/farmslot`). [Getting started →](https://farmslot.io/docs/guides/getting-started)
 
 > Why the name? I know. It stuck: agentic dev farming across many isolated slots. Naming is harder than scheduling the agents.
 
@@ -198,6 +200,10 @@ Farmslot separates product surfaces, runtime services, and reusable toolkit pack
 ---
 
 Created by [Arthur Breton](https://siteed.net)
+
+## Star history
+
+[![Star History Chart](https://api.star-history.com/svg?repos=deeeed/farmslot&type=date&legend=top-left)](https://www.star-history.com/#deeeed/farmslot&type=date&legend=top-left)
 
 ## License
 

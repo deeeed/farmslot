@@ -2,6 +2,7 @@ import type { Command } from 'commander';
 
 import { bold, dim, green, red, yellow } from '../colors.js';
 import { runDoctor } from '../onboarding/doctor.js';
+import { maybePromptGithubStar, starSupportHint } from '../onboarding/star-prompt.js';
 import { resolveWorkspace } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
@@ -34,5 +35,12 @@ export function registerDoctorCommand(program: Command): void {
         );
       }
       if (!report.ok) process.exit(1);
+      if (!output.json && report.ok) {
+        const prompted = await maybePromptGithubStar();
+        if (!prompted) {
+          const hint = starSupportHint();
+          if (hint) output.write(`${dim(hint)}\n`);
+        }
+      }
     });
 }

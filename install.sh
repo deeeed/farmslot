@@ -23,6 +23,7 @@
 #   FARMSLOT_BIN_DIR    dir for the PATH symlink   (default: ~/.local/bin)
 #   FARMSLOT_MINIMAL    set to skip the dashboard build + pair-your-phone step
 #   FARMSLOT_PAIR       set to 1 to pair non-interactively (no prompt)
+#   FARMSLOT_NO_STAR_PROMPT  set to 1 to skip the GitHub star prompt
 set -euo pipefail
 
 WORKSPACE="${FARMSLOT_WORKSPACE:-${HOME}/dev/farmslot-workspace}"
@@ -255,6 +256,37 @@ step_doctor() {
 # Quick win: start the local gateway and show a QR to pair the mobile companion
 # app for tmux control on the go. Reads y/n from /dev/tty so a piped `curl | bash`
 # can still prompt; a non-interactive install (CI, no tty) skips without hanging.
+# One-time GitHub star ask — inline bash so we don't need a public CLI command.
+# Reads from /dev/tty so `curl | bash` still prompts; shares ~/.farmslot/state/
+# star-prompt.json with the CLI doctor/up hook.
+step_star() {
+  case "${FARMSLOT_NO_STAR_PROMPT:-}" in 1|true) return ;; esac
+  if ! command -v gh >/dev/null 2>&1; then
+    return
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    return
+  fi
+  if [ ! -r /dev/tty ]; then
+    return
+  fi
+  local star_state="${FARMSLOT_HOME:-${HOME}/.farmslot}/state/star-prompt.json"
+  if [ -f "$star_state" ]; then
+    return
+  fi
+  local reply
+  mkdir -p "$(dirname "$star_state")"
+  printf '{"prompted_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$star_state"
+  printf '  Enjoying farmslot? Star it on GitHub? [Y/n] ' >/dev/tty
+  read -r reply </dev/tty || reply=""
+  case "$reply" in [Nn]*) return ;; esac
+  if gh repo star deeeed/farmslot >/dev/null 2>&1; then
+    green '  [OK] Thanks for the star!'
+  else
+    printf '\033[0;33m  [WARN] Could not star repository automatically — run: gh repo star deeeed/farmslot\033[0m\n'
+  fi
+}
+
 step_pair() {
   bold "── Start it up ──"
   local start_now="" pair_now="" reply
@@ -317,6 +349,7 @@ main() {
   step_cli
   step_workspace
   step_doctor
+  step_star
   step_pair
 }
 
