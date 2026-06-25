@@ -146,6 +146,7 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
     primaryTarget.session,
     primaryTarget.target,
     roleWindowName,
+    run.flowType,
   );
 
   const prompt = 'Continue working on the current TASK.md and CI follow-up fixes.';
@@ -160,6 +161,24 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
 
   await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd);
   await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
+
+  const workerRole = primaryTarget.role ?? primaryRoleForFlow(run.flowType);
+  const windowSeparator = workerTarget.indexOf(':');
+  const window =
+    windowSeparator === -1
+      ? null
+      : workerTarget.slice(windowSeparator + 1).split('.', 1)[0] || null;
+  await upsertAgentContext(runId, workerRole, {
+    status: 'working',
+    runner,
+    model,
+    target: {
+      session: primaryTarget.session,
+      window,
+      pane: null,
+      target: workerTarget,
+    },
+  });
 
   if (!runnerNeedsPostLaunchPrompt(runner)) {
     return true;
@@ -386,7 +405,16 @@ async function attemptInlineCIFix(
   const signalPath = `${vars.remoteRepo}/${writeResult.taskDir}/CI-FIX-SIGNAL.json`;
   await execOnSlot(vars, `rm -f '${signalPath}'`);
   const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
-  const workerTarget = primaryTarget.target;
+  const roleWindowName =
+    run?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
+      ?.window ?? null;
+  const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+    vars,
+    primaryTarget.session,
+    primaryTarget.target,
+    roleWindowName,
+    run?.flowType,
+  );
   const session = primaryTarget.session;
   const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
     status: 'working',

@@ -885,6 +885,7 @@ async function sendFeedbackToWorker(
     session,
     primaryTarget.target,
     roleWindowName,
+    run?.flowType,
   );
   // Derive the window name from the primary worker's target so resolveAgentTarget
   // can route back to the correct pane if the stored context is used.
@@ -936,6 +937,7 @@ async function relaunchWorkerForFix(
     resolved.session,
     resolved.target,
     roleWindowName,
+    parentRun?.flowType,
   );
   const prompt = 'Continue working on the current TASK.md and self-review fix feedback.';
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.

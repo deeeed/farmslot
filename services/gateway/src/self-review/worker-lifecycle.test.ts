@@ -50,6 +50,17 @@ test('ensureTmuxTargetReadyForRelaunch recreates role window when numeric index 
   assert.equal(target, 'mm-2:dev');
 });
 
+test('ensureTmuxTargetReadyForRelaunch derives role window from flow when context window is missing', async () => {
+  const target = await ensureTmuxTargetReadyForRelaunch(
+    vars,
+    'mm-2',
+    'mm-2:1.1',
+    null,
+    'dev',
+  );
+  assert.equal(target, 'mm-2:dev');
+});
+
 test('ensureTmuxTargetReadyForRelaunch keeps named role window when pane is alive', async () => {
   const target = await ensureTmuxTargetReadyForRelaunch(vars, 'mm-2', 'mm-2:dev', 'dev');
   assert.equal(target, 'mm-2:dev');

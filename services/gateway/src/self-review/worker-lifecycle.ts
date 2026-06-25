@@ -1,16 +1,29 @@
 // self-review/worker-lifecycle.ts — worker liveness and relaunch target helpers for self-review fixes.
 
+import { agentRoleWindow, primaryRoleForFlow } from '@farmslot/protocol';
+
 import { resolveAgentTarget } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { firstWindowTarget, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { resolvePrimaryWorkerTarget, runnerProcessPatternSource } from '../runners/registry.js';
 
+function recreateRoleWindowName(
+  roleWindowName?: string | null,
+  flowType?: string | null,
+): string {
+  const named = roleWindowName?.trim();
+  if (named) return named;
+  if (flowType) return agentRoleWindow(primaryRoleForFlow(flowType)) ?? '';
+  return '';
+}
+
 export async function ensureTmuxTargetReadyForRelaunch(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
   target: string,
   roleWindowName?: string | null,
+  flowType?: string | null,
 ): Promise<string> {
   const sessionReady =
     (await execOnSlot(vars, tmuxShellSnippet(`has-session -t ${shellQuote(session)} 2>/dev/null`)))
@@ -56,7 +69,7 @@ export async function ensureTmuxTargetReadyForRelaunch(
         )
       ).stdout.trim();
       if (windowName && windowName !== windowPart) {
-        recreateWindow = roleWindowName?.trim() || '';
+        recreateWindow = recreateRoleWindowName(roleWindowName, flowType);
         console.warn(
           `[self-review] tmux target ${target} drifted to window ${windowName}; recreating role window ${recreateWindow || '(first window)'}`,
         );
