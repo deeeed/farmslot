@@ -26,6 +26,7 @@ import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { clearStalePrepareProcess } from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import { createRun, getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
+import { teardownGateHeldAgentsIfNeeded } from './gate-held-lifecycle.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
@@ -415,6 +416,7 @@ export async function startRun(runId: string): Promise<void> {
         if (blockedRun.slotId) {
           await cleanupEvalHarnessForTerminalRun(blockedRun, runId, 'blocked run');
           try {
+            await teardownGateHeldAgentsIfNeeded(blockedRun);
             await resetSlot(blockedRun.slotId);
           } catch (resetErr) {
             console.warn(
@@ -568,6 +570,7 @@ export async function startRun(runId: string): Promise<void> {
       // before reaching their cleanup), this prevents stale busy/held state.
       if (failedRun.slotId) {
         try {
+          await teardownGateHeldAgentsIfNeeded(failedRun);
           await resetSlot(failedRun.slotId);
         } catch (err) {
           // The run failure has already been recorded; surface reset failure

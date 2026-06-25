@@ -121,6 +121,45 @@ test('fleet refresh reconciliation preserves active run ownership when status pr
   );
 });
 
+test('fleet refresh preserves gate-held publication slots as review-gate with working agent', () => {
+  const gateHeldRun: Run = {
+    ...makeRun({
+      id: 'run-gate-held',
+      flowType: 'dev',
+      mode: 'autonomous',
+      status: 'blocked',
+      slotId: 'macwork-mm-4',
+      ticketOrPr: 'TAT-3398',
+    }),
+    steps: [
+      {
+        name: 'complete',
+        status: 'done',
+        outputs: { slotDisposition: 'gate-held' },
+      },
+    ],
+    decisions: [
+      {
+        id: 'decision-gate',
+        type: 'engine_human_gate',
+        title: 'Publication gate',
+        description: 'Approve package',
+        actions: [],
+        createdAt: '2026-06-25T00:00:00Z',
+      },
+    ],
+  };
+
+  const reconciled = reconcileRefreshSlotRowWithActiveRun(
+    makeRefreshRow({ agent: 'idle' }),
+    gateHeldRun,
+  );
+
+  assert.equal(reconciled.lifecycle, 'busy');
+  assert.equal(reconciled.phase, 'review-gate');
+  assert.equal(reconciled.agent, 'working');
+});
+
 test('fleet refresh reconciliation does not show blocked runs as working because a stale runner process exists', () => {
   const blockedRun: Run = {
     ...makeRun({

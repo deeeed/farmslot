@@ -20,7 +20,12 @@ import {
   resolveProjectTaskDirName,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  respawnTmuxWindowWithCommand,
+  shellQuote,
+  TMUX_WINDOW_RESPAWN_SETTLE_MS,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 import {
@@ -142,7 +147,8 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 
-  await execOnSlot(vars, tmuxSendTextCommand(workerTarget, launchCmd, { enter: true }));
+  await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd);
+  await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
 
   if (!runnerNeedsPostLaunchPrompt(runner)) {
     return true;
