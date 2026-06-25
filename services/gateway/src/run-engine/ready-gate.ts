@@ -54,13 +54,14 @@ import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { createEngineDecision } from './engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
+  buildEvidenceRefreshAction,
   buildPublishGateReviewStatus,
   countStalePublicationReviews,
   hasValidPrNumber,
   isPublishApprovalAction,
   restampStaleApprovingReviewsForEvidenceRefresh,
-  staleReviewsAreEvidenceOnly,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
@@ -398,28 +399,17 @@ export async function executeReadyGate(runId: string): Promise<string> {
     (independentReviewPolicySatisfied(reviewDepth, independentReviews) && staleReviewCount === 0);
   // The evidence-refresh override is offered ONLY when staleness is purely
   // subject/evidence drift on a still-matching HEAD — never when code changed.
-  const evidenceRefreshOverrideAvailable =
-    publicationApprovalGate &&
-    !!preparedPackage &&
-    !reviewSatisfied &&
-    staleReviewsAreEvidenceOnly(independentReviews, preparedPackage, {
-      requireCrossRunnerCertification: reviewDepth.requireCrossRunner,
-    });
+  const evidenceRefreshAction =
+    publicationApprovalGate && preparedPackage
+      ? buildEvidenceRefreshAction(independentReviews, preparedPackage, reviewDepth)
+      : null;
   const actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }> =
     publicationApprovalGate
       ? [
           ...(reviewSatisfied
             ? [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }]
             : []),
-          ...(evidenceRefreshOverrideAvailable
-            ? [
-                {
-                  id: APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
-                  label: 'Publish Anyway (code unchanged)',
-                  style: 'primary' as const,
-                },
-              ]
-            : []),
+          ...(evidenceRefreshAction ? [evidenceRefreshAction] : []),
           { id: 'hold', label: 'Hold', style: 'secondary' as const },
           {
             id: 'request-extra-review',
@@ -605,17 +595,11 @@ export async function executeReadyGate(runId: string): Promise<string> {
       if (!approvedPackage) throw new Error('Publication approval requires a prepared package');
       // Re-derive availability against the decision-time package so a code change
       // between gate render and resolve cannot smuggle the override through.
-      if (
-        !staleReviewsAreEvidenceOnly(
-          getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
-          approvedPackage,
-          { requireCrossRunnerCertification: reviewDepth.requireCrossRunner },
-        )
-      ) {
-        throw new Error(
-          'Evidence-refresh override unavailable: reviewed code changed; re-review before publishing',
-        );
-      }
+      assertEvidenceRefreshOverrideAvailable(
+        getRun(runId)!.engineState?.publishGate?.independentReviews ?? [],
+        approvedPackage,
+        reviewDepth,
+      );
       await applyEvidenceRefreshOverride(runId, approvedPackage, decision, reviewDepth, selectionData);
     }
     if (isPublishApprovalAction(actionId)) {

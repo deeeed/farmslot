@@ -47,9 +47,9 @@ import { buildCIWatchChainedRunParams } from '../run-engine/ci-watch-chain.js';
 import { resolveEngineDecision } from '../run-engine/engine-decisions.js';
 import {
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  assertEvidenceRefreshOverrideAvailable,
   assertPublicationReviewPolicySatisfied,
   isPublishApprovalAction,
-  staleReviewsAreEvidenceOnly,
   validatePackageApprovalSelection,
 } from '../run-engine/gate-policy.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
@@ -852,17 +852,11 @@ async function assertReadyPublishResolveIsFresh(
     // policy is not yet satisfied here. Gate the resolve on the override's
     // precondition instead: staleness must be evidence-only (HEAD unchanged).
     const reviewDepth = currentPackage.reviewDepth ?? publicationReviewPolicyForRun(run);
-    if (
-      !staleReviewsAreEvidenceOnly(
-        run.engineState?.publishGate?.independentReviews ?? [],
-        currentPackage,
-        { requireCrossRunnerCertification: reviewDepth.requireCrossRunner },
-      )
-    ) {
-      throw new Error(
-        'Evidence-refresh override unavailable: reviewed code changed; re-review before publishing',
-      );
-    }
+    assertEvidenceRefreshOverrideAvailable(
+      run.engineState?.publishGate?.independentReviews ?? [],
+      currentPackage,
+      reviewDepth,
+    );
   } else {
     assertPublicationReviewPolicySatisfied(run, currentPackage);
   }
