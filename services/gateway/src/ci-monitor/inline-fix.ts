@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   type BotComment,
   type CIWatchFixProgress,
+  primaryRoleForFlow,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -43,6 +44,7 @@ import {
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { ensureTmuxTargetReadyForRelaunch } from '../self-review/worker-lifecycle.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 
 import {
@@ -135,7 +137,16 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   const vars = await loadSlotVars(slotId);
   const runner = normalizeRunner(run.metrics.runner);
   const model = run.metrics.model ?? 'unknown';
-  const workerTarget = (await resolveAgentTarget(slotId, { runId, role: 'primary' })).target;
+  const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
+  const roleWindowName =
+    run.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
+      ?.window ?? null;
+  const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+    vars,
+    primaryTarget.session,
+    primaryTarget.target,
+    roleWindowName,
+  );
 
   const prompt = 'Continue working on the current TASK.md and CI follow-up fixes.';
   // Inherit parent run's safety tier (ADR-023) so CI-watch relaunch keeps the posture.

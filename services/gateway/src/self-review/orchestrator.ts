@@ -115,17 +115,27 @@ export function resolveSelfReviewRunnerModel(
         ? normalizeRunner(configRunner)
         : null;
   const reviewRunner = explicitRunner ?? normalizedWorkerRunner;
-  const model =
-    options.model?.trim() ||
-    (explicitRunner ? (config.model ?? runnerDefaultModel(reviewRunner)) : null) ||
-    workerModel ||
-    config.model ||
-    'unknown';
+  const crossRunner = reviewRunner !== normalizedWorkerRunner;
+  // Publish-gate / human-gate plans pass reviewRunner explicitly (e.g. codex static).
+  // Project self_review.model configures dispatch same-runner reviews — never bleed it
+  // onto plan-requested cross-runners or Codex would inherit Claude's opus default.
+  const planRequestedRunner = !!(optionRunner && optionRunner !== 'same');
+  let model: string;
+  if (options.model?.trim()) {
+    model = options.model.trim();
+  } else if (planRequestedRunner) {
+    model = runnerDefaultModel(reviewRunner) ?? 'unknown';
+  } else if (explicitRunner) {
+    model = config.model?.trim() || runnerDefaultModel(reviewRunner) || 'unknown';
+  } else {
+    model =
+      workerModel?.trim() || config.model?.trim() || runnerDefaultModel(reviewRunner) || 'unknown';
+  }
 
   return {
     reviewRunner,
     model,
-    crossRunner: reviewRunner !== normalizedWorkerRunner,
+    crossRunner,
   };
 }
 
