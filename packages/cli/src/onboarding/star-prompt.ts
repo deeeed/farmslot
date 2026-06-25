@@ -112,7 +112,9 @@ export interface MaybePromptGithubStarDeps {
 }
 
 /** True when the interactive question was shown (including if the user declined). */
-export async function maybePromptGithubStar(deps: MaybePromptGithubStarDeps = {}): Promise<boolean> {
+export async function maybePromptGithubStar(
+  deps: MaybePromptGithubStarDeps = {},
+): Promise<boolean> {
   const env = deps.env ?? process.env;
   if (starPromptDisabled(env)) return false;
 
@@ -141,7 +143,9 @@ export async function maybePromptGithubStar(deps: MaybePromptGithubStarDeps = {}
     (deps.logFn ?? console.log)('[farmslot] Thanks for the star!');
     return true;
   }
-  (deps.warnFn ?? console.warn)(`[farmslot] Could not star repository automatically: ${star.error}`);
+  (deps.warnFn ?? console.warn)(
+    `[farmslot] Could not star repository automatically: ${star.error}`,
+  );
   return true;
 }
 

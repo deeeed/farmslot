@@ -2,12 +2,7 @@ import assert from 'node:assert/strict';
 import type { SpawnSyncReturns } from 'node:child_process';
 import test from 'node:test';
 
-import {
-  maybePromptGithubStar,
-  STAR_REPO,
-  starPromptStatePath,
-  starRepo,
-} from './star-prompt.js';
+import { maybePromptGithubStar, STAR_REPO, starPromptStatePath, starRepo } from './star-prompt.js';
 
 test('starPromptStatePath lives under ~/.farmslot/state', () => {
   const path = starPromptStatePath({ FARMSLOT_HOME: '/tmp/farmslot-star-home/.farmslot' });
@@ -15,10 +10,9 @@ test('starPromptStatePath lives under ~/.farmslot/state', () => {
 });
 
 test('starRepo returns ok when gh repo star succeeds', () => {
-  assert.deepEqual(
-    starRepo(STAR_REPO, (() => ({ status: 0, stdout: '', stderr: '' })) as never),
-    { ok: true },
-  );
+  assert.deepEqual(starRepo(STAR_REPO, (() => ({ status: 0, stdout: '', stderr: '' })) as never), {
+    ok: true,
+  });
 });
 
 test('starRepo returns error details when gh exits non-zero', () => {
@@ -121,7 +115,14 @@ test('starRepo hides the Windows console window for gh invocations', () => {
   let seenOptions: Record<string, unknown> | undefined;
   starRepo(STAR_REPO, ((_command: string, _args: readonly string[], options?: object) => {
     seenOptions = options as Record<string, unknown>;
-    return { status: 0, stdout: '', stderr: '', pid: 1, output: [], signal: null } as SpawnSyncReturns<string>;
+    return {
+      status: 0,
+      stdout: '',
+      stderr: '',
+      pid: 1,
+      output: [],
+      signal: null,
+    } as SpawnSyncReturns<string>;
   }) as never);
   assert.equal(seenOptions?.windowsHide, true);
 });
