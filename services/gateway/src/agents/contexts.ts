@@ -22,6 +22,7 @@ import { loadSlotVars } from '../core/config.js';
 import { updateSlotStatus } from '../core/state.js';
 import { resolveTmuxSession } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { getRun, listRuns, updateRunAgentContexts } from '../runs/store.js';
 
 const TERMINAL_AGENT_STATUSES: ReadonlySet<AgentContextStatus> = new Set([
@@ -213,7 +214,7 @@ export async function resolveAgentTarget(
   }
   if (ctx?.target?.target) {
     return {
-      target: ctx.target.target,
+      target: canonicalAgentContextTarget(ctx.target),
       session: ctx.target.session,
       role: ctx.role,
       contextId: ctx.id,

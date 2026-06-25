@@ -323,7 +323,7 @@ export interface CompleteStepOutput {
   prTitleUpdated: boolean;
   prMarkedReady: boolean;
   retrospectiveCreated: boolean;
-  slotDisposition: 'ci-watch' | 'released';
+  slotDisposition: 'ci-watch' | 'released' | 'gate-held';
   artifacts: ArtifactRef[];
   cliCommand?: string;
 }

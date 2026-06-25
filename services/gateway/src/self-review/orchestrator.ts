@@ -24,11 +24,19 @@ import {
   resolveAgentTarget,
   upsertAgentContext,
 } from '../agents/contexts.js';
-import { loadProjectVars, loadSlotVars } from '../core/config.js';
+import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  respawnTmuxWindowWithCommand,
+  shellQuote,
+  TMUX_WINDOW_RESPAWN_SETTLE_MS,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import { buildLaunchCommand } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+} from '../runners/launch-command.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
@@ -107,17 +115,27 @@ export function resolveSelfReviewRunnerModel(
         ? normalizeRunner(configRunner)
         : null;
   const reviewRunner = explicitRunner ?? normalizedWorkerRunner;
-  const model =
-    options.model?.trim() ||
-    (explicitRunner ? (config.model ?? runnerDefaultModel(reviewRunner)) : null) ||
-    workerModel ||
-    config.model ||
-    'unknown';
+  const crossRunner = reviewRunner !== normalizedWorkerRunner;
+  // Publish-gate / human-gate plans pass reviewRunner explicitly (e.g. codex static).
+  // Project self_review.model configures dispatch same-runner reviews — never bleed it
+  // onto plan-requested cross-runners or Codex would inherit Claude's opus default.
+  const planRequestedRunner = !!(optionRunner && optionRunner !== 'same');
+  let model: string;
+  if (options.model?.trim()) {
+    model = options.model.trim();
+  } else if (planRequestedRunner) {
+    model = runnerDefaultModel(reviewRunner) ?? 'unknown';
+  } else if (explicitRunner) {
+    model = config.model?.trim() || runnerDefaultModel(reviewRunner) || 'unknown';
+  } else {
+    model =
+      workerModel?.trim() || config.model?.trim() || runnerDefaultModel(reviewRunner) || 'unknown';
+  }
 
   return {
     reviewRunner,
     model,
-    crossRunner: reviewRunner !== normalizedWorkerRunner,
+    crossRunner,
   };
 }
 
@@ -269,6 +287,7 @@ export interface SelfReviewRetryDeps {
   isWorkerAlive: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
     runner: string,
+    runId?: string,
   ) => Promise<boolean>;
   relaunchWorkerForFix: (
     vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -382,10 +401,10 @@ export async function runSelfReviewRetryLoop({
     debugSelfReviewLog(
       `[self-review] run ${runId.slice(0, 8)} — ${result.issues.length} issue(s) found (retry ${retryCount + 1}/${maxRetries})`,
     );
-    let workerAlive = await deps.isWorkerAlive(vars, workerRunner);
+    let workerAlive = await deps.isWorkerAlive(vars, workerRunner, runId);
     if (!workerAlive) {
       debugSelfReviewLog(
-        `[self-review] run ${runId.slice(0, 8)} — worker exited, re-launching in window 0`,
+        `[self-review] run ${runId.slice(0, 8)} — worker exited, re-launching primary worker`,
       );
       const run = deps.getRun(runId);
       workerAlive = await deps.relaunchWorkerForFix(
@@ -831,15 +850,7 @@ async function sendFeedbackToWorker(
     );
   }
 
-  // Resolve runtimeDir
-  let runtimeDir = '.agent';
-  try {
-    const pv = await loadProjectVars(project);
-    runtimeDir = pv.runtimeDir || '.agent';
-  } catch (err) {
-    // Recoverable: runtimeDir defaults to '.agent' above.
-    console.warn(`[self-review] runtime dir fallback for ${project}: ${(err as Error).message}`);
-  }
+  const runtimeDir = await resolveProjectRuntimeDir(project);
 
   const replacements: Record<string, string> = {
     TASK_DIR: taskDir,
@@ -865,8 +876,17 @@ async function sendFeedbackToWorker(
   // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: `${taskDir}/SELF-REVIEW-FIX.md` });
   const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
-  const workerTarget = primaryTarget.target;
   const session = primaryTarget.session;
+  const roleWindowName =
+    getRun(runId)?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run?.flowType))
+      ?.target?.window ?? null;
+  const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+    vars,
+    session,
+    primaryTarget.target,
+    roleWindowName,
+    run?.flowType,
+  );
   // Derive the window name from the primary worker's target so resolveAgentTarget
   // can route back to the correct pane if the stored context is used.
   const workerWindowSep = workerTarget.indexOf(':');
@@ -908,28 +928,29 @@ async function relaunchWorkerForFix(
   runId: string,
 ): Promise<boolean> {
   const resolved = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
+  const parentRun = getRun(runId);
+  const roleWindowName =
+    parentRun?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(parentRun?.flowType))
+      ?.target?.window ?? null;
   const workerTarget = await ensureTmuxTargetReadyForRelaunch(
     vars,
     resolved.session,
     resolved.target,
+    roleWindowName,
+    parentRun?.flowType,
   );
   const prompt = 'Continue working on the current TASK.md and self-review fix feedback.';
   // Inherit parent run's safety tier (ADR-023) so the relaunch stays on the same posture.
-  const parentSafetyTier = getRun(runId)?.safetyTier;
+  const parentSafetyTier = parentRun?.safetyTier;
+  const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
-    effort: getRun(runId)?.effort,
+    effort: parentRun?.effort,
     safetyTier: parentSafetyTier,
+    runtimeDir,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
-  const sendResult = await execOnSlot(
-    vars,
-    tmuxSendTextCommand(workerTarget, launchCmd, { enter: true }),
-  );
-  if (sendResult.exitCode !== 0) {
-    throw new Error(
-      `Failed to relaunch worker in ${workerTarget}: ${sendResult.stderr || sendResult.stdout || `exit ${sendResult.exitCode}`}`,
-    );
-  }
+  await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd);
+  await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
   const run = getRun(runId);
   const workerRole = resolved.role ?? primaryRoleForFlow(run?.flowType);
   const windowSeparator = workerTarget.indexOf(':');
@@ -954,7 +975,7 @@ async function relaunchWorkerForFix(
     return true;
   }
 
-  const readyTimeout = 60_000;
+  const readyTimeout = RUNNER_LAUNCH_READY_TIMEOUT_MS;
   const readyStart = Date.now();
   while (Date.now() - readyStart < readyTimeout) {
     await new Promise((r) => setTimeout(r, 2000));

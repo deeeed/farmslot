@@ -122,6 +122,47 @@ export async function resolveTmuxSession(
  * hardcodes scattered across slot.killAgentInSession, runners.resolvePrimaryWorkerTarget,
  * and self-review's pane-target fallback that all had to converge on this helper.
  */
+/**
+ * Settle after `respawn-window` before polling an interactive runner TUI for
+ * readiness. Matches dispatch's ROLE_WINDOW_STARTUP_SETTLE_MS.
+ */
+export const TMUX_WINDOW_RESPAWN_SETTLE_MS = 500;
+
+/**
+ * Launch a shell command in an existing tmux window by replacing its pane via
+ * `respawn-window`. Avoids `send-keys -l` for long runner launch lines, which
+ * can be poisoned by shell-init escape responses on fresh windows (see dispatch
+ * launch prelude comments in methods/dispatch/execute.ts).
+ */
+export async function respawnTmuxWindowWithCommand(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  command: string,
+): Promise<void> {
+  const launchCommand = `exec bash -lc ${shellQuote(command)}`;
+  const respawned = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `respawn-window -k -t ${shellQuote(target)} -c ${shellQuote(vars.remoteRepo)} ` +
+        shellQuote(launchCommand),
+    ),
+  );
+  if (respawned.exitCode !== 0) {
+    throw new Error(
+      `Failed to launch command in tmux window ${target}: ${respawned.stderr || respawned.stdout || `exit ${respawned.exitCode}`}`,
+    );
+  }
+  const collapse = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`kill-pane -a -t ${shellQuote(target)} 2>/dev/null || true`),
+  );
+  if (collapse.exitCode !== 0) {
+    throw new Error(
+      `Failed to collapse tmux window ${target} to a single pane after launch: ${collapse.stderr || collapse.stdout || `exit ${collapse.exitCode}`}`,
+    );
+  }
+}
+
 export async function firstWindowTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,

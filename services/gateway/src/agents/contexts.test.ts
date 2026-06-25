@@ -374,7 +374,7 @@ test('resolveAgentTarget prefers explicit and persisted role targets', async (t)
   assert.deepEqual(
     await resolveAgentTarget('runner-browser-1', { runId: run.id, contextId: 'review' }),
     {
-      target: 'mme-1:review.0',
+      target: 'mme-1:review',
       session: 'mme-1',
       role: 'review',
       contextId: 'review',
@@ -383,7 +383,7 @@ test('resolveAgentTarget prefers explicit and persisted role targets', async (t)
   assert.deepEqual(
     await resolveAgentTarget('runner-browser-1', { runId: run.id, role: 'primary' }),
     {
-      target: 'mme-1:review.0',
+      target: 'mme-1:review',
       session: 'mme-1',
       role: 'review',
       contextId: 'review',

@@ -9,6 +9,7 @@ import {
   isHttpFetchForbiddenPort,
   isMockModeProject,
   loadProjectVars,
+  resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
   resolveTaskRelDir,
   validatePrepareConfig,
@@ -335,4 +336,24 @@ test('loadProjectVars validates the prepare block', async (t) => {
     }),
   );
   await assert.rejects(() => loadProjectVars(project), /declares requires but no fallback profile/);
+});
+
+test('resolveProjectRuntimeDir reads paths.runtime_dir from project.json', async (t) => {
+  const project = `runtime-dir-${process.pid}`;
+  const projectDir = path.join(farmslotRoot, 'projects', project);
+  await mkdir(projectDir, { recursive: true });
+  t.after(async () => {
+    await rm(projectDir, { recursive: true, force: true });
+  });
+  await writeFile(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      name: project,
+      paths: { runtime_dir: 'temp/recipe/runtime' },
+    }),
+  );
+
+  assert.equal(await resolveProjectRuntimeDir(project), 'temp/recipe/runtime');
+  assert.equal(await resolveProjectRuntimeDir(null), '.agent');
+  assert.equal(await resolveProjectRuntimeDir('missing-project-xyz'), '.agent');
 });

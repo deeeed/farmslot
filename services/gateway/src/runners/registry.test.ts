@@ -843,6 +843,15 @@ describe('buildLaunchCommand', () => {
       );
     });
 
+    it('passes project runtimeDir through to observability install', () => {
+      const vars = makeVars({ dispatchCmd: '' });
+      const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT, {
+        runtimeDir: 'temp/recipe/runtime',
+      });
+      assert.match(cmd, /--runtime-dir 'temp\/recipe\/runtime'/);
+      assert.doesNotMatch(cmd, /--runtime-dir '\.agent'/);
+    });
+
     it('uses a shell-safe HOME expression for remote observability installs', () => {
       const vars = makeVars({ host: 'remote-mac', remoteRepo: '~/work/repo' });
       const cmd = buildLaunchCommand(vars, 'claude', 'sonnet', PROMPT);

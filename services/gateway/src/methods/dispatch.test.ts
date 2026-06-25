@@ -13,6 +13,7 @@ import type { SlotVars } from '../core/config.js';
 import { cleanupLaunchedWorkerAfterDispatchFailure } from './dispatch/execute.js';
 import {
   buildDispatchRoleShellCommand,
+  canonicalAgentContextTarget,
   parseCapturedAgentPaneTarget,
 } from './dispatch/role-target.js';
 import { resolveDispatchSafetyTier } from './dispatch/safety-tier.js';
@@ -85,7 +86,7 @@ test('parseCapturedAgentPaneTarget prefers tmux window name over numeric index',
     session: 'mme-4',
     window: 'review',
     pane: '0',
-    target: 'mme-4:1.0',
+    target: 'mme-4:review',
   });
 });
 
@@ -194,6 +195,27 @@ test('flowTypeToKey ignores eval wrapper flow names', () => {
   assert.equal(flowTypeToKey('dev'), 'dev');
   assert.equal(flowTypeToKey('eval-candidate-replay'), '');
   assert.equal(flowTypeToKey(''), '');
+});
+
+test('canonicalAgentContextTarget prefers named role window over numeric target', () => {
+  assert.equal(
+    canonicalAgentContextTarget({
+      session: 'mm-2',
+      window: 'dev',
+      pane: '1',
+      target: 'mm-2:1.1',
+    }),
+    'mm-2:dev',
+  );
+  assert.equal(
+    canonicalAgentContextTarget({
+      session: 'mm-2',
+      window: '1',
+      pane: '0',
+      target: 'mm-2:1.0',
+    }),
+    'mm-2:1.0',
+  );
 });
 
 test('parseCapturedAgentPaneTarget falls back to numeric window when name is empty', () => {

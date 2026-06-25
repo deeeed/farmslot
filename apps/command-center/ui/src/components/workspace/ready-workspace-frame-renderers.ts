@@ -8,6 +8,13 @@ import type { LightboxItem, LightboxPair } from '../shared/media-lightbox-types.
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
 import { readyWorkspaceLightStyles } from './ready-workspace-renderers.js';
 
+/** Package-gate runs expose evidence in the Evidence tab and recipe context in Recipe. */
+export function readyWorkspaceShowsReportEvidencePreview(
+  payload: Pick<ReadyGatePayload, 'prPackage'>,
+): boolean {
+  return !payload.prPackage;
+}
+
 export interface ReadyWorkspaceFrameInput {
   payload: ReadyGatePayload;
   splitPct: number;
@@ -51,7 +58,9 @@ export interface ReadyWorkspaceFrameInput {
 
 export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
   const packageGate = !!input.payload.prPackage;
-  const reportEvidence = input.renderReportEvidence?.() ?? nothing;
+  const reportEvidence = readyWorkspaceShowsReportEvidencePreview(input.payload)
+    ? (input.renderReportEvidence?.() ?? nothing)
+    : nothing;
 
   return html`
     <style>
@@ -77,7 +86,7 @@ export function renderReadyWorkspaceFrame(input: ReadyWorkspaceFrameInput) {
             <div class="rdy-resize" @mousedown=${input.onResizeStart}></div>
           `}
       <div class="rdy-bottom" style="flex: ${packageGate ? 1 : 100 - input.splitPct} 1 0%">
-        ${input.payload.prPackage ? html`${input.renderPackagePanel()} ${reportEvidence}` : nothing}
+        ${input.payload.prPackage ? html`${input.renderPackagePanel()}` : nothing}
         ${input.renderTabBar()}
         <div class="rdy-tab-pane-host">${input.renderTabContent()}</div>
       </div>

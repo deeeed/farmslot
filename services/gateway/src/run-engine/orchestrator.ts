@@ -49,6 +49,7 @@ import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
 import { executeFinalizeStep } from './finalize-step.js';
 import { executeFindSlotStep } from './find-slot-step.js';
+import { teardownGateHeldAgentsIfNeeded } from './gate-held-lifecycle.js';
 import {
   buildNoChangeGateInputs,
   hasValidPrNumber,
@@ -266,6 +267,10 @@ async function finalizeNonThrownTerminalRun(
       );
     }
     try {
+      const currentRun = getRun(runId);
+      if (currentRun) {
+        await teardownGateHeldAgentsIfNeeded(currentRun);
+      }
       await resetSlot(run.slotId);
     } catch (err) {
       // Surface but do not mask the run's terminal state.
@@ -415,6 +420,7 @@ export async function startRun(runId: string): Promise<void> {
         if (blockedRun.slotId) {
           await cleanupEvalHarnessForTerminalRun(blockedRun, runId, 'blocked run');
           try {
+            await teardownGateHeldAgentsIfNeeded(blockedRun);
             await resetSlot(blockedRun.slotId);
           } catch (resetErr) {
             console.warn(
@@ -568,6 +574,7 @@ export async function startRun(runId: string): Promise<void> {
       // before reaching their cleanup), this prevents stale busy/held state.
       if (failedRun.slotId) {
         try {
+          await teardownGateHeldAgentsIfNeeded(failedRun);
           await resetSlot(failedRun.slotId);
         } catch (err) {
           // The run failure has already been recorded; surface reset failure

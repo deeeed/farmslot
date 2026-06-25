@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { CompleteStepOutput } from '@farmslot/protocol';
+
 import { writeResultPackageManifest } from '../evals/package-store.js';
 import { createRun, updateRun } from '../runs/store.js';
 
@@ -13,6 +15,7 @@ import {
   readyGateReviewSubjectMatches,
   shouldSkipRetrospectiveAtComplete,
 } from './post-dispatch-steps.js';
+import { shouldPrepareLocalFirstPackage } from './publication-policy.js';
 import {
   deleteTestRunIfPresent,
   makeEvalResultPackage,
@@ -45,7 +48,17 @@ test('complete-step retrospective gating defers only CI-watch flows', () => {
 
 
 
-test('human-gate can approve a prepared local-first package after the slot was released', async (t) => {
+test('local-first complete contract uses gate-held disposition for dev and fix-bug', () => {
+  assert.equal(shouldPrepareLocalFirstPackage(makeRun({ flowType: 'fix-bug' })), true);
+  assert.equal(
+    shouldPrepareLocalFirstPackage(makeRun({ flowType: 'dev', mode: 'autonomous' })),
+    true,
+  );
+  const disposition: CompleteStepOutput['slotDisposition'] = 'gate-held';
+  assert.equal(disposition, 'gate-held');
+});
+
+test('human-gate can approve a prepared local-first package when slot was detached (replay)', async (t) => {
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',

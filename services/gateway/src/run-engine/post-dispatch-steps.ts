@@ -472,6 +472,15 @@ export async function executeSelfReviewStep(
   };
 }
 
+/** Keep the worker tmux session alive while the publication human gate is open. */
+export async function holdSlotForPublicationGate(
+  slotId: string,
+  broadcastFn: (event: string, payload: unknown) => void,
+): Promise<void> {
+  await markSlotBusy(slotId, 'review-gate', 'working');
+  broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+}
+
 export async function executeHumanGateStep(
   runId: string,
   context: PostDispatchStepContext,
@@ -537,10 +546,11 @@ export async function executeHumanGateStep(
     return { inputs, outputs: { skipped: true, reason: 'disabled' } };
   }
 
-  // Update slot lifecycle so UI shows the slot is waiting for review
+  // Update slot lifecycle so UI shows the slot is waiting for review while the
+  // worker runner stays attachable for operator Q&A.
   if (current.slotId) {
-    await markSlotBusy(current.slotId, 'review-gate');
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    await markSlotBusy(current.slotId, 'review-gate', 'working');
+    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
   }
 
   // Track wait duration
@@ -648,10 +658,10 @@ export async function executeHumanGateStep(
 
   const waitDurationMs = Date.now() - gateStart;
 
-  // Restore slot lifecycle after gate resolution
+  // Restore slot lifecycle after gate resolution; worker stays alive until finalize.
   if (current.slotId) {
-    await markSlotBusy(current.slotId, 'working');
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    await markSlotBusy(current.slotId, 'working', 'working');
+    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
   }
 
   const after = getRun(runId)!;
@@ -700,9 +710,8 @@ export async function executeCompleteStep(
       diffStat,
       requireArtifactMirror: true,
     });
-    const noopEmit = () => {};
-    await slotRelease({ slotId: current.slotId, keepWork: true, detachRuns: false }, noopEmit);
-    const cliCommand = `farmslot slot release ${current.slotId} --keep-warm`;
+    await holdSlotForPublicationGate(current.slotId, broadcastFn);
+    const cliCommand = `farmslot slot check ${current.slotId}`;
     return {
       inputs,
       outputs: {
@@ -713,7 +722,7 @@ export async function executeCompleteStep(
         prTitleUpdated: false,
         prMarkedReady: false,
         retrospectiveCreated: false,
-        slotDisposition: 'released',
+        slotDisposition: 'gate-held',
         artifacts: prepared.completion.artifacts,
         cliCommand,
         diffStat,

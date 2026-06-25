@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   type BotComment,
   type CIWatchFixProgress,
+  primaryRoleForFlow,
   type WorkerSignal,
 } from '@farmslot/protocol';
 
@@ -16,13 +17,22 @@ import {
   farmslotRoot,
   loadProjectVars,
   loadSlotVars,
+  resolveProjectRuntimeDir,
   resolveProjectTaskDirName,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
-import { shellQuote, tmuxSendTextCommand, tmuxShellSnippet } from '../core/tmux.js';
+import {
+  respawnTmuxWindowWithCommand,
+  shellQuote,
+  TMUX_WINDOW_RESPAWN_SETTLE_MS,
+  tmuxShellSnippet,
+} from '../core/tmux.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import { buildLaunchCommand } from '../runners/launch-command.js';
+import {
+  buildLaunchCommand,
+  RUNNER_LAUNCH_READY_TIMEOUT_MS,
+} from '../runners/launch-command.js';
 import {
   normalizeRunner,
   resolvePrimaryWorkerTarget,
@@ -34,6 +44,7 @@ import {
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
+import { ensureTmuxTargetReadyForRelaunch } from '../self-review/worker-lifecycle.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 
 import {
@@ -126,23 +137,54 @@ async function relaunchWorkerSession(slotId: string, runId: string): Promise<boo
   const vars = await loadSlotVars(slotId);
   const runner = normalizeRunner(run.metrics.runner);
   const model = run.metrics.model ?? 'unknown';
-  const workerTarget = (await resolveAgentTarget(slotId, { runId, role: 'primary' })).target;
+  const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
+  const roleWindowName =
+    run.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
+      ?.window ?? null;
+  const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+    vars,
+    primaryTarget.session,
+    primaryTarget.target,
+    roleWindowName,
+    run.flowType,
+  );
 
   const prompt = 'Continue working on the current TASK.md and CI follow-up fixes.';
   // Inherit parent run's safety tier (ADR-023) so CI-watch relaunch keeps the posture.
+  const runtimeDir = await resolveProjectRuntimeDir(run.project);
   let launchCmd = buildLaunchCommand(vars, runner, model, prompt, {
     effort: run.effort,
     safetyTier: run.safetyTier,
+    runtimeDir,
   });
   launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
 
-  await execOnSlot(vars, tmuxSendTextCommand(workerTarget, launchCmd, { enter: true }));
+  await respawnTmuxWindowWithCommand(vars, workerTarget, launchCmd);
+  await new Promise((resolve) => setTimeout(resolve, TMUX_WINDOW_RESPAWN_SETTLE_MS));
+
+  const workerRole = primaryTarget.role ?? primaryRoleForFlow(run.flowType);
+  const windowSeparator = workerTarget.indexOf(':');
+  const window =
+    windowSeparator === -1
+      ? null
+      : workerTarget.slice(windowSeparator + 1).split('.', 1)[0] || null;
+  await upsertAgentContext(runId, workerRole, {
+    status: 'working',
+    runner,
+    model,
+    target: {
+      session: primaryTarget.session,
+      window,
+      pane: null,
+      target: workerTarget,
+    },
+  });
 
   if (!runnerNeedsPostLaunchPrompt(runner)) {
     return true;
   }
 
-  const readyTimeout = 60_000;
+  const readyTimeout = RUNNER_LAUNCH_READY_TIMEOUT_MS;
   const readyStart = Date.now();
   while (Date.now() - readyStart < readyTimeout) {
     await new Promise((r) => setTimeout(r, 2000));
@@ -363,7 +405,16 @@ async function attemptInlineCIFix(
   const signalPath = `${vars.remoteRepo}/${writeResult.taskDir}/CI-FIX-SIGNAL.json`;
   await execOnSlot(vars, `rm -f '${signalPath}'`);
   const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
-  const workerTarget = primaryTarget.target;
+  const roleWindowName =
+    run?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
+      ?.window ?? null;
+  const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+    vars,
+    primaryTarget.session,
+    primaryTarget.target,
+    roleWindowName,
+    run?.flowType,
+  );
   const session = primaryTarget.session;
   const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
     status: 'working',

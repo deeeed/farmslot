@@ -39,6 +39,7 @@ import {
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import { cleanupSlotStorage } from '../../fleet/slot-storage-cleanup.js';
+import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 
@@ -68,7 +69,14 @@ export async function slotRelease(
   const skipArtifacts = params.skipArtifacts ?? false;
   const forceReset = params.forceReset ?? false;
   const detachRuns = params.detachRuns ?? true;
+  const preserveAgents = params.preserveAgents ?? false;
   const requestId = params.requestId ?? `release-${randomUUID()}`;
+  const gateHeldRun = findActiveGateHeldRunForSlot(params.slotId);
+  if (gateHeldRun && !preserveAgents && !forceReset) {
+    throw new Error(
+      `Slot ${params.slotId} is gate-held for run ${gateHeldRun.id} — resolve or cancel the publication gate before release`,
+    );
+  }
   const startTime = Date.now();
 
   const out = (line: string) =>
@@ -96,11 +104,17 @@ export async function slotRelease(
   // Mark lifecycle
   await markSlotBusy(params.slotId, 'releasing');
 
-  // 1. Kill running agent
-  step('agent', 'Killing agent...');
-  await killAllAgentWindows(vars);
-  await killAgentInSession(vars);
-  step('agent', 'Agent killed');
+  // 1. Kill running agent. Local-first publication gate-hold skips slotRelease at
+  // COMPLETE entirely (see holdSlotForPublicationGate) and tears down via
+  // killSlotAgents at FINALIZE. preserveAgents is for partial release call sites only.
+  if (!preserveAgents) {
+    step('agent', 'Killing agent...');
+    await killAllAgentWindows(vars);
+    await killAgentInSession(vars);
+    step('agent', 'Agent killed');
+  } else {
+    step('agent', 'Preserving agent windows for human gate');
+  }
 
   // 2. Safety check (skip if --keepWork, --forceReset, or --force implied by keepWarm)
   if (!keepWork && !forceReset) {
@@ -337,6 +351,13 @@ export async function slotRelease(
   emit('slot.release.done', { requestId, slotId: params.slotId, keepWarm });
   complete(0);
   return { released: true };
+}
+
+/** Tear down role windows and runner processes without running a full slot release. */
+export async function killSlotAgents(slotId: string): Promise<void> {
+  const vars = await loadSlotVars(slotId);
+  await killAllAgentWindows(vars);
+  await killAgentInSession(vars);
 }
 
 // ─── slotRecycle — convenience wrapper ───

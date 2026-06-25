@@ -85,3 +85,4 @@ Signal shape:
 - [ ] **13. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: files changed, root cause, fix summary, test results.
 - [ ] **14. Update status** — set `STATUS: done`.
 - [ ] **15. Write completion signal** — run: `echo '{"status":"complete","outcome":"success","disposition":"fixed","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > {{TASK_DIR}}/SIGNAL.json`
+  **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.

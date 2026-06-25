@@ -16,7 +16,7 @@ import { markSlotHeld } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { ghRequest } from '../integrations/github-client.js';
-import { slotRelease } from '../methods/slot.js';
+import { killSlotAgents, slotRelease } from '../methods/slot.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -104,28 +104,7 @@ export async function executeFinalizeStep(
     }
   };
 
-  // 0. Restore slot lifecycle — may be stuck in 'review-gate' if gateway crashed mid human-gate
-  emitWithBroadcast('substep', {
-    name: 'slot-lifecycle',
-    detail: noCodeDisposition ? 'Releasing slot (no-code)' : 'Holding slot for ci-watch',
-  });
-  try {
-    if (noCodeDisposition) {
-      const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
-    } else {
-      await markSlotHeld(current.slotId, 'ci-watch');
-    }
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
-  } catch (err) {
-    // Finalize continues so run completion is not lost, but slot lifecycle
-    // drift is operator-actionable and must be logged.
-    console.warn(
-      `[run-engine] finalize slot hold failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
-    );
-  }
-
-  // 1. Capture session metrics from the worker's Claude session
+  // 0. Capture session metrics while the gate-held worker may still be alive.
   emitWithBroadcast('substep', {
     name: 'session-metrics',
     detail: 'Reading worker session usage',
@@ -158,7 +137,43 @@ export async function executeFinalizeStep(
     );
   }
 
-  // 2. Save session metrics to task folder as artifact
+  // 1. Tear down gate-held worker sessions before slot lifecycle moves on.
+  if (publicationApprovalGate) {
+    emitWithBroadcast('substep', {
+      name: 'agent-teardown',
+      detail: 'Releasing worker tmux session after human gate',
+    });
+    try {
+      await killSlotAgents(current.slotId);
+    } catch (err) {
+      console.warn(
+        `[run-engine] finalize agent teardown failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+      );
+    }
+  }
+
+  // 2. Restore slot lifecycle — may be stuck in 'review-gate' if gateway crashed mid human-gate
+  emitWithBroadcast('substep', {
+    name: 'slot-lifecycle',
+    detail: noCodeDisposition ? 'Releasing slot (no-code)' : 'Holding slot for ci-watch',
+  });
+  try {
+    if (noCodeDisposition) {
+      const noopEmit = () => {};
+      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
+    } else {
+      await markSlotHeld(current.slotId, 'ci-watch');
+    }
+    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
+  } catch (err) {
+    // Finalize continues so run completion is not lost, but slot lifecycle
+    // drift is operator-actionable and must be logged.
+    console.warn(
+      `[run-engine] finalize slot hold failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+    );
+  }
+
+  // 3. Save session metrics to task folder as artifact
   emitWithBroadcast('substep', {
     name: 'save-session-metrics',
     detail: 'Writing artifacts/session-metrics.json',
@@ -190,7 +205,7 @@ export async function executeFinalizeStep(
     }
   }
 
-  // 3. Publish approved local-first package for fix-bug. This is the
+  // 4. Publish approved local-first package for fix-bug. This is the
   // first point where public PR mutation is allowed.
   const pv = await loadProjectVarsOrNull(current.project, 'run step', current.id);
   const ciRepo = pv ? getProjectField(pv.projectJson, 'ci.repo') || null : null;
@@ -280,7 +295,7 @@ export async function executeFinalizeStep(
     await refreshRunLinks(runId);
   }
 
-  // 4. Post reviewer comment if provided for legacy ready gates. Local-first
+  // 5. Post reviewer comment if provided for legacy ready gates. Local-first
   // publication comments are handled inside publishCompletionPackage so they
   // cannot occur before approval and do not duplicate after publication.
   const prNumber = publicationApprovalGate ? publishedPrNumber : current.prNumber;

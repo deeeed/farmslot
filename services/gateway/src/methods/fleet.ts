@@ -33,6 +33,7 @@ import {
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { runnerProcessPatternSource } from '../runners/registry.js';
 import { listRuns } from '../runs/store.js';
 
@@ -110,12 +111,15 @@ function activeRunPriority(run: Run): number {
   return ACTIVE_SLOT_STATUS_PRIORITY[run.status] ?? 0;
 }
 
-function activeSlotPhaseForRun(status: RunStatus): {
+function activeSlotPhaseForRun(run: Run): {
   lifecycle: string;
   phase: string | null;
   agent: 'idle' | 'working';
 } {
-  switch (status) {
+  if (blocksGateHeldSlotRelease(run)) {
+    return { lifecycle: 'busy', phase: 'review-gate', agent: 'working' };
+  }
+  switch (run.status) {
     case 'preparing':
     case 'created':
     case 'grading':
@@ -158,7 +162,7 @@ export function reconcileRefreshSlotRowWithActiveRun<T extends RefreshSlotRow>(
   activeRun: Run | null,
 ): T {
   if (!activeRun) return row;
-  const activeState = activeSlotPhaseForRun(activeRun.status);
+  const activeState = activeSlotPhaseForRun(activeRun);
   return {
     ...row,
     lifecycle: activeState.lifecycle,

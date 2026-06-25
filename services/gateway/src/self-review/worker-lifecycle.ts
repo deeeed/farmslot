@@ -1,15 +1,29 @@
 // self-review/worker-lifecycle.ts — worker liveness and relaunch target helpers for self-review fixes.
 
+import { agentRoleWindow, primaryRoleForFlow } from '@farmslot/protocol';
+
 import { resolveAgentTarget } from '../agents/contexts.js';
 import { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { firstWindowTarget, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { resolvePrimaryWorkerTarget, runnerProcessPatternSource } from '../runners/registry.js';
 
+function recreateRoleWindowName(
+  roleWindowName?: string | null,
+  flowType?: string | null,
+): string {
+  const named = roleWindowName?.trim();
+  if (named) return named;
+  if (flowType) return agentRoleWindow(primaryRoleForFlow(flowType)) ?? '';
+  return '';
+}
+
 export async function ensureTmuxTargetReadyForRelaunch(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
   target: string,
+  roleWindowName?: string | null,
+  flowType?: string | null,
 ): Promise<string> {
   const sessionReady =
     (await execOnSlot(vars, tmuxShellSnippet(`has-session -t ${shellQuote(session)} 2>/dev/null`)))
@@ -28,6 +42,9 @@ export async function ensureTmuxTargetReadyForRelaunch(
     }
   }
 
+  const windowPart = target.includes(':')
+    ? target.slice(target.indexOf(':') + 1).split('.', 1)[0]
+    : '';
   const paneReady = (
     await execOnSlot(
       vars,
@@ -36,21 +53,43 @@ export async function ensureTmuxTargetReadyForRelaunch(
       ),
     )
   ).stdout.trim();
-  if (paneReady) return target;
-
-  const windowPart = target.includes(':')
-    ? target.slice(target.indexOf(':') + 1).split('.', 1)[0]
-    : '';
+  let recreateWindow = windowPart;
+  if (paneReady) {
+    // Legacy dispatches stored numeric targets like mm-2:1.1 while the logical
+    // role window was `dev`. Infra windows (metro-*) can take over that index
+    // after the worker pane exits, so never treat a live pane at a numeric
+    // index as the worker unless the window name still matches.
+    if (/^\d+$/.test(windowPart)) {
+      const windowName = (
+        await execOnSlot(
+          vars,
+          tmuxShellSnippet(
+            `display-message -p -t ${shellQuote(target)} '#{window_name}' 2>/dev/null`,
+          ),
+        )
+      ).stdout.trim();
+      if (windowName && windowName !== windowPart) {
+        recreateWindow = recreateRoleWindowName(roleWindowName, flowType);
+        console.warn(
+          `[self-review] tmux target ${target} drifted to window ${windowName}; recreating role window ${recreateWindow || '(first window)'}`,
+        );
+      } else {
+        return target;
+      }
+    } else {
+      return target;
+    }
+  }
   // No parseable window in the supplied target, OR the caller asked for "0"
   // — both cases collapse to "give me the session's actual first window."
   // Resolve via firstWindowTarget so base-index-1 hosts get `${session}:1`
   // instead of the non-existent `${session}:0` the legacy fallback returned.
-  if (!windowPart || windowPart === '0') return await firstWindowTarget(vars, session);
+  if (!recreateWindow || recreateWindow === '0') return await firstWindowTarget(vars, session);
 
   const created = await execOnSlot(
     vars,
     tmuxShellSnippet(
-      `new-window -t ${shellQuote(session)} -n ${shellQuote(windowPart)} -c ${shellQuote(vars.remoteRepo)} -d 2>/dev/null`,
+      `new-window -t ${shellQuote(session)} -n ${shellQuote(recreateWindow)} -c ${shellQuote(vars.remoteRepo)} -d 2>/dev/null`,
     ),
   );
   if (created.exitCode !== 0) {
@@ -58,7 +97,7 @@ export async function ensureTmuxTargetReadyForRelaunch(
       `Cannot relaunch worker because tmux target ${target} is missing: ${created.stderr || created.stdout || `exit ${created.exitCode}`}`,
     );
   }
-  return `${session}:${windowPart}`;
+  return `${session}:${recreateWindow}`;
 }
 
 export async function isWorkerAlive(

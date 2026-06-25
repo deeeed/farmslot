@@ -10,7 +10,7 @@ The slot state machine has 11 `SlotLifecycle` values, a 3-value `SlotMode`, and 
 - `ready` vs `released` — both dispatchable, only differ by warm build
 - `preparing` vs `dispatching` — both mean "orchestrator is setting up"
 - `pr-watch` was merged into `ci-watch` — both meant "held for PR"
-- `review-gate` — a run step concern, not a slot concern
+- `review-gate` — primarily a run-step phase, but publication gate-hold also uses it as a slot `phase` with `agent: working` ([ADR-038](038-gate-held-worker-session.md))
 - `releasing` — brief transient (<10s)
 - `custom` — redundant with `disabled` (just blocks dispatch); replaced by `manual` for "continue working" case
 - `SlotMode` — redundant with lifecycle (`custom`/`disabled` exist in both)

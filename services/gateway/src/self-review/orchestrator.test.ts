@@ -89,15 +89,27 @@ test('resolveSelfReviewRunnerModel keeps self-review on the worker runner by def
   );
 });
 
-test('resolveSelfReviewRunnerModel supports explicit cross-runner review overrides', () => {
+test('resolveSelfReviewRunnerModel uses project review model only for configured review runner', () => {
   assert.deepEqual(
     resolveSelfReviewRunnerModel(
       'cursor',
       'composer-2.5',
-      { runner: 'same', model: 'opus' },
-      { reviewRunner: 'claude' },
+      { runner: 'claude', model: 'opus' },
+      {},
     ),
     { reviewRunner: 'claude', model: 'opus', crossRunner: true },
+  );
+});
+
+test('resolveSelfReviewRunnerModel ignores project self_review.model for plan-requested cross-runners', () => {
+  assert.deepEqual(
+    resolveSelfReviewRunnerModel(
+      'claude',
+      'opus',
+      { runner: 'same', model: 'opus' },
+      { reviewRunner: 'codex', model: null },
+    ),
+    { reviewRunner: 'codex', model: 'gpt-5.5', crossRunner: true },
   );
 });
 

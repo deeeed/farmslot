@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -53,13 +53,28 @@ function run(args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-if (nodeTest) {
-  run(['exec', 'node', '--import', 'tsx', '--test', ...tests.map((test) => relative(cwd, test))]);
-} else {
-  for (const test of tests) {
-    const command = ['exec', 'tsx'];
-    if (tsconfig) command.push('--tsconfig', tsconfig);
-    command.push(relative(cwd, test));
-    run(command);
-  }
+function usesModuleMocks(testPath) {
+  return readFileSync(testPath, 'utf8').includes('mock.module(');
+}
+
+const moduleMockTests = nodeTest ? tests : tests.filter(usesModuleMocks);
+const regularTests = nodeTest ? [] : tests.filter((test) => !usesModuleMocks(test));
+
+if (moduleMockTests.length > 0) {
+  run([
+    'exec',
+    'node',
+    '--import',
+    'tsx',
+    '--experimental-test-module-mocks',
+    '--test',
+    ...moduleMockTests.map((test) => relative(cwd, test)),
+  ]);
+}
+
+for (const test of regularTests) {
+  const command = ['exec', 'tsx'];
+  if (tsconfig) command.push('--tsconfig', tsconfig);
+  command.push(relative(cwd, test));
+  run(command);
 }
