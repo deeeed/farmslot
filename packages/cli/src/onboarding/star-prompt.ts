@@ -3,7 +3,6 @@
 // Shown once per user when gh is installed and authenticated. Skipped without a
 // TTY, when already prompted, or when FARMSLOT_NO_STAR_PROMPT is set.
 import { spawnSync } from 'node:child_process';
-import { createReadStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -88,10 +87,8 @@ function starPromptDisabled(env: NodeJS.ProcessEnv): boolean {
   return v === '1' || v === 'true';
 }
 
-async function askYesNo(question: string, ttyPath?: string): Promise<boolean> {
-  const input =
-    ttyPath && !process.stdin.isTTY ? createReadStream(ttyPath) : (process.stdin as NodeJS.ReadableStream);
-  const rl = createInterface({ input, output: process.stdout });
+async function askYesNo(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const answer = (await rl.question(question)).trim().toLowerCase();
     return answer === '' || answer === 'y' || answer === 'yes';
@@ -104,12 +101,11 @@ export interface MaybePromptGithubStarDeps {
   env?: NodeJS.ProcessEnv;
   stdinIsTTY?: boolean;
   stdoutIsTTY?: boolean;
-  ttyPath?: string;
   hasBeenPromptedFn?: (env: NodeJS.ProcessEnv) => Promise<boolean>;
   isGhInstalledFn?: () => boolean;
   isGhAuthenticatedFn?: () => boolean;
   markPromptedFn?: (env: NodeJS.ProcessEnv) => Promise<void>;
-  askYesNoFn?: (question: string, ttyPath?: string) => Promise<boolean>;
+  askYesNoFn?: (question: string) => Promise<boolean>;
   starRepoFn?: () => StarRepoResult;
   logFn?: (message: string) => void;
   warnFn?: (message: string) => void;
@@ -120,8 +116,7 @@ export async function maybePromptGithubStar(deps: MaybePromptGithubStarDeps = {}
   const env = deps.env ?? process.env;
   if (starPromptDisabled(env)) return false;
 
-  const ttyPath = deps.ttyPath;
-  const stdinIsTTY = deps.stdinIsTTY ?? (ttyPath ? true : Boolean(process.stdin.isTTY));
+  const stdinIsTTY = deps.stdinIsTTY ?? Boolean(process.stdin.isTTY);
   const stdoutIsTTY = deps.stdoutIsTTY ?? Boolean(process.stdout.isTTY);
   if (!stdinIsTTY || !stdoutIsTTY) return false;
 
@@ -137,10 +132,7 @@ export async function maybePromptGithubStar(deps: MaybePromptGithubStarDeps = {}
   await markPromptedImpl(env);
 
   const askYesNoImpl = deps.askYesNoFn ?? askYesNo;
-  const approved = await askYesNoImpl(
-    '[farmslot] Enjoying farmslot? Star it on GitHub? [Y/n] ',
-    ttyPath,
-  );
+  const approved = await askYesNoImpl('[farmslot] Enjoying farmslot? Star it on GitHub? [Y/n] ');
   if (!approved) return true;
 
   const starRepoImpl = deps.starRepoFn ?? (() => starRepo());
