@@ -10,7 +10,7 @@ Do not edit the template in-place during a cooking run.
 
 Every time you complete a checklist step:
 
-1. immediately change `- [ ]` to `- [x]`
+1. run `./mark N` if present (1-based); otherwise immediately change `- [ ]` to `- [x]`
 2. update `STATUS` if needed
 3. only then move to the next step
 

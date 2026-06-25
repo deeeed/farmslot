@@ -14,8 +14,32 @@ export interface WorkerSignal {
   outcome?: 'success' | 'failure' | 'partial';
   disposition?: WorkerTerminalDisposition;
   evidence?: WorkerTerminalEvidence;
+  checklistTiming?: WorkerSignalChecklistTiming;
   step?: string; // current step name
   reason?: string; // why blocked/failed
   prNumber?: number; // if worker created a PR
   timestamp: string;
+}
+
+export interface WorkerSignalChecklistTiming {
+  schemaVersion: 1;
+  /**
+   * Stable identifier for the checklist file or prompt section when known
+   * (for example `TASK.md` or `CHECKLIST.md`).
+   */
+  source?: string;
+  /**
+   * Append-only event history for checklist items the worker has marked done.
+   * Consumers derive deltas from the event order and timestamps.
+   */
+  events: WorkerSignalChecklistEvent[];
+}
+
+export interface WorkerSignalChecklistEvent {
+  /** Zero-based checklist item index in the parsed task/checklist at the time it was checked. */
+  index: number;
+  /** Human-readable checklist text, copied for resilience if the markdown later changes. */
+  label: string;
+  /** UTC ISO8601 timestamp when the item changed from unchecked to checked. */
+  checkedAt: string;
 }

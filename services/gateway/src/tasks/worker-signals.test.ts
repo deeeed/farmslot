@@ -83,6 +83,31 @@ test('normalizeWorkerSignal accepts evidence-backed no-change terminal dispositi
   );
 });
 
+test('normalizeWorkerSignal preserves optional checklist timing metadata', () => {
+  const result = normalizeWorkerSignal({
+    status: 'complete',
+    outcome: 'success',
+    checklistTiming: {
+      schemaVersion: 1,
+      source: 'CHECKLIST.md',
+      events: [
+        {
+          index: 0,
+          label: 'Run focused validation',
+          checkedAt: '2026-06-25T10:00:00Z',
+        },
+      ],
+    },
+    timestamp: '2026-06-25T10:01:00Z',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    result.ok && result.signal.checklistTiming?.events[0]?.label,
+    'Run focused validation',
+  );
+});
+
 test('normalizeWorkerSignal converts insufficient no-change evidence to blocked partial', () => {
   const result = normalizeWorkerSignal({
     status: 'complete',

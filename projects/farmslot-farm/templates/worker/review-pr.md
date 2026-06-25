@@ -1,6 +1,7 @@
 # Worker: Review-PR — PR #{{PR_NUMBER}}
 
 > **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` with status updates.
+> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (1-based). The final item can add `--status complete --outcome success`.
 
 ---
 
@@ -33,4 +34,4 @@ STATUS: pending
 - [ ] **9. Write review** — create `{{TASK_DIR}}/artifacts/review.md` with findings organized by severity (blocking, suggestion, nit).
 - [ ] **10. Post review comments** — post inline comments on specific lines via GitHub API.
 - [ ] **11. Update status** — set `STATUS: done`.
-- [ ] **12. Write completion signal** — run: `echo '{"status":"complete","outcome":"success","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > {{TASK_DIR}}/SIGNAL.json`
+- [ ] **12. Write completion signal** — run: `{{TASK_DIR}}/mark 12 --status complete --outcome success`

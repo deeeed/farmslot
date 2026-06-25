@@ -1,6 +1,7 @@
 # Worker: PR-Complete
 
 > **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` with status updates.
+> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (1-based). The final item can add `--status complete --outcome success`.
 
 ---
 
@@ -31,4 +32,4 @@ STATUS: pending
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
 - [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: files changed, issue addressed, validation results.
-- [ ] **9. Update status and signal** — set `STATUS: done`, then run: `echo '{"status":"complete","outcome":"success","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > {{TASK_DIR}}/SIGNAL.json`
+- [ ] **9. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark 9 --status complete --outcome success`

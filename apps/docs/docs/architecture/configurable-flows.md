@@ -96,7 +96,7 @@ flowchart LR
   Task --> Signal --> UI
 ```
 
-The template stays project-owned, but the observable shape is shared: markdown headings, checklist items, artifacts under the task directory, and a terminal signal file. See [Customize worker prompts](../guides/customize-worker-prompts.md) for the format.
+The template stays project-owned, but the observable shape is shared: markdown headings, checklist items, artifacts under the task directory, and a terminal signal file. See [Customize worker prompts](../guides/customize-worker-prompts.md) for the template format and [Worker signal protocol](../reference/worker-signal-protocol.md) for `SIGNAL.json`.
 
 ## Validation and evidence flow
 

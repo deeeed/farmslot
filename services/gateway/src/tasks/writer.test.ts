@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -13,6 +13,7 @@ import {
   buildTaskFolderPrefix,
   buildTemplateProvenance,
   COMMENT_SUMMARY_MAX_ROWS,
+  CHECKLIST_MARKER_INPUT,
   type CommentRow,
   findTaskDirCollisions,
   formatPrTitleSuffix,
@@ -395,6 +396,7 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   ) as { contentHash?: string; templateName?: string };
   assert.equal(provenance.templateName, 'dev-interactive.md');
   assert.equal(typeof provenance.contentHash, 'string');
+  await access(path.join(path.dirname(taskA), CHECKLIST_MARKER_INPUT));
 });
 
 test('renderCommentSummary returns placeholder when no rows — worker still re-fetches', () => {
