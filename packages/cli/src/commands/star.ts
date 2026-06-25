@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 
 import { dim } from '../colors.js';
-import { maybePromptGithubStar, starSupportHint } from '../onboarding/star-prompt.js';
+import { maybePromptGithubStar, STAR_REPO, starSupportHint } from '../onboarding/star-prompt.js';
 import { OutputContext } from '../output.js';
 
 export function registerStarCommand(program: Command): void {
@@ -27,7 +27,7 @@ export function registerStarCommand(program: Command): void {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       const hint = starSupportHint();
       if (output.json) {
-        output.writeJson({ hint, repo: hint ? 'deeeed/farmslot' : null });
+        output.writeJson({ hint, repo: hint ? STAR_REPO : null });
         return;
       }
       if (hint) output.write(`${dim(hint)}\n`);

@@ -10,8 +10,8 @@ import {
 } from './star-prompt.js';
 
 test('starPromptStatePath lives under ~/.farmslot/state', () => {
-  const path = starPromptStatePath({ HOME: '/tmp/farmslot-star-home' });
-  assert.match(path, /farmslot\/state\/star-prompt\.json$/);
+  const path = starPromptStatePath({ FARMSLOT_HOME: '/tmp/farmslot-star-home/.farmslot' });
+  assert.equal(path, '/tmp/farmslot-star-home/.farmslot/state/star-prompt.json');
 });
 
 test('starRepo returns ok when gh repo star succeeds', () => {
@@ -74,7 +74,7 @@ test('maybePromptGithubStar does not print thank-you when starring fails', async
 
 test('maybePromptGithubStar skips when FARMSLOT_NO_STAR_PROMPT is set', async () => {
   let asked = false;
-  await maybePromptGithubStar({
+  const prompted = await maybePromptGithubStar({
     env: { FARMSLOT_NO_STAR_PROMPT: '1' },
     stdinIsTTY: true,
     stdoutIsTTY: true,
@@ -84,11 +84,12 @@ test('maybePromptGithubStar skips when FARMSLOT_NO_STAR_PROMPT is set', async ()
     },
   });
   assert.equal(asked, false);
+  assert.equal(prompted, false);
 });
 
 test('maybePromptGithubStar skips without a TTY', async () => {
   let asked = false;
-  await maybePromptGithubStar({
+  const prompted = await maybePromptGithubStar({
     env: {},
     stdinIsTTY: false,
     stdoutIsTTY: true,
@@ -98,6 +99,22 @@ test('maybePromptGithubStar skips without a TTY', async () => {
     },
   });
   assert.equal(asked, false);
+  assert.equal(prompted, false);
+});
+
+test('maybePromptGithubStar returns true when the question is shown', async () => {
+  const prompted = await maybePromptGithubStar({
+    env: {},
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    hasBeenPromptedFn: async () => false,
+    isGhInstalledFn: () => true,
+    isGhAuthenticatedFn: () => true,
+    markPromptedFn: async () => {},
+    askYesNoFn: async () => false,
+    starRepoFn: () => ({ ok: true }),
+  });
+  assert.equal(prompted, true);
 });
 
 test('starRepo hides the Windows console window for gh invocations', () => {

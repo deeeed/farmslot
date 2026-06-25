@@ -33,14 +33,14 @@ export function registerDoctorCommand(program: Command): void {
             ? `\n${green('doctor: all checks passed')}\n`
             : `\n${red('doctor: checks failed')}\n`,
         );
-        if (report.ok) {
-          const hint = starSupportHint();
-          if (hint) output.write(`${dim(hint)}\n`);
-        }
       }
       if (!report.ok) process.exit(1);
       if (!output.json && report.ok) {
-        await maybePromptGithubStar();
+        const prompted = await maybePromptGithubStar();
+        if (!prompted) {
+          const hint = starSupportHint();
+          if (hint) output.write(`${dim(hint)}\n`);
+        }
       }
     });
 }

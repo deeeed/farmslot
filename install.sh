@@ -258,9 +258,7 @@ step_doctor() {
 # can still prompt; a non-interactive install (CI, no tty) skips without hanging.
 # One-time GitHub star ask — reads from /dev/tty so `curl | bash` still prompts.
 step_star() {
-  if [ -n "${FARMSLOT_NO_STAR_PROMPT:-}" ]; then
-    return
-  fi
+  case "${FARMSLOT_NO_STAR_PROMPT:-}" in 1|true) return ;; esac
   if ! command -v gh >/dev/null 2>&1; then
     return
   fi

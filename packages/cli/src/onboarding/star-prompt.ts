@@ -115,21 +115,22 @@ export interface MaybePromptGithubStarDeps {
   warnFn?: (message: string) => void;
 }
 
-export async function maybePromptGithubStar(deps: MaybePromptGithubStarDeps = {}): Promise<void> {
+/** True when the interactive question was shown (including if the user declined). */
+export async function maybePromptGithubStar(deps: MaybePromptGithubStarDeps = {}): Promise<boolean> {
   const env = deps.env ?? process.env;
-  if (starPromptDisabled(env)) return;
+  if (starPromptDisabled(env)) return false;
 
   const ttyPath = deps.ttyPath;
   const stdinIsTTY = deps.stdinIsTTY ?? (ttyPath ? true : Boolean(process.stdin.isTTY));
   const stdoutIsTTY = deps.stdoutIsTTY ?? Boolean(process.stdout.isTTY);
-  if (!stdinIsTTY || !stdoutIsTTY) return;
+  if (!stdinIsTTY || !stdoutIsTTY) return false;
 
   const hasBeenPromptedImpl = deps.hasBeenPromptedFn ?? hasBeenPrompted;
-  if (await hasBeenPromptedImpl(env)) return;
+  if (await hasBeenPromptedImpl(env)) return false;
 
   const isGhInstalledImpl = deps.isGhInstalledFn ?? isGhInstalled;
   const isGhAuthenticatedImpl = deps.isGhAuthenticatedFn ?? isGhAuthenticated;
-  if (!isGhInstalledImpl() || !isGhAuthenticatedImpl()) return;
+  if (!isGhInstalledImpl() || !isGhAuthenticatedImpl()) return false;
 
   // Mark before asking so an interrupt still counts as prompted.
   const markPromptedImpl = deps.markPromptedFn ?? markPrompted;
@@ -140,15 +141,16 @@ export async function maybePromptGithubStar(deps: MaybePromptGithubStarDeps = {}
     '[farmslot] Enjoying farmslot? Star it on GitHub? [Y/n] ',
     ttyPath,
   );
-  if (!approved) return;
+  if (!approved) return true;
 
   const starRepoImpl = deps.starRepoFn ?? (() => starRepo());
   const star = starRepoImpl();
   if (star.ok) {
     (deps.logFn ?? console.log)('[farmslot] Thanks for the star!');
-    return;
+    return true;
   }
   (deps.warnFn ?? console.warn)(`[farmslot] Could not star repository automatically: ${star.error}`);
+  return true;
 }
 
 export function starSupportHint(): string | null {
