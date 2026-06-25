@@ -208,6 +208,24 @@ async function backupRunFile(runFile) {
   return backupPath;
 }
 
+async function rewriteTaskMarkdownPaths(taskDirAbs, legacyRoot, newRoot, dryRun) {
+  const files = ['TASK.md', 'SELF-REVIEW.md', 'SELF-REVIEW-FIX.md', 'CI-FIX.md'];
+  let rewritten = 0;
+  for (const name of files) {
+    const filePath = path.join(taskDirAbs, name);
+    if (!existsSync(filePath)) continue;
+    const before = await readFile(filePath, 'utf8');
+    const legacyPrefix = `${legacyRoot}/`;
+    const newPrefix = `${newRoot}/`;
+    if (!before.includes(legacyPrefix)) continue;
+    const after = before.split(legacyPrefix).join(newPrefix);
+    if (after === before) continue;
+    rewritten += 1;
+    if (!dryRun) await writeFile(filePath, after, 'utf8');
+  }
+  return rewritten;
+}
+
 async function migrateOneRun(runFile, opts) {
   const run = JSON.parse(await readFile(runFile, 'utf8'));
   const label = `${run.id.slice(0, 8)} (${run.ticketOrPr ?? 'no-ticket'})`;
@@ -263,6 +281,17 @@ async function migrateOneRun(runFile, opts) {
         if (art) console.log(art.split('\n').filter(Boolean).map((l) => `    ${l}`).join('\n'));
       }
       console.log(`  [ok] slot merge complete`);
+      const rewritten = await rewriteTaskMarkdownPaths(
+        destAbs,
+        opts.legacyRoot,
+        newRoot,
+        opts.dryRun,
+      );
+      if (rewritten > 0) {
+        console.log(
+          `  [ok] rewrote ${rewritten} task markdown file(s) (${opts.legacyRoot}/ -> ${newRoot}/)`,
+        );
+      }
     }
   } else {
     console.log(`  [warn] no slot repo — run JSON patch only`);
