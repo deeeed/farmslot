@@ -33,3 +33,5 @@ When the operator says the interactive session is complete:
 ```bash
 echo '{"status":"complete","outcome":"success","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' > "{{TASK_DIR}}/SIGNAL.json"
 ```
+
+**Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.
