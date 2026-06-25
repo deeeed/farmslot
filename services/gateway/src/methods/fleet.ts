@@ -33,7 +33,7 @@ import {
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { isGateHeldPublicationRun } from '../run-engine/gate-held-lifecycle.js';
+import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { runnerProcessPatternSource } from '../runners/registry.js';
 import { listRuns } from '../runs/store.js';
 
@@ -116,7 +116,7 @@ function activeSlotPhaseForRun(run: Run): {
   phase: string | null;
   agent: 'idle' | 'working';
 } {
-  if (isGateHeldPublicationRun(run)) {
+  if (blocksGateHeldSlotRelease(run)) {
     return { lifecycle: 'busy', phase: 'review-gate', agent: 'working' };
   }
   switch (run.status) {
