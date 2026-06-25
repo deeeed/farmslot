@@ -478,7 +478,7 @@ export async function holdSlotForPublicationGate(
   broadcastFn: (event: string, payload: unknown) => void,
 ): Promise<void> {
   await markSlotBusy(slotId, 'review-gate', 'working');
-  broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+  broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
 }
 
 export async function executeHumanGateStep(
@@ -550,7 +550,7 @@ export async function executeHumanGateStep(
   // worker runner stays attachable for operator Q&A.
   if (current.slotId) {
     await markSlotBusy(current.slotId, 'review-gate', 'working');
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
   }
 
   // Track wait duration
@@ -661,7 +661,7 @@ export async function executeHumanGateStep(
   // Restore slot lifecycle after gate resolution; worker stays alive until finalize.
   if (current.slotId) {
     await markSlotBusy(current.slotId, 'working', 'working');
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
   }
 
   const after = getRun(runId)!;

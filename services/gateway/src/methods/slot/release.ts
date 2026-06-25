@@ -39,10 +39,10 @@ import {
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import { cleanupSlotStorage } from '../../fleet/slot-storage-cleanup.js';
+import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 
-import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecycle.js';
 import { slotPrepare } from './prepare.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';

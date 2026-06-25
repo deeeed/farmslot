@@ -33,8 +33,8 @@ import {
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { runnerProcessPatternSource } from '../runners/registry.js';
 import { isGateHeldPublicationRun } from '../run-engine/gate-held-lifecycle.js';
+import { runnerProcessPatternSource } from '../runners/registry.js';
 import { listRuns } from '../runs/store.js';
 
 const statusFile = path.join(farmslotRoot, '.farm-status.json');

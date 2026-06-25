@@ -20,9 +20,9 @@ import {
 } from '../core/active-run-selection.js';
 import { loadSlotVars } from '../core/config.js';
 import { updateSlotStatus } from '../core/state.js';
-import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { resolveTmuxSession } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { canonicalAgentContextTarget } from '../methods/dispatch/role-target.js';
 import { getRun, listRuns, updateRunAgentContexts } from '../runs/store.js';
 
 const TERMINAL_AGENT_STATUSES: ReadonlySet<AgentContextStatus> = new Set([

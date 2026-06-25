@@ -24,7 +24,7 @@ import {
   resolveAgentTarget,
   upsertAgentContext,
 } from '../agents/contexts.js';
-import { loadProjectVars, loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
+import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
   respawnTmuxWindowWithCommand,

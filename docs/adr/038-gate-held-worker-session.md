@@ -30,7 +30,7 @@ MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live) �
 
 ### Slot release guard
 
-`slot.release` rejects release when a gate-held publication run is active on the slot (unless `forceReset`), because detach + agent kill breaks finalize/publish.
+`slot.release` rejects release when `blocksGateHeldSlotRelease` is true for an active run on the slot (open publication gate, or post-approval until FINALIZE completes), unless `forceReset` / `preserveAgents`, because detach + agent kill breaks finalize/publish.
 
 ### API surface
 

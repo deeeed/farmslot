@@ -4,10 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { CompleteStepOutput } from '@farmslot/protocol';
+
 import { writeResultPackageManifest } from '../evals/package-store.js';
 import { createRun, updateRun } from '../runs/store.js';
-
-import type { CompleteStepOutput } from '@farmslot/protocol';
 
 import {
   executeHumanGateStep,

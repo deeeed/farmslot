@@ -164,7 +164,7 @@ export async function executeFinalizeStep(
     } else {
       await markSlotHeld(current.slotId, 'ci-watch');
     }
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus(true) });
   } catch (err) {
     // Finalize continues so run completion is not lost, but slot lifecycle
     // drift is operator-actionable and must be logged.

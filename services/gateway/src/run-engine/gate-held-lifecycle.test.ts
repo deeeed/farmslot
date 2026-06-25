@@ -6,6 +6,7 @@ import { PipelineSteps } from '@farmslot/protocol';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
 import {
+  blocksGateHeldSlotRelease,
   completeStepDisposition,
   findActiveGateHeldRunForSlot,
   isGateHeldPublicationRun,
@@ -145,6 +146,45 @@ test('findActiveGateHeldRunForSlot returns active gate-held run for slot', async
   assert.equal(found?.id, run.id);
 });
 
+test('blocksGateHeldSlotRelease stays true after gate approval until FINALIZE completes', () => {
+  const run = makeRun({ flowType: 'dev', mode: 'autonomous', status: 'completing' });
+  run.steps = [
+    {
+      name: PipelineSteps.COMPLETE,
+      status: 'done',
+      outputs: { slotDisposition: 'gate-held' },
+    },
+    { name: PipelineSteps.FINALIZE, status: 'running' },
+  ];
+  run.decisions = [
+    {
+      id: 'decision-1',
+      type: 'engine_human_gate',
+      title: 'Gate',
+      description: 'Review package',
+      actions: [],
+      createdAt: new Date().toISOString(),
+      resolvedAt: new Date().toISOString(),
+      resolvedAction: 'approve-publish',
+    },
+  ];
+  assert.equal(isGateHeldPublicationRun(run), false);
+  assert.equal(blocksGateHeldSlotRelease(run), true);
+});
+
+test('blocksGateHeldSlotRelease is false after FINALIZE completes', () => {
+  const run = makeRun({ flowType: 'fix-bug', status: 'ci-watching' });
+  run.steps = [
+    {
+      name: PipelineSteps.COMPLETE,
+      status: 'done',
+      outputs: { slotDisposition: 'gate-held' },
+    },
+    { name: PipelineSteps.FINALIZE, status: 'done' },
+  ];
+  assert.equal(blocksGateHeldSlotRelease(run), false);
+});
+
 test('findActiveGateHeldRunForSlot ignores resolved gate-held runs', async (t) => {
   const slotId = `gate-held-resolved-${Date.now()}`;
   const run = createRun({
@@ -156,6 +196,15 @@ test('findActiveGateHeldRunForSlot ignores resolved gate-held runs', async (t) =
   t.after(() => cleanupRun(run.id));
   updateRun(run.id, {
     ...gateHeldRunPatch(),
+    status: 'ci-watching',
+    steps: [
+      {
+        name: PipelineSteps.COMPLETE,
+        status: 'done',
+        outputs: { slotDisposition: 'gate-held' },
+      },
+      { name: PipelineSteps.FINALIZE, status: 'done' },
+    ],
     decisions: [
       {
         id: 'decision-1',

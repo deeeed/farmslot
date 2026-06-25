@@ -26,7 +26,6 @@ import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { clearStalePrepareProcess } from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
 import { createRun, getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
-import { teardownGateHeldAgentsIfNeeded } from './gate-held-lifecycle.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
@@ -50,6 +49,7 @@ import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
 import { executeFinalizeStep } from './finalize-step.js';
 import { executeFindSlotStep } from './find-slot-step.js';
+import { teardownGateHeldAgentsIfNeeded } from './gate-held-lifecycle.js';
 import {
   buildNoChangeGateInputs,
   hasValidPrNumber,
