@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "snapshots": [
+    {
+      "recordedAt": "2026-06-25T10:12:04.744Z",
+      "commit": "6212d272f57800c94165de21aa91c35e9c3bc4ab",
+      "scope": "framework",
+      "exclusions": {
+        "tests": false,
+        "dev": false
+      },
+      "totals": {
+        "files": 1759,
+        "code": 350522,
+        "docs": 24287,
+        "config": 8439,
+        "total": 384535
+      },
+      "rollup": {
+        "command-center": {
+          "code": 113087,
+          "total": 114299
+        },
+        "companion": {
+          "code": 60588,
+          "total": 62061
+        },
+        "gateway": {
+          "code": 117651,
+          "total": 117755
+        },
+        "packages": {
+          "code": 34435,
+          "total": 37245
+        },
+        "scripts": {
+          "code": 12172,
+          "total": 12457
+        },
+        "docs": {
+          "code": 0,
+          "total": 18023
+        },
+        "docs-site": {
+          "code": 7079,
+          "total": 11517
+        },
+        "node": {
+          "code": 4288,
+          "total": 4356
+        },
+        "projects": {
+          "code": 0,
+          "total": 145
+        },
+        "infra": {
+          "code": 1222,
+          "total": 6677
+        }
+      }
+    }
+  ]
+}
