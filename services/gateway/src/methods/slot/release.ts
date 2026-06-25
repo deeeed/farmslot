@@ -97,7 +97,9 @@ export async function slotRelease(
   // Mark lifecycle
   await markSlotBusy(params.slotId, 'releasing');
 
-  // 1. Kill running agent (deferred when preserveAgents — human gate still needs worker)
+  // 1. Kill running agent. Local-first publication gate-hold skips slotRelease at
+  // COMPLETE entirely (see holdSlotForPublicationGate) and tears down via
+  // killSlotAgents at FINALIZE. preserveAgents is for partial release call sites only.
   if (!preserveAgents) {
     step('agent', 'Killing agent...');
     await killAllAgentWindows(vars);

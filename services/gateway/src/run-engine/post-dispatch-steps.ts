@@ -472,6 +472,15 @@ export async function executeSelfReviewStep(
   };
 }
 
+/** Keep the worker tmux session alive while the publication human gate is open. */
+export async function holdSlotForPublicationGate(
+  slotId: string,
+  broadcastFn: (event: string, payload: unknown) => void,
+): Promise<void> {
+  await markSlotBusy(slotId, 'review-gate', 'working');
+  broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+}
+
 export async function executeHumanGateStep(
   runId: string,
   context: PostDispatchStepContext,
@@ -701,10 +710,7 @@ export async function executeCompleteStep(
       diffStat,
       requireArtifactMirror: true,
     });
-    // Hold the slot and keep the worker tmux session alive through HUMAN_GATE so
-    // operators can attach and ask why/how questions before publication.
-    await markSlotBusy(current.slotId, 'review-gate', 'working');
-    broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
+    await holdSlotForPublicationGate(current.slotId, broadcastFn);
     const cliCommand = `farmslot slot check ${current.slotId}`;
     return {
       inputs,
