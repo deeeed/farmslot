@@ -43,6 +43,7 @@ import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
 import {
+  isPublishApprovalAction,
   reviewFinalSnapshotMatchesPreparedPackage,
   shouldForceNoChangeHumanGate,
   stampPublishGateReviewStatusForPackage,
@@ -591,7 +592,7 @@ export async function executeHumanGateStep(
     }
     let gateAction = await executeReadyGate(runId);
     let reviewRequestLoops = 0;
-    while (publicationApprovalGate && gateAction !== 'approve-publish' && gateAction !== 'ready') {
+    while (publicationApprovalGate && !isPublishApprovalAction(gateAction)) {
       if (gateAction === 'hold') {
         gateAction = await executeReadyGate(runId);
         continue;

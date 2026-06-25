@@ -23,6 +23,30 @@ import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { publicationReviewPolicyForRun } from './publication-policy.js';
 
+/**
+ * Human override action surfaced on the publish gate when staleness is caused
+ * purely by evidence/subject drift while the reviewed HEAD still matches the
+ * prepared package. Carries the prior pass verdict forward instead of forcing a
+ * needless re-review. Never offered when the reviewed code actually changed.
+ */
+export const APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION = 'approve-publish-evidence-refresh';
+
+/**
+ * Action ids that approve a local-first publication at the human ready/publish
+ * gate. Shared so the engine loop exit, finalize guard, decision replay, and the
+ * resolve freshness check all recognize the same set rather than scattering
+ * string literals that drift apart.
+ */
+export const PUBLISH_APPROVAL_ACTIONS: ReadonlySet<string> = new Set([
+  'approve-publish',
+  APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
+  'ready',
+]);
+
+export function isPublishApprovalAction(actionId: string | null | undefined): boolean {
+  return PUBLISH_APPROVAL_ACTIONS.has(actionId ?? '');
+}
+
 export function isOwnPrApprovalError(err: unknown): boolean {
   const maybeRecord = err as { message?: unknown; stdout?: unknown; stderr?: unknown };
   const text = [maybeRecord?.message, maybeRecord?.stdout, maybeRecord?.stderr]
@@ -303,6 +327,37 @@ export function reviewFinalSnapshotMatchesPreparedPackage(
   return Boolean(preparedPackage.headSha && snapshot.headSha === preparedPackage.headSha);
 }
 
+/**
+ * Per-review staleness diagnosis against the prepared package's review subject.
+ * `headDrift` means the review certified a different (or missing) HEAD SHA than
+ * the prepared package — a real code change that mandates re-review.
+ * `subjectDrift` means the reviewed subject hash no longer matches — typically
+ * caused by an evidence/package refresh that regenerated artifact digests even
+ * though the reviewed code (HEAD) is unchanged. The two reasons are kept
+ * separate so the human evidence-refresh override can target subject-only drift.
+ */
+interface PublicationReviewStaleness {
+  stale: boolean;
+  headDrift: boolean;
+  subjectDrift: boolean;
+}
+
+function diagnosePublicationReviewStaleness(
+  review: IndependentReviewStatus,
+  packageReviewSubjectHash: string,
+  preparedPackage: Pick<ReadyGatePrPackage, 'headSha'>,
+): PublicationReviewStaleness {
+  const snapshot = review.reviewSnapshot;
+  const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
+  const reviewedSubjectHash = review.reviewedReviewSubjectHash ?? null;
+  const subjectDrift = reviewedSubjectHash !== packageReviewSubjectHash;
+  const headDrift =
+    !reviewedHeadSha ||
+    reviewedHeadSha !== preparedPackage.headSha ||
+    (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable'));
+  return { stale: headDrift || subjectDrift, headDrift, subjectDrift };
+}
+
 export function countStalePublicationReviews(
   independentReviews: IndependentReviewStatus[],
   preparedPackage: ReadyGatePrPackage,
@@ -327,18 +382,85 @@ export function countStalePublicationReviews(
       reviewCertifiesApprovedHeadAfterFix(review, preparedPackage) &&
       (!options?.requireCrossRunnerCertification || review.crossRunner),
   );
-  return independentReviews.filter((review) => {
-    const snapshot = review.reviewSnapshot;
-    const reviewedHeadSha = review.reviewedHeadSha ?? snapshot?.headSha ?? null;
-    const reviewedSubjectHash = review.reviewedReviewSubjectHash ?? null;
-    const subjectDrift = reviewedSubjectHash !== packageReviewSubjectHash;
-    const stale =
-      !reviewedHeadSha ||
-      reviewedHeadSha !== preparedPackage.headSha ||
-      subjectDrift ||
-      (!review.reviewedHeadSha && (!snapshot || snapshot.source === 'unavailable'));
-    return stale && !certifiedByFreshFixLoop;
-  }).length;
+  return independentReviews.filter(
+    (review) =>
+      diagnosePublicationReviewStaleness(review, packageReviewSubjectHash, preparedPackage).stale &&
+      !certifiedByFreshFixLoop,
+  ).length;
+}
+
+/**
+ * True when the publish gate is blocked purely by evidence/subject drift on the
+ * prepared package while the reviewed HEAD still matches — i.e. a package
+ * refresh regenerated evidence digests but the reviewed code is unchanged. In
+ * that case the operator may use the `approve-publish-evidence-refresh`
+ * override to carry the prior pass verdict forward without a needless re-review.
+ *
+ * Returns false (override unavailable) when any stale approving review is stale
+ * due to HEAD drift (real code change) or when no stale approving review exists.
+ */
+export function staleReviewsAreEvidenceOnly(
+  independentReviews: IndependentReviewStatus[],
+  preparedPackage: ReadyGatePrPackage,
+  options?: { requireCrossRunnerCertification?: boolean },
+): boolean {
+  const packageReviewSubjectHash = preparedPackage.reviewSubjectHash?.trim();
+  if (!packageReviewSubjectHash) return false;
+  const staleApprovingReviews = independentReviews.filter(
+    (review) =>
+      review.verdict === 'pass' &&
+      review.unresolvedCount === 0 &&
+      (!options?.requireCrossRunnerCertification || review.crossRunner) &&
+      diagnosePublicationReviewStaleness(review, packageReviewSubjectHash, preparedPackage).stale,
+  );
+  if (staleApprovingReviews.length === 0) return false;
+  return staleApprovingReviews.every((review) => {
+    const diagnosis = diagnosePublicationReviewStaleness(
+      review,
+      packageReviewSubjectHash,
+      preparedPackage,
+    );
+    return diagnosis.subjectDrift && !diagnosis.headDrift;
+  });
+}
+
+/**
+ * Carry the prior pass verdict forward when the operator uses the human
+ * evidence-refresh override: restamp every stale approving review whose HEAD
+ * still matches the approved package onto the package's current subject/HEAD so
+ * the standard publication-review policy reads them as fresh. Reuses
+ * `stampPublishGateReviewStatusForPackage` — identical stamping logic to the
+ * automatic refresh path, but gated behind the explicit human override.
+ */
+export function restampStaleApprovingReviewsForEvidenceRefresh(
+  independentReviews: IndependentReviewStatus[],
+  approvedPackage: ReadyGatePrPackage,
+  options?: { requireCrossRunnerCertification?: boolean },
+): {
+  reviews: IndependentReviewStatus[];
+  restampedIds: string[];
+  oldReviewSubjectHashes: string[];
+} {
+  const packageReviewSubjectHash = approvedPackage.reviewSubjectHash?.trim();
+  const restampedIds: string[] = [];
+  const oldReviewSubjectHashes: string[] = [];
+  if (!packageReviewSubjectHash) {
+    return { reviews: independentReviews, restampedIds, oldReviewSubjectHashes };
+  }
+  const reviews = independentReviews.map((review) => {
+    if (review.verdict !== 'pass' || review.unresolvedCount !== 0) return review;
+    if (options?.requireCrossRunnerCertification && !review.crossRunner) return review;
+    const diagnosis = diagnosePublicationReviewStaleness(
+      review,
+      packageReviewSubjectHash,
+      approvedPackage,
+    );
+    if (!diagnosis.stale || diagnosis.headDrift || !diagnosis.subjectDrift) return review;
+    restampedIds.push(review.id);
+    oldReviewSubjectHashes.push(review.reviewedReviewSubjectHash ?? '');
+    return stampPublishGateReviewStatusForPackage(review, approvedPackage);
+  });
+  return { reviews, restampedIds, oldReviewSubjectHashes };
 }
 
 function freshPublicationReviewCountSatisfied(

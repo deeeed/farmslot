@@ -32,6 +32,7 @@ import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import {
   assertPublicationReviewPolicySatisfied,
+  isPublishApprovalAction,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
 import { requiresPublicationApproval } from './publication-policy.js';
@@ -218,7 +219,7 @@ export async function executeFinalizeStep(
   let publishPackageHash: string | undefined;
   let publishBodyPostProcessed = false;
   if (publicationApprovalGate) {
-    if (resolvedAction !== 'approve-publish' && resolvedAction !== 'ready') {
+    if (!isPublishApprovalAction(resolvedAction)) {
       throw blockedRunError(
         'Local-first publication requires approve-publish before finalize',
         resolvedAction ?? 'missing-approval',
