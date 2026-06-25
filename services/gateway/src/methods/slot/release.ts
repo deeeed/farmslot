@@ -42,8 +42,7 @@ import { cleanupSlotStorage } from '../../fleet/slot-storage-cleanup.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 
-import { isGateHeldPublicationRun } from '../../run-engine/gate-held-lifecycle.js';
-import { listRuns } from '../../runs/store.js';
+import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecycle.js';
 import { slotPrepare } from './prepare.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';
@@ -72,9 +71,7 @@ export async function slotRelease(
   const detachRuns = params.detachRuns ?? true;
   const preserveAgents = params.preserveAgents ?? false;
   const requestId = params.requestId ?? `release-${randomUUID()}`;
-  const gateHeldRun = listRuns().find(
-    (run) => run.slotId === params.slotId && isGateHeldPublicationRun(run),
-  );
+  const gateHeldRun = findActiveGateHeldRunForSlot(params.slotId);
   if (gateHeldRun && !preserveAgents && !forceReset) {
     throw new Error(
       `Slot ${params.slotId} is gate-held for run ${gateHeldRun.id} — resolve or cancel the publication gate before release`,

@@ -1,6 +1,7 @@
 import { PipelineSteps, type Run } from '@farmslot/protocol';
 
 import { killSlotAgents } from '../methods/slot.js';
+import { listRuns } from '../runs/store.js';
 
 import { requiresPublicationApproval } from './publication-policy.js';
 
@@ -8,6 +9,11 @@ export function completeStepDisposition(run: Run): string | undefined {
   const step = run.steps?.find((entry) => entry.name === PipelineSteps.COMPLETE);
   const outputs = step?.outputs as { slotDisposition?: string } | undefined;
   return typeof outputs?.slotDisposition === 'string' ? outputs.slotDisposition : undefined;
+}
+
+export function findActiveGateHeldRunForSlot(slotId: string): Run | undefined {
+  const { runs } = listRuns({ active: true });
+  return runs.find((run) => run.slotId === slotId && isGateHeldPublicationRun(run));
 }
 
 export function isGateHeldPublicationRun(run: Run): boolean {
