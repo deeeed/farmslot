@@ -23,6 +23,7 @@
 #   FARMSLOT_BIN_DIR    dir for the PATH symlink   (default: ~/.local/bin)
 #   FARMSLOT_MINIMAL    set to skip the dashboard build + pair-your-phone step
 #   FARMSLOT_PAIR       set to 1 to pair non-interactively (no prompt)
+#   FARMSLOT_NO_STAR_PROMPT  set to 1 to skip the GitHub star prompt
 set -euo pipefail
 
 WORKSPACE="${FARMSLOT_WORKSPACE:-${HOME}/dev/farmslot-workspace}"
@@ -255,6 +256,23 @@ step_doctor() {
 # Quick win: start the local gateway and show a QR to pair the mobile companion
 # app for tmux control on the go. Reads y/n from /dev/tty so a piped `curl | bash`
 # can still prompt; a non-interactive install (CI, no tty) skips without hanging.
+# One-time GitHub star ask — reads from /dev/tty so `curl | bash` still prompts.
+step_star() {
+  if [ -n "${FARMSLOT_NO_STAR_PROMPT:-}" ]; then
+    return
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    return
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    return
+  fi
+  if [ ! -r /dev/tty ]; then
+    return
+  fi
+  FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" star prompt --tty /dev/tty </dev/tty
+}
+
 step_pair() {
   bold "── Start it up ──"
   local start_now="" pair_now="" reply
@@ -317,6 +335,7 @@ main() {
   step_cli
   step_workspace
   step_doctor
+  step_star
   step_pair
 }
 

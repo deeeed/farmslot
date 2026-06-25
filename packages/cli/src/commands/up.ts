@@ -21,6 +21,7 @@ import {
   profilesPath,
   saveProfiles,
 } from '../gateway-profiles.js';
+import { maybePromptGithubStar } from '../onboarding/star-prompt.js';
 import { repoRoot } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
@@ -314,6 +315,7 @@ export function registerUpCommand(program: Command): void {
     .action(async (opts: { port: string }, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       await up(Number(opts.port), output);
+      if (!output.json) await maybePromptGithubStar();
     });
 
   program
