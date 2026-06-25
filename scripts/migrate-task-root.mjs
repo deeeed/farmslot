@@ -10,10 +10,10 @@
  *   node scripts/migrate-task-root.mjs --run 199ace83 --dry-run
  */
 
-import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync, readdirSync } from 'node:fs';
-import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
+import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -134,13 +134,6 @@ function migratePathString(value, legacyRoot, newRoot, repoAbs) {
     }
   }
   return { value, changed: false };
-}
-
-function patchValueAtKey(key, value, legacyRoot, newRoot, repoAbs) {
-  if (!PATH_FIELD_KEYS.has(key) || typeof value !== 'string') {
-    return { value, changed: false };
-  }
-  return migratePathString(value, legacyRoot, newRoot, repoAbs);
 }
 
 function patchRunTree(node, legacyRoot, newRoot, repoAbs, key = null) {
