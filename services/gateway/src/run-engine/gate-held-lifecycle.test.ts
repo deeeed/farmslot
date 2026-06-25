@@ -75,6 +75,28 @@ test('isGateHeldPublicationRun is true for blocked runs awaiting publication gat
   assert.equal(isGateHeldPublicationRun(run), true);
 });
 
+test('isGateHeldPublicationRun is true for blocked runs with engine_review_posting decision', () => {
+  const run = makeRun({ flowType: 'fix-bug', status: 'blocked' });
+  run.steps = [
+    {
+      name: PipelineSteps.COMPLETE,
+      status: 'done',
+      outputs: { slotDisposition: 'gate-held' },
+    },
+  ];
+  run.decisions = [
+    {
+      id: 'decision-1',
+      type: 'engine_review_posting',
+      title: 'Posting',
+      description: 'Review posting package',
+      actions: [],
+      createdAt: new Date().toISOString(),
+    },
+  ];
+  assert.equal(isGateHeldPublicationRun(run), true);
+});
+
 test('isGateHeldPublicationRun is false after gate-held complete without open decision', () => {
   const run = makeRun({ flowType: 'fix-bug', status: 'blocked' });
   run.steps = [

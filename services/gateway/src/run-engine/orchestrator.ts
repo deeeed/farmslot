@@ -267,6 +267,10 @@ async function finalizeNonThrownTerminalRun(
       );
     }
     try {
+      const currentRun = getRun(runId);
+      if (currentRun) {
+        await teardownGateHeldAgentsIfNeeded(currentRun);
+      }
       await resetSlot(run.slotId);
     } catch (err) {
       // Surface but do not mask the run's terminal state.
