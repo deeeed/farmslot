@@ -92,6 +92,25 @@ test('runReplayStep does not open a recovery attempt before replay validation pa
   assert.equal(getRun(badTicketRun.id)?.recoveryAttempts?.length ?? 0, 0);
 });
 
+test('runReplayStep still rejects PR-bound replays without a linked prNumber', async (t) => {
+  const run = createRun({
+    flowType: 'merge-main',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-3398',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.rejects(
+    () => runReplayStep({ runId: run.id, stepName: 'ci-watch', triggeredBy: 'operator' }, () => {}),
+    /Cannot replay run:/,
+  );
+});
+
 test('runReplayStep allows chained PR-bound replays when prNumber is already linked', async (t) => {
   const run = createRun({
     flowType: 'merge-main',

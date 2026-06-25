@@ -16,6 +16,7 @@ import {
 import { execOnSlot } from '../../core/exec.js';
 import { shellQuote } from '../../core/tmux.js';
 import { isFollowUpFlow } from '../../family-observability/context.js';
+import { hasValidPrNumber } from '../../run-engine/gate-policy.js';
 import {
   bumpRunGeneration,
   cancelRunEngine,
@@ -180,10 +181,10 @@ export async function runReplayStep(
   // shape, retrying will hit the same error every time. Fail loudly at the entry so
   // the user understands the run is unrecoverable and needs to be recreated with a
   // correct reference (rather than seeing the same deep "write-task" error repeatedly).
+  // Chained follow-ups (merge-main, pr-complete) keep the Jira key in ticketOrPr
+  // while prNumber holds the linked PR — same split fetchPRData uses at runtime.
   const chainedPrReplay =
-    PR_BOUND_FLOW_TYPES.has(existing.flowType as FlowType) &&
-    existing.prNumber != null &&
-    existing.prNumber > 0;
+    PR_BOUND_FLOW_TYPES.has(existing.flowType as FlowType) && hasValidPrNumber(existing);
   if (
     !isInternalArtifactOnlyEvalTicket(existing) &&
     !(isInteractiveDevRun(existing) && isLocalDevRef(existing.ticketOrPr)) &&
