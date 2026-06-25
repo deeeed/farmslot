@@ -22,11 +22,13 @@ MONITOR → SELF_REVIEW → COMPLETE (gate-held) → HUMAN_GATE (worker live) �
 1. **COMPLETE** — prepare local package; call `holdSlotForPublicationGate` (`busy` / `review-gate` / `agent: working`); emit `slotDisposition: 'gate-held'`. Do **not** call `slotRelease`.
 2. **HUMAN_GATE** — keep `agent: working`; operator may attach via Companion/tmux.
 3. **FINALIZE** — capture session metrics while worker may still be alive; call `killSlotAgents`; then transition slot to `held` / `ci-watch`.
-4. **Terminal cleanup** — blocked/failed/cancel paths after gate-held **COMPLETE** must call `teardownGateHeldAgentsIfNeeded` before `resetSlot`.
+4. **Terminal cleanup** — after gate-held **COMPLETE**, tear down live agents before `resetSlot`:
+   - **Engine blocked/failed** (`run-engine/orchestrator`) — `teardownGateHeldAgentsIfNeeded` (no-op unless `complete.outputs.slotDisposition === 'gate-held'`), then `resetSlot`.
+   - **Operator cancel** (`run.cancel` / `methods/run/lifecycle-control`) — `killAllAgentWindows` + `killAgentInSession` (same primitives as `killSlotAgents`, plus explicit runner for legacy base-pane cleanup), then `resetSlot`. Does **not** call `teardownGateHeldAgentsIfNeeded`; cancel is user-initiated from any non-terminal status (including `human-gating` / `blocked` review-gate) and always runs the full slot-level agent kill so the slot frees immediately after the terminal run record is published.
 
 ### Fleet refresh
 
-`fleet.refresh` maps gate-held runs (`complete.outputs.slotDisposition === 'gate-held'` + unresolved `engine_human_gate`) to `busy` / `review-gate` / `agent: working`, not `held` / `pr-watch` / `idle`.
+`fleet.refresh` maps slots with active gate-held runs to `busy` / `review-gate` / `agent: working` when `blocksGateHeldSlotRelease` is true (open publication gate via `isGateHeldPublicationRun`, or post-approval until **FINALIZE** completes), not `held` / `pr-watch` / `idle`.
 
 ### Slot release guard
 
@@ -47,7 +49,7 @@ Project worker templates (`dev.md`, `fix-bug.md`) should instruct: write `SIGNAL
 
 - Operators can attach to the worker during publication review on `dev` / `fix-bug`, matching the `review-pr` gate-first UX goal.
 - Session-resume on relaunch (ROADMAP-next) remains a fallback when the runner exits despite template guidance or `pane-died` cleanup.
-- Gateway restart mid-gate: decisions replay; slot phase must be restored via `isGateHeldPublicationRun` on fleet refresh.
+- Gateway restart mid-gate: decisions replay; slot phase must be restored via `blocksGateHeldSlotRelease` on fleet refresh.
 - Companion “talk to worker” affordances should key off `agent: working` + `phase: review-gate` during gate-held runs.
 
 ## Related
