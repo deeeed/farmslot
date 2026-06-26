@@ -24,7 +24,7 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 
 import { claudeHookObservability } from './claude-observability.js';
 import { disagreementReason, logRunnerObservabilityAgreement } from './observability-agreement.js';
-import { runnerActivityIsBusy, runnerObservabilityDir } from './observability-files.js';
+import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
 import { instructionNeedle } from './observability-prompt-digest.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
 import type { ObservabilityScope, RunnerObservability } from './observability-types.js';
@@ -897,7 +897,7 @@ async function warnIfObservabilityDegraded(
 ): Promise<void> {
   const heartbeatMs = getRunnerDefinition(runner).observabilityHeartbeatMs;
   if (heartbeatMs == null) return;
-  const obsDir = shellQuote(runnerObservabilityDir(vars.remoteRepo));
+  const obsDir = shellQuote(await runnerObservabilityDirForSlot(vars));
   const hooksPath = `${obsDir}/hooks.jsonl`;
   const deadline = Date.now() + heartbeatMs;
   while (Date.now() < deadline) {

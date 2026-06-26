@@ -73,8 +73,10 @@ export async function readAgreementEntriesSince(sinceMs: number): Promise<
         };
         if (typeof parsed.timestamp !== 'number' || parsed.timestamp < sinceMs) continue;
         entries.push({ kind: 'runner-observability-agreement', ...parsed });
-      } catch {
-        // skip malformed lines
+      } catch (error) {
+        console.warn(
+          `[runner-observability] skipping malformed agreement line in ${file}: ${(error as Error).message}`,
+        );
       }
     }
   }

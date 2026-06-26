@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import type { loadSlotVars } from '../core/config.js';
+import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -223,15 +223,20 @@ export function contextPctFromStatusline(
   };
 }
 
-export function runnerObservabilityDir(repoPath: string): string {
-  return path.posix.join(repoPath, '.observability');
+export function runnerObservabilityDir(repoPath: string, runtimeDir = '.agent'): string {
+  return path.posix.join(repoPath, runtimeDir, '.observability');
+}
+
+export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<string> {
+  const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
+  return runnerObservabilityDir(vars.remoteRepo, runtimeDir);
 }
 
 export async function readRunnerObservabilityFiles(
   vars: SlotVars,
   repoPath = vars.remoteRepo,
 ): Promise<{ hooksRaw: string; statuslineRaw: string }> {
-  const obsDir = shellQuote(runnerObservabilityDir(repoPath));
+  const obsDir = shellQuote(await runnerObservabilityDirForSlot({ ...vars, remoteRepo: repoPath }));
   const hooksPath = `${obsDir}/hooks.jsonl`;
   const statuslinePath = `${obsDir}/statusline.json`;
   const [hooksResult, statuslineResult] = await Promise.all([

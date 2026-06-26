@@ -9,6 +9,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
   const args = { slotId: null, repo: null, runtimeDir: '.agent', out: null };
@@ -31,7 +34,7 @@ function parseArgs(argv) {
 }
 
 function benchHookWriter(repo, runtimeDir, slotId, iterations = 5) {
-  const installer = path.resolve('scripts/install-runner-observability.mjs');
+  const installer = path.join(ROOT, 'scripts', 'install-runner-observability.mjs');
   const started = Date.now();
   execFileSync(process.execPath, [
     installer,
