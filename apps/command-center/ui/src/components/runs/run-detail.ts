@@ -22,6 +22,7 @@ import '../workspace/review-workspace.js';
 import '../workspace/ready-workspace.js';
 import '../terminal/terminal-view.js';
 import '../shared/hydrating-placeholder.js';
+import '../shared/slot-prepare-popover.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
@@ -691,6 +692,10 @@ export class RunDetail extends RunDetailState {
           // is rare; surface it without an alert.
           console.error('[run-detail] switch slot to run branch failed:', err);
         }),
+      _slotBranchForRun: (run) =>
+        getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.branch ?? '',
+      _slotHealthForRun: (run) =>
+        getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.health ?? null,
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _togglePinnedSlot: (slotId) => {
         togglePinnedSlot(slotId);

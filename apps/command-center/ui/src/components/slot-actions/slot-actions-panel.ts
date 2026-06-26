@@ -36,6 +36,8 @@ import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import { SLOT_PREPARE_TIMEOUT_MS } from '../shared/slot-prepare-client.js';
+import '../shared/slot-prepare-options.js';
+import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
 const SLOT_ACTION_TIMEOUT = 5 * 60_000;
 
@@ -75,6 +77,8 @@ export class SlotActionsPanel extends LitElement {
   /** Prepare profile for the warm branch switch — defaults to the cheapest
    * (`attach`: checkout-only, no rebuild, devserver stays warm). */
   @state() private _switchProfile = 'attach';
+  @state() private _switchStrictProfile = true;
+  @state() private _switchForcePrepare = false;
   /** Whether the switch-branch form is expanded. */
   @state() private _switchOpen = false;
   /** Prepare profiles for the switch-branch profile select (ADR-037), lazily
@@ -308,7 +312,7 @@ export class SlotActionsPanel extends LitElement {
           slotId: this.slotId,
           branch,
           prepareProfile: this._switchProfile || 'attach',
-          strictProfile: true,
+          strictProfile: this._switchStrictProfile,
         },
         'switch-branch',
         SLOT_PREPARE_TIMEOUT_MS,
@@ -620,21 +624,6 @@ export class SlotActionsPanel extends LitElement {
                   @input=${(e: Event) =>
                     (this._switchBranch = (e.target as HTMLInputElement).value)}
                 />
-                ${this._prepareProfiles.length > 0
-                  ? html`
-                      <select
-                        class="sap-switch-select"
-                        .value=${this._switchProfile}
-                        ?disabled=${this._running}
-                        @change=${(e: Event) =>
-                          (this._switchProfile = (e.target as HTMLSelectElement).value)}
-                      >
-                        ${this._prepareProfiles.map(
-                          (p) => html`<option value=${p.name}>${p.label}</option>`,
-                        )}
-                      </select>
-                    `
-                  : nothing}
                 <button
                   class="sap-btn ${confirming ? 'confirming' : ''} ${running ? 'running' : ''}"
                   ?disabled=${this._running || !this._switchBranch.trim()}
@@ -643,6 +632,23 @@ export class SlotActionsPanel extends LitElement {
                   ${running ? 'Switching…' : confirming ? 'Confirm switch?' : 'Switch branch'}
                 </button>
               </div>
+              <slot-prepare-options
+                .project=${this._slot?.project ?? ''}
+                .profiles=${this._prepareProfiles}
+                .prepareProfile=${this._switchProfile}
+                .strictProfile=${this._switchStrictProfile}
+                .forcePrepare=${this._switchForcePrepare}
+                .runBranch=${this._switchBranch}
+                .slotBranch=${this._slot?.branch ?? ''}
+                .slotHealth=${this._slot?.health ?? null}
+                .disabled=${this._running}
+                compact
+                @prepare-options-change=${(event: CustomEvent<SlotPrepareOptionsChangeDetail>) => {
+                  this._switchProfile = event.detail.prepareProfile;
+                  this._switchStrictProfile = event.detail.strictProfile;
+                  this._switchForcePrepare = event.detail.forcePrepare;
+                }}
+              ></slot-prepare-options>
               ${this._slot?.currentRunId
                 ? html`<div class="sap-switch-warn">
                     ⚠ Slot is bound to run ${this._slot.currentRunId.slice(0, 8)} — switching

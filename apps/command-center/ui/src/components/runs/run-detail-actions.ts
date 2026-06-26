@@ -286,6 +286,10 @@ export interface SwitchSlotToRunBranchOptions {
   prepareProfile?: string;
   /** Slot's current branch — enables bind-only when it already matches the run. */
   slotBranch?: string | null;
+  /** Fail fast when profile preconditions fail (default: true). */
+  strictProfile?: boolean;
+  /** Run full checkout even when the slot is already on the run branch. */
+  forcePrepare?: boolean;
 }
 
 export async function switchSlotToRunBranch(
@@ -304,14 +308,15 @@ export async function switchSlotToRunBranch(
     );
   }
   const prepareProfile = options.prepareProfile ?? 'attach';
-  const bindOnly = shouldBindOnlyForLoadRun(branch, options.slotBranch);
+  const strictProfile = options.strictProfile !== false;
+  const bindOnly = shouldBindOnlyForLoadRun(branch, options.slotBranch, options.forcePrepare);
   // Throws on failure — callers surface it in-context (inline in the run loader,
   // a guarded catch on the run-detail button) rather than a browser alert.
   await runSlotPrepare({
     slotId,
     branch,
     prepareProfile,
-    strictProfile: true,
+    strictProfile,
     bindOnly,
     bindRunId: runId,
     runId,

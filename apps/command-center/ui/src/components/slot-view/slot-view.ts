@@ -1,4 +1,4 @@
-import { html } from 'lit';
+import { html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import type { AgentContextSummary, Run, SlotActionSummary, SlotStatus } from '@farmslot/protocol';
@@ -20,6 +20,7 @@ import '../resources/resource-panel.js';
 import '../config/slot-toggle.js';
 import '../slot-actions/slot-actions-panel.js';
 import '../shared/prepare-progress-panel.js';
+import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
 import './slot-history-modal.js';
 import './slot-load-run-modal.js';
 import '../runs/run-pipeline.js';
@@ -863,10 +864,23 @@ export class SlotView extends SlotViewRecipePresenter {
     return html`
       ${renderSlotViewStyles(this._recoveryPhase)}
       ${renderSlotViewHeader(this, { slot, hasSlotData, hasResources, lcColor })}
+      ${hasSlotData
+        ? renderSlotPreparePreconditionStrip({
+            slot,
+            slotBranch: this._git?.branch ?? slot?.branch,
+            activePrepareLabel:
+              this._activePrepare && (this._activePrepare.running || this._activePrepare.exitCode !== null)
+                ? this._activePrepare.label
+                : '',
+          })
+        : nothing}
       ${renderSlotPrepareBanner(this)}
       ${renderSlotViewBody(this, { hasSlotData, hasResources })}
       <slot-history-modal
         slot-id=${this.slotId}
+        .project=${this._slot?.project ?? ''}
+        slot-branch=${this._git?.branch ?? this._slot?.branch ?? ''}
+        .slotHealth=${this._slot?.health ?? null}
         selected-run-id=${this._historyRunId}
         .open=${this._historyOpen}
         @close=${() => {
@@ -879,6 +893,7 @@ export class SlotView extends SlotViewRecipePresenter {
         slot-id=${this.slotId}
         .project=${this._slot?.project ?? ''}
         slot-branch=${this._git?.branch ?? this._slot?.branch ?? ''}
+        .slotHealth=${this._slot?.health ?? null}
         .open=${this._loadRunOpen}
         @close=${() => {
           this._loadRunOpen = false;

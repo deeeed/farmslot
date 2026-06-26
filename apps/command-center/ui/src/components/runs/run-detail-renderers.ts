@@ -60,6 +60,8 @@ export interface RunDetailViewContext {
   _buildRerunAlongsideHref: (run: Run) => string;
   _activateOnSlot: (run: Run) => void | Promise<void>;
   _switchSlotToRunBranch: (run: Run) => void | Promise<void>;
+  _slotBranchForRun: (run: Run) => string;
+  _slotHealthForRun: (run: Run) => import('@farmslot/protocol').SlotHealth | null;
   _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;
   _togglePinnedSlot: (slotId: string) => void;
   _renderInteractiveDevGate: (run: Run) => unknown;
@@ -413,15 +415,17 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         : nothing}
       ${r.slotId && r.branch && canActivateRunOnSlot(r.status)
         ? html`
-            <button
-              class="gate-action-btn"
-              style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
-              title="Warm-switch ${r.slotId} onto this run's branch (${r.branch}) with the cheap attach profile — checkout only, no merge-main, no reinstall. Binds the run so you can replay its recipe in slot-view. No pipeline re-drive."
+            <slot-prepare-popover
+              slot-id=${r.slotId}
+              slot-branch=${ctx._slotBranchForRun(r)}
+              project=${r.project}
+              run-id=${r.id}
+              run-branch=${r.branch}
+              button-label="Switch ${r.slotId} to branch →"
+              button-style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
+              .slotHealth=${ctx._slotHealthForRun(r)}
               ?disabled=${actionsBlocked}
-              @click=${() => ctx._switchSlotToRunBranch(r)}
-            >
-              Switch ${r.slotId} to branch →
-            </button>
+            ></slot-prepare-popover>
           `
         : nothing}
       ${r.status === 'failed'

@@ -3,6 +3,7 @@ import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 
+import { resolveBindOnly } from './slot-prepare-options-model.js';
 import {
   beginSlotPrepareSession,
   scheduleSlotPrepareSessionClear,
@@ -37,8 +38,7 @@ export async function runSlotPrepare(input: RunSlotPrepareInput): Promise<SlotPr
 export function shouldBindOnlyForLoadRun(
   runBranch: string | null | undefined,
   slotBranch: string | null | undefined,
+  forcePrepare = false,
 ): boolean {
-  const run = runBranch?.trim();
-  const slot = slotBranch?.trim();
-  return Boolean(run && slot && run === slot);
+  return resolveBindOnly(runBranch, slotBranch, forcePrepare);
 }

@@ -11,6 +11,7 @@ import {
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { activateRunOnSlot } from '../runs/run-detail-actions.js';
+import '../shared/slot-prepare-popover.js';
 import { formatCreatedAt, formatDuration, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 
@@ -19,6 +20,9 @@ const DEFAULT_LIMIT = 25;
 @customElement('slot-history-modal')
 export class SlotHistoryModal extends LitElement {
   @property({ attribute: 'slot-id' }) slotId = '';
+  @property() project = '';
+  @property({ attribute: 'slot-branch' }) slotBranch = '';
+  @property({ attribute: false }) slotHealth: import('@farmslot/protocol').SlotHealth | null = null;
   @property({ type: Boolean }) open = false;
   /** When set, the modal expands this run row + scrolls it into view on open. */
   @property({ attribute: 'selected-run-id' }) selectedRunId = '';
@@ -581,14 +585,31 @@ export class SlotHistoryModal extends LitElement {
                 <div class="shm-actions">
                   <a class="shm-link" href=${`#${routeForRun({ id: run.runId })}`}>Open run</a>
                   ${this.slotId && canActivateRunOnSlot(run.status)
-                    ? html`<button
-                        class="shm-retry"
-                        title="Re-bind this run onto ${this
-                          .slotId} and re-drive prepare+dispatch with the cheapest warm profile. No new run is created."
-                        @click=${() => this._activate(run.runId)}
-                      >
-                        Reload on this slot →
-                      </button>`
+                    ? html`
+                        <button
+                          class="shm-retry"
+                          title="Re-bind this run onto ${this
+                            .slotId} and re-drive prepare+dispatch with the cheapest warm profile. No new run is created."
+                          @click=${() => this._activate(run.runId)}
+                        >
+                          Reload on this slot →
+                        </button>
+                        ${run.branch
+                          ? html`
+                              <slot-prepare-popover
+                                slot-id=${this.slotId}
+                                slot-branch=${this.slotBranch}
+                                project=${run.project || this.project}
+                                run-id=${run.runId}
+                                run-branch=${run.branch}
+                                button-label="Switch branch →"
+                                button-class="shm-retry"
+                                .slotHealth=${this.slotHealth}
+                                rebind
+                              ></slot-prepare-popover>
+                            `
+                          : nothing}
+                      `
                     : nothing}
                 </div>
               </div>
