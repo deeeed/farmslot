@@ -1,7 +1,7 @@
 # Worker: Interactive Dev — {{TICKET_ID}}
 
-> **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` only when the operator asks you to complete.
-> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. The final item can add `--status complete --outcome success`.
+> **Signal file:** `./mark N` for progress; terminal `SIGNAL.json` only when operator asks.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). TASK.md `STATUS: working` is not SIGNAL `status` — `./mark` owns `SIGNAL.json` during the run. If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete --outcome success` (never `echo > SIGNAL.json`).
 
 ---
 
@@ -17,6 +17,7 @@ STATUS: pending
 
 ## Interactive protocol
 
+- When the operator begins steering work, set `STATUS: working` and run `{{TASK_DIR}}/mark start` before the first `./mark N`.
 - The human operator drives scope, order, review, and whether/when to publish.
 - Keep changes local unless the operator explicitly tells you otherwise.
 - Avoid publishing, pushing, or mutating GitHub PRs unless explicitly instructed.
@@ -32,7 +33,7 @@ When the operator says the interactive session is complete:
 4. Write the completion signal:
 
 ```bash
-{{TASK_DIR}}/mark 4 --status complete --outcome success
+{{TASK_DIR}}/mark complete --outcome success --mark-last
 ```
 
 **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.

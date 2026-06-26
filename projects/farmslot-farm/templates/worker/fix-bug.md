@@ -1,7 +1,7 @@
 # Worker: Fix-Bug — {{TICKET_ID}}
 
-> **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` with status updates.
-> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. The final item can add `--status complete --outcome success`.
+> **Signal file:** `./mark N` for progress; `SIGNAL.json` only when done. TASK `STATUS` ≠ SIGNAL `status`.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete --outcome success` (never `echo > SIGNAL.json`).
 
 ---
 
@@ -46,7 +46,7 @@ Signal shape:
 ```
 
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Update status** — set `STATUS: working` in this file.
+- [ ] **2. Update status** — set `STATUS: working` in this file, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Read the bug description** — understand the reported issue, affected area, and expected behavior.
 - [ ] **4. Reproduce via typecheck/tests** — run validation to confirm the bug:
   ```bash
@@ -85,5 +85,5 @@ Signal shape:
   ```
 - [ ] **13. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: files changed, root cause, fix summary, test results.
 - [ ] **14. Update status** — set `STATUS: done`.
-- [ ] **15. Write completion signal** — run: `{{TASK_DIR}}/mark 15 --status complete --outcome success --disposition fixed`
+- [ ] **15. Write completion signal** — run: `{{TASK_DIR}}/mark complete --outcome success --disposition fixed --mark-last`
       **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.

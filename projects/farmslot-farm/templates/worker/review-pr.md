@@ -1,7 +1,7 @@
 # Worker: Review-PR — PR #{{PR_NUMBER}}
 
-> **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` with status updates.
-> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. The final item can add `--status complete --outcome success`.
+> **Signal file:** `./mark N` for progress; `SIGNAL.json` only when done. TASK `STATUS` ≠ SIGNAL `status`.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete --outcome success` (never `echo > SIGNAL.json`).
 
 ---
 
@@ -20,7 +20,7 @@ STATUS: pending
 ## Checklist
 
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand conventions.
-- [ ] **2. Update status** — set `STATUS: working` in this file.
+- [ ] **2. Update status** — set `STATUS: working` in this file, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Checkout PR branch** — `git checkout {{BRANCH}}` and merge main.
 - [ ] **4. Read the PR description** — understand intent, scope, and linked issues.
 - [ ] **5. Read changed files in full** — do NOT rely on diffs alone. Read each modified file completely to understand surrounding context.
@@ -34,4 +34,4 @@ STATUS: pending
 - [ ] **9. Write review** — create `{{TASK_DIR}}/artifacts/review.md` with findings organized by severity (blocking, suggestion, nit).
 - [ ] **10. Post review comments** — post inline comments on specific lines via GitHub API.
 - [ ] **11. Update status** — set `STATUS: done`.
-- [ ] **12. Write completion signal** — run: `{{TASK_DIR}}/mark 12 --status complete --outcome success`
+- [ ] **12. Write completion signal** — run: `{{TASK_DIR}}/mark complete --outcome success --mark-last`

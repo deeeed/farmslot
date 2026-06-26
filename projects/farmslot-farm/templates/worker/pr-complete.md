@@ -1,7 +1,7 @@
 # Worker: PR-Complete
 
-> **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` with status updates.
-> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. The final item can add `--status complete --outcome success`.
+> **Signal file:** `./mark N` for progress; `SIGNAL.json` only when done. TASK `STATUS` ≠ SIGNAL `status`.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete --outcome success` (never `echo > SIGNAL.json`).
 
 ---
 
@@ -21,7 +21,7 @@ STATUS: pending
 ## Checklist
 
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Update status** — set `STATUS: working` in this file.
+- [ ] **2. Update status** — set `STATUS: working` in this file, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Confirm PR context** — verify `PR_NUMBER`, `PR_BRANCH`, and current task scope before editing.
 - [ ] **4. Checkout PR branch** — `git checkout {{PR_BRANCH}}`
 - [ ] **5. Read inherited context** — review `{{TASK_DIR}}/inputs/inherited/` and any materialized family artifacts before making changes.
@@ -32,4 +32,4 @@ STATUS: pending
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
 - [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: files changed, issue addressed, validation results.
-- [ ] **9. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark 9 --status complete --outcome success`
+- [ ] **9. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark complete --outcome success --mark-last`

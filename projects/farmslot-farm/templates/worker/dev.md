@@ -1,7 +1,7 @@
 # Worker: Feature — {{TICKET_ID}}
 
-> **Signal file:** Write `{{TASK_DIR}}/SIGNAL.json` with status updates.
-> **Checklist marker:** After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. The final item can add `--status complete --outcome success`.
+> **Signal file:** `./mark N` for progress; `SIGNAL.json` only when done. TASK `STATUS` ≠ SIGNAL `status`.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete --outcome success` (never `echo > SIGNAL.json`).
 
 ---
 
@@ -24,7 +24,7 @@ STATUS: pending
 ## Checklist
 
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Update status** — set `STATUS: working` in this file.
+- [ ] **2. Update status** — set `STATUS: working` in this file, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Read the feature requirements** — understand scope, acceptance criteria, and affected packages.
 - [ ] **4. Create branch** — `git checkout -b {{BRANCH}}`
 - [ ] **5. Plan implementation** — identify files to create/modify, types to add to `@farmslot/protocol`, gateway methods, UI components.
@@ -59,6 +59,6 @@ STATUS: pending
   ```
 - [ ] **13. Write report and signal** — create `{{TASK_DIR}}/artifacts/report.md` with files changed, implementation summary, local review notes, screenshots/assets to validate, and test results; update `STATUS: done`, then write the completion signal:
   ```bash
-  {{TASK_DIR}}/mark 13 --status complete --outcome success
+  {{TASK_DIR}}/mark complete --outcome success --mark-last
   ```
   **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.
