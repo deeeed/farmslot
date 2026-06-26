@@ -376,7 +376,7 @@ export class SlotPrepareOptions extends LitElement {
                     title=${profile.description || profile.label}
                     @click=${() => this._setProfile(profile.name)}
                   >
-                    ${profile.name}${profile.isDefault ? ' ★' : ''}
+                    ${profile.label}${profile.isDefault ? ' ★' : ''}
                   </button>
                 `,
               )}

@@ -102,6 +102,7 @@ Profiles live in `project.json`:
       },
       "attach": {
         "label": "Attach to running app",
+        "description": "Only verify an already-running app; fall back if health is missing.",
         "phases": ["health"],
         "requires": ["health_ok"],
         "fallback": "full"
@@ -121,6 +122,10 @@ Farmslot resolves the starting profile in this order:
 
 Unknown explicit profile names fail prepare. Profile names must use lowercase
 letters, numbers, and dashes, and must start with a letter.
+
+`label` is the operator-facing button/list text. `description` is longer help
+text for tooltips and documentation. The profile key remains the stable value
+stored in run metadata and sent to prepare hooks.
 
 ## Preconditions and fallback
 
@@ -151,6 +156,7 @@ A profile can override project hooks for that prepare run:
       },
       "relaunch": {
         "label": "Switch branch + relaunch app",
+        "description": "Reuse installed native artifacts while refreshing JS runtime state.",
         "phases": ["git", "fixtures", "preflight", "health"],
         "requires": ["deps_current", "dev_server_up"],
         "fallback": "full",
