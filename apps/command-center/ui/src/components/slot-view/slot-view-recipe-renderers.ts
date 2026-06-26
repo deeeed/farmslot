@@ -8,7 +8,10 @@ import { artifactKind } from '../../utils/artifact-kind.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
-import { canSlotAcceptRecipeRerun, slotRecipeReplayBlockReason } from '../recipe/recipe-rerun-model.js';
+import {
+  canSlotAcceptRecipeRerun,
+  slotRecipeReplayBlockReason,
+} from '../recipe/recipe-rerun-model.js';
 import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 

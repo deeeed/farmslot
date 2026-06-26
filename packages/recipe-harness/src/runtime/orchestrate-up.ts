@@ -1,6 +1,8 @@
 import type { RuntimeDecisionReport, RuntimeReadinessDecision } from './decision-types.js';
 
-export interface OrchestrateRuntimeUpOptions<T extends RuntimeDecisionReport = RuntimeDecisionReport> {
+export interface OrchestrateRuntimeUpOptions<
+  T extends RuntimeDecisionReport = RuntimeDecisionReport,
+> {
   decide: () => Promise<T>;
   onInstall: (report: T) => Promise<void>;
   onLaunch: (report: T) => Promise<void>;
@@ -10,7 +12,9 @@ export interface OrchestrateRuntimeUpOptions<T extends RuntimeDecisionReport = R
   installAttempted?: { value: boolean };
 }
 
-export interface OrchestrateRuntimeUpResult<T extends RuntimeDecisionReport = RuntimeDecisionReport> {
+export interface OrchestrateRuntimeUpResult<
+  T extends RuntimeDecisionReport = RuntimeDecisionReport,
+> {
   report: T;
   exitDecision: RuntimeReadinessDecision;
 }

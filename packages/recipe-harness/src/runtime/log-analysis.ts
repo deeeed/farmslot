@@ -105,7 +105,10 @@ export function analyzeBundleLog(options: AnalyzeBundleLogOptions): BundleLogAna
     };
   }
   if (lastErr > lastOk) {
-    const excerpt = lines.slice(lastErr, lastErr + 3).join(' | ').slice(0, 400);
+    const excerpt = lines
+      .slice(lastErr, lastErr + 3)
+      .join(' | ')
+      .slice(0, 400);
     const cited = unresolvedModulesFromLogSlice(lines, sliceStart);
     const stillMissing = cited.filter((name) => !moduleExistsInNodeModules(options.target, name));
     if (cited.length > 0 && stillMissing.length === 0) {

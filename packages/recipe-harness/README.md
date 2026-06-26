@@ -33,16 +33,16 @@ npm install @farmslot/recipe-harness @farmslot/protocol
 
 ## Source layout
 
-| Path            | Owns                                                                                                      |
-| --------------- | --------------------------------------------------------------------------------------------------------- |
-| `bin/`          | Published `farmslot-recipe` executable shim.                                                              |
-| `src/index.ts`  | Public package export surface.                                                                            |
-| `src/core/`     | Manifest-aware recipe graph execution, flow calls, predicates, HUD node shaping, and harness-local types. |
-| `src/adapters/` | Standard core and UI adapter factories.                                                                   |
+| Path            | Owns                                                                                                                    |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `bin/`          | Published `farmslot-recipe` executable shim.                                                                            |
+| `src/index.ts`  | Public package export surface.                                                                                          |
+| `src/core/`     | Manifest-aware recipe graph execution, flow calls, predicates, HUD node shaping, and harness-local types.               |
+| `src/adapters/` | Standard core and UI adapter factories.                                                                                 |
 | `src/runtime/`  | Runtime transports (CDP, browser extensions, RN bridge) and shared readiness helpers (deps, log analysis, Metro probe). |
-| `src/node/`     | Node-only artifact, trace, and summary writers.                                                           |
-| `src/cli/`      | CLI entrypoint, commands, and shared CLI validation helpers.                                              |
-| `test/`         | Harness package and export-boundary tests mirroring public behavior.                                      |
+| `src/node/`     | Node-only artifact, trace, and summary writers.                                                                         |
+| `src/cli/`      | CLI entrypoint, commands, and shared CLI validation helpers.                                                            |
+| `test/`         | Harness package and export-boundary tests mirroring public behavior.                                                    |
 
 ## Public import paths
 
@@ -50,24 +50,24 @@ The package exports explicit public subpaths only. Internal modules under
 `src/core/`, `src/node/`, and `test/` are implementation details unless
 listed here.
 
-| Import path                                            | Use for                                    |
-| ------------------------------------------------------ | ------------------------------------------ |
-| `@farmslot/recipe-harness`                             | Preferred root import for runner/adapters. |
-| `@farmslot/recipe-harness/runner`                      | Runner construction helpers.               |
-| `@farmslot/recipe-harness/types`                       | Harness-local runtime types.               |
-| `@farmslot/recipe-harness/adapters/core`               | Standard backend/headless action adapters. |
-| `@farmslot/recipe-harness/adapters/ui`                 | Standard `ui.*` adapter shell.             |
-| `@farmslot/recipe-harness/runtime/cdp`                 | CDP browser transport helpers.             |
-| `@farmslot/recipe-harness/runtime/react-native-bridge` | React Native bridge transport helpers.     |
-| `@farmslot/recipe-harness/runtime/browser-extension`   | Browser-extension target helpers.          |
-| `@farmslot/recipe-harness/runtime/deps-readiness`      | Install fingerprint, baseline, product-marker partial checks. |
-| `@farmslot/recipe-harness/runtime/log-analysis`        | Bundle-log boundaries, unresolved-module scoping, persistent bundle-error state. |
-| `@farmslot/recipe-harness/runtime/metro-probe`         | Metro packager `/status` reachability probe. |
-| `@farmslot/recipe-harness/runtime/decision-types`      | Portable `RuntimeDecisionReport` / action shapes for product adapters. |
+| Import path                                            | Use for                                                                                                                                               |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@farmslot/recipe-harness`                             | Preferred root import for runner/adapters.                                                                                                            |
+| `@farmslot/recipe-harness/runner`                      | Runner construction helpers.                                                                                                                          |
+| `@farmslot/recipe-harness/types`                       | Harness-local runtime types.                                                                                                                          |
+| `@farmslot/recipe-harness/adapters/core`               | Standard backend/headless action adapters.                                                                                                            |
+| `@farmslot/recipe-harness/adapters/ui`                 | Standard `ui.*` adapter shell.                                                                                                                        |
+| `@farmslot/recipe-harness/runtime/cdp`                 | CDP browser transport helpers.                                                                                                                        |
+| `@farmslot/recipe-harness/runtime/react-native-bridge` | React Native bridge transport helpers.                                                                                                                |
+| `@farmslot/recipe-harness/runtime/browser-extension`   | Browser-extension target helpers.                                                                                                                     |
+| `@farmslot/recipe-harness/runtime/deps-readiness`      | Install fingerprint, baseline, product-marker partial checks.                                                                                         |
+| `@farmslot/recipe-harness/runtime/log-analysis`        | Bundle-log boundaries, unresolved-module scoping, persistent bundle-error state.                                                                      |
+| `@farmslot/recipe-harness/runtime/metro-probe`         | Metro packager `/status` reachability probe.                                                                                                          |
+| `@farmslot/recipe-harness/runtime/decision-types`      | Portable `RuntimeDecisionReport` / action shapes for product adapters.                                                                                |
 | `@farmslot/recipe-harness/runtime/orchestrate-up`      | Generic install → relaunch orchestration loop for `recipe up` hosts. `build` exits after `onLaunch` — callers re-invoke after native build completes. |
-| `@farmslot/recipe-harness/cli`                         | Programmatic CLI entrypoint.               |
-| `@farmslot/recipe-harness/cli/support`                 | Shared CLI input validation helpers.       |
-| `@farmslot/recipe-harness/writers`                     | Node-only JSON artifact writers.           |
+| `@farmslot/recipe-harness/cli`                         | Programmatic CLI entrypoint.                                                                                                                          |
+| `@farmslot/recipe-harness/cli/support`                 | Shared CLI input validation helpers.                                                                                                                  |
+| `@farmslot/recipe-harness/writers`                     | Node-only JSON artifact writers.                                                                                                                      |
 
 ## What belongs here
 

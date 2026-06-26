@@ -115,7 +115,11 @@ test('orchestrateRuntimeUp fails when install does not resolve', async () => {
   await assert.rejects(
     () =>
       orchestrateRuntimeUp({
-        decide: async () => ({ decision: 'install', reasonCode: 'deps-missing', detail: 'still missing' }),
+        decide: async () => ({
+          decision: 'install',
+          reasonCode: 'deps-missing',
+          detail: 'still missing',
+        }),
         onInstall: async () => {},
         onLaunch: async () => {},
         onReady: async () => {},

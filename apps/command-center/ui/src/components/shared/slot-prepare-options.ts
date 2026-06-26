@@ -336,10 +336,7 @@ export class SlotPrepareOptions extends LitElement {
   }
 
   override render() {
-    const profiles =
-      this.profiles.length > 0
-        ? this.profiles
-        : [];
+    const profiles = this.profiles.length > 0 ? this.profiles : [];
     const plan = this._plan();
     const label =
       this.variant === 'dispatch'
@@ -410,8 +407,8 @@ export class SlotPrepareOptions extends LitElement {
         </div>
         ${this.variant === 'operator' && !this.compact
           ? html`<div class="spo-help">
-              Default follows project prepare.default (★). Strict mode fails fast instead of silently
-              escalating to a heavier profile.
+              Default follows project prepare.default (★). Strict mode fails fast instead of
+              silently escalating to a heavier profile.
             </div>`
           : nothing}
         ${plan

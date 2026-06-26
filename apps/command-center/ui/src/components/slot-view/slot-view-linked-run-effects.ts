@@ -115,10 +115,7 @@ export async function refreshSlotViewLinkedRun(
         });
         if (refreshToken !== view._linkedRunRefreshToken) return nextPrevRunStatus;
         const directRun = direct.run;
-        if (
-          directRun &&
-          (directRun.slotId === view.slotId || directRun.id === slotBoundRunId)
-        ) {
+        if (directRun && (directRun.slotId === view.slotId || directRun.id === slotBoundRunId)) {
           cachedRun = directRun;
           nextPrevRunStatus = applySlotViewLinkedRun(view, cachedRun, nextPrevRunStatus, 'rpc');
           void view._refreshRecipeRuns(cachedRun);

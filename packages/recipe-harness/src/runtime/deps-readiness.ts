@@ -72,7 +72,11 @@ export function readDecisionState(target: string, name: string): Record<string, 
   return readBaseline(target, name);
 }
 
-export function writeDecisionState(target: string, name: string, value: Record<string, unknown>): void {
+export function writeDecisionState(
+  target: string,
+  name: string,
+  value: Record<string, unknown>,
+): void {
   writeBaseline(target, name, value);
 }
 
@@ -84,10 +88,7 @@ export function clearDecisionState(target: string, name: string): void {
   }
 }
 
-export function depsCheck(
-  target: string,
-  options: { productMarkers?: string[] } = {},
-): DepsCheck {
+export function depsCheck(target: string, options: { productMarkers?: string[] } = {}): DepsCheck {
   const productMarkers = options.productMarkers ?? [];
   const inputs = DEPS_INPUTS.filter((rel) => fs.existsSync(path.join(target, rel)));
   const installed =

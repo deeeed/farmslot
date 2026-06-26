@@ -17,7 +17,9 @@ export type RuntimeReadinessDecision =
   | 'blocked'
   | 'unknown';
 
-export interface RuntimeDecisionReport<TChecks extends Record<string, unknown> = Record<string, unknown>> {
+export interface RuntimeDecisionReport<
+  TChecks extends Record<string, unknown> = Record<string, unknown>,
+> {
   schemaVersion: 1;
   adapter: string;
   target: string;

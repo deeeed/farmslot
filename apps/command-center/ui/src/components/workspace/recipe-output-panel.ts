@@ -233,41 +233,43 @@ export class RecipeOutputPanel extends LitElement {
           class="recipe-output-scroll"
           style="max-height:280px;min-height:120px;overflow-y:auto;background:${colors.bgBase};border:1px solid ${colors.bgCardHover};border-radius:4px;padding:8px 10px;font-family:${fonts.mono};font-size:${fonts.sizeXs};line-height:1.5;white-space:pre-wrap;color:${colors.textSecondary}"
         >
-        ${this._output.lines.length === 0 && this._output.running ? 'Starting recipe...' : nothing}
-        ${this._output.lines.map((l) => html`<div>${l}</div>`)}
-        ${this._output.error
-          ? html`
-              <div style="margin-top:4px;color:${colors.statusFail};font-weight:600">
-                ${this._output.error}
-              </div>
-            `
-          : nothing}
-        ${this._output.exitCode !== undefined
-          ? html`
-              <div
-                style="margin-top:4px;color:${this._output.exitCode === 0
-                  ? colors.statusOk
-                  : colors.statusFail};font-weight:600"
-              >
-                Exit code: ${this._output.exitCode}
-              </div>
-              <div
-                style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:${colors.textMuted}"
-              >
-                <span>Run: ${this._output.requestId || 'unknown'}</span>
-                ${this.showArtifactAction && this._output.requestId
-                  ? html`
-                      <button
-                        style="border:1px solid ${colors.accent}66;border-radius:4px;background:${colors.accent}18;color:${colors.accent};font-family:${fonts.mono};font-size:${fonts.sizeXs};padding:2px 8px;cursor:pointer;"
-                        @click=${this._requestArtifactView}
-                      >
-                        View artifacts
-                      </button>
-                    `
-                  : nothing}
-              </div>
-            `
-          : nothing}
+          ${this._output.lines.length === 0 && this._output.running
+            ? 'Starting recipe...'
+            : nothing}
+          ${this._output.lines.map((l) => html`<div>${l}</div>`)}
+          ${this._output.error
+            ? html`
+                <div style="margin-top:4px;color:${colors.statusFail};font-weight:600">
+                  ${this._output.error}
+                </div>
+              `
+            : nothing}
+          ${this._output.exitCode !== undefined
+            ? html`
+                <div
+                  style="margin-top:4px;color:${this._output.exitCode === 0
+                    ? colors.statusOk
+                    : colors.statusFail};font-weight:600"
+                >
+                  Exit code: ${this._output.exitCode}
+                </div>
+                <div
+                  style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:${colors.textMuted}"
+                >
+                  <span>Run: ${this._output.requestId || 'unknown'}</span>
+                  ${this.showArtifactAction && this._output.requestId
+                    ? html`
+                        <button
+                          style="border:1px solid ${colors.accent}66;border-radius:4px;background:${colors.accent}18;color:${colors.accent};font-family:${fonts.mono};font-size:${fonts.sizeXs};padding:2px 8px;cursor:pointer;"
+                          @click=${this._requestArtifactView}
+                        >
+                          View artifacts
+                        </button>
+                      `
+                    : nothing}
+                </div>
+              `
+            : nothing}
         </div>
       </div>
     `;
