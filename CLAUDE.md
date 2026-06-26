@@ -52,6 +52,10 @@ See `apps/command-center/CLAUDE.md` for the full protocol. If CDP is unreachable
 
 **Every PR must get at least one `/review` round (independent code-reviewer agent) before being suggested for merge.** This applies to PRs opened by Claude — no self-approval, no "ready to merge" straight from a green CI. Fix every finding the review surfaces, including nits, unless explicitly waived. If review uncovers new issues, push a follow-up commit to the same branch and confirm typecheck + CDP still pass.
 
+### Never Commit Directly to `main` — HARD RULE
+
+**Never commit or push to `main` on the farmslot root repo unless Arthur explicitly asks for it.** All farmslot changes go through a feature branch and a PR with review before merge. Before any `git commit` or `git push`, confirm you are on a branch — not `main`. Nested project repos under `projects/<name>/` follow their own git workflow; this rule is for the farmslot monorepo root only.
+
 ### Conventional Commits — HARD RULE
 
 **Every PR title and commit message must follow the [Conventional Commits](https://www.conventionalcommits.org/) spec.** Format: `<type>(<scope>)?: <subject>`.

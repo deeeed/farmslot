@@ -37,7 +37,6 @@ import {
   buildLaunchCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../runners/launch-command.js';
-import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
@@ -46,6 +45,7 @@ import {
   sendRunnerInstructionSafely,
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
+import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';

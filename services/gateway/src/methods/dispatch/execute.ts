@@ -45,7 +45,6 @@ import {
   buildLaunchCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../../runners/launch-command.js';
-import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
@@ -58,6 +57,7 @@ import {
   isRunnerAliveUnderPane,
   listRunnerSessionFiles,
 } from '../../runners/session-process.js';
+import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { watchContext, watchSlot } from '../../tasks/watcher.js';
 import { killAgentInSession, slotPrepare } from '../slot.js';

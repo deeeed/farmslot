@@ -27,7 +27,6 @@ import {
   buildLaunchCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../runners/launch-command.js';
-import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
@@ -35,6 +34,7 @@ import {
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
+import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
   extractRunnerSessionUsage,
