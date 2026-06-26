@@ -5,7 +5,21 @@ import { canActivateRunOnSlot, Methods, type Run, type RunListResult } from '@fa
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { switchSlotToRunBranch } from '../runs/run-detail-actions.js';
+import {
+  type PrepareProfileOption,
+  projectPrepareProfiles,
+} from '../dispatch/dispatch-wizard-draft.js';
+import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
+import '../shared/prepare-progress-panel.js';
+import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
+import {
+  runSlotPrepare,
+  shouldBindOnlyForLoadRun,
+} from '../shared/slot-prepare-client.js';
+import {
+  activeSlotPrepare,
+  subscribeSlotPrepareTracker,
+} from '../shared/slot-prepare-tracker.js';
 import { formatCreatedAt, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 const DEFAULT_LIMIT = 200;
@@ -17,6 +31,8 @@ export class SlotLoadRunModal extends LitElement {
    * slot can only check out branches for its own repo (a mobile slot can't run
    * an extension branch). */
   @property() project = '';
+  /** Slot's current checked-out branch — enables bind-only when it matches the run. */
+  @property({ attribute: 'slot-branch' }) slotBranch = '';
   @property({ type: Boolean }) open = false;
   /** Dev harness escape hatch: when provided, no gateway call is made. */
   @property({ attribute: false }) runsOverride?: Run[];
@@ -32,8 +48,13 @@ export class SlotLoadRunModal extends LitElement {
    * browser alert) so a failed load is explained right in the modal. */
   @state() private _actionBusy = false;
   @state() private _actionError = '';
+  @state() private _prepareProfile = 'attach';
+  @state() private _prepareProfiles: PrepareProfileOption[] = [];
+  @state() private _prepareState: PrepareProgressState | null = null;
   private _loadToken = Symbol('slot-load-run-load');
   private _confirmTimer: ReturnType<typeof setTimeout> | undefined;
+  private _profilesLoadedFor = '';
+  private _unsubPrepare?: () => void;
 
   static override styles = css`
     .slrm-backdrop {
@@ -135,6 +156,26 @@ export class SlotLoadRunModal extends LitElement {
       color: ${unsafeCSS(colors.textMuted)};
       font-size: 11px;
       margin-left: auto;
+    }
+    .slrm-profile-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: ${unsafeCSS(spacing.sm)};
+      align-items: center;
+      margin-bottom: ${unsafeCSS(spacing.md)};
+    }
+    .slrm-profile-label {
+      color: ${unsafeCSS(colors.textMuted)};
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    .slrm-profile-hint {
+      color: ${unsafeCSS(colors.textMuted)};
+      font-size: 11px;
+      line-height: 1.45;
+      flex: 1 1 220px;
+    }
+    .slrm-progress {
+      margin-bottom: ${unsafeCSS(spacing.md)};
     }
     .slrm-state {
       border: 1px solid #2a2a44;
@@ -252,17 +293,25 @@ export class SlotLoadRunModal extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     document.addEventListener('keydown', this._onKeydown);
+    this._unsubPrepare = subscribeSlotPrepareTracker(() => {
+      this._prepareState = this.slotId ? activeSlotPrepare(this.slotId) : null;
+    });
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('keydown', this._onKeydown);
     if (this._confirmTimer) clearTimeout(this._confirmTimer);
+    this._unsubPrepare?.();
+    this._unsubPrepare = undefined;
   }
 
   override updated(changed: Map<string, unknown>) {
     if ((changed.has('open') || changed.has('runsOverride')) && this.open) {
       void this._load();
+    }
+    if (changed.has('project') && this.project) {
+      void this._loadPrepareProfiles();
     }
   }
 
@@ -274,6 +323,27 @@ export class SlotLoadRunModal extends LitElement {
     this._pendingConfirm = '';
     if (this._confirmTimer) clearTimeout(this._confirmTimer);
     this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
+  }
+
+  private async _loadPrepareProfiles() {
+    if (!this.project || this._profilesLoadedFor === this.project) return;
+    this._profilesLoadedFor = this.project;
+    try {
+      this._prepareProfiles = projectPrepareProfiles(await requestProjectConfigs(), this.project);
+      const names = this._prepareProfiles.map((p) => p.name);
+      if (names.length > 0 && !names.includes(this._prepareProfile)) {
+        this._prepareProfile = names.includes('attach')
+          ? 'attach'
+          : (this._prepareProfiles.find((p) => p.isDefault)?.name ?? names[0]!);
+      }
+    } catch (err) {
+      console.warn('[slot-load-run-modal] prepare profiles load failed:', err);
+    }
+  }
+
+  private _bindOnlyHint(run: Run): string {
+    if (!shouldBindOnlyForLoadRun(run.branch, this.slotBranch)) return '';
+    return `Slot is already on ${run.branch} — load will bind only (no checkout).`;
   }
 
   private async _load() {
@@ -352,8 +422,21 @@ export class SlotLoadRunModal extends LitElement {
       this._actionBusy = true;
       // Keep _pendingConfirm set during the await so the row shows "Loading…".
       try {
-        await switchSlotToRunBranch(run.id, this.slotId, run.branch, true);
-        // Success navigates to the slot view — close the modal.
+        const bindOnly = shouldBindOnlyForLoadRun(run.branch, this.slotBranch);
+        await runSlotPrepare({
+          slotId: this.slotId,
+          branch: run.branch!,
+          prepareProfile: this._prepareProfile || 'attach',
+          strictProfile: true,
+          bindOnly,
+          bindRunId: run.id,
+          runId: run.id,
+          rebind: true,
+          label: bindOnly
+            ? `Binding run ${run.id.slice(0, 8)} on ${this.slotId}`
+            : `Preparing ${this.slotId} for run ${run.id.slice(0, 8)}`,
+        });
+        window.location.hash = `#slot/${this.slotId}`;
         this._close();
       } catch (err) {
         // Surface inline (no browser alert); keep the modal open to retry.
@@ -408,8 +491,8 @@ export class SlotLoadRunModal extends LitElement {
             ? html`<button
                 class="slrm-load ${confirming ? 'confirm' : ''}"
                 ?disabled=${this._actionBusy}
-                title="Warm-switch ${this
-                  .slotId} onto this run's branch and bind the run. No new run is created."
+                title=${this._bindOnlyHint(run) ||
+                `Warm-switch ${this.slotId} onto this run's branch and bind the run. No new run is created.`}
                 @click=${() => this._onLoadClick(run)}
               >
                 ${this._actionBusy && confirming
@@ -449,10 +532,44 @@ export class SlotLoadRunModal extends LitElement {
           </div>
           <div class="slrm-body">
             <div class="slrm-note">
-              "Load onto ${this.slotId || 'this slot'}" warm-switches the slot onto the run's branch
-              (checkout only — no merge-main, no reinstall) and binds the run so resume / recipe
-              replay target it. It does not re-drive the run pipeline and creates no new run.
+              Load uses the selected prepare profile in strict mode — if attach preconditions fail
+              (e.g. health not ready), prepare fails fast instead of silently escalating to a
+              heavier profile. When the slot is already on the run's branch, only binding runs. No
+              new run is created and the pipeline is not re-driven.
             </div>
+            <div class="slrm-profile-row">
+              <span class="slrm-profile-label">Prepare profile</span>
+              ${this._prepareProfiles.length > 0
+                ? html`
+                    <select
+                      class="slrm-select"
+                      .value=${this._prepareProfile}
+                      ?disabled=${this._actionBusy}
+                      @change=${(event: Event) => {
+                        this._prepareProfile = (event.target as HTMLSelectElement).value;
+                      }}
+                    >
+                      ${this._prepareProfiles.map(
+                        (profile) =>
+                          html`<option value=${profile.name}>${profile.label}</option>`,
+                      )}
+                    </select>
+                  `
+                : html`
+                    <select class="slrm-select" ?disabled=${this._actionBusy}>
+                      <option value="attach">attach</option>
+                    </select>
+                  `}
+              <span class="slrm-profile-hint">
+                attach checks out only when the branch differs; strict mode keeps attach from
+                falling back to full deps when health is not ready.
+              </span>
+            </div>
+            ${this._actionBusy && this._prepareState
+              ? html`<div class="slrm-progress">
+                  <prepare-progress-panel .state=${this._prepareState} compact></prepare-progress-panel>
+                </div>`
+              : nothing}
             ${this._actionError
               ? html`<div class="slrm-state error">${this._actionError}</div>`
               : nothing}

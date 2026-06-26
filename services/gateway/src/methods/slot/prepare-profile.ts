@@ -216,6 +216,7 @@ export async function selectPrepareProfile(
   requested?: string,
   onCheck?: (profile: string, result: RequirementCheckResult) => void,
   check: typeof checkPrepareRequirement = checkPrepareRequirement,
+  options?: { strict?: boolean },
 ): Promise<PrepareProfileSelection> {
   let profile = resolvePrepareProfile(ctx.projectJson, requested);
   const fallbacks: PrepareProfileFallback[] = [];
@@ -227,6 +228,13 @@ export async function selectPrepareProfile(
       if (!result.ok) failures.push(result);
     }
     if (failures.length === 0) break;
+    if (options?.strict) {
+      const reason = failures.map((f) => `${f.requirement}: ${f.detail}`).join('; ');
+      throw new Error(
+        `Prepare profile '${profile.name}' preconditions failed (${reason}). ` +
+          'Fix slot health or choose a heavier prepare profile.',
+      );
+    }
     const fallbackName = profile.fallback;
     if (!fallbackName) {
       // Unreachable for validated configs (requires⇒fallback); guard against

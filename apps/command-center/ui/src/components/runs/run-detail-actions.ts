@@ -8,6 +8,10 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import {
+  runSlotPrepare,
+  shouldBindOnlyForLoadRun,
+} from '../shared/slot-prepare-client.js';
 
 type Timer = ReturnType<typeof setTimeout> | undefined;
 
@@ -277,6 +281,13 @@ export async function activateRunOnSlot(runId: string, slotId: string): Promise<
  * record is left intact; the recipe-replay button in slot-view becomes
  * available because the slot is bound to this run.
  */
+export interface SwitchSlotToRunBranchOptions {
+  /** Named prepare profile (default: attach). */
+  prepareProfile?: string;
+  /** Slot's current branch — enables bind-only when it already matches the run. */
+  slotBranch?: string | null;
+}
+
 export async function switchSlotToRunBranch(
   runId: string,
   slotId: string,
@@ -285,23 +296,29 @@ export async function switchSlotToRunBranch(
   // different (idle) run. The run-detail button targets the run's own slot, so
   // it leaves this false.
   rebind = false,
+  options: SwitchSlotToRunBranchOptions = {},
 ): Promise<void> {
   if (!slotId || !branch) {
     throw new Error(
       `Cannot switch ${slotId || '(no slot)'}: run ${runId.slice(0, 8)} has no branch`,
     );
   }
+  const prepareProfile = options.prepareProfile ?? 'attach';
+  const bindOnly = shouldBindOnlyForLoadRun(branch, options.slotBranch);
   // Throws on failure — callers surface it in-context (inline in the run loader,
   // a guarded catch on the run-detail button) rather than a browser alert.
-  await gateway.request(Methods.SLOT_PREPARE, {
+  await runSlotPrepare({
     slotId,
     branch,
-    prepareProfile: 'attach',
-    // runId labels the tmux prepare window; bindRunId writes current_run_id
-    // after a successful prepare so resume / recipe-replay target this run.
+    prepareProfile,
+    strictProfile: true,
+    bindOnly,
     bindRunId: runId,
     runId,
     rebind,
+    label: bindOnly
+      ? `Binding run ${runId.slice(0, 8)} on ${slotId}`
+      : `Preparing ${slotId} for run ${runId.slice(0, 8)}`,
   });
   window.location.hash = `#slot/${slotId}`;
 }

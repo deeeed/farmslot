@@ -19,6 +19,7 @@ import '../stream-feed/stream-feed.js';
 import '../resources/resource-panel.js';
 import '../config/slot-toggle.js';
 import '../slot-actions/slot-actions-panel.js';
+import '../shared/prepare-progress-panel.js';
 import './slot-history-modal.js';
 import './slot-load-run-modal.js';
 import '../runs/run-pipeline.js';
@@ -79,7 +80,7 @@ import {
   navigateSlotViewComment,
   openSlotViewIndexedFile,
 } from './slot-view-file-navigation-effects.js';
-import { renderSlotViewHeader } from './slot-view-header-renderers.js';
+import { renderSlotPrepareBanner, renderSlotViewHeader } from './slot-view-header-renderers.js';
 import { renderSlotViewInfoPanel, renderSlotViewSidebarInfo } from './slot-view-info-renderers.js';
 import { handleSlotViewGlobalKey } from './slot-view-keyboard-effects.js';
 import { saveLayout } from './slot-view-layout.js';
@@ -862,6 +863,7 @@ export class SlotView extends SlotViewRecipePresenter {
     return html`
       ${renderSlotViewStyles(this._recoveryPhase)}
       ${renderSlotViewHeader(this, { slot, hasSlotData, hasResources, lcColor })}
+      ${renderSlotPrepareBanner(this)}
       ${renderSlotViewBody(this, { hasSlotData, hasResources })}
       <slot-history-modal
         slot-id=${this.slotId}
@@ -876,6 +878,7 @@ export class SlotView extends SlotViewRecipePresenter {
       <slot-load-run-modal
         slot-id=${this.slotId}
         .project=${this._slot?.project ?? ''}
+        slot-branch=${this._git?.branch ?? this._slot?.branch ?? ''}
         .open=${this._loadRunOpen}
         @close=${() => {
           this._loadRunOpen = false;

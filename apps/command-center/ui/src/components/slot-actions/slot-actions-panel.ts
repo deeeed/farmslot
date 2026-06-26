@@ -35,6 +35,7 @@ import {
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
+import { SLOT_PREPARE_TIMEOUT_MS } from '../shared/slot-prepare-client.js';
 
 const SLOT_ACTION_TIMEOUT = 5 * 60_000;
 
@@ -210,6 +211,7 @@ export class SlotActionsPanel extends LitElement {
     method: string,
     params: Record<string, unknown>,
     actionId: string,
+    timeoutMs = SLOT_ACTION_TIMEOUT,
   ): Promise<T | null> {
     // Pre-allocate the requestId UI-side so the strict event matchers in
     // connectedCallback know the key BEFORE any script.output frames arrive.
@@ -223,11 +225,7 @@ export class SlotActionsPanel extends LitElement {
     this._activeActionId = actionId;
     this._lastRefreshReason = undefined;
     try {
-      const result = await gateway.request<T>(
-        method,
-        { ...params, requestId: reqId },
-        SLOT_ACTION_TIMEOUT,
-      );
+      const result = await gateway.request<T>(method, { ...params, requestId: reqId }, timeoutMs);
       // Methods that short-circuit before emitting script.complete (e.g.
       // safe-mode refresh on dirty tree, or any synchronous slot action)
       // leave `_running` true at this point. Their response itself is the
@@ -253,7 +251,12 @@ export class SlotActionsPanel extends LitElement {
 
   private _prepare = () =>
     this._confirm('prepare', () =>
-      this._runAction(Methods.SLOT_PREPARE, { slotId: this.slotId }, 'prepare'),
+      this._runAction(
+        Methods.SLOT_PREPARE,
+        { slotId: this.slotId },
+        'prepare',
+        SLOT_PREPARE_TIMEOUT_MS,
+      ),
     );
   private _release = (keepWarm: boolean) =>
     this._confirm(keepWarm ? 'release-warm' : 'release', () =>
@@ -301,8 +304,14 @@ export class SlotActionsPanel extends LitElement {
     this._confirm('switch-branch', () =>
       this._runAction(
         Methods.SLOT_PREPARE,
-        { slotId: this.slotId, branch, prepareProfile: this._switchProfile || 'attach' },
+        {
+          slotId: this.slotId,
+          branch,
+          prepareProfile: this._switchProfile || 'attach',
+          strictProfile: true,
+        },
         'switch-branch',
+        SLOT_PREPARE_TIMEOUT_MS,
       ),
     );
   };
@@ -641,8 +650,8 @@ export class SlotActionsPanel extends LitElement {
                   </div>`
                 : nothing}
               <div class="sap-action-desc">
-                Checkout-only via the chosen profile — no merge-main, no reinstall. Dev server stays
-                warm and hot-reloads.
+                Uses the chosen profile in strict mode — attach will not silently escalate to a
+                heavier profile when preconditions fail. Dev server stays warm and hot-reloads.
               </div>
             </div>
           `

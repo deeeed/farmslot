@@ -8,6 +8,7 @@ import { Events } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { subscribe } from '../../state.js';
+import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 import type { SlotView } from './slot-view.js';
 import { loadLayout } from './slot-view-layout.js';
@@ -82,6 +83,10 @@ export function connectSlotView(view: SlotView): void {
     Events.RESOURCE_STATUS_UPDATED,
     (payload) => handleSlotViewResourceStatusUpdate(view, payload),
   );
+
+  view._unsubPrepareTracker = subscribeSlotPrepareTracker(() => {
+    view._activePrepare = view.slotId ? activeSlotPrepare(view.slotId) : null;
+  });
 }
 
 export function disconnectSlotView(view: SlotView): void {
@@ -95,6 +100,7 @@ export function disconnectSlotView(view: SlotView): void {
   view._unsubStateChange?.();
   view._unsubTaskProgress?.();
   view._unsubResourceStatus?.();
+  view._unsubPrepareTracker?.();
   view._cancelFileRestoreRetry();
   view._cancelResourceRestoreRetry();
   view._teardownLive();

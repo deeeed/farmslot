@@ -19,6 +19,7 @@ import { gateway } from '../../gateway-client.js';
 import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
+import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 
 import {
@@ -134,6 +135,8 @@ export abstract class SlotViewState extends LitElement {
   @state() _historyOpen = false;
   @state() _historyRunId = '';
   @state() _loadRunOpen = false;
+  /** In-flight operator-initiated slot.prepare (load-run / switch-branch). */
+  @state() _activePrepare: PrepareProgressState | null = null;
   @state() _manualToggling = false;
   @state() _sidebarOpen = true;
   @state() _terminalOpen = true;
@@ -216,6 +219,7 @@ export abstract class SlotViewState extends LitElement {
   _unsubStateChange?: () => void;
   _unsubTaskProgress?: () => void;
   _unsubResourceStatus?: () => void;
+  _unsubPrepareTracker?: () => void;
   _liveInitPending = false;
   _recoveryEpoch = 0;
   _confirmTimer = new ConfirmActionTimer({

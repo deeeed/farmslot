@@ -119,3 +119,28 @@ test('selectPrepareProfile walks multi-hop fallback chain on failing checks', as
   assert.equal(direct.profile.name, 'attach');
   assert.deepEqual(direct.fallbacks, []);
 });
+
+test('selectPrepareProfile strict mode fails fast without walking fallback chain', async () => {
+  const projectJson: RawProjectJson = {
+    prepare: {
+      profiles: {
+        full: { phases: ['git', 'deps'] },
+        attach: { phases: ['health'], requires: ['health_ok'], fallback: 'full' },
+      },
+    },
+  };
+  const ctx = {
+    vars: {} as never,
+    projectJson,
+    runtimeDir: '.agent',
+  };
+  const failingCheck = async (requirement: 'deps_current' | 'dev_server_up' | 'health_ok') => ({
+    requirement,
+    ok: false,
+    detail: 'health value=none expected=WalletView',
+  });
+  await assert.rejects(
+    () => selectPrepareProfile(ctx, 'attach', undefined, failingCheck, { strict: true }),
+    /preconditions failed.*health_ok/,
+  );
+});
