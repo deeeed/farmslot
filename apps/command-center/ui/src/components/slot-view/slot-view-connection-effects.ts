@@ -14,6 +14,10 @@ import type { SlotView } from './slot-view.js';
 import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
 import { loadLayout } from './slot-view-layout.js';
 import { EDITOR_PREF_KEY, type EditorId, EDITORS } from './slot-view-model.js';
+import {
+  connectSlotViewLayoutObserver,
+  disconnectSlotViewLayoutObserver,
+} from './slot-view-resize-effects.js';
 
 export function connectSlotView(view: SlotView): void {
   document.addEventListener('keydown', view._boundKeyHandler);
@@ -94,6 +98,8 @@ export function connectSlotView(view: SlotView): void {
   view._unsubPrepareTracker = subscribeSlotPrepareTracker(() => {
     view._activePrepare = view.slotId ? activeSlotPrepare(view.slotId) : null;
   });
+
+  connectSlotViewLayoutObserver(view);
 }
 
 export function disconnectSlotView(view: SlotView): void {
@@ -108,6 +114,7 @@ export function disconnectSlotView(view: SlotView): void {
   view._unsubTaskProgress?.();
   view._unsubResourceStatus?.();
   view._unsubPrepareTracker?.();
+  disconnectSlotViewLayoutObserver(view);
   view._cancelFileRestoreRetry();
   view._cancelResourceRestoreRetry();
   view._teardownLive();

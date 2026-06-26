@@ -1,5 +1,6 @@
 import type { SlotView } from './slot-view.js';
 import {
+  computeEffectiveTerminalHeight,
   computeSlotViewResizeValue,
   slotViewResizeCursor,
   type SlotViewResizeType,
@@ -65,9 +66,43 @@ function slotViewResizeMaxWidth(view: SlotView, type: SlotViewResizeType): numbe
 
 function slotViewResizeMaxHeight(view: SlotView, type: SlotViewResizeType): number | undefined {
   if (type !== 'terminal') return undefined;
-  // Use the right column height as the max, leaving at least 60px for the editor tab bar.
+  const rightColHeight = slotViewRightColHeight(view);
+  if (rightColHeight <= 0) return 800;
+  return computeEffectiveTerminalHeight(Number.MAX_SAFE_INTEGER, rightColHeight);
+}
+
+export function slotViewEffectiveTerminalHeight(view: SlotView): number {
+  return computeEffectiveTerminalHeight(
+    view._terminalHeight,
+    view._rightColHeight || slotViewRightColHeight(view),
+  );
+}
+
+function slotViewRightColHeight(view: SlotView): number {
   const rightCol = view.querySelector('.sv-right-col') as HTMLElement | null;
-  return rightCol ? rightCol.clientHeight - 60 : 800;
+  return rightCol?.clientHeight ?? 0;
+}
+
+export function connectSlotViewLayoutObserver(view: SlotView): void {
+  disconnectSlotViewLayoutObserver(view);
+  const attach = () => {
+    const rightCol = view.querySelector('.sv-right-col') as HTMLElement | null;
+    if (!rightCol) return;
+    view._rightColObserver = new ResizeObserver((entries) => {
+      const height = Math.round(entries[0]?.contentRect.height ?? 0);
+      if (height !== view._rightColHeight) {
+        view._rightColHeight = height;
+      }
+    });
+    view._rightColObserver.observe(rightCol);
+    view._rightColHeight = rightCol.clientHeight;
+  };
+  requestAnimationFrame(attach);
+}
+
+export function disconnectSlotViewLayoutObserver(view: SlotView): void {
+  view._rightColObserver?.disconnect();
+  view._rightColObserver = undefined;
 }
 
 function applySlotViewResizeValue(view: SlotView, type: SlotViewResizeType, value: number): void {
@@ -81,5 +116,6 @@ function applySlotViewResizeValue(view: SlotView, type: SlotViewResizeType, valu
     view._pinnedHeight = value;
   } else {
     view._terminalHeight = value;
+    view._rightColHeight = slotViewRightColHeight(view) || view._rightColHeight;
   }
 }

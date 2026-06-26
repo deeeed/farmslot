@@ -149,6 +149,9 @@ export abstract class SlotViewState extends LitElement {
   _linkedRunRefreshToken = Symbol('linked-run-refresh');
   _recipeRunsRefreshToken = Symbol('recipe-runs-refresh');
   @state() _terminalHeight = 250;
+  /** Live height of `.sv-right-col` — used to clamp persisted terminal height. */
+  @state() _rightColHeight = 0;
+  _rightColObserver?: ResizeObserver;
   @state() _pinnedHeight = 200;
   @state() _reviewPanelOpen = false;
   @state() _reviewPanelWidth = 480;
