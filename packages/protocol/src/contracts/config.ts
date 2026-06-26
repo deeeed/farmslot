@@ -83,6 +83,8 @@ export type PrepareRequirement = (typeof PREPARE_REQUIREMENTS)[number];
 export interface PrepareProfileConfig {
   /** Operator-facing label for wizard/CLI listings. */
   label?: string;
+  /** Longer operator-facing help text for tooltips/docs. */
+  description?: string;
   phases: PreparePhase[];
   /** Per-profile hook overrides; unlisted hooks resolve from the project's top-level hooks. */
   hooks?: Record<string, string>;

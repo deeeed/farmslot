@@ -222,6 +222,7 @@ export interface RawProjectJson {
       string,
       {
         label?: string;
+        description?: string;
         phases?: string[];
         hooks?: Record<string, string>;
         requires?: string[];
@@ -622,6 +623,9 @@ export function validatePrepareConfig(projectJson: RawProjectJson, projectConfig
     if (profile.label !== undefined && typeof profile.label !== 'string') {
       throw new Error(`${projectConfig}: prepare.profiles.${name}.label must be a string`);
     }
+    if (profile.description !== undefined && typeof profile.description !== 'string') {
+      throw new Error(`${projectConfig}: prepare.profiles.${name}.description must be a string`);
+    }
     const phases = profile.phases;
     if (!Array.isArray(phases) || phases.length === 0) {
       throw new Error(`${projectConfig}: prepare.profiles.${name}.phases must be a non-empty array`);
@@ -747,6 +751,7 @@ export function normalizeRawProjectPrepare(
     profiles[name] = {
       phases,
       ...(typeof profile.label === 'string' ? { label: profile.label } : {}),
+      ...(typeof profile.description === 'string' ? { description: profile.description } : {}),
       ...(profile.hooks && typeof profile.hooks === 'object' && !Array.isArray(profile.hooks)
         ? { hooks: profile.hooks }
         : {}),

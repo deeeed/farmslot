@@ -121,6 +121,25 @@ export async function slotPrepare(
   }
 }
 
+export async function readPrepareLogTailChunk(
+  logFilePath: string,
+  offset: number,
+): Promise<{ offset: number; output: string }> {
+  const fh = await fsOpen(logFilePath, 'r');
+  try {
+    const st = await fh.stat();
+    const start = st.size < offset ? 0 : offset;
+    if (st.size <= start) {
+      return { offset: start, output: '' };
+    }
+    const buf = Buffer.alloc(st.size - start);
+    await fh.read(buf, 0, buf.length, start);
+    return { offset: st.size, output: buf.toString('utf-8') };
+  } finally {
+    await fh.close();
+  }
+}
+
 async function slotPrepareInner(
   params: SlotPrepareParams,
   stream: PrepareStream,
@@ -978,18 +997,9 @@ async function slotPrepareInner(
             if (reading) return; // prevent concurrent reads on rapid change events
             reading = true;
             try {
-              const fh = await fsOpen(logFilePath, 'r');
-              try {
-                const st = await fh.stat();
-                if (st.size > offset) {
-                  const buf = Buffer.alloc(st.size - offset);
-                  await fh.read(buf, 0, buf.length, offset);
-                  offset = st.size;
-                  stream.output('stdout', buf.toString('utf-8'));
-                }
-              } finally {
-                await fh.close();
-              }
+              const chunk = await readPrepareLogTailChunk(logFilePath, offset);
+              offset = chunk.offset;
+              if (chunk.output) stream.output('stdout', chunk.output);
             } catch {
               /* file may not exist yet */
             }

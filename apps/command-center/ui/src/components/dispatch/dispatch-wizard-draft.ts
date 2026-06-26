@@ -59,6 +59,7 @@ export function projectApps(
 export interface PrepareProfileOption {
   name: string;
   label: string;
+  description?: string;
   isDefault: boolean;
 }
 
@@ -77,6 +78,7 @@ export function projectPrepareProfiles(
   return Object.entries(prepare.profiles).map(([name, profile]) => ({
     name,
     label: profile.label || name,
+    ...(profile.description ? { description: profile.description } : {}),
     isDefault: name === defaultName,
   }));
 }
