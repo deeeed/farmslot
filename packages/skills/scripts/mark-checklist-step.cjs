@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const COMPLETE_COMMANDS = new Set(['complete', 'finish']);
-const START_COMMANDS = new Set(['start', '0']);
+const START_COMMANDS = new Set(['start']);
 const usageLine =
   'usage: mark <step-number|start|complete> [--status ...] [--outcome ...] [--disposition ...] [--reason text] [--needsSelfReview true|false] [--mark-last]';
 
