@@ -1,0 +1,1 @@
+Follow the checklist in {{TASK_FILE}} and mark each step as you progress. Checklist marker and signal instructions are in that file.

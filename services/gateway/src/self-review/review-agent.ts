@@ -27,6 +27,7 @@ import {
   buildLaunchCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../runners/launch-command.js';
+import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
@@ -169,13 +170,16 @@ export async function runReviewAgent(
     // Interactive runners receive a short prompt after the TUI is ready; the
     // detailed instructions live in SELF-REVIEW.md. Exec runners bake a
     // self-contained prompt into their launch command.
+    const parentRun = getRun(_runId);
     const taskPrompt = runnerNeedsPostLaunchPrompt(runner)
-      ? `Read ${taskMdPath} and execute all steps. Mark each checkbox as you complete it.`
+      ? await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
+          taskFile: taskMdPath,
+          taskDir,
+        })
       : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. You must write ${taskDir}/artifacts/review-feedback.md and ${taskDir}/SELF-REVIEW-SIGNAL.json before exiting.`;
 
     // 4. Launch review agent in the review window. Inherit the run's safety
     // tier (ADR-023) so the review agent runs with the same posture as the worker.
-    const parentRun = getRun(_runId);
     const parentSafetyTier = parentRun?.safetyTier;
     const runtimeDir = await resolveProjectRuntimeDir(parentRun?.project);
     let launchCmd = buildLaunchCommand(vars, runner, model, taskPrompt, {

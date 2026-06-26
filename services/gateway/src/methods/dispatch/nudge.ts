@@ -35,6 +35,7 @@ import {
   runnerSupportsTmuxNudges,
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
+import { resolveWorkerNudgePrompt } from '../../runners/worker-prompt.js';
 import { copyPreparedTaskRootSidecars } from '../../tasks/sidecars.js';
 import { unwatchContext, watchContext, watchSlot } from '../../tasks/watcher.js';
 
@@ -323,7 +324,10 @@ export async function nudgeDispatch(
   // Absolute path so the prompt resolves correctly regardless of the worker's current cwd —
   // Claude tool-use loops can chdir mid-task and a relative path would target the wrong place.
   const absoluteTaskMd = `${workerTaskAbs}/TASK.md`;
-  const prompt = `New task waiting at ${absoluteTaskMd}. Stop your current step at a safe checkpoint, read that file, and execute all steps. Mark each checkbox as you complete it.`;
+  const prompt = await resolveWorkerNudgePrompt(vars.projectName, {
+    taskFile: absoluteTaskMd,
+    taskDir: workerTaskAbs,
+  });
   const sent = await sendRunnerInstructionSafely(
     vars,
     workerTarget,

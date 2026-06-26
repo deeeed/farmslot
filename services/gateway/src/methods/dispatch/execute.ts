@@ -45,6 +45,7 @@ import {
   buildLaunchCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../../runners/launch-command.js';
+import { resolveWorkerDispatchPrompt } from '../../runners/worker-prompt.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
@@ -901,7 +902,11 @@ export async function dispatchExecute(
 
   // 5. Launch agent
   step('launch', 'Launching agent...');
-  const taskPrompt = `Read ${workerTaskDir}/TASK.md and execute all steps. Mark each checkbox as you complete it.`;
+  const workerTaskFile = `${workerTaskDir}/TASK.md`;
+  const taskPrompt = await resolveWorkerDispatchPrompt(vars.projectName, {
+    taskFile: workerTaskFile,
+    taskDir: workerTaskDir,
+  });
   const sessionFilesBefore = await listRunnerSessionFiles(vars, runner);
   const safetyTier = resolveDispatchSafetyTier({
     paramsTier: params.safetyTier,

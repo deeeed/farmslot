@@ -43,6 +43,7 @@ import {
   WORKER_ENV_PREFIX,
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
+import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { ensureTmuxTargetReadyForRelaunch } from '../self-review/worker-lifecycle.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
@@ -427,7 +428,11 @@ async function attemptInlineCIFix(
   if (ciFixContext) await watchContext(slotId, ciFixContext);
 
   // Send one-liner nudge to worker
-  const nudgeCmd = `Read ${writeResult.taskDir}/CI-FIX.md and execute all steps. Mark each checkbox as you complete it.`;
+  const ciFixTaskFile = `${writeResult.taskDir}/CI-FIX.md`;
+  const nudgeCmd = await resolveWorkerDispatchPrompt(run.project, {
+    taskFile: ciFixTaskFile,
+    taskDir: writeResult.taskDir,
+  });
   try {
     const sent = await sendRunnerInstructionSafely(
       vars,

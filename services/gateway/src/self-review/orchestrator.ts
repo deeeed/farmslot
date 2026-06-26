@@ -37,6 +37,7 @@ import {
   buildLaunchCommand,
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../runners/launch-command.js';
+import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
@@ -905,7 +906,11 @@ async function sendFeedbackToWorker(
   if (fixContext) await watchContext(vars.slotId, fixContext);
 
   // Send single-line command to the worker's original pane
-  const cmd = `Read ${taskDir}/SELF-REVIEW-FIX.md and execute all steps. Mark each checkbox as you complete it.`;
+  const fixTaskFile = `${taskDir}/SELF-REVIEW-FIX.md`;
+  const cmd = await resolveWorkerDispatchPrompt(project, {
+    taskFile: fixTaskFile,
+    taskDir,
+  });
   const sent = await sendRunnerInstructionSafely(
     vars,
     workerTarget,

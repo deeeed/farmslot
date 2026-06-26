@@ -4,6 +4,11 @@ import { describe, it } from 'node:test';
 import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL } from '@farmslot/protocol';
 
 import { buildCodexExecLaunch, buildLaunchCommand } from './launch-command.js';
+import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
+
+async function dispatchPrompt(taskFile: string): Promise<string> {
+  return resolveWorkerDispatchPrompt('farmslot-farm', { taskFile });
+}
 import {
   detectRunnerLaunchBlocker,
   getRunnerDefinition,
@@ -251,7 +256,7 @@ describe('cursor runner', () => {
     });
   });
 
-  it('does not classify optional MCP login warnings as runner auth blockers', () => {
+  it('does not classify optional MCP login warnings as runner auth blockers', async () => {
     const pane = [
       'MCP startup failed: handshaking with MCP server failed',
       'The sentry MCP server is not logged in. Run `codex mcp login sentry`.',
@@ -260,9 +265,8 @@ describe('cursor runner', () => {
     assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
   });
 
-  it('detects Codex instructions buffered at the live composer without progress', () => {
-    const message =
-      'Read temp/tasks/fix/demo/SELF-REVIEW-FIX.md and execute all steps. Mark each checkbox as you complete it.';
+  it('detects Codex instructions buffered at the live composer without progress', async () => {
+    const message = await dispatchPrompt('temp/tasks/fix/demo/SELF-REVIEW-FIX.md');
     const pane = `
 • Current TASK.md status is already done.
 
@@ -274,9 +278,8 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneHasPendingInstruction(pane, message, 'codex'), true);
   });
 
-  it('does not treat a submitted Codex instruction with progress as pending', () => {
-    const message =
-      'Read temp/tasks/fix/demo/SELF-REVIEW-FIX.md and execute all steps. Mark each checkbox as you complete it.';
+  it('does not treat a submitted Codex instruction with progress as pending', async () => {
+    const message = await dispatchPrompt('temp/tasks/fix/demo/SELF-REVIEW-FIX.md');
     const pane = `
 › ${message}
 
@@ -289,9 +292,8 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneHasProgressAfterInstruction(pane, message), true);
   });
 
-  it('accepts prompt delivery when Codex immediately starts working and no marker remains visible', () => {
-    const message =
-      'Read temp/tasks/feat/proj-1043/SELF-REVIEW.md and execute all steps. Mark each checkbox as you complete it.';
+  it('accepts prompt delivery when Codex immediately starts working and no marker remains visible', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/proj-1043/SELF-REVIEW.md');
     const before = `
 ╭────────────────────────────╮
 │ >_ OpenAI Codex            │
@@ -320,9 +322,8 @@ describe('cursor runner', () => {
     );
   });
 
-  it('does not mistake stale busy text before a buffered Codex instruction for progress', () => {
-    const message =
-      'Read temp/tasks/fix/demo/SELF-REVIEW-FIX.md and execute all steps. Mark each checkbox as you complete it.';
+  it('does not mistake stale busy text before a buffered Codex instruction for progress', async () => {
+    const message = await dispatchPrompt('temp/tasks/fix/demo/SELF-REVIEW-FIX.md');
     const pane = `
 • Working (12s • esc to interrupt)
 
@@ -334,9 +335,8 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneHasBufferedInstruction(pane, message, 'codex'), true);
   });
 
-  it('does not accept Codex post-launch prompt delivery when Enter was dropped', () => {
-    const message =
-      'Read .task/fix/30728-0529-130215/SELF-REVIEW.md and execute all steps. Mark each checkbox as you complete it.';
+  it('does not accept Codex post-launch prompt delivery when Enter was dropped', async () => {
+    const message = await dispatchPrompt('.task/fix/30728-0529-130215/SELF-REVIEW.md');
     const before = `
 ╭─────────────────────────────────────────────────────╮
 │ >_ OpenAI Codex                                     │
@@ -362,9 +362,8 @@ describe('cursor runner', () => {
     );
   });
 
-  it('accepts Claude post-launch prompt delivery once the prompt is in transcript history', () => {
-    const message =
-      'Read temp/tasks/feat/tat-1043-0608-144339/SELF-REVIEW.md and execute all steps. Mark each checkbox as you complete it.';
+  it('accepts Claude post-launch prompt delivery once the prompt is in transcript history', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-1043-0608-144339/SELF-REVIEW.md');
     const before = `
  ▐▛███▜▌   Claude Code v2.1.162
 
@@ -390,9 +389,8 @@ describe('cursor runner', () => {
     );
   });
 
-  it('recognizes a Claude self-review task that is already executing during readiness wait', () => {
-    const message =
-      'Read .task/feat/tat-3215-0622-110508/SELF-REVIEW.md and execute all steps. Mark each checkbox as you complete it.';
+  it('recognizes a Claude self-review task that is already executing during readiness wait', async () => {
+    const message = await dispatchPrompt('.task/feat/tat-3215-0622-110508/SELF-REVIEW.md');
     const pane = `
 ⏺ Update(.task/feat/tat-3215-0622-110508/SELF-REVIEW.md)
   ⎿  Added 1 line, removed 1 line
@@ -415,9 +413,8 @@ describe('cursor runner', () => {
     );
   });
 
-  it('accepts post-launch prompt delivery when the runner queues it for the next tool call', () => {
-    const message =
-      'Read temp/tasks/feat/tat-3307-0609-103547/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+  it('accepts post-launch prompt delivery when the runner queues it for the next tool call', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-3307-0609-103547/TASK.md');
     const before = `
 ⏺ Working (6s • esc to interrupt)
 `;
@@ -426,8 +423,7 @@ describe('cursor runner', () => {
   submitted
   after next
   tool call
-  ↳ Read temp/tasks/feat/tat-3307-0609-103547/TASK.md and execute all steps.
-    Mark each checkbox as you complete it.
+  ↳ ${message}
 `;
 
     assert.equal(runnerPaneHasQueuedInstruction(after, message), true);
@@ -460,9 +456,8 @@ describe('cursor runner', () => {
     assert.equal(runnerBufferedInstructionSubmitKey(pane, 'cursor'), 'C-m');
   });
 
-  it('submits instead of duplicating a post-launch prompt when Cursor already shows the TASK marker', () => {
-    const message =
-      'Read temp/tasks/feat/tat-1043-0608-144339/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+  it('submits instead of duplicating a post-launch prompt when Cursor already shows the TASK marker', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-1043-0608-144339/TASK.md');
     const pane = `
   Follow-ups
   - Read temp/tasks/feat/tat-1043-0608-144339/TASK.md and execute all steps.
@@ -484,9 +479,8 @@ describe('cursor runner', () => {
     );
   });
 
-  it('does not submit from marker-only text when the marker is stale above the live composer', () => {
-    const message =
-      'Read temp/tasks/feat/tat-1043-0608-144339/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+  it('does not submit from marker-only text when the marker is stale above the live composer', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-1043-0608-144339/TASK.md');
     const pane = `
   Old transcript
   - Read temp/tasks/feat/tat-1043-0608-144339/TASK.md and execute all steps.
@@ -512,24 +506,21 @@ describe('cursor runner', () => {
     );
   });
 
-  it('accepts Cursor prompt delivery when the latest duplicate prompt occurrence has live progress', () => {
-    const message =
-      'Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+  it('accepts Cursor prompt delivery when the latest duplicate prompt occurrence has live progress', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-3303-0608-192956/TASK.md');
     const before = `
   Cursor Agent
   → Plan, search, build anything
 `;
     const after = `
-  Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all
-  steps. Mark each checkbox as you complete it.
+  ${message}
 
   Reading the task file and executing its steps.
 
     Read temp/tasks/feat/tat-3303-0608-192956/TASK.md
 
  ┌─ follow-ups ─────────────────────────────────────────────────────────────┐
- │ ○ Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all      │
- │   steps. Mark each checkbox as you complete it.                          │
+ │ ○ ${message}                                                             │
  └──────────────────────────────────────────────────────────────────────────┘
 
  ⠰⠰ Reading  474 tokens
@@ -540,9 +531,8 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'cursor'), true);
   });
 
-  it('accepts Cursor delivery when current tail status is reading despite a duplicate follow-up', () => {
-    const message =
-      'Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+  it('accepts Cursor delivery when current tail status is reading despite a duplicate follow-up', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-3303-0608-192956/TASK.md');
     const before = `
   Cursor Agent
   → Plan, search, build anything
@@ -551,21 +541,20 @@ describe('cursor runner', () => {
   Cursor Agent
   v2026.06.04-5fd875e
 
-  Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.
+  ${message}
 
   I'll read the task file first, then work through each step and mark checkboxes as they're completed.
 
     Read temp/tasks/feat/tat-3303-0608-192956/TASK.md
 
  ┌─ follow-ups ─────────────────────────────────────────────────────────────┐
- │ ○ Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all      │
- │   steps. Mark each checkbox as you complete it.                          │
+ │ ○ ${message}                                                             │
  │ enter send now · ↑ edit · esc cancel                                     │
  └──────────────────────────────────────────────────────────────────────────┘
 
  ⠀⠞ Reading  487 tokens
 
-  → Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.
+  → ${message}
 
   Composer 2.5 · Auto-run
 `;
@@ -574,21 +563,18 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'cursor'), true);
   });
 
-  it('does not accept stale Cursor progress before a later buffered duplicate prompt', () => {
-    const message =
-      'Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps. Mark each checkbox as you complete it.';
+  it('does not accept stale Cursor progress before a later buffered duplicate prompt', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-3303-0608-192956/TASK.md');
     const before = `
   Cursor Agent
   → Plan, search, build anything
 `;
     const after = `
-  Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all
-  steps. Mark each checkbox as you complete it.
+  ${message}
 
   Reading the task file and executing its steps.
 
-  → Read temp/tasks/feat/tat-3303-0608-192956/TASK.md and execute all steps.
-    Mark each checkbox as you complete it.
+  → ${message}
 
   Composer 2.5 · Auto-run
 `;
@@ -598,14 +584,12 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneShowsPromptAccepted(after, before, message, 'TASK.md', 'cursor'), false);
   });
 
-  it('detects Codex instructions buffered after tmux wraps long task paths', () => {
-    const message =
-      'Read temp/tasks/fix/eval-bf5e8c3f61bd-clean-extension-42435-harness-4d24c9dd-5057557b-0525-022117/SELF-REVIEW-FIX.md and execute all steps. Mark each checkbox as you complete it.';
+  it('detects Codex instructions buffered after tmux wraps long task paths', async () => {
+    const message = await dispatchPrompt('temp/tasks/fix/eval-bf5e8c3f61bd-clean-extension-42435-harness-4d24c9dd-5057557b-0525-022117/SELF-REVIEW-FIX.md');
     const pane = `
 • Waiting for background terminal (2m 08s • esc to interrupt)
 
-› Read temp/tasks/fix/eval-bf5e8c3f61bd-clean-extension-42435-harness-4d24c9dd-
-  5057557b-0525-022117/SELF-REVIEW-FIX.md and execute all steps. Mark each checkbox as you complete it.
+› ${message}
 
   gpt-5.5 high fast · ~/dev/example-app/example-browser-1
 `;
