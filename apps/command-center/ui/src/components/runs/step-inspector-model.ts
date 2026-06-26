@@ -1,4 +1,9 @@
-import type { FamilyObservabilityArtifact, Run, RunStep } from '@farmslot/protocol';
+import type {
+  FamilyObservabilityArtifact,
+  Run,
+  RunStep,
+  SelfReviewIssue,
+} from '@farmslot/protocol';
 
 import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 
@@ -44,18 +49,13 @@ export interface StepCostInfo {
   extra?: string;
 }
 
-export interface ReviewLoopIssue {
-  file: string;
-  line?: number;
-  description: string;
-}
-
 export interface ReviewLoopAttempt {
   loopNumber: number;
   verdict: string;
   unresolvedCount: number;
-  issues: ReviewLoopIssue[];
+  issues: SelfReviewIssue[];
   completedAt: string;
+  hasFixDelta: boolean;
   fixDeltaPath: string | null;
 }
 
@@ -98,8 +98,8 @@ export function reviewLoopAttempts(step: RunStep): ReviewLoopAttempt[] {
       unresolvedCount: typeof attempt.unresolvedCount === 'number' ? attempt.unresolvedCount : 0,
       issues,
       completedAt: typeof attempt.completedAt === 'string' ? attempt.completedAt : '',
-      fixDeltaPath:
-        fixDelta && typeof fixDelta.diffPath === 'string' ? fixDelta.diffPath : null,
+      hasFixDelta: fixDelta !== null,
+      fixDeltaPath: fixDelta && typeof fixDelta.diffPath === 'string' ? fixDelta.diffPath : null,
     };
   });
 }

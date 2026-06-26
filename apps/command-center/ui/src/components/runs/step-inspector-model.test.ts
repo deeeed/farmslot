@@ -112,6 +112,11 @@ test('stepHasReviewLoop gates the loop panel to review steps with attempts', () 
     } as RunStep),
     false,
   );
+  // self-review with an empty attempts array (and no timeline) does not render
+  assert.equal(
+    stepHasReviewLoop({ name: 'self-review', status: 'done', outputs: { attempts: [] } } as RunStep),
+    false,
+  );
 });
 
 test('reviewLoopAttempts normalizes self-review loop convergence', () => {
@@ -158,8 +163,42 @@ test('reviewLoopAttempts normalizes self-review loop convergence', () => {
     { file: 'a.ts', line: 341, description: 'swallows errors' },
     { file: 'b.tsx', line: undefined, description: 'untested path' },
   ]);
+  assert.equal(attempts[1].hasFixDelta, true);
   assert.equal(attempts[1].fixDeltaPath, 'artifacts/review-loop-2/fix-delta.diff');
+  assert.equal(attempts[0].hasFixDelta, false);
   assert.equal(attempts[0].fixDeltaPath, null);
+});
+
+test('reviewLoopAttempts flags a fixDelta with no diffPath (degraded snapshot)', () => {
+  // ReviewDiffSnapshot.source:'unavailable' yields a fixDelta without a diffPath.
+  // The fix line must still render (hasFixDelta) but without a ` · <path>` suffix.
+  const step = {
+    name: 'self-review',
+    status: 'done',
+    outputs: {
+      attempts: [
+        { loopNumber: 2, verdict: 'pass', unresolvedCount: 0, fixDelta: { source: 'unavailable' } },
+      ],
+    },
+  } as RunStep;
+  const attempt = reviewLoopAttempts(step)[0];
+  assert.equal(attempt.hasFixDelta, true);
+  assert.equal(attempt.fixDeltaPath, null);
+});
+
+test('reviewLoopAttempts returns [] for missing or non-array attempts', () => {
+  assert.deepEqual(
+    reviewLoopAttempts({ name: 'self-review', status: 'running', outputs: {} } as RunStep),
+    [],
+  );
+  assert.deepEqual(
+    reviewLoopAttempts({
+      name: 'self-review',
+      status: 'done',
+      outputs: { attempts: 'nope' },
+    } as unknown as RunStep),
+    [],
+  );
 });
 
 test('reviewLoopAttempts falls back to index-based loop numbers', () => {

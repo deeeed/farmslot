@@ -329,7 +329,7 @@ export class StepInspector extends StepInspectorState {
             ? colors.statusFail
             : colors.textMuted;
     return html`
-      ${attempt.fixDeltaPath !== null
+      ${attempt.hasFixDelta
         ? html`<div class="review-loop-fix">
             worker fix applied${attempt.fixDeltaPath ? ` · ${attempt.fixDeltaPath}` : ''}
           </div>`
