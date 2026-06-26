@@ -7,7 +7,6 @@ import {
   createPrepareProgressState,
   type PrepareProgressState,
   recordPrepareStep,
-  splitPrepareOutputLines,
 } from './prepare-progress-model.js';
 
 type Listener = () => void;
@@ -86,12 +85,7 @@ function ensureSlotPrepareTrackerWired(): void {
     if (!data.requestId || !requestIds.has(data.requestId) || !data.data) return;
     const session = [...sessionsBySlot.values()].find((s) => s.requestId === data.requestId);
     if (!session) return;
-    const lines = splitPrepareOutputLines(data.data);
-    let next = session;
-    for (const line of lines) {
-      next = appendPrepareOutput(next, line);
-    }
-    setSession(next);
+    setSession(appendPrepareOutput(session, data.data));
   });
   gateway.subscribe(Events.SCRIPT_COMPLETE, (payload: unknown) => {
     const data = payload as { requestId?: string; exitCode?: number; error?: string };

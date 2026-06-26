@@ -26,11 +26,15 @@ export async function runSlotPrepare(input: RunSlotPrepareInput): Promise<SlotPr
     label: input.label,
   });
   try {
-    return await gateway.request<SlotPrepareResult>(
+    const result = await gateway.request<SlotPrepareResult>(
       Methods.SLOT_PREPARE,
       { ...input, requestId },
       SLOT_PREPARE_TIMEOUT_MS,
     );
+    if (!result.prepared) {
+      throw new Error(`Slot ${input.slotId} prepare did not complete (slot may be disabled)`);
+    }
+    return result;
   } finally {
     // Keep the session visible briefly after completion for the banner/panel.
     scheduleSlotPrepareSessionClear(input.slotId, 8_000);
