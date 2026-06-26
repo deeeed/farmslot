@@ -102,7 +102,9 @@ const startDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-start-'));
 const startTask = path.join(startDir, 'TASK.md');
 const startSignal = path.join(startDir, 'SIGNAL.json');
 writeFileSync(startTask, '- [ ] **1. Update Status** — begin work');
-result = spawnSync(process.execPath, [helper, startTask, startSignal, 'start'], { encoding: 'utf8' });
+result = spawnSync(process.execPath, [helper, startTask, startSignal, 'start'], {
+  encoding: 'utf8',
+});
 assert.equal(result.status, 0, result.stderr);
 assert.match(readFileSync(startTask, 'utf8'), /- \[ \] \*\*1\. Update Status\*\*/);
 parsed = JSON.parse(readFileSync(startSignal, 'utf8'));

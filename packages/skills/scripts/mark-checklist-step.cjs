@@ -111,9 +111,7 @@ function buildSignalUpdate(signal, opts, target, timing, events, now, taskPath) 
       ...(opts.outcome ? { outcome: opts.outcome } : {}),
       ...(opts.disposition ? { disposition: opts.disposition } : {}),
       ...(opts.reason ? { reason: opts.reason } : {}),
-      ...(opts.needsSelfReview
-        ? { needsSelfReview: opts.needsSelfReview === 'true' }
-        : {}),
+      ...(opts.needsSelfReview ? { needsSelfReview: opts.needsSelfReview === 'true' } : {}),
     };
   }
   return {
@@ -223,8 +221,7 @@ if (
   target.stepNumber != null &&
   !events.some(
     (event) =>
-      event &&
-      (event.stepNumber === target.stepNumber || event.index === target.stepNumber - 1),
+      event && (event.stepNumber === target.stepNumber || event.index === target.stepNumber - 1),
   )
 ) {
   events.push({ stepNumber: target.stepNumber, label: target.label, checkedAt: now });
@@ -236,7 +233,9 @@ atomicWrite(signalPath, `${JSON.stringify(next, null, 2)}\n`, 0o644);
 if (isStartCommand) {
   console.log('signal started');
 } else if (isCompleteCommand) {
-  console.log(`signal complete: status=${next.status}${next.outcome ? ` outcome=${next.outcome}` : ''}`);
+  console.log(
+    `signal complete: status=${next.status}${next.outcome ? ` outcome=${next.outcome}` : ''}`,
+  );
 } else {
   console.log(`marked ${target.stepNumber}: ${target.label}`);
 }
