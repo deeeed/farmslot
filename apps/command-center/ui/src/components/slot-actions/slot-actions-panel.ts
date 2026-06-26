@@ -28,11 +28,7 @@ import { Events, Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import {
-  type PrepareProfileOption,
-  projectPrepareProfiles,
-} from '../dispatch/dispatch-wizard-draft.js';
-import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
+
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import { SLOT_PREPARE_TIMEOUT_MS } from '../shared/slot-prepare-client.js';
@@ -81,10 +77,7 @@ export class SlotActionsPanel extends LitElement {
   @state() private _switchForcePrepare = false;
   /** Whether the switch-branch form is expanded. */
   @state() private _switchOpen = false;
-  /** Prepare profiles for the switch-branch profile select (ADR-037), lazily
-   * loaded from project config when a slot is known. */
-  @state() private _prepareProfiles: PrepareProfileOption[] = [];
-  private _profilesLoadedFor = '';
+
 
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
@@ -167,32 +160,8 @@ export class SlotActionsPanel extends LitElement {
         {},
       );
       this._slot = fleet.fleet.slots.find((s) => s.slot === this.slotId) ?? null;
-      void this._loadPrepareProfiles();
     } catch (err) {
       console.warn('[slot-actions-panel] fleet.status failed:', err);
-    }
-  }
-
-  private async _loadPrepareProfiles() {
-    const project = this._slot?.project ?? '';
-    if (!project || this._profilesLoadedFor === project) return;
-    this._profilesLoadedFor = project;
-    try {
-      this._prepareProfiles = projectPrepareProfiles(await requestProjectConfigs(), project);
-      // Reconcile the selected profile to a value the project actually offers.
-      // Prefer the cheap `attach` profile; otherwise fall back to the project
-      // default (or first) so the select never shows a stale/unknown value.
-      const names = this._prepareProfiles.map((p) => p.name);
-      if (names.length > 0 && !names.includes(this._switchProfile)) {
-        this._switchProfile = names.includes('attach')
-          ? 'attach'
-          : (this._prepareProfiles.find((p) => p.isDefault)?.name ?? names[0]!);
-      }
-    } catch (err) {
-      // Profiles only populate the optional select. On failure the select stays
-      // hidden (_prepareProfiles stays []) and the default 'attach' value is
-      // sent as-is — the switch form still works.
-      console.warn('[slot-actions-panel] prepare profiles load failed:', err);
     }
   }
 
@@ -634,7 +603,6 @@ export class SlotActionsPanel extends LitElement {
               </div>
               <slot-prepare-options
                 .project=${this._slot?.project ?? ''}
-                .profiles=${this._prepareProfiles}
                 .prepareProfile=${this._switchProfile}
                 .strictProfile=${this._switchStrictProfile}
                 .forcePrepare=${this._switchForcePrepare}

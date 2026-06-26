@@ -42,3 +42,45 @@ export function shouldBindOnlyForLoadRun(
 ): boolean {
   return resolveBindOnly(runBranch, slotBranch, forcePrepare);
 }
+
+/** Shared warm-switch + bind path for load-run, popover, and run-detail actions. */
+export interface RunSlotPrepareForRunInput {
+  slotId: string;
+  runId: string;
+  branch: string;
+  slotBranch?: string | null;
+  prepareProfile?: string;
+  strictProfile?: boolean;
+  forcePrepare?: boolean;
+  rebind?: boolean;
+  label?: string;
+}
+
+export function slotPrepareLabel(
+  slotId: string,
+  runId: string,
+  bindOnly: boolean,
+): string {
+  return bindOnly
+    ? `Binding run ${runId.slice(0, 8)} on ${slotId}`
+    : `Preparing ${slotId} for run ${runId.slice(0, 8)}`;
+}
+
+export async function runSlotPrepareForRun(
+  input: RunSlotPrepareForRunInput,
+): Promise<SlotPrepareResult> {
+  const prepareProfile = input.prepareProfile ?? 'attach';
+  const strictProfile = input.strictProfile !== false;
+  const bindOnly = resolveBindOnly(input.branch, input.slotBranch, input.forcePrepare ?? false);
+  return runSlotPrepare({
+    slotId: input.slotId,
+    branch: input.branch,
+    prepareProfile,
+    strictProfile,
+    bindOnly,
+    bindRunId: input.runId,
+    runId: input.runId,
+    rebind: input.rebind,
+    label: input.label ?? slotPrepareLabel(input.slotId, input.runId, bindOnly === true),
+  });
+}

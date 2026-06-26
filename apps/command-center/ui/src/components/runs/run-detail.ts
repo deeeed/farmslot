@@ -42,7 +42,6 @@ import {
   resolveBranchNudgePick,
   resolveInteractiveDevAction,
   resolveSlotPick,
-  switchSlotToRunBranch,
 } from './run-detail-actions.js';
 import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
 import { renderRunGateSection } from './run-detail-decision-renderers.js';
@@ -684,14 +683,6 @@ export class RunDetail extends RunDetailState {
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
       _activateOnSlot: (run) => activateRunOnSlot(run.id, run.slotId ?? ''),
-      _switchSlotToRunBranch: (run) =>
-        switchSlotToRunBranch(run.id, run.slotId ?? '', run.branch ?? null, false, {
-          slotBranch: getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.branch,
-        }).catch((err) => {
-          // Targets the run's own slot (compatible, recipe present) so failure
-          // is rare; surface it without an alert.
-          console.error('[run-detail] switch slot to run branch failed:', err);
-        }),
       _slotBranchForRun: (run) =>
         getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.branch ?? '',
       _slotHealthForRun: (run) =>

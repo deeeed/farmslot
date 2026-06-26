@@ -8,10 +8,7 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import {
-  runSlotPrepare,
-  shouldBindOnlyForLoadRun,
-} from '../shared/slot-prepare-client.js';
+import { runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
 
 type Timer = ReturnType<typeof setTimeout> | undefined;
 
@@ -307,23 +304,17 @@ export async function switchSlotToRunBranch(
       `Cannot switch ${slotId || '(no slot)'}: run ${runId.slice(0, 8)} has no branch`,
     );
   }
-  const prepareProfile = options.prepareProfile ?? 'attach';
-  const strictProfile = options.strictProfile !== false;
-  const bindOnly = shouldBindOnlyForLoadRun(branch, options.slotBranch, options.forcePrepare);
   // Throws on failure — callers surface it in-context (inline in the run loader,
   // a guarded catch on the run-detail button) rather than a browser alert.
-  await runSlotPrepare({
+  await runSlotPrepareForRun({
     slotId,
-    branch,
-    prepareProfile,
-    strictProfile,
-    bindOnly,
-    bindRunId: runId,
     runId,
+    branch,
+    slotBranch: options.slotBranch,
+    prepareProfile: options.prepareProfile,
+    strictProfile: options.strictProfile,
+    forcePrepare: options.forcePrepare,
     rebind,
-    label: bindOnly
-      ? `Binding run ${runId.slice(0, 8)} on ${slotId}`
-      : `Preparing ${slotId} for run ${runId.slice(0, 8)}`,
   });
   window.location.hash = `#slot/${slotId}`;
 }

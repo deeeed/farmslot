@@ -59,7 +59,6 @@ export interface RunDetailViewContext {
   _requestCopilotRunDiagnosis: (run: Run) => void;
   _buildRerunAlongsideHref: (run: Run) => string;
   _activateOnSlot: (run: Run) => void | Promise<void>;
-  _switchSlotToRunBranch: (run: Run) => void | Promise<void>;
   _slotBranchForRun: (run: Run) => string;
   _slotHealthForRun: (run: Run) => import('@farmslot/protocol').SlotHealth | null;
   _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;

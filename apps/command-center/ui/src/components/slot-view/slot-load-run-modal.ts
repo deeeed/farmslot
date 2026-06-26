@@ -9,13 +9,10 @@ import type { SlotHealth } from '@farmslot/protocol';
 
 import '../shared/prepare-progress-panel.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
-import {
-  buildSlotPreparePlan,
-  DEFAULT_SLOT_PREPARE_OPTIONS,
-} from '../shared/slot-prepare-options-model.js';
+import { DEFAULT_SLOT_PREPARE_OPTIONS } from '../shared/slot-prepare-options-model.js';
 import '../shared/slot-prepare-options.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
-import { runSlotPrepare, shouldBindOnlyForLoadRun } from '../shared/slot-prepare-client.js';
+import { runSlotPrepareForRun, shouldBindOnlyForLoadRun } from '../shared/slot-prepare-client.js';
 import {
   activeSlotPrepare,
   subscribeSlotPrepareTracker,
@@ -161,17 +158,6 @@ export class SlotLoadRunModal extends LitElement {
     }
     .slrm-options {
       margin-bottom: ${unsafeCSS(spacing.md)};
-    }
-    .slrm-row-plan {
-      grid-column: 1 / -1;
-      border-top: 1px dashed #2a2a44;
-      padding-top: ${unsafeCSS(spacing.sm)};
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: 11px;
-      line-height: 1.45;
-    }
-    .slrm-row-plan strong {
-      color: ${unsafeCSS(colors.accent)};
     }
     .slrm-progress {
       margin-bottom: ${unsafeCSS(spacing.md)};
@@ -340,19 +326,15 @@ export class SlotLoadRunModal extends LitElement {
     this._actionError = '';
     this._actionBusy = true;
     try {
-      const bindOnly = shouldBindOnlyForLoadRun(run.branch, this.slotBranch, this._forcePrepare);
-      await runSlotPrepare({
+      await runSlotPrepareForRun({
         slotId: this.slotId,
-        branch: run.branch!,
-        prepareProfile: prepareProfile || 'attach',
-        strictProfile,
-        bindOnly,
-        bindRunId: run.id,
         runId: run.id,
+        branch: run.branch!,
+        slotBranch: this.slotBranch,
+        prepareProfile,
+        strictProfile,
+        forcePrepare: this._forcePrepare,
         rebind: true,
-        label: bindOnly
-          ? `Binding run ${run.id.slice(0, 8)} on ${this.slotId}`
-          : `Preparing ${this.slotId} for run ${run.id.slice(0, 8)}`,
       });
       window.location.hash = `#slot/${this.slotId}`;
       this._close();
@@ -454,16 +436,6 @@ export class SlotLoadRunModal extends LitElement {
     const reason = this._loadReason(run);
     const loadable = !reason;
     const confirming = this._pendingConfirm === run.id;
-    const rowPlan = confirming
-      ? buildSlotPreparePlan({
-          runBranch: run.branch,
-          slotBranch: this.slotBranch,
-          slotHealth: this.slotHealth,
-          strictProfile: this._strictProfile,
-          prepareProfile: this._prepareProfile,
-          forcePrepare: this._forcePrepare,
-        })
-      : null;
     const disabledTitle =
       reason === 'no-branch'
         ? 'Run has no branch to check out'
@@ -510,15 +482,6 @@ export class SlotLoadRunModal extends LitElement {
                 Load onto ${this.slotId} →
               </button>`}
         </span>
-        ${rowPlan
-          ? html`<div class="slrm-row-plan">
-              <strong>${rowPlan.mode === 'bind-only' ? 'Bind only' : 'Checkout'}</strong> —
-              ${rowPlan.lines.join(' · ')}
-              ${rowPlan.warnings.length > 0
-                ? html` · ${rowPlan.warnings.map((warning) => html`<span style="color:${unsafeCSS(colors.statusWarn)}">${warning}</span>`)}`
-                : nothing}
-            </div>`
-          : nothing}
       </div>
     `;
   }

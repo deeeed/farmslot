@@ -8,8 +8,7 @@ import '../shared/prepare-progress-panel.js';
 import type { PrepareProgressState } from './prepare-progress-model.js';
 import type { SlotPrepareOptionsChangeDetail } from './slot-prepare-options.js';
 import './slot-prepare-options.js';
-import { runSlotPrepare } from './slot-prepare-client.js';
-import { resolveBindOnly } from './slot-prepare-options-model.js';
+import { runSlotPrepareForRun } from './slot-prepare-client.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from './slot-prepare-tracker.js';
 
 @customElement('slot-prepare-popover')
@@ -130,20 +129,16 @@ export class SlotPreparePopover extends LitElement {
     this._strictProfile = strictProfile;
     this._error = '';
     this._busy = true;
-    const bindOnly = resolveBindOnly(this.runBranch, this.slotBranch, this._forcePrepare);
     try {
-      await runSlotPrepare({
+      await runSlotPrepareForRun({
         slotId: this.slotId,
+        runId: this.runId,
         branch: this.runBranch,
+        slotBranch: this.slotBranch,
         prepareProfile,
         strictProfile,
-        bindOnly,
-        bindRunId: this.runId,
-        runId: this.runId,
+        forcePrepare: this._forcePrepare,
         rebind: this.rebind,
-        label: bindOnly
-          ? `Binding run ${this.runId.slice(0, 8)} on ${this.slotId}`
-          : `Preparing ${this.slotId} for run ${this.runId.slice(0, 8)}`,
       });
       this._open = false;
       window.location.hash = `#slot/${this.slotId}`;
