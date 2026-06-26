@@ -786,53 +786,62 @@ export async function recipeProjectHookRun(
   };
 }
 
-export async function recipeRerun(
-  params: RecipeRerunParams,
+function emitRecipeRerunStream(
   emit: EmitFn,
-): Promise<ScriptActionResult> {
-  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs, recordVideo } = params;
+  requestId: string,
+  data: string,
+  stream: 'stdout' | 'stderr' = 'stderr',
+): void {
+  emit(Events.SCRIPT_OUTPUT, { requestId, stream, data, timestamp: Date.now() });
+}
 
-  // Validate run
-  const run = getRun(runId);
-  if (!run) throw new Error(`Run not found: ${runId}`);
+async function executeRecipeRerunJob(args: {
+  emit: EmitFn;
+  run: NonNullable<ReturnType<typeof getRun>>;
+  runId: string;
+  slotId: string;
+  requestId: string;
+  abortController: AbortController;
+  recipeArtifactPath?: string;
+  recipeRunId?: string;
+  playbackSlowMs?: number;
+  recordVideo?: boolean;
+}): Promise<void> {
+  const {
+    emit,
+    run,
+    runId,
+    slotId,
+    requestId,
+    abortController,
+    recipeArtifactPath,
+    recipeRunId,
+    playbackSlowMs,
+    recordVideo,
+  } = args;
+  const startTime = Date.now();
+  let slotRecipeRunArtifactsDir = '';
 
-  // Validate the slot still belongs to this run and is parked in review-gate.
-  const fleet = await loadFleetStatus();
-  const slotStatus = fleet.slots.find((s) => s.slot === slotId);
-  if (!slotStatus) {
-    throw new Error(`Slot ${slotId} not found`);
-  }
-  if (!canRecipeRerunOnSlot(slotStatus, runId, run.slotId)) {
-    if (slotStatus.agent === 'working') {
-      throw new Error(
-        `Slot ${slotId} has a live worker — wait until it finishes before replaying the recipe`,
-      );
-    }
-    throw new Error(
-      `Slot ${slotId} is not ready for recipe replay on this run ` +
-        `(phase=${slotStatus.phase ?? '-'}, current run=${slotStatus.currentRunId?.slice(0, 8) ?? '-'})`,
-    );
-  }
+  const complete = (detail: {
+    exitCode: number;
+    error?: string;
+    artifactRoot?: string;
+  }): void => {
+    emit(Events.SCRIPT_COMPLETE, {
+      requestId,
+      exitCode: detail.exitCode,
+      duration: Date.now() - startTime,
+      error: detail.error,
+      artifactRoot: detail.artifactRoot ?? slotRecipeRunArtifactsDir,
+    });
+  };
 
-  // Concurrency guard
-  if (activeReruns.has(slotId)) {
-    throw new Error(
-      `Recipe rerun already active on ${slotId} (requestId: ${activeReruns.get(slotId)!.requestId})`,
-    );
-  }
-
-  const requestId = `recipe-${randomUUID().slice(0, 8)}`;
-  const abortController = new AbortController();
-  activeReruns.set(slotId, { requestId, abortController });
-
-  // Everything below is wrapped in try/catch to ensure activeReruns cleanup
   try {
-    // Load slot + project vars
+    emitRecipeRerunStream(emit, requestId, 'Preflight: resolving recipe command...\n');
     const slotVars = await loadSlotVars(slotId);
     const projectVars = await loadProjectVars(run.project);
     const projectJson = projectVars.projectJson;
 
-    // Resolve recipe path on the SLOT (not orchestrator)
     const built = await buildRecipeExecutionCommand(
       run,
       slotVars,
@@ -850,7 +859,7 @@ export async function recipeRerun(
       );
     }
 
-    // Check recipe file exists on the slot
+    emitRecipeRerunStream(emit, requestId, 'Preflight: verifying recipe.json on slot...\n');
     const fileCheck = await execOnSlot(
       slotVars,
       `test -f ${shellExpressionForRemotePath(slotRecipePath)} && echo ok || echo missing`,
@@ -859,9 +868,9 @@ export async function recipeRerun(
       throw new Error(`recipe.json not found on slot at ${slotRecipePath}`);
     }
 
-    const slotRecipeRunArtifactsDir = built.artifactRoot;
+    slotRecipeRunArtifactsDir = built.artifactRoot;
 
-    // Warmth check — tmux + branch are hard blocks, devserver is a soft warning
+    emitRecipeRerunStream(emit, requestId, 'Preflight: checking slot warmth...\n');
     const warmth = await checkSlotWarmth(slotVars, run.branch);
     const hardFailures = warmth.warnings.filter((w) => w.severity === 'hard');
     if (hardFailures.length > 0) {
@@ -874,35 +883,33 @@ export async function recipeRerun(
         `[recipe] warmth warnings for ${slotId}: ${warmth.warnings.map((w) => w.message).join('; ')}`,
       );
       for (const w of warmth.warnings) {
-        emit(Events.SCRIPT_OUTPUT, {
+        emitRecipeRerunStream(
+          emit,
           requestId,
-          stream: 'stderr',
-          data: `⚠ warmth [${w.check}]: ${w.message}\n`,
-          timestamp: Date.now(),
-        });
+          `⚠ warmth [${w.check}]: ${w.message}\n`,
+        );
       }
     }
 
+    emitRecipeRerunStream(
+      emit,
+      requestId,
+      'Preflight: checking app health (Metro, CDP, WalletView)...\n',
+    );
     await assertSlotHealthForRecipeRerun(slotVars, projectJson, projectVars);
+    emitRecipeRerunStream(emit, requestId, 'Preflight: health check passed.\n');
 
     for (const warning of recipeRunUnsupportedOptionWarnings(projectJson, {
       playbackSlowMs,
       recordVideo,
     })) {
-      emit(Events.SCRIPT_OUTPUT, {
-        requestId,
-        stream: 'stderr',
-        data: `⚠ recipe option: ${warning}\n`,
-        timestamp: Date.now(),
-      });
+      emitRecipeRerunStream(emit, requestId, `⚠ recipe option: ${warning}\n`);
     }
 
-    // Build recipe command from project hook
     const rawTimeout = getProjectField(projectJson, 'recipe_timeout');
     const timeoutMs = typeof rawTimeout === 'number' ? rawTimeout : DEFAULT_TIMEOUT_MS;
-
     const recipeCmd = built.command;
-    const startTime = Date.now();
+
     let liveContextPublished = false;
     const publishLiveRecipeContext = () => {
       if (liveContextPublished) return;
@@ -922,65 +929,100 @@ export async function recipeRerun(
       const updatedRun = updateRun(runId, { liveRecipeContext });
       emit(Events.RUN_UPDATED, { run: updatedRun });
     };
+
     console.log(`[recipe] rerun ${requestId} on ${slotId}: ${recipeCmd.slice(0, 100)}`);
+    emitRecipeRerunStream(emit, requestId, `Starting recipe runner...\n$ ${recipeCmd}\n`, 'stdout');
 
-    // Fire-and-forget execution (streams via events)
-    (async () => {
-      try {
+    publishLiveRecipeContext();
+    const result = await execOnSlot(slotVars, recipeCmd, {
+      timeout: timeoutMs,
+      signal: abortController.signal,
+      onOutput: (stream, data) => {
         publishLiveRecipeContext();
-        const result = await execOnSlot(slotVars, recipeCmd, {
-          timeout: timeoutMs,
-          signal: abortController.signal,
-          onOutput: (stream, data) => {
-            publishLiveRecipeContext();
-            emit(Events.SCRIPT_OUTPUT, { requestId, stream, data, timestamp: Date.now() });
-          },
-        });
-        publishLiveRecipeContext();
-        const gatedRecordVideo = recipeRunOptionsForProject(projectJson, {
-          playbackSlowMs,
-          recordVideo,
-        }).recordVideo;
-        if (
-          gatedRecordVideo &&
-          !(await recipeRunHasVideoArtifact(slotVars, slotRecipeRunArtifactsDir))
-        ) {
-          emit(Events.SCRIPT_OUTPUT, {
-            requestId,
-            stream: 'stderr',
-            data: '⚠ recipe option: Video recording was requested, but no .mp4/.mov/.webm artifact was produced. Check the project runner recorder/capture-helper integration.\n',
-            timestamp: Date.now(),
-          });
-        }
-        emit(Events.SCRIPT_COMPLETE, {
-          requestId,
-          exitCode: result.exitCode,
-          duration: Date.now() - startTime,
-          artifactRoot: slotRecipeRunArtifactsDir,
-        });
-        console.log(
-          `[recipe] rerun ${requestId} complete: exit=${result.exitCode} (${Date.now() - startTime}ms)`,
-        );
-      } catch (err) {
-        emit(Events.SCRIPT_COMPLETE, {
-          requestId,
-          exitCode: 1,
-          duration: Date.now() - startTime,
-          error: (err as Error).message,
-          artifactRoot: slotRecipeRunArtifactsDir,
-        });
-        console.warn(`[recipe] rerun ${requestId} failed: ${(err as Error).message}`);
-      } finally {
-        activeReruns.delete(slotId);
-      }
-    })();
+        emit(Events.SCRIPT_OUTPUT, { requestId, stream, data, timestamp: Date.now() });
+      },
+    });
+    publishLiveRecipeContext();
 
-    return { requestId, artifactRoot: slotRecipeRunArtifactsDir };
+    const gatedRecordVideo = recipeRunOptionsForProject(projectJson, {
+      playbackSlowMs,
+      recordVideo,
+    }).recordVideo;
+    if (
+      gatedRecordVideo &&
+      !(await recipeRunHasVideoArtifact(slotVars, slotRecipeRunArtifactsDir))
+    ) {
+      emitRecipeRerunStream(
+        emit,
+        requestId,
+        '⚠ recipe option: Video recording was requested, but no .mp4/.mov/.webm artifact was produced. Check the project runner recorder/capture-helper integration.\n',
+      );
+    }
+
+    complete({ exitCode: result.exitCode, artifactRoot: slotRecipeRunArtifactsDir });
+    console.log(
+      `[recipe] rerun ${requestId} complete: exit=${result.exitCode} (${Date.now() - startTime}ms)`,
+    );
   } catch (err) {
-    // Ensure lock is always released on any failure during setup
+    const message = (err as Error).message;
+    emitRecipeRerunStream(emit, requestId, `Recipe rerun failed: ${message}\n`);
+    complete({ exitCode: 1, error: message, artifactRoot: slotRecipeRunArtifactsDir });
+    console.warn(`[recipe] rerun ${requestId} failed: ${message}`);
+  } finally {
     activeReruns.delete(slotId);
-    throw err;
   }
+}
+
+export async function recipeRerun(
+  params: RecipeRerunParams,
+  emit: EmitFn,
+): Promise<ScriptActionResult> {
+  const { runId, slotId, recipeArtifactPath, recipeRunId, playbackSlowMs, recordVideo } = params;
+
+  const run = getRun(runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+
+  const fleet = await loadFleetStatus();
+  const slotStatus = fleet.slots.find((s) => s.slot === slotId);
+  if (!slotStatus) {
+    throw new Error(`Slot ${slotId} not found`);
+  }
+  if (!canRecipeRerunOnSlot(slotStatus, runId, run.slotId)) {
+    if (slotStatus.agent === 'working') {
+      throw new Error(
+        `Slot ${slotId} has a live worker — wait until it finishes before replaying the recipe`,
+      );
+    }
+    throw new Error(
+      `Slot ${slotId} is not ready for recipe replay on this run ` +
+        `(phase=${slotStatus.phase ?? '-'}, current run=${slotStatus.currentRunId?.slice(0, 8) ?? '-'})`,
+    );
+  }
+
+  if (activeReruns.has(slotId)) {
+    throw new Error(
+      `Recipe rerun already active on ${slotId} (requestId: ${activeReruns.get(slotId)!.requestId})`,
+    );
+  }
+
+  const requestId = `recipe-${randomUUID().slice(0, 8)}`;
+  const abortController = new AbortController();
+  activeReruns.set(slotId, { requestId, abortController });
+
+  void executeRecipeRerunJob({
+    emit,
+    run,
+    runId,
+    slotId,
+    requestId,
+    abortController,
+    recipeArtifactPath,
+    recipeRunId,
+    playbackSlowMs,
+    recordVideo,
+  });
+
+  return { requestId };
 }
 
 export async function recipeCancel(params: RecipeCancelParams): Promise<RecipeCancelResult> {

@@ -211,13 +211,13 @@ export function RecipeRunControls({
     setError('');
     setCommandPreview('');
     earlyEventsRef.current = [];
+    const requestIdRef = { current: '' };
+    subscribeToOutput(requestIdRef);
     setOutput({
       requestId: '',
       running: true,
-      lines: ['Starting recipe...'],
+      lines: ['Connecting to gateway and starting recipe replay...'],
     });
-    const requestIdRef = { current: '' };
-    subscribeToOutput(requestIdRef);
     try {
       const result = await client.request<ScriptActionResult>(Methods.RECIPE_RERUN, params, 30_000);
       requestIdRef.current = result.requestId;
@@ -238,7 +238,7 @@ export function RecipeRunControls({
       setOutput((current) => ({
         requestId: result.requestId,
         running: !earlyComplete,
-        lines: appendLimitedLines(current?.lines ?? ['Starting recipe...'], [
+        lines: appendLimitedLines(current?.lines ?? ['Recipe replay accepted...'], [
           ...earlyOutputLines,
           ...(earlyComplete ? [`Complete: exit ${earlyComplete.exitCode ?? 0}`] : []),
         ]),
