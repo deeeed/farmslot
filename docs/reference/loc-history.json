@@ -58,6 +58,64 @@
           "total": 6677
         }
       }
+    },
+    {
+      "recordedAt": "2026-06-26T21:12:24.688Z",
+      "commit": "6906ed23179d400949a307e14237e9bb08bbfd3a",
+      "scope": "framework",
+      "exclusions": {
+        "tests": false,
+        "dev": false
+      },
+      "totals": {
+        "files": 1802,
+        "code": 356774,
+        "docs": 24786,
+        "config": 8578,
+        "total": 391429
+      },
+      "rollup": {
+        "command-center": {
+          "code": 115457,
+          "total": 116669
+        },
+        "companion": {
+          "code": 60727,
+          "total": 62200
+        },
+        "gateway": {
+          "code": 119547,
+          "total": 119651
+        },
+        "packages": {
+          "code": 35690,
+          "total": 38555
+        },
+        "scripts": {
+          "code": 12730,
+          "total": 13015
+        },
+        "docs": {
+          "code": 0,
+          "total": 18206
+        },
+        "docs-site": {
+          "code": 7080,
+          "total": 11859
+        },
+        "node": {
+          "code": 4288,
+          "total": 4356
+        },
+        "projects": {
+          "code": 0,
+          "total": 145
+        },
+        "infra": {
+          "code": 1255,
+          "total": 6773
+        }
+      }
     }
   ]
 }

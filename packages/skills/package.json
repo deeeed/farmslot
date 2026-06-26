@@ -15,7 +15,8 @@
       "default": "./dist/index.js"
     },
     "./skills/*": "./skills/*/SKILL.md",
-    "./schemas/*": "./schemas/*"
+    "./schemas/*": "./schemas/*",
+    "./scripts/mark-checklist-step.cjs": "./scripts/mark-checklist-step.cjs"
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",

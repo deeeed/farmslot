@@ -429,7 +429,7 @@ async function attemptInlineCIFix(
 
   // Send one-liner nudge to worker
   const ciFixTaskFile = `${writeResult.taskDir}/CI-FIX.md`;
-  const nudgeCmd = await resolveWorkerDispatchPrompt(run.project, {
+  const nudgeCmd = await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
     taskFile: ciFixTaskFile,
     taskDir: writeResult.taskDir,
   });
