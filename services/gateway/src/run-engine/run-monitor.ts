@@ -37,6 +37,7 @@ import {
 } from '../runners/registry.js';
 import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
+import { taskProgress } from '../methods/task.js';
 import { onWorkerSignal, resolveContextFilePath } from '../tasks/watcher.js';
 import {
   isTerminalWorkerSignal,
@@ -122,7 +123,50 @@ interface MonitorState {
   lastPaneHash: string;
   lastPaneChangeAt: number;
   lastStepCount: number;
+  lastCompletedSteps: number;
+  lastProgressChangeAt: number;
+  lastChecklistNudgeAt: number | null;
   startedAt: number;
+}
+
+export interface ChecklistMarkMonitorSnapshot {
+  now: number;
+  startedAt: number;
+  lastPaneChangeAt: number;
+  lastProgressChangeAt: number;
+  lastChecklistNudgeAt: number | null;
+  completedSteps: number;
+  totalSteps: number;
+  graceMs?: number;
+  staleMs?: number;
+  activePaneMs?: number;
+  nudgeCooldownMs?: number;
+}
+
+/** True when the worker pane is active but checklist marks have not advanced. */
+export function evaluateChecklistMarkViolation(snap: ChecklistMarkMonitorSnapshot): {
+  shouldNudge: boolean;
+  message?: string;
+} {
+  const graceMs = snap.graceMs ?? 5 * 60_000;
+  const staleMs = snap.staleMs ?? 5 * 60_000;
+  const activePaneMs = snap.activePaneMs ?? 2 * 60_000;
+  const nudgeCooldownMs = snap.nudgeCooldownMs ?? 10 * 60_000;
+
+  if (snap.totalSteps <= 0 || snap.completedSteps >= snap.totalSteps) {
+    return { shouldNudge: false };
+  }
+  if (snap.now - snap.startedAt < graceMs) return { shouldNudge: false };
+  if (snap.now - snap.lastPaneChangeAt > activePaneMs) return { shouldNudge: false };
+  if (snap.now - snap.lastProgressChangeAt < staleMs) return { shouldNudge: false };
+  if (snap.lastChecklistNudgeAt != null && snap.now - snap.lastChecklistNudgeAt < nudgeCooldownMs) {
+    return { shouldNudge: false };
+  }
+
+  return {
+    shouldNudge: true,
+    message: `Checklist shows ${snap.completedSteps}/${snap.totalSteps} but the worker terminal is active — ./mark may be missing`,
+  };
 }
 
 // ADR-027 Phase 3: monitor state lives on Run.monitorState (already persisted).
@@ -329,12 +373,18 @@ export async function monitorRun(
         lastPaneHash: persisted.lastPaneHash ?? '',
         lastPaneChangeAt: new Date(persisted.lastPollAt).getTime(),
         lastStepCount: 0,
+        lastCompletedSteps: 0,
+        lastProgressChangeAt: new Date(persisted.startedAt).getTime(),
+        lastChecklistNudgeAt: null,
         startedAt: new Date(persisted.startedAt).getTime(),
       }
     : {
         lastPaneHash: '',
         lastPaneChangeAt: now,
         lastStepCount: 0,
+        lastCompletedSteps: 0,
+        lastProgressChangeAt: now,
+        lastChecklistNudgeAt: null,
         startedAt: now,
       };
   // Also restore nudge count from persisted state
@@ -593,7 +643,12 @@ export async function monitorRun(
           violation: { type: v.type, message: v.message },
         });
 
-        if (v.type === 'stuck' || v.type === 'idle' || v.type === 'waiting') {
+        if (
+          v.type === 'stuck' ||
+          v.type === 'idle' ||
+          v.type === 'waiting' ||
+          v.type === 'checklist_unmarked'
+        ) {
           const latestRun = getRun(runId);
           if (!latestRun) {
             exitReason = 'error';
@@ -808,6 +863,42 @@ async function detectViolations(
         timestamp: new Date().toISOString(),
       });
     }
+
+    try {
+      const progress = await taskProgress({ slotId, role, contextId });
+      const completedSteps = progress.structured?.completedSteps ?? 0;
+      const totalSteps = progress.structured?.totalSteps ?? 0;
+      if (completedSteps > state.lastCompletedSteps) {
+        state.lastCompletedSteps = completedSteps;
+        state.lastProgressChangeAt = now;
+        state.lastStepCount = completedSteps;
+      }
+      const checklistViolation = evaluateChecklistMarkViolation({
+        now,
+        startedAt: state.startedAt,
+        lastPaneChangeAt: state.lastPaneChangeAt,
+        lastProgressChangeAt: state.lastProgressChangeAt,
+        lastChecklistNudgeAt: state.lastChecklistNudgeAt,
+        completedSteps,
+        totalSteps,
+      });
+      if (checklistViolation.shouldNudge) {
+        state.lastChecklistNudgeAt = now;
+        violations.push({
+          slotId,
+          role,
+          contextId,
+          type: 'checklist_unmarked',
+          message: checklistViolation.message ?? 'Checklist marks are stale',
+          nudgeSent: null,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (progressErr) {
+      console.warn(
+        `[run-monitor] checklist progress check failed for run ${runId.slice(0, 8)}: ${(progressErr as Error).message}`,
+      );
+    }
   } catch (err) {
     console.warn(
       `[run-monitor] violation detection failed for run ${runId.slice(0, 8)} role=${role ?? '-'}: ${(err as Error).message}`,
@@ -929,6 +1020,12 @@ function buildNudgeMessage(violation: MonitorViolation): string {
       return '[Orchestrator] You appear idle. Report current status in TASK.md.';
     case 'waiting':
       return '[Orchestrator] Continue without waiting. Follow TASK.md exactly.';
+    case 'checklist_unmarked':
+      return (
+        '[Orchestrator] Checklist progress is stale: the terminal shows active work but TASK.md marks have not advanced. ' +
+        'After each completed step, run ./mark N from the task directory BEFORE starting the next step. ' +
+        'Catch up any missed marks now, then continue marking every step.'
+      );
     default:
       return '[Orchestrator] Continue working on the current task.';
   }

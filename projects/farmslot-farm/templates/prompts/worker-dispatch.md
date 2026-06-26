@@ -1,1 +1,1 @@
-Follow the checklist in {{TASK_FILE}} and mark each step as you progress. Checklist marker and signal instructions are in that file.
+Follow the checklist in {{TASK_FILE}}. A step is not complete until you run {{TASK_DIR}}/mark N (1-based); do not start the next step until that mark succeeds. Marks are the orchestrator progress signal — see that file for checklist marker and signal details.

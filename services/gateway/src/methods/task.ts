@@ -12,14 +12,18 @@ import {
   type TaskSchema,
   type TaskStepProgress,
   type TaskStepStatus,
+  type WorkerSignal,
+  type WorkerSignalChecklistEvent,
+  type WorkerSignalChecklistTiming,
 } from '@farmslot/protocol';
 
 import { selectAgentContext } from '../agents/contexts.js';
-import { loadSlotVars, resolveTaskPaths } from '../core/config.js';
+import { loadSlotVars, resolveTaskPaths, type SlotVars } from '../core/config.js';
 import { slotReadFile } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { getRun, listRuns } from '../runs/store.js';
 import { generateTaskSchema } from '../tasks/writer.js';
+import { normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
 export async function taskProgress(params: TaskProgressParams): Promise<TaskProgressResult> {
   const fleet = await loadFleetStatus();
@@ -38,7 +42,14 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
     };
     const flowType = taskFlowTypeFromPath(params.taskFile);
     const schema = generateTaskSchema(markdown, flowType);
-    if (schema.phases.length > 0) result.structured = joinSchemaWithMarkdown(schema, markdown);
+    if (schema.phases.length > 0) {
+      result.structured = joinSchemaWithMarkdown(schema, markdown);
+      const signal = await readWorkerSignal(
+        vars,
+        path.join(path.dirname(effectiveMdPath), 'SIGNAL.json'),
+      );
+      reconcileProgressFromChecklistTiming(result.structured, signal?.checklistTiming);
+    }
     return result;
   }
 
@@ -82,6 +93,9 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
   const schema = generateTaskSchema(markdown, flowType);
   if (schema.phases.length > 0) {
     result.structured = joinSchemaWithMarkdown(schema, markdown);
+    const signalPath = resolveContextSignalPath(effectiveMdPath, context?.signalFile, vars);
+    const signal = await readWorkerSignal(vars, signalPath);
+    reconcileProgressFromChecklistTiming(result.structured, signal?.checklistTiming);
     // Self-review (and similar) templates' last step is "write SIGNAL.json + /exit".
     // The worker exits before it can mark the box `[x]`, so the markdown stays at
     // N-1/N forever even though the role's signal already declared completion.
@@ -115,6 +129,112 @@ function taskFlowTypeFromPath(taskFile: string): string {
     return normalized.slice(idx + DEFAULT_TASK_DIR.length + 1).split('/')[0] || 'fix-bug';
   }
   return normalized.split('/')[0] || 'fix-bug';
+}
+
+function resolveContextSignalPath(
+  effectiveMdPath: string,
+  contextSignalFile: string | null | undefined,
+  vars: SlotVars,
+): string {
+  if (!contextSignalFile) {
+    return path.join(path.dirname(effectiveMdPath), 'SIGNAL.json');
+  }
+  if (path.isAbsolute(contextSignalFile)) return contextSignalFile;
+  return path.join(vars.remoteRepo, contextSignalFile);
+}
+
+async function readWorkerSignal(
+  vars: SlotVars,
+  signalPath: string,
+): Promise<WorkerSignal | undefined> {
+  try {
+    const json = await slotReadFile(vars, signalPath);
+    const parsed = JSON.parse(json) as WorkerSignal;
+    const normalized = normalizeWorkerSignal(parsed);
+    return normalized.ok ? normalized.signal : undefined;
+  } catch {
+    // SIGNAL.json is optional for task progress; when it is absent or mid-write,
+    // fall back to markdown-only progress instead of failing the progress read.
+    return undefined;
+  }
+}
+
+export function checklistTimingDoneSteps(
+  timing: WorkerSignalChecklistTiming | null | undefined,
+): Set<number> {
+  const done = new Set<number>();
+  if (!timing?.events?.length) return done;
+  for (const event of timing.events) {
+    const stepNumber = checklistEventStepNumber(event);
+    if (stepNumber != null) done.add(stepNumber);
+  }
+  return done;
+}
+
+function checklistEventStepNumber(event: WorkerSignalChecklistEvent): number | null {
+  if (typeof event.stepNumber === 'number' && Number.isInteger(event.stepNumber)) {
+    return event.stepNumber >= 1 ? event.stepNumber : null;
+  }
+  const legacyIndex = (event as { index?: unknown }).index;
+  if (typeof legacyIndex === 'number' && Number.isInteger(legacyIndex)) {
+    return legacyIndex >= 0 ? legacyIndex + 1 : null;
+  }
+  return null;
+}
+
+export function reconcileProgressFromChecklistTiming(
+  structured: TaskProgressStructured,
+  timing: WorkerSignalChecklistTiming | null | undefined,
+): void {
+  const doneSteps = checklistTimingDoneSteps(timing);
+  if (doneSteps.size === 0) return;
+
+  let completedSteps = 0;
+  let foundFirstPending = false;
+  let currentPhase: string | null = null;
+  let currentStep: string | null = null;
+
+  for (const phase of structured.phases) {
+    let phaseCompleted = 0;
+    for (const step of phase.steps) {
+      const isDone = step.status === 'done' || doneSteps.has(step.index);
+      if (isDone) {
+        step.status = 'done';
+        phaseCompleted++;
+        completedSteps++;
+      } else if (!foundFirstPending) {
+        step.status = 'running';
+        foundFirstPending = true;
+        currentPhase = phase.name;
+        currentStep = step.name;
+      } else {
+        step.status = 'pending';
+      }
+    }
+    phase.completedSteps = phaseCompleted;
+  }
+
+  structured.completedSteps = completedSteps;
+  structured.currentPhase = currentPhase;
+  structured.currentStep = currentStep;
+}
+
+/** Stable fingerprint for debouncing task-progress broadcasts. */
+export function progressFingerprint(
+  markdown: string,
+  signal?: Pick<WorkerSignal, 'checklistTiming'> | null,
+): string {
+  const boxes = parseCheckboxStates(markdown)
+    .map((done) => (done ? '1' : '0'))
+    .join('');
+  const timing = (signal?.checklistTiming?.events ?? [])
+    .map((event) => {
+      const stepNumber = checklistEventStepNumber(event);
+      return stepNumber == null ? '' : `${stepNumber}:${event.checkedAt ?? ''}`;
+    })
+    .filter(Boolean)
+    .join('|');
+  return `${boxes}#${timing}`;
 }
 
 export function reconcileFinalStepFromSignal(structured: TaskProgressStructured): void {
@@ -201,7 +321,7 @@ export function joinSchemaWithMarkdown(
 const SKIP_SECTIONS =
   /^\**\s*(acceptance criteria|description|task|affected area|screenshots|comments|root cause|rules|recipe acs|pre-merge)/i;
 
-function parseCheckboxStates(markdown: string): boolean[] {
+export function parseCheckboxStates(markdown: string): boolean[] {
   const states: boolean[] = [];
   let inCodeBlock = false;
   let inSkippedSection = false;

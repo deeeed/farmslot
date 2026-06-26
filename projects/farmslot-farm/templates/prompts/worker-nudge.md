@@ -1,1 +1,1 @@
-New task waiting at {{TASK_FILE}}. Stop at a safe checkpoint, follow the checklist in that file, and mark each step as you progress. Checklist marker and signal instructions are in that file.
+New task waiting at {{TASK_FILE}}. Stop at a safe checkpoint, follow the checklist in that file, and run {{TASK_DIR}}/mark N after each completed step before continuing. Marks are mandatory progress signals — see that file for details.
