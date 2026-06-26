@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { type loadSlotVars,resolveProjectRuntimeDir } from '../core/config.js';
+import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
 import { instructionNeedle, runnerPromptDigest } from './observability-prompt-digest.js';

@@ -99,7 +99,7 @@ function main() {
     hookLatencyMs: bench,
     gate: {
       tmuxPaneRequired: true,
-      tmuxPanePass: tmuxPaneSeen || Boolean(process.env.TMUX_PANE),
+      tmuxPanePass: tmuxPaneSeen,
       latencyMedianPass: bench.median < 150,
       latencyMedianTargetMs: 150,
     },

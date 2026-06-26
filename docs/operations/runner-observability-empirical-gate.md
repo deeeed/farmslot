@@ -16,7 +16,7 @@ node scripts/probe-runner-observability.mjs \
 
 | Check | Pass |
 |-------|------|
-| `$TMUX_PANE` visible in hook child (or `tmuxPane` field in `hooks.jsonl`) | non-empty |
+| `tmuxPane` field present in recent `hooks.jsonl` lines (probe `tmuxPaneSeenInHooks`) | true |
 | Hook writer median latency | < 150 ms |
 | Plan-mode hooks still fire | manual: dispatch with plan permission, confirm `hooks.jsonl` advances |
 | `PostToolUse` delivery | manual: one tool call, confirm at-least-once events (dedupe by `tool_use_id` in gateway) |
