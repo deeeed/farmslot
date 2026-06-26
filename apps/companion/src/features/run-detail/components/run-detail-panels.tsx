@@ -1482,6 +1482,7 @@ export function RecipeRunsSection({
           client={client}
           runId={run.id}
           slotId={run.slotId}
+          project={run.project}
           recipeRunId={selectedRecipeRunRequestId}
           onComplete={onRecipeComplete}
         />

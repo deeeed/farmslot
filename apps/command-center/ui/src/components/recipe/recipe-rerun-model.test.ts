@@ -68,12 +68,34 @@ test('canSlotAcceptRecipeRerun accepts a run-bound slot after a warm branch swit
   );
 });
 
-test('canSlotAcceptRecipeRerun rejects a run-bound slot that is mid-worker (busy)', () => {
+test('canSlotAcceptRecipeRerun rejects a run-bound slot that is mid-worker', () => {
   assert.equal(
     canSlotAcceptRecipeRerun(
-      { slot: 'slot-1', currentRunId: 'run-1', phase: 'dispatch', lifecycle: 'busy' },
+      {
+        slot: 'slot-1',
+        currentRunId: 'run-1',
+        phase: 'dispatch',
+        lifecycle: 'busy',
+        agent: 'working',
+      },
       { id: 'run-1', slotId: 'slot-1' },
     ),
     false,
+  );
+});
+
+test('canSlotAcceptRecipeRerun accepts a run-bound slot left busy after load-run bind', () => {
+  assert.equal(
+    canSlotAcceptRecipeRerun(
+      {
+        slot: 'slot-1',
+        currentRunId: 'run-1',
+        phase: 'ci-watch',
+        lifecycle: 'busy',
+        agent: 'idle',
+      },
+      { id: 'run-1', slotId: 'slot-1' },
+    ),
+    true,
   );
 });

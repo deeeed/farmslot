@@ -11,6 +11,8 @@ import { gateway } from '../../gateway-client.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
 
 export const RECIPE_OUTPUT_MAX_LINES = 500;
+/** recipe.rerun should return immediately; allow headroom for gateway validation only. */
+export const RECIPE_RERUN_START_TIMEOUT_MS = 30_000;
 
 interface RecipeOutputState {
   requestId: string;
@@ -39,7 +41,7 @@ export class RecipeOutputPanel extends LitElement {
   @property() recipeArtifactPath = '';
   @property() recipeRunId = '';
   @property({ type: Number }) playbackSlowMs = 0;
-  @property({ type: Boolean }) recordVideo = true;
+  @property({ type: Boolean }) recordVideo = false;
   @property({ type: Boolean }) showArtifactAction = false;
 
   @state() private _output: RecipeOutputState | null = null;
@@ -123,17 +125,31 @@ export class RecipeOutputPanel extends LitElement {
     const unsubComplete = gateway.subscribe(Events.SCRIPT_COMPLETE, handleComplete);
     this._unsubs = [unsubOutput, unsubComplete];
 
+    this._output = {
+      requestId: '',
+      lines: ['Connecting to gateway and starting recipe replay...'],
+      running: true,
+    };
+    this.dispatchEvent(new CustomEvent('running-change', { detail: true }));
+
     try {
       const params: RecipeRerunParams = { runId: this.runId, slotId: this.slotId };
       if (this.recipeArtifactPath) params.recipeArtifactPath = this.recipeArtifactPath;
       if (this.recipeRunId) params.recipeRunId = this.recipeRunId;
       if (this.playbackSlowMs > 0) params.playbackSlowMs = this.playbackSlowMs;
-      params.recordVideo = this.recordVideo;
-      const result = (await gateway.request(Methods.RECIPE_RERUN, params)) as ScriptActionResult;
+      if (this.showArtifactAction) params.recordVideo = this.recordVideo;
+      const result = (await gateway.request(
+        Methods.RECIPE_RERUN,
+        params,
+        RECIPE_RERUN_START_TIMEOUT_MS,
+      )) as ScriptActionResult;
       requestId = result.requestId;
-      this._output = { requestId, lines: [], running: true };
+      this._output = {
+        requestId,
+        lines: ['Recipe replay accepted — streaming live output below...'],
+        running: true,
+      };
       this._starting = false;
-      this.dispatchEvent(new CustomEvent('running-change', { detail: true }));
       // Replay buffered early events
       for (const evt of earlyEvents) {
         if (evt.type === 'output') handleOutput(evt.data as { requestId: string; data: string });
@@ -204,45 +220,57 @@ export class RecipeOutputPanel extends LitElement {
   override render() {
     if (!this._output) return nothing;
     return html`
-      <div
-        class="recipe-output-scroll"
-        style="max-height:200px;overflow-y:auto;background:${colors.bgBase};border-top:1px solid ${colors.bgCardHover};padding:6px 8px;font-family:${fonts.mono};font-size:${fonts.sizeXs};line-height:1.5;white-space:pre-wrap;color:${colors.textSecondary}"
-      >
-        ${this._output.lines.length === 0 && this._output.running ? 'Starting recipe...' : nothing}
-        ${this._output.lines.map((l) => html`<div>${l}</div>`)}
-        ${this._output.error
-          ? html`
-              <div style="margin-top:4px;color:${colors.statusFail};font-weight:600">
-                ${this._output.error}
-              </div>
-            `
-          : nothing}
-        ${this._output.exitCode !== undefined
-          ? html`
-              <div
-                style="margin-top:4px;color:${this._output.exitCode === 0
-                  ? colors.statusOk
-                  : colors.statusFail};font-weight:600"
-              >
-                Exit code: ${this._output.exitCode}
-              </div>
-              <div
-                style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:${colors.textMuted}"
-              >
-                <span>Run: ${this._output.requestId || 'unknown'}</span>
-                ${this.showArtifactAction && this._output.requestId
-                  ? html`
-                      <button
-                        style="border:1px solid ${colors.accent}66;border-radius:4px;background:${colors.accent}18;color:${colors.accent};font-family:${fonts.mono};font-size:${fonts.sizeXs};padding:2px 8px;cursor:pointer;"
-                        @click=${this._requestArtifactView}
-                      >
-                        View artifacts
-                      </button>
-                    `
-                  : nothing}
-              </div>
-            `
-          : nothing}
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        <div
+          style="font-size:${fonts.sizeXs};text-transform:uppercase;letter-spacing:0.08em;color:${colors.textMuted};"
+        >
+          Live output
+          ${this._output.running
+            ? html`<span style="color:${colors.accent};margin-left:8px;">running</span>`
+            : nothing}
+        </div>
+        <div
+          class="recipe-output-scroll"
+          style="max-height:280px;min-height:120px;overflow-y:auto;background:${colors.bgBase};border:1px solid ${colors.bgCardHover};border-radius:4px;padding:8px 10px;font-family:${fonts.mono};font-size:${fonts.sizeXs};line-height:1.5;white-space:pre-wrap;color:${colors.textSecondary}"
+        >
+          ${this._output.lines.length === 0 && this._output.running
+            ? 'Starting recipe...'
+            : nothing}
+          ${this._output.lines.map((l) => html`<div>${l}</div>`)}
+          ${this._output.error
+            ? html`
+                <div style="margin-top:4px;color:${colors.statusFail};font-weight:600">
+                  ${this._output.error}
+                </div>
+              `
+            : nothing}
+          ${this._output.exitCode !== undefined
+            ? html`
+                <div
+                  style="margin-top:4px;color:${this._output.exitCode === 0
+                    ? colors.statusOk
+                    : colors.statusFail};font-weight:600"
+                >
+                  Exit code: ${this._output.exitCode}
+                </div>
+                <div
+                  style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:${colors.textMuted}"
+                >
+                  <span>Run: ${this._output.requestId || 'unknown'}</span>
+                  ${this.showArtifactAction && this._output.requestId
+                    ? html`
+                        <button
+                          style="border:1px solid ${colors.accent}66;border-radius:4px;background:${colors.accent}18;color:${colors.accent};font-family:${fonts.mono};font-size:${fonts.sizeXs};padding:2px 8px;cursor:pointer;"
+                          @click=${this._requestArtifactView}
+                        >
+                          View artifacts
+                        </button>
+                      `
+                    : nothing}
+                </div>
+              `
+            : nothing}
+        </div>
       </div>
     `;
   }

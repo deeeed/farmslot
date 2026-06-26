@@ -8,6 +8,7 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
+import { navigateToPreparedSlot, runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
 
 type Timer = ReturnType<typeof setTimeout> | undefined;
 
@@ -271,12 +272,23 @@ export async function activateRunOnSlot(runId: string, slotId: string): Promise<
 
 /**
  * Warm-switch a slot onto this run's branch and bind the run to it, then open
- * slot-view. Re-uses slot.prepare with the cheap `attach` profile (checkout
- * only — no merge-main, no reinstall; dev server stays warm and hot-reloads).
+ * slot-view. Uses strict slot.prepare (default attach profile; bind-only when
+ * slotBranch already matches — no merge-main, no silent profile escalation).
  * Unlike activateRunOnSlot this does NOT re-drive the run pipeline, so the run
  * record is left intact; the recipe-replay button in slot-view becomes
  * available because the slot is bound to this run.
  */
+export interface SwitchSlotToRunBranchOptions {
+  /** Named prepare profile (default: attach). */
+  prepareProfile?: string;
+  /** Slot's current branch — enables bind-only when it already matches the run. */
+  slotBranch?: string | null;
+  /** Fail fast when profile preconditions fail (default: true). */
+  strictProfile?: boolean;
+  /** Run full checkout even when the slot is already on the run branch. */
+  forcePrepare?: boolean;
+}
+
 export async function switchSlotToRunBranch(
   runId: string,
   slotId: string,
@@ -285,6 +297,7 @@ export async function switchSlotToRunBranch(
   // different (idle) run. The run-detail button targets the run's own slot, so
   // it leaves this false.
   rebind = false,
+  options: SwitchSlotToRunBranchOptions = {},
 ): Promise<void> {
   if (!slotId || !branch) {
     throw new Error(
@@ -293,15 +306,15 @@ export async function switchSlotToRunBranch(
   }
   // Throws on failure — callers surface it in-context (inline in the run loader,
   // a guarded catch on the run-detail button) rather than a browser alert.
-  await gateway.request(Methods.SLOT_PREPARE, {
+  await runSlotPrepareForRun({
     slotId,
-    branch,
-    prepareProfile: 'attach',
-    // runId labels the tmux prepare window; bindRunId writes current_run_id
-    // after a successful prepare so resume / recipe-replay target this run.
-    bindRunId: runId,
     runId,
+    branch,
+    slotBranch: options.slotBranch,
+    prepareProfile: options.prepareProfile,
+    strictProfile: options.strictProfile,
+    forcePrepare: options.forcePrepare,
     rebind,
   });
-  window.location.hash = `#slot/${slotId}`;
+  navigateToPreparedSlot(slotId, runId);
 }

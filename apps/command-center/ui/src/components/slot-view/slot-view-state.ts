@@ -19,7 +19,12 @@ import { gateway } from '../../gateway-client.js';
 import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
+import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
 import type { FileEntry } from '../workspace/file-tree.js';
+import {
+  type RecipeRunnerUiOptions,
+  recipeRunnerUiOptions,
+} from '../workspace/recipe-runner-options-model.js';
 
 import {
   type CheckResult,
@@ -131,9 +136,12 @@ export abstract class SlotViewState extends LitElement {
   @state() _revealLine = 0;
   @state() _showInlineComments = false;
   @state() _linkedRun: Run | null = null;
+  @state() _recipeRunnerUiOptions: RecipeRunnerUiOptions = recipeRunnerUiOptions(null);
   @state() _historyOpen = false;
   @state() _historyRunId = '';
   @state() _loadRunOpen = false;
+  /** In-flight operator-initiated slot.prepare (load-run / switch-branch). */
+  @state() _activePrepare: PrepareProgressState | null = null;
   @state() _manualToggling = false;
   @state() _sidebarOpen = true;
   @state() _terminalOpen = true;
@@ -141,6 +149,9 @@ export abstract class SlotViewState extends LitElement {
   _linkedRunRefreshToken = Symbol('linked-run-refresh');
   _recipeRunsRefreshToken = Symbol('recipe-runs-refresh');
   @state() _terminalHeight = 250;
+  /** Live height of `.sv-right-col` — used to clamp persisted terminal height. */
+  @state() _rightColHeight = 0;
+  _rightColObserver?: ResizeObserver;
   @state() _pinnedHeight = 200;
   @state() _reviewPanelOpen = false;
   @state() _reviewPanelWidth = 480;
@@ -216,6 +227,7 @@ export abstract class SlotViewState extends LitElement {
   _unsubStateChange?: () => void;
   _unsubTaskProgress?: () => void;
   _unsubResourceStatus?: () => void;
+  _unsubPrepareTracker?: () => void;
   _liveInitPending = false;
   _recoveryEpoch = 0;
   _confirmTimer = new ConfirmActionTimer({

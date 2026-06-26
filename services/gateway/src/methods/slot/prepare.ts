@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { open as fsOpen, realpath, stat as fsStat } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -23,7 +24,6 @@ import {
   slotWriteFile,
   slotWriteFiles,
   updateSlotStatus,
-  updateSlotStatusIf,
 } from '../../core/index.js';
 import { shellExpressionForRemotePath } from '../../core/remote-paths.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
@@ -38,7 +38,6 @@ import {
   resolveStartRefInRepo,
   type StartRefResolution,
 } from '../../projects/start-ref-resolution.js';
-import { pushRunRecipeToSlot } from '../../run-completion/artifact-mirror.js';
 import { executeEvalHarnessLifecycle } from '../../run-engine/eval-harness-lifecycle.js';
 import { getRun } from '../../runs/store.js';
 
@@ -49,6 +48,7 @@ import {
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
+import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
   clearStalePrepareProcess,
@@ -58,6 +58,7 @@ import {
 } from './prepare-command.js';
 import {
   buildDepsSentinelWriteCommand,
+  checkPrepareRequirement,
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
@@ -67,6 +68,7 @@ import {
   releasePrepareSentinel,
   startPrepareSentinelHeartbeat,
 } from './prepare-sentinel.js';
+import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
 import {
   activePrepareSlots,
   applySelectedApp,
@@ -87,15 +89,28 @@ export async function slotPrepare(
     throw new Error(`Slot ${params.slotId} is already preparing`);
   }
   activePrepareSlots.add(params.slotId);
+  const requestId = params.requestId ?? `prepare-${randomUUID()}`;
+  const stream = createPrepareStream(emit, {
+    slotId: params.slotId,
+    requestId,
+    startTime: Date.now(),
+  });
   let prepareError: unknown;
   let sentinel: PrepareSentinelLock | null = null;
   try {
     const vars = await loadSlotVars(params.slotId);
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
-    return await slotPrepareInner(params, emit, signal, opts);
+    const result = await slotPrepareInner(params, stream, signal, opts);
+    if (!result.prepared) {
+      stream.complete(1, `Slot ${params.slotId} is disabled`);
+    } else {
+      stream.complete(0);
+    }
+    return { ...result, requestId };
   } catch (error) {
     prepareError = error;
+    stream.complete(1, (error as Error).message);
     throw error;
   } finally {
     try {
@@ -108,17 +123,17 @@ export async function slotPrepare(
 
 async function slotPrepareInner(
   params: SlotPrepareParams,
-  emit: EventEmitter,
+  stream: PrepareStream,
   signal?: AbortSignal,
   opts?: SlotPrepareInternalOptions,
-): Promise<SlotPrepareResult> {
+): Promise<Omit<SlotPrepareResult, 'requestId'>> {
   const vars = await loadSlotVars(params.slotId);
   const selectedApp = await applySelectedApp(vars, params.app);
   const checkAborted = () => {
     if (signal?.aborted) throw new Error('Prepare cancelled');
   };
   if (!vars.slotEnabled) {
-    emit('slot.prepare.step', { name: 'skip', detail: `Slot ${params.slotId} is disabled` });
+    stream.step('skip', `Slot ${params.slotId} is disabled`);
     return { prepared: false };
   }
 
@@ -150,6 +165,22 @@ async function slotPrepareInner(
   if (opts?.startRef && !branch) {
     throw new Error('startRef prepare requires a work branch');
   }
+
+  if (params.bindRunId && params.bindOnly) {
+    stream.step('bind-only', 'Branch already matches — skipping prepare phases');
+    await bindRunToSlot(params, vars, stream.step.bind(stream));
+    if (branch) {
+      await updateSlotStatus(params.slotId, { branch });
+    }
+    return {
+      prepared: true,
+      profile: {
+        selected: 'bind-only',
+        ...(params.prepareProfile ? { requested: params.prepareProfile } : {}),
+        fallbacks: [],
+      },
+    };
+  }
   // Tmux prepare window label — short run id when present so the window name
   // (e.g. `prepare-3308c99d-deps`, `prepare-3308c99d-preflight`) maps directly
   // to the run-detail page. Falls back to a timestamp for manual `cdp.mjs
@@ -166,7 +197,7 @@ async function slotPrepareInner(
     : path.join(farmslotRoot, '.omx', 'logs', `prepare-${params.slotId}`);
   const phaseLog = (name: string) => path.join(prepareLogDir, `${sanitizePhaseName(name)}.log`);
 
-  const step = (name: string, detail: string) => emit('slot.prepare.step', { name, detail });
+  const step = stream.step.bind(stream);
 
   let hookSupportDir: string | undefined;
   let hookSupportChecked = false;
@@ -395,6 +426,8 @@ async function slotPrepareInner(
         'profile',
         `[${candidate}] ${result.requirement} ${result.ok ? 'ok' : 'fail'} — ${result.detail}`,
       ),
+    checkPrepareRequirement,
+    { strict: params.strictProfile === true },
   );
   for (const fb of profileSelection.fallbacks) {
     step('profile', `Profile '${fb.from}' preconditions failed (${fb.reason}); falling back to '${fb.to}'`);
@@ -952,7 +985,7 @@ async function slotPrepareInner(
                   const buf = Buffer.alloc(st.size - offset);
                   await fh.read(buf, 0, buf.length, offset);
                   offset = st.size;
-                  emit('slot.prepare.output', { stream: 'stdout', data: buf.toString('utf-8') });
+                  stream.output('stdout', buf.toString('utf-8'));
                 }
               } finally {
                 await fh.close();
@@ -978,8 +1011,8 @@ async function slotPrepareInner(
         signal,
         windowLabel,
         phase: 'preflight',
-        onOutput: (stream, data) => {
-          emit('slot.prepare.output', { stream, data });
+        onOutput: (outputStream, data) => {
+          stream.output(outputStream === 'stderr' ? 'stderr' : 'stdout', data);
           phaseBuffer += stripAnsi(data);
           const lines = phaseBuffer.split('\n');
           phaseBuffer = lines.pop() ?? '';
@@ -996,7 +1029,7 @@ async function slotPrepareInner(
       for (const w of logWatchers) await w.close();
     }
 
-    emit('slot.prepare.output', { stream: 'stdout', data: `prepare log: ${preflightLogPath}\n` });
+    stream.output('stdout', `prepare log: ${preflightLogPath}\n`);
     if (preflightR.exitCode !== 0) {
       console.log(
         `[prepare] preflight failed (exit ${preflightR.exitCode}) log=${preflightLogPath}`,
@@ -1060,37 +1093,7 @@ async function slotPrepareInner(
   // never stomp a slot another run already owns (a free or self-owned slot is
   // the only safe target).
   if (params.bindRunId) {
-    // A run can only be bound to a slot in its own project — a slot can only
-    // check out branches for its own repo, and the recipe sync below writes into
-    // that repo's task tree. The UI already scopes the loader by project; this
-    // guards the direct-RPC path so a hand-crafted call can't cross-write.
-    const boundRun = getRun(params.bindRunId);
-    if (boundRun && boundRun.project !== vars.projectName) {
-      throw new Error(
-        `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: run project '${boundRun.project}' does not match slot project '${vars.projectName}'.`,
-      );
-    }
-    const bound = await updateSlotStatusIf(
-      params.slotId,
-      // Never re-bind a slot with a live worker. Otherwise a free or self-owned
-      // slot always binds; a slot owned by a different (idle) run binds only
-      // when the operator explicitly requested a rebind (slot-side run loader).
-      (slot) =>
-        slot.agent !== 'working' &&
-        (params.rebind || !slot.current_run_id || slot.current_run_id === params.bindRunId),
-      { current_run_id: params.bindRunId },
-    );
-    if (!bound) {
-      throw new Error(
-        `Cannot bind run ${params.bindRunId.slice(0, 8)} to ${params.slotId}: slot is busy or owned by another run (pass rebind to take over an idle slot).`,
-      );
-    }
-    // Materialize the run's recipe workflows on this slot so a loaded run can be
-    // replayed here (local or remote). Only execution inputs are synced — no
-    // evidence — so it stays lightweight.
-    if (boundRun) {
-      await pushRunRecipeToSlot(boundRun, vars);
-    }
+    await bindRunToSlot(params, vars, step);
   }
 
   // Keep the cached slot.branch truthful: prepare just put HEAD on `branch`, so
@@ -1100,7 +1103,6 @@ async function slotPrepareInner(
     await updateSlotStatus(params.slotId, { branch });
   }
 
-  emit('slot.prepare.done', { slotId: params.slotId, prepared: true });
   return {
     prepared: true,
     profile: {

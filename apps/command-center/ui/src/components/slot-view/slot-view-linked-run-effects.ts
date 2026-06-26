@@ -2,11 +2,12 @@ import type { Run } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import { getRunForSlot } from '../../state.js';
+import { getRunForSlot, getState } from '../../state.js';
 import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 
 import type { SlotView } from './slot-view.js';
 import {
+  selectSlotViewLinkedRun,
   shouldPreserveSlotViewCachedNullRun,
   type SlotViewLinkedRunSource,
   slotViewLinkedRunTransition,
@@ -95,6 +96,10 @@ export async function refreshSlotViewLinkedRun(
   prevRunStatus: string | null,
 ): Promise<string | null> {
   const requestedRunId = requestedSlotViewRunFromUrl();
+  const slotBoundRunId =
+    view._slot?.currentRunId ??
+    getState().fleet?.slots.find((slot) => slot.slot === view.slotId)?.currentRunId ??
+    null;
   let cachedRun = getRunForSlot(view.slotId, requestedRunId);
   let nextPrevRunStatus = applySlotViewLinkedRun(view, cachedRun, prevRunStatus, 'cache');
   void view._refreshRecipeRuns(cachedRun);
@@ -109,8 +114,9 @@ export async function refreshSlotViewLinkedRun(
           runId: requestedRunId,
         });
         if (refreshToken !== view._linkedRunRefreshToken) return nextPrevRunStatus;
-        if (direct.run?.slotId === view.slotId) {
-          cachedRun = direct.run;
+        const directRun = direct.run;
+        if (directRun && (directRun.slotId === view.slotId || directRun.id === slotBoundRunId)) {
+          cachedRun = directRun;
           nextPrevRunStatus = applySlotViewLinkedRun(view, cachedRun, nextPrevRunStatus, 'rpc');
           void view._refreshRecipeRuns(cachedRun);
         }
@@ -128,11 +134,12 @@ export async function refreshSlotViewLinkedRun(
       slotId: view.slotId,
     });
     if (refreshToken !== view._linkedRunRefreshToken) return nextPrevRunStatus;
-    // Honor the gateway's null answer for generic slot routes. Exception: an
-    // exact URL-pinned cached run should keep showing historical evidence.
-    const keepRequestedRun = Boolean(requestedRunId && cachedRun?.id === requestedRunId);
-    const nextRun =
-      result.run?.id === requestedRunId ? result.run : keepRequestedRun ? cachedRun : result.run;
+    const nextRun = selectSlotViewLinkedRun({
+      requestedRunId,
+      slotBoundRunId,
+      cachedRun,
+      rpcRun: result.run,
+    });
     nextPrevRunStatus = applySlotViewLinkedRun(view, nextRun, nextPrevRunStatus, 'rpc');
     void view._refreshRecipeRuns(nextRun);
   } catch (err) {

@@ -1,12 +1,24 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import type { SlotHealth } from '@farmslot/protocol';
 import { canActivateRunOnSlot, Methods, type Run, type RunListResult } from '@farmslot/protocol';
+
+import '../shared/prepare-progress-panel.js';
+import '../shared/slot-prepare-options.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { switchSlotToRunBranch } from '../runs/run-detail-actions.js';
 import { formatCreatedAt, routeForRun, runStatusColor } from '../runs/run-utils.js';
+import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
+import {
+  navigateToPreparedSlot,
+  runSlotPrepareForRun,
+  shouldBindOnlyForLoadRun,
+} from '../shared/slot-prepare-client.js';
+import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
+import { DEFAULT_SLOT_PREPARE_OPTIONS } from '../shared/slot-prepare-options-model.js';
+import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 const DEFAULT_LIMIT = 200;
 
@@ -17,6 +29,9 @@ export class SlotLoadRunModal extends LitElement {
    * slot can only check out branches for its own repo (a mobile slot can't run
    * an extension branch). */
   @property() project = '';
+  /** Slot's current checked-out branch — enables bind-only when it matches the run. */
+  @property({ attribute: 'slot-branch' }) slotBranch = '';
+  @property({ attribute: false }) slotHealth: SlotHealth | null = null;
   @property({ type: Boolean }) open = false;
   /** Dev harness escape hatch: when provided, no gateway call is made. */
   @property({ attribute: false }) runsOverride?: Run[];
@@ -32,8 +47,14 @@ export class SlotLoadRunModal extends LitElement {
    * browser alert) so a failed load is explained right in the modal. */
   @state() private _actionBusy = false;
   @state() private _actionError = '';
+  @state() private _prepareProfile = DEFAULT_SLOT_PREPARE_OPTIONS.prepareProfile;
+  @state() private _strictProfile = DEFAULT_SLOT_PREPARE_OPTIONS.strictProfile;
+  @state() private _forcePrepare = DEFAULT_SLOT_PREPARE_OPTIONS.forcePrepare;
+  @state() private _confirmRunBranch = '';
+  @state() private _prepareState: PrepareProgressState | null = null;
   private _loadToken = Symbol('slot-load-run-load');
   private _confirmTimer: ReturnType<typeof setTimeout> | undefined;
+  private _unsubPrepare?: () => void;
 
   static override styles = css`
     .slrm-backdrop {
@@ -135,6 +156,12 @@ export class SlotLoadRunModal extends LitElement {
       color: ${unsafeCSS(colors.textMuted)};
       font-size: 11px;
       margin-left: auto;
+    }
+    .slrm-options {
+      margin-bottom: ${unsafeCSS(spacing.md)};
+    }
+    .slrm-progress {
+      margin-bottom: ${unsafeCSS(spacing.md)};
     }
     .slrm-state {
       border: 1px solid #2a2a44;
@@ -252,12 +279,17 @@ export class SlotLoadRunModal extends LitElement {
   override connectedCallback() {
     super.connectedCallback();
     document.addEventListener('keydown', this._onKeydown);
+    this._unsubPrepare = subscribeSlotPrepareTracker(() => {
+      this._prepareState = this.slotId ? activeSlotPrepare(this.slotId) : null;
+    });
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback();
     document.removeEventListener('keydown', this._onKeydown);
     if (this._confirmTimer) clearTimeout(this._confirmTimer);
+    this._unsubPrepare?.();
+    this._unsubPrepare = undefined;
   }
 
   override updated(changed: Map<string, unknown>) {
@@ -276,6 +308,46 @@ export class SlotLoadRunModal extends LitElement {
     this.dispatchEvent(new CustomEvent('close', { bubbles: true, composed: true }));
   }
 
+  private _bindOnlyHint(run: Run): string {
+    if (!shouldBindOnlyForLoadRun(run.branch, this.slotBranch, this._forcePrepare)) return '';
+    return `Slot is already on ${run.branch} — load will bind only (no checkout). Health/deps checks are skipped; run ensure-js-runtime prepare if recipe replay fails.`;
+  }
+
+  private _onPrepareOptionsChange(event: CustomEvent<SlotPrepareOptionsChangeDetail>) {
+    this._prepareProfile = event.detail.prepareProfile;
+    this._strictProfile = event.detail.strictProfile;
+    this._forcePrepare = event.detail.forcePrepare;
+  }
+
+  private async _executeLoad(
+    run: Run,
+    prepareProfile = this._prepareProfile,
+    strictProfile = this._strictProfile,
+  ) {
+    this._actionError = '';
+    this._actionBusy = true;
+    try {
+      await runSlotPrepareForRun({
+        slotId: this.slotId,
+        runId: run.id,
+        branch: run.branch!,
+        slotBranch: this.slotBranch,
+        prepareProfile,
+        strictProfile,
+        forcePrepare: this._forcePrepare,
+        rebind: true,
+      });
+      navigateToPreparedSlot(this.slotId, run.id);
+      this._close();
+    } catch (err) {
+      this._actionError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this._actionBusy = false;
+      this._pendingConfirm = '';
+      this._confirmRunBranch = '';
+    }
+  }
+
   private async _load() {
     const token = Symbol('slot-load-run-load');
     this._loadToken = token;
@@ -284,6 +356,7 @@ export class SlotLoadRunModal extends LitElement {
     this._search = '';
     this._statusFilter = '';
     this._pendingConfirm = '';
+    this._confirmRunBranch = '';
     this._actionError = '';
 
     if (this.runsOverride) {
@@ -348,24 +421,12 @@ export class SlotLoadRunModal extends LitElement {
     if (reason || this._actionBusy) return;
     if (this._pendingConfirm === run.id) {
       if (this._confirmTimer) clearTimeout(this._confirmTimer);
-      this._actionError = '';
-      this._actionBusy = true;
-      // Keep _pendingConfirm set during the await so the row shows "Loading…".
-      try {
-        await switchSlotToRunBranch(run.id, this.slotId, run.branch, true);
-        // Success navigates to the slot view — close the modal.
-        this._close();
-      } catch (err) {
-        // Surface inline (no browser alert); keep the modal open to retry.
-        this._actionError = `Load failed: ${err instanceof Error ? err.message : String(err)}`;
-      } finally {
-        this._actionBusy = false;
-        this._pendingConfirm = '';
-      }
+      await this._executeLoad(run);
       return;
     }
     if (this._confirmTimer) clearTimeout(this._confirmTimer);
     this._pendingConfirm = run.id;
+    this._confirmRunBranch = run.branch ?? '';
     this._confirmTimer = setTimeout(() => {
       this._pendingConfirm = '';
     }, 3000);
@@ -408,8 +469,8 @@ export class SlotLoadRunModal extends LitElement {
             ? html`<button
                 class="slrm-load ${confirming ? 'confirm' : ''}"
                 ?disabled=${this._actionBusy}
-                title="Warm-switch ${this
-                  .slotId} onto this run's branch and bind the run. No new run is created."
+                title=${this._bindOnlyHint(run) ||
+                `Warm-switch ${this.slotId} onto this run's branch and bind the run. No new run is created.`}
                 @click=${() => this._onLoadClick(run)}
               >
                 ${this._actionBusy && confirming
@@ -449,10 +510,47 @@ export class SlotLoadRunModal extends LitElement {
           </div>
           <div class="slrm-body">
             <div class="slrm-note">
-              "Load onto ${this.slotId || 'this slot'}" warm-switches the slot onto the run's branch
-              (checkout only — no merge-main, no reinstall) and binds the run so resume / recipe
-              replay target it. It does not re-drive the run pipeline and creates no new run.
+              Pick a prepare profile and confirm a run to load it. Defaults favor attach + strict
+              mode; use recovery actions after a failure or open Advanced for fallback/checkout
+              overrides. No new run is created and the pipeline is not re-driven.
             </div>
+            <div class="slrm-options">
+              <slot-prepare-options
+                .project=${this.project}
+                .prepareProfile=${this._prepareProfile}
+                .strictProfile=${this._strictProfile}
+                .forcePrepare=${this._forcePrepare}
+                .runBranch=${this._confirmRunBranch}
+                .slotBranch=${this.slotBranch}
+                .slotHealth=${this.slotHealth}
+                .lastError=${this._actionError}
+                .disabled=${this._actionBusy}
+                @prepare-options-change=${this._onPrepareOptionsChange}
+                @recovery-retry=${(
+                  event: CustomEvent<{ prepareProfile: string; strictProfile: boolean }>,
+                ) => {
+                  const run = this._runs.find((entry) => entry.id === this._pendingConfirm);
+                  if (!run) {
+                    this._prepareProfile = event.detail.prepareProfile;
+                    this._strictProfile = event.detail.strictProfile;
+                    return;
+                  }
+                  void this._executeLoad(
+                    run,
+                    event.detail.prepareProfile,
+                    event.detail.strictProfile,
+                  );
+                }}
+              ></slot-prepare-options>
+            </div>
+            ${this._prepareState
+              ? html`<div class="slrm-progress">
+                  <prepare-progress-panel
+                    .state=${this._prepareState}
+                    compact
+                  ></prepare-progress-panel>
+                </div>`
+              : nothing}
             ${this._actionError
               ? html`<div class="slrm-state error">${this._actionError}</div>`
               : nothing}

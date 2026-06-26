@@ -4,13 +4,19 @@ import { Methods } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 
-import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
+import {
+  isSlotViewPinnedLinkedRun,
+  slotViewLoadedRunDrawerKey,
+  slotViewPendingReviewDecision,
+  slotViewReviewDrawerKey,
+} from './slot-view-model.js';
 import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
 import {
   slotViewDesiredRecipeRunId,
   slotViewSelectedRecipeArtifactPath,
   slotViewSelectedRecipeFlowPath,
 } from './slot-view-recipe-view-model.js';
+import { requestedRunFromHash } from './slot-view-url-state.js';
 
 export function resetSlotViewRecipePanelState(view: SlotViewRecipePresenter): void {
   view._linkedRun = null;
@@ -69,19 +75,28 @@ export async function refreshSlotViewArtifactMirror(view: SlotViewRecipePresente
   }
 }
 
-export async function refreshSlotViewRecipeRuns(
+/** Kick off recipe-runs fetch with loading state set synchronously (avoids a paint where the terminal gate hides the drawer). */
+export function scheduleSlotViewRecipeRunsRefresh(
   view: SlotViewRecipePresenter,
   run: Run | null,
-): Promise<void> {
+): void {
   if (!run) {
     clearSlotViewRecipeRuns(view);
     return;
   }
-
-  const refreshToken = Symbol('recipe-runs-refresh');
-  view._recipeRunsRefreshToken = refreshToken;
+  view._recipeRunsRefreshToken = Symbol('recipe-runs-refresh');
   view._recipeRunsLoading = true;
   view._recipeRunsError = '';
+  void refreshSlotViewRecipeRuns(view, run);
+}
+
+export async function refreshSlotViewRecipeRuns(
+  view: SlotViewRecipePresenter,
+  run: Run | null,
+): Promise<void> {
+  if (!run) return;
+
+  const refreshToken = view._recipeRunsRefreshToken;
   try {
     const result = await gateway.request<{
       recipeRuns: RecipeRunArtifactGroup[];
@@ -149,16 +164,15 @@ function applySlotViewRecipeRunsResult(
     selectedRun,
     recipeHost: nextHost,
   });
-  const drawerKey = slotViewReviewDrawerKey({
-    run,
-    readyDecision: view._readyGateDecision(),
-    reviewDecision: slotViewPendingReviewDecision(run),
-    hasRecipeHost: !!nextHost,
-  });
-  const shouldAutoOpen =
-    drawerKey !== ''
-      ? drawerKey !== view._dismissedReviewDrawerKey
-      : result.recipeRuns.length > 0 && !view._dismissedReviewDrawerKey;
+  const pinnedLinkedRun = isSlotViewPinnedLinkedRun(run.id, requestedRunFromHash());
+  const drawerKey =
+    slotViewReviewDrawerKey({
+      run,
+      readyDecision: view._readyGateDecision(),
+      reviewDecision: slotViewPendingReviewDecision(run),
+      hasRecipeHost: !!nextHost,
+    }) || (pinnedLinkedRun ? slotViewLoadedRunDrawerKey(run.id) : '');
+  const shouldAutoOpen = drawerKey !== '' && drawerKey !== view._dismissedReviewDrawerKey;
   if (shouldAutoOpen && !view._reviewPanelOpen) {
     view._reviewPanelOpen = true;
   }

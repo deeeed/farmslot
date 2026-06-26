@@ -284,7 +284,7 @@ export function renderSlotViewWorkspaceStyles(): string {
         flex: 1;
         display: flex;
         flex-direction: row;
-        min-height: 0;
+        min-height: 60px;
         overflow: hidden;
       }
 

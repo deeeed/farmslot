@@ -2,6 +2,8 @@ import { html, nothing } from 'lit';
 
 import type { DevInteractiveProfile, FlowType } from '@farmslot/protocol';
 
+import '../shared/slot-prepare-options.js';
+
 import { colors, fonts } from '../../styles/theme-tokens.js';
 import {
   EFFORT_BY_RUNNER,
@@ -9,6 +11,7 @@ import {
   MODELS_BY_RUNNER,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
+import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
 import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
 
@@ -292,44 +295,26 @@ function renderReviewTierSelector(ctx: DispatchWizardPrimaryControlsRenderContex
 
 function renderPrepareToggle(ctx: DispatchWizardPrimaryControlsRenderContext) {
   const profiles = ctx.prepareProfiles;
-  const profileSelected = (profile: PrepareProfileOption): boolean =>
-    !ctx.skipPrepare &&
-    (ctx.prepareProfile ? ctx.prepareProfile === profile.name : profile.isDefault);
   return html`
     <div class="config-group" style="margin-top: 4px">
       ${profiles.length > 0 ? html`<div class="section-label">Prepare</div>` : nothing}
-      <div class="pill-row">
-        ${profiles.length === 0
-          ? html`
-              <button
-                class="pill ${!ctx.skipPrepare ? 'selected' : ''}"
-                @click=${() => ctx.setSkipPrepare(false)}
-              >
-                Full Prepare
-              </button>
-            `
-          : profiles.map(
-              (profile) => html`
-                <button
-                  class="pill ${profileSelected(profile) ? 'selected' : ''}"
-                  title=${profile.label}
-                  @click=${() => {
-                    ctx.setSkipPrepare(false);
-                    ctx.setPrepareProfile(profile.isDefault ? '' : profile.name);
-                  }}
-                >
-                  ${profile.name}${profile.isDefault ? ' ★' : ''}
-                </button>
-              `,
-            )}
-        <button
-          class="pill ${ctx.skipPrepare ? 'selected' : ''}"
-          @click=${() => ctx.setSkipPrepare(true)}
-          title="Run no preparation at all — operator owns slot state"
-        >
-          Skip Prepare
-        </button>
-      </div>
+      <slot-prepare-options
+        variant="dispatch"
+        .project=${ctx.project}
+        .prepareProfile=${ctx.prepareProfile}
+        .skipPrepare=${ctx.skipPrepare}
+        persist-prefs=${false}
+        show-plan=${false}
+        ?show-advanced=${false}
+        @prepare-options-change=${(event: CustomEvent<SlotPrepareOptionsChangeDetail>) => {
+          if (event.detail.skipPrepare) {
+            ctx.setSkipPrepare(true);
+            return;
+          }
+          ctx.setSkipPrepare(false);
+          ctx.setPrepareProfile(event.detail.prepareProfile);
+        }}
+      ></slot-prepare-options>
     </div>
   `;
 }

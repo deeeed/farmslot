@@ -199,3 +199,45 @@ export function slotViewReviewDrawerKey(input: {
   if (input.hasRecipeHost && input.run) return `recipe:${input.run.id}`;
   return '';
 }
+
+export function isSlotViewPinnedLinkedRun(
+  linkedRunId: string | null | undefined,
+  requestedRunId: string | null | undefined,
+): boolean {
+  return Boolean(requestedRunId && linkedRunId && requestedRunId === linkedRunId);
+}
+
+/** Drawer dismiss key for a run loaded onto the slot without recipe artifacts yet. */
+export function slotViewLoadedRunDrawerKey(runId: string | null | undefined): string {
+  return runId ? `loaded:${runId}` : '';
+}
+
+/** Terminal runs hide the recipe drawer unless there is something to show. */
+export function shouldHideTerminalSlotRecipePanel(input: {
+  recipeHost: unknown;
+  reviewDecision: unknown;
+  readyDecision: unknown;
+  showRecipeLoading: boolean;
+  recipeRunsCount: number;
+  recipeRunsError: string;
+  /** URL ?runId= matches the linked run — keep the shell so load-run has feedback. */
+  pinnedLinkedRun: boolean;
+}): boolean {
+  if (input.pinnedLinkedRun) return false;
+  const hasWorkspace = Boolean(
+    input.recipeHost ||
+    input.reviewDecision ||
+    input.readyDecision ||
+    input.showRecipeLoading ||
+    input.recipeRunsCount > 0 ||
+    input.recipeRunsError,
+  );
+  return !hasWorkspace;
+}
+
+export function slotViewNoRecipeReplayMessage(
+  run: Pick<Run, 'flowType' | 'status'> | null | undefined,
+): string {
+  const flow = run?.flowType ?? 'unknown';
+  return `This ${flow} run has no recipe replay package. Slot-side recipe replay requires artifacts/recipe.json (typical for interactive dev or review-gate runs). PR-complete and other flows may only have diff/session artifacts.`;
+}

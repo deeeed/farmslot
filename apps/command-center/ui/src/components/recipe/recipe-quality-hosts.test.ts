@@ -118,6 +118,28 @@ test('slot-view host keeps stale live recipe selections visible without final-ar
   assert.equal(host.recipeJson, null);
 });
 
+test('slot-view host treats root liveRecipeContext without groupKind as runnable', () => {
+  const run = makeRun({
+    status: 'done',
+    liveRecipeContext: {
+      source: 'recipe-run-artifacts',
+      recipeRunId: null,
+      artifactRoot: '/tmp/task/artifacts',
+      artifactManifest: [{ path: 'artifacts/recipe.json', purpose: 'recipe' }],
+      recipeJson: '{"entry":"bundle"}',
+      recipeQualityArtifact: null,
+      qualityReport: null,
+      workerLearnings: null,
+      isStale: false,
+      selectionReason: 'latest-run',
+    },
+  });
+
+  const host = createSlotViewRecipeHostEntry(run, 'slot-1', run.liveRecipeContext as any);
+  assert.ok(host);
+  assert.equal(host.capabilities.canRerun, true);
+});
+
 test('slot-view host keeps current-artifacts bundle runnable', () => {
   const run = makeRun({
     status: 'blocked',

@@ -100,8 +100,11 @@ export interface RequirementCheckContext {
   runtimeDir: string;
 }
 
-// Lockfiles hashed for the deps_current sentinel. Project-stack agnostic: only
-// files that exist in the slot repo contribute to the hash.
+// Deps inputs hashed for the deps_current sentinel. Keep in sync with
+// @farmslot/recipe-harness/runtime/deps-readiness DEPS_INPUTS.
+const DEPS_FINGERPRINT_INPUTS = ['package.json', 'yarn.lock', '.yarnrc.yml', '.tool-versions'];
+
+// Lockfiles hashed when Node is unavailable on the slot (legacy fallback).
 const LOCKFILE_CANDIDATES = [
   'yarn.lock',
   'package-lock.json',
@@ -116,11 +119,25 @@ export function depsSentinelPath(runtimeDir: string): string {
   return `${runtimeDir}/deps.lock-hash`;
 }
 
+const DEPS_FINGERPRINT_NODE = [
+  "const fs=require('fs'),crypto=require('crypto'),path=require('path');",
+  `const inputs=${JSON.stringify(DEPS_FINGERPRINT_INPUTS)};`,
+  "const h=crypto.createHash('sha256');",
+  "for (const rel of inputs) {",
+  "  const abs=path.join(process.cwd(),rel);",
+  "  if (!fs.existsSync(abs)) continue;",
+  "  h.update(rel); h.update('\\0'); h.update(fs.readFileSync(abs)); h.update('\\0');",
+  "}",
+  "process.stdout.write(h.digest('hex'));",
+].join('');
+
+function depsFingerprintSnippet(): string {
+  return `node -e ${shellQuote(DEPS_FINGERPRINT_NODE)}`;
+}
+
 function lockfileHashSnippet(): string {
-  // sha256sum on Linux, shasum -a 256 on macOS. Empty output when no lockfile
-  // exists — callers treat that as "cannot prove deps are current".
-  // `cat $files` is deliberately unquoted: it relies on word splitting, which
-  // is safe only because LOCKFILE_CANDIDATES are space-free by construction.
+  // `cat $files` is deliberately unquoted: word splitting is safe because
+  // LOCKFILE_CANDIDATES are space-free by construction.
   return [
     `files=""`,
     `for f in ${LOCKFILE_CANDIDATES.join(' ')}; do [ -f "$f" ] && files="$files $f"; done`,
@@ -130,21 +147,36 @@ function lockfileHashSnippet(): string {
   ].join('\n');
 }
 
-export function buildLockfileHashCommand(repo: string): string {
-  return `cd ${shellQuote(repo)} && ${lockfileHashSnippet()}`;
+/** Prefer harness fingerprint via Node; fall back to lockfile hash when Node is absent. */
+function depsHashSnippet(): string {
+  return [
+    `if command -v node >/dev/null 2>&1; then`,
+    `  ${depsFingerprintSnippet()}`,
+    `else`,
+    lockfileHashSnippet()
+      .split('\n')
+      .map((line) => `  ${line}`)
+      .join('\n'),
+    `fi`,
+  ].join('\n');
+}
+
+export function buildDepsFingerprintCommand(repo: string): string {
+  return `cd ${shellQuote(repo)} && ${depsHashSnippet()}`;
 }
 
 /**
  * Written after a successful deps install so deps_current can compare the
- * lockfile state the installed tree was built from. No lockfile → sentinel is
- * removed, which keeps deps_current failing (conservative).
+ * deps-input fingerprint the installed tree was built from. No inputs → sentinel
+ * is removed, which keeps deps_current failing (conservative).
  */
 export function buildDepsSentinelWriteCommand(repo: string, runtimeDir: string): string {
   const sentinel = depsSentinelPath(runtimeDir);
+  const hashCapture = `hash=$(\n${depsHashSnippet()}\n)`;
   return [
     `cd ${shellQuote(repo)}`,
     `mkdir -p ${shellQuote(runtimeDir)}`,
-    `hash=$(${lockfileHashSnippet()})`,
+    hashCapture,
     `if [ -n "$hash" ]; then echo "$hash" > ${shellQuote(sentinel)}; else rm -f ${shellQuote(sentinel)}; fi`,
   ].join(' && ');
 }
@@ -165,14 +197,14 @@ export async function checkPrepareRequirement(
       if (!recorded) {
         return { requirement, ok: false, detail: `no deps sentinel at ${sentinel}` };
       }
-      const currentR = await execOnSlot(vars, buildLockfileHashCommand(vars.remoteRepo));
+      const currentR = await execOnSlot(vars, buildDepsFingerprintCommand(vars.remoteRepo));
       const current = currentR.stdout.trim();
       if (!current) {
-        return { requirement, ok: false, detail: 'no lockfile found to hash' };
+        return { requirement, ok: false, detail: 'no deps inputs found to fingerprint' };
       }
       return current === recorded
-        ? { requirement, ok: true, detail: `lockfile hash ${current.slice(0, 12)} matches sentinel` }
-        : { requirement, ok: false, detail: 'lockfile hash differs from deps sentinel' };
+        ? { requirement, ok: true, detail: `deps fingerprint ${current.slice(0, 12)} matches sentinel` }
+        : { requirement, ok: false, detail: 'deps fingerprint differs from deps sentinel' };
     }
     case 'dev_server_up': {
       const hook = expandHook('dev_server_check', projectJson, vars, projectVars);
@@ -216,6 +248,7 @@ export async function selectPrepareProfile(
   requested?: string,
   onCheck?: (profile: string, result: RequirementCheckResult) => void,
   check: typeof checkPrepareRequirement = checkPrepareRequirement,
+  options?: { strict?: boolean },
 ): Promise<PrepareProfileSelection> {
   let profile = resolvePrepareProfile(ctx.projectJson, requested);
   const fallbacks: PrepareProfileFallback[] = [];
@@ -227,6 +260,13 @@ export async function selectPrepareProfile(
       if (!result.ok) failures.push(result);
     }
     if (failures.length === 0) break;
+    if (options?.strict) {
+      const reason = failures.map((f) => `${f.requirement}: ${f.detail}`).join('; ');
+      throw new Error(
+        `Prepare profile '${profile.name}' preconditions failed (${reason}). ` +
+          'Fix slot health or choose a heavier prepare profile.',
+      );
+    }
     const fallbackName = profile.fallback;
     if (!fallbackName) {
       // Unreachable for validated configs (requires⇒fallback); guard against

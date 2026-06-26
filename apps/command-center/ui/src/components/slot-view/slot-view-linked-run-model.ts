@@ -1,9 +1,30 @@
+import type { Run } from '@farmslot/protocol';
+
 export type SlotViewLinkedRunSource = 'cache' | 'rpc';
 
 const TERMINAL_RUN_STATUSES = new Set(['done', 'failed', 'cancelled']);
 
 export function isSlotViewTerminalRunStatus(status: string | null | undefined): boolean {
   return status !== null && status !== undefined && TERMINAL_RUN_STATUSES.has(status);
+}
+
+/** Pick which run slot-view should treat as linked after cache + RPC hydration. */
+export function selectSlotViewLinkedRun(params: {
+  requestedRunId: string | null;
+  slotBoundRunId: string | null;
+  cachedRun: Run | null;
+  rpcRun: Run | null;
+}): Run | null {
+  const authoritativeBoundRun =
+    params.slotBoundRunId && params.rpcRun?.id === params.slotBoundRunId ? params.rpcRun : null;
+  if (authoritativeBoundRun) return authoritativeBoundRun;
+  if (params.requestedRunId) {
+    if (params.rpcRun?.id === params.requestedRunId) return params.rpcRun;
+    if (params.cachedRun?.id === params.requestedRunId) return params.cachedRun;
+    // URL-pinned load-run must not fall back to slot-history when hydration is still in flight.
+    return null;
+  }
+  return params.rpcRun;
 }
 
 export function shouldPreserveSlotViewCachedNullRun(params: {

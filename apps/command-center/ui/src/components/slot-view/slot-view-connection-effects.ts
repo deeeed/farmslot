@@ -8,10 +8,16 @@ import { Events } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { subscribe } from '../../state.js';
+import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 import type { SlotView } from './slot-view.js';
 import { loadLayout } from './slot-view-layout.js';
 import { EDITOR_PREF_KEY, type EditorId, EDITORS } from './slot-view-model.js';
+import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
+import {
+  connectSlotViewLayoutObserver,
+  disconnectSlotViewLayoutObserver,
+} from './slot-view-resize-effects.js';
 
 export function connectSlotView(view: SlotView): void {
   document.addEventListener('keydown', view._boundKeyHandler);
@@ -26,6 +32,7 @@ export function connectSlotView(view: SlotView): void {
   restoreSlotViewLayout(view);
 
   if (view.slotId) view._loadSlot();
+  void refreshSlotViewRecipeRunnerOptions(view);
 
   // Re-load slot when fleet data arrives (e.g., after page refresh)
   view._unsubState = subscribe((state) => {
@@ -35,10 +42,22 @@ export function connectSlotView(view: SlotView): void {
     if (state.fleet) view._requestSlotSwitcherUpdate(state.fleet.slots);
   });
 
+  // Track linked run for this slot
+  let prevRunStatus: string | null = null;
+  const updateLinkedRun = () => {
+    void view._refreshLinkedRun(prevRunStatus).then((nextStatus) => {
+      prevRunStatus = nextStatus;
+    });
+  };
+
   view._unsubSlot = gateway.subscribe(Events.SLOT_CHANGED, (payload: unknown) => {
     const slot = payload as SlotStatus;
     if (slot.slot === view.slotId) {
+      const prevBoundRunId = view._slot?.currentRunId ?? null;
       view._slot = slot;
+      if ((slot.currentRunId ?? null) !== prevBoundRunId) {
+        updateLinkedRun();
+      }
     }
   });
 
@@ -58,13 +77,6 @@ export function connectSlotView(view: SlotView): void {
     }
   });
 
-  // Track linked run for this slot
-  let prevRunStatus: string | null = null;
-  const updateLinkedRun = () => {
-    void view._refreshLinkedRun(prevRunStatus).then((nextStatus) => {
-      prevRunStatus = nextStatus;
-    });
-  };
   updateLinkedRun();
   view._unsubRunUpdated = gateway.subscribe(Events.RUN_UPDATED, updateLinkedRun);
   view._unsubRunCreated = gateway.subscribe(Events.RUN_CREATED, updateLinkedRun);
@@ -82,6 +94,12 @@ export function connectSlotView(view: SlotView): void {
     Events.RESOURCE_STATUS_UPDATED,
     (payload) => handleSlotViewResourceStatusUpdate(view, payload),
   );
+
+  view._unsubPrepareTracker = subscribeSlotPrepareTracker(() => {
+    view._activePrepare = view.slotId ? activeSlotPrepare(view.slotId) : null;
+  });
+
+  connectSlotViewLayoutObserver(view);
 }
 
 export function disconnectSlotView(view: SlotView): void {
@@ -95,6 +113,8 @@ export function disconnectSlotView(view: SlotView): void {
   view._unsubStateChange?.();
   view._unsubTaskProgress?.();
   view._unsubResourceStatus?.();
+  view._unsubPrepareTracker?.();
+  disconnectSlotViewLayoutObserver(view);
   view._cancelFileRestoreRetry();
   view._cancelResourceRestoreRetry();
   view._teardownLive();

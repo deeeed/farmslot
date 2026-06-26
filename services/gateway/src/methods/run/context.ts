@@ -26,6 +26,20 @@ import {
 } from '../../live-recipe/context.js';
 import { getRun, listRuns, listRunsForSlotHistory } from '../../runs/store.js';
 
+function isReviewableTerminalRun(run: Run): boolean {
+  return run.taskFile != null && (run.status === 'done' || run.status === 'failed');
+}
+
+/** Load-run binds a terminal run onto a slot via fleet currentRunId — honor that before history fallback. */
+export function resolveBoundTerminalRunForSlot(
+  currentRunId: string | null | undefined,
+): Run | null {
+  if (!currentRunId) return null;
+  const run = getRun(currentRunId);
+  if (!run || !isReviewableTerminalRun(run)) return null;
+  return run;
+}
+
 export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
@@ -62,6 +76,10 @@ export function selectActiveRunForSlot(
 export async function runForSlot(params: RunForSlotParams): Promise<RunForSlotResult> {
   const { runs: active } = listRuns({ active: true });
   const slot = (await loadFleetStatus()).slots.find((s) => s.slot === params.slotId);
+  const boundTerminal = resolveBoundTerminalRunForSlot(slot?.currentRunId);
+  if (boundTerminal) {
+    return { run: await attachLiveRecipeContext(boundTerminal) };
+  }
   const activeRun = selectActiveRunForSlot(params.slotId, active, slot?.currentRunId);
   if (activeRun) return { run: await attachLiveRecipeContext(activeRun) };
   // Fall back to the most-recent reviewable run that ran on this slot so an
@@ -85,7 +103,9 @@ export async function runRecipeRunsForSlot(
 ): Promise<RunRecipeRunsForSlotResult> {
   const { runs: active } = listRuns({ active: true });
   const slot = (await loadFleetStatus()).slots.find((s) => s.slot === params.slotId);
-  const run = selectActiveRunForSlot(params.slotId, active, slot?.currentRunId);
+  const run =
+    resolveBoundTerminalRunForSlot(slot?.currentRunId) ??
+    selectActiveRunForSlot(params.slotId, active, slot?.currentRunId);
   if (!run) return { recipeRuns: [], selectedRecipeRunId: null };
   const enrichedRun = await attachLiveRecipeContext(run);
   const recipeRuns = await listRecipeRunArtifactGroupsForRun(enrichedRun);

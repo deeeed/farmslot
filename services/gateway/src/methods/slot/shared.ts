@@ -11,6 +11,7 @@ import type { PrepareProfileFallback } from './prepare-profile.js';
 export type EventEmitter = (event: string, payload: unknown) => void;
 export type SlotPrepareResult = {
   prepared: boolean;
+  requestId: string;
   startRef?: StartRefResolution;
   /** Selected prepare profile + any precondition fallbacks taken (ADR-037). */
   profile?: { selected: string; requested?: string; fallbacks: PrepareProfileFallback[] };

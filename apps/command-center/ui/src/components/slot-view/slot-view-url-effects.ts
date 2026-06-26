@@ -17,6 +17,7 @@ import {
   requestedRecipeViewerModeFromHash,
   requestedResourceFromHash,
   requestedReviewDrawerModeFromHash,
+  requestedRunFromHash,
   slotViewHash,
 } from './slot-view-url-state.js';
 
@@ -30,6 +31,11 @@ export function handleSlotViewHashChange(view: SlotView): void {
     restoreSlotViewHistoryFromUrl(view);
     void restoreSlotViewFileFromUrl(view);
     restoreSlotViewResourceFromUrl(view);
+    const requestedRunId = requestedRunFromHash();
+    if (requestedRunId && !view._reviewPanelOpen) {
+      view._reviewPanelOpen = true;
+      view._saveLayout();
+    }
     void view._refreshLinkedRun(view._linkedRun?.status ?? null);
   }
 }
@@ -46,7 +52,7 @@ export function restoreSlotViewHistoryFromUrl(view: SlotView): void {
 export function syncSlotViewUrlState(view: SlotView): void {
   const fileForUrl = view._activeFile;
   const resourceForUrl = view._activeResourceId || requestedResourceFromHash();
-  const runForUrl = view._linkedRun?.id;
+  const runForUrl = view._linkedRun?.id ?? requestedRunFromHash() ?? undefined;
   // Internal state is the single source of truth. Earlier sync calls from
   // _refreshLinkedRun/_refreshRecipeRuns happen before connectedCallback
   // restores history state, so connectedCallback hydrates _historyOpen /

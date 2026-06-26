@@ -6,8 +6,8 @@ import { PREPARE_PHASES } from '@farmslot/protocol';
 import type { RawProjectJson } from '../../core/index.js';
 
 import {
+  buildDepsFingerprintCommand,
   buildDepsSentinelWriteCommand,
-  buildLockfileHashCommand,
   depsSentinelPath,
   resolvePrepareProfile,
   selectPrepareProfile,
@@ -70,16 +70,24 @@ test('resolvePrepareProfile falls back to a profile named full when no default s
   assert.equal(resolvePrepareProfile(noDefault).name, 'full');
 });
 
-test('deps sentinel commands target the runtime dir and cover lockfiles', () => {
+test('deps sentinel commands target the runtime dir and fingerprint harness inputs', () => {
   assert.equal(depsSentinelPath('.agent'), '.agent/deps.lock-hash');
   const write = buildDepsSentinelWriteCommand('/repo', '.agent');
   assert.match(write, /cd '\/repo'/);
+  assert.doesNotMatch(write, /hash=\$\( &&/);
+  assert.match(write, /hash=\$\(\n/);
   assert.match(write, /\.agent\/deps\.lock-hash/);
+  assert.match(write, /package\.json/);
   assert.match(write, /yarn\.lock/);
-  assert.match(write, /rm -f/); // no lockfile → sentinel removed, deps_current stays failing
-  const hash = buildLockfileHashCommand('/repo');
-  assert.match(hash, /sha256sum/);
-  assert.match(hash, /shasum -a 256/);
+  assert.match(write, /command -v node/);
+  assert.match(write, /node -e/);
+  assert.match(write, /sha256sum/);
+  assert.match(write, /rm -f/); // no deps inputs → sentinel removed, deps_current stays failing
+  const fingerprint = buildDepsFingerprintCommand('/repo');
+  assert.match(fingerprint, /command -v node/);
+  assert.match(fingerprint, /node -e/);
+  assert.match(fingerprint, /\.tool-versions/);
+  assert.match(fingerprint, /shasum -a 256/);
 });
 
 test('selectPrepareProfile walks multi-hop fallback chain on failing checks', async () => {
@@ -118,4 +126,29 @@ test('selectPrepareProfile walks multi-hop fallback chain on failing checks', as
   const direct = await selectPrepareProfile(ctx, 'attach', undefined, passingCheck);
   assert.equal(direct.profile.name, 'attach');
   assert.deepEqual(direct.fallbacks, []);
+});
+
+test('selectPrepareProfile strict mode fails fast without walking fallback chain', async () => {
+  const projectJson: RawProjectJson = {
+    prepare: {
+      profiles: {
+        full: { phases: ['git', 'deps'] },
+        attach: { phases: ['health'], requires: ['health_ok'], fallback: 'full' },
+      },
+    },
+  };
+  const ctx = {
+    vars: {} as never,
+    projectJson,
+    runtimeDir: '.agent',
+  };
+  const failingCheck = async (requirement: 'deps_current' | 'dev_server_up' | 'health_ok') => ({
+    requirement,
+    ok: false,
+    detail: 'health value=none expected=WalletView',
+  });
+  await assert.rejects(
+    () => selectPrepareProfile(ctx, 'attach', undefined, failingCheck, { strict: true }),
+    /preconditions failed.*health_ok/,
+  );
 });

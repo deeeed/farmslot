@@ -9,6 +9,7 @@ import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-ut
 
 import type { SlotView } from './slot-view.js';
 import { realPath } from './slot-view-model.js';
+import { slotViewEffectiveTerminalHeight } from './slot-view-resize-effects.js';
 
 export interface SlotViewBodyRenderContext {
   hasSlotData: boolean;
@@ -746,7 +747,10 @@ export function renderSlotViewBody(
                 </div>
                 ${view._terminalOpen
                   ? html`
-                      <div class="sv-terminal-body" style="height:${view._terminalHeight}px">
+                      <div
+                        class="sv-terminal-body"
+                        style="height:${slotViewEffectiveTerminalHeight(view)}px"
+                      >
                         ${view._bottomTab === 'terminal'
                           ? html`
                               ${view._renderAgentContexts()}

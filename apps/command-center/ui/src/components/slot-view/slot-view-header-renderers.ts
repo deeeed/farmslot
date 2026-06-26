@@ -2,11 +2,24 @@ import { html, nothing } from 'lit';
 
 import type { SlotStatus } from '@farmslot/protocol';
 
-import { colors, fonts } from '../../styles/theme-tokens.js';
+import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned } from '../../utils/pinned-slots.js';
 
 import type { SlotView } from './slot-view.js';
 import { EDITORS } from './slot-view-model.js';
+
+export function renderSlotPrepareBanner(view: SlotView) {
+  const state = view._activePrepare;
+  if (!state) return nothing;
+  return html`
+    <div
+      class="sv-prepare-banner"
+      style="padding:${spacing.sm} ${spacing.md}; border-bottom:1px solid #2a2a44; background:${colors.bgCard}"
+    >
+      <prepare-progress-panel .state=${state}></prepare-progress-panel>
+    </div>
+  `;
+}
 
 export interface SlotViewHeaderRenderContext {
   slot: SlotStatus | null;

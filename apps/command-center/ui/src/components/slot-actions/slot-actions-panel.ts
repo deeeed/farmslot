@@ -26,15 +26,14 @@ import type {
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 
+import '../shared/slot-prepare-options.js';
+
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import {
-  type PrepareProfileOption,
-  projectPrepareProfiles,
-} from '../dispatch/dispatch-wizard-draft.js';
-import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
+import { runSlotPrepare } from '../shared/slot-prepare-client.js';
+import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
 const SLOT_ACTION_TIMEOUT = 5 * 60_000;
 
@@ -71,15 +70,12 @@ export class SlotActionsPanel extends LitElement {
   /** Branch the "switch branch (warm)" form targets. Empty until the user types
    * or the form is opened (prefilled from the slot's current branch). */
   @state() private _switchBranch = '';
-  /** Prepare profile for the warm branch switch — defaults to the cheapest
-   * (`attach`: checkout-only, no rebuild, devserver stays warm). */
-  @state() private _switchProfile = 'attach';
+  /** Prepare profile for the warm branch switch — empty until profiles load (project default). */
+  @state() private _switchProfile = '';
+  @state() private _switchStrictProfile = true;
+  @state() private _switchForcePrepare = false;
   /** Whether the switch-branch form is expanded. */
   @state() private _switchOpen = false;
-  /** Prepare profiles for the switch-branch profile select (ADR-037), lazily
-   * loaded from project config when a slot is known. */
-  @state() private _prepareProfiles: PrepareProfileOption[] = [];
-  private _profilesLoadedFor = '';
 
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
@@ -162,32 +158,8 @@ export class SlotActionsPanel extends LitElement {
         {},
       );
       this._slot = fleet.fleet.slots.find((s) => s.slot === this.slotId) ?? null;
-      void this._loadPrepareProfiles();
     } catch (err) {
       console.warn('[slot-actions-panel] fleet.status failed:', err);
-    }
-  }
-
-  private async _loadPrepareProfiles() {
-    const project = this._slot?.project ?? '';
-    if (!project || this._profilesLoadedFor === project) return;
-    this._profilesLoadedFor = project;
-    try {
-      this._prepareProfiles = projectPrepareProfiles(await requestProjectConfigs(), project);
-      // Reconcile the selected profile to a value the project actually offers.
-      // Prefer the cheap `attach` profile; otherwise fall back to the project
-      // default (or first) so the select never shows a stale/unknown value.
-      const names = this._prepareProfiles.map((p) => p.name);
-      if (names.length > 0 && !names.includes(this._switchProfile)) {
-        this._switchProfile = names.includes('attach')
-          ? 'attach'
-          : (this._prepareProfiles.find((p) => p.isDefault)?.name ?? names[0]!);
-      }
-    } catch (err) {
-      // Profiles only populate the optional select. On failure the select stays
-      // hidden (_prepareProfiles stays []) and the default 'attach' value is
-      // sent as-is — the switch form still works.
-      console.warn('[slot-actions-panel] prepare profiles load failed:', err);
     }
   }
 
@@ -210,6 +182,7 @@ export class SlotActionsPanel extends LitElement {
     method: string,
     params: Record<string, unknown>,
     actionId: string,
+    timeoutMs = SLOT_ACTION_TIMEOUT,
   ): Promise<T | null> {
     // Pre-allocate the requestId UI-side so the strict event matchers in
     // connectedCallback know the key BEFORE any script.output frames arrive.
@@ -223,11 +196,7 @@ export class SlotActionsPanel extends LitElement {
     this._activeActionId = actionId;
     this._lastRefreshReason = undefined;
     try {
-      const result = await gateway.request<T>(
-        method,
-        { ...params, requestId: reqId },
-        SLOT_ACTION_TIMEOUT,
-      );
+      const result = await gateway.request<T>(method, { ...params, requestId: reqId }, timeoutMs);
       // Methods that short-circuit before emitting script.complete (e.g.
       // safe-mode refresh on dirty tree, or any synchronous slot action)
       // leave `_running` true at this point. Their response itself is the
@@ -251,10 +220,7 @@ export class SlotActionsPanel extends LitElement {
     this._confirmTimer.confirm(actionId, fn);
   }
 
-  private _prepare = () =>
-    this._confirm('prepare', () =>
-      this._runAction(Methods.SLOT_PREPARE, { slotId: this.slotId }, 'prepare'),
-    );
+  private _prepare = () => this._confirm('prepare', () => void this._runSlotPrepare());
   private _release = (keepWarm: boolean) =>
     this._confirm(keepWarm ? 'release-warm' : 'release', () =>
       this._runAction(
@@ -298,14 +264,53 @@ export class SlotActionsPanel extends LitElement {
   private _runBranchSwitch = () => {
     const branch = this._switchBranch.trim();
     if (!branch) return;
-    this._confirm('switch-branch', () =>
-      this._runAction(
-        Methods.SLOT_PREPARE,
-        { slotId: this.slotId, branch, prepareProfile: this._switchProfile || 'attach' },
-        'switch-branch',
-      ),
+    this._confirm(
+      'switch-branch',
+      () =>
+        void this._runSlotPrepare('switch-branch', {
+          branch,
+          ...(this._switchProfile ? { prepareProfile: this._switchProfile } : {}),
+          strictProfile: this._switchStrictProfile,
+          label: `Preparing ${this.slotId} for branch ${branch}`,
+        }),
     );
   };
+
+  private async _runSlotPrepare(
+    actionId: 'prepare' | 'switch-branch' = 'prepare',
+    extra: {
+      branch?: string;
+      prepareProfile?: string;
+      strictProfile?: boolean;
+      label?: string;
+    } = {},
+  ): Promise<void> {
+    const reqId = `${actionId}-${crypto.randomUUID()}`;
+    this._output = [];
+    this._running = true;
+    this._exitCode = null;
+    this._requestId = reqId;
+    this._activeActionId = actionId;
+    this._lastRefreshReason = undefined;
+    try {
+      await runSlotPrepare({
+        slotId: this.slotId,
+        requestId: reqId,
+        ...extra,
+      });
+      if (this._running) {
+        this._running = false;
+        this._exitCode = 0;
+        this._activeActionId = '';
+        void this._loadSlot();
+      }
+    } catch (err) {
+      this._running = false;
+      this._exitCode = 1;
+      this._activeActionId = '';
+      this._output = [`ERROR: ${err instanceof Error ? err.message : 'Action failed'}`];
+    }
+  }
 
   // ── Configured project.json slot_actions ──
 
@@ -611,21 +616,6 @@ export class SlotActionsPanel extends LitElement {
                   @input=${(e: Event) =>
                     (this._switchBranch = (e.target as HTMLInputElement).value)}
                 />
-                ${this._prepareProfiles.length > 0
-                  ? html`
-                      <select
-                        class="sap-switch-select"
-                        .value=${this._switchProfile}
-                        ?disabled=${this._running}
-                        @change=${(e: Event) =>
-                          (this._switchProfile = (e.target as HTMLSelectElement).value)}
-                      >
-                        ${this._prepareProfiles.map(
-                          (p) => html`<option value=${p.name}>${p.label}</option>`,
-                        )}
-                      </select>
-                    `
-                  : nothing}
                 <button
                   class="sap-btn ${confirming ? 'confirming' : ''} ${running ? 'running' : ''}"
                   ?disabled=${this._running || !this._switchBranch.trim()}
@@ -634,6 +624,22 @@ export class SlotActionsPanel extends LitElement {
                   ${running ? 'Switching…' : confirming ? 'Confirm switch?' : 'Switch branch'}
                 </button>
               </div>
+              <slot-prepare-options
+                .project=${this._slot?.project ?? ''}
+                .prepareProfile=${this._switchProfile}
+                .strictProfile=${this._switchStrictProfile}
+                .forcePrepare=${this._switchForcePrepare}
+                .runBranch=${this._switchBranch}
+                .slotBranch=${this._slot?.branch ?? ''}
+                .slotHealth=${this._slot?.health ?? null}
+                .disabled=${this._running}
+                compact
+                @prepare-options-change=${(event: CustomEvent<SlotPrepareOptionsChangeDetail>) => {
+                  this._switchProfile = event.detail.prepareProfile;
+                  this._switchStrictProfile = event.detail.strictProfile;
+                  this._switchForcePrepare = event.detail.forcePrepare;
+                }}
+              ></slot-prepare-options>
               ${this._slot?.currentRunId
                 ? html`<div class="sap-switch-warn">
                     ⚠ Slot is bound to run ${this._slot.currentRunId.slice(0, 8)} — switching
@@ -641,8 +647,8 @@ export class SlotActionsPanel extends LitElement {
                   </div>`
                 : nothing}
               <div class="sap-action-desc">
-                Checkout-only via the chosen profile — no merge-main, no reinstall. Dev server stays
-                warm and hot-reloads.
+                Uses the chosen profile in strict mode — attach will not silently escalate to a
+                heavier profile when preconditions fail. Dev server stays warm and hot-reloads.
               </div>
             </div>
           `

@@ -8,12 +8,22 @@ import { artifactKind } from '../../utils/artifact-kind.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
-import { canSlotAcceptRecipeRerun } from '../recipe/recipe-rerun-model.js';
+import {
+  canSlotAcceptRecipeRerun,
+  slotRecipeReplayBlockReason,
+} from '../recipe/recipe-rerun-model.js';
 import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
 import { renderSlotRecipeDrawer } from './slot-recipe-drawer.js';
-import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
+import {
+  isSlotViewPinnedLinkedRun,
+  shouldHideTerminalSlotRecipePanel,
+  slotViewLoadedRunDrawerKey,
+  slotViewNoRecipeReplayMessage,
+  slotViewPendingReviewDecision,
+  slotViewReviewDrawerKey,
+} from './slot-view-model.js';
 import {
   recipeArtifactPurposeLabel,
   renderGeneratedVisualArtifacts,
@@ -25,6 +35,7 @@ import {
 } from './slot-view-recipe-helpers.js';
 import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
 import { slotViewRecipeRunHelpText } from './slot-view-recipe-view-model.js';
+import { requestedRunFromHash } from './slot-view-url-state.js';
 
 export function renderRecipeFlowsList(
   view: SlotViewRecipePresenter,
@@ -443,6 +454,17 @@ function renderRecipeHostBody(
     slotCanAcceptRerun &&
     (recipeHost.capabilities.canRerun || selectedRecipeRunId),
   );
+  const replayBlockReason =
+    !canReplayActiveRecipe && effectiveRecipeJson
+      ? slotRecipeReplayBlockReason({
+          slot: view._slot,
+          run: view._linkedRun,
+          slotId: view.slotId,
+          effectiveRecipeJson,
+          canRerun: recipeHost.capabilities.canRerun,
+          selectedRecipeRunId,
+        })
+      : null;
   return html`
     <div style="padding:8px 12px; border-top:1px solid ${colors.textMuted}22;">
       <div
@@ -495,6 +517,15 @@ function renderRecipeHostBody(
       >
         ${slotViewRecipeRunHelpText(selectedRecipeRun)}
       </div>
+      ${replayBlockReason
+        ? html`
+            <div
+              style="font-size:${fonts.sizeXs}; color:${colors.statusWarn}; margin-bottom:${spacing.sm}; line-height:1.5;"
+            >
+              ${replayBlockReason}
+            </div>
+          `
+        : nothing}
       ${canReplayActiveRecipe
         ? html`
             <div style="margin-bottom:${spacing.sm};">
@@ -505,9 +536,10 @@ function renderRecipeHostBody(
                 recipeArtifactPath=${selectedFlowArtifactPath}
                 recipeRunId=${selectedRecipeRunId}
                 runLabel=${replayLabel}
-                .playbackSlowMs=${2000}
-                showPlayback
-                showArtifactAction
+                .playbackSlowMs=${view._recipeRunnerUiOptions.playbackSlowMs}
+                .recordVideo=${view._recipeRunnerUiOptions.recordVideo}
+                ?showPlayback=${view._recipeRunnerUiOptions.showPlayback}
+                ?showArtifactAction=${view._recipeRunnerUiOptions.showArtifactAction}
                 @running-change=${(event: CustomEvent<boolean>) => {
                   if (!event.detail) void view._refreshLinkedRun(view._linkedRun?.status ?? null);
                 }}
@@ -632,14 +664,67 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
   const showRecipeLoading = Boolean(
     view._linkedRun && view._recipeRunsLoading && !recipeHost && !reviewDecision && !readyDecision,
   );
-  if (!view._linkedRun) return nothing;
+  const requestedRunId = requestedRunFromHash();
+  if (!view._linkedRun) {
+    if (!requestedRunId) return nothing;
+    const drawerKey = slotViewLoadedRunDrawerKey(requestedRunId);
+    return renderSlotRecipeDrawer({
+      reviewPanelOpen: view._reviewPanelOpen,
+      reviewFullWidth: view._reviewFullWidth,
+      reviewPanelWidth: view._reviewPanelWidth,
+      resizing: view._resizing,
+      drawerLabel: 'RECIPE',
+      collapsedTitle: 'Open recipe',
+      recipeExecutionOverlay: nothing,
+      bodyContent: html`
+        <div style="padding:12px; display:flex; flex-direction:column; gap:${spacing.sm};">
+          <div
+            style="font-size:${fonts.sizeXs}; text-transform:uppercase; letter-spacing:0.08em; color:${colors.textMuted};"
+          >
+            Recipe
+          </div>
+          <div style="font-size:${fonts.sizeSm}; color:${colors.textSecondary};">
+            Loading run ${requestedRunId.slice(0, 8)} and recipe evidence…
+          </div>
+        </div>
+      `,
+      onResizeStart: (event) => view._onResizeStart('review', event),
+      onToggleFullWidth: () => {
+        view._reviewFullWidth = !view._reviewFullWidth;
+        view._saveLayout();
+      },
+      onClose: () => {
+        view._reviewFullWidth = false;
+        view._reviewPanelOpen = false;
+        view._dismissedReviewDrawerKey = drawerKey;
+        view._saveLayout();
+      },
+      onOpen: () => {
+        view._reviewPanelOpen = true;
+        if (drawerKey === view._dismissedReviewDrawerKey) view._dismissedReviewDrawerKey = '';
+        view._saveLayout();
+      },
+    });
+  }
   // Hide the drawer entirely for runs whose worker won't ever produce a
   // recipe (terminal states with neither a recipe host nor a review).
   // Without this gate, a long-completed `done` or `cancelled` run shows a
   // misleading "No recipe artifact for this run yet" placeholder forever.
   const runStatus = view._linkedRun.status;
   const isTerminal = runStatus === 'done' || runStatus === 'failed' || runStatus === 'cancelled';
-  if (isTerminal && !recipeHost && !reviewDecision && !readyDecision && !showRecipeLoading)
+  const pinnedLinkedRun = isSlotViewPinnedLinkedRun(view._linkedRun.id, requestedRunFromHash());
+  if (
+    isTerminal &&
+    shouldHideTerminalSlotRecipePanel({
+      recipeHost,
+      reviewDecision,
+      readyDecision,
+      showRecipeLoading,
+      recipeRunsCount: view._recipeRuns.length,
+      recipeRunsError: view._recipeRunsError,
+      pinnedLinkedRun,
+    })
+  )
     return nothing;
 
   const hasPrimaryWorkspace = Boolean(readyDecision || reviewDecision);
@@ -647,12 +732,13 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
   const drawerMode = canSwitchToRecipe ? view._reviewDrawerMode : 'primary';
   const primaryLabel = readyDecision ? 'READY' : reviewDecision ? 'REVIEW' : 'RECIPE';
   const drawerLabel = drawerMode === 'recipe' ? 'RECIPE' : primaryLabel;
-  const drawerKey = slotViewReviewDrawerKey({
-    run: view._linkedRun,
-    readyDecision,
-    reviewDecision,
-    hasRecipeHost: !!recipeHost,
-  });
+  const drawerKey =
+    slotViewReviewDrawerKey({
+      run: view._linkedRun,
+      readyDecision,
+      reviewDecision,
+      hasRecipeHost: !!recipeHost,
+    }) || (pinnedLinkedRun ? slotViewLoadedRunDrawerKey(view._linkedRun.id) : '');
   const collapsedTitle = readyDecision
     ? 'Open ready workspace'
     : reviewDecision
@@ -762,8 +848,10 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
                     Recipe
                   </div>
                   <div>
-                    No recipe artifact for this run yet. Evidence appears here once the worker emits
-                    <code>artifacts/recipe.json</code>.
+                    ${pinnedLinkedRun && !view._recipeRunsLoading
+                      ? slotViewNoRecipeReplayMessage(view._linkedRun)
+                      : html`No recipe artifact for this run yet. Evidence appears here once the
+                          worker emits <code>artifacts/recipe.json</code>.`}
                   </div>
                 </div>
               `;

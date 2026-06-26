@@ -44,16 +44,22 @@ test('familyWarmSlotRerunCheck preserves family observability rerun reasons', ()
     reason: 'slot not found (may have been released)',
   });
   assert.deepEqual(
-    familyWarmSlotRerunCheck(run(), [slot({ lifecycle: 'busy', phase: 'ci-watch' })]),
+    familyWarmSlotRerunCheck(run(), [
+      slot({ agent: 'working', lifecycle: 'busy', phase: 'ci-watch' }),
+    ]),
     {
       ok: false,
-      reason: 'slot slot-1 not in review-gate (busy / ci-watch)',
+      reason: 'slot slot-1 has a live worker (busy / ci-watch)',
     },
   );
 });
 
-test('familyWarmSlotRerunCheck accepts review-gate and held current-run slots', () => {
+test('familyWarmSlotRerunCheck accepts run-bound and review-gate slots', () => {
   assert.deepEqual(familyWarmSlotRerunCheck(run(), [slot()]), { ok: true, slotId: 'slot-1' });
+  assert.deepEqual(
+    familyWarmSlotRerunCheck(run(), [slot({ lifecycle: 'busy', phase: 'ci-watch' })]),
+    { ok: true, slotId: 'slot-1' },
+  );
   assert.deepEqual(
     familyWarmSlotRerunCheck(run(), [slot({ lifecycle: 'held', phase: 'ci-watch' })]),
     { ok: true, slotId: 'slot-1' },

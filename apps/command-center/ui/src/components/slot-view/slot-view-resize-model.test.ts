@@ -1,7 +1,11 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { computeSlotViewResizeValue, slotViewResizeCursor } from './slot-view-resize-model.js';
+import {
+  computeEffectiveTerminalHeight,
+  computeSlotViewResizeValue,
+  slotViewResizeCursor,
+} from './slot-view-resize-model.js';
 
 test('slotViewResizeCursor maps horizontal and vertical resize targets', () => {
   assert.equal(slotViewResizeCursor('sidebar'), 'col-resize');
@@ -61,6 +65,13 @@ test('computeSlotViewResizeValue expands stream and review panels when dragging 
     }),
     600,
   );
+});
+
+test('computeEffectiveTerminalHeight clamps persisted height to right-column budget', () => {
+  assert.equal(computeEffectiveTerminalHeight(769, 227), 139);
+  assert.equal(computeEffectiveTerminalHeight(250, 0), 250);
+  assert.equal(computeEffectiveTerminalHeight(40, 200), 60);
+  assert.equal(computeEffectiveTerminalHeight(900, 120), 60);
 });
 
 test('computeSlotViewResizeValue clamps pinned and terminal vertical heights', () => {

@@ -160,6 +160,10 @@ export interface ProjectConfig {
   autoRecovery?: ProjectAutoRecoveryConfig;
   backlog?: ProjectBacklogConfig;
   prepare?: ProjectPrepareConfig;
+  /** When true, UI may offer slow playback and gateway appends --slow to recipe_run. */
+  recipeRunSupportsPlaybackSlow?: boolean;
+  /** When true, UI may offer video recording and gateway appends --record-video=full-run to recipe_run. */
+  recipeRunSupportsVideoRecording?: boolean;
 }
 
 export interface ProjectCICheckGroup {

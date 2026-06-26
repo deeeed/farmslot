@@ -10,6 +10,7 @@ import {
   canRecipeRerunOnSlot,
   expandRecipeProjectHookTemplate,
   expandRecipeRunHookTemplate,
+  recipeReplayHealthReady,
   recipeRunOptionsForProject,
   recipeRunUnsupportedOptionWarnings,
   resolveRecipeArtifactRootForSlot,
@@ -319,7 +320,7 @@ test('appendRecipePlaybackOptions appends opt-in video recording flag', () => {
     appendRecipePlaybackOptions('node validate-recipe.js --recipe recipe.json', {
       recordVideo: true,
     }),
-    'node validate-recipe.js --recipe recipe.json --record',
+    'node validate-recipe.js --recipe recipe.json --record-video=full-run',
   );
 });
 
@@ -329,7 +330,7 @@ test('appendRecipePlaybackOptions preserves typed option ordering', () => {
       playbackSlowMs: 1000,
       recordVideo: true,
     }),
-    'node validate-recipe.js --recipe recipe.json --slow 1000 --record',
+    'node validate-recipe.js --recipe recipe.json --slow 1000 --record-video=full-run',
   );
 });
 
@@ -398,7 +399,10 @@ test('canRecipeRerunOnSlot allows warm review-gate and held slots for the reques
     canRecipeRerunOnSlot({ currentRunId: 'run-1', phase: 'review-gate' }, 'run-1'),
     true,
   );
-  assert.equal(canRecipeRerunOnSlot({ currentRunId: 'run-1', phase: 'working' }, 'run-1'), false);
+  assert.equal(
+    canRecipeRerunOnSlot({ currentRunId: 'run-1', phase: 'working', agent: 'working' }, 'run-1'),
+    false,
+  );
   assert.equal(
     canRecipeRerunOnSlot({ currentRunId: 'other-run', phase: 'review-gate' }, 'run-1'),
     false,
@@ -416,10 +420,21 @@ test('canRecipeRerunOnSlot allows warm review-gate and held slots for the reques
     canRecipeRerunOnSlot({ currentRunId: 'run-1', lifecycle: 'ready' }, 'run-1'),
     true,
   );
-  // ...but a bound slot that is mid-worker (busy) is still rejected.
+  // ...but a bound slot that is mid-worker is still rejected.
   assert.equal(
-    canRecipeRerunOnSlot({ currentRunId: 'run-1', lifecycle: 'busy', phase: 'working' }, 'run-1'),
+    canRecipeRerunOnSlot(
+      { currentRunId: 'run-1', lifecycle: 'busy', phase: 'working', agent: 'working' },
+      'run-1',
+    ),
     false,
+  );
+  // Load-run bind can leave lifecycle busy while the worker is idle.
+  assert.equal(
+    canRecipeRerunOnSlot(
+      { currentRunId: 'run-1', lifecycle: 'busy', phase: 'ci-watch', agent: 'idle' },
+      'run-1',
+    ),
+    true,
   );
 });
 
@@ -447,4 +462,14 @@ test('canRecipeRerunOnSlot rejects held slots when currentRunId is missing', () 
     canRecipeRerunOnSlot({ lifecycle: 'held', phase: 'ci-watch' }, 'run-1', 'slot-1'),
     false,
   );
+});
+
+test('recipeReplayHealthReady accepts any response when ready indicator is unset', () => {
+  assert.equal(recipeReplayHealthReady('WalletView', undefined), true);
+  assert.equal(recipeReplayHealthReady('', undefined), false);
+});
+
+test('recipeReplayHealthReady matches project ready indicator exactly', () => {
+  assert.equal(recipeReplayHealthReady('WalletView', 'WalletView'), true);
+  assert.equal(recipeReplayHealthReady('LoginView', 'WalletView'), false);
 });

@@ -557,6 +557,35 @@ function isArtifactRootOwnedByCurrentTask(artifactRoot: string, artifactRoots: s
   return artifactRoots.some((baseRoot) => isPathWithinBase(artifactRoot, baseRoot));
 }
 
+function resolveInheritedRecipeInputsDir(run: Pick<Run, 'taskFile'>): string | null {
+  if (!run.taskFile) return null;
+  return path.join(path.dirname(run.taskFile), 'inputs', 'inherited');
+}
+
+/** Family-chain pr-complete runs often ship recipe.json under inputs/inherited only. */
+async function loadContextFromInheritedInputs(run: Run): Promise<LiveRecipeContext | null> {
+  const inheritedRoot = resolveInheritedRecipeInputsDir(run);
+  if (!inheritedRoot) return null;
+  const [recipeJson, workerLearnings, recipeQualityArtifact] = await Promise.all([
+    readPortableTextIfExists(run, path.join(inheritedRoot, 'recipe.json')),
+    readPortableTextIfExists(run, path.join(inheritedRoot, 'learnings.md')),
+    readRecipeQualityArtifactPortable(run, path.join(inheritedRoot, 'recipe-quality.json')),
+  ]);
+  const context: LiveRecipeContext = {
+    source: 'recipe-run-artifacts',
+    recipeRunId: null,
+    artifactRoot: inheritedRoot,
+    artifactManifest: null,
+    recipeJson,
+    recipeQualityArtifact,
+    qualityReport: null,
+    workerLearnings,
+    isStale: false,
+    selectionReason: 'latest-run',
+  };
+  return hasLiveRecipeEvidence(context) ? context : null;
+}
+
 async function loadContextFromArtifactRoot({
   artifactRoot,
   run,
@@ -754,6 +783,20 @@ export async function listRecipeRunArtifactGroupsForRun(
     break;
   }
 
+  if (!groups.some((group) => group.groupKind === 'current-artifacts')) {
+    const inherited = await loadContextFromInheritedInputs(run);
+    if (inherited) {
+      groups.push({
+        id: 'current-artifacts',
+        label: 'Inherited recipe package',
+        groupKind: 'current-artifacts',
+        promoted: false,
+        status: 'unknown',
+        ...inherited,
+      });
+    }
+  }
+
   const liveRecipeContext = run.liveRecipeContext;
   const explicitArtifactRoot = liveRecipeContext?.artifactRoot;
   const explicitArtifactRootValid = Boolean(
@@ -866,6 +909,9 @@ export async function loadLiveRecipeContextForRun(run: Run): Promise<LiveRecipeC
     });
     if (context) return context;
   }
+
+  const inherited = await loadContextFromInheritedInputs(run);
+  if (inherited) return inherited;
 
   return persistedArtifactRootValid ? (run.liveRecipeContext ?? null) : null;
 }

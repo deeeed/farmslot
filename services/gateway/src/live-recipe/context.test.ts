@@ -71,6 +71,32 @@ test('loadLiveRecipeContextForRun projects live recipe artifacts without decisio
   assert.ok((context.artifactManifest?.length ?? 0) >= 3);
 });
 
+test('loadLiveRecipeContextForRun falls back to inputs/inherited recipe.json', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-inherited-recipe-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const taskDir = path.join(root, 'tasks', 'inherited-recipe-only');
+  const inheritedDir = path.join(taskDir, 'inputs', 'inherited');
+  await mkdir(inheritedDir, { recursive: true });
+  await writeFile(path.join(taskDir, 'TASK.md'), '# task\n', 'utf-8');
+  await writeFile(
+    path.join(inheritedDir, 'recipe.json'),
+    '{"title":"Inherited related-markets recipe"}\n',
+    'utf-8',
+  );
+
+  const run = makeRun(path.join(taskDir, 'TASK.md'), { id: 'run-inherited-recipe-1' });
+  const context = await loadLiveRecipeContextForRun(run);
+  const groups = await listRecipeRunArtifactGroupsForRun(run);
+
+  assert.ok(context);
+  assert.match(context.recipeJson ?? '', /Inherited related-markets recipe/);
+  assert.equal(context.artifactRoot, inheritedDir);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0]?.groupKind, 'current-artifacts');
+  assert.equal(groups[0]?.label, 'Inherited recipe package');
+});
+
 test('loadLiveRecipeContextForRun includes current artifact screenshots referenced by evidence manifest', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-current-evidence-screenshots-'));
   t.after(() => rm(root, { recursive: true, force: true }));

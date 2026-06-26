@@ -18,6 +18,7 @@ import '../reviews/review-loop-timeline.js';
 import './recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
+import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
 
 import { ReadyWorkspaceActionPresenter } from './ready-workspace-action-presenter.js';
@@ -53,6 +54,7 @@ import {
   renderReadyQualityTab,
   renderReadyRecipeTab,
 } from './ready-workspace-tab-renderers.js';
+import { loadRecipeRunnerUiOptionsForProject } from './recipe-runner-options-model.js';
 import {
   isWorkspaceDiffArtifact,
   MEDIA_EXTS,
@@ -61,6 +63,17 @@ import {
 
 @customElement('ready-workspace')
 export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
+  override updated(changed: Map<string, unknown>): void {
+    super.updated(changed);
+    if (changed.has('run')) {
+      void loadRecipeRunnerUiOptionsForProject(this.run?.project ?? '', requestProjectConfigs).then(
+        (options) => {
+          this._recipeRunnerUiOptions = options;
+        },
+      );
+    }
+  }
+
   // ─── Render ───
 
   override render() {
@@ -299,6 +312,7 @@ export class ReadyWorkspace extends ReadyWorkspaceActionPresenter {
       runId: this.runId,
       slotId: this.slotId,
       recovering: this._isRecovering,
+      recipeRunnerUiOptions: this._recipeRunnerUiOptions,
       setRecipeView: (view) => {
         this._recipeView = view;
       },

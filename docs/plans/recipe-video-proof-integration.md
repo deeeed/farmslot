@@ -1,8 +1,11 @@
 # Recipe Video Proof Integration Plan
 
-Status: active supporting plan  
+Status: **promoted** — canonical contract is now in
+[`docs/reference/recipe-runner-protocol.md`](../reference/recipe-runner-protocol.md#command-center-replay-options).
+This plan remains as design rationale and phase history.
+
 Supports: `docs/reference/recipe-protocol-v1.md`, `docs/reference/recipe-runtime-capability-contract.md`, `docs/PRD-runner-execution-canonical.md`  
-Lifecycle: promote into reference docs after implementation; delete this plan once shipped.
+Lifecycle: do not duplicate the contract here; update the reference doc when the protocol changes.
 
 ## Problem
 

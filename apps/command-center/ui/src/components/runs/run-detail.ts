@@ -22,6 +22,7 @@ import '../workspace/review-workspace.js';
 import '../workspace/ready-workspace.js';
 import '../terminal/terminal-view.js';
 import '../shared/hydrating-placeholder.js';
+import '../shared/slot-prepare-popover.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
@@ -41,7 +42,6 @@ import {
   resolveBranchNudgePick,
   resolveInteractiveDevAction,
   resolveSlotPick,
-  switchSlotToRunBranch,
 } from './run-detail-actions.js';
 import { renderRunCiStatus } from './run-detail-ci-status-renderer.js';
 import { renderRunGateSection } from './run-detail-decision-renderers.js';
@@ -683,12 +683,10 @@ export class RunDetail extends RunDetailState {
       _requestCopilotRunDiagnosis: (run) => this._requestCopilotRunDiagnosis(run),
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
       _activateOnSlot: (run) => activateRunOnSlot(run.id, run.slotId ?? ''),
-      _switchSlotToRunBranch: (run) =>
-        switchSlotToRunBranch(run.id, run.slotId ?? '', run.branch ?? null).catch((err) => {
-          // Targets the run's own slot (compatible, recipe present) so failure
-          // is rare; surface it without an alert.
-          console.error('[run-detail] switch slot to run branch failed:', err);
-        }),
+      _slotBranchForRun: (run) =>
+        getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.branch ?? '',
+      _slotHealthForRun: (run) =>
+        getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.health ?? null,
       _setRunTags: (run, raw) => this._setRunTags(run, raw),
       _togglePinnedSlot: (slotId) => {
         togglePinnedSlot(slotId);

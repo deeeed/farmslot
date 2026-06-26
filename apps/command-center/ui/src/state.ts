@@ -210,6 +210,10 @@ function isActiveRun(run: Run): boolean {
   return !TERMINAL_RUN_STATUSES.has(run.status);
 }
 
+function isReviewableTerminalRun(run: Run): boolean {
+  return run.taskFile != null && (run.status === 'done' || run.status === 'failed');
+}
+
 export function isPrLinkageMissing(run: Run): boolean {
   // `getProjectDefaultBranch` falls back to DEFAULT_BRANCH while the projects
   // slice is still hydrating, which would flash a false-positive "PR missing"
@@ -567,13 +571,16 @@ function persistFilters(filters: GlobalFilters): void {
 export function getRunForSlot(slotId: string, preferredRunId?: string | null): Run | null {
   if (preferredRunId) {
     const preferred = state.runs.find((r) => r.id === preferredRunId);
-    return preferred?.slotId === slotId && isActiveRun(preferred) ? preferred : null;
+    if (!preferred) return null;
+    // URL-pinned terminal runs are valid for slot-view evidence (load-run replay).
+    if (isReviewableTerminalRun(preferred)) return preferred;
+    return preferred.slotId === slotId && isActiveRun(preferred) ? preferred : null;
   }
 
   const slot = state.fleet?.slots.find((s) => s.slot === slotId);
   if (slot?.currentRunId) {
     const current = state.runs.find((r) => r.id === slot.currentRunId);
-    if (current && isActiveRun(current)) return current;
+    if (current && (isActiveRun(current) || isReviewableTerminalRun(current))) return current;
     // currentRunId is set but the run is not in the local cache (e.g. fleet
     // and runs slices arrived in different orders during reconnect). Return
     // null instead of falling through to a slotId-only scan, which can pick

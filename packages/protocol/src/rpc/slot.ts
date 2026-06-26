@@ -75,6 +75,36 @@ export interface SlotPrepareParams {
    * worker (`agent === 'working'`) is never re-bound, even with this set.
    */
   rebind?: boolean;
+  /**
+   * When true, do not walk the project's prepare-profile fallback chain if
+   * preconditions fail — fail fast with the check reason. Operator-initiated
+   * flows (load-run, switch-branch) pass this so `attach` stays attach.
+   */
+  strictProfile?: boolean;
+  /**
+   * Skip all prepare phases and only bind `bindRunId` + sync recipe workflows.
+   * Use when the slot is already on the target branch (load-run fast path).
+   */
+  bindOnly?: boolean;
+  /**
+   * Pre-allocated progress id. Gateway emits `script.output` / `script.complete`
+   * keyed to this id (same contract as slot.refresh / slot.release).
+   */
+  requestId?: string;
+}
+
+export interface SlotPrepareResult {
+  prepared: boolean;
+  requestId: string;
+  profile?: {
+    selected: string;
+    requested?: string;
+    fallbacks: Array<{ from: string; to: string; reason: string }>;
+  };
+  startRef?: {
+    resolvedSha: string;
+    resolvedAt: string;
+  };
 }
 
 export interface SlotReleaseParams {

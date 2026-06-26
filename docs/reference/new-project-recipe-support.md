@@ -28,7 +28,11 @@ Example `project.json` excerpt:
 Set `recipe_run_supports_playback_slow` to `true` only when the runner supports a
 slow/live replay option that Command Center may append. Set
 `recipe_run_supports_video_recording` to `true` only when the runner supports the
-appended `--record` replay video flag.
+gateway-appended `--record-video=full-run` flag and the harness video artifact
+contract (`videos/recipe-run.mp4` + `artifact-manifest.json` registration).
+
+Canonical replay contract:
+[Recipe Runner Protocol — Command Center replay options](recipe-runner-protocol.md#command-center-replay-options).
 
 ## Backend/API recipe example
 
