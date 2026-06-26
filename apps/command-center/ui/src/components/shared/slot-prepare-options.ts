@@ -16,9 +16,9 @@ import {
   loadSlotPreparePrefs,
   reconcilePrepareProfile,
   saveSlotPreparePrefs,
-  suggestPrepareRecovery,
   type SlotPrepareOptionsState,
   type SlotPreparePlan,
+  suggestPrepareRecovery,
 } from './slot-prepare-options-model.js';
 
 export type SlotPrepareOptionsVariant = 'operator' | 'dispatch' | 'replay';

@@ -1,8 +1,8 @@
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
 import {
   loadRecipeRunnerUiOptionsForProject,
-  recipeRunnerUiOptions,
   type RecipeRunnerUiOptions,
+  recipeRunnerUiOptions,
 } from '../workspace/recipe-runner-options-model.js';
 
 import type { SlotView } from './slot-view.js';

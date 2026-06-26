@@ -13,12 +13,12 @@ import { type RecoveryPhase } from '../../utils/reconnect.js';
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 
 import type { ReviewLoopDraft } from './ready-workspace-modal-renderers.js';
+import {
+  type RecipeRunnerUiOptions,
+  recipeRunnerUiOptions,
+} from './recipe-runner-options-model.js';
 import { VerticalSplitResizer } from './vertical-split-resizer.js';
 import type { ArtifactFilter, ArtifactTypeFilter } from './workspace-artifacts.js';
-import {
-  recipeRunnerUiOptions,
-  type RecipeRunnerUiOptions,
-} from './recipe-runner-options-model.js';
 import type { ReadyWorkspaceTab } from './workspace-url-state.js';
 
 type TabId = ReadyWorkspaceTab;

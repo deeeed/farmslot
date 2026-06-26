@@ -19,7 +19,6 @@ import './recipe-runner-controls.js';
 
 import { gateway } from '../../gateway-client.js';
 import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
-import { loadRecipeRunnerUiOptionsForProject } from './recipe-runner-options-model.js';
 import type { ReviewLoopArtifactOpenDetail } from '../reviews/review-loop-timeline.js';
 
 import { ReadyWorkspaceActionPresenter } from './ready-workspace-action-presenter.js';
@@ -55,6 +54,7 @@ import {
   renderReadyQualityTab,
   renderReadyRecipeTab,
 } from './ready-workspace-tab-renderers.js';
+import { loadRecipeRunnerUiOptionsForProject } from './recipe-runner-options-model.js';
 import {
   isWorkspaceDiffArtifact,
   MEDIA_EXTS,

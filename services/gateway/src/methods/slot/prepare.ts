@@ -48,6 +48,7 @@ import {
   CLEAR_INDEX_FLAGS_THEN_REFRESH_COMMAND,
   REFRESH_INDEX_AND_UNLOCK_COMMAND,
 } from './git-cleanup-commands.js';
+import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
   clearStalePrepareProcess,
@@ -55,20 +56,19 @@ import {
   PREPARE_PREFLIGHT_TIMEOUT_MS,
   runPrepareCommand,
 } from './prepare-command.js';
-import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
-import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
 import {
   acquirePrepareSentinel,
   type PrepareSentinelLock,
   releasePrepareSentinel,
   startPrepareSentinelHeartbeat,
 } from './prepare-sentinel.js';
+import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
 import {
   activePrepareSlots,
   applySelectedApp,

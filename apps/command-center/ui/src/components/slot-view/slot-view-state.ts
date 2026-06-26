@@ -22,8 +22,8 @@ import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 import {
-  recipeRunnerUiOptions,
   type RecipeRunnerUiOptions,
+  recipeRunnerUiOptions,
 } from '../workspace/recipe-runner-options-model.js';
 
 import {

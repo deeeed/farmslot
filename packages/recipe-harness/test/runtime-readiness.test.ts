@@ -4,15 +4,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
+import type { RuntimeDecisionReport } from '../src/runtime/decision-types.js';
+import { depsCheck, recordDepsBaseline } from '../src/runtime/deps-readiness.js';
 import {
   analyzeBundleLog,
   evaluatePersistentBundleError,
   moduleExistsInNodeModules,
   supersededErrorCapture,
 } from '../src/runtime/log-analysis.js';
-import { depsCheck, recordDepsBaseline } from '../src/runtime/deps-readiness.js';
 import { orchestrateRuntimeUp } from '../src/runtime/orchestrate-up.js';
-import type { RuntimeDecisionReport } from '../src/runtime/decision-types.js';
 
 test('depsCheck reports missing install markers', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));

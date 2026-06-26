@@ -8,10 +8,11 @@ import {
   type SlotRunHistoryResult,
 } from '@farmslot/protocol';
 
+import '../shared/slot-prepare-popover.js';
+
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { activateRunOnSlot } from '../runs/run-detail-actions.js';
-import '../shared/slot-prepare-popover.js';
 import { formatCreatedAt, formatDuration, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 

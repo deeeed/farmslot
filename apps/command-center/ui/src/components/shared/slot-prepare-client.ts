@@ -2,7 +2,6 @@ import type { SlotPrepareParams, SlotPrepareResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-
 import { slotViewHash } from '../slot-view/slot-view-url-state.js';
 
 import { resolveBindOnly } from './slot-prepare-options-model.js';

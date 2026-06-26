@@ -2,6 +2,8 @@ import { html, nothing } from 'lit';
 
 import type { DevInteractiveProfile, FlowType } from '@farmslot/protocol';
 
+import '../shared/slot-prepare-options.js';
+
 import { colors, fonts } from '../../styles/theme-tokens.js';
 import {
   EFFORT_BY_RUNNER,
@@ -9,9 +11,8 @@ import {
   MODELS_BY_RUNNER,
   RUNNER_OPTIONS,
 } from '../../utils/runner-options.js';
-
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
-import '../shared/slot-prepare-options.js';
+
 import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
 
 type DispatchMode = 'interactive' | 'autonomous';

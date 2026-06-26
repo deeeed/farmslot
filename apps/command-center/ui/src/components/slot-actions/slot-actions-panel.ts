@@ -26,13 +26,13 @@ import type {
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
 
+import '../shared/slot-prepare-options.js';
+
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import { runSlotPrepare } from '../shared/slot-prepare-client.js';
-import '../shared/slot-prepare-options.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
 const SLOT_ACTION_TIMEOUT = 5 * 60_000;

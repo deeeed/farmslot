@@ -2,9 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
+  type ConfigProjectsResult,
   Events,
   Methods,
-  type ConfigProjectsResult,
   type RecipeCancelResult,
   type RecipeCommandResult,
   type RecipeRerunParams,
@@ -13,9 +13,9 @@ import {
 
 import type { GatewayClient } from '../lib/gateway-client';
 import {
+  type RecipeRunnerUiOptions,
   recipeRunnerUiOptions,
   recipeRunnerUiOptionsForProject,
-  type RecipeRunnerUiOptions,
 } from '../lib/recipe-runner-options';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 

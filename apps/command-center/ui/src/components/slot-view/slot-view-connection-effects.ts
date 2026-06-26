@@ -11,9 +11,9 @@ import { subscribe } from '../../state.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 import type { SlotView } from './slot-view.js';
-import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
 import { loadLayout } from './slot-view-layout.js';
 import { EDITOR_PREF_KEY, type EditorId, EDITORS } from './slot-view-model.js';
+import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
 import {
   connectSlotViewLayoutObserver,
   disconnectSlotViewLayoutObserver,

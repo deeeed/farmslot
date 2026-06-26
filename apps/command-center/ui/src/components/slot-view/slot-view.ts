@@ -20,7 +20,6 @@ import '../resources/resource-panel.js';
 import '../config/slot-toggle.js';
 import '../slot-actions/slot-actions-panel.js';
 import '../shared/prepare-progress-panel.js';
-import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
 import './slot-history-modal.js';
 import './slot-load-run-modal.js';
 import '../runs/run-pipeline.js';
@@ -37,6 +36,7 @@ import {
   isRecoveryEpochCurrent,
   waitForRecoveryHydration,
 } from '../../utils/reconnect.js';
+import { renderSlotPreparePreconditionStrip } from '../shared/slot-prepare-precondition-strip.js';
 import type { FileEntry } from '../workspace/file-tree.js';
 
 import {

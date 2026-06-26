@@ -1,24 +1,24 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
+import type { SlotHealth } from '@farmslot/protocol';
 import { canActivateRunOnSlot, Methods, type Run, type RunListResult } from '@farmslot/protocol';
+
+import '../shared/prepare-progress-panel.js';
+import '../shared/slot-prepare-options.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import type { SlotHealth } from '@farmslot/protocol';
-
-import '../shared/prepare-progress-panel.js';
+import { formatCreatedAt, routeForRun, runStatusColor } from '../runs/run-utils.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
-import { DEFAULT_SLOT_PREPARE_OPTIONS } from '../shared/slot-prepare-options-model.js';
-import '../shared/slot-prepare-options.js';
-import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 import {
   navigateToPreparedSlot,
   runSlotPrepareForRun,
   shouldBindOnlyForLoadRun,
 } from '../shared/slot-prepare-client.js';
+import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
+import { DEFAULT_SLOT_PREPARE_OPTIONS } from '../shared/slot-prepare-options-model.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
-import { formatCreatedAt, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 const DEFAULT_LIMIT = 200;
 

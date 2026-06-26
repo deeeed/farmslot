@@ -10,13 +10,13 @@ import {
   slotViewPendingReviewDecision,
   slotViewReviewDrawerKey,
 } from './slot-view-model.js';
-import { requestedRunFromHash } from './slot-view-url-state.js';
 import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
 import {
   slotViewDesiredRecipeRunId,
   slotViewSelectedRecipeArtifactPath,
   slotViewSelectedRecipeFlowPath,
 } from './slot-view-recipe-view-model.js';
+import { requestedRunFromHash } from './slot-view-url-state.js';
 
 export function resetSlotViewRecipePanelState(view: SlotViewRecipePresenter): void {
   view._linkedRun = null;

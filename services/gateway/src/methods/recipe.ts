@@ -44,7 +44,6 @@ import {
   resolvePathWithinRemoteBase,
   shellExpressionForRemotePath,
 } from '../core/remote-paths.js';
-import { runHealthCheck } from './slot/check.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
@@ -52,6 +51,8 @@ import {
   listRecipeRunArtifactGroupsForRun,
 } from '../live-recipe/context.js';
 import { getRun, updateRun } from '../runs/store.js';
+
+import { runHealthCheck } from './slot/check.js';
 
 type EmitFn = (event: string, payload: unknown) => void;
 

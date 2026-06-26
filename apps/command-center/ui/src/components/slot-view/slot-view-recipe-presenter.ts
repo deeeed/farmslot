@@ -39,8 +39,8 @@ import {
 } from './slot-view-recipe-renderers.js';
 import {
   refreshSlotViewArtifactMirror,
-  scheduleSlotViewRecipeRunsRefresh,
   resetSlotViewRecipePanelState,
+  scheduleSlotViewRecipeRunsRefresh,
 } from './slot-view-recipe-run-effects.js';
 import { renderRecipeRunsList } from './slot-view-recipe-run-list-renderers.js';
 import {

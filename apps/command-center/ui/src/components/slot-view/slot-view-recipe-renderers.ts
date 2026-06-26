@@ -24,7 +24,6 @@ import {
   slotViewPendingReviewDecision,
   slotViewReviewDrawerKey,
 } from './slot-view-model.js';
-import { requestedRunFromHash } from './slot-view-url-state.js';
 import {
   recipeArtifactPurposeLabel,
   renderGeneratedVisualArtifacts,
@@ -36,6 +35,7 @@ import {
 } from './slot-view-recipe-helpers.js';
 import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
 import { slotViewRecipeRunHelpText } from './slot-view-recipe-view-model.js';
+import { requestedRunFromHash } from './slot-view-url-state.js';
 
 export function renderRecipeFlowsList(
   view: SlotViewRecipePresenter,

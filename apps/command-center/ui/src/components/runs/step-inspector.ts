@@ -1,5 +1,5 @@
 import { html, nothing } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { customElement } from 'lit/decorators.js';
 
 import {
   type FamilyObservabilityArtifact,
@@ -10,10 +10,10 @@ import {
 
 import '../shared/media-lightbox.js';
 import '../shared/step-artifacts.js';
+import '../shared/slot-prepare-options.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
-import '../shared/slot-prepare-options.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { formatDuration, stepStatusColor } from './run-utils.js';

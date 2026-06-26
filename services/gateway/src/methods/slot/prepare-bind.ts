@@ -1,6 +1,6 @@
 import type { SlotPrepareParams } from '@farmslot/protocol';
 
-import { updateSlotStatusIf, type SlotVars } from '../../core/index.js';
+import { type SlotVars,updateSlotStatusIf } from '../../core/index.js';
 import { pushRunRecipeToSlot } from '../../run-completion/artifact-mirror.js';
 import { getRun } from '../../runs/store.js';
 

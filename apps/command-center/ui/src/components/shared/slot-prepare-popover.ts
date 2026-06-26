@@ -3,12 +3,14 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type { SlotHealth } from '@farmslot/protocol';
 
-import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import '../shared/prepare-progress-panel.js';
-import type { PrepareProgressState } from './prepare-progress-model.js';
-import type { SlotPrepareOptionsChangeDetail } from './slot-prepare-options.js';
 import './slot-prepare-options.js';
+
+import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+
+import type { PrepareProgressState } from './prepare-progress-model.js';
 import { navigateToPreparedSlot, runSlotPrepareForRun } from './slot-prepare-client.js';
+import type { SlotPrepareOptionsChangeDetail } from './slot-prepare-options.js';
 import { DEFAULT_SLOT_PREPARE_OPTIONS } from './slot-prepare-options-model.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from './slot-prepare-tracker.js';
 
