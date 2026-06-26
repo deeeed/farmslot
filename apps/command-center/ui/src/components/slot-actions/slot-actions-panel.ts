@@ -31,7 +31,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
-import { SLOT_PREPARE_TIMEOUT_MS } from '../shared/slot-prepare-client.js';
+import { runSlotPrepare } from '../shared/slot-prepare-client.js';
 import '../shared/slot-prepare-options.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
@@ -222,15 +222,7 @@ export class SlotActionsPanel extends LitElement {
     this._confirmTimer.confirm(actionId, fn);
   }
 
-  private _prepare = () =>
-    this._confirm('prepare', () =>
-      this._runAction(
-        Methods.SLOT_PREPARE,
-        { slotId: this.slotId },
-        'prepare',
-        SLOT_PREPARE_TIMEOUT_MS,
-      ),
-    );
+  private _prepare = () => this._confirm('prepare', () => void this._runSlotPrepare());
   private _release = (keepWarm: boolean) =>
     this._confirm(keepWarm ? 'release-warm' : 'release', () =>
       this._runAction(
@@ -275,19 +267,49 @@ export class SlotActionsPanel extends LitElement {
     const branch = this._switchBranch.trim();
     if (!branch) return;
     this._confirm('switch-branch', () =>
-      this._runAction(
-        Methods.SLOT_PREPARE,
-        {
-          slotId: this.slotId,
-          branch,
-          prepareProfile: this._switchProfile || 'attach',
-          strictProfile: this._switchStrictProfile,
-        },
-        'switch-branch',
-        SLOT_PREPARE_TIMEOUT_MS,
-      ),
+      void this._runSlotPrepare('switch-branch', {
+        branch,
+        prepareProfile: this._switchProfile || 'attach',
+        strictProfile: this._switchStrictProfile,
+        label: `Preparing ${this.slotId} for branch ${branch}`,
+      }),
     );
   };
+
+  private async _runSlotPrepare(
+    actionId: 'prepare' | 'switch-branch' = 'prepare',
+    extra: {
+      branch?: string;
+      prepareProfile?: string;
+      strictProfile?: boolean;
+      label?: string;
+    } = {},
+  ): Promise<void> {
+    const reqId = `${actionId}-${crypto.randomUUID()}`;
+    this._output = [];
+    this._running = true;
+    this._exitCode = null;
+    this._requestId = reqId;
+    this._activeActionId = actionId;
+    this._lastRefreshReason = undefined;
+    try {
+      await runSlotPrepare({
+        slotId: this.slotId,
+        requestId: reqId,
+        ...extra,
+      });
+      if (this._running) {
+        this._running = false;
+        this._exitCode = 0;
+        this._activeActionId = '';
+        void this._loadSlot();
+      }
+    } catch (err) {
+      this._running = false;
+      this._activeActionId = '';
+      this._output = [`ERROR: ${err instanceof Error ? err.message : 'Action failed'}`];
+    }
+  }
 
   // ── Configured project.json slot_actions ──
 

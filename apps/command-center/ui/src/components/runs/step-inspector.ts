@@ -13,11 +13,7 @@ import '../shared/step-artifacts.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors } from '../../styles/theme-tokens.js';
-import {
-  type PrepareProfileOption,
-  projectPrepareProfiles,
-} from '../dispatch/dispatch-wizard-draft.js';
-import { requestProjectConfigs } from '../dispatch/dispatch-wizard-loaders.js';
+import '../shared/slot-prepare-options.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
 import { formatDuration, stepStatusColor } from './run-utils.js';
@@ -42,26 +38,6 @@ import { stepInspectorStyles } from './step-inspector-styles.js';
 @customElement('step-inspector')
 export class StepInspector extends StepInspectorState {
   static styles = stepInspectorStyles;
-
-  /** Prepare profiles for retry-with-profile buttons (ADR-037). Lazily loaded
-   * from project config when a replayable prepare step is shown; set directly
-   * in the dev harness to avoid a gateway dependency. */
-  @state() prepareProfiles: PrepareProfileOption[] = [];
-  private _profilesLoadedFor = '';
-
-  private async _loadPrepareProfiles() {
-    const project = this.run?.project ?? '';
-    if (!project || this.step?.name !== 'prepare' || !this.allowReplay) return;
-    if (this._profilesLoadedFor === project) return;
-    this._profilesLoadedFor = project;
-    try {
-      this.prepareProfiles = projectPrepareProfiles(await requestProjectConfigs(), project);
-    } catch (err) {
-      // Profiles only add optional retry buttons; a config fetch failure must
-      // not break the inspector. Plain retry/skip stay available.
-      console.warn('[step-inspector] prepare profiles load failed:', err);
-    }
-  }
 
   render() {
     if (!this.step) return nothing;
@@ -112,26 +88,17 @@ export class StepInspector extends StepInspectorState {
                 <button class="retry-btn" @click=${this._onReplay}>Retry from here</button>
                 ${s.name === 'prepare'
                   ? html`
-                      ${this.prepareProfiles.map(
-                        (profile) => html`
-                          <button
-                            class="retry-btn"
-                            title=${`Retry with prepare profile '${profile.name}'${
-                              profile.label !== profile.name ? ` — ${profile.label}` : ''
-                            }`}
-                            @click=${() => this._onReplayWithProfile(profile.name)}
-                          >
-                            Retry: ${profile.name}${profile.isDefault ? ' ★' : ''}
-                          </button>
-                        `,
-                      )}
-                      <button
-                        class="retry-btn"
-                        @click=${this._onReplaySkipPrepare}
-                        title="Replay with no preparation at all — no health gating, you own slot state (ADR-037)"
-                      >
-                        Retry, Skip Prepare
-                      </button>
+                      <slot-prepare-options
+                        variant="replay"
+                        .project=${this.run?.project ?? ''}
+                        persist-prefs=${false}
+                        show-plan=${false}
+                        ?show-advanced=${false}
+                        compact
+                        @profile-action=${(event: CustomEvent<{ prepareProfile: string }>) =>
+                          this._onReplayWithProfile(event.detail.prepareProfile)}
+                        @skip-prepare-action=${this._onReplaySkipPrepare}
+                      ></slot-prepare-options>
                     `
                   : nothing}
               `
@@ -439,7 +406,6 @@ export class StepInspector extends StepInspectorState {
   }
 
   updated() {
-    void this._loadPrepareProfiles();
     const stepName = this.step?.name ?? '';
     if (stepName !== this._prevStepName) {
       this._prevStepName = stepName;

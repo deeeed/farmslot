@@ -21,17 +21,24 @@ import {
   type SlotPreparePlan,
 } from './slot-prepare-options-model.js';
 
+export type SlotPrepareOptionsVariant = 'operator' | 'dispatch' | 'replay';
+
 export interface SlotPrepareOptionsChangeDetail extends SlotPrepareOptionsState {
   plan: SlotPreparePlan | null;
+  skipPrepare?: boolean;
 }
 
 @customElement('slot-prepare-options')
 export class SlotPrepareOptions extends LitElement {
   @property() project = '';
+  @property() variant: SlotPrepareOptionsVariant = 'operator';
   @property({ attribute: false }) profiles: PrepareProfileOption[] = [];
   @property() prepareProfile = DEFAULT_SLOT_PREPARE_OPTIONS.prepareProfile;
   @property({ type: Boolean }) strictProfile = DEFAULT_SLOT_PREPARE_OPTIONS.strictProfile;
   @property({ type: Boolean }) forcePrepare = DEFAULT_SLOT_PREPARE_OPTIONS.forcePrepare;
+  @property({ type: Boolean }) skipPrepare = false;
+  @property({ type: Boolean, attribute: 'persist-prefs' }) persistPrefs = true;
+  @property({ type: Boolean, attribute: 'show-plan' }) showPlan = true;
   @property({ type: Boolean }) showAdvanced = true;
   @property({ type: Boolean }) compact = false;
   @property({ type: Boolean }) disabled = false;
@@ -209,20 +216,23 @@ export class SlotPrepareOptions extends LitElement {
       if (profiles.length > 0) {
         this.profiles = profiles;
       }
-      const prefs = loadSlotPreparePrefs(this.project);
-      this.prepareProfile = reconcilePrepareProfile(
-        this.profiles,
-        prefs.prepareProfile ?? this.prepareProfile,
-      );
-      if (typeof prefs.strictProfile === 'boolean') this.strictProfile = prefs.strictProfile;
-      if (typeof prefs.forcePrepare === 'boolean') this.forcePrepare = prefs.forcePrepare;
-      this._emitChange();
+      if (this.persistPrefs && this.variant === 'operator') {
+        const prefs = loadSlotPreparePrefs(this.project);
+        this.prepareProfile = reconcilePrepareProfile(
+          this.profiles,
+          prefs.prepareProfile ?? this.prepareProfile,
+        );
+        if (typeof prefs.strictProfile === 'boolean') this.strictProfile = prefs.strictProfile;
+        if (typeof prefs.forcePrepare === 'boolean') this.forcePrepare = prefs.forcePrepare;
+        this._emitChange();
+      }
     } catch (err) {
       console.warn('[slot-prepare-options] profile load failed:', err);
     }
   }
 
   private _plan(): SlotPreparePlan | null {
+    if (!this.showPlan || this.variant !== 'operator') return null;
     if (!this.runBranch && !this.slotBranch) return null;
     return buildSlotPreparePlan({
       runBranch: this.runBranch,
@@ -234,14 +244,18 @@ export class SlotPrepareOptions extends LitElement {
     });
   }
 
-  private _emitChange() {
+  private _emitChange(overrides: Partial<SlotPrepareOptionsChangeDetail> = {}) {
     const detail: SlotPrepareOptionsChangeDetail = {
       prepareProfile: this.prepareProfile,
       strictProfile: this.strictProfile,
       forcePrepare: this.forcePrepare,
       plan: this._plan(),
+      ...(this.variant === 'dispatch' ? { skipPrepare: this.skipPrepare } : {}),
+      ...overrides,
     };
-    saveSlotPreparePrefs(this.project, detail);
+    if (this.persistPrefs && this.variant === 'operator' && this.project) {
+      saveSlotPreparePrefs(this.project, detail);
+    }
     this.dispatchEvent(
       new CustomEvent<SlotPrepareOptionsChangeDetail>('prepare-options-change', {
         bubbles: true,
@@ -251,10 +265,56 @@ export class SlotPrepareOptions extends LitElement {
     );
   }
 
+  private _isProfileSelected(profile: PrepareProfileOption): boolean {
+    if (this.variant === 'dispatch') {
+      if (this.skipPrepare) return false;
+      return this.prepareProfile
+        ? this.prepareProfile === profile.name
+        : profile.isDefault;
+    }
+    return this.prepareProfile === profile.name;
+  }
+
   private _setProfile(name: string) {
-    if (this.disabled || this.prepareProfile === name) return;
+    if (this.disabled) return;
+    if (this.variant === 'replay') {
+      this.dispatchEvent(
+        new CustomEvent<{ prepareProfile: string }>('profile-action', {
+          bubbles: true,
+          composed: true,
+          detail: { prepareProfile: name },
+        }),
+      );
+      return;
+    }
+    if (this.variant === 'dispatch') {
+      const profile = this.profiles.find((entry) => entry.name === name);
+      this._emitChange({
+        prepareProfile: profile?.isDefault ? '' : name,
+        skipPrepare: false,
+      });
+      return;
+    }
+    if (this.prepareProfile === name) return;
     this.prepareProfile = name;
     this._emitChange();
+  }
+
+  private _setDispatchSkipPrepare() {
+    if (this.disabled) return;
+    this._emitChange({ skipPrepare: true });
+  }
+
+  private _setDispatchFullPrepare() {
+    if (this.disabled) return;
+    this._emitChange({ prepareProfile: '', skipPrepare: false });
+  }
+
+  private _emitSkipPrepareAction() {
+    if (this.disabled) return;
+    this.dispatchEvent(
+      new CustomEvent('skip-prepare-action', { bubbles: true, composed: true }),
+    );
   }
 
   private _setStrictProfile(value: boolean) {
@@ -288,7 +348,14 @@ export class SlotPrepareOptions extends LitElement {
         ? this.profiles
         : [{ name: 'attach', label: 'attach', isDefault: false }];
     const plan = this._plan();
-    const recovery = this.lastError
+    const label =
+      this.variant === 'dispatch'
+        ? 'Prepare'
+        : this.variant === 'replay'
+          ? 'Retry prepare profile'
+          : 'Prepare profile';
+    const recovery =
+      this.variant === 'operator' && this.lastError
       ? suggestPrepareRecovery(
           this.lastError,
           this.prepareProfile,
@@ -299,25 +366,61 @@ export class SlotPrepareOptions extends LitElement {
 
     return html`
       <div class="spo-wrap">
-        <div class="spo-label">Prepare profile</div>
+        <div class="spo-label">${label}</div>
         <div class="spo-pill-row">
-          ${profiles.map(
-            (profile) => html`
-              <button
-                class="spo-pill ${this.prepareProfile === profile.name ? 'selected' : ''}"
-                ?disabled=${this.disabled}
-                title=${profile.label}
-                @click=${() => this._setProfile(profile.name)}
-              >
-                ${profile.name}${profile.isDefault ? ' ★' : ''}
-              </button>
-            `,
-          )}
+          ${this.variant === 'dispatch' && profiles.length === 0
+            ? html`
+                <button
+                  class="spo-pill ${!this.skipPrepare ? 'selected' : ''}"
+                  ?disabled=${this.disabled}
+                  @click=${this._setDispatchFullPrepare}
+                >
+                  Full Prepare
+                </button>
+              `
+            : profiles.map(
+                (profile) => html`
+                  <button
+                    class="spo-pill ${this._isProfileSelected(profile) ? 'selected' : ''}"
+                    ?disabled=${this.disabled}
+                    title=${profile.label}
+                    @click=${() => this._setProfile(profile.name)}
+                  >
+                    ${profile.name}${profile.isDefault ? ' ★' : ''}
+                  </button>
+                `,
+              )}
+          ${this.variant === 'dispatch'
+            ? html`
+                <button
+                  class="spo-pill ${this.skipPrepare ? 'selected' : ''}"
+                  ?disabled=${this.disabled}
+                  title="Run no preparation at all — operator owns slot state"
+                  @click=${this._setDispatchSkipPrepare}
+                >
+                  Skip Prepare
+                </button>
+              `
+            : nothing}
+          ${this.variant === 'replay'
+            ? html`
+                <button
+                  class="spo-pill"
+                  ?disabled=${this.disabled}
+                  title="Replay with no preparation at all — no health gating, you own slot state"
+                  @click=${this._emitSkipPrepareAction}
+                >
+                  Skip Prepare
+                </button>
+              `
+            : nothing}
         </div>
-        <div class="spo-help">
-          Default is attach. Strict mode fails fast instead of silently escalating to a heavier
-          profile.
-        </div>
+        ${this.variant === 'operator' && !this.compact
+          ? html`<div class="spo-help">
+              Default is attach. Strict mode fails fast instead of silently escalating to a heavier
+              profile.
+            </div>`
+          : nothing}
         ${plan
           ? html`
               <div class="spo-plan">
@@ -327,7 +430,7 @@ export class SlotPrepareOptions extends LitElement {
               </div>
             `
           : nothing}
-        ${this.showAdvanced
+        ${this.variant === 'operator' && this.showAdvanced
           ? html`
               <button class="spo-advanced-toggle" @click=${() => (this._advancedOpen = !this._advancedOpen)}>
                 ${this._advancedOpen ? '▾' : '▸'} Advanced
@@ -360,7 +463,7 @@ export class SlotPrepareOptions extends LitElement {
                 : nothing}
             `
           : nothing}
-        ${this.lastError
+        ${this.variant === 'operator' && this.lastError
           ? html`
               <div class="spo-error">${this.lastError}</div>
               <div class="spo-recovery">
