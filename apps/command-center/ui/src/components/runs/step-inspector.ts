@@ -27,7 +27,6 @@ import {
   LIST_KEYS,
   LOG_KEYS,
   OUTPUT_KEYS,
-  type ReviewLoopAttempt,
   reviewLoopAttempts,
   stepArtifactsForRunStep,
   stepArtifactUrl,
@@ -35,6 +34,7 @@ import {
   stepDurationLabel,
   stepHasReviewLoop,
 } from './step-inspector-model.js';
+import { renderReviewAttempt } from './step-inspector-review-renderer.js';
 import { StepInspectorState } from './step-inspector-state.js';
 import { stepInspectorStyles } from './step-inspector-styles.js';
 
@@ -303,7 +303,7 @@ export class StepInspector extends StepInspectorState {
               ${timeline.map((segment) => this._renderReviewTimelineSegment(segment))}
             </div>`
           : nothing}
-        ${attempts.map((attempt, index) => this._renderReviewAttempt(attempt, index))}
+        ${attempts.map((attempt, index) => renderReviewAttempt(attempt, index))}
       </div>
     `;
   }
@@ -316,49 +316,6 @@ export class StepInspector extends StepInspectorState {
     return html`<span class="review-loop-segment ${kind === 'worker-fix' ? 'fix' : ''}"
       >${label}${duration ? ` ${duration}` : ''}</span
     >`;
-  }
-
-  private _renderReviewAttempt(attempt: ReviewLoopAttempt, index: number) {
-    const { verdict, unresolvedCount: unresolved, issues, completedAt, loopNumber } = attempt;
-    const color =
-      verdict === 'pass'
-        ? colors.statusOk
-        : verdict === 'issues'
-          ? colors.statusWarn
-          : verdict === 'failed'
-            ? colors.statusFail
-            : colors.textMuted;
-    return html`
-      ${attempt.hasFixDelta
-        ? html`<div class="review-loop-fix">
-            worker fix applied${attempt.fixDeltaPath ? ` · ${attempt.fixDeltaPath}` : ''}
-          </div>`
-        : nothing}
-      <div class="review-loop-row ${verdict}">
-        <div class="review-loop-badge" style="color:${color}">
-          ${verdict === 'pass' ? 'pass' : verdict === 'issues' ? 'issues' : verdict}
-        </div>
-        <div class="review-loop-body">
-          <div>
-            Review attempt ${index + 1}${loopNumber !== index + 1 ? ` (loop ${loopNumber})` : ''}
-            ${unresolved ? ` — ${unresolved} unresolved` : ' — no unresolved findings'}
-          </div>
-          ${completedAt
-            ? html`<div class="review-loop-meta">completed ${completedAt}</div>`
-            : nothing}
-          ${issues.map(
-            (issue) => html`
-              <div class="review-loop-issue">
-                <span class="review-loop-file"
-                  >${issue.file}${issue.line ? `:${issue.line}` : ''}</span
-                >
-                — ${issue.description}
-              </div>
-            `,
-          )}
-        </div>
-      </div>
-    `;
   }
 
   private _onDiagnoseFailure() {
