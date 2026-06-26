@@ -538,7 +538,7 @@ export function appendRecipePlaybackOptions(
   const playbackSlowMs = normalizePlaybackSlowMs(args.playbackSlowMs);
   const options: string[] = [];
   if (playbackSlowMs !== undefined) options.push(`--slow ${playbackSlowMs}`);
-  if (args.recordVideo) options.push('--record');
+  if (args.recordVideo) options.push('--record-video=full-run');
   return options.length > 0 ? `${command} ${options.join(' ')}` : command;
 }
 

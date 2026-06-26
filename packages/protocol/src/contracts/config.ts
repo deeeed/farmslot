@@ -162,7 +162,7 @@ export interface ProjectConfig {
   prepare?: ProjectPrepareConfig;
   /** When true, UI may offer slow playback and gateway appends --slow to recipe_run. */
   recipeRunSupportsPlaybackSlow?: boolean;
-  /** When true, UI may offer video recording and gateway appends --record to recipe_run. */
+  /** When true, UI may offer video recording and gateway appends --record-video to recipe_run. */
   recipeRunSupportsVideoRecording?: boolean;
 }
 
