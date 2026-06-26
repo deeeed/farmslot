@@ -62,6 +62,46 @@ if (opts.status && !allowedStatus.has(opts.status)) usage();
 if (opts.outcome && !allowedOutcome.has(opts.outcome)) usage();
 if (opts.disposition && !allowedDisposition.has(opts.disposition)) usage();
 
+const TERMINAL_STATUS = new Set(['complete', 'blocked', 'failed', 'done']);
+const SIGNAL_PASSTHROUGH_KEYS = ['role', 'contextId', 'prNumber'];
+
+function pickSignalPassthrough(signal) {
+  const out = {};
+  for (const key of SIGNAL_PASSTHROUGH_KEYS) {
+    if (signal[key] !== undefined) out[key] = signal[key];
+  }
+  return out;
+}
+
+function buildSignalUpdate(signal, opts, target, timing, events, now, taskPath) {
+  const isTerminal = Boolean(opts.status && TERMINAL_STATUS.has(opts.status));
+  const base = {
+    ...pickSignalPassthrough(signal),
+    step: target.label,
+    checklistTiming: {
+      schemaVersion: 1,
+      source: timing.source || path.basename(taskPath),
+      events,
+    },
+    timestamp: now,
+  };
+  if (isTerminal) {
+    return {
+      ...base,
+      status: opts.status,
+      ...(opts.outcome ? { outcome: opts.outcome } : {}),
+      ...(opts.disposition ? { disposition: opts.disposition } : {}),
+      ...(opts.reason ? { reason: opts.reason } : {}),
+    };
+  }
+  // In-progress marks always emit canonical protocol state; never preserve hand-edited
+  // values like status "working" or outcome "in_progress" from TASK.md confusion.
+  return {
+    ...base,
+    status: 'running',
+  };
+}
+
 function atomicWrite(file, content, mode) {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true });
@@ -133,16 +173,7 @@ if (
   events.push({ stepNumber: target.stepNumber, label: target.label, checkedAt: now });
 }
 
-const next = {
-  ...signal,
-  status: opts.status || signal.status || 'running',
-  ...(opts.outcome ? { outcome: opts.outcome } : {}),
-  ...(opts.disposition ? { disposition: opts.disposition } : {}),
-  ...(opts.reason ? { reason: opts.reason } : {}),
-  step: target.label || signal.step,
-  checklistTiming: { schemaVersion: 1, source: timing.source || path.basename(taskPath), events },
-  timestamp: now,
-};
+const next = buildSignalUpdate(signal, opts, target, timing, events, now, taskPath);
 
 atomicWrite(signalPath, `${JSON.stringify(next, null, 2)}\n`, 0o644);
 console.log(`marked ${stepNumber}: ${target.label}`);

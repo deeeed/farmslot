@@ -42,6 +42,28 @@ result = spawnSync(process.execPath, [helper, task, signal, '1', '--status', 'co
 });
 assert.equal(result.status, 2);
 
+const poisonDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-poison-'));
+const poisonTask = path.join(poisonDir, 'TASK.md');
+const poisonSignal = path.join(poisonDir, 'SIGNAL.json');
+writeFileSync(poisonTask, ['- [ ] Gate step'].join('\n'));
+writeFileSync(
+  poisonSignal,
+  JSON.stringify({
+    status: 'working',
+    outcome: 'in_progress',
+    step: 'stale',
+    timestamp: '2026-06-26T19:00:00.000Z',
+  }),
+);
+result = spawnSync(process.execPath, [helper, poisonTask, poisonSignal, '1'], {
+  encoding: 'utf8',
+});
+assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(readFileSync(poisonSignal, 'utf8'));
+assert.equal(parsed.status, 'running');
+assert.equal(parsed.outcome, undefined);
+assert.equal(parsed.checklistTiming.events.length, 1);
+
 result = spawnSync(process.execPath, [helper, task, signal, '--help'], { encoding: 'utf8' });
 assert.equal(result.status, 0);
 assert.match(result.stdout, /Use the visible 1-based checklist step number/);
