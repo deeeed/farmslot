@@ -70,8 +70,8 @@ function benchHookWriter(repo, runtimeDir, slotId, iterations = 5) {
   return { installMs, samples, median };
 }
 
-function readHookTail(repo) {
-  const logPath = path.join(repo, '.observability', 'hooks.jsonl');
+function readHookTail(repo, runtimeDir) {
+  const logPath = path.join(repo, runtimeDir, '.observability', 'hooks.jsonl');
   if (!fs.existsSync(logPath)) return [];
   return fs
     .readFileSync(logPath, 'utf8')
@@ -86,7 +86,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2));
   const hostname = os.hostname().replace(/\.local$/, '');
   const bench = benchHookWriter(args.repo, args.runtimeDir, args.slotId);
-  const tail = readHookTail(args.repo);
+  const tail = readHookTail(args.repo, args.runtimeDir);
   const tmuxPaneSeen = tail.some((row) => typeof row.tmuxPane === 'string' && row.tmuxPane.length > 0);
   const report = {
     schemaVersion: 1,
