@@ -102,7 +102,11 @@ export async function slotPrepare(
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
     const result = await slotPrepareInner(params, stream, signal, opts);
-    stream.complete(0);
+    if (!result.prepared) {
+      stream.complete(1, `Slot ${params.slotId} is disabled`);
+    } else {
+      stream.complete(0);
+    }
     return { ...result, requestId };
   } catch (error) {
     prepareError = error;

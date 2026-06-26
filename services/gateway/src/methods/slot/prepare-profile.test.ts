@@ -77,11 +77,15 @@ test('deps sentinel commands target the runtime dir and fingerprint harness inpu
   assert.match(write, /\.agent\/deps\.lock-hash/);
   assert.match(write, /package\.json/);
   assert.match(write, /yarn\.lock/);
+  assert.match(write, /command -v node/);
   assert.match(write, /node -e/);
+  assert.match(write, /sha256sum/);
   assert.match(write, /rm -f/); // no deps inputs → sentinel removed, deps_current stays failing
   const fingerprint = buildDepsFingerprintCommand('/repo');
+  assert.match(fingerprint, /command -v node/);
   assert.match(fingerprint, /node -e/);
   assert.match(fingerprint, /\.tool-versions/);
+  assert.match(fingerprint, /shasum -a 256/);
 });
 
 test('selectPrepareProfile walks multi-hop fallback chain on failing checks', async () => {

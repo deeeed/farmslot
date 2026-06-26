@@ -104,6 +104,17 @@ export interface RequirementCheckContext {
 // @farmslot/recipe-harness/runtime/deps-readiness DEPS_INPUTS.
 const DEPS_FINGERPRINT_INPUTS = ['package.json', 'yarn.lock', '.yarnrc.yml', '.tool-versions'];
 
+// Lockfiles hashed when Node is unavailable on the slot (legacy fallback).
+const LOCKFILE_CANDIDATES = [
+  'yarn.lock',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'bun.lockb',
+  'Gemfile.lock',
+  'Cargo.lock',
+  'go.sum',
+];
+
 export function depsSentinelPath(runtimeDir: string): string {
   return `${runtimeDir}/deps.lock-hash`;
 }
@@ -124,8 +135,34 @@ function depsFingerprintSnippet(): string {
   return `node -e ${shellQuote(DEPS_FINGERPRINT_NODE)}`;
 }
 
+function lockfileHashSnippet(): string {
+  // `cat $files` is deliberately unquoted: word splitting is safe because
+  // LOCKFILE_CANDIDATES are space-free by construction.
+  return [
+    `files=""`,
+    `for f in ${LOCKFILE_CANDIDATES.join(' ')}; do [ -f "$f" ] && files="$files $f"; done`,
+    `if [ -n "$files" ]; then`,
+    `  if command -v sha256sum >/dev/null 2>&1; then cat $files | sha256sum; else cat $files | shasum -a 256; fi | cut -d' ' -f1`,
+    `fi`,
+  ].join('\n');
+}
+
+/** Prefer harness fingerprint via Node; fall back to lockfile hash when Node is absent. */
+function depsHashSnippet(): string {
+  return [
+    `if command -v node >/dev/null 2>&1; then`,
+    `  ${depsFingerprintSnippet()}`,
+    `else`,
+    lockfileHashSnippet()
+      .split('\n')
+      .map((line) => `  ${line}`)
+      .join('\n'),
+    `fi`,
+  ].join('\n');
+}
+
 export function buildDepsFingerprintCommand(repo: string): string {
-  return `cd ${shellQuote(repo)} && ${depsFingerprintSnippet()}`;
+  return `cd ${shellQuote(repo)} && ${depsHashSnippet()}`;
 }
 
 /**
@@ -138,7 +175,9 @@ export function buildDepsSentinelWriteCommand(repo: string, runtimeDir: string):
   return [
     `cd ${shellQuote(repo)}`,
     `mkdir -p ${shellQuote(runtimeDir)}`,
-    `hash=$(${depsFingerprintSnippet()})`,
+    `hash=$(`,
+    depsHashSnippet(),
+    `)`,
     `if [ -n "$hash" ]; then echo "$hash" > ${shellQuote(sentinel)}; else rm -f ${shellQuote(sentinel)}; fi`,
   ].join(' && ');
 }
