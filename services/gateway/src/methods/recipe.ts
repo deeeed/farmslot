@@ -761,8 +761,13 @@ export async function recipeRerun(
     throw new Error(`Slot ${slotId} not found`);
   }
   if (!canRecipeRerunOnSlot(slotStatus, runId, run.slotId)) {
+    if (slotStatus.agent === 'working') {
+      throw new Error(
+        `Slot ${slotId} has a live worker — wait until it finishes before replaying the recipe`,
+      );
+    }
     throw new Error(
-      `Slot ${slotId} is not in review-gate for this run ` +
+      `Slot ${slotId} is not ready for recipe replay on this run ` +
         `(phase=${slotStatus.phase ?? '-'}, current run=${slotStatus.currentRunId?.slice(0, 8) ?? '-'})`,
     );
   }
@@ -890,8 +895,12 @@ export async function recipeRerun(
           },
         });
         publishLiveRecipeContext();
+        const gatedRecordVideo = recipeRunOptionsForProject(projectJson, {
+          playbackSlowMs,
+          recordVideo,
+        }).recordVideo;
         if (
-          recordVideo &&
+          gatedRecordVideo &&
           !(await recipeRunHasVideoArtifact(slotVars, slotRecipeRunArtifactsDir))
         ) {
           emit(Events.SCRIPT_OUTPUT, {

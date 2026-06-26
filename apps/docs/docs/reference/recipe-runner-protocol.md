@@ -147,3 +147,93 @@ Every successful or failed run should emit the same portable package shape:
 
 Farmslot review and replay tools consume this package without project-specific UI
 code.
+
+## Command Center replay options
+
+Command Center may re-run a bound recipe against a warm slot through
+`hooks.recipe_run`. Optional replay flags are **capability-gated** in
+`project.json` and appended by the gateway only when the project opts in.
+
+### Project capability flags
+
+| Field | When `true` | Gateway may append |
+| ----- | ----------- | ------------------ |
+| `recipe_run_supports_playback_slow` | Runner honors slowed live playback | `--slow <ms>` (`100`–`60000`) |
+| `recipe_run_supports_video_recording` | Runner honors harness video recording | `--record-video=full-run` |
+
+When a flag is absent or `false`, the gateway strips the corresponding UI
+request and may emit a warning instead of failing the replay.
+
+### Canonical video contract (Farmslot harness)
+
+Video replay uses the **`@farmslot/recipe-harness`** contract — not ad-hoc
+platform recorders (`simctl recordVideo`, `adb screenrecord`, etc.) as the
+primary path.
+
+**Gateway → hook command suffix:**
+
+```bash
+--record-video=full-run
+```
+
+**Harness CLI** (direct runner invocation):
+
+```bash
+recipe-harness run recipe.json \
+  --artifacts-dir artifacts/run \
+  --action-manifest path/to/manifest.json \
+  --record-video            # means full-run
+# or explicitly:
+  --record-video=full-run
+```
+
+**Harness API:**
+
+```ts
+runner.run({
+  artifactsDir: 'artifacts/run',
+  recordVideo: 'full-run', // or false / omitted
+});
+```
+
+**Behavior when enabled:**
+
+1. Resolve one recording target (CLI flags or project `RecordingTargetProvider`).
+2. Run `capture-helper doctor --json` on macOS; fail with actionable diagnostics when unavailable.
+3. Record one whole-recipe MP4 for the run duration.
+4. Write `videos/recipe-run.mp4` under `{{artifacts_dir}}`.
+5. Register the video in `artifact-manifest.json` with `type: "video"`.
+
+### Project runner compatibility layer
+
+Farmslot-compatible project runners sit **on top of** the harness contract and
+should accept the gateway-appended flags their `recipe_run` hook receives.
+
+Rules:
+
+1. **Shell hooks** must forward unknown trailing replay flags to the underlying
+   runner (do not parse-and-drop gateway suffixes).
+2. **Project CLIs** should accept `--record-video=full-run` and may accept
+   `--record` as a legacy alias mapping to `full-run`.
+3. **Target resolution** is project-owned via `RecordingTargetProvider` (browser
+   PID, simulator window, etc.); capture itself stays in harness/capture-helper.
+
+### Slow playback
+
+When `recipe_run_supports_playback_slow: true`, Command Center may append
+`--slow <ms>` for human-readable live playback. The gateway accepts
+`100`–`60000` milliseconds. Projects that do not opt in keep replay commands
+free of playback flags.
+
+### macOS capture-helper requirements
+
+On macOS slots, harness recording uses the Farmslot-installed `capture-helper`
+provider:
+
+- `capture-helper doctor --json` for setup/permission checks
+- stable target resolution for the slot browser or simulator window
+- MP4 artifacts under `{{artifacts_dir}}/videos/`
+
+Non-macOS runners may use a native recorder only when they still emit the same
+Recipe v1 artifact package contract (`artifact-manifest.json` entry for the
+video, non-empty MP4, positive duration when `ffprobe` is available).

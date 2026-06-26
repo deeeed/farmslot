@@ -24,9 +24,21 @@ export function familyWarmSlotRerunCheck(
   const slot = familySlotForRun(slots, run.runId);
   if (!slot) return { ok: false, reason: 'slot not found (may have been released)' };
   if (!canSlotAcceptRecipeRerun(slot, { id: run.runId, slotId: run.slotId })) {
+    if (slot.agent === 'working') {
+      return {
+        ok: false,
+        reason: `slot ${slot.slot} has a live worker (${slot.lifecycle}${slot.phase ? ' / ' + slot.phase : ''})`,
+      };
+    }
+    if (slot.currentRunId && slot.currentRunId !== run.runId) {
+      return {
+        ok: false,
+        reason: `slot ${slot.slot} is bound to run ${slot.currentRunId.slice(0, 8)}, not ${run.runId.slice(0, 8)}`,
+      };
+    }
     return {
       ok: false,
-      reason: `slot ${slot.slot} not in review-gate (${slot.lifecycle}${slot.phase ? ' / ' + slot.phase : ''})`,
+      reason: `slot ${slot.slot} is not ready for recipe replay (${slot.lifecycle}${slot.phase ? ' / ' + slot.phase : ''})`,
     };
   }
   return { ok: true, slotId: slot.slot };

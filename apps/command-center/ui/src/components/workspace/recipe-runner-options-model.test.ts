@@ -39,3 +39,31 @@ test('recipeRunnerUiOptionsForProject resolves by project name', () => {
     true,
   );
 });
+
+test('recipeRunnerUiOptions enables video-only replay controls', () => {
+  assert.deepEqual(
+    recipeRunnerUiOptions({
+      recipeRunSupportsVideoRecording: true,
+    }),
+    {
+      playbackSlowMs: 0,
+      showPlayback: false,
+      showArtifactAction: true,
+      recordVideo: true,
+    },
+  );
+});
+
+test('recipeRunnerUiOptions enables playback-only replay controls', () => {
+  assert.deepEqual(
+    recipeRunnerUiOptions({
+      recipeRunSupportsPlaybackSlow: true,
+    }),
+    {
+      playbackSlowMs: DEFAULT_RECIPE_PLAYBACK_SLOW_MS,
+      showPlayback: true,
+      showArtifactAction: false,
+      recordVideo: false,
+    },
+  );
+});

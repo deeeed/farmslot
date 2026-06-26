@@ -92,7 +92,7 @@
     },
     "recipe_run_supports_video_recording": {
       "type": "boolean",
-      "description": "Opt in when hooks.recipe_run supports the gateway-appended --record-video replay flag. Replay surfaces request video by default for supporting projects; projects that omit this keep commands backwards-compatible.",
+      "description": "Opt in when hooks.recipe_run supports the gateway-appended --record-video=full-run replay flag. Replay surfaces request video by default for supporting projects; projects that omit this keep commands backwards-compatible.",
       "default": false
     },
     "branch_namespace": {

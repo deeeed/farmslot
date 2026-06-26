@@ -105,7 +105,9 @@ export function renderRecipeExecutionOverlay(
                     slotId=${view.slotId}
                     recipeArtifactPath=${view._recipeExecutionArtifactPath}
                     recipeRunId=${view._recipeExecutionRecipeRunId}
-                    showArtifactAction
+                    .playbackSlowMs=${view._recipeRunnerUiOptions.playbackSlowMs}
+                    .recordVideo=${view._recipeRunnerUiOptions.recordVideo}
+                    .showArtifactAction=${view._recipeRunnerUiOptions.showArtifactAction}
                     @running-change=${(event: CustomEvent<boolean>) => {
                       if (!event.detail) {
                         void view._refreshLinkedRun(view._linkedRun?.status ?? null);
