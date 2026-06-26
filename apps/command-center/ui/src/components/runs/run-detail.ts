@@ -684,7 +684,9 @@ export class RunDetail extends RunDetailState {
       _buildRerunAlongsideHref: buildRerunAlongsideHref,
       _activateOnSlot: (run) => activateRunOnSlot(run.id, run.slotId ?? ''),
       _switchSlotToRunBranch: (run) =>
-        switchSlotToRunBranch(run.id, run.slotId ?? '', run.branch ?? null).catch((err) => {
+        switchSlotToRunBranch(run.id, run.slotId ?? '', run.branch ?? null, false, {
+          slotBranch: getState().fleet?.slots.find((slot) => slot.slot === run.slotId)?.branch,
+        }).catch((err) => {
           // Targets the run's own slot (compatible, recipe present) so failure
           // is rare; surface it without an alert.
           console.error('[run-detail] switch slot to run branch failed:', err);

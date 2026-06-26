@@ -565,7 +565,7 @@ export class SlotLoadRunModal extends LitElement {
                 falling back to full deps when health is not ready.
               </span>
             </div>
-            ${this._actionBusy && this._prepareState
+            ${this._prepareState
               ? html`<div class="slrm-progress">
                   <prepare-progress-panel .state=${this._prepareState} compact></prepare-progress-panel>
                 </div>`

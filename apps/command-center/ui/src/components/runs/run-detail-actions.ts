@@ -275,8 +275,8 @@ export async function activateRunOnSlot(runId: string, slotId: string): Promise<
 
 /**
  * Warm-switch a slot onto this run's branch and bind the run to it, then open
- * slot-view. Re-uses slot.prepare with the cheap `attach` profile (checkout
- * only — no merge-main, no reinstall; dev server stays warm and hot-reloads).
+ * slot-view. Uses strict slot.prepare (default attach profile; bind-only when
+ * slotBranch already matches — no merge-main, no silent profile escalation).
  * Unlike activateRunOnSlot this does NOT re-drive the run pipeline, so the run
  * record is left intact; the recipe-replay button in slot-view becomes
  * available because the slot is bound to this run.

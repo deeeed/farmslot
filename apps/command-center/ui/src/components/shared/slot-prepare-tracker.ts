@@ -3,8 +3,8 @@ import { Events } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 
 import {
+  appendPrepareOutput,
   createPrepareProgressState,
-  ingestPrepareOutputLine,
   type PrepareProgressState,
   recordPrepareStep,
 } from './prepare-progress-model.js';
@@ -13,6 +13,7 @@ type Listener = () => void;
 
 const sessionsBySlot = new Map<string, PrepareProgressState>();
 const listeners = new Set<Listener>();
+const clearTimersBySlot = new Map<string, number>();
 
 let wired = false;
 const requestIds = new Set<string>();
@@ -38,8 +39,7 @@ export function subscribeSlotPrepareTracker(listener: Listener): () => void {
 }
 
 export function activeSlotPrepare(slotId: string): PrepareProgressState | null {
-  const session = sessionsBySlot.get(slotId);
-  return session?.running ? session : null;
+  return sessionsBySlot.get(slotId) ?? null;
 }
 
 export function beginSlotPrepareSession(args: {
@@ -48,16 +48,33 @@ export function beginSlotPrepareSession(args: {
   label?: string;
 }): PrepareProgressState {
   ensureSlotPrepareTrackerWired();
+  cancelSlotPrepareSessionClear(args.slotId);
   const state = createPrepareProgressState(args);
   setSession(state);
   return state;
 }
 
 export function clearSlotPrepareSession(slotId: string): void {
+  cancelSlotPrepareSessionClear(slotId);
   const prev = sessionsBySlot.get(slotId);
   if (prev) requestIds.delete(prev.requestId);
   sessionsBySlot.delete(slotId);
   notify();
+}
+
+export function scheduleSlotPrepareSessionClear(slotId: string, delayMs: number): void {
+  cancelSlotPrepareSessionClear(slotId);
+  const timer = window.setTimeout(() => {
+    clearTimersBySlot.delete(slotId);
+    clearSlotPrepareSession(slotId);
+  }, delayMs);
+  clearTimersBySlot.set(slotId, timer);
+}
+
+function cancelSlotPrepareSessionClear(slotId: string): void {
+  const timer = clearTimersBySlot.get(slotId);
+  if (timer) clearTimeout(timer);
+  clearTimersBySlot.delete(slotId);
 }
 
 function ensureSlotPrepareTrackerWired(): void {
@@ -71,7 +88,7 @@ function ensureSlotPrepareTrackerWired(): void {
     const lines = data.data.split('\n').filter((line) => line.length > 0);
     let next = session;
     for (const line of lines) {
-      next = ingestPrepareOutputLine(next, line);
+      next = appendPrepareOutput(next, line);
     }
     setSession(next);
   });

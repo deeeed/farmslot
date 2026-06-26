@@ -58,6 +58,7 @@ import {
 import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDepsSentinelWriteCommand,
+  checkPrepareRequirement,
   type ResolvedPrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
@@ -421,7 +422,7 @@ async function slotPrepareInner(
         'profile',
         `[${candidate}] ${result.requirement} ${result.ok ? 'ok' : 'fail'} — ${result.detail}`,
       ),
-    undefined,
+    checkPrepareRequirement,
     { strict: params.strictProfile === true },
   );
   for (const fb of profileSelection.fallbacks) {

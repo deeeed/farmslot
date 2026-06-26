@@ -5,7 +5,7 @@ import { gateway } from '../../gateway-client.js';
 
 import {
   beginSlotPrepareSession,
-  clearSlotPrepareSession,
+  scheduleSlotPrepareSessionClear,
 } from './slot-prepare-tracker.js';
 
 /** Cover metamask-mobile-farm prepare_deps_s (5400s) with headroom. */
@@ -30,7 +30,7 @@ export async function runSlotPrepare(input: RunSlotPrepareInput): Promise<SlotPr
     );
   } finally {
     // Keep the session visible briefly after completion for the banner/panel.
-    window.setTimeout(() => clearSlotPrepareSession(input.slotId), 8_000);
+    scheduleSlotPrepareSessionClear(input.slotId, 8_000);
   }
 }
 
