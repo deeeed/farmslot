@@ -21,6 +21,10 @@ import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { CopyFeedbackTimer } from '../shared/copy-feedback-model.js';
 import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
 import type { FileEntry } from '../workspace/file-tree.js';
+import {
+  recipeRunnerUiOptions,
+  type RecipeRunnerUiOptions,
+} from '../workspace/recipe-runner-options-model.js';
 
 import {
   type CheckResult,
@@ -132,6 +136,7 @@ export abstract class SlotViewState extends LitElement {
   @state() _revealLine = 0;
   @state() _showInlineComments = false;
   @state() _linkedRun: Run | null = null;
+  @state() _recipeRunnerUiOptions: RecipeRunnerUiOptions = recipeRunnerUiOptions(null);
   @state() _historyOpen = false;
   @state() _historyRunId = '';
   @state() _loadRunOpen = false;

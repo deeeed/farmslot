@@ -11,6 +11,7 @@ import { subscribe } from '../../state.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 
 import type { SlotView } from './slot-view.js';
+import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
 import { loadLayout } from './slot-view-layout.js';
 import { EDITOR_PREF_KEY, type EditorId, EDITORS } from './slot-view-model.js';
 
@@ -27,6 +28,7 @@ export function connectSlotView(view: SlotView): void {
   restoreSlotViewLayout(view);
 
   if (view.slotId) view._loadSlot();
+  void refreshSlotViewRecipeRunnerOptions(view);
 
   // Re-load slot when fleet data arrives (e.g., after page refresh)
   view._unsubState = subscribe((state) => {

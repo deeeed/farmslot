@@ -4,6 +4,7 @@ import type { ResourcePanel } from '../resources/resource-panel.js';
 
 import type { SlotView } from './slot-view.js';
 import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
+import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
 
 export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unknown>): void {
   // Auto-focus new file input when prompt opens
@@ -110,6 +111,9 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
     view._scheduleUrlRestoreRetry(requestedFile, 1);
   }
   // Auto-open review panel when a review gate decision becomes pending
+  if (changed.has('_linkedRun') || changed.has('_slot')) {
+    void refreshSlotViewRecipeRunnerOptions(view);
+  }
   if (changed.has('_linkedRun')) {
     const hasSlotRecipeHost = !!createSlotViewRecipeHostEntry(view._linkedRun, view.slotId);
     const readyDecision = view._readyGateDecision();

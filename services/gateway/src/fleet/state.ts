@@ -685,6 +685,9 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         const backlog = normalizeRawProjectBacklog(raw.backlog);
         const prepare = normalizeRawProjectPrepare(raw.prepare, raw.name || dir);
         const publicationReview = normalizePublicationReview(raw);
+        const recipeRunSupportsPlaybackSlow = raw.recipe_run_supports_playback_slow === true;
+        const recipeRunSupportsVideoRecording =
+          raw.recipe_run_supports_video_recording === true;
         projects.push({
           name: raw.name || dir,
           repoUrl: raw.repo_url || '',
@@ -787,6 +790,8 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
           ...(backlog ? { backlog } : {}),
           ...(prepare ? { prepare } : {}),
           ...(publicationReview ? { publicationReview } : {}),
+          ...(recipeRunSupportsPlaybackSlow ? { recipeRunSupportsPlaybackSlow: true } : {}),
+          ...(recipeRunSupportsVideoRecording ? { recipeRunSupportsVideoRecording: true } : {}),
         });
       } catch {
         /* skip invalid projects */

@@ -533,6 +533,10 @@ function renderRecipeHostBody(
                 recipeArtifactPath=${selectedFlowArtifactPath}
                 recipeRunId=${selectedRecipeRunId}
                 runLabel=${replayLabel}
+                .playbackSlowMs=${view._recipeRunnerUiOptions.playbackSlowMs}
+                .recordVideo=${view._recipeRunnerUiOptions.recordVideo}
+                ?showPlayback=${view._recipeRunnerUiOptions.showPlayback}
+                ?showArtifactAction=${view._recipeRunnerUiOptions.showArtifactAction}
                 @running-change=${(event: CustomEvent<boolean>) => {
                   if (!event.detail) void view._refreshLinkedRun(view._linkedRun?.status ?? null);
                 }}

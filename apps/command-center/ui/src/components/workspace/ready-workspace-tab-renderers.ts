@@ -5,6 +5,7 @@ import type { ArtifactRef, PublicationTarget, ReadyGatePayload } from '@farmslot
 
 import type { ReadyInputArtifact } from './ready-workspace-inputs.js';
 import { renderReadyWorkspaceMarkdown } from './ready-workspace-markdown.js';
+import type { RecipeRunnerUiOptions } from './recipe-runner-options-model.js';
 import { VIDEO_EXTS } from './workspace-artifacts.js';
 
 export function renderReadyPrPreviewTab(input: {
@@ -72,6 +73,7 @@ export function renderReadyRecipeTab(input: {
   runId: string;
   slotId: string;
   recovering: boolean;
+  recipeRunnerUiOptions: RecipeRunnerUiOptions;
   setRecipeView: (view: 'graph' | 'json') => void;
 }) {
   const { payload } = input;
@@ -97,8 +99,10 @@ export function renderReadyRecipeTab(input: {
         slotId=${input.slotId}
         runLabel="Run live"
         description="Runs this recipe on the warm ready workspace without covering the stream. Follow logs here, then inspect generated artifacts from the new attempt."
-        .playbackSlowMs=${2000}
-        showPlayback
+        .playbackSlowMs=${input.recipeRunnerUiOptions.playbackSlowMs}
+        .recordVideo=${input.recipeRunnerUiOptions.recordVideo}
+        ?showPlayback=${input.recipeRunnerUiOptions.showPlayback}
+        ?showArtifactAction=${input.recipeRunnerUiOptions.showArtifactAction}
         ?disabled=${input.recovering}
       ></recipe-runner-controls>
       ${input.recipeView === 'graph'

@@ -15,6 +15,10 @@ import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import type { ReviewLoopDraft } from './ready-workspace-modal-renderers.js';
 import { VerticalSplitResizer } from './vertical-split-resizer.js';
 import type { ArtifactFilter, ArtifactTypeFilter } from './workspace-artifacts.js';
+import {
+  recipeRunnerUiOptions,
+  type RecipeRunnerUiOptions,
+} from './recipe-runner-options-model.js';
 import type { ReadyWorkspaceTab } from './workspace-url-state.js';
 
 type TabId = ReadyWorkspaceTab;
@@ -38,6 +42,8 @@ export abstract class ReadyWorkspaceState extends LitElement {
   @property({ type: Boolean }) hideRecipeTab = false;
   @property({ attribute: false }) recipeRuns: RecipeRunArtifactGroup[] = [];
   @property() selectedRecipeRunId = '';
+
+  @state() _recipeRunnerUiOptions: RecipeRunnerUiOptions = recipeRunnerUiOptions(null);
 
   @state() _acting = false;
   @state() _pendingConfirm: string | null = null;
