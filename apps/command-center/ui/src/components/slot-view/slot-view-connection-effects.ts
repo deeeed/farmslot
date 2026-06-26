@@ -38,10 +38,22 @@ export function connectSlotView(view: SlotView): void {
     if (state.fleet) view._requestSlotSwitcherUpdate(state.fleet.slots);
   });
 
+  // Track linked run for this slot
+  let prevRunStatus: string | null = null;
+  const updateLinkedRun = () => {
+    void view._refreshLinkedRun(prevRunStatus).then((nextStatus) => {
+      prevRunStatus = nextStatus;
+    });
+  };
+
   view._unsubSlot = gateway.subscribe(Events.SLOT_CHANGED, (payload: unknown) => {
     const slot = payload as SlotStatus;
     if (slot.slot === view.slotId) {
+      const prevBoundRunId = view._slot?.currentRunId ?? null;
       view._slot = slot;
+      if ((slot.currentRunId ?? null) !== prevBoundRunId) {
+        updateLinkedRun();
+      }
     }
   });
 
@@ -61,13 +73,6 @@ export function connectSlotView(view: SlotView): void {
     }
   });
 
-  // Track linked run for this slot
-  let prevRunStatus: string | null = null;
-  const updateLinkedRun = () => {
-    void view._refreshLinkedRun(prevRunStatus).then((nextStatus) => {
-      prevRunStatus = nextStatus;
-    });
-  };
   updateLinkedRun();
   view._unsubRunUpdated = gateway.subscribe(Events.RUN_UPDATED, updateLinkedRun);
   view._unsubRunCreated = gateway.subscribe(Events.RUN_CREATED, updateLinkedRun);

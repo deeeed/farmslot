@@ -60,6 +60,19 @@ test('selectSlotViewLinkedRun keeps URL pin when slot is not bound elsewhere', (
   );
 });
 
+test('selectSlotViewLinkedRun avoids slot-history fallback while URL pin hydrates', () => {
+  const history = stubRun('history-run', 'mm-5');
+  assert.equal(
+    selectSlotViewLinkedRun({
+      requestedRunId: 'pinned-run',
+      slotBoundRunId: null,
+      cachedRun: null,
+      rpcRun: history,
+    }),
+    null,
+  );
+});
+
 test('isSlotViewTerminalRunStatus recognizes terminal run statuses only', () => {
   assert.equal(isSlotViewTerminalRunStatus('done'), true);
   assert.equal(isSlotViewTerminalRunStatus('failed'), true);

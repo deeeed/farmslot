@@ -10,6 +10,7 @@ import {
   canRecipeRerunOnSlot,
   expandRecipeProjectHookTemplate,
   expandRecipeRunHookTemplate,
+  recipeReplayHealthReady,
   recipeRunOptionsForProject,
   recipeRunUnsupportedOptionWarnings,
   resolveRecipeArtifactRootForSlot,
@@ -461,4 +462,14 @@ test('canRecipeRerunOnSlot rejects held slots when currentRunId is missing', () 
     canRecipeRerunOnSlot({ lifecycle: 'held', phase: 'ci-watch' }, 'run-1', 'slot-1'),
     false,
   );
+});
+
+test('recipeReplayHealthReady accepts any response when ready indicator is unset', () => {
+  assert.equal(recipeReplayHealthReady('WalletView', undefined), true);
+  assert.equal(recipeReplayHealthReady('', undefined), false);
+});
+
+test('recipeReplayHealthReady matches project ready indicator exactly', () => {
+  assert.equal(recipeReplayHealthReady('WalletView', 'WalletView'), true);
+  assert.equal(recipeReplayHealthReady('LoginView', 'WalletView'), false);
 });

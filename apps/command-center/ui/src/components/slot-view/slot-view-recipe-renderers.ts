@@ -661,7 +661,48 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
   const showRecipeLoading = Boolean(
     view._linkedRun && view._recipeRunsLoading && !recipeHost && !reviewDecision && !readyDecision,
   );
-  if (!view._linkedRun) return nothing;
+  const requestedRunId = requestedRunFromHash();
+  if (!view._linkedRun) {
+    if (!requestedRunId) return nothing;
+    const drawerKey = slotViewLoadedRunDrawerKey(requestedRunId);
+    return renderSlotRecipeDrawer({
+      reviewPanelOpen: view._reviewPanelOpen,
+      reviewFullWidth: view._reviewFullWidth,
+      reviewPanelWidth: view._reviewPanelWidth,
+      resizing: view._resizing,
+      drawerLabel: 'RECIPE',
+      collapsedTitle: 'Open recipe',
+      recipeExecutionOverlay: nothing,
+      bodyContent: html`
+        <div style="padding:12px; display:flex; flex-direction:column; gap:${spacing.sm};">
+          <div
+            style="font-size:${fonts.sizeXs}; text-transform:uppercase; letter-spacing:0.08em; color:${colors.textMuted};"
+          >
+            Recipe
+          </div>
+          <div style="font-size:${fonts.sizeSm}; color:${colors.textSecondary};">
+            Loading run ${requestedRunId.slice(0, 8)} and recipe evidence…
+          </div>
+        </div>
+      `,
+      onResizeStart: (event) => view._onResizeStart('review', event),
+      onToggleFullWidth: () => {
+        view._reviewFullWidth = !view._reviewFullWidth;
+        view._saveLayout();
+      },
+      onClose: () => {
+        view._reviewFullWidth = false;
+        view._reviewPanelOpen = false;
+        view._dismissedReviewDrawerKey = drawerKey;
+        view._saveLayout();
+      },
+      onOpen: () => {
+        view._reviewPanelOpen = true;
+        if (drawerKey === view._dismissedReviewDrawerKey) view._dismissedReviewDrawerKey = '';
+        view._saveLayout();
+      },
+    });
+  }
   // Hide the drawer entirely for runs whose worker won't ever produce a
   // recipe (terminal states with neither a recipe host nor a review).
   // Without this gate, a long-completed `done` or `cancelled` run shows a

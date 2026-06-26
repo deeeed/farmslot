@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
   Events,
   Methods,
+  type ConfigProjectsResult,
   type RecipeCancelResult,
   type RecipeCommandResult,
   type RecipeRerunParams,
@@ -11,12 +12,18 @@ import {
 } from '@farmslot/protocol';
 
 import type { GatewayClient } from '../lib/gateway-client';
+import {
+  recipeRunnerUiOptions,
+  recipeRunnerUiOptionsForProject,
+  type RecipeRunnerUiOptions,
+} from '../lib/recipe-runner-options';
 import { colors, fonts, radii, spacing } from '../lib/theme';
 
 interface RecipeRunControlsProps {
   client: GatewayClient | null;
   runId: string;
   slotId: string | null | undefined;
+  project?: string | null;
   recipeRunId?: string | null;
   onComplete?: (requestId: string) => void;
 }
@@ -51,11 +58,13 @@ export function RecipeRunControls({
   client,
   runId,
   slotId,
+  project,
   recipeRunId,
   onComplete,
 }: RecipeRunControlsProps) {
-  const [playbackSlowMs, setPlaybackSlowMs] = useState(2000);
-  const [recordVideo, setRecordVideo] = useState(true);
+  const [uiOptions, setUiOptions] = useState<RecipeRunnerUiOptions>(() => recipeRunnerUiOptions(null));
+  const [playbackSlowMs, setPlaybackSlowMs] = useState(0);
+  const [recordVideo, setRecordVideo] = useState(false);
   const [output, setOutput] = useState<RecipeOutputState | null>(null);
   const [commandPreview, setCommandPreview] = useState('');
   const [error, setError] = useState('');
@@ -68,9 +77,46 @@ export function RecipeRunControls({
   const canCancel = Boolean(client && slotId && output?.running && output.requestId);
   const canCommand = Boolean(client && runId && slotId && !output?.running);
   const params = useMemo(
-    () => recipeRequestParams(runId, slotId ?? '', recipeRunId, playbackSlowMs, recordVideo),
-    [playbackSlowMs, recipeRunId, recordVideo, runId, slotId],
+    () =>
+      recipeRequestParams(
+        runId,
+        slotId ?? '',
+        recipeRunId,
+        playbackSlowMs,
+        uiOptions.showRecordVideo ? recordVideo : false,
+      ),
+    [playbackSlowMs, recipeRunId, recordVideo, runId, slotId, uiOptions.showRecordVideo],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!client || !project) {
+      const defaults = recipeRunnerUiOptions(null);
+      setUiOptions(defaults);
+      setPlaybackSlowMs(defaults.playbackSlowMs);
+      setRecordVideo(defaults.recordVideo);
+      return;
+    }
+    void (async () => {
+      try {
+        const result = await client.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
+        if (cancelled) return;
+        const options = recipeRunnerUiOptionsForProject(project, result.projects);
+        setUiOptions(options);
+        setPlaybackSlowMs(options.playbackSlowMs);
+        setRecordVideo(options.recordVideo);
+      } catch {
+        if (cancelled) return;
+        const defaults = recipeRunnerUiOptions(null);
+        setUiOptions(defaults);
+        setPlaybackSlowMs(defaults.playbackSlowMs);
+        setRecordVideo(defaults.recordVideo);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, project]);
 
   useEffect(() => {
     outputRef.current = output;
@@ -264,49 +310,53 @@ export function RecipeRunControls({
         </View>
       </View>
 
-      <View style={styles.playbackRow}>
-        <Text style={styles.playbackLabel}>Playback</Text>
-        {PLAYBACK_OPTIONS.map((option) => (
+      {uiOptions.showPlayback ? (
+        <View style={styles.playbackRow}>
+          <Text style={styles.playbackLabel}>Playback</Text>
+          {PLAYBACK_OPTIONS.map((option) => (
+            <Pressable
+              key={option.value}
+              style={[
+                styles.playbackChip,
+                playbackSlowMs === option.value && styles.activeChip,
+                output?.running && styles.disabledButton,
+              ]}
+              disabled={output?.running}
+              accessibilityLabel={`Set recipe playback to ${option.label}`}
+              onPress={() => setPlaybackSlowMs(option.value)}
+            >
+              <Text
+                style={[
+                  styles.playbackChipText,
+                  playbackSlowMs === option.value && styles.activeChipText,
+                ]}
+              >
+                {option.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {uiOptions.showRecordVideo ? (
+        <View style={styles.playbackRow}>
+          <Text style={styles.playbackLabel}>Video</Text>
           <Pressable
-            key={option.value}
             style={[
               styles.playbackChip,
-              playbackSlowMs === option.value && styles.activeChip,
+              recordVideo && styles.activeChip,
               output?.running && styles.disabledButton,
             ]}
             disabled={output?.running}
-            accessibilityLabel={`Set recipe playback to ${option.label}`}
-            onPress={() => setPlaybackSlowMs(option.value)}
+            accessibilityLabel="Record recipe replay video"
+            onPress={() => setRecordVideo((current) => !current)}
           >
-            <Text
-              style={[
-                styles.playbackChipText,
-                playbackSlowMs === option.value && styles.activeChipText,
-              ]}
-            >
-              {option.label}
+            <Text style={[styles.playbackChipText, recordVideo && styles.activeChipText]}>
+              {recordVideo ? 'Recording on' : 'Record video'}
             </Text>
           </Pressable>
-        ))}
-      </View>
-
-      <View style={styles.playbackRow}>
-        <Text style={styles.playbackLabel}>Video</Text>
-        <Pressable
-          style={[
-            styles.playbackChip,
-            recordVideo && styles.activeChip,
-            output?.running && styles.disabledButton,
-          ]}
-          disabled={output?.running}
-          accessibilityLabel="Record recipe replay video when supported"
-          onPress={() => setRecordVideo((current) => !current)}
-        >
-          <Text style={[styles.playbackChipText, recordVideo && styles.activeChipText]}>
-            Record if supported
-          </Text>
-        </Pressable>
-      </View>
+        </View>
+      ) : null}
 
       <View style={styles.actionRow}>
         {output?.running ? (
@@ -374,7 +424,7 @@ function recipeRequestParams(
   const params: RecipeRerunParams = { runId, slotId };
   if (recipeRunId) params.recipeRunId = recipeRunId;
   if (playbackSlowMs > 0) params.playbackSlowMs = playbackSlowMs;
-  params.recordVideo = recordVideo;
+  if (recordVideo) params.recordVideo = true;
   return params;
 }
 

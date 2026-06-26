@@ -18,11 +18,12 @@ export function selectSlotViewLinkedRun(params: {
   const authoritativeBoundRun =
     params.slotBoundRunId && params.rpcRun?.id === params.slotBoundRunId ? params.rpcRun : null;
   if (authoritativeBoundRun) return authoritativeBoundRun;
-  if (params.rpcRun?.id === params.requestedRunId) return params.rpcRun;
-  const keepRequestedRun = Boolean(
-    params.requestedRunId && params.cachedRun?.id === params.requestedRunId,
-  );
-  if (keepRequestedRun) return params.cachedRun;
+  if (params.requestedRunId) {
+    if (params.rpcRun?.id === params.requestedRunId) return params.rpcRun;
+    if (params.cachedRun?.id === params.requestedRunId) return params.cachedRun;
+    // URL-pinned load-run must not fall back to slot-history when hydration is still in flight.
+    return null;
+  }
   return params.rpcRun;
 }
 

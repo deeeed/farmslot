@@ -364,6 +364,45 @@ async function checkSlotWarmth(
   return { warm: warnings.length === 0, warnings };
 }
 
+export const RECIPE_REPLAY_HEALTH_RETRY_DELAYS_MS = [0, 3_000, 5_000] as const;
+
+export function recipeReplayHealthReady(
+  healthValue: string,
+  readyIndicator: string | undefined,
+): boolean {
+  if (!readyIndicator) return Boolean(healthValue);
+  return healthValue === readyIndicator;
+}
+
+async function readRecipeReplayHealth(
+  slotVars: SlotVars,
+  healthHook: string,
+  parseCmd: string,
+  delayMs: number,
+): Promise<string> {
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return runHealthCheck(slotVars, healthHook, parseCmd, {
+    logPrefix: 'recipe',
+    timeoutMs: 30_000,
+  });
+}
+
+async function waitForRecipeReplayHealth(
+  slotVars: SlotVars,
+  healthHook: string,
+  parseCmd: string,
+  readyIndicator: string | undefined,
+): Promise<string> {
+  let lastValue = '';
+  for (const delayMs of RECIPE_REPLAY_HEALTH_RETRY_DELAYS_MS) {
+    lastValue = await readRecipeReplayHealth(slotVars, healthHook, parseCmd, delayMs);
+    if (recipeReplayHealthReady(lastValue, readyIndicator)) return lastValue;
+  }
+  return lastValue;
+}
+
 /** Mirror prepare health gating so recipe replay fails fast when CDP/app is cold. */
 export async function assertSlotHealthForRecipeRerun(
   slotVars: SlotVars,
@@ -374,13 +413,15 @@ export async function assertSlotHealthForRecipeRerun(
   if (!healthHook?.trim()) return;
 
   const readyIndicator = getProjectField(projectJson, 'health.ready_indicator');
-  const parseCmd = getProjectField(projectJson, 'health.parse_health');
-  let healthValue = await runHealthCheck(slotVars, healthHook, parseCmd, {
-    logPrefix: 'recipe',
-    timeoutMs: 30_000,
-  });
+  const parseCmd = getProjectField(projectJson, 'health.parse_health') ?? '';
+  let healthValue = await waitForRecipeReplayHealth(
+    slotVars,
+    healthHook,
+    parseCmd,
+    readyIndicator,
+  );
 
-  if (!readyIndicator || healthValue === readyIndicator) return;
+  if (recipeReplayHealthReady(healthValue, readyIndicator)) return;
 
   const unlockHook = expandHook('unlock', projectJson, slotVars, projectVars);
   if (unlockHook?.trim()) {
@@ -389,14 +430,15 @@ export async function assertSlotHealthForRecipeRerun(
       `cd ${shellQuote(slotVars.remoteRepo)} && ${unlockHook} 2>&1`,
       { timeout: 60_000 },
     );
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    healthValue = await runHealthCheck(slotVars, healthHook, parseCmd, {
-      logPrefix: 'recipe',
-      timeoutMs: 30_000,
-    });
+    healthValue = await waitForRecipeReplayHealth(
+      slotVars,
+      healthHook,
+      parseCmd,
+      readyIndicator,
+    );
   }
 
-  if (healthValue !== readyIndicator) {
+  if (!recipeReplayHealthReady(healthValue, readyIndicator)) {
     throw new Error(
       `Slot ${slotVars.slotId} is not ready for recipe replay (health=${healthValue || 'none'}, expected ${readyIndicator}). ` +
         'Run ensure-js-runtime prepare (or slot check) so Metro, the app, and CDP reach WalletView.',
