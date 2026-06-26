@@ -67,8 +67,14 @@ export async function pushRunRecipeToSlot(
   // even when the slot has never run this task (no temp/tasks/.../artifacts/ yet).
   const files: Array<{ path: string; content: string }> = [];
   const localRecipe = path.join(localArtifactsDir, 'recipe.json');
+  const inheritedRecipe = path.join(path.dirname(run.taskFile), 'inputs', 'inherited', 'recipe.json');
   if (existsSync(localRecipe)) {
     files.push({ path: 'recipe.json', content: (await readFile(localRecipe)).toString('base64') });
+  } else if (existsSync(inheritedRecipe)) {
+    files.push({
+      path: 'recipe.json',
+      content: (await readFile(inheritedRecipe)).toString('base64'),
+    });
   }
   const localFlowsDir = path.join(localArtifactsDir, 'recipe-flows');
   if (existsSync(localFlowsDir)) {
