@@ -39,7 +39,7 @@ npm install @farmslot/recipe-harness @farmslot/protocol
 | `src/index.ts`  | Public package export surface.                                                                            |
 | `src/core/`     | Manifest-aware recipe graph execution, flow calls, predicates, HUD node shaping, and harness-local types. |
 | `src/adapters/` | Standard core and UI adapter factories.                                                                   |
-| `src/runtime/`  | Runtime transports for CDP, browser extensions, and React Native bridge connections.                      |
+| `src/runtime/`  | Runtime transports (CDP, browser extensions, RN bridge) and shared readiness helpers (deps, log analysis, Metro probe). |
 | `src/node/`     | Node-only artifact, trace, and summary writers.                                                           |
 | `src/cli/`      | CLI entrypoint, commands, and shared CLI validation helpers.                                              |
 | `test/`         | Harness package and export-boundary tests mirroring public behavior.                                      |
@@ -60,6 +60,10 @@ listed here.
 | `@farmslot/recipe-harness/runtime/cdp`                 | CDP browser transport helpers.             |
 | `@farmslot/recipe-harness/runtime/react-native-bridge` | React Native bridge transport helpers.     |
 | `@farmslot/recipe-harness/runtime/browser-extension`   | Browser-extension target helpers.          |
+| `@farmslot/recipe-harness/runtime/deps-readiness`      | Install fingerprint, baseline, product-marker partial checks. |
+| `@farmslot/recipe-harness/runtime/log-analysis`        | Bundle-log boundaries, unresolved-module scoping, persistent bundle-error state. |
+| `@farmslot/recipe-harness/runtime/metro-probe`         | Metro packager `/status` reachability probe. |
+| `@farmslot/recipe-harness/runtime/decision-types`      | Portable `RuntimeDecisionReport` / action shapes for product adapters. |
 | `@farmslot/recipe-harness/cli`                         | Programmatic CLI entrypoint.               |
 | `@farmslot/recipe-harness/cli/support`                 | Shared CLI input validation helpers.       |
 | `@farmslot/recipe-harness/writers`                     | Node-only JSON artifact writers.           |
@@ -68,6 +72,7 @@ listed here.
 
 The harness owns generic execution mechanics:
 
+- runtime-readiness primitives (`runtime/deps-readiness`, `runtime/log-analysis`, `runtime/metro-probe`) — product runners supply adapter-specific markers, log patterns, and shell launch;
 - manifest-aware runner construction;
 - graph execution, `call` flow composition, setup/start-state/proof/teardown ordering;
 - standard core adapters such as `command`, `wait`, `assert_json`, `watch_logs`, and `end`;

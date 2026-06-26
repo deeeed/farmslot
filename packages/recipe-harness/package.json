@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/recipe-harness",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -62,6 +62,26 @@
       "types": "./dist/runtime/react-native-bridge.d.ts",
       "import": "./dist/runtime/react-native-bridge.js",
       "default": "./dist/runtime/react-native-bridge.js"
+    },
+    "./runtime/deps-readiness": {
+      "types": "./dist/runtime/deps-readiness.d.ts",
+      "import": "./dist/runtime/deps-readiness.js",
+      "default": "./dist/runtime/deps-readiness.js"
+    },
+    "./runtime/log-analysis": {
+      "types": "./dist/runtime/log-analysis.d.ts",
+      "import": "./dist/runtime/log-analysis.js",
+      "default": "./dist/runtime/log-analysis.js"
+    },
+    "./runtime/metro-probe": {
+      "types": "./dist/runtime/metro-probe.d.ts",
+      "import": "./dist/runtime/metro-probe.js",
+      "default": "./dist/runtime/metro-probe.js"
+    },
+    "./runtime/decision-types": {
+      "types": "./dist/runtime/decision-types.d.ts",
+      "import": "./dist/runtime/decision-types.js",
+      "default": "./dist/runtime/decision-types.js"
     }
   },
   "scripts": {

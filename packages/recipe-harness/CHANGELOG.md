@@ -4,6 +4,15 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.3.0 - 2026-06-26
+
+- Add shared runtime-readiness helpers under `@farmslot/recipe-harness/runtime/*`:
+  - `deps-readiness` — install fingerprint, baseline recording, product-marker partial checks, decision state persistence
+  - `log-analysis` — Metro/RN bundle log boundaries, unresolved-module scoping, persistent bundle-error detection
+  - `metro-probe` — packager `/status` reachability probe
+  - `decision-types` — portable `RuntimeDecisionReport` / `RuntimeDecisionAction` shapes
+- Product runners (e.g. MetaMask) should import these modules instead of copying readiness logic locally.
+
 ## 0.2.2 - 2026-06-10
 
 - Publish with npm-resolvable `@farmslot/protocol` dependency metadata instead of workspace-only protocol references.
