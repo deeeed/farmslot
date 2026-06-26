@@ -156,14 +156,18 @@ test('projectPrepareProfiles maps profiles with labels and default star', () => 
         default: 'relaunch',
         profiles: {
           full: { phases: ['git', 'deps'] as PreparePhase[] },
-          relaunch: { phases: ['git'] as PreparePhase[], label: 'Relaunch app' },
+          relaunch: {
+            phases: ['git'] as PreparePhase[],
+            label: 'Relaunch app',
+            description: 'Restart the app',
+          },
         },
       },
     },
   ];
   assert.deepEqual(projectPrepareProfiles(configs, 'demo'), [
     { name: 'full', label: 'full', isDefault: false },
-    { name: 'relaunch', label: 'Relaunch app', isDefault: true },
+    { name: 'relaunch', label: 'Relaunch app', description: 'Restart the app', isDefault: true },
   ]);
   // No explicit default → a profile literally named "full" is the implicit default.
   const noDefault = [

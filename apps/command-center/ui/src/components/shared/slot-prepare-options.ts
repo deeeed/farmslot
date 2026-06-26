@@ -373,7 +373,7 @@ export class SlotPrepareOptions extends LitElement {
                   <button
                     class="spo-pill ${this._isProfileSelected(profile) ? 'selected' : ''}"
                     ?disabled=${this.disabled}
-                    title=${profile.label}
+                    title=${profile.description || profile.label}
                     @click=${() => this._setProfile(profile.name)}
                   >
                     ${profile.name}${profile.isDefault ? ' ★' : ''}

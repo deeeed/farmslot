@@ -47,6 +47,10 @@
                 "type": "string",
                 "description": "Operator-facing label for wizard/CLI listings."
               },
+              "description": {
+                "type": "string",
+                "description": "Longer operator-facing help text for profile tooltips and docs."
+              },
               "phases": {
                 "type": "array",
                 "minItems": 1,

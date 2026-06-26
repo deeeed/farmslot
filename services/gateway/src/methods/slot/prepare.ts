@@ -981,6 +981,9 @@ async function slotPrepareInner(
               const fh = await fsOpen(logFilePath, 'r');
               try {
                 const st = await fh.stat();
+                if (st.size < offset) {
+                  offset = 0;
+                }
                 if (st.size > offset) {
                   const buf = Buffer.alloc(st.size - offset);
                   await fh.read(buf, 0, buf.length, offset);
