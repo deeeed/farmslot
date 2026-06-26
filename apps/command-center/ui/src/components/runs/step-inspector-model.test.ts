@@ -87,7 +87,11 @@ test('stepHasReviewLoop gates the loop panel to review steps with attempts', () 
     attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 8 }],
   };
   assert.equal(
-    stepHasReviewLoop({ name: 'self-review', status: 'done', outputs: selfReviewOutputs } as RunStep),
+    stepHasReviewLoop({
+      name: 'self-review',
+      status: 'done',
+      outputs: selfReviewOutputs,
+    } as RunStep),
     true,
   );
   assert.equal(
@@ -114,7 +118,11 @@ test('stepHasReviewLoop gates the loop panel to review steps with attempts', () 
   );
   // self-review with an empty attempts array (and no timeline) does not render
   assert.equal(
-    stepHasReviewLoop({ name: 'self-review', status: 'done', outputs: { attempts: [] } } as RunStep),
+    stepHasReviewLoop({
+      name: 'self-review',
+      status: 'done',
+      outputs: { attempts: [] },
+    } as RunStep),
     false,
   );
 });
