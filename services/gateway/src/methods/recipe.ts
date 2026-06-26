@@ -274,21 +274,17 @@ export function canRecipeRerunOnSlot(
     currentRunId?: string | null;
     phase?: string | null;
     lifecycle?: string | null;
+    agent?: string | null;
   },
   runId: string,
   runSlotId?: string | null,
 ): boolean {
   if (slotStatus.currentRunId && slotStatus.currentRunId !== runId) return false;
   if (slotStatus.currentRunId === runId) {
-    // A slot bound to this run accepts a recipe rerun when it is parked at the
-    // review gate, held, or freshly prepared/idle (`ready`) — the last is the
-    // state after an operator warm branch switch. A mid-worker (busy) slot is
-    // still rejected so a replay never collides with a live worker.
-    return (
-      slotStatus.phase === 'review-gate' ||
-      slotStatus.lifecycle === 'held' ||
-      slotStatus.lifecycle === 'ready'
-    );
+    // Operator load-run / warm switch binds currentRunId without always resetting
+    // lifecycle to `ready`. Reject only when a live worker still owns the slot.
+    if (slotStatus.agent === 'working') return false;
+    return true;
   }
   // Some review-gate slots do not persist currentRunId after handoff; keep that
   // recovery path narrow so arbitrary held slots cannot be claimed by stale runs.

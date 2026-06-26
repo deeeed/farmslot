@@ -72,13 +72,13 @@ export function navigateToPreparedSlot(slotId: string, runId: string): void {
 export async function runSlotPrepareForRun(
   input: RunSlotPrepareForRunInput,
 ): Promise<SlotPrepareResult> {
-  const prepareProfile = input.prepareProfile ?? 'attach';
+  const prepareProfile = input.prepareProfile?.trim() || undefined;
   const strictProfile = input.strictProfile !== false;
   const bindOnly = resolveBindOnly(input.branch, input.slotBranch, input.forcePrepare ?? false);
   return runSlotPrepare({
     slotId: input.slotId,
     branch: input.branch,
-    prepareProfile,
+    ...(prepareProfile ? { prepareProfile } : {}),
     strictProfile,
     bindOnly,
     bindRunId: input.runId,

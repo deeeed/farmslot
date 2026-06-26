@@ -9,6 +9,7 @@ import type { PrepareProgressState } from './prepare-progress-model.js';
 import type { SlotPrepareOptionsChangeDetail } from './slot-prepare-options.js';
 import './slot-prepare-options.js';
 import { navigateToPreparedSlot, runSlotPrepareForRun } from './slot-prepare-client.js';
+import { DEFAULT_SLOT_PREPARE_OPTIONS } from './slot-prepare-options-model.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from './slot-prepare-tracker.js';
 
 @customElement('slot-prepare-popover')
@@ -28,7 +29,7 @@ export class SlotPreparePopover extends LitElement {
   @state() private _open = false;
   @state() private _busy = false;
   @state() private _error = '';
-  @state() private _prepareProfile = 'attach';
+  @state() private _prepareProfile = DEFAULT_SLOT_PREPARE_OPTIONS.prepareProfile;
   @state() private _strictProfile = true;
   @state() private _forcePrepare = false;
   @state() private _prepareState: PrepareProgressState | null = null;

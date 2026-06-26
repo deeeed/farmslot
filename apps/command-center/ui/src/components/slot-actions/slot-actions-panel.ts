@@ -70,9 +70,8 @@ export class SlotActionsPanel extends LitElement {
   /** Branch the "switch branch (warm)" form targets. Empty until the user types
    * or the form is opened (prefilled from the slot's current branch). */
   @state() private _switchBranch = '';
-  /** Prepare profile for the warm branch switch — defaults to the cheapest
-   * (`attach`: checkout-only, no rebuild, devserver stays warm). */
-  @state() private _switchProfile = 'attach';
+  /** Prepare profile for the warm branch switch — empty until profiles load (project default). */
+  @state() private _switchProfile = '';
   @state() private _switchStrictProfile = true;
   @state() private _switchForcePrepare = false;
   /** Whether the switch-branch form is expanded. */
@@ -270,7 +269,7 @@ export class SlotActionsPanel extends LitElement {
       () =>
         void this._runSlotPrepare('switch-branch', {
           branch,
-          prepareProfile: this._switchProfile || 'attach',
+          ...(this._switchProfile ? { prepareProfile: this._switchProfile } : {}),
           strictProfile: this._switchStrictProfile,
           label: `Preparing ${this.slotId} for branch ${branch}`,
         }),

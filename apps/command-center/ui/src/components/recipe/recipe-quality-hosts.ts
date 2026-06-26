@@ -114,13 +114,25 @@ function formatLiveRecipeProvenanceDetail(context: LiveRecipeContext): string | 
   return null;
 }
 
+function liveRecipeContextCanRerun(
+  context: LiveRecipeContext & Partial<RecipeRunArtifactGroup>,
+  slotId: string,
+): boolean {
+  if (!slotId) return false;
+  if (context.groupKind === 'latest-valid' || context.groupKind === 'live-run') return false;
+  if (context.groupKind === 'current-artifacts') return true;
+  // Gateway LiveRecipeContext omits groupKind for root bundle contexts.
+  if (context.source === 'recipe-run-live') return false;
+  return Boolean(context.recipeJson);
+}
+
 function toLiveRecipeHostEntry(
   run: Run,
   slotId: string,
   context: LiveRecipeContext,
 ): SlotViewRecipeHostEntry {
   const groupContext = context as LiveRecipeContext & Partial<RecipeRunArtifactGroup>;
-  const canRerun = groupContext.groupKind === 'current-artifacts' && Boolean(slotId);
+  const canRerun = liveRecipeContextCanRerun(groupContext, slotId);
   return {
     runId: run.id,
     slotId: slotId || null,

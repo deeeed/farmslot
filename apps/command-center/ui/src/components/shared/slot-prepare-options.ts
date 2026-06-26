@@ -266,11 +266,8 @@ export class SlotPrepareOptions extends LitElement {
   }
 
   private _isProfileSelected(profile: PrepareProfileOption): boolean {
-    if (this.variant === 'dispatch') {
-      if (this.skipPrepare) return false;
-      return this.prepareProfile ? this.prepareProfile === profile.name : profile.isDefault;
-    }
-    return this.prepareProfile === profile.name;
+    if (this.skipPrepare) return false;
+    return this.prepareProfile ? this.prepareProfile === profile.name : profile.isDefault;
   }
 
   private _setProfile(name: string) {
@@ -342,7 +339,7 @@ export class SlotPrepareOptions extends LitElement {
     const profiles =
       this.profiles.length > 0
         ? this.profiles
-        : [{ name: 'attach', label: 'attach', isDefault: false }];
+        : [];
     const plan = this._plan();
     const label =
       this.variant === 'dispatch'
@@ -413,8 +410,8 @@ export class SlotPrepareOptions extends LitElement {
         </div>
         ${this.variant === 'operator' && !this.compact
           ? html`<div class="spo-help">
-              Default is attach. Strict mode fails fast instead of silently escalating to a heavier
-              profile.
+              Default follows project prepare.default (★). Strict mode fails fast instead of silently
+              escalating to a heavier profile.
             </div>`
           : nothing}
         ${plan

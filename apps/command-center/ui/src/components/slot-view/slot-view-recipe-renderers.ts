@@ -8,7 +8,7 @@ import { artifactKind } from '../../utils/artifact-kind.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
-import { canSlotAcceptRecipeRerun } from '../recipe/recipe-rerun-model.js';
+import { canSlotAcceptRecipeRerun, slotRecipeReplayBlockReason } from '../recipe/recipe-rerun-model.js';
 import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-header.js';
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
@@ -451,6 +451,17 @@ function renderRecipeHostBody(
     slotCanAcceptRerun &&
     (recipeHost.capabilities.canRerun || selectedRecipeRunId),
   );
+  const replayBlockReason =
+    !canReplayActiveRecipe && effectiveRecipeJson
+      ? slotRecipeReplayBlockReason({
+          slot: view._slot,
+          run: view._linkedRun,
+          slotId: view.slotId,
+          effectiveRecipeJson,
+          canRerun: recipeHost.capabilities.canRerun,
+          selectedRecipeRunId,
+        })
+      : null;
   return html`
     <div style="padding:8px 12px; border-top:1px solid ${colors.textMuted}22;">
       <div
@@ -503,6 +514,15 @@ function renderRecipeHostBody(
       >
         ${slotViewRecipeRunHelpText(selectedRecipeRun)}
       </div>
+      ${replayBlockReason
+        ? html`
+            <div
+              style="font-size:${fonts.sizeXs}; color:${colors.statusWarn}; margin-bottom:${spacing.sm}; line-height:1.5;"
+            >
+              ${replayBlockReason}
+            </div>
+          `
+        : nothing}
       ${canReplayActiveRecipe
         ? html`
             <div style="margin-bottom:${spacing.sm};">

@@ -19,8 +19,9 @@ export interface PrepareRecoverySuggestion {
   label: string;
 }
 
+/** Empty prepareProfile means use project.json prepare.default (gateway resolvePrepareProfile). */
 export const DEFAULT_SLOT_PREPARE_OPTIONS: SlotPrepareOptionsState = {
-  prepareProfile: 'attach',
+  prepareProfile: '',
   strictProfile: true,
   forcePrepare: false,
 };
@@ -59,9 +60,8 @@ export function reconcilePrepareProfile(
   current: string,
 ): string {
   const names = profiles.map((profile) => profile.name);
-  if (names.length === 0) return current || 'attach';
-  if (names.includes(current)) return current;
-  if (names.includes('attach')) return 'attach';
+  if (names.length === 0) return current;
+  if (current && names.includes(current)) return current;
   return profiles.find((profile) => profile.isDefault)?.name ?? names[0]!;
 }
 
@@ -149,7 +149,7 @@ export function buildSlotPreparePlan(args: {
       : runBranch
         ? `Prepare on ${runBranch}`
         : 'Prepare slot',
-    `Profile: ${args.prepareProfile}${args.strictProfile ? ' (strict)' : ' (allow fallback)'}`,
+    `Profile: ${args.prepareProfile || 'project default'}${args.strictProfile ? ' (strict)' : ' (allow fallback)'}`,
   ];
   return { mode: 'checkout', lines, warnings };
 }

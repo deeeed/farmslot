@@ -398,7 +398,10 @@ test('canRecipeRerunOnSlot allows warm review-gate and held slots for the reques
     canRecipeRerunOnSlot({ currentRunId: 'run-1', phase: 'review-gate' }, 'run-1'),
     true,
   );
-  assert.equal(canRecipeRerunOnSlot({ currentRunId: 'run-1', phase: 'working' }, 'run-1'), false);
+  assert.equal(
+    canRecipeRerunOnSlot({ currentRunId: 'run-1', phase: 'working', agent: 'working' }, 'run-1'),
+    false,
+  );
   assert.equal(
     canRecipeRerunOnSlot({ currentRunId: 'other-run', phase: 'review-gate' }, 'run-1'),
     false,
@@ -416,10 +419,21 @@ test('canRecipeRerunOnSlot allows warm review-gate and held slots for the reques
     canRecipeRerunOnSlot({ currentRunId: 'run-1', lifecycle: 'ready' }, 'run-1'),
     true,
   );
-  // ...but a bound slot that is mid-worker (busy) is still rejected.
+  // ...but a bound slot that is mid-worker is still rejected.
   assert.equal(
-    canRecipeRerunOnSlot({ currentRunId: 'run-1', lifecycle: 'busy', phase: 'working' }, 'run-1'),
+    canRecipeRerunOnSlot(
+      { currentRunId: 'run-1', lifecycle: 'busy', phase: 'working', agent: 'working' },
+      'run-1',
+    ),
     false,
+  );
+  // Load-run bind can leave lifecycle busy while the worker is idle.
+  assert.equal(
+    canRecipeRerunOnSlot(
+      { currentRunId: 'run-1', lifecycle: 'busy', phase: 'ci-watch', agent: 'idle' },
+      'run-1',
+    ),
+    true,
   );
 });
 

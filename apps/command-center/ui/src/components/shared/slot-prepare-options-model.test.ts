@@ -9,16 +9,16 @@ import {
   suggestPrepareRecovery,
 } from './slot-prepare-options-model.js';
 
-test('reconcilePrepareProfile prefers attach then project default', () => {
+test('reconcilePrepareProfile prefers project default over attach', () => {
   assert.equal(
     reconcilePrepareProfile(
       [
-        { name: 'full', label: 'Full', isDefault: true },
+        { name: 'ensure-js-runtime', label: 'Ensure JS runtime', isDefault: true },
         { name: 'attach', label: 'Attach', isDefault: false },
       ],
-      'missing',
+      '',
     ),
-    'attach',
+    'ensure-js-runtime',
   );
 });
 
