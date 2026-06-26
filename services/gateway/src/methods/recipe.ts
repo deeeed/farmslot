@@ -37,13 +37,14 @@ import {
   type SlotVars,
 } from '../core/config.js';
 import { execOnSlot, isLocal } from '../core/exec.js';
-import { expandTemplate } from '../core/hooks.js';
+import { expandHook, expandTemplate } from '../core/hooks.js';
 import {
   isShellHomePath,
   normalizeRemotePath,
   resolvePathWithinRemoteBase,
   shellExpressionForRemotePath,
 } from '../core/remote-paths.js';
+import { runHealthCheck } from './slot/check.js';
 import { resolveTmuxSession, shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import {
@@ -361,6 +362,46 @@ async function checkSlotWarmth(
   ]);
 
   return { warm: warnings.length === 0, warnings };
+}
+
+/** Mirror prepare health gating so recipe replay fails fast when CDP/app is cold. */
+export async function assertSlotHealthForRecipeRerun(
+  slotVars: SlotVars,
+  projectJson: RawProjectJson,
+  projectVars: ProjectVars,
+): Promise<void> {
+  const healthHook = expandHook('health_check', projectJson, slotVars, projectVars);
+  if (!healthHook?.trim()) return;
+
+  const readyIndicator = getProjectField(projectJson, 'health.ready_indicator');
+  const parseCmd = getProjectField(projectJson, 'health.parse_health');
+  let healthValue = await runHealthCheck(slotVars, healthHook, parseCmd, {
+    logPrefix: 'recipe',
+    timeoutMs: 30_000,
+  });
+
+  if (!readyIndicator || healthValue === readyIndicator) return;
+
+  const unlockHook = expandHook('unlock', projectJson, slotVars, projectVars);
+  if (unlockHook?.trim()) {
+    await execOnSlot(
+      slotVars,
+      `cd ${shellQuote(slotVars.remoteRepo)} && ${unlockHook} 2>&1`,
+      { timeout: 60_000 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    healthValue = await runHealthCheck(slotVars, healthHook, parseCmd, {
+      logPrefix: 'recipe',
+      timeoutMs: 30_000,
+    });
+  }
+
+  if (healthValue !== readyIndicator) {
+    throw new Error(
+      `Slot ${slotVars.slotId} is not ready for recipe replay (health=${healthValue || 'none'}, expected ${readyIndicator}). ` +
+        'Run ensure-js-runtime prepare (or slot check) so Metro, the app, and CDP reach WalletView.',
+    );
+  }
 }
 
 /**
@@ -794,6 +835,8 @@ export async function recipeRerun(
         });
       }
     }
+
+    await assertSlotHealthForRecipeRerun(slotVars, projectJson, projectVars);
 
     for (const warning of recipeRunUnsupportedOptionWarnings(projectJson, {
       playbackSlowMs,
