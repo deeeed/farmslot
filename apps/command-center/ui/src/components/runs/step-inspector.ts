@@ -27,10 +27,13 @@ import {
   LIST_KEYS,
   LOG_KEYS,
   OUTPUT_KEYS,
+  type ReviewLoopAttempt,
+  reviewLoopAttempts,
   stepArtifactsForRunStep,
   stepArtifactUrl,
   type StepCostInfo,
   stepDurationLabel,
+  stepHasReviewLoop,
 } from './step-inspector-model.js';
 import { StepInspectorState } from './step-inspector-state.js';
 import { stepInspectorStyles } from './step-inspector-styles.js';
@@ -288,11 +291,10 @@ export class StepInspector extends StepInspectorState {
   }
 
   private _renderReviewLoopSummary(step: RunStep) {
-    if (!step.name.includes('publication-review-')) return nothing;
+    if (!stepHasReviewLoop(step)) return nothing;
     const out = (step.outputs ?? {}) as Record<string, unknown>;
-    const attempts = Array.isArray(out.attempts) ? (out.attempts as Record<string, unknown>[]) : [];
     const timeline = Array.isArray(out.timeline) ? (out.timeline as Record<string, unknown>[]) : [];
-    if (attempts.length === 0 && timeline.length === 0) return nothing;
+    const attempts = reviewLoopAttempts(step);
     return html`
       <div class="section-title">Review Loop</div>
       <div class="review-loop">
@@ -316,18 +318,8 @@ export class StepInspector extends StepInspectorState {
     >`;
   }
 
-  private _renderReviewAttempt(attempt: Record<string, unknown>, index: number) {
-    const verdict = typeof attempt.verdict === 'string' ? attempt.verdict : 'pending';
-    const unresolved = typeof attempt.unresolvedCount === 'number' ? attempt.unresolvedCount : 0;
-    const issues = Array.isArray(attempt.issues)
-      ? (attempt.issues as Record<string, unknown>[])
-      : [];
-    const completedAt = typeof attempt.completedAt === 'string' ? attempt.completedAt : '';
-    const loopNumber = typeof attempt.loopNumber === 'number' ? attempt.loopNumber : index + 1;
-    const fixDelta =
-      attempt.fixDelta && typeof attempt.fixDelta === 'object'
-        ? (attempt.fixDelta as Record<string, unknown>)
-        : null;
+  private _renderReviewAttempt(attempt: ReviewLoopAttempt, index: number) {
+    const { verdict, unresolvedCount: unresolved, issues, completedAt, loopNumber } = attempt;
     const color =
       verdict === 'pass'
         ? colors.statusOk
@@ -337,10 +329,9 @@ export class StepInspector extends StepInspectorState {
             ? colors.statusFail
             : colors.textMuted;
     return html`
-      ${fixDelta
+      ${attempt.fixDeltaPath !== null
         ? html`<div class="review-loop-fix">
-            worker fix
-            applied${typeof fixDelta.diffPath === 'string' ? ` · ${fixDelta.diffPath}` : ''}
+            worker fix applied${attempt.fixDeltaPath ? ` · ${attempt.fixDeltaPath}` : ''}
           </div>`
         : nothing}
       <div class="review-loop-row ${verdict}">
@@ -359,9 +350,9 @@ export class StepInspector extends StepInspectorState {
             (issue) => html`
               <div class="review-loop-issue">
                 <span class="review-loop-file"
-                  >${String(issue.file ?? 'unknown')}${issue.line ? `:${issue.line}` : ''}</span
+                  >${issue.file}${issue.line ? `:${issue.line}` : ''}</span
                 >
-                — ${String(issue.description ?? '')}
+                — ${issue.description}
               </div>
             `,
           )}
