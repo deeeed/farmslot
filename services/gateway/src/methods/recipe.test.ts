@@ -319,7 +319,7 @@ test('appendRecipePlaybackOptions appends opt-in video recording flag', () => {
     appendRecipePlaybackOptions('node validate-recipe.js --recipe recipe.json', {
       recordVideo: true,
     }),
-    'node validate-recipe.js --recipe recipe.json --record-video=full-run',
+    'node validate-recipe.js --recipe recipe.json --record',
   );
 });
 
@@ -329,7 +329,7 @@ test('appendRecipePlaybackOptions preserves typed option ordering', () => {
       playbackSlowMs: 1000,
       recordVideo: true,
     }),
-    'node validate-recipe.js --recipe recipe.json --slow 1000 --record-video=full-run',
+    'node validate-recipe.js --recipe recipe.json --slow 1000 --record',
   );
 });
 
