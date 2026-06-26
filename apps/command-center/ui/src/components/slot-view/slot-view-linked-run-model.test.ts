@@ -1,11 +1,64 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
+import type { Run } from '@farmslot/protocol';
+
 import {
   isSlotViewTerminalRunStatus,
+  selectSlotViewLinkedRun,
   shouldPreserveSlotViewCachedNullRun,
   slotViewLinkedRunTransition,
 } from './slot-view-linked-run-model.js';
+
+function stubRun(id: string, slotId: string): Run {
+  return {
+    id,
+    slotId,
+    familyId: 'family-1',
+    lane: 'default',
+    flowType: 'dev',
+    status: 'done',
+    project: 'demo',
+    mode: 'interactive',
+    ticketOrPr: 'T-1',
+    branch: 'main',
+    summary: '',
+    taskFile: '/tmp/TASK.md',
+    steps: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    metrics: {},
+    decisions: [],
+  } as unknown as Run;
+}
+
+test('selectSlotViewLinkedRun prefers fleet-bound run over stale URL pin', () => {
+  const bound = stubRun('bound-run', 'mm-5');
+  const stale = stubRun('stale-run', 'mm-5');
+  assert.equal(
+    selectSlotViewLinkedRun({
+      requestedRunId: 'stale-run',
+      slotBoundRunId: 'bound-run',
+      cachedRun: stale,
+      rpcRun: bound,
+    })?.id,
+    'bound-run',
+  );
+});
+
+test('selectSlotViewLinkedRun keeps URL pin when slot is not bound elsewhere', () => {
+  const pinned = stubRun('pinned-run', 'mm-5');
+  const history = stubRun('history-run', 'mm-5');
+  assert.equal(
+    selectSlotViewLinkedRun({
+      requestedRunId: 'pinned-run',
+      slotBoundRunId: null,
+      cachedRun: pinned,
+      rpcRun: history,
+    })?.id,
+    'pinned-run',
+  );
+});
 
 test('isSlotViewTerminalRunStatus recognizes terminal run statuses only', () => {
   assert.equal(isSlotViewTerminalRunStatus('done'), true);
