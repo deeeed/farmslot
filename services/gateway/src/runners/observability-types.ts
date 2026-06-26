@@ -1,0 +1,54 @@
+import type { loadSlotVars } from '../core/config.js';
+
+export type ObservabilitySource = 'hook' | 'statusline' | 'signal' | 'pane' | 'unknown';
+export type ObservabilityConfidence = 'high' | 'medium' | 'low';
+
+export interface ObservabilityReading<T> {
+  value: T;
+  source: ObservabilitySource;
+  confidence: ObservabilityConfidence;
+  /** ms since epoch of the underlying event/file mtime. */
+  observedAt: number;
+}
+
+export type RunnerActivity =
+  | 'idle'
+  | 'composing'
+  | 'tool-running'
+  | 'awaiting-input'
+  | 'unknown';
+
+export type ObservabilityScope = 'event-driven' | 'pane-only' | 'none';
+
+export type SlotVars = Awaited<ReturnType<typeof loadSlotVars>>;
+
+export interface HookRecord {
+  schemaVersion?: number;
+  observedAt?: number;
+  observed_at?: number;
+  timestamp?: number;
+  hook_event_name?: string;
+  event?: string;
+  tool_name?: string;
+  session_id?: string;
+  cwd?: string;
+}
+
+export interface StatuslineRecord {
+  schemaVersion?: number;
+  observedAt?: number;
+  observed_at?: number;
+  timestamp?: number;
+  mtime?: number;
+  busy?: boolean;
+  model?: string;
+  ctxPct?: number;
+  contextPct?: number;
+}
+
+export interface RunnerObservability {
+  getActivity(vars: SlotVars, target: string): Promise<ObservabilityReading<RunnerActivity> | null>;
+  getContextPct(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
+  activeTool(vars: SlotVars, target: string): Promise<ObservabilityReading<string> | null>;
+  lastTurnCompletedAt(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
+}

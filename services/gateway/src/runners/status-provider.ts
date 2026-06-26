@@ -2,6 +2,7 @@ import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 
+import { claudeHookObservability } from './claude-observability.js';
 import { normalizeRunner } from './registry.js';
 
 /**
@@ -33,10 +34,8 @@ export function parseClaudeCtxPctFromPane(pane: string): number | null {
  * runtime info about a worker (context utilization, future: token budget, last-action time,
  * tool-call rate, etc.) calls a typed interface instead of branching on runner id.
  *
- * Implementations choose their own source. Today Claude scrapes the tmux pane status line via
- * {@link parseClaudeCtxPctFromPane}; future Claude impls can prefer a statusline file written by a
- * settings.json hook and fall back to pane parsing. Codex / OpenCode currently expose nothing
- * — their providers are absent from {@link KNOWN_RUNNER_STATUS_PROVIDERS}.
+ * Implementations choose their own source. Claude prefers Farmslot hook/statusline files and
+ * falls back to tmux pane parsing when observability files are absent or stale.
  *
  * Adding a new field: extend this interface, give every existing provider a default impl
  * (typically `null`), and let callers null-check the result.
@@ -51,6 +50,14 @@ export interface RunnerStatusProvider {
 
 const claudeStatusProvider: RunnerStatusProvider = {
   async getContextPct(vars, target) {
+    try {
+      const reading = await claudeHookObservability.getContextPct(vars, target);
+      if (reading) return reading.value;
+    } catch (error) {
+      console.warn(
+        `[runner-observability] statusline ctxPct read failed for ${vars.slotId}: ${(error as Error).message}`,
+      );
+    }
     const pane = (
       await execOnSlot(
         vars,

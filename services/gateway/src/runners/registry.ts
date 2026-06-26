@@ -22,6 +22,10 @@ import {
 } from '../core/tmux.js';
 import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-signals.js';
 
+import { claudeHookObservability } from './claude-observability.js';
+import { disagreementReason, logRunnerObservabilityAgreement } from './observability-agreement.js';
+import { runnerActivityIsBusy } from './observability-files.js';
+import type { ObservabilityScope, RunnerObservability } from './observability-types.js';
 import { classifyRunnerPaneStateBestEffort } from './pane-classifier.js';
 
 /**
@@ -72,6 +76,11 @@ export interface RunnerDefinition {
    * through and the runner CLI is the source of truth at dispatch time.
    */
   acceptsModel(model: string): boolean;
+  /**
+   * How runner liveness is observed. Event-driven runners expose hook/statusline
+   * files; pane-only runners rely on tmux capture; none skips observability reads.
+   */
+  observabilityScope: ObservabilityScope;
 }
 
 const DEFAULT_RUNNER = 'claude';
@@ -109,6 +118,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CLAUDE_MODEL,
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
+    observabilityScope: 'event-driven',
   },
   codex: {
     id: 'codex',
@@ -140,6 +150,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: 'gpt-5.5',
     acceptsModel: (model) => model === 'unknown' || !CLAUDE_MODEL_PREFIXES.test(model),
+    observabilityScope: 'pane-only',
   },
   cursor: {
     id: 'cursor',
@@ -162,6 +173,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_CURSOR_MODEL,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
+    observabilityScope: 'pane-only',
   },
   grok: {
     id: 'grok',
@@ -185,6 +197,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: DEFAULT_GROK_MODEL,
     acceptsModel: (model) => model === 'unknown' || (model?.trim().length ?? 0) > 0,
+    observabilityScope: 'pane-only',
   },
   opencode: {
     id: 'opencode',
@@ -200,6 +213,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
     acceptsModel: () => true,
+    observabilityScope: 'none',
   },
   none: {
     id: 'none',
@@ -215,6 +229,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
     acceptsModel: () => true,
+    observabilityScope: 'none',
   },
   fake: {
     id: 'fake',
@@ -230,8 +245,20 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: null,
     acceptsModel: () => true,
+    observabilityScope: 'none',
   },
 };
+
+const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
+  claude: claudeHookObservability,
+};
+
+export function getRunnerObservability(runnerId?: string | null): RunnerObservability | null {
+  if (!runnerId) return null;
+  const def = getRunnerDefinition(runnerId);
+  if (def.observabilityScope !== 'event-driven') return null;
+  return KNOWN_RUNNER_OBSERVABILITY[normalizeRunner(runnerId)] ?? null;
+}
 
 /**
  * Runner's fallback safety tier (ADR-023). Consulted only when neither the
@@ -799,6 +826,55 @@ export function runnerPaneShouldSubmitExistingInstruction(
   return true;
 }
 
+async function recordRunnerObservabilityAgreement(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  pane: string,
+  logPrefix: string,
+): Promise<void> {
+  const def = getRunnerDefinition(runner);
+  if (def.observabilityScope !== 'event-driven') return;
+  const observability = getRunnerObservability(runner);
+  if (!observability) return;
+  const paneBusy = paneShowsBusyComposer(pane);
+  let hookActivity = null;
+  let hookBusy: boolean | null = null;
+  let hookSource: string | null = null;
+  let hookConfidence: string | null = null;
+  let hookObservedAt: number | null = null;
+  try {
+    const reading = await observability.getActivity(vars, target);
+    if (reading) {
+      hookActivity = reading.value;
+      hookBusy = runnerActivityIsBusy(reading.value);
+      hookSource = reading.source;
+      hookConfidence = reading.confidence;
+      hookObservedAt = reading.observedAt;
+    }
+  } catch (error) {
+    console.warn(
+      `[runner-observability] activity read failed for ${vars.slotId}: ${(error as Error).message}`,
+    );
+  }
+  const reason = disagreementReason({ paneBusy, hookBusy, hookActivity });
+  logRunnerObservabilityAgreement({
+    slotId: vars.slotId,
+    runner,
+    target,
+    logPrefix,
+    paneBusy,
+    hookBusy,
+    hookActivity,
+    hookSource,
+    hookConfidence,
+    hookObservedAt,
+    agreed: hookBusy == null ? null : paneBusy === hookBusy,
+    ...(reason ? { disagreementReason: reason } : {}),
+    timestamp: Date.now(),
+  });
+}
+
 async function captureTmuxPane(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -906,6 +982,7 @@ export async function sendRunnerInstructionSafely(
   // to clear — it passes `forceBusyPoll: true` to override the per-runner default.
   if (!def.requiresBusyComposerPoll && !opts.forceBusyPoll) {
     const pane = await captureTmuxPane(vars, target);
+    await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
     if (runnerPaneHasPendingInstruction(pane, message, runner)) {
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
@@ -914,6 +991,7 @@ export async function sendRunnerInstructionSafely(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const pane = await captureTmuxPane(vars, target);
+    await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
     if (runnerPaneHasPendingInstruction(pane, message, runner)) {
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
