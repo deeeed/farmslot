@@ -51,7 +51,11 @@ Farmslot project config:
 
 Set `recipe_run_supports_playback_slow` to `true` only when your runner actually
 supports slowed live playback. Set `recipe_run_supports_video_recording` to
-`true` only when your runner supports the appended `--record` replay video flag.
+`true` only when your runner supports the gateway-appended
+`--record-video=full-run` replay flag and writes harness-style video artifacts
+(`videos/recipe-run.mp4`). See
+[Recipe Runner Protocol — Command Center replay options](/docs/reference/recipe-runner-protocol#command-center-replay-options)
+in the repo reference docs for the full contract.
 
 ## Minimal recipe
 
