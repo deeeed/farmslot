@@ -11,6 +11,8 @@ import {
   supersededErrorCapture,
 } from '../src/runtime/log-analysis.js';
 import { depsCheck, recordDepsBaseline } from '../src/runtime/deps-readiness.js';
+import { orchestrateRuntimeUp } from '../src/runtime/orchestrate-up.js';
+import type { RuntimeDecisionReport } from '../src/runtime/decision-types.js';
 
 test('depsCheck reports missing install markers', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
@@ -79,6 +81,48 @@ test('supersededErrorCapture ignores stale native errors after bundle ok', () =>
     okPattern: /Bundled \d+ms|iOS Bundled/u,
   });
   assert.equal(stale, null);
+});
+
+test('orchestrateRuntimeUp installs once then relaunches', async () => {
+  let decideCalls = 0;
+  const reports: RuntimeDecisionReport[] = [
+    { decision: 'install', reasonCode: 'deps-missing', detail: 'missing markers' },
+    { decision: 'launch', reasonCode: 'metro-down', detail: 'metro not listening' },
+  ];
+  const installed: string[] = [];
+  const launched: string[] = [];
+  const result = await orchestrateRuntimeUp({
+    decide: async () => {
+      const report = reports[decideCalls++] ?? reports[reports.length - 1]!;
+      return report;
+    },
+    onInstall: async () => {
+      installed.push('install');
+    },
+    onLaunch: async (report) => {
+      launched.push(report.decision);
+    },
+    onReady: async () => {
+      throw new Error('unexpected ready');
+    },
+  });
+  assert.deepEqual(installed, ['install']);
+  assert.deepEqual(launched, ['launch']);
+  assert.equal(result.exitDecision, 'launch');
+});
+
+test('orchestrateRuntimeUp fails when install does not resolve', async () => {
+  await assert.rejects(
+    () =>
+      orchestrateRuntimeUp({
+        decide: async () => ({ decision: 'install', reasonCode: 'deps-missing', detail: 'still missing' }),
+        onInstall: async () => {},
+        onLaunch: async () => {},
+        onReady: async () => {},
+        installAttempted: { value: true },
+      }),
+    /install did not resolve runtime/,
+  );
 });
 
 test('evaluatePersistentBundleError blocks on repeated excerpt', async () => {

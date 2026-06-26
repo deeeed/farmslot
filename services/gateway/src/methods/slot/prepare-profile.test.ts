@@ -6,8 +6,8 @@ import { PREPARE_PHASES } from '@farmslot/protocol';
 import type { RawProjectJson } from '../../core/index.js';
 
 import {
+  buildDepsFingerprintCommand,
   buildDepsSentinelWriteCommand,
-  buildLockfileHashCommand,
   depsSentinelPath,
   resolvePrepareProfile,
   selectPrepareProfile,
@@ -70,16 +70,18 @@ test('resolvePrepareProfile falls back to a profile named full when no default s
   assert.equal(resolvePrepareProfile(noDefault).name, 'full');
 });
 
-test('deps sentinel commands target the runtime dir and cover lockfiles', () => {
+test('deps sentinel commands target the runtime dir and fingerprint harness inputs', () => {
   assert.equal(depsSentinelPath('.agent'), '.agent/deps.lock-hash');
   const write = buildDepsSentinelWriteCommand('/repo', '.agent');
   assert.match(write, /cd '\/repo'/);
   assert.match(write, /\.agent\/deps\.lock-hash/);
+  assert.match(write, /package\.json/);
   assert.match(write, /yarn\.lock/);
-  assert.match(write, /rm -f/); // no lockfile → sentinel removed, deps_current stays failing
-  const hash = buildLockfileHashCommand('/repo');
-  assert.match(hash, /sha256sum/);
-  assert.match(hash, /shasum -a 256/);
+  assert.match(write, /node -e/);
+  assert.match(write, /rm -f/); // no deps inputs → sentinel removed, deps_current stays failing
+  const fingerprint = buildDepsFingerprintCommand('/repo');
+  assert.match(fingerprint, /node -e/);
+  assert.match(fingerprint, /\.tool-versions/);
 });
 
 test('selectPrepareProfile walks multi-hop fallback chain on failing checks', async () => {

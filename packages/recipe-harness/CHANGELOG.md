@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 _No entries yet. Add Added/Changed/Fixed/Removed bullets here with each PR; date and version only at publish._
 
+## 0.3.1 - 2026-06-26
+
+- Add `runtime/orchestrate-up` — generic install → relaunch decision loop (`orchestrateRuntimeUp`) for product runners to wrap with shell/platform actions.
+
 ## 0.3.0 - 2026-06-26
 
 - Add shared runtime-readiness helpers under `@farmslot/recipe-harness/runtime/*`:

@@ -100,51 +100,45 @@ export interface RequirementCheckContext {
   runtimeDir: string;
 }
 
-// Lockfiles hashed for the deps_current sentinel. Project-stack agnostic: only
-// files that exist in the slot repo contribute to the hash.
-const LOCKFILE_CANDIDATES = [
-  'yarn.lock',
-  'package-lock.json',
-  'pnpm-lock.yaml',
-  'bun.lockb',
-  'Gemfile.lock',
-  'Cargo.lock',
-  'go.sum',
-];
+// Deps inputs hashed for the deps_current sentinel. Keep in sync with
+// @farmslot/recipe-harness/runtime/deps-readiness DEPS_INPUTS.
+const DEPS_FINGERPRINT_INPUTS = ['package.json', 'yarn.lock', '.yarnrc.yml', '.tool-versions'];
 
 export function depsSentinelPath(runtimeDir: string): string {
   return `${runtimeDir}/deps.lock-hash`;
 }
 
-function lockfileHashSnippet(): string {
-  // sha256sum on Linux, shasum -a 256 on macOS. Empty output when no lockfile
-  // exists — callers treat that as "cannot prove deps are current".
-  // `cat $files` is deliberately unquoted: it relies on word splitting, which
-  // is safe only because LOCKFILE_CANDIDATES are space-free by construction.
-  return [
-    `files=""`,
-    `for f in ${LOCKFILE_CANDIDATES.join(' ')}; do [ -f "$f" ] && files="$files $f"; done`,
-    `if [ -n "$files" ]; then`,
-    `  if command -v sha256sum >/dev/null 2>&1; then cat $files | sha256sum; else cat $files | shasum -a 256; fi | cut -d' ' -f1`,
-    `fi`,
-  ].join('\n');
+const DEPS_FINGERPRINT_NODE = [
+  "const fs=require('fs'),crypto=require('crypto'),path=require('path');",
+  `const inputs=${JSON.stringify(DEPS_FINGERPRINT_INPUTS)};`,
+  "const h=crypto.createHash('sha256');",
+  "for (const rel of inputs) {",
+  "  const abs=path.join(process.cwd(),rel);",
+  "  if (!fs.existsSync(abs)) continue;",
+  "  h.update(rel); h.update('\\0'); h.update(fs.readFileSync(abs)); h.update('\\0');",
+  "}",
+  "process.stdout.write(h.digest('hex'));",
+].join('');
+
+function depsFingerprintSnippet(): string {
+  return `node -e ${shellQuote(DEPS_FINGERPRINT_NODE)}`;
 }
 
-export function buildLockfileHashCommand(repo: string): string {
-  return `cd ${shellQuote(repo)} && ${lockfileHashSnippet()}`;
+export function buildDepsFingerprintCommand(repo: string): string {
+  return `cd ${shellQuote(repo)} && ${depsFingerprintSnippet()}`;
 }
 
 /**
  * Written after a successful deps install so deps_current can compare the
- * lockfile state the installed tree was built from. No lockfile → sentinel is
- * removed, which keeps deps_current failing (conservative).
+ * deps-input fingerprint the installed tree was built from. No inputs → sentinel
+ * is removed, which keeps deps_current failing (conservative).
  */
 export function buildDepsSentinelWriteCommand(repo: string, runtimeDir: string): string {
   const sentinel = depsSentinelPath(runtimeDir);
   return [
     `cd ${shellQuote(repo)}`,
     `mkdir -p ${shellQuote(runtimeDir)}`,
-    `hash=$(${lockfileHashSnippet()})`,
+    `hash=$(${depsFingerprintSnippet()})`,
     `if [ -n "$hash" ]; then echo "$hash" > ${shellQuote(sentinel)}; else rm -f ${shellQuote(sentinel)}; fi`,
   ].join(' && ');
 }
@@ -165,14 +159,14 @@ export async function checkPrepareRequirement(
       if (!recorded) {
         return { requirement, ok: false, detail: `no deps sentinel at ${sentinel}` };
       }
-      const currentR = await execOnSlot(vars, buildLockfileHashCommand(vars.remoteRepo));
+      const currentR = await execOnSlot(vars, buildDepsFingerprintCommand(vars.remoteRepo));
       const current = currentR.stdout.trim();
       if (!current) {
-        return { requirement, ok: false, detail: 'no lockfile found to hash' };
+        return { requirement, ok: false, detail: 'no deps inputs found to fingerprint' };
       }
       return current === recorded
-        ? { requirement, ok: true, detail: `lockfile hash ${current.slice(0, 12)} matches sentinel` }
-        : { requirement, ok: false, detail: 'lockfile hash differs from deps sentinel' };
+        ? { requirement, ok: true, detail: `deps fingerprint ${current.slice(0, 12)} matches sentinel` }
+        : { requirement, ok: false, detail: 'deps fingerprint differs from deps sentinel' };
     }
     case 'dev_server_up': {
       const hook = expandHook('dev_server_check', projectJson, vars, projectVars);
