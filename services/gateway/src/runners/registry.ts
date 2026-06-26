@@ -24,7 +24,9 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 
 import { claudeHookObservability } from './claude-observability.js';
 import { disagreementReason, logRunnerObservabilityAgreement } from './observability-agreement.js';
-import { runnerActivityIsBusy } from './observability-files.js';
+import { runnerActivityIsBusy, runnerObservabilityDir } from './observability-files.js';
+import { instructionNeedle } from './observability-prompt-digest.js';
+import { writeRunnerPromptSentinel } from './observability-sentinel.js';
 import type { ObservabilityScope, RunnerObservability } from './observability-types.js';
 import { classifyRunnerPaneStateBestEffort } from './pane-classifier.js';
 
@@ -81,6 +83,8 @@ export interface RunnerDefinition {
    * files; pane-only runners rely on tmux capture; none skips observability reads.
    */
   observabilityScope: ObservabilityScope;
+  /** Post-send hook heartbeat window for degraded-mode detection (ADR-032). Null skips check. */
+  observabilityHeartbeatMs?: number | null;
 }
 
 const DEFAULT_RUNNER = 'claude';
@@ -119,6 +123,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultModel: DEFAULT_CLAUDE_MODEL,
     acceptsModel: (model) => model === 'unknown' || CLAUDE_MODEL_PREFIXES.test(model),
     observabilityScope: 'event-driven',
+    observabilityHeartbeatMs: 5000,
   },
   codex: {
     id: 'codex',
@@ -594,10 +599,6 @@ function normalizePaneText(value: string): string {
     .trim();
 }
 
-function instructionNeedle(message: string): string {
-  return normalizePaneText(message).slice(0, 160);
-}
-
 export function runnerPaneContainsInstruction(pane: string, message: string): boolean {
   const needle = instructionNeedle(message);
   if (!needle) return false;
@@ -888,6 +889,32 @@ async function captureTmuxPane(
   ).stdout;
 }
 
+async function warnIfObservabilityDegraded(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  sentAtMs: number,
+  logPrefix: string,
+): Promise<void> {
+  const heartbeatMs = getRunnerDefinition(runner).observabilityHeartbeatMs;
+  if (heartbeatMs == null) return;
+  const obsDir = shellQuote(runnerObservabilityDir(vars.remoteRepo));
+  const hooksPath = `${obsDir}/hooks.jsonl`;
+  const deadline = Date.now() + heartbeatMs;
+  while (Date.now() < deadline) {
+    const stat = await execOnSlot(
+      vars,
+      `stat -f %m ${hooksPath} 2>/dev/null || stat -c %Y ${hooksPath} 2>/dev/null || echo 0`,
+    );
+    const mtimeSec = Number.parseInt(stat.stdout.trim(), 10);
+    const mtimeMs = Number.isFinite(mtimeSec) ? mtimeSec * 1000 : 0;
+    if (mtimeMs >= sentAtMs) return;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  console.warn(
+    `[${logPrefix}] [observability] degraded — hooks.jsonl did not advance within ${heartbeatMs}ms after send-keys; pane fallback remains authoritative`,
+  );
+}
+
 async function submitRunnerInstruction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -896,7 +923,16 @@ async function submitRunnerInstruction(
   logPrefix: string,
   mode: 'send' | 'submit-existing',
 ): Promise<boolean> {
+  let sentAtMs: number | null = null;
   if (mode === 'send') {
+    try {
+      const sentinel = await writeRunnerPromptSentinel(vars, message);
+      sentAtMs = sentinel.sentAt;
+    } catch (error) {
+      console.warn(
+        `[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`,
+      );
+    }
     await execOnSlot(vars, tmuxSendTextCommand(target, message, { enter: true }));
   } else {
     const pane = await captureTmuxPane(vars, target);
@@ -910,7 +946,12 @@ async function submitRunnerInstruction(
   for (let attempt = 1; attempt <= 5; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     const pane = await captureTmuxPane(vars, target);
-    if (!runnerPaneHasBufferedInstruction(pane, message, runner)) return true;
+    if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
+      if (mode === 'send' && sentAtMs != null) {
+        await warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix);
+      }
+      return true;
+    }
     if (attempt < 5) {
       const submitKey = runnerBufferedInstructionSubmitKey(pane, runner);
       console.warn(`[${logPrefix}] instruction appears buffered in ${target}; sending submit key`);
@@ -924,6 +965,9 @@ async function submitRunnerInstruction(
   console.warn(
     `[${logPrefix}] instruction still appears pending in ${target} after submit verification`,
   );
+  if (mode === 'send' && sentAtMs != null) {
+    await warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix);
+  }
   return false;
 }
 

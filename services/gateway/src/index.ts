@@ -74,6 +74,7 @@ import {
 } from './security/auth.js';
 import { initSelfReview } from './self-review/orchestrator.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
+import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
 import { broadcast, broadcastEvent, createWebSocketServer } from './server.js';
 import { handleGitHubWebhook, handleJiraWebhook } from './webhook.js';
 
@@ -438,6 +439,13 @@ async function main(): Promise<void> {
     });
   });
   onWorkerSignal((slotId, runId, signal, role, contextId) => {
+    void applyRunningWorkerSignalToContext(slotId, runId, signal, role, contextId).catch(
+      (error) => {
+        console.warn(
+          `[worker-signal] failed to apply running signal for ${slotId}: ${(error as Error).message}`,
+        );
+      },
+    );
     broadcast({
       type: 'event',
       event: Events.WORKER_SIGNAL,

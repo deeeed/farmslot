@@ -345,6 +345,18 @@ export async function nudgeDispatch(
     );
     // No rollback needed — we deferred all state mutation past this point. Prior run is still
     // the slot's owner and its monitor/watchers are intact. The new run fails cleanly.
+    const { getRun, updateRun } = await import('../../runs/store.js');
+    const timeoutRunId =
+      ((await readSlotField(params.slotId, 'current_run_id')) as string | null) ?? params.runId;
+    const timeoutRun = timeoutRunId ? getRun(timeoutRunId) : null;
+    if (timeoutRun) {
+      updateRun(timeoutRunId!, {
+        metrics: {
+          ...timeoutRun.metrics,
+          nudgeTimeoutCount: (timeoutRun.metrics.nudgeTimeoutCount ?? 0) + 1,
+        },
+      });
+    }
     throw new NudgeTimeoutError(
       `Nudge to ${workerTarget} timed out — runner stayed busy past 30s. Pane tail:\n${paneRes.stdout}`,
       paneRes.stdout,

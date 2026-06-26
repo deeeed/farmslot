@@ -29,6 +29,32 @@ try {
   rotateIfLarge(logPath);
   const observedAt = Date.now();
   const event = payload.hook_event_name || payload.event;
+  let runnerPromptDigest;
+  let sentAt;
+  if (event === 'UserPromptSubmit') {
+    const sentDir = path.join(obsDir, 'sent');
+    try {
+      const files = fs.readdirSync(sentDir).filter((name) => name.endsWith('.json'));
+      let newest = null;
+      for (const file of files) {
+        const full = path.join(sentDir, file);
+        const stat = fs.statSync(full);
+        if (!newest || stat.mtimeMs > newest.mtimeMs) {
+          const body = JSON.parse(fs.readFileSync(full, 'utf8'));
+          newest = {
+            digest: body.digest || file.replace(/\\.json$/, ''),
+            sentAt: body.sentAt,
+          };
+        }
+      }
+      if (newest) {
+        runnerPromptDigest = newest.digest;
+        sentAt = newest.sentAt;
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
   const record = {
     schemaVersion: 1,
     observedAt,
@@ -44,6 +70,8 @@ try {
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
     runner: 'claude',
+    ...(runnerPromptDigest ? { runnerPromptDigest } : {}),
+    ...(sentAt ? { sentAt } : {}),
   };
   fs.appendFileSync(logPath, JSON.stringify(record) + '\\n');
 } catch (error) {

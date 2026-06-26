@@ -5,6 +5,7 @@ import {
   lastTurnCompletedFromHooks,
   parseHookJsonl,
   parseStatuslineJson,
+  promptAcceptedFromHooks,
   readRunnerObservabilityFiles,
 } from './observability-files.js';
 import type { RunnerObservability, SlotVars } from './observability-types.js';
@@ -35,5 +36,10 @@ export const claudeHookObservability: RunnerObservability = {
   async lastTurnCompletedAt(vars) {
     const { hooks } = await loadObservabilitySnapshot(vars);
     return lastTurnCompletedFromHooks(hooks);
+  },
+
+  async promptAccepted(vars, _target, promptDigest, sinceMs) {
+    const { hooks } = await loadObservabilitySnapshot(vars);
+    return promptAcceptedFromHooks(hooks, promptDigest, sinceMs);
   },
 };

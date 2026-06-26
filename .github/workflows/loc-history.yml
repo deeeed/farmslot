@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  record:
-    name: Record framework LOC snapshot
+  verify:
+    name: Verify framework LOC snapshot
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
@@ -29,17 +29,17 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
-      - name: Record LOC snapshot
-        run: node scripts/quality/count-loc.mjs --scope framework --record
-
-      - name: Commit LOC history when changed
+      - name: Verify committed LOC history matches current tree
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/reference/loc-history.json
-          if git diff --staged --quiet; then
-            echo "LOC history unchanged"
+          set -euo pipefail
+          BEFORE_SHA="$(git rev-parse HEAD)"
+          cp docs/reference/loc-history.json /tmp/loc-history.committed.json
+          node scripts/quality/count-loc.mjs --scope framework --record
+          if git diff --quiet docs/reference/loc-history.json; then
+            echo "LOC history is current for ${BEFORE_SHA}"
             exit 0
           fi
-          git commit -m "chore(quality): record LOC snapshot"
-          git push
+          echo "::error::docs/reference/loc-history.json is stale. Run 'yarn quality:loc:record' locally and commit the update in your PR."
+          git diff --stat docs/reference/loc-history.json
+          git checkout -- docs/reference/loc-history.json
+          exit 1

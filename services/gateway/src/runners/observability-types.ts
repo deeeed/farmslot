@@ -30,8 +30,11 @@ export interface HookRecord {
   hook_event_name?: string;
   event?: string;
   tool_name?: string;
+  tool_use_id?: string;
   session_id?: string;
   cwd?: string;
+  runnerPromptDigest?: string;
+  sentAt?: number;
 }
 
 export interface StatuslineRecord {
@@ -51,4 +54,10 @@ export interface RunnerObservability {
   getContextPct(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
   activeTool(vars: SlotVars, target: string): Promise<ObservabilityReading<string> | null>;
   lastTurnCompletedAt(vars: SlotVars, target: string): Promise<ObservabilityReading<number> | null>;
+  promptAccepted(
+    vars: SlotVars,
+    target: string,
+    promptDigest: string,
+    sinceMs: number,
+  ): Promise<ObservabilityReading<boolean> | null>;
 }
