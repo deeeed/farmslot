@@ -6,9 +6,11 @@ import type { Run, SlotStatus } from '@farmslot/protocol';
 import {
   adjacentSlotId,
   isDirectoryReadErrorMessage,
+  isSlotViewPinnedLinkedRun,
   shouldHideTerminalSlotRecipePanel,
   slotSwitcherEntries,
   slotSwitcherSignature,
+  slotViewLoadedRunDrawerKey,
   slotViewReadyGateDecision,
   slotViewReviewDrawerKey,
 } from './slot-view-model.js';
@@ -244,6 +246,7 @@ test('shouldHideTerminalSlotRecipePanel hides bare terminal runs', () => {
       showRecipeLoading: false,
       recipeRunsCount: 0,
       recipeRunsError: '',
+      pinnedLinkedRun: false,
     }),
     true,
   );
@@ -258,6 +261,7 @@ test('shouldHideTerminalSlotRecipePanel keeps drawer while recipe runs load', ()
       showRecipeLoading: true,
       recipeRunsCount: 0,
       recipeRunsError: '',
+      pinnedLinkedRun: false,
     }),
     false,
   );
@@ -272,6 +276,7 @@ test('shouldHideTerminalSlotRecipePanel keeps drawer when recipe runs exist', ()
       showRecipeLoading: false,
       recipeRunsCount: 2,
       recipeRunsError: '',
+      pinnedLinkedRun: false,
     }),
     false,
   );
@@ -286,7 +291,34 @@ test('shouldHideTerminalSlotRecipePanel keeps drawer on recipe runs fetch error'
       showRecipeLoading: false,
       recipeRunsCount: 0,
       recipeRunsError: 'gateway timeout',
+      pinnedLinkedRun: false,
     }),
     false,
   );
+});
+
+test('shouldHideTerminalSlotRecipePanel keeps drawer for URL-pinned loaded runs', () => {
+  assert.equal(
+    shouldHideTerminalSlotRecipePanel({
+      recipeHost: null,
+      reviewDecision: null,
+      readyDecision: null,
+      showRecipeLoading: false,
+      recipeRunsCount: 0,
+      recipeRunsError: '',
+      pinnedLinkedRun: true,
+    }),
+    false,
+  );
+});
+
+test('isSlotViewPinnedLinkedRun matches only when URL runId equals linked run', () => {
+  assert.equal(isSlotViewPinnedLinkedRun('run-a', 'run-a'), true);
+  assert.equal(isSlotViewPinnedLinkedRun('run-a', 'run-b'), false);
+  assert.equal(isSlotViewPinnedLinkedRun(null, 'run-a'), false);
+});
+
+test('slotViewLoadedRunDrawerKey namespaces dismiss state for loaded runs', () => {
+  assert.equal(slotViewLoadedRunDrawerKey('run-a'), 'loaded:run-a');
+  assert.equal(slotViewLoadedRunDrawerKey(null), '');
 });

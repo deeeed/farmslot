@@ -14,10 +14,14 @@ import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
 import { renderSlotRecipeDrawer } from './slot-recipe-drawer.js';
 import {
+  isSlotViewPinnedLinkedRun,
   shouldHideTerminalSlotRecipePanel,
+  slotViewLoadedRunDrawerKey,
+  slotViewNoRecipeReplayMessage,
   slotViewPendingReviewDecision,
   slotViewReviewDrawerKey,
 } from './slot-view-model.js';
+import { requestedRunFromHash } from './slot-view-url-state.js';
 import {
   recipeArtifactPurposeLabel,
   renderGeneratedVisualArtifacts,
@@ -643,6 +647,7 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
   // misleading "No recipe artifact for this run yet" placeholder forever.
   const runStatus = view._linkedRun.status;
   const isTerminal = runStatus === 'done' || runStatus === 'failed' || runStatus === 'cancelled';
+  const pinnedLinkedRun = isSlotViewPinnedLinkedRun(view._linkedRun.id, requestedRunFromHash());
   if (
     isTerminal &&
     shouldHideTerminalSlotRecipePanel({
@@ -652,6 +657,7 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
       showRecipeLoading,
       recipeRunsCount: view._recipeRuns.length,
       recipeRunsError: view._recipeRunsError,
+      pinnedLinkedRun,
     })
   )
     return nothing;
@@ -661,12 +667,13 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
   const drawerMode = canSwitchToRecipe ? view._reviewDrawerMode : 'primary';
   const primaryLabel = readyDecision ? 'READY' : reviewDecision ? 'REVIEW' : 'RECIPE';
   const drawerLabel = drawerMode === 'recipe' ? 'RECIPE' : primaryLabel;
-  const drawerKey = slotViewReviewDrawerKey({
-    run: view._linkedRun,
-    readyDecision,
-    reviewDecision,
-    hasRecipeHost: !!recipeHost,
-  });
+  const drawerKey =
+    slotViewReviewDrawerKey({
+      run: view._linkedRun,
+      readyDecision,
+      reviewDecision,
+      hasRecipeHost: !!recipeHost,
+    }) || (pinnedLinkedRun ? slotViewLoadedRunDrawerKey(view._linkedRun.id) : '');
   const collapsedTitle = readyDecision
     ? 'Open ready workspace'
     : reviewDecision
@@ -776,8 +783,10 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
                     Recipe
                   </div>
                   <div>
-                    No recipe artifact for this run yet. Evidence appears here once the worker emits
-                    <code>artifacts/recipe.json</code>.
+                    ${pinnedLinkedRun && !view._recipeRunsLoading
+                      ? slotViewNoRecipeReplayMessage(view._linkedRun)
+                      : html`No recipe artifact for this run yet. Evidence appears here once the
+                          worker emits <code>artifacts/recipe.json</code>.`}
                   </div>
                 </div>
               `;

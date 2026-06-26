@@ -4,7 +4,13 @@ import { Methods } from '@farmslot/protocol';
 import { gateway } from '../../gateway-client.js';
 import { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 
-import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
+import {
+  isSlotViewPinnedLinkedRun,
+  slotViewLoadedRunDrawerKey,
+  slotViewPendingReviewDecision,
+  slotViewReviewDrawerKey,
+} from './slot-view-model.js';
+import { requestedRunFromHash } from './slot-view-url-state.js';
 import type { SlotViewRecipePresenter } from './slot-view-recipe-presenter.js';
 import {
   slotViewDesiredRecipeRunId,
@@ -158,16 +164,15 @@ function applySlotViewRecipeRunsResult(
     selectedRun,
     recipeHost: nextHost,
   });
-  const drawerKey = slotViewReviewDrawerKey({
-    run,
-    readyDecision: view._readyGateDecision(),
-    reviewDecision: slotViewPendingReviewDecision(run),
-    hasRecipeHost: !!nextHost,
-  });
-  const shouldAutoOpen =
-    drawerKey !== ''
-      ? drawerKey !== view._dismissedReviewDrawerKey
-      : result.recipeRuns.length > 0 && !view._dismissedReviewDrawerKey;
+  const pinnedLinkedRun = isSlotViewPinnedLinkedRun(run.id, requestedRunFromHash());
+  const drawerKey =
+    slotViewReviewDrawerKey({
+      run,
+      readyDecision: view._readyGateDecision(),
+      reviewDecision: slotViewPendingReviewDecision(run),
+      hasRecipeHost: !!nextHost,
+    }) || (pinnedLinkedRun ? slotViewLoadedRunDrawerKey(run.id) : '');
+  const shouldAutoOpen = drawerKey !== '' && drawerKey !== view._dismissedReviewDrawerKey;
   if (shouldAutoOpen && !view._reviewPanelOpen) {
     view._reviewPanelOpen = true;
   }
