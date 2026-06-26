@@ -95,19 +95,53 @@ path; `not_reproducible` also requires `evidence.reproductionAttempted: true`.
 may include it when their instructions ask them to record checklist timing, but a
 missing field must never block completion.
 
-Farmslot-rendered tasks include a tiny `mark` helper beside `TASK.md`. Workers
-should run `{{TASK_DIR}}/mark N` after completing checklist item `N` (using the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`.
-For the terminal item, append status flags, for example:
+Farmslot-rendered tasks include a tiny `mark` helper beside `TASK.md`. When the
+worker begins the checklist (typically right after setting `STATUS: working`),
+run `{{TASK_DIR}}/mark start` once to create a worker-owned `SIGNAL.json` with
+`status: "running"` and `step: "started"`. This timestamp is the durable
+"worker engaged" floor — distinct from gateway dispatch time.
+
+After that, run `{{TASK_DIR}}/mark N` after completing checklist item `N`
+(using the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`.
+
+For terminal completion, use `mark complete` — it merges into the existing
+signal file and preserves `checklistTiming` history. Never truncate with
+`echo > SIGNAL.json`:
 
 ```bash
-{{TASK_DIR}}/mark 15 --status complete --outcome success
+{{TASK_DIR}}/mark complete --outcome success --mark-last
 ```
 
-Direct skill runs can use the same helper format by writing a `mark` wrapper
-beside their `CHECKLIST.md` that calls `farmslot-checklist` or the vendored
-`mark-checklist-step.cjs` script from `@farmslot/skills`.
+Role-specific signal files (`SELF-REVIEW-SIGNAL.json`, `CI-FIX-SIGNAL.json`,
+etc.) use the same helper with an explicit task/signal path:
 
-Each event records the moment a checklist item changed from unchecked to checked:
+```bash
+node {{farmslot_dir}}/packages/skills/scripts/mark-checklist-step.cjs \
+  {{TASK_DIR}}/SELF-REVIEW.md {{TASK_DIR}}/SELF-REVIEW-SIGNAL.json \
+  complete --outcome success --mark-last
+```
+
+Direct skill runs (consensys agentic skills) use `recipe-harness/scripts/mark-checklist-step.cjs`.
+Farmslot gateway dispatch uses the same implementation mirrored in
+`@farmslot/skills` at `scripts/mark-checklist-step.cjs` on the slot's farmslot
+install. Keep the mirror in sync with recipe-harness when changing behavior.
+
+Worker engaged (bootstrap, no checklist event yet):
+
+```json
+{
+  "status": "running",
+  "step": "started",
+  "checklistTiming": {
+    "schemaVersion": 1,
+    "source": "TASK.md",
+    "events": []
+  },
+  "timestamp": "2026-06-26T10:00:00Z"
+}
+```
+
+Each progress event records the moment a checklist item changed from unchecked to checked:
 
 ```json
 {

@@ -61,6 +61,7 @@ Supported layouts:
 
 ## Maintenance rules
 
+- `scripts/mark-checklist-step.cjs` mirrors consensys-skills `recipe-harness/scripts/mark-checklist-step.cjs`. Edit the recipe-harness copy first; sync the mirror before shipping Farmslot gateway or npm changes.
 - Keep package payloads self-contained; consumers should not need the Farmslot monorepo.
 - Update `CHANGELOG.md` before packaging or publishing.
 - Run the package readiness guard when files move, bins change, or exports are added.
