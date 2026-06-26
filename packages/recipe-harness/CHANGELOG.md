@@ -4,6 +4,8 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+_No entries yet. Add Added/Changed/Fixed/Removed bullets here with each PR; date and version only at publish._
+
 ## 0.3.0 - 2026-06-26
 
 - Add shared runtime-readiness helpers under `@farmslot/recipe-harness/runtime/*`:

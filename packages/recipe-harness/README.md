@@ -84,6 +84,12 @@ Project-specific behavior stays outside this package. For example,
 `example.trade.place_order`, `checkout.ensure_cart`, or `backend.seed_user`
 belong in the project runner that imports this package.
 
+## Changelog
+
+Update [CHANGELOG.md](./CHANGELOG.md) under `## Unreleased` in the same PR as code changes
+(Added / Changed / Fixed / Removed). Add a dated version section only when publishing
+(`yarn npm publish` — `prepack` checks changelog readiness).
+
 ## Minimal runner
 
 ```ts
