@@ -7,12 +7,7 @@ import path from 'node:path';
 
 import { type FSWatcher, watch } from 'chokidar';
 
-import type {
-  AgentContext,
-  AgentRole,
-  TaskProgressResult,
-  WorkerSignal,
-} from '@farmslot/protocol';
+import type { AgentContext, AgentRole, TaskProgressResult, WorkerSignal } from '@farmslot/protocol';
 
 import { getAgentContexts, summarizeAgentContexts } from '../agents/contexts.js';
 import {
@@ -26,7 +21,7 @@ import { updateSlotStatus } from '../core/state.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { sendNodeRequest } from '../fleet/node-rpc.js';
 import { clearTaskProgressOverlay, loadFleetStatus } from '../fleet/state.js';
-import { progressFingerprint, taskProgress } from '../methods/task.js';
+import { taskProgress } from '../methods/task.js';
 import { listRuns } from '../runs/store.js';
 
 import { normalizeWorkerSignal } from './worker-signals.js';
@@ -60,7 +55,7 @@ interface SlotWatch {
   watcher?: FSWatcher; // chokidar watcher for local (TASK.md)
   signalWatcher?: FSWatcher; // chokidar watcher for local (SIGNAL.json)
   agentRequestIds?: Array<{ requestId: string; kind: 'task' | 'signal' }>; // fs.watch request IDs for remote task + signal watches
-  lastProgressFingerprint?: string; // debounce: only emit when progress inputs actually change
+  lastCheckboxHash?: string; // debounce: only emit when checkboxes actually change
 }
 
 interface WatchSlotOptions {
@@ -495,10 +490,10 @@ async function computeAndEmit(key: string, content?: string): Promise<void> {
       markdown = await slotReadFile(sw, sw.taskFilePath);
     }
 
-    const signal = await readSignalForFingerprint(sw);
-    const fingerprint = progressFingerprint(markdown, signal);
-    if (fingerprint === sw.lastProgressFingerprint) return;
-    sw.lastProgressFingerprint = fingerprint;
+    // Quick hash of checkbox states to avoid redundant broadcasts
+    const checkboxHash = hashCheckboxes(markdown);
+    if (checkboxHash === sw.lastCheckboxHash) return;
+    sw.lastCheckboxHash = checkboxHash;
 
     // Use the existing taskProgress method to get structured progress
     const result = await taskProgress({
@@ -514,17 +509,15 @@ async function computeAndEmit(key: string, content?: string): Promise<void> {
   }
 }
 
-async function readSignalForFingerprint(sw: SlotWatch): Promise<WorkerSignal | null> {
-  try {
-    const json = await slotReadFile(sw, sw.signalFilePath);
-    const parsed = JSON.parse(json) as WorkerSignal;
-    const normalized = normalizeWorkerSignal(parsed);
-    return normalized.ok ? normalized.signal : null;
-  } catch {
-    // SIGNAL.json is optional and often absent until the worker writes its
-    // first signal. Fingerprinting should still proceed from TASK.md alone.
-    return null;
+function hashCheckboxes(markdown: string): string {
+  // Fast: just concat checkbox states as a string
+  let hash = '';
+  for (const line of markdown.split('\n')) {
+    const t = line.trim();
+    if (t.startsWith('- [x]') || t.startsWith('- [X]')) hash += '1';
+    else if (t.startsWith('- [ ]')) hash += '0';
   }
+  return hash;
 }
 
 // ─── Handle SIGNAL.json changes ───

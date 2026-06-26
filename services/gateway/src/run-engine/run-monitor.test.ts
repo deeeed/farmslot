@@ -3,7 +3,6 @@ import test from 'node:test';
 
 import {
   bindSignalToMonitorContext,
-  evaluateChecklistMarkViolation,
   isWorkerSignalFreshForRun,
   shouldHoldForInteractivePrComplete,
   signalMatchesMonitorContext,
@@ -128,32 +127,4 @@ test('shouldHoldForInteractivePrComplete only gates interactive PR-complete hand
     shouldHoldForInteractivePrComplete({ flowType: 'dev', mode: 'interactive' } as any),
     false,
   );
-});
-
-test('evaluateChecklistMarkViolation nudges when pane is active but marks are stale', () => {
-  const now = Date.parse('2026-06-26T22:00:00Z');
-  const result = evaluateChecklistMarkViolation({
-    now,
-    startedAt: now - 10 * 60_000,
-    lastPaneChangeAt: now - 30_000,
-    lastProgressChangeAt: now - 6 * 60_000,
-    lastChecklistNudgeAt: null,
-    completedSteps: 0,
-    totalSteps: 32,
-  });
-  assert.equal(result.shouldNudge, true);
-});
-
-test('evaluateChecklistMarkViolation stays quiet during grace period', () => {
-  const now = Date.parse('2026-06-26T22:00:00Z');
-  const result = evaluateChecklistMarkViolation({
-    now,
-    startedAt: now - 2 * 60_000,
-    lastPaneChangeAt: now - 30_000,
-    lastProgressChangeAt: now - 2 * 60_000,
-    lastChecklistNudgeAt: null,
-    completedSteps: 0,
-    totalSteps: 32,
-  });
-  assert.equal(result.shouldNudge, false);
 });

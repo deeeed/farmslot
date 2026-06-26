@@ -267,7 +267,7 @@ export interface MonitorViolation {
   role?: AgentRole;
   contextId?: string;
   target?: string;
-  type: 'stuck' | 'skipped' | 'idle' | 'waiting' | 'checklist_unmarked' | 'error';
+  type: 'stuck' | 'skipped' | 'idle' | 'waiting' | 'error';
   message: string;
   nudgeSent: string | null;
   timestamp: string;
