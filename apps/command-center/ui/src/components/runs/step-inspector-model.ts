@@ -1,4 +1,9 @@
-import type { FamilyObservabilityArtifact, Run, RunStep } from '@farmslot/protocol';
+import type {
+  FamilyObservabilityArtifact,
+  Run,
+  RunStep,
+  SelfReviewIssue,
+} from '@farmslot/protocol';
 
 import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 
@@ -42,6 +47,61 @@ export interface StepCostInfo {
   tokens?: string;
   model?: string;
   extra?: string;
+}
+
+export interface ReviewLoopAttempt {
+  loopNumber: number;
+  verdict: string;
+  unresolvedCount: number;
+  issues: SelfReviewIssue[];
+  completedAt: string;
+  hasFixDelta: boolean;
+  fixDeltaPath: string | null;
+}
+
+/**
+ * Steps that emit a per-loop review convergence trace in their outputs. Both
+ * the publication-review steps and the self-review loop write `attempts[]` /
+ * `timeline[]` describing each review→fix→re-review iteration.
+ */
+export function stepHasReviewLoop(step: RunStep): boolean {
+  if (!step.name.includes('publication-review-') && step.name !== 'self-review') return false;
+  const out = (step.outputs ?? {}) as Record<string, unknown>;
+  const attempts = Array.isArray(out.attempts) ? out.attempts : [];
+  const timeline = Array.isArray(out.timeline) ? out.timeline : [];
+  return attempts.length > 0 || timeline.length > 0;
+}
+
+/**
+ * Normalize the free-form `outputs.attempts` blob into the per-loop rows the
+ * inspector renders. self-review and publication-review share this shape
+ * (`loopNumber`, `verdict`, `unresolvedCount`, `issues[]`, optional `fixDelta`).
+ */
+export function reviewLoopAttempts(step: RunStep): ReviewLoopAttempt[] {
+  const out = (step.outputs ?? {}) as Record<string, unknown>;
+  const attempts = Array.isArray(out.attempts) ? (out.attempts as Record<string, unknown>[]) : [];
+  return attempts.map((attempt, index) => {
+    const fixDelta =
+      attempt.fixDelta && typeof attempt.fixDelta === 'object'
+        ? (attempt.fixDelta as Record<string, unknown>)
+        : null;
+    const issues = Array.isArray(attempt.issues)
+      ? (attempt.issues as Record<string, unknown>[]).map((issue) => ({
+          file: String(issue.file ?? 'unknown'),
+          line: typeof issue.line === 'number' ? issue.line : undefined,
+          description: String(issue.description ?? ''),
+        }))
+      : [];
+    return {
+      loopNumber: typeof attempt.loopNumber === 'number' ? attempt.loopNumber : index + 1,
+      verdict: typeof attempt.verdict === 'string' ? attempt.verdict : 'pending',
+      unresolvedCount: typeof attempt.unresolvedCount === 'number' ? attempt.unresolvedCount : 0,
+      issues,
+      completedAt: typeof attempt.completedAt === 'string' ? attempt.completedAt : '',
+      hasFixDelta: fixDelta !== null,
+      fixDeltaPath: fixDelta && typeof fixDelta.diffPath === 'string' ? fixDelta.diffPath : null,
+    };
+  });
 }
 
 export function stepDurationLabel(step: RunStep, nowMs: number): string {

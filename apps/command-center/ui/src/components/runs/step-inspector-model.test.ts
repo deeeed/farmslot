@@ -5,9 +5,11 @@ import type { Run, RunStep } from '@farmslot/protocol';
 
 import {
   extractStepCostInfo,
+  reviewLoopAttempts,
   stepArtifactsForRunStep,
   stepArtifactUrl,
   stepDurationLabel,
+  stepHasReviewLoop,
 } from './step-inspector-model.js';
 
 test('stepDurationLabel formats completed and running step durations', () => {
@@ -75,6 +77,150 @@ test('stepArtifactsForRunStep normalizes typed artifacts and drops malformed row
         sizeBytes: 123,
         source: 'step-output',
       },
+    ],
+  );
+});
+
+test('stepHasReviewLoop gates the loop panel to review steps with attempts', () => {
+  const selfReviewOutputs = {
+    verdict: 'pass',
+    attempts: [{ loopNumber: 1, verdict: 'issues', unresolvedCount: 8 }],
+  };
+  assert.equal(
+    stepHasReviewLoop({
+      name: 'self-review',
+      status: 'done',
+      outputs: selfReviewOutputs,
+    } as RunStep),
+    true,
+  );
+  assert.equal(
+    stepHasReviewLoop({
+      name: 'publication-review-1',
+      status: 'done',
+      outputs: { timeline: [{ kind: 'review' }] },
+    } as RunStep),
+    true,
+  );
+  // self-review with no loop data should not render the panel
+  assert.equal(
+    stepHasReviewLoop({ name: 'self-review', status: 'running', outputs: {} } as RunStep),
+    false,
+  );
+  // unrelated steps never render the panel
+  assert.equal(
+    stepHasReviewLoop({
+      name: 'verify',
+      status: 'done',
+      outputs: { attempts: [{ loopNumber: 1 }] },
+    } as RunStep),
+    false,
+  );
+  // self-review with an empty attempts array (and no timeline) does not render
+  assert.equal(
+    stepHasReviewLoop({
+      name: 'self-review',
+      status: 'done',
+      outputs: { attempts: [] },
+    } as RunStep),
+    false,
+  );
+});
+
+test('reviewLoopAttempts normalizes self-review loop convergence', () => {
+  const step = {
+    name: 'self-review',
+    status: 'done',
+    outputs: {
+      verdict: 'pass',
+      attempts: [
+        {
+          loopNumber: 1,
+          verdict: 'issues',
+          unresolvedCount: 8,
+          completedAt: '2026-05-24T08:59:22.694Z',
+          issues: [
+            { file: 'a.ts', line: 341, description: 'swallows errors' },
+            { file: 'b.tsx', description: 'untested path' },
+          ],
+        },
+        {
+          loopNumber: 2,
+          verdict: 'issues',
+          unresolvedCount: 1,
+          fixDelta: { diffPath: 'artifacts/review-loop-2/fix-delta.diff' },
+        },
+        { loopNumber: 3, verdict: 'issues', unresolvedCount: 4 },
+        { loopNumber: 4, verdict: 'pass', unresolvedCount: 0 },
+      ],
+    },
+  } as RunStep;
+
+  const attempts = reviewLoopAttempts(step);
+  // The self-review loop converges 8 -> 1 -> 4 -> 0 across four passes.
+  assert.deepEqual(
+    attempts.map((a) => [a.loopNumber, a.verdict, a.unresolvedCount]),
+    [
+      [1, 'issues', 8],
+      [2, 'issues', 1],
+      [3, 'issues', 4],
+      [4, 'pass', 0],
+    ],
+  );
+  assert.deepEqual(attempts[0].issues, [
+    { file: 'a.ts', line: 341, description: 'swallows errors' },
+    { file: 'b.tsx', line: undefined, description: 'untested path' },
+  ]);
+  assert.equal(attempts[1].hasFixDelta, true);
+  assert.equal(attempts[1].fixDeltaPath, 'artifacts/review-loop-2/fix-delta.diff');
+  assert.equal(attempts[0].hasFixDelta, false);
+  assert.equal(attempts[0].fixDeltaPath, null);
+});
+
+test('reviewLoopAttempts flags a fixDelta with no diffPath (degraded snapshot)', () => {
+  // ReviewDiffSnapshot.source:'unavailable' yields a fixDelta without a diffPath.
+  // The fix line must still render (hasFixDelta) but without a ` · <path>` suffix.
+  const step = {
+    name: 'self-review',
+    status: 'done',
+    outputs: {
+      attempts: [
+        { loopNumber: 2, verdict: 'pass', unresolvedCount: 0, fixDelta: { source: 'unavailable' } },
+      ],
+    },
+  } as RunStep;
+  const attempt = reviewLoopAttempts(step)[0];
+  assert.equal(attempt.hasFixDelta, true);
+  assert.equal(attempt.fixDeltaPath, null);
+});
+
+test('reviewLoopAttempts returns [] for missing or non-array attempts', () => {
+  assert.deepEqual(
+    reviewLoopAttempts({ name: 'self-review', status: 'running', outputs: {} } as RunStep),
+    [],
+  );
+  assert.deepEqual(
+    reviewLoopAttempts({
+      name: 'self-review',
+      status: 'done',
+      outputs: { attempts: 'nope' },
+    } as unknown as RunStep),
+    [],
+  );
+});
+
+test('reviewLoopAttempts falls back to index-based loop numbers', () => {
+  const step = {
+    name: 'self-review',
+    status: 'done',
+    outputs: { attempts: [{ verdict: 'pass' }, {}] },
+  } as RunStep;
+  const attempts = reviewLoopAttempts(step);
+  assert.deepEqual(
+    attempts.map((a) => [a.loopNumber, a.verdict, a.unresolvedCount]),
+    [
+      [1, 'pass', 0],
+      [2, 'pending', 0],
     ],
   );
 });

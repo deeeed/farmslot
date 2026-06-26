@@ -27,11 +27,14 @@ import {
   LIST_KEYS,
   LOG_KEYS,
   OUTPUT_KEYS,
+  reviewLoopAttempts,
   stepArtifactsForRunStep,
   stepArtifactUrl,
   type StepCostInfo,
   stepDurationLabel,
+  stepHasReviewLoop,
 } from './step-inspector-model.js';
+import { renderReviewAttempt } from './step-inspector-review-renderer.js';
 import { StepInspectorState } from './step-inspector-state.js';
 import { stepInspectorStyles } from './step-inspector-styles.js';
 
@@ -288,11 +291,10 @@ export class StepInspector extends StepInspectorState {
   }
 
   private _renderReviewLoopSummary(step: RunStep) {
-    if (!step.name.includes('publication-review-')) return nothing;
+    if (!stepHasReviewLoop(step)) return nothing;
     const out = (step.outputs ?? {}) as Record<string, unknown>;
-    const attempts = Array.isArray(out.attempts) ? (out.attempts as Record<string, unknown>[]) : [];
     const timeline = Array.isArray(out.timeline) ? (out.timeline as Record<string, unknown>[]) : [];
-    if (attempts.length === 0 && timeline.length === 0) return nothing;
+    const attempts = reviewLoopAttempts(step);
     return html`
       <div class="section-title">Review Loop</div>
       <div class="review-loop">
@@ -301,7 +303,7 @@ export class StepInspector extends StepInspectorState {
               ${timeline.map((segment) => this._renderReviewTimelineSegment(segment))}
             </div>`
           : nothing}
-        ${attempts.map((attempt, index) => this._renderReviewAttempt(attempt, index))}
+        ${attempts.map((attempt, index) => renderReviewAttempt(attempt, index))}
       </div>
     `;
   }
@@ -314,60 +316,6 @@ export class StepInspector extends StepInspectorState {
     return html`<span class="review-loop-segment ${kind === 'worker-fix' ? 'fix' : ''}"
       >${label}${duration ? ` ${duration}` : ''}</span
     >`;
-  }
-
-  private _renderReviewAttempt(attempt: Record<string, unknown>, index: number) {
-    const verdict = typeof attempt.verdict === 'string' ? attempt.verdict : 'pending';
-    const unresolved = typeof attempt.unresolvedCount === 'number' ? attempt.unresolvedCount : 0;
-    const issues = Array.isArray(attempt.issues)
-      ? (attempt.issues as Record<string, unknown>[])
-      : [];
-    const completedAt = typeof attempt.completedAt === 'string' ? attempt.completedAt : '';
-    const loopNumber = typeof attempt.loopNumber === 'number' ? attempt.loopNumber : index + 1;
-    const fixDelta =
-      attempt.fixDelta && typeof attempt.fixDelta === 'object'
-        ? (attempt.fixDelta as Record<string, unknown>)
-        : null;
-    const color =
-      verdict === 'pass'
-        ? colors.statusOk
-        : verdict === 'issues'
-          ? colors.statusWarn
-          : verdict === 'failed'
-            ? colors.statusFail
-            : colors.textMuted;
-    return html`
-      ${fixDelta
-        ? html`<div class="review-loop-fix">
-            worker fix
-            applied${typeof fixDelta.diffPath === 'string' ? ` · ${fixDelta.diffPath}` : ''}
-          </div>`
-        : nothing}
-      <div class="review-loop-row ${verdict}">
-        <div class="review-loop-badge" style="color:${color}">
-          ${verdict === 'pass' ? 'pass' : verdict === 'issues' ? 'issues' : verdict}
-        </div>
-        <div class="review-loop-body">
-          <div>
-            Review attempt ${index + 1}${loopNumber !== index + 1 ? ` (loop ${loopNumber})` : ''}
-            ${unresolved ? ` — ${unresolved} unresolved` : ' — no unresolved findings'}
-          </div>
-          ${completedAt
-            ? html`<div class="review-loop-meta">completed ${completedAt}</div>`
-            : nothing}
-          ${issues.map(
-            (issue) => html`
-              <div class="review-loop-issue">
-                <span class="review-loop-file"
-                  >${String(issue.file ?? 'unknown')}${issue.line ? `:${issue.line}` : ''}</span
-                >
-                — ${String(issue.description ?? '')}
-              </div>
-            `,
-          )}
-        </div>
-      </div>
-    `;
   }
 
   private _onDiagnoseFailure() {
