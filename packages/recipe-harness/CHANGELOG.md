@@ -4,7 +4,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
-_No entries yet. Add Added/Changed/Fixed/Removed bullets here with each PR; date and version only at publish._
+- Document `orchestrateRuntimeUp` `build` decision as terminal — hosts must call again after native build finishes.
 
 ## 0.3.1 - 2026-06-26
 

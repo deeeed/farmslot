@@ -310,7 +310,7 @@ export class SlotLoadRunModal extends LitElement {
 
   private _bindOnlyHint(run: Run): string {
     if (!shouldBindOnlyForLoadRun(run.branch, this.slotBranch, this._forcePrepare)) return '';
-    return `Slot is already on ${run.branch} — load will bind only (no checkout).`;
+    return `Slot is already on ${run.branch} — load will bind only (no checkout). Health/deps checks are skipped; run ensure-js-runtime prepare if recipe replay fails.`;
   }
 
   private _onPrepareOptionsChange(event: CustomEvent<SlotPrepareOptionsChangeDetail>) {

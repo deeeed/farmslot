@@ -36,6 +36,7 @@ test('buildSlotPreparePlan surfaces bind-only and branch checkout', () => {
     forcePrepare: false,
   });
   assert.equal(bindOnly.mode, 'bind-only');
+  assert.match(bindOnly.warnings.join(' '), /skips health\/deps preconditions/i);
 
   const checkout = buildSlotPreparePlan({
     runBranch: 'feature/a',

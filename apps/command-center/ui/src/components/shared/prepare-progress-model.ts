@@ -34,11 +34,21 @@ export function createPrepareProgressState(args: {
   };
 }
 
+/** Split streamed prepare output without dropping intentional blank lines. */
+export function splitPrepareOutputLines(data: string): string[] {
+  if (!data) return [];
+  const chunks = data.split('\n');
+  if (chunks.length > 0 && chunks[chunks.length - 1] === '') {
+    return chunks.slice(0, -1);
+  }
+  return chunks;
+}
+
 export function appendPrepareOutput(
   state: PrepareProgressState,
   data: string,
 ): PrepareProgressState {
-  const chunks = data.split('\n').filter((line) => line.length > 0);
+  const chunks = splitPrepareOutputLines(data);
   if (chunks.length === 0) return state;
   const lines = [...state.lines, ...chunks];
   return {

@@ -64,7 +64,7 @@ listed here.
 | `@farmslot/recipe-harness/runtime/log-analysis`        | Bundle-log boundaries, unresolved-module scoping, persistent bundle-error state. |
 | `@farmslot/recipe-harness/runtime/metro-probe`         | Metro packager `/status` reachability probe. |
 | `@farmslot/recipe-harness/runtime/decision-types`      | Portable `RuntimeDecisionReport` / action shapes for product adapters. |
-| `@farmslot/recipe-harness/runtime/orchestrate-up`      | Generic install → relaunch orchestration loop for `recipe up` hosts. |
+| `@farmslot/recipe-harness/runtime/orchestrate-up`      | Generic install → relaunch orchestration loop for `recipe up` hosts. `build` exits after `onLaunch` — callers re-invoke after native build completes. |
 | `@farmslot/recipe-harness/cli`                         | Programmatic CLI entrypoint.               |
 | `@farmslot/recipe-harness/cli/support`                 | Shared CLI input validation helpers.       |
 | `@farmslot/recipe-harness/writers`                     | Node-only JSON artifact writers.           |

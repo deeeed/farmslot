@@ -293,14 +293,17 @@ export class SlotActionsPanel extends LitElement {
     this._activeActionId = actionId;
     this._lastRefreshReason = undefined;
     try {
-      await runSlotPrepare({
+      const result = await runSlotPrepare({
         slotId: this.slotId,
         requestId: reqId,
         ...extra,
       });
       if (this._running) {
         this._running = false;
-        this._exitCode = 0;
+        this._exitCode = result.prepared ? 0 : 1;
+        if (!result.prepared) {
+          this._output = ['ERROR: Slot prepare did not complete (slot may be disabled)'];
+        }
         this._activeActionId = '';
         void this._loadSlot();
       }

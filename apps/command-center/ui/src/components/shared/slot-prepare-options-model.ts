@@ -137,6 +137,9 @@ export function buildSlotPreparePlan(args: {
     !args.forcePrepare && Boolean(runBranch && slotBranch && runBranch === slotBranch);
   const warnings = healthWarnings(args.slotHealth, args.strictProfile, args.prepareProfile);
   if (bindOnly) {
+    warnings.push(
+      'Bind only skips health/deps preconditions — run ensure-js-runtime prepare or slot check before recipe replay if Metro is cold',
+    );
     return {
       mode: 'bind-only',
       lines: [`Bind run on ${slotBranch} (branch already matches)`],
