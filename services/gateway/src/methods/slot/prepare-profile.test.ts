@@ -74,6 +74,8 @@ test('deps sentinel commands target the runtime dir and fingerprint harness inpu
   assert.equal(depsSentinelPath('.agent'), '.agent/deps.lock-hash');
   const write = buildDepsSentinelWriteCommand('/repo', '.agent');
   assert.match(write, /cd '\/repo'/);
+  assert.doesNotMatch(write, /hash=\$\( &&/);
+  assert.match(write, /hash=\$\(\n/);
   assert.match(write, /\.agent\/deps\.lock-hash/);
   assert.match(write, /package\.json/);
   assert.match(write, /yarn\.lock/);

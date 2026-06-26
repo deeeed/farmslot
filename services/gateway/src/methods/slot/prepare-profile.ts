@@ -172,12 +172,11 @@ export function buildDepsFingerprintCommand(repo: string): string {
  */
 export function buildDepsSentinelWriteCommand(repo: string, runtimeDir: string): string {
   const sentinel = depsSentinelPath(runtimeDir);
+  const hashCapture = `hash=$(\n${depsHashSnippet()}\n)`;
   return [
     `cd ${shellQuote(repo)}`,
     `mkdir -p ${shellQuote(runtimeDir)}`,
-    `hash=$(`,
-    depsHashSnippet(),
-    `)`,
+    hashCapture,
     `if [ -n "$hash" ]; then echo "$hash" > ${shellQuote(sentinel)}; else rm -f ${shellQuote(sentinel)}; fi`,
   ].join(' && ');
 }
