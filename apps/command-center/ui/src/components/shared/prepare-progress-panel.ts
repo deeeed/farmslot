@@ -129,21 +129,21 @@ export class PrepareProgressPanel extends LitElement {
         </div>
         ${state.steps.length > 0
           ? html`<div class="ppp-steps">
-              ${state.steps.slice(-12).map(
-                (step) => html`
-                  <div class="ppp-step">
-                    <span class="ppp-step-name">${step.name}</span>${step.detail}
-                  </div>
-                `,
-              )}
+              ${state.steps
+                .slice(-12)
+                .map(
+                  (step) => html`
+                    <div class="ppp-step">
+                      <span class="ppp-step-name">${step.name}</span>${step.detail}
+                    </div>
+                  `,
+                )}
             </div>`
           : nothing}
         ${state.lines.length > 0
           ? html`<div class="ppp-log">${state.lines.slice(-40).join('\n')}</div>`
           : nothing}
-        ${state.error
-          ? html`<div class="ppp-error">${state.error}</div>`
-          : nothing}
+        ${state.error ? html`<div class="ppp-error">${state.error}</div>` : nothing}
       </div>
     `;
   }

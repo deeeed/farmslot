@@ -107,9 +107,9 @@ function ensureSlotPrepareTrackerWired(): void {
   gateway.subscribe('slot.prepare.step', (payload: unknown) => {
     const data = payload as { requestId?: string; slotId?: string; name?: string; detail?: string };
     if (!data.requestId || !requestIds.has(data.requestId) || !data.name) return;
-    const session = sessionsBySlot.get(data.slotId ?? '') ?? [...sessionsBySlot.values()].find(
-      (s) => s.requestId === data.requestId,
-    );
+    const session =
+      sessionsBySlot.get(data.slotId ?? '') ??
+      [...sessionsBySlot.values()].find((s) => s.requestId === data.requestId);
     if (!session) return;
     setSession(recordPrepareStep(session, data.name, data.detail ?? ''));
   });

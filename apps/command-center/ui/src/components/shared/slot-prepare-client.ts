@@ -3,6 +3,8 @@ import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 
+import { slotViewHash } from '../slot-view/slot-view-url-state.js';
+
 import { resolveBindOnly } from './slot-prepare-options-model.js';
 import {
   beginSlotPrepareSession,
@@ -56,14 +58,15 @@ export interface RunSlotPrepareForRunInput {
   label?: string;
 }
 
-export function slotPrepareLabel(
-  slotId: string,
-  runId: string,
-  bindOnly: boolean,
-): string {
+export function slotPrepareLabel(slotId: string, runId: string, bindOnly: boolean): string {
   return bindOnly
     ? `Binding run ${runId.slice(0, 8)} on ${slotId}`
     : `Preparing ${slotId} for run ${runId.slice(0, 8)}`;
+}
+
+/** Navigate to slot-view with the prepared run pinned in the URL. */
+export function navigateToPreparedSlot(slotId: string, runId: string): void {
+  window.location.hash = slotViewHash({ slotId, runId });
 }
 
 export async function runSlotPrepareForRun(

@@ -869,13 +869,13 @@ export class SlotView extends SlotViewRecipePresenter {
             slot,
             slotBranch: this._git?.branch ?? slot?.branch,
             activePrepareLabel:
-              this._activePrepare && (this._activePrepare.running || this._activePrepare.exitCode !== null)
+              this._activePrepare &&
+              (this._activePrepare.running || this._activePrepare.exitCode !== null)
                 ? this._activePrepare.label
                 : '',
           })
         : nothing}
-      ${renderSlotPrepareBanner(this)}
-      ${renderSlotViewBody(this, { hasSlotData, hasResources })}
+      ${renderSlotPrepareBanner(this)} ${renderSlotViewBody(this, { hasSlotData, hasResources })}
       <slot-history-modal
         slot-id=${this.slotId}
         .project=${this._slot?.project ?? ''}

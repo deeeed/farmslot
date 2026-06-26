@@ -34,7 +34,10 @@ export function createPrepareProgressState(args: {
   };
 }
 
-export function appendPrepareOutput(state: PrepareProgressState, data: string): PrepareProgressState {
+export function appendPrepareOutput(
+  state: PrepareProgressState,
+  data: string,
+): PrepareProgressState {
   const chunks = data.split('\n').filter((line) => line.length > 0);
   if (chunks.length === 0) return state;
   const lines = [...state.lines, ...chunks];
@@ -61,7 +64,10 @@ export function parsePrepareOutputLine(line: string): { name: string; detail: st
   return { name: match[1]!, detail: match[2] ?? '' };
 }
 
-export function ingestPrepareOutputLine(state: PrepareProgressState, line: string): PrepareProgressState {
+export function ingestPrepareOutputLine(
+  state: PrepareProgressState,
+  line: string,
+): PrepareProgressState {
   const next = appendPrepareOutput(state, line);
   const parsed = parsePrepareOutputLine(line);
   if (!parsed) return next;

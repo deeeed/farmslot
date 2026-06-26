@@ -6,6 +6,7 @@ import type { Run, SlotStatus } from '@farmslot/protocol';
 import {
   adjacentSlotId,
   isDirectoryReadErrorMessage,
+  shouldHideTerminalSlotRecipePanel,
   slotSwitcherEntries,
   slotSwitcherSignature,
   slotViewReadyGateDecision,
@@ -231,5 +232,61 @@ test('slotViewReviewDrawerKey preserves ready/review precedence over recipe host
       hasRecipeHost: false,
     }),
     '',
+  );
+});
+
+test('shouldHideTerminalSlotRecipePanel hides bare terminal runs', () => {
+  assert.equal(
+    shouldHideTerminalSlotRecipePanel({
+      recipeHost: null,
+      reviewDecision: null,
+      readyDecision: null,
+      showRecipeLoading: false,
+      recipeRunsCount: 0,
+      recipeRunsError: '',
+    }),
+    true,
+  );
+});
+
+test('shouldHideTerminalSlotRecipePanel keeps drawer while recipe runs load', () => {
+  assert.equal(
+    shouldHideTerminalSlotRecipePanel({
+      recipeHost: null,
+      reviewDecision: null,
+      readyDecision: null,
+      showRecipeLoading: true,
+      recipeRunsCount: 0,
+      recipeRunsError: '',
+    }),
+    false,
+  );
+});
+
+test('shouldHideTerminalSlotRecipePanel keeps drawer when recipe runs exist', () => {
+  assert.equal(
+    shouldHideTerminalSlotRecipePanel({
+      recipeHost: null,
+      reviewDecision: null,
+      readyDecision: null,
+      showRecipeLoading: false,
+      recipeRunsCount: 2,
+      recipeRunsError: '',
+    }),
+    false,
+  );
+});
+
+test('shouldHideTerminalSlotRecipePanel keeps drawer on recipe runs fetch error', () => {
+  assert.equal(
+    shouldHideTerminalSlotRecipePanel({
+      recipeHost: null,
+      reviewDecision: null,
+      readyDecision: null,
+      showRecipeLoading: false,
+      recipeRunsCount: 0,
+      recipeRunsError: 'gateway timeout',
+    }),
+    false,
   );
 });

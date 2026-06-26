@@ -69,19 +69,28 @@ export async function refreshSlotViewArtifactMirror(view: SlotViewRecipePresente
   }
 }
 
-export async function refreshSlotViewRecipeRuns(
+/** Kick off recipe-runs fetch with loading state set synchronously (avoids a paint where the terminal gate hides the drawer). */
+export function scheduleSlotViewRecipeRunsRefresh(
   view: SlotViewRecipePresenter,
   run: Run | null,
-): Promise<void> {
+): void {
   if (!run) {
     clearSlotViewRecipeRuns(view);
     return;
   }
-
-  const refreshToken = Symbol('recipe-runs-refresh');
-  view._recipeRunsRefreshToken = refreshToken;
+  view._recipeRunsRefreshToken = Symbol('recipe-runs-refresh');
   view._recipeRunsLoading = true;
   view._recipeRunsError = '';
+  void refreshSlotViewRecipeRuns(view, run);
+}
+
+export async function refreshSlotViewRecipeRuns(
+  view: SlotViewRecipePresenter,
+  run: Run | null,
+): Promise<void> {
+  if (!run) return;
+
+  const refreshToken = view._recipeRunsRefreshToken;
   try {
     const result = await gateway.request<{
       recipeRuns: RecipeRunArtifactGroup[];

@@ -78,7 +78,6 @@ export class SlotActionsPanel extends LitElement {
   /** Whether the switch-branch form is expanded. */
   @state() private _switchOpen = false;
 
-
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
     setPendingConfirm: (pending) => {
@@ -266,13 +265,15 @@ export class SlotActionsPanel extends LitElement {
   private _runBranchSwitch = () => {
     const branch = this._switchBranch.trim();
     if (!branch) return;
-    this._confirm('switch-branch', () =>
-      void this._runSlotPrepare('switch-branch', {
-        branch,
-        prepareProfile: this._switchProfile || 'attach',
-        strictProfile: this._switchStrictProfile,
-        label: `Preparing ${this.slotId} for branch ${branch}`,
-      }),
+    this._confirm(
+      'switch-branch',
+      () =>
+        void this._runSlotPrepare('switch-branch', {
+          branch,
+          prepareProfile: this._switchProfile || 'attach',
+          strictProfile: this._switchStrictProfile,
+          label: `Preparing ${this.slotId} for branch ${branch}`,
+        }),
     );
   };
 

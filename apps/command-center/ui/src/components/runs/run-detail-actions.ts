@@ -8,7 +8,7 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
-import { runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
+import { navigateToPreparedSlot, runSlotPrepareForRun } from '../shared/slot-prepare-client.js';
 
 type Timer = ReturnType<typeof setTimeout> | undefined;
 
@@ -316,5 +316,5 @@ export async function switchSlotToRunBranch(
     forcePrepare: options.forcePrepare,
     rebind,
   });
-  window.location.hash = `#slot/${slotId}`;
+  navigateToPreparedSlot(slotId, runId);
 }

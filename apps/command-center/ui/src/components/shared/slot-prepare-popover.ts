@@ -8,7 +8,7 @@ import '../shared/prepare-progress-panel.js';
 import type { PrepareProgressState } from './prepare-progress-model.js';
 import type { SlotPrepareOptionsChangeDetail } from './slot-prepare-options.js';
 import './slot-prepare-options.js';
-import { runSlotPrepareForRun } from './slot-prepare-client.js';
+import { navigateToPreparedSlot, runSlotPrepareForRun } from './slot-prepare-client.js';
 import { activeSlotPrepare, subscribeSlotPrepareTracker } from './slot-prepare-tracker.js';
 
 @customElement('slot-prepare-popover')
@@ -141,7 +141,7 @@ export class SlotPreparePopover extends LitElement {
         rebind: this.rebind,
       });
       this._open = false;
-      window.location.hash = `#slot/${this.slotId}`;
+      navigateToPreparedSlot(this.slotId, this.runId);
       this.dispatchEvent(new CustomEvent('completed', { bubbles: true, composed: true }));
     } catch (err) {
       this._error = err instanceof Error ? err.message : String(err);
@@ -185,10 +185,17 @@ export class SlotPreparePopover extends LitElement {
                 @recovery-retry=${this._onRecovery}
               ></slot-prepare-options>
               ${this._prepareState
-                ? html`<prepare-progress-panel .state=${this._prepareState} compact></prepare-progress-panel>`
+                ? html`<prepare-progress-panel
+                    .state=${this._prepareState}
+                    compact
+                  ></prepare-progress-panel>`
                 : nothing}
               <div class="spp-actions">
-                <button class="spp-btn" ?disabled=${this._busy} @click=${() => (this._open = false)}>
+                <button
+                  class="spp-btn"
+                  ?disabled=${this._busy}
+                  @click=${() => (this._open = false)}
+                >
                   Cancel
                 </button>
                 <button

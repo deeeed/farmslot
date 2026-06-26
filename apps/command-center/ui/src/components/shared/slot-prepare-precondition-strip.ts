@@ -7,7 +7,8 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 function healthTone(value: string): string {
   const normalized = value.trim().toUpperCase();
   if (!value || value === '-') return colors.textMuted;
-  if (normalized === 'OK' || normalized === 'LOCAL' || /WALLET/i.test(value)) return colors.statusOk;
+  if (normalized === 'OK' || normalized === 'LOCAL' || /WALLET/i.test(value))
+    return colors.statusOk;
   if (normalized === 'OFF' || normalized === 'FAIL') return colors.statusWarn;
   return colors.textSecondary;
 }
@@ -37,12 +38,16 @@ export function renderSlotPreparePreconditionStrip(args: {
         ([label, value, color]) => html`
           <span title=${label}
             >${label}
-            <span style="color:${color}; font-weight:700; margin-left:4px">${value || '-'}</span></span
+            <span style="color:${color}; font-weight:700; margin-left:4px"
+              >${value || '-'}</span
+            ></span
           >
         `,
       )}
       ${args.activePrepareLabel
-        ? html`<span style="margin-left:auto; color:${colors.accent}">${args.activePrepareLabel}</span>`
+        ? html`<span style="margin-left:auto; color:${colors.accent}"
+            >${args.activePrepareLabel}</span
+          >`
         : nothing}
     </div>
   `;

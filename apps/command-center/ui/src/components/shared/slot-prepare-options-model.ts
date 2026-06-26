@@ -34,7 +34,9 @@ export function loadSlotPreparePrefs(project: string): Partial<SlotPrepareOption
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Partial<SlotPrepareOptionsState>;
     return {
-      ...(typeof parsed.prepareProfile === 'string' ? { prepareProfile: parsed.prepareProfile } : {}),
+      ...(typeof parsed.prepareProfile === 'string'
+        ? { prepareProfile: parsed.prepareProfile }
+        : {}),
       ...(typeof parsed.strictProfile === 'boolean' ? { strictProfile: parsed.strictProfile } : {}),
       ...(typeof parsed.forcePrepare === 'boolean' ? { forcePrepare: parsed.forcePrepare } : {}),
     };
@@ -131,7 +133,8 @@ export function buildSlotPreparePlan(args: {
 }): SlotPreparePlan {
   const runBranch = args.runBranch?.trim() || null;
   const slotBranch = args.slotBranch?.trim() || null;
-  const bindOnly = !args.forcePrepare && Boolean(runBranch && slotBranch && runBranch === slotBranch);
+  const bindOnly =
+    !args.forcePrepare && Boolean(runBranch && slotBranch && runBranch === slotBranch);
   const warnings = healthWarnings(args.slotHealth, args.strictProfile, args.prepareProfile);
   if (bindOnly) {
     return {

@@ -199,3 +199,23 @@ export function slotViewReviewDrawerKey(input: {
   if (input.hasRecipeHost && input.run) return `recipe:${input.run.id}`;
   return '';
 }
+
+/** Terminal runs hide the recipe drawer unless there is something to show. */
+export function shouldHideTerminalSlotRecipePanel(input: {
+  recipeHost: unknown;
+  reviewDecision: unknown;
+  readyDecision: unknown;
+  showRecipeLoading: boolean;
+  recipeRunsCount: number;
+  recipeRunsError: string;
+}): boolean {
+  const hasWorkspace = Boolean(
+    input.recipeHost ||
+    input.reviewDecision ||
+    input.readyDecision ||
+    input.showRecipeLoading ||
+    input.recipeRunsCount > 0 ||
+    input.recipeRunsError,
+  );
+  return !hasWorkspace;
+}

@@ -13,7 +13,11 @@ import { renderCollapsibleSectionHeader } from '../shared/collapsible-section-he
 import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 
 import { renderSlotRecipeDrawer } from './slot-recipe-drawer.js';
-import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-view-model.js';
+import {
+  shouldHideTerminalSlotRecipePanel,
+  slotViewPendingReviewDecision,
+  slotViewReviewDrawerKey,
+} from './slot-view-model.js';
 import {
   recipeArtifactPurposeLabel,
   renderGeneratedVisualArtifacts,
@@ -639,7 +643,17 @@ export function renderSlotRecipePanel(view: SlotViewRecipePresenter) {
   // misleading "No recipe artifact for this run yet" placeholder forever.
   const runStatus = view._linkedRun.status;
   const isTerminal = runStatus === 'done' || runStatus === 'failed' || runStatus === 'cancelled';
-  if (isTerminal && !recipeHost && !reviewDecision && !readyDecision && !showRecipeLoading)
+  if (
+    isTerminal &&
+    shouldHideTerminalSlotRecipePanel({
+      recipeHost,
+      reviewDecision,
+      readyDecision,
+      showRecipeLoading,
+      recipeRunsCount: view._recipeRuns.length,
+      recipeRunsError: view._recipeRunsError,
+    })
+  )
     return nothing;
 
   const hasPrimaryWorkspace = Boolean(readyDecision || reviewDecision);

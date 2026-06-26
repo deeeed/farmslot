@@ -268,9 +268,7 @@ export class SlotPrepareOptions extends LitElement {
   private _isProfileSelected(profile: PrepareProfileOption): boolean {
     if (this.variant === 'dispatch') {
       if (this.skipPrepare) return false;
-      return this.prepareProfile
-        ? this.prepareProfile === profile.name
-        : profile.isDefault;
+      return this.prepareProfile ? this.prepareProfile === profile.name : profile.isDefault;
     }
     return this.prepareProfile === profile.name;
   }
@@ -312,9 +310,7 @@ export class SlotPrepareOptions extends LitElement {
 
   private _emitSkipPrepareAction() {
     if (this.disabled) return;
-    this.dispatchEvent(
-      new CustomEvent('skip-prepare-action', { bubbles: true, composed: true }),
-    );
+    this.dispatchEvent(new CustomEvent('skip-prepare-action', { bubbles: true, composed: true }));
   }
 
   private _setStrictProfile(value: boolean) {
@@ -356,13 +352,13 @@ export class SlotPrepareOptions extends LitElement {
           : 'Prepare profile';
     const recovery =
       this.variant === 'operator' && this.lastError
-      ? suggestPrepareRecovery(
-          this.lastError,
-          this.prepareProfile,
-          this._projectConfigs,
-          this.project,
-        )
-      : { profile: null, label: '' };
+        ? suggestPrepareRecovery(
+            this.lastError,
+            this.prepareProfile,
+            this._projectConfigs,
+            this.project,
+          )
+        : { profile: null, label: '' };
 
     return html`
       <div class="spo-wrap">
@@ -424,7 +420,9 @@ export class SlotPrepareOptions extends LitElement {
         ${plan
           ? html`
               <div class="spo-plan">
-                <div class="spo-plan-mode">${plan.mode === 'bind-only' ? 'Bind only' : 'Checkout'}</div>
+                <div class="spo-plan-mode">
+                  ${plan.mode === 'bind-only' ? 'Bind only' : 'Checkout'}
+                </div>
                 ${plan.lines.map((line) => html`<div class="spo-plan-line">${line}</div>`)}
                 ${plan.warnings.map((warning) => html`<div class="spo-warn">${warning}</div>`)}
               </div>
@@ -432,7 +430,10 @@ export class SlotPrepareOptions extends LitElement {
           : nothing}
         ${this.variant === 'operator' && this.showAdvanced
           ? html`
-              <button class="spo-advanced-toggle" @click=${() => (this._advancedOpen = !this._advancedOpen)}>
+              <button
+                class="spo-advanced-toggle"
+                @click=${() => (this._advancedOpen = !this._advancedOpen)}
+              >
                 ${this._advancedOpen ? '▾' : '▸'} Advanced
               </button>
               ${this._advancedOpen

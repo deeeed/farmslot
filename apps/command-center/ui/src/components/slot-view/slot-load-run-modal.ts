@@ -12,11 +12,12 @@ import type { PrepareProgressState } from '../shared/prepare-progress-model.js';
 import { DEFAULT_SLOT_PREPARE_OPTIONS } from '../shared/slot-prepare-options-model.js';
 import '../shared/slot-prepare-options.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
-import { runSlotPrepareForRun, shouldBindOnlyForLoadRun } from '../shared/slot-prepare-client.js';
 import {
-  activeSlotPrepare,
-  subscribeSlotPrepareTracker,
-} from '../shared/slot-prepare-tracker.js';
+  navigateToPreparedSlot,
+  runSlotPrepareForRun,
+  shouldBindOnlyForLoadRun,
+} from '../shared/slot-prepare-client.js';
+import { activeSlotPrepare, subscribeSlotPrepareTracker } from '../shared/slot-prepare-tracker.js';
 import { formatCreatedAt, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 const DEFAULT_LIMIT = 200;
@@ -336,7 +337,7 @@ export class SlotLoadRunModal extends LitElement {
         forcePrepare: this._forcePrepare,
         rebind: true,
       });
-      window.location.hash = `#slot/${this.slotId}`;
+      navigateToPreparedSlot(this.slotId, run.id);
       this._close();
     } catch (err) {
       this._actionError = err instanceof Error ? err.message : String(err);
@@ -525,20 +526,29 @@ export class SlotLoadRunModal extends LitElement {
                 .lastError=${this._actionError}
                 .disabled=${this._actionBusy}
                 @prepare-options-change=${this._onPrepareOptionsChange}
-                @recovery-retry=${(event: CustomEvent<{ prepareProfile: string; strictProfile: boolean }>) => {
+                @recovery-retry=${(
+                  event: CustomEvent<{ prepareProfile: string; strictProfile: boolean }>,
+                ) => {
                   const run = this._runs.find((entry) => entry.id === this._pendingConfirm);
                   if (!run) {
                     this._prepareProfile = event.detail.prepareProfile;
                     this._strictProfile = event.detail.strictProfile;
                     return;
                   }
-                  void this._executeLoad(run, event.detail.prepareProfile, event.detail.strictProfile);
+                  void this._executeLoad(
+                    run,
+                    event.detail.prepareProfile,
+                    event.detail.strictProfile,
+                  );
                 }}
               ></slot-prepare-options>
             </div>
             ${this._prepareState
               ? html`<div class="slrm-progress">
-                  <prepare-progress-panel .state=${this._prepareState} compact></prepare-progress-panel>
+                  <prepare-progress-panel
+                    .state=${this._prepareState}
+                    compact
+                  ></prepare-progress-panel>
                 </div>`
               : nothing}
             ${this._actionError
