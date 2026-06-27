@@ -11,10 +11,9 @@ export async function applyRunningWorkerSignalToContext(
   contextId?: string,
 ): Promise<void> {
   if (signal.status !== 'running') return;
-  const effectiveRunId = runId;
-  if (!effectiveRunId) return;
+  if (!runId) return;
 
-  const run = getRun(effectiveRunId);
+  const run = getRun(runId);
   if (!run || run.slotId !== slotId) return;
 
   const contexts = run.agentContexts ?? [];
@@ -27,7 +26,7 @@ export async function applyRunningWorkerSignalToContext(
   });
   if (!match) return;
 
-  await upsertAgentContext(effectiveRunId, match.role, {
+  await upsertAgentContext(runId, match.role, {
     lastSignalAt: signal.timestamp ?? new Date().toISOString(),
   });
 }
