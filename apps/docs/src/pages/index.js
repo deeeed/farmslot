@@ -202,12 +202,13 @@ function CommandCenterOnboarding() {
       <div className={clsx('container', styles.commandCenterPanel)}>
         <div className={styles.commandCenterIntro}>
           <span className={styles.sectionEyebrow}>Hosted cockpit</span>
-          <Heading as="h2">Open Command Center first, then connect your local farm.</Heading>
+          <Heading as="h2">Open Command Center, then connect your farm.</Heading>
           <p>
-            The hosted Command Center is a static page at <code>farmslot.io/cc</code>. It connects
-            only to the gateway you launch locally, using the secure link that{' '}
-            <code>farmslot up</code>
-            prints. The local Command Center remains available as a fallback when you need it.
+            The hosted Command Center is published as a static page at{' '}
+            <code>farmslot.io/cc</code>. For today’s plain local gateway, run{' '}
+            <code>farmslot up</code> and use the local Command Center URL it prints; browsers can
+            block HTTPS pages from opening a plain <code>ws://localhost</code> gateway. The hosted
+            page remains available for secure gateways and the upcoming secure local bridge.
           </p>
           <div className={styles.commandCenterActions}>
             <a className="button button--primary button--lg" href={COMMAND_CENTER_URL}>
@@ -226,8 +227,9 @@ function CommandCenterOnboarding() {
             <strong>1. If Farmslot is installed</strong>
             <CodeBlock language="bash">{GATEWAY_COMMAND}</CodeBlock>
             <p>
-              Starts your local gateway, opens the hosted Command Center, and lands on Doctor so you
-              can verify gateway, projects, slots, browsers, simulators, ADB, and capture-helper.
+              Starts your local gateway, opens the local Command Center fallback, and gives you the
+              hosted link to try once the gateway is reachable from the browser. Use Doctor to
+              verify gateway, projects, slots, browsers, simulators, ADB, and capture-helper.
             </p>
           </article>
           <article>
@@ -239,11 +241,11 @@ function CommandCenterOnboarding() {
             </p>
           </article>
           <article>
-            <strong>3. If hosted cannot reach localhost</strong>
+            <strong>3. Hosted Command Center</strong>
             <p>
-              Use the fallback URL printed by <code>farmslot up</code>, usually{' '}
-              <code>http://localhost:7777</code>. This serves the local Command Center from the same
-              gateway.
+              <code>farmslot.io/cc</code> is deployed with the docs site, but GitHub Pages redirects
+              to HTTPS. If your browser blocks the plain local gateway, use the fallback URL printed
+              by <code>farmslot up</code>, usually <code>http://localhost:7777</code>.
             </p>
           </article>
         </div>

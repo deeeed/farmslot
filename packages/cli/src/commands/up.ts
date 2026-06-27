@@ -68,7 +68,7 @@ function hostedCommandCenterUrl(port: number, token: string): string {
   return `${HOSTED_COMMAND_CENTER_BASE}#doctor?connect=${encodeBase64UrlJson(payload)}`;
 }
 
-function openHostedCommandCenter(url: string): boolean {
+function openUrl(url: string): boolean {
   if (process.platform === 'darwin') {
     return spawnSync('open', [url], { stdio: 'ignore' }).status === 0;
   }
@@ -259,17 +259,15 @@ function writeUpResult(params: {
     return;
   }
 
-  const opened = params.openBrowser && openHostedCommandCenter(hostedDashboard);
+  const opened = params.openBrowser && params.dashboardBuilt && openUrl(fallbackDashboard);
   params.output.write(`${green(params.status)} ${dim(`pid ${params.pid}`)}\n`);
   params.output.write(
-    `  ${dim('command center')} ${cyan(hostedDashboard)}${opened ? dim(' (opened)') : ''}\n`,
+    `  ${dim('command center')} ${cyan(fallbackDashboard)}${
+      opened ? dim(' (opened)') : ''
+    }${params.dashboardBuilt ? '' : dim(' (build local UI first: yarn --cwd apps/command-center/ui build)')}\n`,
   );
   params.output.write(
-    `  ${dim('fallback')}       ${cyan(fallbackDashboard)}${
-      params.dashboardBuilt
-        ? ''
-        : dim(' (build local UI first: yarn --cwd apps/command-center/ui build)')
-    }\n`,
+    `  ${dim('hosted')}        ${cyan(hostedDashboard)} ${dim('(served after Pages deploy; HTTPS browsers may block plain local ws:// gateways)')}\n`,
   );
   params.output.write(`  ${dim('gateway')}        ${cyan(`ws://localhost:${params.port}/ws`)}\n`);
   params.output.write(
@@ -362,35 +360,16 @@ async function up(port: number, output: OutputContext, openBrowser: boolean): Pr
   await verifyTokenAuth(port, token, output);
   const localActive = registerLocalProfile(port, token);
 
-  const dashboardBuilt = existsSync(UI_DIST_INDEX);
-  const hostedDashboard = hostedCommandCenterUrl(port, token);
-  const fallbackDashboard = `http://localhost:${port}`;
-  if (output.json) {
-    output.writeJson({
-      pid: child.pid,
-      port,
-      url: `ws://localhost:${port}`,
-      profile: LOCAL_PROFILE,
-      token,
-      pairCommand: pairHint(localActive),
-      dashboard: dashboardBuilt ? fallbackDashboard : null,
-      hostedDashboard,
-      fallbackDashboard,
-    });
-    return;
-  }
-  const opened = openBrowser && openHostedCommandCenter(hostedDashboard);
-  output.write(`${green('gateway up')} ${dim(`pid ${child.pid}`)}\n`);
-  output.write(
-    `  ${dim('command center')} ${cyan(hostedDashboard)}${opened ? dim(' (opened)') : ''}\n`,
-  );
-  output.write(
-    `  ${dim('fallback')}       ${cyan(fallbackDashboard)}${dashboardBuilt ? '' : dim(' (build local UI first: yarn --cwd apps/command-center/ui build)')}\n`,
-  );
-  output.write(`  ${dim('gateway')}        ${cyan(`ws://localhost:${port}/ws`)}\n`);
-  output.write(
-    `  ${dim('next')}       ${bold(pairHint(localActive))} ${dim('(pair your phone)')}\n`,
-  );
+  writeUpResult({
+    output,
+    status: 'gateway up',
+    pid: child.pid,
+    port,
+    token,
+    localActive,
+    dashboardBuilt: existsSync(UI_DIST_INDEX),
+    openBrowser,
+  });
 }
 
 async function down(output: OutputContext): Promise<void> {
@@ -410,7 +389,7 @@ export function registerUpCommand(program: Command): void {
     .command('up')
     .description('Start the local gateway + dashboard as a background service')
     .option('--port <port>', 'gateway port', '7777')
-    .option('--no-open', 'print the hosted Command Center URL without opening a browser')
+    .option('--no-open', 'print Command Center URLs without opening a browser')
     .action(async (opts: { port: string; open?: boolean }, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       await up(Number(opts.port), output, opts.open !== false && !output.json);
