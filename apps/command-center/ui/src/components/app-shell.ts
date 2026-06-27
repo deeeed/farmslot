@@ -24,6 +24,7 @@ import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
 import './shared/hydrating-placeholder.js';
 import './shared/update-banner.js';
+import './shared/demo-banner.js';
 import './fleet-map/fleet-canvas.js';
 import './terminal/split-view.js';
 import './dispatch/dispatch-wizard.js';
@@ -1100,6 +1101,7 @@ export class FarmApp extends LitElement {
           : ''}
       </nav>
       <div class="fa-main">
+        <demo-banner></demo-banner>
         ${this.renderUpdateBanner()}
         <fleet-summary-bar
           .summary=${this.summary}
