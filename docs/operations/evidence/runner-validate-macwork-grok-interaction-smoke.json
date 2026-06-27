@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-06-27T08:27:14.579Z",
+  "recordedAt": "2026-06-27T10:55:57.534Z",
   "host": "macwork",
   "scenario": "interaction-smoke",
   "runner": "grok",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-6kXaVH",
-  "session": "runner-validate-grok-interaction-smoke-71899",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-lKeYlu",
+  "session": "runner-validate-grok-interaction-smoke-99153",
   "launchMode": "grok-interactive",
   "projectDirectoryResolved": false,
   "promptSubmitted": true,
   "markerSeen": true,
   "pass": true,
   "error": null,
-  "paneTail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-6kXaV\nH/.tmux-driver-launch.sh\nReply with exactly TMUX_HOOK_OK and nothing else."
+  "paneTail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-lKeYl\nu/.tmux-driver-launch.sh\nReply with exactly TMUX_HOOK_OK and nothing else."
 }
