@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import {
+  cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -15,13 +17,13 @@ import {
   resolveTaskFileAbsolute,
   type Run,
   type RunBundleImportMode,
+  type RunBundleEntryMeta,
   type RunBundleImportRequest,
   type RunBundleImportResult,
   type RunBundleManifest,
 } from '@farmslot/protocol';
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
-import { copyDirectoryRecursive } from './copy-tree.js';
 import { sha256File } from './hashing.js';
 import { resolveRunsDir } from './paths.js';
 import {
@@ -37,11 +39,18 @@ function parseManifest(bundleDir: string): RunBundleManifest {
   return parsed;
 }
 
+function assertManifestEntryPathMatchesKey(key: string, meta: RunBundleEntryMeta): void {
+  assertSafeBundleRelativePath(key);
+  if (meta.path !== key) {
+    throw new Error(`Bundle entry path alias not allowed: ${key} -> ${meta.path}`);
+  }
+}
+
 function verifyEntries(bundleDir: string, manifest: RunBundleManifest): void {
   const bundleRoot = path.resolve(bundleDir);
   for (const [key, meta] of Object.entries(manifest.entries)) {
-    const relative = meta.path ?? key;
-    assertSafeBundleRelativePath(relative);
+    assertManifestEntryPathMatchesKey(key, meta);
+    const relative = key;
     const filePath = resolvePathInsideRoot(bundleRoot, relative);
     if (!existsSync(filePath)) {
       throw new Error(`Bundle entry missing on disk: ${relative}`);
@@ -62,11 +71,60 @@ function verifyEntries(bundleDir: string, manifest: RunBundleManifest): void {
 
 function loadBundledRun(bundleDir: string, runPath: string, manifest: RunBundleManifest): Run {
   assertSafeBundleRelativePath(runPath);
-  if (!manifest.entries[runPath]) {
+  const meta = manifest.entries[runPath];
+  if (!meta) {
     throw new Error(`Bundle runPath not listed in manifest entries: ${runPath}`);
   }
+  assertManifestEntryPathMatchesKey(runPath, meta);
   const filePath = resolvePathInsideRoot(path.resolve(bundleDir), runPath);
   return JSON.parse(readFileSync(filePath, 'utf-8')) as Run;
+}
+
+function assertNoUnlistedFilesInBundleSubtree(
+  bundleDir: string,
+  manifest: RunBundleManifest,
+  relativeDir: string,
+): void {
+  const bundleRoot = path.resolve(bundleDir);
+  const subtreeRoot = resolvePathInsideRoot(bundleRoot, relativeDir);
+  if (!existsSync(subtreeRoot)) return;
+
+  const walk = (currentDir: string): void => {
+    for (const entry of readdirSync(currentDir)) {
+      const sourcePath = path.join(currentDir, entry);
+      const stats = statSync(sourcePath);
+      if (stats.isDirectory()) {
+        walk(sourcePath);
+        continue;
+      }
+      if (!stats.isFile()) continue;
+      const relative = path.relative(bundleRoot, sourcePath).replace(/\\/g, '/');
+      if (!manifest.entries[relative]) {
+        throw new Error(`Bundle contains unlisted file: ${relative}`);
+      }
+    }
+  };
+  walk(subtreeRoot);
+}
+
+function copyListedTaskTreeFiles(input: {
+  bundleDir: string;
+  manifest: RunBundleManifest;
+  taskKey: string;
+  destDir: string;
+}): void {
+  const prefix = `tasks/${input.taskKey}/`;
+  const bundleRoot = path.resolve(input.bundleDir);
+  mkdirSync(input.destDir, { recursive: true });
+  for (const [key, meta] of Object.entries(input.manifest.entries)) {
+    assertManifestEntryPathMatchesKey(key, meta);
+    if (!key.startsWith(prefix)) continue;
+    const suffix = key.slice(prefix.length);
+    const sourcePath = resolvePathInsideRoot(bundleRoot, key);
+    const destPath = path.join(input.destDir, suffix);
+    mkdirSync(path.dirname(destPath), { recursive: true });
+    cpSync(sourcePath, destPath);
+  }
 }
 
 function persistRunRecord(runsDir: string, run: Run): void {
@@ -82,21 +140,26 @@ function persistRunRecord(runsDir: string, run: Run): void {
 function restoreTaskTree(input: {
   bundleDir: string;
   farmslotRoot: string;
+  manifest: RunBundleManifest;
   taskKey: string;
   taskRelativePath?: string;
 }): string | null {
   assertSafeBundleSegment(input.taskKey, 'task key');
-  const sourceTaskDir = resolvePathInsideRoot(
-    path.resolve(input.bundleDir),
-    path.join('tasks', input.taskKey),
-  );
+  const taskBundleDir = path.join('tasks', input.taskKey).replace(/\\/g, '/');
+  const sourceTaskDir = resolvePathInsideRoot(path.resolve(input.bundleDir), taskBundleDir);
   if (!existsSync(sourceTaskDir)) return null;
+  assertNoUnlistedFilesInBundleSubtree(input.bundleDir, input.manifest, taskBundleDir);
   const taskRelative = input.taskRelativePath?.replace(/\\/g, '/');
   const relativeDir = taskRelative
     ? path.dirname(taskRelative)
     : path.join('.sandbox', 'imported', 'tasks', input.taskKey).replace(/\\/g, '/');
   const destDir = resolvePathInsideRoot(path.resolve(input.farmslotRoot), relativeDir);
-  copyDirectoryRecursive(sourceTaskDir, destDir);
+  copyListedTaskTreeFiles({
+    bundleDir: input.bundleDir,
+    manifest: input.manifest,
+    taskKey: input.taskKey,
+    destDir,
+  });
   const taskFileRelative = taskRelative ?? `${relativeDir}/TASK.md`;
   return resolveTaskFileAbsolute(input.farmslotRoot, taskFileRelative);
 }
@@ -200,6 +263,7 @@ export function importBundle(request: RunBundleImportRequest): RunBundleImportRe
         const taskFile = restoreTaskTree({
           bundleDir,
           farmslotRoot: request.farmslotRoot,
+          manifest,
           taskKey: entry.taskKey,
           taskRelativePath: entry.taskRelativePath,
         });
