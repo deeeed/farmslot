@@ -27,7 +27,7 @@
   "hooks": {
     "post_merge_install": "cd apps/command-center && yarn install",
     "preflight": "cd apps/command-center && yarn typecheck",
-    "health_check": "cd apps/command-center && yarn typecheck",
+    "health_check": "cd apps/command-center && yarn typecheck && echo ok",
     "teardown": "true"
   },
   "health": {

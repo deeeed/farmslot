@@ -70,7 +70,8 @@ fi
 
 # -- 2. Repo exists -------------------------------------------------------
 header "Repo"
-if remote "test -d '${REMOTE_REPO}/.git'"; then
+# Worktrees expose .git as a file; linked clones use a .git directory.
+if remote "test -e '${REMOTE_REPO}/.git'"; then
   pass "Repo exists at ${REMOTE_REPO}"
 else
   fail "Repo not found at ${REMOTE_REPO}"
