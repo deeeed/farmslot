@@ -228,7 +228,7 @@ function captureDoctorPassed(stdout: string): boolean {
   try {
     const parsed = JSON.parse(stdout) as { checks?: Array<{ ok?: boolean; required?: boolean }> };
     return (parsed.checks ?? []).every((check) => check.ok || check.required === false);
-  } catch (error) {
+  } catch {
     // Older or broken capture-helper builds can print non-JSON; treat that as a failed doctor check.
     return false;
   }

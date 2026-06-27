@@ -7,6 +7,7 @@ import {
   parseHostedGatewayConnection,
   persistGatewayAuthForHttp,
 } from '../gateway-url.js';
+
 import { gatewayApiUrl, gatewayHttpOrigin } from './gateway-origin.js';
 
 test('gatewayHttpOrigin falls back to the current host on local pages', () => {

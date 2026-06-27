@@ -46,7 +46,6 @@ import {
 } from './runtime/screen-session.js';
 import { unsubscribeAll } from './runtime/tmux-stream.js';
 // Method handlers
-import { isGatewayOriginAllowed } from './security/origin.js';
 import {
   authenticateGatewayClient,
   GatewayAuthError,
@@ -55,6 +54,7 @@ import {
   resolveRequestIp,
   sanitizeAuthFailureReason,
 } from './security/auth.js';
+import { isGatewayOriginAllowed } from './security/origin.js';
 import { handleSelfReviewFsChanged } from './self-review/orchestrator.js';
 import type { ClientState } from './server/client-state.js';
 import { routeMethod } from './server/route-method.js';

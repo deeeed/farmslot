@@ -1,8 +1,7 @@
-import { gatewayApiUrl } from '../../utils/gateway-origin.js';
-
 import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
+import { gatewayApiUrl } from '../../utils/gateway-origin.js';
 import { desiredRecipeRunId, recipeRunIdExists } from '../shared/recipe-run-selection-model.js';
 
 import { recipeNodeExists, selectedRecipeRunRequestId } from './slot-view-recipe-helpers.js';
