@@ -99,7 +99,7 @@ function ensureSlotPrepareTrackerWired(): void {
       error: data.error ?? '',
     });
   });
-  gateway.subscribe('slot.prepare.step', (payload: unknown) => {
+  gateway.subscribe(Events.SLOT_PREPARE_STEP, (payload: unknown) => {
     const data = payload as { requestId?: string; slotId?: string; name?: string; detail?: string };
     if (!data.requestId || !requestIds.has(data.requestId) || !data.name) return;
     const session =

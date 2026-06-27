@@ -17,6 +17,7 @@ export {
   shouldPreservePrepareWindowOnSuccess,
 } from './prepare-command.js';
 export { reconcileStalePrepareLocks } from './prepare-sentinel.js';
+export { slotPrepareStatus } from './prepare-status.js';
 export { slotRecycle } from './recycle.js';
 export { slotRefresh, slotRefreshBlockedReason } from './refresh.js';
 export {

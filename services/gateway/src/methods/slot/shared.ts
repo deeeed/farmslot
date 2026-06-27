@@ -1,3 +1,5 @@
+import type { PrepareStepRecord } from '@farmslot/protocol';
+
 import {
   type ProjectVars,
   type RawProjectJson,
@@ -35,6 +37,17 @@ export interface CheckStep {
 }
 
 export const activePrepareSlots = new Set<string>();
+
+/** In-flight prepare session per slot, so a reloaded UI can re-attach to the
+ * live `slot.prepare.*` stream and recover the steps it missed (ADR-037).
+ * Populated by createPrepareStream for the stream's lifetime. */
+export interface ActivePrepareSession {
+  requestId: string;
+  startedAt: number;
+  steps: PrepareStepRecord[];
+}
+export const activePrepareSessions = new Map<string, ActivePrepareSession>();
+
 export const DEFAULT_GATEWAY_PORT = 7777;
 
 function normalizeSelectedApp(value: unknown): string {

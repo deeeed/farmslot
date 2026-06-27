@@ -34,6 +34,11 @@ export const Events = {
   SCRIPT_OUTPUT: 'script.output',
   SCRIPT_COMPLETE: 'script.complete',
 
+  // Slot prepare streaming (structured phase/profile provenance, ADR-037)
+  SLOT_PREPARE_STEP: 'slot.prepare.step',
+  SLOT_PREPARE_OUTPUT: 'slot.prepare.output',
+  SLOT_PREPARE_DONE: 'slot.prepare.done',
+
   // Fleet bulk refresh (FLEET_REFRESH_SLOTS)
   FLEET_REFRESH_SCHEDULED: 'fleet.refresh.scheduled',
   FLEET_REFRESH_SLOT_UPDATE: 'fleet.refresh.slot-update',
@@ -135,6 +140,13 @@ export interface SlotChangedPayload {
 export interface ScriptOutputPayload extends ScriptOutput {}
 
 export interface ScriptCompletePayload extends ScriptComplete {}
+
+export interface SlotPrepareStepPayload {
+  requestId: string;
+  slotId: string;
+  name: string;
+  detail: string;
+}
 
 export interface TerminalDataPayload extends TerminalData {}
 
