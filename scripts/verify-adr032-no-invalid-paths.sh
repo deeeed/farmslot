@@ -26,4 +26,18 @@ done
 [[ -d "$EVIDENCE/replay" ]] && fail "misleading replay dir present: $EVIDENCE/replay"
 [[ -f "$EVIDENCE/pr-chain-audit.json" ]] && fail "pr-chain-audit.json present"
 
+OPS_EVIDENCE="$ROOT/docs/operations/evidence"
+for pattern in \
+  'adr032-phase1-agreement-*.json' \
+  'runner-validate-*-busy-composer.json' \
+  'runner-validate-*-mode-switch.json' \
+  'runner-validate-*-prompt-accepted.json' \
+  'runner-validate-*-turn-boundary.json' \
+  'runner-validate-*-grok-*.json' \
+  'runner-validate-*-cursor-*.json'; do
+  if compgen -G "$OPS_EVIDENCE/$pattern" >/dev/null; then
+    fail "optional harness evidence present (not committed): $OPS_EVIDENCE/$pattern"
+  fi
+done
+
 echo "INVALID-PATHS PASS: only canonical ADR-032 goal evidence/scripts on disk"

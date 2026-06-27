@@ -11,7 +11,20 @@
     "docs/operations/evidence/adr032/pr85-*",
     "docs/operations/evidence/adr032/pr86-*",
     "docs/operations/evidence/adr032/replay/",
-    "docs/operations/evidence/adr032/pr-chain-audit.json"
+    "docs/operations/evidence/adr032/pr-chain-audit.json",
+    "docs/operations/evidence/adr032-phase1-agreement-*.json",
+    "docs/operations/evidence/runner-validate-*-busy-composer.json",
+    "docs/operations/evidence/runner-validate-*-mode-switch.json",
+    "docs/operations/evidence/runner-validate-*-prompt-accepted.json",
+    "docs/operations/evidence/runner-validate-*-turn-boundary.json",
+    "docs/operations/evidence/runner-validate-*-grok-*.json",
+    "docs/operations/evidence/runner-validate-*-cursor-*.json"
+  ],
+  "committedMacworkEvidence": [
+    "docs/operations/evidence/adr032-phase1-probe-macwork-claude.json",
+    "docs/operations/evidence/adr032-phase1-probe-macwork-codex.json",
+    "docs/operations/evidence/runner-validate-macwork-claude-hook-smoke.json",
+    "docs/operations/evidence/runner-validate-macwork-codex-hook-smoke.json"
   ],
   "validEvidenceFiles": [
     "pr81-premerge.json",
@@ -34,6 +47,8 @@
     "Single closeout path: assert -> shipped-main + merge-process (PR #81 only).",
     "Plan criterion 2 (plan.md:8): cross-review equivalent — not post-merge GitHub APPROVED.",
     "Plan criterion 3 (plan.md:9): CI green on PR head before mergedAt — verified via frozen + live gh rollup.",
-    "PRs #82-#86 are outside this goal scope; their artifacts were removed from the repo."
+    "PRs #82-#86 are outside this goal scope; their artifacts were removed from the repo.",
+    "Committed macwork harness evidence is four JSONs in committedMacworkEvidence; optional scenarios and grok/cursor smokes are local-only.",
+    "Phase 2 exit frozen in phase2-exit-window.json (exitPass true as of 2026-06-27)."
   ]
 }

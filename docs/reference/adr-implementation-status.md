@@ -23,7 +23,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [026](../adr/026-self-improvement-recursive-loop.md) | Self-improvement recursive loop | Proposed | Partial | Structured retrospective grading + improvement loop not fully wired |
 | [030](../adr/030-replay-provenance-and-reference-evals.md) | Eval packages on run families | Accepted | Partial | Replay closure: baseline/head identity, live regression evidence |
 | [031](../adr/031-deterministic-first-auto-recovery.md) | Deterministic-first auto-recovery | Accepted | Shipped | Policy tuning from audit evidence |
-| [032](../adr/032-runner-observability-via-hooks.md) | Runner observability via hooks | Accepted | Partial | Phase 2 exit monitoring; Phase 3 pane-regex retirement |
+| [032](../adr/032-runner-observability-via-hooks.md) | Runner observability via hooks | Accepted | Partial | Phase 2 exit passed; Phase 3 pane-regex retirement |
 | [033](../adr/033-mobile-tmux-worker-control.md) | Mobile tmux worker control | Accepted | Shipped | Deferred: background wake-word, auto-send, remote provisioning |
 | [034](../adr/034-recipe-protocol-v1.md) | Recipe Protocol v1 | Accepted | Partial | Project migration + manifest-first UI + live self-validation |
 | [035](../adr/035-node-support-bundles.md) | Node support bundles | Accepted | Partial | Gateway prepare sync; not all projects declare bundles |
@@ -85,15 +85,16 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 ## ADR-032 — Runner Observability via Hooks (Accepted)
 
-**Implementation: Partial (Phases 1–2 shipped)**
+**Implementation: Partial (Phases 1–2 shipped; Phase 2 exit passed)**
 
 | ADR requirement | Status | Evidence / gap |
 | --------------- | ------ | -------------- |
 | Hook installers + `hooks.jsonl` / statusline writes | Shipped | PR #81 (`e4cbcb4`) |
 | `scripts/runner-validation/` harness | Shipped | Operator guide in `docs/operations/` |
 | Obs-first `sendRunnerInstructionSafely` | Shipped | PRs #82–#84, `91674d9` follow-up |
-| Phase 2 exit: zero `nudgeTimeoutCount` over 7 days | Partial | Empirical monitoring in progress |
-| Phase 3: retire Claude pane-regex branches | Not started | Waits for Phase 2 exit gate |
+| Phase 2 exit: zero `nudgeTimeoutCount` over 7 days | Shipped | `docs/operations/evidence/adr032/phase2-exit-window.json` (`exitPass: true`) |
+| Committed macwork evidence snapshots | Shipped | Four JSONs listed in `docs/operations/evidence/adr032/GOAL-SCOPE.json` |
+| Phase 3: retire Claude pane-regex branches | Not started | Scheduled; exit gate cleared |
 | Cursor/Grok hook path | Not started | Remain `pane-only` per ADR matrix |
 
 ---

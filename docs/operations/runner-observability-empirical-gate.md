@@ -26,6 +26,8 @@ bash scripts/run-adr032-phase1-gate.sh
 
 Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
 
+**Committed snapshots:** only macwork hook-smoke JSONs for Claude and Codex are versioned (plus install probes — see below). Grok/Cursor pane smokes and optional harness scenarios write local JSON under the same directory but must not be committed; `scripts/verify-adr032-no-invalid-paths.sh` fails if they appear on disk during closeout verification.
+
 Operator guide: [runner-validation-harness.md](./runner-validation-harness.md)
 
 ## Install probes
@@ -64,6 +66,14 @@ node scripts/validate-observability-agreement-window.mjs \
 ```
 
 No fixed “200 events @ 98%” bar — that was never a real Phase 1 gate.
+
+## Revalidation
+
+| Scope | Command |
+|-------|---------|
+| Phase 1 empirical gate (E2E + probes) | `bash scripts/run-adr032-phase1-gate.sh` |
+| Full ADR-032 closeout | `bash scripts/assert-adr032-goal-evidence.sh` |
+| Phase 2 exit only | `bash scripts/verify-adr032-phase2-exit.sh` (refreshes `docs/operations/evidence/adr032/phase2-exit-window.json`) |
 
 ## Abort rule
 
