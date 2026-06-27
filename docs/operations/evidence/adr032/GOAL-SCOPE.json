@@ -1,6 +1,17 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "goalCriteria2and3Pr": 81,
+  "deletedInvalidPaths": [
+    "scripts/harvest-adr032-goal-evidence.sh",
+    "scripts/harvest-adr032-pr-chain-audit.mjs",
+    "scripts/assert-adr032-pr-chain.mjs",
+    "docs/operations/evidence/adr032/pr82-*",
+    "docs/operations/evidence/adr032/pr83-*",
+    "docs/operations/evidence/adr032/pr84-*",
+    "docs/operations/evidence/adr032/pr85-*",
+    "docs/operations/evidence/adr032/pr86-*",
+    "docs/operations/evidence/adr032/replay/"
+  ],
   "validEvidenceFiles": [
     "pr81-premerge.json",
     "pr81-merge-timing-note.json",
@@ -16,8 +27,9 @@
     "scripts/run-adr032-phase1-gate.sh"
   ],
   "notes": [
-    "ADR-032 goal closeout uses split verifiers only; no PR-chain harvest or waiver paths.",
-    "Criteria 2-3 apply to PR #81: pre-merge cross-review JSON + CI green on PR head before mergedAt.",
-    "Post-merge GitHub APPROVED on PR #81 is disclosed but not used as review proof."
+    "Single closeout path: assert -> shipped-main + merge-process (PR #81 only).",
+    "Plan criterion 2 (plan.md:8): cross-review equivalent — not post-merge GitHub APPROVED.",
+    "Plan criterion 3 (plan.md:9): CI green on PR head before mergedAt — verified via frozen + live gh rollup.",
+    "PRs #82-#86 are outside this goal scope; their artifacts were removed from the repo."
   ]
 }

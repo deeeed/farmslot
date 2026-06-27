@@ -6,6 +6,25 @@
   "mergeStateStatusAtMerge": "BLOCKED",
   "premergeEvidenceFile": "pr81-premerge.json",
   "processWaiver": null,
-  "compensatingEvidence": ["pr81-premerge.json", "pr81-CROSS-REVIEW-LOOP.json"],
-  "disclosure": "PR #81 required jobs were SUCCESS before merge per pr81-premerge.json. GH formal APPROVE arrived post-merge; pre-merge cross-review JSON is authoritative for review timing."
+  "planCriterion2": {
+    "requirement": "PR #81 cross-review-orchestrator or equivalent independent review (plan.md line 8)",
+    "satisfiedBy": "pr81-CROSS-REVIEW-LOOP.json cycle 2 PASS + cross-review-pr81.txt",
+    "reviewTiming": "pre-merge-cross-review"
+  },
+  "planCriterion3": {
+    "requirement": "PR #81 CI green at merge time (plan.md line 9)",
+    "satisfiedBy": "pr81-premerge.json + live gh pr view 81 statusCheckRollup: required jobs SUCCESS with completedAt <= mergedAt",
+    "requiredJobs": [
+      "Repository quality guards",
+      "Command Center quality gates",
+      "Docs quality gates",
+      "Gateway service quality"
+    ]
+  },
+  "githubReviewConstraint": {
+    "author": "abretonc7s",
+    "note": "Self-authored PR: formal GitHub APPROVED from author is not available. Independent deeeed APPROVE landed post-merge (2026-06-27T10:08:19Z). Plan criterion 2 is satisfied via cross-review JSON, not post-merge GH stamp."
+  },
+  "compensatingEvidence": ["pr81-premerge.json", "pr81-CROSS-REVIEW-LOOP.json", "cross-review-pr81.txt"],
+  "disclosure": "mergeStateStatus BLOCKED reflects GitHub mergeability while checks were still completing; frozen + live rollups show all required jobs SUCCESS before mergedAt."
 }
