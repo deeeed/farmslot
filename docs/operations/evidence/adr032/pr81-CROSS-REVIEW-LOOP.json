@@ -28,7 +28,7 @@
         {
           "reviewerId": "code-reviewer",
           "verdict": "ISSUES",
-          "blockingCount": 3,
+          "blockingCount": 1,
           "evidenceReview": "Codex hook evidence gaps; e2e skip-greenwash; docs drift",
           "validationReview": "e2e-tmux-runner-validate and run-adr032-phase1-gate required",
           "outputArtifact": "docs/operations/evidence/adr032/pr81-CROSS-REVIEW-LOOP.json"

@@ -84,7 +84,15 @@ done
 require_file "$EVIDENCE_DIR/phase2-decision-grep.txt"
 require_grep 'resolvePendingInstructionObsFirst' "$ROOT/services/gateway/src/runners/registry.ts" 'registry.ts'
 require_grep 'sendRunnerInstructionWhenPaneClear' "$ROOT/services/gateway/src/runners/registry.ts" 'registry.ts'
+require_grep 'selectPendingFromObservabilityAndPane' "$EVIDENCE_DIR/phase2-decision-grep.txt" 'phase2-decision-grep'
 
 require_file "$EVIDENCE_DIR/pr82-postmerge-ci.json"
+node --input-type=module -e "
+import fs from 'node:fs';
+const runs = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+if (!Array.isArray(runs) || runs.length === 0) process.exit(1);
+const quality = runs.find((r) => r.name === 'Farmslot Quality' || String(r.name).includes('Quality'));
+if (!quality || quality.conclusion !== 'SUCCESS') process.exit(1);
+" "$EVIDENCE_DIR/pr82-postmerge-ci.json" || fail 'pr82-postmerge-ci.json missing SUCCESS quality run'
 
 echo "ASSERT PASS: all ADR-032 goal evidence criteria satisfied"
