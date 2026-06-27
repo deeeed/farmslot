@@ -13,6 +13,7 @@ import {
 import path from 'node:path';
 
 import {
+  assertApprovedTaskRestoreRelativePath,
   isRunBundleManifest,
   resolveTaskFileAbsolute,
   type Run,
@@ -150,6 +151,9 @@ function restoreTaskTree(input: {
   if (!existsSync(sourceTaskDir)) return null;
   assertNoUnlistedFilesInBundleSubtree(input.bundleDir, input.manifest, taskBundleDir);
   const taskRelative = input.taskRelativePath?.replace(/\\/g, '/');
+  if (taskRelative) {
+    assertApprovedTaskRestoreRelativePath(taskRelative);
+  }
   const relativeDir = taskRelative
     ? path.dirname(taskRelative)
     : path.join('.sandbox', 'imported', 'tasks', input.taskKey).replace(/\\/g, '/');

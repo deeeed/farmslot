@@ -188,3 +188,113 @@ test('farmrun export/import round-trip persists reference-only imports', () => {
     rmSync(bundlePath, { force: true });
   }
 });
+
+test('farmrun seed import remaps parentRunId redirectedToRunId and familyId', () => {
+  const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-lineage-src-'));
+  const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-lineage-dst-'));
+  const bundlePath = path.join(tmpdir(), `bundle-lineage-${Date.now()}.farmrun`);
+  const parentId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const childId = 'bbbbbbbb-bbbb-cccc-dddd-ffffffffffffffff';
+  const familyId = parentId;
+  const parentTask = path.join(
+    sourceRoot,
+    'projects',
+    'demo-farm',
+    'tasks',
+    'dev',
+    'parent-case',
+    'TASK.md',
+  );
+  const childTask = path.join(
+    sourceRoot,
+    'projects',
+    'demo-farm',
+    'tasks',
+    'dev',
+    'child-case',
+    'TASK.md',
+  );
+  const parent: Run = {
+    id: parentId,
+    familyId,
+    lane: 'comparison',
+    variant: 'baseline',
+    flowType: 'dev',
+    mode: 'validation',
+    status: 'done',
+    project: 'demo-farm',
+    ticketOrPr: 'PARENT-1',
+    slotId: 'mac-1',
+    branch: 'eval/baseline',
+    completionPolicy: 'artifact-only',
+    taskFile: parentTask,
+    redirectedToRunId: childId,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const child: Run = {
+    id: childId,
+    familyId,
+    lane: 'comparison',
+    variant: 'candidate',
+    flowType: 'dev',
+    mode: 'validation',
+    status: 'done',
+    project: 'demo-farm',
+    ticketOrPr: 'CHILD-1',
+    slotId: 'mac-1',
+    branch: 'eval/candidate',
+    completionPolicy: 'artifact-only',
+    taskFile: childTask,
+    parentRunId: parentId,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  writeMinimalFarmslotRoot(sourceRoot);
+  writeFixtureRun(sourceRoot, parent);
+  writeFixtureRun(sourceRoot, child);
+
+  try {
+    exportRunsToBundle({
+      farmslotRoot: sourceRoot,
+      outputPath: bundlePath,
+      profile: 'family',
+      runIds: [parentId, childId],
+    });
+    writeMinimalFarmslotRoot(targetRoot);
+    const imported = importBundle({
+      farmslotRoot: targetRoot,
+      bundlePath,
+      mode: 'seed',
+    });
+    assert.equal(imported.importedRunIds.length, 2);
+    const newParentId = imported.idMap[parentId];
+    const newChildId = imported.idMap[childId];
+    assert.ok(newParentId);
+    assert.ok(newChildId);
+    assert.notEqual(newParentId, parentId);
+    assert.notEqual(newChildId, childId);
+
+    const persistedParent = JSON.parse(
+      readFileSync(path.join(targetRoot, '.runs', `${newParentId}.json`), 'utf-8'),
+    ) as Run;
+    const persistedChild = JSON.parse(
+      readFileSync(path.join(targetRoot, '.runs', `${newChildId}.json`), 'utf-8'),
+    ) as Run;
+
+    assert.equal(persistedParent.familyId, newParentId);
+    assert.equal(persistedChild.familyId, newParentId);
+    assert.equal(persistedParent.redirectedToRunId, newChildId);
+    assert.equal(persistedChild.parentRunId, newParentId);
+  } finally {
+    rmSync(sourceRoot, { recursive: true, force: true });
+    rmSync(targetRoot, { recursive: true, force: true });
+    rmSync(bundlePath, { force: true });
+  }
+});

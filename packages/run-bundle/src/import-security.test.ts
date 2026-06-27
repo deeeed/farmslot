@@ -292,6 +292,87 @@ test('import rejects manifest entry path aliases for run JSON', () => {
   }
 });
 
+test('import rejects taskRelativePath outside orchestrator task roots', () => {
+  const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst6-'));
+  const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack6-'));
+  const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const run: Run = {
+    id: runId,
+    familyId: 'family-1',
+    lane: 'comparison',
+    variant: 'baseline',
+    flowType: 'dev',
+    mode: 'validation',
+    status: 'done',
+    project: 'demo-farm',
+    ticketOrPr: 'EVAL-1',
+    slotId: 'mac-1',
+    branch: 'eval/baseline',
+    completionPolicy: 'artifact-only',
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const runFile = 'runs/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.json';
+  const runJson = JSON.stringify(run, null, 2);
+  const taskKey = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const taskFileRel = `tasks/${taskKey}/TASK.md`;
+  const taskContent = '# task\n';
+  const manifest: RunBundleManifest = {
+    version: RUN_BUNDLE_VERSION,
+    profile: 'reference',
+    exportedAt: new Date().toISOString(),
+    bundleId: 'bundle-6',
+    source: { farmslotRoot: '/tmp/source', runIds: [runId] },
+    remapPolicy: 'remap-ids',
+    runs: [
+      {
+        originalRunId: runId,
+        runPath: runFile,
+        taskKey,
+        taskRelativePath: 'scripts/evil-hook/TASK.md',
+      },
+    ],
+    entries: {
+      [runFile]: {
+        sha256: sha256Text(runJson),
+        bytes: Buffer.byteLength(runJson, 'utf-8'),
+        path: runFile,
+      },
+      [taskFileRel]: {
+        sha256: sha256Text(taskContent),
+        bytes: Buffer.byteLength(taskContent, 'utf-8'),
+        path: taskFileRel,
+      },
+    },
+  };
+  buildMaliciousBundle(bundleDir, manifest, run, runFile);
+  mkdirSync(path.join(bundleDir, 'tasks', taskKey), { recursive: true });
+  writeFileSync(path.join(bundleDir, 'tasks', taskKey, 'TASK.md'), taskContent, 'utf-8');
+  const bundlePath = path.join(tmpdir(), `bad-task-root-${Date.now()}.farmrun`);
+  packFarmrunDirectory(bundleDir, bundlePath);
+  writeMinimalRoot(targetRoot);
+
+  try {
+    assert.throws(
+      () =>
+        importBundle({
+          farmslotRoot: targetRoot,
+          bundlePath,
+          mode: 'seed',
+        }),
+      /Task relative path must restore under projects\/<name>\/tasks\/ or \.sandbox\/\.\.\.\/tasks\//,
+    );
+  } finally {
+    rmSync(targetRoot, { recursive: true, force: true });
+    rmSync(bundleDir, { recursive: true, force: true });
+    rmSync(bundlePath, { force: true });
+  }
+});
+
 test('import rejects unlisted files under task tree', () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst5-'));
   const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack5-'));

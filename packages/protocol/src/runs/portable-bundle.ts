@@ -56,6 +56,26 @@ export function taskRelativePathFromAbsolute(
   return null;
 }
 
+const PROJECT_TASK_ROOT_PATTERN = /^projects\/[a-zA-Z0-9._-]+\/tasks\/.+/;
+const SANDBOX_TASK_ROOT_PATTERN = /^\.sandbox\/(?:[^/]+\/)*tasks\/.+/;
+
+/** Bundled task restores must land under orchestrator or sandbox task roots only. */
+export function assertApprovedTaskRestoreRelativePath(relativePath: string): void {
+  const cleaned = relativePath.replace(/\\/g, '/').replace(/^\//, '');
+  if (!cleaned || path.isAbsolute(cleaned)) {
+    throw new Error(`Unsafe task relative path: ${relativePath}`);
+  }
+  if (cleaned.split('/').some((segment) => segment === '..' || segment === '.')) {
+    throw new Error(`Unsafe task relative path: ${relativePath}`);
+  }
+  if (PROJECT_TASK_ROOT_PATTERN.test(cleaned) || SANDBOX_TASK_ROOT_PATTERN.test(cleaned)) {
+    return;
+  }
+  throw new Error(
+    `Task relative path must restore under projects/<name>/tasks/ or .sandbox/.../tasks/: ${relativePath}`,
+  );
+}
+
 export function resolveTaskFileAbsolute(farmslotRoot: string, relativePath: string): string {
   const root = path.resolve(farmslotRoot);
   const cleaned = relativePath.replace(/\\/g, '/').replace(/^\//, '');
