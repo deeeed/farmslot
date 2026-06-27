@@ -5,6 +5,7 @@ import {
   computePromptAcceptedSinceMs,
   isObservabilityReadingAuthoritative,
   selectBusyFromObservabilityAndPane,
+  selectIdleFromObservabilityAndPane,
   selectPendingFromObservabilityAndPane,
 } from './observability-send-decision.js';
 import type { ObservabilityReading, RunnerActivity } from './observability-types.js';
@@ -92,6 +93,32 @@ test('selectPendingFromObservabilityAndPane falls back to pane when hook is abse
   });
   assert.deepEqual(selectPendingFromObservabilityAndPane(null, false), {
     pending: false,
+    source: 'pane',
+    confidence: null,
+  });
+});
+
+test('selectIdleFromObservabilityAndPane prefers hook idle when authoritative', () => {
+  assert.deepEqual(selectIdleFromObservabilityAndPane(activityReading('idle'), false), {
+    idle: true,
+    source: 'hook',
+    confidence: 'high',
+  });
+  assert.deepEqual(selectIdleFromObservabilityAndPane(activityReading('composing'), true), {
+    idle: false,
+    source: 'hook',
+    confidence: 'high',
+  });
+});
+
+test('selectIdleFromObservabilityAndPane falls back to pane on unknown or missing hook', () => {
+  assert.deepEqual(selectIdleFromObservabilityAndPane(null, true), {
+    idle: true,
+    source: 'pane',
+    confidence: null,
+  });
+  assert.deepEqual(selectIdleFromObservabilityAndPane(activityReading('unknown'), false), {
+    idle: false,
     source: 'pane',
     confidence: null,
   });

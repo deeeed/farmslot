@@ -43,6 +43,23 @@ export function selectBusyFromObservabilityAndPane(
   return { busy: paneBusy, source: 'pane', confidence: null };
 }
 
+export function selectIdleFromObservabilityAndPane(
+  hookReading: ObservabilityReading<RunnerActivity> | null | undefined,
+  paneIdle: boolean,
+): { idle: boolean; source: 'hook' | 'pane'; confidence: ObservabilityConfidence | null } {
+  if (
+    isObservabilityReadingAuthoritative(hookReading) &&
+    hookReading.value !== 'unknown'
+  ) {
+    return {
+      idle: !runnerActivityIsBusy(hookReading.value),
+      source: 'hook',
+      confidence: hookReading.confidence,
+    };
+  }
+  return { idle: paneIdle, source: 'pane', confidence: null };
+}
+
 export function selectPendingFromObservabilityAndPane(
   promptReading: ObservabilityReading<boolean> | null | undefined,
   panePending: boolean,

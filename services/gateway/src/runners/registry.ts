@@ -31,6 +31,7 @@ import {
   isObservabilityReadingAuthoritative,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
+  selectIdleFromObservabilityAndPane,
   selectPendingFromObservabilityAndPane,
 } from './observability-send-decision.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
@@ -947,6 +948,48 @@ async function sendRunnerInstructionWhenPaneClear(
   return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
 }
 
+async function runnerLooksIdleObsFirst(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  pane: string,
+): Promise<boolean> {
+  const paneIdle = runnerPaneLooksIdle(pane.split('\n'), runner);
+  const reading = await readRunnerActivityFromObservability(vars, target, runner);
+  return selectIdleFromObservabilityAndPane(reading, paneIdle).idle;
+}
+
+async function runnerShowsPromptDeliveryAccepted(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  message: string,
+  sinceMs: number,
+  postPane: string,
+  previousPane: string,
+  marker: string,
+): Promise<boolean> {
+  if (runnerPaneShowsPromptAccepted(postPane, previousPane, message, marker, runner)) {
+    return true;
+  }
+  const observability = getRunnerObservability(runner);
+  if (!observability) return false;
+  try {
+    const reading = await observability.promptAccepted(
+      vars,
+      target,
+      runnerPromptDigest(message),
+      sinceMs,
+    );
+    return isObservabilityReadingAuthoritative(reading) && reading.value === true;
+  } catch (error) {
+    console.warn(
+      `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
+    );
+    return false;
+  }
+}
+
 async function resolveBusyComposerObsFirst(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -1134,7 +1177,7 @@ async function waitForPaneAfterClassifierAction(
     if (runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner)) {
       return { kind: 'task-accepted', pane };
     }
-    if (!runnerPaneLooksIdle(pane.split('\n'), runner)) {
+    if (!(await runnerLooksIdleObsFirst(vars, target, runner, pane))) {
       stableCount = 0;
       lastPane = '';
       continue;
@@ -1376,7 +1419,7 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    if (!runnerPaneLooksIdle(pane.split('\n'), runner)) {
+    if (!(await runnerLooksIdleObsFirst(vars, target, runner, pane))) {
       stableCount = 0;
       lastPane = '';
       continue;
@@ -1537,6 +1580,7 @@ export async function sendRunnerPostLaunchPrompt(
           `send-keys -t ${shellQuote(target)} ${runnerBufferedInstructionSubmitKey(preSendPane, runner)} 2>/dev/null`,
         )
       : tmuxSendTextCommand(target, message, { enter: true });
+    const sentAtMs = Date.now();
     const promptResult = await execOnSlot(vars, sendCommand);
     if (promptResult.exitCode !== 0) {
       throw new Error(
@@ -1550,7 +1594,19 @@ export async function sendRunnerPostLaunchPrompt(
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
       )
     ).stdout;
-    if (runnerPaneShowsPromptAccepted(postPane, lastPane, message, marker, runner)) {
+    const promptAcceptedSinceMs = sentAtMs - 500;
+    if (
+      await runnerShowsPromptDeliveryAccepted(
+        vars,
+        target,
+        runner,
+        message,
+        promptAcceptedSinceMs,
+        postPane,
+        lastPane,
+        marker,
+      )
+    ) {
       console.log(
         `[${logPrefix}] prompt delivered to ${target} (attempt ${attempt}/${maxAttempts})`,
       );
