@@ -125,12 +125,18 @@ case "${PLATFORM_VALUE}" in
       bash "${COMPANION_SCRIPT}"
       --recipe "${RECIPE_PATH}"
       --artifacts-dir "${ARTIFACTS_DIR}"
-      --runtime-dir "${RUNTIME_DIR}"
       --platform "${PLATFORM_VALUE}"
       --metro-port "${METRO_PORT_VALUE}"
-      --simulator "${SIMULATOR_VALUE}"
-      --adb-serial "${ADB_SERIAL_VALUE}"
     )
+    if [[ -n "${RUNTIME_DIR}" ]]; then
+      ARGS+=(--runtime-dir "${RUNTIME_DIR}")
+    fi
+    if [[ -n "${SIMULATOR_VALUE}" ]]; then
+      ARGS+=(--simulator "${SIMULATOR_VALUE}")
+    fi
+    if [[ -n "${ADB_SERIAL_VALUE}" ]]; then
+      ARGS+=(--adb-serial "${ADB_SERIAL_VALUE}")
+    fi
     ;;
   *)
     # Runner + harness always live in the farmslot monorepo (primary_repo), not the slot
