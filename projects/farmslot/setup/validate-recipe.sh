@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Unified Recipe v1 runner for the farmslot project.
+# Routes CLI/gateway slots to Command Center CDP replay; mobile slots to Companion.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PRIMARY_REPO="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+RECIPE_PATH=""
+ARTIFACTS_DIR=""
+RUNTIME_DIR=""
+PLATFORM_VALUE="${PLATFORM:-cli}"
+CDP_PORT_VALUE="${CDP_PORT:-${FARMSLOT_CDP_PORT:-9323}}"
+GATEWAY_PORT_VALUE="${GATEWAY_PORT:-${WATCHER_PORT:-}}"
+METRO_PORT_VALUE="${METRO_PORT:-${WATCHER_PORT:-7677}}"
+SIMULATOR_VALUE="${IOS_SIMULATOR:-${SIMULATOR:-}}"
+ADB_SERIAL_VALUE="${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}"
+SLOW_MS=""
+RECORD_VIDEO=0
+SLOT_ID_VALUE="${SLOT_ID:-${FARMSLOT_SLOT_ID:-}}"
+DRY_RUN=0
+
+value_from_equals() {
+  local option="$1"
+  local value="${option#*=}"
+  if [[ -z "${value}" ]]; then
+    echo "ERROR: ${option%%=*} requires a value." >&2
+    exit 1
+  fi
+  printf '%s' "${value}"
+}
+
+require_value() {
+  local option="$1"
+  local value="${2:-}"
+  if [[ -z "${value}" || "${value}" == --* ]]; then
+    echo "ERROR: ${option} requires a value." >&2
+    exit 1
+  fi
+  printf '%s' "${value}"
+}
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --recipe)
+      RECIPE_PATH="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --recipe=*)
+      RECIPE_PATH="$(value_from_equals "$1")"; shift ;;
+    --artifacts-dir)
+      ARTIFACTS_DIR="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --artifacts-dir=*)
+      ARTIFACTS_DIR="$(value_from_equals "$1")"; shift ;;
+    --runtime-dir)
+      RUNTIME_DIR="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --runtime-dir=*)
+      RUNTIME_DIR="$(value_from_equals "$1")"; shift ;;
+    --platform)
+      PLATFORM_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --platform=*)
+      PLATFORM_VALUE="$(value_from_equals "$1")"; shift ;;
+    --cdp-port)
+      CDP_PORT_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --cdp-port=*)
+      CDP_PORT_VALUE="$(value_from_equals "$1")"; shift ;;
+    --gateway-port)
+      GATEWAY_PORT_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --gateway-port=*)
+      GATEWAY_PORT_VALUE="$(value_from_equals "$1")"; shift ;;
+    --metro-port)
+      METRO_PORT_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --metro-port=*)
+      METRO_PORT_VALUE="$(value_from_equals "$1")"; shift ;;
+    --simulator)
+      SIMULATOR_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --simulator=*)
+      SIMULATOR_VALUE="$(value_from_equals "$1")"; shift ;;
+    --adb-serial)
+      ADB_SERIAL_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --adb-serial=*)
+      ADB_SERIAL_VALUE="$(value_from_equals "$1")"; shift ;;
+    --slot-id)
+      SLOT_ID_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --slot-id=*)
+      SLOT_ID_VALUE="$(value_from_equals "$1")"; shift ;;
+    --slow)
+      SLOW_MS="$(require_value "$1" "${2:-}")"; shift 2 ;;
+    --slow=*)
+      SLOW_MS="$(value_from_equals "$1")"; shift ;;
+    --record-video=*)
+      RECORD_VIDEO=1; shift ;;
+    --record-video)
+      RECORD_VIDEO=1; shift ;;
+    --dry-run)
+      DRY_RUN=1; shift ;;
+    *)
+      echo "ERROR: unknown recipe validation option '$1'." >&2
+      exit 1 ;;
+  esac
+done
+
+if [[ -z "${RECIPE_PATH}" || -z "${ARTIFACTS_DIR}" ]]; then
+  echo "ERROR: --recipe and --artifacts-dir are required." >&2
+  exit 1
+fi
+
+REPO_ROOT="${FARMSLOT_SLOT_REPO:-${REPO:-$PRIMARY_REPO}}"
+MANIFEST_PATH="${PRIMARY_REPO}/docs/examples/recipes/farmslot-v1.action-manifest.json"
+
+case "${PLATFORM_VALUE}" in
+  ios|android)
+    COMPANION_SCRIPT="${REPO_ROOT}/apps/companion/scripts/agentic/validate-recipe.sh"
+    if [[ ! -f "${COMPANION_SCRIPT}" ]]; then
+      echo "ERROR: companion recipe runner missing at ${COMPANION_SCRIPT}" >&2
+      exit 1
+    fi
+    ARGS=(
+      bash "${COMPANION_SCRIPT}"
+      --recipe "${RECIPE_PATH}"
+      --artifacts-dir "${ARTIFACTS_DIR}"
+      --runtime-dir "${RUNTIME_DIR}"
+      --platform "${PLATFORM_VALUE}"
+      --metro-port "${METRO_PORT_VALUE}"
+      --simulator "${SIMULATOR_VALUE}"
+      --adb-serial "${ADB_SERIAL_VALUE}"
+    )
+    ;;
+  *)
+    RUNNER="${REPO_ROOT}/apps/command-center/scripts/agentic/run-recipe.mjs"
+    if [[ ! -f "${RUNNER}" ]]; then
+      echo "ERROR: command-center recipe runner missing at ${RUNNER}" >&2
+      exit 1
+    fi
+    ARGS=(
+      node "${RUNNER}" "${RECIPE_PATH}"
+      --artifacts-dir "${ARTIFACTS_DIR}"
+      --action-manifest "${MANIFEST_PATH}"
+      --project-root "${REPO_ROOT}"
+      --cdp-port "${CDP_PORT_VALUE}"
+      --gateway-port "${GATEWAY_PORT_VALUE}"
+      --slot-id "${SLOT_ID_VALUE}"
+    )
+    if [[ -n "${SLOW_MS}" ]]; then
+      ARGS+=(--slow "${SLOW_MS}")
+    fi
+    if [[ "${RECORD_VIDEO}" -eq 1 ]]; then
+      ARGS+=(--record-video=full-run)
+    fi
+    ;;
+esac
+
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  printf '%q ' "${ARGS[@]}"
+  printf '\n'
+  exit 0
+fi
+
+exec "${ARGS[@]}"
