@@ -29,11 +29,11 @@ test('isHttpFetchForbiddenPort flags CDP ports that Node fetch refuses', () => {
 
 test('getOrchestratorTaskRoot uses sandbox path for mock projects', () => {
   assert.equal(
-    getOrchestratorTaskRoot('farmslot-farm', {
+    getOrchestratorTaskRoot('farmslot', {
       external: { mock_mode: true },
-      task_dir: '.sandbox/farmslot-farm/worker-task',
+      task_dir: '.sandbox/farmslot/worker-task',
     } as any),
-    path.join(farmslotRoot, '.sandbox', 'farmslot-farm', 'tasks'),
+    path.join(farmslotRoot, '.sandbox', 'farmslot', 'tasks'),
   );
 });
 

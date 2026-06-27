@@ -85,7 +85,7 @@ Simple projects can use the base harness directly with built-in actions such as 
 
 AudioLab is the public reference project for a rich app runner: [github.com/deeeed/audiolab](https://github.com/deeeed/audiolab). Its playground app keeps the app-specific CDP bridge and native audio probes in the AudioLab repo, then exposes them through a Recipe v1 action manifest and project runner. Farmslot consumes the resulting `recipe.json`, `summary.json`, `trace.json`, and `artifact-manifest.json` package without needing AudioLab-specific code in the control plane.
 
-Farmslot also defines itself as a project (`projects/farmslot-farm/project.json`) and demo pool slot (`pool/farmslot-demo.json`). This self-integration is the minimal CLI/monorepo example: a project can start with typecheck/health hooks and grow into richer recipe evidence over time.
+Farmslot also defines itself as a project (`projects/farmslot/project.json`) and demo pool slot (`pool/farmslot-demo.json`). This self-integration is the minimal CLI/monorepo example: a project can start with typecheck/health hooks and grow into richer recipe evidence over time.
 
 ## Recipe Protocol v1
 

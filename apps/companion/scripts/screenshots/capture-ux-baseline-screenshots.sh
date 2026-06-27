@@ -16,24 +16,24 @@ case "${APP_VARIANT}" in
   development)
     DEFAULT_APP_ID="net.siteed.farmslot.development"
     DEFAULT_SCHEME="farmslot-development"
-    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-companion-development"
+    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-development"
     ;;
   preview)
     DEFAULT_APP_ID="net.siteed.farmslot.preview"
     DEFAULT_SCHEME="farmslot-preview"
-    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-companion-preview"
+    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-preview"
     ;;
   production)
     DEFAULT_APP_ID="net.siteed.farmslot"
     DEFAULT_SCHEME="farmslot"
-    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot-companion"
+    DEFAULT_DEV_CLIENT_SCHEME="exp+farmslot"
     ;;
   *) echo "ERROR: unsupported APP_VARIANT '${APP_VARIANT}' (expected development, preview, or production)." >&2; exit 1 ;;
 esac
 
 SCHEME="${SCHEME:-${DEFAULT_SCHEME}}"
 DEV_CLIENT_SCHEME="${DEV_CLIENT_SCHEME:-${DEFAULT_DEV_CLIENT_SCHEME}}"
-DEV_CLIENT_SCHEME_FALLBACK="${DEV_CLIENT_SCHEME_FALLBACK:-exp+farmslot-companion}"
+DEV_CLIENT_SCHEME_FALLBACK="${DEV_CLIENT_SCHEME_FALLBACK:-exp+farmslot}"
 IOS_BUNDLE_ID="${IOS_BUNDLE_ID:-${DEFAULT_APP_ID}}"
 ANDROID_PACKAGE="${ANDROID_PACKAGE:-${DEFAULT_APP_ID}}"
 IOS_DEVICE="${IOS_DEVICE:-booted}"
@@ -161,7 +161,7 @@ start_metro() {
   if [[ "${START_METRO}" != "1" ]]; then
     return 0
   fi
-  local log="/tmp/farmslot-companion-ux-baseline-metro.log"
+  local log="/tmp/farmslot-ux-baseline-metro.log"
   echo "[ux-screenshots] starting Metro on ${METRO_PORT}; log: ${log}"
   (
     cd "${APP_DIR}"

@@ -29,7 +29,7 @@ ws.on('open', () => {
   ws.send(JSON.stringify({
     type: 'req', id: '1', method: 'run.create',
     params: {
-      project: 'farmslot-farm',
+      project: 'farmslot',
       flowType: 'dev',
       ticketOrPr: 'FARM-QA1',
       runner: 'fake',

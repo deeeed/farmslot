@@ -12,7 +12,7 @@ import {
 const validParams = {
   flowType: 'dev' as const,
   ticketOrPr: 'PROJ-1',
-  project: 'farmslot-farm',
+  project: 'farmslot',
   lane: 'comparison' as const,
   variant: 'candidate-a',
   completionPolicy: 'artifact-only' as const,

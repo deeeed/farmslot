@@ -34,7 +34,7 @@ test('buildQueuePreviewParams preserves family/lane/variant identity', () => {
   const item: QueueItem = {
     id: 'queue-1',
     flowType: 'review-pr',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'example-org/example-mobile#42',
     familyId: 'family-1',
     parentRunId: 'parent-1',
@@ -47,7 +47,7 @@ test('buildQueuePreviewParams preserves family/lane/variant identity', () => {
   };
   assert.deepEqual(buildQueuePreviewParams(item), {
     slotId: undefined,
-    project: 'farmslot-farm',
+    project: 'farmslot',
     flowType: 'review-pr',
     ticketOrPr: 'example-org/example-mobile#42',
     familyId: 'family-1',
@@ -62,7 +62,7 @@ test('buildQueuePreviewParams forwards branch as targetBranch for PR-bound flows
   const reviewItem: QueueItem = {
     id: 'queue-pr-bound',
     flowType: 'review-pr',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'owner/repo#42',
     branch: 'feat/proj-42',
     priority: 1,
@@ -86,7 +86,7 @@ test('addItem rejects an explicit empty allowedSlots list', () => {
     () =>
       addItem({
         flowType: 'fix-bug',
-        project: 'farmslot-farm',
+        project: 'farmslot',
         ticketOrPr: 'PROJ-1',
         allowedSlots: [],
       }),
@@ -97,7 +97,7 @@ test('addItem rejects an explicit empty allowedSlots list', () => {
 test('addItem preserves interactive dev policy fields for auto-dispatch', () => {
   const item = addItem({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'Sketch a flexible dev launch flow',
     mode: 'interactive',
     devInteractiveProfile: 'reviewed',
@@ -119,7 +119,7 @@ test('addItem preserves eval-cell metadata for queued matrix dispatch', () => {
     queueKind: 'eval-cell',
     label: 'case one / candidate a',
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'EVAL-CASE-1',
     lane: 'comparison',
     variant: 'candidate-a',
@@ -136,7 +136,7 @@ test('addItem preserves eval-cell metadata for queued matrix dispatch', () => {
       experimentManifestPath: '/tmp/eval/experiment-manifest.json',
       trialId: 'cell-case-1-candidate-a',
       trialStartParams: {
-        project: 'farmslot-farm',
+        project: 'farmslot',
         experimentManifestPath: '/tmp/eval/experiment-manifest.json',
         axes: {},
       },
@@ -156,13 +156,13 @@ test('addItem preserves eval-cell metadata for queued matrix dispatch', () => {
 test('reorderItems rewrites queue priorities and listItems returns reordered ids', () => {
   const first = addItem({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-queue-1',
     priority: 10,
   });
   const second = addItem({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-queue-2',
     priority: 20,
   });
@@ -189,19 +189,19 @@ test('reorderItems rewrites queue priorities and listItems returns reordered ids
 test('reorderItems preserves omitted queued item positions when reordering a subset', () => {
   const first = addItem({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-queue-partial-1',
     priority: 10,
   });
   const second = addItem({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-queue-partial-2',
     priority: 20,
   });
   const third = addItem({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-queue-partial-3',
     priority: 30,
   });
@@ -223,7 +223,7 @@ test('reorderItems preserves omitted queued item positions when reordering a sub
 test('updateItem allows pending slot reassignment but rejects dispatching items', () => {
   const item = addItem({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-queue-update',
     priority: 10,
   });
@@ -250,7 +250,7 @@ test('evalSuiteCapUsage counts active runs and dispatching eval queue cells', as
   await setEvalSuiteCap(capGroupId, 2, 'dataset-cap-usage');
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'EVAL-CAP',
     engineState: {
       evalExperiment: {
@@ -270,7 +270,7 @@ test('evalSuiteCapUsage counts active runs and dispatching eval queue cells', as
   const item = addItem({
     queueKind: 'eval-cell',
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'EVAL-CAP-2',
     evalCell: {
       capGroupId,
@@ -280,7 +280,7 @@ test('evalSuiteCapUsage counts active runs and dispatching eval queue cells', as
       experimentManifestPath: '/tmp/eval/manifest.json',
       trialId: 'cell-cap-2',
       trialStartParams: {
-        project: 'farmslot-farm',
+        project: 'farmslot',
         experimentManifestPath: '/tmp/eval/manifest.json',
         axes: {},
       },
@@ -301,7 +301,7 @@ test('evalSuiteCapUsage counts active runs and dispatching eval queue cells', as
 test('addItem persists valid startRef only after shared comparison policy passes', () => {
   const item = addItem({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-1',
     familyId: 'family-start-ref',
     lane: 'comparison',
@@ -322,7 +322,7 @@ test('addItem persists valid startRef only after shared comparison policy passes
 test('addItem rejects direct prior-run startRef provenance', async (t) => {
   const baseline = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-1-prior-run',
   });
   t.after(() => cleanupRun(baseline.id));
@@ -350,7 +350,7 @@ test('addItem rejects invalid startRef policy before queue persistence', () => {
     () =>
       addItem({
         flowType: 'review-pr',
-        project: 'farmslot-farm',
+        project: 'farmslot',
         ticketOrPr: 'PROJ-1',
         lane: 'comparison',
         variant: 'candidate-start-ref',
@@ -363,7 +363,7 @@ test('addItem rejects invalid startRef policy before queue persistence', () => {
     () =>
       addItem({
         flowType: 'dev',
-        project: 'farmslot-farm',
+        project: 'farmslot',
         ticketOrPr: 'PROJ-1',
         lane: 'comparison',
         completionPolicy: 'artifact-only',
@@ -377,7 +377,7 @@ test('queue preview params can drive family-aware comparison affinity', () => {
   const item: QueueItem = {
     id: 'queue-2',
     flowType: 'review-pr',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'example-org/example-mobile#42',
     familyId: 'family-2',
     parentRunId: null,
@@ -393,7 +393,7 @@ test('queue preview params can drive family-aware comparison affinity', () => {
     slot: 'held-slot',
     machine: 'demo',
     platform: 'cli',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
     branch: 'review/example-org-example-mobile-42-codex',
     agent: 'idle',
@@ -433,7 +433,7 @@ test('selectQueueDispatchSlot prefers identity-matching held comparison slot', (
   const item: QueueItem = {
     id: 'queue-3',
     flowType: 'review-pr',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'example-org/example-mobile#42',
     familyId: 'family-3',
     parentRunId: null,
@@ -449,7 +449,7 @@ test('selectQueueDispatchSlot prefers identity-matching held comparison slot', (
       slot: 'ready-slot',
       machine: 'demo',
       platform: 'cli',
-      project: 'farmslot-farm',
+      project: 'farmslot',
       health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
       branch: 'main',
       agent: 'idle',
@@ -479,7 +479,7 @@ test('selectQueueDispatchSlot prefers identity-matching held comparison slot', (
       slot: 'held-slot',
       machine: 'demo',
       platform: 'cli',
-      project: 'farmslot-farm',
+      project: 'farmslot',
       health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
       branch: 'review/example-org-example-mobile-42-claude',
       agent: 'idle',
@@ -513,7 +513,7 @@ test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls b
   const item: QueueItem = {
     id: 'queue-4',
     flowType: 'review-pr',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'example-org/example-mobile#42',
     familyId: 'family-4',
     parentRunId: null,
@@ -529,7 +529,7 @@ test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls b
       slot: 'ready-slot',
       machine: 'demo',
       platform: 'cli',
-      project: 'farmslot-farm',
+      project: 'farmslot',
       health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
       branch: 'main',
       agent: 'idle',
@@ -559,7 +559,7 @@ test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls b
       slot: 'held-mismatch',
       machine: 'demo',
       platform: 'cli',
-      project: 'farmslot-farm',
+      project: 'farmslot',
       health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
       branch: 'review/example-org-example-mobile-42-claude',
       agent: 'idle',
@@ -595,7 +595,7 @@ test('canDispatchQueuedItemToSlot accepts held affinity slots but rejects workin
       slot: 'held-slot',
       machine: 'demo',
       platform: 'cli',
-      project: 'farmslot-farm',
+      project: 'farmslot',
       health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
       branch: 'feature',
       agent: 'idle',
@@ -621,7 +621,7 @@ test('canDispatchQueuedItemToSlot accepts held affinity slots but rejects workin
       slot: 'busy-slot',
       machine: 'demo',
       platform: 'cli',
-      project: 'farmslot-farm',
+      project: 'farmslot',
       health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
       branch: 'feature',
       agent: 'working',
@@ -647,7 +647,7 @@ test('canDispatchQueuedItemToSlot accepts held affinity slots but rejects workin
 test('addItem preserves selected worker template version for queue parity', () => {
   const item = addItem({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-4242',
     taskTemplate: { fileName: 'fix-bug-v2.md', variant: 'v2' },
   });

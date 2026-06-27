@@ -20,7 +20,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     flowType: overrides.flowType ?? 'fix-bug',
     mode: overrides.mode ?? 'interactive',
     status: 'ci-watching',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-1',
     slotId: 'slot-1',
     branch: 'fix/proj-1',

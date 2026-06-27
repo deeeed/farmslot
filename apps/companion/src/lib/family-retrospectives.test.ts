@@ -28,7 +28,7 @@ function run(
     flowType: 'fix-bug',
     lane: 'production',
     status: 'done',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `TASK-${runId}`,
     branch: null,
     prNumber: null,

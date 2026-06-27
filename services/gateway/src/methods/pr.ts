@@ -936,7 +936,7 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
   const repo = projectConfig?.ci?.repo ?? null;
   // Project has no ci.repo configured — fall back to `gh pr list` inside the
   // slot's local repo (no ETag cache, but preserves discovery for projects
-  // like farmslot-farm that only carry the remote in the slot checkout).
+  // like farmslot that only carry the remote in the slot checkout).
   if (!repo) {
     const fallback = await findPRViaSlotRepo(slot.slot, slot.branch);
     if (!fallback) return { pr: null, repo: null };

@@ -68,7 +68,7 @@ function sha256Text(text: string): string {
 test('runResolveDecision keeps publish gate pending when approved package selection is stale', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PUBLISH-STALE-${Date.now().toString(16).toUpperCase()}`,
     mode: 'autonomous',
     initialContext: 'Exercise stale publish package approval',
@@ -145,7 +145,7 @@ test('runResolveDecision rejects approval when current package artifact drifted'
 
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PUBLISH-DRIFT-${Date.now().toString(16).toUpperCase()}`,
     mode: 'autonomous',
     initialContext: 'Exercise current package drift approval',
@@ -250,7 +250,7 @@ test('runResolveDecision rejects approval when selected evidence hash drifted', 
 
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `EVIDENCE-DRIFT-${Date.now().toString(16).toUpperCase()}`,
     mode: 'autonomous',
     initialContext: 'Exercise selected evidence drift approval',
@@ -346,7 +346,7 @@ test('runResolveDecision rejects approval when selected evidence differs from re
 
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `EVIDENCE-SELECTION-${Date.now().toString(16).toUpperCase()}`,
     mode: 'autonomous',
     initialContext: 'Exercise selected evidence approval mismatch',
@@ -489,7 +489,7 @@ test('comparison duplicates are allowed for same family with distinct variants',
 test('createRun persists lightweight interactive dev initial context policy', async (t) => {
   const run = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `DEV-LOCAL-${Date.now().toString(16).toUpperCase()}`,
     mode: 'interactive',
     initialContext: 'Explore a faster local dev task launch flow',
@@ -513,7 +513,7 @@ test('createRun persists lightweight interactive dev initial context policy', as
 test('createRun preserves reviewed interactive dev profile on dev lane', async (t) => {
   const run = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `DEV-REVIEWED-${Date.now().toString(16).toUpperCase()}`,
     mode: 'interactive',
     devInteractiveProfile: 'reviewed',
@@ -538,7 +538,7 @@ test('createRun preserves reviewed interactive dev profile on dev lane', async (
 test('runInteractiveDevResolve rejects terminal interactive dev runs without slot mutation', async (t) => {
   const run = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `DEV-DONE-${Date.now().toString(16).toUpperCase()}`,
     mode: 'interactive',
     initialContext: 'Already complete interactive dev task',
@@ -559,14 +559,14 @@ test('runInteractiveDevResolve rejects terminal interactive dev runs without slo
 test('runInteractiveDevResolve marks blocked and failed operator actions with audit state', async (t) => {
   const blocked = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `DEV-BLOCKED-${Date.now().toString(16).toUpperCase()}`,
     mode: 'interactive',
     initialContext: 'Blocked interactive dev task',
   });
   const failed = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `DEV-FAILED-${Date.now().toString(16).toUpperCase()}`,
     mode: 'interactive',
     initialContext: 'Failed interactive dev task',
@@ -821,7 +821,7 @@ test('runCreate persists implicit dev-interactive template selection for interac
     {
       flowType: 'dev',
       mode: 'interactive',
-      project: 'farmslot-farm',
+      project: 'farmslot',
       ticketOrPr: `interactive dev spike ${Date.now()}`,
     },
     () => {},

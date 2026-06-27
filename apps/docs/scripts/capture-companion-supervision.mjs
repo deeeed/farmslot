@@ -170,7 +170,7 @@ function readCompanionSlotConfig() {
   if (poolPath) {
     const pool = JSON.parse(readFileSync(resolve(repoRoot, poolPath), 'utf8'));
     const poolSlot = (pool.slots || []).find(
-      (candidate) => candidate.project === 'farmslot-companion' || /companion/i.test(candidate.id),
+      (candidate) => candidate.project === 'farmslot' || /companion/i.test(candidate.id),
     );
     if (poolSlot) {
       return {
@@ -220,7 +220,7 @@ const demoRun = {
   flowType: 'dev',
   mode: 'interactive',
   status: 'monitoring',
-  project: 'farmslot-farm',
+  project: 'farmslot',
   ticketOrPr: 'Docusaurus demo: validate recipe evidence',
   app: 'apps/docs',
   effort: 'demo',
@@ -254,7 +254,7 @@ const demoRun = {
       updatedAt: fixtureNow(-60000),
       runMeta: {
         runId,
-        project: 'farmslot-farm',
+        project: 'farmslot',
         slotId,
         ticketOrPr: 'Docusaurus demo: validate recipe evidence',
       },
@@ -278,7 +278,7 @@ const demoFleet = {
       slot: slotId,
       machine: 'farmslot-demo',
       platform: 'ios',
-      project: 'farmslot-farm',
+      project: 'farmslot',
       health: 'ok',
       branch: 'docs/real-demo-media',
       agent: 'codex',
@@ -754,7 +754,7 @@ function writeOutputs({ videoPath, posterPath, screenshotPath }) {
         regeneratedBy: `yarn --cwd apps/docs capture:companion-supervision --artifacts-dir ${rel(artifactsDir)}${copyToDocs ? ' --copy-to-docs' : ''}`,
         publicSafety: {
           forbiddenPatternsChecked: forbidden.map(String),
-          fixtureLabelsChecked: ['farmslot-farm', 'audiolab-farm', 'Docusaurus demo'],
+          fixtureLabelsChecked: ['farmslot', 'audiolab-farm', 'Docusaurus demo'],
         },
       },
       null,

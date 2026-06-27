@@ -34,7 +34,7 @@ export abstract class EvalCockpitState extends LitElement {
   @property({ attribute: false }) caseCatalogOverride: EvalCaseCatalogItem[] | null = null;
   @property({ attribute: false }) initialSelectedCaseIds: string[] = [];
 
-  @state() _project = 'farmslot-farm';
+  @state() _project = 'farmslot';
   @state() _caseQuery = '';
   @state() _caseKindFilter: EvalCaseFilterKind = 'all';
   @state() _caseProjectFilter = 'all';

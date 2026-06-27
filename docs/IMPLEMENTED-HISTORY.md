@@ -231,7 +231,7 @@ The following are planned roadmap items, not implemented history as of 2026-06-2
 - ADR-032 Phase 3 pane-regex retirement (Phase 2 exit passed; frozen in `docs/operations/evidence/adr032/phase2-exit-window.json`);
 - activate-on-slot warm-auto-pick follow-ups (affinity scan when `slotId` is omitted, recently-released slot eligibility) and portable replay delta for artifact-only cross-slot hydration;
 - dispatch-time nudge router, optional runner session resume on relaunch/fix paths, OpenShell slot-runtime spike, and published `capture-helper` package migration at the node integration boundary;
-- ADR-036 onboarding follow-ups only when demos/org rollout need them: portable `farmslot-companion` pack and clean-machine `curl | bash` rehearsal;
+- ADR-036 onboarding follow-ups only when demos/org rollout need them: portable `farmslot` pack and clean-machine `curl | bash` rehearsal;
 - pipeline-ops analytics follow-ups: trend/time-series, regression detection, richer failure/host-load/prepare-substep capture, and cost-per-PR once token extraction is reliable;
 - mobile background wake-word, automatic send without tap, and remote node provisioning/enrollment beyond the shipped foreground/authenticated V1;
 - deeper iOS interactive worker-terminal QA and landscape/fullscreen terminal refinement beyond current Android real-device + iOS launch smoke;
