@@ -93,7 +93,7 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 | `scripts/runner-validation/` harness | Shipped | Operator guide in `docs/operations/` |
 | Obs-first `sendRunnerInstructionSafely` | Shipped | PRs #82–#84, `91674d9` follow-up |
 | Phase 2 exit: zero `nudgeTimeoutCount` over 7 days | Partial | Empirical monitoring in progress |
-| Phase 3: retire Claude pane-regex branches | Not started | Waits for Phase 2 exit + Claude minor upgrade |
+| Phase 3: retire Claude pane-regex branches | Not started | Waits for Phase 2 exit gate |
 | Cursor/Grok hook path | Not started | Remain `pane-only` per ADR matrix |
 
 ---

@@ -168,7 +168,7 @@ After the initial command-center platform landed, Farmslot shipped persistent au
     - `run.activateOnSlot` re-binds terminal/`blocked` runs onto a slot and re-drives PREPARE→DISPATCH with the `attach` warm profile (falls back to project warm default); exposed from run-detail, slot-view, and slot-history.
   - `e4cbcb4` / PR #81 through `91674d9` (2026-06-27) — ADR-032 runner observability Phases 1–2:
     - Claude/Codex hook installers, `scripts/runner-validation/` harness, obs-first `sendRunnerInstructionSafely`, agreement log, and hook-path timeout via `resolveSafeSendTimeoutMs()`.
-    - Phase 3 retirement of Claude-only pane-regex branches remains deferred until Phase 2 exit criteria clear after one Claude minor upgrade.
+    - Phase 3 retirement of Claude-only pane-regex branches remains deferred until Phase 2 exit criteria clear.
   - Recipe Protocol v1 core (ADR-034) — `@farmslot/protocol` validators (`validateRecipeDocument`, `validateRecipeWithManifest`, `validateRecipeArtifactPackage`), `@farmslot/recipe-harness` graph runtime, `farmslot recipe validate`, and `docs/examples/recipes/farmslot/` self-validation fixtures. Rollout gaps (all-project typed manifest emission, manifest-first UI, live self-validation) remain open; see [reference/adr-implementation-status.md](reference/adr-implementation-status.md).
 - ADR-023, ADR-024, ADR-025, ADR-026, ADR-027, ADR-028, ADR-030, ADR-031, ADR-032, ADR-033, ADR-034, ADR-036, and ADR-037 provide the architecture trail for the current runner, observability, self-improvement, quota, replay provenance, auto-recovery, hook-based runner observability, recipe protocol, CLI gateway profiles, prepare profiles, and mobile tmux worker-control direction.
 

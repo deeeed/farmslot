@@ -323,7 +323,7 @@ Phase 1 telemetry (new code that must ship alongside the fixture):
 
 **Phase 3 — Retire Claude pane regex set (scope-restricted).** Delete the **claude-only branches** of `paneShowsBusyComposer`, `runnerPaneHasPendingInstruction`, `runnerPaneLooksIdle`. Retain the `cursor` and `codex` branches — those runners' `observabilityScope === 'pane-only'` (per matrix above) and pane regex is more reliable there than for Claude. Retire the `requiresBusyComposerPoll` capability flag iff its only non-default consumer (Claude) is gone. Demote `parseClaudeCtxPctFromPane` to a debug helper.
 
-**Exit criterion:** one Claude minor-version upgrade has shipped under Phase 2 without a hook-vs-pane disagreement exceeding 2 %. Claude version captured automatically at slot `prepare` via `claude --version` parsed into `SlotStatus.runnerVersion` (new field); upgrade events flagged when `runnerVersion` changes across consecutive prepares.
+**Exit criterion:** Phase 2 empirical exit has passed — `Run.metrics.nudgeTimeoutCount` stays at zero over the 7-day rolling window on Claude-runner slots, and optional agreement-log triage shows no systematic hook-vs-pane disagreement on healthy slots. No version-upgrade wait; Phase 3 is implementation work once that gate clears.
 
 ## Migration Surface (existing code paths)
 
