@@ -230,7 +230,12 @@ function testSentinelCorrelation(obsDir, paneId, message) {
   const sentAt = Date.now();
   fs.writeFileSync(path.join(sentDir, `${digest}.json`), `${JSON.stringify({ sentAt, digest, prompt: instructionNeedle(message) })}\n`);
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
-  const payload = JSON.stringify({ hook_event_name: 'UserPromptSubmit', session_id: 'e2e', cwd: process.cwd() });
+  const payload = JSON.stringify({
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'e2e',
+    cwd: process.cwd(),
+    prompt: message,
+  });
   execFileSync(process.execPath, [hookPath], {
     input: payload,
     env: {

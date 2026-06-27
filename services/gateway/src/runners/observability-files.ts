@@ -276,7 +276,8 @@ export function promptAcceptedFromHooks(
     };
   }
   const matched =
-    !latest.digest || latest.digest === promptDigest || latest.digest.startsWith(promptDigest);
+    typeof latest.digest === 'string' &&
+    (latest.digest === promptDigest || latest.digest.startsWith(promptDigest));
   return {
     value: matched,
     source: 'hook',
