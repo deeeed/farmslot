@@ -3,6 +3,7 @@
 //
 // A pack is a directory (local path or git clone) with a pack.json at its root
 // and one or more project dirs in the standard projects/<name>/ layout.
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -148,6 +149,12 @@ export function validatePackDir(packDir: string): { pack: PackJson | null; error
         `${proj.dir}/project.json: 'name' is ${JSON.stringify(declared.name)} but must match the dir name '${name}'`,
       );
     }
+    const setupScript = join(projDir, 'setup', `${proj.platform}.sh`);
+    if (!existsSync(setupScript)) {
+      errors.push(
+        `${proj.dir}/setup/${proj.platform}.sh not found in pack (project add runs setup-slot.sh for every declared platform)`,
+      );
+    }
   }
   return errors.length > 0 ? { pack: null, errors } : { pack, errors: [] };
 }
@@ -170,17 +177,25 @@ export function projectShortName(proj: PackProject): string {
 export function hashPackDir(packDir: string): string {
   const hash = createHash('sha256');
   const entries: Array<{ rel: string; content: Buffer | string }> = [];
+  const isGitPack = existsSync(join(packDir, '.git'));
+  const isIgnored = (rel: string): boolean => {
+    if (!isGitPack) return false;
+    const result = spawnSync('git', ['-C', packDir, 'check-ignore', '--quiet', '--', rel]);
+    return result.status === 0;
+  };
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir).sort()) {
       if (entry === '.git' || entry === 'node_modules') continue;
       const full = join(dir, entry);
+      const rel = relative(packDir, full);
+      if (isIgnored(rel)) continue;
       const stat = lstatSync(full);
       if (stat.isSymbolicLink()) {
-        entries.push({ rel: relative(packDir, full), content: `symlink:${readlinkSync(full)}` });
+        entries.push({ rel, content: `symlink:${readlinkSync(full)}` });
       } else if (stat.isDirectory()) {
         walk(full);
       } else {
-        entries.push({ rel: relative(packDir, full), content: readFileSync(full) });
+        entries.push({ rel, content: readFileSync(full) });
       }
     }
   };

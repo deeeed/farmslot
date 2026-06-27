@@ -11,7 +11,7 @@ my-pack/
   pack.json                      # pack manifest (required)
   projects/<name>-farm/          # one or more project dirs, standard layout
     project.json                 # per schemas/project.schema.json
-    setup/<platform>.sh          # one-time slot bootstrap (run by setup-slot.sh)
+    setup/<platform>.sh          # required one-time slot bootstrap (run by setup-slot.sh)
     fixtures/                    # optional fixture templates
     templates/                   # optional task templates
   hooks/                         # optional pack hook scripts
@@ -80,16 +80,18 @@ quotes in workspace, repo, and hook paths.
 1. Resolve the source (local dir, or git URL cloned under `<workspace>/packs/`).
 2. Validate `pack.json` + each project dir against the contract above.
 3. Decide: new pack → add; same content hash → no-op (re-verify); changed → repair.
-4. Run `pre_add`.
-5. Copy project dirs into the workspace farmslot `projects/` (applying
+4. Verify every declared project has `setup/<platform>.sh`; missing setup
+   scripts fail early before product repos or slots are mutated.
+5. Run `pre_add`.
+6. Copy project dirs into the workspace farmslot `projects/` (applying
    `repo_url` overrides).
-6. Per slot: blobless-clone (`--filter=blob:none`) the product repo into
+7. Per slot: blobless-clone (`--filter=blob:none`) the product repo into
    `<workspace>/repos/<short>-<n>`, register the slot in the machine pool file
    (ports allocated from 9300+; existing slots are never clobbered), then run
    the existing lifecycle scripts: `sync-fixtures.sh`, `setup-slot.sh`, the
    project `preflight` hook, and `preflight-slot.sh` (validation).
-7. Run `post_add`, then `smoke`.
-8. Record the pack (source, content hash, projects, slots) in workspace
+8. Run `post_add`, then `smoke`.
+9. Record the pack (source, content hash, projects, slots) in workspace
    `state.json`, print the action sheet, and finish with `farmslot doctor`.
 
 `prepare-slot.sh` is not part of onboarding: it delegates to the gateway
@@ -117,3 +119,16 @@ Ownership rules:
 `pre_add` hook seeds a tiny local fixture repo, with a fast smoke check. The
 onboarding E2E (`scripts/quality/test-onboarding.sh`) runs it end to end in a
 scratch workspace.
+
+## Deferred setup and per-project adds
+
+Use `farmslot project add <pack> --no-setup` when a pack should register projects, clone slot repos, and sync fixtures without running expensive setup/build/preflight scripts. The pack hash is intentionally left repair-needed so a later run without `--no-setup` performs the full setup.
+
+Use `--project <name>` to add or repair one project from a multi-project pack:
+
+```bash
+farmslot project add git@github.com:Example/team-farm.git --no-setup
+farmslot project add git@github.com:Example/team-farm.git --project example-extension-farm
+```
+
+`--project` accepts the project dir basename, pack `short`, or `projects/<name>` path.

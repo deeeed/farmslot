@@ -27,6 +27,11 @@ function writePackDir(overrides: Record<string, unknown> = {}): string {
     join(dir, 'projects', 'example-app-farm', 'project.json'),
     JSON.stringify({ name: 'example-app-farm' }),
   );
+  mkdirSync(join(dir, 'projects', 'example-app-farm', 'setup'), { recursive: true });
+  writeFileSync(
+    join(dir, 'projects', 'example-app-farm', 'setup', 'cli.sh'),
+    '#!/usr/bin/env bash\n',
+  );
   return dir;
 }
 
@@ -63,6 +68,14 @@ test('validatePackDir validates project dirs and name match', () => {
 
   const empty = mkdtempSync(join(tmpdir(), 'fs-pack-'));
   assert.ok(validatePackDir(empty).errors[0].includes('no pack.json'));
+});
+
+test('validatePackDir requires a setup script for each declared platform', () => {
+  const dir = writePackDir({
+    projects: [{ dir: 'projects/example-app-farm', platform: 'ios', slots: 1 }],
+  });
+  const result = validatePackDir(dir);
+  assert.ok(result.errors.some((e) => e.includes('setup/ios.sh not found')));
 });
 
 test('projectName / projectShortName derive from the pack dir entry', () => {

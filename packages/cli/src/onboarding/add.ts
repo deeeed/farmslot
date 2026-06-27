@@ -56,6 +56,13 @@ export interface AddProgress {
   childOutputToStderr?: boolean;
 }
 
+export interface ProjectAddOptions {
+  /** Register/clone/sync fixtures only; defer setup/build/preflight/smoke. */
+  noSetup?: boolean;
+  /** Limit the add/repair to these project names or pack short names. */
+  projects?: string[];
+}
+
 /** spawnSync stdio config honoring the JSON-mode stdout contract. */
 function childStdio(progress: AddProgress): 'inherit' | [number, number, number] {
   return progress.childOutputToStderr ? [0, 2, 2] : 'inherit';
@@ -369,6 +376,8 @@ export interface AddResult {
   slots: string[];
   /** Per-project install failures (resilient add continued past them); empty = clean. */
   failures: string[];
+  /** True when setup/build/preflight were intentionally deferred. */
+  deferredSetup: boolean;
 }
 
 /**
@@ -455,7 +464,33 @@ export function findMissingState(
   return missing;
 }
 
-export function projectAdd(source: string, ws: Workspace, progress: AddProgress): AddResult {
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values));
+}
+
+function filterPackProjects(pack: PackJson, selectors: string[] | undefined): PackJson {
+  const requested = selectors?.map((s) => s.trim()).filter(Boolean) ?? [];
+  if (requested.length === 0) return pack;
+  const wanted = new Set(requested);
+  const projects = pack.projects.filter((proj) => {
+    const name = projectName(proj);
+    const short = projectShortName(proj);
+    return wanted.has(name) || wanted.has(short) || wanted.has(proj.dir);
+  });
+  if (projects.length === 0) {
+    throw new AddError(
+      `no projects matched ${requested.join(', ')} (available: ${pack.projects.map(projectName).join(', ')})`,
+    );
+  }
+  return { ...pack, projects };
+}
+
+export function projectAdd(
+  source: string,
+  ws: Workspace,
+  progress: AddProgress,
+  options: ProjectAddOptions = {},
+): AddResult {
   const state = readState(ws);
   if (!state) {
     throw new AddError(`workspace state not found at ${ws.statePath} — run install.sh first`);
@@ -466,6 +501,7 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
   if (!pack) {
     throw new AddError(`invalid pack at ${packDir}:\n  - ${errors.join('\n  - ')}`);
   }
+  const selectedPack = filterPackProjects(pack, options.projects);
   const hash = hashPackDir(packDir);
   let action = decideAddAction(state.packs[pack.name]?.hash, hash);
 
@@ -475,19 +511,22 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
   // An unchanged pack is verify-only — one-time setup must not rerun. Anything
   // missing (deleted repo, edited pool, lost project dir) escalates to repair.
   if (action === 'noop') {
-    const missing = findMissingState(pack, pool, ws);
+    const missing = findMissingState(selectedPack, pool, ws);
     if (missing.length > 0) {
       progress.info(`pack unchanged but state incomplete — repairing: ${missing.join('; ')}`);
       action = 'repair';
     }
   }
   const mutate = action !== 'noop';
-  progress.step({ label: `pack ${pack.name} validated`, detail: `${packDir} (${action})` });
+  progress.step({
+    label: `pack ${pack.name} validated`,
+    detail: `${packDir} (${action}${options.noSetup ? ', setup deferred' : ''})`,
+  });
 
   // Ownership is authoritative against the PRE-claim state — the claim below
   // would make every project look owned and disarm the unowned-dir guard.
   if (mutate) {
-    for (const proj of pack.projects) {
+    for (const proj of selectedPack.projects) {
       const name = projectName(proj);
       assertProjectOwnership(name, pack.name, state, join(ws.farmslotDir, 'projects', name));
     }
@@ -505,7 +544,10 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
         [pack.name]: {
           source: isGitUrl(source) ? source : resolve(source),
           hash: '',
-          projects: pack.projects.map(projectName),
+          projects: uniqueStrings([
+            ...(state.packs[pack.name]?.projects ?? []),
+            ...selectedPack.projects.map(projectName),
+          ]),
           slots: state.packs[pack.name]?.slots ?? [],
         },
       },
@@ -519,8 +561,8 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
   // mobile build on a machine without Xcode) must NOT block the remaining
   // projects in the pack. Failures are collected per project, surfaced at the
   // end, and left for the repair path to retry — they never abort the pack.
-  const projects = pack.projects.map(projectName);
-  const allSlots = pack.projects.flatMap((proj) => {
+  const projects = selectedPack.projects.map(projectName);
+  const allSlots = selectedPack.projects.flatMap((proj) => {
     const short = projectShortName(proj);
     return Array.from({ length: proj.slots }, (_, i) => `${pool.machine}-${short}-${i + 1}`);
   });
@@ -529,7 +571,7 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
   // Slot-id ownership conflicts are config errors the resilient loop must NOT
   // swallow as a per-project failure (repair can't heal them) — fail fast here,
   // before any mutation, so they abort the whole add with a clear message.
-  for (const proj of pack.projects) {
+  for (const proj of selectedPack.projects) {
     const name = projectName(proj);
     const short = projectShortName(proj);
     for (let n = 1; n <= proj.slots; n++) {
@@ -543,7 +585,7 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
     }
   }
 
-  for (const proj of pack.projects) {
+  for (const proj of selectedPack.projects) {
     const projName = projectName(proj);
     try {
       const registered = mutate
@@ -597,33 +639,40 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
             }
           }
 
-          // Existing lifecycle scripts own fixtures, setup, and hook expansion;
-          // never reimplement them.
+          // Existing lifecycle scripts own fixtures and hook expansion; never
+          // reimplement them. `--no-setup` stops before build/preflight so teams
+          // can register farms quickly and prepare one project later.
           run('bash', ['scripts/sync-fixtures.sh', '--slot', slotId], {
             cwd: ws.farmslotDir,
             stdio: childStdio(progress),
           });
           progress.step({ label: `slot ${slotId} fixtures synced` });
-          run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
-            cwd: ws.farmslotDir,
-            stdio: childStdio(progress),
-          });
-          progress.step({ label: `slot ${slotId} setup complete` });
-
-          if (registered.preflight) {
-            run('bash', ['scripts/run-project-hook.sh', slotId, 'preflight'], {
+          if (options.noSetup) {
+            progress.info(`slot ${slotId} setup/preflight deferred (--no-setup)`);
+          } else {
+            run('bash', ['scripts/setup-slot.sh', slotId, registered.defaultBranch], {
               cwd: ws.farmslotDir,
               stdio: childStdio(progress),
             });
-            progress.step({ label: `slot ${slotId} preflight hook ran` });
+            progress.step({ label: `slot ${slotId} setup complete` });
+
+            if (registered.preflight) {
+              run('bash', ['scripts/run-project-hook.sh', slotId, 'preflight'], {
+                cwd: ws.farmslotDir,
+                stdio: childStdio(progress),
+              });
+              progress.step({ label: `slot ${slotId} preflight hook ran` });
+            }
           }
         }
 
-        run('bash', ['scripts/preflight-slot.sh', slotId], {
-          cwd: ws.farmslotDir,
-          stdio: childStdio(progress),
-        });
-        progress.step({ label: `slot ${slotId} validated (preflight + health)` });
+        if (!options.noSetup) {
+          run('bash', ['scripts/preflight-slot.sh', slotId], {
+            cwd: ws.farmslotDir,
+            stdio: childStdio(progress),
+          });
+          progress.step({ label: `slot ${slotId} validated (preflight + health)` });
+        }
       }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
@@ -634,15 +683,27 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
     }
   }
 
+  const fullPackSelected = selectedPack.projects.length === pack.projects.length;
+  const completedFullPack = failures.length === 0 && !options.noSetup && fullPackSelected;
+  const preserveCurrentHash = action === 'noop' && state.packs[pack.name]?.hash === hash;
+
   // Pack-level finalization assumes every project installed; skip it (and the
   // smoke gate) on a partial install so hooks never run against missing slots
   // and one project's failure doesn't fail the smoke check for the others.
-  if (failures.length === 0) {
+  if (completedFullPack) {
     if (mutate) runPackHook(pack, 'post_add', packDir, ws, progress);
     if (pack.hooks?.smoke) {
       runPackHook(pack, 'smoke', packDir, ws, progress);
       progress.step({ label: `pack ${pack.name} smoke check passed` });
     }
+  } else if (options.noSetup) {
+    progress.info(
+      `pack ${pack.name}: setup deferred — skipped post_add/smoke; run without --no-setup to build and validate slots`,
+    );
+  } else if (!fullPackSelected) {
+    progress.info(
+      `pack ${pack.name}: project subset installed — skipped post_add/smoke; remaining projects still need setup`,
+    );
   } else {
     progress.info(
       `pack ${pack.name}: ${failures.length} project(s) failed — skipped post_add/smoke; re-run \`farmslot project add\` to retry the failed slots`,
@@ -658,13 +719,19 @@ export function projectAdd(source: string, ws: Workspace, progress: AddProgress)
       ...claimedState.packs,
       [pack.name]: {
         source: isGitUrl(source) ? source : resolve(source),
-        hash: failures.length === 0 ? hash : '',
-        projects,
-        slots: allSlots,
+        hash: completedFullPack || preserveCurrentHash ? hash : '',
+        projects: uniqueStrings([...(claimedState.packs[pack.name]?.projects ?? []), ...projects]),
+        slots: uniqueStrings([...(claimedState.packs[pack.name]?.slots ?? []), ...allSlots]),
       },
     },
   };
   writeState(ws, newState);
 
-  return { pack, action, slots: allSlots, failures };
+  return {
+    pack: selectedPack,
+    action,
+    slots: allSlots,
+    failures,
+    deferredSetup: Boolean(options.noSetup),
+  };
 }

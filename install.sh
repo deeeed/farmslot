@@ -24,6 +24,10 @@
 #   FARMSLOT_MINIMAL    set to skip the dashboard build + pair-your-phone step
 #   FARMSLOT_PAIR       set to 1 to pair non-interactively (no prompt)
 #   FARMSLOT_NO_STAR_PROMPT  set to 1 to skip the GitHub star prompt
+#   FARMSLOT_AUTO_INSTALL  set to 1 to install missing common tools with Homebrew
+#   FARMSLOT_SKIP_CAPTURE_HELPER  set to 1 to skip external capture-helper install/check
+#   FARMSLOT_CAPTURE_HELPER_NPM_PACKAGE  npm package name (default: @siteed/capture-helper)
+#   FARMSLOT_CAPTURE_HELPER_BREW_FORMULA brew formula name (default: capture-helper)
 set -euo pipefail
 
 WORKSPACE="${FARMSLOT_WORKSPACE:-${HOME}/dev/farmslot-workspace}"
@@ -35,6 +39,7 @@ DEFAULT_REPO_URL="https://github.com/deeeed/farmslot.git"
 # ── Output helpers ───────────────────────────────────────────────────────────
 red() { printf '\033[0;31m%s\033[0m\n' "$1"; }
 green() { printf '\033[0;32m%s\033[0m\n' "$1"; }
+yellow() { printf '\033[0;33m%s\033[0m\n' "$1"; }
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 
 fail() {
@@ -92,6 +97,105 @@ check_cmd() {
   fi
 }
 
+tty_available() {
+  [ -r /dev/tty ] && { : </dev/tty && : >/dev/tty; } 2>/dev/null
+}
+
+ask_yes_no() {
+  local prompt="$1" reply
+  if [ "${FARMSLOT_AUTO_INSTALL:-}" = "1" ]; then
+    return 0
+  fi
+  tty_available || return 1
+  printf '  %s [y/N] ' "$prompt" >/dev/tty
+  read -r reply </dev/tty || reply=""
+  case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+activate_version_managers() {
+  # Non-interactive installers do not source shell profiles. Put common manager
+  # shims on PATH so an existing asdf/nvm setup works before we decide anything
+  # is missing.
+  if [ -d "${ASDF_DATA_DIR:-$HOME/.asdf}/shims" ]; then
+    export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:${ASDF_DATA_DIR:-$HOME/.asdf}/bin:${PATH}"
+  fi
+  export NVM_DIR="${NVM_DIR:-${HOME}/.nvm}"
+  if [ -s "${NVM_DIR}/nvm.sh" ]; then
+    # shellcheck disable=SC1091
+    . "${NVM_DIR}/nvm.sh"
+    if ! command -v node >/dev/null 2>&1; then
+      nvm use default >/dev/null 2>&1 || nvm use --lts >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+brew_formula_for() {
+  case "$1" in
+    python3) echo python ;;
+    *) echo "$1" ;;
+  esac
+}
+
+check_cmd_or_brew() {
+  local name="$1" hint="$2" formula
+  if command -v "$name" >/dev/null 2>&1; then
+    green "  [OK] ${name}"
+    return
+  fi
+  if [ "$(uname)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+    formula="$(brew_formula_for "$name")"
+    if ask_yes_no "${name} is missing. Install ${formula} with Homebrew now?"; then
+      run_step "brew install ${formula}" brew install "$formula"
+      command -v "$name" >/dev/null 2>&1 && { green "  [OK] ${name}"; return; }
+    fi
+  fi
+  fail "${name} not found on PATH" "$hint"
+}
+
+source_nvm() {
+  export NVM_DIR="${NVM_DIR:-${HOME}/.nvm}"
+  [ -s "${NVM_DIR}/nvm.sh" ] || return 1
+  # shellcheck disable=SC1091
+  . "${NVM_DIR}/nvm.sh"
+}
+
+use_asdf_node() {
+  local version="$1" root
+  command -v asdf >/dev/null 2>&1 || return 1
+  if ! asdf plugin list 2>/dev/null | grep -qx nodejs; then
+    asdf plugin add nodejs || return 1
+  fi
+  if ! asdf where nodejs "$version" >/dev/null 2>&1; then
+    asdf install nodejs "$version" || return 1
+  fi
+  root="$(asdf where nodejs "$version" 2>/dev/null)" || return 1
+  [ -n "$root" ] && [ -x "$root/bin/node" ] || return 1
+  export ASDF_NODEJS_VERSION="$version"
+  export PATH="$root/bin:$PATH"
+}
+
+use_nvm_node() {
+  local version="$1"
+  source_nvm || return 1
+  if ! nvm which "$version" >/dev/null 2>&1; then
+    nvm install "$version" || return 1
+  fi
+  nvm use "$version" >/dev/null 2>&1
+}
+
+ensure_yarn() {
+  if command -v yarn >/dev/null 2>&1; then
+    green "  [OK] yarn"
+    return
+  fi
+  if command -v corepack >/dev/null 2>&1; then
+    run_step "enable corepack" corepack enable
+  fi
+  command -v yarn >/dev/null 2>&1 \
+    && green "  [OK] yarn" \
+    || fail "yarn not found on PATH" "run: corepack enable (ships with node)"
+}
+
 # check_runner <name> <install-hint> <login-hint> <auth-marker-regex> <auth-cmd...>
 # Three states: missing / inactive / authenticated. Per-runner markers mirror
 # packages/cli prereqs.ts probeRunnerAuth — keep both in sync.
@@ -116,6 +220,22 @@ check_runner() {
   fi
 }
 
+capture_helper_doctor() {
+  python3 - <<'PY'
+import subprocess, sys
+try:
+    subprocess.run(
+        ["capture-helper", "doctor", "--json"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=20,
+        check=True,
+    )
+except Exception:
+    sys.exit(1)
+PY
+}
+
 # ── Steps ────────────────────────────────────────────────────────────────────
 
 # Dev/test mode when run from inside a checkout; otherwise clone the remote.
@@ -125,9 +245,11 @@ step_detect_source() {
   if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     local script_dir
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [ -f "${script_dir}/packages/cli/bin/farmslot.mjs" ] && [ -d "${script_dir}/.git" ]; then
-      SOURCE_MODE="local"
-      SOURCE="$script_dir"
+    if [ -f "${script_dir}/packages/cli/bin/farmslot.mjs" ]; then
+      if [ -d "${script_dir}/.git" ] || [ -f "${script_dir}/.git" ]; then
+        SOURCE_MODE="local"
+        SOURCE="$script_dir"
+      fi
     fi
   fi
   if [ "$SOURCE_MODE" = "git" ]; then
@@ -136,13 +258,16 @@ step_detect_source() {
   CLONE="${WORKSPACE}/farmslot"
 }
 
-step_prereqs() {
-  bold "── Prerequisites ──"
-  check_cmd git "macOS: xcode-select --install · Linux: apt install git"
-  check_cmd node "install node (see .tool-versions) via https://nodejs.org or asdf/nvm"
-  check_cmd yarn "corepack enable (ships with node)"
-  check_cmd tmux "macOS: brew install tmux · Linux: apt install tmux"
-  check_cmd python3 "macOS: brew install python3 · Linux: apt install python3"
+step_base_prereqs() {
+  bold "── Base prerequisites ──"
+  check_cmd_or_brew git "macOS: xcode-select --install or brew install git · Linux: apt install git"
+}
+
+step_runtime_prereqs() {
+  bold "── Runtime prerequisites ──"
+  ensure_yarn
+  check_cmd_or_brew tmux "macOS: brew install tmux · Linux: apt install tmux"
+  check_cmd_or_brew python3 "macOS: brew install python3 · Linux: apt install python3"
 }
 
 step_runners() {
@@ -198,13 +323,37 @@ step_node() {
   required_node="$(sed -n 's/.*"node": *"\([^"]*\)".*/\1/p' "${CLONE}/package.json" | head -1)"
   # Recommended = .tool-versions (what maintainers run; newer is better).
   recommended_node="$(sed -n 's/^nodejs \([0-9.]*\).*/\1/p' "${CLONE}/.tool-versions" 2>/dev/null | head -1)"
+  if ! command -v node >/dev/null 2>&1; then
+    if [ -n "$recommended_node" ] && use_asdf_node "$recommended_node"; then
+      green "  [OK] node $(node --version) (asdf)"
+    elif [ -n "$recommended_node" ] && use_nvm_node "$recommended_node"; then
+      green "  [OK] node $(node --version) (nvm)"
+    elif [ "$(uname)" = "Darwin" ] && command -v brew >/dev/null 2>&1 \
+      && ask_yes_no "node is missing. Install node with Homebrew now?"; then
+      run_step "brew install node" brew install node
+    fi
+  fi
+  command -v node >/dev/null 2>&1 \
+    || fail "node not found on PATH" "install node via asdf/nvm/brew; Farmslot recommends ${recommended_node:-the version in .tool-versions}"
   node_version="$(node --version | tr -d 'v')"
   node -e "
 const min = ('${required_node}'.match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/) || []).slice(1).map(n => Number(n || 0));
 const cur = '${node_version}'.split('.').map(Number);
 if (!min.length) process.exit(0);
 for (let i = 0; i < 3; i++) { if (cur[i] !== min[i]) process.exit(cur[i] > min[i] ? 0 : 1); }
-" || fail "node ${node_version} is below the minimum ${required_node}" "upgrade node — newer is better; asdf: asdf install nodejs ${recommended_node:-latest}, or nvm install --lts (see .tool-versions)"
+" || {
+    if [ -n "$recommended_node" ] && use_asdf_node "$recommended_node"; then
+      node_version="$(node --version | tr -d 'v')"
+    elif [ -n "$recommended_node" ] && use_nvm_node "$recommended_node"; then
+      node_version="$(node --version | tr -d 'v')"
+    fi
+    node -e "
+const min = ('${required_node}'.match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/) || []).slice(1).map(n => Number(n || 0));
+const cur = '${node_version}'.split('.').map(Number);
+if (!min.length) process.exit(0);
+for (let i = 0; i < 3; i++) { if (cur[i] !== min[i]) process.exit(cur[i] > min[i] ? 0 : 1); }
+" || fail "node ${node_version} is below the minimum ${required_node}" "upgrade node — asdf: asdf install nodejs ${recommended_node:-latest}, or nvm install ${recommended_node:-'--lts'}"
+  }
   # Below the recommended version is fine — warn, don't block. Lets devs reuse an
   # existing LTS (e.g. the one their product repos pin) instead of forcing a switch.
   if [ -n "$recommended_node" ] && ! node -e "
@@ -216,6 +365,40 @@ for (let i = 0; i < 3; i++) { const a = cur[i] || 0, b = rec[i] || 0; if (a !== 
       "$node_version" "$required_node" "$recommended_node"
   else
     green "  [OK] node ${node_version} (>= ${required_node})"
+  fi
+}
+
+step_capture_helper() {
+  [ "$(uname)" = "Darwin" ] || return
+  case "${FARMSLOT_SKIP_CAPTURE_HELPER:-}" in 1|true) return ;; esac
+  bold "── Capture helper ──"
+  local npm_pkg="${FARMSLOT_CAPTURE_HELPER_NPM_PACKAGE:-@siteed/capture-helper}"
+  local brew_formula="${FARMSLOT_CAPTURE_HELPER_BREW_FORMULA:-capture-helper}"
+  if ! command -v capture-helper >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1 \
+      && ask_yes_no "capture-helper is missing. Install ${brew_formula} with Homebrew now?"; then
+      if brew install "$brew_formula"; then
+        green "  [OK] capture-helper installed via Homebrew"
+      else
+        yellow "  [WARN] Homebrew install failed for ${brew_formula}; trying npm if allowed"
+      fi
+    fi
+    if ! command -v capture-helper >/dev/null 2>&1 \
+      && command -v npm >/dev/null 2>&1 \
+      && ask_yes_no "Install ${npm_pkg} globally with npm now?"; then
+      npm install -g "$npm_pkg"
+    fi
+  fi
+  if command -v capture-helper >/dev/null 2>&1; then
+    if capture_helper_doctor; then
+      green "  [OK] capture-helper doctor"
+    else
+      yellow "  [WARN] capture-helper is installed but doctor failed or timed out"
+      echo "  fix: run 'capture-helper doctor --json' and grant Screen Recording permission if requested"
+    fi
+  else
+    yellow "  [WARN] capture-helper not installed — live screenshots/video will be unavailable"
+    echo "  fix: npm install -g ${npm_pkg}  # or install the Homebrew formula"
   fi
 }
 
@@ -267,7 +450,7 @@ step_star() {
   if ! gh auth status >/dev/null 2>&1; then
     return
   fi
-  if [ ! -r /dev/tty ]; then
+  if ! tty_available; then
     return
   fi
   local star_state="${FARMSLOT_HOME:-${HOME}/.farmslot}/state/star-prompt.json"
@@ -295,7 +478,7 @@ step_pair() {
     return
   elif [ "${FARMSLOT_PAIR:-}" = "1" ]; then
     start_now="yes"; pair_now="yes"
-  elif [ -r /dev/tty ]; then
+  elif tty_available; then
     # Command Center (web dashboard) first — what most people use.
     printf '  Start the Command Center (web dashboard) now? [Y/n] ' >/dev/tty
     read -r reply </dev/tty || reply=""
@@ -338,14 +521,17 @@ step_pair() {
 
 main() {
   step_detect_source
+  activate_version_managers
   bold "=== farmslot install ==="
   echo "  workspace: ${WORKSPACE}"
   echo "  source:    ${SOURCE} (${SOURCE_MODE})"
   echo ""
-  step_prereqs
-  step_runners
+  step_base_prereqs
   step_clone
   step_node
+  step_runtime_prereqs
+  step_capture_helper
+  step_runners
   step_cli
   step_workspace
   step_doctor
