@@ -21,6 +21,7 @@ import type {
   SlotActionListResult,
   SlotActionRunResult,
   SlotActionSummary,
+  SlotPrepareStepPayload,
   SlotRefreshResult,
   SlotStatus,
 } from '@farmslot/protocol';
@@ -67,18 +68,16 @@ export class SlotActionsPanel extends LitElement {
   @state() private _activeActionId = '';
   /** Captured from a safe-mode refresh that aborted; gates the inline Force Refresh button. */
   @state() private _lastRefreshReason: 'dirty' | 'stale' | undefined = undefined;
-  /** Branch the "switch branch (warm)" form targets. Empty until the user types
-   * or the form is opened (prefilled from the slot's current branch). */
-  @state() private _switchBranch = '';
-  /** Prepare profile for the warm branch switch — empty until profiles load (project default). */
-  @state() private _switchProfile = '';
-  @state() private _switchStrictProfile = true;
-  @state() private _switchForcePrepare = false;
-  /** Whether the switch-branch form is expanded. */
-  @state() private _switchOpen = false;
-  /** Prepare profile for the plain Prepare action — empty until profiles load (project default ★). */
+  /** Selected prepare profile — empty until profiles load (then the project default ★). */
   @state() private _prepareProfile = '';
   @state() private _prepareStrictProfile = true;
+  /** Optional branch for the Prepare surface. Empty keeps the slot's current
+   * branch; a value checks that branch out (the warm branch-switch path). */
+  @state() private _prepareBranch = '';
+  /** Structured prepare sub-steps streamed from the gateway (`slot.prepare.step`),
+   * scoped to the active prepare requestId. Carries profile/fallback provenance
+   * (ADR-037) so the operator sees which phases ran, not just a raw log. */
+  @state() private _prepareSteps: Array<{ name: string; detail: string }> = [];
 
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
@@ -128,6 +127,17 @@ export class SlotActionsPanel extends LitElement {
         this._exitCode = data.exitCode;
         this._activeActionId = '';
         void this._loadSlot();
+      }),
+    );
+
+    // Structured prepare sub-steps (ADR-037). The gateway emits one
+    // `slot.prepare.step` per phase / profile-resolution / fallback alongside
+    // the raw `script.output` stream; we render them as a clean step list so
+    // the operator sees which profile resolved and which phases ran.
+    this._unsubs.push(
+      gateway.subscribe<SlotPrepareStepPayload>(Events.SLOT_PREPARE_STEP, (data) => {
+        if (!this._requestId || data.requestId !== this._requestId) return;
+        this._prepareSteps = [...this._prepareSteps, { name: data.name, detail: data.detail }];
       }),
     );
   }
@@ -193,6 +203,7 @@ export class SlotActionsPanel extends LitElement {
     // honour it; methods that don't simply ignore the extra field.
     const reqId = `${actionId}-${crypto.randomUUID()}`;
     this._output = [];
+    this._prepareSteps = [];
     this._running = true;
     this._exitCode = null;
     this._requestId = reqId;
@@ -223,13 +234,21 @@ export class SlotActionsPanel extends LitElement {
     this._confirmTimer.confirm(actionId, fn);
   }
 
-  private _prepare = () =>
+  // Single Prepare entry point. With no branch it prepares the slot's current
+  // branch; with a branch it checks that branch out first (the warm
+  // branch-switch path) — one surface instead of two competing pickers.
+  private _prepare = () => {
+    const branch = this._prepareBranch.trim();
+    const switching = branch !== '' && branch !== (this._slot?.branch ?? '');
     this._confirm('prepare', () =>
-      void this._runSlotPrepare('prepare', {
+      void this._runSlotPrepare({
+        ...(branch ? { branch } : {}),
         ...(this._prepareProfile ? { prepareProfile: this._prepareProfile } : {}),
         strictProfile: this._prepareStrictProfile,
+        ...(switching ? { label: `Preparing ${this.slotId} for branch ${branch}` } : {}),
       }),
     );
+  };
   private _release = (keepWarm: boolean) =>
     this._confirm(keepWarm ? 'release-warm' : 'release', () =>
       this._runAction(
@@ -258,35 +277,7 @@ export class SlotActionsPanel extends LitElement {
       this._runAction(Methods.SLOT_CLEANUP, { slotId: this.slotId, reason: 'manual' }, 'cleanup'),
     );
 
-  private _toggleSwitchForm = () => {
-    this._switchOpen = !this._switchOpen;
-    // Prefill the branch input from the slot's current branch on first open.
-    if (this._switchOpen && !this._switchBranch) {
-      this._switchBranch = this._slot?.branch ?? '';
-    }
-  };
-
-  // Warm branch switch: re-uses slot.prepare with a chosen branch + the cheap
-  // `attach` profile (checkout-only, no merge-main, no rebuild, devserver stays
-  // up so Metro/webpack hot-reload). Lets a limited-slot node serve several
-  // branches in turn without a full prepare.
-  private _runBranchSwitch = () => {
-    const branch = this._switchBranch.trim();
-    if (!branch) return;
-    this._confirm(
-      'switch-branch',
-      () =>
-        void this._runSlotPrepare('switch-branch', {
-          branch,
-          ...(this._switchProfile ? { prepareProfile: this._switchProfile } : {}),
-          strictProfile: this._switchStrictProfile,
-          label: `Preparing ${this.slotId} for branch ${branch}`,
-        }),
-    );
-  };
-
   private async _runSlotPrepare(
-    actionId: 'prepare' | 'switch-branch' = 'prepare',
     extra: {
       branch?: string;
       prepareProfile?: string;
@@ -294,12 +285,13 @@ export class SlotActionsPanel extends LitElement {
       label?: string;
     } = {},
   ): Promise<void> {
-    const reqId = `${actionId}-${crypto.randomUUID()}`;
+    const reqId = `prepare-${crypto.randomUUID()}`;
     this._output = [];
+    this._prepareSteps = [];
     this._running = true;
     this._exitCode = null;
     this._requestId = reqId;
-    this._activeActionId = actionId;
+    this._activeActionId = 'prepare';
     this._lastRefreshReason = undefined;
     try {
       await runSlotPrepare({
@@ -559,14 +551,6 @@ export class SlotActionsPanel extends LitElement {
         onClick: () => this._refresh(false),
       },
       {
-        id: 'prepare',
-        label: 'Prepare',
-        style: '',
-        desc: 'Bring the slot up using the selected prepare profile (above).',
-        confirmLabel: 'Confirm Prepare?',
-        onClick: () => this._prepare(),
-      },
-      {
         id: 'release',
         label: 'Release',
         style: '',
@@ -601,90 +585,94 @@ export class SlotActionsPanel extends LitElement {
     ];
   }
 
-  private _renderSwitchBranchForm() {
-    // Only meaningful when the slot can be prepared (idle/ready). A busy/held
-    // slot is gated out exactly like the Prepare action.
-    if (!this._actionAvailability('prepare').available) return nothing;
-    const running = this._running && this._activeActionId === 'switch-branch';
-    const confirming = this._pendingConfirm === 'switch-branch';
+  // Unified Prepare surface (ADR-037). One place to: pick the prepare profile
+  // (e.g. mobile's "Full clean native rebuild" vs the default warm "Ensure JS
+  // runtime"), optionally check out a different branch (the warm branch-switch
+  // path), and fire Prepare. Replaces the old separate profile picker +
+  // "Switch branch (warm)" form, which duplicated the same component and
+  // fought over the same persisted prefs. Gated on prepare availability.
+  private _renderPrepareSurface() {
+    const availability = this._actionAvailability('prepare');
+    if (!availability.available) {
+      return html`
+        <div class="sap-section-label">Prepare</div>
+        <div class="sap-unavailable">
+          <div class="sap-unavailable-row">${availability.reason}</div>
+        </div>
+      `;
+    }
+    const running = this._running && this._activeActionId === 'prepare';
+    const confirming = this._pendingConfirm === 'prepare';
+    const branch = this._prepareBranch.trim();
+    const switching = branch !== '' && branch !== (this._slot?.branch ?? '');
+    const prepareLabel = running
+      ? 'Preparing…'
+      : confirming
+        ? 'Confirm Prepare?'
+        : switching
+          ? `Prepare on ${branch}`
+          : 'Prepare';
     return html`
-      <div class="sap-section-label">
-        <button class="sap-switch-toggle" @click=${this._toggleSwitchForm}>
-          ${this._switchOpen ? '▾' : '▸'} Switch branch (warm)
-        </button>
-      </div>
-      ${this._switchOpen
-        ? html`
-            <div class="sap-switch-form">
-              <div class="sap-switch-row">
-                <input
-                  class="sap-switch-input"
-                  .value=${this._switchBranch}
-                  placeholder="branch to check out"
-                  ?disabled=${this._running}
-                  @input=${(e: Event) =>
-                    (this._switchBranch = (e.target as HTMLInputElement).value)}
-                />
-                <button
-                  class="sap-btn ${confirming ? 'confirming' : ''} ${running ? 'running' : ''}"
-                  ?disabled=${this._running || !this._switchBranch.trim()}
-                  @click=${this._runBranchSwitch}
-                >
-                  ${running ? 'Switching…' : confirming ? 'Confirm switch?' : 'Switch branch'}
-                </button>
-              </div>
-              <slot-prepare-options
-                .project=${this._slot?.project ?? ''}
-                .prepareProfile=${this._switchProfile}
-                .strictProfile=${this._switchStrictProfile}
-                .forcePrepare=${this._switchForcePrepare}
-                .runBranch=${this._switchBranch}
-                .slotBranch=${this._slot?.branch ?? ''}
-                .slotHealth=${this._slot?.health ?? null}
-                .disabled=${this._running}
-                compact
-                @prepare-options-change=${(event: CustomEvent<SlotPrepareOptionsChangeDetail>) => {
-                  this._switchProfile = event.detail.prepareProfile;
-                  this._switchStrictProfile = event.detail.strictProfile;
-                  this._switchForcePrepare = event.detail.forcePrepare;
-                }}
-              ></slot-prepare-options>
-              ${this._slot?.currentRunId
-                ? html`<div class="sap-switch-warn">
-                    ⚠ Slot is bound to run ${this._slot.currentRunId.slice(0, 8)} — switching
-                    changes its checked-out branch.
-                  </div>`
-                : nothing}
-              <div class="sap-action-desc">
-                Uses the chosen profile in strict mode — attach will not silently escalate to a
-                heavier profile when preconditions fail. Dev server stays warm and hot-reloads.
-              </div>
-            </div>
-          `
-        : nothing}
-    `;
-  }
-
-  // Profile picker for the plain Prepare action (ADR-037). Lets the operator
-  // pick which project-defined entry point Prepare runs (e.g. mobile's "Full
-  // clean native rebuild" vs the default warm "Ensure JS runtime") instead of
-  // always firing prepare.default. Gated on the same availability as Prepare.
-  private _renderPrepareOptions() {
-    if (!this._actionAvailability('prepare').available) return nothing;
-    return html`
-      <div class="sap-prepare-options">
+      <div class="sap-section-label">Prepare</div>
+      <div class="sap-prepare-form">
         <slot-prepare-options
           .project=${this._slot?.project ?? ''}
           .prepareProfile=${this._prepareProfile}
           .strictProfile=${this._prepareStrictProfile}
+          .runBranch=${this._prepareBranch}
+          .slotBranch=${this._slot?.branch ?? ''}
+          .slotHealth=${this._slot?.health ?? null}
           .disabled=${this._running}
-          .showAdvanced=${false}
-          .showPlan=${false}
+          .showForce=${false}
           @prepare-options-change=${(event: CustomEvent<SlotPrepareOptionsChangeDetail>) => {
             this._prepareProfile = event.detail.prepareProfile;
             this._prepareStrictProfile = event.detail.strictProfile;
           }}
         ></slot-prepare-options>
+        <input
+          class="sap-prepare-input"
+          .value=${this._prepareBranch}
+          placeholder="branch (optional — keep current: ${this._slot?.branch ?? 'main'})"
+          ?disabled=${this._running}
+          @input=${(e: Event) => (this._prepareBranch = (e.target as HTMLInputElement).value)}
+        />
+        <button
+          class="sap-btn ${confirming ? 'confirming' : ''} ${running ? 'running' : ''}"
+          ?disabled=${this._running}
+          @click=${this._prepare}
+        >
+          ${prepareLabel}
+        </button>
+        ${switching && this._slot?.currentRunId
+          ? html`<div class="sap-prepare-warn">
+              ⚠ Slot is bound to run ${this._slot.currentRunId.slice(0, 8)} — switching changes its
+              checked-out branch.
+            </div>`
+          : nothing}
+        <div class="sap-action-desc">
+          Runs the selected profile. Leave the branch empty to prepare the current branch; enter one
+          to check it out first (dev server stays warm and hot-reloads).
+        </div>
+      </div>
+    `;
+  }
+
+  // Structured prepare sub-steps (ADR-037). Renders the live `slot.prepare.step`
+  // stream — profile resolution, each phase, fallback reasons — as a clean step
+  // list instead of leaving the operator to read them out of the raw log.
+  private _renderPrepareSteps() {
+    if (this._prepareSteps.length === 0) return nothing;
+    const lastIdx = this._prepareSteps.length - 1;
+    return html`
+      <div class="sap-steps">
+        ${this._prepareSteps.map(
+          (step, i) => html`
+            <div class="sap-step ${this._running && i === lastIdx ? 'active' : ''}">
+              <span class="sap-step-name">${step.name}</span>
+              <span class="sap-step-detail">${step.detail}</span>
+            </div>
+          `,
+        )}
       </div>
     `;
   }
@@ -836,37 +824,13 @@ export class SlotActionsPanel extends LitElement {
         slot-actions-panel .sap-custom-row .sap-btn {
           width: auto;
         }
-        slot-actions-panel .sap-prepare-options {
-          padding: 4px ${spacing.md} ${spacing.sm};
-        }
-        slot-actions-panel .sap-switch-toggle {
-          background: none;
-          border: none;
-          padding: 0;
-          color: ${colors.textMuted};
-          font-family: ${fonts.mono};
-          font-size: 10px;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          cursor: pointer;
-        }
-        slot-actions-panel .sap-switch-toggle:hover {
-          color: ${colors.accent};
-        }
-        slot-actions-panel .sap-switch-form {
+        slot-actions-panel .sap-prepare-form {
           display: flex;
           flex-direction: column;
-          gap: 4px;
+          gap: 6px;
           padding: 0 ${spacing.md} ${spacing.sm};
         }
-        slot-actions-panel .sap-switch-row {
-          display: flex;
-          gap: ${spacing.xs};
-          align-items: center;
-          flex-wrap: wrap;
-        }
-        slot-actions-panel .sap-switch-input,
-        slot-actions-panel .sap-switch-select {
+        slot-actions-panel .sap-prepare-input {
           background: ${colors.bgCard};
           color: ${colors.textPrimary};
           border: 1px solid #2a2a44;
@@ -874,20 +838,44 @@ export class SlotActionsPanel extends LitElement {
           padding: 6px 8px;
           font-family: ${fonts.mono};
           font-size: ${fonts.sizeXs};
+          width: 100%;
         }
-        slot-actions-panel .sap-switch-input {
-          flex: 1 1 160px;
-          min-width: 120px;
-        }
-        slot-actions-panel .sap-switch-row .sap-btn {
-          width: auto;
-          flex: 0 0 auto;
-        }
-        slot-actions-panel .sap-switch-warn {
+        slot-actions-panel .sap-prepare-warn {
           color: ${colors.statusWarn};
           font-family: ${fonts.mono};
           font-size: ${fonts.sizeXs};
           line-height: 1.4;
+        }
+        slot-actions-panel .sap-steps {
+          margin: ${spacing.sm} ${spacing.md} 0;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        slot-actions-panel .sap-step {
+          display: flex;
+          gap: ${spacing.sm};
+          align-items: baseline;
+          font-family: ${fonts.mono};
+          font-size: ${fonts.sizeXs};
+          line-height: 1.4;
+          padding: 2px 6px;
+          border-left: 2px solid #2a2a44;
+        }
+        slot-actions-panel .sap-step.active {
+          border-left-color: ${colors.accent};
+          animation: sap-btn-pulse 1.2s ease-in-out infinite;
+        }
+        slot-actions-panel .sap-step-name {
+          color: ${colors.accent};
+          text-transform: uppercase;
+          font-size: 10px;
+          letter-spacing: 0.04em;
+          flex: 0 0 auto;
+          min-width: 64px;
+        }
+        slot-actions-panel .sap-step-detail {
+          color: ${colors.textSecondary};
         }
         slot-actions-panel .sap-output {
           margin: ${spacing.sm} ${spacing.md};
@@ -912,8 +900,7 @@ export class SlotActionsPanel extends LitElement {
         }
       </style>
 
-      ${this._renderStatusBanner()} ${this._renderSwitchBranchForm()}
-      ${this._renderPrepareOptions()}
+      ${this._renderStatusBanner()} ${this._renderPrepareSurface()}
       ${available.length > 0
         ? html`
             <div class="sap-section-label">Available actions</div>
@@ -968,6 +955,7 @@ export class SlotActionsPanel extends LitElement {
         : nothing}
       ${!this.hideOutput && (this._running || this._output.length > 0)
         ? html`
+            ${this._renderPrepareSteps()}
             <div class="sap-output">
               ${this._output.map((line) => html`<div>${line}</div>`)}
               ${this._running

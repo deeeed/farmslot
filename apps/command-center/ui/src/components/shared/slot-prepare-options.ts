@@ -40,6 +40,10 @@ export class SlotPrepareOptions extends LitElement {
   @property({ type: Boolean, attribute: 'persist-prefs' }) persistPrefs = true;
   @property({ type: Boolean, attribute: 'show-plan' }) showPlan = true;
   @property({ type: Boolean }) showAdvanced = true;
+  /** Show the "Force checkout" toggle inside Advanced. Off where bind-only is
+   * irrelevant (e.g. a branchless operator prepare), so strict can still show
+   * without an inert force control. */
+  @property({ type: Boolean }) showForce = true;
   @property({ type: Boolean }) compact = false;
   @property({ type: Boolean }) disabled = false;
   @property() lastError = '';
@@ -443,16 +447,20 @@ export class SlotPrepareOptions extends LitElement {
                         />
                         Strict profile (no silent fallback)
                       </label>
-                      <label class="spo-check">
-                        <input
-                          type="checkbox"
-                          .checked=${this.forcePrepare}
-                          ?disabled=${this.disabled}
-                          @change=${(event: Event) =>
-                            this._setForcePrepare((event.target as HTMLInputElement).checked)}
-                        />
-                        Force checkout (skip bind-only fast path)
-                      </label>
+                      ${this.showForce
+                        ? html`
+                            <label class="spo-check">
+                              <input
+                                type="checkbox"
+                                .checked=${this.forcePrepare}
+                                ?disabled=${this.disabled}
+                                @change=${(event: Event) =>
+                                  this._setForcePrepare((event.target as HTMLInputElement).checked)}
+                              />
+                              Force checkout (skip bind-only fast path)
+                            </label>
+                          `
+                        : nothing}
                     </div>
                   `
                 : nothing}
