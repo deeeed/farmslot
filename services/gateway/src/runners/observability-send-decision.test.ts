@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  computePromptAcceptedSinceMs,
   isObservabilityReadingAuthoritative,
   selectBusyFromObservabilityAndPane,
   selectPendingFromObservabilityAndPane,
@@ -21,6 +22,11 @@ function promptReading(
 ): ObservabilityReading<boolean> {
   return { value, source: 'hook', confidence, observedAt: Date.now() };
 }
+
+test('computePromptAcceptedSinceMs aligns lookback with safe-send timeout window', () => {
+  assert.equal(computePromptAcceptedSinceMs(20_000, 10_000), 10_000);
+  assert.equal(computePromptAcceptedSinceMs(40_000, 30_000), 10_000);
+});
 
 test('isObservabilityReadingAuthoritative rejects null and low confidence', () => {
   assert.equal(isObservabilityReadingAuthoritative(null), false);
