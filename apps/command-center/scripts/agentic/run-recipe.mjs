@@ -414,15 +414,21 @@ async function resolveCaptureHelperTarget(selectorArgs) {
   return parsed;
 }
 
-async function repositionCdpChromeWindow(bounds = { x: 200, y: 150, width: 1200, height: 800 }) {
+async function activateCdpChromeWindow(bounds = { x: 200, y: 150, width: 1200, height: 800 }) {
   const right = bounds.x + bounds.width;
   const bottom = bounds.y + bounds.height;
   await execFileAsync('osascript', [
     '-e',
     'tell application "Google Chrome" to activate',
     '-e',
+    `tell application "Google Chrome" to set index of front window to 1`,
+    '-e',
     `tell application "Google Chrome" to set bounds of front window to {${bounds.x}, ${bounds.y}, ${right}, ${bottom}}`,
   ]);
+}
+
+async function repositionCdpChromeWindow(bounds = { x: 200, y: 150, width: 1200, height: 800 }) {
+  await activateCdpChromeWindow(bounds);
 }
 
 /** capture-helper cannot record off-screen windows; bring Chrome on-screen before record.video. */
@@ -437,10 +443,12 @@ async function ensureCapturableRecordingTarget(target) {
         : ['--app-name', target.appName, '--window-name', target.windowName];
 
   try {
+    await activateCdpChromeWindow();
+    await new Promise((resolve) => setTimeout(resolve, 400));
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const parsed = await resolveCaptureHelperTarget(selectorArgs);
       if (parsed.selected?.onScreen === true) {
-        if (parsed.selected?.id != null && target.kind === 'pid') {
+        if (parsed.selected?.id != null) {
           return { kind: 'window-id', windowId: String(parsed.selected.id) };
         }
         return target;

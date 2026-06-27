@@ -31,23 +31,40 @@ if command -v osascript >/dev/null 2>&1; then
     >/dev/null 2>&1 || true
 fi
 
-# Relaunch CDP Chrome when the existing session window is off-screen.
+# Always relaunch CDP Chrome for proof runs so capture-helper sees a fresh on-screen window.
+UI_PORT="$(python3 - <<'PY' "$FF_REPO" "$FF_GATEWAY_PORT"
+import json, pathlib, sys
+repo, gw = sys.argv[1], sys.argv[2]
+ports = pathlib.Path(repo) / ".env.ports"
+ui = "5174"
+if ports.is_file():
+    for line in ports.read_text().splitlines():
+        if line.startswith("UI_PORT="):
+            ui = line.split("=", 1)[1].strip()
+            break
+print(ui)
+PY
+)"
+export FARMSLOT_UI_URL="http://localhost:${UI_PORT}/"
+CDP_PID="$(lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+if [[ -n "$CDP_PID" ]]; then
+  log "relaunching CDP Chrome for slot UI ${FARMSLOT_UI_URL}"
+  kill "$CDP_PID" 2>/dev/null || true
+  sleep 1
+fi
+
+if ! FARMSLOT_UI_URL="$FARMSLOT_UI_URL" bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >>"$SCRATCH/e2e.log" 2>&1; then
+  log "debug-chrome failed — see $SCRATCH/e2e.log"
+fi
+sleep 2
 if command -v capture-helper >/dev/null 2>&1; then
   CDP_PID="$(lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
   if [[ -n "$CDP_PID" ]]; then
-    ON_SCREEN="$(capture-helper resolve --pid "$CDP_PID" --json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print('true' if d.get('selected',{}).get('onScreen') else 'false')" 2>/dev/null || echo false)"
-    if [[ "$ON_SCREEN" != "true" ]]; then
-      log "CDP Chrome off-screen; relaunching debug-chrome with window-position"
-      kill "$CDP_PID" 2>/dev/null || true
-      sleep 1
-    fi
+    capture-helper snapshot --pid "$CDP_PID" -o "$SCRATCH/cdp-preflight.png" >>"$SCRATCH/e2e.log" 2>&1 \
+      && log "capture-helper preflight snapshot ok" \
+      || log "capture-helper preflight snapshot failed — video may be blocked by ScreenCaptureKit"
   fi
 fi
-
-if ! bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >>"$SCRATCH/e2e.log" 2>&1; then
-  log "debug-chrome failed — see $SCRATCH/e2e.log"
-fi
-sleep 1
 
 node "$PRIMARY_REPO/apps/command-center/scripts/agentic/recipe-doctor.mjs" \
   --cdp-port "$FF_CDP_PORT" --gateway-port "$FF_GATEWAY_PORT" --slot-id "$FF_SLOT" --json \
