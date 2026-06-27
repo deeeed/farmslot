@@ -21,7 +21,7 @@ yarn add @farmslot/run-bundle @farmslot/protocol
 ## Main exports
 
 ```ts
-import { exportRunAsPackage, importRunPackage, listBundleContents } from '@farmslot/run-bundle';
+import { exportRunsToBundle, importBundle, listBundle } from '@farmslot/run-bundle';
 ```
 
 ## CLI and gateway
