@@ -192,6 +192,9 @@ function isDevHarnessFile(file, excludeDev) {
 }
 
 function shouldCount(file, options) {
+  // Self-referential: snapshot rows live in this file; counting it makes --record
+  // append ~58 config lines that are not in the stored totals and breaks CI verify.
+  if (file === HISTORY_PATH) return false;
   const ext = extensionOf(file);
   if (BINARY_EXTENSIONS.has(ext)) return false;
   if (IGNORED_SUFFIXES.some((suffix) => file.endsWith(suffix))) return false;
