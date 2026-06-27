@@ -46,6 +46,10 @@ CHROME_ARGS=(
 )
 if [[ "$HEADLESS" == "1" || "$HEADLESS" == "true" || "$HEADLESS" == "yes" ]]; then
   CHROME_ARGS+=(--headless=new --disable-gpu)
+else
+  # ScreenCaptureKit treats windows on secondary/virtual spaces as off-screen.
+  # Pin headed CDP Chrome to the primary display so capture-helper can record.
+  CHROME_ARGS+=(--window-position=200,150 --window-size=1200,800)
 fi
 if [[ "$CHROME" == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]] \
   && command -v open >/dev/null 2>&1; then

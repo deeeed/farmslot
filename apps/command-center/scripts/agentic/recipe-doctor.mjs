@@ -4,23 +4,27 @@
  *
  * Usage:
  *   node apps/command-center/scripts/agentic/recipe-doctor.mjs \
- *     --cdp-port 9323 --gateway-port 8809 --json
+ *     --cdp-port 9323 --gateway-port 8809 --slot-id macwork-ff-2 --json
  */
 import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import { listCdpTargets } from '@farmslot/recipe-harness/runtime/cdp';
 
+const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, '../../../..');
+const FARMSLOT_ROOT = path.resolve(__dirname, '../../../..');
 
 function parseArgs(argv) {
   const options = {
     cdpPort: Number(process.env.FARMSLOT_CDP_PORT ?? 9323),
     gatewayPort: process.env.GATEWAY_PORT ?? '',
     uiUrl: process.env.FARMSLOT_UI_URL ?? '',
-    projectRoot: REPO_ROOT,
+    slotId: process.env.FARMSLOT_SLOT_ID ?? '',
+    projectRoot: FARMSLOT_ROOT,
     json: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -31,6 +35,8 @@ function parseArgs(argv) {
     else if (arg.startsWith('--gateway-port=')) options.gatewayPort = arg.slice(15);
     else if (arg === '--ui-url') options.uiUrl = argv[++i] ?? '';
     else if (arg.startsWith('--ui-url=')) options.uiUrl = arg.slice(9);
+    else if (arg === '--slot-id') options.slotId = argv[++i] ?? '';
+    else if (arg.startsWith('--slot-id=')) options.slotId = arg.slice(10);
     else if (arg === '--project-root') options.projectRoot = path.resolve(argv[++i] ?? '.');
     else if (arg.startsWith('--project-root=')) {
       options.projectRoot = path.resolve(arg.slice(15));
@@ -44,11 +50,41 @@ async function resolveUiUrl(projectRoot, explicit) {
   try {
     const raw = await readFile(path.join(projectRoot, '.env.ports'), 'utf8');
     const match = raw.match(/^VITE_PORT=(\d+)/m);
-    if (match) return `http://127.0.0.1:${match[1]}`;
+    if (match) return `http://localhost:${match[1]}`;
   } catch {
     // optional
   }
-  return 'http://127.0.0.1:5174';
+  return 'http://localhost:5174';
+}
+
+async function loadSlotProjectRoot(slotId, farmslotRoot) {
+  if (!slotId) return farmslotRoot;
+  const poolDir = path.join(farmslotRoot, 'pool');
+  let entries;
+  try {
+    const { readdir } = await import('node:fs/promises');
+    entries = await readdir(poolDir);
+  } catch {
+    return farmslotRoot;
+  }
+  for (const file of entries) {
+    if (!file.endsWith('.json') || file.endsWith('.example.json')) continue;
+    const raw = await readFile(path.join(poolDir, file), 'utf8');
+    const pool = JSON.parse(raw);
+    const slot = pool.slots?.find((candidate) => candidate.id === slotId);
+    if (slot?.repo) return path.resolve(slot.repo);
+  }
+  return farmslotRoot;
+}
+
+async function pidListeningOnPort(port) {
+  try {
+    const { stdout } = await execFileAsync('lsof', [`-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
+    const pid = Number(stdout.trim().split('\n')[0]);
+    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function checkFetch(label, url) {
@@ -65,9 +101,112 @@ async function checkFetch(label, url) {
   }
 }
 
+function parseCaptureHelperJson(stdout, stderr = '') {
+  const combined = `${stdout}\n${stderr}`.trim();
+  if (!combined) return null;
+  const lines = combined.split('\n').map((line) => line.trim());
+  const singleLine = lines.find((line) => line.startsWith('{') && line.endsWith('}'));
+  if (singleLine) {
+    try {
+      return JSON.parse(singleLine);
+    } catch {
+      // fall through to multi-line parse
+    }
+  }
+  const start = combined.indexOf('{');
+  const end = combined.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(combined.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+async function checkCaptureHelperDoctor() {
+  if (process.platform !== 'darwin') {
+    return {
+      id: 'capture_helper.doctor',
+      status: 'pass',
+      message: 'skipped (non-macOS)',
+    };
+  }
+  try {
+    const { stdout } = await execFileAsync('capture-helper', ['doctor', '--json']);
+    const parsed = parseCaptureHelperJson(stdout);
+    const ok = parsed?.ok === true;
+    return {
+      id: 'capture_helper.doctor',
+      status: ok ? 'pass' : 'fail',
+      message: ok
+        ? `capture-helper ${parsed?.build?.version ?? ''} ready`.trim()
+        : 'capture-helper doctor failed; grant Screen Recording to the terminal host',
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { id: 'capture_helper.doctor', status: 'fail', message };
+  }
+}
+
+async function checkCaptureWindowOnScreen(cdpPort) {
+  if (process.platform !== 'darwin') {
+    return {
+      id: 'capture_helper.window.on_screen',
+      status: 'pass',
+      message: 'skipped (non-macOS)',
+    };
+  }
+  const pid = await pidListeningOnPort(cdpPort);
+  if (!pid) {
+    return {
+      id: 'capture_helper.window.on_screen',
+      status: 'fail',
+      message: `no listener on CDP :${cdpPort}`,
+    };
+  }
+  try {
+    const { stdout, stderr } = await execFileAsync('capture-helper', [
+      'resolve',
+      '--pid',
+      String(pid),
+      '--json',
+    ]);
+    const parsed = parseCaptureHelperJson(stdout, stderr);
+    if (!parsed) {
+      const errDoc = parseCaptureHelperJson('', stderr);
+      if (errDoc?.code === 'screen_recording_denied') {
+        return {
+          id: 'capture_helper.window.on_screen',
+          status: 'fail',
+          message:
+            'Screen Recording permission denied for capture-helper; enable in System Settings',
+        };
+      }
+      return {
+        id: 'capture_helper.window.on_screen',
+        status: 'fail',
+        message: stderr.trim() || stdout.trim() || 'capture-helper resolve failed',
+      };
+    }
+    const onScreen = parsed.selected?.onScreen === true;
+    return {
+      id: 'capture_helper.window.on_screen',
+      status: onScreen ? 'pass' : 'fail',
+      message: onScreen
+        ? `Chrome window ${parsed.selected?.title ?? 'selected'} is on-screen`
+        : `Chrome window is off-screen (${parsed.selected?.title ?? 'unknown'}); run debug-chrome (window-position) or activate Chrome before --record-video`,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { id: 'capture_helper.window.on_screen', status: 'fail', message };
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const uiUrl = await resolveUiUrl(options.projectRoot, options.uiUrl);
+  const slotProjectRoot = await loadSlotProjectRoot(options.slotId, FARMSLOT_ROOT);
+  const uiProjectRoot = options.projectRoot === FARMSLOT_ROOT ? slotProjectRoot : options.projectRoot;
+  const uiUrl = await resolveUiUrl(uiProjectRoot, options.uiUrl);
   const checks = [];
 
   checks.push(await checkFetch('command_center.dev_server.ready', `${uiUrl}/`));
@@ -100,8 +239,11 @@ async function main() {
     checks.push({ id: 'runtime.browser.open', status: 'fail', message });
   }
 
+  checks.push(await checkCaptureHelperDoctor());
+  checks.push(await checkCaptureWindowOnScreen(options.cdpPort));
+
   const manifestPath = path.join(
-    options.projectRoot,
+    FARMSLOT_ROOT,
     'docs/examples/recipes/farmslot-v1.action-manifest.json',
   );
   try {
@@ -116,7 +258,7 @@ async function main() {
     checks.push({ id: 'recipe.action_manifest.present', status: 'fail', message });
   }
 
-  const runnerPath = path.join(options.projectRoot, 'apps/command-center/scripts/agentic/run-recipe.mjs');
+  const runnerPath = path.join(FARMSLOT_ROOT, 'apps/command-center/scripts/agentic/run-recipe.mjs');
   try {
     await readFile(runnerPath, 'utf8');
     checks.push({
@@ -136,6 +278,9 @@ async function main() {
     ui_url: uiUrl,
     cdp_port: options.cdpPort,
     gateway_port: options.gatewayPort || null,
+    slot_id: options.slotId || null,
+    slot_project_root: slotProjectRoot,
+    farmslot_root: FARMSLOT_ROOT,
   };
 
   if (options.json) console.log(JSON.stringify(document, null, 2));

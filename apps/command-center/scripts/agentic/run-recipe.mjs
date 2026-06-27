@@ -383,6 +383,95 @@ async function resolveRecordingTarget(options) {
   };
 }
 
+function parseCaptureHelperJson(stdout, stderr = '') {
+  const combined = `${stdout}\n${stderr}`.trim();
+  if (!combined) return null;
+  const lines = combined.split('\n').map((line) => line.trim());
+  const singleLine = lines.find((line) => line.startsWith('{') && line.endsWith('}'));
+  if (singleLine) {
+    try {
+      return JSON.parse(singleLine);
+    } catch {
+      // fall through
+    }
+  }
+  const start = combined.indexOf('{');
+  const end = combined.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  return JSON.parse(combined.slice(start, end + 1));
+}
+
+async function resolveCaptureHelperTarget(selectorArgs) {
+  const { stdout, stderr } = await execFileAsync('capture-helper', [
+    'resolve',
+    ...selectorArgs,
+    '--json',
+  ]);
+  const parsed = parseCaptureHelperJson(stdout, stderr);
+  if (!parsed) {
+    throw new Error(`${stdout}\n${stderr}`.trim() || 'capture-helper resolve returned no JSON');
+  }
+  return parsed;
+}
+
+async function repositionCdpChromeWindow(bounds = { x: 200, y: 150, width: 1200, height: 800 }) {
+  const right = bounds.x + bounds.width;
+  const bottom = bounds.y + bounds.height;
+  await execFileAsync('osascript', [
+    '-e',
+    'tell application "Google Chrome" to activate',
+    '-e',
+    `tell application "Google Chrome" to set bounds of front window to {${bounds.x}, ${bounds.y}, ${right}, ${bottom}}`,
+  ]);
+}
+
+/** capture-helper cannot record off-screen windows; bring Chrome on-screen before record.video. */
+async function ensureCapturableRecordingTarget(target) {
+  if (process.platform !== 'darwin') return target;
+
+  const selectorArgs =
+    target.kind === 'pid'
+      ? ['--pid', String(target.pid)]
+      : target.kind === 'window-id'
+        ? ['--window-id', target.windowId]
+        : ['--app-name', target.appName, '--window-name', target.windowName];
+
+  try {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const parsed = await resolveCaptureHelperTarget(selectorArgs);
+      if (parsed.selected?.onScreen === true) {
+        if (parsed.selected?.id != null && target.kind === 'pid') {
+          return { kind: 'window-id', windowId: String(parsed.selected.id) };
+        }
+        return target;
+      }
+
+      console.warn(
+        `[run-recipe] CDP Chrome window is off-screen (${parsed.selected?.title ?? 'unknown'}); repositioning for capture-helper (attempt ${attempt + 1}/3)`,
+      );
+      await repositionCdpChromeWindow({
+        x: 200 + attempt * 40,
+        y: 150 + attempt * 40,
+        width: 1200,
+        height: 800,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 700));
+    }
+
+    const finalResolve = await resolveCaptureHelperTarget(selectorArgs);
+    if (finalResolve.selected?.id != null) {
+      console.warn(
+        `[run-recipe] using window-id ${finalResolve.selected.id} for capture-helper after reposition attempts`,
+      );
+      return { kind: 'window-id', windowId: String(finalResolve.selected.id) };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[run-recipe] capture target preflight skipped: ${message}`);
+  }
+  return target;
+}
+
 async function main() {
   const { recipePath, options } = parseArgs(process.argv.slice(2));
   const uiUrl = await resolveUiUrl(options.projectRoot, options.uiUrl);
@@ -475,7 +564,10 @@ async function main() {
     options.slowMs,
   );
 
-  const recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
+  let recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
+  if (recordingTarget) {
+    recordingTarget = await ensureCapturableRecordingTarget(recordingTarget);
+  }
 
   const runner = createRecipeRunner({
     actionManifest: filteredManifest,
