@@ -51,7 +51,15 @@ test('farmrun export/import round-trip remaps ids in seed mode', () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-dst-'));
   const bundlePath = path.join(tmpdir(), `bundle-${Date.now()}.farmrun`);
   const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-  const taskFile = path.join(sourceRoot, 'projects', 'demo-farm', 'tasks', 'evals', 'case-1', 'TASK.md');
+  const taskFile = path.join(
+    sourceRoot,
+    'projects',
+    'demo-farm',
+    'tasks',
+    'evals',
+    'case-1',
+    'TASK.md',
+  );
   const run: Run = {
     id: runId,
     familyId: 'family-1',
@@ -68,7 +76,7 @@ test('farmrun export/import round-trip remaps ids in seed mode', () => {
     taskFile,
     steps: [],
     decisions: [],
-    metrics: {},
+    metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

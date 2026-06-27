@@ -1,6 +1,7 @@
 import path from 'node:path';
 
-import { Option, type Command } from 'commander';
+import { type Command,Option } from 'commander';
+
 import {
   exportRunAsPackage,
   exportRunsToBundle,
@@ -12,6 +13,7 @@ import {
 import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
 import { OutputContext } from '../output.js';
+
 import { resolveRunsExportProfile, resolveRunsImportMode } from './runs-cli-options.js';
 
 interface ExportOptions {
@@ -163,10 +165,14 @@ export function registerRunsCommand(program: Command): void {
         if (output.json) output.writeJson({ manifest });
         else {
           output.write(`${bold(manifest.bundleId)} ${dim(manifest.exportedAt)}\n`);
-          output.write(`  ${dim('profile')} ${manifest.profile} · ${manifest.runs.length} run(s)\n`);
+          output.write(
+            `  ${dim('profile')} ${manifest.profile} · ${manifest.runs.length} run(s)\n`,
+          );
           output.write(`  ${dim('source')} ${manifest.source.farmslotRoot}\n`);
           for (const run of manifest.runs) {
-            output.write(`  - ${run.originalRunId}${run.taskKey ? ` · task ${run.taskKey}` : ''}\n`);
+            output.write(
+              `  - ${run.originalRunId}${run.taskKey ? ` · task ${run.taskKey}` : ''}\n`,
+            );
           }
         }
       } catch (err) {

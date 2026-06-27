@@ -1,10 +1,10 @@
 import type { ArtifactRef, SelfReviewIssue } from '../recipes/step-io.js';
 
 import type { AgentContext, SafetyTier } from './agents.js';
-import type { RunImportProvenance } from './run-bundles.js';
 import type { FailureCategory, RunRecoveryProposalConfidence } from './chat.js';
 import type { TaskTemplateSelection, TemplateProvenance } from './evals.js';
 import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js';
+import type { RunImportProvenance } from './run-bundles.js';
 import type { SlotHealth } from './slots.js';
 
 // ─── Runs ───

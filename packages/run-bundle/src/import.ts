@@ -2,14 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import type { Run } from '@farmslot/protocol';
 import {
   isRunBundleManifest,
+  resolveTaskFileAbsolute,
+  type Run,
   type RunBundleImportRequest,
   type RunBundleImportResult,
   type RunBundleManifest,
 } from '@farmslot/protocol';
-import { resolveTaskFileAbsolute } from '@farmslot/protocol';
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
 import { copyDirectoryRecursive } from './copy-tree.js';
@@ -82,7 +82,8 @@ function applyImportMode(
       readOnly: false,
     };
   }
-  const nextId = mode === 'seed' ? randomUUID() : `ref-${sourceRunId.slice(0, 8)}-${randomUUID().slice(0, 8)}`;
+  const nextId =
+    mode === 'seed' ? randomUUID() : `ref-${sourceRunId.slice(0, 8)}-${randomUUID().slice(0, 8)}`;
   idMap[sourceRunId] = nextId;
   return {
     ...run,
@@ -111,11 +112,7 @@ export function importBundle(request: RunBundleImportRequest): RunBundleImportRe
   const bundleDir = unpackFarmrunArchive(request.bundlePath);
   try {
     const manifest = parseManifest(bundleDir);
-    if (
-      request.mode === 'mirror' &&
-      !request.force &&
-      manifest.runs.length > 1
-    ) {
+    if (request.mode === 'mirror' && !request.force && manifest.runs.length > 1) {
       throw new Error(
         'mirror import refuses multi-entry bundles without --force — use seed or reference-only for sandboxes',
       );

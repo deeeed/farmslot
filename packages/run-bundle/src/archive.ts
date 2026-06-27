@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -41,7 +49,9 @@ export function packFarmrunDirectory(sourceDir: string, outputPath: string): voi
   });
   rmSync(tmpTar, { force: true });
   if (zstdResult.status !== 0) {
-    throw new Error(`zstd pack failed: ${zstdResult.stderr || zstdResult.stdout || 'unknown error'}`);
+    throw new Error(
+      `zstd pack failed: ${zstdResult.stderr || zstdResult.stdout || 'unknown error'}`,
+    );
   }
 }
 
@@ -58,7 +68,9 @@ export function unpackFarmrunArchive(bundlePath: string): string {
   });
   if (zstdResult.status !== 0) {
     rmSync(tempRoot, { recursive: true, force: true });
-    throw new Error(`zstd unpack failed: ${zstdResult.stderr || zstdResult.stdout || 'unknown error'}`);
+    throw new Error(
+      `zstd unpack failed: ${zstdResult.stderr || zstdResult.stdout || 'unknown error'}`,
+    );
   }
   const extractDir = path.join(tempRoot, 'root');
   mkdirSync(extractDir, { recursive: true });
@@ -69,7 +81,9 @@ export function unpackFarmrunArchive(bundlePath: string): string {
   rmSync(tmpTar, { force: true });
   if (tarResult.status !== 0) {
     rmSync(tempRoot, { recursive: true, force: true });
-    throw new Error(`tar unpack failed: ${tarResult.stderr || tarResult.stdout || 'unknown error'}`);
+    throw new Error(
+      `tar unpack failed: ${tarResult.stderr || tarResult.stdout || 'unknown error'}`,
+    );
   }
   return extractDir;
 }

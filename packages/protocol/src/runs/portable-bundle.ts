@@ -1,5 +1,5 @@
-import type { Run } from '../contracts/runs.js';
 import type { RunBundleProfile } from '../contracts/run-bundles.js';
+import type { Run } from '../contracts/runs.js';
 
 const TERMINAL_IMPORT_STATUSES = new Set(['done', 'failed', 'cancelled', 'blocked']);
 
@@ -11,7 +11,9 @@ export function sanitizeRunForBundleExport(run: Run, profile: RunBundleProfile):
     if (cloned.engineState) {
       const flags = cloned.engineState.flags;
       cloned.engineState = {
-        ...(cloned.engineState.evalExperiment ? { evalExperiment: cloned.engineState.evalExperiment } : {}),
+        ...(cloned.engineState.evalExperiment
+          ? { evalExperiment: cloned.engineState.evalExperiment }
+          : {}),
         ...(cloned.engineState.publishGate?.packageArtifactPath
           ? {
               publishGate: {

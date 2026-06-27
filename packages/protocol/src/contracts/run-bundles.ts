@@ -80,8 +80,6 @@ export interface RunBundleListResult {
   manifest: RunBundleManifest;
 }
 
-
-
 export function isRunBundleProfile(value: unknown): value is RunBundleProfile {
   return value === 'reference' || value === 'family' || value === 'full';
 }

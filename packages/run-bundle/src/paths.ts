@@ -7,7 +7,10 @@ export function hasFarmslotRootMarkers(candidate: string): boolean {
   return ROOT_MARKERS.every((marker) => existsSync(path.join(candidate, marker)));
 }
 
-export function resolveFarmslotRoot(startDir = process.cwd(), env: NodeJS.ProcessEnv = process.env): string {
+export function resolveFarmslotRoot(
+  startDir = process.cwd(),
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   if (env.FARMSLOT_ROOT) {
     const resolved = path.resolve(env.FARMSLOT_ROOT);
     if (!hasFarmslotRootMarkers(resolved)) {

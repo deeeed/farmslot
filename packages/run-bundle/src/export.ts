@@ -3,18 +3,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import type { Run } from '@farmslot/protocol';
 import {
   isRunBundleManifest,
+  RUN_BUNDLE_VERSION,
   type RunBundleEntryMeta,
   type RunBundleExportRequest,
   type RunBundleExportResult,
   type RunBundleManifest,
   type RunBundleProfile,
   type RunBundleRunEntry,
-  RUN_BUNDLE_VERSION,
-} from '@farmslot/protocol';
-import {
   sanitizeRunForBundleExport,
   taskRelativePathFromAbsolute,
 } from '@farmslot/protocol';
@@ -31,7 +28,11 @@ const PACKAGE_FILENAMES = [
   'experiment-manifest.json',
 ];
 
-function inferProfile(runCount: number, requested: RunBundleProfile | undefined, family: boolean): RunBundleProfile {
+function inferProfile(
+  runCount: number,
+  requested: RunBundleProfile | undefined,
+  family: boolean,
+): RunBundleProfile {
   if (requested) return requested;
   if (family) return 'family';
   return runCount > 1 ? 'family' : 'reference';
@@ -154,7 +155,8 @@ export function exportRunsToBundle(
       entries,
       ...(missingData.length ? { missingData } : {}),
     };
-    if (!isRunBundleManifest(manifest)) throw new Error('Refusing to write invalid farmrun manifest');
+    if (!isRunBundleManifest(manifest))
+      throw new Error('Refusing to write invalid farmrun manifest');
     writeBundleManifest(bundleDir, `${JSON.stringify(manifest, null, 2)}\n`);
     packFarmrunDirectory(bundleDir, request.outputPath);
     return { manifest, outputPath: request.outputPath, runCount: runs.length };
