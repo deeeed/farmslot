@@ -48,7 +48,10 @@ node --test scripts/runner-validation/run.test.mjs
 node "$ROOT/scripts/runner-validation/run.mjs" --scenario busy-composer --runner both
 
 echo "== runner validation harness (live tmux: hook-smoke) =="
-node "$ROOT/scripts/runner-validation/run.mjs" --scenario hook-smoke --runner both
+node "$ROOT/scripts/runner-validation/run.mjs" --scenario hook-smoke --runner hooks
+
+echo "== runner validation harness (live tmux: grok pane-smoke) =="
+node "$ROOT/scripts/runner-validation/run.mjs" --scenario pane-smoke --runner grok
 
 echo "== agreement window (production logs when present) =="
 AGREEMENT_OUT="$EVIDENCE_DIR/adr032-phase1-agreement-${HOST}.json"

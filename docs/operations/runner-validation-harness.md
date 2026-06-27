@@ -22,7 +22,7 @@ node scripts/runner-validation/run.mjs --runner all --scenario all
 
 Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
 
-Wired into `scripts/run-adr032-phase1-gate.sh` for hook runners; extend gate with `--runner pane-only --scenario pane-smoke` when Grok/Cursor become fleet-default.
+Wired into `scripts/run-adr032-phase1-gate.sh`: `hook-smoke` (Claude + Codex) and **grok `pane-smoke`**. Add `--runner pane-only` to include Cursor when it becomes fleet-default.
 
 ## Runner groups
 
