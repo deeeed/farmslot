@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# ADR-032 merge-process verifier (plan criteria 2, 3) for historical PR #81 only.
-# Uses frozen evidence under docs/operations/evidence/adr032/ — not replay PR mislabels.
+# ADR-032 merge-process verifier (plan criteria 2, 3) for PR #81 only.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,12 +10,14 @@ fail() {
   exit 1
 }
 
-echo "== verify ADR-032 merge process (PR #81 frozen evidence: ${EVIDENCE_DIR}) =="
+echo "== verify ADR-032 merge process (PR #81: ${EVIDENCE_DIR}) =="
 
-POSTMERGE="$(mktemp)"
-trap 'rm -f "$POSTMERGE"' EXIT
+LIVE_PR="$(mktemp)"
+trap 'rm -f "$LIVE_PR"' EXIT
 
-gh pr view 81 --json number,state,mergedAt,mergeCommit,url >"$POSTMERGE" || fail 'gh pr view 81'
+gh pr view 81 \
+  --json number,state,mergedAt,mergeCommit,url,statusCheckRollup,reviews,headRefOid \
+  >"$LIVE_PR" || fail 'gh pr view 81'
 
 (
   cd "$ROOT"
@@ -26,34 +27,30 @@ import { verifyPr81MergeProcess } from './scripts/lib/verify-adr032-pr81-merge-p
 import { parseIsoMs } from './scripts/lib/adr032-pr-chain-validate.mjs';
 
 const evidenceDir = process.argv[1];
-const postPath = process.argv[2];
-const result = verifyPr81MergeProcess(evidenceDir);
+const livePath = process.argv[2];
+const livePrView = JSON.parse(fs.readFileSync(livePath, 'utf8'));
+const result = verifyPr81MergeProcess(evidenceDir, livePrView);
 if (!result.ok) {
   console.error(result.error ?? 'PR81 merge-process validation failed', result);
   process.exit(1);
 }
 
-const post = JSON.parse(fs.readFileSync(postPath, 'utf8'));
-if (post.state !== 'MERGED') {
-  console.error('gh pr view 81: expected MERGED, got', post.state);
+if (livePrView.state !== 'MERGED') {
+  console.error('gh pr view 81: expected MERGED, got', livePrView.state);
   process.exit(1);
 }
-const liveMergedMs = parseIsoMs(post.mergedAt);
+const liveMergedMs = parseIsoMs(livePrView.mergedAt);
 const frozenMergedMs = parseIsoMs(result.mergedAt);
 if (liveMergedMs == null || frozenMergedMs == null || liveMergedMs !== frozenMergedMs) {
   console.error('gh pr view 81: mergedAt mismatch with frozen timing note', {
-    live: post.mergedAt,
+    live: livePrView.mergedAt,
     frozen: result.mergedAt,
   });
   process.exit(1);
 }
 
-console.log('ok merge-process: PR #81 frozen pre-merge CI + pre-merge cross-review', {
-  reviewTiming: result.reviewTiming,
-  mergedAt: result.mergedAt,
-  mergeCommit: result.mergeCommit,
-});
-" "$EVIDENCE_DIR" "$POSTMERGE"
+console.log('ok merge-process: PR #81 plan criteria 2-3', result);
+" "$EVIDENCE_DIR" "$LIVE_PR"
 ) || fail 'PR #81 merge-process validation'
 
-echo "MERGE-PROCESS PASS: PR #81 criteria 2-3 satisfied via frozen evidence + live MERGED state"
+echo "MERGE-PROCESS PASS: PR #81 criteria 2-3 (cross-review + CI green before merge)"

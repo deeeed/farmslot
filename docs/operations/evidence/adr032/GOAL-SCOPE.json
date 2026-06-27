@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "goalCriteria2and3Pr": 81,
+  "outOfScopePrs": [82, 83, 84, 85, 86, 89, 90, 91],
+  "notes": [
+    "ADR-032 goal acceptance criteria 2-3 apply to PR #81 only (plan.md).",
+    "PR #82 was admin-merged while required CI was IN_PROGRESS; disclosed in pr82-merge-timing-note.json but not a goal gate.",
+    "Post-merge GitHub APPROVED reviews on PRs #81-#86 do not retroactively change mergedAt; cross-review JSON is authoritative for PR #81 review timing per pr81-merge-timing-note.json.",
+    "replay/pr89-process-demo/ demonstrates capture-pre-merge-evidence.sh hygiene only."
+  ]
+}

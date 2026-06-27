@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# DEPRECATED for goal closeout — use scripts/assert-adr032-goal-evidence.sh instead.
+# This harvester + pr-chain-audit path is retained for historical reference only.
 # Harvest immutable ADR-032 goal-closeout evidence (code gates + PR chain audit).
 # Writes fixed filenames; do not hand-edit outputs. Exits non-zero on any gate failure.
 set -euo pipefail
