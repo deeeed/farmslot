@@ -13,6 +13,7 @@ PLATFORM_VALUE="${PLATFORM:-}"
 METRO_PORT_VALUE="${METRO_PORT:-${WATCHER_PORT:-7677}}"
 SIMULATOR_VALUE="${IOS_SIMULATOR:-${SIMULATOR:-}}"
 ADB_SERIAL_VALUE="${ADB_SERIAL:-${ANDROID_SERIAL:-${ANDROID_DEVICE:-}}}"
+RECORD_VIDEO=0
 DRY_RUN=0
 
 value_from_equals() {
@@ -67,6 +68,10 @@ while [[ "$#" -gt 0 ]]; do
       ADB_SERIAL_VALUE="$(value_from_equals "$1")"; shift ;;
     --dry-run)
       DRY_RUN=1; shift ;;
+    --record-video=*)
+      RECORD_VIDEO=1; shift ;;
+    --record-video)
+      RECORD_VIDEO=1; shift ;;
     *)
       echo "ERROR: unknown recipe validation option '$1'." >&2
       exit 1 ;;
@@ -81,6 +86,9 @@ fi
 ARGS=(farmslot-expo-recipe run "${RECIPE_PATH}" --artifacts-dir "${ARTIFACTS_DIR}")
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   ARGS+=(--dry-run)
+fi
+if [[ "${RECORD_VIDEO}" -eq 1 ]]; then
+  ARGS+=(--record-video=full-run)
 fi
 
 cd "${APP_DIR}"
