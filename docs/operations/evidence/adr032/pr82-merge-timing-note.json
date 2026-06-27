@@ -1,0 +1,6 @@
+{
+  "pr": 82,
+  "mergeCommit": "02fe7bd8b30c80ba4658e3ff0decbd52cb1604f2",
+  "disclosure": "PR #82 merged while Farmslot Quality jobs were still IN_PROGRESS on the pre-merge head; post-merge CI on the merge commit later reported SUCCESS (see pr82-postmerge-ci.json). This does not retroactively change merge-time state but documents eventual green validation.",
+  "premergeEvidenceHint": "archive pr82-premerge.json in operator scratch if historical IN_PROGRESS capture is required"
+}

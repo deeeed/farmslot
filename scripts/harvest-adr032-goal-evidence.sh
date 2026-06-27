@@ -44,8 +44,8 @@ append_exit_marker SAFE_SEND "$EVIDENCE_DIR/registry-safe-send-run.log" "${PIPES
 echo "== gh PR chain audit =="
 PR_JSON="$(mktemp)"
 trap 'rm -f "$PR_JSON.raw"' EXIT
-for n in 81 82 83 84; do
-  gh pr view "$n" --json number,title,state,mergedAt,mergeCommit,reviews,url,statusCheckRollup \
+for n in 81 82 83 84 85 86; do
+  gh pr view "$n" --json number,title,state,mergedAt,mergeCommit,reviews,url,statusCheckRollup,author \
     >>"$PR_JSON.raw"
   echo "---" >>"$PR_JSON.raw"
 done
@@ -55,19 +55,33 @@ import path from 'node:path';
 const evidenceDir = process.env.EVIDENCE_DIR ?? '.';
 const raw = fs.readFileSync(process.argv[1], 'utf8');
 const chunks = raw.split('---\\n').map((c) => c.trim()).filter(Boolean);
-if (chunks.length !== 4) {
-  console.error('pr-chain-audit: expected 4 gh pr view payloads, got', chunks.length);
+if (chunks.length !== 6) {
+  console.error('pr-chain-audit: expected 6 gh pr view payloads, got', chunks.length);
   process.exit(1);
 }
 const prs = chunks.map((c) => JSON.parse(c));
+for (const p of prs) {
+  const author = p.author?.login ?? null;
+  const approved = (p.reviews ?? []).some(
+    (r) => r.state === 'APPROVED' && r.author?.login && r.author.login !== author,
+  );
+  if (!approved) {
+    console.error('pr-chain-audit: PR', p.number, 'missing independent APPROVED gh review');
+    process.exit(1);
+  }
+}
 const out = {
   harvestedAt: new Date().toISOString(),
   mainSha: process.argv[2],
   prs: prs.map((p) => ({
     ...p,
-    crossReviewArtifact: path.join(evidenceDir, \`pr\${p.number}-CROSS-REVIEW-LOOP.json\`),
-    githubFormalApproveBlocked:
-      'Self-authored PR: gh pr review --approve rejected by GitHub policy; cross-review JSON is authoritative.',
+    crossReviewArtifact:
+      p.number <= 84
+        ? path.join(evidenceDir, \`pr\${p.number}-CROSS-REVIEW-LOOP.json\`)
+        : null,
+    independentApproveReview: (p.reviews ?? []).find(
+      (r) => r.state === 'APPROVED' && r.author?.login !== p.author?.login,
+    )?.author?.login ?? null,
   })),
 };
 fs.writeFileSync(process.argv[3], JSON.stringify(out, null, 2) + '\\n');
@@ -86,15 +100,27 @@ if (!Array.isArray(runs) || runs.length === 0) {
   process.exit(1);
 }
 const quality = runs.find((r) => r.name === 'Farmslot Quality' || String(r.name).includes('Quality'));
-if (!quality || quality.conclusion !== 'SUCCESS') {
+if (!quality || String(quality.conclusion).toLowerCase() !== 'success') {
   console.error('pr82-postmerge-ci: expected Farmslot Quality SUCCESS');
   process.exit(1);
 }
 " "$EVIDENCE_DIR/pr82-postmerge-ci.json"
 
 echo "== registry phase2 decision grep =="
-grep -n -E 'resolvePendingInstructionObsFirst|sendRunnerInstructionWhenPaneClear|selectPendingFromObservabilityAndPane' \
+grep -n -E 'resolvePendingInstructionObsFirst|sendRunnerInstructionWhenPaneClear|selectPendingFromObservabilityAndPane|selectIdleFromObservabilityAndPane|runnerShowsPromptDeliveryAccepted' \
   "$ROOT/services/gateway/src/runners/registry.ts" \
   | tee "$EVIDENCE_DIR/phase2-decision-grep.txt" >/dev/null
+
+node --input-type=module -e "
+import fs from 'node:fs';
+const note = {
+  pr: 82,
+  mergeCommit: process.argv[1],
+  disclosure:
+    'PR #82 merged while Farmslot Quality jobs were still IN_PROGRESS on the pre-merge head; post-merge CI on the merge commit later reported SUCCESS (see pr82-postmerge-ci.json). This does not retroactively change merge-time state but documents eventual green validation.',
+  premergeEvidenceHint: 'archive pr82-premerge.json in operator scratch if historical IN_PROGRESS capture is required',
+};
+fs.writeFileSync(process.argv[2], JSON.stringify(note, null, 2) + '\\n');
+" "$(gh pr view 82 --json mergeCommit -q .mergeCommit.oid)" "$EVIDENCE_DIR/pr82-merge-timing-note.json"
 
 echo "ADR-032 goal evidence harvest complete -> ${EVIDENCE_DIR}"

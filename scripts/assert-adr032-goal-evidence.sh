@@ -35,16 +35,22 @@ require_grep 'TYPECHECK_EXIT:0' "$EVIDENCE_DIR/cc-typecheck.log" 'cc-typecheck'
 
 require_file "$EVIDENCE_DIR/registry-safe-send-run.log"
 require_grep 'SAFE_SEND_EXIT:0' "$EVIDENCE_DIR/registry-safe-send-run.log" 'safe-send tests'
-require_grep '# pass 4' "$EVIDENCE_DIR/registry-safe-send-run.log" 'registry-safe-send 4/4'
-require_grep '# pass 9' "$EVIDENCE_DIR/registry-safe-send-run.log" 'observability-decision 9/9'
+require_grep '# fail 0' "$EVIDENCE_DIR/registry-safe-send-run.log" 'runner obs tests no failures'
+if grep -q '# pass 15' "$EVIDENCE_DIR/registry-safe-send-run.log"; then
+  require_grep '# pass 15' "$EVIDENCE_DIR/registry-safe-send-run.log" 'combined registry obs tests 15/15'
+else
+  require_grep '# pass 4' "$EVIDENCE_DIR/registry-safe-send-run.log" 'registry-safe-send 4/4'
+  require_grep '# pass 11' "$EVIDENCE_DIR/registry-safe-send-run.log" 'observability-decision 11/11'
+fi
 
 require_file "$EVIDENCE_DIR/pr-chain-audit.json"
 node --input-type=module -e "
 import fs from 'node:fs';
 const p = process.argv[1];
 const audit = JSON.parse(fs.readFileSync(p, 'utf8'));
-if (!Array.isArray(audit.prs) || audit.prs.length !== 4) {
-  console.error('pr-chain-audit: expected 4 PR entries');
+const expected = [81, 82, 83, 84, 85, 86];
+if (!Array.isArray(audit.prs) || audit.prs.length !== expected.length) {
+  console.error('pr-chain-audit: expected', expected.length, 'PR entries');
   process.exit(1);
 }
 for (const pr of audit.prs) {
@@ -52,12 +58,20 @@ for (const pr of audit.prs) {
     console.error('pr-chain-audit: PR', pr.number, 'state', pr.state, '!= MERGED');
     process.exit(1);
   }
-  if (!pr.crossReviewArtifact) {
+  if (!pr.crossReviewArtifact && pr.number <= 84) {
     console.error('pr-chain-audit: PR', pr.number, 'missing crossReviewArtifact');
     process.exit(1);
   }
+  const author = pr.author?.login ?? null;
+  const approved = (pr.reviews ?? []).some(
+    (r) => r.state === 'APPROVED' && r.author?.login && r.author.login !== author,
+  );
+  if (!approved) {
+    console.error('pr-chain-audit: PR', pr.number, 'missing independent APPROVED review');
+    process.exit(1);
+  }
 }
-console.log('ok pr-chain-audit: 4 MERGED PRs with crossReviewArtifact');
+console.log('ok pr-chain-audit:', expected.length, 'MERGED PRs with independent APPROVED reviews');
 " "$EVIDENCE_DIR/pr-chain-audit.json" || fail 'pr-chain-audit.json validation'
 
 for n in 81 82 83 84; do
@@ -85,14 +99,16 @@ require_file "$EVIDENCE_DIR/phase2-decision-grep.txt"
 require_grep 'resolvePendingInstructionObsFirst' "$ROOT/services/gateway/src/runners/registry.ts" 'registry.ts'
 require_grep 'sendRunnerInstructionWhenPaneClear' "$ROOT/services/gateway/src/runners/registry.ts" 'registry.ts'
 require_grep 'selectPendingFromObservabilityAndPane' "$EVIDENCE_DIR/phase2-decision-grep.txt" 'phase2-decision-grep'
+require_grep 'selectIdleFromObservabilityAndPane' "$EVIDENCE_DIR/phase2-decision-grep.txt" 'phase2-decision-grep idle'
 
 require_file "$EVIDENCE_DIR/pr82-postmerge-ci.json"
+require_file "$EVIDENCE_DIR/pr82-merge-timing-note.json"
 node --input-type=module -e "
 import fs from 'node:fs';
 const runs = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
 if (!Array.isArray(runs) || runs.length === 0) process.exit(1);
 const quality = runs.find((r) => r.name === 'Farmslot Quality' || String(r.name).includes('Quality'));
-if (!quality || quality.conclusion !== 'SUCCESS') process.exit(1);
+if (!quality || String(quality.conclusion).toLowerCase() !== 'success') process.exit(1);
 " "$EVIDENCE_DIR/pr82-postmerge-ci.json" || fail 'pr82-postmerge-ci.json missing SUCCESS quality run'
 
 echo "ASSERT PASS: all ADR-032 goal evidence criteria satisfied"
