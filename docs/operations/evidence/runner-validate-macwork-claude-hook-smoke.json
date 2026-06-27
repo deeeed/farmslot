@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-06-27T07:10:24.930Z",
+  "recordedAt": "2026-06-27T07:44:26.166Z",
   "host": "macwork",
   "scenario": "hook-smoke",
   "runner": "claude",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-NJsTqg",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-YigQTy",
   "slotId": "runner-validate-macwork-claude",
-  "session": "runner-validate-claude-hook-smoke-42771",
+  "session": "runner-validate-claude-hook-smoke-30522",
   "launchMode": "claude-print",
   "registeredExpected": [
     "SessionStart",
@@ -40,45 +40,45 @@
   "newRows": [
     {
       "schemaVersion": 1,
-      "observedAt": 1782544215966,
-      "timestamp": 1782544215966,
+      "observedAt": 1782546256276,
+      "timestamp": 1782546256276,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
-      "session_id": "808ae5c1-664f-441e-926a-f322a61ea4e7",
-      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-NJsTqg/808ae5c1-664f-441e-926a-f322a61ea4e7.jsonl",
-      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-NJsTqg",
-      "tmuxPane": "%169",
+      "session_id": "df1cb16a-2421-42b5-8d24-2bd74a340f34",
+      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-YigQTy/df1cb16a-2421-42b5-8d24-2bd74a340f34.jsonl",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-YigQTy",
+      "tmuxPane": "%199",
       "slotId": "runner-validate-macwork-claude",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782544216725,
-      "timestamp": 1782544216725,
+      "observedAt": 1782546256705,
+      "timestamp": 1782546256705,
       "hook_event_name": "UserPromptSubmit",
       "event": "UserPromptSubmit",
-      "session_id": "808ae5c1-664f-441e-926a-f322a61ea4e7",
-      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-NJsTqg/808ae5c1-664f-441e-926a-f322a61ea4e7.jsonl",
-      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-NJsTqg",
+      "session_id": "df1cb16a-2421-42b5-8d24-2bd74a340f34",
+      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-YigQTy/df1cb16a-2421-42b5-8d24-2bd74a340f34.jsonl",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-YigQTy",
       "permission_mode": "bypassPermissions",
-      "tmuxPane": "%169",
+      "tmuxPane": "%199",
       "slotId": "runner-validate-macwork-claude",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782544219868,
-      "timestamp": 1782544219868,
+      "observedAt": 1782546259435,
+      "timestamp": 1782546259435,
       "hook_event_name": "Stop",
       "event": "Stop",
-      "session_id": "808ae5c1-664f-441e-926a-f322a61ea4e7",
-      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-NJsTqg/808ae5c1-664f-441e-926a-f322a61ea4e7.jsonl",
-      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-NJsTqg",
+      "session_id": "df1cb16a-2421-42b5-8d24-2bd74a340f34",
+      "transcript_path": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-YigQTy/df1cb16a-2421-42b5-8d24-2bd74a340f34.jsonl",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-YigQTy",
       "permission_mode": "bypassPermissions",
       "effort": {
         "level": "high"
       },
-      "tmuxPane": "%169",
+      "tmuxPane": "%199",
       "slotId": "runner-validate-macwork-claude",
       "runner": "claude"
     }
@@ -92,5 +92,5 @@
   "unknownEvents": [],
   "pass": true,
   "error": null,
-  "paneTail": "bash '/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-NJ\nsTqg/.runner-validate-launch.sh'\n(base) ➜  runner-validate-claude-NJsTqg bash '/var/folders/98/_mm6pm_d0nj7vj72jw\nq0hc_00000gn/T/runner-validate-claude-NJsTqg/.runner-validate-launch.sh'"
+  "paneTail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-Yig\nQTy/.tmux-driver-launch.sh\n(base) ➜  runner-validate-claude-YigQTy bash /var/folders/98/_mm6pm_d0nj7vj72jwq\n0hc_00000gn/T/runner-validate-claude-YigQTy/.tmux-driver-launch.sh\nTMUX_HOOK_OK"
 }

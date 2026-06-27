@@ -13,6 +13,26 @@ trace_path="${3:-}"
 skill_dir="$(cd "$(dirname "$0")/.." && pwd)"
 script_path="$repo_dir/.tmux-driver-launch.sh"
 
+wait_for_shell_state() {
+  local deadline=$((SECONDS + 20))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    local state
+    state="$(python3 - <<'PY' "$("$skill_dir/scripts/pane-state.sh" "$pane_id")"
+import json, sys
+print(json.loads(sys.argv[1])["state"])
+PY
+)"
+    if [ "$state" = "shell" ]; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "{\"error\":\"shell_not_ready\",\"pane_id\":\"$pane_id\"}" >&2
+  return 1
+}
+
+wait_for_shell_state
+
 {
   printf '%s\n' '#!/bin/bash'
   printf '%s\n' 'set -euo pipefail'
