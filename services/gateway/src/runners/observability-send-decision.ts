@@ -40,14 +40,20 @@ export function selectPendingFromObservabilityAndPane(
   promptReading: ObservabilityReading<boolean> | null | undefined,
   panePending: boolean,
 ): { pending: boolean; source: 'hook' | 'pane'; confidence: ObservabilityConfidence | null } {
-  if (isObservabilityReadingAuthoritative(promptReading)) {
-    if (promptReading.value === true) {
-      return { pending: false, source: 'hook', confidence: promptReading.confidence };
-    }
-    if (panePending) {
+  // Live composer state wins when hooks report an older accepted digest but the
+  // instruction is still buffered — prevents duplicate send-keys on re-nudge.
+  if (panePending) {
+    if (isObservabilityReadingAuthoritative(promptReading) && promptReading.value === false) {
       return { pending: true, source: 'hook', confidence: promptReading.confidence };
     }
-    return { pending: false, source: 'hook', confidence: promptReading.confidence };
+    return { pending: true, source: 'pane', confidence: null };
   }
-  return { pending: panePending, source: 'pane', confidence: null };
+  if (isObservabilityReadingAuthoritative(promptReading)) {
+    return {
+      pending: false,
+      source: 'hook',
+      confidence: promptReading.confidence,
+    };
+  }
+  return { pending: false, source: 'pane', confidence: null };
 }

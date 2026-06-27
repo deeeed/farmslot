@@ -54,11 +54,19 @@ test('selectBusyFromObservabilityAndPane falls back to pane on unknown or missin
   });
 });
 
-test('selectPendingFromObservabilityAndPane treats accepted hook as not pending', () => {
-  assert.deepEqual(selectPendingFromObservabilityAndPane(promptReading(true), true), {
+test('selectPendingFromObservabilityAndPane treats accepted hook as not pending when pane is clear', () => {
+  assert.deepEqual(selectPendingFromObservabilityAndPane(promptReading(true), false), {
     pending: false,
     source: 'hook',
     confidence: 'high',
+  });
+});
+
+test('selectPendingFromObservabilityAndPane prefers live pane when hook reports stale acceptance', () => {
+  assert.deepEqual(selectPendingFromObservabilityAndPane(promptReading(true), true), {
+    pending: true,
+    source: 'pane',
+    confidence: null,
   });
 });
 
@@ -68,16 +76,24 @@ test('selectPendingFromObservabilityAndPane keeps buffered composer pending when
     source: 'hook',
     confidence: 'high',
   });
-  assert.deepEqual(selectPendingFromObservabilityAndPane(promptReading(false), false), {
-    pending: false,
-    source: 'hook',
-    confidence: 'high',
-  });
 });
 
 test('selectPendingFromObservabilityAndPane falls back to pane when hook is absent', () => {
   assert.deepEqual(selectPendingFromObservabilityAndPane(null, true), {
     pending: true,
+    source: 'pane',
+    confidence: null,
+  });
+  assert.deepEqual(selectPendingFromObservabilityAndPane(null, false), {
+    pending: false,
+    source: 'pane',
+    confidence: null,
+  });
+});
+
+test('selectBusyFromObservabilityAndPane falls back to pane on low confidence', () => {
+  assert.deepEqual(selectBusyFromObservabilityAndPane(activityReading('idle', 'low'), true), {
+    busy: true,
     source: 'pane',
     confidence: null,
   });

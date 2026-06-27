@@ -863,6 +863,7 @@ async function runnerHasPendingInstruction(
   runner: string,
   message: string,
   pane: string,
+  sinceMs: number,
 ): Promise<boolean> {
   const panePending = runnerPaneHasPendingInstruction(pane, message, runner);
   const observability = getRunnerObservability(runner);
@@ -872,7 +873,7 @@ async function runnerHasPendingInstruction(
       vars,
       target,
       runnerPromptDigest(message),
-      0,
+      sinceMs,
     );
     return selectPendingFromObservabilityAndPane(reading, panePending).pending;
   } catch (error) {
@@ -1097,6 +1098,8 @@ export async function sendRunnerInstructionSafely(
   const runner = normalizeRunner(runnerId);
   const def = getRunnerDefinition(runner);
   const effectiveTimeoutMs = timeoutMs ?? resolveSafeSendTimeoutMs(runner);
+  const loopStartMs = Date.now();
+  const promptAcceptedSinceMs = loopStartMs - effectiveTimeoutMs;
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt
   // in. Most call sites send into an idle prompt where the registry default (Claude: false,
   // codex: true) is correct. The branch-affinity nudge flow targets a Claude session that may
@@ -1104,16 +1107,20 @@ export async function sendRunnerInstructionSafely(
   // to clear — it passes `forceBusyPoll: true` to override the per-runner default.
   if (!def.requiresBusyComposerPoll && !opts.forceBusyPoll) {
     const pane = await captureTmuxPane(vars, target);
-    if (await runnerHasPendingInstruction(vars, target, runner, message, pane)) {
+    if (
+      await runnerHasPendingInstruction(vars, target, runner, message, pane, promptAcceptedSinceMs)
+    ) {
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
     await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
     return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
   }
-  const deadline = Date.now() + effectiveTimeoutMs;
+  const deadline = loopStartMs + effectiveTimeoutMs;
   while (Date.now() < deadline) {
     const pane = await captureTmuxPane(vars, target);
-    if (await runnerHasPendingInstruction(vars, target, runner, message, pane)) {
+    if (
+      await runnerHasPendingInstruction(vars, target, runner, message, pane, promptAcceptedSinceMs)
+    ) {
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
     if (runnerPaneContainsInstruction(pane, message)) {
