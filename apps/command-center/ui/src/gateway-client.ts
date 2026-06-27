@@ -14,6 +14,7 @@ import {
   GATEWAY_PASSWORD_STORAGE_KEY,
   GATEWAY_TOKEN_STORAGE_KEY,
   GATEWAY_URL_STORAGE_KEY,
+  gatewayWebSocketToHttpOrigin,
   parseHostedGatewayConnection,
   persistGatewayAuthForHttp,
   replaceStoredGatewayAuthForHttp,
@@ -87,11 +88,23 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
   };
 }
 
-function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials): void {
+function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: string): void {
   const credential = auth.token?.trim() || auth.password?.trim();
   const secure = location.protocol === 'https:' ? '; Secure' : '';
-  if (!credential) {
+  const clearCookie = (): void => {
     document.cookie = `${HTTP_AUTH_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0${secure}`;
+  };
+  if (!credential) {
+    clearCookie();
+    return;
+  }
+  try {
+    if (gatewayWebSocketToHttpOrigin(gatewayUrl) !== location.origin) {
+      clearCookie();
+      return;
+    }
+  } catch {
+    clearCookie();
     return;
   }
   document.cookie = `${HTTP_AUTH_COOKIE}=${encodeURIComponent(
@@ -125,7 +138,7 @@ export class GatewayClient {
     this.auth = auth ?? resolved.auth;
     this.persistConnection();
     persistGatewayAuthForHttp(this.auth);
-    syncBrowserHttpAuthCookie(this.auth);
+    syncBrowserHttpAuthCookie(this.auth, this.url);
   }
 
   get connectionState(): ConnectionState {
@@ -152,7 +165,7 @@ export class GatewayClient {
 
   setAuthCredentials(auth: GatewayAuthCredentials): void {
     this.auth = auth;
-    syncBrowserHttpAuthCookie(auth);
+    syncBrowserHttpAuthCookie(auth, this.url);
     this.authBlocked = false;
     this.lastAuthError = null;
     replaceStoredGatewayAuthForHttp(auth);

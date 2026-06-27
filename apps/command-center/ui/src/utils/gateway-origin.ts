@@ -24,16 +24,17 @@ export function gatewayHttpOrigin(locationLike = currentLocation()): string {
 }
 
 export function gatewayApiUrl(path: string): string {
+  const gatewayOrigin = gatewayHttpOrigin();
   const absolute =
     path.startsWith('http://') || path.startsWith('https://')
       ? new URL(path)
-      : new URL(path, gatewayHttpOrigin());
+      : new URL(path, gatewayOrigin);
   const credential =
     typeof localStorage !== 'undefined' ? localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY) : null;
   const fallbackPassword =
     typeof localStorage !== 'undefined' ? localStorage.getItem(GATEWAY_PASSWORD_STORAGE_KEY) : null;
   const queryCredential = credential ?? fallbackPassword;
-  if (queryCredential && !absolute.searchParams.has('token')) {
+  if (absolute.origin === gatewayOrigin && queryCredential && !absolute.searchParams.has('token')) {
     absolute.searchParams.set('token', queryCredential);
   }
   return absolute.toString();

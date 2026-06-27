@@ -60,6 +60,17 @@ test('gatewayApiUrl can authenticate artifact URLs with stored passwords', () =>
   });
 });
 
+test('gatewayApiUrl does not append gateway credentials to off-gateway absolute URLs', () => {
+  withMockLocalStorage(() => {
+    localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, 'hosted-token');
+
+    assert.equal(
+      gatewayApiUrl('https://example.com/artifact.png'),
+      'https://example.com/artifact.png',
+    );
+  });
+});
+
 function withMockLocalStorage(fn: () => void): void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const store = new Map<string, string>();
