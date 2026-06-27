@@ -81,6 +81,9 @@ projects/farmslot-farm/fixtures/*
 !projects/farmslot-farm/fixtures/CLAUDE.local.agent.fix-bug.md
 !projects/farmslot-farm/fixtures/CLAUDE.local.agent.feature.md
 !projects/farmslot-farm/fixtures/CLAUDE.local.agent.review-pr.md
+!projects/farmslot-farm/setup/
+projects/farmslot-farm/setup/*
+!projects/farmslot-farm/setup/sandbox-dev.sh
 projects/farmslot-farm/tasks/
 projects/farmslot-farm/.agent/
 projects/farmslot-farm/.task/

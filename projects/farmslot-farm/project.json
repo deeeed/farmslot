@@ -27,11 +27,46 @@
   "hooks": {
     "post_merge_install": "cd apps/command-center && yarn install",
     "preflight": "cd apps/command-center && yarn typecheck",
-    "health_check": "cd apps/command-center && yarn typecheck && echo ok",
-    "teardown": "true"
+    "health_check": "bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
+    "dev_server_check": "bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
+    "teardown": "bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{port}}"
   },
+  "prepare": {
+    "default": "sandbox",
+    "profiles": {
+      "sandbox": {
+        "label": "Worktree sandbox — sync + start gateway (tsx watch)",
+        "description": "Git sync, deps, then boot this checkout's gateway and Vite UI on the slot port. Use for ff-* worktree sandboxes.",
+        "phases": ["git", "fixtures", "deps", "preflight", "health"],
+        "hooks": {
+          "preflight": "bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}"
+        }
+      },
+      "attach": {
+        "label": "Reuse running gateway",
+        "description": "Health-check only when gateway is already up (main operator / farmdev).",
+        "phases": ["health"],
+        "requires": ["dev_server_up", "health_ok"],
+        "fallback": "sandbox"
+      },
+      "full": {
+        "label": "Sync + typecheck (no gateway lifecycle)",
+        "description": "Git sync and typecheck without starting or restarting the gateway process.",
+        "phases": ["git", "fixtures", "deps", "preflight", "health"],
+        "hooks": {
+          "preflight": "cd apps/command-center && yarn typecheck",
+          "health_check": "cd apps/command-center && yarn typecheck && echo ok"
+        }
+      }
+    }
+  },
+  "cleanup_patterns": [
+    "tsx.*services/gateway/src/index",
+    "concurrently.*@farmslot/gateway"
+  ],
   "health": {
-    "dev_server_name": "Gateway"
+    "dev_server_name": "Gateway",
+    "dev_server_log": ".sandbox/farmslot-farm/agent/sandbox-dev.log"
   },
   "fixtures": {
     "templates": [
@@ -82,14 +117,14 @@
       "type": "dev-server",
       "label": "Gateway",
       "streamable": false,
-      "controllable": false,
+      "controllable": true,
       "watch": {
         "type": "port-listen",
         "port": "{{port}}"
       },
       "hooks": {
-        "health": "cd apps/command-center && yarn typecheck",
-        "shutdown": "true"
+        "health": "bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
+        "shutdown": "bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{port}}"
       }
     }
   },
