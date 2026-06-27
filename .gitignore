@@ -73,6 +73,7 @@ projects/farmslot/templates/prompts/*
 !projects/farmslot/fixtures/
 projects/farmslot/fixtures/*
 !projects/farmslot/templates/worker/dev.md
+!projects/farmslot/templates/worker/dev-interactive.md
 !projects/farmslot/templates/worker/fix-bug.md
 !projects/farmslot/templates/worker/review-pr.md
 !projects/farmslot/templates/worker/merge-main.md
@@ -82,11 +83,15 @@ projects/farmslot/fixtures/*
 !projects/farmslot/fixtures/CLAUDE.local.agent.feature.md
 !projects/farmslot/fixtures/CLAUDE.local.agent.review-pr.md
 !projects/farmslot/fixtures/CLAUDE.local.agent.companion-mobile.md
+!projects/farmslot/fixtures/runtime/
+projects/farmslot/fixtures/runtime/*
+!projects/farmslot/fixtures/runtime/recipe-quality.md
 !projects/farmslot/setup/
 projects/farmslot/setup/*
 !projects/farmslot/setup/sandbox-dev.sh
 !projects/farmslot/setup/sandbox-companion.sh
 !projects/farmslot/setup/companion-prepare.sh
+!projects/farmslot/setup/validate-recipe.sh
 projects/farmslot/tasks/
 projects/farmslot/.agent/
 projects/farmslot/.task/

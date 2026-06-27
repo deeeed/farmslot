@@ -32,7 +32,9 @@
     "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
     "teardown": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh stop --gateway-port {{port}}",
     "setup": "cd apps/companion && yarn install",
-    "recipe_run": "bash apps/companion/scripts/agentic/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --runtime-dir {{runtime_dir}} --platform {{platform}} --metro-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}"
+    "recipe_action_manifest": "cat {{farmslot_dir}}/docs/examples/recipes/farmslot-v1.action-manifest.json",
+    "recipe_doctor": "cd {{repo}} && node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{cdp_port}} --gateway-port {{port}} --slot-id {{slot_id}} --json",
+    "recipe_run": "bash {{primary_repo}}/projects/farmslot/setup/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --runtime-dir {{runtime_dir}} --platform {{platform}} --cdp-port {{cdp_port}} --gateway-port {{port}} --metro-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}} --slot-id {{slot_id}}"
   },
   "prepare": {
     "default": "sandbox",
@@ -101,13 +103,17 @@
       }
     }
   },
-  "recipe_run_supports_playback_slow": false,
+  "recipe_run_supports_playback_slow": true,
   "health": {
     "dev_server_name": "Gateway",
     "dev_server_log": ".sandbox/farmslot/agent/sandbox-dev.log"
   },
   "fixtures": {
     "templates": [
+      {
+        "src": "runtime/recipe-quality.md",
+        "dst": "{{runtime_dir}}/recipe-quality.md"
+      },
       {
         "dst": ".sandbox/farmslot/claude/CLAUDE.local.md",
         "compose": {
@@ -211,5 +217,12 @@
       }
     }
   },
-  "task_dir": ".sandbox/farmslot/worker-task"
+  "task_dir": ".sandbox/farmslot/worker-task",
+  "vars": {
+    "recipe_runner_resolve_cmd": "node -e \"console.log('apps/command-center/scripts/agentic/run-recipe.mjs')\"",
+    "recipe_manifest_path": "{{farmslot_dir}}/docs/examples/recipes/farmslot-v1.action-manifest.json",
+    "recipe_validate_wrapper": "{{primary_repo}}/projects/farmslot/setup/validate-recipe.sh",
+    "recipe_quality_path": "{{runtime_dir}}/recipe-quality.md",
+    "recipe_example_banner": "{{farmslot_dir}}/docs/examples/recipes/farmslot/demo-red-banner.recipe.json"
+  }
 }

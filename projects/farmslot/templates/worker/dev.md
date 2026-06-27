@@ -15,50 +15,119 @@ human approval, optional independent review, and CI only after publication.
 
 ```text
 TICKET: {{TICKET_ID}}
+TICKET_URL: {{TICKET_URL}}
 TITLE: {{TICKET_TITLE}}
 BRANCH: {{BRANCH}}
 TASK_DIR: {{TASK_DIR}}
+SESSION: {{SESSION}}
+REPO: {{REPO}}
+PLATFORM: {{PLATFORM}}
+CDP_PORT: {{CDP_PORT}}
+WATCHER_PORT: {{WATCHER_PORT}}
+RUNTIME_DIR: {{RUNTIME_DIR}}
+SLOT: {{SLOT}}
 STATUS: pending
 ```
 
+## Description
+
+{{DESCRIPTION}}
+
+## Acceptance Criteria
+
+{{ACCEPTANCE_CRITERIA}}
+
+### Recipe tooling
+
+Resolve once, then reuse:
+
+```bash
+cd {{REPO}}
+RUNNER="node {{recipe_runner_resolve_cmd}}"
+MANIFEST="{{recipe_manifest_path}}"
+WRAPPER="{{recipe_validate_wrapper}}"
+```
+
+Read `{{recipe_quality_path}}` before writing any recipe.
+
 ## Checklist
 
-- [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
-- [ ] **2. Update status** — set `STATUS: working` in this file, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
-- [ ] **3. Read the feature requirements** — understand scope, acceptance criteria, and affected packages.
-- [ ] **4. Create branch** — `git checkout -b {{BRANCH}}`
-- [ ] **5. Plan implementation** — identify files to create/modify, types to add to `@farmslot/protocol`, gateway methods, UI components.
-- [ ] **6. Implement types** — add shared types to `packages/protocol/src/types.ts` if needed.
-- [ ] **7. Implement gateway logic** — add methods, handlers, or engine changes.
-- [ ] **8. Add tests** — write tests using `node:test` + `node:assert` for new gateway logic.
-- [ ] **9. Validate** — run typecheck and tests:
+Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failures — fix before proceeding.
+
+### Phase 1: Setup
+
+- [ ] **1. Confirm recipe runtime** — doctor must pass before UI proof:
+  ```bash
+  cd {{REPO}}
+  node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
+  bash apps/command-center/scripts/debug-chrome.sh
+  ```
+  If CDP or the sandbox UI is down, set `STATUS: blocked` with the failing check and stop.
+- [ ] **2. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md`.
+- [ ] **3. Update status** — set `STATUS: working`, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 3`.
+- [ ] **4. Read requirements** — map acceptance criteria to proof mode (`state`, `visual`, `mixed`) in this TASK file.
+- [ ] **5. Create branch** — `git checkout -b {{BRANCH}}`
+
+### Phase 2: Baseline recipe (UI/command-center ACs)
+
+Skip Phase 2 only when every AC is backend-only with zero Command Center surface. State the reason in this TASK file.
+
+- [ ] **6. Write `{{TASK_DIR}}/artifacts/recipe.json`** — cover all acceptance criteria using manifest actions from `{{recipe_manifest_path}}`. For modifications, the recipe should fail on current code before your fix.
+- [ ] **7. Baseline recipe run** — must exit non-zero on unfixed code (or document `Baseline: N/A — purely additive` with rationale):
+  ```bash
+  cd {{REPO}}
+  bash {{recipe_validate_wrapper}} \
+    --recipe {{TASK_DIR}}/artifacts/recipe.json \
+    --artifacts-dir {{TASK_DIR}}/artifacts/recipe-run-baseline \
+    --runtime-dir {{RUNTIME_DIR}} \
+    --platform {{PLATFORM}} \
+    --cdp-port {{CDP_PORT}} \
+    --gateway-port {{WATCHER_PORT}} \
+    --slot-id {{SLOT}}
+  ```
+
+### Phase 3: Implement
+
+- [ ] **8. Implement** — types in `packages/protocol`, gateway logic in `services/gateway`, UI in `apps/command-center/ui`.
+- [ ] **9. Unit tests** — add `node:test` coverage for new gateway logic when applicable.
+
+### Phase 4: Validate
+
+- [ ] **10. Typecheck + gateway tests**:
   ```bash
   cd apps/command-center && yarn typecheck
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
-- [ ] **10. Self-review** — read the diff. Check for: inline type duplication, unnecessary helpers, comments that restate code.
-- [ ] **11. Commit** — atomic commit(s) following the repo's Lore commit protocol.
-- [ ] **12. Prepare local workspace package inputs** — keep the branch local; write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; do not push or mutate GitHub.
-- [ ] **12a. Optional visual evidence manifest** — if screenshots/videos prove the change, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` using the strict schema below. Use `before_after_pairs` for comparisons; unknown top-level keys are invalid. Omit this file when there is no visual evidence.
-  ```json
-  {
-    "version": 1,
-    "preferred_mode": "screenshots",
-    "before_after_pairs": [
-      {
-        "label": "What changed",
-        "covers": ["ac1"],
-        "before": "before-ac1.png",
-        "after": "after-ac1.png"
-      }
-    ],
-    "standalone": [{ "label": "Final state", "covers": ["ac2"], "file": "after-ac2.png" }],
-    "omit": ["redundant.png"],
-    "videos": { "after": "after.mp4", "preferred": false }
-  }
+- [ ] **11. Recipe regression** — must exit 0 after the fix:
+  ```bash
+  cd {{REPO}}
+  bash {{recipe_validate_wrapper}} \
+    --recipe {{TASK_DIR}}/artifacts/recipe.json \
+    --artifacts-dir {{TASK_DIR}}/artifacts/recipe-run \
+    --runtime-dir {{RUNTIME_DIR}} \
+    --platform {{PLATFORM}} \
+    --cdp-port {{CDP_PORT}} \
+    --gateway-port {{WATCHER_PORT}} \
+    --slot-id {{SLOT}}
   ```
-- [ ] **13. Write report and signal** — create `{{TASK_DIR}}/artifacts/report.md` with files changed, implementation summary, local review notes, screenshots/assets to validate, and test results; update `STATUS: done`, then write the completion signal:
+- [ ] **11b. Recipe coverage + quality** — write `{{TASK_DIR}}/artifacts/recipe-coverage.md` and `{{TASK_DIR}}/artifacts/recipe-quality.json` when `recipe.json` exists.
+- [ ] **11c. Artifact contract**:
+  ```bash
+  node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-quality-if-recipe --require-recipe-coverage-if-recipe
+  ```
+- [ ] **12. Self-review** — read the diff; no inline protocol duplication or comment noise.
+- [ ] **13. Commit** — atomic commit(s) following Conventional Commits.
+- [ ] **14. Prepare local workspace package** — write `{{TASK_DIR}}/artifacts/pr-description.md`; do not push or open a PR.
+- [ ] **14a. Evidence manifest** — when screenshots/videos prove the change, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` using the strict schema (before/after pairs for visual ACs; reference `recipe-run/screenshots/*` when applicable).
+- [ ] **15. Report + signal** — write `{{TASK_DIR}}/artifacts/report.md`, set `STATUS: done`, then:
   ```bash
   {{TASK_DIR}}/mark complete --outcome success --mark-last
   ```
-  **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.
+  **Do NOT `/exit`.** Stay alive for the publication gate.
+
+## Recipe rules
+
+- Use only manifest-declared actions.
+- Never inject UI/store state to manufacture proof — drive the real flow via recipe/CDP.
+- If you remove your code, the recipe must fail.
+- Companion/mobile ACs: switch to companion runner via the same `{{recipe_validate_wrapper}}` on an `ios`/`android` slot when the ticket requires device proof.
