@@ -377,7 +377,10 @@ export async function executeWriteTaskStep(
   // Skip if taskFile already provided
   if (current.taskFile) {
     console.log(`[run-engine] taskFile already set, skipping write-task`);
-    const templateName = FLOW_TO_TASK_TEMPLATE[current.flowType] ?? `${current.flowType}.md`;
+    const templateName =
+      current.templateProvenance?.templateName ??
+      current.taskTemplate?.fileName ??
+      (FLOW_TO_TASK_TEMPLATE[current.flowType] ?? `${current.flowType}.md`);
     const pv = await loadProjectVarsOrNull(current.project, 'run step', current.id);
     const orchestratorTaskRoot = pv
       ? getOrchestratorTaskRoot(current.project, pv.projectJson)
@@ -533,6 +536,10 @@ export async function executeWriteTaskStep(
   ): StepIO => {
     const taskRelDir = extractTaskRelDir(taskFilePath);
     const afterWrite = getRun(runId)!;
+    const resolvedTemplateName =
+      afterWrite.templateProvenance?.templateName ??
+      afterWrite.taskTemplate?.fileName ??
+      templateName;
     const artifacts: ArtifactRef[] = [
       { path: 'TASK.md', purpose: 'task-md' },
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
@@ -551,7 +558,7 @@ export async function executeWriteTaskStep(
       inputs,
       outputs: {
         taskFile: taskFilePath,
-        templateName,
+        templateName: resolvedTemplateName,
         taskRelDir,
         branch: afterWrite.branch || undefined,
         summary: afterWrite.summary || undefined,
