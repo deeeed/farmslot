@@ -5,6 +5,7 @@ import type {
   DevInteractiveProfile,
   DispatchCandidatesResult,
   FlowType,
+  ProfileFitSuggestion,
   ProjectConfig,
   QueueItem,
   Run,
@@ -59,6 +60,7 @@ export abstract class DispatchWizardState extends LitElement {
   @state() _skipPrepare = false;
   /** Named prepare profile; '' = project default (ADR-037). */
   @state() _prepareProfile = '';
+  @state() _profileFitSuggestion: ProfileFitSuggestion | null = null;
   @state() _devInteractiveProfile: DevInteractiveProfile = 'lightweight';
   @state() _reviewTier: '' | 'light' | 'standard' | 'full' = '';
   @state() _publicationReviewLoops: PublicationReviewLoopDraft[] = [];

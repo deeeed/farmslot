@@ -34,6 +34,7 @@ import { requiresCollisionPrecheck } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { createEngineDecision, handleCollisionDecision } from './engine-decisions.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
+import { detectProfileFit } from './profile-fit-gate.js';
 import { detectProjectMismatch } from './project-fit-gate.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { refreshRunLinks } from './run-links.js';
@@ -178,6 +179,7 @@ export async function executeGradeStep(
     );
   }
   let projectMismatchOverride: Record<string, unknown> | null = null;
+  let profileFitOverride: Record<string, unknown> | null = null;
   const projectMismatch = await detectProjectMismatch(run, ticketData);
   if (projectMismatch) {
     const actionId = await createEngineDecision(
@@ -202,6 +204,52 @@ export async function executeGradeStep(
     }
     projectMismatchOverride = { projectMismatch, overriddenBy: 'user' };
   }
+
+  let slotPlatform: string | null = null;
+  if (run.slotId) {
+    const { loadFleetStatus } = await import('../fleet/state.js');
+    const fleet = await loadFleetStatus();
+    slotPlatform = fleet.slots.find((s) => s.slot === run.slotId)?.platform ?? null;
+  }
+  const resolvedProfileFit = detectProfileFit(run, ticketData, {
+    prepareProfile: run.prepareProfile,
+    app: run.app,
+    slotPlatform,
+  });
+  if (resolvedProfileFit) {
+    const actionId = await createEngineDecision(
+      runId,
+      'prepare_profile_mismatch',
+      `Ticket looks like it needs prepare profile "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}, but this run uses "${run.prepareProfile ?? 'sandbox'}". ${resolvedProfileFit.rationale} Continue with the current profile?`,
+      [
+        {
+          id: 'continue',
+          label: `Continue with ${run.prepareProfile ?? 'sandbox'}`,
+          style: 'primary',
+        },
+        { id: 'abort', label: 'Abort run', style: 'danger' },
+      ],
+    );
+    if (actionId === 'abort') {
+      stepPartialIO.set(runId, {
+        inputs,
+        outputs: { profileFit: resolvedProfileFit, source: ticketData?.source, title: ticketData?.title },
+      });
+      throw new Error('Prepare profile mismatch: aborted by user');
+    }
+    profileFitOverride = { profileFit: resolvedProfileFit, overriddenBy: 'user' };
+    const current = getRun(runId);
+    if (current) {
+      updateRun(runId, {
+        engineState: {
+          ...current.engineState,
+          profileFitSuggestion: resolvedProfileFit,
+          validationPlan: resolvedProfileFit.validationPlan,
+        },
+      });
+    }
+  }
+
   // Validate flow type matches ticket type
   let flowTypeMismatch: string | null = null;
   if (ticketData?.issueType) {
@@ -230,6 +278,7 @@ export async function executeGradeStep(
   // Grade the ticket
   const outputs: Record<string, unknown> = { flowTypeMismatch };
   if (projectMismatchOverride) outputs.projectMismatchOverride = projectMismatchOverride;
+  if (profileFitOverride) outputs.profileFitOverride = profileFitOverride;
   if (ticketData && run.engineState?.evalExperiment) {
     const grade = {
       difficulty: 'medium' as const,

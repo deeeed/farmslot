@@ -1,7 +1,7 @@
 # Farmslot unified project + multi-surface validation plan
 
 **Owner:** Arthur / Farmslot
-**Status:** Approved supporting plan (Phase A in progress)
+**Status:** Approved supporting plan (Phases A–D shipped)
 **Last updated:** 2026-06-27
 **Relates to:** [ROADMAP-next.md](../ROADMAP-next.md), [PRD-core-farmslot-canonical.md](../PRD-core-farmslot-canonical.md), [PRD-command-center-canonical.md](../PRD-command-center-canonical.md), [PRD-mobile-companion-canonical.md](../PRD-mobile-companion-canonical.md), [plans/farmslot-self-dogfood-day.md](farmslot-self-dogfood-day.md), [plans/generic-recipe-protocol.md](generic-recipe-protocol.md), [operations/worktree-operator-model.md](../operations/worktree-operator-model.md)
 
@@ -145,8 +145,24 @@ Classifier emits `validation[]` when ticket mentions companion + gateway/ui/prot
 
 ### Phase D — Dogfood proof
 
-- One cross-surface dev run: gateway change + CDP + companion recipe against ff-* port.
-- Update self-dogfood-day + worktree-operator-model examples.
+Cross-surface proof matrix (manual, one run family):
+
+```bash
+# 1. Gateway sandbox on ff-2
+farmslot slot prepare macwork-ff-2 --prepare-profile stack-dogfood
+
+# 2. Command Center CDP
+node apps/command-center/scripts/cdp.mjs eval '#runs' "document.title"
+
+# 3. Gateway RPC
+node apps/command-center/scripts/cdp.mjs gateway run.list '{}'
+
+# 4. Companion recipe (mobile slot or device-pinned agentic.local.conf)
+farmslot slot prepare macwork-fc-1 --prepare-profile companion-warm
+# hooks.recipe_run via docs/examples/recipes/farmslot/mobile-companion.recipe.json
+```
+
+Evidence: run ids + recipe artifacts under `.sandbox/farmslot/`.
 
 ## Success criteria
 

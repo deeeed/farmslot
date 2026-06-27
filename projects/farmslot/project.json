@@ -60,6 +60,36 @@
           "preflight": "cd apps/command-center && yarn typecheck",
           "health_check": "cd apps/command-center && yarn typecheck && echo ok"
         }
+      },
+      "companion-warm": {
+        "label": "Companion warm — Metro + dev client",
+        "description": "Boot isolated simulator when configured, start Metro on the slot port, and verify gateway pairing URL. No native rebuild.",
+        "phases": ["git", "fixtures", "deps", "preflight", "health"],
+        "hooks": {
+          "preflight": "cd apps/companion && METRO_PORT={{port}} IOS_SIMULATOR={{simulator}} ADB_SERIAL={{adb_serial}} bash scripts/agentic/prepare-profile.sh warm",
+          "health_check": "lsof -nP -iTCP:{{port}} -sTCP:LISTEN -t >/dev/null 2>&1",
+          "dev_server_check": "lsof -nP -iTCP:{{port}} -sTCP:LISTEN -t >/dev/null 2>&1"
+        },
+        "requires": ["dev_server_up"],
+        "fallback": "companion-full"
+      },
+      "companion-full": {
+        "label": "Companion full — native build + Metro",
+        "description": "Native rebuild via expo run when simulator or adb is configured, then warm Metro health.",
+        "phases": ["git", "fixtures", "deps", "preflight", "health"],
+        "hooks": {
+          "preflight": "cd apps/companion && METRO_PORT={{port}} IOS_SIMULATOR={{simulator}} ADB_SERIAL={{adb_serial}} bash scripts/agentic/prepare-profile.sh full",
+          "health_check": "lsof -nP -iTCP:{{port}} -sTCP:LISTEN -t >/dev/null 2>&1 && cd apps/companion && yarn typecheck"
+        }
+      },
+      "stack-dogfood": {
+        "label": "Gateway sandbox + companion warm",
+        "description": "Start this checkout's gateway on the slot port, then boot companion Metro (derived port) for cross-surface dogfood.",
+        "phases": ["git", "fixtures", "deps", "preflight", "health"],
+        "hooks": {
+          "preflight": "bash {{repo}}/projects/farmslot/setup/stack-dogfood.sh --gateway-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
+          "health_check": "bash {{repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}"
+        }
       }
     }
   },

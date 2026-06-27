@@ -85,46 +85,12 @@ projects/farmslot/fixtures/*
 !projects/farmslot/setup/
 projects/farmslot/setup/*
 !projects/farmslot/setup/sandbox-dev.sh
+!projects/farmslot/setup/stack-dogfood.sh
 projects/farmslot/tasks/
 projects/farmslot/.agent/
 projects/farmslot/.task/
 
-# Legacy demo project (superseded by projects/farmslot)
-!projects/farmslot-farm/
-projects/farmslot-farm/*
-!projects/farmslot-farm/project.json
-!projects/farmslot-farm/templates/
-projects/farmslot-farm/templates/*
-!projects/farmslot-farm/templates/worker/
-projects/farmslot-farm/templates/worker/*
-!projects/farmslot-farm/templates/prompts/
-projects/farmslot-farm/templates/prompts/*
-!projects/farmslot-farm/templates/prompts/worker-dispatch.md
-!projects/farmslot-farm/templates/prompts/worker-nudge.md
-!projects/farmslot-farm/fixtures/
-projects/farmslot-farm/fixtures/*
-!projects/farmslot-farm/templates/worker/dev.md
-!projects/farmslot-farm/templates/worker/fix-bug.md
-!projects/farmslot-farm/templates/worker/review-pr.md
-!projects/farmslot-farm/templates/worker/merge-main.md
-!projects/farmslot-farm/templates/worker/pr-complete.md
-!projects/farmslot-farm/fixtures/CLAUDE.local.base.md
-!projects/farmslot-farm/fixtures/CLAUDE.local.agent.fix-bug.md
-!projects/farmslot-farm/fixtures/CLAUDE.local.agent.feature.md
-!projects/farmslot-farm/fixtures/CLAUDE.local.agent.review-pr.md
-!projects/farmslot-farm/fixtures/CLAUDE.local.agent.companion-mobile.md
-!projects/farmslot-farm/setup/
-projects/farmslot-farm/setup/*
-!projects/farmslot-farm/setup/sandbox-dev.sh
-projects/farmslot-farm/tasks/
-projects/farmslot-farm/.agent/
-projects/farmslot-farm/.task/
 
-# Keep first-party Farmslot companion config in-repo so the mobile app can be
-# dispatched and recipe-validated like external app projects.
-!projects/farmslot-companion/
-projects/farmslot-companion/*
-!projects/farmslot-companion/project.json
 
 # Central sandbox root for fake/demo runner isolation
 .sandbox/

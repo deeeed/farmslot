@@ -80,7 +80,7 @@ Pick **one** small farmslot roadmap/backlog item (docs-only or tiny gateway fix)
 
 ```bash
 # Example shape — adjust to your backlog item id when created
-farmslot run create --flow dev --mode interactive --project farmslot ...  # today: farmslot until unified project lands (ROADMAP-next #12)
+farmslot run create --flow dev --mode interactive --project farmslot --prepare-profile sandbox ...
 # or backlog.enqueue handoff after backlog item exists
 ```
 
@@ -95,7 +95,7 @@ Success = run appears in `#runs`, Companion active runs, terminal on slot, **you
 
 MetaMask farms remain the heavy integration test bed. For **demo** and **parallel agent** work, prefer:
 
-- `farmslot` (today `farmslot`) / `example-browser-farm` for protocol/UI proofs — see [farmslot-unified-project-validation-plan.md](farmslot-unified-project-validation-plan.md)
+- `farmslot` / `example-browser-farm` for protocol/UI proofs — see [farmslot-unified-project-validation-plan.md](farmslot-unified-project-validation-plan.md)
 - ADR-039 bundles to move **reference eval packages** between gateways without MM rebuild cost
 
 Goal: more roadmap execution visible on Farmslot-native projects so demos do not require MM slot warmup.
