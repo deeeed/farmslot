@@ -1,6 +1,6 @@
 # Worktree Operator Model
 
-**Owner:** Arthur / Farmslot  
+**Owner:** Arthur / Farmslot
 **Relates to:** [ADR-039](../adr/039-run-portable-bundles.md), [README.md](../../README.md#development-multi-worktree)
 
 ## Canonical planes

@@ -21,11 +21,7 @@ yarn add @farmslot/run-bundle @farmslot/protocol
 ## Main exports
 
 ```ts
-import {
-  exportRunAsPackage,
-  importRunPackage,
-  listBundleContents,
-} from '@farmslot/run-bundle';
+import { exportRunAsPackage, importRunPackage, listBundleContents } from '@farmslot/run-bundle';
 ```
 
 ## CLI and gateway
@@ -42,25 +38,25 @@ Gateway RPC methods: `run.bundle.export`, `run.bundle.import`, `run.bundle.list`
 
 ## Import modes
 
-| Mode | CLI flag | Behavior |
-| ---- | -------- | -------- |
-| `seed` | default | Writable copy with new run ids |
-| `reference-only` | `--read-only` | Read-only reference for eval seeding |
-| `mirror` | `--keep-ids --force` | Preserve ids when safe |
+| Mode             | CLI flag             | Behavior                             |
+| ---------------- | -------------------- | ------------------------------------ |
+| `seed`           | default              | Writable copy with new run ids       |
+| `reference-only` | `--read-only`        | Read-only reference for eval seeding |
+| `mirror`         | `--keep-ids --force` | Preserve ids when safe               |
 
 ## Source layout
 
-| Path | Owns |
-| ---- | ---- |
-| `src/index.ts` | Public package export surface. |
-| `src/archive.ts` | zstd+tar `.farmrun` pack/unpack. |
-| `src/collect.ts` | Run tree collection and manifest assembly. |
-| `src/export.ts` | Export profiles (`reference`, `family`, `full`). |
-| `src/import.ts` | Import modes (`seed`, `reference-only`, `mirror`). |
-| `src/paths.ts` | Run-root and artifact path helpers. |
-| `src/hashing.ts` | Content hashing for bundle integrity. |
-| `src/copy-tree.ts` | Filesystem copy helpers for import. |
-| `src/round-trip.test.ts` | Seed-mode export/import round-trip tests. |
+| Path                     | Owns                                               |
+| ------------------------ | -------------------------------------------------- |
+| `src/index.ts`           | Public package export surface.                     |
+| `src/archive.ts`         | zstd+tar `.farmrun` pack/unpack.                   |
+| `src/collect.ts`         | Run tree collection and manifest assembly.         |
+| `src/export.ts`          | Export profiles (`reference`, `family`, `full`).   |
+| `src/import.ts`          | Import modes (`seed`, `reference-only`, `mirror`). |
+| `src/paths.ts`           | Run-root and artifact path helpers.                |
+| `src/hashing.ts`         | Content hashing for bundle integrity.              |
+| `src/copy-tree.ts`       | Filesystem copy helpers for import.                |
+| `src/round-trip.test.ts` | Seed-mode export/import round-trip tests.          |
 
 ## Maintenance rules
 

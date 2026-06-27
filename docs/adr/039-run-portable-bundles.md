@@ -68,7 +68,7 @@ Add a **portable run bundle** format and **CLI-first export/import** commands. B
 
 ### 1. Bundle format: `farmrun` v1
 
-A `*.farmrun` file is a **zstd-compressed tar** with a signed manifest and content-addressed payload entries.
+A `*.farmrun` file is a **zstd-compressed tar** with a content-addressed manifest and payload entries (hash + byte verification on import).
 
 ```
 farmrun-v1/

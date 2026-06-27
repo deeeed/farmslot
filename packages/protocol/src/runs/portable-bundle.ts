@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import type { RunBundleProfile } from '../contracts/run-bundles.js';
 import type { Run } from '../contracts/runs.js';
 
@@ -55,6 +57,17 @@ export function taskRelativePathFromAbsolute(
 }
 
 export function resolveTaskFileAbsolute(farmslotRoot: string, relativePath: string): string {
+  const root = path.resolve(farmslotRoot);
   const cleaned = relativePath.replace(/\\/g, '/').replace(/^\//, '');
-  return `${farmslotRoot.replace(/\\/g, '/').replace(/\/$/, '')}/${cleaned}`;
+  if (!cleaned || path.isAbsolute(cleaned)) {
+    throw new Error(`Unsafe task relative path: ${relativePath}`);
+  }
+  if (cleaned.split('/').some((segment) => segment === '..')) {
+    throw new Error(`Unsafe task relative path: ${relativePath}`);
+  }
+  const resolved = path.resolve(root, cleaned);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Task path escapes farmslot root: ${relativePath}`);
+  }
+  return resolved;
 }

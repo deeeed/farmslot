@@ -1,8 +1,8 @@
 # Farmslot self-dogfood day — execution context
 
-**Owner:** Arthur  
-**Date:** 2026-06-27  
-**Status:** Active execution plan (today)  
+**Owner:** Arthur
+**Date:** 2026-06-27
+**Status:** Active execution plan (today)
 **Relates to:** [ADR-039](../adr/039-run-portable-bundles.md), [ADR-040](../adr/040-epic-work-graph-orchestration.md) (future), [ROADMAP-next.md](../ROADMAP-next.md), [worktree-operator-model.md](../operations/worktree-operator-model.md)
 
 ## Why this exists

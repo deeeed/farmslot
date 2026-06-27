@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -13,7 +21,14 @@ import {
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
 import { copyDirectoryRecursive } from './copy-tree.js';
+import { sha256File } from './hashing.js';
 import { resolveRunsDir } from './paths.js';
+import {
+  assertSafeBundleRelativePath,
+  assertSafeBundleSegment,
+  assertSafeRunId,
+  resolvePathInsideRoot,
+} from './safe-paths.js';
 
 function parseManifest(bundleDir: string): RunBundleManifest {
   const parsed = JSON.parse(readBundleManifestFromDir(bundleDir)) as unknown;
@@ -22,21 +37,42 @@ function parseManifest(bundleDir: string): RunBundleManifest {
 }
 
 function verifyEntries(bundleDir: string, manifest: RunBundleManifest): void {
+  const bundleRoot = path.resolve(bundleDir);
   for (const [key, meta] of Object.entries(manifest.entries)) {
-    const filePath = path.join(bundleDir, meta.path ?? key);
+    const relative = meta.path ?? key;
+    assertSafeBundleRelativePath(relative);
+    const filePath = resolvePathInsideRoot(bundleRoot, relative);
     if (!existsSync(filePath)) {
-      throw new Error(`Bundle entry missing on disk: ${meta.path ?? key}`);
+      throw new Error(`Bundle entry missing on disk: ${relative}`);
+    }
+    const stats = statSync(filePath);
+    if (!stats.isFile()) {
+      throw new Error(`Bundle entry is not a file: ${relative}`);
+    }
+    if (stats.size !== meta.bytes) {
+      throw new Error(`Bundle entry byte mismatch: ${relative}`);
+    }
+    const actualHash = sha256File(filePath);
+    if (actualHash !== meta.sha256) {
+      throw new Error(`Bundle entry hash mismatch: ${relative}`);
     }
   }
 }
 
-function loadBundledRun(bundleDir: string, runPath: string): Run {
-  return JSON.parse(readFileSync(path.join(bundleDir, runPath), 'utf-8')) as Run;
+function loadBundledRun(bundleDir: string, runPath: string, manifest: RunBundleManifest): Run {
+  assertSafeBundleRelativePath(runPath);
+  if (!manifest.entries[runPath]) {
+    throw new Error(`Bundle runPath not listed in manifest entries: ${runPath}`);
+  }
+  const filePath = resolvePathInsideRoot(path.resolve(bundleDir), runPath);
+  return JSON.parse(readFileSync(filePath, 'utf-8')) as Run;
 }
 
 function persistRunRecord(runsDir: string, run: Run): void {
+  assertSafeRunId(run.id);
   mkdirSync(runsDir, { recursive: true });
-  const filePath = path.join(runsDir, `${run.id}.json`);
+  const runsRoot = path.resolve(runsDir);
+  const filePath = resolvePathInsideRoot(runsRoot, `${run.id}.json`);
   const tmpPath = `${filePath}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
   writeFileSync(tmpPath, `${JSON.stringify(run, null, 2)}\n`, 'utf-8');
   renameSync(tmpPath, filePath);
@@ -48,13 +84,17 @@ function restoreTaskTree(input: {
   taskKey: string;
   taskRelativePath?: string;
 }): string | null {
-  const sourceTaskDir = path.join(input.bundleDir, 'tasks', input.taskKey);
+  assertSafeBundleSegment(input.taskKey, 'task key');
+  const sourceTaskDir = resolvePathInsideRoot(
+    path.resolve(input.bundleDir),
+    path.join('tasks', input.taskKey),
+  );
   if (!existsSync(sourceTaskDir)) return null;
   const taskRelative = input.taskRelativePath?.replace(/\\/g, '/');
   const relativeDir = taskRelative
     ? path.dirname(taskRelative)
     : path.join('.sandbox', 'imported', 'tasks', input.taskKey).replace(/\\/g, '/');
-  const destDir = path.join(input.farmslotRoot, relativeDir);
+  const destDir = resolvePathInsideRoot(path.resolve(input.farmslotRoot), relativeDir);
   copyDirectoryRecursive(sourceTaskDir, destDir);
   const taskFileRelative = taskRelative ?? `${relativeDir}/TASK.md`;
   return resolveTaskFileAbsolute(input.farmslotRoot, taskFileRelative);
@@ -124,7 +164,7 @@ export function importBundle(request: RunBundleImportRequest): RunBundleImportRe
     const packagePaths: string[] = [];
 
     for (const entry of manifest.runs) {
-      const bundled = loadBundledRun(bundleDir, entry.runPath);
+      const bundled = loadBundledRun(bundleDir, entry.runPath, manifest);
       const existingPath = path.join(runsDir, `${bundled.id}.json`);
       if (request.mode === 'mirror' && existsSync(existingPath) && !request.force) {
         throw new Error(
