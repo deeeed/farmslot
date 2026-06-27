@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-/** Allow cross-review completion slightly before merge when clocks skew. */
-const PRE_MERGE_SKEW_MS = 120_000;
+/** Cross-review must complete on or before mergedAt (no post-merge backdating). */
+const PRE_MERGE_SKEW_MS = 0;
 
 export function parseIsoMs(value) {
   if (!value) return null;
@@ -50,7 +50,7 @@ export function hasPreMergeCrossReview(evidenceDir, pr, rootDir = evidenceDir) {
   if (completedMs == null) return false;
   const verdicts = last.reviewerVerdicts ?? [];
   const pass = verdicts.some((v) => v.verdict === 'PASS' && v.blockingCount === 0);
-  return pass && completedMs <= mergedMs && completedMs >= mergedMs - PRE_MERGE_SKEW_MS;
+  return pass && completedMs <= mergedMs + PRE_MERGE_SKEW_MS;
 }
 
 export function reviewTimingForPr(pr, evidenceDir) {

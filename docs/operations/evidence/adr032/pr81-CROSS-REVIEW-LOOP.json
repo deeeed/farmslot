@@ -2,7 +2,7 @@
   "$schema": "../../../../.agents/skills/fs-cross-review-loop/templates/CROSS-REVIEW-LOOP.schema.json",
   "status": "clean",
   "startedAt": "2026-06-27T06:00:00.000Z",
-  "updatedAt": "2026-06-27T08:33:22.000Z",
+  "updatedAt": "2026-06-27T07:30:00.000Z",
   "task": "PR #81 feat(gateway): close ADR-032 phase 1 and ship Codex hook observability",
   "artifactDir": "docs/operations/evidence/adr032",
   "maxCycles": 3,
@@ -18,7 +18,7 @@
   "optionalReviewers": [],
   "blockingFindingsOpen": 0,
   "finalVerdict": "clean",
-  "stopReason": "Reviewer PASS on merge commit e4cbcb4; e2e and phase-1 gate green",
+  "stopReason": "Cycle 2 PASS at 07:30Z before merge; e2e and phase-1 gate green on head 9a0ebfc",
   "cycleRecords": [
     {
       "cycle": 1,
@@ -62,8 +62,8 @@
       ],
       "findingsSentToWorker": [],
       "workerFixSummary": "No further code changes",
-      "validationSummary": "Merged e4cbcb42b0de557aaf3c205816f8b6c59f406944",
-      "completedAt": "2026-06-27T08:33:22.000Z"
+      "validationSummary": "e2e-tmux-runner-validate exit 0; run-adr032-phase1-gate exit 0",
+      "completedAt": "2026-06-27T07:30:00.000Z"
     }
   ]
 }

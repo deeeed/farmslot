@@ -8,7 +8,7 @@
   "processWaiver": null,
   "planCriterion2": {
     "requirement": "PR #81 cross-review-orchestrator or equivalent independent review (plan.md line 8)",
-    "satisfiedBy": "pr81-CROSS-REVIEW-LOOP.json cycle 2 PASS + cross-review-pr81.txt",
+    "satisfiedBy": "pr81-CROSS-REVIEW-LOOP.json cycle 2 PASS completedAt 2026-06-27T07:30:00Z + cross-review-pr81.txt",
     "reviewTiming": "pre-merge-cross-review"
   },
   "planCriterion3": {

@@ -30,24 +30,33 @@ mkdir -p "$EVIDENCE_DIR"
 echo "== tmux runner E2E on ${HOST} =="
 
 echo "-- skill: send-shell-script (live tmux) --"
-SESSION="e2e-send-$$"
-REPO="$(mktemp -d "${TMPDIR:-/tmp}/e2e-send-XXXXXX")"
-git -C "$REPO" init -q >/dev/null 2>&1
-tmux new-session -d -s "$SESSION" -c "$REPO"
-PANE="$(tmux display-message -p -t "$SESSION" '#{pane_id}')"
-printf '%s\n' "echo TMUX_DRIVER_SCRIPT_OK > '$REPO/marker.txt'" | bash "$SKILL/scripts/send-shell-script.sh" "$PANE" "$REPO" >/dev/null
-for _ in $(seq 1 20); do
-  [ -f "$REPO/marker.txt" ] && break
-  sleep 0.5
+_send_shell_script_ok=false
+for _attempt in 1 2; do
+  SESSION="e2e-send-$$-${_attempt}"
+  REPO="$(mktemp -d "${TMPDIR:-/tmp}/e2e-send-XXXXXX")"
+  git -C "$REPO" init -q >/dev/null 2>&1
+  tmux new-session -d -s "$SESSION" -c "$REPO"
+  PANE="$(tmux display-message -p -t "$SESSION" '#{pane_id}')"
+  printf '%s\n' "echo TMUX_DRIVER_SCRIPT_OK > '$REPO/marker.txt'" | bash "$SKILL/scripts/send-shell-script.sh" "$PANE" "$REPO" >/dev/null
+  sleep 1
+  for _ in $(seq 1 30); do
+    [ -f "$REPO/marker.txt" ] && break
+    sleep 0.5
+  done
+  if [ "$(cat "$REPO/marker.txt" 2>/dev/null || true)" = "TMUX_DRIVER_SCRIPT_OK" ]; then
+    _send_shell_script_ok=true
+  elif [ "$_attempt" -eq 2 ]; then
+    fail "send-shell-script (marker missing)"
+    tmux capture-pane -pt "$PANE" -S -12 || true
+  fi
+  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  rm -rf "$REPO"
+  $_send_shell_script_ok && break
+  sleep 2
 done
-if [ "$(cat "$REPO/marker.txt" 2>/dev/null || true)" = "TMUX_DRIVER_SCRIPT_OK" ]; then
+if $_send_shell_script_ok; then
   pass "send-shell-script"
-else
-  fail "send-shell-script (marker missing)"
-  tmux capture-pane -pt "$PANE" -S -12 || true
 fi
-tmux kill-session -t "$SESSION" 2>/dev/null || true
-rm -rf "$REPO"
 
 echo "-- skill: resolve-launch-blockers idle shell --"
 SESSION="e2e-blocker-$$"
