@@ -29,7 +29,7 @@ export async function runBundleImport(params: RunBundleImportParams): Promise<Ru
   const result = importBundle({
     farmslotRoot,
     bundlePath: params.bundlePath,
-    mode: params.mode ?? 'reference-only',
+    mode: params.mode ?? 'seed',
     force: params.force,
   });
   await loadAllRuns();

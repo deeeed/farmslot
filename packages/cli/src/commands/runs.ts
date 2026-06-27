@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import type { Command } from 'commander';
+import { Option, type Command } from 'commander';
 import {
   exportRunAsPackage,
   exportRunsToBundle,
@@ -12,10 +12,12 @@ import {
 import { bold, cyan, dim, green } from '../colors.js';
 import { resolveContext } from '../context.js';
 import { OutputContext } from '../output.js';
+import { resolveRunsExportProfile, resolveRunsImportMode } from './runs-cli-options.js';
 
 interface ExportOptions {
   output?: string;
   profile?: 'reference' | 'family' | 'full';
+  forensic?: boolean;
   familyId?: string;
   runId?: string[];
   asPackage?: string;
@@ -23,6 +25,8 @@ interface ExportOptions {
 }
 
 interface ImportOptions {
+  readOnly?: boolean;
+  keepIds?: boolean;
   mode?: 'reference-only' | 'seed' | 'mirror';
   force?: boolean;
   root?: string;
@@ -36,17 +40,25 @@ function resolveRootFlag(root: string | undefined): string {
 }
 
 export function registerRunsCommand(program: Command): void {
-  const runs = program.command('runs').description('Portable run bundle export/import (ADR-039)');
+  const runs = program
+    .command('runs')
+    .description('Copy run history between gateways via .farmrun bundles (ADR-039)');
 
   runs
     .command('export [runId]')
-    .description('Export one or more runs into a .farmrun bundle')
+    .description('Save run(s) to a .farmrun bundle')
     .option('-o, --output <path>', 'Output .farmrun path (required)')
-    .option('--profile <profile>', 'Bundle profile: reference, family, or full', 'reference')
-    .option('--family-id <id>', 'Export all runs in a family')
+    .option('--family-id <id>', 'Export all runs in a family (uses family profile)')
     .option('--run-id <id>', 'Additional run id (repeatable)', collect, [] as string[])
+    .option('--forensic', 'Include analytics and debug extras (power users)')
     .option('--as-package <path>', 'Export only the result package JSON for a single run')
     .option('--root <path>', 'Farmslot repo root override (default: auto-detect)')
+    .addOption(
+      new Option(
+        '--profile <profile>',
+        'Legacy: reference, family, or full (scripts; prefer defaults and --forensic)',
+      ).hideHelp(),
+    )
     .action((runId: string | undefined, opts: ExportOptions, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       try {
@@ -63,10 +75,11 @@ export function registerRunsCommand(program: Command): void {
           return;
         }
         if (!opts.output) throw new Error('--output is required for bundle export');
+        const profile = resolveRunsExportProfile(opts);
         const result = exportRunsToBundle({
           farmslotRoot,
           outputPath: path.resolve(opts.output),
-          profile: opts.profile ?? 'reference',
+          profile,
           familyId: opts.familyId,
           positionalRunId: runId,
           runIds: opts.runId ?? [],
@@ -87,19 +100,22 @@ export function registerRunsCommand(program: Command): void {
 
   runs
     .command('import <bundlePath>')
-    .description('Import a .farmrun bundle into the target farmslot root')
-    .option(
-      '--mode <mode>',
-      'Import mode: reference-only, seed, or mirror',
-      'reference-only',
-    )
-    .option('--force', 'Allow risky mirror overwrite')
+    .description('Load a .farmrun bundle (default: writable sandbox copy)')
+    .option('--read-only', 'Packages + read-only run stubs; no relaunch or prior-run dispatch')
+    .option('--keep-ids', 'Preserve original run IDs (disaster recovery; avoid in worktrees)')
+    .option('--force', 'Allow --keep-ids to overwrite conflicting run IDs')
     .option('--root <path>', 'Farmslot repo root override (default: auto-detect)')
+    .addOption(
+      new Option(
+        '--mode <mode>',
+        'Legacy: reference-only, seed, or mirror (scripts; prefer default and flags above)',
+      ).hideHelp(),
+    )
     .action(async (bundlePath: string, opts: ImportOptions, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       try {
         const farmslotRoot = resolveRootFlag(opts.root);
-        const mode = opts.mode ?? 'reference-only';
+        const mode = resolveRunsImportMode(opts);
         const useGateway = Boolean(cmd.optsWithGlobals().gateway || cmd.optsWithGlobals().url);
         const result = useGateway
           ? await client.call<ReturnType<typeof importBundle>>('run.bundle.import', {
@@ -116,7 +132,7 @@ export function registerRunsCommand(program: Command): void {
         if (output.json) output.writeJson(result);
         else {
           output.write(
-            `${green('Bundle imported')} ${bold(String(result.importedRunIds.length))} run(s)\n`,
+            `${green('Bundle imported')} ${bold(String(result.importedRunIds.length))} run(s) · ${dim(mode)}\n`,
           );
           for (const id of result.importedRunIds) {
             output.write(`  ${cyan(id)}\n`);
@@ -126,7 +142,7 @@ export function registerRunsCommand(program: Command): void {
           }
           if (!useGateway) {
             output.write(
-              `  ${dim('note')} restart gateway or use --gateway import to refresh in-memory run list\n`,
+              `  ${dim('tip')} use --gateway/--url import to refresh the live run list\n`,
             );
           }
         }

@@ -117,11 +117,11 @@ The `farmrun` format is intentionally **multi-entry** from v1 so batch and singl
 
 **v1 does not need** a parallel `farmslot runs export-batch` command. One `farmslot runs export` with selector flags produces one `*.farmrun` containing N runs/tasks/packages. Import always accepts multi-entry bundles; default import mode applies per entry.
 
-**Batch import semantics:**
+**Batch import semantics** (same human/protocol mapping as single import; default is `seed`):
 
-- `reference-only` — import all packages; create read-only stubs for runs.
-- `seed` — remap all run IDs; preserve `familyId` grouping when the bundle profile is `family`.
-- `mirror` — refused for multi-entry bundles unless `--force` (too risky for accidental history collision).
+- `seed` (default) — remap all run IDs; preserve `familyId` grouping when the bundle profile is `family`.
+- `reference-only` (`--read-only`) — import all packages; create read-only stubs for runs.
+- `mirror` (`--keep-ids`) — refused for multi-entry bundles unless `--force` (too risky for accidental history collision).
 
 **What batch export is not:**
 
@@ -131,35 +131,53 @@ The `farmrun` format is intentionally **multi-entry** from v1 so batch and singl
 
 ### 3. CLI commands (v1 surface)
 
-Ship in `@farmslot/cli` first (ADR-036: profiles let any checkout target any gateway):
+Ship in `@farmslot/cli` first (ADR-036: profiles let any checkout target any gateway).
+
+#### Human CLI surface (primary)
+
+Operators should not need to learn protocol vocabulary. The CLI exposes plain flags; RPC/protocol keep the internal enum names.
+
+**Export:**
 
 ```bash
-# Single reference
-farmslot runs export <runId> [--profile reference|full] -o baseline.farmrun
-
-# Batch: whole family (comparison siblings + reference)
+farmslot runs export <runId> -o baseline.farmrun
 farmslot runs export --family-id <familyId> -o family.farmrun
-
-# Batch: explicit set (agent-friendly)
 farmslot runs export --run-id <id1> --run-id <id2> -o refs.farmrun
-
-# Import into sandbox gateway root or explicit target
-farmslot runs import baseline.farmrun [--gateway sandbox] [--mode <mode>]
-
-# Promote-back: export candidate package only (small, main-bound)
-farmslot runs export <runId> --as-package -o /tmp/candidate.result-package.json
-
-# Inspect without importing
+farmslot runs export <runId> -o dump.farmrun --forensic
+farmslot runs export <runId> --as-package /tmp/candidate.result-package.json
 farmslot runs bundle ls baseline.farmrun
 ```
 
-**Import modes:**
+| Human flag | Protocol profile | When |
+| ---------- | ---------------- | ---- |
+| *(none)* | `reference` | Default baseline export |
+| `--family-id` | `family` (auto) | Whole comparison family |
+| `--forensic` | `full` | Support / debug only |
+
+**Import:**
+
+```bash
+farmslot runs import baseline.farmrun
+farmslot runs import baseline.farmrun --read-only
+farmslot runs import baseline.farmrun --keep-ids --force
+farmslot --url ws://localhost:7778 runs import baseline.farmrun
+```
+
+| Human flag | Protocol mode | When |
+| ---------- | ------------- | ---- |
+| *(none)* | `seed` | **Default** — writable sandbox copy, new run IDs |
+| `--read-only` | `reference-only` | Packages + stubs; eval display only |
+| `--keep-ids` (+ `--force`) | `mirror` | Disaster recovery; not worktrees |
+
+Legacy hidden flags `--profile` and `--mode` remain for scripts and RPC callers.
+
+#### Protocol import modes (internal)
 
 | Mode | Behavior |
 | ---- | -------- |
-| `reference-only` (sandbox default) | Writes packages + minimal run stubs marked `imported: true`, `readOnly: true`. Enables `eval.experiment.create` `package` and read-only `prior-run` display; **does not** allow relaunch/monitor as if native. |
-| `seed` | Imports run records + task trees with **new run IDs** and `provenance.importedFrom` pointing at source IDs. Enables `prior-run` and comparison sibling launches in the target gateway without ID collision. |
-| `mirror` (main only, explicit flag) | Preserves original run IDs. Refused when a conflicting ID already exists unless `--force` with interactive confirmation. For disaster recovery, not daily worktree use. |
+| `seed` (**CLI default**) | Imports run records + task trees with **new run IDs** and `provenance.importedFrom` pointing at source IDs. Enables `prior-run` and comparison sibling launches in the target gateway without ID collision. |
+| `reference-only` (`--read-only`) | Writes packages + minimal run stubs marked `imported: true`, `readOnly: true`. Enables `eval.experiment.create` `package` and read-only `prior-run` display; **does not** allow relaunch/monitor as if native. |
+| `mirror` (`--keep-ids`) | Preserves original run IDs. Refused when a conflicting ID already exists unless `--force`. For disaster recovery, not daily worktree use. |
 
 Default target roots:
 
@@ -199,7 +217,7 @@ Import/export must align with ADR-030, not fork it:
 
 ```text
 Main:     farmslot runs export <baselineRunId> -o /tmp/baseline.farmrun
-Worktree: farmslot --gateway sandbox runs import /tmp/baseline.farmrun --mode seed
+Worktree: farmslot --gateway sandbox runs import /tmp/baseline.farmrun
 Worktree: farmslot --gateway sandbox rpc eval.trial.start '{...}'
 ```
 
@@ -244,7 +262,7 @@ Real dispatches/evals that must appear in Companion history still target `--gate
 ### Negative
 
 - Bundle format maintenance (schema versioning, artifact relocation edge cases).
-- Risk of duplicate family IDs if operators misuse `mirror` mode on main — mitigated by defaulting sandboxes to `seed` / `reference-only`.
+- Risk of duplicate family IDs if operators misuse `mirror` / `--keep-ids` on main — mitigated by defaulting imports to `seed` (writable remap) and hiding `mirror` behind `--keep-ids --force`.
 - Some task artifacts remain machine-local; manifest must surface `missingData` honestly.
 
 ## Implementation Plan (after acceptance)

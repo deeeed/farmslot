@@ -13,25 +13,37 @@
 ## Seed a sandbox from main
 
 ```bash
-# Main — export reference family or run
+# Main — export a run or whole family (reference profile is the default)
 cd /Users/deeeed/dev/farmslot
 farmslot runs export <runId> -o /tmp/baseline.farmrun
 # or
 farmslot runs export --family-id <familyId> -o /tmp/family.farmrun
 
-# Worktree sandbox — import (filesystem) or via gateway RPC
+# Worktree sandbox — import writable copy (new run IDs)
 cd /Users/deeeed/dev/farmslot-worktrees/<branch>
-farmslot runs import /tmp/baseline.farmrun --mode seed --root "$PWD"
+farmslot runs import /tmp/baseline.farmrun --root "$PWD"
 
 # When sandbox gateway is running on 7778:
-farmslot --url ws://localhost:7778 runs import /tmp/baseline.farmrun --mode seed
+farmslot --url ws://localhost:7778 runs import /tmp/baseline.farmrun
 ```
 
-Import modes:
+### Import flags (human surface)
 
-- `reference-only` — read-only stubs + packages for eval seeding (default)
-- `seed` — new run IDs, writable comparison siblings
-- `mirror` — preserve IDs (disaster recovery only; refused for multi-run bundles without `--force`)
+| You want… | Command |
+| --------- | ------- |
+| Writable sandbox copy for comparisons / `prior-run` (usual case) | `farmslot runs import <bundle>` |
+| Packages + read-only stubs only (no relaunch) | `farmslot runs import <bundle> --read-only` |
+| Preserve original run IDs (disaster recovery; avoid in worktrees) | `farmslot runs import <bundle> --keep-ids --force` |
+
+Protocol/RPC names (`seed`, `reference-only`, `mirror`) and `--mode` remain for scripts but are hidden from primary CLI help.
+
+### Export flags (human surface)
+
+| You want… | Command |
+| --------- | ------- |
+| Baseline for eval / worktree seeding (default) | `farmslot runs export <runId> -o out.farmrun` |
+| Whole comparison family | `farmslot runs export --family-id <id> -o out.farmrun` |
+| Support / forensic dump | `farmslot runs export <runId> -o out.farmrun --forensic` |
 
 ## Promote candidate packages back to main
 
@@ -40,4 +52,4 @@ farmslot runs export <candidateRunId> --as-package /tmp/candidate.result-package
 # Use #evals manual package reference or eval.experiment.create on main
 ```
 
-Real production history stays on main unless you explicitly import with `mirror --force`.
+Real production history stays on main unless you explicitly import with `--keep-ids --force`.
