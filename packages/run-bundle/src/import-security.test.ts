@@ -107,6 +107,87 @@ test('import rejects manifest path traversal in taskRelativePath', () => {
   }
 });
 
+test('import rejects tampered task payload hashes', () => {
+  const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst3-'));
+  const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack3-'));
+  const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const run: Run = {
+    id: runId,
+    familyId: 'family-1',
+    lane: 'comparison',
+    variant: 'baseline',
+    flowType: 'dev',
+    mode: 'validation',
+    status: 'done',
+    project: 'demo-farm',
+    ticketOrPr: 'EVAL-1',
+    slotId: 'mac-1',
+    branch: 'eval/baseline',
+    completionPolicy: 'artifact-only',
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const runFile = 'runs/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.json';
+  const runJson = JSON.stringify(run, null, 2);
+  const taskKey = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const taskFileRel = `tasks/${taskKey}/TASK.md`;
+  const taskContent = '# task\n';
+  const manifest: RunBundleManifest = {
+    version: RUN_BUNDLE_VERSION,
+    profile: 'reference',
+    exportedAt: new Date().toISOString(),
+    bundleId: 'bundle-3',
+    source: { farmslotRoot: '/tmp/source', runIds: [runId] },
+    remapPolicy: 'remap-ids',
+    runs: [
+      {
+        originalRunId: runId,
+        runPath: runFile,
+        taskKey,
+        taskRelativePath: 'projects/demo-farm/tasks/evals/case-1/TASK.md',
+      },
+    ],
+    entries: {
+      [runFile]: {
+        sha256: sha256Text(runJson),
+        bytes: Buffer.byteLength(runJson, 'utf-8'),
+        path: runFile,
+      },
+      [taskFileRel]: {
+        sha256: sha256Text(taskContent),
+        bytes: Buffer.byteLength(taskContent, 'utf-8'),
+        path: taskFileRel,
+      },
+    },
+  };
+  buildMaliciousBundle(bundleDir, manifest, run, runFile);
+  mkdirSync(path.join(bundleDir, 'tasks', taskKey), { recursive: true });
+  writeFileSync(path.join(bundleDir, 'tasks', taskKey, 'TASK.md'), '# tampered\n', 'utf-8');
+  const bundlePath = path.join(tmpdir(), `tampered-task-${Date.now()}.farmrun`);
+  packFarmrunDirectory(bundleDir, bundlePath);
+  writeMinimalRoot(targetRoot);
+
+  try {
+    assert.throws(
+      () =>
+        importBundle({
+          farmslotRoot: targetRoot,
+          bundlePath,
+          mode: 'seed',
+        }),
+      /Bundle entry byte mismatch: tasks\//,
+    );
+  } finally {
+    rmSync(targetRoot, { recursive: true, force: true });
+    rmSync(bundleDir, { recursive: true, force: true });
+    rmSync(bundlePath, { force: true });
+  }
+});
+
 test('import rejects unlisted runPath entries', () => {
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst2-'));
   const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack2-'));

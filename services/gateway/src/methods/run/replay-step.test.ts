@@ -26,6 +26,24 @@ test('replaySlotReclaimCheck rejects slots owned by another active run', () => {
   });
 });
 
+test('runReplayStep rejects read-only imported reference runs', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `REF-${Date.now()}`,
+  });
+  updateRun(run.id, { readOnly: true, status: 'done' });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      await deleteRun(run.id);
+    }
+  });
+  await assert.rejects(
+    () => runReplayStep({ runId: run.id, stepName: 'prepare' }, () => {}),
+    /read-only imported reference and cannot be replayed/,
+  );
+});
+
 test('runReplayStep rejects non-authorized triggeredBy actor before replay', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

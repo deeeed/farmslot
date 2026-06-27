@@ -14,6 +14,7 @@ import {
   isRunBundleManifest,
   resolveTaskFileAbsolute,
   type Run,
+  type RunBundleImportMode,
   type RunBundleImportRequest,
   type RunBundleImportResult,
   type RunBundleManifest,
@@ -148,6 +149,25 @@ function applyImportMode(
   };
 }
 
+function remapImportedRunLineage(
+  run: Run,
+  idMap: Record<string, string>,
+  mode: RunBundleImportMode,
+): Run {
+  if (mode === 'mirror' || Object.keys(idMap).length === 0) return run;
+  const next = { ...run };
+  if (next.parentRunId && idMap[next.parentRunId]) {
+    next.parentRunId = idMap[next.parentRunId];
+  }
+  if (next.redirectedToRunId && idMap[next.redirectedToRunId]) {
+    next.redirectedToRunId = idMap[next.redirectedToRunId];
+  }
+  if (idMap[next.familyId]) {
+    next.familyId = idMap[next.familyId];
+  }
+  return next;
+}
+
 export function importBundle(request: RunBundleImportRequest): RunBundleImportResult {
   const bundleDir = unpackFarmrunArchive(request.bundlePath);
   try {
@@ -162,6 +182,7 @@ export function importBundle(request: RunBundleImportRequest): RunBundleImportRe
     const idMap: Record<string, string> = {};
     const importedRunIds: string[] = [];
     const packagePaths: string[] = [];
+    const stagedRuns: Run[] = [];
 
     for (const entry of manifest.runs) {
       const bundled = loadBundledRun(bundleDir, entry.runPath, manifest);
@@ -184,6 +205,11 @@ export function importBundle(request: RunBundleImportRequest): RunBundleImportRe
           next = { ...next, taskFile, activeTaskFile: taskFile };
         }
       }
+      stagedRuns.push(next);
+    }
+
+    for (const staged of stagedRuns) {
+      const next = remapImportedRunLineage(staged, idMap, request.mode);
       if (next.taskFile) {
         for (const name of ['reference.result-package.json', 'candidate.result-package.json']) {
           const candidate = path.join(path.dirname(next.taskFile), 'artifacts', 'packages', name);

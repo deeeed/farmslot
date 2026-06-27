@@ -18,7 +18,7 @@ import {
 
 import { packFarmrunDirectory, writeBundleManifest } from './archive.js';
 import { selectRunsForExport } from './collect.js';
-import { copyDirectoryRecursive } from './copy-tree.js';
+import { copyDirectoryRecursive, registerDirectoryEntries } from './copy-tree.js';
 import { sha256File, sha256Text } from './hashing.js';
 import { resolveRunsDir, sanitizeBundleRunId } from './paths.js';
 
@@ -114,6 +114,7 @@ export function exportRunsToBundle(
         const taskKey = sanitizeBundleRunId(run.id);
         const taskBundleDir = `tasks/${taskKey}`;
         copyDirectoryRecursive(path.dirname(run.taskFile), path.join(bundleDir, taskBundleDir));
+        registerDirectoryEntries(bundleDir, taskBundleDir, entries);
         entry.taskKey = taskKey;
         entry.taskRelativePath = taskRelative ?? undefined;
         if (!taskRelative) missingData.push(`task-path-unrelocatable:${run.id}`);
