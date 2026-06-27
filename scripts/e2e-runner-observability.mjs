@@ -433,4 +433,7 @@ async function main() {
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(`[e2e-runner-observability] ${error?.message || String(error)}`);
+  process.exit(1);
+});

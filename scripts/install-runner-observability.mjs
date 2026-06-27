@@ -19,6 +19,7 @@ function normalizeInstructionText(value) {
     .trim();
 }
 
+// Keep digest helpers in sync with services/gateway/src/runners/observability-prompt-digest.ts
 function instructionNeedle(message) {
   return normalizeInstructionText(message).slice(0, 160);
 }
@@ -115,7 +116,7 @@ try {
     ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),
   };
-  fs.appendFileSync(logPath, JSON.stringify(record) + '\\n');
+  fs.appendFileSync(logPath, \`\${JSON.stringify(record)}\n\`);
 } catch (error) {
   console.error('[farmslot-observability] ' + (error?.message || String(error)));
 }
