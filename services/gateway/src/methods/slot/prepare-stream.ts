@@ -1,4 +1,4 @@
-import type { EventEmitter } from './shared.js';
+import { activePrepareSessions, type EventEmitter } from './shared.js';
 
 export interface PrepareStream {
   requestId: string;
@@ -13,6 +13,8 @@ export function createPrepareStream(
   args: { slotId: string; requestId: string; startTime: number },
 ): PrepareStream {
   const { slotId, requestId, startTime } = args;
+  // Track this prepare's steps so a reloaded UI can re-attach (ADR-037).
+  activePrepareSessions.set(slotId, { requestId, startedAt: startTime, steps: [] });
   const out = (stream: 'stdout' | 'stderr', data: string) => {
     emit('script.output', {
       requestId,
@@ -26,11 +28,13 @@ export function createPrepareStream(
     requestId,
     slotId,
     step(name, detail) {
+      activePrepareSessions.get(slotId)?.steps.push({ name, detail });
       emit('slot.prepare.step', { requestId, slotId, name, detail });
       out('stdout', `[${name}] ${detail}`);
     },
     output: out,
     complete(exitCode, error) {
+      activePrepareSessions.delete(slotId);
       emit('script.complete', {
         requestId,
         exitCode,

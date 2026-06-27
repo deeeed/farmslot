@@ -21,7 +21,28 @@ export const SlotMethods = {
   recipeProjectHookRun: Methods.RECIPE_PROJECT_HOOK_RUN,
   actionList: Methods.SLOT_ACTION_LIST,
   actionRun: Methods.SLOT_ACTION_RUN,
+  prepareStatus: Methods.SLOT_PREPARE_STATUS,
 } as const;
+
+/** One structured prepare sub-step (ADR-037) — phase, profile resolution, or
+ * fallback reason. Mirrors the `slot.prepare.step` event payload. */
+export interface PrepareStepRecord {
+  name: string;
+  detail: string;
+}
+
+export interface SlotPrepareStatusParams {
+  slotId: string;
+}
+
+/** Snapshot of an in-flight gateway-mediated prepare, used to re-attach the UI
+ * after a reload: `requestId` rebinds the live `slot.prepare.*` stream and
+ * `steps` restores the history emitted before the reload. */
+export interface SlotPrepareStatusResult {
+  preparing: boolean;
+  requestId?: string;
+  steps: PrepareStepRecord[];
+}
 
 // Slot RPC also exposes slot-facing run helpers so callers can import one slot
 // RPC contract module.

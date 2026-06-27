@@ -114,6 +114,7 @@ import {
   type SlotCleanupParams,
   type SlotFixtureRefreshParams,
   type SlotPrepareParams,
+  type SlotPrepareStatusParams,
   type SlotRecycleParams,
   type SlotRefreshParams,
   type SlotReleaseParams,
@@ -282,6 +283,7 @@ import {
   slotFixtureRefresh,
   slotOpenEditor,
   slotPrepare,
+  slotPrepareStatus,
   slotRecycle,
   slotRefresh,
   slotRelease,
@@ -410,6 +412,8 @@ export async function routeMethod(
       return slotFixtureRefresh(p as SlotFixtureRefreshParams, emit);
     case Methods.SLOT_CLEANUP:
       return slotCleanup(p as SlotCleanupParams);
+    case Methods.SLOT_PREPARE_STATUS:
+      return slotPrepareStatus(p as SlotPrepareStatusParams);
     case Methods.FLEET_REFRESH_SLOTS:
       return fleetRefreshSlots(p as FleetRefreshSlotsParams, emit);
     case Methods.FLEET_REFRESH_SLOTS_CANCEL:

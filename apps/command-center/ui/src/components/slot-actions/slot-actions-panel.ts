@@ -21,6 +21,7 @@ import type {
   SlotActionListResult,
   SlotActionRunResult,
   SlotActionSummary,
+  SlotPrepareStatusResult,
   SlotPrepareStepPayload,
   SlotRefreshResult,
   SlotStatus,
@@ -171,8 +172,30 @@ export class SlotActionsPanel extends LitElement {
         {},
       );
       this._slot = fleet.fleet.slots.find((s) => s.slot === this.slotId) ?? null;
+      void this._reattachIfPreparing();
     } catch (err) {
       console.warn('[slot-actions-panel] fleet.status failed:', err);
+    }
+  }
+
+  // Re-attach to a prepare already running server-side (e.g. after a page
+  // reload). The prepare is gateway-mediated and keeps going across reloads;
+  // here we recover its requestId + the steps emitted before the reload, then
+  // the existing requestId-scoped subscriptions resume the live stream.
+  private async _reattachIfPreparing() {
+    if (this._running || this._requestId) return;
+    if (this._slot?.phase !== 'preparing') return;
+    try {
+      const status = await gateway.request<SlotPrepareStatusResult>(Methods.SLOT_PREPARE_STATUS, {
+        slotId: this.slotId,
+      });
+      if (!status.preparing || !status.requestId) return;
+      this._requestId = status.requestId;
+      this._prepareSteps = status.steps;
+      this._activeActionId = 'prepare';
+      this._running = true;
+    } catch (err) {
+      console.warn('[slot-actions-panel] prepare reattach failed:', err);
     }
   }
 

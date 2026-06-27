@@ -20,6 +20,7 @@ export const Methods = {
   SLOT_RECYCLE: 'slot.recycle',
   SLOT_REFRESH: 'slot.refresh',
   SLOT_CLEANUP: 'slot.cleanup',
+  SLOT_PREPARE_STATUS: 'slot.prepareStatus',
   SLOT_FIXTURE_REFRESH: 'slot.fixtureRefresh',
 
   // Fleet-bulk
