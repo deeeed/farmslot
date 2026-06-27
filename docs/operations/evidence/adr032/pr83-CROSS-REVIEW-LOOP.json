@@ -1,0 +1,69 @@
+{
+  "$schema": "../../../../.agents/skills/fs-cross-review-loop/templates/CROSS-REVIEW-LOOP.schema.json",
+  "status": "clean",
+  "startedAt": "2026-06-27T08:50:00.000Z",
+  "updatedAt": "2026-06-27T09:17:34.000Z",
+  "task": "PR #83 fix(gateway): consult observability before pane in ADR-032 safe-send",
+  "artifactDir": "docs/operations/evidence/adr032",
+  "maxCycles": 3,
+  "cycles": 2,
+  "requiredReviewers": [
+    {
+      "id": "code-reviewer",
+      "label": "Independent code-reviewer subagent",
+      "runnerType": "grok",
+      "paneId": null
+    }
+  ],
+  "optionalReviewers": [],
+  "blockingFindingsOpen": 0,
+  "finalVerdict": "clean",
+  "stopReason": "Reviewer PASS after unused-import fix and obs-first ordering correction",
+  "cycleRecords": [
+    {
+      "cycle": 1,
+      "startedAt": "2026-06-27T08:50:00.000Z",
+      "workerReadySignal": "Obs-first ordering fix ready",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "ISSUES",
+          "blockingCount": 1,
+          "evidenceReview": "Unused selectBusyFromObservabilityAndPane import",
+          "validationReview": "registry-safe-send tests required",
+          "outputArtifact": "docs/operations/evidence/adr032/pr83-CROSS-REVIEW-LOOP.json"
+        }
+      ],
+      "findingsSentToWorker": [
+        {
+          "reviewerId": "code-reviewer",
+          "severity": "P2",
+          "reference": "services/gateway/src/runners/registry.ts",
+          "finding": "Remove unused import; authoritative hook-not-accepted must return pending without duplicate promptAccepted"
+        }
+      ],
+      "workerFixSummary": "Removed unused import; fixed hook-not-accepted pending path",
+      "validationSummary": "registry-safe-send 3/3; observability-decision 9/9; e2e PASS",
+      "completedAt": "2026-06-27T09:10:00.000Z"
+    },
+    {
+      "cycle": 2,
+      "startedAt": "2026-06-27T09:10:00.000Z",
+      "workerReadySignal": "Follow-up commit pushed",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "PASS",
+          "blockingCount": 0,
+          "evidenceReview": "All local gates green",
+          "validationReview": "APPROVE pending CI",
+          "outputArtifact": "docs/operations/evidence/adr032/pr83-CROSS-REVIEW-LOOP.json"
+        }
+      ],
+      "findingsSentToWorker": [],
+      "workerFixSummary": "No further changes",
+      "validationSummary": "Merged 4e730e20e1e4e0fd88bcf846c2dbb58c11dd70d3",
+      "completedAt": "2026-06-27T09:17:34.000Z"
+    }
+  ]
+}

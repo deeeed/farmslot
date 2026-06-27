@@ -1,0 +1,69 @@
+{
+  "$schema": "../../../../.agents/skills/fs-cross-review-loop/templates/CROSS-REVIEW-LOOP.schema.json",
+  "status": "clean",
+  "startedAt": "2026-06-27T08:00:00.000Z",
+  "updatedAt": "2026-06-27T08:45:13.000Z",
+  "task": "PR #82 feat(gateway): ADR-032 phase 2 — hooks authoritative for event-driven runners",
+  "artifactDir": "docs/operations/evidence/adr032",
+  "maxCycles": 3,
+  "cycles": 2,
+  "requiredReviewers": [
+    {
+      "id": "code-reviewer",
+      "label": "Independent code-reviewer subagent",
+      "runnerType": "grok",
+      "paneId": null
+    }
+  ],
+  "optionalReviewers": [],
+  "blockingFindingsOpen": 0,
+  "finalVerdict": "clean",
+  "stopReason": "Reviewer PASS on merge commit 02fe7bd after promptAccepted sinceMs fix",
+  "cycleRecords": [
+    {
+      "cycle": 1,
+      "startedAt": "2026-06-27T08:00:00.000Z",
+      "workerReadySignal": "Phase 2 hook-authoritative safe-send ready for review",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "ISSUES",
+          "blockingCount": 1,
+          "evidenceReview": "promptAccepted sinceMs unbounded; stale hook acceptance could block re-nudge",
+          "validationReview": "observability-send-decision tests required",
+          "outputArtifact": "docs/operations/evidence/adr032/pr82-CROSS-REVIEW-LOOP.json"
+        }
+      ],
+      "findingsSentToWorker": [
+        {
+          "reviewerId": "code-reviewer",
+          "severity": "P1",
+          "reference": "services/gateway/src/runners/registry.ts",
+          "finding": "Bound promptAccepted sinceMs to loopStartMs - effectiveTimeoutMs; pane pending must win over stale hook acceptance"
+        }
+      ],
+      "workerFixSummary": "Fixed in 51c8656: computePromptAcceptedSinceMs + pane-pending precedence",
+      "validationSummary": "yarn typecheck exit 0; observability-send-decision 8/8 pass",
+      "completedAt": "2026-06-27T08:30:00.000Z"
+    },
+    {
+      "cycle": 2,
+      "startedAt": "2026-06-27T08:30:00.000Z",
+      "workerReadySignal": "51c8656 pushed",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "PASS",
+          "blockingCount": 0,
+          "evidenceReview": "Hook-first path present in registry.ts; typecheck green",
+          "validationReview": "APPROVE; optional MEDIUM/LOW nits deferred",
+          "outputArtifact": "docs/operations/evidence/adr032/pr82-CROSS-REVIEW-LOOP.json"
+        }
+      ],
+      "findingsSentToWorker": [],
+      "workerFixSummary": "No further blockers",
+      "validationSummary": "Merged 02fe7bd8b30c80ba4658e3ff0decbd52cb1604f2",
+      "completedAt": "2026-06-27T08:45:13.000Z"
+    }
+  ]
+}
