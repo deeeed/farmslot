@@ -16,7 +16,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | **Not started** | Accepted/planned decision with no meaningful implementation yet. |
 | **Proposed** | ADR not accepted — treat as design intent only. |
 
-## Summary (ADR-026 – ADR-038)
+## Summary (ADR-026 – ADR-039)
 
 | ADR | Title | ADR status | Implementation | Top open gap |
 | --- | ----- | ---------- | -------------- | ------------ |
@@ -30,6 +30,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [036](../adr/036-cli-gateway-profiles.md) | CLI gateway profiles | Accepted | Partial | Core shipped; demo/onboarding rehearsal follow-ups |
 | [037](../adr/037-prepare-profiles.md) | Prepare profiles | Accepted | Shipped | Automatic profile selection deferred by ADR |
 | [038](../adr/038-gate-held-worker-session.md) | Gate-held worker session | Accepted | Partial | Companion gate-held affordances; optional pane-died softening |
+| [039](../adr/039-run-portable-bundles.md) | Portable run bundles | Accepted | Shipped | v1.1 selectors, CC export UI, `--seed-eval` helper |
 
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
 

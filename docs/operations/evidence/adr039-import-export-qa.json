@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-06-27T14:30:00.000Z",
+  "scenario": "adr039-live-export-import-seed",
+  "sourceFarmslotRoot": "/Users/deeeed/dev/farmslot",
+  "sourceRunId": "0034bfca-79f3-4d3f-8fea-0640fc27bb2a",
+  "bundlePath": "/tmp/adr039-qa.farmrun",
+  "importMode": "seed",
+  "importedRunId": "0cc894c6-d66a-4882-9103-c21dc591a241",
+  "automatedTests": [
+    "packages/run-bundle: round-trip seed",
+    "packages/cli: runs-cli-options"
+  ],
+  "result": "pass",
+  "notes": "Manual live proof on macwork; gateway RPC import not exercised in this capture."
+}

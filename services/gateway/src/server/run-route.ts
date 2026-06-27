@@ -16,6 +16,9 @@ import {
   type RunArchiveParams,
   type RunAutoRecoveryStopParams,
   type RunBulkDeleteParams,
+  type RunBundleExportParams,
+  type RunBundleImportParams,
+  type RunBundleListParams,
   type RunCancelParams,
   type RunCIWatchPokeParams,
   type RunCleanupParams,
@@ -97,6 +100,7 @@ import {
 import { runProposeImprovement } from '../methods/run/propose-improvement.js';
 import { runReplayStep } from '../methods/run/replay-step.js';
 import { runSlotHistory } from '../methods/run/slot-history.js';
+import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-bundle.js';
 
 export interface RouteRunMethodContext {
   emit: (event: string, payload: unknown) => void;
@@ -125,6 +129,12 @@ export async function routeRunMethod(
       }
       return handled(runCreate(runParams, emit));
     }
+    case Methods.RUN_BUNDLE_EXPORT:
+      return handled(runBundleExport(p as RunBundleExportParams));
+    case Methods.RUN_BUNDLE_IMPORT:
+      return handled(runBundleImport(p as RunBundleImportParams));
+    case Methods.RUN_BUNDLE_LIST:
+      return handled(runBundleList(p as RunBundleListParams));
     case Methods.RUN_GET:
       return handled(runGet(p as RunGetParams));
     case Methods.RUN_CONTEXT_BUNDLE:

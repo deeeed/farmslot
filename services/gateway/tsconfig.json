@@ -3,7 +3,8 @@
   "compilerOptions": {
     "paths": {
       "@farmslot/protocol": ["../../packages/protocol/src/index.ts"],
-      "@farmslot/protocol/*": ["../../packages/protocol/src/*"]
+      "@farmslot/protocol/*": ["../../packages/protocol/src/*"],
+      "@farmslot/run-bundle": ["../../packages/run-bundle/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

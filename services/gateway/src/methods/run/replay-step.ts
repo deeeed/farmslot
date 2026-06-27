@@ -175,6 +175,11 @@ export async function runReplayStep(
   }
   const existing = getRun(params.runId);
   if (!existing) throw new Error(`Run not found: ${params.runId}`);
+  if (existing.readOnly) {
+    throw new Error(
+      `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be replayed`,
+    );
+  }
   const triggeredBy = params.triggeredBy ?? 'operator';
 
   const flowSteps = FLOW_STEPS[existing.flowType];

@@ -4313,6 +4313,7 @@ __metadata:
   dependencies:
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-harness": "workspace:*"
+    "@farmslot/run-bundle": "workspace:*"
     "@types/node": "npm:^22.0.0"
     "@types/qrcode": "npm:^1.5.5"
     "@types/ws": "npm:^8.5.0"
@@ -4410,6 +4411,7 @@ __metadata:
   dependencies:
     "@earendil-works/pi-ai": "npm:0.74.2"
     "@farmslot/protocol": "workspace:*"
+    "@farmslot/run-bundle": "workspace:*"
     "@sinclair/typebox": "npm:^0.34.49"
     "@types/node": "npm:^22.0.0"
     "@types/ws": "npm:^8.5.0"
@@ -4520,6 +4522,19 @@ __metadata:
     ws: "npm:^8.18.0"
   bin:
     farmslot-recipe: ./bin/farmslot-recipe.mjs
+  languageName: unknown
+  linkType: soft
+
+"@farmslot/run-bundle@workspace:*, @farmslot/run-bundle@workspace:packages/run-bundle":
+  version: 0.0.0-use.local
+  resolution: "@farmslot/run-bundle@workspace:packages/run-bundle"
+  dependencies:
+    "@farmslot/protocol": "workspace:*"
+    "@types/node": "npm:^22.0.0"
+    eslint: "npm:^10.3.0"
+    prettier: "npm:^3.8.3"
+    tsx: "npm:^4.19.0"
+    typescript: "npm:^5.6.0"
   languageName: unknown
   linkType: soft
 

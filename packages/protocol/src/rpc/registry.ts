@@ -166,6 +166,9 @@ export const Methods = {
   SLOT_ACTION_RUN: 'slot.action.run',
 
   // Runs
+  RUN_BUNDLE_EXPORT: 'run.bundle.export',
+  RUN_BUNDLE_IMPORT: 'run.bundle.import',
+  RUN_BUNDLE_LIST: 'run.bundle.list',
   RUN_CREATE: 'run.create',
   RUN_GET: 'run.get',
   RUN_CONTEXT_BUNDLE: 'run.contextBundle',

@@ -1,33 +1,25 @@
 {
-  "name": "@farmslot/cli",
+  "name": "@farmslot/run-bundle",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "farmslot": "./bin/farmslot.mjs"
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
   },
   "scripts": {
-    "farmslot": "tsx src/entry.ts",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint \"src/**/*.ts\"",
-    "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "quality": "prettier --check . && eslint \"src/**/*.ts\" && tsc --noEmit && yarn test",
     "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json src"
   },
   "dependencies": {
-    "@farmslot/protocol": "workspace:*",
-    "@farmslot/recipe-harness": "workspace:*",
-    "@farmslot/run-bundle": "workspace:*",
-    "commander": "^12.0.0",
-    "qrcode": "^1.5.4",
-    "ws": "^8.18.0"
+    "@farmslot/protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/qrcode": "^1.5.5",
-    "@types/ws": "^8.5.0",
     "eslint": "^10.3.0",
     "prettier": "^3.8.3",
     "tsx": "^4.19.0",
