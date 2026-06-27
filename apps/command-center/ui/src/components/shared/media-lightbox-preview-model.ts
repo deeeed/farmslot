@@ -15,7 +15,12 @@ export interface SameOriginLightboxFetchUrlInput {
 export function sameOriginLightboxFetchUrl(input: SameOriginLightboxFetchUrlInput): string {
   try {
     const parsed = new URL(input.url, input.locationHref);
-    if (parsed.origin === input.windowOrigin || parsed.origin === input.gatewayOrigin) {
+    const current = new URL(input.locationHref);
+    const hostedCommandCenter = current.pathname === '/cc' || current.pathname.startsWith('/cc/');
+    if (
+      parsed.origin === input.windowOrigin ||
+      (parsed.origin === input.gatewayOrigin && !hostedCommandCenter)
+    ) {
       return `${parsed.pathname}${parsed.search}${parsed.hash}`;
     }
     return input.url;

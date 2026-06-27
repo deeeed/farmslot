@@ -22,6 +22,15 @@ test('same-origin lightbox fetch urls strip UI and gateway origins only', () => 
     '/artifacts/a.md',
   );
   assert.equal(
+    sameOriginLightboxFetchUrl({
+      ...base,
+      locationHref: 'https://farmslot.io/cc/#doctor',
+      windowOrigin: 'https://farmslot.io',
+      url: 'http://localhost:7777/artifacts/a.md?token=t',
+    }),
+    'http://localhost:7777/artifacts/a.md?token=t',
+  );
+  assert.equal(
     sameOriginLightboxFetchUrl({ ...base, url: 'https://example.test/artifacts/a.md' }),
     'https://example.test/artifacts/a.md',
   );

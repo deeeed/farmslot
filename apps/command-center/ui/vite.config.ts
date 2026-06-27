@@ -12,8 +12,10 @@ const gatewayPort = Number(process.env.GATEWAY_PORT) || 7777;
 const gatewayHost = process.env.GATEWAY_PROXY_HOST || process.env.GATEWAY_HOST || '127.0.0.1';
 const vitePort = Number(process.env.VITE_PORT) || 5174;
 const gatewayTarget = `http://${gatewayHost}:${gatewayPort}`;
+const base = process.env.FARMSLOT_CC_BASE || process.env.VITE_BASE || '/';
 
 export default defineConfig({
+  base,
   root: resolve(__dirname),
   define: {
     __FARMSLOT_APP_VERSION__: JSON.stringify(appVersion),

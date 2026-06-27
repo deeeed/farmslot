@@ -33,8 +33,18 @@ the source instead of cloning from a URL.
 What it does:
 
 - checks prerequisites (git, node per `engines`, yarn, tmux, python3) and agent
-  runners (at least one of claude / codex / cursor-agent / grok) — prints install
-  hints, never auto-installs
+  runners (at least one of claude / codex / cursor-agent / grok). On macOS it
+  can install missing common tools through Homebrew prompts
+  (`FARMSLOT_AUTO_INSTALL=1` accepts those prompts non-interactively); otherwise
+  it prints fix hints and stops.
+- activates existing `asdf`/`nvm` installs in non-interactive shells and uses
+  them to install/switch to the repo's recommended Node version when needed.
+- on macOS, checks for the standalone `capture-helper` CLI and can install it
+  with Homebrew or `npm install -g @siteed/capture-helper` unless
+  `FARMSLOT_SKIP_CAPTURE_HELPER=1` is set. Grant Screen Recording permission to
+  the terminal app on first capture so Command Center can show live visual
+  evidence. The legacy embedded helper under `tools/capture-helper/` is not used
+  by the installer.
 - creates the workspace (default `~/dev/farmslot-workspace`, override with
   `FARMSLOT_WORKSPACE`): `farmslot/` clone, `repos/`, `runs/`, `state.json`
 - installs dependencies, builds the CLI's workspace packages, symlinks
@@ -130,3 +140,17 @@ farmslot doctor
 
 Green checklist (prereqs, runners, workspace, pool, packs, CLI, gateway
 profiles) or specific failures with fix hints. Exit code reflects status.
+
+### Fast pack registration
+
+For heavyweight packs, prefer a registration-only first pass:
+
+```bash
+farmslot project add <pack> --no-setup
+```
+
+This proves the workspace, pack contract, slot registration, repo clones, and fixtures without running product builds. Follow with a focused full setup when ready:
+
+```bash
+farmslot project add <pack> --project <project-name>
+```

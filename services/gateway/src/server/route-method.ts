@@ -231,6 +231,7 @@ import {
   fleetRefreshSlots,
   fleetRefreshSlotsCancel,
 } from '../methods/fleet-refresh.js';
+import { gatewayDoctor } from '../methods/gateway-doctor.js';
 import { gatewayStatus } from '../methods/gateway-status.js';
 import {
   gitBranchDiff,
@@ -390,6 +391,8 @@ export async function routeMethod(
     // Gateway self-status
     case Methods.GATEWAY_STATUS:
       return gatewayStatus(p as GatewayStatusParams);
+    case Methods.GATEWAY_DOCTOR:
+      return gatewayDoctor();
 
     // Fleet
     case Methods.FLEET_STATUS:

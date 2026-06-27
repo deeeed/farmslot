@@ -5,10 +5,11 @@
 // the built Command Center dashboard on the same port. It registers a `local`
 // authed profile for subsequent commands (pair, fleet, …). `farmslot down`
 // stops it. pid + log live under ~/.farmslot.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
+import { hostname, networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import type { Command } from 'commander';
@@ -26,6 +27,56 @@ import { OutputContext } from '../output.js';
 
 const LOCAL_PROFILE = 'local';
 const UI_DIST_INDEX = join(repoRoot, 'apps', 'command-center', 'ui', 'dist', 'index.html');
+const HOSTED_COMMAND_CENTER_BASE = 'https://farmslot.io/cc';
+
+interface HostedGatewayCandidate {
+  url: string;
+  label: string;
+}
+
+function encodeBase64UrlJson(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+}
+
+function lanIPv4s(): string[] {
+  const all: string[] = [];
+  for (const list of Object.values(networkInterfaces())) {
+    for (const iface of list ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) all.push(iface.address);
+    }
+  }
+  const isPrivate = (ip: string): boolean =>
+    /^10\./.test(ip) || /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+  const privateIps = all.filter(isPrivate);
+  return [...new Set(privateIps.length > 0 ? privateIps : all)];
+}
+
+function hostedGatewayCandidates(port: number): HostedGatewayCandidate[] {
+  const host = hostname().replace(/\.local$/, '');
+  return [
+    { url: `ws://localhost:${port}/ws`, label: 'Local gateway' },
+    ...lanIPv4s().map((ip) => ({ url: `ws://${ip}:${port}/ws`, label: `${host} LAN` })),
+  ];
+}
+
+function hostedCommandCenterUrl(port: number, token: string): string {
+  const payload = {
+    v: 1,
+    gateways: hostedGatewayCandidates(port),
+    token,
+  };
+  return `${HOSTED_COMMAND_CENTER_BASE}#doctor?connect=${encodeBase64UrlJson(payload)}`;
+}
+
+function openHostedCommandCenter(url: string): boolean {
+  if (process.platform === 'darwin') {
+    return spawnSync('open', [url], { stdio: 'ignore' }).status === 0;
+  }
+  const opener = process.platform === 'win32' ? 'start' : 'xdg-open';
+  return (
+    spawnSync(opener, [url], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0
+  );
+}
 
 function farmslotHome(): string {
   return dirname(profilesPath());
@@ -181,21 +232,68 @@ function pairHint(localActive: boolean): string {
   return localActive ? 'farmslot pair' : 'farmslot --gateway local pair';
 }
 
-async function up(port: number, output: OutputContext): Promise<void> {
+function writeUpResult(params: {
+  output: OutputContext;
+  status: 'gateway up' | 'gateway already running';
+  pid: number;
+  port: number;
+  token: string;
+  localActive: boolean;
+  dashboardBuilt: boolean;
+  openBrowser: boolean;
+}): void {
+  const hostedDashboard = hostedCommandCenterUrl(params.port, params.token);
+  const fallbackDashboard = `http://localhost:${params.port}`;
+  if (params.output.json) {
+    params.output.writeJson({
+      pid: params.pid,
+      port: params.port,
+      url: `ws://localhost:${params.port}`,
+      profile: LOCAL_PROFILE,
+      token: params.token,
+      pairCommand: pairHint(params.localActive),
+      dashboard: params.dashboardBuilt ? fallbackDashboard : null,
+      hostedDashboard,
+      fallbackDashboard,
+    });
+    return;
+  }
+
+  const opened = params.openBrowser && openHostedCommandCenter(hostedDashboard);
+  params.output.write(`${green(params.status)} ${dim(`pid ${params.pid}`)}\n`);
+  params.output.write(
+    `  ${dim('command center')} ${cyan(hostedDashboard)}${opened ? dim(' (opened)') : ''}\n`,
+  );
+  params.output.write(
+    `  ${dim('fallback')}       ${cyan(fallbackDashboard)}${
+      params.dashboardBuilt
+        ? ''
+        : dim(' (build local UI first: yarn --cwd apps/command-center/ui build)')
+    }\n`,
+  );
+  params.output.write(`  ${dim('gateway')}        ${cyan(`ws://localhost:${params.port}/ws`)}\n`);
+  params.output.write(
+    `  ${dim('next')}           ${bold(pairHint(params.localActive))} ${dim('(pair your phone)')}\n`,
+  );
+}
+
+async function up(port: number, output: OutputContext, openBrowser: boolean): Promise<void> {
   const existingPid = readPid();
   if (existingPid && isAlive(existingPid)) {
     if (await waitForHealth(port, 2000)) {
       const token = ensureTokenAuthEnv();
       await verifyTokenAuth(port, token, output);
       const localActive = registerLocalProfile(port, token);
-      output.write(`${green('gateway already running')} ${dim(`pid ${existingPid}`)}\n`);
-      output.write(`  ${dim('dashboard')}  ${cyan(`http://localhost:${port}`)}\n`);
-      output.write(
-        `  ${dim('token')}      ${token} ${dim('(paste into the dashboard to log in)')}\n`,
-      );
-      output.write(
-        `  ${dim('next')}       ${bold(pairHint(localActive))} ${dim('(pair your phone)')}\n`,
-      );
+      writeUpResult({
+        output,
+        status: 'gateway already running',
+        pid: existingPid,
+        port,
+        token,
+        localActive,
+        dashboardBuilt: existsSync(UI_DIST_INDEX),
+        openBrowser,
+      });
       return;
     }
     // Pid alive but our port is not healthy: either a wedged gateway or the OS
@@ -265,6 +363,8 @@ async function up(port: number, output: OutputContext): Promise<void> {
   const localActive = registerLocalProfile(port, token);
 
   const dashboardBuilt = existsSync(UI_DIST_INDEX);
+  const hostedDashboard = hostedCommandCenterUrl(port, token);
+  const fallbackDashboard = `http://localhost:${port}`;
   if (output.json) {
     output.writeJson({
       pid: child.pid,
@@ -273,22 +373,21 @@ async function up(port: number, output: OutputContext): Promise<void> {
       profile: LOCAL_PROFILE,
       token,
       pairCommand: pairHint(localActive),
-      dashboard: dashboardBuilt ? `http://localhost:${port}` : null,
+      dashboard: dashboardBuilt ? fallbackDashboard : null,
+      hostedDashboard,
+      fallbackDashboard,
     });
     return;
   }
+  const opened = openBrowser && openHostedCommandCenter(hostedDashboard);
   output.write(`${green('gateway up')} ${dim(`pid ${child.pid}`)}\n`);
-  if (dashboardBuilt) {
-    output.write(`  ${dim('dashboard')}  ${cyan(`http://localhost:${port}`)}\n`);
-    output.write(
-      `  ${dim('token')}      ${token} ${dim('(paste into the dashboard to log in)')}\n`,
-    );
-  } else {
-    output.write(
-      `  ${dim('dashboard')}  ${dim('not built — run: yarn --cwd apps/command-center/ui build')}\n`,
-    );
-  }
-  output.write(`  ${dim('gateway')}    ${cyan(`ws://localhost:${port}`)}\n`);
+  output.write(
+    `  ${dim('command center')} ${cyan(hostedDashboard)}${opened ? dim(' (opened)') : ''}\n`,
+  );
+  output.write(
+    `  ${dim('fallback')}       ${cyan(fallbackDashboard)}${dashboardBuilt ? '' : dim(' (build local UI first: yarn --cwd apps/command-center/ui build)')}\n`,
+  );
+  output.write(`  ${dim('gateway')}        ${cyan(`ws://localhost:${port}/ws`)}\n`);
   output.write(
     `  ${dim('next')}       ${bold(pairHint(localActive))} ${dim('(pair your phone)')}\n`,
   );
@@ -311,9 +410,10 @@ export function registerUpCommand(program: Command): void {
     .command('up')
     .description('Start the local gateway + dashboard as a background service')
     .option('--port <port>', 'gateway port', '7777')
-    .action(async (opts: { port: string }, cmd: Command) => {
+    .option('--no-open', 'print the hosted Command Center URL without opening a browser')
+    .action(async (opts: { port: string; open?: boolean }, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      await up(Number(opts.port), output);
+      await up(Number(opts.port), output, opts.open !== false && !output.json);
     });
 
   program

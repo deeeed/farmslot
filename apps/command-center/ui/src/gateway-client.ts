@@ -9,7 +9,16 @@ import type {
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
-import { resolveGatewayWebSocketUrl } from './gateway-url.js';
+import {
+  GATEWAY_CANDIDATES_STORAGE_KEY,
+  GATEWAY_PASSWORD_STORAGE_KEY,
+  GATEWAY_TOKEN_STORAGE_KEY,
+  GATEWAY_URL_STORAGE_KEY,
+  parseHostedGatewayConnection,
+  persistGatewayAuthForHttp,
+  replaceStoredGatewayAuthForHttp,
+  resolveGatewayWebSocketUrls,
+} from './gateway-url.js';
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'auth_required';
 type EventCallback<T = unknown> = (payload: T) => void;
@@ -23,6 +32,11 @@ interface ImportMetaWithEnv extends ImportMeta {
 export interface GatewayAuthCredentials {
   token?: string;
   password?: string;
+}
+
+interface BrowserGatewayConnection {
+  urls: string[];
+  auth: GatewayAuthCredentials;
 }
 
 interface PendingRequest {
@@ -46,17 +60,30 @@ const MAX_BACKOFF = 30_000;
 const HTTP_AUTH_COOKIE = 'farmslot_gateway_credential';
 const HTTP_AUTH_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
-function resolveBrowserGatewayAuth(): GatewayAuthCredentials {
+function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
   const env = (import.meta as ImportMetaWithEnv).env;
+  const hosted = parseHostedGatewayConnection(location.hash);
   const token =
-    env.VITE_FARMSLOT_GATEWAY_TOKEN ?? localStorage.getItem('farmslot.gateway.token') ?? undefined;
+    env.VITE_FARMSLOT_GATEWAY_TOKEN ??
+    hosted.token ??
+    localStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY) ??
+    undefined;
   const password =
     env.VITE_FARMSLOT_GATEWAY_PASSWORD ??
-    localStorage.getItem('farmslot.gateway.password') ??
+    hosted.password ??
+    localStorage.getItem(GATEWAY_PASSWORD_STORAGE_KEY) ??
     undefined;
+  const urls = resolveGatewayWebSocketUrls(
+    env.VITE_FARMSLOT_GATEWAY_URL,
+    location,
+    localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY),
+  );
   return {
-    ...(token ? { token } : {}),
-    ...(password ? { password } : {}),
+    urls,
+    auth: {
+      ...(token ? { token } : {}),
+      ...(password ? { password } : {}),
+    },
   };
 }
 
@@ -83,19 +110,22 @@ export class GatewayClient {
   private binarySubs = new Set<BinaryCallback>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private backoff = 1000;
+  private urls: string[];
+  private urlIndex = 0;
   private url: string;
   private auth: GatewayAuthCredentials;
   private disposed = false;
   private authBlocked = false;
   private lastAuthError: GatewayRequestError | null = null;
 
-  constructor(url?: string, auth: GatewayAuthCredentials = resolveBrowserGatewayAuth()) {
-    const env = (import.meta as ImportMetaWithEnv).env;
-    // In local dev this normally stays unset and Vite proxies /ws to GATEWAY_PORT.
-    // Deployed Command Center instances should set VITE_FARMSLOT_GATEWAY_URL.
-    this.url = url ?? resolveGatewayWebSocketUrl(env.VITE_FARMSLOT_GATEWAY_URL, location);
-    this.auth = auth;
-    syncBrowserHttpAuthCookie(auth);
+  constructor(url?: string, auth?: GatewayAuthCredentials) {
+    const resolved = resolveBrowserGatewayConnection();
+    this.urls = url ? [url] : resolved.urls;
+    this.url = this.urls[0];
+    this.auth = auth ?? resolved.auth;
+    this.persistConnection();
+    persistGatewayAuthForHttp(this.auth);
+    syncBrowserHttpAuthCookie(this.auth);
   }
 
   get connectionState(): ConnectionState {
@@ -125,10 +155,7 @@ export class GatewayClient {
     syncBrowserHttpAuthCookie(auth);
     this.authBlocked = false;
     this.lastAuthError = null;
-    localStorage.removeItem('farmslot.gateway.token');
-    localStorage.removeItem('farmslot.gateway.password');
-    if (auth.token) localStorage.setItem('farmslot.gateway.token', auth.token);
-    if (auth.password) localStorage.setItem('farmslot.gateway.password', auth.password);
+    replaceStoredGatewayAuthForHttp(auth);
     this.ws?.close();
     this.ws = null;
     this.setState('disconnected');
@@ -167,6 +194,7 @@ export class GatewayClient {
         return;
       }
       this.setState('disconnected');
+      this.advanceGatewayCandidate();
       this.scheduleReconnect();
     };
 
@@ -324,6 +352,18 @@ export class GatewayClient {
         /* listener error */
       }
     }
+  }
+
+  private advanceGatewayCandidate(): void {
+    if (this.urls.length <= 1) return;
+    this.urlIndex = (this.urlIndex + 1) % this.urls.length;
+    this.url = this.urls[this.urlIndex];
+    this.persistConnection();
+  }
+
+  private persistConnection(): void {
+    localStorage.setItem(GATEWAY_URL_STORAGE_KEY, this.url);
+    localStorage.setItem(GATEWAY_CANDIDATES_STORAGE_KEY, JSON.stringify(this.urls));
   }
 
   private scheduleReconnect(): void {

@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
+import { gatewayApiUrl } from '../../utils/gateway-origin.js';
 
 import type { SlotView } from './slot-view.js';
 import { basename, extToLanguage, isImageFile, isMediaFile, realPath } from './slot-view-model.js';
@@ -263,7 +264,9 @@ export function renderEditor(view: SlotView) {
 
   // Image files — render via gateway HTTP endpoint (proxied through Vite)
   if (isImageFile(view._activeFile)) {
-    const src = `/api/file?slotId=${encodeURIComponent(view.slotId)}&path=${encodeURIComponent(view._activeFile)}`;
+    const src = gatewayApiUrl(
+      `/api/file?slotId=${encodeURIComponent(view.slotId)}&path=${encodeURIComponent(view._activeFile)}`,
+    );
     return html`<div class="sv-image-viewer">
       <img src=${src} alt=${basename(view._activeFile)} />
     </div>`;
@@ -271,7 +274,9 @@ export function renderEditor(view: SlotView) {
 
   // Video files
   if (isMediaFile(view._activeFile)) {
-    const src = `/api/file?slotId=${encodeURIComponent(view.slotId)}&path=${encodeURIComponent(view._activeFile)}`;
+    const src = gatewayApiUrl(
+      `/api/file?slotId=${encodeURIComponent(view.slotId)}&path=${encodeURIComponent(view._activeFile)}`,
+    );
     return html`<div class="sv-image-viewer">
       <video controls src=${src}></video>
     </div>`;

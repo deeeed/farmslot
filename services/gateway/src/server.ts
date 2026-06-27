@@ -46,6 +46,7 @@ import {
 } from './runtime/screen-session.js';
 import { unsubscribeAll } from './runtime/tmux-stream.js';
 // Method handlers
+import { isGatewayOriginAllowed } from './security/origin.js';
 import {
   authenticateGatewayClient,
   GatewayAuthError,
@@ -94,7 +95,12 @@ export function createWebSocketServer(
   authRuntime: GatewayAuthRuntime,
 ): WebSocketServer {
   activeAuthRuntime = authRuntime;
-  const wss = new WebSocketServer({ server: httpServer });
+  const wss = new WebSocketServer({
+    server: httpServer,
+    verifyClient: (info, done) => {
+      done(isGatewayOriginAllowed(info.origin, info.req.headers.host));
+    },
+  });
 
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
     const state: ClientState = {

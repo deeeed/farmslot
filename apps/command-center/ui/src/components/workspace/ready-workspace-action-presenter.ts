@@ -14,7 +14,7 @@ import {
   buildArtifactUrlResolver,
   rewriteMarkdownArtifactUrls,
 } from '../../utils/artifact-markdown.js';
-import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { gatewayApiUrl, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 import {
   currentRecoveryEpoch,
   isRecoveryEpochCurrent,
@@ -238,7 +238,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (artifact?.sha256) params.set('v', artifact.sha256.slice(0, 12));
     else if (typeof artifact?.sizeBytes === 'number') params.set('v', `s${artifact.sizeBytes}`);
     if (typeof artifact?.sizeBytes === 'number') params.set('vsize', String(artifact.sizeBytes));
-    return `${GATEWAY_BASE}/api/run-artifact?${params.toString()}`;
+    return gatewayApiUrl(`${GATEWAY_BASE}/api/run-artifact?${params.toString()}`);
   }
 
   _recipeRunArtifactUrl(group: RecipeRunArtifactGroup, artifact: ArtifactRef): string {
@@ -314,7 +314,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._legacyTaskPromptError = '';
     try {
       const params = new URLSearchParams({ runId: this.runId, path: 'TASK.md' });
-      const response = await fetch(`${window.location.origin}/api/run-artifact?${params}`);
+      const response = await fetch(gatewayApiUrl(`/api/run-artifact?${params}`));
       if (!response.ok) throw new Error(`${response.status}`);
       this._legacyTaskPromptText = await response.text();
     } catch (error) {

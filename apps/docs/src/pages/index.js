@@ -8,6 +8,8 @@ import styles from './index.module.css';
 
 const INSTALL_COMMAND =
   'curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | bash';
+const COMMAND_CENTER_URL = 'https://farmslot.io/cc';
+const GATEWAY_COMMAND = 'farmslot up';
 
 const operatingLoop = ['Dispatch', 'Watch', 'Steer', 'Validate', 'Review', 'Improve'];
 
@@ -145,8 +147,17 @@ function HomepageHeader() {
             </span>
           </div>
           <div className={styles.buttons}>
-            <Link className="button button--secondary button--lg" to="/docs/guides/getting-started">
-              Get started
+            <a className="button button--secondary button--lg" href={COMMAND_CENTER_URL}>
+              Open Command Center
+            </a>
+            <Link
+              className={clsx(
+                'button button--outline button--secondary button--lg',
+                styles.heroOutlineButton,
+              )}
+              to="/docs/guides/getting-started"
+            >
+              Install Farmslot
             </Link>
             <Link
               className={clsx(
@@ -182,6 +193,62 @@ function HomepageHeader() {
         </div>
       </div>
     </header>
+  );
+}
+
+function CommandCenterOnboarding() {
+  return (
+    <section className={styles.commandCenterOnboarding}>
+      <div className={clsx('container', styles.commandCenterPanel)}>
+        <div className={styles.commandCenterIntro}>
+          <span className={styles.sectionEyebrow}>Hosted cockpit</span>
+          <Heading as="h2">Open Command Center first, then connect your local farm.</Heading>
+          <p>
+            The hosted Command Center is a static page at <code>farmslot.io/cc</code>. It connects
+            only to the gateway you launch locally, using the secure link that{' '}
+            <code>farmslot up</code>
+            prints. The local Command Center remains available as a fallback when you need it.
+          </p>
+          <div className={styles.commandCenterActions}>
+            <a className="button button--primary button--lg" href={COMMAND_CENTER_URL}>
+              Open farmslot.io/cc
+            </a>
+            <Link
+              className="button button--outline button--primary button--lg"
+              to="/docs/guides/getting-started"
+            >
+              Install guide
+            </Link>
+          </div>
+        </div>
+        <div className={styles.onboardingCards}>
+          <article>
+            <strong>1. If Farmslot is installed</strong>
+            <CodeBlock language="bash">{GATEWAY_COMMAND}</CodeBlock>
+            <p>
+              Starts your local gateway, opens the hosted Command Center, and lands on Doctor so you
+              can verify gateway, projects, slots, browsers, simulators, ADB, and capture-helper.
+            </p>
+          </article>
+          <article>
+            <strong>2. If this is a clean machine</strong>
+            <CodeBlock language="bash">{INSTALL_COMMAND}</CodeBlock>
+            <p>
+              Installs prerequisites, configures Farmslot, then guides you to launch the gateway and
+              connect Command Center.
+            </p>
+          </article>
+          <article>
+            <strong>3. If hosted cannot reach localhost</strong>
+            <p>
+              Use the fallback URL printed by <code>farmslot up</code>, usually{' '}
+              <code>http://localhost:7777</code>. This serves the local Command Center from the same
+              gateway.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -341,6 +408,7 @@ export default function Home() {
     >
       <HomepageHeader />
       <main>
+        <CommandCenterOnboarding />
         <LatestAdditions />
         <DemoSection />
         <FeedbackLoop />

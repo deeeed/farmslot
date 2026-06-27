@@ -19,6 +19,14 @@ test('familyMarkdownPreviewFetchPath strips gateway base for proxied artifact fe
     familyMarkdownPreviewFetchPath('http://localhost:7777', '/api/run-artifact?x=1'),
     '/api/run-artifact?x=1',
   );
+  assert.equal(
+    familyMarkdownPreviewFetchPath(
+      'http://localhost:7777',
+      'http://localhost:7777/api/run-artifact?x=1&token=t',
+      '/cc/',
+    ),
+    'http://localhost:7777/api/run-artifact?x=1&token=t',
+  );
 });
 
 test('familyMarkdownPreviewText strips markdown chrome and truncates first content line', () => {
