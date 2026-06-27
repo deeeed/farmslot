@@ -104,6 +104,7 @@
     }
   },
   "recipe_run_supports_playback_slow": true,
+  "recipe_run_supports_video_recording": true,
   "health": {
     "dev_server_name": "Gateway",
     "dev_server_log": ".sandbox/farmslot/agent/sandbox-dev.log"
@@ -222,6 +223,7 @@
     "recipe_runner_resolve_cmd": "node -e \"console.log('apps/command-center/scripts/agentic/run-recipe.mjs')\"",
     "recipe_manifest_path": "{{farmslot_dir}}/docs/examples/recipes/farmslot-v1.action-manifest.json",
     "recipe_validate_wrapper": "{{primary_repo}}/projects/farmslot/setup/validate-recipe.sh",
+    "recipe_sync_evidence_cmd": "bash {{primary_repo}}/projects/farmslot/setup/sync-recipe-evidence.sh",
     "recipe_quality_path": "{{runtime_dir}}/recipe-quality.md",
     "recipe_example_banner": "{{farmslot_dir}}/docs/examples/recipes/farmslot/demo-red-banner.recipe.json"
   }

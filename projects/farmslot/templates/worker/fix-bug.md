@@ -95,7 +95,12 @@ Signal shape:
   cd apps/command-center && yarn typecheck
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
-- [ ] **8b. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` + `recipe-quality.json` and run `check-task-artifact-contract.mjs` with recipe flags.
+- [ ] **8b. PR-grade proof run** (UI bugs) — slow + video, then sync evidence:
+  ```bash
+  bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
+  ```
+- [ ] **8c. Evidence manifest** — `evidence-manifest.json` with before/after pairs + `videos.after: artifacts/after.mp4` for gateway PR embed.
+- [ ] **8d. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` + `recipe-quality.json` and run `check-task-artifact-contract.mjs` with recipe flags.
 - [ ] **9. Self-review** — read the diff (`git diff`). Check for: inline type duplication (use `@farmslot/protocol`), unnecessary helpers, comments that restate code.
 - [ ] **10. Commit** — single commit following the repo's Lore commit protocol.
 - [ ] **11. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
@@ -109,13 +114,13 @@ Signal shape:
       {
         "label": "Bug before/after",
         "covers": ["ac1"],
-        "before": "before-ac1.png",
-        "after": "after-ac1.png"
+        "before": "artifacts/before-ac1.png",
+        "after": "artifacts/after-ac1.png"
       }
     ],
-    "standalone": [{ "label": "Fixed final state", "covers": ["ac2"], "file": "after-ac2.png" }],
-    "omit": ["redundant.png"],
-    "videos": { "after": "after.mp4", "preferred": false }
+    "standalone": [{ "label": "Fixed final state", "covers": ["ac2"], "file": "artifacts/after-ac2.png" }],
+    "omit": ["artifacts/redundant.png"],
+    "videos": { "after": "artifacts/after.mp4", "preferred": true, "note": "Full recipe replay at 2s slow playback" }
   }
   ```
 - [ ] **13. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: files changed, root cause, fix summary, test results.

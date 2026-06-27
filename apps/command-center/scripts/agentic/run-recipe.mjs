@@ -15,20 +15,27 @@
  *     [--record-video=full-run] \
  *     [--json]
  */
+import { execFile } from 'node:child_process';
 import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
 import { createStandardCoreAdapters } from '@farmslot/recipe-harness/adapters/core';
 import { createStandardUiAdapters } from '@farmslot/recipe-harness/adapters/ui';
-import { createRecipeRunner } from '@farmslot/recipe-harness/runner';
+import {
+  createCaptureHelperVideoRecorder,
+  createRecipeRunner,
+} from '@farmslot/recipe-harness';
 import {
   CdpWebPage,
   createCdpWebUiTransport,
   listCdpTargets,
   selectCdpTarget,
 } from '@farmslot/recipe-harness/runtime/cdp';
+
+const execFileAsync = promisify(execFile);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -50,6 +57,11 @@ function parseArgs(argv) {
     slotId: process.env.FARMSLOT_SLOT_ID ?? '',
     slowMs: 0,
     recordVideo: false,
+    recordMaxFps: 15,
+    recordMaxSize: 1080,
+    recordAppName: process.env.FARMSLOT_RECORD_APP_NAME ?? 'Google Chrome',
+    recordWindowName: process.env.FARMSLOT_RECORD_WINDOW_NAME ?? '',
+    recordPid: 0,
     json: false,
     inputs: {},
   };
@@ -122,6 +134,46 @@ function parseArgs(argv) {
     }
     if (arg === '--record-video' || arg === '--record-video=full-run') {
       options.recordVideo = true;
+      continue;
+    }
+    if (arg === '--record-max-fps') {
+      options.recordMaxFps = Number(argv[++i]);
+      continue;
+    }
+    if (arg.startsWith('--record-max-fps=')) {
+      options.recordMaxFps = Number(arg.slice('--record-max-fps='.length));
+      continue;
+    }
+    if (arg === '--record-max-size') {
+      options.recordMaxSize = Number(argv[++i]);
+      continue;
+    }
+    if (arg.startsWith('--record-max-size=')) {
+      options.recordMaxSize = Number(arg.slice('--record-max-size='.length));
+      continue;
+    }
+    if (arg === '--record-app-name') {
+      options.recordAppName = argv[++i] ?? '';
+      continue;
+    }
+    if (arg.startsWith('--record-app-name=')) {
+      options.recordAppName = arg.slice('--record-app-name='.length);
+      continue;
+    }
+    if (arg === '--record-window-name') {
+      options.recordWindowName = argv[++i] ?? '';
+      continue;
+    }
+    if (arg.startsWith('--record-window-name=')) {
+      options.recordWindowName = arg.slice('--record-window-name='.length);
+      continue;
+    }
+    if (arg === '--record-pid') {
+      options.recordPid = Number(argv[++i]);
+      continue;
+    }
+    if (arg.startsWith('--record-pid=')) {
+      options.recordPid = Number(arg.slice('--record-pid='.length));
       continue;
     }
     if (arg === '--json') {
@@ -301,6 +353,40 @@ async function connectPage(cdpPort, preferredHash) {
   return CdpWebPage.connectToTarget(selected);
 }
 
+async function pidListeningOnPort(port) {
+  try {
+    const { stdout } = await execFileAsync('lsof', [
+      `-iTCP:${port}`,
+      '-sTCP:LISTEN',
+      '-t',
+    ]);
+    const pid = Number(stdout.trim().split('\n')[0]);
+    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveRecordingTarget(options) {
+  if (options.recordPid > 0) {
+    return { kind: 'pid', pid: options.recordPid };
+  }
+  const cdpPid = await pidListeningOnPort(options.cdpPort);
+  if (cdpPid) return { kind: 'pid', pid: cdpPid };
+  if (options.recordWindowName) {
+    return {
+      kind: 'app-window',
+      appName: options.recordAppName,
+      windowName: options.recordWindowName,
+    };
+  }
+  return {
+    kind: 'app-window',
+    appName: options.recordAppName,
+    windowName: 'localhost',
+  };
+}
+
 async function main() {
   const { recipePath, options } = parseArgs(process.argv.slice(2));
   const uiUrl = await resolveUiUrl(options.projectRoot, options.uiUrl);
@@ -386,6 +472,8 @@ async function main() {
     options.slowMs,
   );
 
+  const recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
+
   const runner = createRecipeRunner({
     actionManifest: filteredManifest,
     adapters: [
@@ -399,6 +487,17 @@ async function main() {
     ],
     preconditions: buildPreconditions({ uiUrl, gatewayPort: options.gatewayPort }),
     logger: console,
+    recording: {
+      videoRecorder: createCaptureHelperVideoRecorder(),
+      targetProvider: {
+        async resolveRecordingTarget() {
+          if (!recordingTarget) {
+            throw new Error('Recording target requested without --record-video.');
+          }
+          return recordingTarget;
+        },
+      },
+    },
   });
 
   const result = await runner.run({
@@ -407,7 +506,12 @@ async function main() {
     artifactsDir,
     projectRoot: options.projectRoot,
     recordVideo: options.recordVideo
-      ? { mode: 'full-run' }
+      ? {
+          mode: 'full-run',
+          maxFps: options.recordMaxFps,
+          maxSize: options.recordMaxSize,
+          target: recordingTarget,
+        }
       : false,
     env: {
       FARMSLOT_CDP_PORT: String(options.cdpPort),
