@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -448,6 +448,75 @@ test('import rejects unlisted files under task tree', () => {
         }),
       /Bundle contains unlisted file: tasks\//,
     );
+  } finally {
+    rmSync(targetRoot, { recursive: true, force: true });
+    rmSync(bundleDir, { recursive: true, force: true });
+    rmSync(bundlePath, { force: true });
+  }
+});
+
+test('import clears stale taskFile when bundle has no task tree', () => {
+  const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-dst7-'));
+  const bundleDir = mkdtempSync(path.join(tmpdir(), 'farmrun-sec-pack7-'));
+  const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const run: Run = {
+    id: runId,
+    familyId: 'family-1',
+    lane: 'comparison',
+    variant: 'baseline',
+    flowType: 'dev',
+    mode: 'validation',
+    status: 'done',
+    project: 'demo-farm',
+    ticketOrPr: 'EVAL-1',
+    slotId: 'mac-1',
+    branch: 'eval/baseline',
+    completionPolicy: 'artifact-only',
+    taskFile: '/tmp/source/projects/demo-farm/tasks/dev/stale/TASK.md',
+    activeTaskFile: '/tmp/source/projects/demo-farm/tasks/dev/stale/TASK.md',
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const runFile = 'runs/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.json';
+  const runJson = JSON.stringify(run, null, 2);
+  const manifest: RunBundleManifest = {
+    version: RUN_BUNDLE_VERSION,
+    profile: 'reference',
+    exportedAt: new Date().toISOString(),
+    bundleId: 'bundle-7',
+    source: { farmslotRoot: '/tmp/source', runIds: [runId] },
+    remapPolicy: 'remap-ids',
+    runs: [{ originalRunId: runId, runPath: runFile }],
+    entries: {
+      [runFile]: {
+        sha256: sha256Text(runJson),
+        bytes: Buffer.byteLength(runJson, 'utf-8'),
+        path: runFile,
+      },
+    },
+  };
+  buildMaliciousBundle(bundleDir, manifest, run, runFile);
+  const bundlePath = path.join(tmpdir(), `stale-taskfile-${Date.now()}.farmrun`);
+  packFarmrunDirectory(bundleDir, bundlePath);
+  writeMinimalRoot(targetRoot);
+
+  try {
+    const imported = importBundle({
+      farmslotRoot: targetRoot,
+      bundlePath,
+      mode: 'seed',
+    });
+    const persisted = JSON.parse(
+      readFileSync(
+        path.join(targetRoot, '.runs', `${imported.importedRunIds[0]}.json`),
+        'utf-8',
+      ),
+    ) as Run;
+    assert.equal(persisted.taskFile, null);
+    assert.equal(persisted.activeTaskFile, undefined);
   } finally {
     rmSync(targetRoot, { recursive: true, force: true });
     rmSync(bundleDir, { recursive: true, force: true });

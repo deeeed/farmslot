@@ -250,6 +250,17 @@ test('farmrun seed import remaps parentRunId redirectedToRunId and familyId', ()
     completionPolicy: 'artifact-only',
     taskFile: childTask,
     parentRunId: parentId,
+    agentContexts: [
+      {
+        id: 'ctx-child',
+        role: 'dev',
+        label: 'dev',
+        status: 'complete',
+        slotId: 'mac-1',
+        runId: childId,
+        taskFile: childTask,
+      },
+    ],
     steps: [],
     decisions: [],
     metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
@@ -292,6 +303,7 @@ test('farmrun seed import remaps parentRunId redirectedToRunId and familyId', ()
     assert.equal(persistedChild.familyId, newParentId);
     assert.equal(persistedParent.redirectedToRunId, newChildId);
     assert.equal(persistedChild.parentRunId, newParentId);
+    assert.equal(persistedChild.agentContexts?.[0]?.runId, newChildId);
   } finally {
     rmSync(sourceRoot, { recursive: true, force: true });
     rmSync(targetRoot, { recursive: true, force: true });

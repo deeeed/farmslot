@@ -237,6 +237,23 @@ function remapImportedRunLineage(
   return next;
 }
 
+function remapNestedRunIdReferences(run: Run, idMap: Record<string, string>): Run {
+  if (Object.keys(idMap).length === 0) return run;
+  const next = structuredClone(run);
+  if (next.agentContexts) {
+    for (const ctx of next.agentContexts) {
+      if (idMap[ctx.runId]) ctx.runId = idMap[ctx.runId];
+    }
+  }
+  if (next.liveRecipeContext?.recipeRunId && idMap[next.liveRecipeContext.recipeRunId]) {
+    next.liveRecipeContext = {
+      ...next.liveRecipeContext,
+      recipeRunId: idMap[next.liveRecipeContext.recipeRunId],
+    };
+  }
+  return next;
+}
+
 export function importBundle(request: RunBundleImportRequest): RunBundleImportResult {
   const bundleDir = unpackFarmrunArchive(request.bundlePath);
   try {
@@ -274,12 +291,17 @@ export function importBundle(request: RunBundleImportRequest): RunBundleImportRe
         if (taskFile) {
           next = { ...next, taskFile, activeTaskFile: taskFile };
         }
+      } else if (request.mode === 'seed' || request.mode === 'reference-only') {
+        next = { ...next, taskFile: null, activeTaskFile: undefined };
       }
       stagedRuns.push(next);
     }
 
     for (const staged of stagedRuns) {
-      const next = remapImportedRunLineage(staged, idMap, request.mode);
+      const next = remapNestedRunIdReferences(
+        remapImportedRunLineage(staged, idMap, request.mode),
+        idMap,
+      );
       if (next.taskFile) {
         for (const name of ['reference.result-package.json', 'candidate.result-package.json']) {
           const candidate = path.join(path.dirname(next.taskFile), 'artifacts', 'packages', name);

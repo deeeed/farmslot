@@ -76,6 +76,26 @@ export function assertApprovedTaskRestoreRelativePath(relativePath: string): voi
   );
 }
 
+/** Export-only: task file must live under farmslotRoot and approved task roots. */
+export function strictTaskRelativePathFromFarmslotRoot(
+  farmslotRoot: string,
+  taskFile: string | null | undefined,
+): string | null {
+  if (!taskFile?.trim()) return null;
+  const root = path.resolve(farmslotRoot);
+  const resolved = path.resolve(taskFile);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    return null;
+  }
+  const relative = path.relative(root, resolved).replace(/\\/g, '/');
+  try {
+    assertApprovedTaskRestoreRelativePath(relative);
+  } catch {
+    return null;
+  }
+  return relative;
+}
+
 export function resolveTaskFileAbsolute(farmslotRoot: string, relativePath: string): string {
   const root = path.resolve(farmslotRoot);
   const cleaned = relativePath.replace(/\\/g, '/').replace(/^\//, '');

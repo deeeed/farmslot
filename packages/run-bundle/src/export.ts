@@ -13,7 +13,7 @@ import {
   type RunBundleProfile,
   type RunBundleRunEntry,
   sanitizeRunForBundleExport,
-  taskRelativePathFromAbsolute,
+  strictTaskRelativePathFromFarmslotRoot,
 } from '@farmslot/protocol';
 
 import { packFarmrunDirectory, writeBundleManifest } from './archive.js';
@@ -109,21 +109,29 @@ export function exportRunsToBundle(
         runPath: runFile,
       };
 
-      const taskRelative = taskRelativePathFromAbsolute(request.farmslotRoot, run.taskFile);
+      const taskRelative = strictTaskRelativePathFromFarmslotRoot(
+        request.farmslotRoot,
+        run.taskFile,
+      );
       if (run.taskFile && existsSync(run.taskFile)) {
-        const taskKey = sanitizeBundleRunId(run.id);
-        const taskBundleDir = `tasks/${taskKey}`;
-        copyDirectoryRecursive(path.dirname(run.taskFile), path.join(bundleDir, taskBundleDir));
-        registerDirectoryEntries(bundleDir, taskBundleDir, entries);
-        entry.taskKey = taskKey;
-        entry.taskRelativePath = taskRelative ?? undefined;
-        if (!taskRelative) missingData.push(`task-path-unrelocatable:${run.id}`);
-        const packagePaths = collectPackagePaths(path.dirname(run.taskFile));
-        if (packagePaths.length) {
-          entry.packagePaths = packagePaths.map((packagePath) => {
-            const rel = path.relative(path.dirname(run.taskFile!), packagePath).replace(/\\/g, '/');
-            return `${taskBundleDir}/${rel}`;
-          });
+        if (!taskRelative) {
+          missingData.push(`task-path-unapproved:${run.id}`);
+        } else {
+          const taskKey = sanitizeBundleRunId(run.id);
+          const taskBundleDir = `tasks/${taskKey}`;
+          copyDirectoryRecursive(path.dirname(run.taskFile), path.join(bundleDir, taskBundleDir));
+          registerDirectoryEntries(bundleDir, taskBundleDir, entries);
+          entry.taskKey = taskKey;
+          entry.taskRelativePath = taskRelative;
+          const packagePaths = collectPackagePaths(path.dirname(run.taskFile));
+          if (packagePaths.length) {
+            entry.packagePaths = packagePaths.map((packagePath) => {
+              const rel = path
+                .relative(path.dirname(run.taskFile!), packagePath)
+                .replace(/\\/g, '/');
+              return `${taskBundleDir}/${rel}`;
+            });
+          }
         }
       } else if (run.taskFile) {
         missingData.push(`task-dir-missing:${run.id}`);

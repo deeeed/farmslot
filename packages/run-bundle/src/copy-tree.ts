@@ -6,17 +6,38 @@ import type { RunBundleEntryMeta } from '@farmslot/protocol';
 import { sha256File } from './hashing.js';
 import { assertSafeBundleRelativePath } from './safe-paths.js';
 
-const SKIP_DIR_NAMES = new Set(['node_modules', '.git']);
+const SKIP_DIR_NAMES = new Set(['node_modules', '.git', '.ssh', 'secrets']);
+const SENSITIVE_FILE_NAMES = new Set([
+  '.env',
+  '.env.local',
+  '.env.production',
+  '.npmrc',
+  'credentials.json',
+  'secrets.json',
+]);
+const SENSITIVE_FILE_SUFFIXES = ['.pem', '.key', '.p12', '.pfx'];
+
+export function shouldSkipBundleFilesystemEntry(name: string, isDirectory: boolean): boolean {
+  if (isDirectory) return SKIP_DIR_NAMES.has(name);
+  if (SENSITIVE_FILE_NAMES.has(name)) return true;
+  const lower = name.toLowerCase();
+  if (SENSITIVE_FILE_SUFFIXES.some((suffix) => lower.endsWith(suffix))) return true;
+  if (lower.includes('credential') || lower.includes('secret') || lower.includes('token')) {
+    return true;
+  }
+  return false;
+}
 
 export function copyDirectoryRecursive(sourceDir: string, destDir: string): void {
   if (!existsSync(sourceDir)) return;
   mkdirSync(destDir, { recursive: true });
   for (const entry of readdirSync(sourceDir)) {
-    if (SKIP_DIR_NAMES.has(entry)) continue;
+    if (shouldSkipBundleFilesystemEntry(entry, false)) continue;
     const sourcePath = path.join(sourceDir, entry);
     const destPath = path.join(destDir, entry);
     const stats = statSync(sourcePath);
     if (stats.isDirectory()) {
+      if (shouldSkipBundleFilesystemEntry(entry, true)) continue;
       copyDirectoryRecursive(sourcePath, destPath);
       continue;
     }
@@ -38,13 +59,14 @@ export function registerDirectoryEntries(
 
   const walk = (currentDir: string): void => {
     for (const entry of readdirSync(currentDir)) {
-      if (SKIP_DIR_NAMES.has(entry)) continue;
       const sourcePath = path.join(currentDir, entry);
       const stats = statSync(sourcePath);
       if (stats.isDirectory()) {
+        if (shouldSkipBundleFilesystemEntry(entry, true)) continue;
         walk(sourcePath);
         continue;
       }
+      if (shouldSkipBundleFilesystemEntry(entry, false)) continue;
       if (!stats.isFile()) continue;
       const relative = path.relative(bundleRoot, sourcePath).replace(/\\/g, '/');
       assertSafeBundleRelativePath(relative);
