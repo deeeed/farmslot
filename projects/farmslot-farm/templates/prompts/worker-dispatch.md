@@ -1,1 +1,0 @@
-Follow the checklist in {{TASK_FILE}}. After each step, run {{TASK_DIR}}/mark N before continuing.

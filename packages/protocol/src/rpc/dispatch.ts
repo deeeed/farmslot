@@ -197,6 +197,8 @@ export interface DispatchPreviewParams {
   familyId?: string;
   lane?: import('../contracts/index.js').RunLane;
   variant?: string | null;
+  app?: string;
+  prepareProfile?: string;
   /** Restrict slot resolution to this set. Empty/omitted = all project slots. */
   allowedSlots?: string[];
   /**

@@ -1,3 +1,4 @@
+import type { ProfileFitSuggestion } from './validation-plan.js';
 import type { TaskTemplateSelection } from './evals.js';
 import type {
   DevInteractiveProfile,
@@ -88,4 +89,5 @@ export interface DispatchPreview {
   runner: string;
   model: string;
   taskId: string;
+  profileFit?: ProfileFitSuggestion;
 }

@@ -17,10 +17,10 @@ else
 fi
 
 echo "[preflight] Checking gateway..."
-if curl -sf http://localhost:7777/health &>/dev/null; then
-  echo "[preflight] Gateway reachable"
+if curl -sf "http://127.0.0.1:${GATEWAY_PORT}/health" &>/dev/null; then
+  echo "[preflight] Gateway reachable on :${GATEWAY_PORT}"
 else
-  echo "[preflight] WARNING: Gateway not reachable on localhost:7777"
+  echo "[preflight] WARNING: Gateway not reachable on :${GATEWAY_PORT}"
 fi
 
 echo "[preflight] Done"

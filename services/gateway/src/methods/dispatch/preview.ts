@@ -27,6 +27,9 @@ import {
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
 
+import { detectProfileFit } from '../../run-engine/profile-fit-gate.js';
+import { fetchTicketData } from '../../run-engine/ticket-data.js';
+
 import { findBestSlot, isCdpLive, isFreeSlot, slotScore, validateSlot } from './slot-scoring.js';
 import { resolveDispatchTargetBranch } from './target-branch.js';
 import { normalizeTicketRef } from './ticket-ref.js';
@@ -729,10 +732,61 @@ export async function dispatchPreview(
     logPrefix: 'dispatch.preview',
   });
   const enriched = { ...params, targetBranch: resolvedTargetBranch };
-  return resolveDispatchPreviewFromFleet(
+  const result = resolveDispatchPreviewFromFleet(
     { ...enriched, ...resolveDispatchFamilyContext(enriched) },
     fleet.slots,
   );
+  const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
+  const ticketData = await fetchTicketData({
+    id: 'dispatch-preview',
+    familyId: 'dispatch-preview',
+    lane: 'production',
+    flowType: params.flowType as FlowType,
+    status: 'created',
+    project: params.project,
+    ticketOrPr: params.ticketOrPr,
+    slotId: result.preview.slotId,
+    branch: null,
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: null, runner: null },
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+    prepareProfile: params.prepareProfile,
+    app: params.app,
+  } as Run).catch(() => null);
+  const profileFit = detectProfileFit(
+    {
+      id: 'dispatch-preview',
+      familyId: 'dispatch-preview',
+      lane: 'production',
+      flowType: params.flowType as FlowType,
+      status: 'created',
+      project: params.project,
+      ticketOrPr: params.ticketOrPr,
+      slotId: result.preview.slotId,
+      branch: null,
+      taskFile: null,
+      steps: [],
+      decisions: [],
+      metrics: { nudgeCount: 0, model: null, runner: null },
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      prepareProfile: params.prepareProfile,
+      app: params.app,
+    } as Run,
+    ticketData,
+    {
+      prepareProfile: params.prepareProfile,
+      app: params.app,
+      slotPlatform: slotInfo?.platform ?? null,
+    },
+  );
+  if (profileFit) {
+    result.preview.profileFit = profileFit;
+  }
+  return result;
 }
 
 export function resolveDispatchPreviewFromFleet(
