@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${1:-${ADR032_EVIDENCE_DIR:-${SCRATCH:-/tmp}/adr032-shipped}}"
 
 echo "== ADR-032 goal evidence (split verifiers) =="
+bash "$ROOT/scripts/verify-adr032-no-invalid-paths.sh"
+
 SCRATCH="${SCRATCH:-$(dirname "$OUT_DIR")}" ADR032_SHIPPED_EVIDENCE_DIR="$OUT_DIR" \
   bash "$ROOT/scripts/verify-adr032-shipped-main.sh" "$OUT_DIR"
 
