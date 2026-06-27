@@ -7,13 +7,16 @@ import test from 'node:test';
 import {
   aggregateAgreementEntries,
   appendRunnerObservabilityAgreement,
+  resetAgreementLogDirCacheForTests,
 } from './observability-agreement-log.js';
 
 test('appendRunnerObservabilityAgreement writes ndjson under configured dir', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'obs-agreement-'));
   t.after(() => {
     process.env.FARMSLOT_OBSERVABILITY_AGREEMENT_DIR = undefined;
+    resetAgreementLogDirCacheForTests();
   });
+  resetAgreementLogDirCacheForTests();
   process.env.FARMSLOT_OBSERVABILITY_AGREEMENT_DIR = dir;
   const entry = {
     slotId: 'runner-local-mm-1',
