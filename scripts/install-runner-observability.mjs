@@ -112,7 +112,7 @@ try {
     tool_name: payload.tool_name,
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
-    runner: 'claude',
+    runner: process.env.FARMSLOT_RUNNER || 'claude',
     ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),
   };
@@ -156,7 +156,7 @@ try {
     cwd: input?.workspace?.current_dir || input?.cwd,
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
-    runner: 'claude',
+    runner: process.env.FARMSLOT_RUNNER || 'claude',
   };
   const target = path.join(obsDir, 'statusline.json');
   const tmp = target + '.' + process.pid + '.tmp';
@@ -170,7 +170,7 @@ try {
 }
 `;
 
-const HOOK_EVENTS = [
+const CLAUDE_HOOK_EVENTS = [
   'UserPromptSubmit',
   'PreToolUse',
   'PostToolUse',
@@ -179,6 +179,18 @@ const HOOK_EVENTS = [
   'SubagentStop',
   'StopFailure',
 ];
+
+const CODEX_HOOK_EVENTS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PreToolUse',
+  'PostToolUse',
+  'Notification',
+  'Stop',
+  'StopFailure',
+];
+
+const FARMSLOT_HOOK_MARKER = 'farmslot-observability-hook.mjs';
 
 function parseArgs(argv) {
   const out = {};
@@ -233,7 +245,7 @@ function removeFarmslotHooks(settings) {
             hook &&
             typeof hook === 'object' &&
             typeof hook.command === 'string' &&
-            hook.command.includes('farmslot-observability-hook.mjs')
+            hook.command.includes(FARMSLOT_HOOK_MARKER)
           ),
       );
       if (keptHooks.length > 0) cleanedEntries.push({ ...entry, hooks: keptHooks });
@@ -255,7 +267,7 @@ function mergeClaudeSettings(settingsPath, markerPath, hookCommand, statusComman
       ? settings.hooks
       : {};
   const hook = { type: 'command', command: hookCommand, timeout: 5 };
-  for (const eventName of HOOK_EVENTS) {
+  for (const eventName of CLAUDE_HOOK_EVENTS) {
     const entries = Array.isArray(settings.hooks[eventName]) ? settings.hooks[eventName] : [];
     settings.hooks[eventName] = [...entries, { matcher: '', hooks: [hook] }];
   }
@@ -276,45 +288,75 @@ function mergeClaudeSettings(settingsPath, markerPath, hookCommand, statusComman
   return { statusLineInstalled };
 }
 
-function installClaude({ repo, runtimeDir = '.agent', slotId }) {
-  if (!repo) throw new Error('missing --repo');
-  if (!slotId) throw new Error('missing --slot-id');
-  const repoPath = path.resolve(repo);
-  const obsDir = path.resolve(repoPath, runtimeDir, '.observability');
-  const binDir = path.join(obsDir, 'bin');
-  const settingsPath = path.join(repoPath, '.claude', 'settings.local.json');
-  const markerPath = path.join(obsDir, '.farmslot-owned');
-  const hookPath = path.join(binDir, 'farmslot-observability-hook.mjs');
-  const statuslinePath = path.join(binDir, 'farmslot-statusline.mjs');
-  fs.mkdirSync(binDir, { recursive: true });
-  fs.writeFileSync(hookPath, HOOK_SCRIPT);
-  fs.writeFileSync(statuslinePath, STATUSLINE_SCRIPT);
-  execFileSync(process.execPath, ['--check', hookPath], { stdio: 'pipe' });
-  execFileSync(process.execPath, ['--check', statuslinePath], { stdio: 'pipe' });
+function readCodexHooksDocument(filePath) {
+  const parsed = readJsonObject(filePath);
+  const root = { ...parsed };
+  const hooksSource =
+    parsed.hooks && typeof parsed.hooks === 'object' && !Array.isArray(parsed.hooks)
+      ? parsed.hooks
+      : {};
+  const hooks = JSON.parse(JSON.stringify(hooksSource));
+  return { root, hooks };
+}
 
-  const compatObsDir = path.join(repoPath, '.observability');
-  if (!fs.existsSync(compatObsDir)) fs.symlinkSync(obsDir, compatObsDir, 'dir');
+function removeFarmslotCodexHookEntries(hooks) {
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return;
+  for (const [eventName, entries] of Object.entries(hooks)) {
+    if (!Array.isArray(entries)) continue;
+    const cleanedEntries = [];
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object' || !Array.isArray(entry.hooks)) {
+        cleanedEntries.push(entry);
+        continue;
+      }
+      const keptHooks = entry.hooks.filter(
+        (hook) =>
+          !(
+            hook &&
+            typeof hook === 'object' &&
+            typeof hook.command === 'string' &&
+            hook.command.includes(FARMSLOT_HOOK_MARKER)
+          ),
+      );
+      if (keptHooks.length > 0) cleanedEntries.push({ ...entry, hooks: keptHooks });
+    }
+    if (cleanedEntries.length > 0) hooks[eventName] = cleanedEntries;
+    else delete hooks[eventName];
+  }
+}
 
-  const hookCommand = `FARMSLOT_OBS_DIR=${shQuote(obsDir)} FARMSLOT_SLOT_ID=${shQuote(slotId)} node ${shQuote(hookPath)}`;
-  const statusCommand = `FARMSLOT_OBS_DIR=${shQuote(obsDir)} FARMSLOT_SLOT_ID=${shQuote(slotId)} node ${shQuote(statuslinePath)}`;
-  const { statusLineInstalled } = mergeClaudeSettings(
-    settingsPath,
-    markerPath,
-    hookCommand,
-    statusCommand,
-  );
-  fs.writeFileSync(markerPath, 'farmslot\n');
+function mergeCodexHooks(hooksPath, markerPath, hookCommand) {
+  fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
+  backupOnce(hooksPath, markerPath);
+  const { root, hooks } = readCodexHooksDocument(hooksPath);
+  removeFarmslotCodexHookEntries(hooks);
+  const hook = { type: 'command', command: hookCommand, timeout: 5 };
+  for (const eventName of CODEX_HOOK_EVENTS) {
+    const entries = Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
+    hooks[eventName] = [...entries, { hooks: [hook] }];
+  }
+  root.hooks = hooks;
+  fs.writeFileSync(hooksPath, JSON.stringify(root, null, 2) + '\n');
+}
+
+function ensureCodexHooksFeature(configPath, markerPath) {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  backupOnce(configPath, markerPath);
+  let content = '';
+  if (fs.existsSync(configPath)) content = fs.readFileSync(configPath, 'utf8');
+  if (/\[features\][\s\S]*?\bhooks\s*=\s*true\b/m.test(content)) return;
+  const block = '\n[features]\nhooks = true\n';
+  fs.writeFileSync(configPath, (content.trimEnd() ? content.trimEnd() + block : block.trimStart()));
+}
+
+function writeObservabilityInstallManifest(obsDir, manifest) {
   fs.writeFileSync(
     path.join(obsDir, 'install.json'),
     JSON.stringify(
       {
         schemaVersion: 1,
         installedAt: new Date().toISOString(),
-        runner: 'claude',
-        repo: repoPath,
-        runtimeDir,
-        slotId,
-        statusLineInstalled,
+        ...manifest,
       },
       null,
       2,
@@ -322,12 +364,90 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
   );
 }
 
+function installObservabilityBinaries({ repo, runtimeDir, slotId, runner }) {
+  const repoPath = path.resolve(repo);
+  const obsDir = path.resolve(repoPath, runtimeDir, '.observability');
+  const binDir = path.join(obsDir, 'bin');
+  const hookPath = path.join(binDir, 'farmslot-observability-hook.mjs');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(hookPath, HOOK_SCRIPT);
+  execFileSync(process.execPath, ['--check', hookPath], { stdio: 'pipe' });
+  const compatObsDir = path.join(repoPath, '.observability');
+  if (!fs.existsSync(compatObsDir)) fs.symlinkSync(obsDir, compatObsDir, 'dir');
+  const hookCommand = [
+    `FARMSLOT_OBS_DIR=${shQuote(obsDir)}`,
+    `FARMSLOT_SLOT_ID=${shQuote(slotId)}`,
+    `FARMSLOT_RUNNER=${shQuote(runner)}`,
+    `node ${shQuote(hookPath)}`,
+  ].join(' ');
+  return { repoPath, obsDir, hookPath, hookCommand };
+}
+
+function installClaude({ repo, runtimeDir = '.agent', slotId }) {
+  if (!repo) throw new Error('missing --repo');
+  if (!slotId) throw new Error('missing --slot-id');
+  const { repoPath, obsDir, hookCommand } = installObservabilityBinaries({
+    repo,
+    runtimeDir,
+    slotId,
+    runner: 'claude',
+  });
+  const settingsPath = path.join(repoPath, '.claude', 'settings.local.json');
+  const markerPath = path.join(obsDir, '.farmslot-owned');
+  const statuslinePath = path.join(obsDir, 'bin', 'farmslot-statusline.mjs');
+  fs.writeFileSync(statuslinePath, STATUSLINE_SCRIPT);
+  execFileSync(process.execPath, ['--check', statuslinePath], { stdio: 'pipe' });
+  const statusCommand = [
+    `FARMSLOT_OBS_DIR=${shQuote(obsDir)}`,
+    `FARMSLOT_SLOT_ID=${shQuote(slotId)}`,
+    `FARMSLOT_RUNNER=${shQuote('claude')}`,
+    `node ${shQuote(statuslinePath)}`,
+  ].join(' ');
+  const { statusLineInstalled } = mergeClaudeSettings(
+    settingsPath,
+    markerPath,
+    hookCommand,
+    statusCommand,
+  );
+  fs.writeFileSync(markerPath, 'farmslot\n');
+  writeObservabilityInstallManifest(obsDir, {
+    runner: 'claude',
+    repo: repoPath,
+    runtimeDir,
+    slotId,
+    statusLineInstalled,
+  });
+}
+
+function installCodex({ repo, runtimeDir = '.agent', slotId }) {
+  if (!repo) throw new Error('missing --repo');
+  if (!slotId) throw new Error('missing --slot-id');
+  const { repoPath, obsDir, hookCommand } = installObservabilityBinaries({
+    repo,
+    runtimeDir,
+    slotId,
+    runner: 'codex',
+  });
+  const markerPath = path.join(obsDir, '.farmslot-owned');
+  const hooksPath = path.join(repoPath, '.codex', 'hooks.json');
+  const configPath = path.join(repoPath, '.codex', 'config.toml');
+  mergeCodexHooks(hooksPath, markerPath, hookCommand);
+  ensureCodexHooksFeature(configPath, markerPath);
+  fs.writeFileSync(markerPath, 'farmslot\n');
+  writeObservabilityInstallManifest(obsDir, {
+    runner: 'codex',
+    repo: repoPath,
+    runtimeDir,
+    slotId,
+    statusLineInstalled: false,
+  });
+}
+
 function install(args) {
   const runner = args.runner || 'claude';
-  if (runner !== 'claude') {
-    throw new Error(`unsupported runner for observability install: ${runner}`);
-  }
-  installClaude(args);
+  if (runner === 'claude') installClaude(args);
+  else if (runner === 'codex') installCodex(args);
+  else throw new Error(`unsupported runner for observability install: ${runner}`);
 }
 
 try {

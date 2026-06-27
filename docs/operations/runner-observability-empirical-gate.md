@@ -5,11 +5,24 @@ Run this gate on **runner-local**, **mini**, and **runner-a** before enabling ho
 ## Probe
 
 ```bash
+# Claude (Phase 1)
 node scripts/probe-runner-observability.mjs \
+  --runner claude \
   --slot-id <slot-id> \
   --repo <slot-repo-path> \
   --runtime-dir .agent \
-  --out /tmp/observability-gate-<host>.json
+  --out /tmp/observability-gate-<host>-claude.json
+
+# Codex (Phase 1.5)
+node scripts/probe-runner-observability.mjs \
+  --runner codex \
+  --slot-id <slot-id> \
+  --repo <slot-repo-path> \
+  --runtime-dir .agent \
+  --out /tmp/observability-gate-<host>-codex.json
+
+# Full local gate bundle (probes + unit tests + agreement-window harness)
+bash scripts/run-adr032-phase1-gate.sh
 ```
 
 ## Pass criteria

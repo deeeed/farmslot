@@ -155,7 +155,8 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     defaultSafetyTier: 'sandboxed',
     defaultModel: 'gpt-5.5',
     acceptsModel: (model) => model === 'unknown' || !CLAUDE_MODEL_PREFIXES.test(model),
-    observabilityScope: 'pane-only',
+    observabilityScope: 'event-driven',
+    observabilityHeartbeatMs: 5000,
   },
   cursor: {
     id: 'cursor',
@@ -256,6 +257,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
 
 const KNOWN_RUNNER_OBSERVABILITY: Record<string, RunnerObservability> = {
   claude: claudeHookObservability,
+  codex: claudeHookObservability,
 };
 
 export function getRunnerObservability(runnerId?: string | null): RunnerObservability | null {

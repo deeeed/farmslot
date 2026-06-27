@@ -12,6 +12,7 @@ async function dispatchPrompt(taskFile: string): Promise<string> {
 import {
   detectRunnerLaunchBlocker,
   getRunnerDefinition,
+  getRunnerObservability,
   normalizeRunner,
   runnerBufferedInstructionSubmitKey,
   runnerContinueCommand,
@@ -882,6 +883,7 @@ describe('buildLaunchCommand', () => {
       const vars = makeVars({ dispatchCmd: '' });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
       assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/);
+      assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
       assert.doesNotMatch(cmd, /model_reasoning_effort/);
       assert.doesNotMatch(cmd, /'Read TASK\.md and execute\.'/);
@@ -896,6 +898,7 @@ describe('buildLaunchCommand', () => {
         cmd,
         /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/codex .*--model gpt-5/,
       );
+      assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
       assert.doesNotMatch(cmd, /model_reasoning_effort/);
       assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
@@ -917,6 +920,11 @@ describe('buildLaunchCommand', () => {
       });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
       assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox/);
+    });
+
+    it('exposes hook-file observability provider after Phase 1.5', () => {
+      assert.equal(getRunnerDefinition('codex').observabilityScope, 'event-driven');
+      assert.ok(getRunnerObservability('codex'));
     });
   });
 

@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T06:36:20.833Z",
+  "host": "macwork",
+  "runner": "codex",
+  "slotId": "adr032-gate-macwork",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/adr032-gate-Os421E",
+  "tmuxPane": null,
+  "tmuxPaneSeenInHooks": true,
+  "hookLatencyMs": {
+    "installMs": 68,
+    "samples": [
+      34,
+      34,
+      34,
+      34,
+      39
+    ],
+    "median": 34
+  },
+  "gate": {
+    "tmuxPaneRequired": true,
+    "tmuxPanePass": true,
+    "runnerTagPass": true,
+    "latencyMedianPass": true,
+    "latencyMedianTargetMs": 150
+  },
+  "notes": [
+    "Run separately in plan mode and after a real tool call to validate PostToolUse semantics.",
+    "Compare hook-vs-pane agreement via gateway .runs/observability-agreement/*.ndjson after live nudges."
+  ],
+  "recentHookEvents": [
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782542180695,
+      "timestamp": 1782542180695,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Os421E",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782542180729,
+      "timestamp": 1782542180729,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Os421E",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782542180763,
+      "timestamp": 1782542180763,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Os421E",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782542180797,
+      "timestamp": 1782542180797,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Os421E",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782542180831,
+      "timestamp": 1782542180831,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Os421E",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    }
+  ]
+}

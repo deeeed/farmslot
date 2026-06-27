@@ -1,6 +1,6 @@
 # PRD: Runner Observability Hooks Phase 1
 
-**Status:** Accepted for implementation planning
+**Status:** Shipped (code + gates); fleet agreement NDJSON collection continues on opt-in slots
 **Date:** 2026-05-22
 **Relates to:** [ADR-032](../adr/032-runner-observability-via-hooks.md), [ROADMAP-next](../ROADMAP-next.md), [ADR-023](../adr/023-runner-agnostic-tui-execution.md), [ADR-027](../adr/027-unified-gateway-state.md)
 

@@ -245,20 +245,32 @@ export function buildLaunchCommand(
   // back to the inline exec-mode launcher (keeps working on pools that only
   // know about Claude-shaped dispatch templates).
   if (runner === 'codex') {
+    const installCommand = buildRunnerObservabilityInstallCommand(
+      vars,
+      runner,
+      repo,
+      opts.runtimeDir,
+    );
     if (cmdIsRunnerAware) {
-      return `unset CLAUDECODE && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort)}`;
+      return withRunnerObservabilityInstall(
+        `unset CLAUDECODE && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort)}`,
+        installCommand,
+      );
     }
     // Use the configured codex_path when present; otherwise leave resolution to
     // the worker shell's PATH. Do not infer a Node-sibling binary because asdf
     // toolchains can leave stale Codex installs beside older Node versions.
-    return buildCodexExecLaunch({
-      binary: resolveCodexBinary(vars.codexPath),
-      model,
-      effort: opts.effort,
-      prompt: launchPrompt,
-      repo,
-      safetyTier: tier,
-    });
+    return withRunnerObservabilityInstall(
+      buildCodexExecLaunch({
+        binary: resolveCodexBinary(vars.codexPath),
+        model,
+        effort: opts.effort,
+        prompt: launchPrompt,
+        repo,
+        safetyTier: tier,
+      }),
+      installCommand,
+    );
   }
 
   // Cursor Agent: route through runner-aware dispatch templates when configured,
