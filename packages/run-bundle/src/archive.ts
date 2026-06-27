@@ -2,14 +2,19 @@ import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+import { assertSafeBundleRelativePath, resolvePathInsideRoot } from './safe-paths.js';
 
 function resolveTool(name: string, extraPaths: string[]): string {
   const pathEnv = process.env.PATH ?? '';
@@ -55,6 +60,44 @@ export function packFarmrunDirectory(sourceDir: string, outputPath: string): voi
   }
 }
 
+function normalizeArchiveMember(member: string): string {
+  return member.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '');
+}
+
+function assertArchiveMembersSafe(tar: string, archivePath: string): void {
+  const listResult = spawnSync(tar, ['-tf', archivePath], {
+    stdio: 'pipe',
+    encoding: 'utf-8',
+  });
+  if (listResult.status !== 0) {
+    throw new Error(
+      `tar list failed: ${listResult.stderr || listResult.stdout || 'unknown error'}`,
+    );
+  }
+  for (const rawMember of listResult.stdout.split('\n')) {
+    const member = normalizeArchiveMember(rawMember.trim());
+    if (!member) continue;
+    assertSafeBundleRelativePath(member);
+  }
+}
+
+function assertExtractedTreeConfined(extractDir: string): void {
+  const root = realpathSync(path.resolve(extractDir));
+  const walk = (currentDir: string): void => {
+    for (const entry of readdirSync(currentDir)) {
+      const entryPath = path.join(currentDir, entry);
+      const stats = lstatSync(entryPath);
+      const resolved = realpathSync(entryPath);
+      if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+        throw new Error(`Extracted bundle path escapes unpack root: ${entry}`);
+      }
+      if (stats.isDirectory()) walk(resolved);
+    }
+  };
+  walk(root);
+  resolvePathInsideRoot(root, 'manifest.json');
+}
+
 export function unpackFarmrunArchive(bundlePath: string): string {
   const zstd = resolveTool('zstd', ['/opt/homebrew/bin', '/usr/local/bin']);
   const tar = resolveTool('tar', ['/usr/bin']);
@@ -72,6 +115,7 @@ export function unpackFarmrunArchive(bundlePath: string): string {
       `zstd unpack failed: ${zstdResult.stderr || zstdResult.stdout || 'unknown error'}`,
     );
   }
+  assertArchiveMembersSafe(tar, tmpTar);
   const extractDir = path.join(tempRoot, 'root');
   mkdirSync(extractDir, { recursive: true });
   const tarResult = spawnSync(tar, ['-xf', tmpTar, '-C', extractDir], {
@@ -85,6 +129,7 @@ export function unpackFarmrunArchive(bundlePath: string): string {
       `tar unpack failed: ${tarResult.stderr || tarResult.stdout || 'unknown error'}`,
     );
   }
+  assertExtractedTreeConfined(extractDir);
   return extractDir;
 }
 
