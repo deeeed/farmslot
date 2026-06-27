@@ -35,7 +35,9 @@ for _attempt in 1 2; do
   SESSION="e2e-send-$$-${_attempt}"
   REPO="$(mktemp -d "${TMPDIR:-/tmp}/e2e-send-XXXXXX")"
   git -C "$REPO" init -q >/dev/null 2>&1
-  tmux new-session -d -s "$SESSION" -c "$REPO"
+  # zsh/oh-my-zsh in default tmux sessions often ignores send-keys Enter; bash is reliable.
+  tmux new-session -d -s "$SESSION" -c "$REPO" bash --noprofile --norc
+  sleep 1
   PANE="$(tmux display-message -p -t "$SESSION" '#{pane_id}')"
   printf '%s\n' "echo TMUX_DRIVER_SCRIPT_OK > '$REPO/marker.txt'" | bash "$SKILL/scripts/send-shell-script.sh" "$PANE" "$REPO" >/dev/null
   sleep 1
