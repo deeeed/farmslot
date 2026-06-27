@@ -198,7 +198,8 @@ async function checkSSH(vars: SlotVars): Promise<CheckStep> {
 
 async function checkRepo(vars: SlotVars): Promise<CheckStep> {
   try {
-    const result = await execOnSlot(vars, `test -d ${shellQuote(`${vars.remoteRepo}/.git`)}`);
+    // Linked clones use a .git directory; git worktrees use a .git file.
+    const result = await execOnSlot(vars, `test -e ${shellQuote(`${vars.remoteRepo}/.git`)}`);
     if (result.exitCode === 0) {
       return { name: 'repo', status: 'pass', detail: `Repo exists at ${vars.remoteRepo}` };
     }
