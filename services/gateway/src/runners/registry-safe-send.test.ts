@@ -25,6 +25,7 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
 
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
+let paneCaptureCount = 0;
 
 mock.module('./claude-observability.js', {
   namedExports: {
@@ -57,6 +58,10 @@ mock.module('../core/exec.js', {
     execOnSlot: async (_slotVars: SlotVars, cmd: string) => {
       if (cmd.includes('capture-pane')) {
         callOrder.push('pane:capture');
+        paneCaptureCount += 1;
+        if (paneCaptureCount > 1) {
+          return { exitCode: 0, stdout: '❯\nctx:12%\n', stderr: '' };
+        }
         return { exitCode: 0, stdout: paneText, stderr: '' };
       }
       if (cmd.includes('send-keys') || cmd.includes('send-text')) {
@@ -79,6 +84,7 @@ const { sendRunnerInstructionSafely } = await import('./registry.js');
 
 test('sendRunnerInstructionSafely consults observability before pane on hook-authoritative idle', async () => {
   callOrder.length = 0;
+  paneCaptureCount = 0;
   activityReading = {
     value: 'idle',
     source: 'hook',
@@ -110,17 +116,14 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
   assert.ok(obsPromptIdx >= 0, `expected obs:promptAccepted in ${callOrder.join(',')}`);
   assert.ok(obsActivityIdx >= 0, `expected obs:getActivity in ${callOrder.join(',')}`);
   assert.ok(
-    obsPromptIdx < firstPaneIdx || firstPaneIdx === -1,
+    obsPromptIdx < firstPaneIdx,
     `obs promptAccepted should precede first pane capture; order=${callOrder.join(',')}`,
-  );
-  assert.ok(
-    obsActivityIdx < firstPaneIdx,
-    `obs getActivity should precede first pane capture; order=${callOrder.join(',')}`,
   );
 });
 
 test('sendRunnerInstructionSafely skips pane busy scrape when hook reports composing', async () => {
   callOrder.length = 0;
+  paneCaptureCount = 0;
   activityReading = {
     value: 'composing',
     source: 'hook',
@@ -147,16 +150,47 @@ test('sendRunnerInstructionSafely skips pane busy scrape when hook reports compo
   assert.equal(sent, false);
   assert.ok(callOrder.includes('obs:promptAccepted'));
   assert.ok(callOrder.includes('obs:getActivity'));
-  const obsActivityIdx = callOrder.indexOf('obs:getActivity');
-  const firstPaneIdx = callOrder.indexOf('pane:capture');
-  assert.ok(
-    firstPaneIdx === -1 || obsActivityIdx < firstPaneIdx,
-    `busy decision must consult hooks before any pane capture; order=${callOrder.join(',')}`,
+  assert.equal(
+    callOrder.indexOf('sentinel:write'),
+    -1,
+    `hook-busy path must not fresh-send; order=${callOrder.join(',')}`,
+  );
+});
+
+test('sendRunnerInstructionSafely prefers live pane over stale hook acceptance', async () => {
+  callOrder.length = 0;
+  paneCaptureCount = 0;
+  activityReading = {
+    value: 'idle',
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  promptAcceptedReading = {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+  const needle = message.slice(0, 80);
+  paneText = `❯ ${needle}\nctx:12%\n`;
+
+  const sent = await sendRunnerInstructionSafely(vars, target, 'claude', message, '[test]');
+
+  assert.equal(sent, true);
+  assert.ok(callOrder.includes('obs:promptAccepted'));
+  assert.ok(callOrder.includes('pane:capture'));
+  assert.ok(callOrder.includes('tmux:send'));
+  assert.equal(
+    callOrder.indexOf('sentinel:write'),
+    -1,
+    `stale hook acceptance must submit-existing, not fresh send; order=${callOrder.join(',')}`,
   );
 });
 
 test('sendRunnerInstructionSafely falls back to pane when hook activity is unknown', async () => {
   callOrder.length = 0;
+  paneCaptureCount = 0;
   activityReading = {
     value: 'unknown',
     source: 'hook',
@@ -183,7 +217,5 @@ test('sendRunnerInstructionSafely falls back to pane when hook activity is unkno
 
   assert.equal(sent, true);
   assert.ok(callOrder.includes('pane:capture'));
-  const obsActivityIdx = callOrder.indexOf('obs:getActivity');
-  const firstPaneIdx = callOrder.indexOf('pane:capture');
-  assert.ok(obsActivityIdx < firstPaneIdx);
+  assert.ok(callOrder.includes('obs:getActivity'));
 });
