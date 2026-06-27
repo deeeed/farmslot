@@ -24,10 +24,7 @@ import { promisify } from 'node:util';
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
 import { createStandardCoreAdapters } from '@farmslot/recipe-harness/adapters/core';
 import { createStandardUiAdapters } from '@farmslot/recipe-harness/adapters/ui';
-import {
-  createCaptureHelperVideoRecorder,
-  createRecipeRunner,
-} from '@farmslot/recipe-harness';
+import { createCaptureHelperVideoRecorder, createRecipeRunner } from '@farmslot/recipe-harness';
 import {
   CdpWebPage,
   createCdpWebUiTransport,
@@ -351,11 +348,7 @@ async function connectPage(cdpPort, preferredHash) {
 
 async function pidListeningOnPort(port) {
   try {
-    const { stdout } = await execFileAsync('lsof', [
-      `-iTCP:${port}`,
-      '-sTCP:LISTEN',
-      '-t',
-    ]);
+    const { stdout } = await execFileAsync('lsof', [`-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
     const pid = Number(stdout.trim().split('\n')[0]);
     return Number.isInteger(pid) && pid > 0 ? pid : undefined;
   } catch {
@@ -367,19 +360,31 @@ async function resolveRecordingTarget(options) {
   if (options.recordPid > 0) {
     return { kind: 'pid', pid: options.recordPid };
   }
+  const windowName =
+    options.recordWindowName ||
+    process.env.FARMSLOT_RECORD_WINDOW_NAME ||
+    'Farmslot Command Center';
+  const appName = options.recordAppName;
+  try {
+    const parsed = await resolveCaptureHelperTarget([
+      '--app-name',
+      appName,
+      '--window-name',
+      windowName,
+    ]);
+    if (parsed.selected?.id != null) {
+      return { kind: 'window-id', windowId: String(parsed.selected.id) };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[run-recipe] capture-helper window resolve failed (${windowName}): ${message}`);
+  }
   const cdpPid = await pidListeningOnPort(options.cdpPort);
   if (cdpPid) return { kind: 'pid', pid: cdpPid };
-  if (options.recordWindowName) {
-    return {
-      kind: 'app-window',
-      appName: options.recordAppName,
-      windowName: options.recordWindowName,
-    };
-  }
   return {
     kind: 'app-window',
-    appName: options.recordAppName,
-    windowName: 'localhost',
+    appName,
+    windowName,
   };
 }
 
@@ -551,11 +556,9 @@ async function main() {
       implementedActions.has(action),
     ),
     pre_conditions: (manifest.pre_conditions ?? []).filter((entry) =>
-      [
-        'command_center.dev_server.ready',
-        'gateway.reachable',
-        'runtime.browser.open',
-      ].includes(entry.id),
+      ['command_center.dev_server.ready', 'gateway.reachable', 'runtime.browser.open'].includes(
+        entry.id,
+      ),
     ),
   };
 
@@ -563,9 +566,7 @@ async function main() {
   const cdpTransport = createCdpWebUiTransport({
     async getPage(input) {
       if (input.action === 'ui.navigate') {
-        preferredHash = hashFromNavigateTarget(
-          String(input.node.url ?? input.node.target ?? ''),
-        );
+        preferredHash = hashFromNavigateTarget(String(input.node.url ?? input.node.target ?? ''));
       }
       return connectPage(options.cdpPort, preferredHash);
     },

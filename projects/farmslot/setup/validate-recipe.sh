@@ -6,6 +6,28 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRIMARY_REPO="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+# Homebrew/npm `capture-helper` is a Node shim whose candidate list can recurse into
+# itself (/opt/homebrew/bin/capture-helper), hanging doctor/record. Prefer the native
+# binary when CAPTURE_HELPER_PATH / SITEED_CAPTURE_HELPER_BIN are unset.
+resolve_capture_helper_bin() {
+  local candidate
+  for candidate in \
+    "${CAPTURE_HELPER_PATH:-}" \
+    "${SITEED_CAPTURE_HELPER_BIN:-}" \
+    "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
+    "${HOME}/dev/capture-helper/.build/release/capture-helper"; do
+    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+if helper_bin="$(resolve_capture_helper_bin)"; then
+  export CAPTURE_HELPER_PATH="${helper_bin}"
+  export SITEED_CAPTURE_HELPER_BIN="${helper_bin}"
+fi
+
 RECIPE_PATH=""
 ARTIFACTS_DIR=""
 RUNTIME_DIR=""

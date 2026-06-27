@@ -60,6 +60,11 @@
       "import": "./dist/runs/evidence-summary.js",
       "default": "./dist/runs/evidence-summary.js"
     },
+    "./runs/portable-bundle": {
+      "types": "./dist/runs/portable-bundle.d.ts",
+      "import": "./dist/runs/portable-bundle.js",
+      "default": "./dist/runs/portable-bundle.js"
+    },
     "./transport/events": {
       "types": "./dist/transport/events.d.ts",
       "import": "./dist/transport/events.js",
