@@ -539,8 +539,24 @@ async function slotPrepareInner(
     step('branch', `git sync skipped (profile ${profileName()}; HEAD stays on '${current || 'unknown'}')`);
   } else {
     if (!branch && current && current !== defaultBranch) {
-      throw new Error(
-        `Slot is on '${current}', expected '${defaultBranch}'. Run release-slot.sh first.`,
+      // Git worktrees cannot checkout `main` when it is checked out elsewhere.
+      // Sandboxes use tracking branches (e.g. wt/ff-2) at the same commit as
+      // origin/defaultBranch — allow prepare when HEAD matches, not only by name.
+      const headR = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git rev-parse HEAD origin/${defaultBranch} 2>/dev/null`,
+      );
+      const refs = headR.stdout.trim().split(/\s+/).filter(Boolean);
+      const worktreeAtDefault =
+        headR.exitCode === 0 && refs.length === 2 && refs[0] === refs[1];
+      if (!worktreeAtDefault) {
+        throw new Error(
+          `Slot is on '${current}', expected '${defaultBranch}'. Run release-slot.sh first.`,
+        );
+      }
+      step(
+        'branch',
+        `Worktree branch '${current}' matches origin/${defaultBranch}; proceeding`,
       );
     }
 
