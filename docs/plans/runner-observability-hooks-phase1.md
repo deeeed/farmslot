@@ -138,4 +138,4 @@ Expose Phase 1 as minimal diagnostics, not as a new primary UI surface:
 
 - Codex hook coexistence with OMX `.codex/hooks.json` remains a fleet verification item (installer merges Farmslot hook alongside existing registrations).
 - Cursor remains pane-only unless a first-party streamed event surface appears.
-- Retiring Claude pane regex belongs to ADR-032 Phase 3 after one Claude version upgrade under hook-authoritative mode.
+- Retiring Claude pane regex belongs to ADR-032 Phase 3 once Phase 2 exit criteria clear under hook-authoritative mode.
