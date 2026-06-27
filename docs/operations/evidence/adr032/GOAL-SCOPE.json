@@ -10,7 +10,8 @@
     "docs/operations/evidence/adr032/pr84-*",
     "docs/operations/evidence/adr032/pr85-*",
     "docs/operations/evidence/adr032/pr86-*",
-    "docs/operations/evidence/adr032/replay/"
+    "docs/operations/evidence/adr032/replay/",
+    "docs/operations/evidence/adr032/pr-chain-audit.json"
   ],
   "validEvidenceFiles": [
     "pr81-premerge.json",
@@ -21,6 +22,7 @@
   ],
   "validScripts": [
     "scripts/assert-adr032-goal-evidence.sh",
+    "scripts/verify-adr032-no-invalid-paths.sh",
     "scripts/verify-adr032-shipped-main.sh",
     "scripts/verify-adr032-merge-process.sh",
     "scripts/capture-pre-merge-evidence.sh",

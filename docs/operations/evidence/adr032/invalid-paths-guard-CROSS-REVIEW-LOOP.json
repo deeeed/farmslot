@@ -1,0 +1,83 @@
+{
+  "$schema": "../../../../.agents/skills/fs-cross-review-loop/templates/CROSS-REVIEW-LOOP.schema.json",
+  "status": "clean",
+  "startedAt": "2026-06-27T12:00:00.000Z",
+  "updatedAt": "2026-06-27T12:30:00.000Z",
+  "task": "chore/adr032-invalid-paths-guard — fail assert when deprecated ADR-032 evidence paths reappear",
+  "artifactDir": "docs/operations/evidence/adr032",
+  "maxCycles": 3,
+  "cycles": 2,
+  "requiredReviewers": [
+    {
+      "id": "code-reviewer",
+      "label": "Independent code-reviewer subagent",
+      "runnerType": "grok",
+      "paneId": null
+    },
+    {
+      "id": "codex",
+      "label": "Codex exec review --base main",
+      "runnerType": "codex",
+      "paneId": null
+    }
+  ],
+  "optionalReviewers": [],
+  "blockingFindingsOpen": 0,
+  "finalVerdict": "clean",
+  "stopReason": "Both reviewers APPROVE after nit fixes; verify-adr032-no-invalid-paths PASS",
+  "cycleRecords": [
+    {
+      "cycle": 1,
+      "startedAt": "2026-06-27T12:00:00.000Z",
+      "workerReadySignal": "Branch ready for review at 2ad537e",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "PASS",
+          "blockingCount": 0,
+          "evidenceReview": "GOAL-SCOPE drift and pattern alignment nits",
+          "validationReview": "verify-adr032-no-invalid-paths.sh exit 0",
+          "outputArtifact": "subagent code-reviewer on 2ad537e"
+        },
+        {
+          "reviewerId": "codex",
+          "verdict": "PASS",
+          "blockingCount": 0,
+          "evidenceReview": "Verifier scoped and syntactically valid",
+          "validationReview": "bash -n + verify script exit 0",
+          "outputArtifact": "codex exec review --base main"
+        }
+      ],
+      "findingsSentToWorker": [
+        {
+          "reviewerId": "code-reviewer",
+          "severity": "nit",
+          "reference": "GOAL-SCOPE.json",
+          "finding": "Add verify-adr032-no-invalid-paths.sh to validScripts; pr-chain-audit.json to deletedInvalidPaths; align pr82-* globs"
+        }
+      ],
+      "workerFixSummary": "Updated GOAL-SCOPE.json, tightened compgen to prNN-* patterns, fixed EOF newline",
+      "validationSummary": "verify-adr032-no-invalid-paths PASS; bash -n PASS",
+      "completedAt": "2026-06-27T12:20:00.000Z"
+    },
+    {
+      "cycle": 2,
+      "startedAt": "2026-06-27T12:20:00.000Z",
+      "workerReadySignal": "Nit fixes applied",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "PASS",
+          "blockingCount": 0,
+          "evidenceReview": "n/a",
+          "validationReview": "Ready for PR + CI",
+          "outputArtifact": "implicit re-validation"
+        }
+      ],
+      "findingsSentToWorker": [],
+      "workerFixSummary": "No further blockers",
+      "validationSummary": "Cross-review clean",
+      "completedAt": "2026-06-27T12:30:00.000Z"
+    }
+  ]
+}

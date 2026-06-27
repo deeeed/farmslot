@@ -18,8 +18,8 @@ for script in \
 done
 
 for pattern in pr82 pr83 pr84 pr85 pr86; do
-  if compgen -G "$EVIDENCE/${pattern}*" >/dev/null; then
-    fail "out-of-scope evidence present: $EVIDENCE/${pattern}*"
+  if compgen -G "$EVIDENCE/${pattern}-*" >/dev/null; then
+    fail "out-of-scope evidence present: $EVIDENCE/${pattern}-*"
   fi
 done
 
