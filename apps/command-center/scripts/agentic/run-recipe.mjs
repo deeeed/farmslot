@@ -488,6 +488,7 @@ async function main() {
       ? path.resolve(path.dirname(options.actionManifest), '../../..')
       : path.resolve(options.projectRoot));
   const inputs = {
+    ...((recipeRaw.inputs && typeof recipeRaw.inputs === 'object' && recipeRaw.inputs) || {}),
     ui_url: uiUrl,
     cdp_port: String(options.cdpPort),
     gateway_port: options.gatewayPort,
@@ -496,7 +497,6 @@ async function main() {
     repo: options.projectRoot,
     farmslot_dir: farmslotDir,
     primary_repo: farmslotDir,
-    ...((recipeRaw.inputs && typeof recipeRaw.inputs === 'object' && recipeRaw.inputs) || {}),
     ...options.inputs,
   };
 
