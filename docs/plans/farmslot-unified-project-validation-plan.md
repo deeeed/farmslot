@@ -3,15 +3,15 @@
 **Owner:** Arthur / Farmslot
 **Status:** Approved supporting plan (Phases A–D shipped)
 **Last updated:** 2026-06-27
-**Relates to:** [ROADMAP-next.md](../ROADMAP-next.md), [PRD-core-farmslot-canonical.md](../PRD-core-farmslot-canonical.md), [PRD-command-center-canonical.md](../PRD-command-center-canonical.md), [PRD-mobile-companion-canonical.md](../PRD-mobile-companion-canonical.md), [plans/farmslot-self-dogfood-day.md](farmslot-self-dogfood-day.md), [plans/generic-recipe-protocol.md](generic-recipe-protocol.md), [operations/worktree-operator-model.md](../operations/worktree-operator-model.md)
+**Relates to:** [ROADMAP-next.md](../ROADMAP-next.md), [PRD-core-farmslot-canonical.md](../PRD-core-farmslot-canonical.md), [PRD-command-center-canonical.md](../PRD-command-center-canonical.md), [PRD-mobile-companion-canonical.md](../PRD-mobile-companion-canonical.md), [plans/farmslot-self-integration-day.md](farmslot-self-integration-day.md), [plans/generic-recipe-protocol.md](generic-recipe-protocol.md), [operations/worktree-operator-model.md](../operations/worktree-operator-model.md)
 
 ## Problem
 
-Farmslot dogfood formerly split across two project configs (`farmslot-farm`, `farmslot-companion`) while sharing one monorepo and one product roadmap. That fragments backlog, runs, dispatch defaults, and operator mental model. Cross-surface tasks (gateway + Command Center + Companion) do not map cleanly to a single `app` or `prepareProfile`.
+First-party Farmslot work formerly split across two project configs (`farmslot-farm`, `farmslot-companion`) while sharing one monorepo and one product roadmap. That fragments backlog, runs, dispatch defaults, and operator mental model. Cross-surface tasks (gateway + Command Center + Companion) do not map cleanly to a single `app` or `prepareProfile`.
 
 ## Goal
 
-1. **One canonical project** — `farmslot` — for all first-party dogfood dispatch, backlog, and run history.
+1. **One canonical project** — `farmslot` — for all first-party dispatch, backlog, and run history.
 2. **App + prepare profile selection** — `command-center` vs `companion` surfaces with MM-style warm/full profiles on the mobile lane.
 3. **Validation plan** — when a ticket needs proof on multiple surfaces, classify a **plan** (primary prepare + validation steps), not a single enum.
 4. **Dispatch safety** — extend the existing project-fit pattern to intra-project profile/app fit and multi-surface warnings.
@@ -35,7 +35,7 @@ projects/farmslot/project.json
   prepare.profiles:
     sandbox, attach, typecheck          # gateway / CC (current farmslot)
     companion-warm, companion-full      # Metro + dev client (MM ensure-js / full analogue)
-    stack-dogfood (optional composite)  # gateway sandbox + companion warm — operator-only shortcut
+    sandbox-companion (optional composite)  # gateway sandbox + companion warm — operator-only shortcut
 ```
 
 Pool slots keep heterogeneous resources under `project: "farmslot"`:
@@ -106,7 +106,7 @@ Classifier emits `validation[]` when ticket mentions companion + gateway/ui/prot
 | [ADR-031](../adr/031-deterministic-first-auto-recovery.md) | Deterministic classifier before LLM. | Reuse pattern for profile-fit; audit/recovery can consume `validationPlan` misses later. |
 | **Project-fit gate (code, no ADR)** | Shipped in `project-fit-gate.ts` / `task-steps.ts`. | Document in this plan; optional one-paragraph cross-reference in ADR-037 addendum ("inter-project fit gate"). |
 | [generic-recipe-protocol.md](generic-recipe-protocol.md) | Phase 4 self-validation suite. | Multi-surface validation plan is the **dispatch/prepare** complement to recipe suite **evidence**. |
-| [farmslot-self-dogfood-day.md](farmslot-self-dogfood-day.md) | Uses `project: farmslot`. | Update examples to `farmslot` when migration lands. |
+| [farmslot-self-integration-day.md](farmslot-self-integration-day.md) | Uses `project: farmslot`. | Update examples to `farmslot` when migration lands. |
 | [companion-ui-architecture-refactor.md](companion-ui-architecture-refactor.md) | UI structure only. | Orthogonal; no blocker. |
 
 **Not planned elsewhere (gap this plan fills):**
@@ -135,7 +135,7 @@ Classifier emits `validation[]` when ticket mentions companion + gateway/ui/prot
 
 - Gateway: `sandbox`, `attach`, `typecheck`.
 - Companion: `companion-warm`, `companion-full` (hooks in `apps/companion/scripts/agentic/`).
-- Optional `stack-dogfood` composite script under `projects/farmslot/setup/`.
+- Optional `sandbox-companion` composite script under `projects/farmslot/setup/`.
 
 ### Phase C — Profile-fit gate
 
@@ -143,13 +143,13 @@ Classifier emits `validation[]` when ticket mentions companion + gateway/ui/prot
 - Dispatch wizard preview shows suggestion.
 - Protocol: optional `validationPlan` on `Run` or task artifact schema (only if needed for UI persistence).
 
-### Phase D — Dogfood proof
+### Phase D — Cross-surface proof
 
 Cross-surface proof matrix (manual, one run family):
 
 ```bash
 # 1. Gateway sandbox on ff-2
-farmslot slot prepare macwork-ff-2 --prepare-profile stack-dogfood
+farmslot slot prepare macwork-ff-2 --prepare-profile sandbox-companion
 
 # 2. Command Center CDP
 node apps/command-center/scripts/cdp.mjs eval '#runs' "document.title"

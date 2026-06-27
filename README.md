@@ -74,7 +74,7 @@ Open [http://localhost:7777](http://localhost:7777) to use Command Center with t
 Farmslot is designed to be project-agnostic: each repository keeps its own runner hooks, fixtures, recipes, and domain actions behind `project.json`. Two useful reference integrations are:
 
 - **AudioLab** — [github.com/deeeed/audiolab](https://github.com/deeeed/audiolab) is a public Expo/React Native monorepo that uses Recipe Protocol v1 to expose app-specific audio and native-module probes through a project-owned recipe runner. It is the best public example for adapting an existing app without moving app semantics into Farmslot core.
-- **Farmslot itself** — this repo includes `projects/farmslot/project.json` and `pool/farmslot-demo.json`, so Farmslot can dispatch, validate, and dogfood work against its own monorepo using the same pool/project model as any imported project.
+- **Farmslot itself** — this repo includes `projects/farmslot/project.json` and `pool/farmslot-demo.json`, so you can dispatch and validate work on this monorepo using the same pool/project model as any imported project.
 
 ## Adding a project
 

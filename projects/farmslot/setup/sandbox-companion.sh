@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Gateway sandbox + companion warm prepare for cross-surface farmslot dogfood.
+# Gateway sandbox + companion warm prepare for cross-surface first-party work.
 #
-#   bash projects/farmslot/setup/stack-dogfood.sh --gateway-port 8809
+#   bash projects/farmslot/setup/sandbox-companion.sh --gateway-port 8809
 set -euo pipefail
 
 GATEWAY_PORT=""
@@ -44,7 +44,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 METRO_PORT="${METRO_PORT:-$((GATEWAY_PORT + 70))}"
 
-echo "[stack-dogfood] gateway :${GATEWAY_PORT} metro :${METRO_PORT}"
+echo "[sandbox-companion] gateway :${GATEWAY_PORT} metro :${METRO_PORT}"
 bash "${SCRIPT_DIR}/sandbox-dev.sh" start --gateway-port "${GATEWAY_PORT}"
 
 cd "${REPO_ROOT}/apps/companion"
@@ -54,4 +54,4 @@ METRO_PORT="${METRO_PORT}" \
   ADB_SERIAL="${ADB_SERIAL}" \
   bash scripts/agentic/prepare-profile.sh warm
 
-echo "[stack-dogfood] ready — gateway http://127.0.0.1:${GATEWAY_PORT} metro :${METRO_PORT}"
+echo "[sandbox-companion] ready — gateway http://127.0.0.1:${GATEWAY_PORT} metro :${METRO_PORT}"

@@ -510,7 +510,7 @@ Use the project runners below as source references for v1 adapter design:
 | Example Mobile App  | `projects/example-mobile-farm/templates/worker/*` references to app-local `scripts/perps/agentic/validate-recipe.sh`                            | Mobile runner contract and flow/action guidance live in the mobile project.                                                           |
 | Audiolab            | `projects/audiolab-farm/templates/worker/*` references to `scripts/agentic/validate-flow-schema.sh` and `validate-recipe.sh`                    | Non-Example App reference for project-native validation.                                                                              |
 | Core monorepo       | `projects/example-core-farm/fixtures/agentic/recipes/validate-recipe.js`                                                                        | Headless/CLI reference: `command` + `assert_output` + `type: "log"` artifacts. No browser, no simulator.                              |
-| Farmslot itself     | `docs/examples/recipes/farmslot/` self-validation recipes and artifact packages                                                                 | Dogfoods this same protocol for Command Center, Gateway, Mobile Companion, artifact viewer, recipe replay, and onboarding validation. |
+| Farmslot itself     | `docs/examples/recipes/farmslot/` self-validation recipes and artifact packages                                                                 | Exercises this same protocol for Command Center, Gateway, Mobile Companion, artifact viewer, recipe replay, and onboarding validation. |
 
 ## New project checklist
 

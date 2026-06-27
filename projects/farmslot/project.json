@@ -90,12 +90,12 @@
           "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}} && cd apps/companion && yarn typecheck"
         }
       },
-      "stack-dogfood": {
+      "sandbox-companion": {
         "label": "Gateway sandbox + companion warm",
-        "description": "Start this checkout's gateway on the slot port, then boot companion Metro (derived port) for cross-surface dogfood.",
+        "description": "Start this checkout's gateway on the slot port, then boot companion Metro (derived port) for cross-surface tasks.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/stack-dogfood.sh --gateway-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-companion.sh --gateway-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
           "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}"
         }
       }
