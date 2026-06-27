@@ -3,11 +3,68 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const HOOK_SCRIPT = `import fs from 'node:fs';
+const HOOK_SCRIPT = `import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 function readStdin() {
   return fs.readFileSync(0, 'utf8');
+}
+
+function normalizeInstructionText(value) {
+  return String(value)
+    .replace(/\\x1b\\[[0-9;]*[A-Za-z]/g, '')
+    .replace(/([/-])\\s+/g, '$1')
+    .replace(/\\s+/g, ' ')
+    .trim();
+}
+
+function instructionNeedle(message) {
+  return normalizeInstructionText(message).slice(0, 160);
+}
+
+function runnerPromptDigest(message) {
+  return crypto.createHash('sha1').update(instructionNeedle(message)).digest('hex').slice(0, 16);
+}
+
+function promptTextFromPayload(payload) {
+  const raw = payload.prompt ?? payload.user_prompt ?? payload.message;
+  return typeof raw === 'string' && raw.trim() ? raw : null;
+}
+
+function loadSentinel(sentDir, digest) {
+  const full = path.join(sentDir, digest + '.json');
+  if (!fs.existsSync(full)) return null;
+  const body = JSON.parse(fs.readFileSync(full, 'utf8'));
+  return {
+    digest: body.digest || digest,
+    sentAt: body.sentAt,
+  };
+}
+
+function matchSentinelForPrompt(sentDir, promptText) {
+  const needle = instructionNeedle(promptText);
+  const expectedDigest = runnerPromptDigest(promptText);
+  const exact = loadSentinel(sentDir, expectedDigest);
+  if (exact) return exact;
+  let files = [];
+  try {
+    files = fs.readdirSync(sentDir).filter((name) => name.endsWith('.json'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+  for (const file of files) {
+    const body = JSON.parse(fs.readFileSync(path.join(sentDir, file), 'utf8'));
+    const prompt = typeof body.prompt === 'string' ? body.prompt : '';
+    if (needle && prompt && (prompt === needle || needle.startsWith(prompt) || prompt.startsWith(needle))) {
+      return {
+        digest: body.digest || file.replace(/\\.json$/, ''),
+        sentAt: body.sentAt,
+      };
+    }
+  }
+  return null;
 }
 
 function rotateIfLarge(filePath) {
@@ -33,26 +90,11 @@ try {
   let sentAt;
   if (event === 'UserPromptSubmit') {
     const sentDir = path.join(obsDir, 'sent');
-    try {
-      const files = fs.readdirSync(sentDir).filter((name) => name.endsWith('.json'));
-      let newest = null;
-      for (const file of files) {
-        const full = path.join(sentDir, file);
-        const stat = fs.statSync(full);
-        if (!newest || stat.mtimeMs > newest.mtimeMs) {
-          const body = JSON.parse(fs.readFileSync(full, 'utf8'));
-          newest = {
-            digest: body.digest || file.replace(/\\.json$/, ''),
-            sentAt: body.sentAt,
-          };
-        }
-      }
-      if (newest) {
-        runnerPromptDigest = newest.digest;
-        sentAt = newest.sentAt;
-      }
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
+    const promptText = promptTextFromPayload(payload);
+    const matched = promptText ? matchSentinelForPrompt(sentDir, promptText) : null;
+    if (matched) {
+      runnerPromptDigest = matched.digest;
+      sentAt = matched.sentAt;
     }
   }
   const record = {

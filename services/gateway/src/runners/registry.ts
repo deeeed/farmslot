@@ -1026,16 +1026,15 @@ export async function sendRunnerInstructionSafely(
   // to clear — it passes `forceBusyPoll: true` to override the per-runner default.
   if (!def.requiresBusyComposerPoll && !opts.forceBusyPoll) {
     const pane = await captureTmuxPane(vars, target);
-    await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
     if (runnerPaneHasPendingInstruction(pane, message, runner)) {
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
+    await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
     return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
   }
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const pane = await captureTmuxPane(vars, target);
-    await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
     if (runnerPaneHasPendingInstruction(pane, message, runner)) {
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
@@ -1050,10 +1049,13 @@ export async function sendRunnerInstructionSafely(
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
     if (!paneShowsBusyComposer(pane)) {
+      await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
+  const timeoutPane = await captureTmuxPane(vars, target);
+  await recordRunnerObservabilityAgreement(vars, target, runner, timeoutPane, logPrefix);
   console.warn(
     `[${logPrefix}] runner ${runner} stayed busy; skipped sending duplicate/queued prompt to ${target}`,
   );
