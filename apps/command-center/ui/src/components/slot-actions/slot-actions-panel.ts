@@ -679,6 +679,7 @@ export class SlotActionsPanel extends LitElement {
           .strictProfile=${this._prepareStrictProfile}
           .disabled=${this._running}
           .showAdvanced=${false}
+          .showPlan=${false}
           @prepare-options-change=${(event: CustomEvent<SlotPrepareOptionsChangeDetail>) => {
             this._prepareProfile = event.detail.prepareProfile;
             this._prepareStrictProfile = event.detail.strictProfile;
