@@ -1,24 +1,24 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-06-27T08:26:52.634Z",
+  "recordedAt": "2026-06-27T10:55:35.359Z",
   "host": "macwork",
   "scenario": "pane-smoke",
   "runner": "grok",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-xbf4g1",
-  "session": "runner-validate-grok-pane-smoke-53946",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-6nWnlW",
+  "session": "runner-validate-grok-pane-smoke-81348",
   "launchMode": "grok-print",
   "markerSeen": true,
   "promptNeedleSeen": true,
   "pass": true,
   "error": null,
-  "paneTail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-xbf4g\n1/.tmux-driver-launch.sh\n(base) ➜  runner-validate-grok-xbf4g1 bash /var/folders/98/_mm6pm_d0nj7vj72jwq0h\nc_00000gn/T/runner-validate-grok-xbf4g1/.tmux-driver-launch.sh\n2026-06-27T08:26:17.387011Z ERROR worker quit with fatal: Transport channel clos\ned, when Client(reqwest::Error { kind: Request, url: \"http://localhost:8124/mcp/\n\", source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect\nerror\", 127.0.0.1:8124, Os { code: 61, kind: ConnectionRefused, message: \"Connec\ntion refused\" })) })\nTMUX_HOOK_OK\n(base) ➜  runner-validate-grok-xbf4g1 git:(main) ✗",
+  "paneTail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-6nWnl\nW/.tmux-driver-launch.sh\n(base) ➜  runner-validate-grok-6nWnlW bash /var/folders/98/_mm6pm_d0nj7vj72jwq0h\nc_00000gn/T/runner-validate-grok-6nWnlW/.tmux-driver-launch.sh\n2026-06-27T10:55:01.157666Z ERROR worker quit with fatal: Transport channel clos\ned, when Client(reqwest::Error { kind: Request, url: \"http://localhost:8124/mcp/\n\", source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect\nerror\", 127.0.0.1:8124, Os { code: 61, kind: ConnectionRefused, message: \"Connec\ntion refused\" })) })\nTMUX_HOOK_OK\n(base) ➜  runner-validate-grok-6nWnlW",
   "paneState": {
-    "pane_id": "%252",
-    "session_name": "runner-validate-grok-pane-smoke-53946",
+    "pane_id": "%361",
+    "session_name": "runner-validate-grok-pane-smoke-81348",
     "current_command": "zsh",
-    "current_path": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-xbf4g1",
+    "current_path": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-6nWnlW",
     "pane_title": "macwork",
-    "pane_pid": "54647",
+    "pane_pid": "82273",
     "state": "shell",
     "phase": "idle",
     "confidence": "high",
@@ -27,7 +27,7 @@
     ],
     "launch_blocker": null,
     "auto_action": null,
-    "tail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-xbf4g\n1/.tmux-driver-launch.sh\n(base) ➜  runner-validate-grok-xbf4g1 bash /var/folders/98/_mm6pm_d0nj7vj72jwq0h\nc_00000gn/T/runner-validate-grok-xbf4g1/.tmux-driver-launch.sh\n2026-06-27T08:26:17.387011Z ERROR worker quit with fatal: Transport channel clos\ned, when Client(reqwest::Error { kind: Request, url: \"http://localhost:8124/mcp/\n\", source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect\nerror\", 127.0.0.1:8124, Os { code: 61, kind: ConnectionRefused, message: \"Connec\ntion refused\" })) })\nTMUX_HOOK_OK\n(base) ➜  runner-validate-grok-xbf4g1 git:(main) ✗",
-    "last_line": "(base) ➜  runner-validate-grok-xbf4g1 git:(main) ✗"
+    "tail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-6nWnl\nW/.tmux-driver-launch.sh\n(base) ➜  runner-validate-grok-6nWnlW bash /var/folders/98/_mm6pm_d0nj7vj72jwq0h\nc_00000gn/T/runner-validate-grok-6nWnlW/.tmux-driver-launch.sh\n2026-06-27T10:55:01.157666Z ERROR worker quit with fatal: Transport channel clos\ned, when Client(reqwest::Error { kind: Request, url: \"http://localhost:8124/mcp/\n\", source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect\nerror\", 127.0.0.1:8124, Os { code: 61, kind: ConnectionRefused, message: \"Connec\ntion refused\" })) })\nTMUX_HOOK_OK\n(base) ➜  runner-validate-grok-6nWnlW",
+    "last_line": "(base) ➜  runner-validate-grok-6nWnlW"
   }
 }
