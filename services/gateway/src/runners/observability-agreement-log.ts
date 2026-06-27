@@ -17,6 +17,11 @@ export interface ObservabilityAgreementAggregate {
 
 let _agreementDir: string | null = null;
 
+/** Test-only: clear cached agreement dir between cases. */
+export function resetAgreementLogDirCacheForTests(): void {
+  _agreementDir = null;
+}
+
 function agreementLogDir(): string {
   if (_agreementDir) return _agreementDir;
   if (process.env.FARMSLOT_OBSERVABILITY_AGREEMENT_DIR) {

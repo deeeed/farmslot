@@ -25,7 +25,7 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 import { claudeHookObservability } from './claude-observability.js';
 import { disagreementReason, logRunnerObservabilityAgreement } from './observability-agreement.js';
 import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
-import { instructionNeedle } from './observability-prompt-digest.js';
+import { instructionNeedle, normalizeInstructionText } from './observability-prompt-digest.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
 import type { ObservabilityScope, RunnerObservability } from './observability-types.js';
 import { classifyRunnerPaneStateBestEffort } from './pane-classifier.js';
@@ -474,7 +474,7 @@ export function runnerPaneShowsWorkspaceTrustPrompt(
 ): boolean {
   const runner = normalizeRunner(runnerId);
   if (runner !== 'cursor') return false;
-  const value = normalizePaneText(pane).toLowerCase();
+  const value = normalizeInstructionText(pane).toLowerCase();
   return (
     value.includes('[a] trust this workspace') &&
     value.includes('[q] quit') &&
@@ -487,7 +487,7 @@ function runnerPaneShowsGrokProjectDirectoryPrompt(
   runnerId?: string | null,
 ): boolean {
   if (normalizeRunner(runnerId) !== 'grok') return false;
-  const value = normalizePaneText(pane).toLowerCase();
+  const value = normalizeInstructionText(pane).toLowerCase();
   return (
     value.includes('run grok build in a project directory') &&
     value.includes('(current)') &&
@@ -522,7 +522,7 @@ export function detectRunnerLaunchBlocker(
     };
   }
 
-  const lines = normalizePaneText(pane)
+  const lines = normalizeInstructionText(pane)
     .split('\n')
     .map((line) => line.trim().toLowerCase())
     .filter(Boolean);
@@ -591,24 +591,16 @@ export function paneShowsBusyComposer(pane: string): boolean {
   );
 }
 
-function normalizePaneText(value: string): string {
-  return value
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
-    .replace(/([/-])\s+/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 export function runnerPaneContainsInstruction(pane: string, message: string): boolean {
   const needle = instructionNeedle(message);
   if (!needle) return false;
-  return normalizePaneText(pane).includes(needle);
+  return normalizeInstructionText(pane).includes(needle);
 }
 
 export function runnerPaneHasProgressAfterInstruction(pane: string, message: string): boolean {
   const needle = instructionNeedle(message);
   if (!needle) return false;
-  const compactPane = normalizePaneText(pane);
+  const compactPane = normalizeInstructionText(pane);
   const idx = compactPane.lastIndexOf(needle);
   if (idx === -1) return false;
   const after = compactPane.slice(idx + needle.length);
@@ -621,7 +613,7 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
 
 export function runnerPaneHasQueuedInstruction(pane: string, message: string): boolean {
   if (!runnerPaneContainsInstruction(pane, message)) return false;
-  const compactPane = normalizePaneText(pane).toLowerCase();
+  const compactPane = normalizeInstructionText(pane).toLowerCase();
   return (
     compactPane.includes('messages to be submitted after next tool call') ||
     compactPane.includes('submitted after next tool call') ||
@@ -638,7 +630,7 @@ function claudePaneShowsQueuedInstruction(pane: string, message: string): boolea
 function claudePaneShowsSubmittedInstruction(pane: string, message: string): boolean {
   const needle = instructionNeedle(message);
   if (!needle) return false;
-  const compactPane = normalizePaneText(pane);
+  const compactPane = normalizeInstructionText(pane);
   const idx = compactPane.lastIndexOf(needle);
   if (idx === -1) return false;
   const after = compactPane.slice(idx + needle.length);
@@ -740,7 +732,7 @@ export function runnerPaneHasPendingInstruction(
     .map((line) => line.trim())
     .filter(Boolean);
   const tail = lines.slice(-12).join(' ');
-  const compactTail = normalizePaneText(tail);
+  const compactTail = normalizeInstructionText(tail);
   const idx = compactTail.lastIndexOf(needle);
   if (idx === -1) return false;
   const runner = normalizeRunner(runnerId);
@@ -948,7 +940,11 @@ async function submitRunnerInstruction(
     const pane = await captureTmuxPane(vars, target);
     if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
       if (mode === 'send' && sentAtMs != null) {
-        await warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix);
+        void warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix).catch((error) => {
+          console.warn(
+            `[${logPrefix}] [observability] degraded check failed: ${(error as Error).message}`,
+          );
+        });
       }
       return true;
     }
@@ -966,7 +962,11 @@ async function submitRunnerInstruction(
     `[${logPrefix}] instruction still appears pending in ${target} after submit verification`,
   );
   if (mode === 'send' && sentAtMs != null) {
-    await warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix);
+    void warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix).catch((error) => {
+      console.warn(
+        `[${logPrefix}] [observability] degraded check failed: ${(error as Error).message}`,
+      );
+    });
   }
   return false;
 }
