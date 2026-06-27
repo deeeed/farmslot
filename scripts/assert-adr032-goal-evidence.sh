@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ADR-032 goal closeout: shipped code (criteria 1,4,5) + optional merge-process replay.
+# ADR-032 goal closeout: shipped code (criteria 1,4,5) + PR #81 merge-process (criteria 2,3).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,12 +9,8 @@ echo "== ADR-032 goal evidence (split verifiers) =="
 SCRATCH="${SCRATCH:-$(dirname "$OUT_DIR")}" ADR032_SHIPPED_EVIDENCE_DIR="$OUT_DIR" \
   bash "$ROOT/scripts/verify-adr032-shipped-main.sh" "$OUT_DIR"
 
-REPLAY_DIR="${ADR032_MERGE_EVIDENCE_DIR:-$ROOT/docs/operations/evidence/adr032/replay}"
-if [[ -f "$REPLAY_DIR/pr81-premerge-capture.json" && -f "$REPLAY_DIR/pr81-postmerge.json" && -f "$REPLAY_DIR/cross-review-pr81.txt" ]]; then
-  bash "$ROOT/scripts/verify-adr032-merge-process.sh" "$REPLAY_DIR"
-else
-  echo "MERGE-PROCESS SKIP: no frozen replay evidence at $REPLAY_DIR"
-  echo "  Historical PRs #81–#86 lack pre-merge GH APPROVED; run replay PR per replay/README.md"
-fi
+ADR032_MERGE_EVIDENCE_DIR="${ADR032_MERGE_EVIDENCE_DIR:-$ROOT/docs/operations/evidence/adr032}" \
+  bash "$ROOT/scripts/verify-adr032-merge-process.sh" \
+  "$ROOT/docs/operations/evidence/adr032"
 
-echo "ASSERT PASS: shipped-main satisfied; merge-process checked when replay evidence present"
+echo "ASSERT PASS: shipped-main + PR #81 merge-process satisfied"

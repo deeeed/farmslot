@@ -1,23 +1,23 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-06-27T10:57:13.087Z",
+  "recordedAt": "2026-06-27T11:42:51.350Z",
   "host": "macwork",
   "runner": "claude",
   "slotId": "adr032-gate-macwork",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/adr032-gate-rT76gS",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/adr032-gate-78GTZJ",
   "inTmux": false,
   "tmuxPane": null,
   "tmuxPaneSeenInHooks": true,
   "hookLatencyMs": {
-    "installMs": 103,
+    "installMs": 105,
     "samples": [
-      36,
-      37,
-      42,
-      42,
-      45
+      39,
+      39,
+      39,
+      41,
+      41
     ],
-    "median": 42
+    "median": 39
   },
   "gate": {
     "installOnly": true,
@@ -35,60 +35,60 @@
   "recentHookEvents": [
     {
       "schemaVersion": 1,
-      "observedAt": 1782557832923,
-      "timestamp": 1782557832923,
+      "observedAt": 1782560571188,
+      "timestamp": 1782560571188,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-rT76gS",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-78GTZJ",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782557832966,
-      "timestamp": 1782557832966,
+      "observedAt": 1782560571230,
+      "timestamp": 1782560571230,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-rT76gS",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-78GTZJ",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782557833003,
-      "timestamp": 1782557833003,
+      "observedAt": 1782560571268,
+      "timestamp": 1782560571268,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-rT76gS",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-78GTZJ",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782557833040,
-      "timestamp": 1782557833040,
+      "observedAt": 1782560571308,
+      "timestamp": 1782560571308,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-rT76gS",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-78GTZJ",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782557833085,
-      "timestamp": 1782557833085,
+      "observedAt": 1782560571347,
+      "timestamp": 1782560571347,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-rT76gS",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-78GTZJ",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"
