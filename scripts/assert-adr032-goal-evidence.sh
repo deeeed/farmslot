@@ -44,47 +44,25 @@ else
 fi
 
 require_file "$EVIDENCE_DIR/pr-chain-audit.json"
-node --input-type=module -e "
-import fs from 'node:fs';
-const p = process.argv[1];
-const audit = JSON.parse(fs.readFileSync(p, 'utf8'));
-const expected = [81, 82, 83, 84, 85, 86];
-if (!Array.isArray(audit.prs) || audit.prs.length !== expected.length) {
-  console.error('pr-chain-audit: expected', expected.length, 'PR entries');
-  process.exit(1);
-}
-for (const pr of audit.prs) {
-  if (pr.state !== 'MERGED') {
-    console.error('pr-chain-audit: PR', pr.number, 'state', pr.state, '!= MERGED');
-    process.exit(1);
-  }
-  if (!pr.crossReviewArtifact && pr.number <= 84) {
-    console.error('pr-chain-audit: PR', pr.number, 'missing crossReviewArtifact');
-    process.exit(1);
-  }
-  const author = pr.author?.login ?? null;
-  const approved = (pr.reviews ?? []).some(
-    (r) => r.state === 'APPROVED' && r.author?.login && r.author.login !== author,
-  );
-  if (!approved) {
-    console.error('pr-chain-audit: PR', pr.number, 'missing independent APPROVED review');
-    process.exit(1);
-  }
-}
-console.log('ok pr-chain-audit:', expected.length, 'MERGED PRs with independent APPROVED reviews');
-" "$EVIDENCE_DIR/pr-chain-audit.json" || fail 'pr-chain-audit.json validation'
+require_file "$EVIDENCE_DIR/pr81-premerge.json"
+require_file "$EVIDENCE_DIR/pr82-premerge.json"
+require_file "$EVIDENCE_DIR/pr81-merge-timing-note.json"
+node "$ROOT/scripts/assert-adr032-pr-chain.mjs" "$EVIDENCE_DIR" "$EVIDENCE_DIR/pr-chain-audit.json" \
+  || fail 'pr-chain-audit merge-time validation'
 
-for n in 81 82 83 84; do
+for n in 81 82 83 84 85 86; do
   require_file "$EVIDENCE_DIR/pr${n}-CROSS-REVIEW-LOOP.json"
 done
 node "$ROOT/scripts/validate-cross-review-loop-json.mjs" \
-  "$EVIDENCE_DIR/pr81-CROSS-REVIEW-LOOP.json" \
-  "$EVIDENCE_DIR/pr82-CROSS-REVIEW-LOOP.json" \
-  "$EVIDENCE_DIR/pr83-CROSS-REVIEW-LOOP.json" \
-  "$EVIDENCE_DIR/pr84-CROSS-REVIEW-LOOP.json" \
+  "$EVIDENCE_DIR"/pr81-CROSS-REVIEW-LOOP.json \
+  "$EVIDENCE_DIR"/pr82-CROSS-REVIEW-LOOP.json \
+  "$EVIDENCE_DIR"/pr83-CROSS-REVIEW-LOOP.json \
+  "$EVIDENCE_DIR"/pr84-CROSS-REVIEW-LOOP.json \
+  "$EVIDENCE_DIR"/pr85-CROSS-REVIEW-LOOP.json \
+  "$EVIDENCE_DIR"/pr86-CROSS-REVIEW-LOOP.json \
   || fail 'cross-review JSON schema validation'
 
-for n in 81 82 83 84; do
+for n in 81 82 83 84 85 86; do
   node --input-type=module -e "
 import fs from 'node:fs';
 const doc = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));

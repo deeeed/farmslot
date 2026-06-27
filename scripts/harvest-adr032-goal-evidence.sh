@@ -42,50 +42,18 @@ echo "== gateway safe-send + decision tests =="
 append_exit_marker SAFE_SEND "$EVIDENCE_DIR/registry-safe-send-run.log" "${PIPESTATUS[0]}" || exit 1
 
 echo "== gh PR chain audit =="
-PR_JSON="$(mktemp)"
-trap 'rm -f "$PR_JSON.raw"' EXIT
+PR_JSON="$(mktemp).raw"
+trap 'rm -f "$PR_JSON"' EXIT
 for n in 81 82 83 84 85 86; do
   gh pr view "$n" --json number,title,state,mergedAt,mergeCommit,reviews,url,statusCheckRollup,author \
-    >>"$PR_JSON.raw"
-  echo "---" >>"$PR_JSON.raw"
+    >>"$PR_JSON"
+  echo "---" >>"$PR_JSON"
 done
-EVIDENCE_DIR="$EVIDENCE_DIR" node --input-type=module -e "
-import fs from 'node:fs';
-import path from 'node:path';
-const evidenceDir = process.env.EVIDENCE_DIR ?? '.';
-const raw = fs.readFileSync(process.argv[1], 'utf8');
-const chunks = raw.split('---\\n').map((c) => c.trim()).filter(Boolean);
-if (chunks.length !== 6) {
-  console.error('pr-chain-audit: expected 6 gh pr view payloads, got', chunks.length);
-  process.exit(1);
-}
-const prs = chunks.map((c) => JSON.parse(c));
-for (const p of prs) {
-  const author = p.author?.login ?? null;
-  const approved = (p.reviews ?? []).some(
-    (r) => r.state === 'APPROVED' && r.author?.login && r.author.login !== author,
-  );
-  if (!approved) {
-    console.error('pr-chain-audit: PR', p.number, 'missing independent APPROVED gh review');
-    process.exit(1);
-  }
-}
-const out = {
-  harvestedAt: new Date().toISOString(),
-  mainSha: process.argv[2],
-  prs: prs.map((p) => ({
-    ...p,
-    crossReviewArtifact:
-      p.number <= 84
-        ? path.join(evidenceDir, \`pr\${p.number}-CROSS-REVIEW-LOOP.json\`)
-        : null,
-    independentApproveReview: (p.reviews ?? []).find(
-      (r) => r.state === 'APPROVED' && r.author?.login !== p.author?.login,
-    )?.author?.login ?? null,
-  })),
-};
-fs.writeFileSync(process.argv[3], JSON.stringify(out, null, 2) + '\\n');
-" "$PR_JSON.raw" "$(git -C "$ROOT" rev-parse HEAD)" "$EVIDENCE_DIR/pr-chain-audit.json"
+node "$ROOT/scripts/harvest-adr032-pr-chain-audit.mjs" \
+  "$PR_JSON" \
+  "$(git -C "$ROOT" rev-parse HEAD)" \
+  "$EVIDENCE_DIR" \
+  "$EVIDENCE_DIR/pr-chain-audit.json"
 
 PR82_SHA="$(gh pr view 82 --json mergeCommit -q .mergeCommit.oid)"
 echo "== PR #82 post-merge CI (commit ${PR82_SHA}) =="
@@ -111,16 +79,14 @@ grep -n -E 'resolvePendingInstructionObsFirst|sendRunnerInstructionWhenPaneClear
   "$ROOT/services/gateway/src/runners/registry.ts" \
   | tee "$EVIDENCE_DIR/phase2-decision-grep.txt" >/dev/null
 
-node --input-type=module -e "
-import fs from 'node:fs';
-const note = {
-  pr: 82,
-  mergeCommit: process.argv[1],
-  disclosure:
-    'PR #82 merged while Farmslot Quality jobs were still IN_PROGRESS on the pre-merge head; post-merge CI on the merge commit later reported SUCCESS (see pr82-postmerge-ci.json). This does not retroactively change merge-time state but documents eventual green validation.',
-  premergeEvidenceHint: 'archive pr82-premerge.json in operator scratch if historical IN_PROGRESS capture is required',
-};
-fs.writeFileSync(process.argv[2], JSON.stringify(note, null, 2) + '\\n');
-" "$(gh pr view 82 --json mergeCommit -q .mergeCommit.oid)" "$EVIDENCE_DIR/pr82-merge-timing-note.json"
+require_merge_notes() {
+  for n in 81 82; do
+    [[ -f "$EVIDENCE_DIR/pr${n}-merge-timing-note.json" ]] || {
+      echo "missing pr${n}-merge-timing-note.json in evidence dir" >&2
+      exit 1
+    }
+  done
+}
+require_merge_notes
 
 echo "ADR-032 goal evidence harvest complete -> ${EVIDENCE_DIR}"

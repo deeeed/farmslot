@@ -1,6 +1,17 @@
 {
   "pr": 82,
   "mergeCommit": "02fe7bd8b30c80ba4658e3ff0decbd52cb1604f2",
-  "disclosure": "PR #82 merged while Farmslot Quality jobs were still IN_PROGRESS on the pre-merge head; post-merge CI on the merge commit later reported SUCCESS (see pr82-postmerge-ci.json). This does not retroactively change merge-time state but documents eventual green validation.",
-  "premergeEvidenceHint": "archive pr82-premerge.json in operator scratch if historical IN_PROGRESS capture is required"
+  "mergedAt": "2026-06-27T08:45:13Z",
+  "mergeTimeCiGreen": false,
+  "mergeStateStatusAtMerge": "BLOCKED",
+  "premergeEvidenceFile": "pr82-premerge.json",
+  "inProgressJobsAtMerge": [
+    "Repository quality guards",
+    "Command Center quality gates",
+    "Docs quality gates",
+    "Gateway service quality"
+  ],
+  "processWaiver": "PR #82 was admin-merged while required Farmslot Quality jobs were IN_PROGRESS on the pre-merge head. This violates plan criterion 3 (merge only when CI green). Compensating evidence: pr82-postmerge-ci.json shows eventual Farmslot Quality SUCCESS on the merge commit.",
+  "compensatingEvidence": ["pr82-postmerge-ci.json", "pr82-CROSS-REVIEW-LOOP.json"],
+  "disclosure": "Post-merge GH APPROVE reviews (deeeed) do not retroactively satisfy pre-merge review timing; cross-review JSON completedAt at merge is the authoritative pre-merge review record for this PR."
 }
