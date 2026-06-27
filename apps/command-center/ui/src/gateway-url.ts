@@ -130,7 +130,7 @@ function normalizePayloadUrls(payload: HostedGatewayPayload): string[] {
 function parseStoredGatewayCandidates(value: string | null | undefined): string[] {
   if (!value?.trim()) return [];
   try {
-    const parsed = JSON.parse(value) as unknown;
+    const parsed: unknown = JSON.parse(value);
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((item): item is string => typeof item === 'string')
