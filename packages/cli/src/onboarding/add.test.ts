@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -18,6 +19,7 @@ import {
   assertProjectOwnership,
   findMissingState,
   operatorAddedFiles,
+  projectAdd,
   registerProject,
 } from './add.js';
 import type { PackJson, PackProject } from './pack.js';
@@ -206,4 +208,127 @@ test('registerProject re-add preserves operator secrets, refreshes pack files', 
   assert.equal(readFileSync(join(destFix, '.js.env.sample'), 'utf-8'), 'KEY=\nNEW=\n');
   // Pack-deleted file is NOT resurrected (it was tracked, not gitignored).
   assert.equal(existsSync(join(destFix, 'legacy-hook.sh')), false);
+});
+
+test('projectAdd --no-setup --project registers selected slots without setup/preflight', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-add-deferred-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const ws: Workspace = workspaceAt(join(root, 'ws'));
+  mkdirSync(ws.root, { recursive: true });
+  mkdirSync(join(ws.farmslotDir, 'pool'), { recursive: true });
+  mkdirSync(ws.reposDir, { recursive: true });
+  writeFileSync(
+    join(ws.farmslotDir, 'pool', 'm.json'),
+    JSON.stringify({ machine: 'm', host: 'localhost', ssh_user: 'me', slots: [] }, null, 2),
+  );
+  writeFileSync(ws.statePath, JSON.stringify(stateWith({}), null, 2));
+
+  const scriptsDir = join(ws.farmslotDir, 'scripts');
+  mkdirSync(scriptsDir, { recursive: true });
+  writeFileSync(
+    join(scriptsDir, 'sync-fixtures.sh'),
+    '#!/usr/bin/env bash\ntouch "$PWD/synced-$2"\n',
+  );
+  writeFileSync(
+    join(scriptsDir, 'setup-slot.sh'),
+    '#!/usr/bin/env bash\necho setup should not run >&2\nexit 42\n',
+  );
+  writeFileSync(
+    join(scriptsDir, 'preflight-slot.sh'),
+    '#!/usr/bin/env bash\necho preflight should not run >&2\nexit 43\n',
+  );
+  chmodSync(join(scriptsDir, 'sync-fixtures.sh'), 0o755);
+  chmodSync(join(scriptsDir, 'setup-slot.sh'), 0o755);
+  chmodSync(join(scriptsDir, 'preflight-slot.sh'), 0o755);
+
+  const repo = join(root, 'repo');
+  mkdirSync(repo, { recursive: true });
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), 'fixture repo\n');
+  spawnSync('git', ['add', '.'], { cwd: repo });
+  spawnSync(
+    'git',
+    ['-c', 'user.email=a@example.com', '-c', 'user.name=A', 'commit', '-qm', 'init'],
+    { cwd: repo },
+  );
+
+  const pack = join(root, 'pack');
+  for (const name of ['app-farm', 'other-farm']) {
+    const projectDir = join(pack, 'projects', name);
+    mkdirSync(join(projectDir, 'setup'), { recursive: true });
+    writeFileSync(
+      join(projectDir, 'project.json'),
+      JSON.stringify({ name, repo_url: repo, default_branch: 'master' }, null, 2),
+    );
+    writeFileSync(join(projectDir, 'setup', 'cli.sh'), '#!/usr/bin/env bash\n');
+  }
+  writeFileSync(
+    join(pack, 'pack.json'),
+    JSON.stringify(
+      {
+        name: 'team-pack',
+        projects: [
+          { dir: 'projects/app-farm', platform: 'cli', slots: 1, short: 'app' },
+          { dir: 'projects/other-farm', platform: 'cli', slots: 1, short: 'other' },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  const result = projectAdd(
+    pack,
+    ws,
+    { step: () => {}, info: () => {} },
+    { noSetup: true, projects: ['app-farm'] },
+  );
+  assert.equal(result.deferredSetup, true);
+  assert.deepEqual(result.slots, ['m-app-1']);
+  assert.equal(existsSync(join(ws.reposDir, 'app-1', '.git')), true);
+  assert.equal(existsSync(join(ws.reposDir, 'other-1', '.git')), false);
+  assert.equal(existsSync(join(ws.farmslotDir, 'synced-m-app-1')), true);
+
+  let state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
+  assert.deepEqual(state.packs['team-pack'].projects, ['app-farm']);
+  assert.deepEqual(state.packs['team-pack'].slots, ['m-app-1']);
+  assert.equal(state.packs['team-pack'].hash, '');
+
+  writeFileSync(join(scriptsDir, 'setup-slot.sh'), '#!/usr/bin/env bash\ntouch "$PWD/setup-$1"\n');
+  writeFileSync(
+    join(scriptsDir, 'preflight-slot.sh'),
+    '#!/usr/bin/env bash\ntouch "$PWD/preflight-$1"\n',
+  );
+  chmodSync(join(scriptsDir, 'setup-slot.sh'), 0o755);
+  chmodSync(join(scriptsDir, 'preflight-slot.sh'), 0o755);
+
+  const fullSubset = projectAdd(
+    pack,
+    ws,
+    { step: () => {}, info: () => {} },
+    { projects: ['app-farm'] },
+  );
+  assert.equal(fullSubset.deferredSetup, false);
+  assert.equal(existsSync(join(ws.farmslotDir, 'setup-m-app-1')), true);
+  assert.equal(existsSync(join(ws.farmslotDir, 'preflight-m-app-1')), true);
+  state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
+  assert.equal(state.packs['team-pack'].hash, '');
+
+  const fullPack = projectAdd(pack, ws, { step: () => {}, info: () => {} });
+  assert.deepEqual(fullPack.slots, ['m-app-1', 'm-other-1']);
+  state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
+  const completedHash = state.packs['team-pack'].hash;
+  assert.notEqual(completedHash, '');
+
+  rmSync(join(ws.reposDir, 'other-1'), { recursive: true });
+  const subsetNoop = projectAdd(
+    pack,
+    ws,
+    { step: () => {}, info: () => {} },
+    { projects: ['app'] },
+  );
+  assert.equal(subsetNoop.action, 'noop');
+  state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
+  assert.equal(state.packs['team-pack'].hash, completedHash);
 });

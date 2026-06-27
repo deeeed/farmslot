@@ -6,6 +6,11 @@ import { runDoctor } from '../onboarding/doctor.js';
 import { resolveWorkspace } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
+interface ProjectAddCliOptions {
+  noSetup?: boolean;
+  project?: string[];
+}
+
 export function registerProjectCommand(program: Command): void {
   const project = program.command('project').description('Project pack management (onboarding)');
 
@@ -13,7 +18,13 @@ export function registerProjectCommand(program: Command): void {
     .command('add')
     .description('Register a project pack: projects, repos, slots, validation')
     .argument('<source>', 'pack directory or git URL containing pack.json')
-    .action(async (source: string, _: unknown, cmd: Command) => {
+    .option('--no-setup', 'Register/clone/sync fixtures only; defer setup/build/preflight')
+    .option(
+      '--project <name>',
+      'Only add/repair one project from the pack (repeatable)',
+      (value, previous: string[] = []) => [...previous, value],
+    )
+    .action(async (source: string, opts: ProjectAddCliOptions, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       const ws = resolveWorkspace();
       if (!ws) {
@@ -23,18 +34,28 @@ export function registerProjectCommand(program: Command): void {
 
       const infos: string[] = [];
       try {
-        const result = projectAdd(source, ws, {
-          step: (s) => {
-            if (!output.json) {
-              output.write(`${green('[OK]')} ${s.label}${s.detail ? dim(`  ${s.detail}`) : ''}\n`);
-            }
+        const result = projectAdd(
+          source,
+          ws,
+          {
+            step: (s) => {
+              if (!output.json) {
+                output.write(
+                  `${green('[OK]')} ${s.label}${s.detail ? dim(`  ${s.detail}`) : ''}\n`,
+                );
+              }
+            },
+            info: (msg) => {
+              infos.push(msg);
+              if (!output.json) output.write(`${dim(msg)}\n`);
+            },
+            childOutputToStderr: output.json,
           },
-          info: (msg) => {
-            infos.push(msg);
-            if (!output.json) output.write(`${dim(msg)}\n`);
+          {
+            noSetup: Boolean(opts.noSetup),
+            projects: opts.project,
           },
-          childOutputToStderr: output.json,
-        });
+        );
 
         // Every onboarding command ends with doctor.
         const report = await runDoctor(ws);
@@ -45,11 +66,17 @@ export function registerProjectCommand(program: Command): void {
             slots: result.slots,
             failures: result.failures,
             notes: infos,
+            deferred_setup: result.deferredSetup,
             doctor: report,
           });
         } else {
           output.write(`\n${bold(`pack ${result.pack.name}: ${result.action}`)}\n`);
           output.write(`  ${green('✓')} slots: ${result.slots.join(', ')}\n`);
+          if (result.deferredSetup) {
+            output.write(
+              `${dim('setup/build/preflight deferred — run the same command without --no-setup, optionally with --project <name>, when ready.')}\n`,
+            );
+          }
           if (result.failures.length > 0) {
             output.write(`\n${red('Projects that failed to install (others continued):')}\n`);
             for (const f of result.failures) output.write(`  ${red('✗')} ${f}\n`);

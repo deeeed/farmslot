@@ -335,6 +335,56 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
   return { title: 'CLI', checks };
 }
 
+function captureHelperSection(): DoctorSection {
+  if (process.platform !== 'darwin') {
+    return {
+      title: 'Capture',
+      checks: [
+        {
+          name: 'capture-helper',
+          ok: true,
+          warn: true,
+          detail: 'skipped (macOS-only evidence helper)',
+        },
+      ],
+    };
+  }
+  const bin = commandPath('capture-helper');
+  if (!bin) {
+    return {
+      title: 'Capture',
+      checks: [
+        {
+          name: 'capture-helper',
+          ok: true,
+          warn: true,
+          detail: 'not found',
+          hint: 'install: npm install -g @siteed/capture-helper (or the Homebrew formula)',
+        },
+      ],
+    };
+  }
+  const result = spawnSync(bin, ['doctor', '--json'], { encoding: 'utf-8', timeout: 10_000 });
+  if (result.status === 0) {
+    return {
+      title: 'Capture',
+      checks: [{ name: 'capture-helper', ok: true, detail: `${bin} doctor passed` }],
+    };
+  }
+  return {
+    title: 'Capture',
+    checks: [
+      {
+        name: 'capture-helper',
+        ok: true,
+        warn: true,
+        detail: (result.stderr || result.stdout || result.error?.message || 'doctor failed').trim(),
+        hint: 'run: capture-helper doctor --json; grant Screen Recording permission if requested',
+      },
+    ],
+  };
+}
+
 /** Run git in `cwd`, returning trimmed stdout, or null on any non-zero exit. */
 function gitOut(cwd: string, args: string[]): string | null {
   const result = spawnSync('git', args, { cwd, encoding: 'utf-8' });
@@ -487,6 +537,7 @@ export async function runDoctor(ws: Workspace | null): Promise<DoctorReport> {
     poolSection(ws, state),
     packSection(ws, state),
     cliSection(ws, state),
+    captureHelperSection(),
     updatesSection(ws),
     await gatewaySection(),
   ];
