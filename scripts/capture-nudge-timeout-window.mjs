@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
- * ADR-032 Phase 2 exit evidence: aggregate Run.metrics.nudgeTimeoutCount over a
- * rolling window from the gateway run store (.runs/*.json).
+ * Aggregate Run.metrics.nudgeTimeoutCount over a rolling window from the gateway run store.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,7 +23,7 @@ function parseArgs(argv) {
     else if (token === '--out') args.out = argv[++i];
     else if (token === '--help' || token === '-h') {
       console.log(
-        'usage: capture-adr032-phase2-exit-evidence.mjs [--runs-dir <path>] [--window-days 7] [--runner claude] [--out report.json]',
+        'usage: capture-nudge-timeout-window.mjs [--runs-dir <path>] [--window-days 7] [--runner claude] [--out report.json]',
       );
       process.exit(0);
     }
@@ -62,7 +61,7 @@ function summarize(runs, runnerFilter) {
   );
   return {
     schemaVersion: 1,
-    criterion: 'ADR-032 Phase 2 exit: nudgeTimeoutCount zero over rolling window',
+    criterion: 'nudgeTimeoutCount zero over rolling window',
     recordedAt: new Date().toISOString(),
     runnerFilter,
     windowDays: null,
@@ -85,7 +84,7 @@ function summarize(runs, runnerFilter) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!Number.isFinite(args.windowDays) || args.windowDays <= 0) {
-    console.error('capture-adr032-phase2-exit-evidence: --window-days must be a positive number');
+    console.error('capture-nudge-timeout-window: --window-days must be a positive number');
     process.exit(2);
   }
   const cutoffMs = Date.now() - args.windowDays * 24 * 60 * 60 * 1000;

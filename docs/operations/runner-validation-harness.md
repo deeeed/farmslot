@@ -29,7 +29,7 @@ node scripts/runner-validation/run.mjs --runner all --scenario all
 
 Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
 
-Wired into `scripts/run-adr032-phase1-gate.sh`: `hook-smoke` (Claude + Codex), **grok `pane-smoke`**, and **grok `interaction-smoke`**. Add `--runner pane-only` to include Cursor when it becomes fleet-default.
+Wired into `scripts/e2e-tmux-runner-validate.sh` and `scripts/run-runner-observability-gate.sh`: `hook-smoke` (Claude + Codex, committed evidence), **grok `pane-smoke`**, and **grok `interaction-smoke`** (local temp dir only). Add `--runner pane-only` to include Cursor when it becomes fleet-default.
 
 ## Runner groups
 

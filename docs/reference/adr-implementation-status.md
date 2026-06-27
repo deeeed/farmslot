@@ -93,7 +93,7 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 | `scripts/runner-validation/` harness | Shipped | Operator guide in `docs/operations/` |
 | Obs-first `sendRunnerInstructionSafely` | Shipped | PRs #82–#84, `91674d9` follow-up |
 | Phase 2 exit: zero `nudgeTimeoutCount` over 7 days | Shipped | `docs/operations/evidence/adr032/phase2-exit-window.json` (`exitPass: true`) |
-| Committed macwork evidence snapshots | Shipped | Four JSONs listed in `docs/operations/evidence/adr032/GOAL-SCOPE.json` |
+| Committed macwork evidence snapshots | Shipped | Four JSONs listed in `docs/operations/evidence/adr032/GOAL-SCOPE.json`; closeout verifiers retired from `scripts/` |
 | Phase 3: retire Claude pane-regex branches | Not started | Scheduled; exit gate cleared |
 | Cursor/Grok hook path | Not started | Remain `pane-only` per ADR matrix |
 

@@ -11,7 +11,7 @@ Phase 1 closeout is **tmux-first**, not unit tests or synthetic agreement counts
 bash scripts/e2e-tmux-runner-validate.sh
 
 # Full gate bundle (E2E + install probes)
-bash scripts/run-adr032-phase1-gate.sh
+bash scripts/run-runner-observability-gate.sh
 ```
 
 | E2E check | Proves |
@@ -24,9 +24,7 @@ bash scripts/run-adr032-phase1-gate.sh
 | `grok interaction-smoke` | Interactive TUI + compose submit + response marker |
 | `cursor pane-smoke` | `cursor-agent --print --trust` (when binary present) |
 
-Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
-
-**Committed snapshots:** only macwork hook-smoke JSONs for Claude and Codex are versioned (plus install probes — see below). Grok/Cursor pane smokes and optional harness scenarios write local JSON under the same directory but must not be committed; `scripts/verify-adr032-no-invalid-paths.sh` fails if they appear on disk during closeout verification.
+**Committed snapshots:** only macwork hook-smoke JSONs for Claude and Codex are versioned (plus install probes — see below). Grok/Cursor pane smokes and optional harness scenarios write to a temp directory during `e2e-tmux-runner-validate.sh` and must not be committed.
 
 Operator guide: [runner-validation-harness.md](./runner-validation-harness.md)
 
@@ -69,11 +67,22 @@ No fixed “200 events @ 98%” bar — that was never a real Phase 1 gate.
 
 ## Revalidation
 
+ADR-032 goal closeout is frozen under `docs/operations/evidence/adr032/`. Use these reusable ops commands for ongoing checks:
+
 | Scope | Command |
 |-------|---------|
-| Phase 1 empirical gate (E2E + probes) | `bash scripts/run-adr032-phase1-gate.sh` |
-| Full ADR-032 closeout | `bash scripts/assert-adr032-goal-evidence.sh` |
-| Phase 2 exit only | `bash scripts/verify-adr032-phase2-exit.sh` (refreshes `docs/operations/evidence/adr032/phase2-exit-window.json`) |
+| Live tmux E2E | `bash scripts/e2e-tmux-runner-validate.sh` |
+| Empirical gate (E2E + probes) | `bash scripts/run-runner-observability-gate.sh` |
+| Nudge-timeout window report | `node scripts/capture-nudge-timeout-window.mjs --window-days 7 --runner claude --out /tmp/nudge-window.json` |
+
+To refresh the frozen Phase 2 snapshot intentionally:
+
+```bash
+node scripts/capture-nudge-timeout-window.mjs \
+  --window-days 7 \
+  --runner claude \
+  --out docs/operations/evidence/adr032/phase2-exit-window.json
+```
 
 ## Abort rule
 

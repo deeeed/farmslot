@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SKILL="$ROOT/.agents/skills/tmux-model-driver"
 HOST="$(hostname -s 2>/dev/null || hostname | sed 's/\.local$//')"
 EVIDENCE_DIR="$ROOT/docs/operations/evidence"
+OPTIONAL_EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/runner-e2e-optional-XXXXXX")"
 FAIL=0
 HOOK_RAN=false
 HOOK_PASSED=false
@@ -26,6 +27,10 @@ runner_available() {
 }
 
 mkdir -p "$EVIDENCE_DIR"
+cleanup_optional_evidence() {
+  rm -rf "$OPTIONAL_EVIDENCE_DIR"
+}
+trap cleanup_optional_evidence EXIT
 
 echo "== tmux runner E2E on ${HOST} =="
 
@@ -85,10 +90,11 @@ run_harness() {
   local scenario="$2"
   local is_first="${3:-false}"
   local optional="${4:-false}"
+  local out_dir="${5:-$EVIDENCE_DIR}"
   if [ "$is_first" != true ]; then
     sleep 15
   fi
-  if node "$ROOT/scripts/runner-validation/run.mjs" --runner "$runner" --scenario "$scenario"; then
+  if node "$ROOT/scripts/runner-validation/run.mjs" --runner "$runner" --scenario "$scenario" --out-dir "$out_dir"; then
     pass "${runner}/${scenario}"
     return 0
   fi
@@ -120,13 +126,13 @@ if runner_available grok; then
   echo "-- harness: grok pane-smoke --"
   GROK_RAN=true
   if [ "$FIRST_HARNESS" = true ]; then
-    run_harness grok pane-smoke true || true
+    run_harness grok pane-smoke true false "$OPTIONAL_EVIDENCE_DIR" || true
     FIRST_HARNESS=false
   else
-    run_harness grok pane-smoke false || true
+    run_harness grok pane-smoke false false "$OPTIONAL_EVIDENCE_DIR" || true
   fi
   echo "-- harness: grok interaction-smoke --"
-  run_harness grok interaction-smoke false || true
+  run_harness grok interaction-smoke false false "$OPTIONAL_EVIDENCE_DIR" || true
 else
   skip "grok pane-smoke + interaction-smoke (binary missing)"
 fi
@@ -134,10 +140,10 @@ fi
 if runner_available cursor; then
   echo "-- harness: cursor pane-smoke (optional) --"
   if [ "$FIRST_HARNESS" = true ]; then
-    run_harness cursor pane-smoke true true
+    run_harness cursor pane-smoke true true "$OPTIONAL_EVIDENCE_DIR"
     FIRST_HARNESS=false
   else
-    run_harness cursor pane-smoke false true
+    run_harness cursor pane-smoke false true "$OPTIONAL_EVIDENCE_DIR"
   fi
 else
   skip "cursor pane-smoke (binary missing)"
@@ -159,4 +165,5 @@ if [ "$FAIL" -ne 0 ]; then
 fi
 
 echo "tmux runner E2E complete on ${HOST}"
-echo "evidence: ${EVIDENCE_DIR}/runner-validate-${HOST}-*.json"
+echo "committed evidence: ${EVIDENCE_DIR}/runner-validate-${HOST}-{claude,codex}-hook-smoke.json"
+echo "optional evidence (local only): ${OPTIONAL_EVIDENCE_DIR}/runner-validate-${HOST}-*.json"
