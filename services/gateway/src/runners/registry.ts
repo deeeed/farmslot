@@ -27,6 +27,8 @@ import { disagreementReason, logRunnerObservabilityAgreement } from './observabi
 import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
 import { instructionNeedle, normalizeInstructionText, runnerPromptDigest } from './observability-prompt-digest.js';
 import {
+  computePromptAcceptedSinceMs,
+  isObservabilityReadingAuthoritative,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
   selectBusyFromObservabilityAndPane,
@@ -857,6 +859,37 @@ async function readRunnerActivityFromObservability(
   }
 }
 
+type HookPendingDecision =
+  | { kind: 'hook'; pending: boolean }
+  | { kind: 'fallback' };
+
+async function resolvePendingInstructionObsFirst(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  message: string,
+  sinceMs: number,
+): Promise<HookPendingDecision> {
+  const observability = getRunnerObservability(runner);
+  if (!observability) return { kind: 'fallback' };
+  try {
+    const reading = await observability.promptAccepted(
+      vars,
+      target,
+      runnerPromptDigest(message),
+      sinceMs,
+    );
+    if (!isObservabilityReadingAuthoritative(reading)) return { kind: 'fallback' };
+    if (reading.value === true) return { kind: 'hook', pending: false };
+    return { kind: 'fallback' };
+  } catch (error) {
+    console.warn(
+      `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
+    );
+    return { kind: 'fallback' };
+  }
+}
+
 async function runnerHasPendingInstruction(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -884,15 +917,18 @@ async function runnerHasPendingInstruction(
   }
 }
 
-async function runnerShowsBusyComposer(
+type HookBusyDecision = { kind: 'hook'; busy: boolean } | { kind: 'fallback' };
+
+async function resolveBusyComposerObsFirst(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
-  pane: string,
-): Promise<boolean> {
-  const paneBusy = paneShowsBusyComposer(pane);
+): Promise<HookBusyDecision> {
   const reading = await readRunnerActivityFromObservability(vars, target, runner);
-  return selectBusyFromObservabilityAndPane(reading, paneBusy).busy;
+  if (isObservabilityReadingAuthoritative(reading) && reading.value !== 'unknown') {
+    return { kind: 'hook', busy: runnerActivityIsBusy(reading.value) };
+  }
+  return { kind: 'fallback' };
 }
 
 async function recordRunnerObservabilityAgreement(
@@ -1099,32 +1135,86 @@ export async function sendRunnerInstructionSafely(
   const def = getRunnerDefinition(runner);
   const effectiveTimeoutMs = timeoutMs ?? resolveSafeSendTimeoutMs(runner);
   const loopStartMs = Date.now();
-  const promptAcceptedSinceMs = loopStartMs - effectiveTimeoutMs;
+  const promptAcceptedSinceMs = computePromptAcceptedSinceMs(loopStartMs, effectiveTimeoutMs);
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt
   // in. Most call sites send into an idle prompt where the registry default (Claude: false,
   // codex: true) is correct. The branch-affinity nudge flow targets a Claude session that may
   // be mid-tool-use, where send-keys gets queued or eaten unless we wait for the busy marker
   // to clear — it passes `forceBusyPoll: true` to override the per-runner default.
   if (!def.requiresBusyComposerPoll && !opts.forceBusyPoll) {
-    const pane = await captureTmuxPane(vars, target);
-    if (
-      await runnerHasPendingInstruction(vars, target, runner, message, pane, promptAcceptedSinceMs)
-    ) {
-      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+    const pendingObs = await resolvePendingInstructionObsFirst(
+      vars,
+      target,
+      runner,
+      message,
+      promptAcceptedSinceMs,
+    );
+    if (pendingObs.kind === 'fallback') {
+      const pane = await captureTmuxPane(vars, target);
+      if (
+        await runnerHasPendingInstruction(
+          vars,
+          target,
+          runner,
+          message,
+          pane,
+          promptAcceptedSinceMs,
+        )
+      ) {
+        return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+      }
+      await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
+      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
     }
+    const pane = await captureTmuxPane(vars, target);
     await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
     return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
   }
   const deadline = loopStartMs + effectiveTimeoutMs;
   while (Date.now() < deadline) {
-    const pane = await captureTmuxPane(vars, target);
-    if (
-      await runnerHasPendingInstruction(vars, target, runner, message, pane, promptAcceptedSinceMs)
-    ) {
-      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+    const pendingObs = await resolvePendingInstructionObsFirst(
+      vars,
+      target,
+      runner,
+      message,
+      promptAcceptedSinceMs,
+    );
+    let pane: string | null = null;
+    const ensurePane = async (): Promise<string> => {
+      if (pane == null) pane = await captureTmuxPane(vars, target);
+      return pane;
+    };
+
+    if (pendingObs.kind === 'fallback') {
+      const captured = await ensurePane();
+      if (
+        await runnerHasPendingInstruction(
+          vars,
+          target,
+          runner,
+          message,
+          captured,
+          promptAcceptedSinceMs,
+        )
+      ) {
+        return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+      }
     }
-    if (runnerPaneContainsInstruction(pane, message)) {
-      if (runnerPaneHasProgressAfterInstruction(pane, message)) {
+
+    const busyObs = await resolveBusyComposerObsFirst(vars, target, runner);
+    if (busyObs.kind === 'hook') {
+      if (!busyObs.busy) {
+        const captured = await ensurePane();
+        await recordRunnerObservabilityAgreement(vars, target, runner, captured, logPrefix);
+        return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      continue;
+    }
+
+    const captured = await ensurePane();
+    if (runnerPaneContainsInstruction(captured, message)) {
+      if (runnerPaneHasProgressAfterInstruction(captured, message)) {
         console.log(
           `[${logPrefix}] instruction already submitted in ${target} — skip duplicate send`,
         );
@@ -1133,8 +1223,8 @@ export async function sendRunnerInstructionSafely(
       console.log(`[${logPrefix}] instruction already present in ${target}; sending submit key`);
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
-    if (!(await runnerShowsBusyComposer(vars, target, runner, pane))) {
-      await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
+    if (!paneShowsBusyComposer(captured)) {
+      await recordRunnerObservabilityAgreement(vars, target, runner, captured, logPrefix);
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));

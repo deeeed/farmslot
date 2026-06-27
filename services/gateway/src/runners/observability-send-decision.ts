@@ -11,6 +11,13 @@ export const RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS = 10_000;
 /** Pane-only runners and observability fallback paths. */
 export const RUNNER_PANE_SAFE_SEND_TIMEOUT_MS = 30_000;
 
+export function computePromptAcceptedSinceMs(
+  loopStartMs: number,
+  effectiveTimeoutMs: number,
+): number {
+  return loopStartMs - effectiveTimeoutMs;
+}
+
 export function isObservabilityReadingAuthoritative<T>(
   reading: ObservabilityReading<T> | null | undefined,
 ): reading is ObservabilityReading<T> {
