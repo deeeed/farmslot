@@ -1,0 +1,69 @@
+{
+  "$schema": "../../../../.agents/skills/fs-cross-review-loop/templates/CROSS-REVIEW-LOOP.schema.json",
+  "status": "clean",
+  "startedAt": "2026-06-27T06:00:00.000Z",
+  "updatedAt": "2026-06-27T08:33:22.000Z",
+  "task": "PR #81 feat(gateway): close ADR-032 phase 1 and ship Codex hook observability",
+  "artifactDir": "docs/operations/evidence/adr032",
+  "maxCycles": 3,
+  "cycles": 2,
+  "requiredReviewers": [
+    {
+      "id": "code-reviewer",
+      "label": "Independent code-reviewer subagent",
+      "runnerType": "grok",
+      "paneId": null
+    }
+  ],
+  "optionalReviewers": [],
+  "blockingFindingsOpen": 0,
+  "finalVerdict": "clean",
+  "stopReason": "Reviewer PASS on merge commit e4cbcb4; e2e and phase-1 gate green",
+  "cycleRecords": [
+    {
+      "cycle": 1,
+      "startedAt": "2026-06-27T06:00:00.000Z",
+      "workerReadySignal": "Post-fix validation complete",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "ISSUES",
+          "blockingCount": 1,
+          "evidenceReview": "Codex hook evidence gaps; e2e skip-greenwash; docs drift",
+          "validationReview": "e2e-tmux-runner-validate and run-adr032-phase1-gate required",
+          "outputArtifact": "docs/operations/evidence/adr032/pr81-CROSS-REVIEW-LOOP.json"
+        }
+      ],
+      "findingsSentToWorker": [
+        {
+          "reviewerId": "code-reviewer",
+          "severity": "P1",
+          "reference": "scripts/e2e-tmux-runner-validate.sh",
+          "finding": "Codex hook-smoke evidence must be green without skip-greenwash"
+        }
+      ],
+      "workerFixSummary": "Addressed codex evidence, probe install-only path, e2e harness, docs reconciliation",
+      "validationSummary": "e2e PASS; phase-1 gate PASS",
+      "completedAt": "2026-06-27T07:30:00.000Z"
+    },
+    {
+      "cycle": 2,
+      "startedAt": "2026-06-27T07:30:00.000Z",
+      "workerReadySignal": "Round-2 fixes pushed",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "PASS",
+          "blockingCount": 0,
+          "evidenceReview": "e2e-tmux-runner-validate exit 0; run-adr032-phase1-gate exit 0",
+          "validationReview": "APPROVE pending CI green on e4cbcb4",
+          "outputArtifact": "docs/operations/evidence/adr032/pr81-CROSS-REVIEW-LOOP.json"
+        }
+      ],
+      "findingsSentToWorker": [],
+      "workerFixSummary": "No further code changes",
+      "validationSummary": "Merged e4cbcb42b0de557aaf3c205816f8b6c59f406944",
+      "completedAt": "2026-06-27T08:33:22.000Z"
+    }
+  ]
+}
