@@ -3,8 +3,23 @@ import test from 'node:test';
 
 import {
   slotViewPinnedFolderCandidates,
+  slotViewPinnedFolderFromTaskFile,
   slotViewTaskRelativePath,
 } from './slot-view-pinned-model.js';
+
+test('slotViewTaskRelativePath prefers slot agent task file on worker repo', () => {
+  assert.equal(
+    slotViewTaskRelativePath({
+      runTaskFile:
+        '/Users/deeeed/dev/farmslot/.sandbox/farmslot/tasks/feat/112-0627-223003/TASK.md',
+      slotAgentTaskFile:
+        '.sandbox/farmslot/worker-task/feat/112-0627-223003/TASK.md',
+      slotTaskFile: 'fallback-slot-task',
+      showTaskUi: true,
+    }),
+    'feat/112-0627-223003',
+  );
+});
 
 test('slotViewTaskRelativePath prefers run task files rooted under tasks', () => {
   assert.equal(
@@ -36,8 +51,19 @@ test('slotViewTaskRelativePath falls back to slot task only when task UI is visi
   );
 });
 
-test('slotViewPinnedFolderCandidates preserves probe order from project task dirs to legacy paths', () => {
+test('slotViewPinnedFolderFromTaskFile returns slot-relative task directory', () => {
+  assert.equal(
+    slotViewPinnedFolderFromTaskFile(
+      '.sandbox/farmslot/worker-task/feat/112-0627-223003/TASK.md',
+    ),
+    '.sandbox/farmslot/worker-task/feat/112-0627-223003',
+  );
+});
+
+test('slotViewPinnedFolderCandidates probes sandbox worker-task before legacy paths', () => {
   assert.deepEqual(slotViewPinnedFolderCandidates('PROJ-123'), [
+    '.sandbox/farmslot/worker-task/PROJ-123',
+    '.sandbox/farmslot/task/PROJ-123',
     'temp/tasks/PROJ-123',
     'tasks/PROJ-123',
     '.task/PROJ-123',

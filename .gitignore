@@ -95,6 +95,7 @@ projects/farmslot/.task/
 
 # Central sandbox root for fake/demo runner isolation
 .sandbox/
+.observability
 .omx/
 **/.omx/
 **/.omc/
