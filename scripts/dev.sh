@@ -8,11 +8,15 @@ FARMSLOT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT_ENV_FILE="$FARMSLOT_ROOT/.env.ports"
 AUTH_ENV_FILE="$FARMSLOT_ROOT/.env.local-auth"
 
-# Load port overrides
+# Load port overrides. Caller-set GATEWAY_PORT/VITE_PORT (sandbox prepare) win over file values.
+_gateway_override="${GATEWAY_PORT:-}"
+_vite_override="${VITE_PORT:-}"
 if [ -f "$PORT_ENV_FILE" ]; then
   set -a; source "$PORT_ENV_FILE"; set +a
   echo "[dev] Loaded ports from $PORT_ENV_FILE"
 fi
+if [ -n "$_gateway_override" ]; then export GATEWAY_PORT="$_gateway_override"; fi
+if [ -n "$_vite_override" ]; then export VITE_PORT="$_vite_override"; fi
 
 # Load optional local-only auth secrets. This file is gitignored and should contain
 # FARMSLOT_GATEWAY_TOKEN or FARMSLOT_GATEWAY_PASSWORD when exposing the gateway remotely.
