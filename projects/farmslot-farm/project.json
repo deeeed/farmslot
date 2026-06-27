@@ -25,7 +25,7 @@
     }
   },
   "hooks": {
-    "post_merge_install": "cd apps/command-center && yarn install",
+    "post_merge_install": "yarn install",
     "preflight": "cd apps/command-center && yarn typecheck",
     "health_check": "bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
     "dev_server_check": "bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
