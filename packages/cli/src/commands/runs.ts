@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { type Command,Option } from 'commander';
+import { type Command, Option } from 'commander';
 
 import {
   exportRunAsPackage,
