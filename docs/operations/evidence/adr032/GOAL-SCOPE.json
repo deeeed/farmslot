@@ -26,7 +26,9 @@
     "scripts/verify-adr032-shipped-main.sh",
     "scripts/verify-adr032-merge-process.sh",
     "scripts/capture-pre-merge-evidence.sh",
-    "scripts/run-adr032-phase1-gate.sh"
+    "scripts/run-adr032-phase1-gate.sh",
+    "scripts/capture-adr032-phase2-exit-evidence.mjs",
+    "scripts/verify-adr032-phase2-exit.sh"
   ],
   "notes": [
     "Single closeout path: assert -> shipped-main + merge-process (PR #81 only).",

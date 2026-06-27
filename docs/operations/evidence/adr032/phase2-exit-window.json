@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "criterion": "ADR-032 Phase 2 exit: nudgeTimeoutCount zero over rolling window",
+  "recordedAt": "2026-06-27T13:33:34.673Z",
+  "runnerFilter": "claude",
+  "windowDays": 7,
+  "windowStart": "2026-06-20T13:33:34.255Z",
+  "windowEnd": "2026-06-27T13:33:34.674Z",
+  "totalRunsInWindow": 346,
+  "runnerRunsInWindow": 240,
+  "nudgeTimeoutCountSum": 0,
+  "timeoutRunCount": 0,
+  "exitPass": true,
+  "timeoutRuns": [],
+  "runsDir": ".runs"
+}
