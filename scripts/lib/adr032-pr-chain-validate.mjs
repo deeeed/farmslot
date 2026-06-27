@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const MERGE_SKEW_MS = 120_000;
+/** Allow cross-review completion slightly before merge when clocks skew. */
+const PRE_MERGE_SKEW_MS = 120_000;
 
 export function parseIsoMs(value) {
   if (!value) return null;
@@ -41,7 +42,7 @@ export function hasPreMergeCrossReview(evidenceDir, pr, rootDir = evidenceDir) {
   if (completedMs == null) return false;
   const verdicts = last.reviewerVerdicts ?? [];
   const pass = verdicts.some((v) => v.verdict === 'PASS' && v.blockingCount === 0);
-  return pass && completedMs <= mergedMs + MERGE_SKEW_MS;
+  return pass && completedMs <= mergedMs && completedMs >= mergedMs - PRE_MERGE_SKEW_MS;
 }
 
 export function reviewTimingForPr(pr, evidenceDir) {
@@ -72,21 +73,21 @@ export function requiredChecksGreen(checks, mergedAt) {
     'Docs quality gates',
     'Gateway service quality',
   ];
-  const inProgress = (checks ?? []).filter(
-    (c) => c.status === 'IN_PROGRESS' && required.includes(c.name),
-  );
-  const failed = (checks ?? []).filter(
-    (c) => required.includes(c.name) && String(c.conclusion).toLowerCase() === 'failure',
+  const requiredChecks = (checks ?? []).filter((c) => required.includes(c.name));
+  const inProgress = requiredChecks.filter((c) => c.status === 'IN_PROGRESS');
+  const notSuccess = requiredChecks.filter(
+    (c) =>
+      c.status !== 'COMPLETED' || String(c.conclusion).toLowerCase() !== 'success',
   );
   return {
-    greenAtDecision: inProgress.length === 0 && failed.length === 0,
+    greenAtDecision: requiredChecks.length === required.length && inProgress.length === 0 && notSuccess.length === 0,
     inProgressJobs: inProgress.map((c) => c.name),
-    failedJobs: failed.map((c) => c.name),
+    notSuccessJobs: notSuccess.map((c) => c.name),
     capturedBeforeMerge:
       mergedMs != null &&
-      (checks ?? []).every((c) => {
+      requiredChecks.every((c) => {
         const doneMs = parseIsoMs(c.completedAt);
-        return c.status !== 'IN_PROGRESS' || doneMs == null || doneMs <= mergedMs + MERGE_SKEW_MS;
+        return c.status === 'COMPLETED' && doneMs != null && doneMs <= mergedMs;
       }),
   };
 }

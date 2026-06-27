@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
   assertPreMergeReview,
   hasPreMergeGhApprove,
@@ -54,12 +53,15 @@ const out = {
   harvestedAt: new Date().toISOString(),
   mainSha,
   integrity,
-  prs: prs.map((p) => ({
-    ...p,
-    crossReviewArtifact: path.join(evidenceDir, `pr${p.number}-CROSS-REVIEW-LOOP.json`),
-    reviewTiming: reviewTimingForPr(p, evidenceDir),
-    postMergeGhApproveOnly: reviewTimingForPr(p, evidenceDir) === 'post-merge-gh-only',
-  })),
+  prs: prs.map((p) => {
+    const timing = reviewTimingForPr(p, evidenceDir);
+    return {
+      ...p,
+      crossReviewArtifact: path.join(evidenceDir, `pr${p.number}-CROSS-REVIEW-LOOP.json`),
+      reviewTiming: timing,
+      postMergeGhApproveOnly: timing === 'post-merge-gh-only',
+    };
+  }),
 };
 
 fs.writeFileSync(outPath, `${JSON.stringify(out, null, 2)}\n`);

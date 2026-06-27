@@ -42,15 +42,15 @@ echo "== gateway safe-send + decision tests =="
 append_exit_marker SAFE_SEND "$EVIDENCE_DIR/registry-safe-send-run.log" "${PIPESTATUS[0]}" || exit 1
 
 echo "== gh PR chain audit =="
-PR_JSON="$(mktemp)"
-trap 'rm -f "$PR_JSON.raw"' EXIT
+PR_JSON="$(mktemp).raw"
+trap 'rm -f "$PR_JSON"' EXIT
 for n in 81 82 83 84 85 86; do
   gh pr view "$n" --json number,title,state,mergedAt,mergeCommit,reviews,url,statusCheckRollup,author \
-    >>"$PR_JSON.raw"
-  echo "---" >>"$PR_JSON.raw"
+    >>"$PR_JSON"
+  echo "---" >>"$PR_JSON"
 done
 node "$ROOT/scripts/harvest-adr032-pr-chain-audit.mjs" \
-  "$PR_JSON.raw" \
+  "$PR_JSON" \
   "$(git -C "$ROOT" rev-parse HEAD)" \
   "$EVIDENCE_DIR" \
   "$EVIDENCE_DIR/pr-chain-audit.json"
