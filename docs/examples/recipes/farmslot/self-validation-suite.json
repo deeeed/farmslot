@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "title": "Farmslot self-validation recipe suite",
-  "description": "Repo-local dogfood recipes that validate Command Center, Gateway, Mobile Companion, live replay, artifact viewing, and onboarding surfaces using the Generic Recipe Protocol v1 package shape.",
+  "description": "Repo-local self-validation recipes for Command Center, Gateway, Mobile Companion, live replay, artifact viewing, and onboarding surfaces using the Generic Recipe Protocol v1 package shape.",
   "recipes": [
     {
       "id": "command-center-ui",

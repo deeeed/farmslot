@@ -32,7 +32,7 @@ const COMMAND_CENTER_TOKENS = [
 
 const GATEWAY_ONLY_PROFILES = new Set(['sandbox', 'attach', 'typecheck']);
 const COMPANION_PROFILES = new Set(['companion-warm', 'companion-full']);
-const STACK_PROFILE = 'stack-dogfood';
+const SANDBOX_COMPANION_PROFILE = 'sandbox-companion';
 
 export type ProfileFitContext = {
   slotPlatform?: string | null;
@@ -118,20 +118,23 @@ function suggestPrepareProfile(
   slotPlatform?: string | null,
 ): { profile: string; confidence: ProfileFitSuggestion['confidence']; rationale: string } | null {
   const needsCompanion = surfaces.companion;
-  const needsStack =
+  const needsSandboxCompanion =
     needsCompanion && (surfaces.gateway || surfaces.commandCenter || slotPlatform === 'cli');
 
-  if (needsStack) {
+  if (needsSandboxCompanion) {
     return {
-      profile: STACK_PROFILE,
+      profile: SANDBOX_COMPANION_PROFILE,
       confidence: 'high',
       rationale:
-        'Ticket metadata references companion plus gateway or Command Center surfaces — use stack-dogfood.',
+        'Ticket metadata references companion plus gateway or Command Center surfaces — use sandbox-companion.',
     };
   }
   if (needsCompanion) {
     return {
-      profile: slotPlatform === 'ios' || slotPlatform === 'android' ? 'companion-warm' : STACK_PROFILE,
+      profile:
+        slotPlatform === 'ios' || slotPlatform === 'android'
+          ? 'companion-warm'
+          : SANDBOX_COMPANION_PROFILE,
       confidence: 'high',
       rationale: 'Ticket metadata references companion/mobile work.',
     };

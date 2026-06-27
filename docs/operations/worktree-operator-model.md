@@ -8,7 +8,7 @@
 | Plane | Path / ports | Purpose |
 | ----- | -------------- | ------- |
 | **Main operator** | Primary clone, gateway `7777`, UI `5174`, Companion `local` | Canonical `.runs/` history, real dispatches/evals |
-| **Worktree sandbox** | `farmslot-wt/*` (`macwork-ff-*`), `.env.ports` → `8808+` / `5175` | Gateway dogfood via `project: farmslot`, profile `sandbox` |
+| **Worktree sandbox** | `farmslot-wt/*` (`macwork-ff-*`), `.env.ports` → `8808+` / `5175` | Gateway dev via `project: farmslot`, profile `sandbox` |
 | **Companion mobile** | `macwork-fc-*`, Metro `8871+` | Companion lane via `companion-warm` / `companion-full` |
 
 ## Seed a sandbox from main

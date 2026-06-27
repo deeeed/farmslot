@@ -1,4 +1,4 @@
-# Farmslot self-dogfood day — execution context
+# Farmslot self-integration day — execution context
 
 **Owner:** Arthur
 **Date:** 2026-06-27
@@ -89,7 +89,7 @@ Success = run appears in `#runs`, Companion active runs, terminal on slot, **you
 ### D. Document evidence
 
 - [ ] `docs/operations/evidence/adr039-import-export-qa.json` (or sibling) after manual QA
-- [ ] Note run ids used for the first self-dogfood dispatch
+- [ ] Note run ids used for the first gateway-originated dispatch
 
 ## Demo trajectory (MetaMask → Farmslot-native)
 
@@ -108,4 +108,4 @@ Goal: more roadmap execution visible on Farmslot-native projects so demos do not
 
 ## Session handoff (copy to agents)
 
-> We are dogfooding Farmslot: all agent work should create Runs via gateway dispatch, not naked tmux. ADR-039 PR #95 must merge today with import/export QA. Next: one backlog item dispatched through Farmslot; parallel agents use worktree sandboxes + bundle seed from main. Canonical history on 7777.
+> All agent work on this repo should create Runs via gateway dispatch, not naked tmux. ADR-039 PR #95 must merge today with import/export QA. Next: one backlog item dispatched through Farmslot; parallel agents use worktree sandboxes + bundle seed from main. Canonical history on 7777.

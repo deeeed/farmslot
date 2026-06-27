@@ -56,7 +56,7 @@ test('profile fit gate ignores explicit operator prepare profile', () => {
   );
 });
 
-test('profile fit gate suggests stack-dogfood for companion + gateway ticket on cli slot', () => {
+test('profile fit gate suggests sandbox-companion for companion + gateway ticket on cli slot', () => {
   const result = detectProfileFit(
     run(),
     {
@@ -66,7 +66,7 @@ test('profile fit gate suggests stack-dogfood for companion + gateway ticket on 
     { slotPlatform: 'cli' },
   );
 
-  assert.equal(result?.suggestedPrepareProfile, 'stack-dogfood');
+  assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
   assert.equal(result?.confidence, 'high');
   assert.ok((result?.validationPlan?.length ?? 0) >= 2);
 });
@@ -80,13 +80,13 @@ test('profile fit gate emits validation plan steps for multi-surface tickets', (
     },
     { slotPlatform: 'cli' },
   );
-  assert.equal(result?.suggestedPrepareProfile, 'stack-dogfood');
+  assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
   assert.ok((result?.validationPlan?.length ?? 0) >= 3);
 });
 
 test('profile fit gate warns when gateway-only sandbox is default for companion ticket', () => {
   const result = detectProfileFit(run(), companionTicket, { slotPlatform: 'cli' });
-  assert.equal(result?.suggestedPrepareProfile, 'stack-dogfood');
+  assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
 });
 
 test('resolveCompanionSlotId finds dedicated mobile slot for project', () => {
