@@ -1,6 +1,10 @@
 # Farmslot — Generic Recipe Protocol v1 PRD
 
-> This PRD captures the product slice. The canonical field-level protocol source of truth is [Recipe Protocol v1](../reference/recipe-protocol-v1.md).
+**Status:** Active rollout checklist (ADR-034 **Accepted**; protocol **core shipped** on `main`).
+**Implementation map:** [adr-implementation-status.md](../reference/adr-implementation-status.md#adr-034--recipe-protocol-v1-accepted)
+**Last updated:** 2026-06-27
+
+> This PRD captures the remaining product slice after the core contract landed. The canonical field-level protocol source of truth is [Recipe Protocol v1](../reference/recipe-protocol-v1.md). Do not treat this file as a greenfield proposal — use it to track adoption gaps (manifest emission, UI, hooks, live self-validation, docs).
 
 This PRD proposes a Generic Farmslot Recipe Protocol v1 product slice. It sits under the whole-product authority of [PRD-product.md](../PRD-product.md) and the canonical roadmap surfaces, and it should be treated as a cross-chunk planning artifact until promoted into the relevant canonical chunk PRDs.
 
