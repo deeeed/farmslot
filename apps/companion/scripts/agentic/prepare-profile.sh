@@ -56,6 +56,7 @@ start_metro_background() {
       METRO_PORT="${METRO_PORT}" \
       GATEWAY_PORT="${GATEWAY_PORT}" \
       EXPO_PUBLIC_GATEWAY_URL="${COMPANION_GATEWAY_URL}" \
+      EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE=1 \
       REACT_NATIVE_PACKAGER_HOSTNAME="${COMPANION_PACKAGER_HOSTNAME}" \
       yarn expo start --dev-client --port "${METRO_PORT}" --localhost
   ) >>"${log_file}" 2>&1 &
