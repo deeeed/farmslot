@@ -38,6 +38,8 @@ done
 
 [[ "$GATEWAY_PORT" =~ ^[0-9]+$ ]] || usage
 
+SLOT_GATEWAY_PORT="$GATEWAY_PORT"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 RUNTIME_DIR="${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot-farm/agent}"
@@ -54,7 +56,8 @@ if [[ -f "$PORT_ENV" ]]; then
   set +a
 fi
 
-# Slot port wins over .env.ports defaults for this invocation.
+# Pool slot port wins over .env.ports (prepare passes --gateway-port {{port}}).
+GATEWAY_PORT="$SLOT_GATEWAY_PORT"
 export GATEWAY_PORT
 VITE_PORT="${VITE_PORT:-5174}"
 export VITE_PORT
@@ -124,7 +127,7 @@ case "$ACTION" in
     : >"$LOG_FILE"
     (
       cd "$REPO_ROOT"
-      exec bash scripts/dev.sh
+      GATEWAY_PORT="$GATEWAY_PORT" VITE_PORT="$VITE_PORT" exec bash scripts/dev.sh
     ) >>"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
 

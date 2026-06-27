@@ -36,7 +36,7 @@
     "profiles": {
       "sandbox": {
         "label": "Worktree sandbox — sync + start gateway (tsx watch)",
-        "description": "Git sync, deps, then boot this checkout's gateway and Vite UI on the slot port. Use for ff-* worktree sandboxes.",
+        "description": "Git sync, deps, then boot this checkout's gateway and Vite UI on the slot port. Use for ff-* worktree sandboxes. Typecheck is not run here — use profile full when you need it before dispatch.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
           "preflight": "bash {{repo}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}"
@@ -60,10 +60,6 @@
       }
     }
   },
-  "cleanup_patterns": [
-    "tsx.*services/gateway/src/index",
-    "concurrently.*@farmslot/gateway"
-  ],
   "health": {
     "dev_server_name": "Gateway",
     "dev_server_log": ".sandbox/farmslot-farm/agent/sandbox-dev.log"
