@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+
 import {
   assertPreMergeReview,
   requiredChecksGreen,
-  reviewTimingForPr,
 } from './lib/adr032-pr-chain-validate.mjs';
 
 const [, , evidenceDir, auditPath] = process.argv;
