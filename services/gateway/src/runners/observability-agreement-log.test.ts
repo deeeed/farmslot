@@ -13,7 +13,7 @@ import {
 test('appendRunnerObservabilityAgreement writes ndjson under configured dir', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'obs-agreement-'));
   t.after(() => {
-    process.env.FARMSLOT_OBSERVABILITY_AGREEMENT_DIR = undefined;
+    delete process.env.FARMSLOT_OBSERVABILITY_AGREEMENT_DIR;
     resetAgreementLogDirCacheForTests();
   });
   resetAgreementLogDirCacheForTests();

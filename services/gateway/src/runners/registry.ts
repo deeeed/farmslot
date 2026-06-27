@@ -940,6 +940,7 @@ async function submitRunnerInstruction(
     const pane = await captureTmuxPane(vars, target);
     if (!runnerPaneHasBufferedInstruction(pane, message, runner)) {
       if (mode === 'send' && sentAtMs != null) {
+        // Intentionally fire-and-forget: degraded heartbeat must not block send confirmation.
         void warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix).catch((error) => {
           console.warn(
             `[${logPrefix}] [observability] degraded check failed: ${(error as Error).message}`,
@@ -962,6 +963,7 @@ async function submitRunnerInstruction(
     `[${logPrefix}] instruction still appears pending in ${target} after submit verification`,
   );
   if (mode === 'send' && sentAtMs != null) {
+    // Intentionally fire-and-forget: degraded heartbeat must not block send confirmation.
     void warnIfObservabilityDegraded(vars, runner, sentAtMs, logPrefix).catch((error) => {
       console.warn(
         `[${logPrefix}] [observability] degraded check failed: ${(error as Error).message}`,

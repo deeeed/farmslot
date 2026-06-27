@@ -351,8 +351,10 @@ function checkRuntimeAlignment(repo, runtimeDir, projectRuntimeDir) {
 }
 
 async function main() {
-  await loadPromptDigestModule();
-  const args = parseArgs(process.argv.slice(2));
+  let args;
+  try {
+    await loadPromptDigestModule();
+    args = parseArgs(process.argv.slice(2));
   const projectRuntimeDir = args.project ? readProjectRuntimeDir(args.project) : null;
   const runtimeDir = args.runtimeDir ?? projectRuntimeDir ?? '.agent';
   const agreementDir =
@@ -363,8 +365,6 @@ async function main() {
   const shell = ensureTmuxShellSession(args.tmuxSession, args.repo, 'shell');
   const claude = ensureTmuxShellSession(args.tmuxSession, args.repo, 'claude');
   const checks = {};
-
-  try {
     installObservability(args.repo, runtimeDir, args.slotId);
     checks.runtimeAlignment = checkRuntimeAlignment(args.repo, runtimeDir, projectRuntimeDir);
     checks.probeGate = runProbeInTmux(args.repo, runtimeDir, args.slotId, shell.paneId);
@@ -428,12 +428,9 @@ async function main() {
     if (!pass) process.exit(1);
   } catch (error) {
     console.error(`[e2e-runner-observability] ${error?.message || String(error)}`);
-    if (!args.keepSession) killTmuxSession(args.tmuxSession);
+    if (args && !args.keepSession) killTmuxSession(args.tmuxSession);
     process.exit(1);
   }
 }
 
-main().catch((error) => {
-  console.error(`[e2e-runner-observability] ${error?.message || String(error)}`);
-  process.exit(1);
-});
+main();
