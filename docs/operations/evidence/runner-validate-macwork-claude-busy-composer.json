@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T07:11:17.801Z",
+  "host": "macwork",
+  "scenario": "busy-composer",
+  "runner": "claude",
+  "mode": "fixture",
+  "fixtures": [
+    {
+      "file": "claude-composing.txt",
+      "busy": true,
+      "expectBusy": true,
+      "pass": true
+    },
+    {
+      "file": "claude-idle.txt",
+      "busy": false,
+      "expectBusy": false,
+      "pass": true
+    }
+  ],
+  "pass": true,
+  "skipped": false,
+  "skipReason": null,
+  "error": null
+}

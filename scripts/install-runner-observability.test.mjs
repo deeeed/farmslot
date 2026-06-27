@@ -137,6 +137,13 @@ test('codex install merges farmslot hook alongside existing codex hooks', () => 
   const config = fs.readFileSync(path.join(repo, '.codex', 'config.toml'), 'utf8');
   assert.match(config, /hooks\s*=\s*true/);
 
+  const codexHome = path.join(repo, '.agent', 'codex-home');
+  assert.ok(fs.existsSync(codexHome));
+  const codexHomeConfig = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
+  assert.match(codexHomeConfig, /hooks\s*=\s*true/);
+  assert.match(codexHomeConfig, /trusted_hash = "sha256:[a-f0-9]{64}"/);
+  assert.ok(fs.existsSync(path.join(codexHome, 'hooks.json')));
+
   const obsDir = path.join(repo, '.agent', '.observability');
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
   runHook(hookPath, obsDir, { hook_event_name: 'UserPromptSubmit', session_id: 'c1' }, 'codex');

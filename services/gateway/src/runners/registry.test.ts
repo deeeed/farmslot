@@ -110,7 +110,10 @@ describe('codex runner', () => {
       repo: '/workspace/repo',
       safetyTier: 'dangerous',
     });
-    assert.match(launch, /codex --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5/);
+    assert.match(
+      launch,
+      /CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home' .*codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5/,
+    );
     assertCodexWorkerDoesNotInjectMcpOverrides(launch);
     assert.doesNotMatch(launch, /model_reasoning_effort/);
     assert.doesNotMatch(launch, /codex exec /);
@@ -124,7 +127,10 @@ describe('codex runner', () => {
       repo: '/workspace/repo',
       safetyTier: 'dangerous',
     });
-    assert.match(launch, /codex --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5$/);
+    assert.match(
+      launch,
+      /CODEX_HOME='\/workspace\/repo\/\.agent\/codex-home' .*codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox .*--model gpt-5\.5$/,
+    );
     assert.doesNotMatch(launch, /Read TASK\.md/);
   });
 });
@@ -882,7 +888,8 @@ describe('buildLaunchCommand', () => {
       // The dangerous flag only appears when a project/dispatch explicitly opts in.
       const vars = makeVars({ dispatchCmd: '' });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
-      assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/);
+      assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
+      assert.match(cmd, /codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/);
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
       assert.doesNotMatch(cmd, /model_reasoning_effort/);
@@ -896,7 +903,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT);
       assert.match(
         cmd,
-        /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/codex .*--model gpt-5/,
+        /unset CLAUDECODE && CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home' && cd \/tmp\/repo && \/usr\/local\/bin\/codex .*--model gpt-5/,
       );
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
@@ -910,7 +917,10 @@ describe('buildLaunchCommand', () => {
         dispatchCmd: 'cd {repo} && {runner_path}',
       });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT);
-      assert.match(cmd, /unset CLAUDECODE && cd \/tmp\/repo && \/usr\/local\/bin\/codex/);
+      assert.match(
+        cmd,
+        /unset CLAUDECODE && CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home' && cd \/tmp\/repo && \/usr\/local\/bin\/codex/,
+      );
       assert.doesNotMatch(cmd, /model_reasoning_effort/);
     });
 
@@ -919,7 +929,8 @@ describe('buildLaunchCommand', () => {
         dispatchCmd: 'cd {repo} && {claude_path}',
       });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
-      assert.match(cmd, /codex --dangerously-bypass-approvals-and-sandbox/);
+      assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
+      assert.match(cmd, /codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox/);
     });
 
     it('exposes hook-file observability provider after Phase 1.5', () => {

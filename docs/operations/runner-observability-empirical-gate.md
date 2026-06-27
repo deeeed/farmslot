@@ -2,6 +2,28 @@
 
 Run this gate on **runner-local**, **mini**, and **runner-a** before enabling hook telemetry fleet-wide.
 
+## Runner validation harness (per-runner tmux scenarios)
+
+Farmslot ships a runner-specific validation harness under `scripts/runner-validation/`. Each runner adapter owns launch quirks (Claude print mode, Codex `CODEX_HOME` + `exec`, etc.); scenarios assert hook/pane contracts:
+
+| Scenario | What it proves |
+|----------|----------------|
+| `hook-smoke` | `SessionStart` + `UserPromptSubmit` + `Stop`, `tmuxPane` present |
+| `prompt-accepted` | `UserPromptSubmit.runnerPromptDigest` matches gateway sentinel |
+| `turn-boundary` | `Stop` timestamp ≥ `UserPromptSubmit` |
+| `busy-composer` | Pane busy regex on fixtures (Claude); skipped for Codex |
+| `mode-switch` | Bypass permission mode visible in hook or pane (Claude); skipped for Codex |
+
+```bash
+# All scenarios for Claude + Codex (live tmux where applicable)
+node scripts/runner-validation/run.mjs --runner both --scenario all
+
+# ADR-032 gate subset
+node scripts/runner-validation/run.mjs --runner both --scenario hook-smoke
+```
+
+Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
+
 ## Probe
 
 ```bash

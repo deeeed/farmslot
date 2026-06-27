@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL, type SafetyTier } from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
@@ -79,12 +81,18 @@ export function assertRunnerLaunchPrerequisites(
   // launch time as a missing-binary error rather than here.
 }
 
+export function buildCodexHomeEnv(repo: string, runtimeDir = '.agent'): string {
+  const codexHome = path.posix.join(repo, runtimeDir, 'codex-home');
+  return `CODEX_HOME=${shellQuote(codexHome)}`;
+}
+
 export function buildCodexExecLaunch(options: {
   binary: string;
   model?: string | null;
   effort?: string | null;
   prompt?: string;
   repo: string;
+  runtimeDir?: string;
   /** Safety tier (ADR-023). Omit to let `runnerFlagsForTier` apply the codex default (`sandboxed`). */
   safetyTier?: SafetyTier;
 }): string {
@@ -94,7 +102,8 @@ export function buildCodexExecLaunch(options: {
   const flagList = runnerFlagsForTier('codex', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const prompt = options.prompt?.trim() ? ` ${shellQuote(options.prompt)}` : '';
-  return `unset CLAUDECODE && cd '${options.repo}' && ${options.binary}${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
+  const codexHomeEnv = buildCodexHomeEnv(options.repo, options.runtimeDir ?? '.agent');
+  return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeEnv} ${options.binary} --disable plugin_hooks${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
 }
 
 function codexReasoningEffortFlag(effort?: string | null): string {
@@ -253,7 +262,7 @@ export function buildLaunchCommand(
     );
     if (cmdIsRunnerAware) {
       return withRunnerObservabilityInstall(
-        `unset CLAUDECODE && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort)}`,
+        `unset CLAUDECODE && ${buildCodexHomeEnv(repo, opts.runtimeDir)} && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort)}`,
         installCommand,
       );
     }
@@ -267,6 +276,7 @@ export function buildLaunchCommand(
         effort: opts.effort,
         prompt: launchPrompt,
         repo,
+        runtimeDir: opts.runtimeDir,
         safetyTier: tier,
       }),
       installCommand,

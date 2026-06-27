@@ -1,6 +1,8 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const HOOK_SCRIPT = `import crypto from 'node:crypto';
@@ -201,6 +203,141 @@ const CODEX_HOOK_EVENTS = [
 ];
 
 const FARMSLOT_HOOK_MARKER = 'farmslot-observability-hook.mjs';
+
+const CODEX_HOOK_EVENT_LABELS = {
+  SessionStart: 'session_start',
+  PreToolUse: 'pre_tool_use',
+  PostToolUse: 'post_tool_use',
+  UserPromptSubmit: 'user_prompt_submit',
+  PreCompact: 'pre_compact',
+  PostCompact: 'post_compact',
+  Stop: 'stop',
+};
+
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map((item) => canonicalJson(item));
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalJson(value[key])]),
+    );
+  }
+  return value;
+}
+
+function versionForCodexTomlIdentity(value) {
+  const serialized = JSON.stringify(canonicalJson(value));
+  return `sha256:${createHash('sha256').update(serialized).digest('hex')}`;
+}
+
+function escapeTomlBasicString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function normalizedCommandHookIdentity(eventName, entry, hook) {
+  return {
+    event_name: CODEX_HOOK_EVENT_LABELS[eventName],
+    ...(entry.matcher ? { matcher: entry.matcher } : {}),
+    hooks: [
+      {
+        type: 'command',
+        command: hook.command,
+        timeout: Math.max(1, hook.timeout ?? 600),
+        async: false,
+        ...(hook.statusMessage ? { statusMessage: hook.statusMessage } : {}),
+      },
+    ],
+  };
+}
+
+function buildCodexHookTrustToml(hooksPath, hooks) {
+  const blocks = [];
+  for (const eventName of CODEX_HOOK_EVENTS) {
+    const entries = Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
+    entries.forEach((entry, groupIndex) => {
+      if (!entry || !Array.isArray(entry.hooks)) return;
+      entry.hooks.forEach((hook, handlerIndex) => {
+        if (!hook || hook.type !== 'command' || typeof hook.command !== 'string') return;
+        const key = `${hooksPath}:${CODEX_HOOK_EVENT_LABELS[eventName]}:${groupIndex}:${handlerIndex}`;
+        const trustedHash = versionForCodexTomlIdentity(
+          normalizedCommandHookIdentity(eventName, entry, hook),
+        );
+        blocks.push(
+          `[hooks.state."${escapeTomlBasicString(key)}"]`,
+          `trusted_hash = "${escapeTomlBasicString(trustedHash)}"`,
+          '',
+        );
+      });
+    });
+  }
+  return blocks.join('\n').trimEnd();
+}
+
+function stripCodexHookTrustSections(content) {
+  const lines = content.split('\n');
+  const kept = [];
+  let skipping = false;
+  for (const line of lines) {
+    if (/^\[hooks\.state\./.test(line.trim())) {
+      skipping = true;
+      continue;
+    }
+    if (skipping) {
+      if (/^\s*trusted_hash\s*=/.test(line)) continue;
+      if (line.trim() === '') {
+        skipping = false;
+        continue;
+      }
+      skipping = false;
+    }
+    kept.push(line);
+  }
+  return kept.join('\n').trimEnd();
+}
+
+function canonicalCodexPath(filePath) {
+  try {
+    return fs.realpathSync(path.resolve(filePath));
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+function bootstrapCodexHome({ repoPath, runtimeDir, hooksPath }) {
+  const codexHomeDir = path.join(repoPath, runtimeDir, 'codex-home');
+  fs.mkdirSync(codexHomeDir, { recursive: true });
+  const hooksDoc = readJsonObject(hooksPath);
+  const hooks =
+    hooksDoc.hooks && typeof hooksDoc.hooks === 'object' && !Array.isArray(hooksDoc.hooks)
+      ? hooksDoc.hooks
+      : {};
+  const absoluteHooksPath = path.resolve(hooksPath);
+  const codexHomeHooksPath = path.join(codexHomeDir, 'hooks.json');
+  fs.copyFileSync(absoluteHooksPath, codexHomeHooksPath);
+  // Codex with CODEX_HOME reads hooks from codex-home; trusted_hash keys must use that path.
+  const trustHooksPath = canonicalCodexPath(codexHomeHooksPath);
+  const trustToml = buildCodexHookTrustToml(trustHooksPath, hooks);
+  const configPath = path.join(codexHomeDir, 'config.toml');
+  let content = '';
+  if (fs.existsSync(configPath)) content = fs.readFileSync(configPath, 'utf8');
+  content = stripCodexHookTrustSections(content);
+  const featureBlock = '[features]\nhooks = true\n';
+  const canonicalRepoPath = canonicalCodexPath(repoPath);
+  const projectBlock = `[projects."${escapeTomlBasicString(canonicalRepoPath)}"]\ntrust_level = "trusted"\n`;
+  const merged = [content, featureBlock, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
+  fs.writeFileSync(configPath, merged);
+  const userAuth = path.join(os.homedir(), '.codex', 'auth.json');
+  const destAuth = path.join(codexHomeDir, 'auth.json');
+  if (fs.existsSync(userAuth) && !fs.existsSync(destAuth)) {
+    fs.symlinkSync(userAuth, destAuth);
+  }
+  return codexHomeDir;
+}
 
 function parseArgs(argv) {
   const out = {};
@@ -440,15 +577,17 @@ function installCodex({ repo, runtimeDir = '.agent', slotId }) {
   });
   const markerPath = path.join(obsDir, '.farmslot-owned');
   const hooksPath = path.join(repoPath, '.codex', 'hooks.json');
-  const configPath = path.join(repoPath, '.codex', 'config.toml');
+  const projectConfigPath = path.join(repoPath, '.codex', 'config.toml');
   mergeCodexHooks(hooksPath, markerPath, hookCommand);
-  ensureCodexHooksFeature(configPath, markerPath);
+  ensureCodexHooksFeature(projectConfigPath, markerPath);
+  const codexHomeDir = bootstrapCodexHome({ repoPath, runtimeDir, hooksPath });
   fs.writeFileSync(markerPath, 'farmslot\n');
   writeObservabilityInstallManifest(obsDir, {
     runner: 'codex',
     repo: repoPath,
     runtimeDir,
     slotId,
+    codexHomeDir,
     statusLineInstalled: false,
   });
 }

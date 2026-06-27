@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T07:11:14.792Z",
+  "host": "macwork",
+  "scenario": "turn-boundary",
+  "runner": "claude",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-EeUsss",
+  "slotId": "runner-validate-macwork-claude",
+  "session": "runner-validate-claude-turn-boundary-42771",
+  "ordering": {
+    "pass": true,
+    "submitAt": 1782544262397,
+    "stopAt": 1782544268707
+  },
+  "pass": true,
+  "error": null,
+  "paneTail": "bash '/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-Ee\nUsss/.runner-validate-launch.sh'\n(base) ➜  runner-validate-claude-EeUsss bash '/var/folders/98/_mm6pm_d0nj7vj72jw\nq0hc_00000gn/T/runner-validate-claude-EeUsss/.runner-validate-launch.sh'"
+}

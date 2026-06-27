@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T07:12:46.191Z",
+  "host": "macwork",
+  "scenario": "busy-composer",
+  "runner": "codex",
+  "mode": "fixture",
+  "fixtures": [],
+  "pass": true,
+  "skipped": true,
+  "skipReason": "codex has no busy-composer TUI equivalent",
+  "error": null
+}

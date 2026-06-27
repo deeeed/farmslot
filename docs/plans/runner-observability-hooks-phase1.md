@@ -14,6 +14,18 @@ ADR-032 defines the long-term architecture: Farmslot-owned hook/statusline scrip
 
 Ship a telemetry-only Claude runner observability path that proves hook events can be collected, correlated to the tmux pane/slot, and compared against existing pane-derived readings without changing nudge behavior yet.
 
+## Runner validation harness (shipped with PR #81 closeout)
+
+Per-runner tmux scenarios live in `scripts/runner-validation/`:
+
+- `hook-smoke`, `prompt-accepted`, `turn-boundary` — live tmux + hooks.jsonl
+- `busy-composer` — Claude pane fixtures (Codex skips)
+- `mode-switch` — Claude bypass permission mode (Codex skips)
+
+Run: `node scripts/runner-validation/run.mjs --runner both --scenario all`
+
+Evidence: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
+
 ## Non-Goals
 
 - Do not replace `send-keys` input.
