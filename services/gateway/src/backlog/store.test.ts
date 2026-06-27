@@ -35,7 +35,7 @@ test('backlog store creates manual items and enqueues with manual ticketData', a
   const { backlog } = await freshStores();
 
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Investigate local backlog idea',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -61,13 +61,13 @@ test('backlog store allocates unique manual refs under concurrent creates', asyn
 
   const results = await Promise.all([
     backlog.createBacklogItem({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       title: 'Concurrent idea A',
       sourceKind: 'manual',
       flowType: 'dev',
     }),
     backlog.createBacklogItem({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       title: 'Concurrent idea B',
       sourceKind: 'manual',
       flowType: 'dev',
@@ -81,7 +81,7 @@ test('backlog store allocates unique manual refs under concurrent creates', asyn
 test('backlog store serializes concurrent enqueue for the same item', async () => {
   const { backlog, queue } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Only enqueue once',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -106,7 +106,7 @@ test('backlog store serializes concurrent enqueue for the same item', async () =
 test('manual backlog enqueue rejects invalid allowedSlots before queueing', async () => {
   const { backlog, queue } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Invalid isolated slot',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -132,7 +132,7 @@ test('backlog auto-dispatch reports guardrail blocks instead of enqueueing unsaf
   const { backlog } = await freshStores();
 
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Auto dispatch requires guardrails',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -140,7 +140,7 @@ test('backlog auto-dispatch reports guardrail blocks instead of enqueueing unsaf
     autoDispatch: true,
   });
 
-  const result = await backlog.autoDispatchBacklogReady({ project: 'farmslot-farm' });
+  const result = await backlog.autoDispatchBacklogReady({ project: 'farmslot' });
   assert.equal(result.enqueued.length, 0);
   assert.equal(result.blocked.length, 1);
   assert.equal(result.blocked[0]?.item.id, created.item.id);
@@ -150,7 +150,7 @@ test('backlog auto-dispatch reports guardrail blocks instead of enqueueing unsaf
 test('backlog load reconciles existing queue item to prevent duplicate enqueue after restart', async () => {
   const { backlog, queue } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Reconnect queued backlog item',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -160,7 +160,7 @@ test('backlog load reconciles existing queue item to prevent duplicate enqueue a
   const queueItem = queue.addItem({
     backlogItemId: created.item.id,
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: created.item.sourceRef,
     allowedSlots: ['no-such-slot'],
     priority: 10,
@@ -177,7 +177,7 @@ test('backlog load reconciles existing queue item to prevent duplicate enqueue a
 test('direct queue remove refuses backlog-linked queue items', async () => {
   const { backlog, queue } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Cannot strand backlog queue link',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -186,7 +186,7 @@ test('direct queue remove refuses backlog-linked queue items', async () => {
   const queueItem = queue.addItem({
     backlogItemId: created.item.id,
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: created.item.sourceRef,
     allowedSlots: ['no-such-slot'],
     priority: 10,
@@ -204,7 +204,7 @@ test('public dispatch queue add rejects backlog handoff metadata', async () => {
     () =>
       dispatch.dispatchQueueAdd({
         flowType: 'dev',
-        project: 'farmslot-farm',
+        project: 'farmslot',
         ticketOrPr: 'MANUAL-000001',
         backlogItemId: 'backlog-1',
         ticketData: {
@@ -229,7 +229,7 @@ test('direct ticket validation still rejects manual backlog refs without backlog
 test('backlog load marks missing queue link needs-attention and clears stale queue id', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Stale queue link',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -258,7 +258,7 @@ test('backlog load rejects corrupted files without overwriting them', async () =
 test('backlog.update rejects public lifecycle and run linkage mutation', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'No lifecycle forgery',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -277,7 +277,7 @@ test('backlog.update rejects public lifecycle and run linkage mutation', async (
 test('explicit archived filter includes archived backlog items', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Archived view',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -291,7 +291,7 @@ test('explicit archived filter includes archived backlog items', async () => {
 test('delete allows backlog items linked only to terminal runs', async () => {
   const { backlog, runStore } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Delete completed backlog item',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -299,7 +299,7 @@ test('delete allows backlog items linked only to terminal runs', async () => {
   });
   const run = runStore.createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: created.item.sourceRef,
     backlogItemId: created.item.id,
   });
@@ -321,7 +321,7 @@ test('delete allows backlog items linked only to terminal runs', async () => {
 test('manual backlog run handoff normalizes manual refs', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Normalize manual handoff',
     sourceKind: 'manual',
     sourceRef: 'manual-1',
@@ -331,7 +331,7 @@ test('manual backlog run handoff normalizes manual refs', async () => {
   created.item.status = 'queued';
 
   assert.equal(
-    backlog.isValidManualBacklogRunHandoff(created.item.id, 'manual-000001', 'farmslot-farm'),
+    backlog.isValidManualBacklogRunHandoff(created.item.id, 'manual-000001', 'farmslot'),
     true,
   );
   assert.equal(
@@ -343,7 +343,7 @@ test('manual backlog run handoff normalizes manual refs', async () => {
 test('run observation does not overwrite terminal backlog status', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Terminal status',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -366,7 +366,7 @@ test('run observation does not overwrite terminal backlog status', async () => {
 test('run observation can follow successor run by backlogItemId after parent cancellation', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Follow forked run',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -400,7 +400,7 @@ test('backlog broadcasts include archived items for client-side archived filter'
     payload = nextPayload;
   });
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Broadcast archived view',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -414,7 +414,7 @@ test('backlog broadcasts include archived items for client-side archived filter'
 test('backlog load does not overwrite terminal status from linked run observation', async () => {
   const { backlog, runStore } = await freshStores();
   const created = await backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     title: 'Terminal status survives load',
     sourceKind: 'manual',
     flowType: 'dev',
@@ -422,7 +422,7 @@ test('backlog load does not overwrite terminal status from linked run observatio
   });
   const run = runStore.createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: created.item.sourceRef,
     backlogItemId: created.item.id,
   });

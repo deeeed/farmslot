@@ -75,7 +75,7 @@ function makeRun(ticket: string, variant: string): Run {
     flowType: 'dev',
     mode: 'interactive',
     status: 'writing-task',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: ticket,
     slotId: 'demo-ff-1',
     branch: null,
@@ -520,7 +520,7 @@ test('formatPrTitleSuffix normalizes the configured human gate suffix', () => {
 });
 
 test('writeTaskFile renders selected template variant and leaves source template unchanged', async (t) => {
-  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot-farm', 'templates', 'worker');
+  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot', 'templates', 'worker');
   const sourcePath = path.join(workerDir, 'dev.md');
   const variantPath = path.join(workerDir, 'dev-template-test.md');
   const source = await readFile(sourcePath, 'utf-8');
@@ -574,7 +574,7 @@ test('writeTaskFile implicitly renders dev-interactive template for interactive 
 });
 
 test('writeTaskFile implicitly renders pr-complete-interactive template for interactive pr-complete', async (t) => {
-  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot-farm', 'templates', 'worker');
+  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot', 'templates', 'worker');
   const variantPath = path.join(workerDir, 'pr-complete-interactive.md');
   await writeFile(
     variantPath,
@@ -621,7 +621,7 @@ test('writeTaskFile implicitly renders pr-complete-interactive template for inte
 });
 
 test('writeTaskFile appends interactive PR-complete handoff to default template when variant is absent', async (t) => {
-  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot-farm', 'templates', 'worker');
+  const workerDir = path.join(farmslotRoot, 'projects', 'farmslot', 'templates', 'worker');
   const variantPath = path.join(workerDir, 'pr-complete-interactive.md');
   const previousVariant = await readFile(variantPath, 'utf-8').catch(() => null);
   await rm(variantPath, { force: true });

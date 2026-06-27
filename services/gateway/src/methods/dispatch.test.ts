@@ -44,7 +44,7 @@ function makeSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
     slot: overrides.slot ?? 'demo-1',
     machine: overrides.machine ?? 'demo',
     platform: overrides.platform ?? 'cli',
-    project: overrides.project ?? 'farmslot-farm',
+    project: overrides.project ?? 'farmslot',
     health: overrides.health ?? {
       ssh: 'LOCAL',
       device: '-',
@@ -182,7 +182,7 @@ test('resolvePreviewModel uses Cursor default for missing or unknown slot model'
 
 test('dispatch preview displays Cursor composer-2.5 instead of Claude default', () => {
   const result = resolveDispatchPreviewFromFleet(
-    { project: 'farmslot-farm', flowType: 'fix-bug', ticketOrPr: 'PROJ-1' },
+    { project: 'farmslot', flowType: 'fix-bug', ticketOrPr: 'PROJ-1' },
     [makeSlot({ lifecycle: 'ready', phase: null, branch: 'main', runner: 'cursor', model: null })],
   );
 
@@ -245,7 +245,7 @@ test('findAffinitySlot respects family/lane/variant identity when provided', () 
 
   const found = findAffinitySlot(
     [mismatched, matching],
-    'farmslot-farm',
+    'farmslot',
     'example-org/example-mobile#42',
     {
       familyId: 'family-1',
@@ -265,7 +265,7 @@ test('findAffinitySlot falls back to ticket affinity when identity fields are ab
     currentVariant: null,
     branch: 'review/example-org-example-mobile-42',
   });
-  const found = findAffinitySlot([slot], 'farmslot-farm', 'example-org/example-mobile#42', {
+  const found = findAffinitySlot([slot], 'farmslot', 'example-org/example-mobile#42', {
     familyId: 'family-1',
     lane: 'production',
     variant: null,
@@ -281,7 +281,7 @@ test('findAffinitySlot rejects legacy/null identity for comparison lane', () => 
     currentVariant: null,
     branch: 'review/example-org-example-mobile-42',
   });
-  const found = findAffinitySlot([slot], 'farmslot-farm', 'example-org/example-mobile#42', {
+  const found = findAffinitySlot([slot], 'farmslot', 'example-org/example-mobile#42', {
     familyId: 'family-1',
     lane: 'comparison',
     variant: 'claude',
@@ -480,7 +480,7 @@ test('resolveDispatchPreviewFromFleet prefers identity-matching held comparison 
   });
   const preview = resolveDispatchPreviewFromFleet(
     {
-      project: 'farmslot-farm',
+      project: 'farmslot',
       flowType: 'review-pr',
       ticketOrPr: 'example-org/example-mobile#42',
       familyId: 'family-2',
@@ -509,7 +509,7 @@ test('resolveDispatchPreviewFromFleet avoids mismatched held comparison slot and
   });
   const preview = resolveDispatchPreviewFromFleet(
     {
-      project: 'farmslot-farm',
+      project: 'farmslot',
       flowType: 'review-pr',
       ticketOrPr: 'example-org/example-mobile#42',
       familyId: 'family-2',
@@ -758,7 +758,7 @@ test('resolveDispatchPreviewFromFleet honors allowedSlots', () => {
 
   const result = resolveDispatchPreviewFromFleet(
     {
-      project: 'farmslot-farm',
+      project: 'farmslot',
       flowType: 'fix-bug',
       ticketOrPr: 'PROJ-1',
       allowedSlots: ['runner-browser-1'],
@@ -772,14 +772,14 @@ test('resolveDispatchPreviewFromFleet honors allowedSlots', () => {
     () =>
       resolveDispatchPreviewFromFleet(
         {
-          project: 'farmslot-farm',
+          project: 'farmslot',
           flowType: 'fix-bug',
           ticketOrPr: 'PROJ-1',
           allowedSlots: ['does-not-exist'],
         },
         [excluded, included],
       ),
-    /No slots found for project farmslot-farm within allowed slots/,
+    /No slots found for project farmslot within allowed slots/,
   );
 });
 
@@ -803,7 +803,7 @@ test('resolveDispatchPreviewFromFleet prefers same-family ready slot for follow-
 
   const result = resolveDispatchPreviewFromFleet(
     {
-      project: 'farmslot-farm',
+      project: 'farmslot',
       flowType: 'pr-complete',
       ticketOrPr: 'example-org/example-mobile#9009',
       familyId: 'family-root',
@@ -832,7 +832,7 @@ test('findAffinitySlot respects allowedSlots', () => {
     lifecycle: 'held',
     agent: 'idle',
   });
-  const found = findAffinitySlot([sameBranchDifferentMachine, matching], 'farmslot-farm', ticket, {
+  const found = findAffinitySlot([sameBranchDifferentMachine, matching], 'farmslot', ticket, {
     allowedSlots: ['runner-browser-2'],
   });
   assert.equal(found?.slot, 'runner-browser-2');
@@ -1009,7 +1009,7 @@ test('resolveDispatchPreviewFromFleet avoids stale comparison identity in scored
 
   const preview = resolveDispatchPreviewFromFleet(
     {
-      project: 'farmslot-farm',
+      project: 'farmslot',
       flowType: 'review-pr',
       ticketOrPr: 'example-org/example-mobile#42',
       familyId: 'family-2',
@@ -1061,7 +1061,7 @@ test('buildComparisonVariant returns empty when model sanitizes to empty rather 
 // integration paths are exercised live; tests here pin the shape of the gate that decides
 // which busy slots ever reach that IO step.
 
-const PROJECT = 'farmslot-farm';
+const PROJECT = 'farmslot';
 const PR_TICKET = 'example-org/example-browser#41949';
 const PR_BRANCH = 'feat/proj-2802-keyboard-order-entry-ux';
 

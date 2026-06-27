@@ -29,7 +29,7 @@ test('replaySlotReclaimCheck rejects slots owned by another active run', () => {
 test('runReplayStep rejects read-only imported reference runs', async (t) => {
   const run = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `REF-${Date.now()}`,
   });
   updateRun(run.id, { readOnly: true, status: 'done' });
@@ -47,7 +47,7 @@ test('runReplayStep rejects read-only imported reference runs', async (t) => {
 test('runReplayStep rejects non-authorized triggeredBy actor before replay', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   t.after(async () => {
@@ -66,12 +66,12 @@ test('runReplayStep rejects non-authorized triggeredBy actor before replay', asy
 test('runReplayStep does not open a recovery attempt before replay validation passes', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Math.floor(Date.now() / 1000)}`,
   });
   const badTicketRun = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `not-a-ticket-${Date.now()}`,
   });
   const events: any[] = [];
@@ -113,7 +113,7 @@ test('runReplayStep does not open a recovery attempt before replay validation pa
 test('runReplayStep still rejects PR-bound replays without a linked prNumber', async (t) => {
   const run = createRun({
     flowType: 'merge-main',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-3398',
   });
   t.after(async () => {
@@ -132,7 +132,7 @@ test('runReplayStep still rejects PR-bound replays without a linked prNumber', a
 test('runReplayStep still rejects write-task replay for chained PR-bound runs with Jira ticketOrPr', async (t) => {
   const run = createRun({
     flowType: 'merge-main',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-3398',
     prNumber: 3398,
   });
@@ -153,7 +153,7 @@ test('runReplayStep still rejects write-task replay for chained PR-bound runs wi
 test('runReplayStep allows chained PR-bound replays when prNumber is already linked', async (t) => {
   const run = createRun({
     flowType: 'merge-main',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'PROJ-3398',
     prNumber: 3398,
   });
@@ -195,7 +195,7 @@ test('runReplayStep restores taskFile from completed write-task output for downs
   const taskFile = '/tmp/farmslot-task/TASK.md';
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   updateRun(run.id, {
@@ -229,7 +229,7 @@ test('runReplayStep moves terminal runs back to the active replay phase immediat
   const taskFile = '/tmp/farmslot-task/TASK.md';
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   updateRun(run.id, {
@@ -270,7 +270,7 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   updateRun(run.id, {
@@ -324,7 +324,7 @@ test('runReplayStep clears stale decisions when replaying task generation', asyn
   const taskFile = '/tmp/farmslot-stale-task/TASK.md';
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   const staleDecision: RunDecision = {
@@ -364,7 +364,7 @@ test('runReplayStep forces eval worker replays through prepare to reinstall harn
   const taskFile = '/tmp/farmslot-eval-task/TASK.md';
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   updateRun(run.id, {
@@ -413,12 +413,12 @@ test('runReplayStep forces eval worker replays through prepare to reinstall harn
 test('runReplayStep restores skipPrepare for chained follow-ups when the flag was already cleared', async (t) => {
   const parent = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   const run = createRun({
     flowType: 'pr-complete',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'example-org/example-browser#123456',
     familyId: parent.id,
     parentRunId: parent.id,
@@ -458,12 +458,12 @@ test('runReplayStep restores skipPrepare for chained follow-ups when the flag wa
 test('runReplayStep clears skipPrepare when chained follow-up replays from find-slot', async (t) => {
   const parent = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   const run = createRun({
     flowType: 'pr-complete',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'example-org/example-browser#123456',
     familyId: parent.id,
     parentRunId: parent.id,
@@ -499,12 +499,12 @@ test('runReplayStep clears skipPrepare when chained follow-up replays from find-
 test('runReplayStep preserves skipPrepare for review-pr chained follow-up replays', async (t) => {
   const parent = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   const run = createRun({
     flowType: 'review-pr',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'example-org/example-browser#123456',
     familyId: parent.id,
     parentRunId: parent.id,
@@ -543,12 +543,12 @@ test('runReplayStep preserves skipPrepare for review-pr chained follow-up replay
 test('runReplayStep preserves skipPrepare for CI-watch chained follow-up replays', async (t) => {
   const parent = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   const run = createRun({
     flowType: 'pr-complete',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'example-org/example-browser#123456',
     familyId: parent.id,
     parentRunId: parent.id,
@@ -588,7 +588,7 @@ test('runReplayStep preserves skipPrepare for CI-watch chained follow-up replays
 test('runReplayStep preserves resolved publish approvals for post-gate publish retries', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `PROJ-${Date.now()}`,
   });
   const approvedDecision: RunDecision = {
@@ -635,7 +635,7 @@ test('runReplayStep preserves resolved publish approvals for post-gate publish r
 test('runReplayStep keeps unresolved decisions for no-human-gate finalize retries', async (t) => {
   const run = createRun({
     flowType: 'pr-complete',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: 'example-org/example-browser#123456',
   });
   const resolvedDecision: RunDecision = {

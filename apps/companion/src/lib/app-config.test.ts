@@ -9,7 +9,7 @@ test('Expo config enables the Sherpa ONNX native plugin for on-device ASR builds
   const config = createExpoConfig({
     config: {
       name: 'FarmDev',
-      slug: 'farmslot-companion',
+      slug: 'farmslot',
     },
   } as ConfigContext);
   const pluginNames = (config.plugins ?? []).map(getPluginName).filter(Boolean);
@@ -24,7 +24,7 @@ test('Expo config routes microphone permission through audio-studio for voice mo
   const config = createExpoConfig({
     config: {
       name: 'FarmDev',
-      slug: 'farmslot-companion',
+      slug: 'farmslot',
     },
   } as ConfigContext);
   const pluginEntries = config.plugins ?? [];
@@ -53,7 +53,7 @@ test('Expo config keeps audio-studio foreground-only for store builds', () => {
   const config = createExpoConfig({
     config: {
       name: 'FarmDev',
-      slug: 'farmslot-companion',
+      slug: 'farmslot',
     },
   } as ConfigContext);
   const pluginEntries = config.plugins ?? [];
@@ -94,7 +94,7 @@ test('Expo config uses script-provided bundle id and scheme for local native lau
     const config = createExpoConfig({
       config: {
         name: 'FarmDev',
-        slug: 'farmslot-companion',
+        slug: 'farmslot',
       },
     } as ConfigContext);
 

@@ -58,7 +58,38 @@ tools/capture-helper/capture-helper
 # Session work tracker (local only)
 WORK.md
 
-# Keep the fake-runner demo project in-repo for E2E validation
+# Keep first-party dogfood project in-repo for E2E validation
+!projects/farmslot/
+projects/farmslot/*
+!projects/farmslot/project.json
+!projects/farmslot/templates/
+projects/farmslot/templates/*
+!projects/farmslot/templates/worker/
+projects/farmslot/templates/worker/*
+!projects/farmslot/templates/prompts/
+projects/farmslot/templates/prompts/*
+!projects/farmslot/templates/prompts/worker-dispatch.md
+!projects/farmslot/templates/prompts/worker-nudge.md
+!projects/farmslot/fixtures/
+projects/farmslot/fixtures/*
+!projects/farmslot/templates/worker/dev.md
+!projects/farmslot/templates/worker/fix-bug.md
+!projects/farmslot/templates/worker/review-pr.md
+!projects/farmslot/templates/worker/merge-main.md
+!projects/farmslot/templates/worker/pr-complete.md
+!projects/farmslot/fixtures/CLAUDE.local.base.md
+!projects/farmslot/fixtures/CLAUDE.local.agent.fix-bug.md
+!projects/farmslot/fixtures/CLAUDE.local.agent.feature.md
+!projects/farmslot/fixtures/CLAUDE.local.agent.review-pr.md
+!projects/farmslot/fixtures/CLAUDE.local.agent.companion-mobile.md
+!projects/farmslot/setup/
+projects/farmslot/setup/*
+!projects/farmslot/setup/sandbox-dev.sh
+projects/farmslot/tasks/
+projects/farmslot/.agent/
+projects/farmslot/.task/
+
+# Legacy demo project (superseded by projects/farmslot)
 !projects/farmslot-farm/
 projects/farmslot-farm/*
 !projects/farmslot-farm/project.json

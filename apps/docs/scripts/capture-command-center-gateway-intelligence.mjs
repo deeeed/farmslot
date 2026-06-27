@@ -159,7 +159,7 @@ async function ensureCommandCenter() {
 }
 
 async function ensureChrome() {
-  const targetUrl = `${uiUrl}#fleet?projects=farmslot-farm,audiolab-farm,echobridge-farm`;
+  const targetUrl = `${uiUrl}#fleet?projects=farmslot,audiolab-farm,echobridge-farm`;
   if (!(await cdpHttpOk())) {
     spawnSync('bash', ['scripts/debug-chrome.sh'], {
       cwd: commandCenterDir,
@@ -189,8 +189,8 @@ async function ensureChrome() {
 
 async function prepareBrowserView() {
   await evalInPage(`
-    localStorage.setItem('farmslot:global-filters', JSON.stringify({projects:['farmslot-farm','audiolab-farm','echobridge-farm'], machines:['farmslot-demo','demo-host']}));
-    location.href = '${uiUrl}#fleet?projects=farmslot-farm,audiolab-farm,echobridge-farm';
+    localStorage.setItem('farmslot:global-filters', JSON.stringify({projects:['farmslot','audiolab-farm','echobridge-farm'], machines:['farmslot-demo','demo-host']}));
+    location.href = '${uiUrl}#fleet?projects=farmslot,audiolab-farm,echobridge-farm';
     location.reload();
     return true;
   `);
@@ -305,7 +305,7 @@ async function prepareBrowserView() {
     sanitizeDemoLabels();
     clearInterval(window.__docusaurusGatewayDemoSanitizer);
     window.__docusaurusGatewayDemoSanitizer = setInterval(sanitizeDemoLabels, 150);
-    history.replaceState(null, '', '#fleet?projects=farmslot-farm,audiolab-farm,echobridge-farm');
+    history.replaceState(null, '', '#fleet?projects=farmslot,audiolab-farm,echobridge-farm');
     return true;
   `);
 }

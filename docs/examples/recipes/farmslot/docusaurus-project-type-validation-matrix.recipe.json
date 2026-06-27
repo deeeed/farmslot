@@ -6,7 +6,7 @@
   "owner": "farmslot",
   "record": "diagram",
   "inputs": {
-    "allowedProjects": ["farmslot-farm", "audiolab-farm", "echobridge-farm", "farmslot-companion"],
+    "allowedProjects": ["farmslot", "audiolab-farm", "echobridge-farm", "farmslot"],
     "outputDiagram": "diagrams/project-type-validation-matrix.svg",
     "docsDiagram": "apps/docs/static/img/demos/project-type-validation-matrix.svg"
   },

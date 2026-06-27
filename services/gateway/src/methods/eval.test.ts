@@ -39,7 +39,7 @@ function makeReferencePackage(): ResultPackageManifest {
     status: 'final',
     createdAt: '2026-05-09T00:00:00.000Z',
     finalizedAt: '2026-05-09T00:00:01.000Z',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     familyId: 'family-source',
     objectiveHash: 'objective-source',
     taskProfile: 'fix-bug',
@@ -62,18 +62,18 @@ test('evalExperimentCreate is idempotent for a package source', async () => {
     const packagePath = path.join(root, 'reference.result-package.json');
     const sourcePackage = await writeResultPackageManifest(packagePath, makeReferencePackage());
     const first = await evalExperimentCreate({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       taskProfile: 'fix-bug',
       source: { kind: 'package', packagePath },
     });
     evalRoots.add(path.dirname(path.dirname(first.experimentManifestPath)));
     const second = await evalExperimentCreate({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       taskProfile: 'fix-bug',
       source: { kind: 'package', packagePath },
     });
     const differentObjective = await evalExperimentCreate({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       taskProfile: 'fix-bug',
       source: { kind: 'package', packagePath },
       objective: 'Different objective',
@@ -124,7 +124,7 @@ test('evalExperimentCreate persists dataset hooks and separates experiment keys 
     await writeResultPackageManifest(packagePath, makeReferencePackage());
     const source = { kind: 'package' as const, packagePath };
     const first = await evalExperimentCreate({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       taskProfile: 'fix-bug',
       source,
       datasetId: 'template-regression-smoke',
@@ -132,21 +132,21 @@ test('evalExperimentCreate persists dataset hooks and separates experiment keys 
     });
     evalRoots.add(path.dirname(path.dirname(first.experimentManifestPath)));
     const repeat = await evalExperimentCreate({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       taskProfile: 'fix-bug',
       source,
       datasetId: 'template-regression-smoke',
       datasetItemId: 'bugfix-pr-123',
     });
     const differentDataset = await evalExperimentCreate({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       taskProfile: 'fix-bug',
       source,
       datasetId: 'template-regression-expanded',
       datasetItemId: 'bugfix-pr-123',
     });
     const otherDatasetItem = await evalExperimentCreate({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       taskProfile: 'fix-bug',
       source,
       datasetId: 'template-regression-smoke',
@@ -226,7 +226,7 @@ test('evalExperimentCreate hydrates prior-run references from the original PR fa
   );
 
   const original = createRun({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     flowType: 'fix-bug',
     mode: 'interactive',
     ticketOrPr: 'PROJ-2947',
@@ -241,7 +241,7 @@ test('evalExperimentCreate hydrates prior-run references from the original PR fa
     completedAt: '2026-05-01T00:00:00.000Z',
   });
   const follow = createRun({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     flowType: 'pr-complete',
     mode: 'interactive',
     ticketOrPr: 'example-org/example-browser#42284',
@@ -258,7 +258,7 @@ test('evalExperimentCreate hydrates prior-run references from the original PR fa
   });
 
   const result = await evalExperimentCreate({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     taskProfile: 'fix-bug',
     source: { kind: 'prior-run', runId: original.id },
     datasetItemId: 'bugfix-pr-42284',
@@ -292,7 +292,7 @@ test('evalExperimentCreate rejects stale manifests with mismatched experiment ke
     await writeResultPackageManifest(packagePath, makeReferencePackage());
     const source = { kind: 'package' as const, packagePath };
     const first = await evalExperimentCreate({
-      project: 'farmslot-farm',
+      project: 'farmslot',
       taskProfile: 'fix-bug',
       source,
     });
@@ -302,7 +302,7 @@ test('evalExperimentCreate rejects stale manifests with mismatched experiment ke
       experimentKey: 'stale-dataset-folded-key',
     });
     await assert.rejects(
-      () => evalExperimentCreate({ project: 'farmslot-farm', taskProfile: 'fix-bug', source }),
+      () => evalExperimentCreate({ project: 'farmslot', taskProfile: 'fix-bug', source }),
       /stale experimentKey.*Delete the stale eval experiment directory/,
     );
   } finally {
@@ -318,7 +318,7 @@ test('evalTrialStart rejects malformed axes before dispatch', async () => {
     () =>
       evalTrialStart(
         {
-          project: 'farmslot-farm',
+          project: 'farmslot',
           experimentManifestPath: '/tmp/missing-eval.json',
           axes: {
             // @ts-expect-error negative runtime validation: template axes require structured metadata.
@@ -391,7 +391,7 @@ test('evalTrialStart creates a new eval-family candidate without original parent
     experimentKey,
     createdAt: '2026-05-09T00:00:00.000Z',
     updatedAt: '2026-05-09T00:00:01.000Z',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     familyId: 'eval-family-startref',
     case: {
       caseId: 'case-original-run',
@@ -420,7 +420,7 @@ test('evalTrialStart creates a new eval-family candidate without original parent
   try {
     result = await evalTrialStart(
       {
-        project: 'farmslot-farm',
+        project: 'farmslot',
         experimentManifestPath,
         axes: {
           template: { path: 'templates/worker/fix-bug.md' },
@@ -516,7 +516,7 @@ test('evalTrialStart rejects auto replay when the Reference has no base commit',
     experimentKey: `experiment-key-missing-startref-${Date.now()}`,
     createdAt: '2026-05-09T00:00:00.000Z',
     updatedAt: '2026-05-09T00:00:01.000Z',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     familyId: 'eval-family-missing-startref',
     case: {
       caseId: 'case-missing-startref',
@@ -542,7 +542,7 @@ test('evalTrialStart rejects auto replay when the Reference has no base commit',
     () =>
       evalTrialStart(
         {
-          project: 'farmslot-farm',
+          project: 'farmslot',
           experimentManifestPath,
           axes: {
             template: { path: 'templates/fix-bug.md', hash: 'candidate' },
@@ -560,7 +560,7 @@ test('evalTrialStart rejects auto replay when the Reference has no base commit',
 test('evalTrialStart reuses a prior run startRef instead of falling back to main', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-eval-trial-prior-run-startref-'));
   const originalRun = createRun({
-    project: 'farmslot-farm',
+    project: 'farmslot',
     flowType: 'fix-bug',
     ticketOrPr: 'BUG-123',
     lane: 'comparison',
@@ -601,7 +601,7 @@ test('evalTrialStart reuses a prior run startRef instead of falling back to main
     experimentKey: `experiment-key-prior-run-startref-${Date.now()}`,
     createdAt: '2026-05-09T00:00:00.000Z',
     updatedAt: '2026-05-09T00:00:01.000Z',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     familyId: 'eval-family-prior-run-startref',
     case: {
       caseId: 'case-prior-run-startref',
@@ -629,7 +629,7 @@ test('evalTrialStart reuses a prior run startRef instead of falling back to main
   try {
     result = await evalTrialStart(
       {
-        project: 'farmslot-farm',
+        project: 'farmslot',
         experimentManifestPath,
         axes: {
           template: { path: 'templates/fix-bug.md', hash: 'candidate' },
@@ -711,7 +711,7 @@ test('evalTrialStart automatically replays from the reference base commit when a
     experimentKey: `experiment-key-auto-startref-${Date.now()}`,
     createdAt: '2026-05-09T00:00:00.000Z',
     updatedAt: '2026-05-09T00:00:01.000Z',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     familyId: 'eval-family-auto-startref',
     case: {
       caseId: 'case-merged-pr',
@@ -753,7 +753,7 @@ test('evalTrialStart automatically replays from the reference base commit when a
   const startCandidate = async (runner: string, model: string, variant: string) => {
     const result = await evalTrialStart(
       {
-        project: 'farmslot-farm',
+        project: 'farmslot',
         experimentManifestPath,
         axes: {
           template: { path: 'templates/fix-bug.md', hash: 'candidate' },
@@ -876,7 +876,7 @@ test('evalTrialStart treats explicit trialId as an idempotency key', async () =>
       experimentKey: 'experiment-key-1',
       createdAt: '2026-05-09T00:00:00.000Z',
       updatedAt: '2026-05-09T00:00:01.000Z',
-      project: 'farmslot-farm',
+      project: 'farmslot',
       familyId: 'family-1',
       case: {
         caseId: 'case-1',
@@ -912,7 +912,7 @@ test('evalTrialStart treats explicit trialId as an idempotency key', async () =>
     await writeEvalExperimentManifest(experimentManifestPath, experimentManifest);
 
     const result = await evalTrialStart(
-      { project: 'farmslot-farm', experimentManifestPath, axes, trialId },
+      { project: 'farmslot', experimentManifestPath, axes, trialId },
       () => {},
     );
 

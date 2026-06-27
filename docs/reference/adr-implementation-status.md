@@ -178,7 +178,7 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 | `prepare.profiles` in project.json | Shipped | PR #32 (`7ec8827`) |
 | CLI/RPC/UI `prepareProfile` + `FARMSLOT_PREPARE_PROFILE` | Shipped | Gateway + `slot-prepare-options` |
 | `skip_prepare_requires_health` removed | Shipped | Schema/gateway clean |
-| Auto cheapest-profile selection | Not started | Explicit ADR deferral |
+| Auto cheapest-profile selection | Not started | Explicit ADR deferral; follow-up scoped in [plans/farmslot-unified-project-validation-plan.md](../plans/farmslot-unified-project-validation-plan.md) (unified `farmslot` project + profile-fit / validation plan) |
 
 ---
 

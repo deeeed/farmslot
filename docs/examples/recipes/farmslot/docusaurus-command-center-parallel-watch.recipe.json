@@ -6,7 +6,7 @@
   "owner": "farmslot",
   "record": "proof_window",
   "inputs": {
-    "allowedProjects": ["farmslot-farm", "audiolab-farm", "echobridge-farm"],
+    "allowedProjects": ["farmslot", "audiolab-farm", "echobridge-farm"],
     "primarySlots": ["farmslot-demo-ready-1", "farmslot-demo-watch-1"],
     "futureSlots": ["audiolab-demo-ios-1", "echobridge-demo-ios-1"],
     "demoIssues": [

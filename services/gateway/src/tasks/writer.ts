@@ -785,7 +785,7 @@ export async function writeTaskFile(
     // PRs where farmslot has no fix-bug/dev ancestor in the family chain.
     // Skip when the worker template doesn't reference {{RECIPE_SOURCE}} —
     // without the provenance gate the staged recipe goes nowhere and the LLM
-    // call is wasted (e.g. projects/farmslot-farm has no recipe runner and
+    // call is wasted (e.g. projects/farmslot has no recipe runner and
     // its pr-complete.md doesn't render the placeholder).
     if (vars.HAS_RECIPE === 'no' && vars.PR_BODY && template.includes('{{RECIPE_SOURCE}}')) {
       emit('substep', {

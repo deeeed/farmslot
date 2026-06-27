@@ -54,7 +54,7 @@ test('runRecipeRunsForRun throws for missing run id', async () => {
 test('runRecipeRunsForRun returns empty groups for a run without recipe artifacts', async (t) => {
   const run = createRun({
     flowType: 'dev',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `DEV-RECIPE-RUNS-${Date.now().toString(16).toUpperCase()}`,
     mode: 'interactive',
     initialContext: 'Exercise recipe run artifact listing',
@@ -90,7 +90,7 @@ test('selectActiveRunForSlot refuses ambiguous slot ownership without currentRun
 test('resolveBoundTerminalRunForSlot returns terminal runs bound via load-run pointer', async (t) => {
   const run = createRun({
     flowType: 'pr-complete',
-    project: 'farmslot-farm',
+    project: 'farmslot',
     ticketOrPr: `LOAD-BIND-${Date.now().toString(16).toUpperCase()}`,
     mode: 'interactive',
     initialContext: 'Bound terminal run for slot replay',
