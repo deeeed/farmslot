@@ -4,12 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import type { RunnerObservabilityAgreementEntry } from './observability-agreement.js';
 import {
   aggregateAgreementEntries,
   appendRunnerObservabilityAgreement,
   resetAgreementLogDirCacheForTests,
 } from './observability-agreement-log.js';
-import type { RunnerObservabilityAgreementEntry } from './observability-agreement.js';
 
 function baseEntry(
   overrides: Partial<RunnerObservabilityAgreementEntry>,

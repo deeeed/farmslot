@@ -29,7 +29,6 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
     return { scenario: SCENARIO_ID, runner, outPath, pass: true, skipped: true, report };
   }
 
-  const host = os.hostname().replace(/\.local$/, '');
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), `runner-validate-${runner}-`));
   const session = `runner-validate-${runner}-${SCENARIO_ID}-${process.pid}`;
   let paneId = null;

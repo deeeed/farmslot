@@ -6,6 +6,7 @@ import { DEFAULT_PROMPT, PROMPT_MARKER, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import {
   assertRequiredHookEvents,
+  eventName,
   observedEvents,
   readHookLines,
   tmuxPaneSeen,
@@ -13,7 +14,7 @@ import {
 import { installHooks, obsDirFor, readRegisteredEvents } from '../lib/install.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
 import { capturePane, ensureShellSession, killSession } from '../lib/tmux.mjs';
-import { waitForRunnerCompletion } from '../lib/wait.mjs';
+import { pollHookRows, waitForRunnerCompletion } from '../lib/wait.mjs';
 
 export const SCENARIO_ID = 'hook-smoke';
 
@@ -62,7 +63,18 @@ export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDi
 
     runLaunchInTmux(paneId, repo, runner, runnerAdapter, DEFAULT_PROMPT);
 
-    const completion = waitForRunnerCompletion({ paneId, logPath, beforeCount, timeoutMs });
+    let completion = waitForRunnerCompletion({ paneId, logPath, beforeCount, timeoutMs });
+    if (!completion.sawStop) {
+      pollHookRows(logPath, beforeCount, ['SessionStart', 'UserPromptSubmit', 'Stop'], 90000);
+      const pane = capturePane(paneId, 80);
+      const newRows = readHookLines(logPath).slice(beforeCount);
+      completion = {
+        pane,
+        newRows,
+        sawStop: newRows.some((row) => eventName(row) === 'Stop'),
+        sawMarker: pane.includes(PROMPT_MARKER),
+      };
+    }
     report.paneTail = completion.pane.split('\n').slice(-20).join('\n');
 
     sleepMs(5000);

@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { runnerPromptDigest } from './lib/digest.mjs';
 import { turnBoundaryOrdered } from './lib/hooks.mjs';
-import { paneShowsBusyComposer, paneShowsBypassPermissions } from './lib/pane-patterns.mjs';
 import { detectLaunchBlocker } from './lib/pane-blockers.mjs';
+import { paneShowsBusyComposer, paneShowsBypassPermissions } from './lib/pane-patterns.mjs';
 import { listRunners, resolveRunnerList } from './runners/index.mjs';
 import { listScenarios } from './scenarios/index.mjs';
 

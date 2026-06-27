@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DEFAULT_PROMPT, PROMPT_MARKER, sleepMs } from '../lib/common.mjs';
+import { DEFAULT_PROMPT, sleepMs } from '../lib/common.mjs';
 import * as digest from '../lib/digest.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { readHookLines, writePromptSentinel } from '../lib/hooks.mjs';

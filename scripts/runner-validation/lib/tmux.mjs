@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
-import { TMUX_SKILL, sleepMs } from './common.mjs';
+import { sleepMs,TMUX_SKILL } from './common.mjs';
 
 export function tmux(args) {
   return execFileSync('tmux', args, { encoding: 'utf8' }).trim();

@@ -33,7 +33,7 @@ Evidence: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.j
 - Do not replace `send-keys` input.
 - Do not make hooks authoritative for nudge safety in Phase 1.
 - Do not remove pane scraping in Phase 1.
-- Do not implement Codex/Cursor providers in Phase 1.
+- Do not make Codex/Cursor hook readings authoritative in Phase 1 (Codex hooks shipped in PR #81 closeout as telemetry-only; Cursor stays pane-only).
 - Do not depend on OMC internals beyond optional read-only diagnostics documented in ADR-032.
 
 ## Requirements
@@ -136,6 +136,6 @@ Expose Phase 1 as minimal diagnostics, not as a new primary UI surface:
 
 ## Open Follow-Up
 
-- Codex hook integration is Phase 1.5 and requires verifying coexistence with OMX `.codex/hooks.json` registrations.
+- Codex hook coexistence with OMX `.codex/hooks.json` remains a fleet verification item (installer merges Farmslot hook alongside existing registrations).
 - Cursor remains pane-only unless a first-party streamed event surface appears.
 - Retiring Claude pane regex belongs to ADR-032 Phase 3 after one Claude version upgrade under hook-authoritative mode.

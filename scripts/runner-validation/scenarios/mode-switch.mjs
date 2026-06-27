@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DEFAULT_PROMPT, PROMPT_MARKER, sleepMs } from '../lib/common.mjs';
+import { DEFAULT_PROMPT, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
 import { readHookLines } from '../lib/hooks.mjs';
 import { installHooks, obsDirFor } from '../lib/install.mjs';
-import { paneShowsBypassPermissions } from '../lib/pane-patterns.mjs';
 import { runLaunchInTmux } from '../lib/launch.mjs';
+import { paneShowsBypassPermissions } from '../lib/pane-patterns.mjs';
 import { capturePane, ensureShellSession, killSession } from '../lib/tmux.mjs';
 import { waitForRunnerCompletion } from '../lib/wait.mjs';
 

@@ -4,9 +4,8 @@ import path from 'node:path';
 
 import { DEFAULT_PROMPT, PROMPT_MARKER, sleepMs } from '../lib/common.mjs';
 import { writeEvidence } from '../lib/evidence.mjs';
-import { sendShellScript } from '../lib/tmux.mjs';
+import { capturePane, ensureShellSession, killSession, sendShellScript } from '../lib/tmux.mjs';
 import { resolveLaunchBlockers, sendTmuxLine } from '../lib/tmux-input.mjs';
-import { capturePane, ensureShellSession, killSession } from '../lib/tmux.mjs';
 
 export const SCENARIO_ID = 'interaction-smoke';
 

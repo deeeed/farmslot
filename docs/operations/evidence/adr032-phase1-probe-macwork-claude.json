@@ -1,91 +1,94 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-06-27T08:03:21.783Z",
+  "recordedAt": "2026-06-27T08:28:26.421Z",
   "host": "macwork",
   "runner": "claude",
   "slotId": "adr032-gate-macwork",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/adr032-gate-wWxJmt",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/adr032-gate-Xuk0Pi",
+  "inTmux": false,
   "tmuxPane": null,
   "tmuxPaneSeenInHooks": true,
   "hookLatencyMs": {
-    "installMs": 94,
+    "installMs": 82,
     "samples": [
+      31,
+      31,
       32,
-      33,
-      33,
-      33,
-      35
+      36,
+      37
     ],
-    "median": 33
+    "median": 32
   },
   "gate": {
-    "tmuxPaneRequired": true,
-    "tmuxPanePass": true,
+    "installOnly": true,
+    "tmuxPaneRequired": false,
+    "tmuxPanePass": null,
     "runnerTagPass": true,
     "latencyMedianPass": true,
     "latencyMedianTargetMs": 150
   },
   "notes": [
+    "Outside tmux: install + latency only; $TMUX_PANE proof is hook-smoke in scripts/e2e-tmux-runner-validate.sh.",
     "Run separately in plan mode and after a real tool call to validate PostToolUse semantics.",
-    "Compare hook-vs-pane agreement via gateway .runs/observability-agreement/*.ndjson after live nudges."
+    "Agreement NDJSON is optional fleet telemetry — not a Phase 1 closeout gate."
   ],
   "recentHookEvents": [
     {
       "schemaVersion": 1,
-      "observedAt": 1782547401648,
-      "timestamp": 1782547401648,
+      "observedAt": 1782548906283,
+      "timestamp": 1782548906283,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-wWxJmt",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782547401680,
-      "timestamp": 1782547401680,
+      "observedAt": 1782548906316,
+      "timestamp": 1782548906316,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-wWxJmt",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782547401715,
-      "timestamp": 1782547401715,
+      "observedAt": 1782548906347,
+      "timestamp": 1782548906347,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-wWxJmt",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782547401748,
-      "timestamp": 1782547401748,
+      "observedAt": 1782548906383,
+      "timestamp": 1782548906383,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-wWxJmt",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"
     },
     {
       "schemaVersion": 1,
-      "observedAt": 1782547401781,
-      "timestamp": 1782547401781,
+      "observedAt": 1782548906419,
+      "timestamp": 1782548906419,
       "hook_event_name": "SessionStart",
       "event": "SessionStart",
       "session_id": "probe",
-      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-wWxJmt",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
       "tmuxPane": "%0",
       "slotId": "adr032-gate-macwork",
       "runner": "claude"

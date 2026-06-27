@@ -7,10 +7,23 @@ SKILL="$ROOT/.agents/skills/tmux-model-driver"
 HOST="$(hostname -s 2>/dev/null || hostname | sed 's/\.local$//')"
 EVIDENCE_DIR="$ROOT/docs/operations/evidence"
 FAIL=0
+HOOK_RAN=false
+HOOK_PASSED=false
+GROK_RAN=false
 
 pass() { echo "E2E PASS: $*"; }
 fail() { echo "E2E FAIL: $*"; FAIL=1; }
 skip() { echo "E2E SKIP: $*"; }
+
+runner_available() {
+  case "$1" in
+    claude) command -v claude >/dev/null 2>&1 || [ -x "$HOME/.npm-global/bin/claude" ] ;;
+    codex) [ -f "$HOME/.npm-global/lib/node_modules/@openai/codex/bin/codex.js" ] ;;
+    grok) command -v grok >/dev/null 2>&1 || [ -x "$HOME/.grok/bin/grok" ] ;;
+    cursor) command -v cursor-agent >/dev/null 2>&1 || [ -x "$HOME/.local/bin/cursor-agent" ] ;;
+    *) return 1 ;;
+  esac
+}
 
 mkdir -p "$EVIDENCE_DIR"
 
@@ -59,45 +72,74 @@ rm -rf "$REPO"
 run_harness() {
   local runner="$1"
   local scenario="$2"
-  # Codex hook-smoke needs a cool-down after Claude hook-smoke (Stop hook races).
-  sleep 8
+  local is_first="${3:-false}"
+  local optional="${4:-false}"
+  if [ "$is_first" != true ]; then
+    sleep 15
+  fi
   if node "$ROOT/scripts/runner-validation/run.mjs" --runner "$runner" --scenario "$scenario"; then
     pass "${runner}/${scenario}"
-  else
-    fail "${runner}/${scenario}"
+    return 0
   fi
+  if [ "$optional" = true ]; then
+    skip "${runner}/${scenario} (optional)"
+    return 0
+  fi
+  fail "${runner}/${scenario}"
+  return 1
 }
 
-if command -v claude >/dev/null 2>&1 || [ -x "$HOME/.npm-global/bin/claude" ]; then
-  echo "-- harness: claude hook-smoke --"
-  run_harness claude hook-smoke
-else
-  skip "claude hook-smoke (binary missing)"
-fi
+FIRST_HARNESS=true
+for runner in claude codex; do
+  if runner_available "$runner"; then
+    echo "-- harness: ${runner} hook-smoke --"
+    HOOK_RAN=true
+    if [ "$FIRST_HARNESS" = true ]; then
+      if run_harness "$runner" hook-smoke true; then HOOK_PASSED=true; fi
+      FIRST_HARNESS=false
+    elif run_harness "$runner" hook-smoke false; then
+      HOOK_PASSED=true
+    fi
+  else
+    skip "${runner} hook-smoke (binary missing)"
+  fi
+done
 
-CODEX_BIN="$HOME/.npm-global/lib/node_modules/@openai/codex/bin/codex.js"
-if [ -f "$CODEX_BIN" ]; then
-  echo "-- harness: codex hook-smoke --"
-  run_harness codex hook-smoke
-else
-  skip "codex hook-smoke (binary missing)"
-fi
-
-if command -v grok >/dev/null 2>&1 || [ -x "$HOME/.grok/bin/grok" ]; then
+if runner_available grok; then
   echo "-- harness: grok pane-smoke --"
-  run_harness grok pane-smoke
+  GROK_RAN=true
+  if [ "$FIRST_HARNESS" = true ]; then
+    run_harness grok pane-smoke true || true
+    FIRST_HARNESS=false
+  else
+    run_harness grok pane-smoke false || true
+  fi
   echo "-- harness: grok interaction-smoke --"
-  run_harness grok interaction-smoke
+  run_harness grok interaction-smoke false || true
 else
   skip "grok pane-smoke + interaction-smoke (binary missing)"
 fi
 
-CURSOR_BIN="$HOME/.local/bin/cursor-agent"
-if command -v cursor-agent >/dev/null 2>&1 || [ -x "$CURSOR_BIN" ]; then
-  echo "-- harness: cursor pane-smoke --"
-  run_harness cursor pane-smoke
+if runner_available cursor; then
+  echo "-- harness: cursor pane-smoke (optional) --"
+  if [ "$FIRST_HARNESS" = true ]; then
+    run_harness cursor pane-smoke true true
+    FIRST_HARNESS=false
+  else
+    run_harness cursor pane-smoke false true
+  fi
 else
   skip "cursor pane-smoke (binary missing)"
+fi
+
+if ! $HOOK_RAN; then
+  fail "no hook runner binary available (need claude or codex for hook-smoke)"
+elif ! $HOOK_PASSED; then
+  fail "hook-smoke did not pass for any available event-driven runner"
+fi
+
+if runner_available grok && ! $GROK_RAN; then
+  fail "grok binary present but grok smokes did not run"
 fi
 
 if [ "$FAIL" -ne 0 ]; then

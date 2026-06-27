@@ -1,24 +1,24 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-06-27T08:03:21.454Z",
+  "recordedAt": "2026-06-27T08:28:26.117Z",
   "host": "macwork",
   "scenario": "pane-smoke",
   "runner": "cursor",
-  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-BNYYHl",
-  "session": "runner-validate-cursor-pane-smoke-47929",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-3GBLkX",
+  "session": "runner-validate-cursor-pane-smoke-78143",
   "launchMode": "cursor-print",
   "markerSeen": true,
   "promptNeedleSeen": true,
   "pass": true,
   "error": null,
-  "paneTail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-BNY\nYHl/.tmux-driver-launch.sh\n(base) ➜  runner-validate-cursor-BNYYHl bash /var/folders/98/_mm6pm_d0nj7vj72jwq\n0hc_00000gn/T/runner-validate-cursor-BNYYHl/.tmux-driver-launch.sh\nTMUX_HOOK_OK",
+  "paneTail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-3GB\nLkX/.tmux-driver-launch.sh\n(base) ➜  runner-validate-cursor-3GBLkX bash /var/folders/98/_mm6pm_d0nj7vj72jwq\n0hc_00000gn/T/runner-validate-cursor-3GBLkX/.tmux-driver-launch.sh\nTMUX_HOOK_OK\n(base) ➜  runner-validate-cursor-3GBLkX",
   "paneState": {
-    "pane_id": "%226",
-    "session_name": "runner-validate-cursor-pane-smoke-47929",
+    "pane_id": "%254",
+    "session_name": "runner-validate-cursor-pane-smoke-78143",
     "current_command": "zsh",
-    "current_path": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-BNYYHl",
+    "current_path": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-3GBLkX",
     "pane_title": "macwork",
-    "pane_pid": "48716",
+    "pane_pid": "79191",
     "state": "shell",
     "phase": "idle",
     "confidence": "high",
@@ -27,7 +27,7 @@
     ],
     "launch_blocker": null,
     "auto_action": null,
-    "tail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-BNY\nYHl/.tmux-driver-launch.sh\n(base) ➜  runner-validate-cursor-BNYYHl bash /var/folders/98/_mm6pm_d0nj7vj72jwq\n0hc_00000gn/T/runner-validate-cursor-BNYYHl/.tmux-driver-launch.sh\nTMUX_HOOK_OK",
-    "last_line": "TMUX_HOOK_OK"
+    "tail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-3GB\nLkX/.tmux-driver-launch.sh\n(base) ➜  runner-validate-cursor-3GBLkX bash /var/folders/98/_mm6pm_d0nj7vj72jwq\n0hc_00000gn/T/runner-validate-cursor-3GBLkX/.tmux-driver-launch.sh\nTMUX_HOOK_OK\n(base) ➜  runner-validate-cursor-3GBLkX",
+    "last_line": "(base) ➜  runner-validate-cursor-3GBLkX"
   }
 }
