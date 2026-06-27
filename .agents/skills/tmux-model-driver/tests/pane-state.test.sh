@@ -97,4 +97,16 @@ printf '%s\n' "$cursor_json" | grep -q '"state": "cursor"'
 printf '%s\n' "$cursor_json" | grep -q '"launch_blocker": "workspace-trust"'
 printf '%s\n' "$cursor_json" | grep -q '"auto_action": "cursor-trust-workspace"'
 
+cross_runner_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="zsh" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="shell" \
+  TMUX_PANE_STATE_PANE_PID="128" \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'Run Grok Build in a project directory?\n1 (○) farmslot (current)\nEnter:submit' \
+  TMUX_PANE_STATE_LAST_LINE='Enter:submit' \
+  "$SCRIPT" "%8" "cursor"
+)"
+printf '%s\n' "$cross_runner_json" | grep -q '"launch_blocker": null'
+
 echo "pane-state tests: ok"

@@ -242,7 +242,7 @@ Some runners show a post-launch gate before compose is available.
 | Grok | `project-directory` | `Enter` on `(current)` row |
 | Cursor | `workspace-trust` | `a` |
 
-Detection is encoded in `pane-state.sh` and kept in sync with `services/gateway/src/runners/registry.ts` `detectRunnerLaunchBlocker`.
+Detection lives in `pane-state.sh` (optional `[runner-id]` scopes Grok/Cursor blockers; includes `auth-required`). Harness `lib/pane-blockers.mjs` and `resolveLaunchBlockers()` delegate here — keep patterns aligned with `services/gateway/src/runners/registry.ts` `detectRunnerLaunchBlocker`.
 
 Protocol:
 

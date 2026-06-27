@@ -1,8 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
 import path from 'node:path';
 
-import { shSingleQuote, TMUX_SKILL, sleepMs } from './common.mjs';
+import { TMUX_SKILL, sleepMs } from './common.mjs';
 
 export function tmux(args) {
   return execFileSync('tmux', args, { encoding: 'utf8' }).trim();
@@ -45,10 +44,11 @@ export function sendShell(paneId, command) {
 
 /** Avoid tmux send-keys line-wrap splitting long runner launch lines. */
 export function sendShellScript(paneId, repo, bodyLines) {
-  const scriptPath = path.join(repo, '.runner-validate-launch.sh');
-  const script = ['#!/bin/bash', 'set -euo pipefail', `cd ${shSingleQuote(repo)}`, ...bodyLines, ''].join('\n');
-  fs.writeFileSync(scriptPath, script, { mode: 0o755 });
-  sendShell(paneId, `bash ${shSingleQuote(scriptPath)}`);
+  const script = path.join(TMUX_SKILL, 'send-shell-script.sh');
+  execFileSync('bash', [script, paneId, repo], {
+    input: `${bodyLines.join('\n')}\n`,
+    encoding: 'utf8',
+  });
 }
 
 export function ensureShellSession(sessionName, repo) {

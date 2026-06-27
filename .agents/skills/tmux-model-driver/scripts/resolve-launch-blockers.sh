@@ -15,7 +15,7 @@ trust_answered=false
 project_selected=false
 
 while [ "$SECONDS" -lt "$deadline" ]; do
-  state_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id")"
+  state_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id" "$runner_id")"
   blocker_kind="$(python3 - <<'PY' "$state_json"
 import json, sys
 print(json.loads(sys.argv[1]).get("launch_blocker") or "")
@@ -78,7 +78,7 @@ PY
   exit 0
 done
 
-state_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id")"
+state_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id" "$runner_id")"
 python3 - <<'PY' "$state_json" "$runner_id" "$trust_answered" "$project_selected"
 import json, sys
 state = json.loads(sys.argv[1])

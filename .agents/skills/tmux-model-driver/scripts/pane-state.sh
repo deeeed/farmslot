@@ -1,12 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ $# -ne 1 ]; then
-  echo "usage: pane-state.sh <pane-id>" >&2
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+  echo "usage: pane-state.sh <pane-id> [runner-id]" >&2
   exit 1
 fi
 
 pane_id="$1"
+runner_id="${2:-}"
 
 resolve_override() {
   local name="$1"
@@ -35,10 +36,10 @@ phase="idle"
 confidence="low"
 reasons=""
 
-python3 - <<'PY' "$pane_id" "$session_name" "$current_command" "$current_path" "$pane_title" "$pane_pid" "$tail_capture" "$last_line"
+python3 - <<'PY' "$pane_id" "$session_name" "$current_command" "$current_path" "$pane_title" "$pane_pid" "$tail_capture" "$last_line" "$runner_id"
 import json, re, sys
 
-pane_id, session_name, current_command, current_path, pane_title, pane_pid, tail_capture, last_line = sys.argv[1:]
+pane_id, session_name, current_command, current_path, pane_title, pane_pid, tail_capture, last_line, runner_id = sys.argv[1:]
 
 def classify_state(current_command: str, tail: str, last_line: str):
     state = "unknown"
@@ -93,20 +94,43 @@ def classify_state(current_command: str, tail: str, last_line: str):
         reasons.append("no tmux metadata available for this pane")
     return state, confidence, reasons
 
-def detect_launch_blocker(tail: str):
+def normalize_runner(value: str) -> str:
+    return (value or "").strip().lower()
+
+def effective_runner(state: str, runner_id: str) -> str:
+    explicit = normalize_runner(runner_id)
+    if explicit:
+        return explicit
+    if state in {"grok", "cursor"}:
+        return state
+    return ""
+
+def detect_launch_blocker(tail: str, runner: str):
     lower = tail.lower()
-    if (
+    if runner == "cursor" and (
         "[a] trust this workspace" in lower
         and "[q] quit" in lower
         and "use arrow keys to navigate" in lower
     ):
         return "workspace-trust", "cursor-trust-workspace"
-    if (
+    if runner == "grok" and (
         "run grok build in a project directory" in lower
         and "(current)" in lower
         and "enter:submit" in lower
     ):
         return "project-directory", "grok-select-current-project"
+    if runner:
+        for line in tail.split("\n"):
+            line_lower = line.strip().lower()
+            if not line_lower:
+                continue
+            if re.search(r"\bmcp\b", line_lower):
+                continue
+            if re.search(r"\b(login|log in|authenticate|authentication|auth)\b", line_lower) and re.search(
+                r"\b(expired|required|failed|please|needed|unauthorized|not authenticated|not logged in)\b",
+                line_lower,
+            ):
+                return "auth-required", None
     return None, None
 
 def classify_phase(tail: str, launch_blocker):
@@ -117,7 +141,10 @@ def classify_phase(tail: str, launch_blocker):
     return "idle", []
 
 state, confidence, reasons = classify_state(current_command, tail_capture, last_line)
-launch_blocker, auto_action = detect_launch_blocker(tail_capture)
+runner = effective_runner(state, runner_id)
+launch_blocker, auto_action = detect_launch_blocker(tail_capture, runner)
+if runner:
+    reasons.append(f"launch-blocker scope runner={runner}")
 phase, phase_reasons = classify_phase(tail_capture, launch_blocker)
 reasons.extend(phase_reasons)
 

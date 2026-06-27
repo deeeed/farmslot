@@ -53,6 +53,9 @@ node "$ROOT/scripts/runner-validation/run.mjs" --scenario hook-smoke --runner ho
 echo "== runner validation harness (live tmux: grok pane-smoke) =="
 node "$ROOT/scripts/runner-validation/run.mjs" --scenario pane-smoke --runner grok
 
+echo "== runner validation harness (live tmux: grok interaction-smoke) =="
+node "$ROOT/scripts/runner-validation/run.mjs" --scenario interaction-smoke --runner grok
+
 echo "== agreement window (production logs when present) =="
 AGREEMENT_OUT="$EVIDENCE_DIR/adr032-phase1-agreement-${HOST}.json"
 set +e

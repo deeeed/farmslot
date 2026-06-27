@@ -22,7 +22,7 @@ node scripts/runner-validation/run.mjs --runner all --scenario all
 
 Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
 
-Wired into `scripts/run-adr032-phase1-gate.sh`: `hook-smoke` (Claude + Codex) and **grok `pane-smoke`**. Add `--runner pane-only` to include Cursor when it becomes fleet-default.
+Wired into `scripts/run-adr032-phase1-gate.sh`: `hook-smoke` (Claude + Codex), **grok `pane-smoke`**, and **grok `interaction-smoke`**. Add `--runner pane-only` to include Cursor when it becomes fleet-default.
 
 ## Runner groups
 
@@ -81,7 +81,7 @@ Improvement backlog for Grok:
 
 - Gateway launches with argv prompt (`needsPostLaunchPrompt: false`).
 - **`pane-smoke`:** `cursor-agent --print --trust --sandbox enabled` for scriptable tmux validation.
-- Workspace-trust blocker patterns live in `lib/pane-blockers.mjs` for future interactive scenarios.
+- Workspace-trust blocker patterns live in `pane-state.sh` (scoped by runner id); harness `lib/pane-blockers.mjs` delegates there.
 
 ## Architecture
 
@@ -95,7 +95,7 @@ scripts/runner-validation/
   run.test.mjs      # static/unit tests
 ```
 
-Tmux driver builds on [.agents/skills/tmux-model-driver](../../.agents/skills/tmux-model-driver/SKILL.md) (`pane-state`, `send-and-verify`, `resolve-launch-blockers`, `send-shell-script`). Harness-specific launch adapters live in `runners/`; when empirical findings change, update the skill adapters and `lib/pane-blockers.mjs` together. Long launch lines use `.runner-validate-launch.sh` in the temp repo (same pattern as skill `send-shell-script.sh`) to avoid `send-keys` line-wrap bugs.
+Tmux driver delegates to [.agents/skills/tmux-model-driver](../../.agents/skills/tmux-model-driver/SKILL.md) scripts — no duplicated blocker or launch-script logic in harness `lib/`. Harness-specific launch adapters live in `runners/`; when empirical findings change, update the skill first, then runner adapters. Long launch lines go through skill `send-shell-script.sh` (writes `.tmux-driver-launch.sh` in the temp repo) to avoid `send-keys` line-wrap bugs.
 
 ## Related docs
 

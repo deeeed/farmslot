@@ -30,7 +30,7 @@ node scripts/runner-validation/run.mjs --runner all --scenario all
 
 See [runner-validation-harness.md](./runner-validation-harness.md) for scenario matrix and per-runner launch rules.
 
-`scripts/run-adr032-phase1-gate.sh` runs hook-smoke (Claude + Codex) and **grok pane-smoke** live in tmux, plus static busy-composer fixtures.
+`scripts/run-adr032-phase1-gate.sh` runs hook-smoke (Claude + Codex), **grok pane-smoke**, and **grok interaction-smoke** live in tmux, plus static busy-composer fixtures.
 
 Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
 

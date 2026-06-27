@@ -260,7 +260,7 @@ Per-runner behavioral differences (how to launch in tmux, whether compose buffer
 | ----- | -------------- |
 | `runners/<id>.mjs` | Launch adapters, registered hook events, repo prep (`git init` for Codex), explicit skip reasons |
 | `scenarios/<name>.mjs` | Executable contracts: hook smoke, prompt digest acceptance, turn ordering, busy-composer fixtures, permission mode |
-| `lib/` | tmux driver (wraps `.agents/skills/tmux-model-driver`), hook readers, digest helpers synced with gateway |
+| `lib/` | tmux driver delegates to `.agents/skills/tmux-model-driver` scripts (`pane-state`, `send-and-verify`, `resolve-launch-blockers`, `send-shell-script`); hook readers and digest helpers synced with gateway |
 | `run.mjs` | Orchestrator: `--runner`, `--scenario`, evidence JSON under `docs/operations/evidence/runner-validate-*` |
 
 **Empirical rules encoded in adapters (not shared assumptions):**
@@ -272,7 +272,13 @@ Per-runner behavioral differences (how to launch in tmux, whether compose buffer
 
 Scenarios that are runner-inapplicable (Codex busy-composer, Codex mode-switch; hook scenarios on pane-only runners) **skip with `pass: true` and an explicit `skipReason`** rather than fake success. Live mid-turn busy capture remains a fixture-tier test until a stable recipe exists.
 
-Gate entrypoint: `node scripts/runner-validation/run.mjs` (also wired into `scripts/run-adr032-phase1-gate.sh`). Operator guide: [runner-validation-harness.md](../operations/runner-validation-harness.md).
+Gate entrypoint: `node scripts/runner-validation/run.mjs` (also wired into `scripts/run-adr032-phase1-gate.sh`):
+
+- `hook-smoke` — Claude + Codex (event-driven hooks)
+- `grok pane-smoke` — single-turn `grok -p` shell launch
+- `grok interaction-smoke` — production-parity interactive TUI (project-directory blocker when shown + compose submit)
+
+Operator guide: [runner-validation-harness.md](../operations/runner-validation-harness.md).
 
 ### Interaction with `oh-my-claudecode` (OMC)
 

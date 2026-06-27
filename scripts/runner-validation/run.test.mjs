@@ -33,6 +33,15 @@ test('grok project-directory blocker detection matches gateway contract', () => 
   Enter:submit
 `;
   assert.equal(detectLaunchBlocker(pane, 'grok')?.kind, 'project-directory');
+  assert.equal(detectLaunchBlocker(pane, 'cursor'), null);
+});
+
+test('cursor workspace-trust blocker detection matches gateway contract', () => {
+  const pane = `[a] trust this workspace
+[q] quit
+use arrow keys to navigate`;
+  assert.equal(detectLaunchBlocker(pane, 'cursor')?.kind, 'workspace-trust');
+  assert.equal(detectLaunchBlocker(pane, 'grok'), null);
 });
 
 test('busy-composer fixture distinguishes composing vs idle', () => {

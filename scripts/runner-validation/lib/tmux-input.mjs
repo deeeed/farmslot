@@ -1,8 +1,8 @@
 import { execFileSync } from 'node:child_process';
+import path from 'node:path';
 
-import { sleepMs } from './common.mjs';
+import { TMUX_SKILL } from './common.mjs';
 import { capturePane } from './tmux.mjs';
-import { detectLaunchBlocker } from './pane-blockers.mjs';
 
 export function sendTmuxKey(paneId, key) {
   execFileSync('tmux', ['send-keys', '-t', paneId, key]);
@@ -13,28 +13,38 @@ export function sendTmuxLine(paneId, text) {
   execFileSync('tmux', ['send-keys', '-t', paneId, 'C-m']);
 }
 
+/** Delegate to tmux-model-driver resolve-launch-blockers.sh. */
 export function resolveLaunchBlockers(paneId, runnerId, timeoutMs = 60000) {
-  const deadline = Date.now() + timeoutMs;
-  let trustAnswered = false;
-  let projectSelected = false;
-  while (Date.now() < deadline) {
-    const pane = capturePane(paneId, 80);
-    const blocker = detectLaunchBlocker(pane, runnerId);
-    if (blocker?.autoAction === 'cursor-trust-workspace' && !trustAnswered) {
-      sendTmuxKey(paneId, 'a');
-      trustAnswered = true;
-      sleepMs(1500);
-      continue;
+  const timeoutSeconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const script = path.join(TMUX_SKILL, 'resolve-launch-blockers.sh');
+  try {
+    const out = execFileSync('bash', [script, paneId, runnerId, String(timeoutSeconds)], {
+      encoding: 'utf8',
+    });
+    const result = JSON.parse(out);
+    return {
+      pane: capturePane(paneId, 80),
+      blocker: null,
+      resolved: Boolean(result.resolved),
+      trustAnswered: Boolean(result.trust_answered),
+      projectSelected: Boolean(result.project_selected),
+    };
+  } catch (error) {
+    const stdout = error?.stdout?.toString?.() || '';
+    if (stdout.trim()) {
+      const result = JSON.parse(stdout);
+      const blocker =
+        result.launch_blocker != null
+          ? { kind: result.launch_blocker, autoAction: result.auto_action ?? null }
+          : null;
+      return {
+        pane: capturePane(paneId, 80),
+        blocker,
+        resolved: Boolean(result.resolved),
+        trustAnswered: Boolean(result.trust_answered),
+        projectSelected: Boolean(result.project_selected),
+      };
     }
-    if (blocker?.autoAction === 'grok-select-current-project' && !projectSelected) {
-      sendTmuxKey(paneId, 'Enter');
-      projectSelected = true;
-      sleepMs(1500);
-      continue;
-    }
-    if (blocker) return { pane, blocker, resolved: false };
-    if (!blocker) return { pane, blocker: null, resolved: true, trustAnswered, projectSelected };
-    sleepMs(1000);
+    return { pane: capturePane(paneId, 80), blocker: null, resolved: false };
   }
-  return { pane: capturePane(paneId, 80), blocker: null, resolved: false };
 }
