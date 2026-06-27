@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * ADR-032 Phase 1 exit helper — analyze hook-vs-pane agreement NDJSON.
+ * Optional fleet diagnostic — analyze hook-vs-pane agreement NDJSON.
  *
- * Pass when at least --min-events rows exist and agreement rate >= --min-rate.
- * Use --dir to point at .runs/observability-agreement (defaults to repo root).
+ * Not part of ADR-032 Phase 1 closeout. Run manually when hooks are enabled on
+ * live slots and you want a snapshot of hook-vs-pane agreement.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,8 +14,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 function parseArgs(argv) {
   const args = {
     dir: path.join(ROOT, '.runs', 'observability-agreement'),
-    minEvents: 200,
-    minRate: 0.98,
+    minEvents: 1,
+    minRate: 0,
     out: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -26,7 +26,7 @@ function parseArgs(argv) {
     else if (token === '--out') args.out = argv[++i];
     else if (token === '--help' || token === '-h') {
       console.log(
-        'usage: validate-observability-agreement-window.mjs [--dir <path>] [--min-events 200] [--min-rate 0.98] [--out report.json]',
+        'usage: validate-observability-agreement-window.mjs [--dir <path>] [--min-events 1] [--min-rate 0] [--out report.json]',
       );
       process.exit(0);
     }

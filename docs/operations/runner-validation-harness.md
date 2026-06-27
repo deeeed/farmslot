@@ -4,11 +4,11 @@ Farmslot-owned tmux validation for **runner capability and interaction** differe
 
 Implementation: `scripts/runner-validation/`
 
-## Validation
+## Validation (live tmux E2E)
 
 ```bash
-# Full tmux-driver + harness smoke (unit tests, parity fixtures, live tmux, grok smokes)
-bash scripts/validate-tmux-driver.sh
+# Primary proof — live tmux only
+bash scripts/e2e-tmux-runner-validate.sh
 ```
 
 ## Quick start

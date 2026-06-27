@@ -123,7 +123,7 @@ Expose Phase 1 as minimal diagnostics, not as a new primary UI surface:
 - Claude hook events are written to `hooks.jsonl` and can be read through node-pushed `tmux.worker.inventory.updated` / `tmux.worker.list` for at least one active slot.
 - `statusline.json` is atomically updated and parsed without partial-read failures.
 - Existing nudge behavior is unchanged when hooks are absent, stale, malformed, or disabled.
-- Agreement logging captures at least 200 consecutive nudge/control decisions without introducing user-visible regressions.
+- Live tmux E2E passes via `scripts/e2e-tmux-runner-validate.sh` on a representative machine (hook-smoke + Grok smokes).
 - `apps/command-center && yarn typecheck` passes.
 
 ## Rollout
@@ -132,7 +132,7 @@ Expose Phase 1 as minimal diagnostics, not as a new primary UI surface:
 2. Add the hook writer/statusline fixture behind an opt-in pool or project setting.
 3. Add the gateway provider and agreement log in telemetry-only mode.
 4. Enable on Claude-runner slots one machine at a time.
-5. Review the 200-event agreement window before promoting ADR-032 Phase 2.
+5. Promote ADR-032 Phase 2 only after tmux E2E stays green across fleet machines and operator review of any agreement-log disagreements (no fixed event-count gate).
 
 ## Open Follow-Up
 

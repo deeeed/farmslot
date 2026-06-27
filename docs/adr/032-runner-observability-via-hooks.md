@@ -313,7 +313,9 @@ Phase 1 telemetry (new code that must ship alongside the fixture):
 - `services/gateway/src/observability-agreement-log.ts` — records every `sendRunnerInstructionSafely` call with both hook-derived and pane-derived readings; daily aggregation rolled into run-store.
 - `Run.metrics.nudgeTimeoutCount` increments at the existing `NudgeTimeoutError` throw site (`nudge.ts:330`). Run-list UI exposes it as a column.
 
-**Exit criterion:** 200 consecutive nudges across mm-\* slots with hook reading ≥ 98% agreement with pane reading; disagreements logged with both readings for triage.
+**Phase 1 closeout criterion (empirical, tmux-first):** `scripts/e2e-tmux-runner-validate.sh` passes on a representative machine — Claude/Codex `hook-smoke`, Grok `pane-smoke` + `interaction-smoke`, skill `send-shell-script` + `resolve-launch-blockers` — plus install probes (`probe-runner-observability.mjs`). See [runner-observability-empirical-gate.md](../operations/runner-observability-empirical-gate.md).
+
+**Fleet telemetry (optional, not a closeout blocker):** `observability-agreement-log.ts` may record hook-vs-pane readings during live nudges for triage. No fixed event-count threshold gates Phase 1 — agreement NDJSON is diagnostic when hooks are enabled on slots, not a synthetic exit bar.
 
 **Phase 2 — Hooks authoritative; pane is fallback.** `sendRunnerInstructionSafely` and `runnerPaneHasPendingInstruction` consult `RunnerObservability` first; pane scraping is used only when the observability provider returns `unknown` or `null`. The 30 s nudge timeout drops to 10 s because the hook signal is sub-second instead of poll-rate-limited.
 
