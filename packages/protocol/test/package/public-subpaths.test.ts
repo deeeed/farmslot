@@ -279,6 +279,7 @@ for (const [name, actual, expected] of [
       recipeProjectHookRun: Methods.RECIPE_PROJECT_HOOK_RUN,
       actionList: Methods.SLOT_ACTION_LIST,
       actionRun: Methods.SLOT_ACTION_RUN,
+      prepareStatus: Methods.SLOT_PREPARE_STATUS,
     },
   ],
 ] as const) {

@@ -276,13 +276,15 @@ export class SlotActionsPanel extends LitElement {
   private _prepare = () => {
     const branch = this._prepareBranch.trim();
     const switching = branch !== '' && branch !== (this._slot?.branch ?? '');
-    this._confirm('prepare', () =>
-      void this._runSlotPrepare({
-        ...(branch ? { branch } : {}),
-        ...(this._prepareProfile ? { prepareProfile: this._prepareProfile } : {}),
-        strictProfile: this._prepareStrictProfile,
-        ...(switching ? { label: `Preparing ${this.slotId} for branch ${branch}` } : {}),
-      }),
+    this._confirm(
+      'prepare',
+      () =>
+        void this._runSlotPrepare({
+          ...(branch ? { branch } : {}),
+          ...(this._prepareProfile ? { prepareProfile: this._prepareProfile } : {}),
+          strictProfile: this._prepareStrictProfile,
+          ...(switching ? { label: `Preparing ${this.slotId} for branch ${branch}` } : {}),
+        }),
     );
   };
   private _release = (keepWarm: boolean) =>
