@@ -137,6 +137,9 @@ case "${PLATFORM_VALUE}" in
     if [[ -n "${ADB_SERIAL_VALUE}" ]]; then
       ARGS+=(--adb-serial "${ADB_SERIAL_VALUE}")
     fi
+    if [[ "${RECORD_VIDEO}" -eq 1 ]]; then
+      ARGS+=(--record-video=full-run)
+    fi
     ;;
   *)
     # Runner + harness always live in the farmslot monorepo (primary_repo), not the slot
