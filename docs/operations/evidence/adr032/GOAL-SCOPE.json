@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "goalCriteria2and3Pr": 81,
+  "validEvidenceFiles": [
+    "pr81-premerge.json",
+    "pr81-merge-timing-note.json",
+    "pr81-CROSS-REVIEW-LOOP.json",
+    "cross-review-pr81.txt",
+    "pr81-live-gh-audit.json"
+  ],
+  "validScripts": [
+    "scripts/assert-adr032-goal-evidence.sh",
+    "scripts/verify-adr032-shipped-main.sh",
+    "scripts/verify-adr032-merge-process.sh",
+    "scripts/capture-pre-merge-evidence.sh",
+    "scripts/run-adr032-phase1-gate.sh"
+  ],
+  "notes": [
+    "ADR-032 goal closeout uses split verifiers only; no PR-chain harvest or waiver paths.",
+    "Criteria 2-3 apply to PR #81: pre-merge cross-review JSON + CI green on PR head before mergedAt.",
+    "Post-merge GitHub APPROVED on PR #81 is disclosed but not used as review proof."
+  ]
+}

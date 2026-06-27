@@ -1,0 +1,10 @@
+ADR-032 PR #81 independent cross-review closeout
+Task: PR #81 feat(gateway): close ADR-032 phase 1 and ship Codex hook observability
+Reviewer: independent code-reviewer subagent (grok)
+Artifact: docs/operations/evidence/adr032/pr81-CROSS-REVIEW-LOOP.json
+
+Round 1 (2026-06-27T06:00:00Z): REQUEST-CHANGES — codex hook-smoke evidence, e2e skip-greenwash, docs drift
+Round 2 (2026-06-27T07:30:00Z): PASS — e2e-tmux-runner-validate exit 0; run-adr032-phase1-gate exit 0 on head e4cbcb4
+Completed: 2026-06-27T08:33:22Z (at merge; see pr81-merge-timing-note.json disclosure)
+
+VERDICT: APPROVE pending CI
