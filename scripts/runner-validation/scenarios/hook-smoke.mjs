@@ -19,6 +19,12 @@ export const SCENARIO_ID = 'hook-smoke';
 
 export async function runScenario({ runnerAdapter, timeoutMs, keepSession, outDir }) {
   const runner = runnerAdapter.RUNNER_ID;
+  const skip = runnerAdapter.skipReason?.(SCENARIO_ID);
+  if (skip) {
+    const report = { runner, skipped: true, skipReason: skip, pass: true };
+    const outPath = writeEvidence(report, SCENARIO_ID, runner, outDir);
+    return { scenario: SCENARIO_ID, runner, outPath, pass: true, skipped: true, report };
+  }
   const host = os.hostname().replace(/\.local$/, '');
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), `runner-validate-${runner}-`));
   const runtimeDir = '.agent';

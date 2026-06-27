@@ -5,6 +5,7 @@ import path from 'node:path';
 import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
 
 export const RUNNER_ID = 'claude';
+export const OBSERVABILITY_SCOPE = 'event-driven';
 
 export const REGISTERED_EVENTS = [
   'SessionStart',
@@ -45,6 +46,12 @@ export function supportsLiveScenario() {
   return true;
 }
 
-export function skipReason() {
+export function skipReason(scenario) {
+  if (scenario === 'pane-smoke') {
+    return 'claude is event-driven; use hook-smoke';
+  }
+  if (scenario === 'interaction-smoke') {
+    return 'claude print path covered by hook-smoke';
+  }
   return null;
 }

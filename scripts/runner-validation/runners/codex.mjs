@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DEFAULT_PROMPT, shSingleQuote } from '../lib/common.mjs';
 
 export const RUNNER_ID = 'codex';
+export const OBSERVABILITY_SCOPE = 'event-driven';
 
 export const REGISTERED_EVENTS = [
   'SessionStart',
@@ -66,6 +67,8 @@ export function supportsLiveScenario(scenario) {
 }
 
 export function skipReason(scenario) {
+  if (scenario === 'pane-smoke') return 'codex is event-driven; use hook-smoke';
+  if (scenario === 'interaction-smoke') return 'codex exec path covered by hook-smoke';
   if (scenario === 'mode-switch') return 'codex exec mode has no interactive permission-mode TUI';
   if (scenario === 'busy-composer') return 'codex has no busy-composer TUI equivalent';
   return null;

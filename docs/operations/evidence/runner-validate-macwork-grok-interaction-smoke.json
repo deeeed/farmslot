@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T07:31:45.724Z",
+  "host": "macwork",
+  "scenario": "interaction-smoke",
+  "runner": "grok",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-FdgmJu",
+  "session": "runner-validate-grok-interaction-smoke-9456",
+  "launchMode": "grok-interactive",
+  "projectDirectoryResolved": false,
+  "promptSubmitted": true,
+  "markerSeen": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash '/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-Fdgm\nJu/.runner-validate-launch.sh'\nReply with exactly TMUX_HOOK_OK and nothing else."
+}

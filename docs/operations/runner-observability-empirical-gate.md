@@ -15,12 +15,20 @@ Farmslot ships a runner-specific validation harness under `scripts/runner-valida
 | `mode-switch` | Bypass permission mode visible in hook or pane (Claude); skipped for Codex |
 
 ```bash
-# All scenarios for Claude + Codex (live tmux where applicable)
-node scripts/runner-validation/run.mjs --runner both --scenario all
+# Hook runners (ADR-032)
+node scripts/runner-validation/run.mjs --runner hooks --scenario hook-smoke
 
-# ADR-032 gate subset
-node scripts/runner-validation/run.mjs --runner both --scenario hook-smoke
+# Pane-only runners (Cursor, Grok)
+node scripts/runner-validation/run.mjs --runner pane-only --scenario pane-smoke
+
+# Grok production-parity interaction path
+node scripts/runner-validation/run.mjs --runner grok --scenario interaction-smoke
+
+# Full matrix
+node scripts/runner-validation/run.mjs --runner all --scenario all
 ```
+
+See [runner-validation-harness.md](./runner-validation-harness.md) for scenario matrix and per-runner launch rules.
 
 Evidence JSON: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
 

@@ -7,15 +7,32 @@ import test from 'node:test';
 import { runnerPromptDigest } from './lib/digest.mjs';
 import { turnBoundaryOrdered } from './lib/hooks.mjs';
 import { paneShowsBusyComposer, paneShowsBypassPermissions } from './lib/pane-patterns.mjs';
-import { listRunners } from './runners/index.mjs';
+import { detectLaunchBlocker } from './lib/pane-blockers.mjs';
+import { listRunners, resolveRunnerList } from './runners/index.mjs';
 import { listScenarios } from './scenarios/index.mjs';
 
 const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/panes');
 
-test('runner-validation catalog includes claude and codex scenarios', () => {
-  assert.deepEqual(listRunners().sort(), ['claude', 'codex']);
-  assert.equal(listScenarios().length, 5);
+test('runner-validation catalog includes four runners and seven scenarios', () => {
+  assert.deepEqual(listRunners().sort(), ['claude', 'codex', 'cursor', 'grok']);
+  assert.equal(listScenarios().length, 7);
   assert.ok(listScenarios().includes('hook-smoke'));
+  assert.ok(listScenarios().includes('pane-smoke'));
+  assert.ok(listScenarios().includes('interaction-smoke'));
+});
+
+test('runner groups resolve grok in pane-only preset', () => {
+  assert.deepEqual(resolveRunnerList('pane-only').sort(), ['cursor', 'grok']);
+  assert.ok(resolveRunnerList('all').includes('grok'));
+});
+
+test('grok project-directory blocker detection matches gateway contract', () => {
+  const pane = `
+  Run Grok Build in a project directory?
+  1 (○) probe (current)
+  Enter:submit
+`;
+  assert.equal(detectLaunchBlocker(pane, 'grok')?.kind, 'project-directory');
 });
 
 test('busy-composer fixture distinguishes composing vs idle', () => {

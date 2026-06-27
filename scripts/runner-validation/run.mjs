@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { EVIDENCE_DIR, sleepMs } from './lib/common.mjs';
-import { getRunnerAdapter, listRunners } from './runners/index.mjs';
+import { getRunnerAdapter, resolveRunnerList } from './runners/index.mjs';
 import { listScenarios, SCENARIOS } from './scenarios/index.mjs';
 
 function parseArgs(argv) {
@@ -29,7 +29,7 @@ function parseArgs(argv) {
     else if (token === '--keep-session') args.keepSession = true;
     else if (token === '--help' || token === '-h') {
       console.log(
-        'usage: runner-validation/run.mjs [--runner claude|codex|both] [--scenario hook-smoke|prompt-accepted|turn-boundary|busy-composer|mode-switch|all] [--out-dir path] [--timeout-ms 180000] [--keep-session]',
+        'usage: runner-validation/run.mjs [--runner claude|codex|cursor|grok|both|hooks|pane-only|all] [--scenario hook-smoke|pane-smoke|interaction-smoke|prompt-accepted|turn-boundary|busy-composer|mode-switch|all] [--out-dir path] [--timeout-ms 300000] [--keep-session]',
       );
       process.exit(0);
     } else {
@@ -40,9 +40,7 @@ function parseArgs(argv) {
 }
 
 function runnersForArg(runnerArg) {
-  if (runnerArg === 'both') return listRunners();
-  if (!listRunners().includes(runnerArg)) throw new Error(`unsupported runner: ${runnerArg}`);
-  return [runnerArg];
+  return resolveRunnerList(runnerArg);
 }
 
 function scenariosForArg(scenarioArg) {

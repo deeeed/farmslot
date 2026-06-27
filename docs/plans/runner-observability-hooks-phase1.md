@@ -16,13 +16,15 @@ Ship a telemetry-only Claude runner observability path that proves hook events c
 
 ## Runner validation harness (shipped with PR #81 closeout)
 
-Per-runner tmux scenarios live in `scripts/runner-validation/`:
+Per-runner tmux scenarios live in `scripts/runner-validation/` (see [operations/runner-validation-harness.md](../operations/runner-validation-harness.md)):
 
-- `hook-smoke`, `prompt-accepted`, `turn-boundary` — live tmux + hooks.jsonl
-- `busy-composer` — Claude pane fixtures (Codex skips)
-- `mode-switch` — Claude bypass permission mode (Codex skips)
+- `hook-smoke`, `prompt-accepted`, `turn-boundary` — Claude/Codex live tmux + hooks.jsonl
+- `pane-smoke` — Cursor/Grok print-mode launch + pane marker
+- `interaction-smoke` — Grok interactive TUI + project-directory + compose submit
+- `busy-composer` — Claude pane fixtures
+- `mode-switch` — Claude bypass permission mode
 
-Run: `node scripts/runner-validation/run.mjs --runner both --scenario all`
+Run: `node scripts/runner-validation/run.mjs --runner all --scenario all`
 
 Evidence: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
 
