@@ -31,7 +31,6 @@ import {
   isObservabilityReadingAuthoritative,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
   RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
-  selectBusyFromObservabilityAndPane,
   selectPendingFromObservabilityAndPane,
 } from './observability-send-decision.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
@@ -881,7 +880,7 @@ async function resolvePendingInstructionObsFirst(
     );
     if (!isObservabilityReadingAuthoritative(reading)) return { kind: 'fallback' };
     if (reading.value === true) return { kind: 'hook', pending: false };
-    return { kind: 'fallback' };
+    return { kind: 'hook', pending: true };
   } catch (error) {
     console.warn(
       `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
@@ -1149,6 +1148,9 @@ export async function sendRunnerInstructionSafely(
       message,
       promptAcceptedSinceMs,
     );
+    if (pendingObs.kind === 'hook' && pendingObs.pending) {
+      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+    }
     if (pendingObs.kind === 'fallback') {
       const pane = await captureTmuxPane(vars, target);
       if (
@@ -1185,6 +1187,10 @@ export async function sendRunnerInstructionSafely(
       return pane;
     };
 
+    if (pendingObs.kind === 'hook' && pendingObs.pending) {
+      const captured = await ensurePane();
+      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+    }
     if (pendingObs.kind === 'fallback') {
       const captured = await ensurePane();
       if (
