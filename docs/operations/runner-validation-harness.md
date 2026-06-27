@@ -95,7 +95,7 @@ scripts/runner-validation/
   run.test.mjs      # static/unit tests
 ```
 
-Tmux driver wraps `.agents/skills/tmux-model-driver` (`send-and-verify`, `pane-state`). Long launch lines use `.runner-validate-launch.sh` in the temp repo to avoid `send-keys` line-wrap bugs.
+Tmux driver builds on [.agents/skills/tmux-model-driver](../../.agents/skills/tmux-model-driver/SKILL.md) (`pane-state`, `send-and-verify`, `resolve-launch-blockers`, `send-shell-script`). Harness-specific launch adapters live in `runners/`; when empirical findings change, update the skill adapters and `lib/pane-blockers.mjs` together. Long launch lines use `.runner-validate-launch.sh` in the temp repo (same pattern as skill `send-shell-script.sh`) to avoid `send-keys` line-wrap bugs.
 
 ## Related docs
 
