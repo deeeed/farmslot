@@ -133,7 +133,9 @@ case "${PLATFORM_VALUE}" in
     )
     ;;
   *)
-    RUNNER="${REPO_ROOT}/apps/command-center/scripts/agentic/run-recipe.mjs"
+    # Runner + harness always live in the farmslot monorepo (primary_repo), not the slot
+    # worktree. --project-root points at the checkout under test (FARMSLOT_SLOT_REPO).
+    RUNNER="${PRIMARY_REPO}/apps/command-center/scripts/agentic/run-recipe.mjs"
     if [[ ! -f "${RUNNER}" ]]; then
       echo "ERROR: command-center recipe runner missing at ${RUNNER}" >&2
       exit 1
@@ -143,6 +145,8 @@ case "${PLATFORM_VALUE}" in
       --artifacts-dir "${ARTIFACTS_DIR}"
       --action-manifest "${MANIFEST_PATH}"
       --project-root "${REPO_ROOT}"
+      --input=farmslot_dir="${PRIMARY_REPO}"
+      --input=primary_repo="${PRIMARY_REPO}"
       --cdp-port "${CDP_PORT_VALUE}"
       --gateway-port "${GATEWAY_PORT_VALUE}"
       --slot-id "${SLOT_ID_VALUE}"

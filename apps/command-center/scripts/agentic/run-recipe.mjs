@@ -219,11 +219,11 @@ async function resolveUiUrl(projectRoot, explicit) {
   try {
     const raw = await readFile(portEnv, 'utf8');
     const match = raw.match(/^VITE_PORT=(\d+)/m);
-    if (match) return `http://127.0.0.1:${match[1]}`;
+    if (match) return `http://localhost:${match[1]}`;
   } catch {
     // .env.ports is optional outside sandbox worktrees.
   }
-  return 'http://127.0.0.1:5174';
+  return 'http://localhost:5174';
 }
 
 function substituteTemplateString(value, inputs) {
@@ -267,42 +267,38 @@ async function fetchOk(url) {
   return response.ok;
 }
 
-function buildPreconditions({ uiUrl, gatewayPort }) {
+function buildPreconditions({ uiUrl, gatewayPort, cdpPort }) {
   return [
     {
       id: 'command_center.dev_server.ready',
-      async check() {
+      async execute() {
         const ok = await fetchOk(`${uiUrl}/`);
         return {
-          status: ok ? 'pass' : 'fail',
-          detail: ok ? `UI reachable at ${uiUrl}` : `UI not reachable at ${uiUrl}`,
+          ok,
+          error: ok ? undefined : `UI not reachable at ${uiUrl}`,
         };
       },
     },
     {
       id: 'gateway.reachable',
-      async check() {
-        if (!gatewayPort) {
-          return { status: 'pass', detail: 'gateway_port not configured; skipped.' };
-        }
+      async execute() {
+        if (!gatewayPort) return { ok: true };
         const ok = await fetchOk(`http://127.0.0.1:${gatewayPort}/health`);
         return {
-          status: ok ? 'pass' : 'fail',
-          detail: ok
-            ? `Gateway healthy on :${gatewayPort}`
-            : `Gateway not healthy on :${gatewayPort}`,
+          ok,
+          error: ok ? undefined : `Gateway not healthy on :${gatewayPort}`,
         };
       },
     },
     {
       id: 'runtime.browser.open',
-      async check(context) {
+      async execute() {
         try {
-          await listCdpTargets('127.0.0.1', context.cdpPort);
-          return { status: 'pass', detail: `CDP listening on :${context.cdpPort}` };
+          await listCdpTargets('127.0.0.1', cdpPort);
+          return { ok: true };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          return { status: 'fail', detail: message };
+          return { ok: false, error: message };
         }
       },
     },
@@ -397,6 +393,11 @@ async function main() {
       : path.resolve(options.projectRoot, options.actionManifest),
   );
 
+  const farmslotDir =
+    process.env.FARMSLOT_DIR ??
+    (path.isAbsolute(options.actionManifest)
+      ? path.resolve(path.dirname(options.actionManifest), '../../..')
+      : path.resolve(options.projectRoot));
   const inputs = {
     ui_url: uiUrl,
     cdp_port: String(options.cdpPort),
@@ -404,6 +405,8 @@ async function main() {
     gateway_url: options.gatewayPort ? `ws://127.0.0.1:${options.gatewayPort}/ws` : '',
     slot_id: options.slotId,
     repo: options.projectRoot,
+    farmslot_dir: farmslotDir,
+    primary_repo: farmslotDir,
     ...((recipeRaw.inputs && typeof recipeRaw.inputs === 'object' && recipeRaw.inputs) || {}),
     ...options.inputs,
   };
@@ -485,7 +488,11 @@ async function main() {
         actions: filteredManifest.supported_official_actions,
       }),
     ],
-    preconditions: buildPreconditions({ uiUrl, gatewayPort: options.gatewayPort }),
+    preconditions: buildPreconditions({
+      uiUrl,
+      gatewayPort: options.gatewayPort,
+      cdpPort: options.cdpPort,
+    }),
     logger: console,
     recording: {
       videoRecorder: createCaptureHelperVideoRecorder(),
