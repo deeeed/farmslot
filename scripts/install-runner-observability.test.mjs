@@ -39,6 +39,26 @@ function runHook(hookPath, obsDir, payload, runner = 'claude') {
   });
 }
 
+test('claude install registers observability hook events validated against Claude Code surface', () => {
+  const { repo } = installToTempDir('claude');
+  const settings = JSON.parse(
+    fs.readFileSync(path.join(repo, '.claude', 'settings.local.json'), 'utf8'),
+  );
+  const registered = Object.keys(settings.hooks).sort();
+  assert.deepEqual(registered, [
+    'Notification',
+    'PostCompact',
+    'PostToolUse',
+    'PreCompact',
+    'PreToolUse',
+    'SessionStart',
+    'Stop',
+    'StopFailure',
+    'SubagentStop',
+    'UserPromptSubmit',
+  ]);
+});
+
 test('installed hook appends real newlines so hooks.jsonl splits into records', () => {
   const { obsDir, hookPath } = installToTempDir();
   const logPath = path.join(obsDir, 'hooks.jsonl');
@@ -99,6 +119,20 @@ test('codex install merges farmslot hook alongside existing codex hooks', () => 
   const commands = stopEntries.flatMap((entry) => entry.hooks.map((hook) => hook.command));
   assert.ok(commands.some((cmd) => cmd.includes('omx-codex-native-hook.mjs')));
   assert.ok(commands.some((cmd) => cmd.includes('farmslot-observability-hook.mjs')));
+
+  const codexEvents = Object.keys(hooksDoc.hooks).sort();
+  assert.deepEqual(codexEvents, [
+    'PostCompact',
+    'PostToolUse',
+    'PreCompact',
+    'PreToolUse',
+    'SessionStart',
+    'Stop',
+    'UserPromptSubmit',
+  ]);
+  assert.ok(!codexEvents.includes('Notification'));
+  assert.ok(!codexEvents.includes('StopFailure'));
+  assert.ok(!codexEvents.includes('SubagentStop'));
 
   const config = fs.readFileSync(path.join(repo, '.codex', 'config.toml'), 'utf8');
   assert.match(config, /hooks\s*=\s*true/);

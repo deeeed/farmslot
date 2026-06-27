@@ -170,7 +170,12 @@ try {
 }
 `;
 
+// Claude Code native hook events Farmslot cares about for observability telemetry.
+// Validated against code.claude.com hooks guide / Agent SDK event list (2026):
+// SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop,
+// SubagentStop, StopFailure, PreCompact, PostCompact.
 const CLAUDE_HOOK_EVENTS = [
+  'SessionStart',
   'UserPromptSubmit',
   'PreToolUse',
   'PostToolUse',
@@ -178,16 +183,21 @@ const CLAUDE_HOOK_EVENTS = [
   'Stop',
   'SubagentStop',
   'StopFailure',
+  'PreCompact',
+  'PostCompact',
 ];
 
+// Codex CLI native hook events — must match oh-my-codex MANAGED_HOOK_EVENTS and
+// plugins/oh-my-codex/hooks/codex-native-hook.mjs CODEX_HOOK_EVENT_NAMES.
+// Codex does NOT emit Claude-only events such as Notification, StopFailure, or SubagentStop.
 const CODEX_HOOK_EVENTS = [
   'SessionStart',
-  'UserPromptSubmit',
   'PreToolUse',
   'PostToolUse',
-  'Notification',
+  'UserPromptSubmit',
+  'PreCompact',
+  'PostCompact',
   'Stop',
-  'StopFailure',
 ];
 
 const FARMSLOT_HOOK_MARKER = 'farmslot-observability-hook.mjs';
