@@ -82,6 +82,12 @@
             },
             "review-pr": {
               "includes": ["CLAUDE.local.agent.review-pr.md", "CLAUDE.local.base.md"]
+            },
+            "companion": {
+              "includes": ["CLAUDE.local.agent.companion-mobile.md", "CLAUDE.local.base.md"]
+            },
+            "companion-mobile": {
+              "includes": ["CLAUDE.local.agent.companion-mobile.md", "CLAUDE.local.base.md"]
             }
           }
         }
