@@ -756,44 +756,44 @@
       }
     },
     {
-      "recordedAt": "2026-06-27T17:35:11.778Z",
-      "commit": "baf70a15e4bc19aa6cb5bd01ba453af47e447417",
+      "recordedAt": "2026-06-27T18:04:06.942Z",
+      "commit": "2028f6e10eedddcc5fff855e44af705914adbea5",
       "scope": "framework",
       "exclusions": {
         "tests": false,
         "dev": false
       },
       "totals": {
-        "files": 1918,
-        "code": 365066,
-        "docs": 25949,
-        "config": 9413,
-        "total": 401748
+        "files": 1896,
+        "code": 364318,
+        "docs": 25973,
+        "config": 9218,
+        "total": 400829
       },
       "rollup": {
         "command-center": {
-          "code": 115801,
-          "total": 117014
+          "code": 115730,
+          "total": 116943
         },
         "companion": {
           "code": 60727,
           "total": 62200
         },
         "gateway": {
-          "code": 120960,
-          "total": 121066
+          "code": 120870,
+          "total": 120976
         },
         "packages": {
-          "code": 38227,
-          "total": 41213
+          "code": 38192,
+          "total": 41178
         },
         "scripts": {
-          "code": 16432,
-          "total": 16733
+          "code": 15880,
+          "total": 16181
         },
         "docs": {
           "code": 0,
-          "total": 19949
+          "total": 19778
         },
         "docs-site": {
           "code": 7080,
@@ -814,19 +814,19 @@
       }
     },
     {
-      "recordedAt": "2026-06-27T17:52:44.499Z",
-      "commit": "0ef5feaeb2e662c82c1d1f95d3b4ed54223cb698",
+      "recordedAt": "2026-06-27T18:17:29.462Z",
+      "commit": "f0366a0391ada867f40ce8a7ba70504b8ac1dc01",
       "scope": "framework",
       "exclusions": {
         "tests": false,
         "dev": false
       },
       "totals": {
-        "files": 1918,
-        "code": 365550,
-        "docs": 25988,
-        "config": 9413,
-        "total": 402271
+        "files": 1898,
+        "code": 364998,
+        "docs": 26012,
+        "config": 9218,
+        "total": 401548
       },
       "rollup": {
         "command-center": {
@@ -846,12 +846,12 @@
           "total": 41511
         },
         "scripts": {
-          "code": 16432,
-          "total": 16733
+          "code": 15880,
+          "total": 16181
         },
         "docs": {
           "code": 0,
-          "total": 19988
+          "total": 19817
         },
         "docs-site": {
           "code": 7080,

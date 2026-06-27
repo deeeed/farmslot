@@ -1,26 +1,50 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "goalCriteria2and3Pr": 81,
   "deletedInvalidPaths": [
     "scripts/harvest-adr032-goal-evidence.sh",
     "scripts/harvest-adr032-pr-chain-audit.mjs",
     "scripts/assert-adr032-pr-chain.mjs",
+    "scripts/assert-adr032-goal-evidence.sh",
+    "scripts/verify-adr032-no-invalid-paths.sh",
+    "scripts/verify-adr032-shipped-main.sh",
+    "scripts/verify-adr032-merge-process.sh",
+    "scripts/capture-pre-merge-evidence.sh",
+    "scripts/run-adr032-phase1-gate.sh",
+    "scripts/capture-adr032-phase2-exit-evidence.mjs",
+    "scripts/verify-adr032-phase2-exit.sh",
+    "scripts/lib/adr032-pr-chain-validate.mjs",
+    "scripts/lib/verify-adr032-pr81-merge-process.mjs",
     "docs/operations/evidence/adr032/pr82-*",
     "docs/operations/evidence/adr032/pr83-*",
     "docs/operations/evidence/adr032/pr84-*",
     "docs/operations/evidence/adr032/pr85-*",
     "docs/operations/evidence/adr032/pr86-*",
     "docs/operations/evidence/adr032/replay/",
-    "docs/operations/evidence/adr032/pr-chain-audit.json"
+    "docs/operations/evidence/adr032/pr-chain-audit.json",
+    "docs/operations/evidence/adr032-phase1-agreement-*.json",
+    "docs/operations/evidence/runner-validate-*-busy-composer.json",
+    "docs/operations/evidence/runner-validate-*-mode-switch.json",
+    "docs/operations/evidence/runner-validate-*-prompt-accepted.json",
+    "docs/operations/evidence/runner-validate-*-turn-boundary.json",
+    "docs/operations/evidence/runner-validate-*-grok-*.json",
+    "docs/operations/evidence/runner-validate-*-cursor-*.json"
+  ],
+  "committedMacworkEvidence": [
+    "docs/operations/evidence/adr032-phase1-probe-macwork-claude.json",
+    "docs/operations/evidence/adr032-phase1-probe-macwork-codex.json",
+    "docs/operations/evidence/runner-validate-macwork-claude-hook-smoke.json",
+    "docs/operations/evidence/runner-validate-macwork-codex-hook-smoke.json"
   ],
   "validEvidenceFiles": [
     "pr81-premerge.json",
     "pr81-merge-timing-note.json",
     "pr81-CROSS-REVIEW-LOOP.json",
     "cross-review-pr81.txt",
-    "pr81-live-gh-audit.json"
+    "pr81-live-gh-audit.json",
+    "phase2-exit-window.json"
   ],
-  "validScripts": [
+  "retiredCloseoutScripts": [
     "scripts/assert-adr032-goal-evidence.sh",
     "scripts/verify-adr032-no-invalid-paths.sh",
     "scripts/verify-adr032-shipped-main.sh",
@@ -30,10 +54,21 @@
     "scripts/capture-adr032-phase2-exit-evidence.mjs",
     "scripts/verify-adr032-phase2-exit.sh"
   ],
+  "reusableOpsScripts": [
+    "scripts/e2e-tmux-runner-validate.sh",
+    "scripts/run-runner-observability-gate.sh",
+    "scripts/probe-runner-observability.mjs",
+    "scripts/capture-nudge-timeout-window.mjs",
+    "scripts/validate-observability-agreement-window.mjs",
+    "scripts/runner-validation/run.mjs"
+  ],
   "notes": [
-    "Single closeout path: assert -> shipped-main + merge-process (PR #81 only).",
+    "Single closeout path (historical): assert -> shipped-main + merge-process (PR #81 only). Closeout scripts retired 2026-06-27; frozen JSON in this directory is the durable audit trail.",
     "Plan criterion 2 (plan.md:8): cross-review equivalent — not post-merge GitHub APPROVED.",
     "Plan criterion 3 (plan.md:9): CI green on PR head before mergedAt — verified via frozen + live gh rollup.",
-    "PRs #82-#86 are outside this goal scope; their artifacts were removed from the repo."
+    "PRs #82-#86 are outside this goal scope; their artifacts were removed from the repo.",
+    "Committed macwork harness evidence is four JSONs in committedMacworkEvidence; optional scenarios and grok/cursor smokes are local-only.",
+    "Phase 2 exit frozen in phase2-exit-window.json (exitPass true as of 2026-06-27).",
+    "Ongoing revalidation uses reusableOpsScripts only — see docs/operations/runner-observability-empirical-gate.md."
   ]
 }

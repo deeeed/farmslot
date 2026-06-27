@@ -272,13 +272,15 @@ Per-runner behavioral differences (how to launch in tmux, whether compose buffer
 
 Scenarios that are runner-inapplicable (Codex busy-composer, Codex mode-switch; hook scenarios on pane-only runners) **skip with `pass: true` and an explicit `skipReason`** rather than fake success. Live mid-turn busy capture remains a fixture-tier test until a stable recipe exists.
 
-Gate entrypoint: `node scripts/runner-validation/run.mjs` (also wired into `scripts/run-adr032-phase1-gate.sh`):
+Gate entrypoint: `node scripts/runner-validation/run.mjs` (also wired into `scripts/run-runner-observability-gate.sh`):
 
 - `hook-smoke` — Claude + Codex (event-driven hooks)
 - `grok pane-smoke` — single-turn `grok -p` shell launch
 - `grok interaction-smoke` — production-parity interactive TUI (project-directory blocker when shown + compose submit)
 
 Operator guide: [runner-validation-harness.md](../operations/runner-validation-harness.md).
+
+**Committed closeout evidence (repo):** only four macwork JSON snapshots are versioned — install probes (`adr032-phase1-probe-macwork-{claude,codex}.json`) and harness hook-smoke artifacts (`runner-validate-macwork-{claude,codex}-hook-smoke.json`). PR #81 merge-process and Phase 2 exit snapshots live under `docs/operations/evidence/adr032/`. Optional harness scenarios and Grok/Cursor pane smokes run locally via `e2e-tmux-runner-validate.sh` into a temp directory and must not be committed. One-shot ADR closeout verifiers (`assert-adr032-*`, `verify-adr032-*`) were retired from `scripts/` after closeout; ongoing ops use [runner-observability-empirical-gate.md](../operations/runner-observability-empirical-gate.md).
 
 ### Interaction with `oh-my-claudecode` (OMC)
 
@@ -323,7 +325,7 @@ Phase 1 telemetry (new code that must ship alongside the fixture):
 
 **Phase 3 — Retire Claude pane regex set (scope-restricted).** Delete the **claude-only branches** of `paneShowsBusyComposer`, `runnerPaneHasPendingInstruction`, `runnerPaneLooksIdle`. Retain the `cursor` and `codex` branches — those runners' `observabilityScope === 'pane-only'` (per matrix above) and pane regex is more reliable there than for Claude. Retire the `requiresBusyComposerPoll` capability flag iff its only non-default consumer (Claude) is gone. Demote `parseClaudeCtxPctFromPane` to a debug helper.
 
-**Exit criterion:** Phase 2 empirical exit has passed — `Run.metrics.nudgeTimeoutCount` stays at zero over the 7-day rolling window on Claude-runner slots, and optional agreement-log triage shows no systematic hook-vs-pane disagreement on healthy slots. No version-upgrade wait; Phase 3 is implementation work once that gate clears.
+**Exit criterion:** Phase 2 empirical exit **passed** (2026-06-27) — `Run.metrics.nudgeTimeoutCount` stayed at zero over the 7-day rolling window on Claude-runner slots (`docs/operations/evidence/adr032/phase2-exit-window.json`, `exitPass: true`). Phase 3 pane-regex retirement is the remaining implementation work.
 
 ## Migration Surface (existing code paths)
 

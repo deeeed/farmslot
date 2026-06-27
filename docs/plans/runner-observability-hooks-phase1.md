@@ -26,7 +26,7 @@ Per-runner tmux scenarios live in `scripts/runner-validation/` (see [operations/
 
 Run: `node scripts/runner-validation/run.mjs --runner all --scenario all`
 
-Evidence: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
+Evidence: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json` (only hook-smoke JSONs for Claude/Codex plus install probes are committed; other scenarios stay local-only — see ADR-032 closeout addendum)
 
 ## Non-Goals
 
