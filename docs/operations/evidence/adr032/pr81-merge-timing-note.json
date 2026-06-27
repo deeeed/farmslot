@@ -1,0 +1,11 @@
+{
+  "pr": 81,
+  "mergeCommit": "e4cbcb42b0de557aaf3c205816f8b6c59f406944",
+  "mergedAt": "2026-06-27T08:33:22Z",
+  "mergeTimeCiGreen": true,
+  "mergeStateStatusAtMerge": "BLOCKED",
+  "premergeEvidenceFile": "pr81-premerge.json",
+  "processWaiver": null,
+  "compensatingEvidence": ["pr81-premerge.json", "pr81-CROSS-REVIEW-LOOP.json"],
+  "disclosure": "PR #81 required jobs were SUCCESS before merge per pr81-premerge.json. GH formal APPROVE arrived post-merge; pre-merge cross-review JSON is authoritative for review timing."
+}

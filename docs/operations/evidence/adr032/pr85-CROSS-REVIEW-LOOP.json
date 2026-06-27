@@ -1,0 +1,69 @@
+{
+  "$schema": "../../../../.agents/skills/fs-cross-review-loop/templates/CROSS-REVIEW-LOOP.schema.json",
+  "status": "clean",
+  "startedAt": "2026-06-27T09:40:00.000Z",
+  "updatedAt": "2026-06-27T09:51:09.000Z",
+  "task": "PR #85 chore(adr): ADR-032 goal evidence harvest and cross-review closeout",
+  "artifactDir": "docs/operations/evidence/adr032",
+  "maxCycles": 3,
+  "cycles": 2,
+  "requiredReviewers": [
+    {
+      "id": "code-reviewer",
+      "label": "Independent code-reviewer subagent",
+      "runnerType": "grok",
+      "paneId": null
+    }
+  ],
+  "optionalReviewers": [],
+  "blockingFindingsOpen": 0,
+  "finalVerdict": "clean",
+  "stopReason": "Reviewer PASS on merge commit b776776 after harvest/assert alignment fix",
+  "cycleRecords": [
+    {
+      "cycle": 1,
+      "startedAt": "2026-06-27T09:40:00.000Z",
+      "workerReadySignal": "Evidence scripts ready for review",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "ISSUES",
+          "blockingCount": 2,
+          "evidenceReview": "Harvest/assert log filename mismatch; silent gh pr view failures",
+          "validationReview": "Fix before merge",
+          "outputArtifact": "docs/operations/evidence/adr032/pr85-CROSS-REVIEW-LOOP.json"
+        }
+      ],
+      "findingsSentToWorker": [
+        {
+          "reviewerId": "code-reviewer",
+          "severity": "P1",
+          "reference": "scripts/harvest-adr032-goal-evidence.sh",
+          "finding": "Exit markers written to wrong log files vs assert expectations"
+        }
+      ],
+      "workerFixSummary": "Fixed in 40914fc: append_exit_marker alignment",
+      "validationSummary": "validate-cross-review-loop-json all ok",
+      "completedAt": "2026-06-27T09:48:00.000Z"
+    },
+    {
+      "cycle": 2,
+      "startedAt": "2026-06-27T09:48:00.000Z",
+      "workerReadySignal": "40914fc pushed",
+      "reviewerVerdicts": [
+        {
+          "reviewerId": "code-reviewer",
+          "verdict": "PASS",
+          "blockingCount": 0,
+          "evidenceReview": "Blockers resolved; CI green",
+          "validationReview": "APPROVE pending merge",
+          "outputArtifact": "docs/operations/evidence/adr032/pr85-CROSS-REVIEW-LOOP.json"
+        }
+      ],
+      "findingsSentToWorker": [],
+      "workerFixSummary": "No further blockers",
+      "validationSummary": "Merged b7767761e22c8bc84a56941c595c48fc2149340a",
+      "completedAt": "2026-06-27T09:51:09.000Z"
+    }
+  ]
+}
