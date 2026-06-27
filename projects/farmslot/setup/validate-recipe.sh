@@ -14,8 +14,7 @@ resolve_capture_helper_bin() {
   for candidate in \
     "${CAPTURE_HELPER_PATH:-}" \
     "${SITEED_CAPTURE_HELPER_BIN:-}" \
-    "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
-    "${HOME}/dev/capture-helper/.build/release/capture-helper"; do
+    "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper"; do
     if [[ -n "${candidate}" && -x "${candidate}" ]]; then
       printf '%s' "${candidate}"
       return 0

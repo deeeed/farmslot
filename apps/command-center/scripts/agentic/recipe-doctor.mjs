@@ -101,6 +101,12 @@ async function checkFetch(label, url) {
   }
 }
 
+function captureHelperBin() {
+  return (
+    process.env.CAPTURE_HELPER_PATH ?? process.env.SITEED_CAPTURE_HELPER_BIN ?? 'capture-helper'
+  );
+}
+
 function parseCaptureHelperJson(stdout, stderr = '') {
   const combined = `${stdout}\n${stderr}`.trim();
   if (!combined) return null;
@@ -132,7 +138,7 @@ async function checkCaptureHelperDoctor() {
     };
   }
   try {
-    const { stdout, stderr } = await execFileAsync('capture-helper', ['doctor', '--json']);
+    const { stdout, stderr } = await execFileAsync(captureHelperBin(), ['doctor', '--json']);
     const parsed = parseCaptureHelperJson(stdout, stderr);
     const ok = parsed?.ok === true;
     return {
@@ -165,7 +171,7 @@ async function checkCaptureWindowOnScreen(cdpPort) {
     };
   }
   try {
-    const { stdout, stderr } = await execFileAsync('capture-helper', [
+    const { stdout, stderr } = await execFileAsync(captureHelperBin(), [
       'resolve',
       '--pid',
       String(pid),

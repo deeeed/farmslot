@@ -403,14 +403,16 @@ function parseCaptureHelperJson(stdout, stderr = '') {
   const start = combined.indexOf('{');
   const end = combined.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
-  return JSON.parse(combined.slice(start, end + 1));
+  try {
+    return JSON.parse(combined.slice(start, end + 1));
+  } catch {
+    return null;
+  }
 }
 
 function captureHelperBin() {
   return (
-    process.env.CAPTURE_HELPER_PATH ??
-    process.env.SITEED_CAPTURE_HELPER_BIN ??
-    'capture-helper'
+    process.env.CAPTURE_HELPER_PATH ?? process.env.SITEED_CAPTURE_HELPER_BIN ?? 'capture-helper'
   );
 }
 
