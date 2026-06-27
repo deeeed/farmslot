@@ -5,6 +5,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const HISTORY_PATH = 'docs/reference/loc-history.json';
 
@@ -412,6 +413,17 @@ function buildSnapshot(options, totals, rollups) {
   };
 }
 
+/** Exported for unit tests — must stay in sync with recordSnapshot guards. */
+export function locSnapshotMetricsMatch(last, next) {
+  if (!last || !next) return false;
+  return (
+    last.scope === next.scope &&
+    JSON.stringify(last.exclusions) === JSON.stringify(next.exclusions) &&
+    JSON.stringify(last.totals) === JSON.stringify(next.totals) &&
+    JSON.stringify(last.rollup) === JSON.stringify(next.rollup)
+  );
+}
+
 function recordSnapshot(options, totals, rollups) {
   const history = loadHistory();
   const snapshot = buildSnapshot(options, totals, rollups);
@@ -422,6 +434,12 @@ function recordSnapshot(options, totals, rollups) {
     JSON.stringify(last.exclusions) === JSON.stringify(snapshot.exclusions)
   ) {
     console.log(`[count-loc] snapshot already recorded for ${snapshot.commit.slice(0, 8)}`);
+    return false;
+  }
+  if (locSnapshotMetricsMatch(last, snapshot)) {
+    console.log(
+      `[count-loc] LOC metrics unchanged since ${last.commit.slice(0, 8)}; skip recording ${snapshot.commit.slice(0, 8)}`,
+    );
     return false;
   }
 
@@ -481,6 +499,10 @@ function printTrend(limit = 12) {
   }
 }
 
+const isMain =
+  process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+
+if (isMain) {
 const options = parseArgs(process.argv.slice(2));
 if (options.help) {
   printHelp();
@@ -555,4 +577,5 @@ if (options.group === 'area') {
 console.log('\nBy language:');
 for (const [language, lines] of [...languages.entries()].sort((a, b) => b[1] - a[1])) {
   console.log(`  ${language.padEnd(12)} ${lines.toLocaleString().padStart(9)}`);
+}
 }
