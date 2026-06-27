@@ -82,11 +82,15 @@ export function requiredChecksGreen(checks, mergedAt) {
     'Gateway service quality',
   ];
   const requiredChecks = (checks ?? []).filter((c) => required.includes(c.name));
-  const inProgress = requiredChecks.filter((c) => c.status === 'IN_PROGRESS');
-  const notSuccess = requiredChecks.filter(
-    (c) =>
-      c.status !== 'COMPLETED' || String(c.conclusion).toLowerCase() !== 'success',
+  const inProgress = requiredChecks.filter(
+    (c) => c.status === 'IN_PROGRESS' || c.status === 'PENDING' || c.status === 'QUEUED',
   );
+  const notSuccess = requiredChecks.filter((c) => {
+    const conclusion = String(c.conclusion ?? '').toLowerCase();
+    if (inProgress.includes(c)) return false;
+    if (c.status !== 'COMPLETED') return true;
+    return conclusion !== 'success' && conclusion !== 'skipped';
+  });
   return {
     greenAtDecision: requiredChecks.length === required.length && inProgress.length === 0 && notSuccess.length === 0,
     inProgressJobs: inProgress.map((c) => c.name),
