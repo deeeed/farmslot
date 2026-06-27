@@ -1,3 +1,4 @@
+import { appendRunnerObservabilityAgreement } from './observability-agreement-log.js';
 import type { RunnerActivity } from './observability-types.js';
 
 export interface RunnerObservabilityAgreementEntry {
@@ -40,4 +41,9 @@ export function logRunnerObservabilityAgreement(entry: RunnerObservabilityAgreem
     ...entry,
   };
   console.log(`[runner-observability] ${JSON.stringify(payload)}`);
+  void appendRunnerObservabilityAgreement(entry).catch((error) => {
+    console.warn(
+      `[runner-observability] failed to persist agreement log: ${(error as Error).message}`,
+    );
+  });
 }

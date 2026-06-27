@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import type { loadSlotVars } from '../core/config.js';
+import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -223,11 +223,20 @@ export function contextPctFromStatusline(
   };
 }
 
+export function runnerObservabilityDir(repoPath: string, runtimeDir = '.agent'): string {
+  return path.posix.join(repoPath, runtimeDir, '.observability');
+}
+
+export async function runnerObservabilityDirForSlot(vars: SlotVars): Promise<string> {
+  const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
+  return runnerObservabilityDir(vars.remoteRepo, runtimeDir);
+}
+
 export async function readRunnerObservabilityFiles(
   vars: SlotVars,
   repoPath = vars.remoteRepo,
 ): Promise<{ hooksRaw: string; statuslineRaw: string }> {
-  const obsDir = shellQuote(path.posix.join(repoPath, '.observability'));
+  const obsDir = shellQuote(await runnerObservabilityDirForSlot({ ...vars, remoteRepo: repoPath }));
   const hooksPath = `${obsDir}/hooks.jsonl`;
   const statuslinePath = `${obsDir}/statusline.json`;
   const [hooksResult, statuslineResult] = await Promise.all([
@@ -237,5 +246,42 @@ export async function readRunnerObservabilityFiles(
   return {
     hooksRaw: hooksResult.stdout,
     statuslineRaw: statuslineResult.stdout,
+  };
+}
+
+export function promptAcceptedFromHooks(
+  hooks: readonly HookRecord[],
+  promptDigest: string,
+  sinceMs: number,
+  graceMs = 500,
+  now = Date.now(),
+): ObservabilityReading<boolean> | null {
+  let latest: { observedAt: number; digest?: string } | null = null;
+  for (const record of hooks) {
+    const event = hookEventName(record);
+    if (event !== 'UserPromptSubmit') continue;
+    const observedAt = observedAtFromRecord(record);
+    if (observedAt == null || observedAt < sinceMs) continue;
+    if (!latest || observedAt > latest.observedAt) {
+      latest = { observedAt, digest: record.runnerPromptDigest };
+    }
+  }
+  if (!latest) {
+    if (now - sinceMs < graceMs) return null;
+    return {
+      value: false,
+      source: 'hook',
+      confidence: 'medium',
+      observedAt: now,
+    };
+  }
+  const matched =
+    typeof latest.digest === 'string' &&
+    (latest.digest === promptDigest || latest.digest.startsWith(promptDigest));
+  return {
+    value: matched,
+    source: 'hook',
+    confidence: latest.digest ? 'high' : 'medium',
+    observedAt: latest.observedAt,
   };
 }

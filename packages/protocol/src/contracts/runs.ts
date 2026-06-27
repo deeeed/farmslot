@@ -707,6 +707,8 @@ export interface RunListSummaryMeta {
 export interface RunMetrics {
   durationMs?: number;
   nudgeCount: number;
+  /** ADR-032 Phase 1: tmux nudges that timed out waiting for runner busy-clear. */
+  nudgeTimeoutCount?: number;
   model: string | null;
   runner: string | null;
   runnerSessionId?: string | null;

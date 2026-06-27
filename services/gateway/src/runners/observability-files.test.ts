@@ -6,6 +6,7 @@ import {
   contextPctFromStatusline,
   deriveRunnerActivity,
   parseHookJsonl,
+  promptAcceptedFromHooks,
   runnerActivityIsBusy,
 } from './observability-files.js';
 
@@ -86,4 +87,21 @@ test('runnerActivityIsBusy treats composing and tool-running as busy', () => {
   assert.equal(runnerActivityIsBusy('composing'), true);
   assert.equal(runnerActivityIsBusy('tool-running'), true);
   assert.equal(runnerActivityIsBusy('idle'), false);
+});
+
+test('promptAcceptedFromHooks matches digest after grace window', () => {
+  const since = NOW - 10_000;
+  const reading = promptAcceptedFromHooks(
+    [{ hook_event_name: 'UserPromptSubmit', observedAt: NOW - 1_000, runnerPromptDigest: 'abc123' }],
+    'abc123',
+    since,
+    0,
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: NOW - 1_000,
+  });
 });
