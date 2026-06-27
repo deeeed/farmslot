@@ -15,6 +15,9 @@ import {
   type RunActivateOnSlotParams,
   type RunArchiveParams,
   type RunAutoRecoveryStopParams,
+  type RunBundleExportParams,
+  type RunBundleImportParams,
+  type RunBundleListParams,
   type RunBulkDeleteParams,
   type RunCancelParams,
   type RunCIWatchPokeParams,
@@ -55,6 +58,7 @@ import {
 import { familyObservabilityGet, familyReportGenerate } from '../methods/family-observability.js';
 import { intelligenceActionsSummary } from '../methods/intelligence.js';
 import { operatorSnapshot, runContextBundle, runRecoveryProposal } from '../methods/operator.js';
+import { runBundleExport, runBundleImport, runBundleList } from '../methods/run-bundle.js';
 import {
   runCreate,
   runInteractiveDevResolve,
@@ -125,6 +129,12 @@ export async function routeRunMethod(
       }
       return handled(runCreate(runParams, emit));
     }
+    case Methods.RUN_BUNDLE_EXPORT:
+      return handled(runBundleExport(p as RunBundleExportParams));
+    case Methods.RUN_BUNDLE_IMPORT:
+      return handled(runBundleImport(p as RunBundleImportParams));
+    case Methods.RUN_BUNDLE_LIST:
+      return handled(runBundleList(p as RunBundleListParams));
     case Methods.RUN_GET:
       return handled(runGet(p as RunGetParams));
     case Methods.RUN_CONTEXT_BUNDLE:

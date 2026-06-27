@@ -8,6 +8,7 @@ export * from './rpc/index.js';
 export * from './runs/evidence-summary.js';
 export * from './runs/family-iteration-ledger.js';
 export * from './runs/family-readiness.js';
+export * from './runs/portable-bundle.js';
 export * from './surfaces/command-center.js';
 export * from './transport/events.js';
 export * from './transport/frames.js';

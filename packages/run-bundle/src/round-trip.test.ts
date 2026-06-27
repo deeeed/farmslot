@@ -1,0 +1,116 @@
+import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import type { Run } from '@farmslot/protocol';
+
+import { exportRunsToBundle, importBundle, listBundle } from './index.js';
+
+function writeFixtureRun(root: string, run: Run, taskBody = '# Task'): void {
+  const runsDir = path.join(root, '.runs');
+  mkdirSync(runsDir, { recursive: true });
+  writeFileSync(path.join(runsDir, `${run.id}.json`), `${JSON.stringify(run, null, 2)}\n`, 'utf-8');
+  if (!run.taskFile) return;
+  const taskDir = path.dirname(run.taskFile);
+  mkdirSync(path.join(taskDir, 'inputs'), { recursive: true });
+  mkdirSync(path.join(taskDir, 'artifacts', 'packages'), { recursive: true });
+  writeFileSync(run.taskFile, taskBody, 'utf-8');
+  writeFileSync(
+    path.join(taskDir, 'artifacts', 'packages', 'reference.result-package.json'),
+    JSON.stringify({
+      version: 1,
+      kind: 'result-package',
+      packageId: 'pkg-test',
+      packageHash: 'hash',
+      status: 'final',
+      createdAt: new Date().toISOString(),
+      finalizedAt: new Date().toISOString(),
+      project: run.project,
+      familyId: run.familyId,
+      objectiveHash: 'obj',
+      taskProfile: 'fix-bug',
+      source: { kind: 'prior-run', runId: run.id, familyId: run.familyId },
+      role: 'reference',
+      diff: { source: 'unavailable', available: false },
+      axes: {},
+      visualEvidence: [],
+      validationEvidence: [],
+      reviewEvidence: [],
+      outcomeClaims: [],
+      evidenceRequirements: [],
+      missingData: ['rubric-unreviewed'],
+    }),
+    'utf-8',
+  );
+}
+
+test('farmrun export/import round-trip remaps ids in seed mode', () => {
+  const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-src-'));
+  const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-dst-'));
+  const bundlePath = path.join(tmpdir(), `bundle-${Date.now()}.farmrun`);
+  const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const taskFile = path.join(sourceRoot, 'projects', 'demo-farm', 'tasks', 'evals', 'case-1', 'TASK.md');
+  const run: Run = {
+    id: runId,
+    familyId: 'family-1',
+    lane: 'comparison',
+    variant: 'baseline',
+    flowType: 'dev',
+    mode: 'validation',
+    status: 'done',
+    project: 'demo-farm',
+    ticketOrPr: 'EVAL-1',
+    slotId: 'mac-1',
+    branch: 'eval/baseline',
+    completionPolicy: 'artifact-only',
+    taskFile,
+    steps: [],
+    decisions: [],
+    metrics: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  writeFileSync(path.join(sourceRoot, 'CLAUDE.md'), '# farmslot\n', 'utf-8');
+  mkdirSync(path.join(sourceRoot, 'scripts'), { recursive: true });
+  writeFileSync(path.join(sourceRoot, 'scripts', 'dev.sh'), '#!/bin/bash\n', 'utf-8');
+  mkdirSync(path.join(sourceRoot, 'services', 'gateway'), { recursive: true });
+  writeFileSync(path.join(sourceRoot, 'services', 'gateway', 'package.json'), '{}\n', 'utf-8');
+  writeFixtureRun(sourceRoot, run);
+
+  try {
+    exportRunsToBundle({
+      farmslotRoot: sourceRoot,
+      outputPath: bundlePath,
+      profile: 'reference',
+      positionalRunId: runId,
+    });
+    const manifest = listBundle(bundlePath);
+    assert.equal(manifest.runs.length, 1);
+
+    writeFileSync(path.join(targetRoot, 'CLAUDE.md'), '# farmslot\n', 'utf-8');
+    mkdirSync(path.join(targetRoot, 'scripts'), { recursive: true });
+    writeFileSync(path.join(targetRoot, 'scripts', 'dev.sh'), '#!/bin/bash\n', 'utf-8');
+    mkdirSync(path.join(targetRoot, 'services', 'gateway'), { recursive: true });
+    writeFileSync(path.join(targetRoot, 'services', 'gateway', 'package.json'), '{}\n', 'utf-8');
+
+    const imported = importBundle({
+      farmslotRoot: targetRoot,
+      bundlePath,
+      mode: 'seed',
+    });
+    assert.equal(imported.importedRunIds.length, 1);
+    assert.notEqual(imported.importedRunIds[0], runId);
+    const persisted = JSON.parse(
+      readFileSync(path.join(targetRoot, '.runs', `${imported.importedRunIds[0]}.json`), 'utf-8'),
+    ) as Run;
+    assert.equal(persisted.importProvenance?.importedFromRunId, runId);
+    assert.equal(persisted.readOnly, false);
+    assert.ok(persisted.taskFile?.includes('projects/demo-farm/tasks/evals/case-1/TASK.md'));
+  } finally {
+    rmSync(sourceRoot, { recursive: true, force: true });
+    rmSync(targetRoot, { recursive: true, force: true });
+    rmSync(bundlePath, { force: true });
+  }
+});

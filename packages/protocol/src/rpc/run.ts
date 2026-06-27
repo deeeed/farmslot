@@ -488,3 +488,21 @@ export interface FamilyReportGenerateResult {
   snapshot: import('../contracts/index.js').FamilyObservabilitySnapshot;
   report: import('../contracts/index.js').FamilyReport;
 }
+
+export interface RunBundleExportParams {
+  runId?: string;
+  runIds?: string[];
+  familyId?: string;
+  profile?: import('../contracts/run-bundles.js').RunBundleProfile;
+  outputPath: string;
+}
+
+export interface RunBundleImportParams {
+  bundlePath: string;
+  mode?: import('../contracts/run-bundles.js').RunBundleImportMode;
+  force?: boolean;
+}
+
+export interface RunBundleListParams {
+  bundlePath: string;
+}

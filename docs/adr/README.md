@@ -48,3 +48,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [036](036-cli-gateway-profiles.md)                     | CLI Gateway Profiles and Auth                                           | Accepted |
 | [037](037-prepare-profiles.md)                         | Prepare Profiles — Project-Defined Slot Entry Points                    | Accepted |
 | [038](038-gate-held-worker-session.md)                 | Gate-Held Worker Session at Publication Human Gate                    | Accepted |
+| [039](039-run-portable-bundles.md)                     | Portable Run Bundles for Cross-Gateway Reference Seeding              | Accepted |

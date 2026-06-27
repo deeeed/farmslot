@@ -15,6 +15,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "0.74.2",
     "@farmslot/protocol": "workspace:*",
+    "@farmslot/run-bundle": "workspace:*",
     "@sinclair/typebox": "^0.34.49",
     "chokidar": "^4.0.0",
     "node-pty": "^1.0.0",

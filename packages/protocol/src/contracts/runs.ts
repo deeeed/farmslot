@@ -1,6 +1,7 @@
 import type { ArtifactRef, SelfReviewIssue } from '../recipes/step-io.js';
 
 import type { AgentContext, SafetyTier } from './agents.js';
+import type { RunImportProvenance } from './run-bundles.js';
 import type { FailureCategory, RunRecoveryProposalConfidence } from './chat.js';
 import type { TaskTemplateSelection, TemplateProvenance } from './evals.js';
 import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js';
@@ -1098,7 +1099,13 @@ export interface Run {
    * hook and the archive/delete catch-alls (see runs/analytics.ts).
    */
   analyticsEmittedAt?: string;
+  /** Present when this run record was imported from a portable bundle (ADR-039). */
+  importProvenance?: RunImportProvenance;
+  /** Imported reference-only runs must not be re-dispatched or activated on slot. */
+  readOnly?: boolean;
 }
+
+export type { RunImportProvenance } from './run-bundles.js';
 
 export function isLightweightInteractiveDevRun(
   run: Pick<Run, 'flowType' | 'mode' | 'devInteractiveProfile'>,

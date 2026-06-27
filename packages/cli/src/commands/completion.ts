@@ -179,6 +179,7 @@ _farmslot() {
         rpc) _arguments '1:method:' '2:params:' '(--stream)--stream[Show streaming events]' ;;
         recipe) _farmslot_recipe ;;
         run) _farmslot_run ;;
+        runs) _farmslot_runs ;;
         completion) _farmslot_completion ;;
         node) _farmslot_node ;;
       esac ;;
@@ -197,6 +198,7 @@ _farmslot_commands() {
     'rpc:Raw gateway RPC call'
     'recipe:Recipe protocol helpers'
     'run:Run lifecycle operations'
+    'runs:Portable run bundle export/import'
     'completion:Generate or install shell completions'
     'node:Node management'
     'doctor:Check workspace health'
@@ -236,6 +238,12 @@ _farmslot_dispatch() {
 _farmslot_run() {
   local -a commands
   commands=('create:Create a supervised run')
+  _describe 'subcommand' commands
+}
+
+_farmslot_runs() {
+  local -a commands
+  commands=('export:Export portable run bundle' 'import:Import portable run bundle' 'bundle:Inspect bundles')
   _describe 'subcommand' commands
 }
 
@@ -279,7 +287,7 @@ const BASH_COMPLETION = `_farmslot_completions() {
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
   case \${COMP_CWORD} in
-    1) COMPREPLY=($(compgen -W "fleet gateway slot dispatch pr config rpc recipe run completion node doctor project update login logout auth" -- "$cur")) ;;
+    1) COMPREPLY=($(compgen -W "fleet gateway slot dispatch pr config rpc recipe run runs completion node doctor project update login logout auth" -- "$cur")) ;;
     2)
       case \${COMP_WORDS[1]} in
         fleet) COMPREPLY=($(compgen -W "status refresh" -- "$cur")) ;;
@@ -290,6 +298,7 @@ const BASH_COMPLETION = `_farmslot_completions() {
         config) COMPREPLY=($(compgen -W "pools projects" -- "$cur")) ;;
         recipe) COMPREPLY=($(compgen -W "validate run" -- "$cur")) ;;
         run) COMPREPLY=($(compgen -W "create" -- "$cur")) ;;
+        runs) COMPREPLY=($(compgen -W "export import bundle" -- "$cur")) ;;
         completion) COMPREPLY=($(compgen -W "zsh bash fish install" -- "$cur")) ;;
         node) COMPREPLY=($(compgen -W "status deploy" -- "$cur")) ;;
       esac ;;
@@ -315,6 +324,7 @@ complete -c farmslot -n '__fish_use_subcommand' -a config -d 'Configuration'
 complete -c farmslot -n '__fish_use_subcommand' -a rpc -d 'Raw RPC call'
 complete -c farmslot -n '__fish_use_subcommand' -a recipe -d 'Recipe protocol helpers'
 complete -c farmslot -n '__fish_use_subcommand' -a run -d 'Run lifecycle operations'
+complete -c farmslot -n '__fish_use_subcommand' -a runs -d 'Portable run bundle export/import'
 complete -c farmslot -n '__fish_use_subcommand' -a completion -d 'Shell completions'
 complete -c farmslot -n '__fish_use_subcommand' -a node -d 'Node management'
 
@@ -326,6 +336,7 @@ complete -c farmslot -n '__fish_seen_subcommand_from pr' -a 'status list'
 complete -c farmslot -n '__fish_seen_subcommand_from config' -a 'pools projects'
 complete -c farmslot -n '__fish_seen_subcommand_from recipe' -a 'validate run'
 complete -c farmslot -n '__fish_seen_subcommand_from run' -a 'create'
+complete -c farmslot -n '__fish_seen_subcommand_from runs' -a 'export import bundle'
 complete -c farmslot -n '__fish_seen_subcommand_from completion' -a 'zsh bash fish install'
 complete -c farmslot -n '__fish_seen_subcommand_from node' -a 'status deploy'
 

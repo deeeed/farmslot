@@ -92,6 +92,11 @@ export async function runActivateOnSlot(
 ): Promise<RunActivateOnSlotResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
+  if (run.readOnly) {
+    throw new Error(
+      `Run ${params.runId.slice(0, 8)} is a read-only imported reference and cannot be activated on a slot`,
+    );
+  }
 
   // Activate re-drives from PREPARE; flows without a PREPARE step (e.g. merge-main)
   // have no prepare step object to replay and cannot be re-bound this way.
