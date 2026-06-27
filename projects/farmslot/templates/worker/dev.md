@@ -98,7 +98,7 @@ Skip Phase 2 only when every AC is backend-only with zero Command Center surface
   cd apps/command-center && yarn typecheck
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
-- [ ] **11. Recipe regression** — must exit 0 after the fix:
+- [ ] **11. Recipe regression (fast)** — must exit 0 after the fix (no video):
   ```bash
   cd {{REPO}}
   bash {{recipe_validate_wrapper}} \
@@ -110,16 +110,42 @@ Skip Phase 2 only when every AC is backend-only with zero Command Center surface
     --gateway-port {{WATCHER_PORT}} \
     --slot-id {{SLOT}}
   ```
-- [ ] **11b. Recipe coverage + quality** — write `{{TASK_DIR}}/artifacts/recipe-coverage.md` and `{{TASK_DIR}}/artifacts/recipe-quality.json` when `recipe.json` exists.
-- [ ] **11c. Artifact contract**:
+
+### Phase 5: PR-grade recipe evidence (required for Command Center UI)
+
+Skip only when every AC is backend-only with zero UI surface — state why in this TASK file.
+
+- [ ] **12. Proof run with video** — slow playback + full-run MP4 for publication:
+  ```bash
+  cd {{REPO}}
+  bash apps/command-center/scripts/debug-chrome.sh
+  bash {{recipe_validate_wrapper}} \
+    --recipe {{TASK_DIR}}/artifacts/recipe.json \
+    --artifacts-dir {{TASK_DIR}}/artifacts/recipe-run \
+    --runtime-dir {{RUNTIME_DIR}} \
+    --platform {{PLATFORM}} \
+    --cdp-port {{CDP_PORT}} \
+    --gateway-port {{WATCHER_PORT}} \
+    --slot-id {{SLOT}} \
+    --slow 2000 \
+    --record-video=full-run \
+    --task-dir {{TASK_DIR}}
+  ```
+  (`validate-recipe.sh` auto-promotes screenshots + `after.mp4` into `artifacts/` when `--task-dir` is set.)
+- [ ] **12a. Validate screenshots (HARD GATE)** — Read each promoted `artifacts/before-*.png` and `artifacts/after-*.png` via the Read tool. The claimed UI must be visible — not off-screen, wrong route, or generic shell. Re-run step 12 if not.
+- [ ] **12b. Write `{{TASK_DIR}}/artifacts/evidence-manifest.json`** — gateway uses this to embed screenshots + `after.mp4` in the created PR. Follow `{{recipe_quality_path}}` (before/after pairs + `videos.after: artifacts/after.mp4`).
+- [ ] **12c. Recipe coverage + quality** — `recipe-coverage.md` + `recipe-quality.json`. Visual ACs cannot be `pass` without screenshot/video proof.
+- [ ] **12d. Artifact contract**:
   ```bash
   node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-quality-if-recipe --require-recipe-coverage-if-recipe
   ```
-- [ ] **12. Self-review** — read the diff; no inline protocol duplication or comment noise.
-- [ ] **13. Commit** — atomic commit(s) following Conventional Commits.
-- [ ] **14. Prepare local workspace package** — write `{{TASK_DIR}}/artifacts/pr-description.md`; do not push or open a PR.
-- [ ] **14a. Evidence manifest** — when screenshots/videos prove the change, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` using the strict schema (before/after pairs for visual ACs; reference `recipe-run/screenshots/*` when applicable).
-- [ ] **15. Report + signal** — write `{{TASK_DIR}}/artifacts/report.md`, set `STATUS: done`, then:
+
+### Phase 6: Report + package
+
+- [ ] **13. Self-review** — read the diff; no inline protocol duplication or comment noise.
+- [ ] **14. Commit** — atomic commit(s) following Conventional Commits.
+- [ ] **15. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
+- [ ] **16. Report + signal** — write `{{TASK_DIR}}/artifacts/report.md` (list evidence paths: screenshots + `after.mp4`), set `STATUS: done`, then:
   ```bash
   {{TASK_DIR}}/mark complete --outcome success --mark-last
   ```

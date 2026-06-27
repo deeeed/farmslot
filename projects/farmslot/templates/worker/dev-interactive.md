@@ -57,7 +57,11 @@ bash {{recipe_validate_wrapper}} \
 
 - Author or update `{{TASK_DIR}}/artifacts/recipe.json` so it covers the ticket acceptance criteria.
 - Prefer adapting `{{recipe_example_banner}}` for demo-banner smoke tasks.
-- Run the recipe after implementation; store artifacts under `{{TASK_DIR}}/artifacts/recipe-run/`.
+- Run a **fast** recipe after implementation (no video), then a **proof** run for publication:
+  ```bash
+  bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
+  ```
+- Promoted `artifacts/before-*.png`, `artifacts/after-*.png`, and `artifacts/after.mp4` feed the created PR via `evidence-manifest.json`.
 - Write `recipe-coverage.md` + `recipe-quality.json` when a recipe exists.
 - Never inject UI state — use `ui.navigate`, `ui.wait_for`, and `ui.screenshot` through the runner.
 

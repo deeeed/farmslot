@@ -92,6 +92,7 @@ projects/farmslot/setup/*
 !projects/farmslot/setup/sandbox-companion.sh
 !projects/farmslot/setup/companion-prepare.sh
 !projects/farmslot/setup/validate-recipe.sh
+!projects/farmslot/setup/sync-recipe-evidence.sh
 projects/farmslot/tasks/
 projects/farmslot/.agent/
 projects/farmslot/.task/

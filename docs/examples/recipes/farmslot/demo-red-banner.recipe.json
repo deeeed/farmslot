@@ -45,7 +45,8 @@
         },
         "capture-without-banner": {
           "action": "ui.screenshot",
-          "path": "screenshots/demo-banner-absent.png",
+          "path": "screenshots/before-demo-banner.png",
+          "note": "Slot shell without demo banner — reviewer before state",
           "next": "restart-with-demo-flag",
           "intent": "Capture reviewer-visible proof that the shell renders without the demo banner."
         },
@@ -73,7 +74,8 @@
         },
         "capture-with-banner": {
           "action": "ui.screenshot",
-          "path": "screenshots/demo-banner-present.png",
+          "path": "screenshots/after-demo-banner.png",
+          "note": "Red demo banner visible with exact monitoring copy",
           "next": "done",
           "intent": "Capture reviewer-visible proof of the red demo monitoring banner."
         },
