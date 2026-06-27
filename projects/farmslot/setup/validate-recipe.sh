@@ -157,9 +157,13 @@ case "${PLATFORM_VALUE}" in
       --input=farmslot_dir="${PRIMARY_REPO}"
       --input=primary_repo="${PRIMARY_REPO}"
       --cdp-port "${CDP_PORT_VALUE}"
-      --gateway-port "${GATEWAY_PORT_VALUE}"
-      --slot-id "${SLOT_ID_VALUE}"
     )
+    if [[ -n "${GATEWAY_PORT_VALUE}" ]]; then
+      ARGS+=(--gateway-port "${GATEWAY_PORT_VALUE}")
+    fi
+    if [[ -n "${SLOT_ID_VALUE}" ]]; then
+      ARGS+=(--slot-id "${SLOT_ID_VALUE}")
+    fi
     if [[ -n "${SLOW_MS}" ]]; then
       ARGS+=(--slow "${SLOW_MS}")
     fi

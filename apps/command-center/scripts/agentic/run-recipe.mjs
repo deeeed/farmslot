@@ -499,14 +499,18 @@ async function main() {
     ...((recipeRaw.inputs && typeof recipeRaw.inputs === 'object' && recipeRaw.inputs) || {}),
     ui_url: uiUrl,
     cdp_port: String(options.cdpPort),
-    gateway_port: options.gatewayPort,
-    gateway_url: options.gatewayPort ? `ws://127.0.0.1:${options.gatewayPort}/ws` : '',
-    slot_id: options.slotId,
     repo: options.projectRoot,
     farmslot_dir: farmslotDir,
     primary_repo: farmslotDir,
     ...options.inputs,
   };
+  if (options.gatewayPort) {
+    inputs.gateway_port = options.gatewayPort;
+    inputs.gateway_url = `ws://127.0.0.1:${options.gatewayPort}/ws`;
+  }
+  if (options.slotId) {
+    inputs.slot_id = options.slotId;
+  }
 
   const recipeDocument = substituteDeep(recipeRaw, inputs);
   const artifactsDir = path.resolve(options.artifactsDir);

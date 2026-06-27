@@ -32,30 +32,31 @@ if command -v osascript >/dev/null 2>&1; then
 fi
 
 # Always relaunch CDP Chrome for proof runs so capture-helper sees a fresh on-screen window.
-UI_PORT="$(python3 - <<'PY' "$FF_REPO" "$FF_GATEWAY_PORT"
-import json, pathlib, sys
-repo, gw = sys.argv[1], sys.argv[2]
+VITE_PORT="$(python3 - <<'PY' "$FF_REPO"
+import pathlib, sys
+repo = sys.argv[1]
 ports = pathlib.Path(repo) / ".env.ports"
 ui = "5174"
 if ports.is_file():
     for line in ports.read_text().splitlines():
-        if line.startswith("UI_PORT="):
+        if line.startswith("VITE_PORT="):
             ui = line.split("=", 1)[1].strip()
             break
 print(ui)
 PY
 )"
-export FARMSLOT_UI_URL="http://localhost:${UI_PORT}/"
+export FARMSLOT_UI_URL="http://localhost:${VITE_PORT}/"
+export FARMSLOT_CDP_PORT="$FF_CDP_PORT"
 CDP_PID="$(lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
 if [[ -n "$CDP_PID" ]]; then
-  log "relaunching CDP Chrome for slot UI ${FARMSLOT_UI_URL}"
+  log "relaunching CDP Chrome for slot UI ${FARMSLOT_UI_URL} cdp :${FF_CDP_PORT}"
   kill "$CDP_PID" 2>/dev/null || true
   sleep 1
 fi
 
-if ! FARMSLOT_UI_URL="$FARMSLOT_UI_URL" bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >>"$SCRATCH/e2e.log" 2>&1; then
-  log "debug-chrome failed — see $SCRATCH/e2e.log"
-fi
+FARMSLOT_UI_URL="$FARMSLOT_UI_URL" FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
+  bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >>"$SCRATCH/e2e.log" 2>&1 \
+  || { log "debug-chrome failed — see $SCRATCH/e2e.log"; exit 1; }
 sleep 2
 if command -v capture-helper >/dev/null 2>&1; then
   CDP_PID="$(lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
@@ -97,7 +98,8 @@ ls -la "$TASK_DIR/artifacts/" "$TASK_DIR/artifacts/recipe-run/videos/" 2>/dev/nu
 
 node "$PRIMARY_REPO/scripts/quality/check-task-artifact-contract.mjs" "$TASK_DIR" \
   --require-recipe-quality-if-recipe --require-recipe-coverage-if-recipe \
-  >"$SCRATCH/runA-contract.log" 2>&1 || log "contract check pending artifacts (exit=$?)"
+  >"$SCRATCH/runA-contract.log" 2>&1
+log "contract check exit=$?"
 
 cd "$PRIMARY_REPO/apps/command-center" && yarn typecheck >"$SCRATCH/typecheck-cc.log" 2>&1
 log "command-center typecheck exit=$?"
