@@ -38,6 +38,36 @@ Always:
 
 If verification fails, stop and reassess instead of spamming more keys.
 
+## Production Path vs Smoke Path
+
+Cross-review, orchestration, and multi-step PR work use the **interactive tmux compose path** in the existing model pane. That is the safe default.
+
+| Goal | Path | Notes |
+|------|------|-------|
+| Cross-review / worker nudges / review loops | Interactive model pane | `send-keys -l` then named `Enter` |
+| One-shot smoke from an agent terminal | `claude -p` / `codex exec` in a real shell | OK outside tmux; not a tmux-pane substitute |
+| `claude -p` inside a tmux shell pane | Avoid | Launch script can exit with no visible output; orchestrator thinks review ran when it did not |
+| Extra shell pane + `claude -p` for review | Avoid | Corrupts cross-review routing; keep reviewer in its dedicated model pane |
+
+`claude -p` can work from a direct terminal, but it is a poor fit for tmux orchestration: no compose progress (`Cooking…`), weak pane verification, and easy false success when the process exits silently.
+
+## Canonical Submit Sequence
+
+Match gateway `tmuxSendTextCommand` in `services/gateway/src/core/tmux.ts`:
+
+```bash
+tmux send-keys -t <pane-id> -l '<payload>'
+tmux send-keys -t <pane-id> Enter    # named Enter — not C-m for Claude/Codex
+```
+
+Runner-specific submit keys (same contract as `runnerBufferedInstructionSubmitKey` in `services/gateway/src/runners/registry.ts`):
+
+- **Claude / Codex / Grok:** named `Enter`
+- **Cursor:** `C-m`
+- **Codex while busy:** `Tab` when pane shows `tab to queue message`
+
+After submit, **do not trust `send-and-verify.sh` alone**. Re-capture the pane and look for runner-specific progress markers.
+
 ## Context Reset Guard
 
 When starting a **new run** in an existing model pane, do not assume the old conversation is safe to reuse.
@@ -106,18 +136,26 @@ Important:
 
 - exact `pane_current_command=claude` is a strong signal
 - text-only prompt/status hints are weak fallback evidence, not the source of truth
-- interactive `❯` compose often **does not submit** on a single Enter in tmux
+- multiline compose can sit in the bordered input box without submitting; `C-m` is unreliable — use named `Enter`
+- `send-and-verify.sh` may return `submitted` while the prompt is still buffered; always re-capture
 
 Rules:
 
 - send natural-language instructions, not shell commands
 - if you need shell work, exit or interrupt back to shell first
-- after `send-keys ... C-m`, capture the pane again
-- if the raw text you sent is still sitting at `❯`, it did not execute usefully
+- submit with `send-keys -l` + named `Enter`; capture again before sending more keys
+- if the raw text you sent is still sitting in the compose box at `❯`, it did not execute — send `Enter` again or `C-u` + resend
+- reset with `/clear` + `Enter`, verify empty `❯`, then send the new task
 
-Scriptable validation path (preferred for smoke / benchmarks):
+Success signals (any of these):
 
-- shell pane + `claude --dangerously-skip-permissions -p '<prompt>'`
+- `Cooking…` / `Baked for` / tool lines (`⏺ Bash`, `Reading N files`)
+- prompt echoed above an empty `❯`, not trapped inside the compose border
+- session status shows `thinking` / `session:Nm`
+
+Scriptable validation path (agent terminal only — not tmux reviewer panes):
+
+- `claude --dangerously-skip-permissions -p '<prompt>'` from a real shell outside tmux
 
 ### Codex Pane (`event-driven`)
 
@@ -130,7 +168,9 @@ Rules:
 
 - send natural-language instructions to Codex mode
 - do not assume Claude prompt semantics
-- verify the pane moved off the raw pending input after Enter
+- submit with `send-keys -l` + named `Enter`; if prompt echoes with `›` but no `Working`, send `Enter` again
+- when pane shows `tab to queue message`, submit with `Tab` instead of `Enter`
+- verify `Working (` appeared or hooks started before treating the send as successful
 
 Scriptable validation path:
 
@@ -255,7 +295,7 @@ Auth-required blockers have no safe auto action — stop and ask a human to log 
 
 ## Submission Guard
 
-After every `tmux send-keys ... C-m`, do a capture pass.
+After every compose submit (`send-keys -l` + runner-specific submit key), do a capture pass.
 
 Be careful: panes can show **ghost input** that looks like pending text but is not actually the active prompt line.
 
@@ -362,7 +402,9 @@ That is not "Codex broken". It is a wrapper-contract failure and should be track
 | Failure | Fix |
 | ------- | --- |
 | Sent shell command into interactive Claude | detect state first; exit to shell or send Claude-language instruction instead |
-| Sent instruction but it stayed pending at `❯` | add a submission verification pass after Enter; prefer `claude -p` for smoke |
+| Sent instruction but it stayed pending at `❯` | use named `Enter` (not `C-m`); re-capture; for cross-review stay in interactive pane — do not fall back to `claude -p` in tmux |
+| Launched `claude -p` in tmux shell pane for review | driver bug; use interactive model pane (`send-keys -l` + `Enter`) or run `-p` only from agent terminal |
+| `send-and-verify.sh` said submitted but Claude still composing | verifier false positive; wait for `Cooking…` / tool output, not script JSON alone |
 | Started a new benchmark inside an old Claude session | exit to shell and relaunch fresh process; do not rely on prior session state |
 | Sent `claude ...` while still inside Claude | shell-launch guard failed; return to shell first |
 | Thought dim scrollback text was pending input | ghost-input guard failed; re-capture and verify active prompt line |

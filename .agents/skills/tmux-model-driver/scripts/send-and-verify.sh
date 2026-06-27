@@ -20,11 +20,19 @@ print(json.loads(sys.argv[1])["state"])
 PY
 )"
 
+submit_key_for_action() {
+  case "$1" in
+    cursor) echo "C-m" ;;
+    *) echo "Enter" ;;
+  esac
+}
+
 if [ "$action_kind" = "shell" ] && [ "$before_state" != "shell" ]; then
   verification="shell_launch_blocked"
 else
+  submit_key="$(submit_key_for_action "$action_kind")"
   tmux send-keys -t "$pane_id" -l "$payload"
-  tmux send-keys -t "$pane_id" C-m
+  tmux send-keys -t "$pane_id" "$submit_key"
   sleep 1
   after_json="$("$skill_dir/scripts/pane-state.sh" "$pane_id")"
   verification="$(python3 - <<'PY' "$payload" "$after_json"
