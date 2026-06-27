@@ -10,8 +10,15 @@ mkdir -p "$SCRATCH"
 FF_SLOT="${FF_SLOT:-macwork-ff-2}"
 FF_GATEWAY_PORT="${FF_GATEWAY_PORT:-8809}"
 FF_CDP_PORT="${FF_CDP_PORT:-9323}"
-FF_REPO="${FF_REPO:-/Users/deeeed/dev/farmslot-wt/farmslot-2}"
-TASK_DIR="${TASK_DIR:-$FF_REPO/.sandbox/farmslot/worker-task/feat/e2e-28-proof}"
+FF_REPO="${FF_REPO:-}"
+TASK_DIR="${TASK_DIR:-}"
+if [[ -z "$FF_REPO" ]]; then
+  echo "[e2e-evidence] ERROR: set FF_REPO to the slot worktree (e.g. farmslot-wt/farmslot-2)" >&2
+  exit 1
+fi
+if [[ -z "$TASK_DIR" ]]; then
+  TASK_DIR="$FF_REPO/.sandbox/farmslot/worker-task/feat/e2e-28-proof"
+fi
 
 log() { echo "[e2e-evidence] $*" | tee -a "$SCRATCH/e2e.log"; }
 
@@ -37,7 +44,9 @@ if command -v capture-helper >/dev/null 2>&1; then
   fi
 fi
 
-bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >/dev/null 2>&1 || true
+if ! bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >>"$SCRATCH/e2e.log" 2>&1; then
+  log "debug-chrome failed — see $SCRATCH/e2e.log"
+fi
 sleep 1
 
 node "$PRIMARY_REPO/apps/command-center/scripts/agentic/recipe-doctor.mjs" \

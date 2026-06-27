@@ -132,8 +132,8 @@ async function checkCaptureHelperDoctor() {
     };
   }
   try {
-    const { stdout } = await execFileAsync('capture-helper', ['doctor', '--json']);
-    const parsed = parseCaptureHelperJson(stdout);
+    const { stdout, stderr } = await execFileAsync('capture-helper', ['doctor', '--json']);
+    const parsed = parseCaptureHelperJson(stdout, stderr);
     const ok = parsed?.ok === true;
     return {
       id: 'capture_helper.doctor',
