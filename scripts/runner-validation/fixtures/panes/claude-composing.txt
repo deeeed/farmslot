@@ -1,0 +1,8 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│    Opus 4.8 · Claude Max · operator@example.com                              │
+│             /Users/dev/project                                               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ · Composing…
+  fs · Opus 4.8                                               ● high · /effort
+  ⏵⏵ bypass permissions on (shift+tab to cycle)

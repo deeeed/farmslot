@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T08:28:26.117Z",
+  "host": "macwork",
+  "scenario": "pane-smoke",
+  "runner": "cursor",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-3GBLkX",
+  "session": "runner-validate-cursor-pane-smoke-78143",
+  "launchMode": "cursor-print",
+  "markerSeen": true,
+  "promptNeedleSeen": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-3GB\nLkX/.tmux-driver-launch.sh\n(base) ➜  runner-validate-cursor-3GBLkX bash /var/folders/98/_mm6pm_d0nj7vj72jwq\n0hc_00000gn/T/runner-validate-cursor-3GBLkX/.tmux-driver-launch.sh\nTMUX_HOOK_OK\n(base) ➜  runner-validate-cursor-3GBLkX",
+  "paneState": {
+    "pane_id": "%254",
+    "session_name": "runner-validate-cursor-pane-smoke-78143",
+    "current_command": "zsh",
+    "current_path": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-3GBLkX",
+    "pane_title": "macwork",
+    "pane_pid": "79191",
+    "state": "shell",
+    "phase": "idle",
+    "confidence": "high",
+    "reasons": [
+      "exact pane_current_command indicates shell"
+    ],
+    "launch_blocker": null,
+    "auto_action": null,
+    "tail": "bash /var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-cursor-3GB\nLkX/.tmux-driver-launch.sh\n(base) ➜  runner-validate-cursor-3GBLkX bash /var/folders/98/_mm6pm_d0nj7vj72jwq\n0hc_00000gn/T/runner-validate-cursor-3GBLkX/.tmux-driver-launch.sh\nTMUX_HOOK_OK\n(base) ➜  runner-validate-cursor-3GBLkX",
+    "last_line": "(base) ➜  runner-validate-cursor-3GBLkX"
+  }
+}

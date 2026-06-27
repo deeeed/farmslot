@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const HOOK_SCRIPT = `import crypto from 'node:crypto';
@@ -112,7 +114,7 @@ try {
     tool_name: payload.tool_name,
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
-    runner: 'claude',
+    runner: process.env.FARMSLOT_RUNNER || 'claude',
     ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),
   };
@@ -156,7 +158,7 @@ try {
     cwd: input?.workspace?.current_dir || input?.cwd,
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
-    runner: 'claude',
+    runner: process.env.FARMSLOT_RUNNER || 'claude',
   };
   const target = path.join(obsDir, 'statusline.json');
   const tmp = target + '.' + process.pid + '.tmp';
@@ -170,7 +172,12 @@ try {
 }
 `;
 
-const HOOK_EVENTS = [
+// Claude Code native hook events Farmslot cares about for observability telemetry.
+// Validated against code.claude.com hooks guide / Agent SDK event list (2026):
+// SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop,
+// SubagentStop, StopFailure, PreCompact, PostCompact.
+const CLAUDE_HOOK_EVENTS = [
+  'SessionStart',
   'UserPromptSubmit',
   'PreToolUse',
   'PostToolUse',
@@ -178,7 +185,159 @@ const HOOK_EVENTS = [
   'Stop',
   'SubagentStop',
   'StopFailure',
+  'PreCompact',
+  'PostCompact',
 ];
+
+// Codex CLI native hook events — must match oh-my-codex MANAGED_HOOK_EVENTS and
+// plugins/oh-my-codex/hooks/codex-native-hook.mjs CODEX_HOOK_EVENT_NAMES.
+// Codex does NOT emit Claude-only events such as Notification, StopFailure, or SubagentStop.
+const CODEX_HOOK_EVENTS = [
+  'SessionStart',
+  'PreToolUse',
+  'PostToolUse',
+  'UserPromptSubmit',
+  'PreCompact',
+  'PostCompact',
+  'Stop',
+];
+
+const FARMSLOT_HOOK_MARKER = 'farmslot-observability-hook.mjs';
+
+const CODEX_HOOK_EVENT_LABELS = {
+  SessionStart: 'session_start',
+  PreToolUse: 'pre_tool_use',
+  PostToolUse: 'post_tool_use',
+  UserPromptSubmit: 'user_prompt_submit',
+  PreCompact: 'pre_compact',
+  PostCompact: 'post_compact',
+  Stop: 'stop',
+};
+
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map((item) => canonicalJson(item));
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalJson(value[key])]),
+    );
+  }
+  return value;
+}
+
+function versionForCodexTomlIdentity(value) {
+  const serialized = JSON.stringify(canonicalJson(value));
+  return `sha256:${createHash('sha256').update(serialized).digest('hex')}`;
+}
+
+function escapeTomlBasicString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function normalizedCommandHookIdentity(eventName, entry, hook) {
+  return {
+    event_name: CODEX_HOOK_EVENT_LABELS[eventName],
+    ...(entry.matcher ? { matcher: entry.matcher } : {}),
+    hooks: [
+      {
+        type: 'command',
+        command: hook.command,
+        timeout: Math.max(1, hook.timeout ?? 600),
+        async: false,
+        ...(hook.statusMessage ? { statusMessage: hook.statusMessage } : {}),
+      },
+    ],
+  };
+}
+
+function buildCodexHookTrustToml(hooksPath, hooks) {
+  const blocks = [];
+  for (const eventName of CODEX_HOOK_EVENTS) {
+    const entries = Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
+    entries.forEach((entry, groupIndex) => {
+      if (!entry || !Array.isArray(entry.hooks)) return;
+      entry.hooks.forEach((hook, handlerIndex) => {
+        if (!hook || hook.type !== 'command' || typeof hook.command !== 'string') return;
+        const key = `${hooksPath}:${CODEX_HOOK_EVENT_LABELS[eventName]}:${groupIndex}:${handlerIndex}`;
+        const trustedHash = versionForCodexTomlIdentity(
+          normalizedCommandHookIdentity(eventName, entry, hook),
+        );
+        blocks.push(
+          `[hooks.state."${escapeTomlBasicString(key)}"]`,
+          `trusted_hash = "${escapeTomlBasicString(trustedHash)}"`,
+          '',
+        );
+      });
+    });
+  }
+  return blocks.join('\n').trimEnd();
+}
+
+function stripCodexHookTrustSections(content) {
+  const lines = content.split('\n');
+  const kept = [];
+  let skipping = false;
+  for (const line of lines) {
+    if (/^\[hooks\.state\./.test(line.trim())) {
+      skipping = true;
+      continue;
+    }
+    if (skipping) {
+      if (/^\s*trusted_hash\s*=/.test(line)) continue;
+      if (line.trim() === '') {
+        skipping = false;
+        continue;
+      }
+      skipping = false;
+    }
+    kept.push(line);
+  }
+  return kept.join('\n').trimEnd();
+}
+
+function canonicalCodexPath(filePath) {
+  try {
+    return fs.realpathSync(path.resolve(filePath));
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+function bootstrapCodexHome({ repoPath, runtimeDir, hooksPath }) {
+  const codexHomeDir = path.join(repoPath, runtimeDir, 'codex-home');
+  fs.mkdirSync(codexHomeDir, { recursive: true });
+  const hooksDoc = readJsonObject(hooksPath);
+  const hooks =
+    hooksDoc.hooks && typeof hooksDoc.hooks === 'object' && !Array.isArray(hooksDoc.hooks)
+      ? hooksDoc.hooks
+      : {};
+  const absoluteHooksPath = path.resolve(hooksPath);
+  const codexHomeHooksPath = path.join(codexHomeDir, 'hooks.json');
+  fs.copyFileSync(absoluteHooksPath, codexHomeHooksPath);
+  // Codex with CODEX_HOME reads hooks from codex-home; trusted_hash keys must use that path.
+  const trustHooksPath = canonicalCodexPath(codexHomeHooksPath);
+  const trustToml = buildCodexHookTrustToml(trustHooksPath, hooks);
+  const configPath = path.join(codexHomeDir, 'config.toml');
+  let content = '';
+  if (fs.existsSync(configPath)) content = fs.readFileSync(configPath, 'utf8');
+  content = stripCodexHookTrustSections(content);
+  const featureBlock = '[features]\nhooks = true\n';
+  const canonicalRepoPath = canonicalCodexPath(repoPath);
+  const projectBlock = `[projects."${escapeTomlBasicString(canonicalRepoPath)}"]\ntrust_level = "trusted"\n`;
+  const merged = [content, featureBlock, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
+  fs.writeFileSync(configPath, merged);
+  const userAuth = path.join(os.homedir(), '.codex', 'auth.json');
+  const destAuth = path.join(codexHomeDir, 'auth.json');
+  if (fs.existsSync(userAuth) && !fs.existsSync(destAuth)) {
+    fs.symlinkSync(userAuth, destAuth);
+  }
+  return codexHomeDir;
+}
 
 function parseArgs(argv) {
   const out = {};
@@ -233,7 +392,7 @@ function removeFarmslotHooks(settings) {
             hook &&
             typeof hook === 'object' &&
             typeof hook.command === 'string' &&
-            hook.command.includes('farmslot-observability-hook.mjs')
+            hook.command.includes(FARMSLOT_HOOK_MARKER)
           ),
       );
       if (keptHooks.length > 0) cleanedEntries.push({ ...entry, hooks: keptHooks });
@@ -255,7 +414,7 @@ function mergeClaudeSettings(settingsPath, markerPath, hookCommand, statusComman
       ? settings.hooks
       : {};
   const hook = { type: 'command', command: hookCommand, timeout: 5 };
-  for (const eventName of HOOK_EVENTS) {
+  for (const eventName of CLAUDE_HOOK_EVENTS) {
     const entries = Array.isArray(settings.hooks[eventName]) ? settings.hooks[eventName] : [];
     settings.hooks[eventName] = [...entries, { matcher: '', hooks: [hook] }];
   }
@@ -276,45 +435,75 @@ function mergeClaudeSettings(settingsPath, markerPath, hookCommand, statusComman
   return { statusLineInstalled };
 }
 
-function installClaude({ repo, runtimeDir = '.agent', slotId }) {
-  if (!repo) throw new Error('missing --repo');
-  if (!slotId) throw new Error('missing --slot-id');
-  const repoPath = path.resolve(repo);
-  const obsDir = path.resolve(repoPath, runtimeDir, '.observability');
-  const binDir = path.join(obsDir, 'bin');
-  const settingsPath = path.join(repoPath, '.claude', 'settings.local.json');
-  const markerPath = path.join(obsDir, '.farmslot-owned');
-  const hookPath = path.join(binDir, 'farmslot-observability-hook.mjs');
-  const statuslinePath = path.join(binDir, 'farmslot-statusline.mjs');
-  fs.mkdirSync(binDir, { recursive: true });
-  fs.writeFileSync(hookPath, HOOK_SCRIPT);
-  fs.writeFileSync(statuslinePath, STATUSLINE_SCRIPT);
-  execFileSync(process.execPath, ['--check', hookPath], { stdio: 'pipe' });
-  execFileSync(process.execPath, ['--check', statuslinePath], { stdio: 'pipe' });
+function readCodexHooksDocument(filePath) {
+  const parsed = readJsonObject(filePath);
+  const root = { ...parsed };
+  const hooksSource =
+    parsed.hooks && typeof parsed.hooks === 'object' && !Array.isArray(parsed.hooks)
+      ? parsed.hooks
+      : {};
+  const hooks = JSON.parse(JSON.stringify(hooksSource));
+  return { root, hooks };
+}
 
-  const compatObsDir = path.join(repoPath, '.observability');
-  if (!fs.existsSync(compatObsDir)) fs.symlinkSync(obsDir, compatObsDir, 'dir');
+function removeFarmslotCodexHookEntries(hooks) {
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return;
+  for (const [eventName, entries] of Object.entries(hooks)) {
+    if (!Array.isArray(entries)) continue;
+    const cleanedEntries = [];
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object' || !Array.isArray(entry.hooks)) {
+        cleanedEntries.push(entry);
+        continue;
+      }
+      const keptHooks = entry.hooks.filter(
+        (hook) =>
+          !(
+            hook &&
+            typeof hook === 'object' &&
+            typeof hook.command === 'string' &&
+            hook.command.includes(FARMSLOT_HOOK_MARKER)
+          ),
+      );
+      if (keptHooks.length > 0) cleanedEntries.push({ ...entry, hooks: keptHooks });
+    }
+    if (cleanedEntries.length > 0) hooks[eventName] = cleanedEntries;
+    else delete hooks[eventName];
+  }
+}
 
-  const hookCommand = `FARMSLOT_OBS_DIR=${shQuote(obsDir)} FARMSLOT_SLOT_ID=${shQuote(slotId)} node ${shQuote(hookPath)}`;
-  const statusCommand = `FARMSLOT_OBS_DIR=${shQuote(obsDir)} FARMSLOT_SLOT_ID=${shQuote(slotId)} node ${shQuote(statuslinePath)}`;
-  const { statusLineInstalled } = mergeClaudeSettings(
-    settingsPath,
-    markerPath,
-    hookCommand,
-    statusCommand,
-  );
-  fs.writeFileSync(markerPath, 'farmslot\n');
+function mergeCodexHooks(hooksPath, markerPath, hookCommand) {
+  fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
+  backupOnce(hooksPath, markerPath);
+  const { root, hooks } = readCodexHooksDocument(hooksPath);
+  removeFarmslotCodexHookEntries(hooks);
+  const hook = { type: 'command', command: hookCommand, timeout: 5 };
+  for (const eventName of CODEX_HOOK_EVENTS) {
+    const entries = Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
+    hooks[eventName] = [...entries, { hooks: [hook] }];
+  }
+  root.hooks = hooks;
+  fs.writeFileSync(hooksPath, JSON.stringify(root, null, 2) + '\n');
+}
+
+function ensureCodexHooksFeature(configPath, markerPath) {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  backupOnce(configPath, markerPath);
+  let content = '';
+  if (fs.existsSync(configPath)) content = fs.readFileSync(configPath, 'utf8');
+  if (/\[features\][\s\S]*?\bhooks\s*=\s*true\b/m.test(content)) return;
+  const block = '\n[features]\nhooks = true\n';
+  fs.writeFileSync(configPath, (content.trimEnd() ? content.trimEnd() + block : block.trimStart()));
+}
+
+function writeObservabilityInstallManifest(obsDir, manifest) {
   fs.writeFileSync(
     path.join(obsDir, 'install.json'),
     JSON.stringify(
       {
         schemaVersion: 1,
         installedAt: new Date().toISOString(),
-        runner: 'claude',
-        repo: repoPath,
-        runtimeDir,
-        slotId,
-        statusLineInstalled,
+        ...manifest,
       },
       null,
       2,
@@ -322,12 +511,92 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
   );
 }
 
+function installObservabilityBinaries({ repo, runtimeDir, slotId, runner }) {
+  const repoPath = path.resolve(repo);
+  const obsDir = path.resolve(repoPath, runtimeDir, '.observability');
+  const binDir = path.join(obsDir, 'bin');
+  const hookPath = path.join(binDir, 'farmslot-observability-hook.mjs');
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(hookPath, HOOK_SCRIPT);
+  execFileSync(process.execPath, ['--check', hookPath], { stdio: 'pipe' });
+  const compatObsDir = path.join(repoPath, '.observability');
+  if (!fs.existsSync(compatObsDir)) fs.symlinkSync(obsDir, compatObsDir, 'dir');
+  const hookCommand = [
+    `FARMSLOT_OBS_DIR=${shQuote(obsDir)}`,
+    `FARMSLOT_SLOT_ID=${shQuote(slotId)}`,
+    `FARMSLOT_RUNNER=${shQuote(runner)}`,
+    `node ${shQuote(hookPath)}`,
+  ].join(' ');
+  return { repoPath, obsDir, hookPath, hookCommand };
+}
+
+function installClaude({ repo, runtimeDir = '.agent', slotId }) {
+  if (!repo) throw new Error('missing --repo');
+  if (!slotId) throw new Error('missing --slot-id');
+  const { repoPath, obsDir, hookCommand } = installObservabilityBinaries({
+    repo,
+    runtimeDir,
+    slotId,
+    runner: 'claude',
+  });
+  const settingsPath = path.join(repoPath, '.claude', 'settings.local.json');
+  const markerPath = path.join(obsDir, '.farmslot-owned');
+  const statuslinePath = path.join(obsDir, 'bin', 'farmslot-statusline.mjs');
+  fs.writeFileSync(statuslinePath, STATUSLINE_SCRIPT);
+  execFileSync(process.execPath, ['--check', statuslinePath], { stdio: 'pipe' });
+  const statusCommand = [
+    `FARMSLOT_OBS_DIR=${shQuote(obsDir)}`,
+    `FARMSLOT_SLOT_ID=${shQuote(slotId)}`,
+    `FARMSLOT_RUNNER=${shQuote('claude')}`,
+    `node ${shQuote(statuslinePath)}`,
+  ].join(' ');
+  const { statusLineInstalled } = mergeClaudeSettings(
+    settingsPath,
+    markerPath,
+    hookCommand,
+    statusCommand,
+  );
+  fs.writeFileSync(markerPath, 'farmslot\n');
+  writeObservabilityInstallManifest(obsDir, {
+    runner: 'claude',
+    repo: repoPath,
+    runtimeDir,
+    slotId,
+    statusLineInstalled,
+  });
+}
+
+function installCodex({ repo, runtimeDir = '.agent', slotId }) {
+  if (!repo) throw new Error('missing --repo');
+  if (!slotId) throw new Error('missing --slot-id');
+  const { repoPath, obsDir, hookCommand } = installObservabilityBinaries({
+    repo,
+    runtimeDir,
+    slotId,
+    runner: 'codex',
+  });
+  const markerPath = path.join(obsDir, '.farmslot-owned');
+  const hooksPath = path.join(repoPath, '.codex', 'hooks.json');
+  const projectConfigPath = path.join(repoPath, '.codex', 'config.toml');
+  mergeCodexHooks(hooksPath, markerPath, hookCommand);
+  ensureCodexHooksFeature(projectConfigPath, markerPath);
+  const codexHomeDir = bootstrapCodexHome({ repoPath, runtimeDir, hooksPath });
+  fs.writeFileSync(markerPath, 'farmslot\n');
+  writeObservabilityInstallManifest(obsDir, {
+    runner: 'codex',
+    repo: repoPath,
+    runtimeDir,
+    slotId,
+    codexHomeDir,
+    statusLineInstalled: false,
+  });
+}
+
 function install(args) {
   const runner = args.runner || 'claude';
-  if (runner !== 'claude') {
-    throw new Error(`unsupported runner for observability install: ${runner}`);
-  }
-  installClaude(args);
+  if (runner === 'claude') installClaude(args);
+  else if (runner === 'codex') installCodex(args);
+  else throw new Error(`unsupported runner for observability install: ${runner}`);
 }
 
 try {

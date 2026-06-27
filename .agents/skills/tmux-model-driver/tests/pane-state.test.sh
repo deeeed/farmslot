@@ -56,4 +56,57 @@ unknown_json="$(
 printf '%s\n' "$unknown_json" | grep -q '"state": "unknown"'
 printf '%s\n' "$unknown_json" | grep -q '"confidence": "low"'
 
+grok_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="grok" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp/repo" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="grok" \
+  TMUX_PANE_STATE_PANE_PID="125" \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'Run Grok Build in a project directory?\nEnter:submit' \
+  TMUX_PANE_STATE_LAST_LINE='Enter:submit' \
+  "$SCRIPT" "%5"
+)"
+printf '%s\n' "$grok_json" | grep -q '"state": "grok"'
+printf '%s\n' "$grok_json" | grep -q '"confidence": "high"'
+
+grok_blocker_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="grok" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp/repo" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="grok" \
+  TMUX_PANE_STATE_PANE_PID="126" \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'Run Grok Build in a project directory?\n1 (○) farmslot (current)\nEnter:submit' \
+  TMUX_PANE_STATE_LAST_LINE='Enter:submit' \
+  "$SCRIPT" "%6"
+)"
+printf '%s\n' "$grok_blocker_json" | grep -q '"launch_blocker": "project-directory"'
+printf '%s\n' "$grok_blocker_json" | grep -q '"auto_action": "grok-select-current-project"'
+printf '%s\n' "$grok_blocker_json" | grep -q '"phase": "launch-blocker"'
+
+cursor_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="cursor-agent" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp/repo" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="cursor" \
+  TMUX_PANE_STATE_PANE_PID="127" \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'[a] trust this workspace\n[q] quit\nuse arrow keys to navigate' \
+  TMUX_PANE_STATE_LAST_LINE='use arrow keys to navigate' \
+  "$SCRIPT" "%7"
+)"
+printf '%s\n' "$cursor_json" | grep -q '"state": "cursor"'
+printf '%s\n' "$cursor_json" | grep -q '"launch_blocker": "workspace-trust"'
+printf '%s\n' "$cursor_json" | grep -q '"auto_action": "cursor-trust-workspace"'
+
+cross_runner_json="$(
+  TMUX_PANE_STATE_CURRENT_COMMAND="zsh" \
+  TMUX_PANE_STATE_CURRENT_PATH="/tmp" \
+  TMUX_PANE_STATE_SESSION_NAME="demo" \
+  TMUX_PANE_STATE_PANE_TITLE="shell" \
+  TMUX_PANE_STATE_PANE_PID="128" \
+  TMUX_PANE_STATE_TAIL_CAPTURE=$'Run Grok Build in a project directory?\n1 (○) farmslot (current)\nEnter:submit' \
+  TMUX_PANE_STATE_LAST_LINE='Enter:submit' \
+  "$SCRIPT" "%8" "cursor"
+)"
+printf '%s\n' "$cross_runner_json" | grep -q '"launch_blocker": null'
+
 echo "pane-state tests: ok"

@@ -1,6 +1,6 @@
 ---
 name: tmux-model-driver
-description: Drive another model through a tmux pane with guardrails. Use when Codex should orchestrate Claude, Codex, or another agent inside an existing tmux session, verify pane state before sending input, and keep a feedback loop around observed pane output.
+description: Drive another model through a tmux pane with guardrails. Use when Codex should orchestrate Claude, Codex, Grok, Cursor, or another agent inside an existing tmux session, verify pane state before sending input, and keep a feedback loop around observed pane output.
 ---
 
 # Tmux Model Driver
@@ -11,16 +11,20 @@ Use this skill when:
 
 - a worker already lives in a tmux pane
 - Codex must nudge that worker iteratively
-- the worker may be in different modes: shell prompt, interactive Claude, interactive Codex, or a long-running command
+- the worker may be in different modes: shell prompt, interactive Claude, Codex, Grok, Cursor, or a long-running command
 - bad `send-keys` can waste tokens or corrupt state
 
 Primary helpers:
 
 - [scripts/pane-state.sh](scripts/pane-state.sh) — detect pane mode and return structured JSON
 - [scripts/send-and-verify.sh](scripts/send-and-verify.sh) — send one payload and verify it actually landed
+- [scripts/resolve-launch-blockers.sh](scripts/resolve-launch-blockers.sh) — auto-resolve Grok project-directory and Cursor workspace-trust prompts
+- [scripts/send-shell-script.sh](scripts/send-shell-script.sh) — run long launch lines via a repo script (avoids `send-keys` wrap)
 - [scripts/launch-file-task.sh](scripts/launch-file-task.sh) — launch a fresh file-first model run from verified shell state
 - [scripts/watch-file-task.sh](scripts/watch-file-task.sh) — classify file-backed progress vs false progress
 - [scripts/write-trace.py](scripts/write-trace.py) — append structured trace events for later replay or gateway ingestion
+
+Empirical runner contracts live in [scripts/runner-validation/](../../../scripts/runner-validation/) and [docs/operations/runner-validation-harness.md](../../../docs/operations/runner-validation-harness.md). When harness findings change, update this skill's adapters first.
 
 ## Core Rule
 
@@ -45,12 +49,12 @@ Default rule:
 Preferred pattern for a new task:
 
 1. return to shell
-2. launch a fresh Claude/Codex process
+2. launch a fresh Claude/Codex/Grok/Cursor process
 3. pass the new prompt into that fresh process
 
 Use `/clear` only when you intentionally want to keep the same interactive process and you verify the reset actually happened.
 
-Reusing an already-open Claude/Codex prompt for a new benchmark run is unsafe by default because hidden prior context can bleed into the next result.
+Reusing an already-open model prompt for a new benchmark run is unsafe by default because hidden prior context can bleed into the next result.
 
 ## State Machine
 
@@ -64,23 +68,33 @@ Design:
   - `phase`
   - `confidence`
   - `reasons`
+  - `launch_blocker` / `auto_action` when a post-launch gate is visible
 
 Operational rule:
 
 - trust the classifier result when confidence is high
 - when confidence is low and the next action is risky, prefer `unknown` handling over guessing
+- when `phase` is `launch-blocker`, resolve the blocker before sending the task prompt
 
 Expected states:
 
 - `shell` — safe for shell commands
 - `claude` — send natural-language Claude instructions, not shell commands
 - `codex` — send natural-language Codex instructions, not shell commands
+- `grok` — send natural-language Grok instructions; may need project-directory resolution first
+- `cursor` — send natural-language Cursor instructions; may need workspace-trust first
 - `busy` — long-running command still active; usually wait or interrupt intentionally
 - `unknown` — do not send anything until clarified
 
+Expected phases:
+
+- `idle` — ready for the next driver action
+- `busy` — runner is working; wait or interrupt intentionally
+- `launch-blocker` — runner TUI is waiting on trust/project selection before compose is available
+
 ## Runner Adapters
 
-### Claude Pane
+### Claude Pane (`event-driven`)
 
 Signals:
 
@@ -92,6 +106,7 @@ Important:
 
 - exact `pane_current_command=claude` is a strong signal
 - text-only prompt/status hints are weak fallback evidence, not the source of truth
+- interactive `❯` compose often **does not submit** on a single Enter in tmux
 
 Rules:
 
@@ -100,7 +115,11 @@ Rules:
 - after `send-keys ... C-m`, capture the pane again
 - if the raw text you sent is still sitting at `❯`, it did not execute usefully
 
-### Codex Pane
+Scriptable validation path (preferred for smoke / benchmarks):
+
+- shell pane + `claude --dangerously-skip-permissions -p '<prompt>'`
+
+### Codex Pane (`event-driven`)
 
 Signals:
 
@@ -112,6 +131,53 @@ Rules:
 - send natural-language instructions to Codex mode
 - do not assume Claude prompt semantics
 - verify the pane moved off the raw pending input after Enter
+
+Scriptable validation path:
+
+- bare tmux has no shell `codex` function — use full `node …/codex.js`
+- requires `git init` in the target repo
+- isolated `CODEX_HOME={{runtime_dir}}/codex-home` with canonical `trusted_hash` (realpath-safe on macOS)
+- smoke: `codex exec --disable plugin_hooks --sandbox workspace-write '<prompt>'`
+- wait for **Stop hook** or a pane marker — marker alone is not enough for hook-driven runs
+
+### Grok Pane (`pane-only`) — priority runner
+
+Grok is interactive-first in production (`needsPostLaunchPrompt: true`). Treat it differently from Claude/Codex.
+
+Signals:
+
+- pane current command is `grok`
+- project-directory prompt: `Run Grok Build in a project directory`, `(current)`, `Enter:submit`
+- compose ready after blocker clears
+
+Two validated paths:
+
+1. **Fast smoke (shell):** `grok -p '<prompt>' --model grok-build` — single-turn, proves binary + response marker.
+2. **Production-parity (interactive):**
+   - launch `grok --model grok-build` from shell
+   - run [scripts/resolve-launch-blockers.sh](scripts/resolve-launch-blockers.sh) `<pane> grok` — sends `Enter` on the `(current)` project row
+   - submit prompt with `send-keys -l` + Enter
+   - wait for response marker in pane output
+
+Rules:
+
+- do not assume Claude `❯` semantics
+- after interactive launch, **always** check `launch_blocker` before composing
+- `git init` in the launch repo so Grok sees a project directory
+- binary default: `~/.grok/bin/grok`
+
+### Cursor Pane (`pane-only`)
+
+Signals:
+
+- pane current command is `cursor-agent` or `agent`
+- workspace-trust prompt: `[a] trust this workspace`, `[q] quit`, `use arrow keys to navigate`
+
+Rules:
+
+- gateway often launches with argv prompt (`needsPostLaunchPrompt: false`)
+- for tmux smoke, prefer shell + `cursor-agent --print --trust --sandbox enabled`
+- for interactive launch without `--trust`, run [scripts/resolve-launch-blockers.sh](scripts/resolve-launch-blockers.sh) `<pane> cursor` — sends `a`
 
 ### Shell Pane
 
@@ -137,12 +203,12 @@ Launching a fresh model process is a **shell action**.
 
 That means:
 
-- if the pane is currently inside Claude or Codex, do **not** send the shell launch line yet
+- if the pane is currently inside Claude, Codex, Grok, or Cursor, do **not** send the shell launch line yet
 - first interrupt or exit back to shell
 - verify the pane state is `shell`
 - only then send the new process launch command
 
-If you send `claude ...` or `codex ...` while still inside an interactive Claude/Codex prompt, the line may be treated as chat input instead of a shell command. That is a driver bug, not a model bug.
+If you send `claude ...`, `codex ...`, `grok ...`, or `cursor-agent ...` while still inside an interactive model prompt, the line may be treated as chat input instead of a shell command. That is a driver bug, not a model bug.
 
 Prefer a **dedicated shell pane** for visible runner validation.
 
@@ -154,6 +220,38 @@ Pattern:
 4. report which pane id is shell vs model
 
 This prevents cross-contamination and makes runner validation observable without corrupting the active model session.
+
+## Launch-Script Guard
+
+Long runner launch lines **wrap and break** when sent with `tmux send-keys -l` in narrow panes.
+
+When the launch command is longer than ~120 characters or includes multiple env prefixes:
+
+1. verify shell state
+2. write a script in the target repo via [scripts/send-shell-script.sh](scripts/send-shell-script.sh)
+3. execute `bash .tmux-driver-launch.sh` through the shell adapter
+
+The runner-validation harness uses the same pattern as `.runner-validate-launch.sh`. Prefer the skill helper so orchestrators do not reimplement it.
+
+## Launch-Blocker Guard
+
+Some runners show a post-launch gate before compose is available.
+
+| Runner | Blocker | Auto action |
+|--------|---------|-------------|
+| Grok | `project-directory` | `Enter` on `(current)` row |
+| Cursor | `workspace-trust` | `a` |
+
+Detection lives in `pane-state.sh` (optional `[runner-id]` scopes Grok/Cursor blockers; includes `auth-required`). Harness `lib/pane-blockers.mjs` and `resolveLaunchBlockers()` delegate here — keep patterns aligned with `services/gateway/src/runners/registry.ts` `detectRunnerLaunchBlocker`.
+
+Protocol:
+
+1. launch runner from verified shell state
+2. poll `pane-state.sh` until `phase` is not `launch-blocker`, or call `resolve-launch-blockers.sh`
+3. only then send the task prompt
+4. if `verification` is `launch_blocker` after a compose send, you skipped step 2
+
+Auth-required blockers have no safe auto action — stop and ask a human to log in.
 
 ## Submission Guard
 
@@ -179,9 +277,9 @@ Bad outcome:
 Good outcome:
 
 - shell prompt moved and command output began
-- Claude/Codex prompt consumed the instruction and started working
+- Claude/Codex/Grok/Cursor prompt consumed the instruction and started working
 - a new-run shell command no longer appears as pending input inside an old interactive model session
-- a fresh `claude ...` / `codex ...` launch only happens from verified shell state
+- a fresh model launch only happens from verified shell state
 
 If the bad outcome happens, record it as a driver failure. Do not keep nudging blindly.
 
@@ -229,6 +327,7 @@ Feed those findings back into:
 
 - the target skill contract
 - the tmux-driver adapter rules
+- [scripts/runner-validation/runners/](../../../scripts/runner-validation/runners/) launch adapters
 - any runner-specific quirks
 
 Record a distinction between:
@@ -248,26 +347,33 @@ That is not "Codex broken". It is a wrapper-contract failure and should be track
 1. Detect pane state with `scripts/pane-state.sh <pane-id>`.
 2. If this is a new run, reset context first. Prefer exiting to shell and relaunching a fresh process.
 3. If the next action is a shell launch, require verified `shell` state first.
-4. If state is wrong for the intended action, transition first.
-5. Send one message or command with `scripts/send-and-verify.sh`.
-6. Re-capture the pane.
-7. Check for ghost-input false positives before deciding input is pending.
-8. Confirm the send actually landed.
-9. Append a trace event.
-10. Only then continue.
+4. If `phase` is `launch-blocker`, run `resolve-launch-blockers.sh` before composing.
+5. If state is wrong for the intended action, transition first.
+6. For long launch lines, use `send-shell-script.sh` instead of raw `send-keys -l`.
+7. Send one message or command with `scripts/send-and-verify.sh`.
+8. Re-capture the pane.
+9. Check for ghost-input false positives before deciding input is pending.
+10. Confirm the send actually landed.
+11. Append a trace event.
+12. Only then continue.
 
 ## Common Failures
 
-| Failure                                              | Fix                                                                           |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Sent shell command into interactive Claude           | detect state first; exit to shell or send Claude-language instruction instead |
-| Sent instruction but it stayed pending at `❯`        | add a submission verification pass after Enter                                |
-| Started a new benchmark inside an old Claude session | exit to shell and relaunch fresh process; do not rely on prior session state  |
-| Sent `claude ...` while still inside Claude          | shell-launch guard failed; return to shell first                              |
-| Thought dim scrollback text was pending input        | ghost-input guard failed; re-capture and verify active prompt line            |
-| Claude showed `ctrl+g to edit in Nvim` after a nudge | input was buffered, not submitted; verifier must not mark success             |
-| Assumed Claude and Codex prompts behave the same     | use runner-specific adapters                                                  |
-| Kept nudging a busy pane                             | classify `busy` and wait or interrupt intentionally                           |
+| Failure | Fix |
+| ------- | --- |
+| Sent shell command into interactive Claude | detect state first; exit to shell or send Claude-language instruction instead |
+| Sent instruction but it stayed pending at `❯` | add a submission verification pass after Enter; prefer `claude -p` for smoke |
+| Started a new benchmark inside an old Claude session | exit to shell and relaunch fresh process; do not rely on prior session state |
+| Sent `claude ...` while still inside Claude | shell-launch guard failed; return to shell first |
+| Thought dim scrollback text was pending input | ghost-input guard failed; re-capture and verify active prompt line |
+| Claude showed `ctrl+g to edit in Nvim` after a nudge | input was buffered, not submitted; verifier must not mark success |
+| Assumed Claude and Codex prompts behave the same | use runner-specific adapters |
+| Kept nudging a busy pane | classify `busy` and wait or interrupt intentionally |
+| Grok launched but prompt never reached compose | project-directory blocker still up; run `resolve-launch-blockers.sh` |
+| Cursor launched but compose unavailable | workspace-trust blocker; send `a` via blocker resolver |
+| Long `codex exec` / `cursor-agent` line split mid-command | launch-script guard failed; use `send-shell-script.sh` |
+| Codex hooks never fired in smoke | used marker-only wait; wait for Stop hook or use hook-smoke scenario |
+| Grok `-p` works but interactive path fails | two paths differ; use interaction-smoke protocol for production parity |
 
 ## Output
 
@@ -291,4 +397,5 @@ Suggested per-event keys:
 - `before_state`
 - `after_state`
 - `verification`
+- `launch_blocker`
 - `notes`

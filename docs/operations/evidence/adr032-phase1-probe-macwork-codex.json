@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T08:28:26.732Z",
+  "host": "macwork",
+  "runner": "codex",
+  "slotId": "adr032-gate-macwork",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/adr032-gate-Xuk0Pi",
+  "inTmux": false,
+  "tmuxPane": null,
+  "tmuxPaneSeenInHooks": true,
+  "hookLatencyMs": {
+    "installMs": 70,
+    "samples": [
+      31,
+      31,
+      32,
+      33,
+      39
+    ],
+    "median": 32
+  },
+  "gate": {
+    "installOnly": true,
+    "tmuxPaneRequired": false,
+    "tmuxPanePass": null,
+    "runnerTagPass": true,
+    "latencyMedianPass": true,
+    "latencyMedianTargetMs": 150
+  },
+  "notes": [
+    "Outside tmux: install + latency only; $TMUX_PANE proof is hook-smoke in scripts/e2e-tmux-runner-validate.sh.",
+    "Run separately in plan mode and after a real tool call to validate PostToolUse semantics.",
+    "Agreement NDJSON is optional fleet telemetry — not a Phase 1 closeout gate."
+  ],
+  "recentHookEvents": [
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782548906594,
+      "timestamp": 1782548906594,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782548906626,
+      "timestamp": 1782548906626,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782548906657,
+      "timestamp": 1782548906657,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782548906689,
+      "timestamp": 1782548906689,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782548906729,
+      "timestamp": 1782548906729,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "probe",
+      "cwd": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T//adr032-gate-Xuk0Pi",
+      "tmuxPane": "%0",
+      "slotId": "adr032-gate-macwork",
+      "runner": "codex"
+    }
+  ]
+}

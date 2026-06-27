@@ -1,6 +1,6 @@
 # PRD: Runner Observability Hooks Phase 1
 
-**Status:** Accepted for implementation planning
+**Status:** Shipped (code + gates); fleet agreement NDJSON collection continues on opt-in slots
 **Date:** 2026-05-22
 **Relates to:** [ADR-032](../adr/032-runner-observability-via-hooks.md), [ROADMAP-next](../ROADMAP-next.md), [ADR-023](../adr/023-runner-agnostic-tui-execution.md), [ADR-027](../adr/027-unified-gateway-state.md)
 
@@ -14,12 +14,26 @@ ADR-032 defines the long-term architecture: Farmslot-owned hook/statusline scrip
 
 Ship a telemetry-only Claude runner observability path that proves hook events can be collected, correlated to the tmux pane/slot, and compared against existing pane-derived readings without changing nudge behavior yet.
 
+## Runner validation harness (shipped with PR #81 closeout)
+
+Per-runner tmux scenarios live in `scripts/runner-validation/` (see [operations/runner-validation-harness.md](../operations/runner-validation-harness.md)):
+
+- `hook-smoke`, `prompt-accepted`, `turn-boundary` — Claude/Codex live tmux + hooks.jsonl
+- `pane-smoke` — Cursor/Grok print-mode launch + pane marker
+- `interaction-smoke` — Grok interactive TUI + project-directory + compose submit
+- `busy-composer` — Claude pane fixtures
+- `mode-switch` — Claude bypass permission mode
+
+Run: `node scripts/runner-validation/run.mjs --runner all --scenario all`
+
+Evidence: `docs/operations/evidence/runner-validate-<host>-<runner>-<scenario>.json`
+
 ## Non-Goals
 
 - Do not replace `send-keys` input.
 - Do not make hooks authoritative for nudge safety in Phase 1.
 - Do not remove pane scraping in Phase 1.
-- Do not implement Codex/Cursor providers in Phase 1.
+- Do not make Codex/Cursor hook readings authoritative in Phase 1 (Codex hooks shipped in PR #81 closeout as telemetry-only; Cursor stays pane-only).
 - Do not depend on OMC internals beyond optional read-only diagnostics documented in ADR-032.
 
 ## Requirements
@@ -109,7 +123,7 @@ Expose Phase 1 as minimal diagnostics, not as a new primary UI surface:
 - Claude hook events are written to `hooks.jsonl` and can be read through node-pushed `tmux.worker.inventory.updated` / `tmux.worker.list` for at least one active slot.
 - `statusline.json` is atomically updated and parsed without partial-read failures.
 - Existing nudge behavior is unchanged when hooks are absent, stale, malformed, or disabled.
-- Agreement logging captures at least 200 consecutive nudge/control decisions without introducing user-visible regressions.
+- Live tmux E2E passes via `scripts/e2e-tmux-runner-validate.sh` on a representative machine (hook-smoke + Grok smokes).
 - `apps/command-center && yarn typecheck` passes.
 
 ## Rollout
@@ -118,10 +132,10 @@ Expose Phase 1 as minimal diagnostics, not as a new primary UI surface:
 2. Add the hook writer/statusline fixture behind an opt-in pool or project setting.
 3. Add the gateway provider and agreement log in telemetry-only mode.
 4. Enable on Claude-runner slots one machine at a time.
-5. Review the 200-event agreement window before promoting ADR-032 Phase 2.
+5. Promote ADR-032 Phase 2 only after tmux E2E stays green across fleet machines and operator review of any agreement-log disagreements (no fixed event-count gate).
 
 ## Open Follow-Up
 
-- Codex hook integration is Phase 1.5 and requires verifying coexistence with OMX `.codex/hooks.json` registrations.
+- Codex hook coexistence with OMX `.codex/hooks.json` remains a fleet verification item (installer merges Farmslot hook alongside existing registrations).
 - Cursor remains pane-only unless a first-party streamed event surface appears.
 - Retiring Claude pane regex belongs to ADR-032 Phase 3 after one Claude version upgrade under hook-authoritative mode.

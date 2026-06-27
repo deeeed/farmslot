@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T07:45:36.653Z",
+  "totalRows": 0,
+  "comparableRows": 0,
+  "agreedRows": 0,
+  "agreementRate": 0,
+  "gate": {
+    "minEvents": 200,
+    "minRate": 0.98,
+    "eventsPass": false,
+    "ratePass": false
+  },
+  "disagreements": []
+}

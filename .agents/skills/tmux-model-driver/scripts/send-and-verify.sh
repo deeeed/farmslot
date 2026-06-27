@@ -39,8 +39,10 @@ elif payload and payload in last_line:
     print("pending_input")
 elif payload and payload in tail and "ctrl+g to edit in Nvim" in tail:
     print("input_buffered")
-elif payload and payload in tail and after.get("state") in {"claude", "codex"} and last_line == "❯":
+elif payload and payload in tail and after.get("state") in {"claude", "codex", "grok", "cursor"} and last_line == "❯":
     print("likely_pending_input")
+elif after.get("phase") == "launch-blocker":
+    print("launch_blocker")
 else:
     print("submitted")
 PY

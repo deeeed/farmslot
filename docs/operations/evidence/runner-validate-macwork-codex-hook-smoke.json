@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T08:25:50.204Z",
+  "host": "macwork",
+  "scenario": "hook-smoke",
+  "runner": "codex",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-tLWws4",
+  "slotId": "runner-validate-macwork-codex",
+  "session": "runner-validate-codex-hook-smoke-43198",
+  "launchMode": "codex-exec",
+  "registeredExpected": [
+    "SessionStart",
+    "PreToolUse",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "PreCompact",
+    "PostCompact",
+    "Stop"
+  ],
+  "registeredInstalled": [
+    "PostCompact",
+    "PostToolUse",
+    "PreCompact",
+    "PreToolUse",
+    "SessionStart",
+    "Stop",
+    "UserPromptSubmit"
+  ],
+  "observedEvents": [
+    "SessionStart",
+    "Stop",
+    "UserPromptSubmit"
+  ],
+  "newRows": [
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782548739985,
+      "timestamp": 1782548739985,
+      "hook_event_name": "SessionStart",
+      "event": "SessionStart",
+      "session_id": "019f082f-2fcb-7cd1-a05c-1670d51164b0",
+      "transcript_path": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-tLWws4/.agent/codex-home/sessions/2026/06/27/rollout-2026-06-27T10-25-38-019f082f-2fcb-7cd1-a05c-1670d51164b0.jsonl",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-tLWws4",
+      "permission_mode": "bypassPermissions",
+      "tmuxPane": "%251",
+      "slotId": "runner-validate-macwork-codex",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782548740361,
+      "timestamp": 1782548740361,
+      "hook_event_name": "UserPromptSubmit",
+      "event": "UserPromptSubmit",
+      "session_id": "019f082f-2fcb-7cd1-a05c-1670d51164b0",
+      "transcript_path": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-tLWws4/.agent/codex-home/sessions/2026/06/27/rollout-2026-06-27T10-25-38-019f082f-2fcb-7cd1-a05c-1670d51164b0.jsonl",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-tLWws4",
+      "permission_mode": "bypassPermissions",
+      "tmuxPane": "%251",
+      "slotId": "runner-validate-macwork-codex",
+      "runner": "codex"
+    },
+    {
+      "schemaVersion": 1,
+      "observedAt": 1782548743367,
+      "timestamp": 1782548743367,
+      "hook_event_name": "Stop",
+      "event": "Stop",
+      "session_id": "019f082f-2fcb-7cd1-a05c-1670d51164b0",
+      "transcript_path": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-tLWws4/.agent/codex-home/sessions/2026/06/27/rollout-2026-06-27T10-25-38-019f082f-2fcb-7cd1-a05c-1670d51164b0.jsonl",
+      "cwd": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-tLWws4",
+      "permission_mode": "bypassPermissions",
+      "tmuxPane": "%251",
+      "slotId": "runner-validate-macwork-codex",
+      "runner": "codex"
+    }
+  ],
+  "tmuxPaneSeen": true,
+  "requiredEventsSeen": {
+    "SessionStart": true,
+    "UserPromptSubmit": true,
+    "Stop": true
+  },
+  "unknownEvents": [],
+  "pass": true,
+  "error": null,
+  "paneTail": "provider: openai\napproval: never\nsandbox: workspace-write [workdir, /tmp, $TMPDIR]\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f082f-2fcb-7cd1-a05c-1670d51164b0\n--------\nuser\nReply with exactly TMUX_HOOK_OK and nothing else.\nhook: SessionStart\nhook: SessionStart Completed\nhook: UserPromptSubmit\nhook: UserPromptSubmit Completed\ncodex\nTMUX_HOOK_OK\nhook: Stop\nhook: Stop Completed\ntokens used\n2,814\n(base) ➜  runner-validate-codex-tLWws4 git:(main) ✗"
+}

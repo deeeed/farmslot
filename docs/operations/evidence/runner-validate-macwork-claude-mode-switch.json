@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-06-27T07:11:41.724Z",
+  "host": "macwork",
+  "scenario": "mode-switch",
+  "runner": "claude",
+  "skipped": false,
+  "skipReason": null,
+  "bypassPermissionsSeen": false,
+  "permissionMode": null,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash '/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-0u\n6h82/.runner-validate-launch.sh'\n(base) ➜  runner-validate-claude-0u6h82 bash '/var/folders/98/_mm6pm_d0nj7vj72jw\nq0hc_00000gn/T/runner-validate-claude-0u6h82/.runner-validate-launch.sh'\nTMUX_HOOK_OK\n(base) ➜  runner-validate-claude-0u6h82"
+}
