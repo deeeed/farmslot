@@ -13,11 +13,10 @@
  *     --out /tmp/obs-e2e.json
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -76,6 +75,7 @@ function hasTmuxSession(name) {
     tmux(['has-session', '-t', name]);
     return true;
   } catch {
+    // tmux has-session exits non-zero when the session does not exist
     return false;
   }
 }
@@ -145,17 +145,19 @@ function readObsDirFromSettings(repo) {
   return null;
 }
 
-function instructionNeedle(message) {
-  return message
-    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
-    .replace(/([/-])\s+/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 160);
-}
+let instructionNeedle;
+let runnerPromptDigest;
 
-function runnerPromptDigest(message) {
-  return createHash('sha1').update(instructionNeedle(message)).digest('hex').slice(0, 16);
+async function loadPromptDigestModule() {
+  const { register } = await import('tsx/esm/api');
+  register();
+  const mod = await import(
+    pathToFileURL(
+      path.join(ROOT, 'services/gateway/src/runners/observability-prompt-digest.ts'),
+    ).href,
+  );
+  instructionNeedle = mod.instructionNeedle;
+  runnerPromptDigest = mod.runnerPromptDigest;
 }
 
 function refreshCompatObservabilityLink(repo, runtimeDir) {
@@ -348,7 +350,8 @@ function checkRuntimeAlignment(repo, runtimeDir, projectRuntimeDir) {
   };
 }
 
-function main() {
+async function main() {
+  await loadPromptDigestModule();
   const args = parseArgs(process.argv.slice(2));
   const projectRuntimeDir = args.project ? readProjectRuntimeDir(args.project) : null;
   const runtimeDir = args.runtimeDir ?? projectRuntimeDir ?? '.agent';
@@ -430,4 +433,7 @@ function main() {
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(`[e2e-runner-observability] ${error?.message || String(error)}`);
+  process.exit(1);
+});

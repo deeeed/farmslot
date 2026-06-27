@@ -86,14 +86,14 @@ try {
   rotateIfLarge(logPath);
   const observedAt = Date.now();
   const event = payload.hook_event_name || payload.event;
-  let runnerPromptDigest;
+  let matchedDigest;
   let sentAt;
   if (event === 'UserPromptSubmit') {
     const sentDir = path.join(obsDir, 'sent');
     const promptText = promptTextFromPayload(payload);
     const matched = promptText ? matchSentinelForPrompt(sentDir, promptText) : null;
     if (matched) {
-      runnerPromptDigest = matched.digest;
+      matchedDigest = matched.digest;
       sentAt = matched.sentAt;
     }
   }
@@ -112,7 +112,7 @@ try {
     tmuxPane: process.env.TMUX_PANE || undefined,
     slotId: process.env.FARMSLOT_SLOT_ID || undefined,
     runner: 'claude',
-    ...(runnerPromptDigest ? { runnerPromptDigest } : {}),
+    ...(matchedDigest ? { runnerPromptDigest: matchedDigest } : {}),
     ...(sentAt ? { sentAt } : {}),
   };
   fs.appendFileSync(logPath, JSON.stringify(record) + '\\n');
