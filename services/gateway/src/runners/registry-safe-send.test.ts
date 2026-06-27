@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 
 import type { SlotVars } from '../core/config.js';
+
 import type { ObservabilityReading, RunnerActivity } from './observability-types.js';
 import { makeVars } from './test-fixtures.js';
 

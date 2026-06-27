@@ -1188,7 +1188,6 @@ export async function sendRunnerInstructionSafely(
     };
 
     if (pendingObs.kind === 'hook' && pendingObs.pending) {
-      const captured = await ensurePane();
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
     if (pendingObs.kind === 'fallback') {
