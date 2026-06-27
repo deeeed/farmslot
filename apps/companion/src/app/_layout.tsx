@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import 'expo-dev-client';
 
 import { AppEnvironmentIndicator } from '../components/AppEnvironmentIndicator';
+import { DemoMonitoringBanner } from '../components/DemoMonitoringBanner';
 import { AppUpdatesMonitor } from '../components/AppUpdatesMonitor';
 import { FallbackHeaderBack } from '../components/FallbackHeaderBack';
 import { GlobalFilterCoordinator } from '../components/GlobalFilterCoordinator';
@@ -45,6 +46,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <RecipeBridgeProvider bridgeName="@farmslot/companion">
         <StatusBar style="light" />
+        <DemoMonitoringBanner />
         <GlobalFilterCoordinator />
         {!isStoreScreenshotMode ? <AppUpdatesMonitor /> : null}
         <Stack
