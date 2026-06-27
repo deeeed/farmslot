@@ -149,7 +149,27 @@ After the initial command-center platform landed, Farmslot shipped persistent au
     - recipe operational validation and Expo project integration connected the protocol/harness direction to real client adoption rather than keeping the recipe work only inside Command Center.
     - command-center view models and repo support scripts/skills were reorganized for public readiness, and PR #128 (`b139955f`) consolidated the docs tree around canonical PRDs, ADRs, operations docs, reference material, and implemented history.
     - `4ddedfd3` added the Metro protocol module-resolution helper needed by embedded/client package consumers.
-- ADR-023, ADR-024, ADR-025, ADR-026, ADR-027, ADR-028, ADR-030, ADR-031, ADR-032, and ADR-033 provide the architecture trail for the current runner, observability, self-improvement, quota, replay provenance, auto-recovery, hook-based runner observability, and mobile tmux worker-control direction.
+  - `fe3f932` through `c2927e0` (2026-06-12) — ADR-036 CLI gateway profiles:
+    - kubeconfig-style `~/.farmslot/gateways.json` store, `farmslot gateway add/remove/list/use`, global `--gateway <name>`, and doctor Gateways reachability/auth hints.
+    - `farmslot login`/`logout`/`auth status` reuse the Companion pairing/auth flow against named profiles.
+  - `81c5704` / PR #30 (2026-06-13) and `bfcca19` / PR #46 (2026-06-22) — one-command local onboarding:
+    - `farmslot up`/`down` run a token-auth local gateway as a managed background service with the built UI bundle on the gateway port.
+    - `farmslot pair` exposes LAN/Tailscale pairing QR for the Companion via `pairing.create`/`pairing.exchange`.
+  - `7ec8827` / PR #32 (2026-06-13) — ADR-037 prepare profiles:
+    - project-owned `prepare.profiles` with phased `git`/`fixtures`/`deps`/`preflight`/`health`, machine-checkable `requires`, deterministic `fallback`, and `FARMSLOT_PREPARE_PROFILE` on every hook invocation.
+    - CLI/RPC `prepareProfile`, gateway `resolvePrepareProfile`, unified `slot-prepare-options` across dispatch wizard, slot view, step replay, and activate-on-slot; `skip_prepare_requires_health` removed from schema/gateway.
+  - `792469b` / PR #48 (2026-06-23) — pipeline-ops analytics V1:
+    - terminal-run NDJSON sink, `analytics.query`/`analytics.backfill`, `farmslot analytics` CLI, and Command Center `#analytics` dashboard for per-step bottlenecks, failure attribution, loop counts, and wait-time views (cost/tokens intentionally excluded until extraction is reliable).
+  - `70742c2` (2026-06-23) — update freshness:
+    - read-only `gateway.status` reports clone-behind-origin metadata from a TTL-cached `git fetch`; Command Center renders a dismissable update banner and `farmslot doctor` surfaces an Updates section.
+  - `1a491df` / PR #54 (2026-06-23) — family-compare view (template/model comparison slice 1):
+    - within-family Leaderboard/Matrix/Evidence/Cards tabs in family observability, `cmpTab`/`cmpSort` URL state, visual evidence matrix, and run-list family compare shortcuts.
+  - `60cad69` / PR #55 (2026-06-23) — activate-on-slot V1:
+    - `run.activateOnSlot` re-binds terminal/`blocked` runs onto a slot and re-drives PREPARE→DISPATCH with the `attach` warm profile (falls back to project warm default); exposed from run-detail, slot-view, and slot-history.
+  - `e4cbcb4` / PR #81 through `91674d9` (2026-06-27) — ADR-032 runner observability Phases 1–2:
+    - Claude/Codex hook installers, `scripts/runner-validation/` harness, obs-first `sendRunnerInstructionSafely`, agreement log, and hook-path timeout via `resolveSafeSendTimeoutMs()`.
+    - Phase 3 retirement of Claude-only pane-regex branches remains deferred until Phase 2 exit criteria clear after one Claude minor upgrade.
+- ADR-023, ADR-024, ADR-025, ADR-026, ADR-027, ADR-028, ADR-030, ADR-031, ADR-032, ADR-033, ADR-036, and ADR-037 provide the architecture trail for the current runner, observability, self-improvement, quota, replay provenance, auto-recovery, hook-based runner observability, CLI gateway profiles, prepare profiles, and mobile tmux worker-control direction.
 
 ### 4. Mobile Companion is shipped through oversight, evidence review, and operator-control lanes
 
@@ -164,12 +184,13 @@ Mobile is part of the implemented product, not just a placeholder. The canonical
 
 ### 5. Runner-neutral execution: contract shipped, second-runner bring-up still open
 
-Farmslot has the tmux-based, operator-attachable execution style, the unified launch entry point (`buildLaunchCommand` in `runners.ts`), the first-class `SafetyTier` model on Run (per-run override, family inheritance), and a capability-based runner registry pattern (`RunnerStatusProvider`, `runnerSupportsTmuxNudges`). The shared contract is in production. What remains open is the rules-shim layer (`.cursor/rules/<name>/RULE.md`, `.agents/skills/<name>/SKILL.md`) and OpenCode bring-up — both deferred until a second non-Claude runner reaches production use.
+Farmslot has the tmux-based, operator-attachable execution style, the unified launch entry point (`buildLaunchCommand` in `runners.ts`), the first-class `SafetyTier` model on Run (per-run override, family inheritance), and a capability-based runner registry pattern (`RunnerStatusProvider`, `runnerSupportsTmuxNudges`). ADR-032 Phases 1–2 add hook-based `RunnerObservability` for `event-driven` runners with obs-first safe-send. The shared contract is in production. What remains open is ADR-032 Phase 3 pane-regex retirement, the rules-shim layer (`.cursor/rules/<name>/RULE.md`, `.agents/skills/<name>/SKILL.md`), optional session resume on relaunch, and OpenCode bring-up — deferred until production pain or a second non-Claude runner need appears.
 
 **Evidence**
 
 - `5832f84` (PR #21) — runner-agnostic launch unification + `SafetyTier` (sandboxed/full-auto/dangerous) on Run.
 - `47fd062` — runner status behind a typed provider interface (`RunnerStatusProvider` registry pattern enforced by `apps/command-center/CLAUDE.md`).
+- `e4cbcb4` through `91674d9` / PRs #81–#84 — ADR-032 hook installers, runner-validation harness, obs-first `sendRunnerInstructionSafely`, and hook-path timeout.
 - Codex exec-mode validated on live slots (per ADR-023 status updates).
 - ADR-023 §4 marks the rules-shim layer deferred until a second non-Claude runner reaches production.
 - `docs/ROADMAP.md` still tracks runner-neutral expansion as deferred strategic follow-up after the active evaluation-hardening lane.
@@ -177,6 +198,7 @@ Farmslot has the tmux-based, operator-attachable execution style, the unified la
 ## Crosswalk Notes for Historical Truth
 
 - If this repository is migrated to a new public repo without preserving the original private commit graph, treat the source repository history through `4ddedfd3` (2026-06-02) as the pre-migration raw evidence. The most important compact anchors are PRs #73-#78, #81-#96, #121-#123, and #128 plus the commits named above.
+- Post-migration infrastructure on current `main` also anchors on `fe3f932` (ADR-036 profiles), `7ec8827` / PR #32 (ADR-037 prepare profiles), `792469b` / PR #48 (pipeline analytics V1), `1a491df` / PR #54 (family-compare), `60cad69` / PR #55 (activate-on-slot), `81c5704` / PR #30 + `bfcca19` / PR #46 (onboarding up/pair), and `e4cbcb4`–`91674d9` / PRs #81–#84 (ADR-032 Phases 1–2). PR numbers before and after migration are not always the same feature — prefer commit SHA when in doubt.
 - `docs/archive/roadmap-completed-milestones.md` remains the raw archive for command-center milestone history.
 - ADR-033 and the canonical mobile PRD retain the durable mobile operator-control detail.
 - `docs/adr/README.md` is helpful as an index, but it is not a complete inventory because ADR-026, ADR-027, and ADR-028 exist outside its current table.
@@ -184,25 +206,29 @@ Farmslot has the tmux-based, operator-attachable execution style, the unified la
 
 ## Current Historical Interpretation
 
-As of 2026-06-02:
+As of 2026-06-27:
 
 1. Farmslot shipped the core platform first.
 2. The desktop command center and persistent automation/orchestration stack are already real product surfaces.
 3. Mobile oversight is shipped through M4/global filters and M5/operator-control hardening is now usable: authenticated gateway profiles/pairing, mobile evidence/before→after review, progress/workspace navigation, foreground voice nudges, and registered-node tmux worker control are implemented.
-4. The runner-neutral execution contract is now in production for Claude + Codex (unified launch, `SafetyTier`, capability registry, status providers). ADR-032's hook/statusline observability plan is accepted for telemetry-first implementation, and mobile worker control already consumes the same status/source/freshness shape when available. The remaining strategic runner surface is OpenCode bring-up plus the deferred rules-shim layer (ADR-023 §4), both gated on a real second-runner production use case.
-5. The active near-term lane has moved from landing eval-package/operator-flow/mobile-control foundations to stabilizing recently changed UI surfaces, then closing replay evidence and corpus workflow gaps. Dispatch-wizard comparison entry, the bugfix local-first publish gate, eval experiment/result-package artifacts, the local `#evals` Reference/Candidate cockpit, shared dispatch queue/eval slot caps, worker-template selection, deterministic auto-recovery, flexible interactive dev intake, backlog intake, dev publication gating, authenticated Companion access, mobile evidence navigation, and Mobile Tmux Worker Control are implemented history. Recipe review/quality work should be treated as maintenance unless eval experiments or normal PR work exposes a concrete regression.
+4. The runner-neutral execution contract is in production for Claude + Codex (unified launch, `SafetyTier`, capability registry, status providers). ADR-032 Phases 1–2 are shipped: hook installers, runner-validation harness, and obs-first safe-send are live for `event-driven` runners. Phase 3 pane-regex retirement and the 7-day nudge-timeout exit gate remain monitoring work. OpenCode bring-up and the deferred rules-shim layer (ADR-023 §4) stay gated on a real second-runner production use case.
+5. The active near-term lane has moved from landing eval-package/operator-flow/mobile-control foundations to stabilizing recently changed UI surfaces, then closing replay evidence and corpus workflow gaps. Dispatch-wizard comparison entry, the bugfix local-first publish gate, eval experiment/result-package artifacts, the local `#evals` Reference/Candidate cockpit, shared dispatch queue/eval slot caps, worker-template selection, deterministic auto-recovery, flexible interactive dev intake, backlog intake, dev publication gating, authenticated Companion access, mobile evidence navigation, Mobile Tmux Worker Control, ADR-037 prepare profiles, ADR-036 CLI gateway profiles + `farmslot up`/`pair`, pipeline analytics V1, family-compare view, and activate-on-slot V1 are implemented history. Recipe review/quality work should be treated as maintenance unless eval experiments or normal PR work exposes a concrete regression.
 6. The repository has been prepared for public migration: docs are consolidated around canonical current-state sources, package publishing is changelog-gated, and the protocol/harness/Expo/skills packages have explicit external adoption boundaries.
 
 ## Explicit Not-Yet-Shipped Boundaries
 
-The following are planned roadmap items, not implemented history as of 2026-06-02:
+The following are planned roadmap items, not implemented history as of 2026-06-27:
 
 - short UI/UX stabilization fixes that will be discovered by real testing of the recently refactored `#evals`, `#backlog`, dispatch, run detail/family observability, slot view, workspace, dev publication gate, and mobile worker/evidence surfaces;
 - replay closure for a durable regression program: complete real-run manifests, consistent baseline/head/diff identity, richer missing-data semantics, and enough live replay evidence beyond dev-harness fixtures;
 - gateway-owned suite history, corpus dashboards, aggregate reports, and scorer execution beyond the shipped shared queue/cap execution path;
 - backlog-intelligence, Jira/GitHub write-back, or auto-dispatch policy expansion beyond PR #95's shipped guarded intake/queue handoff;
 - dev publication policy tuning beyond PR #96's shipped local-first gate, unless real interactive/autonomous dev evidence shows a concrete gap;
-- ADR-032 hook/statusline implementation beyond the accepted telemetry-first PRD/ADR docs;
+- ADR-032 Phase 3 pane-regex retirement and empirical Phase 2 exit monitoring (`nudgeTimeoutCount` over a 7-day Claude-slot window);
+- activate-on-slot warm-auto-pick follow-ups (affinity scan when `slotId` is omitted, recently-released slot eligibility) and portable replay delta for artifact-only cross-slot hydration;
+- dispatch-time nudge router, optional runner session resume on relaunch/fix paths, OpenShell slot-runtime spike, and published `capture-helper` package migration at the node integration boundary;
+- ADR-036 onboarding follow-ups only when demos/org rollout need them: portable `farmslot-companion` pack and clean-machine `curl | bash` rehearsal;
+- pipeline-ops analytics follow-ups: trend/time-series, regression detection, richer failure/host-load/prepare-substep capture, and cost-per-PR once token extraction is reliable;
 - mobile background wake-word, automatic send without tap, and remote node provisioning/enrollment beyond the shipped foreground/authenticated V1;
 - deeper iOS interactive worker-terminal QA and landscape/fullscreen terminal refinement beyond current Android real-device + iOS launch smoke;
 - any Langfuse/LangSmith export adapter or external eval platform integration.
