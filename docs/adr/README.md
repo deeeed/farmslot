@@ -1,12 +1,12 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-06-08
+**Last updated:** 2026-06-27
 **Stale by:** 2026-09-08
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
 
-Reference: [Product Roadmap](../ROADMAP.md) | [Command Center PRD](../PRD-command-center-canonical.md)
+Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../reference/adr-implementation-status.md) | [Command Center PRD](../PRD-command-center-canonical.md)
 
 | #                                                      | Decision                                                                | Status   |
 | ------------------------------------------------------ | ----------------------------------------------------------------------- | -------- |
@@ -43,7 +43,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [Command Center PRD](../PRD-comman
 | [031](031-deterministic-first-auto-recovery.md)        | Deterministic-First Auto-Recovery                                       | Accepted |
 | [032](032-runner-observability-via-hooks.md)           | Event-Driven Runner Observability via Hooks and Signal Files            | Accepted |
 | [033](033-mobile-tmux-worker-control.md)               | Mobile Control of General Tmux Workers                                  | Accepted |
-| [034](034-recipe-protocol-v1.md)                       | Recipe Protocol v1                                                      | Proposed |
+| [034](034-recipe-protocol-v1.md)                       | Recipe Protocol v1                                                      | Accepted |
 | [035](035-node-support-bundles.md)                     | Node Support Bundles                                                    | Accepted |
 | [036](036-cli-gateway-profiles.md)                     | CLI Gateway Profiles and Auth                                           | Accepted |
 | [037](037-prepare-profiles.md)                         | Prepare Profiles — Project-Defined Slot Entry Points                    | Accepted |

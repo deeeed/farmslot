@@ -169,7 +169,8 @@ After the initial command-center platform landed, Farmslot shipped persistent au
   - `e4cbcb4` / PR #81 through `91674d9` (2026-06-27) — ADR-032 runner observability Phases 1–2:
     - Claude/Codex hook installers, `scripts/runner-validation/` harness, obs-first `sendRunnerInstructionSafely`, agreement log, and hook-path timeout via `resolveSafeSendTimeoutMs()`.
     - Phase 3 retirement of Claude-only pane-regex branches remains deferred until Phase 2 exit criteria clear after one Claude minor upgrade.
-- ADR-023, ADR-024, ADR-025, ADR-026, ADR-027, ADR-028, ADR-030, ADR-031, ADR-032, ADR-033, ADR-036, and ADR-037 provide the architecture trail for the current runner, observability, self-improvement, quota, replay provenance, auto-recovery, hook-based runner observability, CLI gateway profiles, prepare profiles, and mobile tmux worker-control direction.
+  - Recipe Protocol v1 core (ADR-034) — `@farmslot/protocol` validators (`validateRecipeDocument`, `validateRecipeWithManifest`, `validateRecipeArtifactPackage`), `@farmslot/recipe-harness` graph runtime, `farmslot recipe validate`, and `docs/examples/recipes/farmslot/` self-validation fixtures. Rollout gaps (all-project typed manifest emission, manifest-first UI, live self-validation) remain open; see [reference/adr-implementation-status.md](reference/adr-implementation-status.md).
+- ADR-023, ADR-024, ADR-025, ADR-026, ADR-027, ADR-028, ADR-030, ADR-031, ADR-032, ADR-033, ADR-034, ADR-036, and ADR-037 provide the architecture trail for the current runner, observability, self-improvement, quota, replay provenance, auto-recovery, hook-based runner observability, recipe protocol, CLI gateway profiles, prepare profiles, and mobile tmux worker-control direction.
 
 ### 4. Mobile Companion is shipped through oversight, evidence review, and operator-control lanes
 
@@ -206,7 +207,7 @@ Farmslot has the tmux-based, operator-attachable execution style, the unified la
 
 ## Current Historical Interpretation
 
-As of 2026-06-27:
+As of 2026-06-27 (see [reference/adr-implementation-status.md](reference/adr-implementation-status.md) for ADR-level shipped-vs-open detail):
 
 1. Farmslot shipped the core platform first.
 2. The desktop command center and persistent automation/orchestration stack are already real product surfaces.
@@ -220,6 +221,7 @@ As of 2026-06-27:
 The following are planned roadmap items, not implemented history as of 2026-06-27:
 
 - short UI/UX stabilization fixes that will be discovered by real testing of the recently refactored `#evals`, `#backlog`, dispatch, run detail/family observability, slot view, workspace, dev publication gate, and mobile worker/evidence surfaces;
+- Recipe Protocol v1 **rollout** (core validators/harness/fixtures are shipped): all-project typed manifest emission, manifest-first UI, live self-validation execution, and project hook alignment;
 - replay closure for a durable regression program: complete real-run manifests, consistent baseline/head/diff identity, richer missing-data semantics, and enough live replay evidence beyond dev-harness fixtures;
 - gateway-owned suite history, corpus dashboards, aggregate reports, and scorer execution beyond the shipped shared queue/cap execution path;
 - backlog-intelligence, Jira/GitHub write-back, or auto-dispatch policy expansion beyond PR #95's shipped guarded intake/queue handoff;

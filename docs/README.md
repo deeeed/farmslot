@@ -8,6 +8,7 @@ This folder is the repo-native source of truth for product scope, architecture d
 - [Product PRD](PRD-product.md) — top-level product scope.
 - [Roadmap](ROADMAP.md) and [next roadmap](ROADMAP-next.md) — current execution direction.
 - [ADR index](adr/README.md) — accepted architecture/product decisions.
+- [ADR implementation status](reference/adr-implementation-status.md) — what is shipped vs still open per current ADR.
 
 ## Folder map
 

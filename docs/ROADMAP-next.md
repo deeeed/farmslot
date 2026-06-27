@@ -1,7 +1,7 @@
 # Farmslot Near-Term Roadmap
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-06-27 (in-flight infrastructure audit — ADR-032/036/037, family-compare, analytics V1 confirmed shipped)
+**Last updated:** 2026-06-27 (ADR implementation status matrix; Recipe Protocol v1 core shipped, adoption partial)
 **Stale by:** 2026-08-22
 
 This is the canonical near-term execution roadmap for Farmslot after the dispatch comparison, bugfix local-first publication gate, eval replay cockpit, deterministic auto-recovery, flexible interactive dev work, shared dispatch queue/eval caps, worker-template selection, backlog intake, and dev publication gating. Use it with [ROADMAP.md](ROADMAP.md), [IMPLEMENTED-HISTORY.md](IMPLEMENTED-HISTORY.md), [DOCS-GOVERNANCE.md](DOCS-GOVERNANCE.md), [PRD-product.md](PRD-product.md), and the canonical chunk PRDs.
@@ -14,7 +14,7 @@ This document identifies what should land next. Shipped history belongs in [IMPL
 
 Farmslot now has a first shipped replay/eval loop for evaluating agent output: worker screenshots/videos, evidence manifests, media lightboxes, artifact galleries, family observability, durable diffs, review-signal counters, retrospective learnings, Co-Pilot/log/recovery evidence surfaces, dispatch comparison lanes, a bugfix local-first publication gate, a local `#evals` Reference/Candidate cockpit, shared dispatch queue/eval slot caps, selectable worker template versions, backlog intake, and local-first dev publication gating.
 
-The immediate product problem is no longer landing the eval foundation; PRs #74-#78 shipped that foundation. The problem is **turning shipped eval packages into a reliable regression program**. When we adjust prompts, worker templates, recipe-runner behavior, model/runner configuration, flexible interactive-dev workflow, or the recipe protocol itself, Farmslot should be able to recreate previous PR outcomes as artifact-only Candidate packages and compare them against known-good Reference packages with diffs, visual evidence, validation evidence, review signals, time/cost, and explicit package comparison pairs. The new Generic Recipe Protocol v1 proposal in [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md) is the planning surface for standardizing the recipe graph envelope, typed artifact manifest, and Farmslot self-validation recipes that make those comparisons trustworthy.
+The immediate product problem is no longer landing the eval foundation; PRs #74-#78 shipped that foundation. The problem is **turning shipped eval packages into a reliable regression program**. When we adjust prompts, worker templates, recipe-runner behavior, model/runner configuration, flexible interactive-dev workflow, or the recipe protocol itself, Farmslot should be able to recreate previous PR outcomes as artifact-only Candidate packages and compare them against known-good Reference packages with diffs, visual evidence, validation evidence, review signals, time/cost, and explicit package comparison pairs. Recipe Protocol v1 core (ADR-034) is **shipped** in validators, harness, CLI, and self-validation fixtures — see [reference/adr-implementation-status.md](reference/adr-implementation-status.md). Remaining work is **adoption and replay dependency**: typed manifests on all project runs, manifest-first UI, live self-validation execution, and project hook alignment. [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md) remains the product checklist for that rollout.
 
 This continues to extend the existing run-family/lane/run model from ADR-024 and add evals over result packages, rather than create a second top-level replay taxonomy or a separate line concept. The shipped near-term eval lane is incremental: single-case experiment/package foundation, dataset/suite/scorer boundary, local suite-builder fan-out, shared dispatch-queue slot caps, and worker-template version selection are complete; remaining gateway-owned suite history, scoring/reporting, and corpus/history surfaces wait until replay closure is reliable.
 
@@ -23,7 +23,7 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 ## Immediate Execution Order
 
 1. **Run a short operator UI/UX stabilization pass.** Exercise the recently changed Command Center surfaces (`#evals`, `#backlog`, dispatch, run detail/family observability, slot view, ready/review workspaces, and dev publication gate) plus the newly shipped Mobile Companion operator surfaces (active runs, artifacts/diff/recipe workspaces, PRs, terminal, and Workers). Fix concrete regressions and polish issues found during real operator use. This is stabilization of shipped roadmap work, not a new product lane; small run-history curation affordances such as operator tags for demo/review collections belong here. Companion structural refactor (screen controllers, feature folders, shared workspace kit) is captured in [plans/companion-ui-architecture-refactor.md](plans/companion-ui-architecture-refactor.md).
-2. **Start Generic Recipe Protocol v1 as the replay/evidence substrate.** Use [reference/recipe-protocol-v1.md](reference/recipe-protocol-v1.md), [ADR-034](adr/034-recipe-protocol-v1.md), and [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md) to formalize the mandatory `validate.workflow` graph envelope, typed artifact manifest, additive composition/start-state semantics, and proof-window evidence phases before deeper replay/corpus expansion depends on unstable recipe evidence.
+2. **Complete Recipe Protocol v1 adoption (ADR-034 core is shipped).** Validators (`validateRecipeDocument`, `validateRecipeWithManifest`, `validateRecipeArtifactPackage`), `@farmslot/recipe-harness`, `farmslot recipe validate`, and `docs/examples/recipes/farmslot/` fixtures already exist. Close the remaining PRD gaps from [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md): typed `artifact-manifest.json` on all project runs, manifest-first UI (reduce filename inference), Mobile/Audiolab `hooks.recipe_run` alignment, live self-validation execution, and onboarding doc consolidation — in parallel with replay closure, not as a greenfield protocol build.
 3. **Close remaining package provenance and real-run capture gaps.** Worker-template version selection is shipped, but durable replay still needs actual eval baseline SHA, candidate head/diff identity, complete real-run manifests, richer task-profile metadata, typed recipe artifact semantics, and clearer missing-data semantics before evals can be treated as a regression program.
 4. **Use eval packages to validate prompt/template/harness changes.** The first practical target is evaluating whether recipe/video/base-flow/template/protocol changes recreate prior PR quality better or worse.
 5. **Promote replay from queued cockpit execution to durable operator workflow.** The shared dispatch queue, eval slot caps, and template selection are shipped; add gateway-owned suite history, corpus/history views, and reporting only after replay closure is trustworthy.
@@ -90,30 +90,32 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 - adding a new replay/reference `FlowType`,
 - adding corpus/history dashboards or external eval exports.
 
-### 2. Planned Follow-Up — Generic Recipe Protocol v1
+### 2. Active Follow-Up — Recipe Protocol v1 Adoption (core shipped)
 
-**Status:** planned PRD proposal; implementation should begin only after explicit approval.
+**Status:** ADR-034 **Accepted**; protocol **core shipped**; product rollout **partial**. See [reference/adr-implementation-status.md](reference/adr-implementation-status.md#adr-034--recipe-protocol-v1-accepted).
 
 **Planning artifacts:** [reference/recipe-protocol-v1.md](reference/recipe-protocol-v1.md), [ADR-034](adr/034-recipe-protocol-v1.md), and [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md).
 
-**Goal:** standardize Farmslot recipes around the existing `validate.workflow` graph envelope while preserving project-native runner/adapters. The work should make recipe evidence portable across Extension, Mobile, Audiolab, future backend/web/macOS projects, Command Center, Gateway, and Mobile Companion without rewriting existing project validators.
+**Shipped core:**
 
-**Placement rationale:** this belongs before deeper replay/corpus productization because eval packages depend on trustworthy recipe artifacts, replay semantics, and artifact viewers. It also belongs after the immediate UI stabilization pass because the current operator surfaces are already high-churn.
+- canonical spec and ADR-034 decision;
+- `@farmslot/protocol` validators and `@farmslot/recipe-harness` graph runtime (composition, `startState`, typed manifest writers);
+- `farmslot recipe validate` and Farmslot self-validation **fixtures** under `docs/examples/recipes/farmslot/`;
+- example v1 recipes and action manifests for browser/mobile/backend paths.
 
-**Required v1 outcomes:**
+**Remaining PRD outcomes (not greenfield — adoption/rollout):**
 
-- formalize the mandatory `validate.workflow` graph envelope;
-- keep flat recipes valid while adding optional `uses`, `call`, `startState`, `proofTargets`, `phase`, and `record` semantics for composed recipes;
-- preserve Extension/Mobile/Audiolab validators as reference implementations;
-- specify a Farmslot compatibility validator for graph envelope + artifact package + flow catalogs;
-- add a typed artifact manifest so UI surfaces do not rely only on filename inference;
-- define UI-class replay/slow-playback expectations separately from backend/batch expectations;
-- plan Farmslot self-validation recipes for Command Center web UI, Gateway RPC/API, Mobile Companion, recipe replay, artifact viewer, and ready/review workspaces;
+- all project runners emit typed `artifact-manifest.json` on every run (legacy summary/trace-only packages remain valid but non-v1);
+- Command Center and Companion consume manifests first; filename inference stays fallback only;
+- Mobile/Audiolab align on explicit `hooks.recipe_run` where worker-template invocation is still the path;
+- execute the self-validation fixture suite against live Command Center/Gateway/Companion surfaces, not only offline validation;
 - consolidate `docs/reference/recipe-runner-protocol.md`, `projects/README.md`, and new-project onboarding examples.
 
-### 3. In-Flight Follow-Up — `@farmslot/skills` recipe-first adoption kit
+**Placement rationale:** replay closure and eval packages depend on trustworthy recipe evidence. The contract exists; the gap is consistent emission and operator-visible proof on real runs.
 
-**Status:** implementation is in progress on the `@farmslot/skills` package branch.
+### 3. Active Follow-Up — `@farmslot/skills` recipe-first adoption kit
+
+**Status:** package exists on `main` (`packages/skills`); polish, publish, and external dogfood remain.
 
 **Goal:** make Farmslot useful before a project adopts the full framework. A user should be able to install a small skill pack, ask an agent to create or review a proof recipe, and produce a credible evidence plan with no gateway, pool, Command Center, or multi-machine setup.
 
@@ -218,6 +220,7 @@ These were previously future-looking backlog items, but the codebase now shows t
 
 ## Cross-Checks
 
+- `docs/reference/adr-implementation-status.md` is the canonical shipped-vs-open matrix for current ADRs; keep it aligned when roadmap items move.
 - `docs/IMPLEMENTED-HISTORY.md` records shipped work; do not reframe planned evals as implemented history.
 - `docs/ROADMAP.md` owns product-level sequencing; this file owns the near-term execution shape.
 - Bugfix local-first publication gating is shipped history; use it as the clean boundary that eval packages build on.
