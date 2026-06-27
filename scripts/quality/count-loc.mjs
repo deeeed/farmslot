@@ -7,7 +7,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const HISTORY_PATH = 'docs/reference/loc-history.json';
+export const HISTORY_PATH = 'docs/reference/loc-history.json';
 
 const BINARY_EXTENSIONS = new Set([
   '.png',
@@ -94,6 +94,7 @@ function parseArgs(argv) {
     json: false,
     record: false,
     trend: false,
+    verify: false,
     help: false,
   };
 
@@ -118,6 +119,9 @@ function parseArgs(argv) {
         break;
       case '--trend':
         options.trend = true;
+        break;
+      case '--verify':
+        options.verify = true;
         break;
       case '--group': {
         const value = argv[++i];
@@ -157,6 +161,7 @@ Options:
   --exclude-tests                  Skip *.test.* and /test/ paths
   --exclude-dev                    Skip */src/dev/* harness fixtures
   --record                         Append snapshot to docs/reference/loc-history.json
+  --verify                         Fail if committed history is stale (same check as LOC History CI)
   --trend                          Show LOC evolution from recorded snapshots
   --json                           Machine-readable output
   --help, -h                       Show this help
@@ -166,7 +171,14 @@ Examples:
   yarn quality:loc --group area --scope framework
   yarn quality:loc --exclude-tests --exclude-dev
   yarn quality:loc --record --scope framework
+  yarn quality:loc --verify --scope framework
   yarn quality:loc --trend
+
+Squash-merge workflow:
+  1. Finish code changes on the PR branch.
+  2. yarn quality:loc:record  (metrics exclude docs/reference/loc-history.json)
+  3. yarn quality:loc:verify  (must pass before merge; squash SHA may differ)
+  4. Squash merge — main LOC History uses metrics-match skip when tree is unchanged.
   yarn quality:loc --json --group both`);
 }
 
@@ -191,7 +203,10 @@ function isDevHarnessFile(file, excludeDev) {
   return file.includes('/src/dev/');
 }
 
-function shouldCount(file, options) {
+export function shouldCount(file, options) {
+  // Self-referential: snapshot rows live in this file; counting it makes --record
+  // append ~58 config lines that are not in the stored totals and breaks CI verify.
+  if (file === HISTORY_PATH) return false;
   const ext = extensionOf(file);
   if (BINARY_EXTENSIONS.has(ext)) return false;
   if (IGNORED_SUFFIXES.some((suffix) => file.endsWith(suffix))) return false;
@@ -424,6 +439,28 @@ export function locSnapshotMetricsMatch(last, next) {
   );
 }
 
+/** Same contract as .github/workflows/loc-history.yml — restores file on failure. */
+export function verifyLocHistory(options) {
+  if (!existsSync(HISTORY_PATH)) {
+    return { ok: false, head: gitSha(), reason: `missing ${HISTORY_PATH}` };
+  }
+  const head = gitSha();
+  const committed = readFileSync(HISTORY_PATH, 'utf8');
+  const { areas, rollups } = collect(options);
+  const areaTotals = summarize(areas);
+  recordSnapshot(options, areaTotals, rollups);
+  const updated = readFileSync(HISTORY_PATH, 'utf8');
+  if (committed === updated) {
+    return { ok: true, head };
+  }
+  writeFileSync(HISTORY_PATH, committed);
+  return {
+    ok: false,
+    head,
+    reason: `${HISTORY_PATH} is stale — run 'yarn quality:loc:record' and commit`,
+  };
+}
+
 function recordSnapshot(options, totals, rollups) {
   const history = loadHistory();
   const snapshot = buildSnapshot(options, totals, rollups);
@@ -512,6 +549,16 @@ if (options.help) {
 if (options.trend) {
   printTrend();
   process.exit(0);
+}
+
+if (options.verify) {
+  const result = verifyLocHistory(options);
+  if (result.ok) {
+    console.log(`[count-loc] LOC history is current for ${result.head}`);
+    process.exit(0);
+  }
+  console.error(`[count-loc] ${result.reason}`);
+  process.exit(1);
 }
 
 const { areas, rollups, languages } = collect(options);

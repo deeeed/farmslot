@@ -290,6 +290,238 @@
           "total": 7215
         }
       }
+    },
+    {
+      "recordedAt": "2026-06-27T15:00:56.675Z",
+      "commit": "1733aa0bd096b946e1be92fc42054bbb068c95f2",
+      "scope": "framework",
+      "exclusions": {
+        "tests": false,
+        "dev": false
+      },
+      "totals": {
+        "files": 1890,
+        "code": 362214,
+        "docs": 25415,
+        "config": 9657,
+        "total": 398603
+      },
+      "rollup": {
+        "command-center": {
+          "code": 115730,
+          "total": 116942
+        },
+        "companion": {
+          "code": 60727,
+          "total": 62200
+        },
+        "gateway": {
+          "code": 120789,
+          "total": 120893
+        },
+        "packages": {
+          "code": 35693,
+          "total": 38558
+        },
+        "scripts": {
+          "code": 16359,
+          "total": 16660
+        },
+        "docs": {
+          "code": 0,
+          "total": 19775
+        },
+        "docs-site": {
+          "code": 7080,
+          "total": 11859
+        },
+        "node": {
+          "code": 4288,
+          "total": 4356
+        },
+        "projects": {
+          "code": 0,
+          "total": 145
+        },
+        "infra": {
+          "code": 1548,
+          "total": 7215
+        }
+      }
+    },
+    {
+      "recordedAt": "2026-06-27T15:06:57.692Z",
+      "commit": "6d2c311508b6fa17f8c324ac4a1b1c1c8930e5c5",
+      "scope": "framework",
+      "exclusions": {
+        "tests": false,
+        "dev": false
+      },
+      "totals": {
+        "files": 1890,
+        "code": 362214,
+        "docs": 25415,
+        "config": 9715,
+        "total": 398661
+      },
+      "rollup": {
+        "command-center": {
+          "code": 115730,
+          "total": 116942
+        },
+        "companion": {
+          "code": 60727,
+          "total": 62200
+        },
+        "gateway": {
+          "code": 120789,
+          "total": 120893
+        },
+        "packages": {
+          "code": 35693,
+          "total": 38558
+        },
+        "scripts": {
+          "code": 16359,
+          "total": 16660
+        },
+        "docs": {
+          "code": 0,
+          "total": 19833
+        },
+        "docs-site": {
+          "code": 7080,
+          "total": 11859
+        },
+        "node": {
+          "code": 4288,
+          "total": 4356
+        },
+        "projects": {
+          "code": 0,
+          "total": 145
+        },
+        "infra": {
+          "code": 1548,
+          "total": 7215
+        }
+      }
+    },
+    {
+      "recordedAt": "2026-06-27T15:10:17.358Z",
+      "commit": "51eef2b54e4ee5ed9d333cd8dc4c94d163379252",
+      "scope": "framework",
+      "exclusions": {
+        "tests": false,
+        "dev": false
+      },
+      "totals": {
+        "files": 1889,
+        "code": 362217,
+        "docs": 25415,
+        "config": 9362,
+        "total": 398311
+      },
+      "rollup": {
+        "command-center": {
+          "code": 115730,
+          "total": 116942
+        },
+        "companion": {
+          "code": 60727,
+          "total": 62200
+        },
+        "gateway": {
+          "code": 120789,
+          "total": 120893
+        },
+        "packages": {
+          "code": 35693,
+          "total": 38558
+        },
+        "scripts": {
+          "code": 16362,
+          "total": 16663
+        },
+        "docs": {
+          "code": 0,
+          "total": 19480
+        },
+        "docs-site": {
+          "code": 7080,
+          "total": 11859
+        },
+        "node": {
+          "code": 4288,
+          "total": 4356
+        },
+        "projects": {
+          "code": 0,
+          "total": 145
+        },
+        "infra": {
+          "code": 1548,
+          "total": 7215
+        }
+      }
+    },
+    {
+      "recordedAt": "2026-06-27T15:12:36.133Z",
+      "commit": "110dd960f75bd35b3ba1d10bc7d5b2e821901f47",
+      "scope": "framework",
+      "exclusions": {
+        "tests": false,
+        "dev": false
+      },
+      "totals": {
+        "files": 1889,
+        "code": 362276,
+        "docs": 25415,
+        "config": 9354,
+        "total": 398362
+      },
+      "rollup": {
+        "command-center": {
+          "code": 115730,
+          "total": 116942
+        },
+        "companion": {
+          "code": 60727,
+          "total": 62200
+        },
+        "gateway": {
+          "code": 120789,
+          "total": 120893
+        },
+        "packages": {
+          "code": 35693,
+          "total": 38558
+        },
+        "scripts": {
+          "code": 16421,
+          "total": 16722
+        },
+        "docs": {
+          "code": 0,
+          "total": 19480
+        },
+        "docs-site": {
+          "code": 7080,
+          "total": 11859
+        },
+        "node": {
+          "code": 4288,
+          "total": 4356
+        },
+        "projects": {
+          "code": 0,
+          "total": 145
+        },
+        "infra": {
+          "code": 1548,
+          "total": 7207
+        }
+      }
     }
   ]
 }
