@@ -30,16 +30,4 @@ jobs:
         run: corepack enable
 
       - name: Verify committed LOC history matches current tree
-        run: |
-          set -euo pipefail
-          BEFORE_SHA="$(git rev-parse HEAD)"
-          cp docs/reference/loc-history.json /tmp/loc-history.committed.json
-          node scripts/quality/count-loc.mjs --scope framework --record
-          if git diff --quiet docs/reference/loc-history.json; then
-            echo "LOC history is current for ${BEFORE_SHA}"
-            exit 0
-          fi
-          echo "::error::docs/reference/loc-history.json is stale. Run 'yarn quality:loc:record' locally and commit the update in your PR."
-          git diff --stat docs/reference/loc-history.json
-          git checkout -- docs/reference/loc-history.json
-          exit 1
+        run: yarn quality:loc:verify

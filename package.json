@@ -27,6 +27,7 @@
     "quality:large-files": "node scripts/quality/check-large-files.mjs",
     "quality:loc": "node scripts/quality/count-loc.mjs",
     "quality:loc:record": "node scripts/quality/count-loc.mjs --scope framework --record",
+    "quality:loc:verify": "node scripts/quality/count-loc.mjs --scope framework --verify",
     "quality:loc:trend": "node scripts/quality/count-loc.mjs --trend",
     "typecheck:command-center": "yarn --cwd apps/command-center typecheck",
     "typecheck:companion": "yarn --cwd apps/companion typecheck",
