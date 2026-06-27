@@ -14,6 +14,9 @@ import {
   getRunnerDefinition,
   getRunnerObservability,
   normalizeRunner,
+  resolveSafeSendTimeoutMs,
+  RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
+  RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
   runnerBufferedInstructionSubmitKey,
   runnerContinueCommand,
   runnerDefaultModel,
@@ -936,6 +939,18 @@ describe('buildLaunchCommand', () => {
     it('exposes hook-file observability provider after Phase 1.5', () => {
       assert.equal(getRunnerDefinition('codex').observabilityScope, 'event-driven');
       assert.ok(getRunnerObservability('codex'));
+    });
+  });
+
+  describe('ADR-032 phase 2 safe-send timeouts', () => {
+    it('uses hook timeout for event-driven runners with observability', () => {
+      assert.equal(resolveSafeSendTimeoutMs('claude'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
+      assert.equal(resolveSafeSendTimeoutMs('codex'), RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS);
+    });
+
+    it('uses pane timeout for pane-only runners', () => {
+      assert.equal(resolveSafeSendTimeoutMs('grok'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
+      assert.equal(resolveSafeSendTimeoutMs('cursor'), RUNNER_PANE_SAFE_SEND_TIMEOUT_MS);
     });
   });
 

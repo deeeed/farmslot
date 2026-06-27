@@ -25,9 +25,15 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 import { claudeHookObservability } from './claude-observability.js';
 import { disagreementReason, logRunnerObservabilityAgreement } from './observability-agreement.js';
 import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
-import { instructionNeedle, normalizeInstructionText } from './observability-prompt-digest.js';
+import { instructionNeedle, normalizeInstructionText, runnerPromptDigest } from './observability-prompt-digest.js';
+import {
+  RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
+  RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
+  selectBusyFromObservabilityAndPane,
+  selectPendingFromObservabilityAndPane,
+} from './observability-send-decision.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
-import type { ObservabilityScope, RunnerObservability } from './observability-types.js';
+import type { ObservabilityReading, ObservabilityScope, RunnerActivity, RunnerObservability } from './observability-types.js';
 import { classifyRunnerPaneStateBestEffort } from './pane-classifier.js';
 
 /**
@@ -265,6 +271,19 @@ export function getRunnerObservability(runnerId?: string | null): RunnerObservab
   const def = getRunnerDefinition(runnerId);
   if (def.observabilityScope !== 'event-driven') return null;
   return KNOWN_RUNNER_OBSERVABILITY[normalizeRunner(runnerId)] ?? null;
+}
+
+export {
+  RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
+  RUNNER_PANE_SAFE_SEND_TIMEOUT_MS,
+} from './observability-send-decision.js';
+
+export function resolveSafeSendTimeoutMs(runnerId: string): number {
+  const def = getRunnerDefinition(runnerId);
+  if (def.observabilityScope === 'event-driven' && getRunnerObservability(runnerId)) {
+    return RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS;
+  }
+  return RUNNER_PANE_SAFE_SEND_TIMEOUT_MS;
 }
 
 /**
@@ -821,6 +840,60 @@ export function runnerPaneShouldSubmitExistingInstruction(
   return true;
 }
 
+async function readRunnerActivityFromObservability(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+): Promise<ObservabilityReading<RunnerActivity> | null> {
+  const observability = getRunnerObservability(runner);
+  if (!observability) return null;
+  try {
+    return await observability.getActivity(vars, target);
+  } catch (error) {
+    console.warn(
+      `[runner-observability] activity read failed for ${vars.slotId}: ${(error as Error).message}`,
+    );
+    return null;
+  }
+}
+
+async function runnerHasPendingInstruction(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  message: string,
+  pane: string,
+): Promise<boolean> {
+  const panePending = runnerPaneHasPendingInstruction(pane, message, runner);
+  const observability = getRunnerObservability(runner);
+  if (!observability) return panePending;
+  try {
+    const reading = await observability.promptAccepted(
+      vars,
+      target,
+      runnerPromptDigest(message),
+      0,
+    );
+    return selectPendingFromObservabilityAndPane(reading, panePending).pending;
+  } catch (error) {
+    console.warn(
+      `[runner-observability] promptAccepted read failed for ${vars.slotId}: ${(error as Error).message}`,
+    );
+    return panePending;
+  }
+}
+
+async function runnerShowsBusyComposer(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  pane: string,
+): Promise<boolean> {
+  const paneBusy = paneShowsBusyComposer(pane);
+  const reading = await readRunnerActivityFromObservability(vars, target, runner);
+  return selectBusyFromObservabilityAndPane(reading, paneBusy).busy;
+}
+
 async function recordRunnerObservabilityAgreement(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -905,7 +978,7 @@ async function warnIfObservabilityDegraded(
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   console.warn(
-    `[${logPrefix}] [observability] degraded — hooks.jsonl did not advance within ${heartbeatMs}ms after send-keys; pane fallback remains authoritative`,
+    `[${logPrefix}] [observability] degraded — hooks.jsonl did not advance within ${heartbeatMs}ms after send-keys; pane fallback engaged`,
   );
 }
 
@@ -1018,11 +1091,12 @@ export async function sendRunnerInstructionSafely(
   runnerId: string,
   message: string,
   logPrefix: string,
-  timeoutMs = 30000,
+  timeoutMs?: number,
   opts: { forceBusyPoll?: boolean } = {},
 ): Promise<boolean> {
   const runner = normalizeRunner(runnerId);
   const def = getRunnerDefinition(runner);
+  const effectiveTimeoutMs = timeoutMs ?? resolveSafeSendTimeoutMs(runner);
   // Skip the busy-composer poll iff the runner doesn't require it AND the caller didn't opt
   // in. Most call sites send into an idle prompt where the registry default (Claude: false,
   // codex: true) is correct. The branch-affinity nudge flow targets a Claude session that may
@@ -1030,16 +1104,16 @@ export async function sendRunnerInstructionSafely(
   // to clear — it passes `forceBusyPoll: true` to override the per-runner default.
   if (!def.requiresBusyComposerPoll && !opts.forceBusyPoll) {
     const pane = await captureTmuxPane(vars, target);
-    if (runnerPaneHasPendingInstruction(pane, message, runner)) {
+    if (await runnerHasPendingInstruction(vars, target, runner, message, pane)) {
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
     await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
     return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
   }
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Date.now() + effectiveTimeoutMs;
   while (Date.now() < deadline) {
     const pane = await captureTmuxPane(vars, target);
-    if (runnerPaneHasPendingInstruction(pane, message, runner)) {
+    if (await runnerHasPendingInstruction(vars, target, runner, message, pane)) {
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
     if (runnerPaneContainsInstruction(pane, message)) {
@@ -1052,7 +1126,7 @@ export async function sendRunnerInstructionSafely(
       console.log(`[${logPrefix}] instruction already present in ${target}; sending submit key`);
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
     }
-    if (!paneShowsBusyComposer(pane)) {
+    if (!(await runnerShowsBusyComposer(vars, target, runner, pane))) {
       await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
       return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
     }

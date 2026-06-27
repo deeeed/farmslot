@@ -32,6 +32,7 @@ import {
 import { loadFleetStatus } from '../../fleet/state.js';
 import {
   normalizeRunner,
+  resolveSafeSendTimeoutMs,
   runnerSupportsTmuxNudges,
   sendRunnerInstructionSafely,
 } from '../../runners/registry.js';
@@ -316,7 +317,7 @@ export async function nudgeDispatch(
   };
 
   // STEP B: send the nudge FIRST, BEFORE any ownership state mutation. Critical correctness
-  // property: if the prompt fails to land (runner stayed busy past the 30s timeout, ssh hiccup,
+  // property: if the prompt fails to land (runner stayed busy past the hook/pane timeout, ssh hiccup,
   // etc.), the prior run is still active with its monitor + watchers + slot ownership intact.
   // Stomping prior ownership before delivery would leave the old worker executing without an
   // active monitor while the new run fails — silent split-brain.
@@ -328,13 +329,14 @@ export async function nudgeDispatch(
     taskFile: absoluteTaskMd,
     taskDir: workerTaskAbs,
   });
+  const nudgeTimeoutMs = resolveSafeSendTimeoutMs(runner);
   const sent = await sendRunnerInstructionSafely(
     vars,
     workerTarget,
     runner,
     prompt,
     '[nudge]',
-    30000,
+    nudgeTimeoutMs,
     { forceBusyPoll: true },
   );
   if (!sent) {
@@ -356,7 +358,7 @@ export async function nudgeDispatch(
       });
     }
     throw new NudgeTimeoutError(
-      `Nudge to ${workerTarget} timed out — runner stayed busy past 30s. Pane tail:\n${paneRes.stdout}`,
+      `Nudge to ${workerTarget} timed out — runner stayed busy past ${Math.round(nudgeTimeoutMs / 1000)}s. Pane tail:\n${paneRes.stdout}`,
       paneRes.stdout,
     );
   }
