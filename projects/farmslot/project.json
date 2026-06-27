@@ -28,9 +28,9 @@
   "hooks": {
     "post_merge_install": "yarn install",
     "preflight": "cd apps/command-center && yarn typecheck",
-    "health_check": "bash {{repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
-    "dev_server_check": "bash {{repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
-    "teardown": "bash {{repo}}/projects/farmslot/setup/sandbox-dev.sh stop --gateway-port {{port}}",
+    "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
+    "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
+    "teardown": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh stop --gateway-port {{port}}",
     "setup": "cd apps/companion && yarn install",
     "recipe_run": "bash apps/companion/scripts/agentic/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --runtime-dir {{runtime_dir}} --platform {{platform}} --metro-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}"
   },
@@ -42,7 +42,7 @@
         "description": "Git sync, deps, then boot this checkout's gateway and Vite UI on the slot port. Use for ff-* worktree sandboxes. Typecheck is not run here — use profile typecheck when you need it before dispatch.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "bash {{repo}}/projects/farmslot/setup/sandbox-dev.sh start --gateway-port {{port}}"
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh start --gateway-port {{port}}"
         }
       },
       "attach": {
@@ -61,16 +61,24 @@
           "health_check": "cd apps/command-center && yarn typecheck && echo ok"
         }
       },
-      "companion-warm": {
-        "label": "Companion warm — Metro + dev client",
-        "description": "Boot isolated simulator when configured, start Metro on the slot port, and verify gateway pairing URL. No native rebuild.",
+      "full": {
+        "label": "Alias for typecheck (legacy farmslot-farm name)",
+        "description": "Backward-compatible name for the typecheck-only prepare profile.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "cd apps/companion && METRO_PORT={{port}} IOS_SIMULATOR={{simulator}} ADB_SERIAL={{adb_serial}} bash scripts/agentic/prepare-profile.sh warm",
-          "health_check": "lsof -nP -iTCP:{{port}} -sTCP:LISTEN -t >/dev/null 2>&1",
-          "dev_server_check": "lsof -nP -iTCP:{{port}} -sTCP:LISTEN -t >/dev/null 2>&1"
+          "preflight": "cd apps/command-center && yarn typecheck",
+          "health_check": "cd apps/command-center && yarn typecheck && echo ok"
+        }
+      },
+      "companion-warm": {
+        "label": "Companion warm — Metro + dev client",
+        "description": "Boot isolated simulator when configured, start Metro on the derived slot port, and verify gateway pairing URL. No native rebuild.",
+        "phases": ["git", "fixtures", "deps", "preflight", "health"],
+        "hooks": {
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh warm --slot-port {{port}} --platform {{platform}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
+          "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}}",
+          "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}}"
         },
-        "requires": ["dev_server_up"],
         "fallback": "companion-full"
       },
       "companion-full": {
@@ -78,8 +86,8 @@
         "description": "Native rebuild via expo run when simulator or adb is configured, then warm Metro health.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "cd apps/companion && METRO_PORT={{port}} IOS_SIMULATOR={{simulator}} ADB_SERIAL={{adb_serial}} bash scripts/agentic/prepare-profile.sh full",
-          "health_check": "lsof -nP -iTCP:{{port}} -sTCP:LISTEN -t >/dev/null 2>&1 && cd apps/companion && yarn typecheck"
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh full --slot-port {{port}} --platform {{platform}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
+          "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}} && cd apps/companion && yarn typecheck"
         }
       },
       "stack-dogfood": {
@@ -87,8 +95,8 @@
         "description": "Start this checkout's gateway on the slot port, then boot companion Metro (derived port) for cross-surface dogfood.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "bash {{repo}}/projects/farmslot/setup/stack-dogfood.sh --gateway-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
-          "health_check": "bash {{repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}"
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/stack-dogfood.sh --gateway-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
+          "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}"
         }
       }
     }
@@ -167,8 +175,8 @@
         "port": "{{port}}"
       },
       "hooks": {
-        "health": "bash {{repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
-        "shutdown": "bash {{repo}}/projects/farmslot/setup/sandbox-dev.sh stop --gateway-port {{port}}"
+        "health": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
+        "shutdown": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh stop --gateway-port {{port}}"
       }
     },
     "ios-sim": {

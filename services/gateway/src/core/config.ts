@@ -118,6 +118,7 @@ export interface SlotVars {
 export interface RawProjectJson {
   name?: string;
   repo_url?: string;
+  primary_repo?: string;
   default_branch?: string;
   recipe_run_supports_playback_slow?: boolean;
   recipe_run_supports_video_recording?: boolean;

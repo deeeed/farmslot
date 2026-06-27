@@ -670,6 +670,17 @@ expand_slot_template() {
   text="${text//\{\{FARMSLOT_DIR\}\}/${FARMSLOT_DIR:-}}"
   text="${text//\{\{repo\}\}/${REMOTE_REPO:-${REPO:-}}}"
   text="${text//\{\{REPO\}\}/${REMOTE_REPO:-${REPO:-}}}"
+  local primary_repo="${REMOTE_REPO:-${REPO:-}}"
+  if [ -n "${PROJECT_JSON:-}" ]; then
+    primary_repo="$(printf '%s' "$PROJECT_JSON" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print((d.get("primary_repo") or "").strip())
+' 2>/dev/null || true)"
+    [ -z "$primary_repo" ] && primary_repo="${REMOTE_REPO:-${REPO:-}}"
+  fi
+  text="${text//\{\{primary_repo\}\}/${primary_repo}}"
+  text="${text//\{\{PRIMARY_REPO\}\}/${primary_repo}}"
   text="${text//\{\{mobile_repo\}\}/${MOBILE_REPO:-}}"
   text="${text//\{\{MOBILE_REPO\}\}/${MOBILE_REPO:-}}"
   if [ "${EXPAND_PROJECT_TEMPLATE_VARS:-1}" != "0" ] && [ -n "${PROJECT_JSON:-}" ]; then

@@ -137,25 +137,27 @@ export interface ProfileFitBannerRenderContext {
 }
 
 export function renderProfileFitBanner(ctx: ProfileFitBannerRenderContext) {
-  if (!ctx.profileFit) return nothing;
+  const suggestion = ctx.profileFit;
+  if (!suggestion) return nothing;
+  const suggestedProfile = suggestion.suggestedPrepareProfile;
   return html`
     <div class="profile-fit-banner">
       <div class="profile-fit-title">Prepare profile suggestion</div>
       <div class="profile-fit-copy">
-        ${ctx.profileFit.rationale} Suggested profile:
-        <strong>${ctx.profileFit.suggestedPrepareProfile}</strong>
-        ${ctx.profileFit.validationPlan?.length
-          ? html` — validation plan: ${ctx.profileFit.validationPlan.length} step(s)`
+        ${suggestion.rationale} Suggested profile:
+        <strong>${suggestedProfile}</strong>
+        ${suggestion.validationPlan?.length
+          ? html` — validation plan: ${suggestion.validationPlan.length} step(s)`
           : nothing}
       </div>
-      ${ctx.prepareProfile === ctx.profileFit.suggestedPrepareProfile
+      ${ctx.prepareProfile === suggestedProfile
         ? nothing
         : html`
             <button
               class="profile-fit-apply"
-              @click=${() => ctx.applySuggestedPrepareProfile(ctx.profileFit!.suggestedPrepareProfile)}
+              @click=${() => ctx.applySuggestedPrepareProfile(suggestedProfile)}
             >
-              Use ${ctx.profileFit.suggestedPrepareProfile}
+              Use ${suggestedProfile}
             </button>
           `}
     </div>

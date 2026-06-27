@@ -41,7 +41,7 @@ done
 [[ "$GATEWAY_PORT" =~ ^[0-9]+$ ]] || usage
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 METRO_PORT="${METRO_PORT:-$((GATEWAY_PORT + 70))}"
 
 echo "[stack-dogfood] gateway :${GATEWAY_PORT} metro :${METRO_PORT}"

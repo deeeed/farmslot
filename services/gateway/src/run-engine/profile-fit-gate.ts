@@ -26,7 +26,6 @@ const COMMAND_CENTER_TOKENS = [
   'command-center',
   'dispatch wizard',
   'cdp',
-  'ui',
   'vite',
   '#runs',
 ];
@@ -39,6 +38,8 @@ export type ProfileFitContext = {
   slotPlatform?: string | null;
   prepareProfile?: string | null;
   app?: string | null;
+  /** Dedicated companion mobile slot when fleet exposes one for this project. */
+  companionSlotId?: string | null;
 };
 
 function buildHaystack(run: Run, ticketData: RunTicketData | null): string {
@@ -81,6 +82,7 @@ function buildValidationPlan(
   surfaces: ReturnType<typeof detectSurfaces>,
   primaryPrepareProfile: string,
   slotPlatform?: string | null,
+  companionSlotId?: string | null,
 ): ValidationPlanStep[] {
   const steps: ValidationPlanStep[] = [];
   if (surfaces.commandCenter || surfaces.gateway) {
@@ -96,12 +98,16 @@ function buildValidationPlan(
     });
   }
   if (surfaces.companion) {
+    const companionSlot =
+      slotPlatform === 'ios' || slotPlatform === 'android'
+        ? undefined
+        : companionSlotId?.trim() || undefined;
     steps.push({
       surface: 'companion',
       kind: 'recipe',
       recipe: 'mobile-companion.recipe.json',
       prepareProfile: slotPlatform === 'cli' ? 'companion-warm' : primaryPrepareProfile,
-      slot: slotPlatform === 'ios' || slotPlatform === 'android' ? 'macwork-fc-1' : undefined,
+      ...(companionSlot ? { slot: companionSlot } : {}),
     });
   }
   return steps;
@@ -169,7 +175,12 @@ export function detectProfileFit(
       suggestedApp,
       confidence: suggestion.confidence,
       rationale: suggestion.rationale,
-      validationPlan: buildValidationPlan(surfaces, suggestion.profile, context.slotPlatform),
+      validationPlan: buildValidationPlan(
+        surfaces,
+        suggestion.profile,
+        context.slotPlatform,
+        context.companionSlotId,
+      ),
     };
   }
 
@@ -185,4 +196,17 @@ export function effectivePrepareProfile(
     run.prepareProfile?.trim() ||
     defaultPrepareProfile(context.slotPlatform)
   );
+}
+
+export function resolveCompanionSlotId(
+  slots: ReadonlyArray<{ slot: string; project: string; platform?: string | null; lifecycle?: string | null }>,
+  project: string,
+): string | undefined {
+  const match = slots.find(
+    (entry) =>
+      entry.project === project &&
+      entry.lifecycle !== 'disabled' &&
+      (entry.platform === 'ios' || entry.platform === 'android'),
+  );
+  return match?.slot;
 }

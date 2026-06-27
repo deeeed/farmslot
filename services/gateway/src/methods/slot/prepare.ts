@@ -542,6 +542,10 @@ async function slotPrepareInner(
       // Git worktrees cannot checkout `main` when it is checked out elsewhere.
       // Sandboxes use tracking branches (e.g. wt/ff-2) at the same commit as
       // origin/defaultBranch — allow prepare when HEAD matches, not only by name.
+      await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${defaultBranch} 2>/dev/null || true`,
+      );
       const headR = await execOnSlot(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && git rev-parse HEAD origin/${defaultBranch} 2>/dev/null`,

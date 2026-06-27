@@ -27,7 +27,7 @@ import {
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
 
-import { detectProfileFit } from '../../run-engine/profile-fit-gate.js';
+import { detectProfileFit, resolveCompanionSlotId } from '../../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../../run-engine/ticket-data.js';
 
 import { findBestSlot, isCdpLive, isFreeSlot, slotScore, validateSlot } from './slot-scoring.js';
@@ -737,7 +737,7 @@ export async function dispatchPreview(
     fleet.slots,
   );
   const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
-  const ticketData = await fetchTicketData({
+  const previewRun = {
     id: 'dispatch-preview',
     familyId: 'dispatch-preview',
     lane: 'production',
@@ -755,34 +755,14 @@ export async function dispatchPreview(
     updatedAt: new Date(0).toISOString(),
     prepareProfile: params.prepareProfile,
     app: params.app,
-  } as Run).catch(() => null);
-  const profileFit = detectProfileFit(
-    {
-      id: 'dispatch-preview',
-      familyId: 'dispatch-preview',
-      lane: 'production',
-      flowType: params.flowType as FlowType,
-      status: 'created',
-      project: params.project,
-      ticketOrPr: params.ticketOrPr,
-      slotId: result.preview.slotId,
-      branch: null,
-      taskFile: null,
-      steps: [],
-      decisions: [],
-      metrics: { nudgeCount: 0, model: null, runner: null },
-      createdAt: new Date(0).toISOString(),
-      updatedAt: new Date(0).toISOString(),
-      prepareProfile: params.prepareProfile,
-      app: params.app,
-    } as Run,
-    ticketData,
-    {
-      prepareProfile: params.prepareProfile,
-      app: params.app,
-      slotPlatform: slotInfo?.platform ?? null,
-    },
-  );
+  } as Run;
+  const ticketData = await fetchTicketData(previewRun).catch(() => null);
+  const profileFit = detectProfileFit(previewRun, ticketData, {
+    prepareProfile: params.prepareProfile,
+    app: params.app,
+    slotPlatform: slotInfo?.platform ?? null,
+    companionSlotId: resolveCompanionSlotId(fleet.slots, params.project),
+  });
   if (profileFit) {
     result.preview.profileFit = profileFit;
   }
