@@ -4,7 +4,7 @@ Reviewer: independent code-reviewer subagent (grok)
 Artifact: docs/operations/evidence/adr032/pr81-CROSS-REVIEW-LOOP.json
 
 Round 1 (2026-06-27T06:00:00Z): REQUEST-CHANGES — codex hook-smoke evidence, e2e skip-greenwash, docs drift
-Round 2 (2026-06-27T07:30:00Z): PASS — e2e-tmux-runner-validate exit 0; run-adr032-phase1-gate exit 0 on head e4cbcb4
-Completed: 2026-06-27T08:33:22Z (at merge; see pr81-merge-timing-note.json disclosure)
+Round 2 (2026-06-27T07:30:00Z): PASS — e2e-tmux-runner-validate exit 0; run-adr032-phase1-gate exit 0 on head 9a0ebfc
+Completed: 2026-06-27T07:30:00Z (63 minutes before PR #81 mergedAt 08:33:22Z)
 
 VERDICT: APPROVE pending CI
