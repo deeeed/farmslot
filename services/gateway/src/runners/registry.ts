@@ -879,7 +879,8 @@ async function resolvePendingInstructionObsFirst(
       sinceMs,
     );
     if (!isObservabilityReadingAuthoritative(reading)) return { kind: 'fallback' };
-    if (reading.value === true) return { kind: 'hook', pending: false };
+    // Accepted digest still needs pane confirmation — live composer can override stale hooks.
+    if (reading.value === true) return { kind: 'fallback' };
     return { kind: 'hook', pending: true };
   } catch (error) {
     console.warn(
@@ -917,6 +918,34 @@ async function runnerHasPendingInstruction(
 }
 
 type HookBusyDecision = { kind: 'hook'; busy: boolean } | { kind: 'fallback' };
+
+async function sendRunnerInstructionWhenPaneClear(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  message: string,
+  pane: string,
+  promptAcceptedSinceMs: number,
+  logPrefix: string,
+): Promise<boolean> {
+  if (
+    await runnerHasPendingInstruction(vars, target, runner, message, pane, promptAcceptedSinceMs)
+  ) {
+    return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+  }
+  if (runnerPaneContainsInstruction(pane, message)) {
+    if (runnerPaneHasProgressAfterInstruction(pane, message)) {
+      console.log(
+        `[${logPrefix}] instruction already submitted in ${target} — skip duplicate send`,
+      );
+      return true;
+    }
+    console.log(`[${logPrefix}] instruction already present in ${target}; sending submit key`);
+    return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
+  }
+  await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
+  return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
+}
 
 async function resolveBusyComposerObsFirst(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -1153,24 +1182,16 @@ export async function sendRunnerInstructionSafely(
     }
     if (pendingObs.kind === 'fallback') {
       const pane = await captureTmuxPane(vars, target);
-      if (
-        await runnerHasPendingInstruction(
-          vars,
-          target,
-          runner,
-          message,
-          pane,
-          promptAcceptedSinceMs,
-        )
-      ) {
-        return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
-      }
-      await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
-      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
+      return sendRunnerInstructionWhenPaneClear(
+        vars,
+        target,
+        runner,
+        message,
+        pane,
+        promptAcceptedSinceMs,
+        logPrefix,
+      );
     }
-    const pane = await captureTmuxPane(vars, target);
-    await recordRunnerObservabilityAgreement(vars, target, runner, pane, logPrefix);
-    return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
   }
   const deadline = loopStartMs + effectiveTimeoutMs;
   while (Date.now() < deadline) {
@@ -1210,27 +1231,31 @@ export async function sendRunnerInstructionSafely(
     if (busyObs.kind === 'hook') {
       if (!busyObs.busy) {
         const captured = await ensurePane();
-        await recordRunnerObservabilityAgreement(vars, target, runner, captured, logPrefix);
-        return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
+        return sendRunnerInstructionWhenPaneClear(
+          vars,
+          target,
+          runner,
+          message,
+          captured,
+          promptAcceptedSinceMs,
+          logPrefix,
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, 1500));
       continue;
     }
 
     const captured = await ensurePane();
-    if (runnerPaneContainsInstruction(captured, message)) {
-      if (runnerPaneHasProgressAfterInstruction(captured, message)) {
-        console.log(
-          `[${logPrefix}] instruction already submitted in ${target} — skip duplicate send`,
-        );
-        return true;
-      }
-      console.log(`[${logPrefix}] instruction already present in ${target}; sending submit key`);
-      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'submit-existing');
-    }
     if (!paneShowsBusyComposer(captured)) {
-      await recordRunnerObservabilityAgreement(vars, target, runner, captured, logPrefix);
-      return submitRunnerInstruction(vars, target, runner, message, logPrefix, 'send');
+      return sendRunnerInstructionWhenPaneClear(
+        vars,
+        target,
+        runner,
+        message,
+        captured,
+        promptAcceptedSinceMs,
+        logPrefix,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
