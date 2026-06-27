@@ -27,7 +27,7 @@ bash "$ROOT/scripts/e2e-tmux-runner-validate.sh" 2>&1 | tee "$OUT_DIR/e2e-tmux-r
 append_exit E2E "$OUT_DIR/e2e-tmux-runner-validate.log" "${PIPESTATUS[0]}" || fail 'e2e-tmux-runner-validate'
 
 echo "== run-adr032-phase1-gate =="
-bash "$ROOT/scripts/run-adr032-phase1-gate.sh" 2>&1 | tee "$OUT_DIR/run-adr032-phase1-gate.log"
+ADR032_SKIP_E2E=1 bash "$ROOT/scripts/run-adr032-phase1-gate.sh" 2>&1 | tee "$OUT_DIR/run-adr032-phase1-gate.log"
 append_exit GATE "$OUT_DIR/run-adr032-phase1-gate.log" "${PIPESTATUS[0]}" || fail 'run-adr032-phase1-gate'
 
 echo "== command-center typecheck =="

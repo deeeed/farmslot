@@ -28,8 +28,12 @@ run_probe() {
 
 echo "== ADR-032 Phase 1 empirical gate on ${HOST} =="
 
-echo "== live tmux E2E (primary) =="
-bash "$ROOT/scripts/e2e-tmux-runner-validate.sh"
+if [ "${ADR032_SKIP_E2E:-}" = "1" ]; then
+  echo "== live tmux E2E (skipped — ADR032_SKIP_E2E=1) =="
+else
+  echo "== live tmux E2E (primary) =="
+  bash "$ROOT/scripts/e2e-tmux-runner-validate.sh"
+fi
 
 echo "== observability install probes =="
 run_probe claude
