@@ -42,8 +42,11 @@ wait_for_shell_state
 } >"$script_path"
 chmod +x "$script_path"
 
+# Pane cwd is repo_dir (tmux new-session -c). Relative path avoids narrow-pane wrap
+# truncating long /var/folders/.../.tmux-driver-launch.sh before Enter runs.
+launch_cmd='bash .tmux-driver-launch.sh'
 if [ -n "$trace_path" ]; then
-  "$skill_dir/scripts/send-and-verify.sh" "$pane_id" shell "$trace_path" <<<"bash $(printf '%q' "$script_path")"
+  "$skill_dir/scripts/send-and-verify.sh" "$pane_id" shell "$trace_path" <<<"$launch_cmd"
 else
-  "$skill_dir/scripts/send-and-verify.sh" "$pane_id" shell <<<"bash $(printf '%q' "$script_path")"
+  "$skill_dir/scripts/send-and-verify.sh" "$pane_id" shell <<<"$launch_cmd"
 fi
