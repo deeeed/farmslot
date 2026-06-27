@@ -76,6 +76,9 @@ export class SlotActionsPanel extends LitElement {
   @state() private _switchForcePrepare = false;
   /** Whether the switch-branch form is expanded. */
   @state() private _switchOpen = false;
+  /** Prepare profile for the plain Prepare action — empty until profiles load (project default ★). */
+  @state() private _prepareProfile = '';
+  @state() private _prepareStrictProfile = true;
 
   private readonly _confirmTimer = new ConfirmActionTimer({
     pendingConfirm: () => this._pendingConfirm,
@@ -220,7 +223,13 @@ export class SlotActionsPanel extends LitElement {
     this._confirmTimer.confirm(actionId, fn);
   }
 
-  private _prepare = () => this._confirm('prepare', () => void this._runSlotPrepare());
+  private _prepare = () =>
+    this._confirm('prepare', () =>
+      void this._runSlotPrepare('prepare', {
+        ...(this._prepareProfile ? { prepareProfile: this._prepareProfile } : {}),
+        strictProfile: this._prepareStrictProfile,
+      }),
+    );
   private _release = (keepWarm: boolean) =>
     this._confirm(keepWarm ? 'release-warm' : 'release', () =>
       this._runAction(
@@ -553,7 +562,7 @@ export class SlotActionsPanel extends LitElement {
         id: 'prepare',
         label: 'Prepare',
         style: '',
-        desc: 'Full prepare: deps install, preflight, dev-server, health check.',
+        desc: 'Bring the slot up using the selected prepare profile (above).',
         confirmLabel: 'Confirm Prepare?',
         onClick: () => this._prepare(),
       },
@@ -653,6 +662,29 @@ export class SlotActionsPanel extends LitElement {
             </div>
           `
         : nothing}
+    `;
+  }
+
+  // Profile picker for the plain Prepare action (ADR-037). Lets the operator
+  // pick which project-defined entry point Prepare runs (e.g. mobile's "Full
+  // clean native rebuild" vs the default warm "Ensure JS runtime") instead of
+  // always firing prepare.default. Gated on the same availability as Prepare.
+  private _renderPrepareOptions() {
+    if (!this._actionAvailability('prepare').available) return nothing;
+    return html`
+      <div class="sap-prepare-options">
+        <slot-prepare-options
+          .project=${this._slot?.project ?? ''}
+          .prepareProfile=${this._prepareProfile}
+          .strictProfile=${this._prepareStrictProfile}
+          .disabled=${this._running}
+          .showAdvanced=${false}
+          @prepare-options-change=${(event: CustomEvent<SlotPrepareOptionsChangeDetail>) => {
+            this._prepareProfile = event.detail.prepareProfile;
+            this._prepareStrictProfile = event.detail.strictProfile;
+          }}
+        ></slot-prepare-options>
+      </div>
     `;
   }
 
@@ -803,6 +835,9 @@ export class SlotActionsPanel extends LitElement {
         slot-actions-panel .sap-custom-row .sap-btn {
           width: auto;
         }
+        slot-actions-panel .sap-prepare-options {
+          padding: 4px ${spacing.md} ${spacing.sm};
+        }
         slot-actions-panel .sap-switch-toggle {
           background: none;
           border: none;
@@ -877,6 +912,7 @@ export class SlotActionsPanel extends LitElement {
       </style>
 
       ${this._renderStatusBanner()} ${this._renderSwitchBranchForm()}
+      ${this._renderPrepareOptions()}
       ${available.length > 0
         ? html`
             <div class="sap-section-label">Available actions</div>
