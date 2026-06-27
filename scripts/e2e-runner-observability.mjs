@@ -355,16 +355,16 @@ async function main() {
   try {
     await loadPromptDigestModule();
     args = parseArgs(process.argv.slice(2));
-  const projectRuntimeDir = args.project ? readProjectRuntimeDir(args.project) : null;
-  const runtimeDir = args.runtimeDir ?? projectRuntimeDir ?? '.agent';
-  const agreementDir =
-    args.agreementDir ?? path.join(os.tmpdir(), `farmslot-obs-agreement-e2e-${process.pid}`);
-  const hostname = os.hostname().replace(/\.local$/, '');
-  const obsDir = obsDirFor(args.repo, runtimeDir);
+    const projectRuntimeDir = args.project ? readProjectRuntimeDir(args.project) : null;
+    const runtimeDir = args.runtimeDir ?? projectRuntimeDir ?? '.agent';
+    const agreementDir =
+      args.agreementDir ?? path.join(os.tmpdir(), `farmslot-obs-agreement-e2e-${process.pid}`);
+    const hostname = os.hostname().replace(/\.local$/, '');
+    const obsDir = obsDirFor(args.repo, runtimeDir);
 
-  const shell = ensureTmuxShellSession(args.tmuxSession, args.repo, 'shell');
-  const claude = ensureTmuxShellSession(args.tmuxSession, args.repo, 'claude');
-  const checks = {};
+    const shell = ensureTmuxShellSession(args.tmuxSession, args.repo, 'shell');
+    const claude = ensureTmuxShellSession(args.tmuxSession, args.repo, 'claude');
+    const checks = {};
     installObservability(args.repo, runtimeDir, args.slotId);
     checks.runtimeAlignment = checkRuntimeAlignment(args.repo, runtimeDir, projectRuntimeDir);
     checks.probeGate = runProbeInTmux(args.repo, runtimeDir, args.slotId, shell.paneId);
