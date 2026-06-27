@@ -406,8 +406,16 @@ function parseCaptureHelperJson(stdout, stderr = '') {
   return JSON.parse(combined.slice(start, end + 1));
 }
 
+function captureHelperBin() {
+  return (
+    process.env.CAPTURE_HELPER_PATH ??
+    process.env.SITEED_CAPTURE_HELPER_BIN ??
+    'capture-helper'
+  );
+}
+
 async function resolveCaptureHelperTarget(selectorArgs) {
-  const { stdout, stderr } = await execFileAsync('capture-helper', [
+  const { stdout, stderr } = await execFileAsync(captureHelperBin(), [
     'resolve',
     ...selectorArgs,
     '--json',
@@ -600,7 +608,9 @@ async function main() {
     }),
     logger: console,
     recording: {
-      videoRecorder: createCaptureHelperVideoRecorder(),
+      videoRecorder: createCaptureHelperVideoRecorder({
+        captureHelperPath: captureHelperBin(),
+      }),
       targetProvider: {
         async resolveRecordingTarget() {
           if (!recordingTarget) {
