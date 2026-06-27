@@ -3,7 +3,7 @@
   "title": "Command Center demo red monitoring banner",
   "description": "Proves the demo-gated Farmslot monitoring banner is absent by default and present when the demo env flag is enabled on the slot sandbox.",
   "inputs": {
-    "ui_url": "http://127.0.0.1:5174",
+    "ui_url": "http://localhost:5174",
     "slot_id": "macwork-ff-2",
     "gateway_port": "8809",
     "banner_text": "FARMSLOT DEMO: PARALLEL RUN MONITORING"
@@ -52,8 +52,8 @@
         },
         "restart-with-demo-flag": {
           "action": "command",
-          "cmd": "FARMSLOT_SLOT_REPO={{repo}} VITE_FARMSLOT_DEMO_BANNER=1 bash projects/farmslot/setup/sandbox-dev.sh start --gateway-port {{gateway_port}}",
-          "cwd": "{{repo}}",
+          "cmd": "FARMSLOT_SLOT_REPO={{repo}} bash {{farmslot_dir}}/projects/farmslot/setup/sandbox-dev.sh stop --gateway-port {{gateway_port}} && VITE_FARMSLOT_DEMO_BANNER=1 FARMSLOT_SLOT_REPO={{repo}} bash {{farmslot_dir}}/projects/farmslot/setup/sandbox-dev.sh start --gateway-port {{gateway_port}}",
+          "cwd": ".",
           "timeout_ms": 120000,
           "next": "open-slot-shell-demo-on",
           "intent": "Restart the sandbox dev stack with the demo banner env flag enabled."

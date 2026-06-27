@@ -127,7 +127,9 @@ case "$ACTION" in
     : >"$LOG_FILE"
     (
       cd "$REPO_ROOT"
-      GATEWAY_PORT="$GATEWAY_PORT" VITE_PORT="$VITE_PORT" exec bash scripts/dev.sh
+      GATEWAY_PORT="$GATEWAY_PORT" VITE_PORT="$VITE_PORT" \
+        VITE_FARMSLOT_DEMO_BANNER="${VITE_FARMSLOT_DEMO_BANNER:-}" \
+        exec bash scripts/dev.sh
     ) >>"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
 
