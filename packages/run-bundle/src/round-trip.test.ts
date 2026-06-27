@@ -46,6 +46,14 @@ function writeFixtureRun(root: string, run: Run, taskBody = '# Task'): void {
   );
 }
 
+function writeMinimalFarmslotRoot(root: string): void {
+  writeFileSync(path.join(root, 'CLAUDE.md'), '# farmslot\n', 'utf-8');
+  mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  writeFileSync(path.join(root, 'scripts', 'dev.sh'), '#!/bin/bash\n', 'utf-8');
+  mkdirSync(path.join(root, 'services', 'gateway'), { recursive: true });
+  writeFileSync(path.join(root, 'services', 'gateway', 'package.json'), '{}\n', 'utf-8');
+}
+
 test('farmrun export/import round-trip remaps ids in seed mode', () => {
   const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-src-'));
   const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-dst-'));
@@ -80,11 +88,7 @@ test('farmrun export/import round-trip remaps ids in seed mode', () => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  writeFileSync(path.join(sourceRoot, 'CLAUDE.md'), '# farmslot\n', 'utf-8');
-  mkdirSync(path.join(sourceRoot, 'scripts'), { recursive: true });
-  writeFileSync(path.join(sourceRoot, 'scripts', 'dev.sh'), '#!/bin/bash\n', 'utf-8');
-  mkdirSync(path.join(sourceRoot, 'services', 'gateway'), { recursive: true });
-  writeFileSync(path.join(sourceRoot, 'services', 'gateway', 'package.json'), '{}\n', 'utf-8');
+  writeMinimalFarmslotRoot(sourceRoot);
   writeFixtureRun(sourceRoot, run);
 
   try {
@@ -97,11 +101,7 @@ test('farmrun export/import round-trip remaps ids in seed mode', () => {
     const manifest = listBundle(bundlePath);
     assert.equal(manifest.runs.length, 1);
 
-    writeFileSync(path.join(targetRoot, 'CLAUDE.md'), '# farmslot\n', 'utf-8');
-    mkdirSync(path.join(targetRoot, 'scripts'), { recursive: true });
-    writeFileSync(path.join(targetRoot, 'scripts', 'dev.sh'), '#!/bin/bash\n', 'utf-8');
-    mkdirSync(path.join(targetRoot, 'services', 'gateway'), { recursive: true });
-    writeFileSync(path.join(targetRoot, 'services', 'gateway', 'package.json'), '{}\n', 'utf-8');
+    writeMinimalFarmslotRoot(targetRoot);
 
     const imported = importBundle({
       farmslotRoot: targetRoot,
@@ -116,6 +116,72 @@ test('farmrun export/import round-trip remaps ids in seed mode', () => {
     assert.equal(persisted.importProvenance?.importedFromRunId, runId);
     assert.equal(persisted.readOnly, false);
     assert.ok(persisted.taskFile?.includes('projects/demo-farm/tasks/evals/case-1/TASK.md'));
+  } finally {
+    rmSync(sourceRoot, { recursive: true, force: true });
+    rmSync(targetRoot, { recursive: true, force: true });
+    rmSync(bundlePath, { force: true });
+  }
+});
+
+test('farmrun export/import round-trip persists reference-only imports', () => {
+  const sourceRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-src-'));
+  const targetRoot = mkdtempSync(path.join(tmpdir(), 'farmrun-dst-'));
+  const bundlePath = path.join(tmpdir(), `bundle-ref-${Date.now()}.farmrun`);
+  const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const taskFile = path.join(
+    sourceRoot,
+    'projects',
+    'demo-farm',
+    'tasks',
+    'evals',
+    'case-1',
+    'TASK.md',
+  );
+  const run: Run = {
+    id: runId,
+    familyId: 'family-1',
+    lane: 'comparison',
+    variant: 'baseline',
+    flowType: 'dev',
+    mode: 'validation',
+    status: 'done',
+    project: 'demo-farm',
+    ticketOrPr: 'EVAL-1',
+    slotId: 'mac-1',
+    branch: 'eval/baseline',
+    completionPolicy: 'artifact-only',
+    taskFile,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: 'claude', runner: 'claude' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  writeMinimalFarmslotRoot(sourceRoot);
+  writeFixtureRun(sourceRoot, run);
+
+  try {
+    exportRunsToBundle({
+      farmslotRoot: sourceRoot,
+      outputPath: bundlePath,
+      profile: 'reference',
+      positionalRunId: runId,
+    });
+    writeMinimalFarmslotRoot(targetRoot);
+    const imported = importBundle({
+      farmslotRoot: targetRoot,
+      bundlePath,
+      mode: 'reference-only',
+    });
+    assert.equal(imported.importedRunIds.length, 1);
+    assert.notEqual(imported.importedRunIds[0], runId);
+    assert.match(imported.importedRunIds[0], /^ref-[0-9a-f]{8}-[0-9a-f]{12}$/i);
+    const persisted = JSON.parse(
+      readFileSync(path.join(targetRoot, '.runs', `${imported.importedRunIds[0]}.json`), 'utf-8'),
+    ) as Run;
+    assert.equal(persisted.importProvenance?.importedFromRunId, runId);
+    assert.equal(persisted.readOnly, true);
+    assert.equal(persisted.status, 'done');
   } finally {
     rmSync(sourceRoot, { recursive: true, force: true });
     rmSync(targetRoot, { recursive: true, force: true });

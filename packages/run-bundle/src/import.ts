@@ -124,7 +124,9 @@ function applyImportMode(
     };
   }
   const nextId =
-    mode === 'seed' ? randomUUID() : `ref-${sourceRunId.slice(0, 8)}-${randomUUID().slice(0, 8)}`;
+    mode === 'seed'
+      ? randomUUID()
+      : `ref-${sourceRunId.slice(0, 8)}-${randomUUID().replace(/-/g, '').slice(0, 12)}`;
   idMap[sourceRunId] = nextId;
   return {
     ...run,
