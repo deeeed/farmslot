@@ -41,7 +41,7 @@ done
 SLOT_GATEWAY_PORT="$GATEWAY_PORT"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 RUNTIME_DIR="${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot/agent}"
 PID_FILE="$RUNTIME_DIR/sandbox-dev.pid"
 LOG_FILE="$RUNTIME_DIR/sandbox-dev.log"

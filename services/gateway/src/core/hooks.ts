@@ -81,9 +81,16 @@ function expandTemplateInternal(
   result = result.replaceAll('{{slot_id}}', slotVars.slotId);
   result = result.replaceAll('{{SESSION}}', session);
   result = result.replaceAll('{{session}}', session);
-  // REPO = full repo path
+  // REPO = slot checkout path; primary_repo = canonical project tree (worktree sandboxes).
   result = result.replaceAll('{{REPO}}', slotVars.repo);
   result = result.replaceAll('{{repo}}', slotVars.repo);
+  const primaryRepo =
+    typeof projectVars?.projectJson.primary_repo === 'string' &&
+    projectVars.projectJson.primary_repo.trim()
+      ? projectVars.projectJson.primary_repo.trim()
+      : slotVars.repo;
+  result = result.replaceAll('{{primary_repo}}', primaryRepo);
+  result = result.replaceAll('{{PRIMARY_REPO}}', primaryRepo);
   // Reference repos — derive path from slot repo parent + local_name
   if (projectVars?.projectJson.reference_repos) {
     const repoParent = path.dirname(slotVars.repo);

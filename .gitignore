@@ -86,6 +86,7 @@ projects/farmslot/fixtures/*
 projects/farmslot/setup/*
 !projects/farmslot/setup/sandbox-dev.sh
 !projects/farmslot/setup/stack-dogfood.sh
+!projects/farmslot/setup/companion-prepare.sh
 projects/farmslot/tasks/
 projects/farmslot/.agent/
 projects/farmslot/.task/
