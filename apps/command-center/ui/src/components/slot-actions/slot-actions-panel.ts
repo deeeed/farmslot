@@ -156,6 +156,15 @@ export class SlotActionsPanel extends LitElement {
       this._slot = this.slotOverride;
     }
     if (changed.has('slotId') && this.slotId) {
+      // Reused for a different slot — drop the prior slot's action state so a
+      // stale `_requestId` doesn't block reattach to the new slot's prepare.
+      this._requestId = '';
+      this._running = false;
+      this._activeActionId = '';
+      this._output = [];
+      this._prepareSteps = [];
+      this._exitCode = null;
+      this._lastRefreshReason = undefined;
       void this._loadSlot();
       void this._loadActions();
     }
@@ -174,6 +183,8 @@ export class SlotActionsPanel extends LitElement {
       this._slot = fleet.fleet.slots.find((s) => s.slot === this.slotId) ?? null;
       void this._reattachIfPreparing();
     } catch (err) {
+      // Expected when the gateway is transiently unreachable; recovery is to
+      // leave the last-known slot snapshot (or the "Loading…" banner) in place.
       console.warn('[slot-actions-panel] fleet.status failed:', err);
     }
   }
@@ -195,6 +206,8 @@ export class SlotActionsPanel extends LitElement {
       this._activeActionId = 'prepare';
       this._running = true;
     } catch (err) {
+      // Expected when the gateway is transiently unreachable; recovery is to
+      // skip reattach — the panel simply won't show live progress this load.
       console.warn('[slot-actions-panel] prepare reattach failed:', err);
     }
   }
@@ -557,7 +570,7 @@ export class SlotActionsPanel extends LitElement {
   // does" so users don't need to ask. Order matters — listed top-to-bottom
   // in the modal.
   private _actionCatalog(): Array<{
-    id: 'prepare' | 'release' | 'release-warm' | 'refresh' | 'recycle' | 'cleanup';
+    id: 'release' | 'release-warm' | 'refresh' | 'recycle' | 'cleanup';
     label: string;
     desc: string;
     style: '' | 'primary' | 'danger';

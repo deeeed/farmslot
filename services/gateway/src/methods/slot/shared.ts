@@ -1,3 +1,5 @@
+import type { PrepareStepRecord } from '@farmslot/protocol';
+
 import {
   type ProjectVars,
   type RawProjectJson,
@@ -42,7 +44,7 @@ export const activePrepareSlots = new Set<string>();
 export interface ActivePrepareSession {
   requestId: string;
   startedAt: number;
-  steps: Array<{ name: string; detail: string }>;
+  steps: PrepareStepRecord[];
 }
 export const activePrepareSessions = new Map<string, ActivePrepareSession>();
 

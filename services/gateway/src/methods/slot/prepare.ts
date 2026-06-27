@@ -70,6 +70,7 @@ import {
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
 import {
+  activePrepareSessions,
   activePrepareSlots,
   applySelectedApp,
   type EventEmitter,
@@ -117,6 +118,10 @@ export async function slotPrepare(
       if (sentinel) await releasePrepareSentinel(sentinel, prepareError);
     } finally {
       activePrepareSlots.delete(params.slotId);
+      // Belt-and-suspenders: stream.complete() already clears this, but guard
+      // against any path that throws before complete() runs so the reattach
+      // buffer can't go stale.
+      activePrepareSessions.delete(params.slotId);
     }
   }
 }
