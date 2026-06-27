@@ -6,4 +6,8 @@ files in this directory produced by `scripts/capture-pre-merge-evidence.sh` imme
 a replay PR merge.
 
 Populate via one replay PR: cross-review loop → `capture-pre-merge-evidence.sh` → merge →
-freeze `pr81-premerge-capture.json` and `pr81-postmerge.json` here.
+freeze these artifacts:
+
+- `pr81-premerge-capture.json` — atomic pre-merge snapshot (OPEN PR, head-scoped APPROVE, CI green)
+- `pr81-postmerge.json` — merged PR view after merge
+- `cross-review-pr81.txt` — reviewer verdict with line `VERDICT: APPROVE` or `VERDICT: APPROVE pending CI`

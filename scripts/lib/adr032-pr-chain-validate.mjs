@@ -10,15 +10,23 @@ export function parseIsoMs(value) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+export function independentApproveOnHead(pr) {
+  const head = pr.headRefOid ?? null;
+  const author = pr.author?.login ?? null;
+  if (!head) return null;
+  return (pr.reviews ?? []).find((r) => {
+    if (r.state !== 'APPROVED' || !r.author?.login || r.author.login === author) return false;
+    return r.commit?.oid === head;
+  }) ?? null;
+}
+
 export function hasPreMergeGhApprove(pr) {
   const mergedMs = parseIsoMs(pr.mergedAt);
   if (mergedMs == null) return false;
-  const author = pr.author?.login ?? null;
-  return (pr.reviews ?? []).some((r) => {
-    if (r.state !== 'APPROVED' || !r.author?.login || r.author.login === author) return false;
-    const submittedMs = parseIsoMs(r.submittedAt);
-    return submittedMs != null && submittedMs <= mergedMs;
-  });
+  const approve = independentApproveOnHead(pr);
+  if (!approve) return false;
+  const submittedMs = parseIsoMs(approve.submittedAt);
+  return submittedMs != null && submittedMs <= mergedMs;
 }
 
 export function loadCrossReviewLoop(evidenceDir, prNumber) {

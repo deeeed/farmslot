@@ -35,31 +35,23 @@ gh run list --commit "$HEAD_SHA" --limit 30 \
   --json databaseId,name,status,conclusion,event,headSha,createdAt \
   >"$RUNS"
 
-node --input-type=module -e "
+(
+  cd "$ROOT"
+  node --input-type=module -e "
 import fs from 'node:fs';
+import {
+  independentApproveOnHead,
+  requiredChecksGreen,
+} from './scripts/lib/adr032-pr-chain-validate.mjs';
 
 const pr = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
 const runs = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const outPath = process.argv[3];
 
-const required = [
-  'Repository quality guards',
-  'Command Center quality gates',
-  'Docs quality gates',
-  'Gateway service quality',
-];
-
 const author = pr.author?.login ?? null;
-const hasIndependentApprove = (pr.reviews ?? []).some(
-  (r) => r.state === 'APPROVED' && r.author?.login && r.author.login !== author,
-);
-
-const checks = pr.statusCheckRollup ?? [];
-const requiredChecks = checks.filter((c) => required.includes(c.name));
-const inProgress = requiredChecks.filter((c) => c.status === 'IN_PROGRESS');
-const notSuccess = requiredChecks.filter(
-  (c) => c.status !== 'COMPLETED' || String(c.conclusion).toLowerCase() !== 'success',
-);
+const approveOnHead = independentApproveOnHead(pr);
+const hasIndependentApprove = approveOnHead != null;
+const checks = requiredChecksGreen(pr.statusCheckRollup ?? [], null);
 
 const qualityRun = runs.find((r) => r.name === 'Farmslot Quality');
 const doc = {
@@ -69,12 +61,10 @@ const doc = {
   mergeStateStatus: pr.mergeStateStatus,
   author,
   hasIndependentApprove,
-  requiredChecksGreen:
-    requiredChecks.length === required.length &&
-    inProgress.length === 0 &&
-    notSuccess.length === 0,
-  inProgressJobs: inProgress.map((c) => c.name),
-  notSuccessJobs: notSuccess.map((c) => c.name),
+  independentApproveOnHead: approveOnHead,
+  requiredChecksGreen: checks.greenAtDecision,
+  inProgressJobs: checks.inProgressJobs,
+  notSuccessJobs: checks.notSuccessJobs,
   farmslotQualityRun: qualityRun ?? null,
   prView: pr,
   workflowRuns: runs,
@@ -95,3 +85,4 @@ if (!doc.requiredChecksGreen) {
 }
 console.log('ok capture-pre-merge: PR', pr.number, 'ready for merge');
 " "$PR_VIEW" "$RUNS" "$OUT_PATH"
+)

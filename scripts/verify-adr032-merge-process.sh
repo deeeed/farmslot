@@ -21,17 +21,33 @@ require_file "$EVIDENCE_DIR/pr81-premerge-capture.json"
 require_file "$EVIDENCE_DIR/pr81-postmerge.json"
 require_file "$EVIDENCE_DIR/cross-review-pr81.txt"
 
-node --input-type=module -e "
+(
+  cd "$ROOT"
+  node --input-type=module -e "
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  independentApproveOnHead,
+  parseIsoMs,
+} from './scripts/lib/adr032-pr-chain-validate.mjs';
+
+function crossReviewApproves(text) {
+  for (const line of text.split(/\\r?\\n/)) {
+    if (/^VERDICT:\\s*APPROVE pending CI\\s*$/i.test(line)) return true;
+    if (/^VERDICT:\\s*APPROVE\\s*$/i.test(line)) return true;
+    if (/^VERDICT:/i.test(line)) return false;
+  }
+  return false;
+}
 
 const evidenceDir = process.argv[1];
 const pre = JSON.parse(fs.readFileSync(path.join(evidenceDir, 'pr81-premerge-capture.json'), 'utf8'));
 const post = JSON.parse(fs.readFileSync(path.join(evidenceDir, 'pr81-postmerge.json'), 'utf8'));
 const crossReview = fs.readFileSync(path.join(evidenceDir, 'cross-review-pr81.txt'), 'utf8');
 
-if (!pre.capturedAt) {
-  console.error('pr81-premerge-capture: missing capturedAt');
+const captureMs = parseIsoMs(pre.capturedAt);
+if (captureMs == null) {
+  console.error('pr81-premerge-capture: invalid capturedAt', pre.capturedAt);
   process.exit(1);
 }
 if (pre.prView?.state !== 'OPEN') {
@@ -47,33 +63,36 @@ if (!pre.requiredChecksGreen) {
   process.exit(1);
 }
 
-const author = pre.prView?.author?.login ?? pre.author ?? null;
-const mergedAt = post.mergedAt ?? post.prView?.mergedAt;
-if (!mergedAt) {
-  console.error('pr81-postmerge: missing mergedAt');
+const prView = pre.prView ?? pre;
+const approve = independentApproveOnHead(prView);
+if (!approve?.submittedAt) {
+  console.error('pr81-premerge-capture: no independent APPROVED review on headRefOid');
   process.exit(1);
 }
-const mergedMs = Date.parse(mergedAt);
-const captureMs = Date.parse(pre.capturedAt);
+
+const mergedAt = post.mergedAt ?? post.prView?.mergedAt;
+const mergedMs = parseIsoMs(mergedAt);
+if (mergedMs == null) {
+  console.error('pr81-postmerge: invalid mergedAt', mergedAt);
+  process.exit(1);
+}
 if (!(captureMs < mergedMs)) {
   console.error('pr81: capturedAt must precede mergedAt');
   process.exit(1);
 }
 
-const approve = (pre.prView?.reviews ?? []).find(
-  (r) => r.state === 'APPROVED' && r.author?.login && r.author.login !== author,
-);
-if (!approve?.submittedAt) {
-  console.error('pr81-premerge-capture: no independent APPROVED review payload');
+const approveMs = parseIsoMs(approve.submittedAt);
+if (approveMs == null) {
+  console.error('pr81-premerge-capture: invalid APPROVED submittedAt', approve.submittedAt);
   process.exit(1);
 }
-if (Date.parse(approve.submittedAt) > mergedMs) {
+if (approveMs > mergedMs) {
   console.error('pr81: APPROVED submittedAt after mergedAt');
   process.exit(1);
 }
 
-if (!/VERDICT:\s*APPROVE/i.test(crossReview) && !/APPROVE pending CI/i.test(crossReview)) {
-  console.error('cross-review-pr81.txt: missing APPROVE verdict');
+if (!crossReviewApproves(crossReview)) {
+  console.error('cross-review-pr81.txt: missing APPROVE verdict line');
   process.exit(1);
 }
 
@@ -83,6 +102,7 @@ if (post.state !== 'MERGED' && post.prView?.state !== 'MERGED') {
 }
 
 console.log('ok merge-process: PR81 frozen pre/post + cross-review satisfied');
-" "$EVIDENCE_DIR" || fail 'PR81 merge-process validation'
+" "$EVIDENCE_DIR"
+) || fail 'PR81 merge-process validation'
 
 echo "MERGE-PROCESS PASS: frozen PR #81 evidence satisfies criteria 2-3"
