@@ -49,14 +49,39 @@ function capture(command, args) {
   return result.stdout;
 }
 
-function hasUnstagedChanges() {
+function hasTrackedUnstagedChanges() {
   const tracked = spawnSync('git', ['diff', '--quiet', '--ignore-submodules', '--'], {
     cwd: repoRoot,
     shell: false,
   });
   if (tracked.status === 1) return true;
   if (tracked.status !== 0) throw new CommandFailedError('git', ['diff', '--quiet'], tracked);
-  return capture('git', ['ls-files', '--others', '--exclude-standard', '-z']).length > 0;
+  return false;
+}
+
+/** Stash tracked unstaged edits only — not --include-untracked (stashing node_modules breaks ESLint). */
+function stashTrackedUnstagedKeepingIndex() {
+  const args = [
+    'stash',
+    'push',
+    '--quiet',
+    '--keep-index',
+    '-m',
+    `farmslot-precommit-quality-${process.pid}`,
+  ];
+  const result = spawnSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    shell: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const status = exitCodeFor(result);
+  if (status === 0) return true;
+  const msg = `${result.stderr ?? ''}${result.stdout ?? ''}`;
+  if (status === 1 && /No local changes to save/i.test(msg)) return false;
+  process.stdout.write(result.stdout ?? '');
+  process.stderr.write(result.stderr ?? '');
+  throw new CommandFailedError('git', args, result);
 }
 
 function splitNullList(output) {
@@ -79,7 +104,7 @@ const deletedStagedFiles = stagedFiles.filter((file) => !existsSync(join(repoRoo
 const eslintFiles = existingStagedFiles.filter((file) => /\.[cm]?[jt]sx?$/.test(file));
 
 let stashedUnstagedChanges = false;
-let restoreExitCode = 0;
+let stashRestoreFailed = false;
 
 try {
   if (stagedFiles.length === 0) {
@@ -87,17 +112,8 @@ try {
     process.exit(0);
   }
 
-  if (hasUnstagedChanges()) {
-    run('git', [
-      'stash',
-      'push',
-      '--quiet',
-      '--keep-index',
-      '--include-untracked',
-      '-m',
-      `farmslot-precommit-quality-${process.pid}`,
-    ]);
-    stashedUnstagedChanges = true;
+  if (hasTrackedUnstagedChanges()) {
+    stashedUnstagedChanges = stashTrackedUnstagedKeepingIndex();
   }
 
   for (const batch of chunks(eslintFiles, 100)) {
@@ -125,29 +141,29 @@ try {
   process.exitCode = error?.exitCode ?? 1;
 } finally {
   if (stashedUnstagedChanges) {
-    const result = spawnSync('git', ['stash', 'pop', '--quiet'], {
+    const result = spawnSync('git', ['stash', 'pop'], {
       cwd: repoRoot,
-      stdio: 'inherit',
+      encoding: 'utf8',
       shell: false,
+      stdio: ['inherit', 'inherit', 'pipe'],
     });
     if (result.status !== 0) {
-      restoreExitCode = exitCodeFor(result);
+      stashRestoreFailed = true;
       process.stderr.write(
-        'Failed to restore pre-commit unstaged changes from git stash; resolve the stash before retrying.\n',
+        'pre-commit: could not restore unstaged edits from stash (entry kept). ' +
+          'After commit, run: git stash list && git stash pop\n',
       );
-      if (process.exitCode) {
-        process.stderr.write(
-          `The quality command had already failed with exit code ${process.exitCode}; restore the stash first, then rerun the command to see the original failure again.\n`,
-        );
-      }
+      if (result.stderr) process.stderr.write(result.stderr);
     }
   }
 }
 
-if (restoreExitCode !== 0) {
-  process.exit(restoreExitCode);
-}
 if (process.exitCode) {
   process.exit(process.exitCode);
+}
+if (stashRestoreFailed) {
+  process.stderr.write(
+    'pre-commit: quality checks passed; commit may proceed. Resolve stash after commit.\n',
+  );
 }
 console.log('farmslot pre-commit: repo ESLint ratchet, Prettier, and type ratchets passed.');

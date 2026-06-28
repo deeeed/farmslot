@@ -26,9 +26,10 @@ copilot/notified-decisions.json
 projects/*/runs/
 
 # Root workspace artifacts (yarn 4 monorepo)
-/node_modules/
-**/node_modules/
-/.yarn/
+# No trailing slash — must ignore symlinks named node_modules (worktree shortcut mistake).
+/node_modules
+**/node_modules
+/.yarn
 
 **.DS_Store
 .claude/scheduled_tasks.lock

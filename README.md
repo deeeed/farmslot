@@ -154,13 +154,14 @@ preview or run idle-resource cleanup through configured project shutdown hooks.
 
 **Setup:**
 
-1. Copy `.env.ports.example` to `.env.ports` at the repo root
-2. Set unique ports per worktree (main worktree uses defaults, no file needed):
+1. Install deps in the worktree checkout (`yarn install` at repo root). Each worktree has its own `node_modules` — do not symlink from another checkout.
+2. Copy `.env.ports.example` to `.env.ports` at the repo root
+3. Set unique ports per worktree (main worktree uses defaults, no file needed):
    ```bash
    GATEWAY_PORT=7778
    VITE_PORT=5175
    ```
-3. Start: `bash scripts/dev.sh` (required — running `yarn dev` directly won't load port overrides)
+4. Start: `bash scripts/dev.sh` (required — running `yarn dev` directly won't load port overrides)
 
 **Port allocation:**
 
