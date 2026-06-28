@@ -7,6 +7,7 @@ import {
   appendFleetRefreshRowLog,
   buildFleetRefreshReviewRows,
   deselectFleetRefreshDangerousRows,
+  isFleetRefreshIdleBranch,
   findFleetRefreshRowByRequestId,
   fleetRefreshBlockedReason,
   fleetRefreshRunningProgress,
@@ -34,6 +35,25 @@ function slot(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
     ...rest,
   } as SlotStatus;
 }
+
+test('isFleetRefreshIdleBranch treats ADR-042 tracking branches as idle', () => {
+  assert.equal(isFleetRefreshIdleBranch('main', 'main'), true);
+  assert.equal(isFleetRefreshIdleBranch('wt/ff-2', 'main'), true);
+  assert.equal(isFleetRefreshIdleBranch('feat/28-add-demo-red-banner', 'main'), false);
+});
+
+test('buildFleetRefreshReviewRows treats idle wt/ff tracking branches as safe', () => {
+  const result = buildFleetRefreshReviewRows(
+    [slot({ slot: 'ff-2', branch: 'wt/ff-2', project: 'farmslot-farm' })],
+    { projects: [], machines: [] },
+  );
+
+  const row = result.rows.get('ff-2');
+  assert.equal(row?.isStale, false);
+  assert.equal(row?.mode, 'safe');
+  assert.equal(row?.selected, true);
+  assert.deepEqual(result.staleSlotIds, []);
+});
 
 test('buildFleetRefreshReviewRows separates safe, stale, and blocked rows', () => {
   const result = buildFleetRefreshReviewRows(

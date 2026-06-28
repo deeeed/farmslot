@@ -262,6 +262,20 @@ test('refreshStaleBranchDetail rejects feature branches on linked worktrees', ()
   assert.match(detail ?? '', /wt\/ff-2/);
 });
 
+test('refreshStaleBranchDetail allows legacy main on linked worktrees', () => {
+  assert.equal(
+    refreshStaleBranchDetail(
+      'main',
+      { slot_tracking_branch: 'wt/{{session}}' },
+      makeSlotVars({ slotId: 'macwork-ff-2', session: 'ff-2' }),
+      undefined,
+      true,
+      'main',
+    ),
+    null,
+  );
+});
+
 test('refreshStaleBranchDetail rejects non-default branches on primary clones', () => {
   const detail = refreshStaleBranchDetail(
     'feat/demo',

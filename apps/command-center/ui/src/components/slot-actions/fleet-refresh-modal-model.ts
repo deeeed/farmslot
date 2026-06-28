@@ -56,6 +56,13 @@ export type FleetRefreshBulkSelectionTarget = 'safe' | 'force-safe';
 
 const FLEET_REFRESH_DEFAULT_BRANCH = 'main';
 
+/** ADR-042 farmslot ff sandboxes idle on wt/ff-N @ origin/main — not `main` by name. */
+export function isFleetRefreshIdleBranch(branch: string, defaultBranch: string): boolean {
+  if (!branch) return false;
+  if (branch === defaultBranch) return true;
+  return /^wt\/ff-[A-Za-z0-9._-]+$/.test(branch);
+}
+
 export function buildFleetRefreshReviewRows(
   slots: readonly SlotStatus[],
   filterSnapshot: FleetRefreshFilterSnapshot,
@@ -86,7 +93,8 @@ export function buildFleetRefreshReviewRows(
     // Gateway truth lives in project.json default_branch but isn't surfaced via
     // fleet.status. The bulk method re-checks with full project context at execution time.
     const defaultBranch = FLEET_REFRESH_DEFAULT_BRANCH;
-    const isStale = Boolean(slot.branch) && slot.branch !== defaultBranch;
+    const isStale =
+      Boolean(slot.branch) && !isFleetRefreshIdleBranch(slot.branch, defaultBranch);
     const row: FleetRefreshRowState = {
       slotId: slot.slot,
       machine: slot.machine,

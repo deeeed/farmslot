@@ -276,36 +276,41 @@ export async function slotRefresh(
       }
       const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
       step('branch', slotIdleResetStepDetail(idleReset, defaultBranch));
-    }
-
-    // 6. Fetch only the default branch. Refresh's contract is "make this idle
-    //    slot latest main"; fetching/pruning every remote branch is slow and
-    //    can fail on large repos with case-colliding branch refs on macOS.
-    step('fetch', `git fetch origin ${defaultBranch}`);
-    await execOnSlot(
-      vars,
-      `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_REMOTE_REF_LOCKS_COMMAND}; }`,
-    );
-    const fetchR = await execOnSlot(
-      vars,
-      `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(defaultBranchRefspec)}`,
-    );
-    if (fetchR.exitCode !== 0) {
-      const msg = `git fetch origin ${defaultBranch} failed: ${fetchR.stderr.slice(-200) || fetchR.stdout.slice(-200)}`;
-      err(msg);
-      complete(1, msg);
-      throw new Error(msg);
-    }
-    step('reset', `git reset --hard origin/${defaultBranch}`);
-    const ffR = await execOnSlot(
-      vars,
-      `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
-    );
-    if (ffR.exitCode !== 0) {
-      const msg = `fast-forward to origin/${defaultBranch} failed: ${ffR.stderr.slice(-200) || ffR.stdout.slice(-200)}`;
-      err(msg);
-      complete(1, msg);
-      throw new Error(msg);
+    } else if (linkedWorktree) {
+      // Safe refresh on linked worktrees: sync via ADR-042 helper so legacy
+      // `main` checkouts normalize to the tracking branch @ origin/default.
+      const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+      step('sync', slotIdleResetStepDetail(idleReset, defaultBranch));
+    } else {
+      // 6. Fetch only the default branch. Refresh's contract is "make this idle
+      //    slot latest main"; fetching/pruning every remote branch is slow and
+      //    can fail on large repos with case-colliding branch refs on macOS.
+      step('fetch', `git fetch origin ${defaultBranch}`);
+      await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_REMOTE_REF_LOCKS_COMMAND}; }`,
+      );
+      const fetchR = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(defaultBranchRefspec)}`,
+      );
+      if (fetchR.exitCode !== 0) {
+        const msg = `git fetch origin ${defaultBranch} failed: ${fetchR.stderr.slice(-200) || fetchR.stdout.slice(-200)}`;
+        err(msg);
+        complete(1, msg);
+        throw new Error(msg);
+      }
+      step('reset', `git reset --hard origin/${defaultBranch}`);
+      const ffR = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
+      );
+      if (ffR.exitCode !== 0) {
+        const msg = `fast-forward to origin/${defaultBranch} failed: ${ffR.stderr.slice(-200) || ffR.stdout.slice(-200)}`;
+        err(msg);
+        complete(1, msg);
+        throw new Error(msg);
+      }
     }
 
     // 7. Verify clean.
