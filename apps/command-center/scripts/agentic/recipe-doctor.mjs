@@ -30,7 +30,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--cdp-port') options.cdpPort = Number(argv[++i]);
-    else if (arg.startsWith('--cdp-port=')) options.cdpPort = Number(arg.slice(10));
+    else if (arg.startsWith('--cdp-port=')) options.cdpPort = Number(arg.slice('--cdp-port='.length));
     else if (arg === '--gateway-port') options.gatewayPort = argv[++i] ?? '';
     else if (arg.startsWith('--gateway-port=')) options.gatewayPort = arg.slice(15);
     else if (arg === '--ui-url') options.uiUrl = argv[++i] ?? '';

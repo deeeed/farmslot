@@ -129,6 +129,14 @@ export function resolveExpoRecordingTarget(
 }
 
 export function resolveExpoVideoRecorder(env: Record<string, string | undefined>): VideoRecorder {
+  if (
+    env.FARMSLOT_RECORD_PID ||
+    env.FARMSLOT_RECORD_WINDOW_ID ||
+    env.FARMSLOT_RECORD_APP_NAME ||
+    env.FARMSLOT_RECORD_WINDOW_NAME
+  ) {
+    return createCaptureHelperVideoRecorder();
+  }
   const target = resolveExpoRecordingTarget(env);
   if (target.kind === 'simulator') return createSimctlVideoRecorder();
   return createCaptureHelperVideoRecorder();
