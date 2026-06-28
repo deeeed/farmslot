@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFile, unlink } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import test from 'node:test';
+
+const execFileAsync = promisify(execFile);
 
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 
@@ -575,4 +579,43 @@ test('listRuns supports normalized tag filtering and tag search', async (t) => {
       .map((run) => run.id),
     [demo.id],
   );
+});
+
+test('loadAllRuns migrates legacy farmslot project to farmslot-farm', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'farmslot-run-migrate-'));
+  const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const legacy = {
+    id: runId,
+    familyId: runId,
+    parentRunId: null,
+    familyRootTicketOrPr: 'TEST-1',
+    lane: 'production',
+    variant: null,
+    flowType: 'dev',
+    mode: 'interactive',
+    status: 'done',
+    project: 'farmslot',
+    ticketOrPr: 'TEST-1',
+    steps: [],
+    decisions: [],
+    metrics: {},
+    createdAt: '2026-06-01T00:00:00.000Z',
+    updatedAt: '2026-06-01T00:00:00.000Z',
+    completedAt: '2026-06-01T00:00:00.000Z',
+  };
+  await writeFile(path.join(tmp, `${runId}.json`), JSON.stringify(legacy));
+  const script = `
+    process.env.FARMSLOT_RUNS_DIR = ${JSON.stringify(tmp)};
+    const { loadAllRuns, getRun } = await import('./store.js');
+    await loadAllRuns();
+    const run = getRun(${JSON.stringify(runId)});
+    if (!run || run.project !== 'farmslot-farm') process.exit(2);
+  `;
+  await execFileAsync(
+    'node',
+    ['--import', 'tsx', '--input-type=module', '-e', script],
+    { cwd: path.resolve('services/gateway/src/runs') },
+  );
+  const disk = JSON.parse(await readFile(path.join(tmp, `${runId}.json`), 'utf8'));
+  assert.equal(disk.project, 'farmslot-farm');
 });

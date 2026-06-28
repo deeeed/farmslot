@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per-worktree gateway + Command Center UI bootstrap for farmslot sandboxes.
+# Per-worktree gateway + Command Center UI bootstrap for farmslot-farm sandboxes.
 #
 # Worktree slots own their dev stack (tsx watch via scripts/dev.sh) — not the
 # global `farmslot up` pidfile. Each checkout uses .env.ports for GATEWAY_PORT /
@@ -170,11 +170,16 @@ case "$ACTION" in
       fi
       exit 1
     fi
-    if gateway_health; then
-      echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}"
+    if gateway_health && ui_health; then
+      echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}, UI on :${VITE_PORT}"
       exit 0
     fi
-    echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2
+    if ! gateway_health; then
+      echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2
+    fi
+    if ! ui_health; then
+      echo "[sandbox-dev] Command Center not reachable on :${VITE_PORT}" >&2
+    fi
     exit 1
     ;;
   stop)
@@ -199,14 +204,17 @@ case "$ACTION" in
       exit 1
     fi
 
+    resolve_primary_runs_dir
+
     if gateway_health; then
-      echo "[sandbox-dev] gateway already healthy on :${GATEWAY_PORT} — skipping start"
-      exit 0
+      if [[ -z "${FARMSLOT_RUNS_DIR:-}" ]]; then
+        echo "[sandbox-dev] gateway already healthy on :${GATEWAY_PORT} — skipping start"
+        exit 0
+      fi
+      echo "[sandbox-dev] restarting gateway on :${GATEWAY_PORT} to apply shared run history"
     fi
 
     stop_sandbox_dev
-
-    resolve_primary_runs_dir
 
     echo "[sandbox-dev] starting gateway :${GATEWAY_PORT} ui :${VITE_PORT} (tsx watch)"
     : >"$LOG_FILE"
