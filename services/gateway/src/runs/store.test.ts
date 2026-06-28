@@ -611,10 +611,11 @@ test('loadAllRuns migrates legacy farmslot project to farmslot-farm', async () =
     const run = getRun(${JSON.stringify(runId)});
     if (!run || run.project !== 'farmslot-farm') process.exit(2);
   `;
+  const runsDir = path.resolve(import.meta.dirname);
   await execFileAsync(
-    'node',
+    process.execPath,
     ['--import', 'tsx', '--input-type=module', '-e', script],
-    { cwd: path.resolve('services/gateway/src/runs') },
+    { cwd: runsDir },
   );
   const disk = JSON.parse(await readFile(path.join(tmp, `${runId}.json`), 'utf8'));
   assert.equal(disk.project, 'farmslot-farm');
