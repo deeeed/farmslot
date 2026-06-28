@@ -226,7 +226,7 @@ case "$ACTION" in
         echo "[sandbox-dev] gateway and UI already healthy on :${GATEWAY_PORT}/:${VITE_PORT} — skipping start"
         exit 0
       fi
-      local active_shared_runs=""
+      active_shared_runs=""
       if [[ -f "$SHARED_RUNS_MARKER" ]]; then
         active_shared_runs="$(tr -d '\n' <"$SHARED_RUNS_MARKER")"
       fi
