@@ -7,6 +7,7 @@
   "primary_repo": "/Users/deeeed/dev/farmslot",
   "artifacts_repo": "deeeed/farmslot-artifacts",
   "worktree_base": "/Users/deeeed/dev/farmslot-wt",
+  "slot_tracking_branch": "wt/{{session}}",
   "apps": ["command-center", "companion"],
   "paths": {
     "runtime_dir": ".sandbox/farmslot-farm/agent",
