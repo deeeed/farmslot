@@ -13,11 +13,27 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const GW = path.join(ROOT, 'scripts/lib/gw.mjs');
 
-function gwCall(method, params) {
+function parseArgs(argv) {
+  let runId = '';
+  let gatewayUrl = process.env.GW_URL || 'ws://localhost:7777';
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--gateway') {
+      gatewayUrl = argv[++i] ?? gatewayUrl;
+      continue;
+    }
+    if (!arg.startsWith('-') && !runId) {
+      runId = arg;
+    }
+  }
+  return { runId, gatewayUrl };
+}
+
+function gwCall(method, params, gatewayUrl) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [GW, method, JSON.stringify(params)], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, GW_URL: process.env.GW_URL || 'ws://localhost:7777' },
+      env: { ...process.env, GW_URL: gatewayUrl },
     });
     let stdout = '';
     let stderr = '';
@@ -34,13 +50,15 @@ function gwCall(method, params) {
   });
 }
 
-const runId = process.argv[2];
+const { runId, gatewayUrl } = parseArgs(process.argv.slice(2));
 if (!runId) {
-  process.stderr.write('Usage: assert-autonomous-gate-invariants.mjs <runId>\n');
+  process.stderr.write(
+    'Usage: assert-autonomous-gate-invariants.mjs <runId> [--gateway ws://127.0.0.1:7777]\n',
+  );
   process.exit(1);
 }
 
-const { run } = await gwCall('run.get', { runId });
+const { run } = await gwCall('run.get', { runId }, gatewayUrl);
 const failures = [];
 
 if (run.mode !== 'autonomous') failures.push(`mode=${run.mode} (expected autonomous)`);

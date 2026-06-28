@@ -64,11 +64,16 @@ function parseArgs(argv) {
         .map((entry) => entry.trim())
         .filter(Boolean)
         .map((entry) => {
-          const [variant, slotId] = entry.split(':');
-          if (!variant?.trim() || !slotId?.trim()) {
-            throw new Error(`Invalid --variants entry '${entry}' (expected variant:slotId)`);
+          const [runner, slotId] = entry.split(':');
+          if (!runner?.trim() || !slotId?.trim()) {
+            throw new Error(`Invalid --variants entry '${entry}' (expected runner:slotId)`);
           }
-          return { variant: variant.trim(), slotId: slotId.trim() };
+          const normalizedRunner = runner.trim();
+          return {
+            runner: normalizedRunner,
+            variant: normalizedRunner,
+            slotId: slotId.trim(),
+          };
         });
     } else if (arg === '-h' || arg === '--help') usage();
     else throw new Error(`Unknown arg: ${arg}`);
@@ -99,7 +104,7 @@ function gwCall(method, params) {
       try {
         resolve(JSON.parse(stdout.trim()));
       } catch (err) {
-        reject(new Error(`Invalid gw JSON: ${(err instanceof Error ? err.message : String(err))}`));
+        reject(new Error(`Invalid gw JSON: ${err instanceof Error ? err.message : String(err)}`));
       }
     });
   });
@@ -108,7 +113,7 @@ function gwCall(method, params) {
 const args = parseArgs(process.argv.slice(2));
 
 const results = [];
-for (const { variant, slotId } of args.variants) {
+for (const { runner, variant, slotId } of args.variants) {
   const payload = {
     project: args.project,
     flowType: args.flow,
@@ -117,14 +122,15 @@ for (const { variant, slotId } of args.variants) {
     lane: 'comparison',
     familyId: args.familyId,
     variant,
+    runner,
     completionPolicy: 'artifact-only',
     startRef: args.startRef,
     prepareProfile: args.prepareProfile,
     slotId,
   };
-  process.stderr.write(`[dispatch-comparison-family] ${variant} → ${slotId}\n`);
+  process.stderr.write(`[dispatch-comparison-family] ${runner} → ${slotId}\n`);
   const created = await gwCall('run.create', payload);
-  results.push({ variant, slotId, runId: created.run?.id });
+  results.push({ runner, variant, slotId, runId: created.run?.id });
 }
 
 process.stdout.write(`${JSON.stringify({ familyId: args.familyId, runs: results }, null, 2)}\n`);

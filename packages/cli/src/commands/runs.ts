@@ -163,7 +163,11 @@ export function registerRunsCommand(program: Command): void {
   runs
     .command('prune')
     .description('Bulk-delete terminal runs matching status filters')
-    .option('--status <list>', 'Comma-separated statuses (default failed,cancelled)', 'failed,cancelled')
+    .option(
+      '--status <list>',
+      'Comma-separated statuses (default failed,cancelled)',
+      'failed,cancelled',
+    )
     .option('--dry-run', 'List matching runs without deleting')
     .option('--limit <n>', 'Max runs to delete (default 200)', '200')
     .action(async (opts: PruneOptions, cmd: Command) => {
@@ -176,9 +180,12 @@ export function registerRunsCommand(program: Command): void {
             .filter(Boolean),
         );
         const limit = Math.max(1, Number(opts.limit ?? 200) || 200);
-        const listed = await client.call<{ runs: Array<{ id: string; status: string }> }>('run.list', {
-          limit: 1000,
-        });
+        const listed = await client.call<{ runs: Array<{ id: string; status: string }> }>(
+          'run.list',
+          {
+            limit: 1000,
+          },
+        );
         const targets = listed.runs
           .filter((run) => statuses.has(run.status))
           .slice(0, limit)

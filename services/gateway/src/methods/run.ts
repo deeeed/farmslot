@@ -76,10 +76,7 @@ import {
 } from '../runs/store.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
-import {
-  assertStartRefSkipPrepareEligible,
-  isStartRefPolicyError,
-} from '../projects/start-ref-policy.js';
+import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
 import { applyComparisonBranchPolicy } from './run/comparison-branch-policy.js';
 import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
