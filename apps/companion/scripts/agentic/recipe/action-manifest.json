@@ -9,7 +9,10 @@
     "index_artifacts",
     "app.status",
     "app.hud",
-    "app.trace"
+    "app.trace",
+    "ui.navigate",
+    "ui.wait_for",
+    "ui.screenshot"
   ],
   "action_metadata": {
     "command": {
@@ -23,6 +26,15 @@
     },
     "app.trace": {
       "description": "Emit a lightweight bridge trace event for recipe timeline observability."
+    },
+    "ui.navigate": {
+      "description": "Navigate the companion shell through the dev recipe bridge (expo-router routes)."
+    },
+    "ui.wait_for": {
+      "description": "Wait for banner copy or run-detail evidence to become visible or absent on the simulator."
+    },
+    "ui.screenshot": {
+      "description": "Capture a simulator screenshot into the recipe artifact package via Metro simctl helper."
     },
     "index_artifacts": {
       "description": "Copy generated screenshot artifacts into the recipe artifact package for review."
