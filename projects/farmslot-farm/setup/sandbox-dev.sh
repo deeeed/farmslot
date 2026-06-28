@@ -55,7 +55,7 @@ acquire_shared_runs_marker_lock() {
   local i=0
   while ! mkdir "$SHARED_RUNS_MARKER_LOCK" 2>/dev/null; do
     sleep 0.05
-    ((i++))
+    i=$((i + 1))
     if (( i > 200 )); then
       echo "[sandbox-dev] timed out waiting for shared-runs marker lock" >&2
       return 1
