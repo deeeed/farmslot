@@ -86,6 +86,7 @@ projects/farmslot/fixtures/*
 !projects/farmslot/fixtures/runtime/
 projects/farmslot/fixtures/runtime/*
 !projects/farmslot/fixtures/runtime/recipe-quality.md
+!projects/farmslot/fixtures/runtime/review-quality.md
 !projects/farmslot/setup/
 projects/farmslot/setup/*
 !projects/farmslot/setup/sandbox-dev.sh

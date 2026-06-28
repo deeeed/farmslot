@@ -101,7 +101,7 @@ Signal shape:
   ```
 - [ ] **8c. Evidence manifest** — `evidence-manifest.json` with before/after pairs + `videos.after: artifacts/after.mp4` for gateway PR embed.
 - [ ] **8d. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` + `recipe-quality.json` and run `check-task-artifact-contract.mjs` with recipe flags.
-- [ ] **9. Self-review** — read the diff (`git diff`). Check for: inline type duplication (use `@farmslot/protocol`), unnecessary helpers, comments that restate code.
+- [ ] **9. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
 - [ ] **10. Commit** — single commit following the repo's Lore commit protocol.
 - [ ] **11. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
 - [ ] **12. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.

@@ -142,7 +142,7 @@ Skip only when every AC is backend-only with zero UI surface — state why in th
 
 ### Phase 6: Report + package
 
-- [ ] **13. Self-review** — read the diff; no inline protocol duplication or comment noise.
+- [ ] **13. Self-review** — read the diff against `{{review_quality_path}}` antipatterns; no inline protocol duplication or comment noise.
 - [ ] **14. Commit** — atomic commit(s) following Conventional Commits.
 - [ ] **15. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
 - [ ] **16. Report + signal** — write `{{TASK_DIR}}/artifacts/report.md` (list evidence paths: screenshots + `after.mp4`), set `STATUS: done`, then:

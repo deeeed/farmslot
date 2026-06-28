@@ -117,6 +117,10 @@
         "dst": "{{runtime_dir}}/recipe-quality.md"
       },
       {
+        "src": "runtime/review-quality.md",
+        "dst": "{{runtime_dir}}/review-quality.md"
+      },
+      {
         "dst": ".sandbox/farmslot/claude/CLAUDE.local.md",
         "compose": {
           "var": "FLOW_TYPE",
@@ -226,6 +230,7 @@
     "recipe_validate_wrapper": "{{primary_repo}}/projects/farmslot/setup/validate-recipe.sh",
     "recipe_sync_evidence_cmd": "bash {{primary_repo}}/projects/farmslot/setup/sync-recipe-evidence.sh",
     "recipe_quality_path": "{{runtime_dir}}/recipe-quality.md",
+    "review_quality_path": "{{runtime_dir}}/review-quality.md",
     "recipe_example_banner": "{{farmslot_dir}}/docs/examples/recipes/farmslot/demo-red-banner.recipe.json"
   }
 }
