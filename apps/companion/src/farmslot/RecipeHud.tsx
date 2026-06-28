@@ -1,6 +1,27 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+// react-native-screens' FullWindowOverlay (iOS) paints in a UIWindow above every
+// native layer — including native-stack modal screens (sheets, perps-style modal
+// presentations) — which a plain root-level absolute View cannot reach. Resolve
+// it optionally so this proof HUD also works in Siteed apps that copy the demo
+// without installing react-native-screens: when the module is absent we fall back
+// to the root View (the HUD is then hidden behind native modals — a documented
+// known limitation). On Android/web FullWindowOverlay is a passthrough.
+const FullWindowOverlay = resolveFullWindowOverlay();
+
+function resolveFullWindowOverlay(): React.ComponentType<{ children: React.ReactNode }> | null {
+  try {
+    return require('react-native-screens').FullWindowOverlay ?? null;
+  } catch (error) {
+    // Expected & recoverable ONLY when react-native-screens is not installed
+    // (it is an optional peer for the proof HUD). Any other failure is a real
+    // bug and must surface rather than be swallowed.
+    if ((error as { code?: string }).code === 'MODULE_NOT_FOUND') return null;
+    throw error;
+  }
+}
+
 export type FarmslotRecipeHudStatus = 'idle' | 'running' | 'pass' | 'fail';
 
 export interface FarmslotRecipeHudState {
@@ -18,7 +39,7 @@ interface RecipeHudProps {
 export function RecipeHud({ state }: Readonly<RecipeHudProps>): React.ReactElement | null {
   if (!state || state.status === 'idle') return null;
   const progress = formatProgress(state.currentStep, state.totalSteps);
-  return (
+  const overlay = (
     <View pointerEvents="none" style={styles.container}>
       <View style={[styles.pill, state.status === 'fail' ? styles.fail : styles.active]}>
         <Text style={styles.pillText}>
@@ -38,6 +59,7 @@ export function RecipeHud({ state }: Readonly<RecipeHudProps>): React.ReactEleme
       </View>
     </View>
   );
+  return FullWindowOverlay ? <FullWindowOverlay>{overlay}</FullWindowOverlay> : overlay;
 }
 
 function formatProgress(currentStep?: number, totalSteps?: number): string {
