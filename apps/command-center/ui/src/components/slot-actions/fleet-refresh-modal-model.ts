@@ -14,10 +14,7 @@ export interface FleetRefreshFilterSnapshot {
   machines: string[];
 }
 
-export type FleetRefreshProjectConfig = Pick<
-  ProjectConfig,
-  'defaultBranch' | 'slotTrackingBranch'
->;
+export type FleetRefreshProjectConfig = Pick<ProjectConfig, 'defaultBranch' | 'slotTrackingBranch'>;
 
 export interface FleetRefreshRowState {
   slotId: string;

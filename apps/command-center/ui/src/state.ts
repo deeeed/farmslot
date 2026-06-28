@@ -214,7 +214,10 @@ export function getProjectSlotTrackingConfigs(): Readonly<
 }
 
 export function updateProjectSlotTracking(
-  map: Record<string, { defaultBranch: string; slotTrackingBranch?: string; worktreeBase?: string }>,
+  map: Record<
+    string,
+    { defaultBranch: string; slotTrackingBranch?: string; worktreeBase?: string }
+  >,
 ): void {
   state.projectSlotTracking = map;
   notify();
