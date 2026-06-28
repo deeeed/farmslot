@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Phase 0 + recipe proof gates for docs/plans/farmslot-cross-surface-evidence-e2e-goal.md
+# Phase 0 + Runs A/B recipe proof + typecheck gates for
+# docs/plans/farmslot-cross-surface-evidence-e2e-goal.md
+#
+# Single entry point: all scratch artifacts are written by this script.
+# Set E2E_SCRATCH_DIR to the implementer scratch directory.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,14 +14,39 @@ mkdir -p "$SCRATCH"
 FF_SLOT="${FF_SLOT:-macwork-ff-2}"
 FF_GATEWAY_PORT="${FF_GATEWAY_PORT:-8809}"
 FF_CDP_PORT="${FF_CDP_PORT:-9323}"
-FF_REPO="${FF_REPO:-}"
-TASK_DIR="${TASK_DIR:-}"
-if [[ -z "$FF_REPO" ]]; then
-  echo "[e2e-evidence] ERROR: set FF_REPO to the slot worktree (e.g. farmslot-wt/farmslot-2)" >&2
-  exit 1
+FC_SLOT="${FC_SLOT:-macwork-fc-1}"
+FC_METRO_PORT="${FC_METRO_PORT:-8871}"
+FC_SIMULATOR="${FC_SIMULATOR:-fs-companion-1}"
+FC_GATEWAY_PORT="${FC_GATEWAY_PORT:-8809}"
+
+resolve_wt() {
+  local name="$1"
+  if [[ "$name" == /* ]]; then
+    printf '%s' "$name"
+    return 0
+  fi
+  local parent
+  parent="$(cd "$PRIMARY_REPO/.." && pwd)"
+  printf '%s/%s' "$parent" "$name"
+}
+
+CC_WT="${CC_WT:-}"
+FC_WT="${FC_WT:-$(resolve_wt "farmslot-wt/farmslot-companion-1")}"
+if [[ -z "$CC_WT" ]]; then
+  CC_WT="$(resolve_wt "farmslot-wt/farmslot-2")"
 fi
+FF_REPO="${FF_REPO:-$CC_WT}"
+
+TASK_DIR="${TASK_DIR:-}"
 if [[ -z "$TASK_DIR" ]]; then
-  TASK_DIR="$FF_REPO/.sandbox/farmslot/worker-task/feat/e2e-28-proof"
+  TASK_DIR="$(find "$CC_WT/.sandbox/farmslot/worker-task" -type f -path '*/artifacts/recipe.json' 2>/dev/null \
+    | xargs -I{} dirname {} 2>/dev/null | xargs -I{} dirname {} 2>/dev/null | sort -r | head -1 || true)"
+fi
+
+FC_TASK_DIR="${FC_TASK_DIR:-}"
+if [[ -z "$FC_TASK_DIR" ]]; then
+  FC_TASK_DIR="$(find "$FC_WT/.sandbox/farmslot/worker-task" -type f -path '*/artifacts/recipe.json' 2>/dev/null \
+    | xargs -I{} dirname {} | xargs -I{} dirname {} | sort -r | head -1 || true)"
 fi
 
 log() { echo "[e2e-evidence] $*" | tee -a "$SCRATCH/e2e.log"; }
@@ -25,6 +54,56 @@ log() { echo "[e2e-evidence] $*" | tee -a "$SCRATCH/e2e.log"; }
 fail_step() {
   log "FAILED: $1 (exit=$2)"
   exit "$2"
+}
+
+capture_typecheck() {
+  local repo="$1"
+  local app="$2"
+  local out_log="$3"
+  if [[ ! -d "$repo/apps/$app" ]]; then
+    echo "ERROR: missing $repo/apps/$app" >"$out_log"
+    return 1
+  fi
+  {
+    echo "=== typecheck $app ==="
+    echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "repo: $repo"
+    cd "$repo/apps/$app"
+    echo "cwd: $(pwd)"
+    echo "branch: $(git -C "$repo" rev-parse --abbrev-ref HEAD)"
+    echo "command: yarn typecheck"
+    echo "--- stdout/stderr ---"
+  } >"$out_log"
+  set +e
+  (cd "$repo/apps/$app" && yarn typecheck) >>"$out_log" 2>&1
+  local ec=$?
+  set -e
+  {
+    echo "--- end ---"
+    echo "exit=$ec"
+  } >>"$out_log"
+  return "$ec"
+}
+
+run_recipe_proof() {
+  local label="$1"
+  local slot_repo="$2"
+  local recipe_path="$3"
+  local artifacts_dir="$4"
+  local task_dir="$5"
+  local platform="$6"
+  local proof_log="$7"
+  shift 7
+  # Remaining args forwarded to validate-recipe.sh
+  FARMSLOT_SLOT_REPO="$slot_repo" EXPO_PUBLIC_GATEWAY_URL="${EXPO_PUBLIC_GATEWAY_URL:-}" \
+    bash "$SCRIPT_DIR/validate-recipe.sh" \
+      --recipe "$recipe_path" \
+      --artifacts-dir "$artifacts_dir" \
+      --runtime-dir "$slot_repo/.sandbox/farmslot/agent" \
+      --platform "$platform" \
+      "$@" \
+      --slow 2000 --record-video=full-run --task-dir "$task_dir" \
+      >"$proof_log" 2>&1
 }
 
 # Pin native capture-helper (same resolution as validate-recipe.sh).
@@ -46,17 +125,17 @@ if helper_bin="$(resolve_capture_helper_bin)"; then
   export SITEED_CAPTURE_HELPER_BIN="${helper_bin}"
 fi
 
-log "scratch=$SCRATCH primary_repo=$PRIMARY_REPO"
+log "scratch=$SCRATCH primary_repo=$PRIMARY_REPO cc_wt=$CC_WT fc_wt=$FC_WT"
 
-# Ensure headed CDP Chrome is on the primary display for capture-helper.
+# ── Phase 0 ─────────────────────────────────────────────────────────────
+
 if command -v osascript >/dev/null 2>&1; then
   osascript -e 'tell application "Google Chrome" to activate' \
     -e 'tell application "Google Chrome" to set bounds of front window to {200, 150, 1400, 950}' \
     >/dev/null 2>&1 || true
 fi
 
-# Always relaunch CDP Chrome for proof runs so capture-helper sees a fresh on-screen window.
-VITE_PORT="$(python3 - <<'PY' "$FF_REPO"
+VITE_PORT="$(python3 - <<'PY' "$CC_WT"
 import pathlib, sys
 repo = sys.argv[1]
 ports = pathlib.Path(repo) / ".env.ports"
@@ -104,39 +183,119 @@ bash "$SCRIPT_DIR/validate-recipe.sh" --dry-run \
   || fail_step "validate-recipe dry-run" $?
 log "dry-run exit=0"
 
-bash "$SCRIPT_DIR/companion-prepare.sh" health --slot-port 8871 --platform ios \
-  >"$SCRATCH/phase0-companion-health.log" 2>&1 \
+{
+  echo "=== companion-prepare health ==="
+  echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "slot-port: $FC_METRO_PORT platform: ios"
+  echo "metro_listening: $(lsof -nP -iTCP:"$FC_METRO_PORT" -sTCP:LISTEN -t 2>/dev/null | wc -l | tr -d ' ')"
+  curl -sf "http://127.0.0.1:${FC_METRO_PORT}/status" 2>&1 && echo "" || echo "metro_status: unreachable"
+  bash "$SCRIPT_DIR/companion-prepare.sh" health --slot-port "$FC_METRO_PORT" --platform ios
+  echo "health_exit=$?"
+} >"$SCRATCH/phase0-companion-health.log" 2>&1 \
   || fail_step "companion-prepare health" $?
 log "companion health exit=0"
 
-mkdir -p "$TASK_DIR/artifacts"
-cp "$PRIMARY_REPO/docs/examples/recipes/farmslot/demo-red-banner.recipe.json" "$TASK_DIR/artifacts/recipe.json"
+# Dry-run consistency (verification plan step 8)
+bash "$SCRIPT_DIR/validate-recipe.sh" --dry-run \
+  --recipe "$PRIMARY_REPO/docs/examples/recipes/farmslot/demo-red-banner.recipe.json" \
+  --artifacts-dir "$SCRATCH/recipe-dry-rerun1" --gateway-port "$FF_GATEWAY_PORT" --slot-id "$FF_SLOT" \
+  >"$SCRATCH/phase0-dryrun-rerun1.log" 2>&1 \
+  || fail_step "dry-run rerun1" $?
+bash "$SCRIPT_DIR/validate-recipe.sh" --dry-run \
+  --recipe "$PRIMARY_REPO/docs/examples/recipes/farmslot/demo-red-banner.recipe.json" \
+  --artifacts-dir "$SCRATCH/recipe-dry-rerun2" --gateway-port "$FF_GATEWAY_PORT" --slot-id "$FF_SLOT" \
+  >"$SCRATCH/phase0-dryrun-rerun2.log" 2>&1 \
+  || fail_step "dry-run rerun2" $?
 
-FARMSLOT_SLOT_REPO="$FF_REPO" bash "$SCRIPT_DIR/validate-recipe.sh" \
-  --recipe "$TASK_DIR/artifacts/recipe.json" \
-  --artifacts-dir "$TASK_DIR/artifacts/recipe-run" \
-  --runtime-dir "$FF_REPO/.sandbox/farmslot/agent" \
-  --platform web --cdp-port "$FF_CDP_PORT" --gateway-port "$FF_GATEWAY_PORT" \
-  --slot-id "$FF_SLOT" --slow 2000 --record-video=full-run --task-dir "$TASK_DIR" \
-  >"$SCRATCH/runA-proof.log" 2>&1 \
+# ── Run A (Command Center) ──────────────────────────────────────────────
+
+if [[ -z "$TASK_DIR" || ! -d "$TASK_DIR" ]]; then
+  fail_step "TASK_DIR missing under CC worktree (set TASK_DIR)" 1
+fi
+if [[ ! -f "$TASK_DIR/artifacts/recipe.json" ]]; then
+  mkdir -p "$TASK_DIR/artifacts"
+  cp "$PRIMARY_REPO/docs/examples/recipes/farmslot/demo-red-banner.recipe.json" "$TASK_DIR/artifacts/recipe.json"
+fi
+
+run_recipe_proof "run A" "$CC_WT" "$TASK_DIR/artifacts/recipe.json" \
+  "$TASK_DIR/artifacts/recipe-run" "$TASK_DIR" web "$SCRATCH/runA-proof.log" \
+  --cdp-port "$FF_CDP_PORT" --gateway-port "$FF_GATEWAY_PORT" --slot-id "$FF_SLOT" \
   || fail_step "run A proof validate-recipe" $?
 log "run A proof exit=0"
 
 cp "$TASK_DIR/artifacts/recipe-run/summary.json" "$SCRATCH/runA-summary.json" 2>/dev/null || true
-ls -la "$TASK_DIR/artifacts/" "$TASK_DIR/artifacts/recipe-run/videos/" 2>/dev/null | tee "$SCRATCH/runA-artifacts.ls"
+{
+  echo "=== Run A artifacts ==="
+  ls -la "$TASK_DIR/artifacts/after.mp4" "$TASK_DIR/artifacts/"*.png 2>&1 || true
+  echo ""
+  cat "$TASK_DIR/artifacts/recipe-run/summary.json" 2>/dev/null || true
+} >"$SCRATCH/runA-artifacts.log" 2>&1
 
 node "$PRIMARY_REPO/scripts/quality/check-task-artifact-contract.mjs" "$TASK_DIR" \
   --require-recipe-quality-if-recipe --require-recipe-coverage-if-recipe \
   >"$SCRATCH/runA-contract.log" 2>&1 \
-  || fail_step "task artifact contract" $?
-log "contract check exit=0"
+  || fail_step "run A task artifact contract" $?
+log "run A contract exit=0"
 
-cd "$PRIMARY_REPO/apps/command-center" && yarn typecheck >"$SCRATCH/typecheck-cc.log" 2>&1 \
-  || fail_step "command-center typecheck" $?
-log "command-center typecheck exit=0"
+# ── Run B (Companion) ───────────────────────────────────────────────────
 
-cd "$PRIMARY_REPO/apps/companion" && yarn typecheck >"$SCRATCH/typecheck-companion.log" 2>&1 \
-  || fail_step "companion typecheck" $?
-log "companion typecheck exit=0"
+if [[ -z "$FC_TASK_DIR" || ! -f "$FC_TASK_DIR/artifacts/recipe.json" ]]; then
+  fail_step "FC_TASK_DIR missing or has no artifacts/recipe.json (set FC_TASK_DIR)" 1
+fi
+
+EXPO_PUBLIC_GATEWAY_URL="ws://127.0.0.1:${FC_GATEWAY_PORT}/ws"
+export EXPO_PUBLIC_GATEWAY_URL
+
+run_recipe_proof "run B" "$FC_WT" "$FC_TASK_DIR/artifacts/recipe.json" \
+  "$FC_TASK_DIR/artifacts/recipe-run-ui" "$FC_TASK_DIR" ios "$SCRATCH/runB-ui-recipe-proof.log" \
+  --metro-port "$FC_METRO_PORT" --simulator "$FC_SIMULATOR" \
+  --gateway-port "$FC_GATEWAY_PORT" --slot-id "$FC_SLOT" \
+  || fail_step "run B ui recipe proof" $?
+log "run B ui recipe proof exit=0"
+
+{
+  echo "=== Run B artifacts ==="
+  ls -la "$FC_TASK_DIR/artifacts/after.mp4" "$FC_TASK_DIR/artifacts/"*.png 2>&1 || true
+  echo ""
+  cat "$FC_TASK_DIR/artifacts/recipe-run-ui/summary.json" 2>/dev/null || true
+  echo ""
+  if [[ -f "$FC_TASK_DIR/artifacts/after.mp4" ]]; then
+    echo "moov:"
+    strings "$FC_TASK_DIR/artifacts/after.mp4" | grep -o moov | head -1 || true
+  fi
+} >"$SCRATCH/runB-artifacts.log" 2>&1
+
+node "$PRIMARY_REPO/scripts/quality/check-task-artifact-contract.mjs" "$FC_TASK_DIR" \
+  --require-recipe-quality-if-recipe --require-recipe-coverage-if-recipe \
+  >"$SCRATCH/runB-contract.log" 2>&1 \
+  || fail_step "run B task artifact contract" $?
+log "run B contract exit=0"
+
+# ── Typechecks on feat worktrees (verification plan step 5) ─────────────
+
+capture_typecheck "$CC_WT" command-center "$SCRATCH/typecheck-cc-runA.log" \
+  || fail_step "command-center typecheck (cc worktree)" $?
+log "command-center typecheck exit=0 (branch in typecheck-cc-runA.log)"
+
+capture_typecheck "$FC_WT" companion "$SCRATCH/typecheck-companion-runB.log" \
+  || fail_step "companion typecheck (fc worktree)" $?
+log "companion typecheck exit=0 (branch in typecheck-companion-runB.log)"
+
+# ── Git state snapshot (verification plan step 9) ───────────────────────
+
+{
+  echo "=== primary repo (tooling PR) ==="
+  cd "$PRIMARY_REPO"
+  echo "cwd: $(pwd)"
+  echo "branch: $(git rev-parse --abbrev-ref HEAD)"
+  git log --oneline -5
+  git status --short
+  echo ""
+  echo "=== CC worktree ==="
+  echo "path: $CC_WT branch: $(git -C "$CC_WT" rev-parse --abbrev-ref HEAD)"
+  echo ""
+  echo "=== FC worktree ==="
+  echo "path: $FC_WT branch: $(git -C "$FC_WT" rev-parse --abbrev-ref HEAD)"
+} >"$SCRATCH/git-state.log" 2>&1
 
 log "e2e evidence capture complete — inspect $SCRATCH"
