@@ -52,7 +52,7 @@
         },
         "restart-with-demo-flag": {
           "action": "command",
-          "cmd": "FARMSLOT_SLOT_REPO={{repo}} bash {{farmslot_dir}}/projects/farmslot/setup/sandbox-dev.sh stop --gateway-port {{gateway_port}} && VITE_FARMSLOT_DEMO_BANNER=1 FARMSLOT_SLOT_REPO={{repo}} bash {{farmslot_dir}}/projects/farmslot/setup/sandbox-dev.sh start --gateway-port {{gateway_port}}",
+          "cmd": "FARMSLOT_SLOT_REPO={{repo}} bash {{farmslot_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{gateway_port}} && VITE_FARMSLOT_DEMO_BANNER=1 FARMSLOT_SLOT_REPO={{repo}} bash {{farmslot_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{gateway_port}}",
           "cwd": ".",
           "timeout_ms": 120000,
           "next": "open-slot-shell-demo-on",

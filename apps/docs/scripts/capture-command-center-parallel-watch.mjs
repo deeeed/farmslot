@@ -44,7 +44,7 @@ const recipe = JSON.parse(readFileSync(recipePath, 'utf8'));
 const trace = [];
 const runIds = [];
 let captureSlots = ['demo-work-1', 'demo-ff-1'];
-let captureProjects = ['farmslot'];
+let captureProjects = ['farmslot-farm'];
 let captureMachines = ['demo-host', 'farmslot-demo'];
 const childProcesses = [];
 
@@ -156,7 +156,7 @@ async function ensureDemoRuns() {
 
   const plans = [
     {
-      project: 'farmslot',
+      project: 'farmslot-farm',
       slotId: 'demo-work-1',
       ticketOrPr: 'https://github.com/deeeed/farmslot/issues/28',
       issueRef: '28',
@@ -164,7 +164,7 @@ async function ensureDemoRuns() {
         'Demo-only Farmslot issue #28: show debug demo badge during parallel run monitoring.',
     },
     {
-      project: 'farmslot',
+      project: 'farmslot-farm',
       slotId: 'demo-ff-1',
       ticketOrPr: `FARMSLOT-DEMO-PARALLEL-WATCH-${new Date()
         .toISOString()

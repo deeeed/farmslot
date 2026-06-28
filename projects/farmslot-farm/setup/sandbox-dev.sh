@@ -6,9 +6,9 @@
 # VITE_PORT isolation.
 #
 # Usage (from slot prepare hooks):
-#   bash projects/farmslot/setup/sandbox-dev.sh start --gateway-port 8808
-#   bash projects/farmslot/setup/sandbox-dev.sh health --gateway-port 8808
-#   bash projects/farmslot/setup/sandbox-dev.sh stop --gateway-port 8808
+#   bash projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port 8808
+#   bash projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port 8808
+#   bash projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port 8808
 set -euo pipefail
 
 ACTION="${1:-}"

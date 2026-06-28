@@ -100,6 +100,7 @@ Reference implementations:
 
 | Project farm              | Recipe surface                                                                                                    |
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `farmslot-farm` (first-party) | Command Center + Companion monorepo — `projects/farmslot-farm/project.json`, `pool/farmslot-demo.json`          |
 | Browser app farm         | CDP or Playwright runner with a `validate-recipe` wrapper                                                       |
 | Native app farm          | Maestro/XCTest/Detox runner with mobile action docs                                                             |
 | Backend/service farm     | Shell, pytest, or API-test runner with JSON artifact output                                                     |

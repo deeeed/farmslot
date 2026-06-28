@@ -12,7 +12,7 @@ function run(overrides: Partial<Run> = {}): Run {
     lane: 'production',
     flowType: 'fix-bug',
     status: 'created',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: 'FS-101',
     slotId: null,
     branch: null,
@@ -92,10 +92,10 @@ test('profile fit gate warns when gateway-only sandbox is default for companion 
 test('resolveCompanionSlotId finds dedicated mobile slot for project', () => {
   const slot = resolveCompanionSlotId(
     [
-      { slot: 'macwork-ff-2', project: 'farmslot', platform: 'cli' },
-      { slot: 'macwork-fc-1', project: 'farmslot', platform: 'ios' },
+      { slot: 'macwork-ff-2', project: 'farmslot-farm', platform: 'cli' },
+      { slot: 'macwork-fc-1', project: 'farmslot-farm', platform: 'ios' },
     ],
-    'farmslot',
+    'farmslot-farm',
   );
   assert.equal(slot, 'macwork-fc-1');
 });

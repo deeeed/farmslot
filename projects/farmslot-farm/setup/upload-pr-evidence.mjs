@@ -9,9 +9,9 @@
  *   reviews/<prNumber>/<filename>    — review flow
  *
  * Usage:
- *   node projects/farmslot/setup/upload-pr-evidence.mjs \
+ *   node projects/farmslot-farm/setup/upload-pr-evidence.mjs \
  *     --task-dir <task-dir> --pr <number> [--flow feature|fix|review] [--dry-run]
- *   node projects/farmslot/setup/upload-pr-evidence.mjs \
+ *   node projects/farmslot-farm/setup/upload-pr-evidence.mjs \
  *     --artifacts-dir <dir> --pr <number> --repo deeeed/farmslot [--edit-pr]
  */
 import { createHash } from 'node:crypto';
@@ -72,7 +72,7 @@ function parseArgs(argv) {
 }
 
 function readProjectJson() {
-  const projectJsonPath = path.join(FARMSLOT_ROOT, 'projects/farmslot/project.json');
+  const projectJsonPath = path.join(FARMSLOT_ROOT, 'projects/farmslot-farm/project.json');
   return JSON.parse(readFileSync(projectJsonPath, 'utf8'));
 }
 
@@ -215,7 +215,7 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const project = readProjectJson();
   const artifactsRepo = opts.repo || project.artifacts_repo;
-  if (!artifactsRepo) throw new Error('artifacts_repo missing in projects/farmslot/project.json');
+  if (!artifactsRepo) throw new Error('artifacts_repo missing in projects/farmslot-farm/project.json');
 
   const mediaFiles = collectMediaFiles(opts.artifactsDir).filter((f) => !f.includes('/'));
   if (mediaFiles.length === 0) {

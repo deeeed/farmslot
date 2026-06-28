@@ -2,7 +2,7 @@
 # Promote recipe-run screenshots/video into task artifacts/ for PR publication.
 #
 # Usage:
-#   bash projects/farmslot/setup/sync-recipe-evidence.sh --task-dir <TASK_DIR> \
+#   bash projects/farmslot-farm/setup/sync-recipe-evidence.sh --task-dir <TASK_DIR> \
 #     [--recipe-run-dir <dir>] [--require-video]
 set -euo pipefail
 

@@ -67,7 +67,7 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
     JSON.stringify(
       {
         machine: 'localhost',
-        project: 'farmslot',
+        project: 'farmslot-farm',
         platform: 'cli',
         os: 'darwin',
         host: 'localhost',
@@ -80,7 +80,7 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   );
 
   const copied = await refreshArtifactMirror(
-    makeRun({ id: testId, project: 'farmslot', slotId, taskFile }),
+    makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile }),
   );
 
   assert.equal(copied >= 2, true);
@@ -158,7 +158,7 @@ test('refreshArtifactMirror rejects evidence-manifest references to internal art
     JSON.stringify(
       {
         machine: 'localhost',
-        project: 'farmslot',
+        project: 'farmslot-farm',
         platform: 'cli',
         os: 'darwin',
         host: 'localhost',
@@ -171,7 +171,7 @@ test('refreshArtifactMirror rejects evidence-manifest references to internal art
   );
 
   await assert.rejects(
-    () => refreshArtifactMirror(makeRun({ id: testId, project: 'farmslot', slotId, taskFile })),
+    () => refreshArtifactMirror(makeRun({ id: testId, project: 'farmslot-farm', slotId, taskFile })),
     /evidence-manifest references internal artifact: artifacts\/runtime-relaunch\/chrome-profile\/cache\.png/,
   );
   assert.equal(

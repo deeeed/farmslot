@@ -2,7 +2,7 @@
   "id": "docusaurus-human-ready-gate",
   "title": "Capture Command Center human ready gate",
   "description": "Reproducibly capture a public-safe Command Center ready gate from the real UI, backed by a gateway-compatible fixture and public-safety assertions.",
-  "project": "farmslot",
+  "project": "farmslot-farm",
   "surface": "command-center",
   "publicSafety": {
     "forbiddenPatterns": [

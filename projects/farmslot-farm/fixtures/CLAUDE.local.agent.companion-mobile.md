@@ -37,7 +37,7 @@ Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agen
    xcrun simctl boot '<simulator-name>'
    open -a Simulator
    ```
-   Or from Command Center: resource `ios-sim` → **boot** (uses `projects/farmslot/project.json` hooks when dispatched as that project).
+   Or from Command Center: resource `ios-sim` → **boot** (uses `projects/farmslot-farm/project.json` hooks when dispatched as that project).
 3. Start Metro + dev client on isolated port:
    ```bash
    cd apps/companion
@@ -73,7 +73,7 @@ Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agen
 - Do not add simulator boot to default `sandbox` prepare or `yarn farmdev`.
 - Do not use shared Metro 8081 across parallel worktrees.
 - Do not inject UI state to fake companion outcomes — drive real taps/keystrokes for evidence.
-- Do not assume `projects/farmslot` pool slots exist on every machine; when absent,
+- Do not assume `projects/farmslot-farm` pool slots exist on every machine; when absent,
   pin devices in `agentic.local.conf` and document the choice in the task report.
 
 ## Validation
@@ -82,4 +82,4 @@ Per-worktree device pins live in gitignored `apps/companion/scripts/agentic/agen
 - Metro: `lsof -nP -iTCP:<metro-port> -sTCP:LISTEN`
 - iOS: `xcrun simctl list devices booted | grep -q '<simulator-name>'`
 - Android: `adb -s '<serial>' get-state`
-- Companion recipes: `projects/farmslot` `recipe_run` hook when slot is configured for that project.
+- Companion recipes: `projects/farmslot-farm` `recipe_run` hook when slot is configured for that project.

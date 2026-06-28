@@ -20,7 +20,7 @@ import {
 
 const sources: FilterSource[] = [
   { project: 'example-audio-farm', machine: 'runner-local' },
-  { project: 'farmslot', machine: 'runner-local' },
+  { project: 'farmslot-farm', machine: 'runner-local' },
   { project: 'example-mobile-farm', machine: 'runner-a' },
 ];
 
@@ -30,7 +30,7 @@ test('reconcileFiltersWithSources keeps saved filters and derives dependent opti
   assert.deepEqual(reconcileFiltersWithSources(saved, sources), {
     filters: { projects: ['example-audio-farm'], machines: [] },
     available: {
-      projects: ['example-audio-farm', 'example-mobile-farm', 'farmslot'],
+      projects: ['example-audio-farm', 'example-mobile-farm', 'farmslot-farm'],
       machines: ['runner-local'],
     },
   });
@@ -48,7 +48,7 @@ test('reconcileFiltersWithSources preserves saved filters that are absent from c
       machines: ['missing-machine', 'runner-local'],
     },
     available: {
-      projects: ['example-audio-farm', 'farmslot', 'missing-project'],
+      projects: ['example-audio-farm', 'farmslot-farm', 'missing-project'],
       machines: ['missing-machine', 'runner-local'],
     },
   });
@@ -128,7 +128,7 @@ test('filterSlots applies both persisted project and machine filters', () => {
       [
         { slot: 'one', project: 'example-audio-farm', machine: 'runner-local' },
         { slot: 'two', project: 'example-audio-farm', machine: 'runner-a' },
-        { slot: 'three', project: 'farmslot', machine: 'runner-local' },
+        { slot: 'three', project: 'farmslot-farm', machine: 'runner-local' },
       ],
       { projects: ['example-audio-farm'], machines: ['runner-local'] },
     ).map((slot) => slot.slot),
@@ -140,13 +140,13 @@ test('filterRuns applies project filters directly and machine filters through sl
   const runs: Run[] = [
     makeRun({ id: 'run-a', project: 'example-audio-farm', slotId: 'slot-a' }),
     makeRun({ id: 'run-b', project: 'example-audio-farm', slotId: 'slot-b' }),
-    makeRun({ id: 'run-c', project: 'farmslot', slotId: 'slot-c' }),
+    makeRun({ id: 'run-c', project: 'farmslot-farm', slotId: 'slot-c' }),
     makeRun({ id: 'run-d', project: 'example-audio-farm', slotId: null }),
   ];
   const slotById = new Map([
     ['slot-a', { project: 'example-audio-farm', machine: 'runner-local' }],
     ['slot-b', { project: 'example-audio-farm', machine: 'runner-a' }],
-    ['slot-c', { project: 'farmslot', machine: 'runner-local' }],
+    ['slot-c', { project: 'farmslot-farm', machine: 'runner-local' }],
   ]);
 
   assert.deepEqual(
@@ -180,7 +180,7 @@ test('filterDecisions requires slot context for both project and machine filters
   ];
   const slotById = new Map([
     ['slot-a', { project: 'example-audio-farm', machine: 'runner-local' }],
-    ['slot-b', { project: 'farmslot', machine: 'runner-local' }],
+    ['slot-b', { project: 'farmslot-farm', machine: 'runner-local' }],
   ]);
 
   assert.deepEqual(
@@ -203,7 +203,7 @@ test('filterDecisions can use decision context when slot context is unavailable'
     makeDecision({
       id: 'decision-b',
       slotId: null,
-      context: { project: 'farmslot', machine: 'runner-a' },
+      context: { project: 'farmslot-farm', machine: 'runner-a' },
     }),
     makeDecision({ id: 'decision-c', slotId: null }),
   ];
@@ -245,7 +245,7 @@ test('loadPersistedFilters restores saved filters and reports no rewrite when un
 
   assert.deepEqual(loaded.filters, { projects: ['example-audio-farm'], machines: [] });
   assert.deepEqual(loaded.available, {
-    projects: ['example-audio-farm', 'example-mobile-farm', 'farmslot'],
+    projects: ['example-audio-farm', 'example-mobile-farm', 'farmslot-farm'],
     machines: ['runner-local'],
   });
   assert.equal(loaded.shouldPersistReconciled, false);
@@ -293,7 +293,7 @@ test('loadPersistedFilters reads available sources after async storage resolves'
     machines: ['runner-local'],
   });
   assert.deepEqual(loaded.available, {
-    projects: ['example-audio-farm', 'farmslot'],
+    projects: ['example-audio-farm', 'farmslot-farm'],
     machines: ['runner-local'],
   });
 });
@@ -325,7 +325,7 @@ test('loadPersistedFilters resets malformed persisted filters for rewrite', asyn
   assert.deepEqual(loaded.savedFilters, { projects: [], machines: [] });
   assert.deepEqual(loaded.filters, { projects: [], machines: [] });
   assert.deepEqual(loaded.available, {
-    projects: ['example-audio-farm', 'example-mobile-farm', 'farmslot'],
+    projects: ['example-audio-farm', 'example-mobile-farm', 'farmslot-farm'],
     machines: ['runner-a', 'runner-local'],
   });
   assert.equal(loaded.shouldPersistReconciled, true);
@@ -361,7 +361,7 @@ test('filter store restores persisted filters with current source options', asyn
     projects: ['example-audio-farm'],
     machines: ['runner-local'],
   });
-  assert.deepEqual(store.getState().availableProjects, ['example-audio-farm', 'farmslot']);
+  assert.deepEqual(store.getState().availableProjects, ['example-audio-farm', 'farmslot-farm']);
   assert.deepEqual(store.getState().availableMachines, ['runner-local']);
 });
 
@@ -381,15 +381,15 @@ test('filter store hydration does not overwrite user changes made while storage 
   store.getState().setAvailable(sources);
 
   const init = store.getState().init();
-  store.getState().toggleProject('farmslot');
+  store.getState().toggleProject('farmslot-farm');
   storageReadGate.release?.();
   await init;
 
-  assert.deepEqual(store.getState().filters, { projects: ['farmslot'], machines: [] });
+  assert.deepEqual(store.getState().filters, { projects: ['farmslot-farm'], machines: [] });
   assert.equal(store.getState().initialized, true);
   assert.equal(store.getState().initializing, false);
   assert.deepEqual(JSON.parse(storage.items[GLOBAL_FILTERS_STORAGE_KEY]), {
-    projects: ['farmslot'],
+    projects: ['farmslot-farm'],
     machines: [],
   });
 });
@@ -404,7 +404,7 @@ test('filter store init is idempotent after hydration', async () => {
   const store = createFilterStore(storage);
   store.getState().setAvailable(sources);
   await store.getState().init();
-  store.getState().toggleProject('farmslot');
+  store.getState().toggleProject('farmslot-farm');
   storage.items[GLOBAL_FILTERS_STORAGE_KEY] = JSON.stringify({
     projects: ['example-mobile-farm'],
     machines: [],
@@ -413,7 +413,7 @@ test('filter store init is idempotent after hydration', async () => {
   await store.getState().init();
 
   assert.deepEqual(store.getState().filters, {
-    projects: ['example-audio-farm', 'farmslot'],
+    projects: ['example-audio-farm', 'farmslot-farm'],
     machines: [],
   });
 });

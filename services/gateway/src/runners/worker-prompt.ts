@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { loadPromptTemplate } from '../core/prompt-templates.js';
 
-const DEFAULT_PROMPT_PROJECT = 'farmslot';
+const DEFAULT_PROMPT_PROJECT = 'farmslot-farm';
 const WORKER_DISPATCH_TEMPLATE = 'worker-dispatch.md';
 const WORKER_NUDGE_TEMPLATE = 'worker-nudge.md';
 

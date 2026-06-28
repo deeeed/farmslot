@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Companion prepare helper — derives Metro vs gateway ports from slot context.
 #
-#   bash projects/farmslot/setup/companion-prepare.sh warm --slot-port 8809 --platform cli
-#   bash projects/farmslot/setup/companion-prepare.sh health --slot-port 8871 --platform ios
+#   bash projects/farmslot-farm/setup/companion-prepare.sh warm --slot-port 8809 --platform cli
+#   bash projects/farmslot-farm/setup/companion-prepare.sh health --slot-port 8871 --platform ios
 set -euo pipefail
 
 MODE=""

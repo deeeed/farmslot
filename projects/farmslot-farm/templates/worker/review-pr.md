@@ -91,7 +91,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
   node apps/command-center/scripts/agentic/recipe-doctor.mjs \
     --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --slot-id {{SLOT}} --json
   bash apps/command-center/scripts/debug-chrome.sh
-  bash projects/farmslot/setup/capture-helper-tmux-check.sh || true
+  bash projects/farmslot-farm/setup/capture-helper-tmux-check.sh || true
   ```
   **full:** doctor fail → `STATUS: blocked`, stop. **standard:** CDP down → note `code review only`, continue.
 - [ ] **5. Fetch PR metadata + diff:**

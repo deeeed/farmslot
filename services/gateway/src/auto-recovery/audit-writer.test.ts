@@ -21,7 +21,7 @@ function action(overrides: Partial<IntelligenceAction> = {}): IntelligenceAction
     timestamp: '2026-05-12T00:00:00.000Z',
     decidedAt: '2026-05-12T00:00:01.000Z',
     runId: 'r',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     stepName: 'prepare',
     actor: 'auto-recovery',
     verdict: { category: 'infra', confidence: 'high' },
@@ -35,7 +35,7 @@ function action(overrides: Partial<IntelligenceAction> = {}): IntelligenceAction
 function terminalRun() {
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: 'PROJ-31031',
   });
   return updateRun(run.id, {

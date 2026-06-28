@@ -5,7 +5,7 @@ import type {
   ValidationPlanStep,
 } from '@farmslot/protocol';
 
-const FARMSLOT_PROJECT = 'farmslot';
+const FARMSLOT_PROJECT = 'farmslot-farm';
 
 const COMPANION_TOKENS = [
   'companion',

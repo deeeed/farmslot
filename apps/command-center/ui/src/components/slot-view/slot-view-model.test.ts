@@ -20,7 +20,7 @@ function makeSlot(slot: string, overrides: Partial<SlotStatus> = {}): SlotStatus
     slot,
     machine: 'runner-local',
     platform: 'darwin',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: 'OK' },
     branch: 'main',
     agent: 'idle',

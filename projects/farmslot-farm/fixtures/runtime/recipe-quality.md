@@ -36,7 +36,7 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
     --task-dir {{TASK_DIR}}
   ```
   (`validate-recipe.sh` auto-promotes screenshots + `after.mp4` when `--task-dir` is set; or run `{{recipe_sync_evidence_cmd}} --task-dir {{TASK_DIR}} --require-video` manually.)
-- Gateway replay uses the same hook via `hooks.recipe_run` in `projects/farmslot/project.json`.
+- Gateway replay uses the same hook via `hooks.recipe_run` in `projects/farmslot-farm/project.json`.
 
 ## Proof rules
 

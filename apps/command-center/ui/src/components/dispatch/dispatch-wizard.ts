@@ -372,7 +372,7 @@ export class DispatchWizard extends DispatchWizardState {
 
   private async _fetchProfileFitSuggestion(project: string, gen: number): Promise<void> {
     if (
-      project !== 'farmslot' ||
+      project !== 'farmslot-farm' ||
       !this._flowType ||
       !this._ticketId.trim() ||
       this._prepareProfile.trim() ||

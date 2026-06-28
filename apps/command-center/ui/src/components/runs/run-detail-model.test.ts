@@ -35,7 +35,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     lane: 'production',
     flowType: 'fix-bug',
     status: 'done',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: 'BUG-123',
     slotId: null,
     branch: null,

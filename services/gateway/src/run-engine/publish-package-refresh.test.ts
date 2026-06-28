@@ -149,7 +149,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
     JSON.stringify(
       {
         machine: 'localhost',
-        project: 'farmslot',
+        project: 'farmslot-farm',
         platform: 'cli',
         os: 'darwin',
         host: 'localhost',
@@ -203,7 +203,7 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: 'PROJ-REFRESH',
     runner: 'codex',
   });
@@ -409,7 +409,7 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
     JSON.stringify(
       {
         machine: 'localhost',
-        project: 'farmslot',
+        project: 'farmslot-farm',
         platform: 'cli',
         os: 'darwin',
         host: 'localhost',
@@ -433,7 +433,7 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: 'PROJ-REFRESH-FAIL',
     runner: 'codex',
   });
@@ -492,7 +492,7 @@ test('refreshReviewGate does not let worker artifacts overwrite gateway-owned pa
     JSON.stringify(
       {
         machine: 'localhost',
-        project: 'farmslot',
+        project: 'farmslot-farm',
         platform: 'cli',
         os: 'darwin',
         host: 'localhost',
@@ -507,7 +507,7 @@ test('refreshReviewGate does not let worker artifacts overwrite gateway-owned pa
   const run = createRun({
     flowType: 'review-pr',
     mode: 'interactive',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: '123',
     runner: 'codex',
   });

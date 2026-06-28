@@ -581,13 +581,13 @@ test('getFamilyRecoveryLedger derives replay attempts from family runs at read t
   const familyId = `family-recovery-${process.pid}`;
   const older = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: 'PROJ-31031',
     familyId,
   });
   const newer = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: 'PROJ-31032',
     familyId,
   });

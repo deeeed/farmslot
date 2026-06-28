@@ -170,7 +170,7 @@ function readCompanionSlotConfig() {
   if (poolPath) {
     const pool = JSON.parse(readFileSync(resolve(repoRoot, poolPath), 'utf8'));
     const poolSlot = (pool.slots || []).find(
-      (candidate) => candidate.project === 'farmslot' || /companion/i.test(candidate.id),
+      (candidate) => candidate.project === 'farmslot-farm' || /companion/i.test(candidate.id),
     );
     if (poolSlot) {
       return {
@@ -220,7 +220,7 @@ const demoRun = {
   flowType: 'dev',
   mode: 'interactive',
   status: 'monitoring',
-  project: 'farmslot',
+  project: 'farmslot-farm',
   ticketOrPr: 'Docusaurus demo: validate recipe evidence',
   app: 'apps/docs',
   effort: 'demo',
@@ -254,7 +254,7 @@ const demoRun = {
       updatedAt: fixtureNow(-60000),
       runMeta: {
         runId,
-        project: 'farmslot',
+        project: 'farmslot-farm',
         slotId,
         ticketOrPr: 'Docusaurus demo: validate recipe evidence',
       },
@@ -278,7 +278,7 @@ const demoFleet = {
       slot: slotId,
       machine: 'farmslot-demo',
       platform: 'ios',
-      project: 'farmslot',
+      project: 'farmslot-farm',
       health: 'ok',
       branch: 'docs/real-demo-media',
       agent: 'codex',

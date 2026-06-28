@@ -28,8 +28,8 @@ First-party Farmslot work formerly split across two project configs (`farmslot-f
 ### Single project config
 
 ```
-projects/farmslot/project.json
-  name: farmslot
+projects/farmslot-farm/project.json
+  name: farmslot-farm
   apps: ["command-center", "companion"]
   worktree_base: farmslot-wt (one base)
   prepare.profiles:
@@ -38,7 +38,7 @@ projects/farmslot/project.json
     sandbox-companion (optional composite)  # gateway sandbox + companion warm — operator-only shortcut
 ```
 
-Pool slots keep heterogeneous resources under `project: "farmslot"`:
+Pool slots keep heterogeneous resources under `project: "farmslot-farm"`:
 
 - `macwork-fs-main`, `macwork-ff-*` — `platform: cli`, gateway port
 - Future `macwork-fc-*` — `platform: ios`, Metro + simulator
@@ -79,7 +79,7 @@ Existing multi-recipe shape: [docs/examples/recipes/farmslot/self-validation-sui
 
 ### 2. Profile / app fit (new — extends ADR-037 deferred auto-selection)
 
-When `run.project === 'farmslot'` (or single first-party project):
+When `run.project === 'farmslot-farm'` (single first-party project):
 
 - Inputs: ticket metadata, `flowType`, current `app`, `prepareProfile`, slot `platform` + resources, profile catalog (`label`, `description` from `project.json`).
 - Deterministic token match first (same haystack pattern as project-fit).
@@ -127,15 +127,15 @@ Classifier emits `validation[]` when ticket mentions companion + gateway/ui/prot
 
 ### Phase A — Project merge (config only)
 
-- Add `projects/farmslot/project.json` (merge hooks, prepare profiles, fixtures, templates).
-- Pool: `project: "farmslot"` on fs/ff slots.
+- Add `projects/farmslot-farm/project.json` (merge hooks, prepare profiles, fixtures, templates).
+- Pool: `project: "farmslot-farm"` on fs/ff slots.
 - Update recipes/docs/tests to use `farmslot` only (no legacy name aliases).
 
 ### Phase B — Profile catalog
 
 - Gateway: `sandbox`, `attach`, `typecheck`.
 - Companion: `companion-warm`, `companion-full` (hooks in `apps/companion/scripts/agentic/`).
-- Optional `sandbox-companion` composite script under `projects/farmslot/setup/`.
+- Optional `sandbox-companion` composite script under `projects/farmslot-farm/setup/`.
 
 ### Phase C — Profile-fit gate
 
@@ -175,4 +175,4 @@ Evidence: run ids + recipe artifacts under `.sandbox/farmslot/`.
 
 1. **New ADR vs ADR-037 addendum** — addendum unless `validationPlan` RPC requires protocol bump.
 2. **Run field vs task-only validation plan** — prefer task artifact + dispatch preview v1; promote to `Run` when Companion must show it live.
-3. **Legacy project dirs** — remove `projects/farmslot-farm` and `projects/farmslot-companion` from the repo once pool/operators are migrated.
+3. **Legacy project dirs** — remove `projects/farmslot` and `projects/farmslot-companion` from operator docs once pool migration is complete; canonical dir is `projects/farmslot-farm`.

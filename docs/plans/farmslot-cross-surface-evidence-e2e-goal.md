@@ -21,7 +21,7 @@ Both tasks are **DO NOT MERGE** smoke work. Success means pipeline + evidence UX
 
 - Recipe example (CC): `docs/examples/recipes/farmslot/demo-red-banner.recipe.json`
 - Recipe example (Companion evidence): `docs/examples/recipes/farmslot/mobile-companion.recipe.json`
-- Recipe quality contract: `projects/farmslot/fixtures/runtime/recipe-quality.md`
+- Recipe quality contract: `projects/farmslot-farm/fixtures/runtime/recipe-quality.md`
 - Tooling branch: `fix/farmslot-farm-worktree-deps-install` (`9dcc84e`…`563c7d5`)
 - Monitor checklist fix: `task.progress` reads `CHECKLIST.md` when present; autonomous `dev.md` uses `TASK.md` checkboxes
 
@@ -38,12 +38,12 @@ Do **not** dispatch Runs A/B until this phase is all green.
   ```
 - [ ] Companion health passes on fc-1 (after Metro up):
   ```bash
-  bash projects/farmslot/setup/companion-prepare.sh health \
+  bash projects/farmslot-farm/setup/companion-prepare.sh health \
     --slot-port 8871 --platform ios
   ```
 - [ ] Dry-run proof command resolves primary-repo runner (not worktree copy):
   ```bash
-  bash projects/farmslot/setup/validate-recipe.sh --dry-run \
+  bash projects/farmslot-farm/setup/validate-recipe.sh --dry-run \
     --recipe docs/examples/recipes/farmslot/demo-red-banner.recipe.json \
     --artifacts-dir /tmp/recipe-dry --gateway-port 8809 --slot-id macwork-ff-2
   ```
@@ -85,7 +85,7 @@ Reuse existing `app-shell.ts` banner work when still valid; worker should not re
 - Fast regression run → exit 0
 - Proof run:
   ```bash
-  bash projects/farmslot/setup/validate-recipe.sh \
+  bash projects/farmslot-farm/setup/validate-recipe.sh \
     --recipe <TASK_DIR>/artifacts/recipe.json \
     --artifacts-dir <TASK_DIR>/artifacts/recipe-run \
     --runtime-dir .sandbox/farmslot/agent \
@@ -160,7 +160,7 @@ Worktree: `farmslot-wt/farmslot-companion-1` · gateway port **8871** · simulat
 - Task-local `artifacts/recipe.json` with companion `ui.navigate` / `ui.wait_for` / `ui.screenshot` nodes
 - Proof run:
   ```bash
-  bash projects/farmslot/setup/validate-recipe.sh \
+  bash projects/farmslot-farm/setup/validate-recipe.sh \
     --recipe <TASK_DIR>/artifacts/recipe.json \
     --artifacts-dir <TASK_DIR>/artifacts/recipe-run \
     --runtime-dir .sandbox/farmslot/agent \

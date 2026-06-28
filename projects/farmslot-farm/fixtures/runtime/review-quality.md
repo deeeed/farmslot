@@ -68,7 +68,7 @@ bash apps/command-center/scripts/debug-chrome.sh
 From the **same tmux pane** that runs recipes:
 
 ```bash
-bash projects/farmslot/setup/capture-helper-tmux-check.sh
+bash projects/farmslot-farm/setup/capture-helper-tmux-check.sh
 ```
 
 Doctor must pass native capture-helper when video proof is claimed.
@@ -86,7 +86,7 @@ Re-upload or fix when:
 Use `/fs-pr-evidence` or:
 
 ```bash
-node projects/farmslot/setup/upload-pr-evidence.mjs --task-dir <dir> --pr <N> --flow feature --edit-pr
+node projects/farmslot-farm/setup/upload-pr-evidence.mjs --task-dir <dir> --pr <N> --flow feature --edit-pr
 ```
 
 ## Review report contract

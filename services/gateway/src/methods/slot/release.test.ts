@@ -20,7 +20,7 @@ test('slotRelease rejects gate-held publication runs before teardown', async (t)
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: `PROJ-${Date.now()}-release-guard`,
     slotId,
   });
@@ -57,7 +57,7 @@ test('slotRelease rejects human-gating gate-held runs before teardown', async (t
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: `PROJ-${Date.now()}-human-gating`,
     slotId,
   });
@@ -84,7 +84,7 @@ test('slotRelease rejects post-approval gate-held runs until FINALIZE completes'
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: `PROJ-${Date.now()}-finalize-guard`,
     slotId,
   });

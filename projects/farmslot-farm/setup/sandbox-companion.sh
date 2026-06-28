@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Gateway sandbox + companion warm prepare for cross-surface first-party work.
 #
-#   bash projects/farmslot/setup/sandbox-companion.sh --gateway-port 8809
+#   bash projects/farmslot-farm/setup/sandbox-companion.sh --gateway-port 8809
 set -euo pipefail
 
 GATEWAY_PORT=""

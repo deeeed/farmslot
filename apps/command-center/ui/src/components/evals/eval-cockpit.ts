@@ -175,7 +175,7 @@ export class EvalCockpit extends EvalCockpitState {
       state.runs.find((run) => run.project)?.project ??
       state.prs.find((pr) => pr.project)?.project ??
       state.fleet?.slots.find((slot) => slot.project)?.project;
-    if (firstProject && this._project === 'farmslot') this._project = firstProject;
+    if (firstProject && this._project === 'farmslot-farm') this._project = firstProject;
   }
 
   private _applyEvalPackageToCells(
@@ -430,7 +430,7 @@ export class EvalCockpit extends EvalCockpitState {
     this._selectedCases = addCasesToBasket(this._selectedCases, [item]);
     if (wasEmpty) this._alignDefaultCandidatesToTaskProfile(item.taskProfile);
     this._error = '';
-    if (this._project === 'farmslot') this._project = item.project;
+    if (this._project === 'farmslot-farm') this._project = item.project;
   }
 
   private _manualItem(): EvalCaseCatalogItem | null {

@@ -189,7 +189,7 @@ async function ensureChrome() {
 
 async function prepareBrowserView() {
   await evalInPage(`
-    localStorage.setItem('farmslot:global-filters', JSON.stringify({projects:['farmslot','audiolab-farm','echobridge-farm'], machines:['farmslot-demo','demo-host']}));
+    localStorage.setItem('farmslot:global-filters', JSON.stringify({projects:['farmslot-farm','audiolab-farm','echobridge-farm'], machines:['farmslot-demo','demo-host']}));
     location.href = '${uiUrl}#fleet?projects=farmslot,audiolab-farm,echobridge-farm';
     location.reload();
     return true;

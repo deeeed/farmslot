@@ -7,7 +7,7 @@ import { buildCodexExecLaunch, buildLaunchCommand } from './launch-command.js';
 import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
 
 async function dispatchPrompt(taskFile: string): Promise<string> {
-  return resolveWorkerDispatchPrompt('farmslot', { taskFile });
+  return resolveWorkerDispatchPrompt('farmslot-farm', { taskFile });
 }
 import {
   detectRunnerLaunchBlocker,

@@ -232,7 +232,7 @@ exit_code=$?
 
 if [[ "${exit_code}" -eq 0 && "${SYNC_EVIDENCE}" -eq 1 && -n "${TASK_DIR}" ]]; then
   sync_args=(
-    bash "${PRIMARY_REPO}/projects/farmslot/setup/sync-recipe-evidence.sh"
+    bash "${PRIMARY_REPO}/projects/farmslot-farm/setup/sync-recipe-evidence.sh"
     --task-dir "${TASK_DIR}"
     --recipe-run-dir "${ARTIFACTS_DIR}"
   )

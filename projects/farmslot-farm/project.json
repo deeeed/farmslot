@@ -1,6 +1,6 @@
 {
   "$schema": "../../schemas/project.schema.json",
-  "name": "farmslot",
+  "name": "farmslot-farm",
   "type": "monorepo",
   "default_branch": "main",
   "default_safety_tier": "dangerous",
@@ -29,13 +29,13 @@
   "hooks": {
     "post_merge_install": "yarn install",
     "preflight": "cd apps/command-center && yarn typecheck",
-    "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
-    "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
-    "teardown": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh stop --gateway-port {{port}}",
+    "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
+    "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
+    "teardown": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{port}}",
     "setup": "cd apps/companion && yarn install",
     "recipe_action_manifest": "cat {{farmslot_dir}}/docs/examples/recipes/farmslot-v1.action-manifest.json",
     "recipe_doctor": "FARMSLOT_SLOT_REPO={{repo}} node {{primary_repo}}/apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{cdp_port}} --gateway-port {{port}} --slot-id {{slot_id}} --project-root {{repo}} --json",
-    "recipe_run": "bash {{primary_repo}}/projects/farmslot/setup/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --runtime-dir {{runtime_dir}} --platform {{platform}} --cdp-port {{cdp_port}} --gateway-port {{port}} --metro-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}} --slot-id {{slot_id}}"
+    "recipe_run": "bash {{primary_repo}}/projects/farmslot-farm/setup/validate-recipe.sh --recipe {{recipe_path}} --artifacts-dir {{artifacts_dir}} --runtime-dir {{runtime_dir}} --platform {{platform}} --cdp-port {{cdp_port}} --gateway-port {{port}} --metro-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}} --slot-id {{slot_id}}"
   },
   "prepare": {
     "default": "sandbox",
@@ -45,7 +45,7 @@
         "description": "Git sync, deps, then boot this checkout's gateway and Vite UI on the slot port. Use for ff-* worktree sandboxes. Typecheck is not run here — use profile typecheck when you need it before dispatch.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh start --gateway-port {{port}}"
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{port}}"
         }
       },
       "attach": {
@@ -78,9 +78,9 @@
         "description": "Boot isolated simulator when configured, start Metro on the derived slot port, and verify gateway pairing URL. No native rebuild.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh warm --slot-port {{port}} --platform {{platform}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
-          "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}}",
-          "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}}"
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/companion-prepare.sh warm --slot-port {{port}} --platform {{platform}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
+          "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}}",
+          "dev_server_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}}"
         },
         "fallback": "companion-full"
       },
@@ -89,8 +89,8 @@
         "description": "Native rebuild via expo run when simulator or adb is configured, then warm Metro health.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh full --slot-port {{port}} --platform {{platform}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
-          "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}} && cd apps/companion && yarn typecheck"
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/companion-prepare.sh full --slot-port {{port}} --platform {{platform}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
+          "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/companion-prepare.sh health --slot-port {{port}} --platform {{platform}} && cd apps/companion && yarn typecheck"
         }
       },
       "sandbox-companion": {
@@ -98,8 +98,8 @@
         "description": "Start this checkout's gateway on the slot port, then boot companion Metro (derived port) for cross-surface tasks.",
         "phases": ["git", "fixtures", "deps", "preflight", "health"],
         "hooks": {
-          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-companion.sh --gateway-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
-          "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}"
+          "preflight": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/sandbox-companion.sh --gateway-port {{port}} --simulator {{simulator}} --adb-serial {{adb_serial}}",
+          "health_check": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}"
         }
       }
     }
@@ -187,8 +187,8 @@
         "port": "{{port}}"
       },
       "hooks": {
-        "health": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh health --gateway-port {{port}}",
-        "shutdown": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot/setup/sandbox-dev.sh stop --gateway-port {{port}}"
+        "health": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/sandbox-dev.sh health --gateway-port {{port}}",
+        "shutdown": "FARMSLOT_SLOT_REPO={{repo}} bash {{primary_repo}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{port}}"
       }
     },
     "ios-sim": {
@@ -227,8 +227,8 @@
   "vars": {
     "recipe_runner_resolve_cmd": "node -e \"console.log('{{primary_repo}}/apps/command-center/scripts/agentic/run-recipe.mjs')\"",
     "recipe_manifest_path": "{{farmslot_dir}}/docs/examples/recipes/farmslot-v1.action-manifest.json",
-    "recipe_validate_wrapper": "{{primary_repo}}/projects/farmslot/setup/validate-recipe.sh",
-    "recipe_sync_evidence_cmd": "bash {{primary_repo}}/projects/farmslot/setup/sync-recipe-evidence.sh",
+    "recipe_validate_wrapper": "{{primary_repo}}/projects/farmslot-farm/setup/validate-recipe.sh",
+    "recipe_sync_evidence_cmd": "bash {{primary_repo}}/projects/farmslot-farm/setup/sync-recipe-evidence.sh",
     "recipe_quality_path": "{{runtime_dir}}/recipe-quality.md",
     "review_quality_path": "{{runtime_dir}}/review-quality.md",
     "recipe_example_banner": "{{farmslot_dir}}/docs/examples/recipes/farmslot/demo-red-banner.recipe.json"

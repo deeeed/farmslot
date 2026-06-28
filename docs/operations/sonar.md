@@ -40,7 +40,7 @@ The repo includes `sonar-project.properties` for a single root project scan cove
 - `services/`
 - `scripts/`
 - `docs/`
-- `projects/farmslot/` only, because it is the checked-in demo project
+- `projects/farmslot-farm/` only, because it is the checked-in demo project
 
 It intentionally does **not** scan `projects/*` broadly. Those directories can contain nested private
 repositories on developer machines. For a real nested project, either:
@@ -49,7 +49,7 @@ repositories on developer machines. For a real nested project, either:
 2. explicitly opt it into a local/CI scan with an override such as:
 
 ```bash
-yarn sonar:scan -- -Dsonar.sources=apps,packages,services,scripts,docs,projects/farmslot,projects/my-public-project
+yarn sonar:scan -- -Dsonar.sources=apps,packages,services,scripts,docs,projects/farmslot-farm,projects/my-public-project
 ```
 
 ## Run analysis

@@ -135,7 +135,7 @@ test('findActiveGateHeldRunForSlot returns active gate-held run for slot', async
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: `PROJ-${Date.now()}-gate-held`,
     slotId,
   });
@@ -189,7 +189,7 @@ test('findActiveGateHeldRunForSlot ignores resolved gate-held runs', async (t) =
   const slotId = `gate-held-resolved-${Date.now()}`;
   const run = createRun({
     flowType: 'fix-bug',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: `PROJ-${Date.now()}-resolved`,
     slotId,
   });

@@ -8,7 +8,7 @@ test('classifyWithLlm applies valid verdicts with wrapping-call cost', async (t)
     costUsd: 0.0123,
   }));
   t.after(() => __setLlmRecoveryCallerForTest(null));
-  const r = await classifyWithLlm('farmslot', 'ECONNRESET');
+  const r = await classifyWithLlm('farmslot-farm', 'ECONNRESET');
   assert.equal(r?.verdict.category, 'infra');
   assert.equal(r?.costUsd, 0.0123);
 });
@@ -18,7 +18,7 @@ test('classifyWithLlm demotes malformed action proposals to low-confidence warni
     costUsd: 0.01,
   }));
   t.after(() => __setLlmRecoveryCallerForTest(null));
-  const r = await classifyWithLlm('farmslot', 'ECONNRESET');
+  const r = await classifyWithLlm('farmslot-farm', 'ECONNRESET');
   assert.equal(r?.verdict.confidence, 'low');
   assert.match(r?.verdict.warning ?? '', /not allowed/);
 });
@@ -27,7 +27,7 @@ test('classifyWithLlm preserves provider cost reported on refinement failure', a
     throw { message: 'provider stopped', usage: { costUsd: 0.02 } };
   });
   t.after(() => __setLlmRecoveryCallerForTest(null));
-  const r = await classifyWithLlm('farmslot', 'ECONNRESET');
+  const r = await classifyWithLlm('farmslot-farm', 'ECONNRESET');
   assert.equal(r?.verdict.confidence, 'low');
   assert.equal(r?.costUsd, 0.02);
 });
@@ -41,7 +41,7 @@ test('classifyWithLlm enforces timeout and aborts the provider signal', async (t
   });
   t.after(() => __setLlmRecoveryCallerForTest(null));
   const startedAt = Date.now();
-  const r = await classifyWithLlm('farmslot', 'slow provider', { timeoutMs: 20 });
+  const r = await classifyWithLlm('farmslot-farm', 'slow provider', { timeoutMs: 20 });
   assert.equal(r?.verdict.confidence, 'low');
   assert.equal(r?.verdict.warning, 'llm_refine_failed');
   assert.equal(aborted, true);

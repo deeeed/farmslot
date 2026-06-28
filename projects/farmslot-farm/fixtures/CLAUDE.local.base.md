@@ -11,5 +11,5 @@
   - Read `.sandbox/farmslot/agent/recipe-quality.md` after fixture sync (workers).
   - Reviewers also read `.sandbox/farmslot/agent/review-quality.md` and apply `fs-recipe-quality`.
   - Doctor: `node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port <cdp> --gateway-port <gateway> --json`
-  - Run: `bash projects/farmslot/setup/validate-recipe.sh --recipe <recipe.json> --artifacts-dir <dir> --cdp-port <cdp> --gateway-port <gateway> --slot-id <slot>`
+  - Run: `bash projects/farmslot-farm/setup/validate-recipe.sh --recipe <recipe.json> --artifacts-dir <dir> --cdp-port <cdp> --gateway-port <gateway> --slot-id <slot>`
 - Never run emitting TypeScript builds that write `.js`, `.d.ts`, or `.map` files into source trees.

@@ -237,8 +237,8 @@ const readyPayload = {
     contextual_findings: [],
     suggested_recipe_delta: [],
     training_fields: {
-      farm: 'farmslot',
-      project: 'farmslot',
+      farm: 'farmslot-farm',
+      project: 'farmslot-farm',
       flow_type: 'dev',
       proof_mode: 'mixed',
       good_patterns: ['public-safe fixture gateway', 'real UI capture', 'human-gate evidence'],
@@ -422,7 +422,7 @@ const run = {
   flowType: 'dev',
   mode: 'interactive',
   status: 'human-gating',
-  project: 'farmslot',
+  project: 'farmslot-farm',
   ticketOrPr: 'DO-NOT-MERGE demo: Docusaurus human ready gate',
   slotId: 'demo-ready-slot',
   branch: 'docs/real-demo-media',
@@ -467,7 +467,7 @@ const slot = {
   slot: 'demo-ready-slot',
   machine: 'demo-farm',
   platform: 'darwin',
-  project: 'farmslot',
+  project: 'farmslot-farm',
   health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
   branch: 'docs/real-demo-media',
   agent: 'codex',
@@ -776,7 +776,7 @@ function rpcPayload(method, params) {
     case 'backlog.list':
       return { items: [] };
     case 'config.projects':
-      return { projects: [{ name: 'farmslot', defaultBranch: 'main', status: 'active' }] };
+      return { projects: [{ name: 'farmslot-farm', defaultBranch: 'main', status: 'active' }] };
     case 'pr.list':
       return { prs: [] };
     case 'pr.forSlot':

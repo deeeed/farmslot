@@ -1,7 +1,7 @@
 {
   "$schema": "../schemas/pool.schema.json",
   "machine": "farmslot-demo",
-  "project": "farmslot",
+  "project": "farmslot-farm",
   "platform": "cli",
   "host": "localhost",
   "ssh_user": "dev",
