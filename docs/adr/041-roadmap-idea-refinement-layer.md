@@ -173,7 +173,7 @@ interface Run {
 } // existing compatibility alias; values normalize to label keys
 ```
 
-Run-family label filters are derived projections over member runs/backlog/work graph labels, not a separately owned `RunFamilySummary` label store. Long term, UI should say **Labels**. Existing run `tags` APIs remain as compatibility aliases: an existing plain run tag such as `demo` maps to label key `global:demo` for filtering/display, and new unprefixed run tags are normalized the same way. Project-scoped labels use `project:<project>:<slug>` only on new `labelKeys` fields; they are not written into legacy `Run.tags` until a deliberate migration exists. External ticket labels from GitHub/Jira are provenance metadata; they do not become Farmslot labels unless explicitly imported or mapped. Promotion propagates selected roadmap labels to generated backlog items and draft/active work graph records.
+Run-family label filters are derived projections over member runs/backlog/work graph labels, not a separately owned `RunFamilySummary` label store. Long term, UI should say **Labels**. Existing run `tags` APIs remain as compatibility aliases: an existing plain run tag such as `demo` maps to label key `global:demo` for filtering/display, and new unprefixed run tags are normalized the same way. Project-scoped labels use `project:<project>:<slug>` only on new `labelKeys` fields; they are not written into legacy `Run.tags` until a deliberate migration exists. Because today's `normalizeRunTag` strips `:`, implementation must either introduce a separate label-key normalizer or update tag normalization before accepting colon-scoped keys. External ticket labels from GitHub/Jira are provenance metadata; they do not become Farmslot labels unless explicitly imported or mapped. Promotion propagates selected roadmap labels to generated backlog items and draft/active work graph records.
 
 ## Storage
 
@@ -264,9 +264,9 @@ A refined roadmap item can promote to:
 
 1. One backlog item for a single deployable objective.
 2. Multiple backlog items when the roadmap item spans several deployable objectives.
-3. Multiple backlog items plus a draft work graph when those objectives have ordering/dependency constraints.
+3. Multiple backlog items plus a draft work graph when those objectives have ordering/dependency constraints; graph activation remains deferred until ADR-040 v1 exists.
 
-The decomposition boundary is execution clarity: each generated backlog item should be independently dispatchable, reviewable, and trackable, while preserving provenance back to the parent roadmap item.
+The decomposition boundary is execution clarity: each generated backlog item should be independently dispatchable, reviewable, and trackable, while preserving provenance back to the parent roadmap item. Generated backlog items default to `autoDispatch=false`; the operator or ADR-040 graph activation decides when related items become runnable.
 
 Promotion writes provenance both ways:
 
@@ -290,7 +290,7 @@ Derived examples:
 
 ### Backlog and dispatch
 
-Backlog remains the execution handoff. `backlog.enqueue` remains the path into the dispatch queue. Roadmap promotion creates backlog items; it never calls `run.create` directly.
+Backlog remains the execution handoff. `backlog.enqueue` remains the path into the dispatch queue. Roadmap promotion creates backlog items; it never calls `run.create` directly. ADR-011/TASK.md execution checklists remain per-run task tracking; roadmap acceptance criteria are product/planning gates and are copied into backlog items only at promotion.
 
 Backlog item additions:
 
@@ -298,7 +298,7 @@ Roadmap promotion should create backlog items with `sourceKind='roadmap'` and `s
 
 ```ts
 interface BacklogItem {
-  sourceKind: BacklogSourceKind | 'roadmap'; // proposed source kind for promotions
+  sourceKind: 'roadmap'; // proposed value to add to BACKLOG_SOURCE_KINDS
   sourceRef: string; // promotionEntryId for roadmap-promoted items
   roadmapItemId?: string;
   roadmapEpicId?: string;
@@ -366,6 +366,6 @@ Costs and risks:
 2. Add read-only gateway index over `{farmslotRoot}/.roadmap` files with atomic writes and a single-writer lock for gateway mutations; human edits are picked up by reload/validation rather than live two-way sync.
 3. Add capture/edit APIs and label catalog APIs.
 4. Add refinement-session launch using tmux runner infrastructure, explicitly outside dispatch.
-5. Add promotion to backlog items with structured acceptance criteria, dispatch notes, provenance snapshots, and inherited labels.
+5. Add promotion to backlog items with structured acceptance criteria, dispatch notes, provenance snapshots, inherited labels, and `autoDispatch=false` defaults.
 6. Add optional work-graph draft integration after ADR-040 v1 contracts are implemented; activation writes canonical graphs to ADR-040 storage, not roadmap storage.
-7. Migrate run tag UI/API wording toward shared labels while keeping compatibility aliases.
+7. Migrate run tag UI/API wording toward shared labels while keeping compatibility aliases, including a label-key normalizer that preserves `global:` / `project:` prefixes.

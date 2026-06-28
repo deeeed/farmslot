@@ -2,7 +2,7 @@
 
 **Owner:** Arthur / Farmslot
 **Last updated:** 2026-06-28
-**Stale by:** 2026-09-27
+**Stale by:** 2026-09-08
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
 This matrix answers: **for each current ADR, what is shipped, what is partial, and what is still open?** Use it with [adr/README.md](../adr/README.md), [ROADMAP-next.md](../ROADMAP-next.md), and [IMPLEMENTED-HISTORY.md](../IMPLEMENTED-HISTORY.md).
@@ -203,7 +203,7 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 
 **Implementation: Not started**
 
-ADR-040 is design intent only. It should not be implemented until a ROADMAP-next milestone accepts the v1 graph scheduler scope.
+ADR-040 is design intent only. It should not be implemented until a ROADMAP-next milestone accepts the v1 graph scheduler scope, after ADR-041 promotion plus the flat backlog path are proven.
 
 | ADR requirement                                    | Status      | Evidence / gap                                |
 | -------------------------------------------------- | ----------- | --------------------------------------------- |
@@ -218,7 +218,7 @@ ADR-040 is design intent only. It should not be implemented until a ROADMAP-next
 
 **Implementation: Not started**
 
-ADR-041 is design intent only. It should not be implemented until a roadmap milestone accepts the markdown-backed roadmap/refinement/promotion scope.
+ADR-041 is design intent only. It should not be implemented until a roadmap milestone accepts the markdown-backed roadmap/refinement/promotion scope; it is the prerequisite planning layer before ADR-040 graph execution.
 
 | ADR requirement                                          | Status      | Evidence / gap                                  |
 | -------------------------------------------------------- | ----------- | ----------------------------------------------- |

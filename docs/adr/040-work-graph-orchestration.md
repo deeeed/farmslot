@@ -203,7 +203,7 @@ export type EdgeCondition =
   | { kind: 'pr-open' } // v2: from's PR exists & open (stacked work)
   | { kind: 'merged'; targetRef?: string } // v1: DURABLE merge SHA or GitHub closed+merged — NOT a terminal run state
   | { kind: 'artifact'; artifactKind: string; path?: string } // v2: named artifact present in from's bundle (ADR-039)
-  | { kind: 'manual'; gateId: string }; // v1: operator flips it (graph-native gate, §8)
+  | { kind: 'manual'; gateId: string }; // v1: operator flips it (graph-native gate, §7)
 
 export interface EdgeEvidence {
   mergeSha?: string;
@@ -364,9 +364,10 @@ acquire/renew per-graph lease            // skip the graph if another worker hol
 load graph + linked backlog/queue/runs + family summaries + PR facts + gates + artifact indexes
 for each edge:  re-evaluate status from DURABLE source facts (pure, idempotent)
 for each node:  recompute waitingOn + status projection
-for each node whose ALL required inbound edges are satisfied AND not gate-required:
+for each node whose ALL required inbound edges are satisfied:
    compute a NODE-LEVEL unlock plan from all inbound satisfied edges (deterministic order)
-   execute via existing services (default: backlog.enqueue(backlogItemId))
+   if the plan permits enqueue (not mark-ready/manual-gate-only):
+      execute via existing services (default: backlog.enqueue(backlogItemId))
    record node-level ActionKey in the idempotency ledger
 persist graph + ledger atomically; broadcast graph update
 detect cycles at activate; an edge added to an active graph that introduces a cycle → needs-attention
@@ -737,8 +738,8 @@ gateway store, readiness-oracle scheduler, durable `merged` evidence, lease + le
 Only genuinely unresolved (architecture calls are made above):
 
 1. **`merged` target ref** — is "merged to the project default branch" the right universal
-   condition, or do some objective sets merge to a feature integration branch? (`targetRef` is in the type;
-   default behaviour is the only open call.)
+   condition, or do some objective sets merge to a feature integration branch? (`targetRef` is already in the type;
+   the open call is the default behaviour when it is omitted.)
 2. **Default `onFailure`** — `halt` is the chosen default (safest). Do you want `skip-dependents`
    as the default for _exploratory_ graphs so one dead objective doesn't freeze the whole graph?
 3. **Manual-gate placement** — is a `manual` _edge_ enough for graph checkpoints, or do you want a

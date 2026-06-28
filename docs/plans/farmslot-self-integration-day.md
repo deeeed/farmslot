@@ -20,10 +20,10 @@ This plan captures the 2026-06-27 dogfood goal and the next goal so every agent/
 
 ## North star (this week)
 
-1. **Merge PR #95 (ADR-039)** — portable `.farmrun` export/import, CI green, cross-review clean.
+1. **Validate ADR-039 bundles and merge PR #95 backlog intake** — portable `.farmrun` export/import plus backlog CI, cross-review clean.
 2. **Prove one simple Farmslot-originated dev run** — interactive `dev` dispatched via gateway/CLI, visible in Companion + `.runs/` on main operator plane.
 3. **Prove worktree seeding** — export baseline from main → import into sandbox → run one eval or comparison trial.
-4. **Translate one roadmap item → backlog item → dispatch** — single item, not epic graph yet.
+4. **Translate one roadmap item → backlog item → dispatch** — single item, not work graph yet.
 5. **Parallel agents** — two+ interactive dev runs on isolated gateways/worktrees, history still recoverable via bundles + main operator plane.
 
 Work graphs (ADR-040) come **after** steps 1–3 are boringly reliable.
@@ -103,7 +103,7 @@ Goal: more roadmap execution visible on Farmslot-native projects so demos do not
 ## What not to do today
 
 - Do not start ADR-040 implementation (Proposed only).
-- Do not add epic graph scheduler code.
+- Do not add work graph scheduler code.
 - Do not skip PR #95 merge to chase backlog graph — bundles are the prerequisite.
 
 ## Session handoff (copy to agents)
