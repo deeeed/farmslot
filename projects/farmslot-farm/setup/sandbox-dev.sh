@@ -56,6 +56,7 @@ if [[ -f "$PORT_ENV" ]]; then
   set +a
 fi
 
+# Canonical operator ports for the primary worktree (see docs/operations/worktree-operator-model.md).
 OPERATOR_GATEWAY_PORT="${GATEWAY_PORT:-7777}"
 OPERATOR_VITE_PORT="${VITE_PORT:-5174}"
 
@@ -78,13 +79,17 @@ is_primary_checkout() {
 PRIMARY_CHECKOUT=0
 if is_primary_checkout; then
   PRIMARY_CHECKOUT=1
-  # Main worktree uses the operator gateway from .env.ports — not an isolated slot port.
+  # Main worktree: operator gateway + Command Center UI — never an isolated slot port.
   GATEWAY_PORT="$OPERATOR_GATEWAY_PORT"
   VITE_PORT="$OPERATOR_VITE_PORT"
 else
-  # Worktree sandboxes get an isolated gateway on the slot's dev-server port.
+  # Worktree sandboxes get isolated ports from their own .env.ports.
   GATEWAY_PORT="$SLOT_GATEWAY_PORT"
-  VITE_PORT="${VITE_PORT:-5174}"
+  VITE_PORT="${VITE_PORT:-}"
+  if [[ -z "$VITE_PORT" || "$VITE_PORT" == "5174" ]]; then
+    echo "[sandbox-dev] worktree sandbox must set VITE_PORT in .env.ports (cannot use operator UI :5174)" >&2
+    exit 1
+  fi
 fi
 export GATEWAY_PORT
 export VITE_PORT
@@ -107,6 +112,10 @@ resolve_primary_runs_dir() {
 
 gateway_health() {
   curl -sf "http://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null 2>&1
+}
+
+ui_health() {
+  curl -sf "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1
 }
 
 kill_port_listeners() {
@@ -147,19 +156,24 @@ wait_for_gateway() {
 
 case "$ACTION" in
   health)
-    if gateway_health; then
-      if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
-        echo "[sandbox-dev] primary checkout — operator gateway healthy on :${GATEWAY_PORT}"
-      else
-        echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}"
+    if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
+      if gateway_health && ui_health; then
+        echo "[sandbox-dev] primary checkout — operator gateway :${GATEWAY_PORT}, Command Center :${VITE_PORT}"
+        exit 0
       fi
+      if ! gateway_health; then
+        echo "[sandbox-dev] primary checkout — operator gateway not healthy on :${GATEWAY_PORT}" >&2
+      fi
+      if ! ui_health; then
+        echo "[sandbox-dev] primary checkout — Command Center not reachable on :${VITE_PORT}" >&2
+      fi
+      exit 1
+    fi
+    if gateway_health; then
+      echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}"
       exit 0
     fi
-    if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
-      echo "[sandbox-dev] primary checkout — operator gateway not healthy on :${GATEWAY_PORT}" >&2
-    else
-      echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2
-    fi
+    echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2
     exit 1
     ;;
   stop)
@@ -172,11 +186,15 @@ case "$ACTION" in
     ;;
   start)
     if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
-      if gateway_health; then
-        echo "[sandbox-dev] primary checkout — operator gateway already healthy on :${GATEWAY_PORT}"
+      if gateway_health && ui_health; then
+        echo "[sandbox-dev] primary checkout — operator gateway :${GATEWAY_PORT}, Command Center :${VITE_PORT}"
         exit 0
       fi
-      echo "[sandbox-dev] primary checkout — start operator gateway first (farmslot up or scripts/dev.sh)" >&2
+      if ! gateway_health; then
+        echo "[sandbox-dev] primary checkout — start operator stack: bash scripts/dev.sh (gateway :${GATEWAY_PORT}, UI :${VITE_PORT})" >&2
+        exit 1
+      fi
+      echo "[sandbox-dev] primary checkout — gateway :${GATEWAY_PORT} up; start Command Center on :${VITE_PORT} (bash scripts/dev.sh)" >&2
       exit 1
     fi
 
