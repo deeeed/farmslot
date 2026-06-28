@@ -12,12 +12,14 @@ import { Methods } from '@farmslot/protocol';
 import {
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_PASSWORD_STORAGE_KEY,
+  GATEWAY_SOURCE_STORAGE_KEY,
   GATEWAY_TOKEN_STORAGE_KEY,
   GATEWAY_URL_STORAGE_KEY,
   gatewayWebSocketToHttpOrigin,
   parseHostedGatewayConnection,
   persistGatewayAuthForHttp,
   replaceStoredGatewayAuthForHttp,
+  resolveGatewayConnectionSource,
   resolveGatewayWebSocketUrls,
 } from './gateway-url.js';
 
@@ -38,6 +40,7 @@ export interface GatewayAuthCredentials {
 interface BrowserGatewayConnection {
   urls: string[];
   auth: GatewayAuthCredentials;
+  source: 'configured' | 'hosted' | 'stored' | 'implicit';
 }
 
 interface PendingRequest {
@@ -74,13 +77,25 @@ function resolveBrowserGatewayConnection(): BrowserGatewayConnection {
     hosted.password ??
     localStorage.getItem(GATEWAY_PASSWORD_STORAGE_KEY) ??
     undefined;
+  const storedCandidates = localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY);
+  const storedGatewayUrl = localStorage.getItem(GATEWAY_URL_STORAGE_KEY);
+  const storedSource = localStorage.getItem(GATEWAY_SOURCE_STORAGE_KEY);
   const urls = resolveGatewayWebSocketUrls(
     env.VITE_FARMSLOT_GATEWAY_URL,
     location,
-    localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY),
+    storedCandidates,
+    storedGatewayUrl,
+  );
+  const source = resolveGatewayConnectionSource(
+    env.VITE_FARMSLOT_GATEWAY_URL,
+    location,
+    storedCandidates,
+    storedGatewayUrl,
+    storedSource,
   );
   return {
     urls,
+    source,
     auth: {
       ...(token ? { token } : {}),
       ...(password ? { password } : {}),
@@ -127,6 +142,7 @@ export class GatewayClient {
   private urlIndex = 0;
   private url: string;
   private auth: GatewayAuthCredentials;
+  private source: BrowserGatewayConnection['source'];
   private disposed = false;
   private authBlocked = false;
   private lastAuthError: GatewayRequestError | null = null;
@@ -136,6 +152,7 @@ export class GatewayClient {
     this.urls = url ? [url] : resolved.urls;
     this.url = this.urls[0];
     this.auth = auth ?? resolved.auth;
+    this.source = url ? 'configured' : resolved.source;
     this.persistConnection();
     persistGatewayAuthForHttp(this.auth);
     syncBrowserHttpAuthCookie(this.auth, this.url);
@@ -375,8 +392,12 @@ export class GatewayClient {
   }
 
   private persistConnection(): void {
+    if (this.source === 'implicit') {
+      return;
+    }
     localStorage.setItem(GATEWAY_URL_STORAGE_KEY, this.url);
     localStorage.setItem(GATEWAY_CANDIDATES_STORAGE_KEY, JSON.stringify(this.urls));
+    localStorage.setItem(GATEWAY_SOURCE_STORAGE_KEY, 'stored');
   }
 
   private scheduleReconnect(): void {

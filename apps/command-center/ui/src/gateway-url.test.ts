@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   parseHostedGatewayConnection,
+  resolveGatewayConnectionSource,
   resolveGatewayWebSocketUrl,
   resolveGatewayWebSocketUrls,
 } from './gateway-url.js';
@@ -63,6 +64,16 @@ test('gateway websocket URL can reuse stored candidates', () => {
     resolveGatewayWebSocketUrls(
       undefined,
       { protocol: 'https:', host: 'farmslot.io', hash: '' },
+      JSON.stringify(['wss://fallback.example/ws']),
+      'wss://stored.example/ws',
+    ),
+    ['wss://stored.example/ws', 'wss://fallback.example/ws'],
+  );
+
+  assert.deepEqual(
+    resolveGatewayWebSocketUrls(
+      undefined,
+      { protocol: 'https:', host: 'farmslot.io', hash: '' },
       JSON.stringify(['ws://localhost:7777', 'https://gateway.example']),
     ),
     ['ws://localhost:7777/ws', 'wss://gateway.example/ws'],
@@ -78,5 +89,50 @@ test('gateway websocket URL ignores malformed hosted and stored candidates', () 
       'not-json',
     ),
     ['wss://farmslot.io/ws'],
+  );
+});
+
+test('gateway connection source distinguishes explicit setup from implicit fallback', () => {
+  const location = { protocol: 'https:', host: 'farmslot.io', hash: '' };
+
+  assert.equal(resolveGatewayConnectionSource(undefined, location, null, null), 'implicit');
+  assert.equal(
+    resolveGatewayConnectionSource(
+      undefined,
+      location,
+      JSON.stringify(['wss://farmslot.io/ws']),
+      null,
+    ),
+    'implicit',
+  );
+  assert.equal(
+    resolveGatewayConnectionSource('wss://gateway.example/ws', location, null, null),
+    'configured',
+  );
+  assert.equal(
+    resolveGatewayConnectionSource(
+      undefined,
+      location,
+      JSON.stringify(['wss://gateway.example/ws']),
+      null,
+    ),
+    'stored',
+  );
+
+  assert.equal(
+    resolveGatewayConnectionSource(undefined, location, null, 'wss://gateway.example/ws'),
+    'stored',
+  );
+  assert.equal(
+    resolveGatewayConnectionSource(undefined, location, null, 'wss://farmslot.io/ws', 'stored'),
+    'stored',
+  );
+
+  const payload = Buffer.from(JSON.stringify({ v: 1, url: 'wss://gateway.example/ws' })).toString(
+    'base64url',
+  );
+  assert.equal(
+    resolveGatewayConnectionSource(undefined, { ...location, hash: `#doctor?connect=${payload}` }),
+    'hosted',
   );
 });

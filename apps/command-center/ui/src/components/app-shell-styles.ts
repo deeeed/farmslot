@@ -401,6 +401,138 @@ export function renderAppShellStyles(
         flex: 1;
         overflow: hidden;
       }
+      farm-app .onboarding-shell {
+        min-height: 100%;
+        overflow: auto;
+        padding: 32px;
+        box-sizing: border-box;
+        background:
+          radial-gradient(circle at top left, ${colors.accent}24, transparent 34rem),
+          ${colors.bgBase};
+      }
+      farm-app .onboarding-hero {
+        max-width: 880px;
+        margin-bottom: 24px;
+      }
+      farm-app .onboarding-kicker {
+        color: ${colors.accent};
+        font-size: ${fonts.sizeXs};
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+      }
+      farm-app .onboarding-hero h1 {
+        color: ${colors.textPrimary};
+        font-size: 34px;
+        line-height: 1.1;
+        margin: 0 0 12px;
+      }
+      farm-app .onboarding-hero p,
+      farm-app .onboarding-card p {
+        color: ${colors.textSecondary};
+        font-size: ${fonts.sizeSm};
+        line-height: 1.55;
+        margin: 0 0 14px;
+      }
+      farm-app .onboarding-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+        max-width: 1040px;
+      }
+      farm-app .onboarding-card {
+        background: ${colors.bgSurface};
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 14px;
+        padding: 20px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22);
+      }
+      farm-app .onboarding-card-wide {
+        grid-column: 1 / -1;
+      }
+      farm-app .onboarding-card h2 {
+        color: ${colors.textPrimary};
+        font-size: ${fonts.sizeLg};
+        margin: 0 0 10px;
+      }
+      farm-app .onboarding-card pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: ${colors.bgInput};
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 10px;
+        color: ${colors.textPrimary};
+        font-family: ${fonts.mono};
+        font-size: ${fonts.sizeSm};
+        margin: 10px 0 14px;
+        padding: 12px;
+      }
+      farm-app .onboarding-card code {
+        color: ${colors.textPrimary};
+        font-family: ${fonts.mono};
+      }
+      farm-app .onboarding-connect {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+      }
+      farm-app .onboarding-connect input {
+        flex: 1;
+        min-width: 0;
+        box-sizing: border-box;
+        background: ${colors.bgInput};
+        color: ${colors.textPrimary};
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 8px;
+        padding: 12px;
+        font-family: ${fonts.mono};
+        font-size: ${fonts.sizeSm};
+      }
+      farm-app .onboarding-connect button,
+      farm-app .onboarding-actions a {
+        border: 1px solid ${colors.accent};
+        border-radius: 8px;
+        background: ${colors.accent};
+        color: white;
+        cursor: pointer;
+        font-family: ${fonts.mono};
+        font-size: ${fonts.sizeSm};
+        font-weight: 800;
+        padding: 11px 14px;
+        text-decoration: none;
+      }
+      farm-app .onboarding-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+      }
+      farm-app .onboarding-actions a:last-child {
+        background: transparent;
+        color: ${colors.textSecondary};
+        border-color: ${colors.bgCardHover};
+      }
+      farm-app .onboarding-error {
+        color: ${colors.statusFail};
+        background: ${colors.statusFail}18;
+        border: 1px solid ${colors.statusFail}55;
+        border-radius: 8px;
+        font-size: ${fonts.sizeSm};
+        margin-top: 12px;
+        padding: 10px;
+      }
+      @media (max-width: 720px) {
+        farm-app .onboarding-shell {
+          padding: 20px;
+        }
+        farm-app .onboarding-hero h1 {
+          font-size: 26px;
+        }
+        farm-app .onboarding-connect {
+          flex-direction: column;
+        }
+      }
       farm-app .pairing-overlay {
         position: fixed;
         inset: 0;

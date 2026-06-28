@@ -49,6 +49,13 @@ import { COMMAND_CENTER_APP_VERSION } from '../build-info.js';
 import type { ConnectionState } from '../gateway-client.js';
 import { gateway } from '../gateway-client.js';
 import {
+  GATEWAY_CANDIDATES_STORAGE_KEY,
+  GATEWAY_SOURCE_STORAGE_KEY,
+  GATEWAY_URL_STORAGE_KEY,
+  normalizeGatewayWebSocketUrl,
+  resolveGatewayConnectionSource,
+} from '../gateway-url.js';
+import {
   type AppState,
   getState,
   type GlobalFilters,
@@ -74,6 +81,7 @@ import {
 import { renderAppShellAuthStyles, renderAppShellStyles } from './app-shell-styles.js';
 
 type Route =
+  | 'onboarding'
   | 'fleet'
   | 'terminal'
   | 'devices'
@@ -114,6 +122,7 @@ interface ImportMetaWithEnv extends ImportMeta {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { route: 'onboarding', icon: '*', label: 'Setup' },
   { route: 'fleet', icon: '#', label: 'Fleet' },
   { route: 'terminal', icon: '>', label: 'Terminals' },
   { route: 'devices', icon: '=', label: 'Devices' },
@@ -189,6 +198,8 @@ export class FarmApp extends LitElement {
   @state() private pairingExpiresAt = '';
   @state() private pairingProfileCount = 0;
   @state() private pairingError = '';
+  @state() private onboardingConnectInput = '';
+  @state() private onboardingError = '';
   private unsub?: () => void;
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
@@ -393,7 +404,7 @@ export class FarmApp extends LitElement {
   };
 
   private parseHash() {
-    const raw = location.hash.replace('#', '') || 'fleet';
+    const raw = location.hash.replace('#', '') || this.defaultRouteForEmptyHash();
     const hash = raw.split('?')[0];
     if (hash === 'dev' || hash.startsWith('dev/')) {
       this.route = 'dev';
@@ -443,6 +454,7 @@ export class FarmApp extends LitElement {
       return;
     }
     const valid: Route[] = [
+      'onboarding',
       'fleet',
       'terminal',
       'devices',
@@ -461,6 +473,18 @@ export class FarmApp extends LitElement {
     this.route = valid.includes(hash as Route) ? (hash as Route) : 'fleet';
     this.slotParam = '';
     this.configParam = '';
+  }
+
+  private defaultRouteForEmptyHash(): Route {
+    const env = (import.meta as ImportMetaWithEnv).env;
+    const source = resolveGatewayConnectionSource(
+      env.VITE_FARMSLOT_GATEWAY_URL,
+      location,
+      localStorage.getItem(GATEWAY_CANDIDATES_STORAGE_KEY),
+      localStorage.getItem(GATEWAY_URL_STORAGE_KEY),
+      localStorage.getItem(GATEWAY_SOURCE_STORAGE_KEY),
+    );
+    return source === 'implicit' ? 'onboarding' : 'fleet';
   }
 
   private getRouteFromHash(): Route {
@@ -809,6 +833,98 @@ export class FarmApp extends LitElement {
     `;
   }
 
+  private applyOnboardingConnection(event: Event) {
+    event.preventDefault();
+    const raw = this.onboardingConnectInput.trim();
+    if (!raw) {
+      this.onboardingError = 'Paste a connect URL or gateway URL first.';
+      return;
+    }
+
+    const hashIndex = raw.indexOf('#');
+    if (raw.startsWith('#') || hashIndex >= 0) {
+      const hash = raw.startsWith('#') ? raw : raw.slice(hashIndex);
+      if (!hash.includes('connect=')) {
+        this.onboardingError =
+          'Connect URLs must include a #connect= or #doctor?connect= fragment.';
+        return;
+      }
+      location.hash = hash.startsWith('#doctor') ? hash : `#doctor?${hash.slice(1)}`;
+      location.reload();
+      return;
+    }
+
+    try {
+      const normalized = normalizeGatewayWebSocketUrl(raw);
+      localStorage.setItem(GATEWAY_URL_STORAGE_KEY, normalized);
+      localStorage.setItem(GATEWAY_CANDIDATES_STORAGE_KEY, JSON.stringify([normalized]));
+      localStorage.setItem(GATEWAY_SOURCE_STORAGE_KEY, 'stored');
+      location.hash = 'doctor';
+      location.reload();
+    } catch (err) {
+      this.onboardingError = err instanceof Error ? err.message : 'Invalid gateway URL.';
+    }
+  }
+
+  private renderOnboardingScreen() {
+    return html`
+      <section class="onboarding-shell">
+        <div class="onboarding-hero">
+          <div class="onboarding-kicker">First connection</div>
+          <h1>Connect Command Center to a Farmslot gateway</h1>
+          <p>
+            No saved gateway connection was found in this browser. Start a local gateway, paste a
+            generated connect URL, or continue manually if you already know where your gateway runs.
+          </p>
+        </div>
+
+        <div class="onboarding-grid">
+          <article class="onboarding-card">
+            <h2>1. Install Farmslot</h2>
+            <p>Use the one-line installer on the machine that should run the gateway.</p>
+            <pre>
+curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | bash</pre
+            >
+          </article>
+
+          <article class="onboarding-card">
+            <h2>2. Start the gateway</h2>
+            <p>From your checkout or workspace, start the local Command Center gateway.</p>
+            <pre>farmslot up</pre>
+            <p>For a repo checkout, the developer shortcut is:</p>
+            <pre>bash scripts/dev.sh</pre>
+          </article>
+
+          <article class="onboarding-card onboarding-card-wide">
+            <h2>3. Connect this browser</h2>
+            <p>Paste the connect URL from <code>farmslot up</code>, or paste a gateway URL.</p>
+            <form
+              class="onboarding-connect"
+              @submit=${(event: Event) => this.applyOnboardingConnection(event)}
+            >
+              <input
+                placeholder="https://farmslot.io/#connect=... or ws://localhost:7777"
+                .value=${this.onboardingConnectInput}
+                @input=${(event: InputEvent) => {
+                  this.onboardingConnectInput = (event.target as HTMLInputElement).value;
+                  this.onboardingError = '';
+                }}
+              />
+              <button type="submit">Connect</button>
+            </form>
+            ${this.onboardingError
+              ? html`<div class="onboarding-error">${this.onboardingError}</div>`
+              : nothing}
+            <div class="onboarding-actions">
+              <a href="#doctor">Open doctor</a>
+              <a href="#fleet">Continue to fleet</a>
+            </div>
+          </article>
+        </div>
+      </section>
+    `;
+  }
+
   private renderAuthScreen() {
     const authError = gateway.authError;
     return html`
@@ -856,6 +972,8 @@ export class FarmApp extends LitElement {
 
   private renderContent() {
     switch (this.route) {
+      case 'onboarding':
+        return this.renderOnboardingScreen();
       case 'fleet':
         return html`<fleet-canvas></fleet-canvas>`;
       case 'terminal':
@@ -1041,7 +1159,9 @@ export class FarmApp extends LitElement {
   }
 
   render() {
-    if (this.connection === 'auth_required') return this.renderAuthScreen();
+    if (this.connection === 'auth_required' && this.route !== 'onboarding') {
+      return this.renderAuthScreen();
+    }
     const activeRunCount = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
 
     return html`
