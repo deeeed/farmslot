@@ -15,10 +15,13 @@ export interface HostedGatewayConnection {
   password?: string;
 }
 
+export type GatewayConnectionSource = 'configured' | 'hosted' | 'stored' | 'implicit';
+
 export const GATEWAY_URL_STORAGE_KEY = 'farmslot.gateway.url';
 export const GATEWAY_CANDIDATES_STORAGE_KEY = 'farmslot.gateway.candidates';
 export const GATEWAY_TOKEN_STORAGE_KEY = 'farmslot.gateway.token';
 export const GATEWAY_PASSWORD_STORAGE_KEY = 'farmslot.gateway.password';
+export const GATEWAY_SOURCE_STORAGE_KEY = 'farmslot.gateway.source';
 
 interface HostedGatewayPayload {
   v?: number;
@@ -40,6 +43,7 @@ export function resolveGatewayWebSocketUrls(
   configuredUrl: string | undefined,
   currentLocation: BrowserLocationLike,
   storedCandidates?: string | null,
+  storedGatewayUrl?: string | null,
 ): string[] {
   const trimmedUrl = configuredUrl?.trim();
   if (trimmedUrl) return [normalizeGatewayWebSocketUrl(trimmedUrl)];
@@ -47,11 +51,32 @@ export function resolveGatewayWebSocketUrls(
   const hosted = parseHostedGatewayConnection(currentLocation.hash ?? '');
   if (hosted.urls.length > 0) return hosted.urls;
 
-  const stored = parseStoredGatewayCandidates(storedCandidates);
-  if (stored.length > 0) return stored;
+  const stored = [
+    ...parseStoredGatewayUrl(storedGatewayUrl),
+    ...parseStoredGatewayCandidates(storedCandidates),
+  ];
+  if (stored.length > 0) return [...new Set(stored)];
 
-  const protocol = currentLocation.protocol === 'https:' ? 'wss:' : 'ws:';
-  return [`${protocol}//${currentLocation.host}/ws`];
+  return [defaultGatewayWebSocketUrl(currentLocation)];
+}
+
+export function resolveGatewayConnectionSource(
+  configuredUrl: string | undefined,
+  currentLocation: BrowserLocationLike,
+  storedCandidates?: string | null,
+  storedGatewayUrl?: string | null,
+  storedSource?: string | null,
+): GatewayConnectionSource {
+  if (configuredUrl?.trim()) return 'configured';
+  if (parseHostedGatewayConnection(currentLocation.hash ?? '').urls.length > 0) return 'hosted';
+
+  const implicit = defaultGatewayWebSocketUrl(currentLocation);
+  const stored = [
+    ...parseStoredGatewayCandidates(storedCandidates),
+    ...parseStoredGatewayUrl(storedGatewayUrl),
+  ];
+  if (storedSource === 'stored' && stored.length > 0) return 'stored';
+  return stored.some((url) => url !== implicit) ? 'stored' : 'implicit';
 }
 
 export function parseHostedGatewayConnection(hash: string): HostedGatewayConnection {
@@ -117,6 +142,11 @@ export function replaceStoredGatewayAuthForHttp(auth: { token?: string; password
   persistGatewayAuthForHttp(auth);
 }
 
+function defaultGatewayWebSocketUrl(currentLocation: BrowserLocationLike): string {
+  const protocol = currentLocation.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${currentLocation.host}/ws`;
+}
+
 function normalizePayloadUrls(payload: HostedGatewayPayload): string[] {
   const raw: string[] = [];
   if (payload.gatewayUrl) raw.push(payload.gatewayUrl);
@@ -125,6 +155,16 @@ function normalizePayloadUrls(payload: HostedGatewayPayload): string[] {
     raw.push(typeof entry === 'string' ? entry : entry.url);
   }
   return [...new Set(raw.map((url) => normalizeGatewayWebSocketUrl(url)))];
+}
+
+function parseStoredGatewayUrl(value: string | null | undefined): string[] {
+  if (!value?.trim()) return [];
+  try {
+    return [normalizeGatewayWebSocketUrl(value)];
+  } catch {
+    // Stored URLs are cache-only; bad localStorage should not break page load.
+    return [];
+  }
 }
 
 function parseStoredGatewayCandidates(value: string | null | undefined): string[] {
