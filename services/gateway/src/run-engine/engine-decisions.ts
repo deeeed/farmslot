@@ -63,14 +63,24 @@ export function resolveEngineDecision(decisionId: string, actionId: string): voi
   }
 }
 
+export function collisionAutoResolveAction(run: Run): 'create-new' | null {
+  if (run.lane === 'comparison' && run.engineState?.flags?.skipPrepare === true) {
+    return 'create-new';
+  }
+  if (run.mode === 'validation' || run.mode === 'autonomous') return 'create-new';
+  return null;
+}
+
 function autoResolveEngineDecision(
   run: Run,
   reason: string,
   actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }>,
 ): string | null {
-  if (run.mode !== 'validation' && run.mode !== 'autonomous') return null;
   const ids = new Set(actions.map((a) => a.id));
-  if (reason === 'collision' && ids.has('create-new')) return 'create-new';
+  if (reason === 'collision' && ids.has('create-new')) {
+    return collisionAutoResolveAction(run);
+  }
+  if (run.mode !== 'validation' && run.mode !== 'autonomous') return null;
   if (reason === 'review_posting' && ids.has('dismiss')) return 'dismiss';
   if (reason === 'human_gate') {
     // Publication-approval runs must wait for a human decision — never auto-resolve.

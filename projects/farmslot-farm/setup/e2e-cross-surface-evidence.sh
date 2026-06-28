@@ -132,6 +132,7 @@ ensure_cdp_chrome_visible() {
 cdp_login_fleet() {
   local ui_hash="#fleet"
   local auth_state
+  local login_timeout="${CDP_LOGIN_TIMEOUT_SEC:-120}"
   : >"$SCRATCH/cc-cdp-login.log"
   auth_state="$(FARMSLOT_ROOT="$CC_WT" FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
     node "$PRIMARY_REPO/apps/command-center/scripts/cdp.mjs" eval "$ui_hash" \
@@ -140,12 +141,32 @@ cdp_login_fleet() {
     log "CDP session already authenticated"
     return 0
   fi
-  FARMSLOT_ROOT="$CC_WT" \
-  FARMSLOT_GATEWAY="ws://127.0.0.1:${FF_GATEWAY_PORT}/ws" \
-  FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
-    node "$PRIMARY_REPO/apps/command-center/scripts/cdp.mjs" login "$ui_hash" \
-    >>"$SCRATCH/cc-cdp-login.log" 2>&1 \
-    || fail_step "CDP gateway login (see cc-cdp-login.log)" 1
+  log "CDP login starting (timeout ${login_timeout}s)"
+  if ! python3 - <<PY "$login_timeout" "$CC_WT" "$FF_CDP_PORT" "$FF_GATEWAY_PORT" "$ui_hash" "$PRIMARY_REPO" "$SCRATCH/cc-cdp-login.log"
+import subprocess, sys
+timeout = int(sys.argv[1])
+cc_wt, cdp_port, gw_port, ui_hash, repo, log_path = sys.argv[2:8]
+cmd = [
+    "node", f"{repo}/apps/command-center/scripts/cdp.mjs", "login", ui_hash,
+]
+env = {
+    **__import__("os").environ,
+    "FARMSLOT_ROOT": cc_wt,
+    "FARMSLOT_GATEWAY": f"ws://127.0.0.1:{gw_port}/ws",
+    "FARMSLOT_CDP_PORT": cdp_port,
+}
+try:
+    with open(log_path, "a", encoding="utf-8") as logf:
+        subprocess.run(cmd, env=env, stdout=logf, stderr=subprocess.STDOUT, timeout=timeout, check=True)
+except subprocess.TimeoutExpired:
+    print(f"CDP login exceeded {timeout}s", file=sys.stderr)
+    sys.exit(124)
+except subprocess.CalledProcessError as exc:
+    sys.exit(exc.returncode or 1)
+PY
+  then
+    fail_step "CDP gateway login (see cc-cdp-login.log)" 1
+  fi
   log "CDP gateway login ok"
 }
 
@@ -301,8 +322,12 @@ FARMSLOT_UI_URL="$FARMSLOT_UI_URL" FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
 sleep 2
 ensure_cdp_chrome_visible
 cdp_login_fleet
+resolve_cdp_listener_pid() {
+  lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true
+}
+
 if [[ -n "${CAPTURE_HELPER_PATH:-}" ]]; then
-  CDP_PID="$(lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+  CDP_PID="$(resolve_cdp_listener_pid)"
   if [[ -n "$CDP_PID" ]]; then
     "$CAPTURE_HELPER_PATH" snapshot --pid "$CDP_PID" -o "$SCRATCH/cdp-preflight.png" >>"$SCRATCH/e2e.log" 2>&1 \
       && log "capture-helper preflight snapshot ok" \
@@ -445,5 +470,13 @@ log "companion typecheck exit=0 (branch in typecheck-companion-runB.log)"
   echo "=== FC worktree ==="
   echo "path: $FC_WT branch: $(git -C "$FC_WT" rev-parse --abbrev-ref HEAD)"
 } >"$SCRATCH/git-state.log" 2>&1
+
+# Optional autonomous gate proof (set RUN_ID_FOR_GATE_CHECK to a live blocked run)
+if [[ -n "${RUN_ID_FOR_GATE_CHECK:-}" ]]; then
+  node "$PRIMARY_REPO/scripts/quality/assert-autonomous-gate-invariants.mjs" "$RUN_ID_FOR_GATE_CHECK" \
+    >"$SCRATCH/gate-invariants.log" 2>&1 \
+    || fail_step "autonomous gate invariants (see gate-invariants.log)" $?
+  log "autonomous gate invariants exit=0 for $RUN_ID_FOR_GATE_CHECK"
+fi
 
 log "e2e evidence capture complete — inspect $SCRATCH"

@@ -76,6 +76,10 @@ import {
 } from '../runs/store.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
+import {
+  assertStartRefSkipPrepareEligible,
+  isStartRefPolicyError,
+} from '../projects/start-ref-policy.js';
 import { applyComparisonBranchPolicy } from './run/comparison-branch-policy.js';
 import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
@@ -330,6 +334,17 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
 
   applyComparisonBranchPolicy(params);
 
+  let startRefSkipPrepareVerified = false;
+  if (params.startRef?.trim() && params.skipPrepare) {
+    try {
+      await assertStartRefSkipPrepareEligible(params);
+      startRefSkipPrepareVerified = true;
+    } catch (error) {
+      if (isStartRefPolicyError(error)) throw error;
+      throw error;
+    }
+  }
+
   // Guard: reject if there's already an active run for the same ticket
   const { runs: existing } = listRuns({ active: true });
   assertDuplicateRunAllowed(params, existing);
@@ -364,9 +379,10 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
     throw new Error('nudgeReuse and freshReuse are mutually exclusive — pick one mode');
   }
 
-  const createParams = normalizedTaskTemplate
-    ? { ...params, taskTemplate: normalizedTaskTemplate }
-    : params;
+  const createParams = {
+    ...(normalizedTaskTemplate ? { ...params, taskTemplate: normalizedTaskTemplate } : params),
+    ...(startRefSkipPrepareVerified ? { startRefSkipPrepareVerified: true as const } : {}),
+  };
   const run = createRun(createParams);
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {

@@ -100,6 +100,11 @@ export interface RunCreateParams {
   mode?: 'interactive' | 'autonomous' | 'validation';
   /** Skip slot prepare entirely — operator owns slot state (ADR-037 §5). */
   skipPrepare?: boolean;
+  /**
+   * Gateway-internal: set by run.create after verifying slot HEAD matches startRef.
+   * External callers must not set this — use skipPrepare + slotId and let run.create verify.
+   */
+  startRefSkipPrepareVerified?: boolean;
   /** Named prepare profile from the project's prepare.profiles (ADR-037). */
   prepareProfile?: string;
   /** Branch-affinity nudge — operator picked "Nudge worker" in the dispatch wizard for a

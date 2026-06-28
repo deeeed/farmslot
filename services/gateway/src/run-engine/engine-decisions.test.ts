@@ -1,0 +1,59 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import type { Run } from '@farmslot/protocol';
+
+import { collisionAutoResolveAction } from './engine-decisions.js';
+
+function makeRun(overrides: Partial<Run> = {}): Run {
+  return {
+    id: overrides.id ?? 'run-1',
+    familyId: overrides.familyId ?? 'family-1',
+    parentRunId: overrides.parentRunId ?? null,
+    familyRootTicketOrPr: overrides.familyRootTicketOrPr ?? 'PROJ-1',
+    lane: overrides.lane ?? 'production',
+    variant: overrides.variant ?? null,
+    flowType: overrides.flowType ?? 'dev',
+    mode: overrides.mode ?? 'interactive',
+    status: overrides.status ?? 'created',
+    project: overrides.project ?? 'demo',
+    ticketOrPr: overrides.ticketOrPr ?? 'PROJ-1',
+    slotId: overrides.slotId ?? null,
+    branch: overrides.branch ?? null,
+    taskFile: overrides.taskFile ?? null,
+    steps: overrides.steps ?? [],
+    decisions: overrides.decisions ?? [],
+    engineState: overrides.engineState,
+    metrics: overrides.metrics ?? {
+      nudgeCount: 0,
+      runner: 'claude',
+      model: 'opus',
+      runnerSessionId: null,
+      runnerSessionPath: null,
+      outcome: 'success',
+    },
+    createdAt: overrides.createdAt ?? '2026-05-04T10:00:00.000Z',
+    updatedAt: overrides.updatedAt ?? '2026-05-04T10:00:00.000Z',
+  } as Run;
+}
+
+test('collisionAutoResolveAction auto-resolves comparison skipPrepare retries', () => {
+  assert.equal(
+    collisionAutoResolveAction(
+      makeRun({
+        lane: 'comparison',
+        mode: 'interactive',
+        engineState: { flags: { skipPrepare: true } },
+      }),
+    ),
+    'create-new',
+  );
+});
+
+test('collisionAutoResolveAction auto-resolves autonomous runs', () => {
+  assert.equal(collisionAutoResolveAction(makeRun({ mode: 'autonomous' })), 'create-new');
+});
+
+test('collisionAutoResolveAction leaves interactive production collisions unresolved', () => {
+  assert.equal(collisionAutoResolveAction(makeRun({ lane: 'production', mode: 'interactive' })), null);
+});

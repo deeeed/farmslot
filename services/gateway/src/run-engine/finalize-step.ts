@@ -12,6 +12,7 @@ import {
 
 import { farmslotRoot, getProjectField, loadSlotVars } from '../core/config.js';
 import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
+import { listRunnerSessionFiles } from '../runners/session-process.js';
 import { markSlotHeld } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
@@ -113,8 +114,23 @@ export async function executeFinalizeStep(
   let session: Record<string, unknown> | undefined;
   try {
     const vars = await loadSlotVars(current.slotId);
-    const usageEnv = current.metrics.runnerSessionPath
-      ? `RUNNER_SESSION_PATH='${current.metrics.runnerSessionPath.replace(/'/g, `'\\''`)}' RUNNER_SESSION_RUNNER='${(current.metrics.runner ?? '').replace(/'/g, `'\\''`)}' `
+    let runnerSessionPath = current.metrics.runnerSessionPath;
+    const runner = current.metrics.runner;
+    if (!runnerSessionPath && runner) {
+      const discovered = await listRunnerSessionFiles(vars, runner);
+      runnerSessionPath = discovered[0] ?? null;
+      if (runnerSessionPath) {
+        updateRun(runId, {
+          metrics: {
+            ...current.metrics,
+            runnerSessionPath,
+            runnerSessionId: path.basename(runnerSessionPath, '.jsonl'),
+          },
+        });
+      }
+    }
+    const usageEnv = runnerSessionPath
+      ? `RUNNER_SESSION_PATH='${runnerSessionPath.replace(/'/g, `'\\''`)}' RUNNER_SESSION_RUNNER='${(runner ?? '').replace(/'/g, `'\\''`)}' `
       : '';
     const cmd = `${usageEnv}bash "${farmslotRoot}/scripts/session-usage.sh" '${current.slotId}' total 2>/dev/null`;
     const result = isLocal(vars.host, vars.machine)

@@ -68,10 +68,18 @@ test('normalizeStartRefRequest rejects non-comparison or publishable combination
   );
 });
 
-test('normalizeStartRefRequest rejects warm reuse flags and unsafe syntax', () => {
+test('normalizeStartRefRequest rejects skipPrepare unless slot HEAD was verified', () => {
   assert.throws(
     () => normalizeStartRefRequest({ ...validParams, skipPrepare: true }),
     /skipPrepare/,
+  );
+  assert.deepEqual(
+    normalizeStartRefRequest({
+      ...validParams,
+      skipPrepare: true,
+      startRefSkipPrepareVerified: true,
+    }),
+    { requestedRef: 'main', source: { kind: 'manual' } },
   );
   assert.throws(() => normalizeStartRefRequest({ ...validParams, nudgeReuse: true }), /nudgeReuse/);
   assert.throws(() => normalizeStartRefRequest({ ...validParams, freshReuse: true }), /freshReuse/);

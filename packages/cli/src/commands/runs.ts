@@ -34,6 +34,12 @@ interface ImportOptions {
   root?: string;
 }
 
+interface PruneOptions {
+  status?: string;
+  dryRun?: boolean;
+  limit?: string;
+}
+
 function resolveRootFlag(root: string | undefined): string {
   return resolveFarmslotRoot(process.cwd(), {
     ...process.env,
@@ -148,6 +154,50 @@ export function registerRunsCommand(program: Command): void {
             );
           }
         }
+      } catch (err) {
+        output.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    });
+
+  runs
+    .command('prune')
+    .description('Bulk-delete terminal runs matching status filters')
+    .option('--status <list>', 'Comma-separated statuses (default failed,cancelled)', 'failed,cancelled')
+    .option('--dry-run', 'List matching runs without deleting')
+    .option('--limit <n>', 'Max runs to delete (default 200)', '200')
+    .action(async (opts: PruneOptions, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      try {
+        const statuses = new Set(
+          (opts.status ?? 'failed,cancelled')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+        );
+        const limit = Math.max(1, Number(opts.limit ?? 200) || 200);
+        const listed = await client.call<{ runs: Array<{ id: string; status: string }> }>('run.list', {
+          limit: 1000,
+        });
+        const targets = listed.runs
+          .filter((run) => statuses.has(run.status))
+          .slice(0, limit)
+          .map((run) => run.id);
+        if (opts.dryRun) {
+          if (output.json) output.writeJson({ dryRun: true, runIds: targets });
+          else {
+            output.write(`Would delete ${targets.length} run(s)\n`);
+            for (const id of targets) output.write(`  ${id}\n`);
+          }
+          return;
+        }
+        let deleted = 0;
+        for (const runId of targets) {
+          await client.call('run.delete', { runId });
+          deleted++;
+        }
+        if (output.json) output.writeJson({ deleted, runIds: targets });
+        else output.write(`${green('Deleted')} ${bold(String(deleted))} run(s)\n`);
       } catch (err) {
         output.error(err instanceof Error ? err.message : String(err));
         process.exit(1);

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir } from 'node:fs/promises';
+import { appendFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -8,17 +8,71 @@ import {
   type SlotFixtureRefreshResult,
 } from '@farmslot/protocol';
 
-import { farmslotRoot, loadSlotVars, type SlotVars } from '../../core/index.js';
+import { execLocal, farmslotRoot, isLocal, loadSlotVars, type SlotVars } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
 
 import { runPrepareCommand } from './prepare-command.js';
 import type { EventEmitter } from './shared.js';
+
+export const LOCAL_FIXTURE_SYNC_TIMEOUT_MS = 60_000;
+export const REMOTE_FIXTURE_SYNC_TIMEOUT_MS = 180_000;
+
+function parseFixtureSyncTimeoutMs(raw: string | undefined): number | null {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function resolveFixtureSyncTimeoutMs(vars: SlotVars): number {
+  const envOverride = parseFixtureSyncTimeoutMs(process.env.FARMSLOT_FIXTURE_SYNC_TIMEOUT_MS);
+  if (envOverride) return envOverride;
+  return isLocal(vars.host, vars.machine)
+    ? LOCAL_FIXTURE_SYNC_TIMEOUT_MS
+    : REMOTE_FIXTURE_SYNC_TIMEOUT_MS;
+}
 
 function buildFixtureSyncCommand(slotId: string, flowType?: string, selectedApp?: string): string {
   const syncArgs = ['--slot', slotId];
   if (flowType) syncArgs.push('--flow-type', flowType);
   if (selectedApp) syncArgs.push('--app', selectedApp);
   return `bash ${shellQuote(`${farmslotRoot}/scripts/sync-fixtures.sh`)} ${syncArgs.map(shellQuote).join(' ')}`;
+}
+
+async function runFixtureSyncInline(
+  syncCmd: string,
+  logPath: string,
+  timeout: number,
+  signal?: AbortSignal,
+): Promise<{ exitCode: number }> {
+  await mkdir(path.dirname(logPath), { recursive: true });
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  }
+  try {
+    const result = await execLocal(syncCmd, {
+      cwd: farmslotRoot,
+      timeout,
+      signal: controller.signal,
+    });
+    const payload = [
+      `[fixture-sync] inline local sync`,
+      `command: ${syncCmd}`,
+      `durationMs: ${Date.now() - startedAt}`,
+      `exit: ${result.exitCode}`,
+      '--- stdout ---',
+      result.stdout,
+      '--- stderr ---',
+      result.stderr,
+      '',
+    ].join('\n');
+    await appendFile(logPath, payload, 'utf-8');
+    return { exitCode: result.exitCode };
+  } finally {
+    if (signal) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 export async function runFixtureSync(
@@ -34,14 +88,18 @@ export async function runFixtureSync(
   },
 ): Promise<void> {
   const syncCmd = buildFixtureSyncCommand(opts.slotId, opts.flowType, opts.selectedApp);
-  const syncResult = await runPrepareCommand(vars, opts.logPath, syncCmd, {
-    cwd: farmslotRoot,
-    timeout: 180_000,
-    signal: opts.signal,
-    windowLabel: opts.windowLabel,
-    phase: opts.phase,
-    forceLocal: true,
-  });
+  const timeout = resolveFixtureSyncTimeoutMs(vars);
+  const slotIsLocal = isLocal(vars.host, vars.machine);
+  const syncResult = slotIsLocal
+    ? await runFixtureSyncInline(syncCmd, opts.logPath, timeout, opts.signal)
+    : await runPrepareCommand(vars, opts.logPath, syncCmd, {
+        cwd: farmslotRoot,
+        timeout,
+        signal: opts.signal,
+        windowLabel: opts.windowLabel,
+        phase: opts.phase,
+        forceLocal: true,
+      });
   if (syncResult.exitCode === 0) return;
 
   const err = new Error(`Fixture sync failed (exit ${syncResult.exitCode}) — log: ${opts.logPath}`);

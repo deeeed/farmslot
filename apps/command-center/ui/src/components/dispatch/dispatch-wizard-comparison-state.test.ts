@@ -5,7 +5,9 @@ import type { Run } from '@farmslot/protocol';
 
 import {
   buildComparisonRunParams,
+  comparisonBranchHint,
   comparisonVariantInputBlocked,
+  resolveComparisonDispatchBranch,
   deriveComparisonVariantState,
   exitedComparisonModeState,
   forkComparisonStateFromRun,
@@ -97,6 +99,35 @@ test('comparison variant helpers suggest collision suffixes and preserve custom 
     true,
   );
   assert.equal(resolveComparisonVariant(' custom ', 'claude', 'opus'), 'custom');
+});
+
+test('comparison dispatch branch is omitted so gateway can auto-derive per variant', () => {
+  assert.equal(
+    resolveComparisonDispatchBranch({
+      comparisonLane: true,
+      variant: 'codex',
+      branch: 'feat/shared-production-branch',
+    }),
+    undefined,
+  );
+  assert.equal(
+    resolveComparisonDispatchBranch({
+      comparisonLane: false,
+      variant: 'codex',
+      branch: 'feat/shared-production-branch',
+    }),
+    'feat/shared-production-branch',
+  );
+  assert.equal(
+    comparisonBranchHint({
+      comparisonLane: true,
+      variant: 'codex',
+      flowType: 'dev',
+      ticketOrPr: 'PROJ-1',
+      derivedBranch: 'feat/proj-1-codex',
+    }),
+    'Branch auto-derived: feat/proj-1-codex',
+  );
 });
 
 test('comparison run params omit lane when inactive', () => {
