@@ -29,7 +29,7 @@ farmslot/
 
 **Every UI change must be validated in the browser via CDP, not just TypeScript compilation.** Use the committed helpers — do NOT write throwaway `cdp-*.mjs` scripts:
 
-1. Start dev server: `cd apps/command-center && yarn dev > /tmp/farmslot-dev.log 2>&1 &`
+1. Start dev server: `cd apps/command-center && yarn farmdev > /tmp/farmslot-dev.log 2>&1 &` (gateway auto-restarts on code changes via `tsx watch`; see **Dev Stack — Local CLI** below)
 2. Launch Chrome with CDP: `bash apps/command-center/scripts/debug-chrome.sh` (idempotent — reuses session if listening). **Default CDP port is `9323`** (not 9222 — that's reserved for the example-browser flow; 4355 is reserved for another flow). Override via `FARMSLOT_CDP_PORT`.
 3. Evaluate in-page via `node apps/command-center/scripts/cdp.mjs eval <route-hash> "<expr>"` or `--file probes/...js` for longer scripts.
 4. Query gateway directly via `node apps/command-center/scripts/cdp.mjs gateway <method> '<params-json>'` to distinguish UI-render bugs from empty-data cases.
@@ -76,6 +76,27 @@ Before **any** `git commit` or `git push`:
 - Apply to **PR titles** (squash-merge commit message) and **individual commits** on the branch.
 
 Examples: `docs(adr): add ADR-026 self-improvement recursive loop`, `feat(ui): retrospective grading checklist`, `fix(gateway): prevent slot orphaning on restart`.
+
+### Dev Stack — Local CLI and Gateway Autorestart — HARD RULE
+
+**Do not invoke a globally installed `farmslot` binary during development.** PATH may resolve to an older machine-installed build with the wrong repo root, pool dir, or gateway URL — conflicting with the checkout you are editing.
+
+Use workspace-local invocations from `apps/command-center`:
+
+```bash
+# Dev stack (gateway + UI) — preferred for the main operator tree
+cd apps/command-center && yarn farmdev
+
+# CLI against this checkout (not PATH farmslot)
+cd apps/command-center && yarn farmslot <subcommand>
+
+# Gateway RPC from scripts/agents (no CLI install)
+node apps/command-center/scripts/cdp.mjs gateway <method> '<params-json>'
+```
+
+`yarn farmdev` runs `scripts/dev.sh`, which loads `.env.ports` / `.env.local-auth`, then `yarn dev` (gateway `tsx watch` + Vite UI). **Gateway source edits auto-restart** — do not manually kill/restart the gateway when `farmdev` is already running. Pool JSON edits under `pool/` are hot-reloaded (chokidar → fleet refresh) without a restart.
+
+Worktree sandbox slots start their own stack via `sandbox-dev.sh` (also `tsx watch`). Only the main operator / `farmdev` tree should own the canonical gateway for CDP and `cdp.mjs gateway` probes unless a slot explicitly isolated ports.
 
 ### Command Center Typecheck — HARD RULE
 

@@ -76,7 +76,7 @@ Two committed helpers do the work — do NOT write throwaway `cdp-*.mjs` files:
 
 Validation flow:
 
-1. **Start the dev server**: `cd apps/command-center && yarn dev > /tmp/farmslot-dev.log 2>&1 &`
+1. **Start the dev server**: `cd apps/command-center && yarn farmdev > /tmp/farmslot-dev.log 2>&1 &` (gateway auto-restarts via `tsx watch`; see **Dev Stack — Local CLI** below)
 2. **Launch Chrome**: `bash scripts/debug-chrome.sh` (reuses existing session if already up)
 3. **Evaluate in the page** (shadow-DOM walks, state reads, click dispatches):
    ```bash
@@ -93,6 +93,21 @@ Validation flow:
 `cdp.mjs` wraps the expression in `(async () => { ... })()` and awaits the promise, so `return value` / `await fetch(...)` work directly. Use `--file` for anything longer than a one-liner to avoid shell-escape pain.
 
 If CDP is not available, at minimum use `node scripts/cdp.mjs gateway <method>` to verify data flows, and `curl http://localhost:5174/src/components/...` to verify compilation.
+
+### Dev Stack — Local CLI and Gateway Autorestart — HARD RULE
+
+**Never use a globally installed `farmslot` binary in dev.** It may point at a different install than the checkout under test (wrong `FARMSLOT_ROOT`, pool path, gateway port/token).
+
+| Task               | Command                                              |
+| ------------------ | ---------------------------------------------------- |
+| Start gateway + UI | `cd apps/command-center && yarn farmdev`             |
+| CLI (this repo)    | `cd apps/command-center && yarn farmslot …`          |
+| Gateway RPC        | `node apps/command-center/scripts/cdp.mjs gateway …` |
+| Gateway only       | `yarn workspace @farmslot/gateway dev`               |
+
+`farmdev` → `scripts/dev.sh` → `yarn dev` → `concurrently` with `@farmslot/gateway dev` (`tsx watch src/index.ts`) and Vite. **Code changes reload the gateway automatically** — do not manually restart after editing gateway source if `farmdev` is up. Pool JSON changes are picked up via file watcher + `fleetRefresh` (no restart).
+
+Bare `yarn dev` skips `.env.ports` unless ports are already exported — prefer `yarn farmdev` on the main operator tree.
 
 ### Preferred Typecheck Command — HARD RULE
 
@@ -172,12 +187,16 @@ The dev harness is at `ui/src/dev/` — one file per component with mock data fa
 ### Testing Gateway Methods
 
 ```bash
-# Start gateway
+# Start gateway + UI (preferred — loads .env.ports, gateway auto-restarts on edit)
+cd apps/command-center && yarn farmdev
+
+# Gateway only (also tsx watch)
 yarn workspace @farmslot/gateway dev
 
-# Test via wscat
+# Test via wscat or cdp.mjs (avoid global `farmslot` CLI in dev)
 wscat -c ws://localhost:7777
 > {"type":"req","id":"1","method":"fleet.status"}
+node scripts/cdp.mjs gateway fleet.status
 ```
 
 ### Testing Node Daemon
