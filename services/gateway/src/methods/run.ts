@@ -191,6 +191,9 @@ function buildInteractiveDevTicketData(
 }
 
 export async function runCreate(params: RunCreateParams, emit: Emit): Promise<RunCreateResult> {
+  // Gateway-internal — clients must not forge HEAD verification.
+  delete params.startRefSkipPrepareVerified;
+
   // Normalize ticketOrPr: extract key from Jira/GitHub URLs, then validate the
   // shape fits the requested flow so we fail fast before slot allocation instead
   // of crashing deep in the write-task step with a cryptic "Invalid PR ref".
@@ -336,13 +339,8 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
 
   let startRefSkipPrepareVerified = false;
   if (params.startRef?.trim() && params.skipPrepare) {
-    try {
-      await assertStartRefSkipPrepareEligible(params);
-      startRefSkipPrepareVerified = true;
-    } catch (error) {
-      if (isStartRefPolicyError(error)) throw error;
-      throw error;
-    }
+    await assertStartRefSkipPrepareEligible(params);
+    startRefSkipPrepareVerified = true;
   }
 
   // Guard: reject if there's already an active run for the same ticket
