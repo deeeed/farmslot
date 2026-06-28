@@ -10,7 +10,10 @@
 #
 # The artifacts repo is cloned/cached at ~/.cache/farmslot/<owner>/<repo>.
 # Files are placed under <flow_plural>/<id>/ in the repo.
-# Uses SSH for git operations (git@github.com:owner/repo.git).
+# Uses SSH for git operations. Override host with FARMSLOT_GITHUB_SSH_HOST; otherwise
+# maps known owners (deeeed → github.com-deeeed, abretonc7s → github.com-abretonc7s).
+#
+# PR screenshot embeds use raw.githubusercontent.com — the artifacts repo MUST be public.
 
 set -euo pipefail
 
@@ -53,7 +56,17 @@ esac
 
 # Local clone cache
 CACHE_DIR="${HOME}/.cache/farmslot/${ARTIFACTS_REPO}"
-REPO_URL="git@github.com:${ARTIFACTS_REPO}.git"
+ARTIFACTS_OWNER="${ARTIFACTS_REPO%%/*}"
+if [ -n "${FARMSLOT_GITHUB_SSH_HOST:-}" ]; then
+  SSH_HOST="${FARMSLOT_GITHUB_SSH_HOST}"
+else
+  case "$ARTIFACTS_OWNER" in
+    deeeed) SSH_HOST="github.com-deeeed" ;;
+    abretonc7s) SSH_HOST="github.com-abretonc7s" ;;
+    *) SSH_HOST="github.com" ;;
+  esac
+fi
+REPO_URL="git@${SSH_HOST}:${ARTIFACTS_REPO}.git"
 
 # Clone or pull
 if [ -d "${CACHE_DIR}/.git" ]; then

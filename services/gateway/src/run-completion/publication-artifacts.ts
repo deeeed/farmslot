@@ -110,6 +110,30 @@ async function fileDigestPrefix(filePath: string): Promise<string> {
     .slice(0, 16);
 }
 
+/** Git push can succeed locally while raw.githubusercontent.com is still 404 — verify before PR embed. */
+async function assertUploadedArtifactUrlsReachable(
+  urlMap: Map<string, string>,
+  options: { failOnError?: boolean },
+): Promise<void> {
+  const failures: string[] = [];
+  for (const [file, url] of urlMap.entries()) {
+    const probeUrl = url.split('?')[0] ?? url;
+    try {
+      const response = await fetch(probeUrl, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) failures.push(`${file} (${response.status})`);
+    } catch (err) {
+      failures.push(`${file} (${(err as Error).message})`);
+    }
+  }
+  if (failures.length === 0) return;
+  const message = `artifact upload verification failed: ${failures.join(', ')}`;
+  if (options.failOnError) throw new Error(message);
+  console.warn(`[run-completion] ${message}`);
+}
+
 function evidenceSelectionSet(selectedEvidenceKeys?: string[]): Set<string> | null {
   if (!selectedEvidenceKeys) return null;
   const keys = new Set<string>();
@@ -331,6 +355,7 @@ export async function uploadArtifacts(
       urlMap.set(f, `${baseUrl}/${f}?sha=${digest}`);
     }
     console.log(`[run-completion] uploaded ${files.length} artifact(s): ${files.join(', ')}`);
+    await assertUploadedArtifactUrlsReachable(urlMap, options);
   } catch (err) {
     return failOrReturnEmpty(`artifact upload failed: ${(err as Error).message}`);
   } finally {
