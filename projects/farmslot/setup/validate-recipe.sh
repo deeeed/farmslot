@@ -63,6 +63,17 @@ require_value() {
   printf '%s' "${value}"
 }
 
+# Gateway hooks may emit bare --simulator/--adb-serial when slot resources are unset.
+# Treat the next token as a value only when it is not another flag.
+optional_flag_value() {
+  local value="${1:-}"
+  if [[ -n "${value}" && "${value}" != --* ]]; then
+    printf '%s' "${value}"
+    return 0
+  fi
+  return 1
+}
+
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --recipe)
@@ -94,11 +105,19 @@ while [[ "$#" -gt 0 ]]; do
     --metro-port=*)
       METRO_PORT_VALUE="$(value_from_equals "$1")"; shift ;;
     --simulator)
-      SIMULATOR_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+      if optional_flag_value "${2:-}"; then
+        SIMULATOR_VALUE="${2}"; shift 2
+      else
+        shift
+      fi ;;
     --simulator=*)
       SIMULATOR_VALUE="$(value_from_equals "$1")"; shift ;;
     --adb-serial)
-      ADB_SERIAL_VALUE="$(require_value "$1" "${2:-}")"; shift 2 ;;
+      if optional_flag_value "${2:-}"; then
+        ADB_SERIAL_VALUE="${2}"; shift 2
+      else
+        shift
+      fi ;;
     --adb-serial=*)
       ADB_SERIAL_VALUE="$(value_from_equals "$1")"; shift ;;
     --slot-id)
