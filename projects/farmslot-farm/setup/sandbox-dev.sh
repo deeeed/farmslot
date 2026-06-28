@@ -16,7 +16,7 @@ GATEWAY_PORT=""
 VITE_PORT=""
 
 usage() {
-  echo "usage: $0 <start|health|stop> --gateway-port <port>" >&2
+  echo "usage: $0 <start|health|stop|test-marker> --gateway-port <port>" >&2
   exit 1
 }
 
@@ -46,9 +46,63 @@ RUNTIME_DIR="${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot-farm/agent}"
 PID_FILE="$RUNTIME_DIR/sandbox-dev.pid"
 LOG_FILE="$RUNTIME_DIR/sandbox-dev.log"
 SHARED_RUNS_MARKER="$RUNTIME_DIR/shared-runs-dir"
+SHARED_RUNS_MARKER_LOCK="$RUNTIME_DIR/shared-runs-dir.lock.d"
 PORT_ENV="$REPO_ROOT/.env.ports"
 
 mkdir -p "$RUNTIME_DIR"
+
+acquire_shared_runs_marker_lock() {
+  local i=0
+  while ! mkdir "$SHARED_RUNS_MARKER_LOCK" 2>/dev/null; do
+    sleep 0.05
+    ((i++))
+    if (( i > 200 )); then
+      echo "[sandbox-dev] timed out waiting for shared-runs marker lock" >&2
+      return 1
+    fi
+  done
+}
+
+release_shared_runs_marker_lock() {
+  rmdir "$SHARED_RUNS_MARKER_LOCK" 2>/dev/null || true
+}
+
+read_shared_runs_marker() {
+  if [[ ! -f "$SHARED_RUNS_MARKER" ]]; then
+    return 1
+  fi
+  local value=""
+  if ! acquire_shared_runs_marker_lock; then
+    return 1
+  fi
+  IFS= read -r value <"$SHARED_RUNS_MARKER" || value=""
+  release_shared_runs_marker_lock
+  if [[ -z "$value" ]]; then
+    return 1
+  fi
+  printf '%s' "$value"
+}
+
+write_shared_runs_marker() {
+  local value="$1"
+  local tmp="${SHARED_RUNS_MARKER}.tmp.$$"
+  if ! acquire_shared_runs_marker_lock; then
+    return 1
+  fi
+  printf '%s\n' "$value" >"$tmp"
+  sync "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$SHARED_RUNS_MARKER"
+  release_shared_runs_marker_lock
+}
+
+clear_shared_runs_marker() {
+  if ! acquire_shared_runs_marker_lock; then
+    rm -f "$SHARED_RUNS_MARKER"
+    return 0
+  fi
+  rm -f "$SHARED_RUNS_MARKER"
+  release_shared_runs_marker_lock
+}
 
 if [[ -f "$PORT_ENV" ]]; then
   # shellcheck disable=SC1090
@@ -141,7 +195,7 @@ stop_sandbox_dev() {
   fi
   kill_port_listeners "$GATEWAY_PORT"
   kill_port_listeners "$VITE_PORT"
-  rm -f "$SHARED_RUNS_MARKER"
+  clear_shared_runs_marker
 }
 
 wait_for_gateway() {
@@ -227,8 +281,10 @@ case "$ACTION" in
         exit 0
       fi
       active_shared_runs=""
-      if [[ -f "$SHARED_RUNS_MARKER" ]]; then
-        active_shared_runs="$(tr -d '\n' <"$SHARED_RUNS_MARKER")"
+      if active_shared_runs="$(read_shared_runs_marker)"; then
+        :
+      else
+        active_shared_runs=""
       fi
       if [[ "$active_shared_runs" == "$FARMSLOT_RUNS_DIR" ]]; then
         echo "[sandbox-dev] gateway and UI already healthy on :${GATEWAY_PORT}/:${VITE_PORT} with shared run history from ${FARMSLOT_RUNS_DIR}"
@@ -255,9 +311,9 @@ case "$ACTION" in
 
     if wait_for_gateway 90 && wait_for_ui 90; then
       if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
-        printf '%s\n' "$FARMSLOT_RUNS_DIR" >"$SHARED_RUNS_MARKER"
+        write_shared_runs_marker "$FARMSLOT_RUNS_DIR"
       else
-        rm -f "$SHARED_RUNS_MARKER"
+        clear_shared_runs_marker
       fi
       echo "[sandbox-dev] ready — gateway http://127.0.0.1:${GATEWAY_PORT} ui http://127.0.0.1:${VITE_PORT}"
       echo "[sandbox-dev] log: ${LOG_FILE}"
@@ -271,6 +327,46 @@ case "$ACTION" in
     fi
     tail -n 40 "$LOG_FILE" >&2 || true
     exit 1
+    ;;
+  test-marker)
+    test_dir="$(mktemp -d "${TMPDIR:-/tmp}/sandbox-dev-marker.XXXXXX")"
+    SHARED_RUNS_MARKER="$test_dir/shared-runs-dir"
+    SHARED_RUNS_MARKER_LOCK="$test_dir/shared-runs-dir.lock.d"
+    trap 'rm -rf "$test_dir"' EXIT
+
+    write_shared_runs_marker "/tmp/primary/.runs"
+    read_back="$(read_shared_runs_marker)" || {
+      echo "read after write failed" >&2
+      exit 1
+    }
+    [[ "$read_back" == "/tmp/primary/.runs" ]] || {
+      echo "marker mismatch: got '$read_back'" >&2
+      exit 1
+    }
+
+    tmp_seen=""
+    (
+      write_shared_runs_marker "/tmp/primary/.runs-concurrent"
+    ) &
+    wait_back="$!"
+    if read_shared_runs_marker >/dev/null 2>&1; then
+      tmp_seen=1
+    fi
+    wait "$wait_back"
+    final="$(read_shared_runs_marker)"
+    [[ "$final" == "/tmp/primary/.runs-concurrent" ]] || {
+      echo "concurrent final mismatch: '$final'" >&2
+      exit 1
+    }
+
+    clear_shared_runs_marker
+    if read_shared_runs_marker >/dev/null 2>&1; then
+      echo "marker still present after clear" >&2
+      exit 1
+    fi
+
+    echo "sandbox-dev marker tests: ok"
+    exit 0
     ;;
   *)
     usage
