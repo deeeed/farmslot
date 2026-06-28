@@ -67,6 +67,7 @@ import {
   type WorkspaceStickyNavLayout,
   workspaceStickyNavThreshold,
 } from '../../lib/workspace-sticky-nav';
+import { setRecipeBridgeScreenText } from '../../farmslot/recipe-bridge-ui';
 import { useConnectionStore } from '../../store/connection';
 import { useRunStore } from '../../store/runs';
 import { formatDuration } from '../workspace-shared/format';
@@ -262,6 +263,17 @@ export default function RunDetailScreen() {
   useEffect(() => {
     void loadRun();
   }, [loadRun]);
+
+  useEffect(() => {
+    if (!run) {
+      setRecipeBridgeScreenText('');
+      return;
+    }
+    const manifest = extractRunArtifactManifest(run)
+      .map((entry) => entry.path)
+      .join(' ');
+    setRecipeBridgeScreenText(`${run.id} Recipe runs Artifacts ${manifest}`);
+  }, [run]);
 
   const noteRecipeRunsUnavailable = useCallback((err: Error) => {
     if (isGatewayBackgroundPauseError(err)) {

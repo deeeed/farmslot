@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { setCompanionDemoBannerMounted } from '../farmslot/recipe-bridge-ui';
 import {
   COMPANION_DEMO_BANNER_TEXT,
   isCompanionDemoBannerEnabled,
@@ -9,10 +10,18 @@ import {
 
 export function DemoMonitoringBanner() {
   const insets = useSafeAreaInsets();
-  if (!isCompanionDemoBannerEnabled()) return null;
+  const enabled = isCompanionDemoBannerEnabled();
+
+  useEffect(() => {
+    setCompanionDemoBannerMounted(enabled);
+    return () => setCompanionDemoBannerMounted(false);
+  }, [enabled]);
+
+  if (!enabled) return null;
 
   return (
     <View
+      testID="farmslot-demo-monitoring-banner"
       pointerEvents="none"
       accessibilityRole="text"
       accessibilityLabel={COMPANION_DEMO_BANNER_TEXT}

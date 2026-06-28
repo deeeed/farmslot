@@ -2,6 +2,11 @@ import React, { createContext, useEffect, useMemo, useState } from 'react';
 import { Platform, View } from 'react-native';
 
 import { useRecipeBridgeRelay } from './recipe-bridge-relay';
+import {
+  handleRecipeBridgeNavigate,
+  handleRecipeBridgeScreenshot,
+  handleRecipeBridgeWaitFor,
+} from './recipe-bridge-ui';
 import { type FarmslotRecipeHudState, RecipeHud } from './RecipeHud';
 
 export interface FarmslotRecipeBridgeCommand {
@@ -54,6 +59,15 @@ export function RecipeBridgeProvider({
         }
         if (command.command === 'trace') {
           return { ok: true, trace: command.payload ?? {} };
+        }
+        if (command.command === 'navigate') {
+          return handleRecipeBridgeNavigate(command.payload);
+        }
+        if (command.command === 'waitFor') {
+          return handleRecipeBridgeWaitFor(command.payload);
+        }
+        if (command.command === 'screenshot') {
+          return handleRecipeBridgeScreenshot(command.payload);
         }
         return { ok: false, error: `Unsupported Farmslot bridge command: ${command.command}` };
       },

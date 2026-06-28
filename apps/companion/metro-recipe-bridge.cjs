@@ -3,6 +3,10 @@
  * runner (farmslot-expo-recipe) and the in-app __FARMSLOT_RECIPE_BRIDGE__.
  */
 
+const { execFileSync } = require('node:child_process');
+const { mkdirSync } = require('node:fs');
+const path = require('node:path');
+
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_POLL_TIMEOUT_MS = 25_000;
 
@@ -73,6 +77,10 @@ function createMetroRecipeBridgeMiddleware() {
       }
       if (pathname === '/farmslot-recipe/result' && req.method === 'POST') {
         void handleAppResult(req, res);
+        return true;
+      }
+      if (pathname === '/farmslot-recipe/simctl-screenshot' && req.method === 'POST') {
+        void handleSimctlScreenshot(req, res);
         return true;
       }
       return false;
@@ -177,6 +185,48 @@ async function handleAppResult(req, res) {
   hostWaiters.delete(id);
   waiter.resolve(body.result ?? { ok: true });
   writeJson(res, 200, { ok: true });
+}
+
+async function handleSimctlScreenshot(req, res) {
+  let body;
+  try {
+    body = await readJsonBody(req);
+  } catch {
+    writeJson(res, 400, { ok: false, error: 'Invalid JSON body.' });
+    return;
+  }
+
+  const relativePath = typeof body.path === 'string' ? body.path.trim() : '';
+  if (!relativePath) {
+    writeJson(res, 400, { ok: false, error: 'Missing screenshot path.' });
+    return;
+  }
+
+  const artifactsDir = process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR;
+  if (!artifactsDir) {
+    writeJson(res, 500, { ok: false, error: 'FARMSLOT_RECIPE_ARTIFACTS_DIR is not set.' });
+    return;
+  }
+
+  const simulator =
+    (typeof body.simulator === 'string' && body.simulator.trim()) ||
+    process.env.SIMULATOR ||
+    process.env.IOS_SIMULATOR ||
+    'fs-companion-1';
+  const outputPath = path.isAbsolute(relativePath)
+    ? relativePath
+    : path.join(artifactsDir, relativePath);
+
+  try {
+    mkdirSync(path.dirname(outputPath), { recursive: true });
+    execFileSync('xcrun', ['simctl', 'io', simulator, 'screenshot', outputPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    writeJson(res, 200, { ok: true, path: relativePath, outputPath });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    writeJson(res, 500, { ok: false, error: message });
+  }
 }
 
 module.exports = {
