@@ -3,10 +3,7 @@ import { create } from 'zustand';
 
 import type { PendingDecision, Run, SlotStatus } from '@farmslot/protocol';
 
-import {
-  normalizeFarmslotProjectFilter,
-  projectMatchesGlobalFilter,
-} from '../lib/project-filter';
+
 
 export const GLOBAL_FILTERS_STORAGE_KEY = '@farmslot:globalFilters';
 
@@ -176,12 +173,7 @@ export function filterSlots<T extends { project?: string | null; machine?: strin
 ): T[] {
   const normalized = normalizeFilters(filters);
   return slots.filter((s) => {
-    if (
-      normalized.projects.length > 0 &&
-      !projectMatchesGlobalFilter(s.project ?? '', normalized.projects)
-    ) {
-      return false;
-    }
+    if (normalized.projects.length > 0 && !normalized.projects.includes(s.project ?? '')) return false;
     if (normalized.machines.length > 0 && !normalized.machines.includes(s.machine ?? ''))
       return false;
     return true;
@@ -195,9 +187,7 @@ export function filterRuns(
 ): Run[] {
   const normalized = normalizeFilters(filters);
   return runs.filter((run) => {
-    if (normalized.projects.length > 0 && !projectMatchesGlobalFilter(run.project, normalized.projects)) {
-      return false;
-    }
+    if (normalized.projects.length > 0 && !normalized.projects.includes(run.project)) return false;
     if (normalized.machines.length > 0) {
       const context = run.slotId ? slotById.get(run.slotId) : undefined;
       const machine = context?.machine ?? getMachineFromSlotId(run.slotId);
@@ -220,10 +210,7 @@ export function filterDecisions(
       context?.machine ??
       getDecisionContextString(decision.context, 'machine') ??
       getMachineFromSlotId(decision.slotId);
-    if (
-      normalized.projects.length > 0 &&
-      (!project || !projectMatchesGlobalFilter(project, normalized.projects))
-    ) {
+    if (normalized.projects.length > 0 && (!project || !normalized.projects.includes(project))) {
       return false;
     }
     if (normalized.machines.length > 0 && (!machine || !normalized.machines.includes(machine))) {
@@ -244,10 +231,7 @@ export function deriveAvailableFilters(
       : sources;
   const machineSources =
     normalized.projects.length > 0
-      ? sources.filter(
-          (source) =>
-            source.project && projectMatchesGlobalFilter(source.project, normalized.projects),
-        )
+      ? sources.filter((source) => source.project && normalized.projects.includes(source.project))
       : sources;
   return {
     projects: uniqueSorted([
@@ -288,7 +272,7 @@ export function normalizeFilters(value: unknown): GlobalFilters {
       Array.isArray(candidate?.projects)
         ? candidate.projects
             .filter((project): project is string => typeof project === 'string')
-            .map(normalizeFarmslotProjectFilter)
+            .map((project) => (project === 'farmslot' ? 'farmslot-farm' : project))
         : [],
     ),
     machines: uniqueSorted(

@@ -19,7 +19,6 @@ import '../stream-feed/stream-feed.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
-import { projectMatchesGlobalFilter } from '../../project-filter.js';
 import { type AppState, getRunForSlot, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
@@ -441,7 +440,7 @@ export class DeviceGrid extends LitElement {
   private _applyFilters(slots: SlotStatus[]): SlotStatus[] {
     const { projects, machines } = this._globalFilters;
     return slots.filter((s) => {
-      if (projects.length > 0 && !projectMatchesGlobalFilter(s.project, projects)) return false;
+      if (projects.length > 0 && !projects.includes(s.project)) return false;
       if (machines.length > 0 && !machines.includes(s.machine)) return false;
       return true;
     });

@@ -8,7 +8,6 @@ import type {
   TmuxWorkerWatchItem,
 } from '@farmslot/protocol';
 
-import { projectMatchesGlobalFilter } from '../../project-filter.js';
 import type { GlobalFilters } from '../../state.js';
 
 /**
@@ -173,7 +172,7 @@ export function filterSlotsByGlobalFilters(
 ): SlotStatus[] {
   const { projects, machines } = filters;
   return slots.filter((slot) => {
-    if (projects.length > 0 && !projectMatchesGlobalFilter(slot.project, projects)) return false;
+    if (projects.length > 0 && !projects.includes(slot.project)) return false;
     if (machines.length > 0 && !machines.includes(slot.machine)) return false;
     return true;
   });

@@ -41,7 +41,6 @@ import {
   Methods,
 } from '@farmslot/protocol';
 
-import { normalizeGlobalFilters } from './project-filter.js';
 import { notify as browserNotify } from './utils/notifications.js';
 import { safeLsGet, safeLsRemove } from './utils/storage.js';
 import { type ConnectionState, gateway } from './gateway-client.js';
@@ -127,17 +126,23 @@ export type AppStateSliceSnapshot = Pick<
   | 'bootstrapFailed'
 >;
 
+function normalizeStoredProjectFilters(projects: string[]): string[] {
+  return [...new Set(projects.map((project) => (project === 'farmslot' ? 'farmslot-farm' : project)))];
+}
+
 function loadGlobalFilters(): GlobalFilters {
   const fromHash = parseFiltersFromHash();
-  if (fromHash) return normalizeGlobalFilters(fromHash);
+  if (fromHash) {
+    return { ...fromHash, projects: normalizeStoredProjectFilters(fromHash.projects) };
+  }
   const raw = safeLsGet(GLOBAL_FILTERS_KEY);
   if (!raw) return { projects: [], machines: [] };
   try {
     const parsed = JSON.parse(raw);
-    return normalizeGlobalFilters({
-      projects: parsed.projects ?? [],
+    return {
+      projects: normalizeStoredProjectFilters(parsed.projects ?? []),
       machines: parsed.machines ?? [],
-    });
+    };
   } catch (err) {
     console.warn('[state] corrupted global-filters in localStorage, clearing:', err);
     safeLsRemove(GLOBAL_FILTERS_KEY);

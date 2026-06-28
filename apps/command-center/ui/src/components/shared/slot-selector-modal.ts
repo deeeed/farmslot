@@ -3,7 +3,6 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type { SlotStatus } from '@farmslot/protocol';
 
-import { projectMatchesGlobalFilter } from '../../project-filter.js';
 import type { GlobalFilters } from '../../state.js';
 import {
   colors,
@@ -225,10 +224,7 @@ export class SlotSelectorModal extends LitElement {
     return this.slots
       .filter((slot) => {
         if (this.project && slot.project !== this.project) return false;
-        if (
-          this.filters.projects.length > 0 &&
-          !projectMatchesGlobalFilter(slot.project, this.filters.projects)
-        ) {
+        if (this.filters.projects.length > 0 && !this.filters.projects.includes(slot.project)) {
           return false;
         }
         if (this.filters.machines.length > 0 && !this.filters.machines.includes(slot.machine)) {
