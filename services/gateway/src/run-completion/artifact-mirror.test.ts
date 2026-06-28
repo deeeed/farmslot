@@ -18,11 +18,11 @@ test('refreshArtifactMirror preserves gateway-owned review artifacts while clear
   const testId = `mirror-gateway-owned-${process.pid}-${Date.now()}`;
   const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(tmpdir(), `${testId}-worker-`));
-  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot/tasks');
+  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
   const taskDir = path.join(taskRoot, taskRelDir);
   const taskFile = path.join(taskDir, 'TASK.md');
-  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot/worker-task', taskRelDir);
+  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);
   const slotId = `${testId}-slot`;
   t.after(async () => {
     await rm(taskDir, { recursive: true, force: true });
@@ -124,11 +124,11 @@ test('refreshArtifactMirror rejects evidence-manifest references to internal art
   const testId = `mirror-internal-manifest-${process.pid}-${Date.now()}`;
   const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(tmpdir(), `${testId}-worker-`));
-  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot/tasks');
+  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
   const taskDir = path.join(taskRoot, taskRelDir);
   const taskFile = path.join(taskDir, 'TASK.md');
-  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot/worker-task', taskRelDir);
+  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);
   const slotId = `${testId}-slot`;
   t.after(async () => {
     await rm(taskDir, { recursive: true, force: true });

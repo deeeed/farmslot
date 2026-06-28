@@ -88,7 +88,7 @@ Reuse existing `app-shell.ts` banner work when still valid; worker should not re
   bash projects/farmslot-farm/setup/validate-recipe.sh \
     --recipe <TASK_DIR>/artifacts/recipe.json \
     --artifacts-dir <TASK_DIR>/artifacts/recipe-run \
-    --runtime-dir .sandbox/farmslot/agent \
+    --runtime-dir .sandbox/farmslot-farm/agent \
     --platform web --cdp-port 9323 --gateway-port 8809 \
     --slot-id macwork-ff-2 --slow 2000 --record-video=full-run --task-dir <TASK_DIR>
   ```
@@ -163,7 +163,7 @@ Worktree: `farmslot-wt/farmslot-companion-1` · gateway port **8871** · simulat
   bash projects/farmslot-farm/setup/validate-recipe.sh \
     --recipe <TASK_DIR>/artifacts/recipe.json \
     --artifacts-dir <TASK_DIR>/artifacts/recipe-run \
-    --runtime-dir .sandbox/farmslot/agent \
+    --runtime-dir .sandbox/farmslot-farm/agent \
     --platform ios --metro-port <derived> --simulator fc-1 \
     --gateway-port 8871 --slot-id macwork-fc-1 \
     --slow 2000 --record-video=full-run --task-dir <TASK_DIR>

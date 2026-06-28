@@ -11,8 +11,8 @@ test('slotViewTaskRelativePath prefers slot agent task file on worker repo', () 
   assert.equal(
     slotViewTaskRelativePath({
       runTaskFile:
-        '/Users/deeeed/dev/farmslot/.sandbox/farmslot/tasks/feat/112-0627-223003/TASK.md',
-      slotAgentTaskFile: '.sandbox/farmslot/worker-task/feat/112-0627-223003/TASK.md',
+        '/Users/deeeed/dev/farmslot/.sandbox/farmslot-farm/tasks/feat/112-0627-223003/TASK.md',
+      slotAgentTaskFile: '.sandbox/farmslot-farm/worker-task/feat/112-0627-223003/TASK.md',
       slotTaskFile: 'fallback-slot-task',
       showTaskUi: true,
     }),
@@ -52,15 +52,15 @@ test('slotViewTaskRelativePath falls back to slot task only when task UI is visi
 
 test('slotViewPinnedFolderFromTaskFile returns slot-relative task directory', () => {
   assert.equal(
-    slotViewPinnedFolderFromTaskFile('.sandbox/farmslot/worker-task/feat/112-0627-223003/TASK.md'),
-    '.sandbox/farmslot/worker-task/feat/112-0627-223003',
+    slotViewPinnedFolderFromTaskFile('.sandbox/farmslot-farm/worker-task/feat/112-0627-223003/TASK.md'),
+    '.sandbox/farmslot-farm/worker-task/feat/112-0627-223003',
   );
 });
 
 test('slotViewPinnedFolderCandidates probes sandbox worker-task before legacy paths', () => {
   assert.deepEqual(slotViewPinnedFolderCandidates('PROJ-123'), [
-    '.sandbox/farmslot/worker-task/PROJ-123',
-    '.sandbox/farmslot/task/PROJ-123',
+    '.sandbox/farmslot-farm/worker-task/PROJ-123',
+    '.sandbox/farmslot-farm/task/PROJ-123',
     'temp/tasks/PROJ-123',
     'tasks/PROJ-123',
     '.task/PROJ-123',

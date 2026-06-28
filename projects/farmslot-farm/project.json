@@ -9,8 +9,8 @@
   "worktree_base": "/Users/deeeed/dev/farmslot-wt",
   "apps": ["command-center", "companion"],
   "paths": {
-    "runtime_dir": ".sandbox/farmslot/agent",
-    "artifact_dir": ".sandbox/farmslot/task"
+    "runtime_dir": ".sandbox/farmslot-farm/agent",
+    "artifact_dir": ".sandbox/farmslot-farm/task"
   },
   "defaults": {
     "fix": {
@@ -108,7 +108,7 @@
   "recipe_run_supports_video_recording": true,
   "health": {
     "dev_server_name": "Gateway",
-    "dev_server_log": ".sandbox/farmslot/agent/sandbox-dev.log"
+    "dev_server_log": ".sandbox/farmslot-farm/agent/sandbox-dev.log"
   },
   "fixtures": {
     "templates": [
@@ -121,7 +121,7 @@
         "dst": "{{runtime_dir}}/review-quality.md"
       },
       {
-        "dst": ".sandbox/farmslot/claude/CLAUDE.local.md",
+        "dst": ".sandbox/farmslot-farm/claude/CLAUDE.local.md",
         "compose": {
           "var": "FLOW_TYPE",
           "variants": {
@@ -223,7 +223,7 @@
       }
     }
   },
-  "task_dir": ".sandbox/farmslot/worker-task",
+  "task_dir": ".sandbox/farmslot-farm/worker-task",
   "vars": {
     "recipe_runner_resolve_cmd": "node -e \"console.log('{{primary_repo}}/apps/command-center/scripts/agentic/run-recipe.mjs')\"",
     "recipe_manifest_path": "{{farmslot_dir}}/docs/examples/recipes/farmslot-v1.action-manifest.json",

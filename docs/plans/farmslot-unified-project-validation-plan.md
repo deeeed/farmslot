@@ -162,7 +162,7 @@ farmslot slot prepare macwork-fc-1 --prepare-profile companion-warm
 # hooks.recipe_run via docs/examples/recipes/farmslot/mobile-companion.recipe.json
 ```
 
-Evidence: run ids + recipe artifacts under `.sandbox/farmslot/`.
+Evidence: run ids + recipe artifacts under `.sandbox/farmslot-farm/`.
 
 ## Success criteria
 

@@ -86,10 +86,10 @@ test('refreshPublishPackage rebuilds the pending package and preserves safe oper
   const testId = `refresh-package-${process.pid}-${Date.now()}`;
   const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(os.tmpdir(), `${testId}-worker-`));
-  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot/tasks');
+  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
   const taskDir = path.join(taskRoot, taskRelDir);
-  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot/worker-task', taskRelDir);
+  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);
   const taskFile = path.join(taskDir, 'TASK.md');
   const slotId = `${testId}-slot`;
   t.after(async () => {
@@ -373,7 +373,7 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
   const testId = `refresh-package-fail-${process.pid}-${Date.now()}`;
   const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(os.tmpdir(), `${testId}-worker-`));
-  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot/tasks');
+  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
   const taskDir = path.join(taskRoot, taskRelDir);
   const taskFile = path.join(taskDir, 'TASK.md');
@@ -389,7 +389,7 @@ test('refreshPublishPackage fails closed when worker artifacts cannot be mirrore
   await mkdir(path.join(taskDir, 'artifacts/independent-review-1/review-loop-1'), {
     recursive: true,
   });
-  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot/worker-task', taskRelDir);
+  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);
   await mkdir(path.join(workerTaskDir, 'artifacts'), { recursive: true });
   await writeFile(taskFile, '# refresh package fail test\n');
   const preservedReviewDiff = path.join(
@@ -461,10 +461,10 @@ test('refreshReviewGate does not let worker artifacts overwrite gateway-owned pa
   const testId = `refresh-review-gateway-owned-${process.pid}-${Date.now()}`;
   const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
   const workerRepo = await mkdtemp(path.join(os.tmpdir(), `${testId}-worker-`));
-  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot/tasks');
+  const taskRoot = path.join(farmslotRoot, '.sandbox/farmslot-farm/tasks');
   const taskRelDir = `test/${testId}`;
   const taskDir = path.join(taskRoot, taskRelDir);
-  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot/worker-task', taskRelDir);
+  const workerTaskDir = path.join(workerRepo, '.sandbox/farmslot-farm/worker-task', taskRelDir);
   const taskFile = path.join(taskDir, 'TASK.md');
   const slotId = `${testId}-slot`;
   t.after(async () => {

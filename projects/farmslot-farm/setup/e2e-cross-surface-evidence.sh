@@ -39,13 +39,13 @@ FF_REPO="${FF_REPO:-$CC_WT}"
 
 TASK_DIR="${TASK_DIR:-}"
 if [[ -z "$TASK_DIR" ]]; then
-  TASK_DIR="$(find "$CC_WT/.sandbox/farmslot/worker-task" -type f -path '*/artifacts/recipe.json' 2>/dev/null \
+  TASK_DIR="$(find "$CC_WT/.sandbox/farmslot-farm/worker-task" -type f -path '*/artifacts/recipe.json' 2>/dev/null \
     | xargs -I{} dirname {} 2>/dev/null | xargs -I{} dirname {} 2>/dev/null | sort -r | head -1 || true)"
 fi
 
 FC_TASK_DIR="${FC_TASK_DIR:-}"
 if [[ -z "$FC_TASK_DIR" ]]; then
-  FC_TASK_DIR="$(find "$FC_WT/.sandbox/farmslot/worker-task" -type f -path '*/artifacts/recipe.json' 2>/dev/null \
+  FC_TASK_DIR="$(find "$FC_WT/.sandbox/farmslot-farm/worker-task" -type f -path '*/artifacts/recipe.json' 2>/dev/null \
     | xargs -I{} dirname {} | xargs -I{} dirname {} | sort -r | head -1 || true)"
 fi
 
@@ -231,7 +231,7 @@ run_recipe_proof() {
     bash "$SCRIPT_DIR/validate-recipe.sh" \
       --recipe "$recipe_path" \
       --artifacts-dir "$artifacts_dir" \
-      --runtime-dir "$slot_repo/.sandbox/farmslot/agent" \
+      --runtime-dir "$slot_repo/.sandbox/farmslot-farm/agent" \
       --platform "$platform" \
       "$@" \
       --slow 2000 "${video_args[@]}" --task-dir "$task_dir" \

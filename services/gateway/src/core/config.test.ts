@@ -31,7 +31,7 @@ test('getOrchestratorTaskRoot uses sandbox path for mock projects', () => {
   assert.equal(
     getOrchestratorTaskRoot('farmslot-farm', {
       external: { mock_mode: true },
-      task_dir: '.sandbox/farmslot/worker-task',
+      task_dir: '.sandbox/farmslot-farm/worker-task',
     } as any),
     path.join(farmslotRoot, '.sandbox', 'farmslot-farm', 'tasks'),
   );

@@ -1,6 +1,6 @@
 const TASK_DIR_MARKERS = [
-  '.sandbox/farmslot/worker-task/',
-  '.sandbox/farmslot/task/',
+  '.sandbox/farmslot-farm/worker-task/',
+  '.sandbox/farmslot-farm/task/',
   'worker-task/',
   'tasks/',
   'temp/tasks/',
@@ -50,8 +50,8 @@ export function slotViewTaskRelativePath(params: {
 
 export function slotViewPinnedFolderCandidates(taskRelPath: string): string[] {
   return [
-    `.sandbox/farmslot/worker-task/${taskRelPath}`,
-    `.sandbox/farmslot/task/${taskRelPath}`,
+    `.sandbox/farmslot-farm/worker-task/${taskRelPath}`,
+    `.sandbox/farmslot-farm/task/${taskRelPath}`,
     `temp/tasks/${taskRelPath}`,
     `tasks/${taskRelPath}`,
     `.task/${taskRelPath}`,
