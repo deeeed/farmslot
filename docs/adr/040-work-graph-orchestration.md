@@ -350,7 +350,7 @@ Event sources (v1 glue; some source facts exist today, while graph events are ne
   event carrying the **merge SHA** (durable evidence) instead of only chaining intra-family.
 - **`gate.opened/resolved`** — ADR-038 publication gate already transitions slot phase; v1
   surfaces that transition as a graph event.
-- **`scheduler.tick`** — recomputes every `active` graph's edge satisfied-bits and node statuses
+- **`scheduler.tick`** — recomputes every `active` or `waiting` graph's edge satisfied-bits and node statuses
   from current **durable** external state. The idempotent backstop: on restart the first tick
   rebuilds everything, so no event is "lost." Webhooks (v2) just lower `pr.merged` latency.
 

@@ -2,7 +2,7 @@
 
 **Owner:** Arthur
 **Date:** 2026-06-27
-**Status:** Active execution plan (today)
+**Status:** Approved supporting plan (2026-06-27 dogfood day; retained as near-term handoff)
 **Relates to:** [ADR-039](../adr/039-run-portable-bundles.md), [ADR-040](../adr/040-work-graph-orchestration.md) (future), [ROADMAP-next.md](../ROADMAP-next.md), [worktree-operator-model.md](../operations/worktree-operator-model.md)
 
 ## Why this exists
@@ -16,7 +16,7 @@ Today the dev loop is: agents in tmux runners on worktrees **without** launching
 - Worktree sandboxes cannot seed baselines from main history
 - Roadmap → backlog → parallel dispatch (ADR-040 direction) has no validated first rung
 
-This plan captures the **today** goal and the **next** goal so every agent/session can align without re-explaining context.
+This plan captures the 2026-06-27 dogfood goal and the next goal so every agent/session can align without re-explaining context.
 
 ## North star (this week)
 
