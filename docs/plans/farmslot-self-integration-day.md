@@ -40,7 +40,7 @@ Work graphs (ADR-040) come **after** steps 1–3 are boringly reliable.
 
 ## Today checklist
 
-### A. Ship ADR-039 (PR #95)
+### A. Ship ADR-039 bundles and PR #95 backlog intake
 
 - [ ] CI green (CLI, protocol, run-bundle, gateway, CC quality, hygiene)
 - [ ] Cross-review loop on PR #95 (`cross-review-orchestrator`, reviewers Claude + Codex)

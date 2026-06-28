@@ -120,7 +120,7 @@ Required fields:
 - `items`: derived from `RoadmapItem.epicId`; the epic file may cache ordering metadata, but item frontmatter is the canonical membership source.
 - `promotion`: optional ledger entries using the same snapshot/idempotency shape as `RoadmapItem.promotion` when the epic itself is promoted to a graph.
 
-An epic is not a work graph. Epic membership answers “these belong together.” WorkGraph edges answer “this cannot execute until that condition is satisfied.”
+An epic is not a work graph. Epic membership answers “these belong together.” WorkGraph edges answer “this cannot execute until that condition is satisfied.” Epic-level promotion is an explicit batch action over already-refined member items: it may create or link a WorkGraph for the generated backlog items, but it must not turn rough epic members directly into backlog or graph nodes.
 
 ### BacklogItem boundary
 
@@ -178,6 +178,8 @@ Run-family label filters are derived projections over member runs/backlog/work g
 ## Storage
 
 Operator-roadmap state is gateway-owned and markdown-first. Files must be sortable and obvious to humans or external agents. The durable home is under the connected gateway's `farmslotRoot`, not `~/.farmslot` machine CLI config.
+
+In a multi-gateway/worktree setup, the operator must choose one canonical roadmap plane per project. For Farmslot dogfooding, that is the main operator gateway/root that owns canonical backlog/run history; throwaway worktree gateways may import/export roadmap snapshots for local refinement, but they must not silently promote into their own fragmented backlog unless the operator explicitly chooses that gateway as canonical for the project.
 
 ```text
 {farmslotRoot}/.roadmap/
@@ -256,6 +258,8 @@ The user attaches labels and optionally adds the roadmap item to a `RoadmapEpic`
 
 Promotion is the only write path from roadmap to execution.
 
+Promotion is blocked until the roadmap item has a concrete project matching a `project.json` `name`; `global` and `unassigned` inbox items must be assigned first. This keeps generated backlog items and ADR-040 v1 work graphs single-project.
+
 A refined roadmap item can promote to:
 
 1. One backlog item for a single deployable objective.
@@ -290,7 +294,7 @@ Backlog remains the execution handoff. `backlog.enqueue` remains the path into t
 
 Backlog item additions:
 
-Roadmap promotion should create backlog items with `sourceKind='roadmap'` and `sourceRef=<promotionEntryId>`; legacy PR #95 sources (`manual`, `jira`, `github`) remain for directly dispatchable intake.
+Roadmap promotion should create backlog items with `sourceKind='roadmap'` and `sourceRef=<promotionEntryId>`; implementation must add `'roadmap'` to the canonical `BACKLOG_SOURCE_KINDS` tuple, not just union-patch call sites. Legacy PR #95 sources (`manual`, `jira`, `github`) remain for directly dispatchable intake.
 
 ```ts
 interface BacklogItem {
