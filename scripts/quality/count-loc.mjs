@@ -462,7 +462,7 @@ export function verifyLocHistory(options) {
   return {
     ok: false,
     head,
-    reason: `${HISTORY_PATH} is stale — run 'yarn quality:loc:record' and commit`,
+    reason: `${HISTORY_PATH} is stale — run 'yarn quality:loc:record' to refresh it, or let LOC History CI open the update PR`,
   };
 }
 
