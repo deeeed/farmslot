@@ -478,7 +478,7 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
               <div class="sp-name">${c.slotId}</div>
               <div class="sp-branch ${isStale ? 'stale' : ''}">${c.branch || DEFAULT_BRANCH}</div>
             </div>
-            <div class="sp-score ${c.score < 50 ? 'good' : 'bad'}">${c.score}</div>
+            <div class="sp-score ${isDispatchScoreStale(c.score) ? 'bad' : 'good'}">${c.score}</div>
             <div class="sp-lifecycle">${c.lifecycle}</div>
             <div style="font-size:10px;color:${colors.textMuted}">${c.machine}</div>
           </div>
@@ -780,8 +780,8 @@ function renderBranchNudgeFreeSlots(
             <div class="bnp-branch ${isStale ? 'stale' : ''}">${c.branch || DEFAULT_BRANCH}</div>
           </div>
           <div
-            class="bnp-score ${c.score < 50 ? '' : ''}"
-            style="color:${c.score < 50 ? colors.statusOk : colors.statusFail}"
+            class="bnp-score"
+            style="color:${isDispatchScoreStale(c.score) ? colors.statusFail : colors.statusOk}"
           >
             ${c.score}
           </div>
