@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+set -eu
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+if [ "${FARMSLOT_SKIP_PREPUSH:-}" = "1" ]; then
+  echo "farmslot pre-push: skipped (FARMSLOT_SKIP_PREPUSH=1)"
+  exit 0
+fi
+exec node scripts/quality/prepush-quality.mjs

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const commandCenterRoot = dirname(scriptDir);
 const repoRoot = resolve(commandCenterRoot, '../..');
-const hookPath = join(scriptDir, 'git-hooks/pre-commit');
+const hooksDir = join(scriptDir, 'git-hooks');
 const force = process.argv.includes('--force');
 
 const gitPath = join(repoRoot, '.git');
@@ -84,7 +84,9 @@ if (currentHooksPath && currentHooksPathResolved !== desiredHooksPath) {
   );
 }
 
-chmodSync(hookPath, 0o755);
+for (const entry of readdirSync(hooksDir)) {
+  chmodSync(join(hooksDir, entry), 0o755);
+}
 execFileSync('git', ['config', '--local', 'core.hooksPath', desiredHooksPath], {
   cwd: repoRoot,
   stdio: 'inherit',

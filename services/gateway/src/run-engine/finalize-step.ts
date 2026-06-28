@@ -12,7 +12,6 @@ import {
 
 import { farmslotRoot, getProjectField, loadSlotVars } from '../core/config.js';
 import { execLocal, execOnSlot, isLocal } from '../core/exec.js';
-import { listRunnerSessionFiles } from '../runners/session-process.js';
 import { markSlotHeld } from '../core/index.js';
 import { shellQuote } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
@@ -28,6 +27,7 @@ import {
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
+import { listRunnerSessionFiles } from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 

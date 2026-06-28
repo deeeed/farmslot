@@ -36,6 +36,7 @@
     "quality": "yarn format:check && yarn lint && yarn lint:type-escapes && yarn test:protocol && yarn test:recipe-harness && yarn test:gateway-root && yarn test:ui && yarn typecheck",
     "hooks:install": "node scripts/install-git-hooks.mjs",
     "precommit:quality": "cd ../.. && node scripts/quality/precommit-quality.mjs",
+    "prepush:quality": "cd ../.. && node scripts/quality/prepush-quality.mjs",
     "test:recipe-operational-gates": "node scripts/test-recipe-operational-gates.mjs",
     "test:ui": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig ui/tsconfig.json ui/src"
   },

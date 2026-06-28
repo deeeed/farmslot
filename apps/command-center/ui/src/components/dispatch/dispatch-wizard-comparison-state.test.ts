@@ -7,10 +7,10 @@ import {
   buildComparisonRunParams,
   comparisonBranchHint,
   comparisonVariantInputBlocked,
-  resolveComparisonDispatchBranch,
   deriveComparisonVariantState,
   exitedComparisonModeState,
   forkComparisonStateFromRun,
+  resolveComparisonDispatchBranch,
   resolveComparisonVariant,
 } from './dispatch-wizard-comparison-state.js';
 

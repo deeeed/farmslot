@@ -31,6 +31,7 @@ import { shellQuote } from '../core/tmux.js';
 import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/context.js';
 import { findFollowUpParentRun } from '../family-observability/state.js';
 import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
+import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -76,8 +77,6 @@ import {
 } from '../runs/store.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
-import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
-import { applyComparisonBranchPolicy } from './run/comparison-branch-policy.js';
 import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
   assertTicketRefMatchesProjectRepo,
@@ -85,6 +84,7 @@ import {
   resolvePrRef,
   validateTicketRef,
 } from './dispatch/ticket-ref.js';
+import { applyComparisonBranchPolicy } from './run/comparison-branch-policy.js';
 import { runCancel } from './run/lifecycle-control.js';
 import { triggerImprovementAnalysis } from './run/propose-improvement.js';
 import { runReplayStep } from './run/replay-step.js';
