@@ -58,6 +58,20 @@ bash scripts/dev.sh
 
 Open [http://localhost:7777](http://localhost:7777). Slot `demo-ff-1` uses `project: farmslot-farm`, `platform: cli`, and the repo root as its checkout. This is enough to explore Command Center, dispatch preview, and the fake-runner slot described in [Local demo and CLI](./local-demo-and-cli.md).
 
+The same pool file also documents `demo-ff-2` — disabled by default — with optional `ios-sim` and a second gateway port. Enable it when you want to practice `companion-warm` or `sandbox-companion` locally without a private machine pool:
+
+```json
+{
+  "id": "demo-ff-2",
+  "enabled": false,
+  "platform": "cli",
+  "resources": {
+    "dev-server": { "port": 7779, "cdp_port": 9325 },
+    "ios-sim": { "simulator": "fs-demo-2", "headless": true }
+  }
+}
+```
+
 ## Isolated worktree (how real slots work)
 
 Production-style slots point each agent at its own checkout and port block:
