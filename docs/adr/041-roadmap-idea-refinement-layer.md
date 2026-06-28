@@ -12,26 +12,36 @@ Farmslot now has three execution-side primitives:
 2. **Backlog items** — dispatchable intake records that can be queued into the existing dispatch path.
 3. **Work graphs** — proposed horizontal dependency orchestration over backlog items.
 
-What is missing is the planning layer **before** backlog intake. Operators often start with rough ideas: a product goal, an implementation hunch, a private note in `~/dev/roadmap`, or a raw prompt. That idea must be refined into an editable spec with acceptance criteria before it is safe to dispatch. Today that process happens outside Farmslot and loses links to the resulting backlog items, runs, bundles, and work graphs.
+What is missing is the planning layer **before** backlog intake. Operators often start with rough ideas: a product goal, an implementation hunch, a private note in `~/dev/roadmap`, or a raw prompt. That rough idea is not a backlog item yet. It must stay in roadmap space until it becomes a deployable, dispatchable spec with acceptance criteria.
 
 The desired product direction is embedded project management:
 
 ```text
-raw idea -> interactive refinement -> editable spec/epic -> backlog item(s) -> optional work graph -> dispatch -> runs/bundles
+roadmap item (rough idea)
+  -> interactive refinement
+  -> roadmap item (refined spec)
+  -> promote -> backlog item(s)
+             -> optional work graph
+             -> dispatch -> runs/bundles
 ```
 
 This ADR defines the durable boundary for that planning layer. It intentionally does **not** implement a full project-management suite. The scope is capture, refine, organize, promote, and track.
 
 ## Decision
 
-Add a gateway-owned **roadmap layer** with markdown-backed records for ideas, refined specs, epics, refinement sessions, and a shared label catalog.
+Add a gateway-owned **roadmap layer** with markdown-backed roadmap items, epics, refinement sessions, and a shared label catalog.
+
+The load-bearing distinction:
+
+- **RoadmapItem** can be rough, refining, refined, or promoted. It owns discovery, product intent, acceptance criteria, and human-editable markdown.
+- **BacklogItem** starts only after promotion. It represents one clear executable objective, like a Jira ticket ready to dispatch. A single refined roadmap item may decompose into many backlog items.
 
 The roadmap layer sits above backlog and work graphs:
 
 ```text
-RoadmapIdea
+RoadmapItem(stage=rough)
   -> RefinementSession
-  -> RefinedIdeaSpec
+  -> RoadmapItem(stage=refined, acceptance criteria present)
   -> RoadmapEpic membership
   -> promote -> BacklogItem(s)
              -> optional WorkGraph draft
@@ -40,8 +50,8 @@ RoadmapIdea
 
 Core rules:
 
-1. **Roadmap is planning state.** It captures intent, acceptance criteria, tradeoffs, and product grouping.
-2. **Backlog is execution intake.** A backlog item remains one dispatchable objective.
+1. **Roadmap is planning state.** It captures rough ideas, refined specs, acceptance criteria, tradeoffs, and product grouping.
+2. **Backlog is execution intake.** A backlog item remains one dispatchable objective and should already read like a deployable Jira ticket. Large roadmap items fan out into multiple backlog items instead of becoming one overloaded backlog item.
 3. **WorkGraph is scheduling state.** It encodes dependency edges between backlog items; it is not the same as an epic.
 4. **RunFamily is execution lineage.** Refinement sessions do not become run families and do not enter dispatch queues.
 5. **RunBundle is evidence transport.** Bundles may reference roadmap/backlog provenance but do not own roadmap state.
@@ -49,29 +59,45 @@ Core rules:
 
 ## Entities
 
-### RoadmapIdea
+### RoadmapItem
 
-A captured raw idea. It can be a short markdown note, pasted prompt, imported file, or UI quick-add.
+A markdown-backed planning item that spans rough idea through refined spec. The item is the unit the user sees in roadmap. Its stage changes as it matures; it is not copied from an “idea” record into a separate “spec” record.
 
 Required fields:
 
 - `id`: stable `ri_<short>` identifier.
 - `project`: Farmslot project key or `global` / `unassigned`.
 - `title`.
-- `status`: `captured | refining | refined | promoted | parked | archived`.
+- `stage`: `rough | refining | refined | promoted | parked | archived`.
 - `labels`: shared label IDs.
+- `epicId`: optional roadmap epic membership.
 - `source`: `manual | import | runner | external` plus optional path/ref.
-- `specId`: set once a refined spec exists.
+- `acceptanceCriteria`: required before promotion; optional while rough.
+- `promotion`: ledger of created backlog item IDs, work graph IDs, timestamps, and operator decisions.
 - `createdAt`, `updatedAt`.
+- `body`: human-authored markdown.
+
+Stage semantics:
+
+| Stage | Meaning | Allowed next step |
+| ----- | ------- | ----------------- |
+| `rough` | Raw thought, unclear scope, may be only a paragraph. | refine, park, archive |
+| `refining` | Interactive runner or human refinement in progress. | refined, rough, parked |
+| `refined` | Spec has problem, proposed solution, non-goals, risks, and acceptance criteria. | promote, edit, park |
+| `promoted` | One or more backlog items/work graphs were created. | track, create additional backlog items explicitly |
+| `parked` | Worth keeping but not active. | rough/refining/refined |
+| `archived` | No longer considered. | restore only by explicit operator action |
+
+A `RoadmapItem(stage=refined)` behaves like a Jira ticket draft: humans and agents can edit the markdown directly. Promotion writes a ledger instead of freezing an immutable revision.
 
 ### RefinementSession
 
-A record of an interactive refinement attempt. It is an orchestration/session record, not an execution run.
+A record of an interactive refinement attempt for one roadmap item. It is an orchestration/session record, not an execution run.
 
 Required fields:
 
 - `id`: stable `rs_<short>` identifier.
-- `ideaId` and optional `specId`.
+- `roadmapItemId`.
 - `runner`: runner kind/model/session/pane metadata.
 - `template`: project-specific refinement prompt/template version.
 - `status`: `active | completed | abandoned | failed`.
@@ -80,27 +106,9 @@ Required fields:
 
 Refinement sessions may reuse tmux runner infrastructure, but they do not call `run.create`, do not allocate a slot, and do not affect run-family metrics.
 
-### RefinedIdeaSpec
-
-The editable markdown ticket-like spec produced from an idea.
-
-Required fields:
-
-- `id`: stable `rspec_<short>` identifier.
-- `ideaId`.
-- `project`.
-- `title`.
-- `status`: `draft | ready-for-promotion | promoted | superseded | archived`.
-- `labels`: shared label IDs.
-- `acceptanceCriteria`: markdown checklist or structured array in frontmatter.
-- `promotion`: ledger of created backlog item IDs, work graph IDs, timestamps, and operator decisions.
-- `body`: human-authored markdown.
-
-A spec is mutable. It behaves like a Jira ticket: humans and agents can edit it directly. Promotion writes a ledger instead of freezing an immutable revision.
-
 ### RoadmapEpic
 
-A product/planning grouping of roadmap ideas/specs.
+A product/planning grouping of roadmap items.
 
 Required fields:
 
@@ -109,10 +117,21 @@ Required fields:
 - `title`.
 - `status`: `draft | active | done | parked | archived`.
 - `labels`: shared label IDs.
-- `items`: ordered roadmap idea/spec IDs, or a derived index from member frontmatter.
+- `items`: ordered roadmap item IDs, or a derived index from member frontmatter.
 - `promotion`: optional links to work graph IDs produced from the epic.
 
 An epic is not a work graph. Epic membership answers “these belong together.” WorkGraph edges answer “this cannot execute until that condition is satisfied.”
+
+### BacklogItem boundary
+
+Backlog is deliberately downstream of roadmap. A rough idea must never become a backlog item. A backlog item should be clear enough for an agent to dispatch without another product-discovery conversation. When one roadmap item requires several deployable changes, promotion creates several backlog items, each with its own objective and acceptance criteria slice.
+
+Promotion from roadmap to backlog requires:
+
+- `stage=refined`.
+- Acceptance criteria present.
+- Dispatch notes or enough context to generate a worker task.
+- Operator confirmation of one objective vs decomposition into multiple backlog items.
 
 ### SharedLabel
 
@@ -132,8 +151,7 @@ Required fields:
 All major records attach labels by ID:
 
 ```ts
-interface RoadmapIdea { labels?: string[] }
-interface RefinedIdeaSpec { labels?: string[] }
+interface RoadmapItem { labels?: string[] }
 interface RoadmapEpic { labels?: string[] }
 interface BacklogItem { labels?: string[] }
 interface WorkGraph { labels?: string[] }
@@ -152,28 +170,27 @@ Roadmap state is gateway-owned and markdown-first. Files must be sortable and ob
 .farmslot/roadmap/
   labels.json
   projects/<project>/
-    ideas/YYYY-MM-DD-short-slug.md
-    specs/YYYY-MM-DD-short-slug.md
+    items/YYYY-MM-DD-short-slug.md
     epics/YYYY-MM-DD-short-slug.md
     sessions/YYYY-MM-DD-short-slug.jsonl
     graphs/YYYY-MM-DD-short-slug.graph.json
-  inbox/ideas/YYYY-MM-DD-unassigned-short-slug.md
+  inbox/items/YYYY-MM-DD-unassigned-short-slug.md
   cross-project/epics/YYYY-MM-DD-short-slug.md
 ```
 
-Markdown files use YAML frontmatter for machine fields and markdown body for human editing:
+A roadmap item keeps the same file as it matures. The stage lives in frontmatter; the markdown body evolves from rough note to refined spec.
 
 ```markdown
 ---
-id: rspec_abc123
-kind: refined-spec
+id: ri_abc123
+kind: roadmap-item
 project: farmslot
-status: ready-for-promotion
+stage: refined
 labels: [roadmap, adr, command-center]
 epicId: re_pm_core
 acceptanceCriteria:
-  - User can refine a raw idea interactively.
-  - Refined spec can promote to one or more backlog items.
+  - User can refine a raw roadmap item interactively.
+  - Refined roadmap item can promote to one or more backlog items.
 promotion:
   backlogItemIds: []
   workGraphIds: []
@@ -194,37 +211,39 @@ The gateway builds an in-memory index from the files, validates frontmatter on l
 
 ### Capture
 
-A user or agent creates a `RoadmapIdea` from quick-add text, pasted markdown, imported `~/dev/roadmap` notes, or external references.
+A user or agent creates a `RoadmapItem(stage=rough)` from quick-add text, pasted markdown, imported `~/dev/roadmap` notes, or external references.
 
-Captured ideas may be unassigned. They live under `inbox/ideas/` until assigned to a project.
+Captured items may be unassigned. They live under `inbox/items/` until assigned to a project.
 
 ### Refine
 
-The user launches a `RefinementSession` from an idea. The gateway starts or attaches to a tmux runner with a project-specific refinement template. The runner asks questions, rewrites the markdown, and produces or updates a `RefinedIdeaSpec`.
+The user launches a `RefinementSession` from a roadmap item. The gateway starts or attaches to a tmux runner with a project-specific refinement template. The runner asks questions and edits the same markdown item until it is ready for `stage=refined`.
 
-The gate to leave refinement is explicit: the spec must have a problem statement, proposed solution, non-goals, acceptance criteria, risks, and dispatch notes.
+The gate to mark refined is explicit: the item must have a problem statement, proposed solution, non-goals, acceptance criteria, risks, and dispatch notes.
 
 ### Organize
 
-The user attaches labels and optionally adds the spec to a `RoadmapEpic`. Roadmap UI supports filtering by project, status, label, and text search. Labels are identical to the labels used in run/backlog filters.
+The user attaches labels and optionally adds the roadmap item to a `RoadmapEpic`. Roadmap UI supports filtering by project, stage, label, and text search. Labels are identical to the labels used in run/backlog filters.
 
 ### Promote
 
 Promotion is the only write path from roadmap to execution.
 
-A ready spec can promote to:
+A refined roadmap item can promote to:
 
-1. One backlog item for a single objective.
-2. Multiple backlog items for decomposed work.
-3. Multiple backlog items plus a draft work graph when dependencies exist.
+1. One backlog item for a single deployable objective.
+2. Multiple backlog items when the roadmap item spans several deployable objectives.
+3. Multiple backlog items plus a draft work graph when those objectives have ordering/dependency constraints.
+
+The decomposition boundary is execution clarity: each generated backlog item should be independently dispatchable, reviewable, and trackable, while preserving provenance back to the parent roadmap item.
 
 Promotion writes provenance both ways:
 
-- Spec promotion ledger records created backlog/work-graph IDs.
-- Backlog items record `roadmapSpecId`, `roadmapIdeaId`, optional `roadmapEpicId`, and inherited `labels`.
-- Work graphs record optional `roadmapEpicId` / `roadmapSpecIds`.
+- Roadmap item promotion ledger records created backlog/work-graph IDs.
+- Backlog items record `roadmapItemId`, optional `roadmapEpicId`, and inherited `labels`.
+- Work graphs record optional `roadmapEpicId` / `roadmapItemIds`.
 
-Promotion is idempotent. Re-promoting an already-promoted spec shows the existing ledger and requires an explicit “create additional backlog items” action.
+Promotion is idempotent. Re-promoting an already-promoted item shows the existing ledger and requires an explicit “create additional backlog items” action. The ledger is the durable mapping from one roadmap item to N backlog items and optional work graph nodes.
 
 ### Track
 
@@ -232,9 +251,9 @@ Roadmap status can roll up from linked backlog/work-graph/run state, but roadmap
 
 Derived examples:
 
-- All linked backlog items done -> spec shows `shipped`/`done` projection.
-- A linked run failed -> spec shows attention needed via derived rollup.
-- Labels changed on a run do not automatically rewrite the originating spec unless the user chooses “sync labels back.”
+- All linked backlog items done -> roadmap item shows `shipped`/`done` projection.
+- A linked run failed -> roadmap item shows attention needed via derived rollup.
+- Labels changed on a run do not automatically rewrite the originating roadmap item unless the user chooses “sync labels back.”
 
 ## Integration boundaries
 
@@ -246,8 +265,7 @@ Backlog item additions:
 
 ```ts
 interface BacklogItem {
-  roadmapIdeaId?: string;
-  roadmapSpecId?: string;
+  roadmapItemId?: string;
   roadmapEpicId?: string;
   labels?: string[];
 }
@@ -255,7 +273,7 @@ interface BacklogItem {
 
 ### Work graphs
 
-A roadmap epic may draft a work graph, but the graph remains executable scheduling state. Work nodes point to backlog items, not roadmap specs. Roadmap links to the graph for visualization and progress rollup.
+A roadmap epic or refined roadmap item may draft a work graph, but the graph remains executable scheduling state. Work nodes point to backlog items, not roadmap items. Roadmap links to the graph for visualization and progress rollup.
 
 ### Runs and run families
 
@@ -263,15 +281,15 @@ Runs keep their existing semantics. The shared label model should converge run `
 
 ### Run bundles
 
-Run bundles may include roadmap/backlog provenance IDs and labels for context. They do not embed canonical roadmap markdown. If a portable bundle references a spec, it should record the ID/path as provenance and include rendered excerpts only as evidence metadata when needed.
+Run bundles may include roadmap/backlog provenance IDs and labels for context. They do not embed canonical roadmap markdown. If a portable bundle references a roadmap item, it should record the ID/path as provenance and include rendered excerpts only as evidence metadata when needed.
 
 ## UI surface
 
 Add a `#roadmap` / backlog-adjacent Command Center surface with four modes:
 
-1. **Inbox:** captured ideas, unassigned notes, imported personal roadmap items.
-2. **Refine:** selected idea/spec plus tmux runner panel and markdown editor.
-3. **Plan:** epics, labels, status, sort order, and project filters.
+1. **Inbox:** rough roadmap items, unassigned notes, imported personal roadmap items.
+2. **Refine:** selected roadmap item plus tmux runner panel and markdown editor.
+3. **Plan:** epics, labels, stage, sort order, and project filters.
 4. **Promote:** decomposition UI that creates backlog items and optionally a work graph draft.
 
 Backlog UI should show roadmap provenance and labels. Run views should reuse the same label filter chips already available for run tags, backed by the shared label catalog.
@@ -280,7 +298,9 @@ Backlog UI should show roadmap provenance and labels. Run views should reuse the
 
 - No live sync with Jira, GitHub Projects, or `~/dev/roadmap`.
 - No sprint planning, burndown, assignees, estimates, or calendar system.
-- No dispatch from raw ideas.
+- No dispatch from rough roadmap items.
+- No backlog entries that still need product-discovery refinement.
+- No overloaded backlog item representing an entire multi-objective roadmap item.
 - No work graph edge semantics beyond ADR-040.
 - No hidden conversion of external ticket labels into Farmslot labels.
 
@@ -288,8 +308,9 @@ Backlog UI should show roadmap provenance and labels. Run views should reuse the
 
 Positive:
 
-- Raw ideas become durable, sortable, and promotable.
-- Specs remain human-editable markdown.
+- Rough ideas become durable, sortable roadmap items instead of polluting backlog.
+- The same roadmap item can mature from raw thought to refined spec.
+- Backlog remains a clean queue of deployable/dispatchable objectives.
 - Backlog and runs gain provenance back to product intent.
 - Labels become one filter vocabulary across planning and execution.
 - ADR-039 bundles and ADR-040 graphs stay cleanly scoped.
@@ -303,7 +324,7 @@ Costs and risks:
 
 ## Rollout
 
-1. Define protocol contracts and markdown schema for roadmap records and shared labels.
+1. Define protocol contracts and markdown schema for roadmap items and shared labels.
 2. Add read-only gateway index over `.farmslot/roadmap` files.
 3. Add capture/edit APIs and label catalog APIs.
 4. Add refinement-session launch using tmux runner infrastructure, explicitly outside dispatch.
