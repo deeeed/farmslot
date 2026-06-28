@@ -10,6 +10,7 @@ export * from './family.js';
 export * from './recipes.js';
 export * from './resources.js';
 export * from './reviews.js';
+export * from './roadmap.js';
 export * from './run-bundles.js';
 export * from './runs.js';
 export * from './slots.js';

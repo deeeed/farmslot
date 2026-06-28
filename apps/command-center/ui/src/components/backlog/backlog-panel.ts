@@ -21,6 +21,12 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import {
+  planningBadgeStyles,
+  renderPlanningBadge,
+  renderTagChips,
+  tagsFromInput,
+} from '../shared/planning-badges.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 
 const STATUSES: Array<BacklogStatus | 'all'> = ['all', ...BACKLOG_STATUSES];
@@ -29,6 +35,7 @@ const SOURCES: BacklogSourceKind[] = [...BACKLOG_SOURCE_KINDS];
 const BACKLOG_PROJECT_PARAM = 'backlogProject';
 const BACKLOG_STATUS_PARAM = 'backlogStatus';
 const BACKLOG_SLOT_SELECTOR_PARAM = 'slotSelector';
+const CUSTOM_PROJECT = '__custom__';
 
 function slotsText(item: BacklogItem): string {
   const slots = item.allowedSlots ?? [];
@@ -55,6 +62,7 @@ export class BacklogPanel extends LitElement {
   @state() private _draftSourceRef = '';
   @state() private _draftFlow: FlowType = 'fix-bug';
   @state() private _draftNotes = '';
+  @state() private _draftTags = '';
   @state() private _draftPriority = '10';
   @state() private _draftAllowedSlots: string[] = [];
   @state() private _draftAutoDispatch = false;
@@ -64,169 +72,161 @@ export class BacklogPanel extends LitElement {
   private _unsub?: () => void;
   private _onHashChange = () => this._applyUrlStateFromHash();
 
-  static styles = css`
-    :host {
-      display: block;
-      color: ${unsafeCSS(colors.textPrimary)};
-      font-family: ${unsafeCSS(fonts.mono)};
-      padding: ${unsafeCSS(spacing.lg)};
-    }
-    .shell {
-      display: grid;
-      gap: ${unsafeCSS(spacing.md)};
-    }
-    .header,
-    .card,
-    .filters,
-    form {
-      border: 1px solid ${unsafeCSS(colors.textMuted)}22;
-      border-radius: ${unsafeCSS(radii.md)};
-      background: ${unsafeCSS(colors.bgCard)};
-      padding: ${unsafeCSS(spacing.md)};
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      gap: ${unsafeCSS(spacing.sm)};
-      align-items: center;
-    }
-    h1,
-    h2,
-    h3,
-    p {
-      margin: 0;
-    }
-    h1 {
-      font-size: ${unsafeCSS(fonts.sizeLg)};
-    }
-    h2 {
-      font-size: ${unsafeCSS(fonts.sizeMd)};
-      margin-bottom: ${unsafeCSS(spacing.sm)};
-    }
-    .muted,
-    label,
-    .meta {
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-    }
-    .filters,
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: ${unsafeCSS(spacing.sm)};
-      align-items: end;
-    }
-    label {
-      display: grid;
-      gap: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .field-label {
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .slot-picker-field {
-      display: grid;
-      gap: 4px;
-    }
-    .slot-picker-summary {
-      border: 1px solid ${unsafeCSS(colors.textMuted)}33;
-      border-radius: ${unsafeCSS(radii.sm)};
-      background: ${unsafeCSS(colors.bgSurface)};
-      padding: 8px;
-      display: flex;
-      justify-content: space-between;
-      gap: ${unsafeCSS(spacing.sm)};
-      align-items: center;
-    }
-    input,
-    select,
-    textarea {
-      border: 1px solid ${unsafeCSS(colors.textMuted)}33;
-      border-radius: ${unsafeCSS(radii.sm)};
-      background: ${unsafeCSS(colors.bgSurface)};
-      color: ${unsafeCSS(colors.textPrimary)};
-      font: inherit;
-      padding: 8px;
-    }
-    textarea {
-      min-height: 70px;
-      resize: vertical;
-    }
-    button {
-      border: 1px solid ${unsafeCSS(colors.accent)}66;
-      border-radius: ${unsafeCSS(radii.sm)};
-      background: ${unsafeCSS(colors.accent)}22;
-      color: ${unsafeCSS(colors.textPrimary)};
-      font: inherit;
-      padding: 8px 10px;
-      cursor: pointer;
-    }
-    button.secondary {
-      border-color: ${unsafeCSS(colors.textMuted)}33;
-      background: ${unsafeCSS(colors.bgSurface)};
-    }
-    button:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-    }
-    .rows {
-      display: grid;
-      gap: ${unsafeCSS(spacing.sm)};
-    }
-    .row {
-      border: 1px solid ${unsafeCSS(colors.textMuted)}22;
-      border-radius: ${unsafeCSS(radii.md)};
-      background: ${unsafeCSS(colors.bgSurface)};
-      padding: ${unsafeCSS(spacing.md)};
-      display: grid;
-      gap: ${unsafeCSS(spacing.sm)};
-    }
-    .row-head {
-      display: flex;
-      justify-content: space-between;
-      gap: ${unsafeCSS(spacing.sm)};
-      align-items: flex-start;
-    }
-    .title {
-      font-weight: 700;
-    }
-    .badges {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    .badge {
-      border: 1px solid ${unsafeCSS(colors.textMuted)}33;
-      border-radius: 999px;
-      padding: 2px 7px;
-      color: ${unsafeCSS(colors.textMuted)};
-      font-size: ${unsafeCSS(fonts.sizeXs)};
-    }
-    .badge.ready {
-      color: ${unsafeCSS(colors.statusOk)};
-      border-color: ${unsafeCSS(colors.statusOk)}66;
-    }
-    .badge.failed,
-    .error {
-      color: ${unsafeCSS(colors.statusFail)};
-    }
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    .message {
-      color: ${unsafeCSS(colors.statusOk)};
-    }
-    .empty {
-      color: ${unsafeCSS(colors.textMuted)};
-      padding: ${unsafeCSS(spacing.md)};
-    }
-  `;
+  static styles = [
+    planningBadgeStyles,
+    css`
+      :host {
+        display: block;
+        color: ${unsafeCSS(colors.textPrimary)};
+        font-family: ${unsafeCSS(fonts.mono)};
+        padding: ${unsafeCSS(spacing.lg)};
+      }
+      .shell {
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+      }
+      .header,
+      .card,
+      .filters,
+      form {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgCard)};
+        padding: ${unsafeCSS(spacing.md)};
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: ${unsafeCSS(spacing.sm)};
+        align-items: center;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: ${unsafeCSS(fonts.sizeLg)};
+      }
+      h2 {
+        font-size: ${unsafeCSS(fonts.sizeMd)};
+        margin-bottom: ${unsafeCSS(spacing.sm)};
+      }
+      .muted,
+      label,
+      .meta {
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+      }
+      .filters,
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: ${unsafeCSS(spacing.sm)};
+        align-items: end;
+      }
+      label {
+        display: grid;
+        gap: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .field-label {
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .slot-picker-field {
+        display: grid;
+        gap: 4px;
+      }
+      .project-picker {
+        display: grid;
+        grid-template-columns: minmax(150px, 0.8fr) minmax(160px, 1fr);
+        gap: 6px;
+      }
+      .slot-picker-summary {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}33;
+        border-radius: ${unsafeCSS(radii.sm)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        padding: 8px;
+        display: flex;
+        justify-content: space-between;
+        gap: ${unsafeCSS(spacing.sm)};
+        align-items: center;
+      }
+      input,
+      select,
+      textarea {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}33;
+        border-radius: ${unsafeCSS(radii.sm)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        color: ${unsafeCSS(colors.textPrimary)};
+        font: inherit;
+        padding: 8px;
+      }
+      textarea {
+        min-height: 70px;
+        resize: vertical;
+      }
+      button {
+        border: 1px solid ${unsafeCSS(colors.accent)}66;
+        border-radius: ${unsafeCSS(radii.sm)};
+        background: ${unsafeCSS(colors.accent)}22;
+        color: ${unsafeCSS(colors.textPrimary)};
+        font: inherit;
+        padding: 8px 10px;
+        cursor: pointer;
+      }
+      button.secondary {
+        border-color: ${unsafeCSS(colors.textMuted)}33;
+        background: ${unsafeCSS(colors.bgSurface)};
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .rows {
+        display: grid;
+        gap: ${unsafeCSS(spacing.sm)};
+      }
+      .row {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        padding: ${unsafeCSS(spacing.md)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.sm)};
+      }
+      .row-head {
+        display: flex;
+        justify-content: space-between;
+        gap: ${unsafeCSS(spacing.sm)};
+        align-items: flex-start;
+      }
+      .title {
+        font-weight: 700;
+      }
+      .badge.failed,
+      .error {
+        color: ${unsafeCSS(colors.statusFail)};
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .message {
+        color: ${unsafeCSS(colors.statusOk)};
+      }
+      .empty {
+        color: ${unsafeCSS(colors.textMuted)};
+        padding: ${unsafeCSS(spacing.md)};
+      }
+    `,
+  ];
 
   connectedCallback() {
     super.connectedCallback();
@@ -296,6 +296,35 @@ export class BacklogPanel extends LitElement {
     );
   }
 
+  private _renderProjectPicker() {
+    const options = this._projects;
+    const selectValue = options.includes(this._draftProject) ? this._draftProject : CUSTOM_PROJECT;
+    return html`<label>
+      Project
+      <div class="project-picker">
+        <select
+          data-testid="backlog-new-project-select"
+          .value=${selectValue}
+          @change=${(e: Event) => {
+            const next = (e.target as HTMLSelectElement).value;
+            this._setDraftProject(next === CUSTOM_PROJECT ? '' : next);
+          }}
+        >
+          ${options.map((project) => html`<option value=${project}>${project}</option>`)}
+          <option value=${CUSTOM_PROJECT}>Custom project…</option>
+        </select>
+        ${selectValue === CUSTOM_PROJECT
+          ? html`<input
+              data-testid="backlog-new-project"
+              placeholder="custom project name"
+              .value=${this._draftProject}
+              @input=${(e: Event) => this._setDraftProject((e.target as HTMLInputElement).value)}
+            />`
+          : nothing}
+      </div>
+    </label>`;
+  }
+
   private _setStatusFilter(status: BacklogStatus | 'all') {
     this._status = status;
     this._writeUrlState();
@@ -316,7 +345,11 @@ export class BacklogPanel extends LitElement {
   }
 
   private get _filtered(): BacklogItem[] {
+    const globalProjects = new Set(this._globalFilters.projects);
     return this._items.filter((item) => {
+      if (this._project === 'all' && globalProjects.size > 0 && !globalProjects.has(item.project)) {
+        return false;
+      }
       if (this._project !== 'all' && item.project !== this._project) return false;
       if (this._status !== 'all' && item.status !== this._status) return false;
       return true;
@@ -339,8 +372,8 @@ export class BacklogPanel extends LitElement {
 
   private _renderAllowedSlotChips(selected: string[]) {
     return selected.length === 0
-      ? html`<span class="badge">Any eligible slot</span>`
-      : selected.map((slot) => html`<span class="badge ready">${slot}</span>`);
+      ? renderPlanningBadge('Any eligible slot')
+      : selected.map((slot) => renderPlanningBadge(slot, 'positive'));
   }
 
   private async _createItem(event: Event) {
@@ -360,6 +393,7 @@ export class BacklogPanel extends LitElement {
         sourceRef: this._draftSourceRef || undefined,
         flowType: this._draftFlow,
         notes: this._draftNotes || undefined,
+        tags: tagsFromInput(this._draftTags),
         priority: Number(this._draftPriority) || 10,
         allowedSlots: this._allowedSlotsFromDraft(),
         autoDispatch: this._draftAutoDispatch,
@@ -367,6 +401,7 @@ export class BacklogPanel extends LitElement {
       this._draftTitle = '';
       this._draftSourceRef = '';
       this._draftNotes = '';
+      this._draftTags = '';
       this._draftAllowedSlots = [];
       this._message = 'Backlog item created';
     } catch (err) {
@@ -436,15 +471,7 @@ export class BacklogPanel extends LitElement {
     return html`<form @submit=${this._createItem}>
       <h2>Add backlog item</h2>
       <div class="grid">
-        <label
-          >Project
-          <select
-            .value=${this._draftProject}
-            @change=${(e: Event) => this._setDraftProject((e.target as HTMLSelectElement).value)}
-          >
-            ${this._projects.map((project) => html`<option value=${project}>${project}</option>`)}
-          </select>
-        </label>
+        ${this._renderProjectPicker()}
         <label
           >Title
           <input
@@ -480,6 +507,14 @@ export class BacklogPanel extends LitElement {
           >
             ${FLOWS.map((flow) => html`<option value=${flow}>${flow}</option>`)}
           </select>
+        </label>
+        <label
+          >Tags
+          <input
+            placeholder="roadmap, command-center"
+            .value=${this._draftTags}
+            @input=${(e: Event) => (this._draftTags = (e.target as HTMLInputElement).value)}
+          />
         </label>
         <label
           >Priority
@@ -546,10 +581,21 @@ export class BacklogPanel extends LitElement {
           </div>
         </div>
         <div class="badges">
-          <span class="badge ${item.status}">${item.status}</span>
-          <span class="badge">p${item.priority}</span>
-          <span class="badge">${slotsText(item)}</span>
-          ${item.autoDispatch ? html`<span class="badge ready">auto</span>` : nothing}
+          ${renderPlanningBadge(
+            item.status,
+            item.status === 'ready'
+              ? 'positive'
+              : item.status === 'failed' || item.status === 'needs-attention'
+                ? 'danger'
+                : 'default',
+          )}
+          ${renderPlanningBadge(`p${item.priority}`)} ${renderPlanningBadge(slotsText(item))}
+          ${renderTagChips(item.tags)}
+          ${item.roadmapItemId
+            ? renderPlanningBadge(`roadmap ${item.roadmapItemId}`, 'positive')
+            : nothing}
+          ${item.specPath ? renderPlanningBadge(`spec ${item.specPath}`) : nothing}
+          ${item.autoDispatch ? renderPlanningBadge('auto', 'positive') : nothing}
         </div>
       </div>
       ${item.lastDispatchError ? html`<div class="error">${item.lastDispatchError}</div>` : nothing}

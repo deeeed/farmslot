@@ -133,6 +133,8 @@ export interface DispatchQueueAddParams {
   effort?: string;
   mode?: 'interactive' | 'autonomous' | 'validation';
   devInteractiveProfile?: import('../contracts/index.js').DevInteractiveProfile;
+  /** Shared normalized tags propagated to the created run. */
+  tags?: string[];
   initialContext?: string;
   devChecklist?: string[];
   slotId?: string;

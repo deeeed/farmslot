@@ -107,6 +107,12 @@ import {
   type ResourceHealthParams,
   type ResourceListParams,
   type ResourceWatchSetEnabledParams,
+  type RoadmapDeleteParams,
+  type RoadmapGetParams,
+  type RoadmapListParams,
+  type RoadmapPromoteParams,
+  type RoadmapRefineParams,
+  type RoadmapSaveParams,
   type SearchQueryParams,
   type SlotActionListParams,
   type SlotActionRunParams,
@@ -278,6 +284,14 @@ import {
   resourceList,
   resourceWatchSetEnabled,
 } from '../methods/resource.js';
+import {
+  roadmapDelete,
+  roadmapGet,
+  roadmapList,
+  roadmapPromote,
+  roadmapRefine,
+  roadmapSave,
+} from '../methods/roadmap.js';
 import { searchQuery } from '../methods/search.js';
 import {
   slotCheck,
@@ -467,6 +481,20 @@ export async function routeMethod(
       return backlogAutoDispatchTick((p ?? {}) as BacklogAutoDispatchTickParams);
     case Methods.BACKLOG_UPCOMING:
       return backlogUpcoming((p ?? {}) as BacklogUpcomingParams);
+
+    // Roadmap
+    case Methods.ROADMAP_LIST:
+      return roadmapList((p ?? {}) as RoadmapListParams);
+    case Methods.ROADMAP_GET:
+      return roadmapGet(p as RoadmapGetParams);
+    case Methods.ROADMAP_SAVE:
+      return roadmapSave(p as RoadmapSaveParams);
+    case Methods.ROADMAP_DELETE:
+      return roadmapDelete(p as RoadmapDeleteParams);
+    case Methods.ROADMAP_REFINE:
+      return roadmapRefine(p as RoadmapRefineParams);
+    case Methods.ROADMAP_PROMOTE:
+      return roadmapPromote(p as RoadmapPromoteParams);
 
     // Pipeline-ops analytics
     case Methods.ANALYTICS_QUERY:

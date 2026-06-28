@@ -35,6 +35,12 @@ export interface BacklogItem {
   flowType: FlowType;
   status: BacklogStatus;
   notes?: string;
+  /** Shared normalized tags propagated to created runs. */
+  tags?: string[];
+  /** Originating ADR-041 roadmap item, when promoted from roadmap. */
+  roadmapItemId?: string;
+  /** Local markdown spec backing this backlog item. */
+  specPath?: string;
   priority: number;
   allowedSlots?: string[];
   autoDispatch?: boolean;
@@ -60,6 +66,9 @@ export interface BacklogCreateInput {
   sourceUrl?: string;
   flowType: FlowType;
   notes?: string;
+  tags?: string[];
+  roadmapItemId?: string;
+  specPath?: string;
   priority?: number;
   allowedSlots?: string[];
   autoDispatch?: boolean;
@@ -73,6 +82,9 @@ export interface BacklogUpdateInput {
   sourceUrl?: string | null;
   flowType?: FlowType;
   notes?: string | null;
+  tags?: string[] | null;
+  roadmapItemId?: string | null;
+  specPath?: string | null;
   priority?: number;
   allowedSlots?: string[] | null;
   autoDispatch?: boolean;

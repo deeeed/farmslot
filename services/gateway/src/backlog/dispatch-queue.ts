@@ -6,7 +6,12 @@ import { readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { DispatchQueueUpdateParams, QueueItem, SlotStatus } from '@farmslot/protocol';
+import {
+  type DispatchQueueUpdateParams,
+  normalizeRunTags,
+  type QueueItem,
+  type SlotStatus,
+} from '@farmslot/protocol';
 
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
 import { evalSuiteCapUsage } from '../evals/suite-cap-store.js';
@@ -167,6 +172,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
   assertAllowedSlots(params.allowedSlots, 'queue dispatch');
   assertEvalQueueItem(params);
   const startRef = normalizeStartRefRequest(params);
+  const tags = normalizeRunTags(params.tags);
   const item: QueueItem = {
     id: randomUUID(),
     queueKind: params.queueKind ?? 'dispatch',
@@ -188,6 +194,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
     effort: params.effort,
     mode: params.mode,
     devInteractiveProfile: params.devInteractiveProfile,
+    ...(tags.length > 0 ? { tags } : {}),
     initialContext: params.initialContext,
     ticketData: params.ticketData,
     devChecklist: params.devChecklist,
