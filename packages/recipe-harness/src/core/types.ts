@@ -77,7 +77,8 @@ export interface RecordingTargetContext {
 export type RecordingTarget =
   | { kind: 'window-id'; windowId: string }
   | { kind: 'pid'; pid: number }
-  | { kind: 'app-window'; appName: string; windowName: string };
+  | { kind: 'app-window'; appName: string; windowName: string }
+  | { kind: 'simulator'; device: string };
 
 export interface VideoRecorderStartRequest {
   outputPath: string;
