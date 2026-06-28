@@ -173,7 +173,13 @@ prepare_companion_slot() {
 
   if [[ "$(curl -s -m 4 "http://127.0.0.1:${FC_METRO_PORT}/status" 2>/dev/null || true)" == "packager-status:running" ]] \
       && wait_companion_bridge "$FC_METRO_PORT" 3; then
-    log "companion metro :$FC_METRO_PORT already running with recipe bridge — reusing"
+    log "companion metro :$FC_METRO_PORT already running with recipe bridge — reusing (relaunch sim)"
+    xcrun simctl boot "$FC_SIMULATOR" 2>/dev/null || true
+    xcrun simctl terminate "$FC_SIMULATOR" "$bundle_id" >/dev/null 2>&1 || true
+    sleep 1
+    xcrun simctl launch "$FC_SIMULATOR" "$bundle_id" >/dev/null
+    wait_companion_bridge "$FC_METRO_PORT" 30 \
+      || fail_step "companion recipe bridge not ready after sim relaunch" 1
     return 0
   fi
 
