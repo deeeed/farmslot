@@ -48,6 +48,7 @@
     "quality:workspaces": "node scripts/quality/run-workspace-quality.mjs",
     "quality:changelogs": "node scripts/quality/check-workspace-changelogs.mjs",
     "prepush:quality": "node scripts/quality/prepush-quality.mjs",
+    "smoke:framework-p1": "node scripts/quality/smoke-framework-p1.mjs",
     "check:node-support": "tsx scripts/check-node-support-bundles.ts",
     "test:onboarding": "bash scripts/quality/test-onboarding.sh",
     "cc:build:pages": "node scripts/build-hosted-command-center.mjs"
