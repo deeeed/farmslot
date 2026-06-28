@@ -5,6 +5,10 @@
 # Single entry point: all scratch artifacts are written by this script.
 # Set E2E_SCRATCH_DIR to the implementer scratch directory.
 # Set E2E_PHASE0_ONLY=1 to stop after Phase 0 (doctor, dry-run, companion health).
+# Set E2E_TRACK1=1 to dispatch autonomous Runs A/B and assert gate invariants (no approve).
+# Optional overrides (zero-nudge defaults):
+#   CC_BRANCH=feat/28-add-demo-red-banner  FC_BRANCH=feat/29-add-companion-demo-banner
+#   TASK_DIR / FC_TASK_DIR — auto-resolved when unset (FC prefers real ui.* ios recipes)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,6 +23,11 @@ FC_SLOT="${FC_SLOT:-macwork-fc-1}"
 FC_METRO_PORT="${FC_METRO_PORT:-8871}"
 FC_SIMULATOR="${FC_SIMULATOR:-fs-companion-1}"
 FC_GATEWAY_PORT="${FC_GATEWAY_PORT:-8809}"
+CC_BRANCH="${CC_BRANCH:-feat/28-add-demo-red-banner}"
+FC_BRANCH="${FC_BRANCH:-feat/29-add-companion-demo-banner}"
+CC_TICKET="${CC_TICKET:-deeeed/farmslot#28}"
+FC_TICKET="${FC_TICKET:-deeeed/farmslot#29}"
+TRACK1_POLL_BUDGET_SEC="${TRACK1_POLL_BUDGET_SEC:-7200}"
 
 resolve_wt() {
   local name="$1"
@@ -45,12 +54,60 @@ if [[ -z "$TASK_DIR" ]]; then
 fi
 
 FC_TASK_DIR="${FC_TASK_DIR:-}"
+
+resolve_fc_task_dir() {
+  local recipe_path best="" best_score=0 score dir
+  while IFS= read -r recipe_path; do
+    [[ -f "$recipe_path" ]] || continue
+    dir="$(dirname "$(dirname "$recipe_path")")"
+    score=0
+    if grep -q '"action": "ui\.' "$recipe_path" 2>/dev/null; then score=$((score + 10)); fi
+    if grep -qi 'MOBILE OPERATOR' "$recipe_path" 2>/dev/null; then score=$((score + 5)); fi
+    if grep -q '"platform": "ios' "$recipe_path" 2>/dev/null; then score=$((score + 3)); fi
+    if grep -q 'sanity-cmd' "$recipe_path" 2>/dev/null; then score=$((score - 20)); fi
+    if (( score > best_score )); then
+      best_score=$score
+      best="$dir"
+    fi
+  done < <(find "$FC_WT/.sandbox" -type f -path '*/artifacts/recipe.json' 2>/dev/null || true)
+  printf '%s' "$best"
+}
+
 if [[ -z "$FC_TASK_DIR" ]]; then
-  FC_TASK_DIR="$(find "$FC_WT/.sandbox/farmslot-farm/worker-task" -type f -path '*/artifacts/recipe.json' 2>/dev/null \
-    | xargs -I{} dirname {} | xargs -I{} dirname {} | sort -r | head -1 || true)"
+  FC_TASK_DIR="$(resolve_fc_task_dir)"
 fi
 
 log() { echo "[e2e-evidence] $*" | tee -a "$SCRATCH/e2e.log"; }
+
+ensure_feature_branch() {
+  local wt="$1"
+  local branch="$2"
+  local label="$3"
+  local current=""
+  current="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  if [[ "$current" == "$branch" ]]; then
+    return 0
+  fi
+  log "checking out $label worktree $branch (was ${current:-unknown})"
+  git -C "$wt" fetch origin "$branch" >>"$SCRATCH/e2e.log" 2>&1 \
+    || fail_step "$label fetch origin/$branch" 1
+  if git -C "$wt" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$wt" checkout "$branch" >>"$SCRATCH/e2e.log" 2>&1 \
+      || fail_step "$label checkout $branch" 1
+  else
+    git -C "$wt" checkout -B "$branch" "origin/$branch" >>"$SCRATCH/e2e.log" 2>&1 \
+      || fail_step "$label checkout -B $branch origin/$branch" 1
+  fi
+}
+
+stop_stale_sim_recording() {
+  pkill -INT -f "xcrun simctl io.*recordVideo" 2>/dev/null || true
+  pkill -INT -f "simctl io ${FC_SIMULATOR} recordVideo" 2>/dev/null || true
+  pkill -INT -f "SimRender.*recordVideo" 2>/dev/null || true
+  sleep 2
+  pkill -KILL -f "xcrun simctl io.*recordVideo" 2>/dev/null || true
+  pkill -KILL -f "SimRender.*recipe-run" 2>/dev/null || true
+}
 
 fail_step() {
   log "FAILED: $1 (exit=$2)"
@@ -231,7 +288,7 @@ prepare_companion_slot() {
   local bundle_id="${COMPANION_BUNDLE_ID:-net.siteed.farmslot.development}"
   local metro_log="$SCRATCH/fc-metro-prep.log"
   log "preparing companion slot metro :$FC_METRO_PORT simulator $FC_SIMULATOR"
-  pkill -INT -f "simctl io ${FC_SIMULATOR} recordVideo" 2>/dev/null || true
+  stop_stale_sim_recording
 
   if [[ "$(curl -s -m 4 "http://127.0.0.1:${FC_METRO_PORT}/status" 2>/dev/null || true)" == "packager-status:running" ]] \
       && wait_companion_bridge "$FC_METRO_PORT" 3; then
@@ -344,6 +401,8 @@ print(ui)
 PY
 )"
 phase0_budget_check "start"
+ensure_feature_branch "$CC_WT" "$CC_BRANCH" "CC"
+ensure_feature_branch "$FC_WT" "$FC_BRANCH" "FC"
 prepare_cc_slot
 phase0_budget_check "cc-slot"
 
@@ -431,6 +490,7 @@ if [[ ! -f "$TASK_DIR/artifacts/recipe.json" ]]; then
 fi
 
 ensure_cdp_chrome_visible
+navigate_cdp_fleet
 run_recipe_proof "run A" "$CC_WT" "$TASK_DIR/artifacts/recipe.json" \
   "$TASK_DIR/artifacts/recipe-run" "$TASK_DIR" web "$SCRATCH/runA-proof.log" \
   --cdp-port "$FF_CDP_PORT" --gateway-port "$FF_GATEWAY_PORT" --slot-id "$FF_SLOT" \
@@ -514,12 +574,99 @@ log "companion typecheck exit=0 (branch in typecheck-companion-runB.log)"
   echo "path: $FC_WT branch: $(git -C "$FC_WT" rev-parse --abbrev-ref HEAD)"
 } >"$SCRATCH/git-state.log" 2>&1
 
+gateway_rpc() {
+  local method="$1"
+  local params="${2:-{}}"
+  FARMSLOT_GATEWAY="${FARMSLOT_GATEWAY:-ws://127.0.0.1:${FF_GATEWAY_PORT}/ws}" \
+    node "$PRIMARY_REPO/apps/command-center/scripts/cdp.mjs" gateway "$method" "$params" 2>>"$SCRATCH/e2e.log"
+}
+
+dispatch_autonomous_run() {
+  local label="$1"
+  local ticket="$2"
+  local slot="$3"
+  local branch="$4"
+  local prepare_profile="$5"
+  local app="${6:-}"
+  local payload app_field=""
+  if [[ -n "$app" ]]; then
+    app_field=$(printf ',"app":"%s"' "$app")
+  fi
+  payload=$(printf '{"flowType":"dev","mode":"autonomous","project":"farmslot-farm","ticketOrPr":"%s","slotId":"%s","branch":"%s","prepareProfile":"%s"%s}' \
+    "$ticket" "$slot" "$branch" "$prepare_profile" "$app_field")
+  log "dispatching Track 1 $label ($ticket on $slot branch $branch)"
+  local dispatch_log="$SCRATCH/track1-dispatch-${label}.json"
+  gateway_rpc run.create "$payload" >"$dispatch_log" \
+    || fail_step "Track 1 dispatch $label" 1
+  python3 - <<'PY' "$dispatch_log"
+import json, sys
+data = json.load(open(sys.argv[1]))
+run = data.get("run")
+if run is None and isinstance(data.get("result"), dict):
+    run = data["result"].get("run")
+run_id = (run or {}).get("id")
+if not run_id:
+    raise SystemExit("run.create response missing run.id")
+print(run_id)
+PY
+}
+
+wait_run_blocked() {
+  local label="$1"
+  local run_id="$2"
+  local started=$SECONDS
+  local status=""
+  while (( SECONDS - started < TRACK1_POLL_BUDGET_SEC )); do
+    local poll_log="$SCRATCH/track1-poll-${label}.json"
+    gateway_rpc run.get "$(printf '{"runId":"%s"}' "$run_id")" >"$poll_log" 2>/dev/null || true
+    status="$(python3 - <<'PY' "$poll_log"
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    run = data.get("run")
+    if run is None and isinstance(data.get("result"), dict):
+        run = data["result"].get("run")
+    print((run or {}).get("status", "unknown"))
+except Exception:
+    print("unknown")
+PY
+)"
+    log "Track 1 $label poll: run=$run_id status=$status elapsed=$((SECONDS - started))s"
+    case "$status" in
+      blocked) printf '%s' "$run_id"; return 0 ;;
+      done|failed|cancelled) fail_step "Track 1 $label run $run_id ended terminal ($status)" 1 ;;
+    esac
+    sleep 60
+  done
+  fail_step "Track 1 $label run $run_id exceeded ${TRACK1_POLL_BUDGET_SEC}s poll budget (last=$status)" 124
+}
+
+assert_gate_invariants() {
+  local label="$1"
+  local run_id="$2"
+  GW_URL="${FARMSLOT_GATEWAY:-ws://127.0.0.1:${FF_GATEWAY_PORT}/ws}" \
+    node "$PRIMARY_REPO/scripts/quality/assert-autonomous-gate-invariants.mjs" "$run_id" \
+      >"$SCRATCH/track1-gate-${label}.log" 2>&1 \
+      || fail_step "Track 1 gate invariants $label (see track1-gate-${label}.log)" 1
+  log "Track 1 gate invariants exit=0 for $label run $run_id"
+}
+
 # Optional autonomous gate proof (set RUN_ID_FOR_GATE_CHECK to a live blocked run)
 if [[ -n "${RUN_ID_FOR_GATE_CHECK:-}" ]]; then
-  node "$PRIMARY_REPO/scripts/quality/assert-autonomous-gate-invariants.mjs" "$RUN_ID_FOR_GATE_CHECK" \
-    >"$SCRATCH/gate-invariants.log" 2>&1 \
-    || fail_step "autonomous gate invariants (see gate-invariants.log)" $?
-  log "autonomous gate invariants exit=0 for $RUN_ID_FOR_GATE_CHECK"
+  assert_gate_invariants "manual" "$RUN_ID_FOR_GATE_CHECK"
+fi
+
+if [[ -n "${E2E_TRACK1:-}" ]]; then
+  log "E2E_TRACK1 set — dispatching autonomous Runs A/B to publication gate"
+  RUN_A_ID="$(dispatch_autonomous_run "run-a" "$CC_TICKET" "$FF_SLOT" "$CC_BRANCH" "sandbox")"
+  echo "$RUN_A_ID" >"$SCRATCH/runA-track1-id.txt"
+  RUN_A_ID="$(wait_run_blocked "run-a" "$RUN_A_ID")"
+  assert_gate_invariants "run-a" "$RUN_A_ID"
+  RUN_B_ID="$(dispatch_autonomous_run "run-b" "$FC_TICKET" "$FC_SLOT" "$FC_BRANCH" "companion-warm" "companion")"
+  echo "$RUN_B_ID" >"$SCRATCH/runB-track1-id.txt"
+  RUN_B_ID="$(wait_run_blocked "run-b" "$RUN_B_ID")"
+  assert_gate_invariants "run-b" "$RUN_B_ID"
+  log "Track 1 complete — Run A=$RUN_A_ID Run B=$RUN_B_ID (blocked@human-gate, not approved)"
 fi
 
 log "e2e evidence capture complete — inspect $SCRATCH"
