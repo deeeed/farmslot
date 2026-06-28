@@ -53,6 +53,21 @@ test('runGradeColor maps semantic grades to status colors', () => {
   assert.equal(runGradeColor('unknown'), colors.textMuted);
 });
 
+test('filterRunList applies machine filters via slot id prefix', () => {
+  const macwork = run('1', { slotId: 'macwork-mm-4', status: 'done' });
+  const mini = run('2', { slotId: 'mini-mm-1', status: 'done' });
+  const unslotted = run('3', { status: 'done' });
+
+  assert.deepEqual(
+    filter({
+      runs: [macwork, mini, unslotted],
+      globalFilters: { projects: [], machines: ['macwork'] },
+      tab: 'history',
+    }).map((item) => item.id),
+    ['1'],
+  );
+});
+
 test('filterRunList applies family, project, tab, status, flow, lane, and search filters', () => {
   const matching = run('1', {
     status: 'failed',

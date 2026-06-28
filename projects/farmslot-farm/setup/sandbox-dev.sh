@@ -62,6 +62,29 @@ export GATEWAY_PORT
 VITE_PORT="${VITE_PORT:-5174}"
 export VITE_PORT
 
+# Worktree sandboxes boot an isolated gateway, but operators still expect the
+# canonical run history from the primary checkout. Share read/write .runs only
+# when this checkout is not the primary_repo (explicit FARMSLOT_RUNS_DIR wins).
+resolve_primary_runs_dir() {
+  if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
+    return 0
+  fi
+  local project_json="$REPO_ROOT/projects/farmslot-farm/project.json"
+  [[ -f "$project_json" ]] || return 0
+  local primary_repo
+  primary_repo="$(node -e "
+    const fs = require('fs');
+    const project = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+    process.stdout.write(String(project.primary_repo || '').trim());
+  " "$project_json")"
+  [[ -n "$primary_repo" ]] || return 0
+  local primary_runs="$primary_repo/.runs"
+  if [[ "$REPO_ROOT" != "$primary_repo" && -d "$primary_runs" ]]; then
+    export FARMSLOT_RUNS_DIR="$primary_runs"
+    echo "[sandbox-dev] sharing run history from ${FARMSLOT_RUNS_DIR}"
+  fi
+}
+
 gateway_health() {
   curl -sf "http://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null 2>&1
 }
@@ -123,13 +146,19 @@ case "$ACTION" in
 
     stop_sandbox_dev
 
+    resolve_primary_runs_dir
+
     echo "[sandbox-dev] starting gateway :${GATEWAY_PORT} ui :${VITE_PORT} (tsx watch)"
     : >"$LOG_FILE"
     (
       cd "$REPO_ROOT"
-      GATEWAY_PORT="$GATEWAY_PORT" VITE_PORT="$VITE_PORT" \
-        VITE_FARMSLOT_DEMO_BANNER="${VITE_FARMSLOT_DEMO_BANNER:-}" \
-        exec bash scripts/dev.sh
+      export GATEWAY_PORT="$GATEWAY_PORT"
+      export VITE_PORT="$VITE_PORT"
+      export VITE_FARMSLOT_DEMO_BANNER="${VITE_FARMSLOT_DEMO_BANNER:-}"
+      if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
+        export FARMSLOT_RUNS_DIR
+      fi
+      exec bash scripts/dev.sh
     ) >>"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
 

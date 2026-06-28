@@ -8,6 +8,15 @@ import { dispositionLabel } from './run-utils.js';
 
 export const TERMINAL_STATUSES = new Set<RunStatus>(['done', 'failed', 'cancelled']);
 
+function runMatchesMachineFilter(slotId: string | null | undefined, machines: string[]): boolean {
+  if (machines.length === 0) return true;
+  const normalized = slotId?.trim();
+  if (!normalized) return false;
+  return machines.some(
+    (machine) => normalized === machine || normalized.startsWith(`${machine}-`),
+  );
+}
+
 export function runGradeColor(semantic: string): string {
   switch (semantic) {
     case 'good':
@@ -44,6 +53,11 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
       : input.runs;
   if (input.globalFilters.projects.length > 0) {
     result = result.filter((run) => input.globalFilters.projects.includes(run.project));
+  }
+  if (input.globalFilters.machines.length > 0) {
+    result = result.filter((run) =>
+      runMatchesMachineFilter(run.slotId, input.globalFilters.machines),
+    );
   }
   if (input.tab === 'active') {
     result = result.filter((run) => !TERMINAL_STATUSES.has(run.status) || run.status === 'failed');
