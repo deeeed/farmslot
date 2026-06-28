@@ -98,6 +98,48 @@ stop_metro_listeners_on_port() {
   done
 }
 
+ensure_cc_auth_env() {
+  local auth_file="$CC_WT/.env.local-auth"
+  local primary_auth="$PRIMARY_REPO/.env.local-auth"
+  if [[ -f "$auth_file" || ! -f "$primary_auth" ]]; then
+    return 0
+  fi
+  ln -sf "$primary_auth" "$auth_file"
+  log "linked CC worktree .env.local-auth from primary repo"
+}
+
+prepare_cc_slot() {
+  ensure_cc_auth_env
+  log "preparing CC sandbox gateway :$FF_GATEWAY_PORT ui from $CC_WT"
+  FARMSLOT_SLOT_REPO="$CC_WT" bash "$SCRIPT_DIR/sandbox-dev.sh" stop --gateway-port "$FF_GATEWAY_PORT" \
+    >>"$SCRATCH/cc-sandbox-prep.log" 2>&1 || true
+  sleep 2
+  unset VITE_FARMSLOT_DEMO_BANNER
+  FARMSLOT_SLOT_REPO="$CC_WT" bash "$SCRIPT_DIR/sandbox-dev.sh" start --gateway-port "$FF_GATEWAY_PORT" \
+    >>"$SCRATCH/cc-sandbox-prep.log" 2>&1 \
+    || fail_step "CC sandbox-dev start (see cc-sandbox-prep.log)" 1
+  log "CC sandbox-dev ready on :$FF_GATEWAY_PORT"
+}
+
+ensure_cdp_chrome_visible() {
+  if command -v osascript >/dev/null 2>&1; then
+    osascript -e 'tell application "Google Chrome" to activate' \
+      -e 'tell application "Google Chrome" to set bounds of front window to {200, 150, 1400, 950}' \
+      >/dev/null 2>&1 || true
+  fi
+}
+
+cdp_login_fleet() {
+  local ui_hash="#fleet"
+  FARMSLOT_ROOT="$CC_WT" \
+  FARMSLOT_GATEWAY="ws://127.0.0.1:${FF_GATEWAY_PORT}/ws" \
+  FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
+    node "$PRIMARY_REPO/apps/command-center/scripts/cdp.mjs" login "$ui_hash" \
+    >>"$SCRATCH/cc-cdp-login.log" 2>&1 \
+    || fail_step "CDP gateway login (see cc-cdp-login.log)" 1
+  log "CDP gateway login ok"
+}
+
 wait_companion_bridge() {
   local port="$1"
   local tries="${2:-40}"
@@ -209,19 +251,27 @@ if ports.is_file():
 print(ui)
 PY
 )"
+prepare_cc_slot
+
 export FARMSLOT_UI_URL="http://localhost:${VITE_PORT}/"
 export FARMSLOT_CDP_PORT="$FF_CDP_PORT"
 CDP_PID="$(lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
-if [[ -n "$CDP_PID" ]]; then
-  log "relaunching CDP Chrome for slot UI ${FARMSLOT_UI_URL} cdp :${FF_CDP_PORT}"
-  kill "$CDP_PID" 2>/dev/null || true
-  sleep 1
+if [[ -z "$CDP_PID" ]]; then
+  log "launching CDP Chrome for slot UI ${FARMSLOT_UI_URL} cdp :${FF_CDP_PORT}"
+  FARMSLOT_UI_URL="$FARMSLOT_UI_URL" FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
+    bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >>"$SCRATCH/e2e.log" 2>&1 \
+    || fail_step "debug-chrome" $?
+else
+  log "reusing CDP session on :${FF_CDP_PORT}"
 fi
-
+sleep 2
+ensure_cdp_chrome_visible
 FARMSLOT_UI_URL="$FARMSLOT_UI_URL" FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
   bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >>"$SCRATCH/e2e.log" 2>&1 \
-  || fail_step "debug-chrome" $?
+  || fail_step "debug-chrome navigate" $?
 sleep 2
+ensure_cdp_chrome_visible
+cdp_login_fleet
 if [[ -n "${CAPTURE_HELPER_PATH:-}" ]]; then
   CDP_PID="$(lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
   if [[ -n "$CDP_PID" ]]; then
