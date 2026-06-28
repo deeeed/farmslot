@@ -15,6 +15,7 @@ import {
   loadSlotVars,
   type ProjectVars,
   type RawProjectJson,
+  type SlotVars,
   updateSlotStatusIf,
 } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
@@ -26,6 +27,37 @@ import {
   REFRESH_REMOTE_REF_LOCKS_COMMAND,
 } from './git-cleanup-commands.js';
 import { activePrepareSlots, type EventEmitter } from './shared.js';
+import {
+  detectLinkedWorktree,
+  isSlotIdleBranch,
+  resetSlotRepoToIdle,
+  resolveSlotTrackingBranch,
+  slotIdleResetStepDetail,
+} from './slot-tracking.js';
+
+export function refreshStaleBranchDetail(
+  currentBranch: string,
+  projectJson: RawProjectJson,
+  slotVars: SlotVars,
+  projectVars: ProjectVars | undefined,
+  linkedWorktree: boolean,
+  defaultBranch: string,
+): string | null {
+  if (!currentBranch) return null;
+  const trackingBranch = resolveSlotTrackingBranch(
+    projectJson,
+    slotVars,
+    projectVars,
+    linkedWorktree,
+  );
+  if (isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)) {
+    return null;
+  }
+  const expected = linkedWorktree
+    ? `'${trackingBranch}' or '${defaultBranch}'`
+    : `'${defaultBranch}'`;
+  return `STALE_BRANCH: on '${currentBranch}', expected ${expected}`;
+}
 
 export function slotRefreshBlockedReason(slot: SlotStatus | undefined): string | null {
   if (!slot) return null;
@@ -112,10 +144,16 @@ export async function slotRefresh(
     } catch {
       /* no project config — fall back to DEFAULT_BRANCH */
     }
-    void projectVars;
-
     const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
     const defaultBranchRefspec = `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`;
+    const linkedWorktree = await detectLinkedWorktree(vars);
+    const trackingBranch = resolveSlotTrackingBranch(
+      projectJson,
+      vars,
+      projectVars,
+      linkedWorktree,
+    );
+    const effectiveBranch = linkedWorktree ? trackingBranch : defaultBranch;
 
     // 1. SSH ping (remote slots only)
     if (!isLocal(vars.host, vars.machine)) {
@@ -144,15 +182,22 @@ export async function slotRefresh(
           `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
         )
       ).stdout.trim();
-      if (currentBranch && currentBranch !== defaultBranch) {
-        const detail = `STALE_BRANCH: on '${currentBranch}', expected '${defaultBranch}'`;
-        step('abort', detail);
+      const staleDetail = refreshStaleBranchDetail(
+        currentBranch,
+        projectJson,
+        vars,
+        projectVars,
+        linkedWorktree,
+        defaultBranch,
+      );
+      if (staleDetail) {
+        step('abort', staleDetail);
         complete(0);
         return {
           requestId,
           refreshed: false,
           reason: 'stale',
-          branch: defaultBranch,
+          branch: effectiveBranch,
           advanced: false,
         };
       }
@@ -169,7 +214,7 @@ export async function slotRefresh(
           requestId,
           refreshed: false,
           reason: 'dirty',
-          branch: defaultBranch,
+          branch: effectiveBranch,
           advanced: false,
         };
       }
@@ -196,8 +241,8 @@ export async function slotRefresh(
     }
     step('origin-head', `origin/HEAD = ${expectedHead}`);
 
-    // 5. Force-mode destructive cleanup. Mirrors the chain in slotPrepareInner
-    //    (skip-worktree sweep, reset --hard HEAD, clean -fd, checkout default).
+    // 5. Force-mode destructive cleanup. Mirrors slotPrepareInner flag sweep,
+    //    then ADR-042 idle reset (tracking branch @ origin/default on linked worktrees).
     //    Safe mode skipped this — the pre-check already proved tree was clean
     //    and on the right branch.
     if (mode === 'force') {
@@ -229,17 +274,8 @@ export async function slotRefresh(
         complete(1, msg);
         throw new Error(msg);
       }
-      const coDefaultR = await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch}`,
-      );
-      if (coDefaultR.exitCode !== 0) {
-        const msg = `checkout ${defaultBranch} failed: ${coDefaultR.stderr.slice(-200) || coDefaultR.stdout.slice(-200)}`;
-        err(msg);
-        complete(1, msg);
-        throw new Error(msg);
-      }
-      step('branch', `Switched to ${defaultBranch}`);
+      const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+      step('branch', slotIdleResetStepDetail(idleReset, defaultBranch));
     }
 
     // 6. Fetch only the default branch. Refresh's contract is "make this idle
@@ -303,19 +339,24 @@ export async function slotRefresh(
       },
       {
         lifecycle: 'ready',
-        // Refresh just reset HEAD to the default branch — persist it so the
-        // cached slot.branch doesn't drift from the repo (state-on-write).
-        branch: defaultBranch,
+        // Refresh just reset HEAD to origin/default — persist the checkout
+        // branch (tracking branch on linked worktrees) so slot.branch stays accurate.
+        branch: effectiveBranch,
         last_error_at: null,
         last_error_msg: null,
       },
     );
 
-    step('done', `${defaultBranch} @ origin (advanced=${advanced})`);
-    emit('slot.refresh.done', { slotId: params.slotId, branch: defaultBranch, advanced, mode });
+    step('done', `${effectiveBranch} @ origin/${defaultBranch} (advanced=${advanced})`);
+    emit('slot.refresh.done', {
+      slotId: params.slotId,
+      branch: effectiveBranch,
+      advanced,
+      mode,
+    });
     complete(0);
 
-    return { requestId, refreshed: true, branch: defaultBranch, advanced };
+    return { requestId, refreshed: true, branch: effectiveBranch, advanced };
   } catch (e) {
     // complete() was already emitted by the inner thrower; if we got here
     // some unhandled path threw — surface it once.
