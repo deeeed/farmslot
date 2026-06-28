@@ -39,3 +39,16 @@ test('mobile gateway profile URLs require WebSocket protocols', () => {
     new RegExp('must start with ws:// or wss://'),
   );
 });
+
+test('recipe bridge mode allows loopback gateway URLs for iOS simulator proof', () => {
+  const previous = process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE;
+  process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE = '1';
+  try {
+    const url = 'ws://127.0.0.1:8809/ws';
+    assert.equal(isMobileGatewayProfileUrl(url), true);
+    assert.equal(mobileGatewayProfileUrlError(url), null);
+  } finally {
+    if (previous === undefined) delete process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE;
+    else process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE = previous;
+  }
+});

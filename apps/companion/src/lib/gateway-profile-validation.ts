@@ -37,7 +37,7 @@ export function isMobileGatewayProfileUrl(url: string): boolean {
 
 export function mobileGatewayProfileUrlError(url: string): string | null {
   if (!isValidGatewayUrl(url)) return 'Gateway URL must start with ws:// or wss://';
-  if (isLegacyLocalhostGatewayUrl(url)) {
+  if (isLegacyLocalhostGatewayUrl(url) && !isRecipeBridgeLoopbackGatewayEnabled()) {
     return 'Mobile profiles cannot use localhost. Use your Mac LAN hostname, a LAN IP, tailnet DNS, or WSS remote URL.';
   }
   return null;
