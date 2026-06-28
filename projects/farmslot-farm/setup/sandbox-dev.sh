@@ -115,7 +115,8 @@ gateway_health() {
 }
 
 ui_health() {
-  curl -sf "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1
+  curl -sf "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1 \
+    || curl -sf -g "http://[::1]:${VITE_PORT}/" >/dev/null 2>&1
 }
 
 kill_port_listeners() {
