@@ -1,4 +1,3 @@
-import type { ProfileFitSuggestion } from './validation-plan.js';
 import type { TaskTemplateSelection } from './evals.js';
 import type {
   DevInteractiveProfile,
@@ -9,6 +8,7 @@ import type {
   RunLane,
   RunStartRefProvenance,
 } from './runs.js';
+import type { ProfileFitSuggestion } from './validation-plan.js';
 
 export type QueueItemKind = 'dispatch' | 'eval-cell';
 

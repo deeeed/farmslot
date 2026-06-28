@@ -16,24 +16,23 @@
  *     [--json]
  */
 import { execFile } from 'node:child_process';
-import { readFile, mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
-import { createStandardCoreAdapters } from '@farmslot/recipe-harness/adapters/core';
-import { createStandardUiAdapters } from '@farmslot/recipe-harness/adapters/ui';
 import {
   createCaptureHelperVideoRecorder,
   createCdpVideoRecorder,
   createRecipeRunner,
 } from '@farmslot/recipe-harness';
+import { createStandardCoreAdapters } from '@farmslot/recipe-harness/adapters/core';
+import { createStandardUiAdapters } from '@farmslot/recipe-harness/adapters/ui';
 import {
   CdpWebPage,
   createCdpWebUiTransport,
   listCdpTargets,
-  selectCdpTarget,
 } from '@farmslot/recipe-harness/runtime/cdp';
 
 const execFileAsync = promisify(execFile);

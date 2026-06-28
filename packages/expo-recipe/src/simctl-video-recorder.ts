@@ -1,13 +1,14 @@
 import { spawn } from 'node:child_process';
 import { readFile, stat } from 'node:fs/promises';
 
-import { errorMessage, manifestTarget } from '@farmslot/recipe-harness';
-import type {
-  ActiveVideoRecording,
-  RecordingTarget,
-  VideoRecorder,
-  VideoRecorderDoctorResult,
-  VideoRecorderStartRequest,
+import {
+  type ActiveVideoRecording,
+  errorMessage,
+  manifestTarget,
+  type RecordingTarget,
+  type VideoRecorder,
+  type VideoRecorderDoctorResult,
+  type VideoRecorderStartRequest,
 } from '@farmslot/recipe-harness';
 
 const DEFAULT_STOP_TIMEOUT_MS = 20_000;
@@ -66,7 +67,15 @@ class SimctlVideoRecorder implements VideoRecorder {
 
   async start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
     const device = simulatorDevice(request.target);
-    const args = ['simctl', 'io', device, 'recordVideo', '--codec=h264', '--force', request.outputPath];
+    const args = [
+      'simctl',
+      'io',
+      device,
+      'recordVideo',
+      '--codec=h264',
+      '--force',
+      request.outputPath,
+    ];
     const child = spawn('xcrun', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const stderr: string[] = [];
     child.stderr.setEncoding('utf-8');

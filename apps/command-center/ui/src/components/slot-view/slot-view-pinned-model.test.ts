@@ -12,8 +12,7 @@ test('slotViewTaskRelativePath prefers slot agent task file on worker repo', () 
     slotViewTaskRelativePath({
       runTaskFile:
         '/Users/deeeed/dev/farmslot/.sandbox/farmslot/tasks/feat/112-0627-223003/TASK.md',
-      slotAgentTaskFile:
-        '.sandbox/farmslot/worker-task/feat/112-0627-223003/TASK.md',
+      slotAgentTaskFile: '.sandbox/farmslot/worker-task/feat/112-0627-223003/TASK.md',
       slotTaskFile: 'fallback-slot-task',
       showTaskUi: true,
     }),
@@ -53,9 +52,7 @@ test('slotViewTaskRelativePath falls back to slot task only when task UI is visi
 
 test('slotViewPinnedFolderFromTaskFile returns slot-relative task directory', () => {
   assert.equal(
-    slotViewPinnedFolderFromTaskFile(
-      '.sandbox/farmslot/worker-task/feat/112-0627-223003/TASK.md',
-    ),
+    slotViewPinnedFolderFromTaskFile('.sandbox/farmslot/worker-task/feat/112-0627-223003/TASK.md'),
     '.sandbox/farmslot/worker-task/feat/112-0627-223003',
   );
 });

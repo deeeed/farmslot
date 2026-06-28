@@ -18,6 +18,8 @@ import { buildFollowUpLineage } from '../../family-observability/context.js';
 import { findFollowUpParentRun } from '../../family-observability/state.js';
 import { getNode } from '../../fleet/machine-registry.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+import { detectProfileFit, resolveCompanionSlotId } from '../../run-engine/profile-fit-gate.js';
+import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
@@ -26,9 +28,6 @@ import {
 } from '../../runners/registry.js';
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
-
-import { detectProfileFit, resolveCompanionSlotId } from '../../run-engine/profile-fit-gate.js';
-import { fetchTicketData } from '../../run-engine/ticket-data.js';
 
 import { findBestSlot, isCdpLive, isFreeSlot, slotScore, validateSlot } from './slot-scoring.js';
 import { resolveDispatchTargetBranch } from './target-branch.js';

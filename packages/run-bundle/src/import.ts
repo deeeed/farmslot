@@ -13,9 +13,7 @@ import {
 import path from 'node:path';
 
 import {
-  assertApprovedTaskRestoreRelativePath,
   isRunBundleManifest,
-  resolveTaskFileAbsolute,
   type Run,
   type RunBundleEntryMeta,
   type RunBundleImportMode,
@@ -23,6 +21,10 @@ import {
   type RunBundleImportResult,
   type RunBundleManifest,
 } from '@farmslot/protocol';
+import {
+  assertApprovedTaskRestoreRelativePath,
+  resolveTaskFileAbsolute,
+} from '@farmslot/protocol/runs/portable-bundle';
 
 import { readBundleManifestFromDir, unpackFarmrunArchive } from './archive.js';
 import { sha256File } from './hashing.js';

@@ -1,0 +1,5 @@
+[
+  {"id": "open-slot-shell", "action": "ui.navigate", "ok": true, "durationMs": 400, "artifacts": []},
+  {"id": "assert-banner-absent", "action": "ui.wait_for", "ok": true, "durationMs": 500, "artifacts": []},
+  {"id": "capture-with-banner", "action": "ui.screenshot", "ok": true, "durationMs": 300, "artifacts": ["screenshots/before-demo-banner.svg"]}
+]

@@ -6,8 +6,8 @@
  *   node apps/command-center/scripts/agentic/recipe-doctor.mjs \
  *     --cdp-port 9323 --gateway-port 8809 --slot-id macwork-ff-2 --json
  */
-import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -31,7 +31,8 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--cdp-port') options.cdpPort = Number(argv[++i]);
-    else if (arg.startsWith('--cdp-port=')) options.cdpPort = Number(arg.slice('--cdp-port='.length));
+    else if (arg.startsWith('--cdp-port='))
+      options.cdpPort = Number(arg.slice('--cdp-port='.length));
     else if (arg === '--gateway-port') options.gatewayPort = argv[++i] ?? '';
     else if (arg.startsWith('--gateway-port=')) options.gatewayPort = arg.slice(15);
     else if (arg === '--ui-url') options.uiUrl = argv[++i] ?? '';
@@ -286,7 +287,8 @@ async function checkCaptureWindowOnScreen(cdpPort) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const slotProjectRoot = await loadSlotProjectRoot(options.slotId, FARMSLOT_ROOT);
-  const uiProjectRoot = options.projectRoot === FARMSLOT_ROOT ? slotProjectRoot : options.projectRoot;
+  const uiProjectRoot =
+    options.projectRoot === FARMSLOT_ROOT ? slotProjectRoot : options.projectRoot;
   const uiUrl = await resolveUiUrl(uiProjectRoot, options.uiUrl);
   const checks = [];
 

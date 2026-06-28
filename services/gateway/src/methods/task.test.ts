@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { TaskProgressStructured } from '@farmslot/protocol';
 
 import { generateTaskSchema } from '../tasks/writer.js';
+
 import { joinSchemaWithMarkdown, reconcileFinalStepFromSignal } from './task.js';
 
 function makeStructured(done: number): TaskProgressStructured {

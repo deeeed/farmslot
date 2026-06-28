@@ -1,14 +1,15 @@
+import { spawn } from 'node:child_process';
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 
-import { CdpSession, selectCdpTarget, sleep } from '../runtime/cdp.js';
 import type {
   ActiveVideoRecording,
   VideoRecorder,
   VideoRecorderDoctorResult,
   VideoRecorderStartRequest,
 } from '../core/types.js';
+import { CdpSession, selectCdpTarget, sleep } from '../runtime/cdp.js';
+
 import { errorMessage } from './capture-helper.js';
 
 export interface CdpVideoRecorderOptions {
@@ -119,10 +120,7 @@ class CdpVideoRecorder implements VideoRecorder {
         if (typeof data !== 'string' || !data) return;
         const activeSession = session;
         if (!activeSession) return;
-        const framePath = path.join(
-          framesDir,
-          `frame_${String(frameIndex).padStart(6, '0')}.png`,
-        );
+        const framePath = path.join(framesDir, `frame_${String(frameIndex).padStart(6, '0')}.png`);
         frameIndex += 1;
         writeChain = writeChain.then(async () => {
           await writeFile(framePath, Buffer.from(data, 'base64'));
