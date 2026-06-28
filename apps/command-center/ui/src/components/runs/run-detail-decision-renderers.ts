@@ -463,7 +463,7 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
     </style>
     <div class="sp-list">
       ${freeOnes.map((c) => {
-        const isStale = !!(c.branch && c.branch !== 'main' && c.branch !== '');
+        const isStale = c.score >= 50;
         const selected = context.selectedSlotId === c.slotId;
         return html`
           <div
@@ -764,7 +764,7 @@ function renderBranchNudgeFreeSlots(
       }
     </style>
     ${candidates.map((c) => {
-      const isStale = !!(c.branch && c.branch !== 'main' && c.branch !== '');
+      const isStale = c.score >= 50;
       const selected = context.selectedSlotId === c.slotId;
       return html`
         <div

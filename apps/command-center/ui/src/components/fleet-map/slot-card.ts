@@ -6,6 +6,7 @@ import type { Run, SlotStatus, TaskProgressStructured } from '@farmslot/protocol
 import '../shared/status-badge.js';
 import './slot-headroom-dot.js';
 
+import { getProjectSlotTrackingConfigs } from '../../state.js';
 import {
   colors,
   fonts,
@@ -14,6 +15,7 @@ import {
   shadows,
   spacing,
 } from '../../styles/theme-tokens.js';
+import { slotBranchDisplay } from './slot-branch-display.js';
 import { runStatusColor } from '../runs/run-utils.js';
 
 @customElement('slot-card')
@@ -120,8 +122,12 @@ export class SlotCard extends LitElement {
     .meta .branch {
       color: ${unsafeCSS(colors.accent)};
     }
-    .meta .branch.main {
+    .meta .branch.main,
+    .meta .branch.tracking {
       color: ${unsafeCSS(colors.textMuted)};
+    }
+    .meta .branch.stale {
+      color: ${unsafeCSS(colors.accent)};
     }
     .meta .task {
       color: ${unsafeCSS(colors.lifecycleBusy)};
@@ -342,9 +348,14 @@ export class SlotCard extends LitElement {
     const hasActiveRun = !!this.linkedRun && s.lifecycle === 'busy';
     const hasExpandableRun = hasActiveRun;
     const legacyIdentity = !!s.currentRunId && !s.currentFamilyId;
-    const branchLabel =
-      s.branch === 'main' ? 'main' : s.branch && s.branch !== 'main' ? s.branch : '';
-    const branchClass = s.branch === 'main' ? 'branch main' : 'branch';
+    const branch = slotBranchDisplay(s, getProjectSlotTrackingConfigs());
+    const branchLabel = branch.label;
+    const branchClass =
+      branch.tone === 'baseline'
+        ? 'branch main'
+        : branch.tone === 'tracking'
+          ? 'branch tracking'
+          : 'branch stale';
 
     return html`
       <div
