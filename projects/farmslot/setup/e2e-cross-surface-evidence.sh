@@ -259,10 +259,12 @@ run_recipe_proof() {
   local platform="$6"
   local proof_log="$7"
   shift 7
-  local record_video="${RECORD_VIDEO_MODE:-full-run}"
   local video_args=()
-  if [[ -n "$record_video" ]]; then
-    video_args=(--record-video="$record_video")
+  # RECORD_VIDEO_MODE unset => default full-run; empty string => omit --record-video.
+  if [[ "${RECORD_VIDEO_MODE-__unset__}" == "__unset__" ]]; then
+    video_args=(--record-video=full-run)
+  elif [[ -n "$RECORD_VIDEO_MODE" ]]; then
+    video_args=(--record-video="$RECORD_VIDEO_MODE")
   fi
   # Remaining args forwarded to validate-recipe.sh
   FARMSLOT_SLOT_REPO="$slot_repo" EXPO_PUBLIC_GATEWAY_URL="${EXPO_PUBLIC_GATEWAY_URL:-}" \
