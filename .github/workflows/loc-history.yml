@@ -42,6 +42,7 @@ jobs:
       - name: Validate LOC history JSON
         run: python3 -m json.tool docs/reference/loc-history.json >/dev/null
 
+      # Post-record sanity check: catches record/serialization regressions before opening a PR.
       - name: Verify recorded LOC history
         run: yarn quality:loc:verify
 

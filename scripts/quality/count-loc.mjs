@@ -444,7 +444,7 @@ export function locSnapshotMetricsMatch(last, next) {
   );
 }
 
-/** Same contract as .github/workflows/loc-history.yml — restores file on failure. */
+/** Check whether a new snapshot would change history; restores the file on failure. */
 export function verifyLocHistory(options) {
   if (!existsSync(HISTORY_PATH)) {
     return { ok: false, head: gitSha(), reason: `missing ${HISTORY_PATH}` };
@@ -559,6 +559,11 @@ if (isMain) {
   if (options.trend) {
     printTrend();
     process.exit(0);
+  }
+
+  if (options.advisory && !options.verify) {
+    console.error('[count-loc] --advisory requires --verify');
+    process.exit(1);
   }
 
   if (options.verify) {
