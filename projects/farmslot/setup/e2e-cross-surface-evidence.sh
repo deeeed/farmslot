@@ -131,6 +131,15 @@ ensure_cdp_chrome_visible() {
 
 cdp_login_fleet() {
   local ui_hash="#fleet"
+  local auth_state
+  : >"$SCRATCH/cc-cdp-login.log"
+  auth_state="$(FARMSLOT_ROOT="$CC_WT" FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
+    node "$PRIMARY_REPO/apps/command-center/scripts/cdp.mjs" eval "$ui_hash" \
+      "!document.querySelector('.auth-card')" 2>>"$SCRATCH/cc-cdp-login.log" || true)"
+  if [[ "$auth_state" == "true" ]]; then
+    log "CDP session already authenticated"
+    return 0
+  fi
   FARMSLOT_ROOT="$CC_WT" \
   FARMSLOT_GATEWAY="ws://127.0.0.1:${FF_GATEWAY_PORT}/ws" \
   FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
