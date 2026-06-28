@@ -31,6 +31,7 @@ import '../slot-actions/fleet-refresh-modal.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
+import { projectMatchesGlobalFilter } from '../../project-filter.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
@@ -552,7 +553,7 @@ export class FleetCanvas extends LitElement {
   private get filteredSlots(): SlotStatus[] {
     let result = this.slots;
     if (this.filterProjects.length > 0) {
-      result = result.filter((s) => this.filterProjects.includes(s.project));
+      result = result.filter((s) => projectMatchesGlobalFilter(s.project, this.filterProjects));
     }
     if (this.filterMachines.length > 0) {
       result = result.filter((s) => this.filterMachines.includes(s.machine));

@@ -779,7 +779,7 @@ test('resolveDispatchPreviewFromFleet honors allowedSlots', () => {
         },
         [excluded, included],
       ),
-    /No slots found for project farmslot within allowed slots/,
+    /No slots found for project farmslot-farm within allowed slots/,
   );
 });
 

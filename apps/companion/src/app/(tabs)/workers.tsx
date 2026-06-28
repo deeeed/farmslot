@@ -474,7 +474,7 @@ export default function WorkersScreen() {
         </Pressable>
       </View>
       <View style={styles.filterRow}>
-        {(['adhoc', 'farmslot-farm', 'all'] as WorkerPaneFilter[]).map((filter) => (
+        {(['adhoc', 'farmslot', 'all'] as WorkerPaneFilter[]).map((filter) => (
           <Pressable
             key={filter}
             style={[styles.filterButton, workerFilter === filter && styles.filterButtonActive]}

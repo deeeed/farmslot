@@ -41,6 +41,7 @@ import {
   Methods,
 } from '@farmslot/protocol';
 
+import { normalizeGlobalFilters } from './project-filter.js';
 import { notify as browserNotify } from './utils/notifications.js';
 import { safeLsGet, safeLsRemove } from './utils/storage.js';
 import { type ConnectionState, gateway } from './gateway-client.js';
@@ -128,12 +129,15 @@ export type AppStateSliceSnapshot = Pick<
 
 function loadGlobalFilters(): GlobalFilters {
   const fromHash = parseFiltersFromHash();
-  if (fromHash) return fromHash;
+  if (fromHash) return normalizeGlobalFilters(fromHash);
   const raw = safeLsGet(GLOBAL_FILTERS_KEY);
   if (!raw) return { projects: [], machines: [] };
   try {
     const parsed = JSON.parse(raw);
-    return { projects: parsed.projects ?? [], machines: parsed.machines ?? [] };
+    return normalizeGlobalFilters({
+      projects: parsed.projects ?? [],
+      machines: parsed.machines ?? [],
+    });
   } catch (err) {
     console.warn('[state] corrupted global-filters in localStorage, clearing:', err);
     safeLsRemove(GLOBAL_FILTERS_KEY);

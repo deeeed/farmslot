@@ -80,6 +80,21 @@ test('filterRunList applies family, project, tab, status, flow, lane, and search
   );
 });
 
+test('filterRunList matches farmslot rename aliases in global project filters', () => {
+  const legacy = run('legacy', { project: 'farmslot', status: 'done' });
+  const renamed = run('renamed', { project: 'farmslot-farm', status: 'done' });
+  const other = run('other', { project: 'metamask-mobile-farm', status: 'done' });
+
+  assert.deepEqual(
+    filter({
+      runs: [legacy, renamed, other],
+      globalFilters: { projects: ['farmslot-farm'], machines: [] },
+      tab: 'history',
+    }).map((item) => item.id),
+    ['legacy', 'renamed'],
+  );
+});
+
 test('filterRunList active and history tabs preserve legacy terminal-status semantics', () => {
   const active = run('active', { status: 'monitoring' });
   const failed = run('failed', { status: 'failed' });

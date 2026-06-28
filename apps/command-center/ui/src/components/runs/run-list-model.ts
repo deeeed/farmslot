@@ -1,5 +1,6 @@
 import type { FlowType, Run, RunLane, RunStatus } from '@farmslot/protocol';
 
+import { projectMatchesGlobalFilter } from '../../project-filter.js';
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -43,7 +44,9 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
       ? (input.tagRuns ?? input.runs)
       : input.runs;
   if (input.globalFilters.projects.length > 0) {
-    result = result.filter((run) => input.globalFilters.projects.includes(run.project));
+    result = result.filter((run) =>
+      projectMatchesGlobalFilter(run.project, input.globalFilters.projects),
+    );
   }
   if (input.tab === 'active') {
     result = result.filter((run) => !TERMINAL_STATUSES.has(run.status) || run.status === 'failed');

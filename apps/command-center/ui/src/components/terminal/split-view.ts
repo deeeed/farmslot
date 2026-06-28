@@ -690,7 +690,7 @@ export class TerminalSplitView extends LitElement {
           <button class="layout-btn" @click=${() => this._fetchTmuxWorkers()}>Refresh tmux</button>
         </div>
         <div class="worker-filter-row">
-          ${(['adhoc', 'farmslot-farm', 'all'] as WorkerPaneFilter[]).map(
+          ${(['adhoc', 'farmslot', 'all'] as WorkerPaneFilter[]).map(
             (filter) => html`
               <button
                 class="worker-filter-btn ${this._workerPaneFilter === filter ? 'active' : ''}"

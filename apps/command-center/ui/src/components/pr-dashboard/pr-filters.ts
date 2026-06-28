@@ -1,5 +1,6 @@
 import type { PRStatus } from '@farmslot/protocol';
 
+import { projectMatchesGlobalFilter } from '../../project-filter.js';
 import type { GlobalFilters } from '../../state.js';
 
 export interface PRDashboardScopeSummary {
@@ -20,7 +21,9 @@ function slotMatchesMachine(slot: string | null | undefined, machine: string): b
 export function filterDashboardPRs(prs: PRStatus[], filters: GlobalFilters): PRStatus[] {
   return prs.filter((pr) => {
     if (pr.ownedFamily !== true) return false;
-    if (filters.projects.length > 0 && !filters.projects.includes(pr.project)) return false;
+    if (filters.projects.length > 0 && !projectMatchesGlobalFilter(pr.project, filters.projects)) {
+      return false;
+    }
     if (filters.machines.length > 0) {
       if (!filters.machines.some((machine) => slotMatchesMachine(pr.slot, machine))) return false;
     }
