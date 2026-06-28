@@ -38,13 +38,22 @@ class SimctlVideoRecorder implements VideoRecorder {
         suggestedFix: 'Run iOS recipe proof on a macOS host or omit --record-video.',
       };
     }
+    let result: CommandResult;
     try {
-      await runCommand('xcrun', ['simctl', 'help', 'io'], { timeoutMs: 10_000 });
+      result = await runCommand('xcrun', ['simctl', 'help', 'io'], { timeoutMs: 10_000 });
     } catch (error) {
       return {
         ok: false,
         code: 'simctl_missing',
         message: `xcrun simctl is not available: ${errorMessage(error)}`,
+        suggestedFix: 'Install Xcode command-line tools and ensure simctl is on PATH.',
+      };
+    }
+    if (result.exitCode !== 0) {
+      return {
+        ok: false,
+        code: 'simctl_help_failed',
+        message: result.stderr.trim() || result.stdout.trim() || 'simctl help io failed.',
         suggestedFix: 'Install Xcode command-line tools and ensure simctl is on PATH.',
       };
     }
