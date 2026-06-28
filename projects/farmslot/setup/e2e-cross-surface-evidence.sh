@@ -327,6 +327,7 @@ bash "$SCRIPT_DIR/validate-recipe.sh" --dry-run \
   || fail_step "validate-recipe dry-run" $?
 log "dry-run exit=0"
 
+prepare_companion_slot
 {
   echo "=== companion-prepare health ==="
   echo "timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -64,7 +64,6 @@ class CdpVideoRecorder implements VideoRecorder {
   }
 
   async start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
-    const fps = Math.min(Math.max(request.maxFps ?? 5, 1), 15);
     const framesDir = path.join(
       path.dirname(request.outputPath),
       `.cdp-frames-${path.basename(request.outputPath, path.extname(request.outputPath))}`,
@@ -73,6 +72,7 @@ class CdpVideoRecorder implements VideoRecorder {
 
     let frameIndex = 0;
     let capturing = true;
+    const recordingStartedAt = Date.now();
     let pageUrl = `cdp:${this.#cdpPort}`;
     let session: CdpSession | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -124,12 +124,10 @@ class CdpVideoRecorder implements VideoRecorder {
           `frame_${String(frameIndex).padStart(6, '0')}.png`,
         );
         frameIndex += 1;
-        writeChain = writeChain
-          .then(() => writeFile(framePath, Buffer.from(data, 'base64')))
-          .catch(() => undefined);
-        void activeSession
-          .call('Page.screencastFrameAck', { sessionId })
-          .catch(() => undefined);
+        writeChain = writeChain.then(async () => {
+          await writeFile(framePath, Buffer.from(data, 'base64'));
+        });
+        void activeSession.call('Page.screencastFrameAck', { sessionId });
       });
     };
 
@@ -150,16 +148,22 @@ class CdpVideoRecorder implements VideoRecorder {
           session.close();
           session = undefined;
         }
-        await writeChain.catch(() => undefined);
+        await writeChain;
         await sleep(200);
         if (frameIndex === 0) {
           throw new Error('CDP recording captured zero frames.');
         }
+        const elapsedSec = Math.max((Date.now() - recordingStartedAt) / 1000, 1);
+        const effectiveFps = Math.min(
+          Math.max(request.maxFps ?? 5, 1),
+          15,
+          Math.max(1, frameIndex / elapsedSec),
+        );
         await encodePngSequenceToMp4({
           ffmpegPath,
           framesDir,
           outputPath,
-          fps,
+          fps: effectiveFps,
         });
         await rm(framesDir, { recursive: true, force: true });
         const stats = await stat(outputPath);

@@ -139,7 +139,7 @@ function screenRecordingDenied(...parts) {
 }
 
 async function checkCdpVideoFallback(cdpPort) {
-  const recorder = createCdpVideoRecorder({ cdpPort });
+  const recorder = createCdpVideoRecorder({ cdpPort, urlIncludes: '#fleet' });
   const doctor = await recorder.doctor();
   return {
     ok: doctor.ok,
@@ -182,43 +182,26 @@ async function checkCaptureHelperDoctor(cdpPort) {
         message: `capture-helper ${parsed?.build?.version ?? ''} ready`.trim(),
       };
     }
-    const denied =
-      parsed?.summary?.requiredFailureCodes?.includes('screen_recording_denied') ||
-      stderr.includes('screen_recording_denied') ||
-      stdout.includes('screen_recording_denied');
-    if (denied) {
-      const cdp = await checkCdpVideoFallback(cdpPort);
-      if (cdp.ok) {
-        return {
-          id: 'capture_helper.doctor',
-          status: 'pass',
-          message: `capture-helper TCC denied; ${cdp.message}`,
-        };
-      }
-    }
-    return {
-      id: 'capture_helper.doctor',
-      status: 'fail',
-      message: 'capture-helper doctor failed; grant Screen Recording or ensure CDP fallback',
-    };
+    return passWithCdpFallbackWhenTccDenied(
+      cdpPort,
+      'capture_helper.doctor',
+      screenRecordingDenied(stdout, stderr)
+        ? 'capture-helper TCC denied'
+        : 'capture-helper doctor failed',
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const stdout =
       error && typeof error === 'object' && 'stdout' in error ? String(error.stdout) : '';
     const stderr =
       error && typeof error === 'object' && 'stderr' in error ? String(error.stderr) : '';
-    const parsed = parseCaptureHelperJson(stdout, stderr);
-    const denied =
-      screenRecordingDenied(message, stdout, stderr) ||
-      parsed?.summary?.requiredFailureCodes?.includes('screen_recording_denied');
-    if (denied) {
-      return passWithCdpFallbackWhenTccDenied(
-        cdpPort,
-        'capture_helper.doctor',
-        'capture-helper TCC denied',
-      );
-    }
-    return { id: 'capture_helper.doctor', status: 'fail', message };
+    return passWithCdpFallbackWhenTccDenied(
+      cdpPort,
+      'capture_helper.doctor',
+      screenRecordingDenied(message, stdout, stderr)
+        ? 'capture-helper TCC denied'
+        : 'capture-helper doctor failed',
+    );
   }
 }
 
@@ -271,13 +254,18 @@ async function checkCaptureWindowOnScreen(cdpPort) {
       };
     }
     const onScreen = parsed.selected?.onScreen === true;
-    return {
-      id: 'capture_helper.window.on_screen',
-      status: onScreen ? 'pass' : 'fail',
-      message: onScreen
-        ? `Chrome window ${parsed.selected?.title ?? 'selected'} is on-screen`
-        : `Chrome window is off-screen (${parsed.selected?.title ?? 'unknown'}); run debug-chrome (window-position) or activate Chrome before --record-video`,
-    };
+    if (onScreen) {
+      return {
+        id: 'capture_helper.window.on_screen',
+        status: 'pass',
+        message: `Chrome window ${parsed.selected?.title ?? 'selected'} is on-screen`,
+      };
+    }
+    return passWithCdpFallbackWhenTccDenied(
+      cdpPort,
+      'capture_helper.window.on_screen',
+      `Chrome window off-screen (${parsed.selected?.title ?? 'unknown'}); using CDP screencast`,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const stdout =
