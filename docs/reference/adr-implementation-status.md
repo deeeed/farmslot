@@ -220,12 +220,12 @@ ADR-040 is design intent only. It should not be implemented until a ROADMAP-next
 
 ADR-041 is design intent only. It should not be implemented until a roadmap milestone accepts the markdown-backed roadmap/refinement/promotion scope; it is the prerequisite planning layer before ADR-040 graph execution.
 
-| ADR requirement                                          | Status      | Evidence / gap                                  |
-| -------------------------------------------------------- | ----------- | ----------------------------------------------- |
-| `{farmslotRoot}/.roadmap` markdown index + label catalog | Not started | Proposed in ADR-041                             |
-| Refinement sessions outside dispatch/run families        | Not started | Proposed tmux runner reuse, no `run.create`     |
-| Roadmap promotion to backlog with snapshots/provenance   | Not started | Proposed bridge to PR #95 backlog intake        |
-| Backlog/graph/run label convergence                      | Not started | Proposed compatibility path for legacy run tags |
+| ADR requirement                                      | Status      | Evidence / gap                                    |
+| ---------------------------------------------------- | ----------- | ------------------------------------------------- |
+| `{farmslotRoot}/.roadmap` markdown index             | Not started | Proposed in ADR-041                               |
+| Tmux refinement helper outside dispatch/run families | Not started | Proposed tmux runner helper, no `run.create`      |
+| Roadmap promotion to backlog markdown specs with ACs | Not started | Proposed bridge to PR #95 backlog intake          |
+| Roadmap/backlog/run tag convergence                  | Not started | Proposed compatibility path for existing run tags |
 
 ---
 

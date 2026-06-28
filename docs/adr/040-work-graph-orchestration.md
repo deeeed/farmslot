@@ -11,9 +11,7 @@
   - ADR-039 (run portable bundles) — `artifact` edge evidence may reference a bundle path
   - ADR-027 (unified gateway state) — graph store is durable gateway state with restart reconciliation
   - PR #95 (backlog intake) — a work node is a thin pointer to exactly one backlog item
-  - ADR-041 (roadmap idea refinement) — roadmap can promote one refined item into many backlog items plus an optional work graph
-
-**Review signoffs:** Reconciled from independent planning/review proposals (2026-06-27 tmux brainstorm). The consensus draft was approved with operational patches D13–D15 (§13, §15). Design only — not an implementation order until roadmap-approved.
+  - ADR-041 (roadmap idea refinement) — roadmap produces dispatchable backlog specs before any future graph scheduling
 
 ---
 
@@ -105,13 +103,8 @@ export interface WorkGraph {
   project: string; // single-project in v1 (§12 non-goals)
   title: string;
   source: WorkGraphSource;
-  /** Shared label keys from ADR-041; propagated from roadmap/backlog when graph is drafted from promotion. */
-  labelKeys?: string[];
-  /** Roadmap provenance when this graph was created by ADR-041 promotion. */
-  roadmapItemIds?: string[];
-  roadmapEpicId?: string;
-  roadmapSnapshotHash?: string;
-  promotionEntryId?: string;
+  /** Shared normalized tags, compatible with existing Run.tags. */
+  tags?: string[];
   status: WorkGraphStatus;
   defaultFailurePolicy: NodeFailurePolicy; // default 'halt'
   scheduler: SchedulerLease; // single-writer guard
@@ -120,8 +113,8 @@ export interface WorkGraph {
 }
 
 export interface WorkGraphSource {
-  kind: 'manual' | 'roadmap-promotion' | 'external-import';
-  ref?: string; // roadmap item/epic id, external issue/milestone url, or operator note
+  kind: 'manual' | 'external-import';
+  ref?: string; // external issue/milestone url or operator note
   url?: string;
 }
 
@@ -146,13 +139,8 @@ export interface WorkNode {
   id: string; // wn_<short>
   graphId: string;
   backlogItemId: string; // 1:1 — ALL dispatch config (flow, lane, model, slots, priority) lives HERE
-  /** Shared label keys from ADR-041; usually inherited from the backlog item / roadmap promotion. */
-  labelKeys?: string[];
-  /** Roadmap provenance mirrored from the backing backlog item for graph queries. */
-  roadmapItemId?: string;
-  roadmapEpicId?: string;
-  roadmapSnapshotHash?: string;
-  promotionEntryId?: string;
+  /** Shared normalized tags, usually inherited from the backlog item. */
+  tags?: string[];
   status: WorkNodeStatus;
   // resolved lazily once the backlog item dispatches; lets the graph observe the CURRENT
   // family without re-deriving it. Retry may update currentFamilyId if lane policy creates
@@ -300,8 +288,7 @@ _existing_ run. The graph otherwise reads only existing run fields
 A node reaches `succeeded` on **family terminal-success**. Its _outbound_ edges carry their
 own satisfied-bit; a `merged` edge only fires once the PR actually merges (possibly after the
 family's last run). So a node can be `succeeded` while a downstream `merged` edge is still
-`pending`. **UI must render "succeeded — merge edge pending," never a bare "done"** (consensus
-log D2).
+`pending`. **UI must render "succeeded — merge edge pending," never a bare "done"**.
 
 ### Edge
 
@@ -373,7 +360,7 @@ persist graph + ledger atomically; broadcast graph update
 detect cycles at activate; an edge added to an active graph that introduces a cycle → needs-attention
 ```
 
-**Node-level unlock plan (consensus log D5).** Multiple inbound edges may satisfy together with
+**Node-level unlock plan.** Multiple inbound edges may satisfy together with
 possibly conflicting actions. The scheduler does **not** fire the satisfying edge's action in
 isolation; it computes one deterministic node-level plan: if any required satisfied edge carries
 `rebase-onto`, the rebase runs first (idempotently), then a single `enqueue`. `mark-ready` edges
@@ -394,7 +381,7 @@ Conditions are idempotent for _reading_; the ledger covers the _write_ side.
 - One active root run per production-lane node. Multiple attempts allowed, but one active
   attempt unless the lane is explicitly `comparison`.
 - The scheduler may enqueue many ready nodes, but **never bypasses** the existing dispatch
-  queue, slot scoring, or eval slot caps (D14). Parallel graph fan-out is throttled the same
+  queue, slot scoring, or eval slot caps. Parallel graph fan-out is throttled the same
   way as flat backlog/queue dispatch — the graph only decides _which_ items become eligible
   to enqueue, not _how many slots_ they may claim.
 - A required failed upstream blocks dependents until retried, replaced, waived, or skipped.
@@ -413,7 +400,7 @@ Conditions are idempotent for _reading_; the ledger covers the _write_ side.
 | **Bundles (ADR-039)**          | `artifact` edge condition resolves against a run bundle path                                          | bundle path lookup in the edge evaluator; bundles are evidence, never the graph store    |
 | **Webhooks (v2)**              | low-latency `pr.merged`/gate facts                                                                    | GitHub webhook receiver; reconciliation stays authoritative                              |
 
-### Backlog auto-dispatch exclusivity (D13)
+### Backlog auto-dispatch exclusivity
 
 PR #95 backlog items may set `autoDispatch: true` and are picked up by
 `backlog.autoDispatchTick` independently of any graph. **Graph-linked backlog items must not
@@ -421,8 +408,8 @@ double-enqueue.**
 
 Rules:
 
-0. A `BacklogItem` may be attached to at most one non-archived `WorkNode`; graph creation and
-   roadmap promotion must reject attempts to reuse the same backlog item in another live graph.
+0. A `BacklogItem` may be attached to at most one non-archived `WorkNode`; graph node creation
+   and updates must reject attempts to reuse the same backlog item in another live graph.
 1. When a backlog item is attached to a work graph node (`workGraphId` + `workNodeId` set),
    graph-owned scheduler/retry/reopen/detach actions are the only enqueue authority for that
    item. This includes `planning`, `active`, `paused`, `waiting`, `needs-attention`, and
@@ -442,14 +429,14 @@ Rules:
 This prevents races between the graph scheduler and the flat backlog tick from creating
 duplicate queue items or runs for the same objective.
 
-### Eval slot caps (D14)
+### Eval slot caps
 
 Shared dispatch queue / eval slot caps (PR #86) apply unchanged. The graph scheduler calls
 `backlog.enqueue`; `tryDispatchNext` and eval-matrix caps decide when items actually claim
 slots. A graph with ten ready nodes may enqueue ten items, but only `N` may run concurrently
 per project eval cap — same as today. The graph does not add a parallel slot-allocation path.
 
-### Comparison-lane nodes (D15)
+### Comparison-lane nodes
 
 A work node in the **production** lane has at most **one active root run** at a time
 (ADR-024 duplicate guard). The graph does **not** model comparison siblings or eval rubrics
@@ -522,7 +509,7 @@ ADR-041 is the roadmap/product-planning layer. Rough or refined roadmap items do
 work graph directly. The normal layered path is:
 
 ```text
-RoadmapItem(stage=refined) -> promote -> BacklogItem(s) -> optional WorkGraph -> dispatch
+RoadmapItem(stage=refined) -> promote -> BacklogItem(s) -> optional manual WorkGraph -> dispatch
 ```
 
 Direct PR #95 backlog intake remains supported only for items that are already dispatchable.
@@ -532,8 +519,8 @@ not directly to backlog or work graph.
 Execution steps:
 
 ```
-1. Operator creates, imports, or receives roadmap-promoted dispatchable backlog items
-2. workGraph.create({ project, title, source, roadmapItemIds?, roadmapEpicId?, roadmapSnapshotHash? }) → status 'planning'
+1. Operator creates, imports, or receives dispatchable backlog items
+2. workGraph.create({ project, title, source }) → status 'planning'
 3. workGraph.addNode({ graphId, backlogItemId })   ×N    (wrap existing items)
 4. workGraph.addEdge({ from, to, condition, required, unlock }) ×M
 5. Gateway validates: acyclic, project match, required fields, branch topology (if rebase edges)
@@ -554,7 +541,7 @@ external themes import through ADR-041 roadmap first.
 **Deferred:**
 
 - Auto-edge inference (Jira "blocks" links, GitHub task-list refs) — v2.
-- LLM decomposition of a prose roadmap item into nodes+edges — v3, always gated behind a
+- LLM decomposition of existing backlog specs into nodes+edges — v3, always gated behind a
   human-reviews-the-graph step. **Never auto-activate an LLM-proposed graph** — a wrong edge
   silently serializes parallel work or unlocks downstream work prematurely. Prove the engine
   with hand-authored graphs first; the engine is identical regardless of who authored the edges.
@@ -573,7 +560,7 @@ terminal-failure:
 - **`isolate`** — only this node → `needs-attention`; direct dependents stay `waiting` for the
   operator.
 
-**Retry vs replace (consensus log D7).** Retry re-enqueues the **same node's** backlog item and
+**Retry vs replace.** Retry re-enqueues the **same node's** backlog item and
 **stays attached to the same node**. If lane policy continues the existing family,
 `currentFamilyId` is unchanged. If lane policy creates a fresh family, the node moves the old
 `currentFamilyId` into `supersededFamilyIds` and sets `currentFamilyId/currentRootRunId` to the
@@ -594,7 +581,7 @@ Honest boundary: the graph prevents premature _starts_; it can't undo _in-flight
 
 **Cycle handling.** Cycles are rejected at `activate` (DFS, reject with the offending edge set →
 graph `failed`). A cycle introduced by editing an active graph is an **authoring error, not an
-execution failure**: graph → `needs-attention`, dispatch nothing until fixed (consensus log D3).
+execution failure**: graph → `needs-attention`, dispatch nothing until fixed.
 
 **Gateway restart.** No durable scheduler state needed beyond graph/node/edge records + the
 action ledger. The first tick after boot recomputes every satisfied-bit and node status from
@@ -606,13 +593,12 @@ from external state rather than from consumed events; `manual` edges persist the
 
 ## 10. Phased rollout
 
-- **v0 (this doc).** ADR-040 Proposed — vocabulary, entity model, and review signoffs promoted
-  to `docs/adr/040-work-graph-orchestration.md` (2026-06-27). No implementation code.
+- **v0 (this doc).** ADR-040 Proposed — vocabulary and entity model only. No implementation code.
 
 - **v1 — execution engine + stacked-PR proof, operator-authored graphs.**
   The brief requires v1 to prove **stacked-PR rebase-unlock AND parallel fan-out**
   (hard constraint), so `rebase-onto` is **in v1**, scoped to the operator-authored stacked-PR
-  proof case (consensus log D6). Ships:
+  proof case. Ships:
   - `work-graph.ts` contracts (`version: 1`; future incompatible schema changes require a
     version bump plus read/migration handling); gateway JSON snapshot store
     (`services/gateway/src/work-graph/store.ts`, `.work-graphs/{id}.json`) with atomic
@@ -640,18 +626,14 @@ from external state rather than from consumed events; `manual` edges persist the
   visualization; GitHub webhooks for low-latency `pr.merged`; `artifact`/bundle edge conditions;
   operator actions for retry/replace/waive/skip.
 
-- **v3 — LLM decomposition + advanced orchestration.** Prose roadmap item → proposed graph
+- **v3 — LLM decomposition + advanced orchestration.** Proposed graph from existing backlog specs
   (human-reviewed before activate); cross-project graphs; critical-path scheduling; priority
   inheritance; analytics; portable cross-gateway graph execution.
 
 **Roadmap relationship (ADR-041).** WorkGraph is an executable dependency DAG over already-created
-BacklogItems. A RoadmapEpic is a planning grouping and is never stored as a WorkGraph. Roadmap
-promotion may draft a graph plan as non-canonical markdown/frontmatter, but the first canonical
-graph write is `workGraph.create(...)` into `.work-graphs/{id}.json` with `status=planning`.
-After that graph exists, roadmap stores only links and promotion snapshots; it must not maintain
-a second edge list. Graph records carry `roadmapItemIds`, optional `roadmapEpicId`,
-`roadmapSnapshotHash`, and `promotionEntryId` so scheduler/progress queries do not need to parse
-mutable roadmap markdown.
+BacklogItems. Roadmap does not own graph state and does not create graph records in ADR-041 v1.
+If an operator later wants dependency scheduling, they create a WorkGraph manually from existing
+backlog items; graph progress can be shown as a derived link from those backlog items.
 
 **Persistence (v1 decision): new gateway store, not extending backlog.** Backlog rows stay flat
 (PR #95's clean contract); graph/node/edge + ledger live in a sibling store. Node→backlog is a
@@ -699,41 +681,14 @@ model for many jobs" anti-pattern ADR-024 §0 warns against.
 - **No new human-gate machinery** — reuse ADR-038 / ADR-023 / recipe gates + the one `manual` edge.
 - **No holding slots for graph dependencies** — `waiting` nodes hold _nothing_; no run exists.
 - **No experiments in the graph** — ADR-030 stays orthogonal; comparison work uses ADR-024
-  comparison lane on the node's backlog/run path, not graph-internal fan-out (D15).
+  comparison lane on the node's backlog/run path, not graph-internal fan-out.
 - **No portable-bundle contents in graph state** — bundles are edge evidence, not the store.
-- **No bypassing backlog auto-dispatch guards** — graph-linked items are scheduler-only (D13).
-- **No bypassing eval slot caps or queue throttling** — graph enqueues; queue dispatches (D14).
+- **No bypassing backlog auto-dispatch guards** — graph-linked items are scheduler-only.
+- **No bypassing eval slot caps or queue throttling** — graph enqueues; queue dispatches.
 
 ---
 
-## 13. Consensus log
-
-Disputed points across the two proposals/reviews and the agreed resolution. Both models had
-**converged** on the load-bearing decisions (horizontal/vertical split, thin node pointer, new
-gateway store, readiness-oracle scheduler, durable `merged` evidence, lease + ledger,
-`needs-attention`, no LLM in v1) before this reconciliation. The remaining disputes:
-
-| #   | Disputed point                            | Proposal A                                           | Proposal B                                                                      | **Resolution**                                                                                                                                        | Rationale                                                                                                                                                                                   |
-| --- | ----------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Node fatness                              | thin pointer (`backlogItemId` + edges + lazy family) | fat node (`flowType`/`priority`/`allowedSlots`/`dispatchPolicy`/`objectiveRef`) | **Thin pointer.** All dispatch config on the backlog item.                                                                                            | One source of truth; avoids the "overload one model" anti-pattern the alternative proposal warned against. The thin-pointer model won in review.                                            |
-| D2  | Node terminal naming                      | node `done` on family-success                        | `succeeded`, UI shows merge-edge pending                                        | **`succeeded` + edge pending shown separately; UI never renders bare "done."**                                                                        | Same semantics; the clearer wording prevents operators reading "done" as "merged."                                                                                                          |
-| D3  | Cycle after edit                          | hard `failed`                                        | `needs-attention`                                                               | **`needs-attention`.**                                                                                                                                | A post-activate edit cycle is an authoring error, not an execution failure. The stricter failure-state proposal won in review.                                                              |
-| D4  | Unlock cardinality                        | one `unlock` per edge                                | `UnlockAction[]` array                                                          | **One unlock per edge in v1.**                                                                                                                        | Array + ledger is more machinery than v1 needs; revisit only if a real two-side-effect case appears.                                                                                        |
-| D5  | Unlock dispatch                           | fire the satisfying edge's action                    | node-level action plan from all inbound edges                                   | **Node-level deterministic plan.**                                                                                                                    | Multiple inbound edges can satisfy together; per-edge firing risks conflicting/duplicate actions. Adopt the node-level plan.                                                                |
-| D6  | `rebase-onto` timing                      | v1 (highest-value feature)                           | v1.5 (highest branch-topology risk)                                             | **v1**, scoped to the operator-authored stacked-PR proof; may split to v1.5 only if build risk demands.                                               | BRIEF hard constraint: v1 must prove **stacked-PR rebase-unlock + parallel fan-out**. The headline goal can't be deferred. Both allowed "v1 if stacked PR is the first proof case" — it is. |
-| D7  | Retry semantics                           | "new family member or fresh family per lane rules"   | attempts stay attached to same node                                             | **Retry re-enqueues the same node, attached to the same node, per its lane rules; replace is an explicit operator edit.**                             | Prevents silent new-family/new-objective drift. Adopt the same-node framing while deferring lane-rule details.                                                                              |
-| D8  | Run linkage                               | initially "no Run fields"                            | additive `workGraphId`/`workNodeId` on Run/QueueItem                            | **Additive back-refs on BacklogItem + QueueItem + Run.** No `waitingOn` on Run.                                                                       | Restart reconciliation + UI joins need them; they're observation, not orchestration. Additive observation links are required for restart reconciliation.                                    |
-| D9  | `WorkNodeAttempt[]` on node               | derive from family/run                               | persist on node                                                                 | **Derive from family/run; persist only the idempotency ledger.**                                                                                      | Storing attempts on the node duplicates family/run data and risks drift.                                                                                                                    |
-| D10 | Status set size                           | tight (`waiting` only)                               | `planned` + `waiting-upstream` distinction                                      | **Keep both `planned` (authored/inactive) and `waiting` (active dependency wait); add `needs-attention`.**                                            | The distinction is operationally real; one merged set with the extra status.                                                                                                                |
-| D11 | "One new primitive" framing               | only `WorkEdge` is new                               | `WorkGraph`/`WorkNode`/`WorkEdge` all first-class                               | **All three are first-class persisted records.**                                                                                                      | Operators + scheduler need graph lifecycle, node status, waiting reasons; the edge is the core new _behavior_ but not the only record. Adopt the first-class record model.                  |
-| D12 | `merged` evidence                         | "PR merged"                                          | merge SHA / closed+merged, durable                                              | **Durable evidence (merge SHA or GitHub closed+merged), never a transient terminal run.**                                                             | Makes restart reconciliation sound. Both agreed; pinned here.                                                                                                                               |
-| D13 | Backlog `autoDispatch` vs graph scheduler | (unstated in consensus)                              | (unstated)                                                                      | **Graph-linked items: graph-owned scheduler/retry/reopen only until explicit detach; flat auto-dispatch and direct enqueue always skip/reject them.** | Operational review — prevents double-enqueue or premature enqueue races with PR #95 `backlog.autoDispatchTick`.                                                                             |
-| D14 | Eval slot caps under parallel fan-out     | (implied queue owns throttling)                      | (implied)                                                                       | **Graph never bypasses queue eval caps or slot selection.**                                                                                           | Operational review — explicit contract for parallel graph fan-out.                                                                                                                          |
-| D15 | Comparison-lane nodes in a graph          | (unstated)                                           | (unstated)                                                                      | **Production node = one active root; comparison via ADR-024 lane on backlog/run, not graph-internal fan-out.**                                        | Operational review — keeps eval methodology out of the DAG scheduler.                                                                                                                       |
-
----
-
-## 14. Open questions for Arthur
+## 13. Open questions for Arthur
 
 Only genuinely unresolved (architecture calls are made above):
 
@@ -754,14 +709,3 @@ Only genuinely unresolved (architecture calls are made above):
    you want stack topology as a first-class edge attribute from the start?
 
 ---
-
-## 15. Review record
-
-The draft was reconciled from local tmux brainstorm artifacts and independent review passes.
-The consensus accepted D1–D12 as written and added operational patches D13–D15 for backlog
-auto-dispatch, eval slot caps, and comparison-lane boundaries.
-
-Brainstorm artifacts (local, gitignored): `.omc/adr040-brainstorm/`.
-
-**Promotion:** Arthur requested promotion with operational patches (2026-06-27). ADR status
-remains **Proposed** until a ROADMAP-next implementation milestone is approved.
