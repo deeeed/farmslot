@@ -45,8 +45,8 @@ import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 
 import { slotPrepare } from './prepare.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
-import { resetSlotRepoToIdle, slotIdleResetStepDetail } from './slot-tracking.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';
+import { resetSlotRepoToIdle, slotIdleResetStepDetail } from './slot-tracking.js';
 
 export async function slotRelease(
   params: SlotReleaseParams,

@@ -70,15 +70,6 @@ import {
 } from './prepare-sentinel.js';
 import { createPrepareStream, type PrepareStream } from './prepare-stream.js';
 import {
-  detectLinkedWorktree,
-  isLinkedGitWorktreeMarker,
-  isSlotIdleBranch,
-  remoteBranchRefspec,
-  resolveMergeMainStrategy,
-  resolveSlotTrackingBranch,
-  worktreeBaseResetRef,
-} from './slot-tracking.js';
-import {
   activePrepareSessions,
   activePrepareSlots,
   applySelectedApp,
@@ -88,6 +79,15 @@ import {
   type SlotPrepareInternalOptions,
   type SlotPrepareResult,
 } from './shared.js';
+import {
+  detectLinkedWorktree,
+  isLinkedGitWorktreeMarker,
+  isSlotIdleBranch,
+  remoteBranchRefspec,
+  resolveMergeMainStrategy,
+  resolveSlotTrackingBranch,
+  worktreeBaseResetRef,
+} from './slot-tracking.js';
 
 export {
   isDefaultWorktreeTrackingBranch,

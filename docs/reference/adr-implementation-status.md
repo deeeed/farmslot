@@ -232,18 +232,18 @@ ADR-041 is design intent only. It should not be implemented until a roadmap mile
 
 ## ADR-042 — Slot Tracking Branches (Accepted)
 
-**Implementation: Partial (prepare only; release gap)**
+**Implementation: Partial (core release/prepare parity shipped in PR #146)**
 
 | ADR requirement                                 | Status      | Evidence / gap                                                                      |
 | ----------------------------------------------- | ----------- | ----------------------------------------------------------------------------------- |
-| Idle = tracking branch @ `origin/defaultBranch` | Partial     | `prepare.ts` allows `wt/ff-*` when HEAD matches; `release.ts` still `checkout main` |
-| Linked worktree reset without `checkout main`   | Partial     | Prepare branch checkout path; release not wired                                     |
-| Project `slot_tracking_branch` template         | Not started | Hardcoded `isDefaultWorktreeTrackingBranch()` regex today                           |
-| `merge_main_strategy` rebase vs merge           | Not started | Prepare always `git merge ${defaultBranch} --no-edit`                               |
-| Shared idle-reset helper prepare + release      | Not started | Logic duplicated; release missing worktree branch                                   |
+| Idle = tracking branch @ `origin/defaultBranch` | Shipped     | `resetSlotRepoToIdle` on release; prepare idle guard + HEAD check                  |
+| Linked worktree reset without `checkout main`   | Shipped     | `slot-tracking.ts` + `release.ts`; E2E `macwork-ff-2` → `wt/ff-2 @ origin/main`     |
+| Project `slot_tracking_branch` template         | Shipped     | Schema + `farmslot-farm` `wt/{{session}}`; legacy `wt/ff-*` regex shim remains    |
+| `merge_main_strategy` rebase vs merge           | Shipped     | `resolveMergeMainStrategy` in prepare merge step                                    |
+| Shared idle-reset helper prepare + release      | Partial     | Release uses helper; prepare branch checkout still inlines reset (shared pure fns)  |
 | Fleet status shows tracking branch @ default    | Not started | `.farm-status.json` reports branch name only                                        |
 
-**Next lane:** gateway `release.ts` fix + project config fields — see [ROADMAP-next.md](../ROADMAP-next.md) item 1.
+**Follow-ups:** bash `release-slot.sh` parity doc, fleet-status `@ origin/main` display, `resetSlotRepoToIdle` integration tests.
 
 ---
 
