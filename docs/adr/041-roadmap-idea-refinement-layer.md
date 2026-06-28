@@ -137,7 +137,7 @@ promotion: []
 ...
 ```
 
-After promotion, the roadmap item can record lightweight links to created backlog specs. Avoid mandatory snapshot hashes in v1; the backlog spec copies the implementation-ready text it needs.
+After promotion, the roadmap item can record lightweight links to created backlog specs. Do not use snapshot hashes in v1; the backlog spec copies the implementation-ready text it needs.
 
 The gateway builds an in-memory index from the files, validates frontmatter on load, and writes atomically with a single-writer lock. Human/external-agent edits are picked up on explicit reload or file-watch invalidation. Gateway writes include the last loaded file hash; if the file changed in an editor, the gateway rejects the write and asks the operator to reload/merge before saving again. Unknown tags remain displayable as raw normalized slugs so human edits do not break the UI.
 
@@ -169,7 +169,7 @@ Promotion to backlog is blocked until the roadmap item has a concrete project ma
 
 A refined roadmap item can promote to backlog as:
 
-1. One backlog item for a single deployable objective when no new manual ADR decision is needed.
+1. One backlog markdown spec for a single deployable objective when no new manual ADR decision is needed.
 2. Multiple backlog markdown specs when the roadmap item spans several deployable objectives.
 
 If refinement shows that an ADR is needed, the user/developer handles that manually before creating backlog specs. The roadmap system can mention the need in markdown, but v1 does not create or update ADR files programmatically.
@@ -203,7 +203,7 @@ Backlog item additions:
 
 V1 backlog can stay markdown-first. A backlog spec must contain enough context for dispatch, including an `## Acceptance Criteria` section. The key rule is that dispatch reads the markdown text just like today's Jira/GitHub ticket text.
 
-Minimal proposed metadata:
+Minimal proposed metadata is additive to PR #95 backlog intake: existing source/title/text fields remain the dispatch contract, while `specPath` points to the local markdown file when the item is backed by one.
 
 ```ts
 interface BacklogItem {
