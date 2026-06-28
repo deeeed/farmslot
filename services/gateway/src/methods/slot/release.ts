@@ -46,6 +46,7 @@ import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { slotPrepare } from './prepare.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';
+import { resetSlotRepoToIdle, slotIdleResetStepDetail } from './slot-tracking.js';
 
 export async function slotRelease(
   params: SlotReleaseParams,
@@ -259,23 +260,9 @@ export async function slotRelease(
       step('storage-clean', `Skipped stale storage cleanup: ${detail}`);
     }
 
-    // Git reset to default branch
-    step('git', `Returning to ${defaultBranch}...`);
-    const currentBranch = (
-      await execOnSlot(
-        vars,
-        `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
-      )
-    ).stdout.trim();
-    if (currentBranch === defaultBranch) {
-      step('git', `Already on ${defaultBranch}`);
-    } else {
-      await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git checkout -- . 2>/dev/null && git clean -fd 2>/dev/null && git checkout ${defaultBranch} 2>/dev/null && git pull origin ${defaultBranch} 2>/dev/null`,
-      );
-      step('git', `Returned to ${defaultBranch} (was ${currentBranch})`);
-    }
+    step('git', `Returning slot to idle baseline...`);
+    const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+    step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
 
     // Recycle app
     step('recycle', 'Recycling app...');

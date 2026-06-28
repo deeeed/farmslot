@@ -79,22 +79,21 @@ import {
   type SlotPrepareInternalOptions,
   type SlotPrepareResult,
 } from './shared.js';
+import {
+  detectLinkedWorktree,
+  isLinkedGitWorktreeMarker,
+  isSlotIdleBranch,
+  remoteBranchRefspec,
+  resolveMergeMainStrategy,
+  resolveSlotTrackingBranch,
+  worktreeBaseResetRef,
+} from './slot-tracking.js';
 
-export function isDefaultWorktreeTrackingBranch(branch: string): boolean {
-  return /^wt\/ff-[A-Za-z0-9._-]+$/.test(branch);
-}
-
-/** Linked worktrees use a .git *file* pointing at the main repo's worktree metadata. */
-export function isLinkedGitWorktreeMarker(stdout: string): boolean {
-  return stdout.trim() === 'linked';
-}
-
-export function worktreeBaseResetRef(
-  defaultBranch: string,
-  resolvedStartRef: StartRefResolution | null,
-): string {
-  return resolvedStartRef?.resolvedSha ?? `origin/${defaultBranch}`;
-}
+export {
+  isDefaultWorktreeTrackingBranch,
+  isLinkedGitWorktreeMarker,
+  worktreeBaseResetRef,
+} from './slot-tracking.js';
 
 export async function slotPrepare(
   params: SlotPrepareParams,
@@ -199,8 +198,6 @@ async function slotPrepareInner(
     'timeouts.prepare_preflight_s',
     PREPARE_PREFLIGHT_TIMEOUT_MS,
   );
-  const remoteBranchRefspec = (name: string): string =>
-    `+refs/heads/${name}:refs/remotes/origin/${name}`;
   const branch = params.branch || '';
   if (opts?.startRef && !branch) {
     throw new Error('startRef prepare requires a work branch');
@@ -564,12 +561,19 @@ async function slotPrepareInner(
     );
   } else {
     if (!branch && current && current !== defaultBranch) {
-      // Git worktrees cannot checkout `main` when it is checked out elsewhere.
-      // Sandboxes use tracking branches (e.g. wt/ff-2) at the same commit as
-      // origin/defaultBranch — allow prepare when HEAD matches, not only by name.
-      if (!isDefaultWorktreeTrackingBranch(current)) {
+      const linkedWorktree = await detectLinkedWorktree(vars);
+      const trackingBranch = resolveSlotTrackingBranch(
+        projectJson,
+        vars,
+        projectVars,
+        linkedWorktree,
+      );
+      if (!isSlotIdleBranch(current, trackingBranch, defaultBranch, linkedWorktree)) {
+        const expected = linkedWorktree
+          ? `'${trackingBranch}' or '${defaultBranch}'`
+          : `'${defaultBranch}'`;
         throw new Error(
-          `Slot is on '${current}', expected '${defaultBranch}' or a wt/ff-* worktree branch. Run release-slot.sh first.`,
+          `Slot is on '${current}', expected ${expected}. Run release-slot.sh first.`,
         );
       }
       const fetchDefaultR = await execOnSlot(
@@ -589,12 +593,14 @@ async function slotPrepareInner(
       const worktreeAtDefault = headR.exitCode === 0 && refs.length === 2 && refs[0] === refs[1];
       if (!worktreeAtDefault) {
         throw new Error(
-          `Slot is on '${current}', expected '${defaultBranch}'. Run release-slot.sh first.`,
+          `Slot is on '${current}', expected '${trackingBranch}' @ origin/${defaultBranch}. Run release-slot.sh first.`,
         );
       }
       step(
         'branch',
-        `Worktree tracking branch '${current}' matches origin/${defaultBranch}; proceeding`,
+        linkedWorktree
+          ? `Worktree tracking branch '${current}' matches origin/${defaultBranch}; proceeding`
+          : `HEAD matches origin/${defaultBranch}; proceeding`,
       );
     }
 
@@ -927,19 +933,47 @@ async function slotPrepareInner(
 
   // 2c. Merge main
   if (mergeMain && branch) {
-    step('merge', `Merging ${defaultBranch}...`);
-    const mergeR = await execOnSlot(
-      vars,
-      `cd ${shellQuote(vars.remoteRepo)} && git merge ${defaultBranch} --no-edit 2>&1`,
+    const mergeStrategy = resolveMergeMainStrategy(
+      projectJson,
+      params.mergeMainStrategy as 'merge' | 'rebase' | undefined,
     );
-    if (/CONFLICT|merge failed|Automatic merge failed/i.exec(mergeR.stdout)) {
+    const linkedWorktree = await detectLinkedWorktree(vars);
+    if (mergeStrategy === 'rebase') {
+      step('merge', `Rebasing ${branch} onto origin/${defaultBranch}...`);
       await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git merge --abort 2>/dev/null; git checkout ${defaultBranch} 2>/dev/null`,
+        `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
       );
-      throw new Error(`Merge conflict — PR author must rebase/merge ${defaultBranch}`);
+      const rebaseR = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git rebase ${shellQuote(`origin/${defaultBranch}`)} 2>&1`,
+      );
+      if (
+        rebaseR.exitCode !== 0 ||
+        /CONFLICT|could not apply|patch failed/i.test(rebaseR.stdout + rebaseR.stderr)
+      ) {
+        await execOnSlot(
+          vars,
+          `cd ${shellQuote(vars.remoteRepo)} && git rebase --abort 2>/dev/null`,
+        );
+        throw new Error(`Rebase conflict — PR author must rebase/merge ${defaultBranch}`);
+      }
+      step('merge', `Rebased ${branch} onto origin/${defaultBranch}`);
+    } else {
+      step('merge', `Merging ${defaultBranch}...`);
+      const mergeR = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git merge ${defaultBranch} --no-edit 2>&1`,
+      );
+      if (/CONFLICT|merge failed|Automatic merge failed/i.exec(mergeR.stdout)) {
+        const abortCmd = linkedWorktree
+          ? `cd ${shellQuote(vars.remoteRepo)} && git merge --abort 2>/dev/null`
+          : `cd ${shellQuote(vars.remoteRepo)} && git merge --abort 2>/dev/null; git checkout ${defaultBranch} 2>/dev/null`;
+        await execOnSlot(vars, abortCmd);
+        throw new Error(`Merge conflict — PR author must rebase/merge ${defaultBranch}`);
+      }
+      step('merge', `Merged ${defaultBranch} into ${branch}`);
     }
-    step('merge', `Merged ${defaultBranch} into ${branch}`);
   }
 
   // 3. Fixtures — after checkout/reset/merge so tracked fixture outputs (for

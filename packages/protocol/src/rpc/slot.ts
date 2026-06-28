@@ -57,10 +57,14 @@ export interface SlotCheckParams {
   slotId: string;
 }
 
+export type MergeMainStrategy = 'merge' | 'rebase';
+
 export interface SlotPrepareParams {
   slotId: string;
   branch?: string;
   mergeMain?: boolean;
+  /** Overrides project merge_main_strategy for this prepare (ADR-042). */
+  mergeMainStrategy?: MergeMainStrategy;
   forceNewBranch?: boolean;
   flowType?: string;
   app?: string;

@@ -120,6 +120,9 @@ export interface RawProjectJson {
   repo_url?: string;
   primary_repo?: string;
   default_branch?: string;
+  worktree_base?: string;
+  slot_tracking_branch?: string;
+  merge_main_strategy?: 'merge' | 'rebase';
   recipe_run_supports_playback_slow?: boolean;
   recipe_run_supports_video_recording?: boolean;
   apps?: string[];

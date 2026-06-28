@@ -132,6 +132,17 @@
       "description": "Base directory for git worktrees. Slots may use worktrees under this path.",
       "examples": ["/Users/example/dev/example-app-wt"]
     },
+    "slot_tracking_branch": {
+      "type": "string",
+      "description": "Template for the idle git branch on linked worktrees (ADR-042). Expanded with slot hook variables such as {{session}}. When omitted on linked worktrees, the gateway derives wt/{{session}}.",
+      "examples": ["wt/{{session}}"]
+    },
+    "merge_main_strategy": {
+      "type": "string",
+      "enum": ["merge", "rebase"],
+      "description": "How prepare integrates default_branch when mergeMain is true (ADR-042). Default merge preserves review-pr abort-on-conflict behavior; rebase is opt-in for linear history.",
+      "default": "merge"
+    },
     "owner_agent": {
       "type": "string",
       "description": "Name of the agent that owns this project, for routing purposes."
