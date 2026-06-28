@@ -29,9 +29,16 @@ export async function dispatchQueueAdd(
 ): Promise<DispatchQueueAddResult> {
   const rawParams = params as DispatchQueueAddParams & {
     backlogItemId?: unknown;
+    workGraphId?: unknown;
+    workNodeId?: unknown;
     ticketData?: unknown;
   };
-  if (rawParams.backlogItemId !== undefined || rawParams.ticketData !== undefined) {
+  if (
+    rawParams.backlogItemId !== undefined ||
+    rawParams.workGraphId !== undefined ||
+    rawParams.workNodeId !== undefined ||
+    rawParams.ticketData !== undefined
+  ) {
     throw new Error(
       'dispatch.queue.add cannot accept backlog handoff metadata; use backlog.enqueue',
     );

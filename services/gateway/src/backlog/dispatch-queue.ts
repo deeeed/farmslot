@@ -177,6 +177,8 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
     id: randomUUID(),
     queueKind: params.queueKind ?? 'dispatch',
     backlogItemId: params.backlogItemId,
+    workGraphId: params.workGraphId,
+    workNodeId: params.workNodeId,
     label: params.label,
     flowType: params.flowType,
     project: params.project,

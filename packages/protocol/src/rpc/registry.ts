@@ -49,6 +49,18 @@ export const Methods = {
   BACKLOG_AUTO_DISPATCH_TICK: 'backlog.autoDispatchTick',
   BACKLOG_UPCOMING: 'backlog.upcoming',
 
+  // Work Graph
+  WORK_GRAPH_CREATE: 'workGraph.create',
+  WORK_GRAPH_GET: 'workGraph.get',
+  WORK_GRAPH_LIST: 'workGraph.list',
+  WORK_GRAPH_ADD_NODE: 'workGraph.addNode',
+  WORK_GRAPH_ADD_EDGE: 'workGraph.addEdge',
+  WORK_GRAPH_UPDATE_NODE: 'workGraph.updateNode',
+  WORK_GRAPH_ACTIVATE: 'workGraph.activate',
+  WORK_GRAPH_PAUSE: 'workGraph.pause',
+  WORK_GRAPH_GATE_RESOLVE: 'workGraph.gateResolve',
+  WORK_GRAPH_SCHEDULER_TICK: 'workGraph.schedulerTick',
+
   // Roadmap
   ROADMAP_LIST: 'roadmap.list',
   ROADMAP_GET: 'roadmap.get',

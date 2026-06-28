@@ -1,0 +1,896 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import {
+  Events,
+  isTerminalRunStatus,
+  normalizeRunTags,
+  type Run,
+  type WorkEdge,
+  type WorkGraph,
+  type WorkGraphActionLedgerEntry,
+  type WorkGraphAddEdgeParams,
+  type WorkGraphAddNodeParams,
+  type WorkGraphCreateParams,
+  type WorkGraphListRpcParams,
+  type WorkGraphProjection,
+  type WorkGraphSnapshot,
+  type WorkGraphUpdateNodeParams,
+  type WorkNode,
+} from '@farmslot/protocol';
+
+import { getQueueSnapshot, persistQueueNow } from '../backlog/dispatch-queue.js';
+import {
+  attachBacklogItemToWorkNode,
+  enqueueBacklogItem,
+  getBacklogItemSnapshot,
+  markBacklogItemReady,
+} from '../backlog/store.js';
+import { farmslotRoot } from '../fleet/state.js';
+import { getAllRuns } from '../runs/store.js';
+
+type BroadcastFn = (event: string, payload: unknown) => void;
+
+const LEASE_MS = 30_000;
+const graphs = new Map<string, WorkGraphSnapshot>();
+let persistChain: Promise<void> = Promise.resolve();
+let mutationTail: Promise<void> = Promise.resolve();
+let broadcast: BroadcastFn | null = null;
+
+function shouldUseIsolatedGraphDir(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
+  if (env.FARMSLOT_TEST_TMP === '1' || env.NODE_TEST_CONTEXT) return true;
+  return argv.some((arg) => /(?:^|[/\\])[^/\\]+\.test\.(?:ts|tsx|js|mjs|cjs)$/.test(arg));
+}
+
+function resolveGraphDir(): string {
+  if (process.env.FARMSLOT_WORK_GRAPH_DIR) return process.env.FARMSLOT_WORK_GRAPH_DIR;
+  if (shouldUseIsolatedGraphDir(process.env, process.argv)) {
+    return path.join(os.tmpdir(), `farmslot-test-work-graphs-${process.pid}`);
+  }
+  return path.join(farmslotRoot, '.work-graphs');
+}
+
+const GRAPH_DIR = resolveGraphDir();
+const SAFE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+export function initWorkGraphStore(fn: BroadcastFn): void {
+  broadcast = fn;
+}
+
+async function withMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = mutationTail;
+  let release!: () => void;
+  mutationTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
+}
+
+async function ensureDir(): Promise<void> {
+  await mkdir(GRAPH_DIR, { recursive: true });
+}
+
+function graphFile(graphId: string): string {
+  if (!isSafeId(graphId)) throw new Error(`Invalid work graph id: ${graphId}`);
+  const file = path.resolve(GRAPH_DIR, `${graphId}.json`);
+  const graphDir = path.resolve(GRAPH_DIR);
+  if (!file.startsWith(`${graphDir}${path.sep}`))
+    throw new Error(`Invalid work graph path for id: ${graphId}`);
+  return file;
+}
+
+async function persistSnapshot(snapshot: WorkGraphSnapshot): Promise<void> {
+  await ensureDir();
+  const file = graphFile(snapshot.graph.id);
+  const tmp = `${file}.tmp.${process.pid}.${randomUUID().slice(0, 8)}`;
+  await writeFile(tmp, JSON.stringify(snapshot, null, 2), 'utf-8');
+  await rename(tmp, file);
+}
+
+function enqueuePersist(snapshot: WorkGraphSnapshot): Promise<void> {
+  persistChain = persistChain.catch(() => undefined).then(() => persistSnapshot(snapshot));
+  return persistChain;
+}
+
+async function persistNow(snapshot: WorkGraphSnapshot): Promise<void> {
+  await enqueuePersist(snapshot);
+}
+
+function emit(snapshot: WorkGraphSnapshot): void {
+  broadcast?.(Events.WORK_GRAPH_UPDATED, { graph: project(snapshot) });
+}
+
+function project(snapshot: WorkGraphSnapshot): WorkGraphProjection {
+  return {
+    graph: { ...snapshot.graph, tags: snapshot.graph.tags ? [...snapshot.graph.tags] : undefined },
+    nodes: snapshot.nodes.map((node) => ({
+      ...node,
+      tags: node.tags ? [...node.tags] : undefined,
+      waitingOn: node.waitingOn.map((reason) => ({ ...reason })),
+      supersededFamilyIds: node.supersededFamilyIds ? [...node.supersededFamilyIds] : undefined,
+      upstreamBaseNodeIds: node.upstreamBaseNodeIds ? [...node.upstreamBaseNodeIds] : undefined,
+    })),
+    edges: snapshot.edges.map((edge) => ({
+      ...edge,
+      evidence: edge.evidence ? { ...edge.evidence } : undefined,
+    })),
+    gates: snapshot.gates.map((gate) => ({ ...gate })),
+    ledger: snapshot.ledger.map((entry) => ({ ...entry })),
+  };
+}
+
+function isSafeId(input: string): boolean {
+  return SAFE_ID_RE.test(input);
+}
+
+function normalizeId(prefix: string, input: string | undefined, title = ''): string {
+  const explicit = input?.trim();
+  if (explicit) {
+    if (!isSafeId(explicit)) {
+      throw new Error(
+        `Invalid identifier ${explicit}; use letters, numbers, underscores, or dashes`,
+      );
+    }
+    return explicit;
+  }
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return `${prefix}_${slug || randomUUID().slice(0, 8)}`;
+}
+
+function requireGraph(graphId: string): WorkGraphSnapshot {
+  const snapshot = graphs.get(graphId);
+  if (!snapshot) throw new Error(`Work graph not found: ${graphId}`);
+  return snapshot;
+}
+
+function normalizeStoredSnapshot(raw: unknown): WorkGraphSnapshot | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const snapshot = raw as WorkGraphSnapshot;
+  if (!snapshot.graph?.id || snapshot.graph.version !== 1) return null;
+  if (!isSafeId(snapshot.graph.id)) return null;
+  if (!Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.edges)) return null;
+  return {
+    graph: {
+      ...snapshot.graph,
+      tags: normalizeRunTags(snapshot.graph.tags),
+      scheduler: snapshot.graph.scheduler ?? {},
+      defaultFailurePolicy: snapshot.graph.defaultFailurePolicy ?? 'halt',
+    },
+    nodes: snapshot.nodes.map((node) => ({ ...node, waitingOn: node.waitingOn ?? [] })),
+    edges: snapshot.edges.map((edge) => ({
+      ...edge,
+      required: edge.required !== false,
+      status: edge.status ?? 'pending',
+      unlock: edge.unlock ?? { kind: 'enqueue' },
+    })),
+    gates: Array.isArray(snapshot.gates) ? snapshot.gates : [],
+    ledger: Array.isArray(snapshot.ledger) ? snapshot.ledger : [],
+  };
+}
+
+export async function loadWorkGraphs(): Promise<void> {
+  graphs.clear();
+  await ensureDir();
+  let files: string[];
+  try {
+    files = await readdir(GRAPH_DIR);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  for (const file of files) {
+    if (!file.endsWith('.json') || file.includes('.tmp.')) continue;
+    const parsed: unknown = JSON.parse(await readFile(path.join(GRAPH_DIR, file), 'utf-8'));
+    const snapshot = normalizeStoredSnapshot(parsed);
+    if (snapshot) graphs.set(snapshot.graph.id, snapshot);
+  }
+}
+
+function wouldCreateCycle(nodes: readonly WorkNode[], edges: readonly WorkEdge[]): string[] {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const adjacency = new Map<string, string[]>();
+  for (const node of nodes) adjacency.set(node.id, []);
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.fromNodeId) || !nodeIds.has(edge.toNodeId)) {
+      return [edge.id];
+    }
+    adjacency.get(edge.fromNodeId)?.push(edge.toNodeId);
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const cycle: string[] = [];
+  const visit = (nodeId: string): boolean => {
+    if (visiting.has(nodeId)) {
+      cycle.push(nodeId);
+      return true;
+    }
+    if (visited.has(nodeId)) return false;
+    visiting.add(nodeId);
+    for (const next of adjacency.get(nodeId) ?? []) {
+      if (visit(next)) {
+        cycle.push(nodeId);
+        return true;
+      }
+    }
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+    return false;
+  };
+  for (const node of nodes) {
+    if (visit(node.id)) return cycle.reverse();
+  }
+  return [];
+}
+
+function assertNoCycle(snapshot: WorkGraphSnapshot): void {
+  const cycle = wouldCreateCycle(snapshot.nodes, snapshot.edges);
+  if (cycle.length > 0) throw new Error(`Work graph contains a cycle: ${cycle.join(' -> ')}`);
+}
+
+export async function createWorkGraph(
+  params: WorkGraphCreateParams,
+): Promise<{ graph: WorkGraphProjection }> {
+  return withMutation(async () => {
+    if (!params.project?.trim()) throw new Error('workGraph.create requires project');
+    if (!params.title?.trim()) throw new Error('workGraph.create requires title');
+    const now = new Date().toISOString();
+    const id = normalizeId('wg', params.id, params.title);
+    if (graphs.has(id)) throw new Error(`Work graph already exists: ${id}`);
+    const graph: WorkGraph = {
+      id,
+      version: 1,
+      project: params.project.trim(),
+      title: params.title.trim(),
+      source: params.source ?? { kind: 'manual' },
+      ...(normalizeRunTags(params.tags).length ? { tags: normalizeRunTags(params.tags) } : {}),
+      status: 'planning',
+      defaultFailurePolicy: params.defaultFailurePolicy ?? 'halt',
+      scheduler: {},
+      createdAt: now,
+      updatedAt: now,
+    };
+    const snapshot: WorkGraphSnapshot = { graph, nodes: [], edges: [], gates: [], ledger: [] };
+    graphs.set(id, snapshot);
+    await persistNow(snapshot);
+    emit(snapshot);
+    return { graph: project(snapshot) };
+  });
+}
+
+export function listWorkGraphs(params: WorkGraphListRpcParams = {}): {
+  graphs: WorkGraphProjection[];
+} {
+  const tagFilter = normalizeRunTags(params.tags);
+  const filtered = [...graphs.values()].filter((snapshot) => {
+    if (params.project && snapshot.graph.project !== params.project) return false;
+    if (params.status && snapshot.graph.status !== params.status) return false;
+    if (!params.includeArchived && snapshot.graph.status === 'archived') return false;
+    if (tagFilter.length) {
+      const graphTags = new Set(normalizeRunTags(snapshot.graph.tags));
+      if (!tagFilter.every((tag) => graphTags.has(tag))) return false;
+    }
+    return true;
+  });
+  return { graphs: filtered.map(project) };
+}
+
+export function getWorkGraph(params: { graphId: string }): { graph: WorkGraphProjection } {
+  return { graph: project(requireGraph(params.graphId)) };
+}
+
+function assertBacklogAvailableForNode(backlogItemId: string, graphId: string): void {
+  const liveGraphs = [...graphs.values()].filter(
+    (snapshot) => snapshot.graph.status !== 'archived',
+  );
+  for (const snapshot of liveGraphs) {
+    if (snapshot.graph.id === graphId) continue;
+    const existing = snapshot.nodes.find((node) => node.backlogItemId === backlogItemId);
+    if (existing) {
+      throw new Error(
+        `Backlog item ${backlogItemId} is already attached to work graph ${snapshot.graph.id}`,
+      );
+    }
+  }
+}
+
+export async function addWorkGraphNode(
+  params: WorkGraphAddNodeParams,
+): Promise<{ graph: WorkGraphProjection }> {
+  return withMutation(async () => {
+    const snapshot = requireGraph(params.graphId);
+    if (snapshot.graph.status !== 'planning')
+      throw new Error('workGraph.addNode requires planning status');
+    if (snapshot.nodes.some((node) => node.backlogItemId === params.backlogItemId)) {
+      throw new Error(`Backlog item ${params.backlogItemId} is already attached to this graph`);
+    }
+    assertBacklogAvailableForNode(params.backlogItemId, params.graphId);
+    const backlogItem = getBacklogItemSnapshot(params.backlogItemId);
+    if (!backlogItem) throw new Error(`Backlog item not found: ${params.backlogItemId}`);
+    if (backlogItem.project !== snapshot.graph.project) {
+      throw new Error(
+        `Backlog item project ${backlogItem.project} does not match graph project ${snapshot.graph.project}`,
+      );
+    }
+    const nodeId = normalizeId('wn', params.id, backlogItem.title);
+    if (snapshot.nodes.some((node) => node.id === nodeId))
+      throw new Error(`Work node already exists: ${nodeId}`);
+    const now = new Date().toISOString();
+    const node: WorkNode = {
+      id: nodeId,
+      graphId: snapshot.graph.id,
+      backlogItemId: backlogItem.id,
+      ...(normalizeRunTags(params.tags ?? backlogItem.tags).length
+        ? { tags: normalizeRunTags(params.tags ?? backlogItem.tags) }
+        : {}),
+      status: 'planned',
+      waitingOn: [],
+      ...(params.onFailure ? { onFailure: params.onFailure } : {}),
+      updatedAt: now,
+    };
+    await attachBacklogItemToWorkNode({
+      itemId: backlogItem.id,
+      graphId: snapshot.graph.id,
+      nodeId,
+    });
+    snapshot.nodes.push(node);
+    snapshot.graph.updatedAt = now;
+    await persistNow(snapshot);
+    emit(snapshot);
+    return { graph: project(snapshot) };
+  });
+}
+
+export async function addWorkGraphEdge(
+  params: WorkGraphAddEdgeParams,
+): Promise<{ graph: WorkGraphProjection }> {
+  return withMutation(async () => {
+    const snapshot = requireGraph(params.graphId);
+    if (snapshot.graph.status !== 'planning')
+      throw new Error('workGraph.addEdge requires planning status');
+    if (!snapshot.nodes.some((node) => node.id === params.fromNodeId))
+      throw new Error(`fromNode not found: ${params.fromNodeId}`);
+    if (!snapshot.nodes.some((node) => node.id === params.toNodeId))
+      throw new Error(`toNode not found: ${params.toNodeId}`);
+    const edge: WorkEdge = {
+      id: normalizeId('we', params.id, `${params.fromNodeId}-${params.toNodeId}`),
+      graphId: snapshot.graph.id,
+      fromNodeId: params.fromNodeId,
+      toNodeId: params.toNodeId,
+      condition: params.condition,
+      required: params.required !== false,
+      status: 'pending',
+      unlock: params.unlock ?? { kind: 'enqueue' },
+    };
+    const candidate = { ...snapshot, edges: [...snapshot.edges, edge] };
+    assertNoCycle(candidate);
+    snapshot.edges.push(edge);
+    snapshot.graph.updatedAt = new Date().toISOString();
+    await persistNow(snapshot);
+    emit(snapshot);
+    return { graph: project(snapshot) };
+  });
+}
+
+export async function updateWorkGraphNode(
+  params: WorkGraphUpdateNodeParams,
+): Promise<{ graph: WorkGraphProjection }> {
+  return withMutation(async () => {
+    const snapshot = requireGraph(params.graphId);
+    const node = snapshot.nodes.find((candidate) => candidate.id === params.nodeId);
+    if (!node) throw new Error(`Work node not found: ${params.nodeId}`);
+    if (params.status) node.status = params.status;
+    if (params.tags !== undefined) {
+      const tags = params.tags === null ? [] : normalizeRunTags(params.tags);
+      if (tags.length) node.tags = tags;
+      else delete node.tags;
+    }
+    if (params.onFailure !== undefined) {
+      if (params.onFailure === null) delete node.onFailure;
+      else node.onFailure = params.onFailure;
+    }
+    if (params.baseRef !== undefined) {
+      if (params.baseRef === null || !params.baseRef.trim()) delete node.baseRef;
+      else node.baseRef = params.baseRef.trim();
+    }
+    if (params.upstreamBaseNodeIds !== undefined) {
+      if (params.upstreamBaseNodeIds === null) delete node.upstreamBaseNodeIds;
+      else
+        node.upstreamBaseNodeIds = [
+          ...new Set(params.upstreamBaseNodeIds.map((id) => id.trim()).filter(Boolean)),
+        ];
+    }
+    node.updatedAt = new Date().toISOString();
+    snapshot.graph.updatedAt = node.updatedAt;
+    await persistNow(snapshot);
+    emit(snapshot);
+    return { graph: project(snapshot) };
+  });
+}
+
+export async function activateWorkGraph(params: {
+  graphId: string;
+}): Promise<{ graph: WorkGraphProjection }> {
+  await withMutation(async () => {
+    const snapshot = requireGraph(params.graphId);
+    assertNoCycle(snapshot);
+    const now = new Date().toISOString();
+    snapshot.graph.status = 'active';
+    snapshot.graph.updatedAt = now;
+    for (const node of snapshot.nodes) {
+      if (node.status === 'planned') {
+        node.status = 'waiting';
+        node.updatedAt = now;
+      }
+    }
+    await persistNow(snapshot);
+    emit(snapshot);
+  });
+  await schedulerTick({ graphId: params.graphId });
+  return { graph: project(requireGraph(params.graphId)) };
+}
+
+export async function pauseWorkGraph(params: {
+  graphId: string;
+}): Promise<{ graph: WorkGraphProjection }> {
+  return withMutation(async () => {
+    const snapshot = requireGraph(params.graphId);
+    snapshot.graph.status = 'paused';
+    snapshot.graph.updatedAt = new Date().toISOString();
+    await persistNow(snapshot);
+    emit(snapshot);
+    return { graph: project(snapshot) };
+  });
+}
+
+function terminalFamilyOutcome(
+  runs: readonly Run[],
+  familyId: string | undefined,
+): 'success' | 'failure' | 'cancelled' | null {
+  if (!familyId) return null;
+  const familyRuns = runs.filter((run) => run.familyId === familyId || run.id === familyId);
+  if (familyRuns.length === 0) return null;
+  if (familyRuns.some((run) => !isTerminalRunStatus(run.status))) return null;
+  if (familyRuns.some((run) => run.status === 'failed')) return 'failure';
+  if (familyRuns.some((run) => run.status === 'cancelled')) return 'cancelled';
+  return 'success';
+}
+
+function mergedEvidenceFromRuns(
+  runs: readonly Run[],
+): { prNumber?: number; mergeSha?: string } | null {
+  for (const run of runs) {
+    const record = run as Run & { mergedAt?: string; mergeSha?: string; prState?: string };
+    if (record.prState === 'MERGED' || record.mergedAt || record.mergeSha) {
+      return { prNumber: run.prNumber, mergeSha: record.mergeSha };
+    }
+  }
+  return null;
+}
+
+function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): void {
+  const linkedRuns = runs.filter(
+    (run) => run.workGraphId === node.graphId && run.workNodeId === node.id,
+  );
+  const latestRun = linkedRuns.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const queued = getQueueSnapshot().find(
+    (item) => item.workGraphId === node.graphId && item.workNodeId === node.id,
+  );
+  if (latestRun) {
+    node.latestRunId = latestRun.id;
+    node.currentFamilyId = latestRun.familyId;
+    if (!latestRun.parentRunId) node.currentRootRunId = latestRun.id;
+    if (latestRun.status === 'blocked' || latestRun.status === 'human-gating')
+      node.status = 'gated';
+    else if (latestRun.status === 'done') node.status = 'succeeded';
+    else if (latestRun.status === 'failed' || latestRun.status === 'cancelled')
+      node.status = 'failed';
+    else node.status = 'running';
+    node.updatedAt = new Date().toISOString();
+    return;
+  }
+  if (queued) {
+    node.status = 'queued';
+    node.updatedAt = new Date().toISOString();
+  }
+}
+
+function evaluateEdge(
+  edge: WorkEdge,
+  snapshot: WorkGraphSnapshot,
+  runs: readonly Run[],
+  now: string,
+): void {
+  const from = snapshot.nodes.find((node) => node.id === edge.fromNodeId);
+  if (!from) {
+    edge.status = 'failed';
+    edge.lastEvaluatedAt = now;
+    return;
+  }
+  if (edge.condition.kind === 'manual') {
+    const gateId = edge.condition.gateId;
+    const resolution = [...snapshot.gates]
+      .reverse()
+      .find(
+        (gate) =>
+          gate.gateId === gateId &&
+          (!gate.graphId || gate.graphId === snapshot.graph.id) &&
+          (gate.edgeId ?? edge.id) === edge.id,
+      );
+    if (resolution?.decision === 'approved' || resolution?.decision === 'waived') {
+      edge.status = resolution.decision === 'waived' ? 'waived' : 'satisfied';
+      edge.evidence = { manualResolution: resolution, observedAt: resolution.resolvedAt };
+    } else if (resolution?.decision === 'rejected') {
+      edge.status = 'failed';
+      edge.evidence = { manualResolution: resolution, observedAt: resolution.resolvedAt };
+    } else {
+      edge.status = 'pending';
+      delete edge.evidence;
+    }
+  } else if (edge.condition.kind === 'family-done') {
+    const outcome = terminalFamilyOutcome(runs, from.currentFamilyId);
+    if (
+      outcome &&
+      (edge.condition.outcome === 'terminal' ||
+        (!edge.condition.outcome && outcome === 'success') ||
+        edge.condition.outcome === outcome)
+    ) {
+      edge.status = 'satisfied';
+      edge.evidence = { observedAt: now };
+    } else if (outcome && outcome !== 'success' && edge.required) {
+      edge.status = 'failed';
+      edge.evidence = { observedAt: now };
+    } else {
+      edge.status = 'pending';
+      delete edge.evidence;
+    }
+  } else if (edge.condition.kind === 'merged') {
+    const upstreamRuns = runs.filter(
+      (run) => run.familyId === from.currentFamilyId || run.id === from.currentFamilyId,
+    );
+    const evidence = mergedEvidenceFromRuns(upstreamRuns);
+    if (evidence) {
+      edge.status = 'satisfied';
+      edge.evidence = { ...evidence, observedAt: now };
+    } else {
+      edge.status = 'pending';
+      delete edge.evidence;
+    }
+  }
+  edge.lastEvaluatedAt = now;
+}
+
+function readinessVersion(snapshot: WorkGraphSnapshot, node: WorkNode, actions: string[]): string {
+  const satisfiedEdges = snapshot.edges
+    .filter(
+      (edge) =>
+        edge.toNodeId === node.id &&
+        edge.required &&
+        (edge.status === 'satisfied' || edge.status === 'waived'),
+    )
+    .map((edge) => edge.id)
+    .sort();
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        graphId: snapshot.graph.id,
+        nodeId: node.id,
+        edges: satisfiedEdges,
+        actions,
+      }),
+    )
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function computeWaiting(node: WorkNode, inbound: readonly WorkEdge[]): void {
+  node.waitingOn = inbound
+    .filter((edge) => edge.required && edge.status !== 'satisfied' && edge.status !== 'waived')
+    .map((edge) => ({
+      kind: edge.condition.kind === 'manual' ? 'manual-gate' : 'upstream',
+      edgeId: edge.id,
+      upstreamNodeId: edge.fromNodeId,
+      detail:
+        edge.condition.kind === 'manual'
+          ? `Waiting on manual gate ${edge.condition.gateId}`
+          : `Waiting on upstream node ${edge.fromNodeId}`,
+    }));
+}
+
+function unlockActionKind(inbound: readonly WorkEdge[]): WorkGraphActionLedgerEntry['actionKind'] {
+  if (inbound.some((edge) => edge.unlock.kind === 'mark-ready')) return 'mark-ready';
+  if (inbound.some((edge) => edge.unlock.kind === 'rebase-onto')) return 'rebase-onto';
+  return 'enqueue';
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function recordNodeUnlockFailure(
+  snapshot: WorkGraphSnapshot,
+  node: WorkNode,
+  inbound: readonly WorkEdge[],
+  now: string,
+  message: string,
+): void {
+  const actions = inbound.map((edge) => edge.unlock.kind).sort();
+  const version = readinessVersion(snapshot, node, actions);
+  const actionKind = unlockActionKind(inbound);
+  const existingStarted = snapshot.ledger.find(
+    (entry) =>
+      entry.graphId === snapshot.graph.id &&
+      entry.nodeId === node.id &&
+      entry.actionKind === actionKind &&
+      entry.readinessVersion === version &&
+      entry.status === 'started',
+  );
+  if (existingStarted) {
+    existingStarted.status = 'failed';
+    existingStarted.completedAt = now;
+    existingStarted.result = message;
+  } else {
+    const key = `${snapshot.graph.id}:${node.id}:${actionKind}:failed:${version}`;
+    if (!snapshot.ledger.some((entry) => entry.key === key)) {
+      snapshot.ledger.push({
+        key,
+        graphId: snapshot.graph.id,
+        nodeId: node.id,
+        actionKind,
+        readinessVersion: version,
+        status: 'failed',
+        startedAt: now,
+        completedAt: now,
+        result: message,
+      });
+    }
+  }
+  node.status = 'needs-attention';
+  node.waitingOn = [{ kind: 'policy', detail: `Unlock failed: ${message}` }];
+  node.updatedAt = now;
+  snapshot.graph.status = 'needs-attention';
+}
+
+async function executeNodeUnlock(
+  snapshot: WorkGraphSnapshot,
+  node: WorkNode,
+  inbound: readonly WorkEdge[],
+  now: string,
+): Promise<void> {
+  const actions = inbound.map((edge) => edge.unlock.kind).sort();
+  const version = readinessVersion(snapshot, node, actions);
+  const actionKind = unlockActionKind(inbound);
+  const actionKey = `${snapshot.graph.id}:${node.id}:${actionKind}:${version}`;
+  if (snapshot.ledger.some((entry) => entry.key === actionKey && entry.status === 'completed'))
+    return;
+  const existingQueue = getQueueSnapshot().find(
+    (item) => item.workGraphId === snapshot.graph.id && item.workNodeId === node.id,
+  );
+  const existingRun = getAllRuns().find(
+    (run) => run.workGraphId === snapshot.graph.id && run.workNodeId === node.id,
+  );
+  if (existingQueue || existingRun) {
+    snapshot.ledger.push({
+      key: actionKey,
+      graphId: snapshot.graph.id,
+      nodeId: node.id,
+      actionKind,
+      readinessVersion: version,
+      status: 'completed',
+      startedAt: now,
+      completedAt: now,
+      result: existingRun ? `run:${existingRun.id}` : `queue:${existingQueue?.id}`,
+    });
+    return;
+  }
+  if (inbound.some((edge) => edge.unlock.kind === 'mark-ready')) {
+    await markBacklogItemReady({ itemId: node.backlogItemId });
+    node.status = 'ready';
+    snapshot.ledger.push({
+      key: actionKey,
+      graphId: snapshot.graph.id,
+      nodeId: node.id,
+      actionKind: 'mark-ready',
+      readinessVersion: version,
+      status: 'completed',
+      startedAt: now,
+      completedAt: now,
+      result: 'ready',
+    });
+    return;
+  }
+  if (inbound.some((edge) => edge.unlock.kind === 'rebase-onto')) {
+    node.status = 'needs-attention';
+    node.waitingOn = [
+      {
+        kind: 'policy',
+        detail: 'rebase-onto unlock requires ci-watch helper integration before execution',
+      },
+    ];
+    snapshot.graph.status = 'needs-attention';
+    snapshot.ledger.push({
+      key: actionKey,
+      graphId: snapshot.graph.id,
+      nodeId: node.id,
+      actionKind: 'rebase-onto',
+      readinessVersion: version,
+      status: 'failed',
+      startedAt: now,
+      completedAt: now,
+      result: 'helper-not-wired',
+    });
+    return;
+  }
+  snapshot.ledger.push({
+    key: actionKey,
+    graphId: snapshot.graph.id,
+    nodeId: node.id,
+    actionKind: 'enqueue',
+    readinessVersion: version,
+    status: 'started',
+    startedAt: now,
+  });
+  const result = await enqueueBacklogItem(
+    { itemId: node.backlogItemId },
+    { workGraphId: snapshot.graph.id, workNodeId: node.id },
+  );
+  await persistQueueNow();
+  node.status = 'queued';
+  const entry = snapshot.ledger.find((candidate) => candidate.key === actionKey);
+  if (entry) {
+    entry.status = 'completed';
+    entry.completedAt = new Date().toISOString();
+    entry.result = `queue:${result.queueItem.id}`;
+  }
+}
+
+function acquireLease(snapshot: WorkGraphSnapshot, owner: string, nowMs: number): boolean {
+  const leaseUntil = Date.parse(snapshot.graph.scheduler.leaseUntil ?? '');
+  if (
+    snapshot.graph.scheduler.leaseOwner &&
+    Number.isFinite(leaseUntil) &&
+    leaseUntil > nowMs &&
+    snapshot.graph.scheduler.leaseOwner !== owner
+  ) {
+    return false;
+  }
+  snapshot.graph.scheduler.leaseOwner = owner;
+  snapshot.graph.scheduler.leaseUntil = new Date(nowMs + LEASE_MS).toISOString();
+  snapshot.graph.scheduler.lastTickAt = new Date(nowMs).toISOString();
+  return true;
+}
+
+export async function schedulerTick(
+  params: { graphId?: string } = {},
+): Promise<{ ok: true; graphs: WorkGraphProjection[] }> {
+  return withMutation(async () => {
+    const owner = `gateway-${process.pid}`;
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
+    const targets = [...graphs.values()].filter((snapshot) => {
+      if (params.graphId && snapshot.graph.id !== params.graphId) return false;
+      return snapshot.graph.status === 'active' || snapshot.graph.status === 'waiting';
+    });
+    const updated: WorkGraphProjection[] = [];
+    for (const snapshot of targets) {
+      if (!acquireLease(snapshot, owner, nowMs)) continue;
+      const runs = getAllRuns();
+      for (const node of snapshot.nodes) syncNodeFromBacklogQueueRuns(node, runs);
+      for (const edge of snapshot.edges) evaluateEdge(edge, snapshot, runs, now);
+      let runnable = 0;
+      for (const node of snapshot.nodes) {
+        if (
+          [
+            'queued',
+            'running',
+            'gated',
+            'succeeded',
+            'failed',
+            'needs-attention',
+            'skipped',
+          ].includes(node.status)
+        )
+          continue;
+        const inbound = snapshot.edges.filter((edge) => edge.toNodeId === node.id);
+        const failedRequired = inbound.filter((edge) => edge.required && edge.status === 'failed');
+        if (failedRequired.length > 0) {
+          node.status = 'needs-attention';
+          node.waitingOn = failedRequired.map((edge) => ({
+            kind: edge.condition.kind === 'manual' ? 'manual-gate' : 'upstream',
+            edgeId: edge.id,
+            upstreamNodeId: edge.fromNodeId,
+            detail: `Required upstream edge ${edge.id} failed`,
+          }));
+          node.updatedAt = now;
+          snapshot.graph.status = 'needs-attention';
+          continue;
+        }
+        computeWaiting(node, inbound);
+        const blocked = node.waitingOn.length > 0;
+        if (blocked) {
+          node.status = 'waiting';
+          node.updatedAt = now;
+          continue;
+        }
+        const requiredInbound = inbound.filter((edge) => edge.required);
+        const satisfiedInbound = requiredInbound.filter(
+          (edge) => edge.status === 'satisfied' || edge.status === 'waived',
+        );
+        if (requiredInbound.length === satisfiedInbound.length) {
+          runnable++;
+          try {
+            await executeNodeUnlock(snapshot, node, inbound, now);
+          } catch (err) {
+            recordNodeUnlockFailure(snapshot, node, inbound, now, errorMessage(err));
+          }
+        }
+      }
+      if (snapshot.graph.status !== 'needs-attention') {
+        const allDone =
+          snapshot.nodes.length > 0 &&
+          snapshot.nodes.every((node) => node.status === 'succeeded' || node.status === 'skipped');
+        snapshot.graph.status = allDone ? 'done' : runnable === 0 ? 'waiting' : 'active';
+      }
+      snapshot.graph.updatedAt = now;
+      await persistNow(snapshot);
+      emit(snapshot);
+      updated.push(project(snapshot));
+    }
+    return { ok: true, graphs: updated };
+  });
+}
+
+export async function gateResolve(params: {
+  graphId?: string;
+  gateId: string;
+  nodeId?: string;
+  edgeId?: string;
+  reason: string;
+  decision: 'approved' | 'rejected' | 'waived';
+}): Promise<{ graph: WorkGraphProjection }> {
+  const graphId = await withMutation(async () => {
+    const matches = [...graphs.values()].flatMap((candidate) =>
+      candidate.edges
+        .filter(
+          (edge) =>
+            edge.condition.kind === 'manual' &&
+            edge.condition.gateId === params.gateId &&
+            (!params.graphId || edge.graphId === params.graphId) &&
+            (!params.edgeId || edge.id === params.edgeId) &&
+            (!params.nodeId || edge.toNodeId === params.nodeId),
+        )
+        .map((edge) => ({ snapshot: candidate, edge })),
+    );
+    if (matches.length === 0) throw new Error(`Manual graph gate not found: ${params.gateId}`);
+    if (matches.length > 1) {
+      throw new Error(
+        `Manual graph gate ${params.gateId} is ambiguous; include graphId, edgeId, or nodeId`,
+      );
+    }
+    const { snapshot, edge } = matches[0]!;
+    snapshot.gates.push({
+      ...params,
+      graphId: snapshot.graph.id,
+      edgeId: params.edgeId ?? edge.id,
+      nodeId: params.nodeId ?? edge.toNodeId,
+      resolvedAt: new Date().toISOString(),
+    });
+    if (snapshot.graph.status === 'waiting' || snapshot.graph.status === 'needs-attention')
+      snapshot.graph.status = 'active';
+    await persistNow(snapshot);
+    emit(snapshot);
+    return snapshot.graph.id;
+  });
+  await schedulerTick({ graphId });
+  return { graph: project(requireGraph(graphId)) };
+}

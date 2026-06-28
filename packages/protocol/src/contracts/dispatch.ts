@@ -31,6 +31,9 @@ export interface QueueItem {
   queueKind?: QueueItemKind;
   /** Backlog item that produced this queue entry, when queued from durable backlog. */
   backlogItemId?: string;
+  /** Work graph node that authorized this queued backlog dispatch. */
+  workGraphId?: string;
+  workNodeId?: string;
   label?: string;
   flowType: FlowType;
   project: string;

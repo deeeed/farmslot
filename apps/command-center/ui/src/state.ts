@@ -32,6 +32,9 @@ import type {
   RunUpdatedPayload,
   SlotChangedPayload,
   SlotStatus,
+  WorkGraphListResult,
+  WorkGraphProjection,
+  WorkGraphUpdatedPayload,
 } from '@farmslot/protocol';
 import {
   buildRunFamilyReadinessSummaries,
@@ -64,6 +67,7 @@ export type HydratedSlice =
   | 'runs'
   | 'queue'
   | 'backlog'
+  | 'workGraphs'
   | 'projects';
 export type HydratedSlices = Record<HydratedSlice, boolean>;
 
@@ -74,6 +78,7 @@ const EMPTY_HYDRATED: HydratedSlices = {
   runs: false,
   queue: false,
   backlog: false,
+  workGraphs: false,
   projects: false,
 };
 
@@ -102,6 +107,7 @@ export interface AppState {
   runProjectAnalytics: RunProjectAnalyticsSummary[];
   queueItems: QueueItem[];
   backlogItems: BacklogItem[];
+  workGraphs: WorkGraphProjection[];
   violations: MonitorViolation[];
   prsUpdatedAt: number;
   globalFilters: GlobalFilters;
@@ -127,6 +133,7 @@ export type AppStateSliceSnapshot = Pick<
   | 'runProjectAnalytics'
   | 'queueItems'
   | 'backlogItems'
+  | 'workGraphs'
   | 'bootstrapFailed'
 >;
 
@@ -177,6 +184,7 @@ const state: AppState = {
   runProjectAnalytics: [],
   queueItems: [],
   backlogItems: [],
+  workGraphs: [],
   violations: [],
   prsUpdatedAt: 0,
   globalFilters: loadGlobalFilters(),
@@ -287,7 +295,16 @@ function newBootstrapState(epoch: number): BootstrapState {
   return {
     epoch,
     ready: new Set(),
-    buffer: { fleet: [], prs: [], decisions: [], runs: [], queue: [], backlog: [], projects: [] },
+    buffer: {
+      fleet: [],
+      prs: [],
+      decisions: [],
+      runs: [],
+      queue: [],
+      backlog: [],
+      workGraphs: [],
+      projects: [],
+    },
     pendingDecisionsDrain: false,
   };
 }
@@ -351,6 +368,7 @@ export function captureStateSlices(): AppStateSliceSnapshot {
     runProjectAnalytics: state.runProjectAnalytics,
     queueItems: state.queueItems,
     backlogItems: state.backlogItems,
+    workGraphs: state.workGraphs,
     bootstrapFailed: state.bootstrapFailed,
   };
 }
@@ -364,6 +382,7 @@ export function restoreStateSlices(snapshot: AppStateSliceSnapshot): void {
   state.runProjectAnalytics = snapshot.runProjectAnalytics;
   state.queueItems = snapshot.queueItems;
   state.backlogItems = snapshot.backlogItems;
+  state.workGraphs = snapshot.workGraphs;
   state.bootstrapFailed = snapshot.bootstrapFailed;
   notify();
 }
@@ -566,6 +585,20 @@ export function updateQueueItems(items: QueueItem[]): void {
 
 export function updateBacklogItems(items: BacklogItem[]): void {
   state.backlogItems = items;
+  notify();
+}
+
+export function updateWorkGraphs(graphs: WorkGraphProjection[]): void {
+  state.workGraphs = graphs;
+  notify();
+}
+
+export function upsertWorkGraph(graph: WorkGraphProjection): void {
+  const idx = state.workGraphs.findIndex((candidate) => candidate.graph.id === graph.graph.id);
+  state.workGraphs =
+    idx >= 0
+      ? state.workGraphs.map((candidate, i) => (i === idx ? graph : candidate))
+      : [graph, ...state.workGraphs];
   notify();
 }
 
@@ -824,6 +857,11 @@ export function initState(): void {
     if (p.items) deferEvent('backlog', () => updateBacklogItems(p.items));
   });
 
+  // Work graph events
+  gateway.subscribe<WorkGraphUpdatedPayload>(Events.WORK_GRAPH_UPDATED, (p) => {
+    if (p.graph) deferEvent('workGraphs', () => upsertWorkGraph(p.graph));
+  });
+
   // GitHub API rate-limit telemetry (github-client.ts emits after each call).
   gateway.subscribe<GitHubRateLimitPayload>(Events.GITHUB_RATE_LIMIT, (p) => {
     updateGitHubQuota(p);
@@ -1020,6 +1058,16 @@ async function runFetchInitialState(
       markFailed('backlog');
     })
     .finally(() => markReady('backlog'));
+  const workGraphsJob = gateway
+    .request<WorkGraphListResult>(Methods.WORK_GRAPH_LIST, { includeArchived: true })
+    .then((r) => {
+      if (stillCurrent() && r.graphs) updateWorkGraphs(r.graphs);
+    })
+    .catch(() => {
+      if (stillCurrent()) updateWorkGraphs([]);
+      markFailed('workGraphs');
+    })
+    .finally(() => markReady('workGraphs'));
   const projectsJob = gateway
     .request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {})
     .then((r) => {
@@ -1070,7 +1118,15 @@ async function runFetchInitialState(
   // it after this point sees lastHydratedEpoch bumped even if PR_LIST is
   // still in flight, which is what spares workspace recovery from the
   // PR_LIST timeout.
-  await Promise.allSettled([fleetJob, decisionsJob, runsJob, queueJob, backlogJob, projectsJob]);
+  await Promise.allSettled([
+    fleetJob,
+    decisionsJob,
+    runsJob,
+    queueJob,
+    backlogJob,
+    workGraphsJob,
+    projectsJob,
+  ]);
   if (stillCurrent()) {
     lastHydratedEpoch = epoch;
     notify();
