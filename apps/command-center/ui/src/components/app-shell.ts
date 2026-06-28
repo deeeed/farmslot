@@ -46,6 +46,8 @@ import './config/config-panel.js';
 import './doctor/gateway-doctor.js';
 
 import { COMMAND_CENTER_APP_VERSION } from '../build-info.js';
+import type { ConnectionState } from '../gateway-client.js';
+import { gateway } from '../gateway-client.js';
 import {
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_SOURCE_STORAGE_KEY,
@@ -53,8 +55,6 @@ import {
   normalizeGatewayWebSocketUrl,
   resolveGatewayConnectionSource,
 } from '../gateway-url.js';
-import type { ConnectionState } from '../gateway-client.js';
-import { gateway } from '../gateway-client.js';
 import {
   type AppState,
   getState,
