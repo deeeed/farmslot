@@ -581,6 +581,15 @@ Use `app.*` when the proof needs app/runtime lifecycle or proof HUD control. Thi
 | `app.hud`       | Set visible proof HUD step text only.                                                 |
 | `app.trace`     | Start/stop app/native runtime trace capture and emit artifacts.                       |
 
+> **Proof HUD above native modals (React Native).** A HUD rendered as a plain
+> root-level absolute `View` is hidden behind native-stack modal presentations
+> (iOS sheets/modal screens). For React Native targets, install
+> `react-native-screens` and wrap the HUD in `FullWindowOverlay` so it paints in
+> a UIWindow above every native layer (passthrough on Android/web). When
+> `react-native-screens` is unavailable, the HUD falls back to the root `View`
+> and modal occlusion is a known limitation. The injected mobile overlay
+> (`AgentStepHud`) and the companion reference HUD apply this wrap.
+
 #### `cdp.*` — Chrome DevTools Protocol capability
 
 Use `cdp.*` when the runner controls a browser/devtools target. This is useful for web apps and browser extensions, but not required for non-browser projects.

@@ -1394,8 +1394,8 @@
       }
     },
     {
-      "recordedAt": "2026-06-28T14:16:44.227Z",
-      "commit": "66c7d2aa4c6d5ef734a4a125a76b8534b32d885d",
+      "recordedAt": "2026-06-28T14:15:38.025Z",
+      "commit": "5e47bc3eb6b1fd5f6176eff509d9a064ec654744",
       "scope": "framework",
       "exclusions": {
         "tests": false,
@@ -1403,19 +1403,19 @@
       },
       "totals": {
         "files": 1934,
-        "code": 370461,
-        "docs": 26600,
+        "code": 370476,
+        "docs": 26610,
         "config": 9543,
-        "total": 407943
+        "total": 407968
       },
       "rollup": {
         "command-center": {
-          "code": 118242,
-          "total": 119465
+          "code": 118235,
+          "total": 119458
         },
         "companion": {
-          "code": 60849,
-          "total": 62322
+          "code": 60871,
+          "total": 62345
         },
         "gateway": {
           "code": 122358,
@@ -1431,7 +1431,7 @@
         },
         "docs": {
           "code": 0,
-          "total": 20621
+          "total": 20630
         },
         "docs-site": {
           "code": 7210,
@@ -1452,8 +1452,8 @@
       }
     },
     {
-      "recordedAt": "2026-06-28T14:21:18.977Z",
-      "commit": "7cea968638019e4458d5d3c17b22471bcaee6a90",
+      "recordedAt": "2026-06-28T14:29:07.466Z",
+      "commit": "eff377ed69490346f62e223acb98abc892f7ed9d",
       "scope": "framework",
       "exclusions": {
         "tests": false,
@@ -1461,10 +1461,10 @@
       },
       "totals": {
         "files": 1934,
-        "code": 370462,
-        "docs": 26600,
+        "code": 370484,
+        "docs": 26610,
         "config": 9543,
-        "total": 407944
+        "total": 407976
       },
       "rollup": {
         "command-center": {
@@ -1472,8 +1472,8 @@
           "total": 119466
         },
         "companion": {
-          "code": 60849,
-          "total": 62322
+          "code": 60871,
+          "total": 62345
         },
         "gateway": {
           "code": 122358,
@@ -1489,7 +1489,7 @@
         },
         "docs": {
           "code": 0,
-          "total": 20621
+          "total": 20630
         },
         "docs-site": {
           "code": 7210,
