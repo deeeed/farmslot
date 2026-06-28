@@ -19,7 +19,7 @@ The desired product direction is embedded project management:
 roadmap item (rough idea)
   -> interactive refinement
   -> roadmap item (refined spec)
-  -> promote -> backlog item(s)
+  -> promote -> backlog markdown spec(s)
              -> dispatch -> runs/bundles
 ```
 
@@ -163,7 +163,7 @@ The user attaches tags and filters roadmap items by project, stage, tag, and tex
 
 ### Promote
 
-Promotion is the only write path from roadmap to downstream durable artifacts.
+Promotion is the only write path from roadmap to backlog markdown specs.
 
 Promotion to backlog is blocked until the roadmap item has a concrete project matching a `project.json` `name`; `global` and `unassigned` inbox items must be assigned first.
 
@@ -179,7 +179,7 @@ The decomposition boundary is execution clarity: each generated backlog spec sho
 Promotion writes lightweight provenance:
 
 - Roadmap item promotion notes record created backlog spec paths/IDs.
-- Backlog markdown records the originating roadmap item and inherited tags. Acceptance criteria live in the backlog markdown, typically under `## Acceptance Criteria`, just like Jira/GitHub text is parsed today.
+- Backlog markdown records the originating roadmap item and inherited tags. Acceptance criteria live in the backlog markdown under `## Acceptance Criteria`, just like Jira/GitHub text is parsed today.
 - Any ADR reference is ordinary markdown text/tags added by the developer, not a typed field or generated artifact.
 
 Promotion should be explicit about whether it creates a new artifact or updates an existing draft. Avoid automatic duplicate backlog specs by showing existing promotion entries before creating more.

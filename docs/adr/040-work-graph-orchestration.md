@@ -509,7 +509,7 @@ ADR-041 is the roadmap/product-planning layer. Rough or refined roadmap items do
 work graph directly. The normal layered path is:
 
 ```text
-RoadmapItem(stage=refined) -> promote -> BacklogItem(s) -> optional manual WorkGraph -> dispatch
+RoadmapItem(stage=refined) -> promote -> Backlog markdown spec(s) -> optional manual WorkGraph -> dispatch
 ```
 
 Direct PR #95 backlog intake remains supported only for items that are already dispatchable.
