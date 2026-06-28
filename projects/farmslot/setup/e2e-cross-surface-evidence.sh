@@ -197,6 +197,23 @@ prepare_companion_slot() {
   log "companion bridge ready on :$FC_METRO_PORT"
 }
 
+doctor_core_checks_ok() {
+  local doctor_json="$1"
+  [[ -f "$doctor_json" ]] || return 1
+  python3 - <<'PY' "$doctor_json"
+import json, sys
+doc = json.load(open(sys.argv[1]))
+checks = doc.get("checks", [])
+if not checks:
+    sys.exit(1)
+allowed_fail = {"capture_helper.doctor", "capture_helper.window.on_screen"}
+for check in checks:
+    if check.get("status") != "pass" and check.get("id") not in allowed_fail:
+        sys.exit(1)
+sys.exit(0)
+PY
+}
+
 capture_helper_screen_recording_ok() {
   local doctor_json="$1"
   [[ -f "$doctor_json" ]] || return 1
@@ -345,11 +362,21 @@ else
   log "capture-helper binary missing — Run A recipe without live video"
 fi
 
+set +e
 node "$PRIMARY_REPO/apps/command-center/scripts/agentic/recipe-doctor.mjs" \
   --cdp-port "$FF_CDP_PORT" --gateway-port "$FF_GATEWAY_PORT" --slot-id "$FF_SLOT" --json \
-  >"$SCRATCH/phase0-doctor.json" 2>"$SCRATCH/phase0-doctor.err" \
-  || fail_step "recipe-doctor" $?
-log "doctor exit=0"
+  >"$SCRATCH/phase0-doctor.json" 2>"$SCRATCH/phase0-doctor.err"
+doctor_ec=$?
+set -e
+if [[ "$doctor_ec" -ne 0 ]]; then
+  if [[ -z "$CC_WEB_RECORD_VIDEO" ]] && doctor_core_checks_ok "$SCRATCH/phase0-doctor.json"; then
+    log "recipe-doctor capture-helper checks failed (screen recording denied) — core checks pass"
+  else
+    fail_step "recipe-doctor" "$doctor_ec"
+  fi
+else
+  log "doctor exit=0"
+fi
 
 bash "$SCRIPT_DIR/validate-recipe.sh" --dry-run \
   --recipe "$PRIMARY_REPO/docs/examples/recipes/farmslot/demo-red-banner.recipe.json" \
