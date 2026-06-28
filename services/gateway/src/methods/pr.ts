@@ -101,11 +101,10 @@ const PR_DASHBOARD_TERMINAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 type PrSlotProjectConfig = {
   defaultBranch: string;
   slotTrackingBranch?: string;
-  worktreeBase?: string;
 };
 
 function slotBranchHasPrLookupContext(
-  slot: Pick<SlotStatus, 'branch' | 'project' | 'session' | 'slot' | 'repo'>,
+  slot: Pick<SlotStatus, 'branch' | 'project' | 'session' | 'slot' | 'linkedWorktree'>,
   projectConfigs: Readonly<Record<string, PrSlotProjectConfig>>,
 ): boolean {
   if (!slot.branch || slot.branch === '-') return false;
@@ -116,9 +115,8 @@ function slotBranchHasPrLookupContext(
     {
       defaultBranch,
       slotTrackingBranch: project?.slotTrackingBranch,
-      worktreeBase: project?.worktreeBase,
     },
-    { session: slot.session, slotId: slot.slot, repo: slot.repo },
+    { session: slot.session, slotId: slot.slot, linkedWorktree: slot.linkedWorktree },
   );
 }
 
@@ -179,7 +177,6 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
       {
         defaultBranch: p.defaultBranch || DEFAULT_BRANCH,
         slotTrackingBranch: p.slotTrackingBranch,
-        worktreeBase: p.worktreeBase,
       },
     ]),
   );
@@ -972,7 +969,6 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
     [slot.project]: {
       defaultBranch: projectConfig?.defaultBranch || DEFAULT_BRANCH,
       slotTrackingBranch: projectConfig?.slotTrackingBranch,
-      worktreeBase: projectConfig?.worktreeBase,
     },
   };
   if (!slotBranchHasPrLookupContext(slot, projectConfigs)) {

@@ -4,7 +4,6 @@ import test from 'node:test';
 import type { SlotVars } from '../../core/config.js';
 
 import {
-  isDefaultWorktreeTrackingBranch,
   isLinkedGitWorktreeMarker,
   isSlotIdleBranch,
   resolveMergeMainStrategy,
@@ -38,18 +37,6 @@ function testSlotVars(overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | '
     ...overrides,
   };
 }
-
-test('isDefaultWorktreeTrackingBranch only allows farmslot ff worktree branches', () => {
-  assert.equal(isDefaultWorktreeTrackingBranch('wt/ff-1'), true);
-  assert.equal(isDefaultWorktreeTrackingBranch('wt/ff-2'), true);
-  assert.equal(isDefaultWorktreeTrackingBranch('wt/ff-demo_1'), true);
-
-  assert.equal(isDefaultWorktreeTrackingBranch('main'), false);
-  assert.equal(isDefaultWorktreeTrackingBranch('feature/demo'), false);
-  assert.equal(isDefaultWorktreeTrackingBranch('wt/mm-1'), false);
-  assert.equal(isDefaultWorktreeTrackingBranch('wt/ff-1/extra'), false);
-  assert.equal(isDefaultWorktreeTrackingBranch('scratch'), false);
-});
 
 test('isLinkedGitWorktreeMarker detects linked worktree marker output', () => {
   assert.equal(isLinkedGitWorktreeMarker('linked\n'), true);
@@ -105,11 +92,11 @@ test('resolveSlotTrackingBranch uses default branch on primary clones', () => {
   assert.equal(branch, 'main');
 });
 
-test('isSlotIdleBranch accepts tracking branch or legacy wt/ff on linked worktrees', () => {
+test('isSlotIdleBranch accepts tracking or default branch on linked worktrees', () => {
   assert.equal(isSlotIdleBranch('wt/ff-2', 'wt/ff-2', 'main', true), true);
-  assert.equal(isSlotIdleBranch('wt/ff-2', 'wt/mm-2', 'main', true), true);
-  assert.equal(isSlotIdleBranch('feat/demo', 'wt/ff-2', 'main', true), false);
   assert.equal(isSlotIdleBranch('main', 'wt/ff-2', 'main', true), true);
+  assert.equal(isSlotIdleBranch('wt/ff-2', 'wt/mm-2', 'main', true), false);
+  assert.equal(isSlotIdleBranch('feat/demo', 'wt/ff-2', 'main', true), false);
 });
 
 test('resolveMergeMainStrategy honors override then project config', () => {

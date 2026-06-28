@@ -2,7 +2,6 @@ import path from 'node:path';
 
 import {
   DEFAULT_BRANCH,
-  isLegacyWorktreeTrackingBranch,
   isSlotIdleBranch,
   remoteBranchRefspec,
   resolveSlotTrackingBranch,
@@ -27,8 +26,7 @@ import { REFRESH_INDEX_AND_UNLOCK_COMMAND } from './git-cleanup-commands.js';
 
 export type MergeMainStrategy = 'merge' | 'rebase';
 
-export { isLegacyWorktreeTrackingBranch, isSlotIdleBranch, remoteBranchRefspec, resolveSlotTrackingBranch };
-export const isDefaultWorktreeTrackingBranch = isLegacyWorktreeTrackingBranch;
+export { isSlotIdleBranch, remoteBranchRefspec, resolveSlotTrackingBranch };
 
 export function worktreeBaseResetRef(
   defaultBranch: string,

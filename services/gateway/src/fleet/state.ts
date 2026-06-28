@@ -308,6 +308,7 @@ interface RawSlot {
   branch: string;
   session?: string;
   repo?: string;
+  linked_worktree?: boolean;
   agent: string;
   enabled: boolean;
   mode: string;
@@ -406,6 +407,7 @@ function transformSlot(raw: RawSlot): SlotStatus {
     branch: raw.branch,
     session: raw.session,
     repo: raw.repo,
+    linkedWorktree: raw.linked_worktree ?? false,
     agent: raw.agent as SlotStatus['agent'],
     enabled: raw.enabled,
     dispatchable: raw.dispatchable,

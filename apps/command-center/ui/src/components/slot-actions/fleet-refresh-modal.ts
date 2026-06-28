@@ -139,7 +139,6 @@ export class FleetRefreshModal extends FleetRefreshModalState {
           {
             defaultBranch: project.defaultBranch,
             slotTrackingBranch: project.slotTrackingBranch,
-            worktreeBase: project.worktreeBase,
           },
         ]),
       );

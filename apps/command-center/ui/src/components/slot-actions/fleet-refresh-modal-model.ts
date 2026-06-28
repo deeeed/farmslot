@@ -16,7 +16,7 @@ export interface FleetRefreshFilterSnapshot {
 
 export type FleetRefreshProjectConfig = Pick<
   ProjectConfig,
-  'defaultBranch' | 'slotTrackingBranch' | 'worktreeBase'
+  'defaultBranch' | 'slotTrackingBranch'
 >;
 
 export interface FleetRefreshRowState {
@@ -113,7 +113,7 @@ export function buildFleetRefreshReviewRows(
     const isStale = isSlotRefreshStaleBranch(slot.branch ?? '', projectCfg ?? { defaultBranch }, {
       session: slot.session,
       slotId: slot.slot,
-      repo: slot.repo,
+      linkedWorktree: slot.linkedWorktree,
     });
     const row: FleetRefreshRowState = {
       slotId: slot.slot,

@@ -31,14 +31,13 @@ export function isCdpLive(cdp: string): boolean {
   return cdp !== 'OFF' && cdp !== '-' && cdp !== 'FAIL' && cdp !== 'Other';
 }
 
-export type SlotScoringProjectConfig = SlotTrackingProjectConfig & { worktreeBase?: string };
+export type SlotScoringProjectConfig = SlotTrackingProjectConfig;
 
 export function projectConfigsFromProjects(
   projects: ReadonlyArray<{
     name: string;
     defaultBranch?: string;
     slotTrackingBranch?: string;
-    worktreeBase?: string;
   }>,
 ): Record<string, SlotScoringProjectConfig> {
   return Object.fromEntries(
@@ -47,7 +46,6 @@ export function projectConfigsFromProjects(
       {
         defaultBranch: p.defaultBranch ?? DEFAULT_BRANCH,
         slotTrackingBranch: p.slotTrackingBranch,
-        worktreeBase: p.worktreeBase,
       },
     ]),
   );
@@ -61,7 +59,6 @@ export function slotTrackingConfigForSlot(
   return {
     defaultBranch: cfg?.defaultBranch ?? DEFAULT_BRANCH,
     slotTrackingBranch: cfg?.slotTrackingBranch,
-    worktreeBase: cfg?.worktreeBase,
   };
 }
 
@@ -72,7 +69,7 @@ export function isDispatchStaleBranch(
   return isSlotRefreshStaleBranch(slot.branch ?? '', slotTrackingConfigForSlot(slot, projectConfigs), {
     session: slot.session,
     slotId: slot.slot,
-    repo: slot.repo,
+    linkedWorktree: slot.linkedWorktree,
   });
 }
 

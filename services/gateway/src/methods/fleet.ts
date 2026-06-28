@@ -33,6 +33,7 @@ import {
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
+import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { runnerProcessPatternSource } from '../runners/registry.js';
 import { listRuns } from '../runs/store.js';
@@ -64,6 +65,7 @@ interface SlotCheckResult {
   branch: string;
   session?: string;
   repo?: string;
+  linkedWorktree?: boolean;
   agent: string;
   enabled: boolean;
   mode: string;
@@ -324,6 +326,7 @@ function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
     branch: r.branch,
     ...(r.session ? { session: r.session } : {}),
     ...(r.repo ? { repo: r.repo } : {}),
+    ...(r.linkedWorktree ? { linked_worktree: true } : {}),
     agent: r.agent,
     enabled: r.enabled,
     mode: r.mode,
@@ -583,14 +586,16 @@ async function checkSingleSlot(
   }
 
   // Run all checks in parallel for this slot
-  const [branchStr, agentStr, emuStr, devserverStr, cdpStr, fixStr] = await Promise.all([
-    checkBranch(vars),
-    checkAgent(vars),
-    checkDevice(vars, projectJson, projectVars),
-    checkDevServer(vars, projectJson, projectVars),
-    checkCDP(vars, projectJson, projectVars),
-    checkFixtures(vars, projectVars, projectJson),
-  ]);
+  const [branchStr, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree] =
+    await Promise.all([
+      checkBranch(vars),
+      checkAgent(vars),
+      checkDevice(vars, projectJson, projectVars),
+      checkDevServer(vars, projectJson, projectVars),
+      checkCDP(vars, projectJson, projectVars),
+      checkFixtures(vars, projectVars, projectJson),
+      checkLinkedWorktree(vars),
+    ]);
 
   const dispatchable =
     mode === 'dispatch' &&
@@ -614,6 +619,7 @@ async function checkSingleSlot(
     branch: branchStr,
     session: vars.session || undefined,
     repo: vars.remoteRepo,
+    linkedWorktree,
     agent: agentStr,
     enabled: true,
     mode,
@@ -623,6 +629,19 @@ async function checkSingleSlot(
 }
 
 // ─── Individual check helpers ───
+
+async function checkLinkedWorktree(vars: SlotVars): Promise<boolean> {
+  try {
+    const r = await execOnSlot(
+      vars,
+      `test -f ${shellQuote(path.join(vars.remoteRepo, '.git'))} && echo linked || echo primary`,
+      { timeout: SLOT_CHECK_TIMEOUT_MS },
+    );
+    return isLinkedGitWorktreeMarker(r.stdout);
+  } catch {
+    return false;
+  }
+}
 
 async function checkBranch(vars: SlotVars): Promise<string> {
   try {

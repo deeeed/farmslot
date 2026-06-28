@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  isLegacyWorktreeTrackingBranch,
-  isRepoUnderWorktreeBase,
   isSlotIdleBranch,
   isSlotRefreshStaleBranch,
   resolveSlotTrackingBranch,
@@ -27,47 +25,41 @@ test('resolveSlotTrackingBranch uses default branch on primary clones', () => {
   assert.equal(branch, 'main');
 });
 
-test('isSlotIdleBranch accepts configured tracking branch and legacy names', () => {
+test('isSlotIdleBranch accepts tracking or default branch on linked worktrees', () => {
   assert.equal(isSlotIdleBranch('wt/mm-2', 'wt/mm-2', 'main', true), true);
-  assert.equal(isSlotIdleBranch('wt/ff-1', 'wt/ff-2', 'main', true), true);
+  assert.equal(isSlotIdleBranch('main', 'wt/ff-2', 'main', true), true);
+  assert.equal(isSlotIdleBranch('wt/ff-1', 'wt/ff-2', 'main', true), false);
   assert.equal(isSlotIdleBranch('feat/demo', 'wt/ff-2', 'main', true), false);
 });
 
-test('isRepoUnderWorktreeBase detects worktree sandboxes from project config', () => {
-  const base = '/Users/deeeed/dev/farmslot-wt';
-  assert.equal(isRepoUnderWorktreeBase(`${base}/farmslot-2`, base), true);
-  assert.equal(isRepoUnderWorktreeBase('/Users/deeeed/dev/farmslot', base), false);
-});
-
-test('isSlotRefreshStaleBranch uses worktree_base instead of hardcoded branch patterns', () => {
+test('isSlotRefreshStaleBranch uses fleet-probed linkedWorktree signal', () => {
   const project = {
     defaultBranch: 'main',
     slotTrackingBranch: 'wt/{{session}}',
-    worktreeBase: '/Users/deeeed/dev/farmslot-wt',
   };
   assert.equal(
-    isSlotRefreshStaleBranch(
-      'wt/ff-2',
-      project,
-      { session: 'ff-2', repo: '/Users/deeeed/dev/farmslot-wt/farmslot-2' },
-    ),
+    isSlotRefreshStaleBranch('wt/ff-2', project, {
+      session: 'ff-2',
+      linkedWorktree: true,
+    }),
     false,
   );
   assert.equal(
-    isSlotRefreshStaleBranch(
-      'feat/demo',
-      project,
-      { session: 'ff-2', repo: '/Users/deeeed/dev/farmslot-wt/farmslot-2' },
-    ),
+    isSlotRefreshStaleBranch('feat/demo', project, {
+      session: 'ff-2',
+      linkedWorktree: true,
+    }),
     true,
   );
   assert.equal(
-    isSlotRefreshStaleBranch('main', project, { session: 'fs-main', repo: '/Users/deeeed/dev/farmslot' }),
+    isSlotRefreshStaleBranch('wt/ff-2', project, {
+      session: 'ff-2',
+      linkedWorktree: false,
+    }),
+    true,
+  );
+  assert.equal(
+    isSlotRefreshStaleBranch('main', project, { session: 'fs-main', linkedWorktree: false }),
     false,
   );
-});
-
-test('isLegacyWorktreeTrackingBranch remains a narrow compatibility shim', () => {
-  assert.equal(isLegacyWorktreeTrackingBranch('wt/ff-2'), true);
-  assert.equal(isLegacyWorktreeTrackingBranch('wt/mm-2'), false);
 });

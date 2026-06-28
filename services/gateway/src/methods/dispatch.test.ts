@@ -81,6 +81,7 @@ function makeSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
     hostLoad: overrides.hostLoad,
     session: overrides.session,
     repo: overrides.repo,
+    linkedWorktree: overrides.linkedWorktree,
   };
 }
 
@@ -605,7 +606,7 @@ test('slotScore treats configured tracking branches as idle', () => {
     project: 'farmslot-farm',
     branch: 'wt/ff-2',
     session: 'ff-2',
-    repo: '/Users/deeeed/dev/farmslot-wt/farmslot-2',
+    linkedWorktree: true,
     health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
   });
   const featureSlot = makeSlot({
@@ -613,7 +614,7 @@ test('slotScore treats configured tracking branches as idle', () => {
     project: 'farmslot-farm',
     branch: 'feat/demo',
     session: 'ff-3',
-    repo: '/Users/deeeed/dev/farmslot-wt/farmslot-3',
+    linkedWorktree: true,
     health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
   });
 

@@ -23,21 +23,12 @@ export interface SlotTrackingProjectConfig {
 export interface SlotTrackingSlotContext {
   session?: string;
   slotId?: string;
+  /** Set by fleet refresh via linked .git probe — single source for stale/idle inference. */
+  linkedWorktree?: boolean;
 }
-
-/** Farmslot ff sandbox tracking branches before pools declared slot_tracking_branch. */
-export const LEGACY_FF_WORKTREE_TRACKING_BRANCH_RE = /^wt\/ff-[A-Za-z0-9._-]+$/;
 
 /** Default linked-worktree branch prefix when slot_tracking_branch is unset. */
 export const LINKED_WORKTREE_SESSION_BRANCH_PREFIX = 'wt/';
-
-/**
- * Legacy linked-worktree names used before every pool declared slot_tracking_branch.
- * Kept until fleet/gateway callers resolve tracking branches from project config only.
- */
-export function isLegacyWorktreeTrackingBranch(branch: string): boolean {
-  return LEGACY_FF_WORKTREE_TRACKING_BRANCH_RE.test(branch);
-}
 
 export function expandSlotTrackingTemplate(
   template: string,
@@ -76,34 +67,19 @@ export function isSlotIdleBranch(
 ): boolean {
   if (!currentBranch) return false;
   if (linkedWorktree) {
-    return (
-      currentBranch === trackingBranch ||
-      currentBranch === defaultBranch ||
-      isLegacyWorktreeTrackingBranch(currentBranch)
-    );
+    return currentBranch === trackingBranch || currentBranch === defaultBranch;
   }
   return currentBranch === defaultBranch;
 }
 
-/** True when a slot repo path lives under the project's configured worktree_base. */
-export function isRepoUnderWorktreeBase(
-  repo: string | undefined,
-  worktreeBase: string | undefined,
-): boolean {
-  if (!repo || !worktreeBase) return false;
-  const normalizedRepo = repo.replace(/\/$/, '');
-  const normalizedBase = worktreeBase.replace(/\/$/, '');
-  return normalizedRepo === normalizedBase || normalizedRepo.startsWith(`${normalizedBase}/`);
-}
-
 export function isSlotRefreshStaleBranch(
   branch: string,
-  project: SlotTrackingProjectConfig & { worktreeBase?: string },
-  ctx: SlotTrackingSlotContext & { repo?: string },
+  project: SlotTrackingProjectConfig,
+  ctx: SlotTrackingSlotContext,
 ): boolean {
   if (!branch) return false;
   const defaultBranch = project.defaultBranch || DEFAULT_BRANCH;
-  const linkedWorktree = isRepoUnderWorktreeBase(ctx.repo, project.worktreeBase);
+  const linkedWorktree = ctx.linkedWorktree ?? false;
   const trackingBranch = resolveSlotTrackingBranch(project, ctx, linkedWorktree, defaultBranch);
   return !isSlotIdleBranch(branch, trackingBranch, defaultBranch, linkedWorktree);
 }

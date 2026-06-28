@@ -10,7 +10,7 @@ export interface SlotBranchDisplay {
 }
 
 export function slotBranchDisplay(
-  slot: Pick<SlotStatus, 'branch' | 'project' | 'session' | 'slot' | 'repo'>,
+  slot: Pick<SlotStatus, 'branch' | 'project' | 'session' | 'slot' | 'linkedWorktree'>,
   projectConfigs: Readonly<Record<string, FleetRefreshProjectConfig>> = {},
 ): SlotBranchDisplay {
   const cfg = projectConfigs[slot.project];
@@ -20,7 +20,7 @@ export function slotBranchDisplay(
   const stale = isSlotRefreshStaleBranch(branch, cfg ?? { defaultBranch }, {
     session: slot.session,
     slotId: slot.slot,
-    repo: slot.repo,
+    linkedWorktree: slot.linkedWorktree,
   });
   if (stale) return { label: branch, tone: 'stale' };
   if (branch === defaultBranch) return { label: defaultBranch, tone: 'baseline' };

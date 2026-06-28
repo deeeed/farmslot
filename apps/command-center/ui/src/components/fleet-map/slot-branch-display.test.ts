@@ -35,7 +35,7 @@ test('slotBranchDisplay treats configured tracking branches as baseline', () => 
       slot: 'macwork-ff-2',
       branch: 'wt/ff-2',
       session: 'ff-2',
-      repo: '/Users/deeeed/dev/farmslot-wt/farmslot-2',
+      linkedWorktree: true,
     }),
     farmslotFarmProject,
   );
