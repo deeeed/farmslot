@@ -127,7 +127,9 @@ export type AppStateSliceSnapshot = Pick<
 >;
 
 function normalizeStoredProjectFilters(projects: string[]): string[] {
-  return [...new Set(projects.map((project) => (project === 'farmslot' ? 'farmslot-farm' : project)))];
+  return [
+    ...new Set(projects.map((project) => (project === 'farmslot' ? 'farmslot-farm' : project))),
+  ];
 }
 
 function loadGlobalFilters(): GlobalFilters {

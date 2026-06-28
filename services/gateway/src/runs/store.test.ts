@@ -604,18 +604,18 @@ test('loadAllRuns migrates legacy farmslot project to farmslot-farm', async () =
     completedAt: '2026-06-01T00:00:00.000Z',
   };
   await writeFile(path.join(tmp, `${runId}.json`), JSON.stringify(legacy));
+  const gatewayRoot = path.resolve(import.meta.dirname, '../..');
   const script = `
     process.env.FARMSLOT_RUNS_DIR = ${JSON.stringify(tmp)};
-    const { loadAllRuns, getRun } = await import('./store.js');
+    const { loadAllRuns, getRun } = await import('./src/runs/store.js');
     await loadAllRuns();
     const run = getRun(${JSON.stringify(runId)});
     if (!run || run.project !== 'farmslot-farm') process.exit(2);
   `;
-  const runsDir = path.resolve(import.meta.dirname);
   await execFileAsync(
     process.execPath,
     ['--import', 'tsx', '--input-type=module', '-e', script],
-    { cwd: runsDir },
+    { cwd: gatewayRoot },
   );
   const disk = JSON.parse(await readFile(path.join(tmp, `${runId}.json`), 'utf8'));
   assert.equal(disk.project, 'farmslot-farm');

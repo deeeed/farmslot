@@ -12,9 +12,7 @@ function runMatchesMachineFilter(slotId: string | null | undefined, machines: st
   if (machines.length === 0) return true;
   const normalized = slotId?.trim();
   if (!normalized) return false;
-  return machines.some(
-    (machine) => normalized === machine || normalized.startsWith(`${machine}-`),
-  );
+  return machines.some((machine) => normalized === machine || normalized.startsWith(`${machine}-`));
 }
 
 export function runGradeColor(semantic: string): string {

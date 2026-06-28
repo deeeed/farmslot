@@ -52,7 +52,9 @@ test('slotViewTaskRelativePath falls back to slot task only when task UI is visi
 
 test('slotViewPinnedFolderFromTaskFile returns slot-relative task directory', () => {
   assert.equal(
-    slotViewPinnedFolderFromTaskFile('.sandbox/farmslot-farm/worker-task/feat/112-0627-223003/TASK.md'),
+    slotViewPinnedFolderFromTaskFile(
+      '.sandbox/farmslot-farm/worker-task/feat/112-0627-223003/TASK.md',
+    ),
     '.sandbox/farmslot-farm/worker-task/feat/112-0627-223003',
   );
 });
