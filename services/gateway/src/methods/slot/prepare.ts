@@ -84,6 +84,18 @@ export function isDefaultWorktreeTrackingBranch(branch: string): boolean {
   return /^wt\/ff-[A-Za-z0-9._-]+$/.test(branch);
 }
 
+/** Linked worktrees use a .git *file* pointing at the main repo's worktree metadata. */
+export function isLinkedGitWorktreeMarker(stdout: string): boolean {
+  return stdout.trim() === 'linked';
+}
+
+export function worktreeBaseResetRef(
+  defaultBranch: string,
+  resolvedStartRef: StartRefResolution | null,
+): string {
+  return resolvedStartRef?.resolvedSha ?? `origin/${defaultBranch}`;
+}
+
 export async function slotPrepare(
   params: SlotPrepareParams,
   emit: EventEmitter,
@@ -745,34 +757,65 @@ async function slotPrepareInner(
         throw new Error(
           `git clean -fd failed on ${vars.slotId} (${vars.remoteRepo}): ${cleanR.stderr.slice(-200) || cleanR.stdout.slice(-200)}`,
         );
-      const coDefaultR = await execOnSlot(
+      const linkedWorktreeR = await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch}`,
+        `test -f ${shellQuote(path.join(vars.remoteRepo, '.git'))} && echo linked || echo primary`,
       );
-      if (coDefaultR.exitCode !== 0)
-        throw new Error(
-          `checkout ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${coDefaultR.stderr.slice(-200) || coDefaultR.stdout.slice(-200)}`,
+      const linkedWorktree = isLinkedGitWorktreeMarker(linkedWorktreeR.stdout);
+      const baseResetRef = worktreeBaseResetRef(defaultBranch, resolvedStartRef ?? null);
+      if (linkedWorktree) {
+        // Git worktrees cannot checkout `main` when it is active in the primary clone.
+        // Reset the current worktree branch directly to the resolved base commit instead.
+        const ffR = await execOnSlot(
+          vars,
+          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard ${shellQuote(baseResetRef)}; }`,
         );
-      const ffR = await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
-      );
-      if (ffR.exitCode !== 0)
-        throw new Error(
-          `fast-forward to origin/${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${ffR.stderr.slice(-200) || ffR.stdout.slice(-200)}`,
+        if (ffR.exitCode !== 0)
+          throw new Error(
+            `worktree reset to ${baseResetRef} failed on ${vars.slotId} (${vars.remoteRepo}): ${ffR.stderr.slice(-200) || ffR.stdout.slice(-200)}`,
+          );
+        const dirty = (
+          await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`)
+        ).stdout.trim();
+        if (dirty) {
+          throw new Error(
+            `Working tree still dirty on ${vars.slotId} after worktree reset to ${baseResetRef}. Refusing to checkout ${branch}. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status\nDirty paths:\n${dirty}`,
+          );
+        }
+        step(
+          'branch',
+          `Worktree synced to ${baseResetRef} without checking out ${defaultBranch}`,
         );
-      const dirty = (
-        await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`)
-      ).stdout.trim();
-      if (dirty) {
-        throw new Error(
-          `Working tree still dirty on ${vars.slotId} after reset to origin/${defaultBranch}. Refusing to checkout ${branch}. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status\nDirty paths:\n${dirty}`,
+      } else {
+        const coDefaultR = await execOnSlot(
+          vars,
+          `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch}`,
+        );
+        if (coDefaultR.exitCode !== 0)
+          throw new Error(
+            `checkout ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${coDefaultR.stderr.slice(-200) || coDefaultR.stdout.slice(-200)}`,
+          );
+        const ffR = await execOnSlot(
+          vars,
+          `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
+        );
+        if (ffR.exitCode !== 0)
+          throw new Error(
+            `fast-forward to origin/${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${ffR.stderr.slice(-200) || ffR.stdout.slice(-200)}`,
+          );
+        const dirty = (
+          await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`)
+        ).stdout.trim();
+        if (dirty) {
+          throw new Error(
+            `Working tree still dirty on ${vars.slotId} after reset to origin/${defaultBranch}. Refusing to checkout ${branch}. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status\nDirty paths:\n${dirty}`,
+          );
+        }
+        step(
+          'branch',
+          `Local ${defaultBranch} fast-forwarded to origin/${defaultBranch} (clean tree)`,
         );
       }
-      step(
-        'branch',
-        `Local ${defaultBranch} fast-forwarded to origin/${defaultBranch} (clean tree)`,
-      );
       // Check if branch exists on remote
       const remoteExists =
         (
@@ -790,10 +833,12 @@ async function slotPrepareInner(
       if (forceNewBranch && remoteExists) {
         // New work flow (fix-bug/dev): delete stale remote branch and recreate from defaultBranch
         step('branch', `Deleting stale remote ${branch} (forceNewBranch)...`);
-        await execOnSlot(
-          vars,
-          `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
-        );
+        if (!linkedWorktree) {
+          await execOnSlot(
+            vars,
+            `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null`,
+          );
+        }
         await execOnSlot(
           vars,
           `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
@@ -846,10 +891,17 @@ async function slotPrepareInner(
           ).exitCode === 0;
         if (localExists) {
           if (forceNewBranch) {
-            await execOnSlot(
-              vars,
-              `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null && git branch -D ${shellQuote(branch)} 2>/dev/null`,
-            );
+            if (linkedWorktree) {
+              await execOnSlot(
+                vars,
+                `cd ${shellQuote(vars.remoteRepo)} && git branch -D ${shellQuote(branch)} 2>/dev/null`,
+              );
+            } else {
+              await execOnSlot(
+                vars,
+                `cd ${shellQuote(vars.remoteRepo)} && git checkout ${defaultBranch} 2>/dev/null && git branch -D ${shellQuote(branch)} 2>/dev/null`,
+              );
+            }
             await execOnSlot(
               vars,
               `cd ${shellQuote(vars.remoteRepo)} && git checkout -b ${shellQuote(branch)} ${shellQuote(newBranchBase)}`,

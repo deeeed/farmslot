@@ -76,6 +76,7 @@ import {
 } from '../runs/store.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
 
+import { applyComparisonBranchPolicy } from './run/comparison-branch-policy.js';
 import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
   assertTicketRefMatchesProjectRepo,
@@ -326,6 +327,8 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
       );
     }
   }
+
+  applyComparisonBranchPolicy(params);
 
   // Guard: reject if there's already an active run for the same ticket
   const { runs: existing } = listRuns({ active: true });
