@@ -1,0 +1,91 @@
+name: Dogfood / framework issue
+description: Record a Farmslot-on-Farmslot bug or improvement (agent-direct fix path — no run required)
+title: "fix(<area>): <short symptom>"
+labels:
+  - dogfood
+body:
+  - type: markdown
+    value: |
+      Record **root cause** before fixing. Prefer **agent-direct** PR (unit test + typecheck) unless a slot/worker is required.
+      See [farmslot-self-dogfood-issue-loop.md](https://github.com/deeeed/farmslot/blob/main/docs/operations/farmslot-self-dogfood-issue-loop.md).
+      Umbrella stabilization: #122
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P0 — blocks dispatch/prepare/gate; merge before E2E
+        - P1 — reliability under load / retry
+        - P2 — observability / harness / ergonomics
+        - P3 — docs only
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - gateway
+        - prepare
+        - dispatch
+        - publication-gate
+        - ui
+        - scripts
+        - e2e-harness
+        - protocol
+        - other
+    validations:
+      required: true
+  - type: dropdown
+    id: fix_path
+    attributes:
+      label: Fix path
+      description: Agent-direct = PR without run.create. Run-mediated = needs slot/recipe proof.
+      options:
+        - A — Agent-direct (PR + unit test)
+        - B — Run-mediated (dispatch + evidence)
+        - C — Run-learned (retrospective / learnings.md)
+    validations:
+      required: true
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom
+      description: What failed or what is wrong (observable behavior)
+    validations:
+      required: true
+  - type: input
+    id: root_cause
+    attributes:
+      label: Root cause (one sentence)
+      description: Diagnosis before patching — bandage or real fix?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Commands, log paths, failing test, or run id — without a slot if possible
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_fix
+    attributes:
+      label: Proposed long-term fix
+      description: What should change in the framework (not symptom-only)
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification plan
+      description: Unit test, typecheck, smoke command, or E2E gate (which rung of the ladder)
+    validations:
+      required: true
+  - type: input
+    id: umbrella
+    attributes:
+      label: Umbrella issue (optional)
+      description: e.g. #122
+    validations:
+      required: false
