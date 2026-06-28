@@ -136,6 +136,9 @@ export interface RunCreateParams {
   allowedSlots?: string[];
   /** Internal backlog handoff link. Public run.create rejects this; backlog.enqueue owns it. */
   backlogItemId?: string;
+  /** Internal work-graph handoff link. Public run.create rejects this; workGraph.schedulerTick owns it. */
+  workGraphId?: string;
+  workNodeId?: string;
   /** Dev-only interactive policy. Defaults to lightweight for interactive dev runs. */
   devInteractiveProfile?: import('../contracts/index.js').DevInteractiveProfile;
   /** Shared normalized tags for planning/execution filtering. */

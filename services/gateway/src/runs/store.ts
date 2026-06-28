@@ -492,6 +492,8 @@ export function createRun(params: RunCreateParams): Run {
         ? [...params.allowedSlots]
         : null,
     backlogItemId: params.backlogItemId,
+    workGraphId: params.workGraphId,
+    workNodeId: params.workNodeId,
     taskFile: params.taskFile ?? null,
     steps: stepsForFlow(params.flowType),
     decisions: [],

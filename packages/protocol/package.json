@@ -170,6 +170,11 @@
       "import": "./dist/contracts/terminal.js",
       "default": "./dist/contracts/terminal.js"
     },
+    "./contracts/work-graph": {
+      "types": "./dist/contracts/work-graph.d.ts",
+      "import": "./dist/contracts/work-graph.js",
+      "default": "./dist/contracts/work-graph.js"
+    },
     "./contracts/workspace": {
       "types": "./dist/contracts/workspace.d.ts",
       "import": "./dist/contracts/workspace.js",
@@ -299,6 +304,11 @@
       "types": "./dist/rpc/tmux.d.ts",
       "import": "./dist/rpc/tmux.js",
       "default": "./dist/rpc/tmux.js"
+    },
+    "./rpc/work-graph": {
+      "types": "./dist/rpc/work-graph.d.ts",
+      "import": "./dist/rpc/work-graph.js",
+      "default": "./dist/rpc/work-graph.js"
     },
     "./rpc/workspace": {
       "types": "./dist/rpc/workspace.d.ts",

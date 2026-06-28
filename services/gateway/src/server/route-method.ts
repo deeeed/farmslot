@@ -149,6 +149,16 @@ import {
   type TmuxSynchronizePanesParams,
   type TmuxWorkerListParams,
   type TmuxZoomPaneParams,
+  type WorkGraphActivateParams,
+  type WorkGraphAddEdgeParams,
+  type WorkGraphAddNodeParams,
+  type WorkGraphCreateParams,
+  type WorkGraphGateResolveParams,
+  type WorkGraphGetParams,
+  type WorkGraphListRpcParams,
+  type WorkGraphPauseParams,
+  type WorkGraphSchedulerTickParams,
+  type WorkGraphUpdateNodeParams,
   type WorkspaceMetroSubscribeParams,
   type WorkspaceMetroUnsubscribeParams,
 } from '@farmslot/protocol';
@@ -337,6 +347,18 @@ import {
   tmuxZoomPane,
 } from '../methods/tmux-control.js';
 import { tmuxWorkerList } from '../methods/tmux-workers.js';
+import {
+  workGraphActivate,
+  workGraphAddEdge,
+  workGraphAddNode,
+  workGraphCreate,
+  workGraphGateResolve,
+  workGraphGet,
+  workGraphList,
+  workGraphPause,
+  workGraphSchedulerTick,
+  workGraphUpdateNode,
+} from '../methods/work-graph.js';
 import { metroSubscribe, metroUnsubscribe } from '../methods/workspace.js';
 import { getAllThumbnails, subscribeThumbnails } from '../observability/thumbnail-cache.js';
 import { farmslotRoot } from '../projects/repo-root.js';
@@ -481,6 +503,28 @@ export async function routeMethod(
       return backlogAutoDispatchTick((p ?? {}) as BacklogAutoDispatchTickParams);
     case Methods.BACKLOG_UPCOMING:
       return backlogUpcoming((p ?? {}) as BacklogUpcomingParams);
+
+    // Work Graph
+    case Methods.WORK_GRAPH_CREATE:
+      return workGraphCreate(p as WorkGraphCreateParams);
+    case Methods.WORK_GRAPH_GET:
+      return workGraphGet(p as WorkGraphGetParams);
+    case Methods.WORK_GRAPH_LIST:
+      return workGraphList((p ?? {}) as WorkGraphListRpcParams);
+    case Methods.WORK_GRAPH_ADD_NODE:
+      return workGraphAddNode(p as WorkGraphAddNodeParams);
+    case Methods.WORK_GRAPH_ADD_EDGE:
+      return workGraphAddEdge(p as WorkGraphAddEdgeParams);
+    case Methods.WORK_GRAPH_UPDATE_NODE:
+      return workGraphUpdateNode(p as WorkGraphUpdateNodeParams);
+    case Methods.WORK_GRAPH_ACTIVATE:
+      return workGraphActivate(p as WorkGraphActivateParams);
+    case Methods.WORK_GRAPH_PAUSE:
+      return workGraphPause(p as WorkGraphPauseParams);
+    case Methods.WORK_GRAPH_GATE_RESOLVE:
+      return workGraphGateResolve(p as WorkGraphGateResolveParams);
+    case Methods.WORK_GRAPH_SCHEDULER_TICK:
+      return workGraphSchedulerTick((p ?? {}) as WorkGraphSchedulerTickParams);
 
     // Roadmap
     case Methods.ROADMAP_LIST:

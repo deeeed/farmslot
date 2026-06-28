@@ -62,6 +62,8 @@ const VALID_SOURCE_KINDS = new Set<BacklogSourceKind>(['jira', 'github', 'manual
 const MANUAL_REF_RE = /^MANUAL-\d+$/;
 const TERMINAL_STATUSES = new Set<BacklogStatus>(['done', 'failed', 'needs-attention', 'archived']);
 const HANDOFF_ACTIVE_STATUSES = new Set<BacklogStatus>(['queued', 'dispatching', 'running']);
+const GRAPH_ENQUEUE_ERROR =
+  'Backlog item is linked to a work graph; use workGraph.schedulerTick or detach it first';
 const BACKLOG_UPDATE_KEYS = new Set([
   'itemId',
   'title',
@@ -251,6 +253,8 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
   const roadmapItemId = normalizeOptionalString(raw.roadmapItemId);
   const rawSpecPath = normalizeOptionalString(raw.specPath);
   const specPath = rawSpecPath && !rawSpecPath.includes('\0') ? rawSpecPath : undefined;
+  const workGraphId = normalizeOptionalString(raw.workGraphId);
+  const workNodeId = normalizeOptionalString(raw.workNodeId);
   return {
     id,
     project,
@@ -264,6 +268,8 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
     ...(tags.length > 0 ? { tags } : {}),
     ...(roadmapItemId ? { roadmapItemId } : {}),
     ...(specPath ? { specPath } : {}),
+    ...(workGraphId ? { workGraphId } : {}),
+    ...(workNodeId ? { workNodeId } : {}),
     priority: typeof raw.priority === 'number' && Number.isFinite(raw.priority) ? raw.priority : 10,
     ...(normalizeStringArray(raw.allowedSlots)
       ? { allowedSlots: normalizeStringArray(raw.allowedSlots) }
@@ -519,6 +525,49 @@ function getItem(itemId: string): BacklogItem {
   return item;
 }
 
+export function getBacklogItemSnapshot(itemId: string): BacklogItem | null {
+  const item = items.find((candidate) => candidate.id === itemId);
+  return item
+    ? {
+        ...item,
+        tags: item.tags ? [...item.tags] : undefined,
+        allowedSlots: item.allowedSlots ? [...item.allowedSlots] : undefined,
+      }
+    : null;
+}
+
+export function listBacklogItemSnapshots(): BacklogItem[] {
+  return items.map((item) => ({
+    ...item,
+    tags: item.tags ? [...item.tags] : undefined,
+    allowedSlots: item.allowedSlots ? [...item.allowedSlots] : undefined,
+  }));
+}
+
+export async function attachBacklogItemToWorkNode(params: {
+  itemId: string;
+  graphId: string;
+  nodeId: string;
+}): Promise<BacklogItem> {
+  return withBacklogMutation(async () => {
+    const item = getItem(params.itemId);
+    if (
+      item.workGraphId &&
+      (item.workGraphId !== params.graphId || item.workNodeId !== params.nodeId)
+    ) {
+      throw new Error(
+        `Backlog item ${params.itemId} is already linked to work graph ${item.workGraphId}`,
+      );
+    }
+    item.workGraphId = params.graphId;
+    item.workNodeId = params.nodeId;
+    item.updatedAt = new Date().toISOString();
+    await persistNow('work-graph-attach');
+    broadcastBacklog();
+    return item;
+  });
+}
+
 export async function updateBacklogItem(params: BacklogUpdateParams): Promise<BacklogUpdateResult> {
   return withBacklogMutation(async () => {
     const unknownKeys = Object.keys(params).filter((key) => !BACKLOG_UPDATE_KEYS.has(key));
@@ -678,14 +727,23 @@ async function assertAutoDispatchEligible(item: BacklogItem): Promise<void> {
   await assertAllowedSlotsBelongToProject(item);
 }
 
-export async function enqueueBacklogItem(params: {
-  itemId: string;
-  auto?: boolean;
-}): Promise<BacklogEnqueueResult> {
+export async function enqueueBacklogItem(
+  params: {
+    itemId: string;
+    auto?: boolean;
+  },
+  options: { workGraphId?: string; workNodeId?: string } = {},
+): Promise<BacklogEnqueueResult> {
   return withBacklogMutation(async () => {
     const item = getItem(params.itemId);
     if (item.status !== 'ready')
       throw new Error(`Cannot enqueue backlog item in status ${item.status}`);
+    if (
+      item.workGraphId &&
+      (item.workGraphId !== options.workGraphId || item.workNodeId !== options.workNodeId)
+    ) {
+      throw new Error(GRAPH_ENQUEUE_ERROR);
+    }
     if (item.queuedQueueItemId || item.runId)
       throw new Error('Backlog item is already linked to queue/run');
     const attemptedAt = new Date().toISOString();
@@ -717,6 +775,8 @@ export async function enqueueBacklogItem(params: {
       }
       const queueParams: InternalDispatchQueueAddParams = {
         backlogItemId: item.id,
+        workGraphId: options.workGraphId,
+        workNodeId: options.workNodeId,
         label: `Backlog: ${item.title}`,
         flowType: item.flowType,
         project: item.project,
@@ -759,6 +819,7 @@ async function blockedReasonForReadyItem(item: BacklogItem): Promise<string | nu
   try {
     if (item.status !== 'ready') return `status is ${item.status}`;
     if (item.queuedQueueItemId || item.runId) return 'already linked to queue/run';
+    if (item.workGraphId) return GRAPH_ENQUEUE_ERROR;
     await assertAutoDispatchEligible(item);
     await normalizeSourceFields(item.sourceKind, item.sourceRef, item.flowType, item.project);
     await assertBacklogSpecReady(item);
@@ -783,7 +844,10 @@ export async function autoDispatchBacklogReady(
   try {
     const candidates = sortedBacklog(
       items.filter(
-        (item) => item.status === 'ready' && (!params.project || item.project === params.project),
+        (item) =>
+          item.status === 'ready' &&
+          !item.workGraphId &&
+          (!params.project || item.project === params.project),
       ),
     );
     for (const item of candidates) {
@@ -809,7 +873,10 @@ export async function upcomingBacklogItems(
 ): Promise<BacklogUpcomingResult> {
   const ready = sortedBacklog(
     items.filter(
-      (item) => item.status === 'ready' && (!params.project || item.project === params.project),
+      (item) =>
+        item.status === 'ready' &&
+        !item.workGraphId &&
+        (!params.project || item.project === params.project),
     ),
   );
   const limited = ready.slice(0, params.limit ?? ready.length);

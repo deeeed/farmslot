@@ -123,9 +123,19 @@ export async function routeRunMethod(
   switch (method) {
     // Runs
     case Methods.RUN_CREATE: {
-      const runParams = p as RunCreateParams & { backlogItemId?: unknown };
-      if (runParams.backlogItemId !== undefined) {
-        throw new Error('run.create cannot accept backlog handoff metadata; use backlog.enqueue');
+      const runParams = p as RunCreateParams & {
+        backlogItemId?: unknown;
+        workGraphId?: unknown;
+        workNodeId?: unknown;
+      };
+      if (
+        runParams.backlogItemId !== undefined ||
+        runParams.workGraphId !== undefined ||
+        runParams.workNodeId !== undefined
+      ) {
+        throw new Error(
+          'run.create cannot accept backlog/work-graph handoff metadata; use backlog.enqueue or workGraph.schedulerTick',
+        );
       }
       return handled(runCreate(runParams, emit));
     }

@@ -1075,6 +1075,9 @@ export interface Run {
   allowedSlots?: string[] | null;
   /** Internal backlog handoff link, persisted so backlog delete/reconcile can find runs. */
   backlogItemId?: string;
+  /** Work graph node that scheduled this run via backlog/queue. */
+  workGraphId?: string;
+  workNodeId?: string;
   completedAt?: string;
   error?: string;
   /**

@@ -24,4 +24,5 @@ export * from './slot.js';
 export * from './task.js';
 export * from './terminal.js';
 export * from './tmux.js';
+export * from './work-graph.js';
 export * from './workspace.js';

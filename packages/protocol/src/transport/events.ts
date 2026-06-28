@@ -18,6 +18,7 @@ import type {
   StreamFrame,
   StreamStatus,
   TerminalData,
+  WorkGraphProjection,
 } from '../contracts/index.js';
 import type { CIWatchFixProgress, CIWatchFixTrigger, CIWatchPhase } from '../recipes/step-io.js';
 import type { TaskProgressResult } from '../rpc/index.js';
@@ -86,6 +87,9 @@ export const Events = {
 
   // Backlog
   BACKLOG_UPDATED: 'backlog.updated',
+
+  // Work graph
+  WORK_GRAPH_UPDATED: 'workGraph.updated',
 
   // CI
   CI_CHECK_UPDATED: 'ci.check.updated',
@@ -392,4 +396,8 @@ export interface FleetThumbnail {
 
 export interface FleetThumbnailsUpdatedPayload {
   thumbnails: Record<string, FleetThumbnail>;
+}
+
+export interface WorkGraphUpdatedPayload {
+  graph: WorkGraphProjection;
 }

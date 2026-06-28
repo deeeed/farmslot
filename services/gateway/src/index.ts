@@ -76,6 +76,7 @@ import { applyGatewayCors } from './security/origin.js';
 import { initSelfReview } from './self-review/orchestrator.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
+import { initWorkGraphStore, loadWorkGraphs, schedulerTick } from './work-graph/store.js';
 import { broadcast, broadcastEvent, createWebSocketServer } from './server.js';
 import { handleGitHubWebhook, handleJiraWebhook } from './webhook.js';
 
@@ -201,7 +202,16 @@ async function main(): Promise<void> {
     routeEventToAutoRecovery(event, payload);
     if (event === Events.RUN_UPDATED || event === Events.RUN_COMPLETED) {
       const run = (payload as { run?: import('@farmslot/protocol').Run }).run;
-      if (run) markBacklogRunObserved(run);
+      if (run) {
+        markBacklogRunObserved(run);
+        if (run.workGraphId) {
+          schedulerTick({ graphId: run.workGraphId }).catch((err) => {
+            console.error(
+              `[work-graph] run event reconciliation failed for ${run.workGraphId}: ${(err as Error).message}`,
+            );
+          });
+        }
+      }
     }
   };
 
@@ -263,6 +273,12 @@ async function main(): Promise<void> {
   await loadQueue();
   initBacklogStore(observedBroadcast);
   await loadBacklog();
+  initWorkGraphStore(observedBroadcast);
+  await loadWorkGraphs();
+  schedulerTick().catch((err) => {
+    console.error(`[work-graph] startup reconciliation failed: ${(err as Error).message}`);
+  });
+
   initDispatchQueue(observedBroadcast, async (item) => {
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const { evalTrialStart } = await import('./methods/eval.js');
@@ -313,10 +329,12 @@ async function main(): Promise<void> {
       initialContext: item.initialContext,
       ticketData: item.ticketData,
       backlogItemId: item.backlogItemId,
+      workGraphId: item.workGraphId,
+      workNodeId: item.workNodeId,
       devChecklist: item.devChecklist,
       reviewDepth: item.reviewDepth,
       pendingReviewPlan: item.pendingReviewPlan,
-    } satisfies import('@farmslot/protocol').RunCreateParams & { backlogItemId?: string };
+    } satisfies import('@farmslot/protocol').RunCreateParams;
     const { run } = await runCreate(runParams, broadcastEvent);
     item.runId = run.id;
     try {

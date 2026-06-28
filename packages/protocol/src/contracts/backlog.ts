@@ -41,6 +41,9 @@ export interface BacklogItem {
   roadmapItemId?: string;
   /** Local markdown spec backing this backlog item. */
   specPath?: string;
+  /** Work graph linkage; graph-linked backlog items can only be enqueued by the graph scheduler. */
+  workGraphId?: string;
+  workNodeId?: string;
   priority: number;
   allowedSlots?: string[];
   autoDispatch?: boolean;
