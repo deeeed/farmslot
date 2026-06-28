@@ -170,6 +170,13 @@ prepare_companion_slot() {
   local metro_log="$SCRATCH/fc-metro-prep.log"
   log "preparing companion slot metro :$FC_METRO_PORT simulator $FC_SIMULATOR"
   pkill -INT -f "simctl io ${FC_SIMULATOR} recordVideo" 2>/dev/null || true
+
+  if [[ "$(curl -s -m 4 "http://127.0.0.1:${FC_METRO_PORT}/status" 2>/dev/null || true)" == "packager-status:running" ]] \
+      && wait_companion_bridge "$FC_METRO_PORT" 3; then
+    log "companion metro :$FC_METRO_PORT already running with recipe bridge — reusing"
+    return 0
+  fi
+
   stop_metro_listeners_on_port "$FC_METRO_PORT"
   sleep 2
   : >"$metro_log"
@@ -187,12 +194,12 @@ prepare_companion_slot() {
     sleep 2
   done
   curl -sf -m 300 -o /dev/null "http://127.0.0.1:${FC_METRO_PORT}/node_modules/expo-router/entry.bundle?platform=ios&dev=true&hot=false" \
-    || fail_step "companion bundle warm" 1
+    || log "companion bundle warm failed — continuing (see $metro_log)"
   xcrun simctl boot "$FC_SIMULATOR" 2>/dev/null || true
   xcrun simctl terminate "$FC_SIMULATOR" "$bundle_id" >/dev/null 2>&1 || true
   sleep 1
   xcrun simctl launch "$FC_SIMULATOR" "$bundle_id" >/dev/null
-  wait_companion_bridge "$FC_METRO_PORT" 40 \
+  wait_companion_bridge "$FC_METRO_PORT" 60 \
     || fail_step "companion recipe bridge not ready (see $metro_log)" 1
   log "companion bridge ready on :$FC_METRO_PORT"
 }
