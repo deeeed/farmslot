@@ -13,6 +13,31 @@
 
 **Unification rule:** all first-party slots share `farmslot-{n}` worktree naming. Do not add `farmslot-companion-*` repos, `macwork-fc-*` slot IDs, or `app: companion` on pool slots. Cross-surface tickets use `sandbox-companion` on one slot.
 
+## Dispatch control plane vs slot validation stack — HARD RULE
+
+`macwork-ff-*` names a **slot** (worktree repo + tmux + pool port). It is **not** the WebSocket URL you dispatch against.
+
+Two different gateways exist on purpose:
+
+| Gateway                      | Port (ff-2 example)                | Role                                                                                                                       |
+| ---------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Operator / control plane** | `7777` on `~/dev/farmslot`         | `run.create`, monitor, gate, canonical UI `5174`, `.runs/` orchestration                                                   |
+| **Slot validation stack**    | `8809` on `farmslot-wt/farmslot-2` | Started by prepare profile `sandbox` — isolated Vite UI (`5876`) + gateway for **recipe/CDP probes** against that checkout |
+
+**Always dispatch from the operator tree:**
+
+```bash
+cd ~/dev/farmslot/apps/command-center
+yarn farmslot run create --project farmslot-farm --slot macwork-ff-2 ...
+# default ws://localhost:7777 — do NOT pass --url ws://localhost:8809
+```
+
+Prepare on `macwork-ff-*` still runs git/tmux in the **worktree** and calls `sandbox-dev.sh start --gateway-port {{port}}` so recipes and `recipe-doctor` can target `http://localhost:5876` and `http://127.0.0.1:8809`. That slot port is for **validation**, not for replacing the operator gateway.
+
+**Common agent mistake:** seeing `--gateway-port 8809` in recipe/E2E docs and running `yarn farmslot --url ws://localhost:8809 run create`. That binds the run engine to the sandbox process — operator UI on `5174` will not track it cleanly even when `.runs/` is shared on disk.
+
+**When `--url ws://localhost:8808+` is correct:** importing runs into an isolated sandbox, debugging that sandbox gateway directly, or slot-local tooling — not normal `run.create` for `macwork-ff-*` smoke/E2E.
+
 ## Idle state (tracking branches)
 
 Linked worktrees cannot checkout `main` when the primary clone has it checked out. Per [ADR-042](../adr/042-slot-tracking-branches.md), an **idle** sandbox slot stays on a **tracking branch** (today `wt/ff-1` … `wt/ff-4`) with `HEAD` equal to `origin/main` — not on `main` by name.
