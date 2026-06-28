@@ -13,6 +13,7 @@ import {
   detectRunnerLaunchBlocker,
   getRunnerDefinition,
   getRunnerObservability,
+  grokPaneShowsColdStartSession,
   normalizeRunner,
   resolveSafeSendTimeoutMs,
   RUNNER_HOOK_SAFE_SEND_TIMEOUT_MS,
@@ -658,6 +659,18 @@ describe('grok runner', () => {
       true,
     );
     assert.equal(runnerLineLooksWaiting('→ Plan, search, build anything', 'grok'), false);
+  });
+
+  it('treats Grok Starting session as not idle for post-launch prompt delivery', () => {
+    const coldStart = `
+    ⠋ Starting session… 5.0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+    assert.equal(grokPaneShowsColdStartSession(coldStart, 'grok'), true);
+    assert.equal(runnerPaneLooksIdle(coldStart.split('\n'), 'grok'), false);
   });
 
   it('recognizes Grok buffered prompts and submitted progress', () => {

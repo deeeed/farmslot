@@ -67,6 +67,7 @@ interface DispatchWizardViewContext {
   comparisonFamilyId: string;
   comparisonParentRunId: string;
   variantPreview: string;
+  comparisonBranchHint: string | null;
   priorRuns: readonly Run[];
   variantCollision: boolean;
   variantInput: string;
@@ -162,6 +163,7 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
             familyId: ctx.comparisonFamilyId,
             parentRunId: ctx.comparisonParentRunId,
             variantPreview: ctx.variantPreview,
+            branchHint: ctx.comparisonBranchHint,
             exitComparisonMode: ctx.exitComparisonMode,
           })}
           ${renderProfileFitBanner({

@@ -10,6 +10,7 @@ import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 
+import { resolveComparisonDispatchBranch } from './dispatch-wizard-comparison-state.js';
 import {
   buildDispatchQueueAddParams,
   buildRunCreateParams,
@@ -44,13 +45,19 @@ export function buildDispatchWizardPayloadDraft(
   input: DispatchPayloadDraftInput,
 ): DispatchPayloadDraft | null {
   if (!input.flowType) return null;
+  const variant = input.comparison.variant?.trim() ?? '';
+  const branch = resolveComparisonDispatchBranch({
+    comparisonLane: Boolean(input.comparison.lane === 'comparison'),
+    variant,
+    branch: input.branch,
+  });
   return {
     flowType: input.flowType,
     project: input.project,
     ticketOrPr: input.ticketId,
     slotId: input.slotOverride || undefined,
     allowedSlots: input.allowedSlots,
-    branch: input.branch,
+    branch,
     model: input.model || undefined,
     runner: input.runner || undefined,
     effort: input.effort || undefined,

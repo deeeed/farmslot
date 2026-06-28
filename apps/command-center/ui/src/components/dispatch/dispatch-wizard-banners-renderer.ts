@@ -9,6 +9,7 @@ export interface ComparisonModeIndicatorRenderContext {
   familyId: string;
   parentRunId: string;
   variantPreview: string;
+  branchHint: string | null;
   exitComparisonMode: () => void;
 }
 
@@ -21,6 +22,9 @@ export function renderComparisonModeIndicator(ctx: ComparisonModeIndicatorRender
         <span><span class="cm-label">family</span> ${ctx.familyId.slice(0, 8)}</span>
         <span><span class="cm-label">parent run</span> ${ctx.parentRunId.slice(0, 8)}</span>
         <span><span class="cm-label">variant</span> ${ctx.variantPreview || '(empty)'}</span>
+        ${ctx.branchHint
+          ? html`<span><span class="cm-label">branch</span> ${ctx.branchHint}</span>`
+          : nothing}
       </div>
       <button
         class="comparison-mode-exit"

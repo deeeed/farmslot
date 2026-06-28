@@ -1,4 +1,4 @@
-import type { Run } from '@farmslot/protocol';
+import type { FlowType, Run } from '@farmslot/protocol';
 import { buildComparisonVariant } from '@farmslot/protocol';
 
 import { detectVariantCollision, isVariantInputBlocked } from './dispatch-wizard-helpers.js';
@@ -103,4 +103,27 @@ export function buildComparisonRunParams(input: {
     variant: input.variant,
     ...(input.comparisonParentRunId ? { parentRunId: input.comparisonParentRunId } : {}),
   };
+}
+
+/** Comparison siblings get per-variant branches from the gateway — omit shared production branches. */
+export function resolveComparisonDispatchBranch(input: {
+  comparisonLane: boolean;
+  variant: string;
+  branch?: string;
+}): string | undefined {
+  if (!input.comparisonLane || !input.variant.trim()) return input.branch;
+  return undefined;
+}
+
+export function comparisonBranchHint(input: {
+  comparisonLane: boolean;
+  variant: string;
+  flowType: FlowType | null;
+  ticketOrPr: string;
+  derivedBranch?: string;
+}): string | null {
+  if (!input.comparisonLane || !input.variant.trim()) return null;
+  return input.derivedBranch
+    ? `Branch auto-derived: ${input.derivedBranch}`
+    : 'Branch auto-derived per variant at dispatch';
 }

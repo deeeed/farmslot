@@ -26,6 +26,7 @@ import {
 import { deriveDispatchWizardBlockingState } from './dispatch-wizard-blockers.js';
 import {
   buildComparisonRunParams,
+  comparisonBranchHint,
   comparisonVariantInputBlocked,
   deriveComparisonVariantState,
   exitedComparisonModeState,
@@ -840,6 +841,12 @@ export class DispatchWizard extends DispatchWizardState {
       comparisonFamilyId: this._comparisonFamilyId,
       comparisonParentRunId: this._comparisonParentRunId,
       variantPreview: this._resolveVariantForDispatch(),
+      comparisonBranchHint: comparisonBranchHint({
+        comparisonLane: this._comparisonLane,
+        variant: this._resolveVariantForDispatch(),
+        flowType: this._flowType,
+        ticketOrPr: this._ticketId,
+      }),
       priorRuns: this._priorRuns,
       variantCollision: this._variantCollision,
       variantInput: this._variantInput,

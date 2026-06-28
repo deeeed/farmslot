@@ -479,6 +479,11 @@ export function runnerLineLooksWaiting(line: string, runnerId?: string | null): 
   return false;
 }
 
+export function grokPaneShowsColdStartSession(pane: string, runnerId?: string | null): boolean {
+  if (normalizeRunner(runnerId) !== 'grok') return false;
+  return /starting session/i.test(normalizeInstructionText(pane));
+}
+
 export function runnerPaneLooksIdle(lines: string[], runnerId?: string | null): boolean {
   // Cursor/Claude/Codex can render an input box with several trailing blank or
   // border lines after the actual placeholder. Inspect the last meaningful
@@ -488,6 +493,7 @@ export function runnerPaneLooksIdle(lines: string[], runnerId?: string | null): 
     .map((line) => line.trim())
     .filter(Boolean)
     .slice(-8);
+  if (grokPaneShowsColdStartSession(tail.join('\n'), runnerId)) return false;
   return tail.some((line) => runnerLineLooksWaiting(line, runnerId));
 }
 
@@ -1412,6 +1418,11 @@ export async function sendRunnerPostLaunchPrompt(
         `${blocker.summary} Snapshot: ${opts.blockerSnapshotPath ?? 'not configured'}. ` +
           `Prompt delivery aborted before the ${readyTimeoutMs / 1000}s readiness timeout.`,
       );
+    }
+    if (grokPaneShowsColdStartSession(pane, runner)) {
+      stableCount = 0;
+      lastPane = '';
+      continue;
     }
     if (runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner)) {
       console.log(

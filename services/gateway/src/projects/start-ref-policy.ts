@@ -1,11 +1,16 @@
 import type {
   FlowType,
+  RunCreateParams,
   RunLane,
   RunStartRefProvenance,
   RunStartRefSource,
 } from '@farmslot/protocol';
 
-import { sanitizeStartRef } from './start-ref-resolution.js';
+import { execOnSlot } from '../core/exec.js';
+import { loadSlotVars } from '../core/index.js';
+import { shellQuote } from '../core/tmux.js';
+
+import { resolveStartRefInRepo, sanitizeStartRef } from './start-ref-resolution.js';
 
 type UnsupportedStartRefSource = { kind: 'prior-run'; runId?: string };
 
@@ -20,6 +25,8 @@ interface StartRefPolicyParams {
   startRef?: string;
   startRefSource?: RunStartRefSource | UnsupportedStartRefSource;
   skipPrepare?: boolean;
+  /** Set by run.create after verifying slot HEAD matches the resolved startRef SHA. */
+  startRefSkipPrepareVerified?: boolean;
   nudgeReuse?: boolean;
   freshReuse?: boolean;
 }
@@ -78,8 +85,10 @@ export function normalizeStartRefRequest(
   if (params.completionPolicy !== 'artifact-only') {
     reject('startRef requires completionPolicy=artifact-only');
   }
-  if (params.skipPrepare) {
-    reject('startRef cannot be combined with skipPrepare');
+  if (params.skipPrepare && !params.startRefSkipPrepareVerified) {
+    reject(
+      'startRef cannot be combined with skipPrepare unless slot HEAD already matches the requested startRef',
+    );
   }
   if (params.nudgeReuse) {
     reject('startRef cannot be combined with nudgeReuse');
@@ -97,6 +106,40 @@ export function normalizeStartRefRequest(
     requestedRef,
     source: params.startRefSource ?? { kind: 'manual' },
   };
+}
+
+export async function assertStartRefSkipPrepareEligible(
+  params: Pick<RunCreateParams, 'startRef' | 'skipPrepare' | 'slotId'>,
+): Promise<void> {
+  if (!params.startRef?.trim() || !params.skipPrepare) return;
+  if (!params.slotId?.trim()) {
+    throw new StartRefPolicyError(
+      'startRef with skipPrepare requires slotId so slot HEAD can be verified against the requested startRef',
+    );
+  }
+  const vars = await loadSlotVars(params.slotId);
+  const requestedRef = sanitizeStartRef(params.startRef);
+  const resolution = await resolveStartRefInRepo({
+    repo: vars.remoteRepo,
+    requestedRef,
+    exec: (command) => execOnSlot(vars, command, { timeout: 30_000 }),
+  });
+  const head = await execOnSlot(
+    vars,
+    `git -C ${shellQuote(vars.remoteRepo)} rev-parse HEAD`,
+    { timeout: 10_000 },
+  );
+  if (head.exitCode !== 0) {
+    throw new StartRefPolicyError(
+      `Could not read slot HEAD for startRef skipPrepare verification: ${head.stderr.slice(-200) || head.stdout.slice(-200)}`,
+    );
+  }
+  const headSha = head.stdout.trim();
+  if (headSha !== resolution.resolvedSha) {
+    throw new StartRefPolicyError(
+      `startRef skipPrepare requires slot HEAD ${headSha.slice(0, 12)} to match startRef ${resolution.resolvedSha.slice(0, 12)} (${requestedRef})`,
+    );
+  }
 }
 
 export function assertStartRefWorkBranchIsLocalOnly(params: {

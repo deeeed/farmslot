@@ -1218,6 +1218,122 @@
           "total": 7416
         }
       }
+    },
+    {
+      "recordedAt": "2026-06-28T13:44:32.632Z",
+      "commit": "e143f4b90c86545c9f84ff4d9ca41d6e553b9902",
+      "scope": "framework",
+      "exclusions": {
+        "tests": false,
+        "dev": false
+      },
+      "totals": {
+        "files": 1933,
+        "code": 370402,
+        "docs": 26595,
+        "config": 9542,
+        "total": 407878
+      },
+      "rollup": {
+        "command-center": {
+          "code": 118214,
+          "total": 119437
+        },
+        "companion": {
+          "code": 60873,
+          "total": 62346
+        },
+        "gateway": {
+          "code": 122358,
+          "total": 122464
+        },
+        "packages": {
+          "code": 39319,
+          "total": 42310
+        },
+        "scripts": {
+          "code": 16403,
+          "total": 16704
+        },
+        "docs": {
+          "code": 0,
+          "total": 20616
+        },
+        "docs-site": {
+          "code": 7210,
+          "total": 11989
+        },
+        "node": {
+          "code": 4288,
+          "total": 4356
+        },
+        "projects": {
+          "code": 0,
+          "total": 146
+        },
+        "infra": {
+          "code": 1737,
+          "total": 7510
+        }
+      }
+    },
+    {
+      "recordedAt": "2026-06-28T13:49:18.121Z",
+      "commit": "dfc1495ba680a26257c27778da66a47ff92f4c39",
+      "scope": "framework",
+      "exclusions": {
+        "tests": false,
+        "dev": false
+      },
+      "totals": {
+        "files": 1933,
+        "code": 370378,
+        "docs": 26586,
+        "config": 9542,
+        "total": 407845
+      },
+      "rollup": {
+        "command-center": {
+          "code": 118214,
+          "total": 119437
+        },
+        "companion": {
+          "code": 60849,
+          "total": 62322
+        },
+        "gateway": {
+          "code": 122358,
+          "total": 122464
+        },
+        "packages": {
+          "code": 39319,
+          "total": 42310
+        },
+        "scripts": {
+          "code": 16403,
+          "total": 16704
+        },
+        "docs": {
+          "code": 0,
+          "total": 20607
+        },
+        "docs-site": {
+          "code": 7210,
+          "total": 11989
+        },
+        "node": {
+          "code": 4288,
+          "total": 4356
+        },
+        "projects": {
+          "code": 0,
+          "total": 146
+        },
+        "infra": {
+          "code": 1737,
+          "total": 7510
+        }
+      }
     }
   ]
 }

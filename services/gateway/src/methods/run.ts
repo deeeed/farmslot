@@ -31,6 +31,7 @@ import { shellQuote } from '../core/tmux.js';
 import { buildFollowUpLineage, isFollowUpFlow } from '../family-observability/context.js';
 import { findFollowUpParentRun } from '../family-observability/state.js';
 import { loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
+import { assertStartRefSkipPrepareEligible } from '../projects/start-ref-policy.js';
 import {
   assertReadyGatePackageInputsCurrent,
   isArtifactOnlyRun,
@@ -83,6 +84,7 @@ import {
   resolvePrRef,
   validateTicketRef,
 } from './dispatch/ticket-ref.js';
+import { applyComparisonBranchPolicy } from './run/comparison-branch-policy.js';
 import { runCancel } from './run/lifecycle-control.js';
 import { triggerImprovementAnalysis } from './run/propose-improvement.js';
 import { runReplayStep } from './run/replay-step.js';
@@ -186,6 +188,9 @@ function buildInteractiveDevTicketData(
 }
 
 export async function runCreate(params: RunCreateParams, emit: Emit): Promise<RunCreateResult> {
+  // Gateway-internal — clients must not forge HEAD verification.
+  delete params.startRefSkipPrepareVerified;
+
   // Normalize ticketOrPr: extract key from Jira/GitHub URLs, then validate the
   // shape fits the requested flow so we fail fast before slot allocation instead
   // of crashing deep in the write-task step with a cryptic "Invalid PR ref".
@@ -327,6 +332,14 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
     }
   }
 
+  applyComparisonBranchPolicy(params);
+
+  let startRefSkipPrepareVerified = false;
+  if (params.startRef?.trim() && params.skipPrepare) {
+    await assertStartRefSkipPrepareEligible(params);
+    startRefSkipPrepareVerified = true;
+  }
+
   // Guard: reject if there's already an active run for the same ticket
   const { runs: existing } = listRuns({ active: true });
   assertDuplicateRunAllowed(params, existing);
@@ -361,9 +374,10 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
     throw new Error('nudgeReuse and freshReuse are mutually exclusive — pick one mode');
   }
 
-  const createParams = normalizedTaskTemplate
-    ? { ...params, taskTemplate: normalizedTaskTemplate }
-    : params;
+  const createParams = {
+    ...(normalizedTaskTemplate ? { ...params, taskTemplate: normalizedTaskTemplate } : params),
+    ...(startRefSkipPrepareVerified ? { startRefSkipPrepareVerified: true as const } : {}),
+  };
   const run = createRun(createParams);
   // Set runtime flags (not persisted)
   if (params.skipPrepare) {
