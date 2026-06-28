@@ -45,6 +45,7 @@ REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 RUNTIME_DIR="${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot-farm/agent}"
 PID_FILE="$RUNTIME_DIR/sandbox-dev.pid"
 LOG_FILE="$RUNTIME_DIR/sandbox-dev.log"
+SHARED_RUNS_MARKER="$RUNTIME_DIR/shared-runs-dir"
 PORT_ENV="$REPO_ROOT/.env.ports"
 
 mkdir -p "$RUNTIME_DIR"
@@ -140,6 +141,7 @@ stop_sandbox_dev() {
   fi
   kill_port_listeners "$GATEWAY_PORT"
   kill_port_listeners "$VITE_PORT"
+  rm -f "$SHARED_RUNS_MARKER"
 }
 
 wait_for_gateway() {
@@ -224,6 +226,14 @@ case "$ACTION" in
         echo "[sandbox-dev] gateway and UI already healthy on :${GATEWAY_PORT}/:${VITE_PORT} — skipping start"
         exit 0
       fi
+      local active_shared_runs=""
+      if [[ -f "$SHARED_RUNS_MARKER" ]]; then
+        active_shared_runs="$(tr -d '\n' <"$SHARED_RUNS_MARKER")"
+      fi
+      if [[ "$active_shared_runs" == "$FARMSLOT_RUNS_DIR" ]]; then
+        echo "[sandbox-dev] gateway and UI already healthy on :${GATEWAY_PORT}/:${VITE_PORT} with shared run history from ${FARMSLOT_RUNS_DIR}"
+        exit 0
+      fi
       echo "[sandbox-dev] restarting gateway on :${GATEWAY_PORT} to apply shared run history"
     fi
 
@@ -244,6 +254,11 @@ case "$ACTION" in
     echo $! >"$PID_FILE"
 
     if wait_for_gateway 90 && wait_for_ui 90; then
+      if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
+        printf '%s\n' "$FARMSLOT_RUNS_DIR" >"$SHARED_RUNS_MARKER"
+      else
+        rm -f "$SHARED_RUNS_MARKER"
+      fi
       echo "[sandbox-dev] ready — gateway http://127.0.0.1:${GATEWAY_PORT} ui http://127.0.0.1:${VITE_PORT}"
       echo "[sandbox-dev] log: ${LOG_FILE}"
       exit 0
