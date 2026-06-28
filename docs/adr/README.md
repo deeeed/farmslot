@@ -49,3 +49,5 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [037](037-prepare-profiles.md)                         | Prepare Profiles — Project-Defined Slot Entry Points                    | Accepted |
 | [038](038-gate-held-worker-session.md)                 | Gate-Held Worker Session at Publication Human Gate                    | Accepted |
 | [039](039-run-portable-bundles.md)                     | Portable Run Bundles for Cross-Gateway Reference Seeding              | Accepted |
+| [040](040-epic-work-graph-orchestration.md)            | Epic Work-Graph Orchestration                                         | Proposed |
+| [041](041-roadmap-idea-refinement-layer.md)             | Roadmap Idea Refinement Layer                                         | Proposed |
