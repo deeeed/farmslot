@@ -85,6 +85,67 @@ capture_typecheck() {
   return "$ec"
 }
 
+stop_metro_listeners_on_port() {
+  local port="$1"
+  local pid cmd
+  for pid in $(lsof -nP -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null); do
+    cmd="$(ps -p "${pid}" -o args= 2>/dev/null || true)"
+    if [[ "${cmd}" == *"expo"* || "${cmd}" == *"metro"* || "${cmd}" == *"@expo"* ]]; then
+      kill "${pid}" 2>/dev/null || true
+      sleep 1
+      kill -9 "${pid}" 2>/dev/null || true
+    fi
+  done
+}
+
+wait_companion_bridge() {
+  local port="$1"
+  local tries="${2:-40}"
+  while (( tries-- > 0 )); do
+    if curl -sf -X POST "http://127.0.0.1:${port}/farmslot-recipe/command" \
+        -H 'Content-Type: application/json' \
+        -d '{"command":"status","nodeId":"e2e-bridge-wait","payload":{},"timeout_ms":8000}' \
+        2>/dev/null | grep -q '"ok":true'; then
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
+}
+
+prepare_companion_slot() {
+  local app_dir="$FC_WT/apps/companion"
+  local bundle_id="${COMPANION_BUNDLE_ID:-net.siteed.farmslot.development}"
+  local metro_log="$SCRATCH/fc-metro-prep.log"
+  log "preparing companion slot metro :$FC_METRO_PORT simulator $FC_SIMULATOR"
+  pkill -INT -f "simctl io ${FC_SIMULATOR} recordVideo" 2>/dev/null || true
+  stop_metro_listeners_on_port "$FC_METRO_PORT"
+  sleep 2
+  : >"$metro_log"
+  (
+    cd "$app_dir"
+    exec env APP_VARIANT=development METRO_PORT="$FC_METRO_PORT" \
+      REACT_NATIVE_PACKAGER_HOSTNAME=127.0.0.1 \
+      EXPO_PUBLIC_GATEWAY_URL="ws://127.0.0.1:${FC_GATEWAY_PORT}/ws" \
+      EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE=1 \
+      yarn expo start --dev-client --port "$FC_METRO_PORT"
+  ) >>"$metro_log" 2>&1 &
+  local tries=45
+  while (( tries-- > 0 )); do
+    [[ "$(curl -s -m 4 "http://127.0.0.1:${FC_METRO_PORT}/status" 2>/dev/null || true)" == "packager-status:running" ]] && break
+    sleep 2
+  done
+  curl -sf -m 300 -o /dev/null "http://127.0.0.1:${FC_METRO_PORT}/node_modules/expo-router/entry.bundle?platform=ios&dev=true&hot=false" \
+    || fail_step "companion bundle warm" 1
+  xcrun simctl boot "$FC_SIMULATOR" 2>/dev/null || true
+  xcrun simctl terminate "$FC_SIMULATOR" "$bundle_id" >/dev/null 2>&1 || true
+  sleep 1
+  xcrun simctl launch "$FC_SIMULATOR" "$bundle_id" >/dev/null
+  wait_companion_bridge "$FC_METRO_PORT" 40 \
+    || fail_step "companion recipe bridge not ready (see $metro_log)" 1
+  log "companion bridge ready on :$FC_METRO_PORT"
+}
+
 run_recipe_proof() {
   local label="$1"
   local slot_repo="$2"
@@ -245,6 +306,8 @@ fi
 
 EXPO_PUBLIC_GATEWAY_URL="ws://127.0.0.1:${FC_GATEWAY_PORT}/ws"
 export EXPO_PUBLIC_GATEWAY_URL
+
+prepare_companion_slot
 
 run_recipe_proof "run B" "$FC_WT" "$FC_TASK_DIR/artifacts/recipe.json" \
   "$FC_TASK_DIR/artifacts/recipe-run-ui" "$FC_TASK_DIR" ios "$SCRATCH/runB-ui-recipe-proof.log" \
