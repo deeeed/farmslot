@@ -41,7 +41,7 @@ done
 SLOT_GATEWAY_PORT="$GATEWAY_PORT"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+REPO_ROOT="${FARMSLOT_SLOT_REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 RUNTIME_DIR="${FARMSLOT_RUNTIME_DIR:-$REPO_ROOT/.sandbox/farmslot-farm/agent}"
 PID_FILE="$RUNTIME_DIR/sandbox-dev.pid"
 LOG_FILE="$RUNTIME_DIR/sandbox-dev.log"
@@ -56,14 +56,67 @@ if [[ -f "$PORT_ENV" ]]; then
   set +a
 fi
 
-# Pool slot port wins over .env.ports (prepare passes --gateway-port {{port}}).
-GATEWAY_PORT="$SLOT_GATEWAY_PORT"
+# Canonical operator ports for the primary worktree (see docs/operations/worktree-operator-model.md).
+OPERATOR_GATEWAY_PORT="${GATEWAY_PORT:-7777}"
+OPERATOR_VITE_PORT="${VITE_PORT:-5174}"
+
+read_primary_repo() {
+  local project_json="$REPO_ROOT/projects/farmslot-farm/project.json"
+  [[ -f "$project_json" ]] || return 1
+  node -e "
+    const fs = require('fs');
+    const project = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+    process.stdout.write(String(project.primary_repo || '').trim());
+  " "$project_json"
+}
+
+is_primary_checkout() {
+  local primary_repo
+  primary_repo="$(read_primary_repo)" || return 1
+  [[ "$(cd "$REPO_ROOT" && pwd -P)" == "$(cd "$primary_repo" && pwd -P)" ]]
+}
+
+PRIMARY_CHECKOUT=0
+if is_primary_checkout; then
+  PRIMARY_CHECKOUT=1
+  # Main worktree: operator gateway + Command Center UI — never an isolated slot port.
+  GATEWAY_PORT="$OPERATOR_GATEWAY_PORT"
+  VITE_PORT="$OPERATOR_VITE_PORT"
+else
+  # Worktree sandboxes get isolated ports from their own .env.ports.
+  GATEWAY_PORT="$SLOT_GATEWAY_PORT"
+  VITE_PORT="${VITE_PORT:-}"
+  if [[ -z "$VITE_PORT" || "$VITE_PORT" == "5174" ]]; then
+    echo "[sandbox-dev] worktree sandbox must set VITE_PORT in .env.ports (cannot use operator UI :5174)" >&2
+    exit 1
+  fi
+fi
 export GATEWAY_PORT
-VITE_PORT="${VITE_PORT:-5174}"
 export VITE_PORT
+
+# Worktree sandboxes boot an isolated gateway, but operators still expect the
+# canonical run history from the primary checkout. Share read/write .runs only
+# when this checkout is not the primary_repo (explicit FARMSLOT_RUNS_DIR wins).
+resolve_primary_runs_dir() {
+  if [[ "$PRIMARY_CHECKOUT" == 1 || -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
+    return 0
+  fi
+  local primary_repo
+  primary_repo="$(read_primary_repo)" || return 0
+  local primary_runs="$primary_repo/.runs"
+  if [[ -d "$primary_runs" ]]; then
+    export FARMSLOT_RUNS_DIR="$primary_runs"
+    echo "[sandbox-dev] sharing run history from ${FARMSLOT_RUNS_DIR}"
+  fi
+}
 
 gateway_health() {
   curl -sf "http://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null 2>&1
+}
+
+ui_health() {
+  curl -sf "http://127.0.0.1:${VITE_PORT}/" >/dev/null 2>&1 \
+    || curl -sf -g "http://[::1]:${VITE_PORT}/" >/dev/null 2>&1
 }
 
 kill_port_listeners() {
@@ -102,23 +155,76 @@ wait_for_gateway() {
   return 1
 }
 
+wait_for_ui() {
+  local max="${1:-90}"
+  local i=0
+  while (( i < max )); do
+    if ui_health; then
+      return 0
+    fi
+    sleep 1
+    ((i++))
+  done
+  return 1
+}
+
 case "$ACTION" in
   health)
-    if gateway_health; then
-      echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}"
+    if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
+      if gateway_health && ui_health; then
+        echo "[sandbox-dev] primary checkout — operator gateway :${GATEWAY_PORT}, Command Center :${VITE_PORT}"
+        exit 0
+      fi
+      if ! gateway_health; then
+        echo "[sandbox-dev] primary checkout — operator gateway not healthy on :${GATEWAY_PORT}" >&2
+      fi
+      if ! ui_health; then
+        echo "[sandbox-dev] primary checkout — Command Center not reachable on :${VITE_PORT}" >&2
+      fi
+      exit 1
+    fi
+    if gateway_health && ui_health; then
+      echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}, UI on :${VITE_PORT}"
       exit 0
     fi
-    echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2
+    if ! gateway_health; then
+      echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2
+    fi
+    if ! ui_health; then
+      echo "[sandbox-dev] Command Center not reachable on :${VITE_PORT}" >&2
+    fi
     exit 1
     ;;
   stop)
+    if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
+      echo "[sandbox-dev] primary checkout — not stopping operator gateway on :${GATEWAY_PORT}"
+      exit 0
+    fi
     stop_sandbox_dev
     echo "[sandbox-dev] stopped sandbox dev on :${GATEWAY_PORT}"
     ;;
   start)
-    if gateway_health; then
-      echo "[sandbox-dev] gateway already healthy on :${GATEWAY_PORT} — skipping start"
-      exit 0
+    if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
+      if gateway_health && ui_health; then
+        echo "[sandbox-dev] primary checkout — operator gateway :${GATEWAY_PORT}, Command Center :${VITE_PORT}"
+        exit 0
+      fi
+      if ! gateway_health; then
+        echo "[sandbox-dev] primary checkout — start operator stack: bash scripts/dev.sh (gateway :${GATEWAY_PORT}, UI :${VITE_PORT})" >&2
+        exit 1
+      fi
+      echo "[sandbox-dev] primary checkout — gateway :${GATEWAY_PORT} up; start Command Center on :${VITE_PORT} (bash scripts/dev.sh)" >&2
+      exit 1
+    fi
+
+    resolve_primary_runs_dir
+
+    if gateway_health && ui_health; then
+      if [[ -z "${FARMSLOT_RUNS_DIR:-}" ]]; then
+        echo "[sandbox-dev] gateway and UI already healthy on :${GATEWAY_PORT}/:${VITE_PORT} — skipping start"
+        exit 0
+      fi
+      echo "[sandbox-dev] restarting gateway on :${GATEWAY_PORT} to apply shared run history"
     fi
 
     stop_sandbox_dev
@@ -127,17 +233,27 @@ case "$ACTION" in
     : >"$LOG_FILE"
     (
       cd "$REPO_ROOT"
-      GATEWAY_PORT="$GATEWAY_PORT" VITE_PORT="$VITE_PORT" exec bash scripts/dev.sh
+      export GATEWAY_PORT="$GATEWAY_PORT"
+      export VITE_PORT="$VITE_PORT"
+      export VITE_FARMSLOT_DEMO_BANNER="${VITE_FARMSLOT_DEMO_BANNER:-}"
+      if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
+        export FARMSLOT_RUNS_DIR
+      fi
+      exec bash scripts/dev.sh
     ) >>"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
 
-    if wait_for_gateway 90; then
+    if wait_for_gateway 90 && wait_for_ui 90; then
       echo "[sandbox-dev] ready — gateway http://127.0.0.1:${GATEWAY_PORT} ui http://127.0.0.1:${VITE_PORT}"
       echo "[sandbox-dev] log: ${LOG_FILE}"
       exit 0
     fi
 
-    echo "[sandbox-dev] gateway did not become healthy — tail ${LOG_FILE}" >&2
+    if ! gateway_health; then
+      echo "[sandbox-dev] gateway did not become healthy — tail ${LOG_FILE}" >&2
+    else
+      echo "[sandbox-dev] Command Center did not become reachable on :${VITE_PORT} — tail ${LOG_FILE}" >&2
+    fi
     tail -n 40 "$LOG_FILE" >&2 || true
     exit 1
     ;;

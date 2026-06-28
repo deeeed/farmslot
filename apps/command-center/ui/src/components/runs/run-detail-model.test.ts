@@ -35,7 +35,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     lane: 'production',
     flowType: 'fix-bug',
     status: 'done',
-    project: 'farmslot',
+    project: 'farmslot-farm',
     ticketOrPr: 'BUG-123',
     slotId: null,
     branch: null,
@@ -236,7 +236,7 @@ test('buildRerunAlongsideHref omits runner/model/variant when unavailable', () =
 
   assert.equal(
     href,
-    '#dispatch?flow=fix-bug&ticket=BUG-123&project=farmslot&lane=comparison&familyId=family-1&parentRunId=run-1',
+    '#dispatch?flow=fix-bug&ticket=BUG-123&project=farmslot-farm&lane=comparison&familyId=family-1&parentRunId=run-1',
   );
 });
 

@@ -70,7 +70,7 @@ const envSchema = Joi.object({
 
 // Keep one canonical Expo slug for the linked EAS project. Install identity and
 // deep-link disambiguation come from bundle/package IDs and schemes, not slug.
-const APP_SLUG = 'farmslot-companion';
+const APP_SLUG = 'farmslot';
 const APP_VERSION = packageJson.version;
 
 function loadEnv(): AppConfigEnv {

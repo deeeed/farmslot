@@ -1,4 +1,4 @@
-# Farmslot self-dogfood day — execution context
+# Farmslot self-integration day — execution context
 
 **Owner:** Arthur
 **Date:** 2026-06-27
@@ -80,7 +80,7 @@ Pick **one** small farmslot roadmap/backlog item (docs-only or tiny gateway fix)
 
 ```bash
 # Example shape — adjust to your backlog item id when created
-farmslot run create --flow dev --mode interactive --project farmslot-farm ...
+farmslot run create --flow dev --mode interactive --project farmslot-farm --prepare-profile sandbox ...
 # or backlog.enqueue handoff after backlog item exists
 ```
 
@@ -89,13 +89,13 @@ Success = run appears in `#runs`, Companion active runs, terminal on slot, **you
 ### D. Document evidence
 
 - [ ] `docs/operations/evidence/adr039-import-export-qa.json` (or sibling) after manual QA
-- [ ] Note run ids used for the first self-dogfood dispatch
+- [ ] Note run ids used for the first gateway-originated dispatch
 
 ## Demo trajectory (MetaMask → Farmslot-native)
 
 MetaMask farms remain the heavy integration test bed. For **demo** and **parallel agent** work, prefer:
 
-- `farmslot-farm` / `example-browser-farm` for protocol/UI proofs
+- `farmslot-farm` / `example-browser-farm` for protocol/UI proofs — see [farmslot-unified-project-validation-plan.md](farmslot-unified-project-validation-plan.md)
 - ADR-039 bundles to move **reference eval packages** between gateways without MM rebuild cost
 
 Goal: more roadmap execution visible on Farmslot-native projects so demos do not require MM slot warmup.
@@ -108,4 +108,4 @@ Goal: more roadmap execution visible on Farmslot-native projects so demos do not
 
 ## Session handoff (copy to agents)
 
-> We are dogfooding Farmslot: all agent work should create Runs via gateway dispatch, not naked tmux. ADR-039 PR #95 must merge today with import/export QA. Next: one backlog item dispatched through Farmslot; parallel agents use worktree sandboxes + bundle seed from main. Canonical history on 7777.
+> All agent work on this repo should create Runs via gateway dispatch, not naked tmux. ADR-039 PR #95 must merge today with import/export QA. Next: one backlog item dispatched through Farmslot; parallel agents use worktree sandboxes + bundle seed from main. Canonical history on 7777.

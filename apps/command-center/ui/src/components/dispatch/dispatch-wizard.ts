@@ -49,6 +49,7 @@ import {
 } from './dispatch-wizard-draft.js';
 import {
   lookupPriorRunsForDispatchWizard,
+  requestDispatchProfileFit,
   requestDispatchProjectMatch,
   requestDispatchWizardCandidates,
   requestProjectConfigs,
@@ -357,6 +358,7 @@ export class DispatchWizard extends DispatchWizardState {
       if (!this.mockMode) this._candidatesEverLoaded = true;
       if (gen !== this._fetchGen) return; // superseded by newer filter/project change
       this._applyCandidateResult(res, prevOverride);
+      void this._fetchProfileFitSuggestion(project, gen);
     } catch (err) {
       if (gen !== this._fetchGen) return;
       console.warn('[dispatch-wizard] dispatch.candidates failed:', err);
@@ -365,6 +367,34 @@ export class DispatchWizard extends DispatchWizardState {
       this._candidateRefreshFailed = true;
     } finally {
       if (gen === this._fetchGen) this._loadingCandidates = false;
+    }
+  }
+
+  private async _fetchProfileFitSuggestion(project: string, gen: number): Promise<void> {
+    if (
+      project !== 'farmslot-farm' ||
+      !this._flowType ||
+      !this._ticketId.trim() ||
+      this._prepareProfile.trim() ||
+      this.mockMode
+    ) {
+      this._profileFitSuggestion = null;
+      return;
+    }
+    try {
+      const suggestion = await requestDispatchProfileFit({
+        project,
+        flowType: this._flowType,
+        ticketOrPr: this._ticketId.trim(),
+        slotId: this._slotOverride || undefined,
+        app: this._app || undefined,
+      });
+      if (gen !== this._fetchGen) return;
+      this._profileFitSuggestion = suggestion;
+    } catch (err) {
+      if (gen !== this._fetchGen) return;
+      console.warn('[dispatch-wizard] dispatch.preview profile fit failed:', err);
+      this._profileFitSuggestion = null;
     }
   }
 
@@ -803,6 +833,7 @@ export class DispatchWizard extends DispatchWizardState {
       skipPrepare: this._skipPrepare,
       prepareProfiles: projectPrepareProfiles(this._projectConfigs, this._project),
       prepareProfile: this._prepareProfile,
+      profileFitSuggestion: this._profileFitSuggestion,
       mode,
       devInteractiveProfile: this._devInteractiveProfile,
       comparisonLane: this._comparisonLane,
@@ -857,6 +888,11 @@ export class DispatchWizard extends DispatchWizardState {
       },
       setPrepareProfile: (prepareProfile) => {
         this._prepareProfile = prepareProfile;
+        this._profileFitSuggestion = null;
+      },
+      applySuggestedPrepareProfile: (prepareProfile) => {
+        this._prepareProfile = prepareProfile;
+        this._profileFitSuggestion = null;
       },
       setDevInteractiveProfile: (profile) => {
         this._devInteractiveProfile = profile;

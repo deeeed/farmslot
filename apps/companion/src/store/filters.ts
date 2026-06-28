@@ -3,6 +3,8 @@ import { create } from 'zustand';
 
 import type { PendingDecision, Run, SlotStatus } from '@farmslot/protocol';
 
+
+
 export const GLOBAL_FILTERS_STORAGE_KEY = '@farmslot:globalFilters';
 
 export interface GlobalFilters {
@@ -171,8 +173,7 @@ export function filterSlots<T extends { project?: string | null; machine?: strin
 ): T[] {
   const normalized = normalizeFilters(filters);
   return slots.filter((s) => {
-    if (normalized.projects.length > 0 && !normalized.projects.includes(s.project ?? ''))
-      return false;
+    if (normalized.projects.length > 0 && !normalized.projects.includes(s.project ?? '')) return false;
     if (normalized.machines.length > 0 && !normalized.machines.includes(s.machine ?? ''))
       return false;
     return true;
@@ -269,7 +270,9 @@ export function normalizeFilters(value: unknown): GlobalFilters {
   return {
     projects: uniqueSorted(
       Array.isArray(candidate?.projects)
-        ? candidate.projects.filter((project): project is string => typeof project === 'string')
+        ? candidate.projects
+            .filter((project): project is string => typeof project === 'string')
+            .map((project) => (project === 'farmslot' ? 'farmslot-farm' : project))
         : [],
     ),
     machines: uniqueSorted(

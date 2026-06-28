@@ -2,7 +2,7 @@
 
 Built by [Arthur Breton](https://siteed.net) as part of the Siteed software factory.
 
-Project page: <https://siteed.net/projects/farmslot> · Privacy policy: <https://siteed.net/farmslot/privacy>
+Project page: <https://siteed.net/projects/farmslot-farm> · Privacy policy: <https://siteed.net/farmslot/privacy>
 
 Mobile operator app for the Farmslot fleet — runs on iOS/iPadOS and Android via Expo development builds. Connects to the gateway over WebSocket and renders fleet status, runs, decisions, workers, PRs, terminals, and artifacts.
 

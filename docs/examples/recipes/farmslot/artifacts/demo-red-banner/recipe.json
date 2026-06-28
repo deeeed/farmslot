@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "title": "Command Center demo red monitoring banner",
+  "description": "Proves the demo-gated Farmslot monitoring banner is absent by default and present when the demo env flag is enabled on the slot sandbox.",
+  "inputs": {
+    "ui_url": "http://localhost:5174",
+    "slot_id": "macwork-ff-2",
+    "gateway_port": "8809",
+    "banner_text": "FARMSLOT DEMO: PARALLEL RUN MONITORING"
+  },
+  "validate": {
+    "workflow": {
+      "pre_conditions": [
+        {
+          "id": "command_center.dev_server.ready",
+          "description": "Command Center Vite dev server is serving the slot shell.",
+          "required": true
+        },
+        {
+          "id": "gateway.reachable",
+          "description": "Gateway health endpoint responds on the slot port.",
+          "required": true
+        },
+        {
+          "id": "runtime.browser.open",
+          "description": "CDP browser session is available for UI proof.",
+          "required": true
+        }
+      ],
+      "entry": "open-slot-shell",
+      "nodes": {
+        "open-slot-shell": {
+          "action": "ui.navigate",
+          "target": "{{ui_url}}/#slot/{{slot_id}}",
+          "next": "assert-banner-absent",
+          "intent": "Open the slot shell on the sandbox UI port."
+        },
+        "assert-banner-absent": {
+          "action": "ui.wait_for",
+          "text": "{{banner_text}}",
+          "expected": "absent",
+          "timeout_ms": 5000,
+          "next": "capture-without-banner",
+          "intent": "Verify the demo banner is not visible when the demo flag is off."
+        },
+        "capture-without-banner": {
+          "action": "ui.screenshot",
+          "path": "screenshots/before-demo-banner.png",
+          "note": "Slot shell without demo banner — reviewer before state",
+          "next": "restart-with-demo-flag",
+          "intent": "Capture reviewer-visible proof that the shell renders without the demo banner."
+        },
+        "restart-with-demo-flag": {
+          "action": "command",
+          "cmd": "FARMSLOT_SLOT_REPO={{repo}} bash {{farmslot_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh stop --gateway-port {{gateway_port}} && VITE_FARMSLOT_DEMO_BANNER=1 FARMSLOT_SLOT_REPO={{repo}} bash {{farmslot_dir}}/projects/farmslot-farm/setup/sandbox-dev.sh start --gateway-port {{gateway_port}}",
+          "cwd": ".",
+          "timeout_ms": 120000,
+          "next": "open-slot-shell-demo-on",
+          "intent": "Restart the sandbox dev stack with the demo banner env flag enabled."
+        },
+        "open-slot-shell-demo-on": {
+          "action": "ui.navigate",
+          "target": "{{ui_url}}/#slot/{{slot_id}}",
+          "next": "assert-banner-present",
+          "intent": "Reload the slot shell after enabling the demo flag."
+        },
+        "assert-banner-present": {
+          "action": "ui.wait_for",
+          "text": "{{banner_text}}",
+          "expected": "visible",
+          "timeout_ms": 10000,
+          "next": "capture-with-banner",
+          "intent": "Verify the exact demo banner copy is visible when the flag is on."
+        },
+        "capture-with-banner": {
+          "action": "ui.screenshot",
+          "path": "screenshots/after-demo-banner.png",
+          "note": "Red demo banner visible with exact monitoring copy",
+          "next": "done",
+          "intent": "Capture reviewer-visible proof of the red demo monitoring banner."
+        },
+        "done": {
+          "action": "end",
+          "status": "pass",
+          "intent": "Demo banner recipe completed."
+        }
+      },
+      "playback": {
+        "mode": "auto",
+        "slow_ms": 2000
+      }
+    }
+  }
+}

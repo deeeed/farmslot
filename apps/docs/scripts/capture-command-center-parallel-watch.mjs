@@ -402,7 +402,7 @@ async function prepareBrowserView() {
     sanitizeDemoLabels();
     clearInterval(window.__docusaurusDemoSanitizer);
     window.__docusaurusDemoSanitizer = setInterval(sanitizeDemoLabels, 250);
-    history.replaceState(null, '', '#terminal?projects=farmslot-farm&machines=demo-host');
+    history.replaceState(null, '', '#terminal?projects=farmslot&machines=demo-host');
     return {terminalCount: document.querySelectorAll('terminal-view').length, text: document.body.innerText.slice(0, 500)};
   `);
   await sleep(3000);

@@ -35,16 +35,21 @@ export function createMetroRecipeBridge(
   return {
     async send(
       command: ReactNativeBridgeCommand,
-      _context: ActionExecutionContext,
+      context: ActionExecutionContext,
     ): Promise<unknown> {
+      const nodeTimeoutMs = readPositiveTimeoutMs(command.payload.timeout_ms);
+      const effectiveTimeoutMs = Math.max(timeoutMs, nodeTimeoutMs ?? 0);
       const response = await fetchImpl(`${baseUrl}/farmslot-recipe/command`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           command: command.command,
           nodeId: command.nodeId,
-          payload: command.payload,
-          timeout_ms: timeoutMs,
+          payload: {
+            ...command.payload,
+            artifacts_dir: context.artifactsDir,
+          },
+          timeout_ms: effectiveTimeoutMs,
         }),
       });
 
@@ -74,4 +79,10 @@ export function createMetroRecipeBridgeUiTransport(
   return createReactNativeBridgeUiTransport({
     bridge: createMetroRecipeBridge(options),
   });
+}
+
+function readPositiveTimeoutMs(value: unknown): number | undefined {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return undefined;
 }

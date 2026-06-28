@@ -237,7 +237,7 @@ const readyPayload = {
     contextual_findings: [],
     suggested_recipe_delta: [],
     training_fields: {
-      farm: 'farmslot',
+      farm: 'farmslot-farm',
       project: 'farmslot-farm',
       flow_type: 'dev',
       proof_mode: 'mixed',

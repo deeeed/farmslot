@@ -7,6 +7,7 @@ import { isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 import type { SlotView } from './slot-view.js';
 import {
   slotViewPinnedFolderCandidates,
+  slotViewPinnedFolderFromTaskFile,
   slotViewTaskRelativePath,
 } from './slot-view-pinned-model.js';
 import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
@@ -16,9 +17,11 @@ function isCurrentPinnedResult(view: SlotView, epoch: number) {
 }
 
 export async function autoPinSlotViewTaskFolder(view: SlotView) {
+  const slotAgentTaskFile = view._agentContexts().find((ctx) => ctx.taskFile)?.taskFile;
   const taskRelPath = slotViewTaskRelativePath({
     runTaskFile: view._linkedRun?.taskFile,
     slotTaskFile: view._slot?.taskFile,
+    slotAgentTaskFile,
     showTaskUi: view._shouldShowTaskUI(),
   });
   if (!taskRelPath) return;
@@ -28,7 +31,13 @@ export async function autoPinSlotViewTaskFolder(view: SlotView) {
   // `.task` paths last. Cache misses by taskRelPath so a slot with no
   // pinned-folder match doesn't re-probe (and re-SSH) on every render.
   if (view._autoPinProbedFor === taskRelPath && view._pinnedFolder) return;
-  const candidates = slotViewPinnedFolderCandidates(taskRelPath);
+  const directPinned = slotAgentTaskFile
+    ? slotViewPinnedFolderFromTaskFile(slotAgentTaskFile)
+    : null;
+  const candidates = [
+    ...(directPinned ? [directPinned] : []),
+    ...slotViewPinnedFolderCandidates(taskRelPath),
+  ];
   for (const candidate of candidates) {
     if (view._pinnedFolder === candidate) {
       view._autoPinProbedFor = taskRelPath;

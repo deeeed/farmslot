@@ -15,4 +15,5 @@ export * from './runs.js';
 export * from './slots.js';
 export * from './task.js';
 export * from './terminal.js';
+export * from './validation-plan.js';
 export * from './workspace.js';

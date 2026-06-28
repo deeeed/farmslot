@@ -322,6 +322,10 @@ export async function loadAllRuns(): Promise<void> {
         run.flowType = 'dev' as any;
         changed = true;
       }
+      if (run.project === 'farmslot') {
+        run.project = 'farmslot-farm';
+        changed = true;
+      }
       if (!run.familyId) {
         run.familyId = run.id;
         changed = true;

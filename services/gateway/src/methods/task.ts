@@ -1,5 +1,6 @@
-// methods/task.ts — Task progress parsed directly from TASK.md
-// No external schema file needed — structure is derived from markdown headers + checkboxes.
+// methods/task.ts — Task progress parsed from the task checklist markdown file.
+// Interactive lightweight dev stores checkboxes in CHECKLIST.md; the generated
+// `mark` helper prefers that file too. Autonomous templates keep progress in TASK.md.
 
 import path from 'node:path';
 
@@ -19,6 +20,7 @@ import { loadSlotVars, resolveTaskPaths } from '../core/config.js';
 import { slotReadFile } from '../core/slot-io.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { getRun, listRuns } from '../runs/store.js';
+import { resolveTaskProgressMarkdownPathForSlot } from '../tasks/progress-path.js';
 import { generateTaskSchema } from '../tasks/writer.js';
 
 export async function taskProgress(params: TaskProgressParams): Promise<TaskProgressResult> {
@@ -69,6 +71,7 @@ export async function taskProgress(params: TaskProgressParams): Promise<TaskProg
     const taskFile = context.taskFile;
     effectiveMdPath = path.isAbsolute(taskFile) ? taskFile : path.join(vars.remoteRepo, taskFile);
   }
+  effectiveMdPath = await resolveTaskProgressMarkdownPathForSlot(vars, effectiveMdPath);
   const markdown = await slotReadFile(vars, effectiveMdPath);
   const result: TaskProgressResult = {
     slotId: params.slotId,

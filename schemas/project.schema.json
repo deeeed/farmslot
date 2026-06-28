@@ -119,7 +119,7 @@
     },
     "artifacts_repo": {
       "type": "string",
-      "description": "GitHub repo (owner/name) for uploading review/fix/feature artifacts (videos, reports). Files are pushed via git to <flow>/<id>/ paths.",
+      "description": "Public GitHub repo (owner/name) for uploading review/fix/feature artifacts (videos, reports). Files are pushed via git to <flow>/<id>/ paths. Must be public so raw.githubusercontent.com URLs render in PR bodies.",
       "examples": ["you/example-farm-artifacts"]
     },
     "primary_repo": {

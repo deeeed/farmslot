@@ -6,6 +6,7 @@ import type { TaskTemplateSelection, TemplateProvenance } from './evals.js';
 import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js';
 import type { RunImportProvenance } from './run-bundles.js';
 import type { SlotHealth } from './slots.js';
+import type { ProfileFitSuggestion, ValidationPlanStep } from './validation-plan.js';
 
 // ─── Runs ───
 
@@ -1134,6 +1135,9 @@ export interface RunEngineState {
   };
   /** Monotonic replay generation counter; startRun bails if the run has been superseded. */
   generation?: number;
+  /** Multi-surface validation matrix suggested at dispatch (farmslot profile-fit). */
+  validationPlan?: ValidationPlanStep[];
+  profileFitSuggestion?: ProfileFitSuggestion;
   autoRecoveryDeadLetter?: string;
   intelligenceAuditDegraded?: boolean;
   /** Local-first publication gate metadata. Stored on the run JSON snapshot; no DB migration. */

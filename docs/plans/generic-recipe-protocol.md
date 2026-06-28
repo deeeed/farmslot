@@ -24,7 +24,7 @@ Farmslot already has useful recipe machinery, but the contract is not expressed 
 - Command Center can render recipe graphs and artifact packages, but artifact typing still depends partly on filename inference and project-specific conventions.
 - Existing recipe documentation is useful but lighter than the current implementation: it describes the runner hook and recommended artifacts, but not the shared graph envelope, adapter boundary, or self-validation strategy.
 - New projects need a clear answer to: “What must I implement to plug into Farmslot recipes without rewriting my whole test ecosystem?”
-- Farmslot itself needs dogfood recipes so protocol, replay, artifact-viewer, gateway, Command Center, and Mobile Companion changes can be validated through the same feedback loop expected from integrated projects.
+- Farmslot itself needs self-validation recipes so protocol, replay, artifact-viewer, gateway, Command Center, and Mobile Companion changes can be validated through the same feedback loop expected from integrated projects.
 
 ## User Outcome
 
@@ -313,7 +313,7 @@ Backend/batch/non-visual projects are not required to provide live visual replay
 
 ### 7. Farmslot self-validation recipes
 
-Farmslot should dogfood the protocol through a repo-local self-validation suite. The suite should validate Farmslot changes with the same recipe package shape expected from integrated projects.
+Farmslot should validate the protocol through a repo-local self-validation suite. The suite should validate Farmslot changes with the same recipe package shape expected from integrated projects.
 
 Initial suite areas:
 
@@ -403,4 +403,4 @@ V1 must be additive:
 
 ## Success Condition
 
-A new project can implement one shared graph envelope, one runner hook, and one typed artifact package while keeping its native test tooling. Farmslot can then replay, render, and review the run on desktop and mobile without project-specific artifact UI code, and Farmslot can validate its own recipe/replay/artifact surfaces with dogfood recipes that emit the same package format.
+A new project can implement one shared graph envelope, one runner hook, and one typed artifact package while keeping its native test tooling. Farmslot can then replay, render, and review the run on desktop and mobile without project-specific artifact UI code, and Farmslot can validate its own recipe/replay/artifact surfaces with self-validation recipes that emit the same package format.

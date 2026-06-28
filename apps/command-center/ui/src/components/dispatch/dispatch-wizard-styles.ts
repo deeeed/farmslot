@@ -187,6 +187,47 @@ export const dispatchWizardStyles = css`
     color: ${unsafeCSS(colors.textMuted)};
   }
 
+  /* ── Profile-fit prepare suggestion banner ── */
+  .profile-fit-banner {
+    border: 1px solid ${unsafeCSS(colors.accent)}66;
+    background: ${unsafeCSS(colors.accent)}10;
+    border-radius: 4px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 11px;
+    color: ${unsafeCSS(colors.textSecondary)};
+  }
+
+  .profile-fit-title {
+    font-weight: 600;
+    color: ${unsafeCSS(colors.accent)};
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 10px;
+  }
+
+  .profile-fit-copy {
+    line-height: 1.4;
+  }
+
+  .profile-fit-apply {
+    align-self: flex-start;
+    font-size: 10px;
+    padding: 4px 8px;
+    border-radius: 3px;
+    border: 1px solid ${unsafeCSS(colors.accent)}66;
+    background: ${unsafeCSS(colors.bgCard)};
+    color: ${unsafeCSS(colors.accent)};
+    cursor: pointer;
+  }
+
+  .profile-fit-apply:hover {
+    border-color: ${unsafeCSS(colors.accent)};
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+
   /* ── Comparison-mode persistent indicator ── */
   .comparison-mode-banner {
     border: 1px solid ${unsafeCSS(colors.statusWarn)}88;

@@ -5,12 +5,14 @@ import {
   type RecipeActionManifestDocument,
 } from '@farmslot/protocol';
 import {
+  createCaptureHelperVideoRecorder,
   createRecipeRunner,
   createStandardUiAdapters,
   type RecipeVideoRecordingOptions,
   type RecordingTarget,
   type RecordingTargetProvider,
   type UiActionTransport,
+  type VideoRecorder,
 } from '@farmslot/recipe-harness';
 import {
   parsePositiveInteger,
@@ -25,6 +27,7 @@ import {
   resolveMetroRecipeBridgePort,
 } from './metro-recipe-bridge-transport.js';
 import { createRedactingCoreAdapters } from './redaction.js';
+import { createSimctlVideoRecorder } from './simctl-video-recorder.js';
 
 export interface ExpoRecipeRunOptions {
   projectRoot?: string;
@@ -87,6 +90,7 @@ export async function runExpoRecipeDocument(
     logger: console,
     recording: {
       targetProvider: createExpoRecordingTargetProvider(),
+      videoRecorder: resolveExpoVideoRecorder(process.env),
     },
   });
 
@@ -117,9 +121,25 @@ export function resolveExpoRecordingTarget(
   if (env.FARMSLOT_RECORD_WINDOW_ID) {
     return { kind: 'window-id', windowId: env.FARMSLOT_RECORD_WINDOW_ID };
   }
+  const simulator = env.SIMULATOR ?? env.IOS_SIMULATOR;
+  if (simulator) return { kind: 'simulator', device: simulator };
   const appName = env.FARMSLOT_RECORD_APP_NAME ?? 'Simulator';
   const windowName = env.FARMSLOT_RECORD_WINDOW_NAME ?? 'Simulator';
   return { kind: 'app-window', appName, windowName };
+}
+
+export function resolveExpoVideoRecorder(env: Record<string, string | undefined>): VideoRecorder {
+  if (
+    env.FARMSLOT_RECORD_PID ||
+    env.FARMSLOT_RECORD_WINDOW_ID ||
+    env.FARMSLOT_RECORD_APP_NAME ||
+    env.FARMSLOT_RECORD_WINDOW_NAME
+  ) {
+    return createCaptureHelperVideoRecorder();
+  }
+  const target = resolveExpoRecordingTarget(env);
+  if (target.kind === 'simulator') return createSimctlVideoRecorder();
+  return createCaptureHelperVideoRecorder();
 }
 
 function createExpoUiTransport(options: ExpoRecipeRunOptions): UiActionTransport {

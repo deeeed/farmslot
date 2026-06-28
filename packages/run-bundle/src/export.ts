@@ -12,9 +12,11 @@ import {
   type RunBundleManifest,
   type RunBundleProfile,
   type RunBundleRunEntry,
+} from '@farmslot/protocol';
+import {
   sanitizeRunForBundleExport,
   strictTaskRelativePathFromFarmslotRoot,
-} from '@farmslot/protocol';
+} from '@farmslot/protocol/runs/portable-bundle';
 
 import { packFarmrunDirectory, writeBundleManifest } from './archive.js';
 import { selectRunsForExport } from './collect.js';

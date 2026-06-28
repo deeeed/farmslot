@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "title": "Farmslot self-validation recipe suite",
-  "description": "Repo-local dogfood recipes that validate Command Center, Gateway, Mobile Companion, live replay, artifact viewing, and onboarding surfaces using the Generic Recipe Protocol v1 package shape.",
+  "description": "Repo-local self-validation recipes for Command Center, Gateway, Mobile Companion, live replay, artifact viewing, and onboarding surfaces using the Generic Recipe Protocol v1 package shape.",
   "recipes": [
     {
       "id": "command-center-ui",
@@ -44,6 +44,13 @@
       "recipe": "documentation-onboarding.recipe.json",
       "artifactDir": "artifacts/documentation-onboarding",
       "proves": "Validates protocol examples, self-validation fixtures, and onboarding commands with the shared v1 contract validator."
+    },
+    {
+      "id": "demo-red-banner",
+      "surface": "command-center-web-ui",
+      "recipe": "demo-red-banner.recipe.json",
+      "artifactDir": "artifacts/demo-red-banner",
+      "proves": "Proves the demo-gated Command Center monitoring banner via CDP-driven UI recipe on ff-* sandboxes."
     }
   ]
 }

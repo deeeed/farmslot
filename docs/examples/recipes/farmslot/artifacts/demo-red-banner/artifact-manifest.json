@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "runStatus": "pass",
+  "artifacts": [
+    {"path": "summary.json", "type": "summary", "label": "Run summary", "mimeType": "application/json", "proofTarget": "PT-1", "covers": ["run-summary"]},
+    {"path": "trace.json", "type": "trace", "label": "Execution trace", "mimeType": "application/json", "proofTarget": "PT-2", "covers": ["execution-trace"]},
+    {"path": "recipe.json", "type": "recipe", "label": "Resolved recipe", "mimeType": "application/json", "proofTarget": "PT-3", "covers": ["resolved-recipe"]},
+    {"path": "screenshots/before-demo-banner.svg", "type": "screenshot", "label": "Before demo banner", "nodeId": "capture-without-banner", "mimeType": "image/svg+xml", "proofTarget": "PT-4", "covers": ["capture-without-banner"]}
+  ]
+}

@@ -11,11 +11,27 @@
 
 ```text
 TICKET: {{TICKET_ID}}
+TICKET_URL: {{TICKET_URL}}
 TITLE: {{TICKET_TITLE}}
 BRANCH: {{BRANCH}}
 TASK_DIR: {{TASK_DIR}}
+SESSION: {{SESSION}}
+REPO: {{REPO}}
+PLATFORM: {{PLATFORM}}
+CDP_PORT: {{CDP_PORT}}
+WATCHER_PORT: {{WATCHER_PORT}}
+RUNTIME_DIR: {{RUNTIME_DIR}}
+SLOT: {{SLOT}}
 STATUS: pending
 ```
+
+## Description
+
+{{DESCRIPTION}}
+
+## Acceptance Criteria
+
+{{ACCEPTANCE_CRITERIA}}
 
 ## Checklist
 
@@ -48,20 +64,44 @@ Signal shape:
 - [ ] **1. Read project docs** — read `CLAUDE.md` (root) and `apps/command-center/CLAUDE.md` to understand repo structure, conventions, and validation rules.
 - [ ] **2. Update status** — set `STATUS: working` in this file, then run `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 2`.
 - [ ] **3. Read the bug description** — understand the reported issue, affected area, and expected behavior.
-- [ ] **4. Reproduce via typecheck/tests** — run validation to confirm the bug:
+- [ ] **4. Reproduce** — for Command Center UI bugs, write `{{TASK_DIR}}/artifacts/recipe.json` from acceptance criteria and run it against current code (must fail before the fix). Read `{{recipe_quality_path}}` first.
   ```bash
+  cd {{REPO}}
+  bash apps/command-center/scripts/debug-chrome.sh
+  bash {{recipe_validate_wrapper}} \
+    --recipe {{TASK_DIR}}/artifacts/recipe.json \
+    --artifacts-dir {{TASK_DIR}}/artifacts/recipe-run-repro \
+    --runtime-dir {{RUNTIME_DIR}} \
+    --platform {{PLATFORM}} \
+    --cdp-port {{CDP_PORT}} \
+    --gateway-port {{WATCHER_PORT}} \
+    --slot-id {{SLOT}} || true
   cd apps/command-center && yarn typecheck
-  cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
 - [ ] **5. Locate the root cause** — identify the exact file(s) and line(s) causing the issue.
 - [ ] **6. Create branch** — `git checkout -b {{BRANCH}}`
 - [ ] **7. Implement the fix** — make the minimal change needed. No refactoring, no cleanup beyond the fix.
-- [ ] **8. Validate the fix** — re-run typecheck and tests:
+- [ ] **8. Validate the fix** — recipe must exit 0 when UI/command-center behavior changed; then typecheck/tests:
   ```bash
+  cd {{REPO}}
+  bash {{recipe_validate_wrapper}} \
+    --recipe {{TASK_DIR}}/artifacts/recipe.json \
+    --artifacts-dir {{TASK_DIR}}/artifacts/recipe-run \
+    --runtime-dir {{RUNTIME_DIR}} \
+    --platform {{PLATFORM}} \
+    --cdp-port {{CDP_PORT}} \
+    --gateway-port {{WATCHER_PORT}} \
+    --slot-id {{SLOT}}
   cd apps/command-center && yarn typecheck
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
-- [ ] **9. Self-review** — read the diff (`git diff`). Check for: inline type duplication (use `@farmslot/protocol`), unnecessary helpers, comments that restate code.
+- [ ] **8b. PR-grade proof run** (UI bugs) — slow + video, then sync evidence:
+  ```bash
+  bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
+  ```
+- [ ] **8c. Evidence manifest** — `evidence-manifest.json` with before/after pairs + `videos.after: artifacts/after.mp4` for gateway PR embed.
+- [ ] **8d. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` + `recipe-quality.json` and run `check-task-artifact-contract.mjs` with recipe flags.
+- [ ] **9. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
 - [ ] **10. Commit** — single commit following the repo's Lore commit protocol.
 - [ ] **11. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.
 - [ ] **12. Draft PR description artifact** — write the intended PR title/body to `{{TASK_DIR}}/artifacts/pr-description.md`; the gateway publishes it only after human approval.
@@ -74,13 +114,13 @@ Signal shape:
       {
         "label": "Bug before/after",
         "covers": ["ac1"],
-        "before": "before-ac1.png",
-        "after": "after-ac1.png"
+        "before": "artifacts/before-ac1.png",
+        "after": "artifacts/after-ac1.png"
       }
     ],
-    "standalone": [{ "label": "Fixed final state", "covers": ["ac2"], "file": "after-ac2.png" }],
-    "omit": ["redundant.png"],
-    "videos": { "after": "after.mp4", "preferred": false }
+    "standalone": [{ "label": "Fixed final state", "covers": ["ac2"], "file": "artifacts/after-ac2.png" }],
+    "omit": ["artifacts/redundant.png"],
+    "videos": { "after": "artifacts/after.mp4", "preferred": true, "note": "Full recipe replay at 2s slow playback" }
   }
   ```
 - [ ] **13. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: files changed, root cause, fix summary, test results.

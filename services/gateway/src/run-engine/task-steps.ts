@@ -34,6 +34,7 @@ import { requiresCollisionPrecheck } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { createEngineDecision, handleCollisionDecision } from './engine-decisions.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
+import { detectProfileFit, resolveCompanionSlotId } from './profile-fit-gate.js';
 import { detectProjectMismatch } from './project-fit-gate.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { refreshRunLinks } from './run-links.js';
@@ -178,6 +179,7 @@ export async function executeGradeStep(
     );
   }
   let projectMismatchOverride: Record<string, unknown> | null = null;
+  let profileFitOverride: Record<string, unknown> | null = null;
   const projectMismatch = await detectProjectMismatch(run, ticketData);
   if (projectMismatch) {
     const actionId = await createEngineDecision(
@@ -202,6 +204,55 @@ export async function executeGradeStep(
     }
     projectMismatchOverride = { projectMismatch, overriddenBy: 'user' };
   }
+
+  let slotPlatform: string | null = null;
+  let companionSlotId: string | undefined;
+  if (run.slotId) {
+    const { loadFleetStatus } = await import('../fleet/state.js');
+    const fleet = await loadFleetStatus();
+    slotPlatform = fleet.slots.find((s) => s.slot === run.slotId)?.platform ?? null;
+    companionSlotId = resolveCompanionSlotId(fleet.slots, run.project);
+  }
+  const resolvedProfileFit = detectProfileFit(run, ticketData, {
+    prepareProfile: run.prepareProfile,
+    app: run.app,
+    slotPlatform,
+    companionSlotId,
+  });
+  if (resolvedProfileFit) {
+    const actionId = await createEngineDecision(
+      runId,
+      'prepare_profile_mismatch',
+      `Ticket looks like it needs prepare profile "${resolvedProfileFit.suggestedPrepareProfile}"${resolvedProfileFit.suggestedApp ? ` (app: ${resolvedProfileFit.suggestedApp})` : ''}, but this run uses "${run.prepareProfile ?? 'sandbox'}". ${resolvedProfileFit.rationale} Continue with the current profile?`,
+      [
+        {
+          id: 'continue',
+          label: `Continue with ${run.prepareProfile ?? 'sandbox'}`,
+          style: 'primary',
+        },
+        { id: 'abort', label: 'Abort run', style: 'danger' },
+      ],
+    );
+    if (actionId === 'abort') {
+      stepPartialIO.set(runId, {
+        inputs,
+        outputs: { profileFit: resolvedProfileFit, source: ticketData?.source, title: ticketData?.title },
+      });
+      throw new Error('Prepare profile mismatch: aborted by user');
+    }
+    profileFitOverride = { profileFit: resolvedProfileFit, overriddenBy: 'user' };
+    const current = getRun(runId);
+    if (current) {
+      updateRun(runId, {
+        engineState: {
+          ...current.engineState,
+          profileFitSuggestion: resolvedProfileFit,
+          validationPlan: resolvedProfileFit.validationPlan,
+        },
+      });
+    }
+  }
+
   // Validate flow type matches ticket type
   let flowTypeMismatch: string | null = null;
   if (ticketData?.issueType) {
@@ -230,6 +281,7 @@ export async function executeGradeStep(
   // Grade the ticket
   const outputs: Record<string, unknown> = { flowTypeMismatch };
   if (projectMismatchOverride) outputs.projectMismatchOverride = projectMismatchOverride;
+  if (profileFitOverride) outputs.profileFitOverride = profileFitOverride;
   if (ticketData && run.engineState?.evalExperiment) {
     const grade = {
       difficulty: 'medium' as const,
@@ -325,7 +377,10 @@ export async function executeWriteTaskStep(
   // Skip if taskFile already provided
   if (current.taskFile) {
     console.log(`[run-engine] taskFile already set, skipping write-task`);
-    const templateName = FLOW_TO_TASK_TEMPLATE[current.flowType] ?? `${current.flowType}.md`;
+    const templateName =
+      current.templateProvenance?.templateName ??
+      current.taskTemplate?.fileName ??
+      (FLOW_TO_TASK_TEMPLATE[current.flowType] ?? `${current.flowType}.md`);
     const pv = await loadProjectVarsOrNull(current.project, 'run step', current.id);
     const orchestratorTaskRoot = pv
       ? getOrchestratorTaskRoot(current.project, pv.projectJson)
@@ -481,6 +536,10 @@ export async function executeWriteTaskStep(
   ): StepIO => {
     const taskRelDir = extractTaskRelDir(taskFilePath);
     const afterWrite = getRun(runId)!;
+    const resolvedTemplateName =
+      afterWrite.templateProvenance?.templateName ??
+      afterWrite.taskTemplate?.fileName ??
+      templateName;
     const artifacts: ArtifactRef[] = [
       { path: 'TASK.md', purpose: 'task-md' },
       { path: CHECKLIST_MARKER_INPUT, purpose: 'checklist-marker' },
@@ -499,7 +558,7 @@ export async function executeWriteTaskStep(
       inputs,
       outputs: {
         taskFile: taskFilePath,
-        templateName,
+        templateName: resolvedTemplateName,
         taskRelDir,
         branch: afterWrite.branch || undefined,
         summary: afterWrite.summary || undefined,

@@ -1,6 +1,6 @@
 # Farmslot self-validation recipe fixtures
 
-These v1 recipe fixtures dogfood the Generic Recipe Protocol against Farmslot's
+These v1 recipe fixtures exercise the Generic Recipe Protocol against Farmslot's
 own surfaces. They are intentionally runner-neutral: each recipe uses the shared
 `validate.workflow` envelope and adapter-owned action names, then pairs that
 recipe with a sample artifact package shaped like a completed project run.
@@ -22,6 +22,7 @@ The suite covers:
 - Live recipe player: warm-slot replay, visible stream/logs, and generated
   output artifacts.
 - Documentation/onboarding: v1 contract validation for examples and fixtures.
+- Demo red banner: CDP UI proof for the ff-* sandbox monitoring banner smoke task.
 
 Validate every fixture from the repository root with:
 

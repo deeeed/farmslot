@@ -80,6 +80,10 @@ import {
   type SlotPrepareResult,
 } from './shared.js';
 
+export function isDefaultWorktreeTrackingBranch(branch: string): boolean {
+  return /^wt\/ff-[A-Za-z0-9._-]+$/.test(branch);
+}
+
 export async function slotPrepare(
   params: SlotPrepareParams,
   emit: EventEmitter,
@@ -454,14 +458,20 @@ async function slotPrepareInner(
     { strict: params.strictProfile === true },
   );
   for (const fb of profileSelection.fallbacks) {
-    step('profile', `Profile '${fb.from}' preconditions failed (${fb.reason}); falling back to '${fb.to}'`);
+    step(
+      'profile',
+      `Profile '${fb.from}' preconditions failed (${fb.reason}); falling back to '${fb.to}'`,
+    );
   }
   prepareProfile = profileSelection.profile;
   if (!phaseEnabled('git') && (branch || mergeMain)) {
     // Branch targeting and mergeMain are run-level (flow-driven) parameters; a
     // profile that omits git must not silently prepare the wrong ref.
     prepareProfile.phases.add('git');
-    step('profile', `git phase forced on: run supplies ${branch ? `branch ${branch}` : 'mergeMain'}`);
+    step(
+      'profile',
+      `git phase forced on: run supplies ${branch ? `branch ${branch}` : 'mergeMain'}`,
+    );
   }
   step(
     'profile',
@@ -536,11 +546,43 @@ async function slotPrepareInner(
   if (!phaseEnabled('git')) {
     // Profiles without the git phase reuse the slot's current checkout. Branch
     // and mergeMain runs can never reach here — selection forces git on for them.
-    step('branch', `git sync skipped (profile ${profileName()}; HEAD stays on '${current || 'unknown'}')`);
+    step(
+      'branch',
+      `git sync skipped (profile ${profileName()}; HEAD stays on '${current || 'unknown'}')`,
+    );
   } else {
     if (!branch && current && current !== defaultBranch) {
-      throw new Error(
-        `Slot is on '${current}', expected '${defaultBranch}'. Run release-slot.sh first.`,
+      // Git worktrees cannot checkout `main` when it is checked out elsewhere.
+      // Sandboxes use tracking branches (e.g. wt/ff-2) at the same commit as
+      // origin/defaultBranch — allow prepare when HEAD matches, not only by name.
+      if (!isDefaultWorktreeTrackingBranch(current)) {
+        throw new Error(
+          `Slot is on '${current}', expected '${defaultBranch}' or a wt/ff-* worktree branch. Run release-slot.sh first.`,
+        );
+      }
+      const fetchDefaultR = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+      );
+      if (fetchDefaultR.exitCode !== 0) {
+        throw new Error(
+          `git fetch origin ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${fetchDefaultR.stderr.slice(-200) || fetchDefaultR.stdout.slice(-200)}`,
+        );
+      }
+      const headR = await execOnSlot(
+        vars,
+        `cd ${shellQuote(vars.remoteRepo)} && git rev-parse HEAD ${shellQuote(`origin/${defaultBranch}`)} 2>/dev/null`,
+      );
+      const refs = headR.stdout.trim().split(/\s+/).filter(Boolean);
+      const worktreeAtDefault = headR.exitCode === 0 && refs.length === 2 && refs[0] === refs[1];
+      if (!worktreeAtDefault) {
+        throw new Error(
+          `Slot is on '${current}', expected '${defaultBranch}'. Run release-slot.sh first.`,
+        );
+      }
+      step(
+        'branch',
+        `Worktree tracking branch '${current}' matches origin/${defaultBranch}; proceeding`,
       );
     }
 
@@ -959,9 +1001,7 @@ async function slotPrepareInner(
     let currentPreflightPhase = '';
     let phaseBuffer = '';
     const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-    const varExports: string[] = [
-      `export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}`,
-    ];
+    const varExports: string[] = [`export FARMSLOT_PREPARE_PROFILE=${shellQuote(profileName())}`];
     for (const [rawKey, rawValue] of Object.entries(params.vars ?? {})) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(rawKey)) {
         throw new Error(`Invalid --var key '${rawKey}' (must match [A-Za-z_][A-Za-z0-9_]*)`);

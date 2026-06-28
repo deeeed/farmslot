@@ -1,7 +1,9 @@
 import type {
   ConfigProjectsResult,
   DispatchCandidatesResult,
+  DispatchPreviewResult,
   FlowType,
+  ProfileFitSuggestion,
   ProjectConfig,
   Run,
   RunListParams,
@@ -82,6 +84,25 @@ export interface DispatchProjectMatchResult {
   repo: string | null;
   normalizedTicket?: string;
   issueType?: string;
+}
+
+export async function requestDispatchProfileFit(input: {
+  project: string;
+  flowType: FlowType;
+  ticketOrPr: string;
+  slotId?: string;
+  prepareProfile?: string;
+  app?: string;
+}): Promise<ProfileFitSuggestion | null> {
+  const res = await gateway.request<DispatchPreviewResult>(Methods.DISPATCH_PREVIEW, {
+    project: input.project,
+    flowType: input.flowType,
+    ticketOrPr: input.ticketOrPr,
+    slotId: input.slotId,
+    prepareProfile: input.prepareProfile || undefined,
+    app: input.app || undefined,
+  });
+  return res.preview.profileFit ?? null;
 }
 
 export function requestDispatchProjectMatch(

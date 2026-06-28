@@ -426,6 +426,7 @@ test('validates Farmslot self-validation recipe packages', async () => {
       'mobile-companion',
       'recipe-player-e2e',
       'documentation-onboarding',
+      'demo-red-banner',
     ],
   );
   assert.deepEqual(
@@ -440,6 +441,7 @@ test('validates Farmslot self-validation recipe packages', async () => {
       'mobile-companion',
       'recipe-player-e2e',
       'documentation-onboarding',
+      'command-center-web-ui',
     ],
   );
 

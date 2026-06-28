@@ -9,7 +9,7 @@
  *   node scripts/e2e-runner-observability.mjs \
  *     --slot-id demo-work-1 \
  *     --repo /path/to/repo \
- *     --project farmslot-farm \
+ *     --project farmslot \
  *     --out /tmp/obs-e2e.json
  */
 import { execFileSync, spawnSync } from 'node:child_process';

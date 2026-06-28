@@ -58,7 +58,7 @@ tools/capture-helper/capture-helper
 # Session work tracker (local only)
 WORK.md
 
-# Keep the fake-runner demo project in-repo for E2E validation
+# Keep first-party dogfood project in-repo for E2E validation
 !projects/farmslot-farm/
 projects/farmslot-farm/*
 !projects/farmslot-farm/project.json
@@ -73,6 +73,7 @@ projects/farmslot-farm/templates/prompts/*
 !projects/farmslot-farm/fixtures/
 projects/farmslot-farm/fixtures/*
 !projects/farmslot-farm/templates/worker/dev.md
+!projects/farmslot-farm/templates/worker/dev-interactive.md
 !projects/farmslot-farm/templates/worker/fix-bug.md
 !projects/farmslot-farm/templates/worker/review-pr.md
 !projects/farmslot-farm/templates/worker/merge-main.md
@@ -81,21 +82,30 @@ projects/farmslot-farm/fixtures/*
 !projects/farmslot-farm/fixtures/CLAUDE.local.agent.fix-bug.md
 !projects/farmslot-farm/fixtures/CLAUDE.local.agent.feature.md
 !projects/farmslot-farm/fixtures/CLAUDE.local.agent.review-pr.md
+!projects/farmslot-farm/fixtures/CLAUDE.local.agent.companion-mobile.md
+!projects/farmslot-farm/fixtures/runtime/
+projects/farmslot-farm/fixtures/runtime/*
+!projects/farmslot-farm/fixtures/runtime/recipe-quality.md
+!projects/farmslot-farm/fixtures/runtime/review-quality.md
 !projects/farmslot-farm/setup/
 projects/farmslot-farm/setup/*
 !projects/farmslot-farm/setup/sandbox-dev.sh
+!projects/farmslot-farm/setup/sandbox-companion.sh
+!projects/farmslot-farm/setup/companion-prepare.sh
+!projects/farmslot-farm/setup/validate-recipe.sh
+!projects/farmslot-farm/setup/sync-recipe-evidence.sh
+!projects/farmslot-farm/setup/e2e-cross-surface-evidence.sh
+!projects/farmslot-farm/setup/upload-pr-evidence.mjs
+!projects/farmslot-farm/setup/capture-helper-tmux-check.sh
 projects/farmslot-farm/tasks/
 projects/farmslot-farm/.agent/
 projects/farmslot-farm/.task/
 
-# Keep first-party Farmslot companion config in-repo so the mobile app can be
-# dispatched and recipe-validated like external app projects.
-!projects/farmslot-companion/
-projects/farmslot-companion/*
-!projects/farmslot-companion/project.json
+
 
 # Central sandbox root for fake/demo runner isolation
 .sandbox/
+.observability
 .omx/
 **/.omx/
 **/.omc/

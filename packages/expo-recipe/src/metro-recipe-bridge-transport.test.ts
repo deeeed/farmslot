@@ -40,6 +40,35 @@ test('createMetroRecipeBridge posts commands to Metro relay and surfaces bridge 
   assert.deepEqual(result, { ok: true, platform: 'android' });
   assert.equal(calls.length, 1);
   assert.match(calls[0]?.url ?? '', /\/farmslot-recipe\/command$/u);
+  const body = calls[0]?.body as {
+    payload?: { artifacts_dir?: string };
+    timeout_ms?: number;
+  };
+  assert.equal(body.payload?.artifacts_dir, '/tmp/artifacts');
+  assert.equal(body.timeout_ms, 30_000);
+});
+
+test('createMetroRecipeBridge honors node timeout_ms above transport default', async () => {
+  const calls: Array<{ body: unknown }> = [];
+  const bridge = createMetroRecipeBridge({
+    fetchImpl: async (_url, init) => {
+      calls.push({ body: JSON.parse(String(init?.body ?? '{}')) });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    },
+  });
+
+  await bridge.send(
+    { command: 'waitFor', nodeId: 'wait-evidence', payload: { timeout_ms: 120_000 } },
+    {
+      nodeId: 'wait-evidence',
+      recipePath: '/tmp/recipe.json',
+      artifactsDir: '/tmp/artifacts',
+      outputs: {},
+    },
+  );
+
+  const body = calls[0]?.body as { timeout_ms?: number };
+  assert.equal(body.timeout_ms, 120_000);
 });
 
 test('createMetroRecipeBridge throws when Metro relay returns ok:false', async () => {

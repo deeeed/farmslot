@@ -98,7 +98,9 @@ test('backlog store serializes concurrent enqueue for the same item', async () =
   assert.ok(
     queue.getQueueSnapshot().filter((item) => item.backlogItemId === created.item.id).length <= 1,
   );
-  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  const item = backlog
+    .listBacklogItems({ includeArchived: true })
+    .items.find((candidate) => candidate.id === created.item.id);
   assert.ok(item && ['queued', 'dispatching', 'running'].includes(item.status));
   assert.equal(item?.lastDispatchError, undefined);
 });

@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit';
 
-import type { FlowType, Run } from '@farmslot/protocol';
+import type { FlowType, ProfileFitSuggestion, Run } from '@farmslot/protocol';
 
 import { groupPriorRunsByFamily } from './dispatch-wizard-helpers.js';
 
@@ -128,6 +128,40 @@ export interface VariantInputRenderContext {
   variantCollision: boolean;
   variantInput: string;
   setVariantInput: (value: string) => void;
+}
+
+export interface ProfileFitBannerRenderContext {
+  profileFit: ProfileFitSuggestion | null;
+  prepareProfile: string;
+  applySuggestedPrepareProfile: (profile: string) => void;
+}
+
+export function renderProfileFitBanner(ctx: ProfileFitBannerRenderContext) {
+  const suggestion = ctx.profileFit;
+  if (!suggestion) return nothing;
+  const suggestedProfile = suggestion.suggestedPrepareProfile;
+  return html`
+    <div class="profile-fit-banner">
+      <div class="profile-fit-title">Prepare profile suggestion</div>
+      <div class="profile-fit-copy">
+        ${suggestion.rationale} Suggested profile:
+        <strong>${suggestedProfile}</strong>
+        ${suggestion.validationPlan?.length
+          ? html` — validation plan: ${suggestion.validationPlan.length} step(s)`
+          : nothing}
+      </div>
+      ${ctx.prepareProfile === suggestedProfile
+        ? nothing
+        : html`
+            <button
+              class="profile-fit-apply"
+              @click=${() => ctx.applySuggestedPrepareProfile(suggestedProfile)}
+            >
+              Use ${suggestedProfile}
+            </button>
+          `}
+    </div>
+  `;
 }
 
 export function renderVariantInput(ctx: VariantInputRenderContext) {

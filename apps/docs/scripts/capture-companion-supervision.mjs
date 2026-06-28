@@ -170,7 +170,7 @@ function readCompanionSlotConfig() {
   if (poolPath) {
     const pool = JSON.parse(readFileSync(resolve(repoRoot, poolPath), 'utf8'));
     const poolSlot = (pool.slots || []).find(
-      (candidate) => candidate.project === 'farmslot-companion' || /companion/i.test(candidate.id),
+      (candidate) => candidate.project === 'farmslot-farm' || /companion/i.test(candidate.id),
     );
     if (poolSlot) {
       return {
@@ -754,7 +754,7 @@ function writeOutputs({ videoPath, posterPath, screenshotPath }) {
         regeneratedBy: `yarn --cwd apps/docs capture:companion-supervision --artifacts-dir ${rel(artifactsDir)}${copyToDocs ? ' --copy-to-docs' : ''}`,
         publicSafety: {
           forbiddenPatternsChecked: forbidden.map(String),
-          fixtureLabelsChecked: ['farmslot-farm', 'audiolab-farm', 'Docusaurus demo'],
+          fixtureLabelsChecked: ['farmslot', 'audiolab-farm', 'Docusaurus demo'],
         },
       },
       null,

@@ -4,6 +4,7 @@ import type {
   DevInteractiveProfile,
   DispatchCandidatesResult,
   FlowType,
+  ProfileFitSuggestion,
   QueueItem,
   ReviewRunnerId,
   ReviewValidationDepth,
@@ -20,6 +21,7 @@ import type { EffortLevel } from '../../utils/runner-options.js';
 import {
   renderComparisonModeIndicator,
   renderPriorRunsBanner,
+  renderProfileFitBanner,
   renderReplayEntryPoint,
   renderVariantInput,
 } from './dispatch-wizard-banners-renderer.js';
@@ -58,6 +60,7 @@ interface DispatchWizardViewContext {
   skipPrepare: boolean;
   prepareProfiles: readonly PrepareProfileOption[];
   prepareProfile: string;
+  profileFitSuggestion: ProfileFitSuggestion | null;
   mode: 'interactive' | 'autonomous';
   devInteractiveProfile: DevInteractiveProfile;
   comparisonLane: boolean;
@@ -95,6 +98,7 @@ interface DispatchWizardViewContext {
   setReviewTier: (reviewTier: '' | 'light' | 'standard' | 'full') => void;
   setSkipPrepare: (skipPrepare: boolean) => void;
   setPrepareProfile: (prepareProfile: string) => void;
+  applySuggestedPrepareProfile: (prepareProfile: string) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
   openEvals: () => void;
   forkFromPriorRun: (run: Run) => void;
@@ -159,6 +163,11 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
             parentRunId: ctx.comparisonParentRunId,
             variantPreview: ctx.variantPreview,
             exitComparisonMode: ctx.exitComparisonMode,
+          })}
+          ${renderProfileFitBanner({
+            profileFit: ctx.profileFitSuggestion,
+            prepareProfile: ctx.prepareProfile,
+            applySuggestedPrepareProfile: ctx.applySuggestedPrepareProfile,
           })}
         `,
         taskTemplateSelector: renderTaskTemplateSelector(ctx),

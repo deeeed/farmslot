@@ -8,6 +8,7 @@ import type {
   RunLane,
   RunStartRefProvenance,
 } from './runs.js';
+import type { ProfileFitSuggestion } from './validation-plan.js';
 
 export type QueueItemKind = 'dispatch' | 'eval-cell';
 
@@ -88,4 +89,5 @@ export interface DispatchPreview {
   runner: string;
   model: string;
   taskId: string;
+  profileFit?: ProfileFitSuggestion;
 }
