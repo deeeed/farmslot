@@ -40,6 +40,12 @@ export interface SlotStatus {
   project: string;
   health: SlotHealth;
   branch: string;
+  /** Pool tmux/session id — used to resolve slot_tracking_branch templates. */
+  session?: string;
+  /** Slot checkout path from pool config. */
+  repo?: string;
+  /** True when the slot repo is a linked git worktree (.git file), probed at fleet refresh. */
+  linkedWorktree?: boolean;
   agent: SlotAgent;
   enabled: boolean;
   dispatchable: boolean;

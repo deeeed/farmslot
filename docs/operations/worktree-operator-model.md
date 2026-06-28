@@ -17,7 +17,7 @@
 
 Linked worktrees cannot checkout `main` when the primary clone has it checked out. Per [ADR-042](../adr/042-slot-tracking-branches.md), an **idle** sandbox slot stays on a **tracking branch** (today `wt/ff-1` … `wt/ff-4`) with `HEAD` equal to `origin/main` — not on `main` by name.
 
-After `slot.release`, the gateway resets the tracking branch to `origin/main` without `git checkout main` (ADR-042, PR #146). If recycle looks wrong, verify idle state manually:
+After `slot.release` or **force** `slot.refresh`, the gateway resets the tracking branch to `origin/main` without `git checkout main` (ADR-042). Safe refresh on an already-idle tracking branch fast-forwards `HEAD` to `origin/main` without switching branch names. If recycle looks wrong, verify idle state manually:
 
 ```bash
 cd /Users/deeeed/dev/farmslot-wt/farmslot-2

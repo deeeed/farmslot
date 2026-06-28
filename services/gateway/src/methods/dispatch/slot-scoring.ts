@@ -1,4 +1,13 @@
-import { DEFAULT_BRANCH, type SlotStatus } from '@farmslot/protocol';
+import {
+  DEFAULT_BRANCH,
+  isDispatchScoreStale,
+  isSlotRefreshStaleBranch,
+  SLOT_STALE_BRANCH_SCORE_PENALTY,
+  type SlotStatus,
+  type SlotTrackingProjectConfig,
+} from '@farmslot/protocol';
+
+export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
@@ -8,7 +17,7 @@ const RED_HOST_PENALTY = 100;
 const YELLOW_HOST_PENALTY = 20;
 const TARGET_BRANCH_BONUS = 100;
 const FAMILY_AFFINITY_BONUS = 75;
-const STALE_BRANCH_PENALTY = 50;
+const STALE_BRANCH_PENALTY = SLOT_STALE_BRANCH_SCORE_PENALTY;
 const CDP_MISSING_PENALTY = 5;
 const DEVICE_MISSING_PENALTY = 5;
 const FIXTURE_STALE_PENALTY = 1;
@@ -22,10 +31,55 @@ export function isCdpLive(cdp: string): boolean {
   return cdp !== 'OFF' && cdp !== '-' && cdp !== 'FAIL' && cdp !== 'Other';
 }
 
+export type SlotScoringProjectConfig = SlotTrackingProjectConfig;
+
+export function projectConfigsFromProjects(
+  projects: ReadonlyArray<{
+    name: string;
+    defaultBranch?: string;
+    slotTrackingBranch?: string;
+  }>,
+): Record<string, SlotScoringProjectConfig> {
+  return Object.fromEntries(
+    projects.map((p) => [
+      p.name,
+      {
+        defaultBranch: p.defaultBranch ?? DEFAULT_BRANCH,
+        slotTrackingBranch: p.slotTrackingBranch,
+      },
+    ]),
+  );
+}
+
+export function slotTrackingConfigForSlot(
+  slot: SlotStatus,
+  projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
+): SlotScoringProjectConfig {
+  const cfg = projectConfigs?.[slot.project];
+  return {
+    defaultBranch: cfg?.defaultBranch ?? DEFAULT_BRANCH,
+    slotTrackingBranch: cfg?.slotTrackingBranch,
+  };
+}
+
+export function isDispatchStaleBranch(
+  slot: SlotStatus,
+  projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
+): boolean {
+  return isSlotRefreshStaleBranch(slot.branch ?? '', slotTrackingConfigForSlot(slot, projectConfigs), {
+    session: slot.session,
+    slotId: slot.slot,
+    linkedWorktree: slot.linkedWorktree,
+  });
+}
+
 export function slotScore(
   slot: SlotStatus,
   targetBranch?: string,
-  options?: { familyId?: string | null },
+  options?: {
+    familyId?: string | null;
+    projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
+  },
 ): number {
   let score = 0;
   const hostHeadroom = slot.hostLoad?.headroom;
@@ -41,8 +95,8 @@ export function slotScore(
   // PR's own slot would score +50 (stale) and lose to any slot on main.
   if (targetBranch && slot.branch === targetBranch && !hostRed) {
     score -= TARGET_BRANCH_BONUS;
-  } else if (slot.branch && slot.branch !== DEFAULT_BRANCH && slot.branch !== '') {
-    // Stale branch is the primary penalty — prepare must reset to main first
+  } else if (isDispatchStaleBranch(slot, options?.projectConfigs)) {
+    // Stale branch is the primary penalty — prepare must reset to idle baseline first
     score += STALE_BRANCH_PENALTY;
   }
   // Family matching — follow-up flows (review-pr / pr-complete / merge-main) often
@@ -65,6 +119,7 @@ export function resolveJiraTargetBranchFromFleet(
   slots: SlotStatus[],
   project: string,
   ticketOrPr: string,
+  projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
 ): string | undefined {
   const canonical = normalizeTicketRef(ticketOrPr);
   if (!JIRA_KEY_RE.test(canonical)) return undefined;
@@ -74,7 +129,7 @@ export function resolveJiraTargetBranchFromFleet(
         s.project === project &&
         isFreeSlot(s) &&
         s.branch &&
-        s.branch !== DEFAULT_BRANCH &&
+        isDispatchStaleBranch(s, projectConfigs) &&
         branchContainsJiraKey(s.branch, canonical),
     )?.branch || undefined
   );
@@ -98,6 +153,7 @@ export function findBestSlot(
     familyId?: string | null;
     lane?: string | null;
     variant?: string | null;
+    projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>;
   },
 ): SlotStatus | null {
   const allow =
@@ -133,8 +189,14 @@ export function findBestSlot(
     })
     .sort(
       (a, b) =>
-        slotScore(a, options?.targetBranch, { familyId: options?.familyId }) -
-        slotScore(b, options?.targetBranch, { familyId: options?.familyId }),
+        slotScore(a, options?.targetBranch, {
+          familyId: options?.familyId,
+          projectConfigs: options?.projectConfigs,
+        }) -
+        slotScore(b, options?.targetBranch, {
+          familyId: options?.familyId,
+          projectConfigs: options?.projectConfigs,
+        }),
     );
   if (candidates.length === 0) return null;
   const cdpCandidates = candidates.filter((s) => isCdpLive(s.health.cdp));

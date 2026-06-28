@@ -46,7 +46,13 @@ import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { slotPrepare } from './prepare.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';
-import { resetSlotRepoToIdle, slotIdleResetStepDetail } from './slot-tracking.js';
+import {
+  detectLinkedWorktree,
+  isSlotIdleBranch,
+  resetSlotRepoToIdle,
+  resolveSlotTrackingBranchFromProject,
+  slotIdleResetStepDetail,
+} from './slot-tracking.js';
 
 export async function slotRelease(
   params: SlotReleaseParams,
@@ -125,7 +131,17 @@ export async function slotRelease(
         `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
       )
     ).stdout.trim();
-    if (currentBranch && currentBranch !== defaultBranch) {
+    const linkedWorktree = await detectLinkedWorktree(vars);
+    const trackingBranch = resolveSlotTrackingBranchFromProject(
+      projectJson,
+      vars,
+      projectVars,
+      linkedWorktree,
+    );
+    if (
+      currentBranch &&
+      !isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)
+    ) {
       const dirty = (
         await execOnSlot(
           vars,
@@ -183,6 +199,7 @@ export async function slotRelease(
 
   // 3. Collect artifacts + clean task files + git reset
   const taskDirName = resolveProjectTaskDirName(projectJson);
+  let idleBranchAfterRelease: string | undefined;
   if (!keepWork) {
     // Read task_file from status
     const taskRel = (await readSlotField(params.slotId, 'task_file')) as string | null;
@@ -262,6 +279,9 @@ export async function slotRelease(
 
     step('git', `Returning slot to idle baseline...`);
     const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+    idleBranchAfterRelease = idleReset.linkedWorktree
+      ? idleReset.trackingBranch
+      : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
 
     // Recycle app
@@ -313,6 +333,7 @@ export async function slotRelease(
   await updateSlotStatus(params.slotId, {
     completed_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     agent: 'idle',
+    ...(idleBranchAfterRelease ? { branch: idleBranchAfterRelease } : {}),
   });
 
   // 7. Re-prepare if keep-warm, otherwise mark ready (cold)

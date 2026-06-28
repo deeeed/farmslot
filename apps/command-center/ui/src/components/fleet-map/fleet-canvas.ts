@@ -31,9 +31,16 @@ import '../slot-actions/fleet-refresh-modal.js';
 import '../shared/hydrating-placeholder.js';
 
 import { gateway } from '../../gateway-client.js';
-import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
+import {
+  type AppState,
+  getProjectSlotTrackingConfigs,
+  getState,
+  isHydrating,
+  subscribe,
+} from '../../state.js';
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { summarizeFleetRefreshEligibility } from '../slot-actions/fleet-refresh-modal-model.js';
 
 import {
   type FleetCanvasGroupBy,
@@ -774,18 +781,10 @@ export class FleetCanvas extends LitElement {
   }
 
   private renderFleetRefreshTrigger() {
-    let cleanIdle = 0;
-    let stale = 0;
-    for (const slot of this.slots) {
-      if (!slot.enabled) continue;
-      if (slot.lifecycle === 'busy' || slot.lifecycle === 'held' || slot.lifecycle === 'disabled')
-        continue;
-      if (slot.currentRunId) continue;
-      if (slot.agent === 'working') continue;
-      if (!slot.branch || slot.branch === 'main' || slot.branch === 'master') cleanIdle++;
-      else stale++;
-    }
-    const eligible = cleanIdle + stale;
+    const { cleanIdle, stale, eligible } = summarizeFleetRefreshEligibility(
+      this.slots,
+      getProjectSlotTrackingConfigs(),
+    );
     const label =
       eligible === 0
         ? 'Refresh idle'

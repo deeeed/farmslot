@@ -13,6 +13,7 @@ import './slot-card.js';
 import './machine-health-bar.js';
 import '../runs/run-pipeline.js';
 
+import { getProjectSlotTrackingConfigs } from '../../state.js';
 import {
   colors,
   fonts,
@@ -22,6 +23,8 @@ import {
   spacing,
 } from '../../styles/theme-tokens.js';
 import { flowColor, flowLabel, formatElapsed, runStatusColor } from '../runs/run-utils.js';
+
+import { slotBranchDisplay } from './slot-branch-display.js';
 
 @customElement('machine-group')
 export class MachineGroup extends LitElement {
@@ -305,8 +308,12 @@ export class MachineGroup extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .slot-row .branch-cell.main {
+    .slot-row .branch-cell.main,
+    .slot-row .branch-cell.tracking {
       color: ${unsafeCSS(colors.textMuted)};
+    }
+    .slot-row .branch-cell.stale {
+      color: ${unsafeCSS(colors.accent)};
     }
   `;
 
@@ -453,9 +460,14 @@ ${deployHint}"
     const isExpanded = this.expandedSlotId === s.slot;
     const hasRun = !!run;
     const isWorking = s.lifecycle === 'busy' && s.phase === 'working';
-    const branchLabel =
-      s.branch === 'main' ? 'main' : s.branch && s.branch !== 'main' ? s.branch : '';
-    const branchClass = s.branch === 'main' ? 'branch-cell main' : 'branch-cell';
+    const branch = slotBranchDisplay(s, getProjectSlotTrackingConfigs());
+    const branchLabel = branch.label;
+    const branchClass =
+      branch.tone === 'baseline'
+        ? 'branch-cell main'
+        : branch.tone === 'tracking'
+          ? 'branch-cell tracking'
+          : 'branch-cell stale';
 
     return html`
       <tr

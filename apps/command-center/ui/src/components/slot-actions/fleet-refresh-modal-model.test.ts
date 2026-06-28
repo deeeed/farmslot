@@ -15,6 +15,7 @@ import {
   selectedFleetRefreshDangerousRowCount,
   selectedFleetRefreshRowCount,
   setFleetRefreshRowsSelected,
+  summarizeFleetRefreshEligibility,
   toggleFleetRefreshRowExpanded,
   updateFleetRefreshRowSelection,
 } from './fleet-refresh-modal-model.js';
@@ -34,6 +35,56 @@ function slot(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
     ...rest,
   } as SlotStatus;
 }
+
+const farmslotFarmProject = {
+  'farmslot-farm': {
+    defaultBranch: 'main',
+    slotTrackingBranch: 'wt/{{session}}',
+    worktreeBase: '/Users/deeeed/dev/farmslot-wt',
+  },
+};
+
+test('summarizeFleetRefreshEligibility counts tracking branches as ready', () => {
+  const summary = summarizeFleetRefreshEligibility(
+    [
+      slot({
+        slot: 'macwork-ff-2',
+        branch: 'wt/ff-2',
+        project: 'farmslot-farm',
+        session: 'ff-2',
+        linkedWorktree: true,
+      }),
+      slot({ slot: 'stale-1', branch: 'feat/demo' }),
+    ],
+    farmslotFarmProject,
+  );
+
+  assert.equal(summary.eligible, 2);
+  assert.equal(summary.cleanIdle, 1);
+  assert.equal(summary.stale, 1);
+});
+
+test('buildFleetRefreshReviewRows treats configured tracking branches as safe', () => {
+  const result = buildFleetRefreshReviewRows(
+    [
+      slot({
+        slot: 'macwork-ff-2',
+        branch: 'wt/ff-2',
+        project: 'farmslot-farm',
+        session: 'ff-2',
+        linkedWorktree: true,
+      }),
+    ],
+    { projects: [], machines: [] },
+    farmslotFarmProject,
+  );
+
+  const row = result.rows.get('macwork-ff-2');
+  assert.equal(row?.isStale, false);
+  assert.equal(row?.mode, 'safe');
+  assert.equal(row?.selected, true);
+  assert.deepEqual(result.staleSlotIds, []);
+});
 
 test('buildFleetRefreshReviewRows separates safe, stale, and blocked rows', () => {
   const result = buildFleetRefreshReviewRows(

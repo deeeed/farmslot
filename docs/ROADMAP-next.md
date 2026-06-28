@@ -22,7 +22,7 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 
 ## Immediate Execution Order
 
-1. **Implement ADR-042 slot tracking branches (release/prepare parity).** Accepted [ADR-042](adr/042-slot-tracking-branches.md): idle slots on linked worktrees use a **tracking branch** (e.g. `wt/ff-2`) at `origin/defaultBranch`, not a failed `git checkout main`. **Partial today:** `prepare.ts` allows and resets worktree tracking branches; `release.ts` still attempts `checkout main` with swallowed errors, leaving worktrees on feature branches after dispatch. **Ship:** shared idle-reset helper, fix `release.ts`, project `slot_tracking_branch` template (+ optional `merge_main_strategy: rebase|merge` for `review-pr`), tests, and worktree-operator doc update. **Blocks:** [farmslot-cross-surface-evidence-e2e-goal.md](plans/farmslot-cross-surface-evidence-e2e-goal.md) Phase 1 Run A (#28 on `macwork-ff-2`) and reliable daily `macwork-ff-*` recycling without manual `git reset --hard origin/main`.
+1. **ADR-042 slot tracking branches — shipped (PR #146 + refresh parity).** Accepted [ADR-042](adr/042-slot-tracking-branches.md): idle linked worktrees use a **tracking branch** (e.g. `wt/ff-2`) at `origin/defaultBranch`. `prepare.ts`, `release.ts`, and `refresh.ts` share `resetSlotRepoToIdle`; project `slot_tracking_branch` is configured in `projects/farmslot-farm/project.json`. **Unblocks:** [farmslot-cross-surface-evidence-e2e-goal.md](plans/farmslot-cross-surface-evidence-e2e-goal.md) Phase 1 Run A (#28 on `macwork-ff-2`) once Phase 0 + #122 gate clear.
 2. **Run a short operator UI/UX stabilization pass.** Exercise the recently changed Command Center surfaces (`#evals`, `#backlog`, dispatch, run detail/family observability, slot view, ready/review workspaces, and dev publication gate) plus the newly shipped Mobile Companion operator surfaces (active runs, artifacts/diff/recipe workspaces, PRs, terminal, and Workers). Fix concrete regressions and polish issues found during real operator use. This is stabilization of shipped roadmap work, not a new product lane; small run-history curation affordances such as operator tags for demo/review collections belong here. Companion structural refactor (screen controllers, feature folders, shared workspace kit) is captured in [plans/companion-ui-architecture-refactor.md](plans/companion-ui-architecture-refactor.md).
 3. **Complete Recipe Protocol v1 adoption (ADR-034 core is shipped).** Validators (`validateRecipeDocument`, `validateRecipeWithManifest`, `validateRecipeArtifactPackage`), `@farmslot/recipe-harness`, `farmslot recipe validate`, and `docs/examples/recipes/farmslot/` fixtures already exist. Close the remaining PRD gaps from [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md): typed `artifact-manifest.json` on all project runs, manifest-first UI (reduce filename inference), Mobile/Audiolab `hooks.recipe_run` alignment, live self-validation execution, and onboarding doc consolidation — in parallel with replay closure, not as a greenfield protocol build.
 4. **Close remaining package provenance and real-run capture gaps.** Worker-template version selection is shipped, but durable replay still needs actual eval baseline SHA, candidate head/diff identity, complete real-run manifests, richer task-profile metadata, typed recipe artifact semantics, and clearer missing-data semantics before evals can be treated as a regression program. **Worktree/sandbox seeding (ADR-039) is shipped:** CLI `farmslot runs export|import|bundle ls` plus gateway `run.bundle.*` RPC write `farmrun` bundles so parallel agents can import main reference runs/packages into sandbox gateways without fragmenting canonical `.runs/` history. Remaining: v1.1 selectors (`--tag`, `--eval-experiment`), Command Center export buttons, `--seed-eval` helper.
@@ -40,22 +40,15 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 
 ## Decision: What Lands Next
 
-### 0. Active Next — ADR-042 Slot Tracking Branches
+### 0. Shipped — ADR-042 Slot Tracking Branches
 
-**Status:** ADR **Accepted** (2026-06-28); implementation **partial**.
+**Status:** ADR **Accepted** (2026-06-28); implementation **shipped** (PR #146 release/prepare + refresh parity PR).
 
 **Planning artifacts:** [ADR-042](adr/042-slot-tracking-branches.md), [worktree-operator-model.md](operations/worktree-operator-model.md)
 
-**Problem:** Linked worktree slots (`macwork-ff-*`) cannot checkout `main` when it is active in the primary clone. Prepare already treats idle as `wt/ff-N` @ `origin/main`; release still runs `git checkout main` and often leaves feature branches behind.
+**Capability:** Linked worktree slots (`macwork-ff-*`) idle on `wt/ff-N` @ `origin/main`. `prepare`, `release`, and force `refresh` use shared `resetSlotRepoToIdle`; safe refresh fast-forwards idle tracking branches without treating them as stale.
 
-**Ship next:**
-
-- shared idle-reset helper used by prepare and release;
-- `release.ts` resets tracking branch to `origin/defaultBranch` instead of checking out `main`;
-- optional `project.json` `slot_tracking_branch` (`wt/{{session}}`) and `merge_main_strategy`;
-- tests + operator doc update.
-
-**Blocks:** E2E Phase 1 Run A (#28, `macwork-ff-2`) and trustworthy `macwork-ff-*` recycle without manual git repair.
+**Next gate:** E2E Phase 0 checklist + #122 re-validation before Run A (#28, `macwork-ff-2`).
 
 ### 0b. Shipped Foundation — Bugfix Local-First Publish Gate
 

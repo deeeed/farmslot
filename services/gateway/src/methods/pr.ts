@@ -6,19 +6,22 @@ import { homedir } from 'node:os';
 import { join as pathJoin, resolve as pathResolve } from 'node:path';
 import { promisify } from 'node:util';
 
-import type {
-  PRForSlotParams,
-  PRForSlotResult,
-  PRListParams,
-  PRListResult,
-  ProjectCICheckGroup,
-  PRStatus,
-  PRStatusParams,
-  PRStatusResult,
-  Run,
-  ScriptActionResult,
-  ScriptComplete,
-  ScriptOutput,
+import {
+  DEFAULT_BRANCH,
+  isSlotRefreshStaleBranch,
+  type PRForSlotParams,
+  type PRForSlotResult,
+  type PRListParams,
+  type PRListResult,
+  type ProjectCICheckGroup,
+  type PRStatus,
+  type PRStatusParams,
+  type PRStatusResult,
+  type Run,
+  type ScriptActionResult,
+  type ScriptComplete,
+  type ScriptOutput,
+  type SlotStatus,
 } from '@farmslot/protocol';
 
 import { isLocal } from '../core/exec.js';
@@ -31,6 +34,7 @@ import {
   loadFleetStatus,
   loadPoolConfigs,
   loadProjectConfig,
+  loadProjectConfigs,
 } from '../fleet/state.js';
 import {
   getBinding,
@@ -94,6 +98,28 @@ const MAX_PR_DASHBOARD_CANDIDATES = 200;
 const TERMINAL_RUN_STATUSES = new Set(['done', 'failed', 'cancelled']);
 const PR_DASHBOARD_TERMINAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+type PrSlotProjectConfig = {
+  defaultBranch: string;
+  slotTrackingBranch?: string;
+};
+
+function slotBranchHasPrLookupContext(
+  slot: Pick<SlotStatus, 'branch' | 'project' | 'session' | 'slot' | 'linkedWorktree'>,
+  projectConfigs: Readonly<Record<string, PrSlotProjectConfig>>,
+): boolean {
+  if (!slot.branch || slot.branch === '-') return false;
+  const project = projectConfigs[slot.project];
+  const defaultBranch = project?.defaultBranch ?? DEFAULT_BRANCH;
+  return isSlotRefreshStaleBranch(
+    slot.branch,
+    {
+      defaultBranch,
+      slotTrackingBranch: project?.slotTrackingBranch,
+    },
+    { session: slot.session, slotId: slot.slot, linkedWorktree: slot.linkedWorktree },
+  );
+}
+
 async function resolveProjectRepo(
   project?: string,
   repoOverride?: string,
@@ -145,18 +171,24 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
   ]);
   // Index: prNumber → most recent run with that PR
   const runByPR = buildLatestRunByPrNumber(runs);
+  const projectConfigs = Object.fromEntries(
+    (await loadProjectConfigs()).map((p) => [
+      p.name,
+      {
+        defaultBranch: p.defaultBranch || DEFAULT_BRANCH,
+        slotTrackingBranch: p.slotTrackingBranch,
+      },
+    ]),
+  );
 
-  // 1. Active slots with non-main branches (worker is active).
+  // 1. Active slots on feature branches (worker is active).
   //    Resolve all slot→PR lookups in parallel; ghRequest's own concurrency gate
   //    (8 by default) keeps github load bounded while we avoid an N-slot serial wait.
   const activeSlots = fleet.slots.filter(
     (s) =>
       s.enabled &&
       (s.agent === 'working' || s.lifecycle === 'busy') &&
-      s.branch &&
-      s.branch !== 'main' &&
-      s.branch !== 'master' &&
-      s.branch !== '-',
+      slotBranchHasPrLookupContext(s, projectConfigs),
   );
   const slotBindings = await Promise.all(
     activeSlots.map((s) =>
@@ -929,10 +961,19 @@ export function prMonitor(
 export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResult> {
   const fleet = await loadFleetStatus();
   const slot = fleet.slots.find((s) => s.slot === params.slotId);
-  if (!slot || !slot.branch || slot.branch === 'main' || slot.branch === 'master') {
+  if (!slot || !slot.branch) {
     return { pr: null, repo: null };
   }
   const projectConfig = await loadProjectConfig(slot.project);
+  const projectConfigs = {
+    [slot.project]: {
+      defaultBranch: projectConfig?.defaultBranch || DEFAULT_BRANCH,
+      slotTrackingBranch: projectConfig?.slotTrackingBranch,
+    },
+  };
+  if (!slotBranchHasPrLookupContext(slot, projectConfigs)) {
+    return { pr: null, repo: null };
+  }
   const repo = projectConfig?.ci?.repo ?? null;
   // Project has no ci.repo configured — fall back to `gh pr list` inside the
   // slot's local repo (no ETag cache, but preserves discovery for projects

@@ -103,6 +103,10 @@ export interface ProjectConfig {
   name: string;
   repoUrl: string;
   defaultBranch: string;
+  /** Linked-worktree idle branch template (e.g. wt/{{session}}). See ADR-042. */
+  slotTrackingBranch?: string;
+  /** Operator/docs hint for worktree sandboxes. Stale/idle inference uses fleet-probed linkedWorktree on SlotStatus, not this path. */
+  worktreeBase?: string;
   apps?: string[];
   paths: { runtimeDir: string; artifactDir: string };
   defaults: Record<string, { runner: string; model: string }>;

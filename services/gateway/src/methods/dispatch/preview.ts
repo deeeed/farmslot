@@ -1,5 +1,4 @@
 import {
-  DEFAULT_BRANCH,
   DEFAULT_CLAUDE_MODEL,
   type DispatchCandidatesParams,
   type DispatchCandidatesResult,
@@ -17,7 +16,7 @@ import { firstWindowTarget, resolveTmuxSession, shellQuote } from '../../core/tm
 import { buildFollowUpLineage } from '../../family-observability/context.js';
 import { findFollowUpParentRun } from '../../family-observability/state.js';
 import { getNode } from '../../fleet/machine-registry.js';
-import { loadFleetStatus } from '../../fleet/state.js';
+import { loadFleetStatus, loadProjectConfigs } from '../../fleet/state.js';
 import { detectProfileFit } from '../../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
@@ -29,7 +28,15 @@ import {
 import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
 
-import { findBestSlot, isCdpLive, isFreeSlot, slotScore, validateSlot } from './slot-scoring.js';
+import {
+  findBestSlot,
+  isCdpLive,
+  isDispatchStaleBranch,
+  isFreeSlot,
+  projectConfigsFromProjects,
+  slotScore,
+  validateSlot,
+} from './slot-scoring.js';
 import { resolveDispatchTargetBranch } from './target-branch.js';
 import { normalizeTicketRef } from './ticket-ref.js';
 
@@ -615,7 +622,8 @@ async function mapWithConcurrency<T>(
 export async function dispatchCandidates(
   params: DispatchCandidatesParams,
 ): Promise<DispatchCandidatesResult> {
-  const fleet = await loadFleetStatus();
+  const [fleet, projectConfigList] = await Promise.all([loadFleetStatus(), loadProjectConfigs()]);
+  const projectConfigs = projectConfigsFromProjects(projectConfigList);
   const machineFilter =
     params.machines && params.machines.length > 0 ? new Set(params.machines) : null;
   const projectSlots = fleet.slots.filter(
@@ -678,12 +686,15 @@ export async function dispatchCandidates(
       return {
         slotId: s.slot,
         score: isFreeSlot(s)
-          ? slotScore(s, resolvedTargetBranch, { familyId: familyContext.familyId })
+          ? slotScore(s, resolvedTargetBranch, {
+              familyId: familyContext.familyId,
+              projectConfigs,
+            })
           : 999,
         cdpLive: isCdpLive(s.health.cdp),
         branch: s.branch || '',
         lifecycle: s.lifecycle,
-        onMain: !s.branch || s.branch === DEFAULT_BRANCH || s.branch === '',
+        onMain: !isDispatchStaleBranch(s, projectConfigs),
         hostLoad: s.hostLoad,
         free: isFreeSlot(s),
         familyAffinity: Boolean(
@@ -731,9 +742,12 @@ export async function dispatchPreview(
     logPrefix: 'dispatch.preview',
   });
   const enriched = { ...params, targetBranch: resolvedTargetBranch };
+  const projectConfigList = await loadProjectConfigs();
+  const projectConfigs = projectConfigsFromProjects(projectConfigList);
   const result = resolveDispatchPreviewFromFleet(
     { ...enriched, ...resolveDispatchFamilyContext(enriched) },
     fleet.slots,
+    projectConfigs,
   );
   const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
   const previewRun = {
@@ -770,6 +784,7 @@ export async function dispatchPreview(
 export function resolveDispatchPreviewFromFleet(
   params: DispatchPreviewParams,
   slots: SlotStatus[],
+  projectConfigs?: ReturnType<typeof projectConfigsFromProjects>,
 ): DispatchPreviewResult {
   let slotInfo: SlotStatus;
 
@@ -813,6 +828,7 @@ export function resolveDispatchPreviewFromFleet(
       familyId: params.familyId,
       lane: params.lane,
       variant: params.variant,
+      projectConfigs,
     });
     if (!best) {
       const allow =

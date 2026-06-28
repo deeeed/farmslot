@@ -20,6 +20,7 @@ import { resolveDispatchSafetyTier } from './dispatch/safety-tier.js';
 import {
   branchContainsJiraKey,
   evaluateSlotIdentityPolicy,
+  isDispatchStaleBranch,
   isFreeSlot,
   resolveJiraTargetBranchFromFleet,
   slotScore,
@@ -78,6 +79,9 @@ function makeSlot(overrides: Partial<SlotStatus> = {}): SlotStatus {
     taskStepProgress: overrides.taskStepProgress ?? null,
     prHealth: overrides.prHealth,
     hostLoad: overrides.hostLoad,
+    session: overrides.session,
+    repo: overrides.repo,
+    linkedWorktree: overrides.linkedWorktree,
   };
 }
 
@@ -587,6 +591,37 @@ test('slotScore penalizes stale branches by default', () => {
   });
   assert.equal(slotScore(mainSlot), 0);
   assert.equal(slotScore(staleSlot), 50);
+});
+
+test('slotScore treats configured tracking branches as idle', () => {
+  const projectConfigs = {
+    'farmslot-farm': {
+      defaultBranch: 'main',
+      slotTrackingBranch: 'wt/{{session}}',
+      worktreeBase: '/Users/deeeed/dev/farmslot-wt',
+    },
+  };
+  const trackingSlot = makeSlot({
+    slot: 'macwork-ff-2',
+    project: 'farmslot-farm',
+    branch: 'wt/ff-2',
+    session: 'ff-2',
+    linkedWorktree: true,
+    health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const featureSlot = makeSlot({
+    slot: 'macwork-ff-3',
+    project: 'farmslot-farm',
+    branch: 'feat/demo',
+    session: 'ff-3',
+    linkedWorktree: true,
+    health: { ssh: 'LOCAL', device: 'sim:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  assert.equal(isDispatchStaleBranch(trackingSlot, projectConfigs), false);
+  assert.equal(isDispatchStaleBranch(featureSlot, projectConfigs), true);
+  assert.equal(slotScore(trackingSlot, undefined, { projectConfigs }), 0);
+  assert.equal(slotScore(featureSlot, undefined, { projectConfigs }), 50);
 });
 
 test('slotScore prefers a same-family stale slot over unrelated main', () => {

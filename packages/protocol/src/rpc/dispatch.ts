@@ -91,6 +91,7 @@ export interface DispatchCandidate {
   cdpLive: boolean;
   branch: string;
   lifecycle: string;
+  /** True when the slot is on an idle baseline (default or tracking branch), not a stale feature branch. */
   onMain: boolean;
   hostLoad?: { cpuPercent: number; memoryPercent: number; diskPercent: number; headroom: string };
   /** True when direct dispatch can pin this slot immediately. Busy/held rows are informational only. */

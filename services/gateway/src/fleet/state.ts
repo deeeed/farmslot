@@ -306,6 +306,9 @@ interface RawSlot {
   cdp: string;
   fixtures: string;
   branch: string;
+  session?: string;
+  repo?: string;
+  linked_worktree?: boolean;
   agent: string;
   enabled: boolean;
   mode: string;
@@ -402,6 +405,9 @@ function transformSlot(raw: RawSlot): SlotStatus {
     project: raw.project,
     health,
     branch: raw.branch,
+    session: raw.session,
+    repo: raw.repo,
+    linkedWorktree: raw.linked_worktree ?? false,
     agent: raw.agent as SlotStatus['agent'],
     enabled: raw.enabled,
     dispatchable: raw.dispatchable,
@@ -692,6 +698,9 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
           name: raw.name || dir,
           repoUrl: raw.repo_url || '',
           defaultBranch: raw.default_branch || 'main',
+          slotTrackingBranch:
+            typeof raw.slot_tracking_branch === 'string' ? raw.slot_tracking_branch : undefined,
+          worktreeBase: typeof raw.worktree_base === 'string' ? raw.worktree_base : undefined,
           apps: Array.isArray(raw.apps)
             ? raw.apps.filter(
                 (app: unknown): app is string => typeof app === 'string' && app.length > 0,

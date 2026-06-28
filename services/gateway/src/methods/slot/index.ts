@@ -19,7 +19,12 @@ export {
 export { reconcileStalePrepareLocks } from './prepare-sentinel.js';
 export { slotPrepareStatus } from './prepare-status.js';
 export { slotRecycle } from './recycle.js';
-export { slotRefresh, slotRefreshBlockedReason } from './refresh.js';
+export {
+  refreshStaleBranchDetail,
+  refreshSyncUsesIdleReset,
+  slotRefresh,
+  slotRefreshBlockedReason,
+} from './refresh.js';
 export {
   buildKillRoleWindowCommand,
   killAgentInSession,

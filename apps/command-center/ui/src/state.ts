@@ -106,6 +106,10 @@ export interface AppState {
   prsUpdatedAt: number;
   globalFilters: GlobalFilters;
   projectDefaultBranches: Record<string, string>;
+  projectSlotTracking: Record<
+    string,
+    { defaultBranch: string; slotTrackingBranch?: string; worktreeBase?: string }
+  >;
   githubQuota: GitHubRateLimitPayload | null;
 }
 
@@ -177,6 +181,7 @@ const state: AppState = {
   prsUpdatedAt: 0,
   globalFilters: loadGlobalFilters(),
   projectDefaultBranches: {},
+  projectSlotTracking: {},
   githubQuota: null,
 };
 
@@ -199,6 +204,22 @@ export function getProjectDefaultBranch(projectName: string): string {
 
 export function updateProjectDefaultBranches(map: Record<string, string>): void {
   state.projectDefaultBranches = map;
+  notify();
+}
+
+export function getProjectSlotTrackingConfigs(): Readonly<
+  Record<string, { defaultBranch: string; slotTrackingBranch?: string; worktreeBase?: string }>
+> {
+  return state.projectSlotTracking;
+}
+
+export function updateProjectSlotTracking(
+  map: Record<
+    string,
+    { defaultBranch: string; slotTrackingBranch?: string; worktreeBase?: string }
+  >,
+): void {
+  state.projectSlotTracking = map;
   notify();
 }
 
@@ -1006,10 +1027,25 @@ async function runFetchInitialState(
         updateProjectDefaultBranches(
           Object.fromEntries(r.projects.map((p) => [p.name, p.defaultBranch || DEFAULT_BRANCH])),
         );
+        updateProjectSlotTracking(
+          Object.fromEntries(
+            r.projects.map((p) => [
+              p.name,
+              {
+                defaultBranch: p.defaultBranch || DEFAULT_BRANCH,
+                slotTrackingBranch: p.slotTrackingBranch,
+                worktreeBase: p.worktreeBase,
+              },
+            ]),
+          ),
+        );
       }
     })
     .catch(() => {
-      if (stillCurrent()) updateProjectDefaultBranches({});
+      if (stillCurrent()) {
+        updateProjectDefaultBranches({});
+        updateProjectSlotTracking({});
+      }
       markFailed('projects');
     })
     .finally(() => markReady('projects'));

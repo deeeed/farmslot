@@ -37,6 +37,8 @@ import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js'
 import { runnerProcessPatternSource } from '../runners/registry.js';
 import { listRuns } from '../runs/store.js';
 
+import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
+
 const statusFile = path.join(farmslotRoot, '.farm-status.json');
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;
 const SLOT_CHECK_TIMEOUT_MS = 5_000;
@@ -62,6 +64,9 @@ interface SlotCheckResult {
   cdp: string;
   fixtures: string;
   branch: string;
+  session?: string;
+  repo?: string;
+  linkedWorktree?: boolean;
   agent: string;
   enabled: boolean;
   mode: string;
@@ -144,7 +149,9 @@ function taskFileRefFromRun(run: Run): string | null {
   if (!run.taskFile) return null;
   const marker = `${path.sep}tasks${path.sep}`;
   const index = run.taskFile.indexOf(marker);
-  return index === -1 ? run.taskFile : run.taskFile.slice(index + marker.length).replace(/\\/g, '/');
+  return index === -1
+    ? run.taskFile
+    : run.taskFile.slice(index + marker.length).replace(/\\/g, '/');
 }
 
 function newestActiveRunForSlot(runs: Run[], slotId: string): Run | null {
@@ -320,6 +327,9 @@ function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
     cdp: r.cdp,
     fixtures: r.fixtures,
     branch: r.branch,
+    ...(r.session ? { session: r.session } : {}),
+    ...(r.repo ? { repo: r.repo } : {}),
+    linked_worktree: r.linkedWorktree ?? false,
     agent: r.agent,
     enabled: r.enabled,
     mode: r.mode,
@@ -579,14 +589,16 @@ async function checkSingleSlot(
   }
 
   // Run all checks in parallel for this slot
-  const [branchStr, agentStr, emuStr, devserverStr, cdpStr, fixStr] = await Promise.all([
-    checkBranch(vars),
-    checkAgent(vars),
-    checkDevice(vars, projectJson, projectVars),
-    checkDevServer(vars, projectJson, projectVars),
-    checkCDP(vars, projectJson, projectVars),
-    checkFixtures(vars, projectVars, projectJson),
-  ]);
+  const [branchStr, agentStr, emuStr, devserverStr, cdpStr, fixStr, linkedWorktree] =
+    await Promise.all([
+      checkBranch(vars),
+      checkAgent(vars),
+      checkDevice(vars, projectJson, projectVars),
+      checkDevServer(vars, projectJson, projectVars),
+      checkCDP(vars, projectJson, projectVars),
+      checkFixtures(vars, projectVars, projectJson),
+      checkLinkedWorktree(vars),
+    ]);
 
   const dispatchable =
     mode === 'dispatch' &&
@@ -608,6 +620,9 @@ async function checkSingleSlot(
     cdp: cdpStr,
     fixtures: fixStr,
     branch: branchStr,
+    session: vars.session || undefined,
+    repo: vars.remoteRepo,
+    linkedWorktree,
     agent: agentStr,
     enabled: true,
     mode,
@@ -617,6 +632,23 @@ async function checkSingleSlot(
 }
 
 // ─── Individual check helpers ───
+
+async function checkLinkedWorktree(vars: SlotVars): Promise<boolean> {
+  try {
+    const r = await execOnSlot(
+      vars,
+      `test -f ${shellQuote(path.join(vars.remoteRepo, '.git'))} && echo linked || echo primary`,
+      { timeout: SLOT_CHECK_TIMEOUT_MS },
+    );
+    return isLinkedGitWorktreeMarker(r.stdout);
+  } catch (e) {
+    console.warn(
+      `[fleet.refresh] ${vars.slotId}: linked worktree probe failed; treating as primary clone`,
+      (e as Error).message ?? e,
+    );
+    return false;
+  }
+}
 
 async function checkBranch(vars: SlotVars): Promise<string> {
   try {

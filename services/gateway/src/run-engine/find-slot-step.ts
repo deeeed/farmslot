@@ -3,15 +3,16 @@ import {
   DEFAULT_BRANCH,
   type DispatchPreviewParams,
   Events,
+  isDispatchScoreStale,
   type Run,
   type RunDecision,
   type RunDecisionPayload,
+  SLOT_STALE_BRANCH_SCORE_PENALTY,
 } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
-import { execLocal, isLocal } from '../core/exec.js';
-import { markSlotBusy, updateSlotStatus } from '../core/index.js';
-import { loadFleetStatus } from '../fleet/state.js';
+import { getProjectField, loadProjectVars, markSlotBusy, updateSlotStatus } from '../core/index.js';
+import { loadFleetStatus, loadProjectConfigs } from '../fleet/state.js';
 import {
   collectBranchAffinityNudgeCandidates,
   dispatchPreview,
@@ -21,7 +22,16 @@ import {
   selectBranchAffinityRefreshSlots,
   verifyBranchAffinityNudgeStillEligible,
 } from '../methods/dispatch.js';
-import { isCdpLive, isFreeSlot, slotScore } from '../methods/dispatch/slot-scoring.js';
+import {
+  isCdpLive,
+  isFreeSlot,
+  projectConfigsFromProjects,
+  slotScore,
+} from '../methods/dispatch/slot-scoring.js';
+import {
+  resetSlotRepoToIdle,
+  slotIdleResetStepDetail,
+} from '../methods/slot/slot-tracking.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
@@ -188,7 +198,11 @@ export async function executeFindSlotStep(
   }
 
   // Capture candidate list before selection (live branch check for accurate scoring)
-  const fleet = await loadFleetStatus(true);
+  const [fleet, projectConfigList] = await Promise.all([
+    loadFleetStatus(true),
+    loadProjectConfigs(),
+  ]);
+  const projectConfigs = projectConfigsFromProjects(projectConfigList);
   // `allowedSlots` narrows the project pool to the set the dispatch UI
   // filtered to at click time. Without this, FIND_SLOT could land the run
   // on a machine the user had just excluded via the global filter bar.
@@ -210,7 +224,7 @@ export async function executeFindSlotStep(
       : undefined;
   const candidates = freeSlots.slice(0, 10).map((s) => ({
     slotId: s.slot,
-    score: slotScore(s, targetBranch, { familyId: run.familyId }),
+    score: slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
     cdpLive: isCdpLive(s.health.cdp),
   }));
 
@@ -304,7 +318,7 @@ export async function executeFindSlotStep(
           },
           freeSlotCandidates: projectSlots.filter(isFreeSlot).map((s) => ({
             slotId: s.slot,
-            score: slotScore(s, targetBranch, { familyId: run.familyId }),
+            score: slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
             branch: s.branch || '',
             lifecycle: s.lifecycle,
             health: s.health,
@@ -420,18 +434,19 @@ export async function executeFindSlotStep(
   }
 
   // Human intervention when no good candidates exist
-  const STALE_THRESHOLD = 50;
   if (
     !run.slotId &&
     (freeSlots.length === 0 ||
-      freeSlots.every(
-        (s) => slotScore(s, targetBranch, { familyId: run.familyId }) >= STALE_THRESHOLD,
+      freeSlots.every((s) =>
+        isDispatchScoreStale(slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })),
       ))
   ) {
     const reason = freeSlots.length === 0 ? 'no_free_slots' : 'all_stale';
     const allProjectSlots = projectSlots.map((s) => ({
       slotId: s.slot,
-      score: isFreeSlot(s) ? slotScore(s, targetBranch, { familyId: run.familyId }) : -1,
+      score: isFreeSlot(s)
+        ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+        : -1,
       branch: s.branch || '',
       lifecycle: s.lifecycle,
       health: s.health,
@@ -441,7 +456,7 @@ export async function executeFindSlotStep(
     const desc =
       reason === 'no_free_slots'
         ? `No free slots for **${run.project}**. ${projectSlots.length} slots exist but all are busy or disabled.`
-        : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${STALE_THRESHOLD}). Pick one to reset or use as-is.`;
+        : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
 
     const slotPickerPayload: import('@farmslot/protocol').SlotPickerPayload = {
       kind: 'slot_picker',
@@ -472,14 +487,20 @@ export async function executeFindSlotStep(
 
     // If user requested reset, do it before proceeding
     if (resolvedDecision?.selectionData?.resetBranch) {
-      console.log(`[run-engine] resetting ${pickedSlotId} to ${DEFAULT_BRANCH}`);
       const vars = await loadSlotVars(pickedSlotId);
-      const resetCmd = `cd '${vars.remoteRepo}' && git checkout ${DEFAULT_BRANCH} && git pull --ff-only 2>/dev/null`;
-      if (isLocal(vars.host, vars.machine)) {
-        await execLocal(resetCmd, { timeout: 30000 });
-      } else {
-        await execLocal(`ssh ${vars.sshTarget} "${resetCmd}"`, { timeout: 30000 });
+      let projectVars;
+      let projectJson = {};
+      try {
+        projectVars = await loadProjectVars(vars.projectName);
+        projectJson = projectVars.projectJson;
+      } catch {
+        /* no project config */
       }
+      const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
+      const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+      console.log(
+        `[run-engine] reset ${pickedSlotId}: ${slotIdleResetStepDetail(idleReset, defaultBranch)}`,
+      );
     }
 
     updateRun(runId, { slotId: pickedSlotId });

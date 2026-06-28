@@ -1,8 +1,13 @@
-import { DEFAULT_BRANCH, type SlotStatus } from '@farmslot/protocol';
+import type { SlotStatus } from '@farmslot/protocol';
 
+import { loadProjectConfigs } from '../../fleet/state.js';
 import { listRuns } from '../../runs/store.js';
 
-import { resolveJiraTargetBranchFromFleet } from './slot-scoring.js';
+import {
+  isDispatchStaleBranch,
+  projectConfigsFromProjects,
+  resolveJiraTargetBranchFromFleet,
+} from './slot-scoring.js';
 import { normalizeTicketRef } from './ticket-ref.js';
 
 export interface ResolveDispatchTargetBranchParams {
@@ -23,11 +28,14 @@ export async function resolveDispatchTargetBranch(
   let resolvedTargetBranch = params.targetBranch ?? undefined;
   const logPrefix = options.logPrefix ?? 'dispatch';
 
+  const projectConfigs = projectConfigsFromProjects(await loadProjectConfigs());
+
   if (!resolvedTargetBranch && params.flowType === 'fix-bug' && params.ticketOrPr) {
     resolvedTargetBranch = resolveJiraTargetBranchFromFleet(
       options.projectSlots ?? options.fleetSlots ?? [],
       params.project,
       params.ticketOrPr,
+      projectConfigs,
     );
     if (resolvedTargetBranch) {
       console.log(
@@ -59,7 +67,7 @@ export async function resolveDispatchTargetBranch(
       (s.currentTicketOrPr === params.ticketOrPr || s.currentTicketOrPr === canonicalTicketOrPr) &&
       s.branch &&
       s.branch !== '-' &&
-      s.branch !== DEFAULT_BRANCH,
+      isDispatchStaleBranch(s, projectConfigs),
   );
   if (matchingSlot?.branch) {
     console.log(

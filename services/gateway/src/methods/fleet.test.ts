@@ -19,6 +19,7 @@ function makeRefreshRow(overrides: Record<string, unknown> = {}) {
     cdp: 'OFF',
     fixtures: '7/10',
     branch: 'TAT-3215-feat-debug-eth-position-banner',
+    linked_worktree: false,
     agent: 'working',
     enabled: true,
     mode: 'dispatch',
@@ -115,10 +116,23 @@ test('fleet refresh reconciliation preserves active run ownership when status pr
       lastSignalAt: undefined,
     },
   ]);
-  assert.equal(
-    reconciled.task_file,
-    'feat/tat-3215-0622-110508/TASK.md',
-  );
+  assert.equal(reconciled.task_file, 'feat/tat-3215-0622-110508/TASK.md');
+});
+
+test('fleet refresh reconciliation preserves linked_worktree from status probe', () => {
+  const row = makeRefreshRow({
+    linked_worktree: true,
+    branch: 'wt/ff-2',
+    agent: 'idle',
+    lifecycle: 'ready',
+  });
+
+  assert.equal(row.linked_worktree, true);
+
+  const reconciled = reconcileRefreshSlotRowWithActiveRun(row, null);
+
+  assert.equal(reconciled.linked_worktree, true);
+  assert.equal(reconciled.branch, 'wt/ff-2');
 });
 
 test('fleet refresh preserves gate-held publication slots as review-gate with working agent', () => {

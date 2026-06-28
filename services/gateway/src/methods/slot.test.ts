@@ -5,6 +5,8 @@ import { promisify } from 'node:util';
 
 import type { SlotStatus } from '@farmslot/protocol';
 
+import type { SlotVars } from '../core/config.js';
+
 import {
   buildDevServerPortCleanup,
   buildKillRoleWindowCommand,
@@ -16,12 +18,39 @@ import {
   getPreparePreflightTimeoutMs,
   getPrepareSentinelPollTimeoutMs,
   prepareSessionTarget,
+  refreshStaleBranchDetail,
+  refreshSyncUsesIdleReset,
   shouldEmitPreparePollWarning,
   shouldPreservePrepareWindowOnSuccess,
   slotRefreshBlockedReason,
 } from './slot.js';
 
 const execFileAsync = promisify(execFile);
+
+function makeSlotVars(overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | 'session'>): SlotVars {
+  return {
+    machine: 'macwork',
+    platform: 'macos',
+    host: 'localhost',
+    sshUser: 'deeeed',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: '/tmp/repo',
+    remoteRepo: '/tmp/repo',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    projectName: 'farmslot-farm',
+    resourceVars: {},
+    ...overrides,
+  };
+}
 
 function makeSlot(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
   return {
@@ -205,6 +234,78 @@ test('successful preflight preserves live pane so dev-server descendants survive
   assert.equal(shouldPreservePrepareWindowOnSuccess('preflight', '0'), true);
   assert.equal(shouldPreservePrepareWindowOnSuccess('preflight', '1'), false);
   assert.equal(shouldPreservePrepareWindowOnSuccess('deps', '0'), false);
+});
+
+test('refreshStaleBranchDetail allows idle tracking branch on linked worktrees', () => {
+  assert.equal(
+    refreshStaleBranchDetail(
+      'wt/ff-2',
+      { slot_tracking_branch: 'wt/{{session}}' },
+      makeSlotVars({ slotId: 'macwork-ff-2', session: 'ff-2' }),
+      undefined,
+      true,
+      'main',
+    ),
+    null,
+  );
+});
+
+test('refreshStaleBranchDetail rejects feature branches on linked worktrees', () => {
+  const detail = refreshStaleBranchDetail(
+    'feat/28-add-demo-red-banner',
+    { slot_tracking_branch: 'wt/{{session}}' },
+    makeSlotVars({ slotId: 'macwork-ff-2', session: 'ff-2' }),
+    undefined,
+    true,
+    'main',
+  );
+  assert.match(detail ?? '', /STALE_BRANCH/);
+  assert.match(detail ?? '', /wt\/ff-2/);
+});
+
+test('refreshSyncUsesIdleReset selects idle-reset vs primary fetch path', () => {
+  assert.equal(refreshSyncUsesIdleReset('safe', true), true);
+  assert.equal(refreshSyncUsesIdleReset('force', false), true);
+  assert.equal(refreshSyncUsesIdleReset('safe', false), false);
+});
+
+test('refreshStaleBranchDetail rejects mismatched tracking branch on linked worktrees', () => {
+  const detail = refreshStaleBranchDetail(
+    'wt/ff-1',
+    { slot_tracking_branch: 'wt/{{session}}' },
+    makeSlotVars({ slotId: 'macwork-ff-2', session: 'ff-2' }),
+    undefined,
+    true,
+    'main',
+  );
+  assert.match(detail ?? '', /STALE_BRANCH/);
+  assert.match(detail ?? '', /wt\/ff-2/);
+});
+
+test('refreshStaleBranchDetail allows legacy main on linked worktrees', () => {
+  assert.equal(
+    refreshStaleBranchDetail(
+      'main',
+      { slot_tracking_branch: 'wt/{{session}}' },
+      makeSlotVars({ slotId: 'macwork-ff-2', session: 'ff-2' }),
+      undefined,
+      true,
+      'main',
+    ),
+    null,
+  );
+});
+
+test('refreshStaleBranchDetail rejects non-default branches on primary clones', () => {
+  const detail = refreshStaleBranchDetail(
+    'feat/demo',
+    {},
+    makeSlotVars({ slotId: 'macwork-fs-main', session: 'fs-main' }),
+    undefined,
+    false,
+    'main',
+  );
+  assert.match(detail ?? '', /STALE_BRANCH: on 'feat\/demo', expected 'main'/);
 });
 
 test('slotRefreshBlockedReason allows refresh on idle ready slot', () => {
