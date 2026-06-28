@@ -21,7 +21,11 @@ function runBash(command: string, cwd?: string) {
 }
 
 function git(cwd: string, ...args: string[]) {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  // Isolate from machine/global core.hooksPath (farmslot pre-commit breaks temp repos).
+  const result = spawnSync('git', ['-c', 'core.hooksPath=.git/hooks', ...args], {
+    cwd,
+    encoding: 'utf8',
+  });
   assert.equal(
     result.status,
     0,

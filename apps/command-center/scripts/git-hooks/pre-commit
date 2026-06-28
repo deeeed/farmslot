@@ -2,4 +2,7 @@
 set -eu
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+if [ ! -f scripts/quality/precommit-quality.mjs ]; then
+  exit 0
+fi
 exec scripts/quality/precommit-quality.mjs
