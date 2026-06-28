@@ -2,7 +2,7 @@
 // Reusable Farmslot UI CDP + gateway RPC helper.
 //
 // Usage:
-//   node scripts/cdp.mjs eval <hash> <expr>           Evaluate JS in the page at route #<hash>.
+//   node scripts/cdp.mjs eval <hash|-|<route#hash>> <expr>  Evaluate JS in a page tab (- = first tab).
 //   node scripts/cdp.mjs eval <hash> --file <path>    Evaluate the file contents in page context.
 //   node scripts/cdp.mjs login <hash>                 Fill the auth form from env token/password.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.

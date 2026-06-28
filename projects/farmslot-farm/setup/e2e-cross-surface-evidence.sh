@@ -4,6 +4,7 @@
 #
 # Single entry point: all scratch artifacts are written by this script.
 # Set E2E_SCRATCH_DIR to the implementer scratch directory.
+# Set E2E_PHASE0_ONLY=1 to stop after Phase 0 (doctor, dry-run, companion health).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -158,13 +159,13 @@ ensure_cdp_chrome_visible() {
 
 navigate_cdp_fleet() {
   local fleet_url="${FARMSLOT_UI_URL%\#*}#fleet"
-  if FARMSLOT_CDP_PORT="$FF_CDP_PORT" node "$PRIMARY_REPO/apps/command-center/scripts/cdp.mjs" eval "#fleet" "true" \
-    >>"$SCRATCH/e2e.log" 2>>"$SCRATCH/e2e.log"; then
-    return 0
-  fi
+  local fleet_base="${FARMSLOT_UI_URL%\#*}"
+  local fleet_url_js fleet_base_js
+  fleet_url_js="$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$fleet_url")"
+  fleet_base_js="$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$fleet_base")"
   FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
     node "$PRIMARY_REPO/apps/command-center/scripts/cdp.mjs" eval "-" \
-      "window.location.href=\"${fleet_url}\"; await new Promise((r) => setTimeout(r, 2000)); true" \
+      "const t=${fleet_url_js}; const b=${fleet_base_js}; if (!location.href.startsWith(b) || location.hash !== '#fleet') { window.location.href=t; await new Promise((r) => setTimeout(r, 2000)); } true" \
       >>"$SCRATCH/e2e.log" 2>>"$SCRATCH/e2e.log" \
       || fail_step "CDP navigate to fleet (${fleet_url})" 1
 }
