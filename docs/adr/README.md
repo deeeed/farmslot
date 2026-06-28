@@ -51,3 +51,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [039](039-run-portable-bundles.md)                     | Portable Run Bundles for Cross-Gateway Reference Seeding                | Accepted |
 | [040](040-work-graph-orchestration.md)                 | Work-Graph Orchestration for Backlog Dependency DAGs                    | Proposed |
 | [041](041-roadmap-idea-refinement-layer.md)            | Operator Roadmap Idea Refinement Layer                                  | Proposed |
+| [042](042-slot-tracking-branches.md)                   | Slot Tracking Branches for Worktrees and Idle State                     | Accepted |

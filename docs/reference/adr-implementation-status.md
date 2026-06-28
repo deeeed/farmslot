@@ -1,7 +1,7 @@
 # ADR Implementation Status
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-06-28
+**Last updated:** 2026-06-28 (ADR-042 accepted; partial implementation)
 **Stale by:** 2026-09-08
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
@@ -16,23 +16,24 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | **Not started** | Accepted/planned decision with no meaningful implementation yet.                            |
 | **Proposed**    | ADR not accepted — treat as design intent only.                                             |
 
-## Summary (ADR-026 – ADR-041)
+## Summary (ADR-026 – ADR-042)
 
-| ADR                                                        | Title                             | ADR status | Implementation | Top open gap                                                        |
-| ---------------------------------------------------------- | --------------------------------- | ---------- | -------------- | ------------------------------------------------------------------- |
-| [026](../adr/026-self-improvement-recursive-loop.md)       | Self-improvement recursive loop   | Proposed   | Partial        | Structured retrospective grading + improvement loop not fully wired |
-| [030](../adr/030-replay-provenance-and-reference-evals.md) | Eval packages on run families     | Accepted   | Partial        | Replay closure: baseline/head identity, live regression evidence    |
-| [031](../adr/031-deterministic-first-auto-recovery.md)     | Deterministic-first auto-recovery | Accepted   | Shipped        | Policy tuning from audit evidence                                   |
-| [032](../adr/032-runner-observability-via-hooks.md)        | Runner observability via hooks    | Accepted   | Partial        | Phase 2 exit passed; Phase 3 pane-regex retirement                  |
-| [033](../adr/033-mobile-tmux-worker-control.md)            | Mobile tmux worker control        | Accepted   | Shipped        | Deferred: background wake-word, auto-send, remote provisioning      |
-| [034](../adr/034-recipe-protocol-v1.md)                    | Recipe Protocol v1                | Accepted   | Partial        | Project migration + manifest-first UI + live self-validation        |
-| [035](../adr/035-node-support-bundles.md)                  | Node support bundles              | Accepted   | Partial        | Gateway prepare sync; not all projects declare bundles              |
-| [036](../adr/036-cli-gateway-profiles.md)                  | CLI gateway profiles              | Accepted   | Partial        | Core shipped; demo/onboarding rehearsal follow-ups                  |
-| [037](../adr/037-prepare-profiles.md)                      | Prepare profiles                  | Accepted   | Shipped        | Automatic profile selection deferred by ADR                         |
-| [038](../adr/038-gate-held-worker-session.md)              | Gate-held worker session          | Accepted   | Partial        | Companion gate-held affordances; optional pane-died softening       |
-| [039](../adr/039-run-portable-bundles.md)                  | Portable run bundles              | Accepted   | Shipped        | v1.1 selectors, CC export UI, `--seed-eval` helper                  |
-| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration          | Proposed   | Not started    | Proposed DAG scheduler over dispatchable backlog items              |
-| [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement  | Proposed   | Not started    | Proposed markdown roadmap/refinement/promotion layer                |
+| ADR                                                        | Title                             | ADR status | Implementation | Top open gap                                                         |
+| ---------------------------------------------------------- | --------------------------------- | ---------- | -------------- | -------------------------------------------------------------------- |
+| [026](../adr/026-self-improvement-recursive-loop.md)       | Self-improvement recursive loop   | Proposed   | Partial        | Structured retrospective grading + improvement loop not fully wired  |
+| [030](../adr/030-replay-provenance-and-reference-evals.md) | Eval packages on run families     | Accepted   | Partial        | Replay closure: baseline/head identity, live regression evidence     |
+| [031](../adr/031-deterministic-first-auto-recovery.md)     | Deterministic-first auto-recovery | Accepted   | Shipped        | Policy tuning from audit evidence                                    |
+| [032](../adr/032-runner-observability-via-hooks.md)        | Runner observability via hooks    | Accepted   | Partial        | Phase 2 exit passed; Phase 3 pane-regex retirement                   |
+| [033](../adr/033-mobile-tmux-worker-control.md)            | Mobile tmux worker control        | Accepted   | Shipped        | Deferred: background wake-word, auto-send, remote provisioning       |
+| [034](../adr/034-recipe-protocol-v1.md)                    | Recipe Protocol v1                | Accepted   | Partial        | Project migration + manifest-first UI + live self-validation         |
+| [035](../adr/035-node-support-bundles.md)                  | Node support bundles              | Accepted   | Partial        | Gateway prepare sync; not all projects declare bundles               |
+| [036](../adr/036-cli-gateway-profiles.md)                  | CLI gateway profiles              | Accepted   | Partial        | Core shipped; demo/onboarding rehearsal follow-ups                   |
+| [037](../adr/037-prepare-profiles.md)                      | Prepare profiles                  | Accepted   | Shipped        | Automatic profile selection deferred by ADR                          |
+| [038](../adr/038-gate-held-worker-session.md)              | Gate-held worker session          | Accepted   | Partial        | Companion gate-held affordances; optional pane-died softening        |
+| [039](../adr/039-run-portable-bundles.md)                  | Portable run bundles              | Accepted   | Shipped        | v1.1 selectors, CC export UI, `--seed-eval` helper                   |
+| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration          | Proposed   | Not started    | Proposed DAG scheduler over dispatchable backlog items               |
+| [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement  | Proposed   | Not started    | Proposed markdown roadmap/refinement/promotion layer                 |
+| [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches            | Accepted   | Partial        | `release.ts` idle reset; configurable tracking branch + rebase merge |
 
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
 
@@ -226,6 +227,23 @@ ADR-041 is design intent only. It should not be implemented until a roadmap mile
 | Tmux refinement helper outside dispatch/run families | Not started | Proposed tmux runner helper, no `run.create`      |
 | Roadmap promotion to backlog markdown specs with ACs | Not started | Proposed bridge to PR #95 backlog intake          |
 | Roadmap/backlog/run tag convergence                  | Not started | Proposed compatibility path for existing run tags |
+
+---
+
+## ADR-042 — Slot Tracking Branches (Accepted)
+
+**Implementation: Partial (prepare only; release gap)**
+
+| ADR requirement                                 | Status      | Evidence / gap                                                                      |
+| ----------------------------------------------- | ----------- | ----------------------------------------------------------------------------------- |
+| Idle = tracking branch @ `origin/defaultBranch` | Partial     | `prepare.ts` allows `wt/ff-*` when HEAD matches; `release.ts` still `checkout main` |
+| Linked worktree reset without `checkout main`   | Partial     | Prepare branch checkout path; release not wired                                     |
+| Project `slot_tracking_branch` template         | Not started | Hardcoded `isDefaultWorktreeTrackingBranch()` regex today                           |
+| `merge_main_strategy` rebase vs merge           | Not started | Prepare always `git merge ${defaultBranch} --no-edit`                               |
+| Shared idle-reset helper prepare + release      | Not started | Logic duplicated; release missing worktree branch                                   |
+| Fleet status shows tracking branch @ default    | Not started | `.farm-status.json` reports branch name only                                        |
+
+**Next lane:** gateway `release.ts` fix + project config fields — see [ROADMAP-next.md](../ROADMAP-next.md) item 1.
 
 ---
 
