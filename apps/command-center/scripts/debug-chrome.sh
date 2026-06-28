@@ -23,6 +23,14 @@ HEADLESS="${FARMSLOT_CDP_HEADLESS:-0}"
 if curl -sf "http://localhost:${PORT}/json/version" >/dev/null 2>&1; then
   echo "[debug-chrome] CDP already listening on :${PORT} — reusing existing session"
   echo "[debug-chrome] endpoints:  http://localhost:${PORT}/json"
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -n "$URL" ]]; then
+    url_js="$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$URL")"
+    FARMSLOT_CDP_PORT="$PORT" node "$SCRIPT_DIR/cdp.mjs" eval "-" \
+      "window.location.href=${url_js}; await new Promise((r) => setTimeout(r, 2000)); true" \
+      >/dev/null 2>&1 \
+      || echo "[debug-chrome] warn: could not navigate reused session to ${URL}" >&2
+  fi
   exit 0
 fi
 

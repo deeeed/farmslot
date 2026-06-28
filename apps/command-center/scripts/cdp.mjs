@@ -2,7 +2,7 @@
 // Reusable Farmslot UI CDP + gateway RPC helper.
 //
 // Usage:
-//   node scripts/cdp.mjs eval <hash> <expr>           Evaluate JS in the page at route #<hash>.
+//   node scripts/cdp.mjs eval <hash|-|<route#hash>> <expr>  Evaluate JS in a page tab (- = first tab).
 //   node scripts/cdp.mjs eval <hash> --file <path>    Evaluate the file contents in page context.
 //   node scripts/cdp.mjs login <hash>                 Fill the auth form from env token/password.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
@@ -40,7 +40,7 @@ async function listTabs() {
 async function findTab(hash) {
   const tabs = await listTabs();
   const pages = tabs.filter((t) => t.type === 'page');
-  if (!hash) return pages[0];
+  if (!hash || hash === '-') return pages[0];
   const needle = hash.startsWith('#') ? hash : `#${hash}`;
   // Intentionally no fallback to pages[0] when a hash is specified: silently
   // retargeting to another tab lets validation scripts "pass" against an
@@ -285,7 +285,7 @@ try {
     console.log(JSON.stringify(await listTabs(), null, 2));
   } else if (cmd === 'eval') {
     const [hash, flag, ...tail] = rest;
-    if (!hash) die('usage: cdp.mjs eval <hash> <expr | --file path>');
+    if (!hash) die('usage: cdp.mjs eval <hash|-|<route#hash>> <expr | --file path>');
     let expr;
     if (flag === '--file') expr = readFileSync(tail[0], 'utf8');
     else expr = [flag, ...tail].join(' ');

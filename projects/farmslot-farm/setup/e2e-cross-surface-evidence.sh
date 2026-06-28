@@ -4,6 +4,7 @@
 #
 # Single entry point: all scratch artifacts are written by this script.
 # Set E2E_SCRATCH_DIR to the implementer scratch directory.
+# Set E2E_PHASE0_ONLY=1 to stop after Phase 0 (doctor, dry-run, companion health).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -154,6 +155,19 @@ ensure_cdp_chrome_visible() {
       -e 'tell application "Google Chrome" to set bounds of front window to {200, 150, 1400, 950}' \
       >/dev/null 2>&1 || true
   fi
+}
+
+navigate_cdp_fleet() {
+  local fleet_url="${FARMSLOT_UI_URL%\#*}#fleet"
+  local fleet_base="${FARMSLOT_UI_URL%\#*}"
+  local fleet_url_js fleet_base_js
+  fleet_url_js="$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$fleet_url")"
+  fleet_base_js="$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$fleet_base")"
+  FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
+    node "$PRIMARY_REPO/apps/command-center/scripts/cdp.mjs" eval "-" \
+      "const t=${fleet_url_js}; const b=${fleet_base_js}; if (!location.href.startsWith(b) || location.hash !== '#fleet') { window.location.href=t; await new Promise((r) => setTimeout(r, 2000)); } true" \
+      >>"$SCRATCH/e2e.log" 2>>"$SCRATCH/e2e.log" \
+      || fail_step "CDP navigate to fleet (${fleet_url})" 1
 }
 
 cdp_login_fleet() {
@@ -342,6 +356,7 @@ FARMSLOT_UI_URL="$FARMSLOT_UI_URL" FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
 sleep 2
 phase0_budget_check "debug-chrome"
 ensure_cdp_chrome_visible
+navigate_cdp_fleet
 cdp_login_fleet
 phase0_budget_check "cdp-login"
 
@@ -399,6 +414,11 @@ bash "$SCRIPT_DIR/validate-recipe.sh" --dry-run \
   || fail_step "dry-run rerun2" $?
 phase0_budget_check "phase0-complete"
 log "Phase 0 complete in $((SECONDS - PHASE0_STARTED_SEC))s (budget ${PHASE0_BUDGET_SEC}s)"
+
+if [[ -n "${E2E_PHASE0_ONLY:-}" ]]; then
+  log "E2E_PHASE0_ONLY set — stopping before Run A/B"
+  exit 0
+fi
 
 # ── Run A (Command Center) ──────────────────────────────────────────────
 
