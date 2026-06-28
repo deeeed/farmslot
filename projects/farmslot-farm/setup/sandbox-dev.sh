@@ -56,30 +56,50 @@ if [[ -f "$PORT_ENV" ]]; then
   set +a
 fi
 
-# Pool slot port wins over .env.ports (prepare passes --gateway-port {{port}}).
-GATEWAY_PORT="$SLOT_GATEWAY_PORT"
+OPERATOR_GATEWAY_PORT="${GATEWAY_PORT:-7777}"
+OPERATOR_VITE_PORT="${VITE_PORT:-5174}"
+
+read_primary_repo() {
+  local project_json="$REPO_ROOT/projects/farmslot-farm/project.json"
+  [[ -f "$project_json" ]] || return 1
+  node -e "
+    const fs = require('fs');
+    const project = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+    process.stdout.write(String(project.primary_repo || '').trim());
+  " "$project_json"
+}
+
+is_primary_checkout() {
+  local primary_repo
+  primary_repo="$(read_primary_repo)" || return 1
+  [[ "$(cd "$REPO_ROOT" && pwd -P)" == "$(cd "$primary_repo" && pwd -P)" ]]
+}
+
+PRIMARY_CHECKOUT=0
+if is_primary_checkout; then
+  PRIMARY_CHECKOUT=1
+  # Main worktree uses the operator gateway from .env.ports — not an isolated slot port.
+  GATEWAY_PORT="$OPERATOR_GATEWAY_PORT"
+  VITE_PORT="$OPERATOR_VITE_PORT"
+else
+  # Worktree sandboxes get an isolated gateway on the slot's dev-server port.
+  GATEWAY_PORT="$SLOT_GATEWAY_PORT"
+  VITE_PORT="${VITE_PORT:-5174}"
+fi
 export GATEWAY_PORT
-VITE_PORT="${VITE_PORT:-5174}"
 export VITE_PORT
 
 # Worktree sandboxes boot an isolated gateway, but operators still expect the
 # canonical run history from the primary checkout. Share read/write .runs only
 # when this checkout is not the primary_repo (explicit FARMSLOT_RUNS_DIR wins).
 resolve_primary_runs_dir() {
-  if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
+  if [[ "$PRIMARY_CHECKOUT" == 1 || -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
     return 0
   fi
-  local project_json="$REPO_ROOT/projects/farmslot-farm/project.json"
-  [[ -f "$project_json" ]] || return 0
   local primary_repo
-  primary_repo="$(node -e "
-    const fs = require('fs');
-    const project = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
-    process.stdout.write(String(project.primary_repo || '').trim());
-  " "$project_json")"
-  [[ -n "$primary_repo" ]] || return 0
+  primary_repo="$(read_primary_repo)" || return 0
   local primary_runs="$primary_repo/.runs"
-  if [[ "$REPO_ROOT" != "$primary_repo" && -d "$primary_runs" ]]; then
+  if [[ -d "$primary_runs" ]]; then
     export FARMSLOT_RUNS_DIR="$primary_runs"
     echo "[sandbox-dev] sharing run history from ${FARMSLOT_RUNS_DIR}"
   fi
@@ -128,17 +148,38 @@ wait_for_gateway() {
 case "$ACTION" in
   health)
     if gateway_health; then
-      echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}"
+      if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
+        echo "[sandbox-dev] primary checkout — operator gateway healthy on :${GATEWAY_PORT}"
+      else
+        echo "[sandbox-dev] gateway healthy on :${GATEWAY_PORT}"
+      fi
       exit 0
     fi
-    echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2
+    if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
+      echo "[sandbox-dev] primary checkout — operator gateway not healthy on :${GATEWAY_PORT}" >&2
+    else
+      echo "[sandbox-dev] gateway not healthy on :${GATEWAY_PORT}" >&2
+    fi
     exit 1
     ;;
   stop)
+    if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
+      echo "[sandbox-dev] primary checkout — not stopping operator gateway on :${GATEWAY_PORT}"
+      exit 0
+    fi
     stop_sandbox_dev
     echo "[sandbox-dev] stopped sandbox dev on :${GATEWAY_PORT}"
     ;;
   start)
+    if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
+      if gateway_health; then
+        echo "[sandbox-dev] primary checkout — operator gateway already healthy on :${GATEWAY_PORT}"
+        exit 0
+      fi
+      echo "[sandbox-dev] primary checkout — start operator gateway first (farmslot up or scripts/dev.sh)" >&2
+      exit 1
+    fi
+
     if gateway_health; then
       echo "[sandbox-dev] gateway already healthy on :${GATEWAY_PORT} — skipping start"
       exit 0
