@@ -4,8 +4,22 @@
  */
 
 const { execFileSync } = require('node:child_process');
-const { mkdirSync } = require('node:fs');
+const { mkdirSync, readFileSync } = require('node:fs');
 const path = require('node:path');
+
+function resolveRecipeArtifactsDir(body) {
+  const fromBody =
+    (typeof body.artifacts_dir === 'string' && body.artifacts_dir.trim()) || '';
+  if (fromBody) return fromBody;
+  if (process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR) {
+    return process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR;
+  }
+  try {
+    return readFileSync(path.join(process.cwd(), '.agent/current-recipe-artifacts-dir'), 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 const DEFAULT_POLL_TIMEOUT_MS = 25_000;
@@ -204,9 +218,7 @@ function captureSimctlScreenshot(body) {
     throw new Error('Missing screenshot path.');
   }
 
-  const artifactsDir =
-    (typeof body.artifacts_dir === 'string' && body.artifacts_dir.trim()) ||
-    process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR;
+  const artifactsDir = resolveRecipeArtifactsDir(body);
   if (!artifactsDir) {
     throw new Error('Missing artifacts_dir for simctl screenshot.');
   }

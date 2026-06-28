@@ -91,7 +91,30 @@ if [[ "${RECORD_VIDEO}" -eq 1 ]]; then
   ARGS+=(--record-video=full-run)
 fi
 
+resolve_capture_helper_bin() {
+  local candidate
+  for candidate in \
+    "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
+    "${CAPTURE_HELPER_PATH:-}" \
+    "${SITEED_CAPTURE_HELPER_BIN:-}"; do
+    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+if helper_bin="$(resolve_capture_helper_bin)"; then
+  export CAPTURE_HELPER_PATH="${helper_bin}"
+  export SITEED_CAPTURE_HELPER_BIN="${helper_bin}"
+fi
+
 cd "${APP_DIR}"
+mkdir -p .agent
+if [[ -n "${ARTIFACTS_DIR}" ]]; then
+  printf '%s\n' "${ARTIFACTS_DIR}" > .agent/current-recipe-artifacts-dir
+  export FARMSLOT_RECIPE_ARTIFACTS_DIR="${ARTIFACTS_DIR}"
+fi
 # Forward slot context for custom project recipes and future live transports.
 RUNTIME_DIR="${RUNTIME_DIR}" \
 PLATFORM="${PLATFORM_VALUE}" \
