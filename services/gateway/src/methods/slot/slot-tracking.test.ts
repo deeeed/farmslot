@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { SlotVars } from '../../core/config.js';
+
 import {
   isDefaultWorktreeTrackingBranch,
   isLinkedGitWorktreeMarker,
@@ -11,7 +13,6 @@ import {
   slotIdleResetStepDetail,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
-import type { SlotVars } from '../../core/config.js';
 
 function testSlotVars(overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | 'session'>): SlotVars {
   return {
