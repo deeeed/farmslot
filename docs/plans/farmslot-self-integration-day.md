@@ -26,7 +26,7 @@ This plan captures the **today** goal and the **next** goal so every agent/sessi
 4. **Translate one roadmap item → backlog item → dispatch** — single item, not epic graph yet.
 5. **Parallel agents** — two+ interactive dev runs on isolated gateways/worktrees, history still recoverable via bundles + main operator plane.
 
-Epic work graphs (ADR-040) come **after** steps 1–3 are boringly reliable.
+Work graphs (ADR-040) come **after** steps 1–3 are boringly reliable.
 
 ## Operator model (steady state)
 

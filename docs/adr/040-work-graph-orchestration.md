@@ -105,6 +105,11 @@ export interface WorkGraph {
   source: WorkGraphSource;
   /** Shared label keys from ADR-041; propagated from roadmap/backlog when graph is drafted from promotion. */
   labelKeys?: string[];
+  /** Roadmap provenance when this graph was created by ADR-041 promotion. */
+  roadmapItemIds?: string[];
+  roadmapEpicId?: string;
+  roadmapSnapshotHash?: string;
+  promotionEntryId?: string;
   status: WorkGraphStatus;
   defaultFailurePolicy: NodeFailurePolicy; // default 'halt'
   scheduler: SchedulerLease; // single-writer guard
@@ -141,6 +146,11 @@ export interface WorkNode {
   backlogItemId: string; // 1:1 — ALL dispatch config (flow, lane, model, slots, priority) lives HERE
   /** Shared label keys from ADR-041; usually inherited from the backlog item / roadmap promotion. */
   labelKeys?: string[];
+  /** Roadmap provenance mirrored from the backing backlog item for graph queries. */
+  roadmapItemId?: string;
+  roadmapEpicId?: string;
+  roadmapSnapshotHash?: string;
+  promotionEntryId?: string;
   status: WorkNodeStatus;
   // resolved lazily once the backlog item dispatches; lets the graph observe the CURRENT
   // family without re-deriving it. Retry may update currentFamilyId if lane policy creates
@@ -508,11 +518,11 @@ Direct PR #95 backlog intake remains supported only for items that are already d
 External themes or milestones that still need product discovery should import to roadmap first,
 not directly to backlog or work graph.
 
-**v1 — deterministic, operator-authored over existing/imported dispatchable backlog:**
+Execution steps:
 
 ```
-1. Operator creates or imports backlog items (existing: backlog.create, or jira/github import)
-2. workGraph.create({ project, title, source })          → status 'planning'
+1. Operator creates, imports, or receives roadmap-promoted dispatchable backlog items
+2. workGraph.create({ project, title, source, roadmapItemIds?, roadmapEpicId?, roadmapSnapshotHash? }) → status 'planning'
 3. workGraph.addNode({ graphId, backlogItemId })   ×N    (wrap existing items)
 4. workGraph.addEdge({ from, to, condition, required, unlock }) ×M
 5. Gateway validates: acyclic, project match, required fields, branch topology (if rebase edges)
@@ -596,8 +606,8 @@ from external state rather than from consumed events; `manual` edges persist the
     `.work-graphs/{id}.json`, same pattern as backlog) + action ledger.
   - `workGraph.create/get/list/addNode/addEdge/updateNode/activate/pause/gateResolve` +
     `schedulerTick`.
-  - Scheduler with **per-graph lease** + **idempotency ledger**, reacting to `family.terminal`
-    - `pr.merged` + `scheduler.tick`.
+  - Scheduler with **per-graph lease** + **idempotency ledger**, reacting to `family.terminal`,
+    `pr.merged`, and `scheduler.tick`.
   - Conditions: `family-done`, `merged` (durable), `manual`. Unlock: `enqueue` + `rebase-onto`
     (via `buildCIWatchChainedRunParams`) + `mark-ready`.
   - `baseRef`/`upstreamBaseNodeIds` + rebase evidence for the stacked case.
@@ -623,8 +633,12 @@ from external state rather than from consumed events; `manual` edges persist the
 
 **Roadmap relationship (ADR-041).** WorkGraph is an executable dependency DAG over already-created
 BacklogItems. A RoadmapEpic is a planning grouping and is never stored as a WorkGraph. Roadmap
-promotion may draft a graph plan, but activation creates a canonical `.work-graphs/{id}.json`
-record owned by this ADR; roadmap stores only provenance links and promotion snapshots.
+promotion may draft a graph plan as non-canonical markdown/frontmatter, but the first canonical
+graph write is `workGraph.create(...)` into `.work-graphs/{id}.json` with `status=planning`.
+After that graph exists, roadmap stores only links and promotion snapshots; it must not maintain
+a second edge list. Graph records carry `roadmapItemIds`, optional `roadmapEpicId`,
+`roadmapSnapshotHash`, and `promotionEntryId` so scheduler/progress queries do not need to parse
+mutable roadmap markdown.
 
 **Persistence (v1 decision): new gateway store, not extending backlog.** Backlog rows stay flat
 (PR #95's clean contract); graph/node/edge + ledger live in a sibling store. Node→backlog is a
@@ -662,7 +676,9 @@ model for many jobs" anti-pattern ADR-024 §0 warns against.
   item, never duplicated onto the node.
 - **No `WorkNodeAttempt[]` array on the node** — attempt history derives from family/run queries.
 - **No LLM graph decomposition** — v3, always human-reviewed before activate.
-- **No graph editing UI** — read-only in v1; editor in v2.
+- **No graph editing UI** — read-only in v1 after creation; editor in v2. Activation
+  approval is the explicit `planning -> active` transition in `workGraph.activate`, not a
+  separate run gate.
 - **No auto-edge inference** from Jira/GitHub links — v2.
 - **No cross-project graphs** — single-project in v1 (slot pools, default branches, project hooks
   are per-project).
