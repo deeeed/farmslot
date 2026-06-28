@@ -2,6 +2,7 @@
 export const Methods = {
   // Gateway self-status
   GATEWAY_STATUS: 'gateway.status',
+  GATEWAY_DOCTOR: 'gateway.doctor',
 
   // Fleet
   FLEET_STATUS: 'fleet.status',

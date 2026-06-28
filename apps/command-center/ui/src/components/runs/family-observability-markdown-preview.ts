@@ -6,8 +6,13 @@ import type { MdFetchEntry } from '../../utils/markdown.js';
 
 import { familyArtifactKey } from './family-observability-artifact-model.js';
 
-export function familyMarkdownPreviewFetchPath(gatewayBase: string, url: string): string {
-  return url.startsWith(gatewayBase) ? url.slice(gatewayBase.length) : url;
+export function familyMarkdownPreviewFetchPath(
+  gatewayBase: string,
+  url: string,
+  locationPathname = typeof window !== 'undefined' ? window.location.pathname : '/',
+): string {
+  const hostedCommandCenter = locationPathname === '/cc' || locationPathname.startsWith('/cc/');
+  return !hostedCommandCenter && url.startsWith(gatewayBase) ? url.slice(gatewayBase.length) : url;
 }
 
 export function familyMarkdownPreviewText(markdown: string): string {

@@ -43,6 +43,7 @@ import './finetune/finetune-page.js';
 import './device-grid/device-grid.js';
 import './chat/chat-panel.js';
 import './config/config-panel.js';
+import './doctor/gateway-doctor.js';
 
 import { COMMAND_CENTER_APP_VERSION } from '../build-info.js';
 import type { ConnectionState } from '../gateway-client.js';
@@ -89,6 +90,7 @@ type Route =
   | 'intelligence'
   | 'analytics'
   | 'config'
+  | 'doctor'
   | 'slot'
   | 'dev';
 
@@ -125,6 +127,7 @@ const NAV_ITEMS: NavItem[] = [
   { route: 'evals', icon: '$', label: 'Evals' },
   { route: 'finetune', icon: '%', label: 'Finetune' },
   { route: 'config', icon: '~', label: 'Config' },
+  { route: 'doctor', icon: '+', label: 'Doctor' },
 ];
 
 const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
@@ -453,6 +456,7 @@ export class FarmApp extends LitElement {
       'intelligence',
       'analytics',
       'config',
+      'doctor',
     ];
     this.route = valid.includes(hash as Route) ? (hash as Route) : 'fleet';
     this.slotParam = '';
@@ -890,6 +894,8 @@ export class FarmApp extends LitElement {
         return html`<analytics-panel></analytics-panel>`;
       case 'config':
         return html`<config-panel .initialPath=${this.configParam}></config-panel>`;
+      case 'doctor':
+        return html`<gateway-doctor></gateway-doctor>`;
       case 'slot':
         return html`<slot-view
           .slotId=${this.slotParam}

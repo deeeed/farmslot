@@ -131,6 +131,7 @@ function inferSafetyTier(method: string): string {
   if (
     method.includes('list') ||
     method.includes('status') ||
+    method.includes('doctor') ||
     method.includes('get') ||
     method.includes('read') ||
     method.includes('capabilities')

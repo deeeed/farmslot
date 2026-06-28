@@ -5,7 +5,7 @@ import type {
   SelfReviewIssue,
 } from '@farmslot/protocol';
 
-import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { gatewayApiUrl, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 
 import { formatDuration } from './run-utils.js';
 
@@ -193,7 +193,7 @@ export function stepArtifactUrl(
   artifact: FamilyObservabilityArtifact,
   gatewayBase = stepInspectorGatewayBase(),
 ): string {
-  return `${gatewayBase}/api/run-artifact?runId=${artifact.runId}&path=${encodeURIComponent(
-    artifact.path,
-  )}`;
+  return gatewayApiUrl(
+    `${gatewayBase}/api/run-artifact?runId=${artifact.runId}&path=${encodeURIComponent(artifact.path)}`,
+  );
 }

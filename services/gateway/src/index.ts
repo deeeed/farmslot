@@ -72,6 +72,7 @@ import {
   authorizeHttpRequest,
   createGatewayAuthRuntime,
 } from './security/auth.js';
+import { applyGatewayCors } from './security/origin.js';
 import { initSelfReview } from './self-review/orchestrator.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
@@ -329,6 +330,16 @@ async function main(): Promise<void> {
 
   // Create HTTP server (health check endpoint)
   const httpServer = createServer((req, res) => {
+    if (!applyGatewayCors(req, res)) {
+      res.writeHead(403);
+      res.end('Forbidden origin');
+      return;
+    }
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));

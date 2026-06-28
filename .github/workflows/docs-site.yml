@@ -6,10 +6,13 @@ on:
       - main
     paths:
       - 'apps/docs/**'
+      - 'apps/command-center/**'
       - 'packages/protocol/**'
       - 'services/gateway/**'
+      - 'packages/cli/**'
       - 'package.json'
       - 'yarn.lock'
+      - 'scripts/build-hosted-command-center.mjs'
       - '.github/workflows/docs-site.yml'
   workflow_dispatch:
 
@@ -49,6 +52,9 @@ jobs:
 
       - name: Build docs site
         run: yarn docs:build
+
+      - name: Build hosted Command Center
+        run: yarn cc:build:pages
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4

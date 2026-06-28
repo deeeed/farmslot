@@ -54,6 +54,7 @@ import {
   resolveRequestIp,
   sanitizeAuthFailureReason,
 } from './security/auth.js';
+import { isGatewayOriginAllowed } from './security/origin.js';
 import { handleSelfReviewFsChanged } from './self-review/orchestrator.js';
 import type { ClientState } from './server/client-state.js';
 import { routeMethod } from './server/route-method.js';
@@ -94,7 +95,12 @@ export function createWebSocketServer(
   authRuntime: GatewayAuthRuntime,
 ): WebSocketServer {
   activeAuthRuntime = authRuntime;
-  const wss = new WebSocketServer({ server: httpServer });
+  const wss = new WebSocketServer({
+    server: httpServer,
+    verifyClient: (info, done) => {
+      done(isGatewayOriginAllowed(info.origin, info.req.headers.host));
+    },
+  });
 
   wss.on('connection', (ws: WebSocket, _req: IncomingMessage) => {
     const state: ClientState = {

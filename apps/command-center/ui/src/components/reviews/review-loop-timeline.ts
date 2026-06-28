@@ -96,7 +96,12 @@ function sameOriginFetchUrl(url: string): string {
   try {
     const parsed = new URL(url, window.location.href);
     const gatewayOrigin = gatewayHttpOrigin();
-    if (parsed.origin === window.location.origin || parsed.origin === gatewayOrigin) {
+    const hostedCommandCenter =
+      window.location.pathname === '/cc' || window.location.pathname.startsWith('/cc/');
+    if (
+      parsed.origin === window.location.origin ||
+      (parsed.origin === gatewayOrigin && !hostedCommandCenter)
+    ) {
       return `${parsed.pathname}${parsed.search}${parsed.hash}`;
     }
     return url;

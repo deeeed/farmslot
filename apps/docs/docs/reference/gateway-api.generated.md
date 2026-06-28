@@ -49,6 +49,8 @@ Source: `packages/protocol/src/transport/frames.ts`
 
 | Method                               | Category     | Safety        | Params | Result | Summary                                            |
 | ------------------------------------ | ------------ | ------------- | ------ | ------ | -------------------------------------------------- |
+| `analytics.backfill`                 | analytics    | bounded-write | —      | —      | Analytics Backfill gateway method.                 |
+| `analytics.query`                    | analytics    | bounded-write | —      | —      | Analytics Query gateway method.                    |
 | `auth.connect`                       | auth         | bounded-write | —      | —      | Auth Connect gateway method.                       |
 | `backlog.autoDispatchTick`           | backlog      | bounded-write | —      | —      | Backlog AutoDispatchTick gateway method.           |
 | `backlog.create`                     | backlog      | bounded-write | —      | —      | Backlog Create gateway method.                     |
@@ -122,6 +124,8 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `fs.rename`                          | fs           | bounded-write | —      | —      | Fs Rename gateway method.                          |
 | `fs.reveal`                          | fs           | bounded-write | —      | —      | Fs Reveal gateway method.                          |
 | `fs.write`                           | fs           | bounded-write | —      | —      | Fs Write gateway method.                           |
+| `gateway.doctor`                     | gateway      | read-only     | —      | —      | Gateway Doctor gateway method.                     |
+| `gateway.status`                     | gateway      | read-only     | —      | —      | Gateway Status gateway method.                     |
 | `git.branchDiff`                     | git          | bounded-write | —      | —      | Git BranchDiff gateway method.                     |
 | `git.diff`                           | git          | bounded-write | —      | —      | Git Diff gateway method.                           |
 | `git.discard`                        | git          | high-impact   | —      | —      | Git Discard gateway method.                        |
@@ -172,10 +176,14 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `resource.health`                    | resource     | bounded-write | —      | —      | Resource Health gateway method.                    |
 | `resource.list`                      | resource     | read-only     | —      | —      | Resource List gateway method.                      |
 | `resource.watch.setEnabled`          | resource     | bounded-write | —      | —      | Resource Watch SetEnabled gateway method.          |
+| `run.activateOnSlot`                 | run          | bounded-write | —      | —      | Run ActivateOnSlot gateway method.                 |
 | `run.archive`                        | run          | bounded-write | —      | —      | Run Archive gateway method.                        |
 | `run.autoRecovery.stop`              | run          | bounded-write | —      | —      | Run AutoRecovery Stop gateway method.              |
 | `run.backfillSummaries`              | run          | bounded-write | —      | —      | Run BackfillSummaries gateway method.              |
 | `run.bulkDelete`                     | run          | bounded-write | —      | —      | Run BulkDelete gateway method.                     |
+| `run.bundle.export`                  | run          | bounded-write | —      | —      | Run Bundle Export gateway method.                  |
+| `run.bundle.import`                  | run          | bounded-write | —      | —      | Run Bundle Import gateway method.                  |
+| `run.bundle.list`                    | run          | read-only     | —      | —      | Run Bundle List gateway method.                    |
 | `run.cancel`                         | run          | bounded-write | —      | —      | Run Cancel gateway method.                         |
 | `run.ciWatch.poke`                   | run          | bounded-write | —      | —      | Run CiWatch Poke gateway method.                   |
 | `run.cleanup`                        | run          | bounded-write | —      | —      | Run Cleanup gateway method.                        |
@@ -202,6 +210,8 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.resolveDecision`                | run          | high-impact   | —      | —      | Run ResolveDecision gateway method.                |
 | `run.resume`                         | run          | lifecycle     | —      | —      | Run Resume gateway method.                         |
 | `run.slotHistory`                    | run          | bounded-write | —      | —      | Run SlotHistory gateway method.                    |
+| `run.tags.list`                      | run          | read-only     | —      | —      | Run Tags List gateway method.                      |
+| `run.tags.set`                       | run          | bounded-write | —      | —      | Run Tags Set gateway method.                       |
 | `screen.subscribe`                   | screen       | bounded-write | —      | —      | Screen Subscribe gateway method.                   |
 | `screen.thumbnail`                   | screen       | bounded-write | —      | —      | Screen Thumbnail gateway method.                   |
 | `screen.unsubscribe`                 | screen       | bounded-write | —      | —      | Screen Unsubscribe gateway method.                 |
@@ -213,6 +223,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `slot.fixtureRefresh`                | slot         | bounded-write | —      | —      | Slot FixtureRefresh gateway method.                |
 | `slot.openEditor`                    | slot         | bounded-write | —      | —      | Slot OpenEditor gateway method.                    |
 | `slot.prepare`                       | slot         | lifecycle     | —      | —      | Slot Prepare gateway method.                       |
+| `slot.prepareStatus`                 | slot         | lifecycle     | —      | —      | Slot PrepareStatus gateway method.                 |
 | `slot.recycle`                       | slot         | lifecycle     | —      | —      | Slot Recycle gateway method.                       |
 | `slot.refresh`                       | slot         | bounded-write | —      | —      | Slot Refresh gateway method.                       |
 | `slot.release`                       | slot         | lifecycle     | —      | —      | Slot Release gateway method.                       |
@@ -289,6 +300,9 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `script.complete`               | script    | Script Complete gateway event.               |
 | `script.output`                 | script    | Script Output gateway event.                 |
 | `slot.changed`                  | slot      | Slot Changed gateway event.                  |
+| `slot.prepare.done`             | slot      | Slot Prepare Done gateway event.             |
+| `slot.prepare.output`           | slot      | Slot Prepare Output gateway event.           |
+| `slot.prepare.step`             | slot      | Slot Prepare Step gateway event.             |
 | `stream.frame`                  | stream    | Stream Frame gateway event.                  |
 | `stream.status`                 | stream    | Stream Status gateway event.                 |
 | `task.progress.updated`         | task      | Task Progress Updated gateway event.         |

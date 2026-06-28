@@ -5,6 +5,7 @@ import {
 } from '@farmslot/protocol';
 
 import { artifactKind } from '../../utils/artifact-kind.js';
+import { gatewayApiUrl } from '../../utils/gateway-origin.js';
 export type ArtifactGroup = 'before' | 'after' | 'review' | 'other';
 export type ArtifactFilter = 'all' | ArtifactGroup;
 export type ArtifactTypeFilter = 'all' | 'image' | 'video' | 'markdown' | 'json' | 'diff' | 'other';
@@ -35,7 +36,7 @@ export function runArtifactUrl(
   runId: string,
   artifact: Pick<ArtifactRef, 'path'>,
 ): string {
-  return `${gatewayBase}${runArtifactApiPath(runId, artifact)}`;
+  return gatewayApiUrl(`${gatewayBase}${runArtifactApiPath(runId, artifact)}`);
 }
 
 export function recipeRunArtifactUrl(
@@ -49,7 +50,7 @@ export function recipeRunArtifactUrl(
   if (artifact.sha256) params.set('v', artifact.sha256.slice(0, 12));
   else if (typeof artifact.sizeBytes === 'number') params.set('v', `s${artifact.sizeBytes}`);
   if (typeof artifact.sizeBytes === 'number') params.set('vsize', String(artifact.sizeBytes));
-  return `${gatewayBase}/api/run-artifact?${params.toString()}`;
+  return gatewayApiUrl(`${gatewayBase}/api/run-artifact?${params.toString()}`);
 }
 
 export function workspaceArtifactGroup(

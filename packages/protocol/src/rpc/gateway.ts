@@ -35,3 +35,28 @@ export interface GatewayStatusResult {
   version: string;
   update: GatewayUpdateStatus;
 }
+
+export interface GatewayDoctorCheck {
+  id: string;
+  label: string;
+  ok: boolean;
+  warn?: boolean;
+  detail: string;
+  hint?: string;
+}
+
+export interface GatewayDoctorSection {
+  id: string;
+  label: string;
+  checks: GatewayDoctorCheck[];
+}
+
+export interface GatewayDoctorResult {
+  generatedAt: string;
+  summary: {
+    ok: number;
+    warn: number;
+    fail: number;
+  };
+  sections: GatewayDoctorSection[];
+}
