@@ -40,7 +40,7 @@ async function listTabs() {
 async function findTab(hash) {
   const tabs = await listTabs();
   const pages = tabs.filter((t) => t.type === 'page');
-  if (!hash) return pages[0];
+  if (!hash || hash === '-') return pages[0];
   const needle = hash.startsWith('#') ? hash : `#${hash}`;
   // Intentionally no fallback to pages[0] when a hash is specified: silently
   // retargeting to another tab lets validation scripts "pass" against an
@@ -285,7 +285,7 @@ try {
     console.log(JSON.stringify(await listTabs(), null, 2));
   } else if (cmd === 'eval') {
     const [hash, flag, ...tail] = rest;
-    if (!hash) die('usage: cdp.mjs eval <hash> <expr | --file path>');
+    if (!hash) die('usage: cdp.mjs eval <hash|-|<route#hash>> <expr | --file path>');
     let expr;
     if (flag === '--file') expr = readFileSync(tail[0], 'utf8');
     else expr = [flag, ...tail].join(' ');
