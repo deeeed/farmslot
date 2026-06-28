@@ -23,7 +23,10 @@ export interface SlotTrackingProjectConfig {
 export interface SlotTrackingSlotContext {
   session?: string;
   slotId?: string;
-  /** Set by fleet refresh via linked .git probe — single source for stale/idle inference. */
+  /**
+   * Set by fleet refresh via linked .git probe — single source for stale/idle inference.
+   * When absent (pre-refresh rows), treated as false (primary-clone rules).
+   */
   linkedWorktree?: boolean;
 }
 

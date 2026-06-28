@@ -199,6 +199,7 @@ export async function slotRelease(
 
   // 3. Collect artifacts + clean task files + git reset
   const taskDirName = resolveProjectTaskDirName(projectJson);
+  let idleBranchAfterRelease: string | undefined;
   if (!keepWork) {
     // Read task_file from status
     const taskRel = (await readSlotField(params.slotId, 'task_file')) as string | null;
@@ -278,6 +279,9 @@ export async function slotRelease(
 
     step('git', `Returning slot to idle baseline...`);
     const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+    idleBranchAfterRelease = idleReset.linkedWorktree
+      ? idleReset.trackingBranch
+      : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
 
     // Recycle app
@@ -329,6 +333,7 @@ export async function slotRelease(
   await updateSlotStatus(params.slotId, {
     completed_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     agent: 'idle',
+    ...(idleBranchAfterRelease ? { branch: idleBranchAfterRelease } : {}),
   });
 
   // 7. Re-prepare if keep-warm, otherwise mark ready (cold)

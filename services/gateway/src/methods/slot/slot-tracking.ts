@@ -93,7 +93,7 @@ export async function detectLinkedWorktree(vars: SlotVars): Promise<boolean> {
   return isLinkedGitWorktreeMarker(linkedWorktreeR.stdout);
 }
 
-export type { ResetSlotRepoToIdleOptions,SlotIdleResetResult };
+export type { ResetSlotRepoToIdleOptions, SlotIdleResetResult };
 
 export async function resetSlotRepoToIdle(
   vars: SlotVars,

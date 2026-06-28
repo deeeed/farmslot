@@ -327,7 +327,7 @@ function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
     branch: r.branch,
     ...(r.session ? { session: r.session } : {}),
     ...(r.repo ? { repo: r.repo } : {}),
-    ...(r.linkedWorktree ? { linked_worktree: true } : {}),
+    linked_worktree: r.linkedWorktree ?? false,
     agent: r.agent,
     enabled: r.enabled,
     mode: r.mode,
