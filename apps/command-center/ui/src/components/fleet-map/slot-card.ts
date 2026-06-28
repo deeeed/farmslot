@@ -15,8 +15,9 @@ import {
   shadows,
   spacing,
 } from '../../styles/theme-tokens.js';
-import { slotBranchDisplay } from './slot-branch-display.js';
 import { runStatusColor } from '../runs/run-utils.js';
+
+import { slotBranchDisplay } from './slot-branch-display.js';
 
 @customElement('slot-card')
 export class SlotCard extends LitElement {

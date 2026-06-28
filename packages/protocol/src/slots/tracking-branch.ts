@@ -30,10 +30,7 @@ export interface SlotTrackingSlotContext {
 /** Default linked-worktree branch prefix when slot_tracking_branch is unset. */
 export const LINKED_WORKTREE_SESSION_BRANCH_PREFIX = 'wt/';
 
-export function expandSlotTrackingTemplate(
-  template: string,
-  ctx: SlotTrackingSlotContext,
-): string {
+export function expandSlotTrackingTemplate(template: string, ctx: SlotTrackingSlotContext): string {
   return template
     .replace(/\{\{session\}\}/g, ctx.session ?? '')
     .replace(/\{\{slot_id\}\}/g, ctx.slotId ?? '');

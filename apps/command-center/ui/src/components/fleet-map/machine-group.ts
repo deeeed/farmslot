@@ -22,8 +22,9 @@ import {
   shadows,
   spacing,
 } from '../../styles/theme-tokens.js';
-import { slotBranchDisplay } from './slot-branch-display.js';
 import { flowColor, flowLabel, formatElapsed, runStatusColor } from '../runs/run-utils.js';
+
+import { slotBranchDisplay } from './slot-branch-display.js';
 
 @customElement('machine-group')
 export class MachineGroup extends LitElement {

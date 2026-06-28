@@ -1,8 +1,8 @@
 import {
   DEFAULT_BRANCH,
-  isSlotRefreshStaleBranch,
   type FleetPrSummaryEntry,
   type FleetRefreshSlotStatus,
+  isSlotRefreshStaleBranch,
   type ProjectConfig,
   type SlotStatus,
 } from '@farmslot/protocol';

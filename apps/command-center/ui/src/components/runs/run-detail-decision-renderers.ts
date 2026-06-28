@@ -4,9 +4,9 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
 import {
+  type BranchAffinityNudgePayload,
   DEFAULT_BRANCH,
   isDispatchScoreStale,
-  type BranchAffinityNudgePayload,
   type PRStatus,
   type RecipeRunArtifactGroup,
   type Run,

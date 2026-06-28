@@ -1,5 +1,4 @@
 import {
-  DEFAULT_BRANCH,
   DEFAULT_CLAUDE_MODEL,
   type DispatchCandidatesParams,
   type DispatchCandidatesResult,

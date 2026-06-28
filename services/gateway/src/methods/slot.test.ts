@@ -269,18 +269,17 @@ test('refreshSyncUsesIdleReset selects idle-reset vs primary fetch path', () => 
   assert.equal(refreshSyncUsesIdleReset('safe', false), false);
 });
 
-test('refreshStaleBranchDetail allows legacy wt/ff tracking branch names', () => {
-  assert.equal(
-    refreshStaleBranchDetail(
-      'wt/ff-1',
-      { slot_tracking_branch: 'wt/{{session}}' },
-      makeSlotVars({ slotId: 'macwork-ff-2', session: 'ff-2' }),
-      undefined,
-      true,
-      'main',
-    ),
-    null,
+test('refreshStaleBranchDetail rejects mismatched tracking branch on linked worktrees', () => {
+  const detail = refreshStaleBranchDetail(
+    'wt/ff-1',
+    { slot_tracking_branch: 'wt/{{session}}' },
+    makeSlotVars({ slotId: 'macwork-ff-2', session: 'ff-2' }),
+    undefined,
+    true,
+    'main',
   );
+  assert.match(detail ?? '', /STALE_BRANCH/);
+  assert.match(detail ?? '', /wt\/ff-2/);
 });
 
 test('refreshStaleBranchDetail allows legacy main on linked worktrees', () => {

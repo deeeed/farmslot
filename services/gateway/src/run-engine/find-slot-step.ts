@@ -4,10 +4,10 @@ import {
   type DispatchPreviewParams,
   Events,
   isDispatchScoreStale,
-  SLOT_STALE_BRANCH_SCORE_PENALTY,
   type Run,
   type RunDecision,
   type RunDecisionPayload,
+  SLOT_STALE_BRANCH_SCORE_PENALTY,
 } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';

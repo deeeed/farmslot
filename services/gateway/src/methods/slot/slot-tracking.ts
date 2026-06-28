@@ -4,8 +4,8 @@ import {
   DEFAULT_BRANCH,
   isSlotIdleBranch,
   remoteBranchRefspec,
-  resolveSlotTrackingBranch,
   type ResetSlotRepoToIdleOptions,
+  resolveSlotTrackingBranch,
   type SlotIdleResetResult,
   type SlotTrackingProjectConfig,
   type SlotTrackingSlotContext,
@@ -93,7 +93,7 @@ export async function detectLinkedWorktree(vars: SlotVars): Promise<boolean> {
   return isLinkedGitWorktreeMarker(linkedWorktreeR.stdout);
 }
 
-export type { SlotIdleResetResult, ResetSlotRepoToIdleOptions };
+export type { ResetSlotRepoToIdleOptions,SlotIdleResetResult };
 
 export async function resetSlotRepoToIdle(
   vars: SlotVars,

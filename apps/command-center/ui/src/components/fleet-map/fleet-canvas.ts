@@ -39,8 +39,8 @@ import {
   subscribe,
 } from '../../state.js';
 import { getRunForSlot } from '../../state.js';
-import { summarizeFleetRefreshEligibility } from '../slot-actions/fleet-refresh-modal-model.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { summarizeFleetRefreshEligibility } from '../slot-actions/fleet-refresh-modal-model.js';
 
 import {
   type FleetCanvasGroupBy,

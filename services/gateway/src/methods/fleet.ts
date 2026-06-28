@@ -33,10 +33,11 @@ import {
 } from '../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import { loadFleetStatus } from '../fleet/state.js';
-import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
 import { blocksGateHeldSlotRelease } from '../run-engine/gate-held-lifecycle.js';
 import { runnerProcessPatternSource } from '../runners/registry.js';
 import { listRuns } from '../runs/store.js';
+
+import { isLinkedGitWorktreeMarker } from './slot/slot-tracking.js';
 
 const statusFile = path.join(farmslotRoot, '.farm-status.json');
 const LOCAL_SLOT_CHECK_CONCURRENCY = 4;

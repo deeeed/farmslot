@@ -20,9 +20,9 @@ import { resolveDispatchSafetyTier } from './dispatch/safety-tier.js';
 import {
   branchContainsJiraKey,
   evaluateSlotIdentityPolicy,
+  isDispatchStaleBranch,
   isFreeSlot,
   resolveJiraTargetBranchFromFleet,
-  isDispatchStaleBranch,
   slotScore,
   validateSlot,
 } from './dispatch/slot-scoring.js';
