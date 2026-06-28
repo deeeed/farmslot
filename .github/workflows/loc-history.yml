@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -46,11 +48,23 @@ jobs:
       - name: Verify recorded LOC history
         run: yarn quality:loc:verify
 
+      - name: Detect LOC history drift
+        id: loc-drift
+        run: |
+          if git diff --quiet -- docs/reference/loc-history.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "LOC history unchanged after record; skipping PR."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "LOC history changed after record; will open PR."
+          fi
+
       - name: Create LOC history PR
+        if: steps.loc-drift.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
+          base: main
           branch: chore/loc-history
-          delete-branch: true
           commit-message: 'chore(quality): update LOC history'
           title: 'chore(quality): update LOC history'
           body: |
