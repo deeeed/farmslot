@@ -28,6 +28,7 @@ import './fleet-map/fleet-canvas.js';
 import './terminal/split-view.js';
 import './dispatch/dispatch-wizard.js';
 import './backlog/backlog-panel.js';
+import './roadmap/roadmap-panel.js';
 import './pr-dashboard/pr-board.js';
 import './decisions/decision-inbox.js';
 import './slot-view/slot-view.js';
@@ -86,6 +87,7 @@ type Route =
   | 'terminal'
   | 'devices'
   | 'dispatch'
+  | 'roadmap'
   | 'backlog'
   | 'prs'
   | 'decisions'
@@ -127,6 +129,7 @@ const NAV_ITEMS: NavItem[] = [
   { route: 'terminal', icon: '>', label: 'Terminals' },
   { route: 'devices', icon: '=', label: 'Devices' },
   { route: 'dispatch', icon: '!', label: 'Dispatch' },
+  { route: 'roadmap', icon: 'r', label: 'Roadmap' },
   { route: 'backlog', icon: '+', label: 'Backlog' },
   { route: 'prs', icon: '&', label: 'PRs' },
   { route: 'decisions', icon: '?', label: 'Decisions' },
@@ -459,6 +462,7 @@ export class FarmApp extends LitElement {
       'terminal',
       'devices',
       'dispatch',
+      'roadmap',
       'backlog',
       'prs',
       'decisions',
@@ -982,6 +986,8 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         return html`<device-grid></device-grid>`;
       case 'dispatch':
         return html`<dispatch-wizard></dispatch-wizard>`;
+      case 'roadmap':
+        return html`<roadmap-panel></roadmap-panel>`;
       case 'backlog':
         return html`<backlog-panel></backlog-panel>`;
       case 'prs':

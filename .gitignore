@@ -71,6 +71,7 @@ projects/farmslot-farm/templates/worker/*
 projects/farmslot-farm/templates/prompts/*
 !projects/farmslot-farm/templates/prompts/worker-dispatch.md
 !projects/farmslot-farm/templates/prompts/worker-nudge.md
+!projects/farmslot-farm/templates/prompts/roadmap-refinement.md
 !projects/farmslot-farm/fixtures/
 projects/farmslot-farm/fixtures/*
 !projects/farmslot-farm/templates/worker/dev.md

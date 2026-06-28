@@ -309,6 +309,7 @@ async function main(): Promise<void> {
       effort: item.effort,
       mode: item.mode,
       devInteractiveProfile: item.devInteractiveProfile,
+      tags: item.tags,
       initialContext: item.initialContext,
       ticketData: item.ticketData,
       backlogItemId: item.backlogItemId,

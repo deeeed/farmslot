@@ -29,6 +29,7 @@ export interface BacklogCreateResult {
 export interface BacklogListParams {
   project?: string;
   status?: BacklogStatus;
+  tags?: string[];
   includeArchived?: boolean;
 }
 export interface BacklogListResult {

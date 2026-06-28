@@ -61,6 +61,19 @@ export interface ProjectPublicationReviewFlowConfig {
   requireCrossRunner?: boolean;
 }
 
+export interface ProjectRoadmapConfig {
+  /** Inline project-specific roadmap refinement prompt template. */
+  refinementPrompt?: string;
+  /** Markdown prompt template path, absolute or relative to projects/<project>/. */
+  refinementPromptPath?: string;
+  /** Default runner id for roadmap refinement sessions. */
+  runner?: string;
+  /** Default model for roadmap refinement sessions. */
+  model?: string;
+  /** Optional command template launched for refinement. Supports {{runner}}, {{model}}, {{prompt_path}}, and {{item_file}}. */
+  runnerCommand?: string;
+}
+
 // ─── Prepare profiles (ADR-037) ───
 
 /**
@@ -165,6 +178,7 @@ export interface ProjectConfig {
   publicationReview?: Partial<Record<'fix-bug' | 'dev', ProjectPublicationReviewFlowConfig>>;
   autoRecovery?: ProjectAutoRecoveryConfig;
   backlog?: ProjectBacklogConfig;
+  roadmap?: ProjectRoadmapConfig;
   prepare?: ProjectPrepareConfig;
   /** When true, UI may offer slow playback and gateway appends --slow to recipe_run. */
   recipeRunSupportsPlaybackSlow?: boolean;

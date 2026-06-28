@@ -153,7 +153,7 @@ Captured items may be unassigned. They live under `inbox/items/` until assigned 
 
 ### Refine
 
-The user can launch or attach a tmux runner from a roadmap item with a project-specific refinement prompt. The runner helps turn the markdown into a refined item. V1 does not require a separate refinement-session database.
+The user can launch or attach a tmux runner from a roadmap item with a project-specific refinement prompt. The prompt is a per-project markdown template (`projects/<project>/templates/prompts/roadmap-refinement.md`, with explicit `project.json` path override when needed), rendered as the agent context before the tmux session opens. The runner helps turn the markdown into a refined item. V1 does not require a separate refinement-session database.
 
 The gate to mark refined is explicit: the item must have a problem statement, proposed solution, non-goals, acceptance criteria, risks, and dispatch notes.
 
@@ -262,4 +262,4 @@ Costs and risks:
 2. Add backlog markdown/spec support with required `## Acceptance Criteria` before dispatch.
 3. Add minimal roadmap list/get/save/promote gateway API over `.roadmap` markdown.
 4. Add Command Center roadmap list/editor/promote UI.
-5. Add tmux refinement launch as a helper, not a new session database.
+5. Add tmux refinement launch as a helper that renders the project prompt template and starts the selected runner/model with that prompt context, not a new session database.

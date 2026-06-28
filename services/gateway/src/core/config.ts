@@ -220,6 +220,13 @@ export interface RawProjectJson {
   backlog?: {
     auto_dispatch?: { enabled?: boolean };
   };
+  roadmap?: {
+    refinement_prompt?: string;
+    refinement_prompt_path?: string;
+    runner?: string;
+    model?: string;
+    runner_command?: string;
+  };
   prepare?: {
     default?: string;
     profiles?: Record<
@@ -449,6 +456,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
 
   validateAutoRecoveryConfig(projectJson, projectConfig);
   validateBacklogConfig(projectJson, projectConfig);
+  validateRoadmapConfig(projectJson, projectConfig);
   validateEvalHarnessesConfig(projectJson, projectConfig);
   validatePublicationReviewConfig(projectJson, projectConfig);
   validatePrepareConfig(projectJson, projectConfig);
@@ -603,6 +611,23 @@ export function validateBacklogConfig(projectJson: RawProjectJson, projectConfig
   }
 }
 
+export function validateRoadmapConfig(projectJson: RawProjectJson, projectConfig: string): void {
+  const cfg = projectJson.roadmap;
+  if (!cfg) return;
+  if (typeof cfg !== 'object' || Array.isArray(cfg)) {
+    throw new Error(`${projectConfig}: roadmap must be an object`);
+  }
+  if (cfg.refinement_prompt !== undefined && typeof cfg.refinement_prompt !== 'string') {
+    throw new Error(`${projectConfig}: roadmap.refinement_prompt must be a string`);
+  }
+  if (cfg.refinement_prompt_path !== undefined && typeof cfg.refinement_prompt_path !== 'string') {
+    throw new Error(`${projectConfig}: roadmap.refinement_prompt_path must be a string`);
+  }
+  if (cfg.runner_command !== undefined && typeof cfg.runner_command !== 'string') {
+    throw new Error(`${projectConfig}: roadmap.runner_command must be a string`);
+  }
+}
+
 export function validatePrepareConfig(projectJson: RawProjectJson, projectConfig: string): void {
   const cfg = projectJson.prepare;
   if (!cfg) return;
@@ -632,7 +657,9 @@ export function validatePrepareConfig(projectJson: RawProjectJson, projectConfig
     }
     const phases = profile.phases;
     if (!Array.isArray(phases) || phases.length === 0) {
-      throw new Error(`${projectConfig}: prepare.profiles.${name}.phases must be a non-empty array`);
+      throw new Error(
+        `${projectConfig}: prepare.profiles.${name}.phases must be a non-empty array`,
+      );
     }
     for (const phase of phases) {
       if (!(PREPARE_PHASES as readonly string[]).includes(phase)) {
@@ -723,6 +750,36 @@ export function normalizeRawProjectBacklog(
           },
         }
       : {}),
+  };
+}
+
+export function normalizeRawProjectRoadmap(
+  raw: RawProjectJson['roadmap'],
+): ProjectConfig['roadmap'] | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const refinementPrompt =
+    typeof raw.refinement_prompt === 'string' && raw.refinement_prompt.trim()
+      ? raw.refinement_prompt.trim()
+      : undefined;
+  const refinementPromptPath =
+    typeof raw.refinement_prompt_path === 'string' && raw.refinement_prompt_path.trim()
+      ? raw.refinement_prompt_path.trim()
+      : undefined;
+  const runner =
+    typeof raw.runner === 'string' && raw.runner.trim() ? raw.runner.trim() : undefined;
+  const model = typeof raw.model === 'string' && raw.model.trim() ? raw.model.trim() : undefined;
+  const runnerCommand =
+    typeof raw.runner_command === 'string' && raw.runner_command.trim()
+      ? raw.runner_command.trim()
+      : undefined;
+  if (!refinementPrompt && !refinementPromptPath && !runner && !model && !runnerCommand)
+    return undefined;
+  return {
+    ...(refinementPrompt ? { refinementPrompt } : {}),
+    ...(refinementPromptPath ? { refinementPromptPath } : {}),
+    ...(runner ? { runner } : {}),
+    ...(model ? { model } : {}),
+    ...(runnerCommand ? { runnerCommand } : {}),
   };
 }
 

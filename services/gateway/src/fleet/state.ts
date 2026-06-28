@@ -26,6 +26,7 @@ import {
   normalizeRawProjectAutoRecovery,
   normalizeRawProjectBacklog,
   normalizeRawProjectPrepare,
+  normalizeRawProjectRoadmap,
 } from '../core/config.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -689,11 +690,11 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         }
         const autoRecovery = normalizeRawProjectAutoRecovery(raw.auto_recovery);
         const backlog = normalizeRawProjectBacklog(raw.backlog);
+        const roadmap = normalizeRawProjectRoadmap(raw.roadmap);
         const prepare = normalizeRawProjectPrepare(raw.prepare, raw.name || dir);
         const publicationReview = normalizePublicationReview(raw);
         const recipeRunSupportsPlaybackSlow = raw.recipe_run_supports_playback_slow === true;
-        const recipeRunSupportsVideoRecording =
-          raw.recipe_run_supports_video_recording === true;
+        const recipeRunSupportsVideoRecording = raw.recipe_run_supports_video_recording === true;
         projects.push({
           name: raw.name || dir,
           repoUrl: raw.repo_url || '',
@@ -797,6 +798,7 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
             : {}),
           ...(autoRecovery ? { autoRecovery } : {}),
           ...(backlog ? { backlog } : {}),
+          ...(roadmap ? { roadmap } : {}),
           ...(prepare ? { prepare } : {}),
           ...(publicationReview ? { publicationReview } : {}),
           ...(recipeRunSupportsPlaybackSlow ? { recipeRunSupportsPlaybackSlow: true } : {}),

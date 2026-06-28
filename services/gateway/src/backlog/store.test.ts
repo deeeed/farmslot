@@ -1,26 +1,42 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
 import { validateTicketRef } from '../methods/dispatch/ticket-ref.js';
+import { farmslotRoot } from '../projects/repo-root.js';
 
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-backlog-test-'));
+const specRoot = path.join(farmslotRoot, '.sandbox', `backlog-spec-test-${process.pid}`);
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
+process.env.FARMSLOT_BACKLOG_SPEC_DIR = specRoot;
 
-test.after(() => rm(testDir, { recursive: true, force: true }));
+test.after(() =>
+  Promise.all([
+    rm(testDir, { recursive: true, force: true }),
+    rm(specRoot, { recursive: true, force: true }),
+  ]),
+);
+
+async function writeSpec(name: string, markdown: string): Promise<string> {
+  await mkdir(specRoot, { recursive: true });
+  const absolutePath = path.join(specRoot, name);
+  await writeFile(absolutePath, markdown, 'utf-8');
+  return path.relative(farmslotRoot, absolutePath);
+}
 
 async function freshStores() {
-  await new Promise((resolve) => setTimeout(resolve, 25));
-  await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
-  await rm(process.env.FARMSLOT_DISPATCH_QUEUE_FILE!, { force: true });
   const backlog = await import('./store.js');
   const queue = await import('./dispatch-queue.js');
   const dispatch = await import('../methods/dispatch/index.js');
   const runStore = await import('../runs/store.js');
+  await backlog.flushBacklogForTests();
+  await queue.persistQueueNow();
+  await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
+  await rm(process.env.FARMSLOT_DISPATCH_QUEUE_FILE!, { force: true });
   backlog.initBacklogStore(() => {});
   queue.initDispatchQueue(
     () => {},
@@ -54,6 +70,106 @@ test('backlog store creates manual items and enqueues with manual ticketData', a
   assert.equal(enqueued.queueItem.ticketOrPr, 'MANUAL-000001');
   assert.equal(enqueued.queueItem.ticketData?.source, 'manual');
   assert.match(enqueued.queueItem.initialContext ?? '', /Backlog notes/);
+});
+
+test('markdown-backed backlog specs require acceptance criteria before ready', async () => {
+  const { backlog } = await freshStores();
+  const specPath = await writeSpec(
+    'missing-ac.md',
+    '# Missing AC\n\n## Problem\n\nThis spec is not dispatchable yet.\n',
+  );
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Missing AC spec',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    specPath,
+  });
+
+  await assert.rejects(
+    () => backlog.markBacklogItemReady({ itemId: created.item.id }),
+    /## Acceptance Criteria/,
+  );
+  assert.equal(backlog.listBacklogItems({ includeArchived: true }).items[0]?.status, 'candidate');
+});
+
+test('markdown-backed backlog specs must stay within configured spec root', async () => {
+  const { backlog } = await freshStores();
+  const outsidePath = path.join(testDir, 'outside-spec.md');
+  await writeFile(
+    outsidePath,
+    '# Outside spec\n\n## Acceptance Criteria\n\n- Must not be readable as a backlog spec.\n',
+    'utf-8',
+  );
+
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Outside spec',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    specPath: path.relative(farmslotRoot, outsidePath),
+  });
+
+  await assert.rejects(
+    () => backlog.markBacklogItemReady({ itemId: created.item.id }),
+    /configured backlog spec directory/,
+  );
+});
+
+test('markdown-backed backlog specs enqueue spec text, ACs, and normalized tags', async () => {
+  const { backlog, runStore } = await freshStores();
+  const specPath = await writeSpec(
+    'dispatchable.md',
+    [
+      '# Dispatchable spec',
+      '',
+      '## Context',
+      '',
+      'Build the markdown-backed backlog handoff.',
+      '',
+      '## Acceptance Criteria',
+      '',
+      '- AC one',
+      '- AC two',
+      '',
+      '## Dispatch Notes',
+      '',
+      'Use the existing backlog queue.',
+    ].join('\n'),
+  );
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Dispatchable markdown spec',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    specPath,
+    roadmapItemId: 'ri_spec123',
+    tags: [' Roadmap ', '#Command Center', 'roadmap'],
+    status: 'ready',
+  });
+
+  assert.deepEqual(created.item.tags, ['command-center', 'roadmap']);
+  assert.equal(created.item.roadmapItemId, 'ri_spec123');
+  assert.equal(backlog.listBacklogItems({ tags: ['command center'] }).items.length, 1);
+
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.deepEqual(enqueued.queueItem.tags, ['command-center', 'roadmap']);
+  assert.match(enqueued.queueItem.initialContext ?? '', /Backlog markdown spec/);
+  assert.match(
+    enqueued.queueItem.initialContext ?? '',
+    /Build the markdown-backed backlog handoff/,
+  );
+  assert.deepEqual(enqueued.queueItem.ticketData?.acceptanceCriteria, ['AC one', 'AC two']);
+  assert.deepEqual(enqueued.queueItem.ticketData?.labels, ['backlog', 'command-center', 'roadmap']);
+  const run = runStore.createRun({
+    flowType: enqueued.queueItem.flowType,
+    project: enqueued.queueItem.project,
+    ticketOrPr: enqueued.queueItem.ticketOrPr,
+    backlogItemId: enqueued.queueItem.backlogItemId,
+    ticketData: enqueued.queueItem.ticketData,
+    tags: enqueued.queueItem.tags,
+  });
+  assert.deepEqual(run.tags, ['command-center', 'roadmap']);
 });
 
 test('backlog store allocates unique manual refs under concurrent creates', async () => {
@@ -198,6 +314,21 @@ test('direct queue remove refuses backlog-linked queue items', async () => {
     () => queue.removeItem(queueItem.id),
     /Cannot remove backlog-linked queue item directly/,
   );
+});
+
+test('dispatch queue normalizes tags before persistence', async () => {
+  const { queue } = await freshStores();
+
+  const queueItem = queue.addItem({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'FS-123',
+    tags: [' Roadmap ', '#Command Center', 'roadmap'],
+    priority: 10,
+  });
+
+  assert.deepEqual(queueItem.tags, ['command-center', 'roadmap']);
+  assert.deepEqual(queue.getQueueSnapshot()[0]?.tags, ['command-center', 'roadmap']);
 });
 
 test('public dispatch queue add rejects backlog handoff metadata', async () => {

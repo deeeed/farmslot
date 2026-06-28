@@ -50,6 +50,8 @@ export interface QueueItem {
   effort?: string;
   mode?: 'interactive' | 'autonomous' | 'validation';
   devInteractiveProfile?: DevInteractiveProfile;
+  /** Shared normalized tags propagated to the created run. */
+  tags?: string[];
   initialContext?: string;
   /** Optional pre-fetched/manual ticket payload forwarded through queue dispatch. */
   ticketData?: import('./runs.js').RunTicketData;

@@ -84,6 +84,33 @@
         }
       }
     },
+    "roadmap": {
+      "type": "object",
+      "description": "Project-specific roadmap refinement settings for ADR-041 idea refinement.",
+      "additionalProperties": false,
+      "properties": {
+        "refinement_prompt": {
+          "type": "string",
+          "description": "Inline project-specific roadmap refinement prompt template."
+        },
+        "refinement_prompt_path": {
+          "type": "string",
+          "description": "Markdown prompt template path, absolute or relative to projects/<project>/. Defaults to templates/prompts/roadmap-refinement.md when present."
+        },
+        "runner_command": {
+          "type": "string",
+          "description": "Optional command template launched for roadmap refinement. Supports {{runner}}, {{model}}, {{prompt_path}}, and {{item_file}}; if no prompt placeholder is present the prompt path is appended. When omitted, the selected runner is launched in tmux with the rendered prompt as context."
+        },
+        "runner": {
+          "type": "string",
+          "description": "Default runner id for roadmap refinement sessions, e.g. claude or codex."
+        },
+        "model": {
+          "type": "string",
+          "description": "Default model for roadmap refinement sessions."
+        }
+      }
+    },
     "default_safety_tier": {
       "type": "string",
       "enum": ["sandboxed", "full-auto", "dangerous"],

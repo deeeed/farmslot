@@ -506,6 +506,7 @@ export function createRun(params: RunCreateParams): Run {
     safetyTier: resolvedTier,
     engineState,
     ticketData: params.ticketData,
+    ...(normalizeRunTags(params.tags).length > 0 ? { tags: normalizeRunTags(params.tags) } : {}),
     createdAt: now,
     startedAt: now,
     updatedAt: now,

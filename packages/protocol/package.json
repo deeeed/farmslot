@@ -145,6 +145,11 @@
       "import": "./dist/contracts/reviews.js",
       "default": "./dist/contracts/reviews.js"
     },
+    "./contracts/roadmap": {
+      "types": "./dist/contracts/roadmap.d.ts",
+      "import": "./dist/contracts/roadmap.js",
+      "default": "./dist/contracts/roadmap.js"
+    },
     "./contracts/runs": {
       "types": "./dist/contracts/runs.d.ts",
       "import": "./dist/contracts/runs.js",
@@ -259,6 +264,11 @@
       "types": "./dist/rpc/resources.d.ts",
       "import": "./dist/rpc/resources.js",
       "default": "./dist/rpc/resources.js"
+    },
+    "./rpc/roadmap": {
+      "types": "./dist/rpc/roadmap.d.ts",
+      "import": "./dist/rpc/roadmap.js",
+      "default": "./dist/rpc/roadmap.js"
     },
     "./rpc/run": {
       "types": "./dist/rpc/run.d.ts",

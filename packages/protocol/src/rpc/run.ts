@@ -138,6 +138,8 @@ export interface RunCreateParams {
   backlogItemId?: string;
   /** Dev-only interactive policy. Defaults to lightweight for interactive dev runs. */
   devInteractiveProfile?: import('../contracts/index.js').DevInteractiveProfile;
+  /** Shared normalized tags for planning/execution filtering. */
+  tags?: string[];
   /** Operator's initial context before the gateway normalizes it into a local DEV-* identity. */
   initialContext?: string;
   /** Optional operator-owned checklist rendered beside TASK.md for lightweight dev. */

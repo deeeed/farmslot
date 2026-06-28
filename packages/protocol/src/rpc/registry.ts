@@ -49,6 +49,14 @@ export const Methods = {
   BACKLOG_AUTO_DISPATCH_TICK: 'backlog.autoDispatchTick',
   BACKLOG_UPCOMING: 'backlog.upcoming',
 
+  // Roadmap
+  ROADMAP_LIST: 'roadmap.list',
+  ROADMAP_GET: 'roadmap.get',
+  ROADMAP_SAVE: 'roadmap.save',
+  ROADMAP_DELETE: 'roadmap.delete',
+  ROADMAP_REFINE: 'roadmap.refine',
+  ROADMAP_PROMOTE: 'roadmap.promote',
+
   // Terminal
   TERMINAL_SUBSCRIBE: 'terminal.subscribe',
   TERMINAL_UNSUBSCRIBE: 'terminal.unsubscribe',
