@@ -64,18 +64,6 @@ class CdpVideoRecorder implements VideoRecorder {
   }
 
   async start(request: VideoRecorderStartRequest): Promise<ActiveVideoRecording> {
-    const target = await selectCdpTarget({
-      host: this.#cdpHost,
-      port: this.#cdpPort,
-      type: 'page',
-      urlIncludes: this.#urlIncludes,
-    });
-    if (!target.webSocketDebuggerUrl) {
-      throw new Error('Selected CDP target has no webSocketDebuggerUrl.');
-    }
-    const session = await CdpSession.connect(target.webSocketDebuggerUrl);
-    await session.call('Page.enable');
-
     const fps = Math.min(Math.max(request.maxFps ?? 5, 1), 15);
     const framesDir = path.join(
       path.dirname(request.outputPath),
@@ -85,43 +73,85 @@ class CdpVideoRecorder implements VideoRecorder {
 
     let frameIndex = 0;
     let capturing = true;
-    let captureError: Error | undefined;
+    let pageUrl = `cdp:${this.#cdpPort}`;
+    let session: CdpSession | undefined;
+    let unsubscribe: (() => void) | undefined;
+    let writeChain = Promise.resolve();
 
-    const captureLoop = (async () => {
-      while (capturing) {
-        const started = Date.now();
-        try {
-          const shot = await session.call<{ data?: string }>('Page.captureScreenshot', {
-            format: 'png',
-          });
-          if (shot.data) {
-            const framePath = path.join(
-              framesDir,
-              `frame_${String(frameIndex).padStart(6, '0')}.png`,
-            );
-            await writeFile(framePath, Buffer.from(shot.data, 'base64'));
-            frameIndex += 1;
-          }
-        } catch (error) {
-          captureError = error instanceof Error ? error : new Error(String(error));
-          capturing = false;
-          break;
-        }
-        const elapsed = Date.now() - started;
-        await sleep(Math.max(0, Math.round(1000 / fps) - elapsed));
+    const connectSession = async (preferFleetHash: boolean): Promise<void> => {
+      if (unsubscribe) {
+        unsubscribe();
+        unsubscribe = undefined;
       }
-    })();
+      if (session) {
+        await session.call('Page.stopScreencast').catch(() => undefined);
+        session.close();
+        session = undefined;
+      }
+      const target = await selectCdpTarget({
+        host: this.#cdpHost,
+        port: this.#cdpPort,
+        type: 'page',
+        urlIncludes: preferFleetHash ? this.#urlIncludes : undefined,
+      }).catch(async () =>
+        selectCdpTarget({
+          host: this.#cdpHost,
+          port: this.#cdpPort,
+          type: 'page',
+        }),
+      );
+      if (!target.webSocketDebuggerUrl) {
+        throw new Error('Selected CDP target has no webSocketDebuggerUrl.');
+      }
+      pageUrl = target.url ?? pageUrl;
+      session = await CdpSession.connect(target.webSocketDebuggerUrl);
+      await session.call('Page.enable');
+      const screencastBounds = screencastMaxBounds(request.maxSize);
+      await session.call('Page.startScreencast', {
+        format: 'png',
+        everyNthFrame: 1,
+        ...(screencastBounds ?? {}),
+      });
+      unsubscribe = session.on('Page.screencastFrame', (params) => {
+        if (!capturing) return;
+        const data = params.data;
+        const sessionId = params.sessionId;
+        if (typeof data !== 'string' || !data) return;
+        const activeSession = session;
+        if (!activeSession) return;
+        const framePath = path.join(
+          framesDir,
+          `frame_${String(frameIndex).padStart(6, '0')}.png`,
+        );
+        frameIndex += 1;
+        writeChain = writeChain
+          .then(() => writeFile(framePath, Buffer.from(data, 'base64')))
+          .catch(() => undefined);
+        void activeSession
+          .call('Page.screencastFrameAck', { sessionId })
+          .catch(() => undefined);
+      });
+    };
+
+    await connectSession(true);
 
     const ffmpegPath = this.#ffmpegPath;
     const outputPath = request.outputPath;
-    const pageUrl = target.url ?? `cdp:${this.#cdpPort}`;
 
     return {
       async stop() {
         capturing = false;
-        await captureLoop.catch(() => undefined);
-        session.close();
-        if (captureError) throw captureError;
+        if (unsubscribe) {
+          unsubscribe();
+          unsubscribe = undefined;
+        }
+        if (session) {
+          await session.call('Page.stopScreencast').catch(() => undefined);
+          session.close();
+          session = undefined;
+        }
+        await writeChain.catch(() => undefined);
+        await sleep(200);
         if (frameIndex === 0) {
           throw new Error('CDP recording captured zero frames.');
         }
@@ -144,6 +174,14 @@ class CdpVideoRecorder implements VideoRecorder {
       },
     };
   }
+}
+
+function screencastMaxBounds(
+  maxSize: number | undefined,
+): { maxWidth: number; maxHeight: number } | undefined {
+  if (maxSize == null || !Number.isFinite(maxSize) || maxSize <= 0) return undefined;
+  const edge = Math.round(maxSize);
+  return { maxWidth: edge, maxHeight: edge };
 }
 
 async function probeCdpScreenshot(

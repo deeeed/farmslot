@@ -99,9 +99,12 @@ export async function selectCdpTarget(options: SelectCdpTargetOptions): Promise<
   return selected;
 }
 
+export type CdpEventHandler = (params: Record<string, unknown>) => void;
+
 export class CdpSession {
   readonly #ws: WebSocket;
   readonly #pending = new Map<number, PendingCall>();
+  readonly #eventHandlers = new Map<string, Set<CdpEventHandler>>();
   #nextId = 0;
 
   private constructor(ws: WebSocket) {
@@ -134,6 +137,16 @@ export class CdpSession {
     return response;
   }
 
+  on(method: string, handler: CdpEventHandler): () => void {
+    const handlers = this.#eventHandlers.get(method) ?? new Set<CdpEventHandler>();
+    handlers.add(handler);
+    this.#eventHandlers.set(method, handlers);
+    return () => {
+      handlers.delete(handler);
+      if (handlers.size === 0) this.#eventHandlers.delete(method);
+    };
+  }
+
   close(): void {
     this.#ws.close();
   }
@@ -141,9 +154,18 @@ export class CdpSession {
   #handleMessage(text: string): void {
     const message = JSON.parse(text) as {
       id?: number;
+      method?: string;
+      params?: Record<string, unknown>;
       result?: unknown;
       error?: { message?: string };
     };
+    if (message.method && message.id == null) {
+      const handlers = this.#eventHandlers.get(message.method);
+      if (handlers) {
+        for (const handler of handlers) handler(message.params ?? {});
+      }
+      return;
+    }
     if (message.id == null) return;
     const pending = this.#pending.get(message.id);
     if (!pending) return;
