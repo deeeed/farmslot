@@ -155,6 +155,19 @@ wait_for_gateway() {
   return 1
 }
 
+wait_for_ui() {
+  local max="${1:-90}"
+  local i=0
+  while (( i < max )); do
+    if ui_health; then
+      return 0
+    fi
+    sleep 1
+    ((i++))
+  done
+  return 1
+}
+
 case "$ACTION" in
   health)
     if [[ "$PRIMARY_CHECKOUT" == 1 ]]; then
@@ -206,9 +219,9 @@ case "$ACTION" in
 
     resolve_primary_runs_dir
 
-    if gateway_health; then
+    if gateway_health && ui_health; then
       if [[ -z "${FARMSLOT_RUNS_DIR:-}" ]]; then
-        echo "[sandbox-dev] gateway already healthy on :${GATEWAY_PORT} — skipping start"
+        echo "[sandbox-dev] gateway and UI already healthy on :${GATEWAY_PORT}/:${VITE_PORT} — skipping start"
         exit 0
       fi
       echo "[sandbox-dev] restarting gateway on :${GATEWAY_PORT} to apply shared run history"
@@ -230,13 +243,17 @@ case "$ACTION" in
     ) >>"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
 
-    if wait_for_gateway 90; then
+    if wait_for_gateway 90 && wait_for_ui 90; then
       echo "[sandbox-dev] ready — gateway http://127.0.0.1:${GATEWAY_PORT} ui http://127.0.0.1:${VITE_PORT}"
       echo "[sandbox-dev] log: ${LOG_FILE}"
       exit 0
     fi
 
-    echo "[sandbox-dev] gateway did not become healthy — tail ${LOG_FILE}" >&2
+    if ! gateway_health; then
+      echo "[sandbox-dev] gateway did not become healthy — tail ${LOG_FILE}" >&2
+    else
+      echo "[sandbox-dev] Command Center did not become reachable on :${VITE_PORT} — tail ${LOG_FILE}" >&2
+    fi
     tail -n 40 "$LOG_FILE" >&2 || true
     exit 1
     ;;
