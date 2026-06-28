@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { SlotVars } from '../../core/config.js';
+
 import {
   isDefaultWorktreeTrackingBranch,
   isLinkedGitWorktreeMarker,
@@ -10,6 +12,31 @@ import {
   slotIdleResetStepDetail,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
+
+function testSlotVars(overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | 'session'>): SlotVars {
+  return {
+    machine: 'macwork',
+    platform: 'macos',
+    host: 'localhost',
+    sshUser: 'deeeed',
+    osType: 'darwin',
+    claudePath: '',
+    codexPath: '',
+    opencodePath: '',
+    cursorPath: '',
+    grokPath: '',
+    dispatchCmd: '',
+    recycleCmd: '',
+    repo: overrides.remoteRepo ?? '/tmp/repo',
+    remoteRepo: overrides.remoteRepo ?? '/tmp/repo',
+    slotMode: 'dispatch',
+    slotEnabled: true,
+    sshTarget: 'localhost',
+    projectName: 'farmslot-farm',
+    resourceVars: {},
+    ...overrides,
+  };
+}
 
 test('isDefaultWorktreeTrackingBranch only allows farmslot ff worktree branches', () => {
   assert.equal(isDefaultWorktreeTrackingBranch('wt/ff-1'), true);
@@ -43,15 +70,7 @@ test('worktreeBaseResetRef prefers resolved startRef sha', () => {
 test('resolveSlotTrackingBranch uses project template on linked worktrees', () => {
   const branch = resolveSlotTrackingBranch(
     { slot_tracking_branch: 'wt/{{session}}' },
-    {
-      slotId: 'macwork-ff-2',
-      session: 'ff-2',
-      repo: '/tmp/farmslot-2',
-      remoteRepo: '/tmp/farmslot-2',
-      host: 'localhost',
-      platform: 'macos',
-      resourceVars: {},
-    },
+    testSlotVars({ slotId: 'macwork-ff-2', session: 'ff-2' }),
     undefined,
     true,
   );
@@ -61,15 +80,7 @@ test('resolveSlotTrackingBranch uses project template on linked worktrees', () =
 test('resolveSlotTrackingBranch falls back to wt/session when template omitted', () => {
   const branch = resolveSlotTrackingBranch(
     {},
-    {
-      slotId: 'macwork-ff-3',
-      session: 'ff-3',
-      repo: '/tmp/farmslot-3',
-      remoteRepo: '/tmp/farmslot-3',
-      host: 'localhost',
-      platform: 'macos',
-      resourceVars: {},
-    },
+    testSlotVars({ slotId: 'macwork-ff-3', session: 'ff-3' }),
     undefined,
     true,
   );
@@ -79,15 +90,7 @@ test('resolveSlotTrackingBranch falls back to wt/session when template omitted',
 test('resolveSlotTrackingBranch uses default branch on primary clones', () => {
   const branch = resolveSlotTrackingBranch(
     { default_branch: 'main', slot_tracking_branch: 'wt/{{session}}' },
-    {
-      slotId: 'macwork-fs-main',
-      session: 'fs-main',
-      repo: '/tmp/farmslot',
-      remoteRepo: '/tmp/farmslot',
-      host: 'localhost',
-      platform: 'macos',
-      resourceVars: {},
-    },
+    testSlotVars({ slotId: 'macwork-fs-main', session: 'fs-main' }),
     undefined,
     false,
   );
