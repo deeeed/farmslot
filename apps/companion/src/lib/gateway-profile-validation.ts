@@ -22,8 +22,17 @@ export function isLegacyLocalhostGatewayUrl(url: string | null | undefined): boo
   }
 }
 
+function isRecipeBridgeLoopbackGatewayEnabled(): boolean {
+  return process.env.EXPO_PUBLIC_FARMSLOT_RECIPE_BRIDGE === '1';
+}
+
 export function isMobileGatewayProfileUrl(url: string): boolean {
-  return isValidGatewayUrl(url) && !isLegacyLocalhostGatewayUrl(url);
+  if (!isValidGatewayUrl(url)) return false;
+  if (isRecipeBridgeLoopbackGatewayEnabled() && isLegacyLocalhostGatewayUrl(url)) {
+    // iOS Simulator recipe proof reaches the host loopback gateway via Metro dev-client.
+    return true;
+  }
+  return !isLegacyLocalhostGatewayUrl(url);
 }
 
 export function mobileGatewayProfileUrlError(url: string): string | null {

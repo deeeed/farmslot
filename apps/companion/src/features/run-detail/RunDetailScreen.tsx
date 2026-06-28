@@ -265,15 +265,19 @@ export default function RunDetailScreen() {
   }, [loadRun]);
 
   useEffect(() => {
-    if (!run) {
+    if (!id) {
       setRecipeBridgeScreenText('');
+      return;
+    }
+    if (!run) {
+      setRecipeBridgeScreenText(`${id} Recipe runs Artifacts`);
       return;
     }
     const manifest = extractRunArtifactManifest(run)
       .map((entry) => entry.path)
       .join(' ');
     setRecipeBridgeScreenText(`${run.id} Recipe runs Artifacts ${manifest}`);
-  }, [run]);
+  }, [id, run]);
 
   const noteRecipeRunsUnavailable = useCallback((err: Error) => {
     if (isGatewayBackgroundPauseError(err)) {
