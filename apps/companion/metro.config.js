@@ -1,4 +1,5 @@
 const { getDefaultConfig } = require('expo/metro-config');
+const fs = require('fs');
 const path = require('path');
 
 const { createMetroRecipeBridgeMiddleware } = require('./metro-recipe-bridge.cjs');
@@ -44,12 +45,27 @@ config.resolver = {
   // Rewrite .js imports to .ts for @farmslot/protocol (ESM convention)
   resolveRequest: (context, moduleName, platform) => {
     // Companion must bundle protocol from dist — src/portable-bundle pulls node:path.
-    if (moduleName === '@farmslot/protocol' || moduleName.startsWith('@farmslot/protocol/')) {
-      const subpath = moduleName === '@farmslot/protocol'
-        ? 'index.js'
-        : `${moduleName.slice('@farmslot/protocol/'.length)}.js`;
-      const distFile = path.join(protocolRoot, 'dist', subpath);
-      return { filePath: distFile, type: 'sourceFile' };
+    if (moduleName === '@farmslot/protocol') {
+      return {
+        filePath: path.join(protocolRoot, 'dist/index.js'),
+        type: 'sourceFile',
+      };
+    }
+    if (moduleName.startsWith('@farmslot/protocol/')) {
+      const subpath = moduleName.slice('@farmslot/protocol/'.length);
+      return {
+        filePath: path.join(protocolRoot, 'dist', `${subpath}.js`),
+        type: 'sourceFile',
+      };
+    }
+    if (
+      context.originModulePath?.includes(`${path.sep}packages${path.sep}protocol${path.sep}dist${path.sep}`) &&
+      moduleName.startsWith('.')
+    ) {
+      const candidate = path.resolve(path.dirname(context.originModulePath), moduleName);
+      if (fs.existsSync(candidate)) {
+        return { filePath: candidate, type: 'sourceFile' };
+      }
     }
     // For protocol internal .js imports — rewrite to .ts
     if (
