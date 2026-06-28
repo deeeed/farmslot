@@ -56,6 +56,33 @@ fail_step() {
   exit "$2"
 }
 
+PHASE0_BUDGET_SEC="${PHASE0_BUDGET_SEC:-120}"
+PHASE0_STARTED_SEC=$SECONDS
+
+phase0_budget_check() {
+  local label="${1:-step}"
+  if (( SECONDS - PHASE0_STARTED_SEC > PHASE0_BUDGET_SEC )); then
+    fail_step "Phase 0 exceeded ${PHASE0_BUDGET_SEC}s budget at ${label}" 124
+  fi
+}
+
+resolve_chrome_cdp_listener_pid() {
+  local port="$1"
+  local pid comm attempt
+  for attempt in 1 2 3 4 5; do
+    pid="$(lsof -iTCP:"${port}" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+    if [[ -n "$pid" ]]; then
+      comm="$(ps -p "$pid" -o comm= 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
+      if [[ "$comm" == *chrome* || "$comm" == *chromium* ]]; then
+        printf '%s' "$pid"
+        return 0
+      fi
+    fi
+    sleep 0.4
+  done
+  return 1
+}
+
 capture_typecheck() {
   local repo="$1"
   local app="$2"
@@ -281,6 +308,7 @@ fi
 log "scratch=$SCRATCH primary_repo=$PRIMARY_REPO cc_wt=$CC_WT fc_wt=$FC_WT"
 
 # ── Phase 0 ─────────────────────────────────────────────────────────────
+# Fail fast: default 120s budget (override PHASE0_BUDGET_SEC). See #132.
 
 if command -v osascript >/dev/null 2>&1; then
   osascript -e 'tell application "Google Chrome" to activate' \
@@ -301,37 +329,29 @@ if ports.is_file():
 print(ui)
 PY
 )"
+phase0_budget_check "start"
 prepare_cc_slot
+phase0_budget_check "cc-slot"
 
 export FARMSLOT_UI_URL="http://localhost:${VITE_PORT}/"
 export FARMSLOT_CDP_PORT="$FF_CDP_PORT"
-CDP_PID="$(lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
-if [[ -z "$CDP_PID" ]]; then
-  log "launching CDP Chrome for slot UI ${FARMSLOT_UI_URL} cdp :${FF_CDP_PORT}"
-  FARMSLOT_UI_URL="$FARMSLOT_UI_URL" FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
-    bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >>"$SCRATCH/e2e.log" 2>&1 \
-    || fail_step "debug-chrome" $?
-else
-  log "reusing CDP session on :${FF_CDP_PORT}"
-fi
-sleep 2
-ensure_cdp_chrome_visible
+log "ensuring CDP Chrome for slot UI ${FARMSLOT_UI_URL} cdp :${FF_CDP_PORT}"
 FARMSLOT_UI_URL="$FARMSLOT_UI_URL" FARMSLOT_CDP_PORT="$FF_CDP_PORT" \
   bash "$PRIMARY_REPO/apps/command-center/scripts/debug-chrome.sh" >>"$SCRATCH/e2e.log" 2>&1 \
-  || fail_step "debug-chrome navigate" $?
+  || fail_step "debug-chrome" $?
 sleep 2
+phase0_budget_check "debug-chrome"
 ensure_cdp_chrome_visible
 cdp_login_fleet
-resolve_cdp_listener_pid() {
-  lsof -iTCP:"$FF_CDP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true
-}
+phase0_budget_check "cdp-login"
 
 if [[ -n "${CAPTURE_HELPER_PATH:-}" ]]; then
-  CDP_PID="$(resolve_cdp_listener_pid)"
-  if [[ -n "$CDP_PID" ]]; then
+  if CDP_PID="$(resolve_chrome_cdp_listener_pid "$FF_CDP_PORT")"; then
     "$CAPTURE_HELPER_PATH" snapshot --pid "$CDP_PID" -o "$SCRATCH/cdp-preflight.png" >>"$SCRATCH/e2e.log" 2>&1 \
-      && log "capture-helper preflight snapshot ok" \
+      && log "capture-helper preflight snapshot ok (pid=$CDP_PID)" \
       || log "capture-helper preflight snapshot failed — video may be blocked by ScreenCaptureKit"
+  else
+    log "capture-helper preflight skipped — no Chrome listener on CDP :${FF_CDP_PORT}"
   fi
 fi
 
@@ -344,6 +364,7 @@ node "$PRIMARY_REPO/apps/command-center/scripts/agentic/recipe-doctor.mjs" \
   >"$SCRATCH/phase0-doctor.json" 2>"$SCRATCH/phase0-doctor.err" \
   || fail_step "recipe-doctor" $?
 log "doctor exit=0"
+phase0_budget_check "recipe-doctor"
 
 bash "$SCRIPT_DIR/validate-recipe.sh" --dry-run \
   --recipe "$PRIMARY_REPO/docs/examples/recipes/farmslot/demo-red-banner.recipe.json" \
@@ -376,6 +397,8 @@ bash "$SCRIPT_DIR/validate-recipe.sh" --dry-run \
   --artifacts-dir "$SCRATCH/recipe-dry-rerun2" --gateway-port "$FF_GATEWAY_PORT" --slot-id "$FF_SLOT" \
   >"$SCRATCH/phase0-dryrun-rerun2.log" 2>&1 \
   || fail_step "dry-run rerun2" $?
+phase0_budget_check "phase0-complete"
+log "Phase 0 complete in $((SECONDS - PHASE0_STARTED_SEC))s (budget ${PHASE0_BUDGET_SEC}s)"
 
 # ── Run A (Command Center) ──────────────────────────────────────────────
 

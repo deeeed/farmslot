@@ -1,18 +1,28 @@
 # Farmslot cross-surface evidence E2E goal
 
-Status: active  
+Status: active (frozen until [#122](https://github.com/deeeed/farmslot/issues/122) re-validation gate)  
 Use as: `/goal docs/plans/farmslot-cross-surface-evidence-e2e-goal.md`  
 Supports: `docs/ROADMAP-next.md` dev publication gate, recipe evidence promotion (`fix/farmslot-farm-worktree-deps-install`), Command Center + Mobile Companion operator surfaces.
 
+**Prerequisite:** framework stabilization merged in PR #135 (`f4367ce`). Run `scripts/quality/smoke-framework-p1.mjs` before dispatching.
+
 ## Goal
 
-Validate the **full farmslot operator loop twice** — once per app — with matching demo banners, recipe proof (screenshots **and** MP4), evidence promotion, monitor checklist, and **draft** publication gate on both runs.
+Validate the **full farmslot operator loop twice** — once per app — with matching demo banners, recipe proof (screenshots **and** MP4), evidence promotion, monitor checklist, and **autonomous publication gate** on both runs.
 
-**Success bar:** every step green. No recipe `fail`, no video ENOENT, no `BLOCKED` SIGNAL, no skipped publication gate, no screenshot-only fallback unless video capture is fixed first.
+**Track 1 contract (autonomous `dev.md`):**
 
-| Run | App | Slot | Ticket |
-| --- | --- | --- | --- |
-| **A** | Command Center | `macwork-ff-2` | [deeeed/farmslot#28](https://github.com/deeeed/farmslot/issues/28) (exists) |
+- `mode: autonomous` only — no interactive steering mid-run.
+- Worker runs through `complete` and commits; run ends **`status=blocked`** at the **human publication gate** with `publicationStatus=not_published` and **no `prNumber`**.
+- Draft GitHub PR is created **only after explicit operator approve** at the gate — not as part of the autonomous worker run.
+- Validator: `node scripts/quality/assert-autonomous-gate-invariants.mjs <runId>` must pass before claiming gate proof.
+- **Never reuse** a terminal run (`done` / `failed` / `cancelled`) for gate validation.
+
+**Success bar:** every step green through gate-held blocked state. No recipe `fail`, no video ENOENT, no worker `BLOCKED` SIGNAL, no screenshot-only fallback unless video capture is fixed first.
+
+| Run   | App              | Slot           | Ticket                                                                                   |
+| ----- | ---------------- | -------------- | ---------------------------------------------------------------------------------------- |
+| **A** | Command Center   | `macwork-ff-2` | [deeeed/farmslot#28](https://github.com/deeeed/farmslot/issues/28) (exists)              |
 | **B** | Mobile Companion | `macwork-fc-1` | [deeeed/farmslot#29](https://github.com/deeeed/farmslot/issues/29) (create before Run B) |
 
 Both tasks are **DO NOT MERGE** smoke work. Success means pipeline + evidence UX, not merge to `main`.
@@ -29,9 +39,11 @@ Both tasks are **DO NOT MERGE** smoke work. Success means pipeline + evidence UX
 
 Do **not** dispatch Runs A/B until this phase is all green.
 
+**Fail-fast:** `projects/farmslot-farm/setup/e2e-cross-surface-evidence.sh` enforces `PHASE0_BUDGET_SEC` (default **120s**). Phase 0 must pass or exit 124 — no hung CDP login / stale capture-helper PID loops (#132).
+
 - [ ] Merge or deploy `fix/farmslot-farm-worktree-deps-install` on the gateway host; restart gateway.
 - [ ] Fix video capture so proof runs exit **0** with `after.mp4` present (current failure: `recipe-run.mp4` ENOENT on `record.video`).
-- [ ] Doctor passes on Command Center / ff-2:
+- [ ] Doctor passes on Command Center / ff-2 (re-resolves Chrome CDP PID; no stale listener):
   ```bash
   node apps/command-center/scripts/agentic/recipe-doctor.mjs \
     --cdp-port 9323 --gateway-port 8809 --slot-id macwork-ff-2 --json
@@ -47,7 +59,7 @@ Do **not** dispatch Runs A/B until this phase is all green.
     --recipe docs/examples/recipes/farmslot/demo-red-banner.recipe.json \
     --artifacts-dir /tmp/recipe-dry --gateway-port 8809 --slot-id macwork-ff-2
   ```
-- [ ] Cancel or complete stale runs (`9d783340`, `f201cf98`).
+- [ ] Trial runs cleared; slots idle; fresh dispatches only.
 
 **Phase 0 done when:** a manual proof run on #28 task artifacts produces `recipe-run/summary.json` with `"status": "pass"` **and** `artifacts/after.mp4` after `--task-dir` sync.
 
@@ -65,7 +77,7 @@ template:    dev.md
 prepare:     sandbox
 branch:      feat/28-add-demo-red-banner
 runner:      claude / opus
-publication: draft PR
+publication: draft PR (after gate approve — not during worker run)
 ```
 
 Worktree: `farmslot-wt/farmslot-2` · gateway port **8809** · CDP **9323**
@@ -109,10 +121,11 @@ Reuse existing `app-shell.ts` banner work when still valid; worker should not re
 - [ ] `complete` builds local-first PR package with evidence digests
 - [ ] Human-gate **Evidence** tab: before/after images + video playable
 - [ ] **PR Preview** tab: embedded media from manifest (not placeholder text)
-- [ ] Approve **draft** publication → GitHub draft PR created
-- [ ] Run → `done` / `success`; slot releases cleanly
+- [ ] Run reaches **`blocked`** at human-gate; `assert-autonomous-gate-invariants.mjs` passes
+- [ ] Approve **draft** publication → GitHub draft PR created (separate operator step)
+- [ ] After approve: run → `done` / `success`; slot releases cleanly
 
-**Record Run A ID** — Run B optional cross-surface recipe segment references it.
+**Record Run A ID** at gate-held `blocked` state — Run B optional cross-surface recipe segment references it.
 
 ## Phase 2 — Run B: Companion banner (#29)
 
@@ -129,7 +142,7 @@ Reuse existing `app-shell.ts` banner work when still valid; worker should not re
 3. Change is isolated (one component + env wiring), easy to revert.
 4. `cd apps/companion && yarn typecheck` passes.
 5. Recipe proof on iOS simulator via companion runner (`platform: ios`), not typecheck alone.
-6. *(Recommended)* Companion run-detail can open Run A and show its recipe evidence (before/after from #28).
+6. _(Recommended)_ Companion run-detail can open Run A and show its recipe evidence (before/after from #28).
 
 ### Dispatch config
 
@@ -181,29 +194,30 @@ After Run A is `done`, extend Run B recipe:
 
 ## Phase 3 — Program-level acceptance
 
-| # | Criterion |
-| --- | --- |
-| 1 | Two autonomous runs, both `done` / `success`, zero failed engine steps |
-| 2 | Both recipes: `summary.json` status `pass`, `failed: 0` |
-| 3 | Both tasks: `after.mp4` + before/after PNGs under `artifacts/` |
-| 4 | Both: `check-task-artifact-contract.mjs` exit 0 |
-| 5 | Both: draft PRs on GitHub with embedded media from manifest |
-| 6 | Publication gate opened and approved for both without validation errors |
-| 7 | `yarn typecheck` clean in `apps/command-center` and `apps/companion` on respective branches |
-| 8 | No operator mid-run steering (autonomous only) |
-| 9 | Monitor checklist advanced via `./mark` on `TASK.md` |
-| 10 | Gateway logs: recipe/video failures surface as run `failed`, not silent pass |
+| #   | Criterion                                                                                   |
+| --- | ------------------------------------------------------------------------------------------- |
+| 1   | Two autonomous runs reach **`blocked`** at publication gate with gate invariants green      |
+| 2   | Both recipes: `summary.json` status `pass`, `failed: 0`                                     |
+| 3   | Both tasks: `after.mp4` + before/after PNGs under `artifacts/`                              |
+| 4   | Both: `check-task-artifact-contract.mjs` exit 0                                             |
+| 5   | After explicit approve: draft PRs on GitHub with embedded media from manifest               |
+| 6   | Publication gate approve succeeds without validation errors; then runs → `done` / `success` |
+| 7   | `yarn typecheck` clean in `apps/command-center` and `apps/companion` on respective branches |
+| 8   | No operator mid-run steering (autonomous only)                                              |
+| 9   | Monitor checklist advanced via `./mark` on `TASK.md`                                        |
+| 10  | Gateway logs: recipe/video failures surface as run `failed`, not silent pass                |
+| 11  | No terminal run reuse for gate proof; fresh dispatches only                                 |
 
 ## Execution order
 
 ```
 Phase 0 (fix video + deploy gateway)
     ↓
-Run A: dispatch #28 → monitor → complete → human-gate → draft PR → done
+Run A: dispatch #28 → monitor → complete → blocked@human-gate → assert gate invariants → approve → draft PR → done
     ↓
 Create #29 on GitHub
     ↓
-Run B: dispatch #29 → monitor → complete → human-gate → draft PR → done
+Run B: dispatch #29 → monitor → complete → blocked@human-gate → assert gate invariants → approve → draft PR → done
     ↓
 (Optional) Companion surfaces Run A evidence in Run B recipe
     ↓
@@ -222,4 +236,4 @@ Runs are **sequential** so Run B can reference Run A `run_id` and Phase 0 video 
 
 ## One-liner
 
-Dual-surface clean E2E: fix recipe video capture, then autonomous `dev.md` Run A (#28, CC banner, `macwork-ff-2`) and Run B (#29, Companion banner, `macwork-fc-1`) — each with pass recipe, MP4, evidence manifest, monitor checklist, and draft publication gate with embedded media; optionally Companion surfaces Run A evidence.
+Dual-surface clean E2E: fix recipe video capture, then autonomous `dev.md` Run A (#28, CC banner, `macwork-ff-2`) and Run B (#29, Companion banner, `macwork-fc-1`) — each with pass recipe, MP4, evidence manifest, monitor checklist, gate-held `blocked` proof, then operator approve → draft PR; optionally Companion surfaces Run A evidence.

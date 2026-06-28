@@ -89,6 +89,27 @@ async function pidListeningOnPort(port) {
   }
 }
 
+async function chromePidListeningOnPort(port, attempts = 5) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const pid = await pidListeningOnPort(port);
+    if (!pid) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      continue;
+    }
+    try {
+      const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'comm=']);
+      const comm = stdout.trim().toLowerCase();
+      if (comm.includes('chrome') || comm.includes('chromium')) {
+        return pid;
+      }
+    } catch {
+      // stale PID — listener died between lsof and ps
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return undefined;
+}
+
 async function checkFetch(label, url) {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
@@ -214,12 +235,12 @@ async function checkCaptureWindowOnScreen(cdpPort) {
       message: 'skipped (non-macOS)',
     };
   }
-  const pid = await pidListeningOnPort(cdpPort);
+  const pid = await chromePidListeningOnPort(cdpPort);
   if (!pid) {
     return {
       id: 'capture_helper.window.on_screen',
       status: 'fail',
-      message: `no listener on CDP :${cdpPort}`,
+      message: `no Chrome listener on CDP :${cdpPort} (re-resolve after debug-chrome)`,
     };
   }
   try {
