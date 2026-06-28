@@ -342,14 +342,14 @@ type WorkGraphEvent =
   | { kind: 'scheduler.tick'; graphId?: string }; // periodic (~60s) + on gateway boot
 ```
 
-Event sources (all emit today or are cheap to add):
+Event sources (v1 glue; some source facts exist today, while graph events are new emissions to add where noted):
 
 - **`family.terminal`** — run engine already computes family completion
-  (`buildRunFamilyReadinessSummaries`). Subscribe the scheduler.
-- **`pr.merged`** — ci-watch already polls PR state and detects merge. Emit a graph event
-  carrying the **merge SHA** (durable evidence) instead of only chaining intra-family.
-- **`gate.opened/resolved`** — ADR-038 publication gate already transitions slot phase;
-  surface the transition as a graph event.
+  (`buildRunFamilyReadinessSummaries`); v1 emits a graph event when that projection changes.
+- **`pr.merged`** — ci-watch already polls PR state and detects merge; v1 emits a graph
+  event carrying the **merge SHA** (durable evidence) instead of only chaining intra-family.
+- **`gate.opened/resolved`** — ADR-038 publication gate already transitions slot phase; v1
+  surfaces that transition as a graph event.
 - **`scheduler.tick`** — recomputes every `active` graph's edge satisfied-bits and node statuses
   from current **durable** external state. The idempotent backstop: on restart the first tick
   rebuilds everything, so no event is "lost." Webhooks (v2) just lower `pr.merged` latency.
@@ -417,6 +417,8 @@ double-enqueue.**
 
 Rules:
 
+0. A `BacklogItem` may be attached to at most one non-archived `WorkNode`; graph creation and
+   roadmap promotion must reject attempts to reuse the same backlog item in another live graph.
 1. When a backlog item is attached to a non-terminal work graph node (`workGraphId` +
    `workNodeId` set), the **graph scheduler is the sole enqueue authority** for that item.
    This includes `planning`, `active`, `paused`, `waiting`, and `needs-attention`: paused means
@@ -426,7 +428,10 @@ Rules:
 3. `backlog.enqueue` from the operator UI on a graph-linked item while the graph is non-terminal
    is rejected with a clear error — same as today's guard against duplicate handoff; the graph
    path owns readiness.
-4. Standalone backlog items (no `workGraphId`) keep today's flat auto-dispatch behaviour.
+4. Detaching a backlog item means an explicit operator/API action that clears both `workGraphId`
+   and `workNodeId` after the graph is terminal, or after the node is removed before activation;
+   detached items then behave like standalone backlog items.
+5. Standalone backlog items (no `workGraphId`) keep today's flat auto-dispatch behaviour.
 
 This prevents races between the graph scheduler and the flat backlog tick from creating
 duplicate queue items or runs for the same objective.
@@ -602,8 +607,10 @@ from external state rather than from consumed events; `manual` edges persist the
   The brief requires v1 to prove **stacked-PR rebase-unlock AND parallel fan-out**
   (hard constraint), so `rebase-onto` is **in v1**, scoped to the operator-authored stacked-PR
   proof case (consensus log D6). Ships:
-  - `work-graph.ts` contracts; gateway store (`services/gateway/src/work-graph/store.ts`,
-    `.work-graphs/{id}.json`, same pattern as backlog) + action ledger.
+  - `work-graph.ts` contracts (`version: 1`; future incompatible schema changes require a
+    version bump plus read/migration handling); gateway JSON snapshot store
+    (`services/gateway/src/work-graph/store.ts`, `.work-graphs/{id}.json`) with atomic
+    write/rename semantics + action ledger.
   - `workGraph.create/get/list/addNode/addEdge/updateNode/activate/pause/gateResolve` +
     `schedulerTick`.
   - Scheduler with **per-graph lease** + **idempotency ledger**, reacting to `family.terminal`,

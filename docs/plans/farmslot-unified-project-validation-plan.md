@@ -11,7 +11,7 @@ First-party Farmslot work formerly split across two project configs (`farmslot-f
 
 ## Goal
 
-1. **One canonical project** — `farmslot` — for all first-party dispatch, backlog, and run history.
+1. **One canonical project config** — `farmslot-farm` — for all first-party dispatch, backlog, and run history.
 2. **App + prepare profile selection** — `command-center` vs `companion` surfaces with MM-style warm/full profiles on the mobile lane.
 3. **Validation plan** — when a ticket needs proof on multiple surfaces, classify a **plan** (primary prepare + validation steps), not a single enum.
 4. **Dispatch safety** — extend the existing project-fit pattern to intra-project profile/app fit and multi-surface warnings.
@@ -106,7 +106,7 @@ Classifier emits `validation[]` when ticket mentions companion + gateway/ui/prot
 | [ADR-024](../adr/024-run-lanes-and-run-family-model.md) §7                     | `run.activateOnSlot` already picks cheapest profile (`attach` → `ensure-js-runtime` → `full`).                                                                          | Reuse chain for `farmslot-farm` profiles; extend activate path when `slotId` omitted / released-slot affinity (already on ROADMAP-next).                                                                                                                     |
 | [ADR-039](../adr/039-run-portable-bundles.md)                                  | Worktree sandboxes + bundle seed.                                                                                                                                       | No change; unified project simplifies `project` field on export/import. Align [worktree-operator-model.md](../operations/worktree-operator-model.md) examples to `project: farmslot-farm`.                                                                   |
 | [ADR-034](../adr/034-recipe-protocol-v1.md)                                    | Self-validation suite spans CC, gateway RPC, companion.                                                                                                                 | Validation plan `kind: recipe` references suite entries; ties to ROADMAP-next recipe adoption item #2.                                                                                                                                                       |
-| [ADR-036](../adr/036-cli-onboarding.md)                                        | Companion pack portability + pairing.                                                                                                                                   | Companion validation steps assume gateway URL from slot; no ADR change.                                                                                                                                                                                      |
+| [ADR-036](../adr/036-cli-gateway-profiles.md)                                  | Companion pack portability + pairing.                                                                                                                                   | Companion validation steps assume gateway URL from slot; no ADR change.                                                                                                                                                                                      |
 | [ADR-033](../adr/033-mobile-tmux-worker-control.md)                            | Companion as gateway client.                                                                                                                                            | Validation plan treats Companion as proof surface, not separate product.                                                                                                                                                                                     |
 | [ADR-007](../adr/007-project-structure.md)                                     | Monorepo + `apps` in schema.                                                                                                                                            | Unified `farmslot-farm` project is the intended use of `project.json` `apps` + `{{app}}` hooks.                                                                                                                                                              |
 | [ADR-031](../adr/031-deterministic-first-auto-recovery.md)                     | Deterministic classifier before LLM.                                                                                                                                    | Reuse pattern for profile-fit; audit/recovery can consume `validationPlan` misses later.                                                                                                                                                                     |
@@ -124,9 +124,9 @@ Classifier emits `validation[]` when ticket mentions companion + gateway/ui/prot
 
 **Already planned — do not duplicate:**
 
-- ADR-037 auto profile selection (deferred) — this plan **is** that follow-up, scoped to `farmslot`.
+- ADR-037 auto profile selection (deferred) — this plan **is** that follow-up, scoped to `farmslot-farm`.
 - Recipe self-validation execution (ROADMAP-next #2).
-- ADR-036 companion pack portable (ROADMAP-next #10).
+- ADR-036 CLI gateway profiles / companion pack portable (ROADMAP-next #10).
 - Activate-on-slot warm-auto-pick (ROADMAP-next captured under ADR-024).
 
 ## Implementation phases
@@ -135,7 +135,7 @@ Classifier emits `validation[]` when ticket mentions companion + gateway/ui/prot
 
 - Add `projects/farmslot-farm/project.json` (merge hooks, prepare profiles, fixtures, templates).
 - Pool: `project: "farmslot-farm"` on fs/ff slots.
-- Update recipes/docs/tests to use `farmslot` only (no legacy name aliases).
+- Update recipes/docs/tests to use `farmslot-farm` as the project key (no legacy name aliases).
 
 ### Phase B — Profile catalog
 
@@ -172,7 +172,7 @@ Evidence: run ids + recipe artifacts under `.sandbox/farmslot-farm/`.
 
 ## Success criteria
 
-- Single backlog project `farmslot`; Companion filters without a second project name.
+- Single backlog project `farmslot-farm`; Companion filters without a second project name.
 - Dispatch warns when companion ticket uses gateway-only `sandbox` without validation plan.
 - Cross-surface task produces explicit validation matrix in task or run metadata.
 - MM-style warm prepare default for companion; `full` only for native/port drift.

@@ -108,4 +108,4 @@ Goal: more roadmap execution visible on Farmslot-native projects so demos do not
 
 ## Session handoff (copy to agents)
 
-> All agent work on this repo should create Runs via gateway dispatch, not naked tmux. ADR-039 PR #95 must merge today with import/export QA. Next: one backlog item dispatched through Farmslot; parallel agents use worktree sandboxes + bundle seed from main. Canonical history on 7777.
+> All agent work on this repo should create Runs via gateway dispatch, not naked tmux. ADR-039 bundle import/export QA and PR #95 backlog intake must stay validated. Next: one backlog item dispatched through Farmslot; parallel agents use worktree sandboxes + bundle seed from main. Canonical history on 7777.

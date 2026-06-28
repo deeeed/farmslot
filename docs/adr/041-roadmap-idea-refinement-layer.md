@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 **Date:** 2026-06-28
-**Relates to:** [ADR-011](011-structured-task-tracking.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-027](027-unified-gateway-state.md), [ADR-039](039-run-portable-bundles.md), [ADR-040](040-work-graph-orchestration.md)
+**Relates to:** [ADR-005](005-state-persistence.md), [ADR-011](011-structured-task-tracking.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-027](027-unified-gateway-state.md), [ADR-039](039-run-portable-bundles.md), [ADR-040](040-work-graph-orchestration.md), PR #95 backlog intake
 
 ## Context
 
@@ -66,7 +66,7 @@ A markdown-backed planning item that spans rough idea through refined spec. The 
 Required fields:
 
 - `id`: stable `ri_<short>` identifier.
-- `project`: Farmslot project key or `global` / `unassigned`.
+- `project`: Farmslot `project.json` `name` value, or `global` / `unassigned`.
 - `title`.
 - `stage`: `rough | refining | refined | promoted | parked | archived`.
 - `labelKeys`: optional shared label keys.
@@ -104,7 +104,7 @@ Required fields:
 - `transcriptPath`: JSONL transcript or structured event log.
 - `createdAt`, `completedAt`.
 
-Refinement sessions may reuse tmux runner infrastructure, but they do not call `run.create`, do not allocate a slot, and do not affect run-family metrics. This is the explicit carve-out from the execution rule that dispatchable agent work creates Runs: refinement edits planning markdown, not deployable code.
+Refinement sessions may reuse tmux runner infrastructure, but they do not call `run.create`, do not allocate a slot, and do not affect run-family metrics. This is the explicit carve-out from the execution rule that dispatchable agent work creates Runs: refinement edits planning markdown, not deployable code. Only one `active` refinement session may own a roadmap item at a time; additional sessions must attach to it or wait until it completes/abandons.
 
 ### RoadmapEpic
 
@@ -186,7 +186,7 @@ Operator-roadmap state is gateway-owned and markdown-first. Files must be sortab
     items/YYYY-MM-DD-short-slug.md
     epics/YYYY-MM-DD-short-slug.md
     sessions/YYYY-MM-DD-short-slug.jsonl
-    snapshots/YYYY-MM-DD-short-slug.md
+    snapshots/<roadmapItemId>-YYYYMMDDTHHMMSSZ.md
   inbox/items/YYYY-MM-DD-unassigned-short-slug.md
   cross-project/epics/YYYY-MM-DD-short-slug.md
 ```
@@ -197,9 +197,9 @@ A roadmap item keeps the same file as it matures. The stage lives in frontmatter
 ---
 id: ri_abc123
 kind: roadmap-item
-project: farmslot
+project: farmslot-farm
 stage: refined
-labelKeys: [global:roadmap, global:adr, project:farmslot:command-center]
+labelKeys: [global:roadmap, global:adr, project:farmslot-farm:command-center]
 epicId: re_pm_core
 acceptanceCriteria:
   - User can refine a raw roadmap item interactively.
@@ -215,7 +215,7 @@ promotion:
 ...
 ```
 
-After promotion, the gateway appends ledger entries such as:
+After promotion, snapshots use item id plus UTC timestamp so multiple promotions from the same item sort together, and the gateway appends ledger entries such as:
 
 ```yaml
 promotion:
@@ -224,13 +224,13 @@ promotion:
       at: 2026-06-28T12:00:00Z
       decision: create-backlog-items
       roadmapRevision: 3
-      snapshotPath: snapshots/ri_abc123-20260628T120000.md
+      snapshotPath: snapshots/ri_abc123-20260628T120000Z.md
       snapshotHash: sha256:...
       backlogItemIds: [bl_1, bl_2]
       workGraphIds: [wg_1]
 ```
 
-The gateway builds an in-memory index from the files, validates frontmatter on load, and writes atomically with a single-writer lock. Human/external-agent edits are accepted only when the file revision/hash still matches the gateway's last loaded revision; otherwise the gateway rejects the write and asks the operator to reload/merge. Unknown labels remain displayable as raw slugs so human edits do not break the UI.
+The gateway builds an in-memory index from the files, validates frontmatter on load, and writes atomically with a single-writer lock. Human/external-agent edits are picked up on explicit reload or file-watch invalidation. Gateway writes include the last loaded file hash; if the file changed in an editor, the gateway rejects the write and asks the operator to reload/merge before saving again. Unknown labels remain displayable as raw slugs so human edits do not break the UI.
 
 `~/dev/roadmap` remains a personal/general notebook. Farmslot supports explicit import/export with provenance, but it is not live-synced and is not canonical for Farmslot project execution.
 
@@ -270,7 +270,7 @@ Promotion writes provenance both ways:
 - Backlog items record `roadmapItemId`, optional `roadmapEpicId`, inherited `labelKeys`, structured `acceptanceCriteria`, `dispatchNotes`, and `roadmapSnapshotHash`.
 - Draft work graph plans inherit selected label keys from the roadmap item/epic. When activated, the canonical ADR-040 WorkGraph and WorkNodes record `roadmapEpicId` / `roadmapItemIds`, inherited `labelKeys`, and the originating promotion snapshot hash.
 
-Promotion is idempotent. Re-promoting an already-promoted item shows the existing ledger and requires an explicit “create additional backlog items” action. The ledger is the durable mapping from one roadmap item revision to N backlog items and optional work graph nodes. Its idempotency key is the roadmap item id, roadmap revision/snapshot hash, operator decision id, and decomposition target id, so retrying a failed promotion cannot silently duplicate backlog items.
+Promotion is idempotent. Re-promoting an already-promoted item shows the existing ledger and requires an explicit “create additional backlog items” action. The ledger is the durable mapping from one roadmap item revision to N backlog items and optional work graph nodes. Its idempotency key is the roadmap item id, roadmap revision/snapshot hash, operator decision id, and a typed decomposition target id (`backlog:<backlogItemId>` or `graph:<workGraphId>`), so retrying a failed promotion cannot silently duplicate backlog items.
 
 ### Track
 
@@ -290,8 +290,12 @@ Backlog remains the execution handoff. `backlog.enqueue` remains the path into t
 
 Backlog item additions:
 
+Roadmap promotion should create backlog items with `sourceKind='roadmap'` and `sourceRef=<promotionEntryId>`; legacy PR #95 sources (`manual`, `jira`, `github`) remain for directly dispatchable intake.
+
 ```ts
 interface BacklogItem {
+  sourceKind: BacklogSourceKind | 'roadmap'; // proposed source kind for promotions
+  sourceRef: string; // promotionEntryId for roadmap-promoted items
   roadmapItemId?: string;
   roadmapEpicId?: string;
   roadmapSnapshotHash?: string;

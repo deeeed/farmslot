@@ -1,7 +1,7 @@
 # ADR Implementation Status
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-06-27
+**Last updated:** 2026-06-28
 **Stale by:** 2026-09-27
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
@@ -9,28 +9,30 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 
 ## How to read status
 
-| Status | Meaning |
-| ------ | ------- |
-| **Shipped** | Decision is implemented in `main` for its core scope; only polish/policy tuning may remain. |
-| **Partial** | Foundational code or UX exists; ADR follow-ups or product closure items are still open. |
-| **Not started** | Accepted/planned decision with no meaningful implementation yet. |
-| **Proposed** | ADR not accepted — treat as design intent only. |
+| Status          | Meaning                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| **Shipped**     | Decision is implemented in `main` for its core scope; only polish/policy tuning may remain. |
+| **Partial**     | Foundational code or UX exists; ADR follow-ups or product closure items are still open.     |
+| **Not started** | Accepted/planned decision with no meaningful implementation yet.                            |
+| **Proposed**    | ADR not accepted — treat as design intent only.                                             |
 
-## Summary (ADR-026 – ADR-039)
+## Summary (ADR-026 – ADR-041)
 
-| ADR | Title | ADR status | Implementation | Top open gap |
-| --- | ----- | ---------- | -------------- | ------------ |
-| [026](../adr/026-self-improvement-recursive-loop.md) | Self-improvement recursive loop | Proposed | Partial | Structured retrospective grading + improvement loop not fully wired |
-| [030](../adr/030-replay-provenance-and-reference-evals.md) | Eval packages on run families | Accepted | Partial | Replay closure: baseline/head identity, live regression evidence |
-| [031](../adr/031-deterministic-first-auto-recovery.md) | Deterministic-first auto-recovery | Accepted | Shipped | Policy tuning from audit evidence |
-| [032](../adr/032-runner-observability-via-hooks.md) | Runner observability via hooks | Accepted | Partial | Phase 2 exit passed; Phase 3 pane-regex retirement |
-| [033](../adr/033-mobile-tmux-worker-control.md) | Mobile tmux worker control | Accepted | Shipped | Deferred: background wake-word, auto-send, remote provisioning |
-| [034](../adr/034-recipe-protocol-v1.md) | Recipe Protocol v1 | Accepted | Partial | Project migration + manifest-first UI + live self-validation |
-| [035](../adr/035-node-support-bundles.md) | Node support bundles | Accepted | Partial | Gateway prepare sync; not all projects declare bundles |
-| [036](../adr/036-cli-gateway-profiles.md) | CLI gateway profiles | Accepted | Partial | Core shipped; demo/onboarding rehearsal follow-ups |
-| [037](../adr/037-prepare-profiles.md) | Prepare profiles | Accepted | Shipped | Automatic profile selection deferred by ADR |
-| [038](../adr/038-gate-held-worker-session.md) | Gate-held worker session | Accepted | Partial | Companion gate-held affordances; optional pane-died softening |
-| [039](../adr/039-run-portable-bundles.md) | Portable run bundles | Accepted | Shipped | v1.1 selectors, CC export UI, `--seed-eval` helper |
+| ADR                                                        | Title                             | ADR status | Implementation | Top open gap                                                        |
+| ---------------------------------------------------------- | --------------------------------- | ---------- | -------------- | ------------------------------------------------------------------- |
+| [026](../adr/026-self-improvement-recursive-loop.md)       | Self-improvement recursive loop   | Proposed   | Partial        | Structured retrospective grading + improvement loop not fully wired |
+| [030](../adr/030-replay-provenance-and-reference-evals.md) | Eval packages on run families     | Accepted   | Partial        | Replay closure: baseline/head identity, live regression evidence    |
+| [031](../adr/031-deterministic-first-auto-recovery.md)     | Deterministic-first auto-recovery | Accepted   | Shipped        | Policy tuning from audit evidence                                   |
+| [032](../adr/032-runner-observability-via-hooks.md)        | Runner observability via hooks    | Accepted   | Partial        | Phase 2 exit passed; Phase 3 pane-regex retirement                  |
+| [033](../adr/033-mobile-tmux-worker-control.md)            | Mobile tmux worker control        | Accepted   | Shipped        | Deferred: background wake-word, auto-send, remote provisioning      |
+| [034](../adr/034-recipe-protocol-v1.md)                    | Recipe Protocol v1                | Accepted   | Partial        | Project migration + manifest-first UI + live self-validation        |
+| [035](../adr/035-node-support-bundles.md)                  | Node support bundles              | Accepted   | Partial        | Gateway prepare sync; not all projects declare bundles              |
+| [036](../adr/036-cli-gateway-profiles.md)                  | CLI gateway profiles              | Accepted   | Partial        | Core shipped; demo/onboarding rehearsal follow-ups                  |
+| [037](../adr/037-prepare-profiles.md)                      | Prepare profiles                  | Accepted   | Shipped        | Automatic profile selection deferred by ADR                         |
+| [038](../adr/038-gate-held-worker-session.md)              | Gate-held worker session          | Accepted   | Partial        | Companion gate-held affordances; optional pane-died softening       |
+| [039](../adr/039-run-portable-bundles.md)                  | Portable run bundles              | Accepted   | Shipped        | v1.1 selectors, CC export UI, `--seed-eval` helper                  |
+| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration          | Proposed   | Not started    | Proposed DAG scheduler over dispatchable backlog items              |
+| [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement  | Proposed   | Not started    | Proposed markdown roadmap/refinement/promotion layer                |
 
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
 
@@ -40,13 +42,13 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 **Implementation: Partial (fragments only, loop not closed)**
 
-| ADR requirement | Status | Evidence / gap |
-| --------------- | ------ | -------------- |
-| Retrospective as primary grading surface | Partial | `family-observability` exists; structured proof-target checklist grading per ADR-026 not fully productized |
-| Structured proof-target checklist grades | Not started | `grade-form.ts` on run-detail remains legacy three-button flow |
-| Rerun verdict as scoped grade | Not started | Warm-slot rerun exists; no structured rerun-grade contract |
-| Improvement proposals gated on bad grades | Partial | ADR-021 improvement-engine / `learnings.md` path exists; ADR-026 wiring into retrospective incomplete |
-| Validator-loop scoring in UI | Not started | `packages/skills` validator-loop scripts are CLI-only |
+| ADR requirement                           | Status      | Evidence / gap                                                                                             |
+| ----------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| Retrospective as primary grading surface  | Partial     | `family-observability` exists; structured proof-target checklist grading per ADR-026 not fully productized |
+| Structured proof-target checklist grades  | Not started | `grade-form.ts` on run-detail remains legacy three-button flow                                             |
+| Rerun verdict as scoped grade             | Not started | Warm-slot rerun exists; no structured rerun-grade contract                                                 |
+| Improvement proposals gated on bad grades | Partial     | ADR-021 improvement-engine / `learnings.md` path exists; ADR-026 wiring into retrospective incomplete      |
+| Validator-loop scoring in UI              | Not started | `packages/skills` validator-loop scripts are CLI-only                                                      |
 
 **Do not schedule as shipped.** Accept ADR-026 or revise before treating the recursive loop as canonical.
 
@@ -56,16 +58,16 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 **Implementation: Partial (foundation + cockpit shipped)**
 
-| ADR requirement | Status | Evidence / gap |
-| --------------- | ------ | -------------- |
-| `EvalExperimentManifest` + `ResultPackageManifest` | Shipped | PRs #74–#78 |
-| `#evals` Reference/Candidate cockpit | Shipped | Local suite builder, template provenance |
-| Artifact-only comparison trials | Shipped | `lane: comparison`, `completionPolicy: artifact-only` |
-| Baseline/head/diff identity on every package | Partial | Fields exist; not consistently populated on live runs |
-| Gateway-owned suite runner + persisted history | Not started | Local basket fan-out only |
-| Scorer execution + aggregate reports | Not started | `EvalScorerConfigRef` is catalog seam only |
-| Corpus/history dashboards | Not started | Explicit ADR non-goal until replay closure |
-| Portable replay delta (follow-up #8) | Not started | Artifact-only branches local-only; cross-slot hydration blocked |
+| ADR requirement                                    | Status      | Evidence / gap                                                  |
+| -------------------------------------------------- | ----------- | --------------------------------------------------------------- |
+| `EvalExperimentManifest` + `ResultPackageManifest` | Shipped     | PRs #74–#78                                                     |
+| `#evals` Reference/Candidate cockpit               | Shipped     | Local suite builder, template provenance                        |
+| Artifact-only comparison trials                    | Shipped     | `lane: comparison`, `completionPolicy: artifact-only`           |
+| Baseline/head/diff identity on every package       | Partial     | Fields exist; not consistently populated on live runs           |
+| Gateway-owned suite runner + persisted history     | Not started | Local basket fan-out only                                       |
+| Scorer execution + aggregate reports               | Not started | `EvalScorerConfigRef` is catalog seam only                      |
+| Corpus/history dashboards                          | Not started | Explicit ADR non-goal until replay closure                      |
+| Portable replay delta (follow-up #8)               | Not started | Artifact-only branches local-only; cross-slot hydration blocked |
 
 **Next product lane:** replay closure on real merged PRs, not re-building the experiment model.
 
@@ -75,11 +77,11 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 **Implementation: Shipped**
 
-| ADR requirement | Status | Evidence / gap |
-| --------------- | ------ | -------------- |
+| ADR requirement                        | Status  | Evidence / gap                                   |
+| -------------------------------------- | ------- | ------------------------------------------------ |
 | Watcher + allowlisted recovery actions | Shipped | PR #82, `a371d7d` lineage on historical branches |
-| Audit log + intelligence summary | Shipped | Gateway surfaces |
-| Policy tuning per project/category | Partial | Opportunistic from audit evidence |
+| Audit log + intelligence summary       | Shipped | Gateway surfaces                                 |
+| Policy tuning per project/category     | Partial | Opportunistic from audit evidence                |
 
 ---
 
@@ -87,15 +89,15 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 **Implementation: Partial (Phases 1–2 shipped; Phase 2 exit passed)**
 
-| ADR requirement | Status | Evidence / gap |
-| --------------- | ------ | -------------- |
-| Hook installers + `hooks.jsonl` / statusline writes | Shipped | PR #81 (`e4cbcb4`) |
-| `scripts/runner-validation/` harness | Shipped | Operator guide in `docs/operations/` |
-| Obs-first `sendRunnerInstructionSafely` | Shipped | PRs #82–#84, `91674d9` follow-up |
-| Phase 2 exit: zero `nudgeTimeoutCount` over 7 days | Shipped | `docs/operations/evidence/adr032/phase2-exit-window.json` (`exitPass: true`) |
-| Committed macwork evidence snapshots | Shipped | Four JSONs listed in `docs/operations/evidence/adr032/GOAL-SCOPE.json`; closeout verifiers retired from `scripts/` |
-| Phase 3: retire Claude pane-regex branches | Not started | Scheduled; exit gate cleared |
-| Cursor/Grok hook path | Not started | Remain `pane-only` per ADR matrix |
+| ADR requirement                                     | Status      | Evidence / gap                                                                                                     |
+| --------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------ |
+| Hook installers + `hooks.jsonl` / statusline writes | Shipped     | PR #81 (`e4cbcb4`)                                                                                                 |
+| `scripts/runner-validation/` harness                | Shipped     | Operator guide in `docs/operations/`                                                                               |
+| Obs-first `sendRunnerInstructionSafely`             | Shipped     | PRs #82–#84, `91674d9` follow-up                                                                                   |
+| Phase 2 exit: zero `nudgeTimeoutCount` over 7 days  | Shipped     | `docs/operations/evidence/adr032/phase2-exit-window.json` (`exitPass: true`)                                       |
+| Committed macwork evidence snapshots                | Shipped     | Four JSONs listed in `docs/operations/evidence/adr032/GOAL-SCOPE.json`; closeout verifiers retired from `scripts/` |
+| Phase 3: retire Claude pane-regex branches          | Not started | Scheduled; exit gate cleared                                                                                       |
+| Cursor/Grok hook path                               | Not started | Remain `pane-only` per ADR matrix                                                                                  |
 
 ---
 
@@ -103,12 +105,12 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 **Implementation: Shipped (V1/M8)**
 
-| ADR requirement | Status | Evidence / gap |
-| --------------- | ------ | -------------- |
-| Worker inventory + terminal + voice nudges | Shipped | 2026-05-22 sprint, ADR-033 M8 |
-| Background wake-word / auto-send | Not started | Explicitly deferred |
-| Remote node provisioning | Not started | Explicitly deferred |
-| Companion structural refactor | Not started | Captured plan only |
+| ADR requirement                            | Status      | Evidence / gap                |
+| ------------------------------------------ | ----------- | ----------------------------- |
+| Worker inventory + terminal + voice nudges | Shipped     | 2026-05-22 sprint, ADR-033 M8 |
+| Background wake-word / auto-send           | Not started | Explicitly deferred           |
+| Remote node provisioning                   | Not started | Explicitly deferred           |
+| Companion structural refactor              | Not started | Captured plan only            |
 
 ---
 
@@ -118,18 +120,18 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 The protocol is **not** a future proposal. Validators, harness runtime, CLI, and self-validation **fixtures** exist. Remaining work is **rollout and dependency**, not greenfield protocol design.
 
-| ADR / PRD requirement | Status | Evidence / gap |
-| --------------------- | ------ | -------------- |
-| Canonical spec `recipe-protocol-v1.md` | Shipped | `docs/reference/recipe-protocol-v1.md` |
-| `validateRecipeDocument` / `validateRecipeWithManifest` / `validateRecipeArtifactPackage` | Shipped | `@farmslot/protocol` |
-| Graph envelope + composition (`call`, `startState`, `proofTargets`, `phase`, `record`) | Shipped | Protocol tests + `@farmslot/recipe-harness` |
-| `farmslot recipe validate` | Shipped | `packages/cli/src/commands/recipe.ts` |
-| Farmslot self-validation recipe **fixtures** | Shipped | `docs/examples/recipes/farmslot/*.recipe.json` |
-| Typed `artifact-manifest.json` on all project runs | Partial | Harness writes manifests; legacy runners still emit summary/trace only |
-| UI manifest-first rendering (no filename inference fallback) | Partial | Gateway reads manifests when present; `inferArtifactPurpose` fallback remains |
-| Mobile/Audiolab `hooks.recipe_run` alignment | Partial | Still often worker-template invoked validators |
-| Live self-validation suite on real slots | Not started | Fixtures validate offline; live execution is operator harness work |
-| Onboarding doc consolidation | Partial | Spec exists; `projects/README.md` not fully unified |
+| ADR / PRD requirement                                                                     | Status      | Evidence / gap                                                                |
+| ----------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------- |
+| Canonical spec `recipe-protocol-v1.md`                                                    | Shipped     | `docs/reference/recipe-protocol-v1.md`                                        |
+| `validateRecipeDocument` / `validateRecipeWithManifest` / `validateRecipeArtifactPackage` | Shipped     | `@farmslot/protocol`                                                          |
+| Graph envelope + composition (`call`, `startState`, `proofTargets`, `phase`, `record`)    | Shipped     | Protocol tests + `@farmslot/recipe-harness`                                   |
+| `farmslot recipe validate`                                                                | Shipped     | `packages/cli/src/commands/recipe.ts`                                         |
+| Farmslot self-validation recipe **fixtures**                                              | Shipped     | `docs/examples/recipes/farmslot/*.recipe.json`                                |
+| Typed `artifact-manifest.json` on all project runs                                        | Partial     | Harness writes manifests; legacy runners still emit summary/trace only        |
+| UI manifest-first rendering (no filename inference fallback)                              | Partial     | Gateway reads manifests when present; `inferArtifactPurpose` fallback remains |
+| Mobile/Audiolab `hooks.recipe_run` alignment                                              | Partial     | Still often worker-template invoked validators                                |
+| Live self-validation suite on real slots                                                  | Not started | Fixtures validate offline; live execution is operator harness work            |
+| Onboarding doc consolidation                                                              | Partial     | Spec exists; `projects/README.md` not fully unified                           |
 
 **Validate locally:**
 
@@ -145,11 +147,11 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 
 **Implementation: Partial**
 
-| ADR requirement | Status | Evidence / gap |
-| --------------- | ------ | -------------- |
-| Content-addressed bundle sync on prepare | Shipped | `services/gateway/src/node-support/`, prepare step |
-| `scripts/check-node-support-bundles.ts` gate | Shipped | CI/check script |
-| All hook-heavy projects declare bundles | Partial | Optional per ADR; project adoption varies |
+| ADR requirement                              | Status  | Evidence / gap                                     |
+| -------------------------------------------- | ------- | -------------------------------------------------- |
+| Content-addressed bundle sync on prepare     | Shipped | `services/gateway/src/node-support/`, prepare step |
+| `scripts/check-node-support-bundles.ts` gate | Shipped | CI/check script                                    |
+| All hook-heavy projects declare bundles      | Partial | Optional per ADR; project adoption varies          |
 
 ---
 
@@ -157,15 +159,15 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 
 **Implementation: Partial (operator core shipped)**
 
-| ADR requirement | Status | Evidence / gap |
-| --------------- | ------ | -------------- |
-| `farmslot gateway add/use/list`, `~/.farmslot/gateways.json` | Shipped | `packages/cli` |
-| `login` / `logout` / `auth status` | Shipped | Reuses pairing flow |
-| Doctor Gateways section | Shipped | Reachability + auth hints |
-| `farmslot up` / `down` / `pair` | Shipped | PRs #30, #46 |
-| `gateway.status` update freshness + CC banner | Shipped | `70742c2` lineage |
-| Portable companion pack + clean-machine rehearsal | Not started | Onboarding follow-up |
-| npm-publish standalone `@farmslot/cli` | Not started | Explicitly deferred |
+| ADR requirement                                              | Status      | Evidence / gap            |
+| ------------------------------------------------------------ | ----------- | ------------------------- |
+| `farmslot gateway add/use/list`, `~/.farmslot/gateways.json` | Shipped     | `packages/cli`            |
+| `login` / `logout` / `auth status`                           | Shipped     | Reuses pairing flow       |
+| Doctor Gateways section                                      | Shipped     | Reachability + auth hints |
+| `farmslot up` / `down` / `pair`                              | Shipped     | PRs #30, #46              |
+| `gateway.status` update freshness + CC banner                | Shipped     | `70742c2` lineage         |
+| Portable companion pack + clean-machine rehearsal            | Not started | Onboarding follow-up      |
+| npm-publish standalone `@farmslot/cli`                       | Not started | Explicitly deferred       |
 
 ---
 
@@ -173,12 +175,12 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 
 **Implementation: Shipped**
 
-| ADR requirement | Status | Evidence / gap |
-| --------------- | ------ | -------------- |
-| `prepare.profiles` in project.json | Shipped | PR #32 (`7ec8827`) |
-| CLI/RPC/UI `prepareProfile` + `FARMSLOT_PREPARE_PROFILE` | Shipped | Gateway + `slot-prepare-options` |
-| `skip_prepare_requires_health` removed | Shipped | Schema/gateway clean |
-| Auto cheapest-profile selection | Partial | Profile-fit gate + dispatch preview for `farmslot` shipped (`profile-fit-gate.ts`); ADR-037 per-flow default map still open — see [plans/farmslot-unified-project-validation-plan.md](../plans/farmslot-unified-project-validation-plan.md) |
+| ADR requirement                                          | Status  | Evidence / gap                                                                                                                                                                                                                              |
+| -------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prepare.profiles` in project.json                       | Shipped | PR #32 (`7ec8827`)                                                                                                                                                                                                                          |
+| CLI/RPC/UI `prepareProfile` + `FARMSLOT_PREPARE_PROFILE` | Shipped | Gateway + `slot-prepare-options`                                                                                                                                                                                                            |
+| `skip_prepare_requires_health` removed                   | Shipped | Schema/gateway clean                                                                                                                                                                                                                        |
+| Auto cheapest-profile selection                          | Partial | Profile-fit gate + dispatch preview for `farmslot` shipped (`profile-fit-gate.ts`); ADR-037 per-flow default map still open — see [plans/farmslot-unified-project-validation-plan.md](../plans/farmslot-unified-project-validation-plan.md) |
 
 ---
 
@@ -186,14 +188,44 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 
 **Implementation: Partial (gateway shipped)**
 
-| ADR requirement | Status | Evidence / gap |
-| --------------- | ------ | -------------- |
-| `holdSlotForPublicationGate` through HUMAN_GATE | Shipped | PR #62 |
-| `fleet.refresh` + `slot.release` guards | Shipped | `blocksGateHeldSlotRelease` |
-| Worker templates stay alive after SIGNAL | Shipped | Nested project templates |
-| Companion affordances for gate-held phase | Not started | ADR consequence callout |
-| Optional `pane-died` softening during gate wait | Not started | Captured follow-up |
-| Session resume on relaunch | Not started | ROADMAP-next captured lane |
+| ADR requirement                                 | Status      | Evidence / gap              |
+| ----------------------------------------------- | ----------- | --------------------------- |
+| `holdSlotForPublicationGate` through HUMAN_GATE | Shipped     | PR #62                      |
+| `fleet.refresh` + `slot.release` guards         | Shipped     | `blocksGateHeldSlotRelease` |
+| Worker templates stay alive after SIGNAL        | Shipped     | Nested project templates    |
+| Companion affordances for gate-held phase       | Not started | ADR consequence callout     |
+| Optional `pane-died` softening during gate wait | Not started | Captured follow-up          |
+| Session resume on relaunch                      | Not started | ROADMAP-next captured lane  |
+
+---
+
+## ADR-040 — Work-Graph Orchestration (Proposed)
+
+**Implementation: Not started**
+
+ADR-040 is design intent only. It should not be implemented until a ROADMAP-next milestone accepts the v1 graph scheduler scope.
+
+| ADR requirement                                    | Status      | Evidence / gap                                |
+| -------------------------------------------------- | ----------- | --------------------------------------------- |
+| WorkGraph / WorkNode / WorkEdge protocol contracts | Not started | Proposed in ADR-040                           |
+| Gateway graph store + action ledger                | Not started | Proposed sibling store to backlog             |
+| Scheduler events and graph enqueue authority       | Not started | Proposed glue over backlog/queue/run/ci-watch |
+| Command Center graph surface                       | Not started | Proposed read-only v1 surface                 |
+
+---
+
+## ADR-041 — Operator Roadmap Idea Refinement Layer (Proposed)
+
+**Implementation: Not started**
+
+ADR-041 is design intent only. It should not be implemented until a roadmap milestone accepts the markdown-backed roadmap/refinement/promotion scope.
+
+| ADR requirement                                          | Status      | Evidence / gap                                  |
+| -------------------------------------------------------- | ----------- | ----------------------------------------------- |
+| `{farmslotRoot}/.roadmap` markdown index + label catalog | Not started | Proposed in ADR-041                             |
+| Refinement sessions outside dispatch/run families        | Not started | Proposed tmux runner reuse, no `run.create`     |
+| Roadmap promotion to backlog with snapshots/provenance   | Not started | Proposed bridge to PR #95 backlog intake        |
+| Backlog/graph/run label convergence                      | Not started | Proposed compatibility path for legacy run tags |
 
 ---
 
