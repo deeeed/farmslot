@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { Run, RunTicketData } from '@farmslot/protocol';
 
-import { detectProfileFit, resolveCompanionSlotId } from './profile-fit-gate.js';
+import { detectProfileFit } from './profile-fit-gate.js';
 
 function run(overrides: Partial<Run> = {}): Run {
   return {
@@ -89,26 +89,16 @@ test('profile fit gate warns when gateway-only sandbox is default for companion 
   assert.equal(result?.suggestedPrepareProfile, 'sandbox-companion');
 });
 
-test('resolveCompanionSlotId finds dedicated mobile slot for project', () => {
-  const slot = resolveCompanionSlotId(
-    [
-      { slot: 'macwork-ff-2', project: 'farmslot-farm', platform: 'cli' },
-      { slot: 'macwork-fc-1', project: 'farmslot-farm', platform: 'ios' },
-    ],
-    'farmslot-farm',
-  );
-  assert.equal(slot, 'macwork-fc-1');
-});
-
-test('profile fit validation plan includes companion slot when fleet exposes one', () => {
+test('profile fit validation plan keeps companion proof on dispatch slot', () => {
   const result = detectProfileFit(
     run(),
     {
       ...companionTicket,
       description: 'Update gateway RPC and companion pairing UI.',
     },
-    { slotPlatform: 'cli', companionSlotId: 'macwork-fc-1' },
+    { slotPlatform: 'cli' },
   );
   const companionStep = result?.validationPlan?.find((step) => step.surface === 'companion');
-  assert.equal(companionStep?.slot, 'macwork-fc-1');
+  assert.equal(companionStep?.prepareProfile, 'sandbox-companion');
+  assert.equal(companionStep?.slot, undefined);
 });

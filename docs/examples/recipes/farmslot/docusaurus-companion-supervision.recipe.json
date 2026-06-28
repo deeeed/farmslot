@@ -7,7 +7,7 @@
   "record": "screenshot-and-video",
   "inputs": {
     "app": "apps/companion",
-    "simulator": "fs-companion-1",
+    "simulator": "fs-2",
     "metroPort": "7677",
     "fixtureGateway": "auto-detected LAN ws://<host>:7777/ws",
     "docsScreenshot": "apps/docs/static/img/demos/companion-mobile-supervision.png"

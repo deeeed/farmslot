@@ -18,7 +18,7 @@ import { buildFollowUpLineage } from '../../family-observability/context.js';
 import { findFollowUpParentRun } from '../../family-observability/state.js';
 import { getNode } from '../../fleet/machine-registry.js';
 import { loadFleetStatus } from '../../fleet/state.js';
-import { detectProfileFit, resolveCompanionSlotId } from '../../run-engine/profile-fit-gate.js';
+import { detectProfileFit } from '../../run-engine/profile-fit-gate.js';
 import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
   normalizeRunner,
@@ -760,7 +760,6 @@ export async function dispatchPreview(
     prepareProfile: params.prepareProfile,
     app: params.app,
     slotPlatform: slotInfo?.platform ?? null,
-    companionSlotId: resolveCompanionSlotId(fleet.slots, params.project),
   });
   if (profileFit) {
     result.preview.profileFit = profileFit;

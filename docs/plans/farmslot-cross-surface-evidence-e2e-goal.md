@@ -23,7 +23,7 @@ Validate the **full farmslot operator loop twice** — once per app — with mat
 | Run   | App              | Slot           | Ticket                                                                                   |
 | ----- | ---------------- | -------------- | ---------------------------------------------------------------------------------------- |
 | **A** | Command Center   | `macwork-ff-2` | [deeeed/farmslot#28](https://github.com/deeeed/farmslot/issues/28) (exists)              |
-| **B** | Mobile Companion | `macwork-fc-1` | [deeeed/farmslot#29](https://github.com/deeeed/farmslot/issues/29) (create before Run B) |
+| **B** | Mobile Companion | `macwork-ff-2` (same worktree) | [deeeed/farmslot#29](https://github.com/deeeed/farmslot/issues/29) (create before Run B) |
 
 Both tasks are **DO NOT MERGE** smoke work. Success means pipeline + evidence UX, not merge to `main`.
 
@@ -39,7 +39,7 @@ Both tasks are **DO NOT MERGE** smoke work. Success means pipeline + evidence UX
 
 Do **not** dispatch Runs A/B until this phase is all green.
 
-**Fail-fast:** `projects/farmslot-farm/setup/e2e-cross-surface-evidence.sh` enforces `PHASE0_BUDGET_SEC` (default **120s**). Phase 0 must pass or exit 124 — no hung CDP login / stale capture-helper PID loops (#132).
+Phase 0 is manual — run the commands below in order; do not dispatch until all exit 0. Budget ~2 minutes wall clock; bail if CDP login or capture-helper hangs (#132).
 
 - [ ] Merge or deploy `fix/farmslot-farm-worktree-deps-install` on the gateway host; restart gateway.
 - [ ] Fix video capture so proof runs exit **0** with `after.mp4` present (current failure: `recipe-run.mp4` ENOENT on `record.video`).
@@ -48,10 +48,10 @@ Do **not** dispatch Runs A/B until this phase is all green.
   node apps/command-center/scripts/agentic/recipe-doctor.mjs \
     --cdp-port 9323 --gateway-port 8809 --slot-id macwork-ff-2 --json
   ```
-- [ ] Companion health passes on fc-1 (after Metro up):
+- [ ] Companion health passes on ff-2 (after Metro up):
   ```bash
   bash projects/farmslot-farm/setup/companion-prepare.sh health \
-    --slot-port 8871 --platform ios
+    --slot-port 8809 --platform ios
   ```
 - [ ] Dry-run proof command resolves primary-repo runner (not worktree copy):
   ```bash
@@ -147,20 +147,19 @@ Reuse existing `app-shell.ts` banner work when still valid; worker should not re
 ### Dispatch config
 
 ```
-project:     farmslot
-slot:        macwork-fc-1
-platform:    ios
-app:         companion
+project:     farmslot-farm
+slot:        macwork-ff-2
+platform:    cli
 flow:        dev
 mode:        autonomous
 template:    dev.md
-prepare:     companion-warm    # companion-full if native rebuild needed
+prepare:     companion-warm    # companion-full if native rebuild needed; sandbox-companion if same ticket spans CC+companion
 branch:      feat/29-add-companion-demo-banner
 runner:      claude / opus
 publication: draft PR
 ```
 
-Worktree: `farmslot-wt/farmslot-companion-1` · gateway port **8871** · simulator **fc-1**
+Worktree: `farmslot-wt/farmslot-2` · gateway port **8809** · Metro **8879** · simulator **fs-2**
 
 ### Implementation contract
 
@@ -177,8 +176,8 @@ Worktree: `farmslot-wt/farmslot-companion-1` · gateway port **8871** · simulat
     --recipe <TASK_DIR>/artifacts/recipe.json \
     --artifacts-dir <TASK_DIR>/artifacts/recipe-run \
     --runtime-dir .sandbox/farmslot-farm/agent \
-    --platform ios --metro-port <derived> --simulator fc-1 \
-    --gateway-port 8871 --slot-id macwork-fc-1 \
+    --platform ios --metro-port 8879 --simulator fs-2 \
+    --gateway-port 8809 --slot-id macwork-ff-2 \
     --slow 2000 --record-video=full-run --task-dir <TASK_DIR>
   ```
 - Same hard gates as Run A (pass summary, MP4, manifest, contract, publication gate)
@@ -236,4 +235,4 @@ Runs are **sequential** so Run B can reference Run A `run_id` and Phase 0 video 
 
 ## One-liner
 
-Dual-surface clean E2E: fix recipe video capture, then autonomous `dev.md` Run A (#28, CC banner, `macwork-ff-2`) and Run B (#29, Companion banner, `macwork-fc-1`) — each with pass recipe, MP4, evidence manifest, monitor checklist, gate-held `blocked` proof, then operator approve → draft PR; optionally Companion surfaces Run A evidence.
+Dual-surface clean E2E: fix recipe video capture, then autonomous `dev.md` Run A (#28, CC banner, `macwork-ff-2`) and Run B (#29, Companion banner, same `macwork-ff-2` / `farmslot-2` with `companion-warm`) — each with pass recipe, MP4, evidence manifest, monitor checklist, gate-held `blocked` proof, then operator approve → draft PR; optionally Companion surfaces Run A evidence.

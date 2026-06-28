@@ -34,7 +34,7 @@ import { requiresCollisionPrecheck } from './decision-replay.js';
 import { captureReviewInputArtifactsForRun } from './diff-artifacts.js';
 import { createEngineDecision, handleCollisionDecision } from './engine-decisions.js';
 import { normalizeEvalReplayForTaskWrite } from './eval-replay-normalization.js';
-import { detectProfileFit, resolveCompanionSlotId } from './profile-fit-gate.js';
+import { detectProfileFit } from './profile-fit-gate.js';
 import { detectProjectMismatch } from './project-fit-gate.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import { refreshRunLinks } from './run-links.js';
@@ -206,18 +206,15 @@ export async function executeGradeStep(
   }
 
   let slotPlatform: string | null = null;
-  let companionSlotId: string | undefined;
   if (run.slotId) {
     const { loadFleetStatus } = await import('../fleet/state.js');
     const fleet = await loadFleetStatus();
     slotPlatform = fleet.slots.find((s) => s.slot === run.slotId)?.platform ?? null;
-    companionSlotId = resolveCompanionSlotId(fleet.slots, run.project);
   }
   const resolvedProfileFit = detectProfileFit(run, ticketData, {
     prepareProfile: run.prepareProfile,
     app: run.app,
     slotPlatform,
-    companionSlotId,
   });
   if (resolvedProfileFit) {
     const actionId = await createEngineDecision(

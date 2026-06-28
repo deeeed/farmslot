@@ -8,8 +8,10 @@
 | Plane | Path / ports | Purpose |
 | ----- | -------------- | ------- |
 | **Main operator** | Primary clone, gateway `7777`, UI `5174`, Companion `local` | Canonical `.runs/` history, real dispatches/evals |
-| **Worktree sandbox** | `farmslot-wt/*` (`macwork-ff-*`), `.env.ports` → `8808+` / `5175` | Gateway dev via `project: farmslot-farm`, profile `sandbox` |
-| **Companion mobile** | `macwork-fc-*`, Metro `8871+` | Companion lane via `companion-warm` / `companion-full` |
+| **Worktree sandbox** | `farmslot-wt/farmslot-{n}` (`macwork-ff-*`), gateway `8808+` | `project: farmslot-farm`, `platform: cli`, profile `sandbox` by default |
+| **Companion (on demand)** | Same slot + worktree | Optional `resources.ios-sim` (`fs-{n}`); boot sim + Metro only via `companion-warm`, `companion-full`, or `sandbox-companion` — never a separate `fc-*` farm |
+
+**Unification rule:** all first-party slots share `farmslot-{n}` worktree naming. Do not add `farmslot-companion-*` repos, `macwork-fc-*` slot IDs, or `app: companion` on pool slots. Cross-surface tickets use `sandbox-companion` on one slot.
 
 ## Seed a sandbox from main
 
