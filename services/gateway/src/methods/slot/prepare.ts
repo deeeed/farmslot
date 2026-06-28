@@ -90,7 +90,6 @@ import {
 } from './slot-tracking.js';
 
 export {
-  isDefaultWorktreeTrackingBranch,
   isLinkedGitWorktreeMarker,
   worktreeBaseResetRef,
 } from './slot-tracking.js';

@@ -11,7 +11,7 @@ import {
 import { loadSlotVars } from '../core/config.js';
 import { execLocal, isLocal } from '../core/exec.js';
 import { markSlotBusy, updateSlotStatus } from '../core/index.js';
-import { loadFleetStatus } from '../fleet/state.js';
+import { loadFleetStatus, loadProjectConfigs } from '../fleet/state.js';
 import {
   collectBranchAffinityNudgeCandidates,
   dispatchPreview,
@@ -21,7 +21,12 @@ import {
   selectBranchAffinityRefreshSlots,
   verifyBranchAffinityNudgeStillEligible,
 } from '../methods/dispatch.js';
-import { isCdpLive, isFreeSlot, slotScore } from '../methods/dispatch/slot-scoring.js';
+import {
+  isCdpLive,
+  isFreeSlot,
+  projectConfigsFromProjects,
+  slotScore,
+} from '../methods/dispatch/slot-scoring.js';
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
@@ -188,7 +193,11 @@ export async function executeFindSlotStep(
   }
 
   // Capture candidate list before selection (live branch check for accurate scoring)
-  const fleet = await loadFleetStatus(true);
+  const [fleet, projectConfigList] = await Promise.all([
+    loadFleetStatus(true),
+    loadProjectConfigs(),
+  ]);
+  const projectConfigs = projectConfigsFromProjects(projectConfigList);
   // `allowedSlots` narrows the project pool to the set the dispatch UI
   // filtered to at click time. Without this, FIND_SLOT could land the run
   // on a machine the user had just excluded via the global filter bar.
@@ -210,7 +219,7 @@ export async function executeFindSlotStep(
       : undefined;
   const candidates = freeSlots.slice(0, 10).map((s) => ({
     slotId: s.slot,
-    score: slotScore(s, targetBranch, { familyId: run.familyId }),
+    score: slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
     cdpLive: isCdpLive(s.health.cdp),
   }));
 
@@ -304,7 +313,7 @@ export async function executeFindSlotStep(
           },
           freeSlotCandidates: projectSlots.filter(isFreeSlot).map((s) => ({
             slotId: s.slot,
-            score: slotScore(s, targetBranch, { familyId: run.familyId }),
+            score: slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
             branch: s.branch || '',
             lifecycle: s.lifecycle,
             health: s.health,
@@ -425,13 +434,17 @@ export async function executeFindSlotStep(
     !run.slotId &&
     (freeSlots.length === 0 ||
       freeSlots.every(
-        (s) => slotScore(s, targetBranch, { familyId: run.familyId }) >= STALE_THRESHOLD,
+        (s) =>
+          slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }) >=
+          STALE_THRESHOLD,
       ))
   ) {
     const reason = freeSlots.length === 0 ? 'no_free_slots' : 'all_stale';
     const allProjectSlots = projectSlots.map((s) => ({
       slotId: s.slot,
-      score: isFreeSlot(s) ? slotScore(s, targetBranch, { familyId: run.familyId }) : -1,
+      score: isFreeSlot(s)
+        ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+        : -1,
       branch: s.branch || '',
       lifecycle: s.lifecycle,
       health: s.health,

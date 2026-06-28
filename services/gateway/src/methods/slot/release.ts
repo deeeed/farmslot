@@ -46,7 +46,13 @@ import { killSlotScreenSessions } from '../../runtime/screen-session.js';
 import { slotPrepare } from './prepare.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';
-import { resetSlotRepoToIdle, slotIdleResetStepDetail } from './slot-tracking.js';
+import {
+  detectLinkedWorktree,
+  isSlotIdleBranch,
+  resetSlotRepoToIdle,
+  resolveSlotTrackingBranchFromProject,
+  slotIdleResetStepDetail,
+} from './slot-tracking.js';
 
 export async function slotRelease(
   params: SlotReleaseParams,
@@ -125,7 +131,17 @@ export async function slotRelease(
         `git -C ${shellQuote(vars.remoteRepo)} rev-parse --abbrev-ref HEAD 2>/dev/null`,
       )
     ).stdout.trim();
-    if (currentBranch && currentBranch !== defaultBranch) {
+    const linkedWorktree = await detectLinkedWorktree(vars);
+    const trackingBranch = resolveSlotTrackingBranchFromProject(
+      projectJson,
+      vars,
+      projectVars,
+      linkedWorktree,
+    );
+    if (
+      currentBranch &&
+      !isSlotIdleBranch(currentBranch, trackingBranch, defaultBranch, linkedWorktree)
+    ) {
       const dirty = (
         await execOnSlot(
           vars,

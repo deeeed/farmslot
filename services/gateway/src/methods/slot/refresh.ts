@@ -292,8 +292,7 @@ export async function slotRefresh(
       );
       step('branch', slotIdleResetStepDetail(idleReset, defaultBranch));
     } else if (linkedWorktree) {
-      // Safe refresh on linked worktrees: sync via ADR-042 helper so legacy
-      // `main` checkouts normalize to the tracking branch @ origin/default.
+      // Safe refresh on linked worktrees: normalize to tracking branch @ origin/default.
       const idleReset = await resetSlotRepoToIdle(
         vars,
         projectJson,

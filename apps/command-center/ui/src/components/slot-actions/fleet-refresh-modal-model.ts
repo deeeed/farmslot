@@ -67,6 +67,20 @@ export type FleetRefreshBulkSelectionTarget = 'safe' | 'force-safe';
 
 const FLEET_REFRESH_DEFAULT_BRANCH = 'main';
 
+export function summarizeFleetRefreshEligibility(
+  slots: readonly SlotStatus[],
+  projectConfigs: Readonly<Record<string, FleetRefreshProjectConfig>> = {},
+): { cleanIdle: number; stale: number; eligible: number } {
+  const { rows, staleSlotIds } = buildFleetRefreshReviewRows(
+    slots,
+    { projects: [], machines: [] },
+    projectConfigs,
+  );
+  const stale = staleSlotIds.length;
+  const eligible = rows.size;
+  return { cleanIdle: eligible - stale, stale, eligible };
+}
+
 export function buildFleetRefreshReviewRows(
   slots: readonly SlotStatus[],
   filterSnapshot: FleetRefreshFilterSnapshot,
