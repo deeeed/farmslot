@@ -59,6 +59,14 @@ export function refreshStaleBranchDetail(
   return `STALE_BRANCH: on '${currentBranch}', expected ${expected}`;
 }
 
+/** True when refresh syncs via resetSlotRepoToIdle (force or linked safe) — not the primary fetch path. */
+export function refreshSyncUsesIdleReset(
+  mode: 'safe' | 'force',
+  linkedWorktree: boolean,
+): boolean {
+  return mode === 'force' || linkedWorktree;
+}
+
 export function slotRefreshBlockedReason(slot: SlotStatus | undefined): string | null {
   if (!slot) return null;
   const lc = slot.lifecycle;
@@ -241,10 +249,11 @@ export async function slotRefresh(
     }
     step('origin-head', `origin/HEAD = ${expectedHead}`);
 
-    // 5. Force-mode destructive cleanup. Mirrors slotPrepareInner flag sweep,
-    //    then ADR-042 idle reset (tracking branch @ origin/default on linked worktrees).
-    //    Safe mode skipped this — the pre-check already proved tree was clean
-    //    and on the right branch.
+    const idleResetOptions = { linkedWorktree };
+
+    // 5–6. Sync to origin/default. Force mode sweeps flags first; linked worktrees
+    //    (safe or force) and force primary clones use resetSlotRepoToIdle once.
+    //    Safe primary clones use a single fetch + reset --hard path.
     if (mode === 'force') {
       const flagSweep = await execOnSlot(
         vars,
@@ -274,15 +283,27 @@ export async function slotRefresh(
         complete(1, msg);
         throw new Error(msg);
       }
-      const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+      const idleReset = await resetSlotRepoToIdle(
+        vars,
+        projectJson,
+        projectVars,
+        defaultBranch,
+        idleResetOptions,
+      );
       step('branch', slotIdleResetStepDetail(idleReset, defaultBranch));
     } else if (linkedWorktree) {
       // Safe refresh on linked worktrees: sync via ADR-042 helper so legacy
       // `main` checkouts normalize to the tracking branch @ origin/default.
-      const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
+      const idleReset = await resetSlotRepoToIdle(
+        vars,
+        projectJson,
+        projectVars,
+        defaultBranch,
+        idleResetOptions,
+      );
       step('sync', slotIdleResetStepDetail(idleReset, defaultBranch));
     } else {
-      // 6. Fetch only the default branch. Refresh's contract is "make this idle
+      // Fetch only the default branch. Refresh's contract is "make this idle
       //    slot latest main"; fetching/pruning every remote branch is slow and
       //    can fail on large repos with case-colliding branch refs on macOS.
       step('fetch', `git fetch origin ${defaultBranch}`);

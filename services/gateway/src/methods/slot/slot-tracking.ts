@@ -98,14 +98,21 @@ export interface SlotIdleResetResult {
   linkedWorktree: boolean;
 }
 
+export interface ResetSlotRepoToIdleOptions {
+  /** When known by the caller (e.g. slot.refresh), skip a second linked-worktree probe. */
+  linkedWorktree?: boolean;
+}
+
 export async function resetSlotRepoToIdle(
   vars: SlotVars,
   projectJson: RawProjectJson,
   projectVars: ProjectVars | undefined,
   defaultBranch: string,
+  options?: ResetSlotRepoToIdleOptions,
 ): Promise<SlotIdleResetResult> {
   const repo = shellQuote(vars.remoteRepo);
-  const linkedWorktree = await detectLinkedWorktree(vars);
+  const linkedWorktree =
+    options?.linkedWorktree ?? (await detectLinkedWorktree(vars));
   const trackingBranch = resolveSlotTrackingBranch(
     projectJson,
     vars,

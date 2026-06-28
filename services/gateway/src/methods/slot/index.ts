@@ -21,6 +21,7 @@ export { slotPrepareStatus } from './prepare-status.js';
 export { slotRecycle } from './recycle.js';
 export {
   refreshStaleBranchDetail,
+  refreshSyncUsesIdleReset,
   slotRefresh,
   slotRefreshBlockedReason,
 } from './refresh.js';
