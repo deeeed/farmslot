@@ -5,6 +5,7 @@
   "default_branch": "main",
   "default_safety_tier": "dangerous",
   "primary_repo": "/Users/deeeed/dev/farmslot",
+  "artifacts_repo": "deeeed/farmslot-artifacts",
   "worktree_base": "/Users/deeeed/dev/farmslot-wt",
   "apps": ["command-center", "companion"],
   "paths": {

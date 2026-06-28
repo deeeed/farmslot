@@ -94,6 +94,8 @@ projects/farmslot/setup/*
 !projects/farmslot/setup/validate-recipe.sh
 !projects/farmslot/setup/sync-recipe-evidence.sh
 !projects/farmslot/setup/e2e-cross-surface-evidence.sh
+!projects/farmslot/setup/upload-pr-evidence.mjs
+!projects/farmslot/setup/capture-helper-tmux-check.sh
 projects/farmslot/tasks/
 projects/farmslot/.agent/
 projects/farmslot/.task/
