@@ -26,6 +26,7 @@
     "quality": "node scripts/quality/run-quality.mjs",
     "quality:large-files": "node scripts/quality/check-large-files.mjs",
     "quality:loc": "node scripts/quality/count-loc.mjs",
+    "quality:loc:advisory": "node scripts/quality/count-loc.mjs --scope framework --verify --advisory",
     "quality:loc:record": "node scripts/quality/count-loc.mjs --scope framework --record",
     "quality:loc:verify": "node scripts/quality/count-loc.mjs --scope framework --verify",
     "quality:loc:trend": "node scripts/quality/count-loc.mjs --trend",

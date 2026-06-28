@@ -95,6 +95,7 @@ function parseArgs(argv) {
     record: false,
     trend: false,
     verify: false,
+    advisory: false,
     help: false,
   };
 
@@ -122,6 +123,9 @@ function parseArgs(argv) {
         break;
       case '--verify':
         options.verify = true;
+        break;
+      case '--advisory':
+        options.advisory = true;
         break;
       case '--group': {
         const value = argv[++i];
@@ -161,7 +165,8 @@ Options:
   --exclude-tests                  Skip *.test.* and /test/ paths
   --exclude-dev                    Skip */src/dev/* harness fixtures
   --record                         Append snapshot to docs/reference/loc-history.json
-  --verify                         Fail if committed history is stale (same check as LOC History CI)
+  --verify                         Check if committed history is stale
+  --advisory                       Report stale history without failing (use with --verify in PR/pre-push)
   --trend                          Show LOC evolution from recorded snapshots
   --json                           Machine-readable output
   --help, -h                       Show this help
@@ -170,15 +175,15 @@ Examples:
   yarn quality:loc
   yarn quality:loc --group area --scope framework
   yarn quality:loc --exclude-tests --exclude-dev
+  yarn quality:loc:advisory
   yarn quality:loc --record --scope framework
   yarn quality:loc --verify --scope framework
   yarn quality:loc --trend
 
-Squash-merge workflow:
-  1. Finish code changes on the PR branch.
-  2. yarn quality:loc:record  (metrics exclude docs/reference/loc-history.json)
-  3. yarn quality:loc:verify  (must pass before merge; squash SHA may differ)
-  4. Squash merge — main LOC History uses metrics-match skip when tree is unchanged.
+LOC history workflow:
+  - PR and pre-push gates run advisory drift checks so stale history cannot block feature work.
+  - Main/scheduled LOC History CI records snapshots into docs/reference/loc-history.json via PR.
+  - Metrics exclude docs/reference/loc-history.json to avoid self-referential drift.
   yarn quality:loc --json --group both`);
 }
 
@@ -439,7 +444,7 @@ export function locSnapshotMetricsMatch(last, next) {
   );
 }
 
-/** Same contract as .github/workflows/loc-history.yml — restores file on failure. */
+/** Check whether a new snapshot would change history; restores the file on failure. */
 export function verifyLocHistory(options) {
   if (!existsSync(HISTORY_PATH)) {
     return { ok: false, head: gitSha(), reason: `missing ${HISTORY_PATH}` };
@@ -448,7 +453,7 @@ export function verifyLocHistory(options) {
   const committed = readFileSync(HISTORY_PATH, 'utf8');
   const { areas, rollups } = collect(options);
   const areaTotals = summarize(areas);
-  recordSnapshot(options, areaTotals, rollups);
+  recordSnapshot(options, areaTotals, rollups, { silent: true });
   const updated = readFileSync(HISTORY_PATH, 'utf8');
   if (committed === updated) {
     return { ok: true, head };
@@ -457,11 +462,11 @@ export function verifyLocHistory(options) {
   return {
     ok: false,
     head,
-    reason: `${HISTORY_PATH} is stale — run 'yarn quality:loc:record' and commit`,
+    reason: `${HISTORY_PATH} is stale — run 'yarn quality:loc:record' to refresh it, or let LOC History CI open the update PR`,
   };
 }
 
-function recordSnapshot(options, totals, rollups) {
+function recordSnapshot(options, totals, rollups, { silent = false } = {}) {
   const history = loadHistory();
   const snapshot = buildSnapshot(options, totals, rollups);
   const last = history.snapshots.at(-1);
@@ -470,21 +475,27 @@ function recordSnapshot(options, totals, rollups) {
     last.scope === snapshot.scope &&
     JSON.stringify(last.exclusions) === JSON.stringify(snapshot.exclusions)
   ) {
-    console.log(`[count-loc] snapshot already recorded for ${snapshot.commit.slice(0, 8)}`);
+    if (!silent) {
+      console.log(`[count-loc] snapshot already recorded for ${snapshot.commit.slice(0, 8)}`);
+    }
     return false;
   }
   if (locSnapshotMetricsMatch(last, snapshot)) {
-    console.log(
-      `[count-loc] LOC metrics unchanged since ${last.commit.slice(0, 8)}; skip recording ${snapshot.commit.slice(0, 8)}`,
-    );
+    if (!silent) {
+      console.log(
+        `[count-loc] LOC metrics unchanged since ${last.commit.slice(0, 8)}; skip recording ${snapshot.commit.slice(0, 8)}`,
+      );
+    }
     return false;
   }
 
   history.snapshots.push(snapshot);
   writeFileSync(HISTORY_PATH, `${JSON.stringify(history, null, 2)}\n`);
-  console.log(
-    `[count-loc] recorded ${snapshot.totals.code.toLocaleString()} code lines at ${HISTORY_PATH}`,
-  );
+  if (!silent) {
+    console.log(
+      `[count-loc] recorded ${snapshot.totals.code.toLocaleString()} code lines at ${HISTORY_PATH}`,
+    );
+  }
   return true;
 }
 
@@ -536,93 +547,102 @@ function printTrend(limit = 12) {
   }
 }
 
-const isMain =
-  process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (isMain) {
-const options = parseArgs(process.argv.slice(2));
-if (options.help) {
-  printHelp();
-  process.exit(0);
-}
-
-if (options.trend) {
-  printTrend();
-  process.exit(0);
-}
-
-if (options.verify) {
-  const result = verifyLocHistory(options);
-  if (result.ok) {
-    console.log(`[count-loc] LOC history is current for ${result.head}`);
+  const options = parseArgs(process.argv.slice(2));
+  if (options.help) {
+    printHelp();
     process.exit(0);
   }
-  console.error(`[count-loc] ${result.reason}`);
-  process.exit(1);
-}
 
-const { areas, rollups, languages } = collect(options);
-const areaTotals = summarize(areas);
-const rollupTotals = summarize(rollups);
-
-if (options.record) {
-  recordSnapshot(options, areaTotals, rollups);
-  if (!options.json) {
+  if (options.trend) {
+    printTrend();
     process.exit(0);
   }
-}
 
-if (options.json) {
-  const payload = {
-    scope: options.scope,
-    group: options.group,
-    exclusions: {
-      tests: options.excludeTests,
-      dev: options.excludeDev,
-    },
-    totals: areaTotals,
-    languages: Object.fromEntries([...languages.entries()].sort((a, b) => b[1] - a[1])),
-  };
-
-  if (options.group === 'rollup' || options.group === 'both') {
-    payload.rollup = Object.fromEntries(
-      sortedEntries(rollups, ROLLUP_ORDER).map(([name, bucket]) => [name, bucketToJson(bucket)]),
-    );
-  }
-  if (options.group === 'area' || options.group === 'both') {
-    payload.areas = Object.fromEntries(
-      sortedEntries(areas).map(([name, bucket]) => [name, bucketToJson(bucket)]),
-    );
+  if (options.advisory && !options.verify) {
+    console.error('[count-loc] --advisory requires --verify');
+    process.exit(1);
   }
 
-  console.log(JSON.stringify(payload, null, 2));
-  process.exit(0);
-}
+  if (options.verify) {
+    const result = verifyLocHistory(options);
+    if (result.ok) {
+      console.log(`[count-loc] LOC history is current for ${result.head}`);
+      process.exit(0);
+    }
+    if (options.advisory) {
+      console.warn(`[count-loc] ${result.reason}`);
+      console.warn('[count-loc] advisory mode: continuing; LOC History CI will record snapshots.');
+      process.exit(0);
+    }
+    console.error(`[count-loc] ${result.reason}`);
+    process.exit(1);
+  }
 
-const exclusionBits = [
-  options.excludeTests ? 'no tests' : null,
-  options.excludeDev ? 'no dev harness' : null,
-]
-  .filter(Boolean)
-  .join(', ');
+  const { areas, rollups, languages } = collect(options);
+  const areaTotals = summarize(areas);
+  const rollupTotals = summarize(rollups);
 
-const header = `Farmslot LOC — git-tracked, scope=${options.scope}${exclusionBits ? ` (${exclusionBits})` : ''}`;
+  if (options.record) {
+    recordSnapshot(options, areaTotals, rollups);
+    if (!options.json) {
+      process.exit(0);
+    }
+  }
 
-if (options.group === 'area') {
-  console.log(`${header}\n`);
-  printTable('By workspace:', sortedEntries(areas), areaTotals);
-} else if (options.group === 'rollup') {
-  console.log(`${header}\n`);
-  printTable('By product area:', sortedEntries(rollups, ROLLUP_ORDER), rollupTotals);
-} else {
-  console.log(`${header}\n`);
-  printTable('By product area:', sortedEntries(rollups, ROLLUP_ORDER), rollupTotals);
-  console.log('');
-  printTable('By workspace:', sortedEntries(areas), areaTotals);
-}
+  if (options.json) {
+    const payload = {
+      scope: options.scope,
+      group: options.group,
+      exclusions: {
+        tests: options.excludeTests,
+        dev: options.excludeDev,
+      },
+      totals: areaTotals,
+      languages: Object.fromEntries([...languages.entries()].sort((a, b) => b[1] - a[1])),
+    };
 
-console.log('\nBy language:');
-for (const [language, lines] of [...languages.entries()].sort((a, b) => b[1] - a[1])) {
-  console.log(`  ${language.padEnd(12)} ${lines.toLocaleString().padStart(9)}`);
-}
+    if (options.group === 'rollup' || options.group === 'both') {
+      payload.rollup = Object.fromEntries(
+        sortedEntries(rollups, ROLLUP_ORDER).map(([name, bucket]) => [name, bucketToJson(bucket)]),
+      );
+    }
+    if (options.group === 'area' || options.group === 'both') {
+      payload.areas = Object.fromEntries(
+        sortedEntries(areas).map(([name, bucket]) => [name, bucketToJson(bucket)]),
+      );
+    }
+
+    console.log(JSON.stringify(payload, null, 2));
+    process.exit(0);
+  }
+
+  const exclusionBits = [
+    options.excludeTests ? 'no tests' : null,
+    options.excludeDev ? 'no dev harness' : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  const header = `Farmslot LOC — git-tracked, scope=${options.scope}${exclusionBits ? ` (${exclusionBits})` : ''}`;
+
+  if (options.group === 'area') {
+    console.log(`${header}\n`);
+    printTable('By workspace:', sortedEntries(areas), areaTotals);
+  } else if (options.group === 'rollup') {
+    console.log(`${header}\n`);
+    printTable('By product area:', sortedEntries(rollups, ROLLUP_ORDER), rollupTotals);
+  } else {
+    console.log(`${header}\n`);
+    printTable('By product area:', sortedEntries(rollups, ROLLUP_ORDER), rollupTotals);
+    console.log('');
+    printTable('By workspace:', sortedEntries(areas), areaTotals);
+  }
+
+  console.log('\nBy language:');
+  for (const [language, lines] of [...languages.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${language.padEnd(12)} ${lines.toLocaleString().padStart(9)}`);
+  }
 }
