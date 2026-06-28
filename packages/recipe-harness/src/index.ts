@@ -18,3 +18,5 @@ export {
   errorMessage,
   manifestTarget,
 } from './recording/capture-helper.js';
+export type { CdpVideoRecorderOptions } from './recording/cdp-video-recorder.js';
+export { createCdpVideoRecorder } from './recording/cdp-video-recorder.js';

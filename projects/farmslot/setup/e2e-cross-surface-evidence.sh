@@ -210,59 +210,6 @@ prepare_companion_slot() {
   log "companion bridge ready on :$FC_METRO_PORT"
 }
 
-doctor_core_checks_ok() {
-  local doctor_json="$1"
-  [[ -f "$doctor_json" ]] || return 1
-  python3 - <<'PY' "$doctor_json"
-import json, sys
-doc = json.load(open(sys.argv[1]))
-checks = doc.get("checks", [])
-if not checks:
-    sys.exit(1)
-allowed_fail = {"capture_helper.doctor", "capture_helper.window.on_screen"}
-for check in checks:
-    if check.get("status") != "pass" and check.get("id") not in allowed_fail:
-        sys.exit(1)
-sys.exit(0)
-PY
-}
-
-capture_helper_screen_recording_ok() {
-  local doctor_json="$1"
-  [[ -f "$doctor_json" ]] || return 1
-  python3 - <<'PY' "$doctor_json"
-import json, sys
-doc = json.load(open(sys.argv[1]))
-for check in doc.get("checks", []):
-    if check.get("id") == "window_enumeration":
-        sys.exit(0 if check.get("ok") else 1)
-sys.exit(1)
-PY
-}
-
-verify_task_mp4() {
-  local mp4="$1"
-  local gate_log="$2"
-  {
-    echo "=== task mp4 gate ==="
-    echo "path: $mp4"
-    if [[ ! -f "$mp4" ]]; then
-      echo "missing: true"
-      echo "gate: FAIL"
-      return 1
-    fi
-    echo "bytes: $(wc -c <"$mp4" | tr -d ' ')"
-    if strings "$mp4" | grep -q moov; then
-      echo "moov: present"
-      echo "gate: PASS"
-      return 0
-    fi
-    echo "moov: absent"
-    echo "gate: FAIL"
-    return 1
-  } >"$gate_log" 2>&1
-}
-
 run_recipe_proof() {
   local label="$1"
   local slot_repo="$2"
@@ -365,33 +312,13 @@ fi
 
 if helper_bin="$(resolve_capture_helper_bin)"; then
   "$helper_bin" doctor --json >"$SCRATCH/phase0-capture-helper-doctor.json" 2>&1 || true
-  if capture_helper_screen_recording_ok "$SCRATCH/phase0-capture-helper-doctor.json"; then
-    CC_WEB_RECORD_VIDEO="full-run"
-    log "capture-helper screen recording ok — Run A will record MP4"
-  else
-    CC_WEB_RECORD_VIDEO=""
-    log "capture-helper screen recording denied — Run A recipe without live video (verify task after.mp4)"
-  fi
-else
-  CC_WEB_RECORD_VIDEO=""
-  log "capture-helper binary missing — Run A recipe without live video"
 fi
 
-set +e
 node "$PRIMARY_REPO/apps/command-center/scripts/agentic/recipe-doctor.mjs" \
   --cdp-port "$FF_CDP_PORT" --gateway-port "$FF_GATEWAY_PORT" --slot-id "$FF_SLOT" --json \
-  >"$SCRATCH/phase0-doctor.json" 2>"$SCRATCH/phase0-doctor.err"
-doctor_ec=$?
-set -e
-if [[ "$doctor_ec" -ne 0 ]]; then
-  if [[ -z "$CC_WEB_RECORD_VIDEO" ]] && doctor_core_checks_ok "$SCRATCH/phase0-doctor.json"; then
-    log "recipe-doctor capture-helper checks failed (screen recording denied) — core checks pass"
-  else
-    fail_step "recipe-doctor" "$doctor_ec"
-  fi
-else
-  log "doctor exit=0"
-fi
+  >"$SCRATCH/phase0-doctor.json" 2>"$SCRATCH/phase0-doctor.err" \
+  || fail_step "recipe-doctor" $?
+log "doctor exit=0"
 
 bash "$SCRIPT_DIR/validate-recipe.sh" --dry-run \
   --recipe "$PRIMARY_REPO/docs/examples/recipes/farmslot/demo-red-banner.recipe.json" \
@@ -435,18 +362,11 @@ if [[ ! -f "$TASK_DIR/artifacts/recipe.json" ]]; then
 fi
 
 ensure_cdp_chrome_visible
-RECORD_VIDEO_MODE="$CC_WEB_RECORD_VIDEO" \
-  run_recipe_proof "run A" "$CC_WT" "$TASK_DIR/artifacts/recipe.json" \
+run_recipe_proof "run A" "$CC_WT" "$TASK_DIR/artifacts/recipe.json" \
   "$TASK_DIR/artifacts/recipe-run" "$TASK_DIR" web "$SCRATCH/runA-proof.log" \
   --cdp-port "$FF_CDP_PORT" --gateway-port "$FF_GATEWAY_PORT" --slot-id "$FF_SLOT" \
   || fail_step "run A proof validate-recipe" $?
-if [[ -z "$CC_WEB_RECORD_VIDEO" ]]; then
-  verify_task_mp4 "$TASK_DIR/artifacts/after.mp4" "$SCRATCH/runA-video-gate.log" \
-    || fail_step "run A after.mp4 gate (screen recording denied; see phase0-capture-helper-doctor.json)" 1
-  log "run A proof exit=0 (recipe nodes; task after.mp4 gate pass)"
-else
-  log "run A proof exit=0 (recipe + live MP4)"
-fi
+log "run A proof exit=0"
 
 cp "$TASK_DIR/artifacts/recipe-run/summary.json" "$SCRATCH/runA-summary.json" 2>/dev/null || true
 {

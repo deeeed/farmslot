@@ -24,7 +24,11 @@ import { promisify } from 'node:util';
 import { getRecipeActionManifestActionNames } from '@farmslot/protocol';
 import { createStandardCoreAdapters } from '@farmslot/recipe-harness/adapters/core';
 import { createStandardUiAdapters } from '@farmslot/recipe-harness/adapters/ui';
-import { createCaptureHelperVideoRecorder, createRecipeRunner } from '@farmslot/recipe-harness';
+import {
+  createCaptureHelperVideoRecorder,
+  createCdpVideoRecorder,
+  createRecipeRunner,
+} from '@farmslot/recipe-harness';
 import {
   CdpWebPage,
   createCdpWebUiTransport,
@@ -356,6 +360,23 @@ async function pidListeningOnPort(port) {
   }
 }
 
+async function resolveWebVideoRecorder(cdpPort, captureHelperPath) {
+  const captureRecorder = createCaptureHelperVideoRecorder({ captureHelperPath });
+  const captureDoctor = await captureRecorder.doctor?.();
+  if (captureDoctor?.ok) return captureRecorder;
+  const cdpRecorder = createCdpVideoRecorder({ cdpPort, urlIncludes: '#fleet' });
+  const cdpDoctor = await cdpRecorder.doctor();
+  if (cdpDoctor.ok) {
+    console.warn(
+      `[run-recipe] capture-helper unavailable (${captureDoctor?.code ?? 'unknown'}); using ${cdpRecorder.name}`,
+    );
+    return cdpRecorder;
+  }
+  throw new Error(
+    `No web video recorder available: capture-helper (${captureDoctor?.message ?? 'unknown'}); CDP (${cdpDoctor.message})`,
+  );
+}
+
 async function resolveRecordingTarget(options) {
   if (options.recordPid > 0) {
     return { kind: 'pid', pid: options.recordPid };
@@ -587,8 +608,11 @@ async function main() {
     options.slowMs,
   );
 
+  const webVideoRecorder = options.recordVideo
+    ? await resolveWebVideoRecorder(options.cdpPort, captureHelperBin())
+    : undefined;
   let recordingTarget = options.recordVideo ? await resolveRecordingTarget(options) : undefined;
-  if (recordingTarget) {
+  if (recordingTarget && webVideoRecorder?.name === 'capture-helper') {
     recordingTarget = await ensureCapturableRecordingTarget(recordingTarget);
   }
 
@@ -610,9 +634,11 @@ async function main() {
     }),
     logger: console,
     recording: {
-      videoRecorder: createCaptureHelperVideoRecorder({
-        captureHelperPath: captureHelperBin(),
-      }),
+      videoRecorder:
+        webVideoRecorder ??
+        createCaptureHelperVideoRecorder({
+          captureHelperPath: captureHelperBin(),
+        }),
       targetProvider: {
         async resolveRecordingTarget() {
           if (!recordingTarget) {
