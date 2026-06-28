@@ -75,7 +75,7 @@ Existing multi-recipe shape: [docs/examples/recipes/farmslot/self-validation-sui
 - Jira prefix / GitHub repo → candidate **projects**
 - LLM + deterministic metadata → `project_mismatch` human gate
 
-**After unified `farmslot`:** still needed between `farmslot` and `metamask-mobile-farm`, etc. Not replaced.
+**After unified `farmslot-farm`:** still needed between `farmslot-farm` and `metamask-mobile-farm`, etc. Not replaced.
 
 ### 2. Profile / app fit (new — extends ADR-037 deferred auto-selection)
 
@@ -97,21 +97,21 @@ Classifier emits `validation[]` when ticket mentions companion + gateway/ui/prot
 | Artifact | Relationship | Action |
 | -------- | ------------ | ------ |
 | [ADR-037](../adr/037-prepare-profiles.md) | **Primary home** for profile catalog, `requires`/`fallback`, `FARMSLOT_PREPARE_PROFILE`. Explicitly defers *automatic* profile selection and per-flow-type default map. | Implement profile-fit + optional per-app default map as **ADR-037 follow-up** (addendum or short ADR-041 if RPC adds `validationPlan`). Update [adr-implementation-status.md](../reference/adr-implementation-status.md) row "Auto cheapest-profile selection". |
-| [ADR-024](../adr/024-run-lanes-and-run-family-model.md) §7 | `run.activateOnSlot` already picks cheapest profile (`attach` → `ensure-js-runtime` → `full`). | Reuse chain for `farmslot` profiles; extend activate path when `slotId` omitted / released-slot affinity (already on ROADMAP-next). |
-| [ADR-039](../adr/039-run-portable-bundles.md) | Worktree sandboxes + bundle seed. | No change; unified project simplifies `project` field on export/import. Align [worktree-operator-model.md](../operations/worktree-operator-model.md) examples to `project: farmslot`. |
+| [ADR-024](../adr/024-run-lanes-and-run-family-model.md) §7 | `run.activateOnSlot` already picks cheapest profile (`attach` → `ensure-js-runtime` → `full`). | Reuse chain for `farmslot-farm` profiles; extend activate path when `slotId` omitted / released-slot affinity (already on ROADMAP-next). |
+| [ADR-039](../adr/039-run-portable-bundles.md) | Worktree sandboxes + bundle seed. | No change; unified project simplifies `project` field on export/import. Align [worktree-operator-model.md](../operations/worktree-operator-model.md) examples to `project: farmslot-farm`. |
 | [ADR-034](../adr/034-recipe-protocol-v1.md) | Self-validation suite spans CC, gateway RPC, companion. | Validation plan `kind: recipe` references suite entries; ties to ROADMAP-next recipe adoption item #2. |
 | [ADR-036](../adr/036-cli-onboarding.md) | Companion pack portability + pairing. | Companion validation steps assume gateway URL from slot; no ADR change. |
 | [ADR-033](../adr/033-mobile-tmux-worker-control.md) | Companion as gateway client. | Validation plan treats Companion as proof surface, not separate product. |
-| [ADR-007](../adr/007-project-structure.md) | Monorepo + `apps` in schema. | Unified `farmslot` project is the intended use of `project.json` `apps` + `{{app}}` hooks. |
+| [ADR-007](../adr/007-project-structure.md) | Monorepo + `apps` in schema. | Unified `farmslot-farm` project is the intended use of `project.json` `apps` + `{{app}}` hooks. |
 | [ADR-031](../adr/031-deterministic-first-auto-recovery.md) | Deterministic classifier before LLM. | Reuse pattern for profile-fit; audit/recovery can consume `validationPlan` misses later. |
 | **Project-fit gate (code, no ADR)** | Shipped in `project-fit-gate.ts` / `task-steps.ts`. | Document in this plan; optional one-paragraph cross-reference in ADR-037 addendum ("inter-project fit gate"). |
 | [generic-recipe-protocol.md](generic-recipe-protocol.md) | Phase 4 self-validation suite. | Multi-surface validation plan is the **dispatch/prepare** complement to recipe suite **evidence**. |
-| [farmslot-self-integration-day.md](farmslot-self-integration-day.md) | Uses `project: farmslot`. | Update examples to `farmslot` when migration lands. |
+| [farmslot-self-integration-day.md](farmslot-self-integration-day.md) | Uses `project: farmslot-farm`. | Updated with migration. |
 | [companion-ui-architecture-refactor.md](companion-ui-architecture-refactor.md) | UI structure only. | Orthogonal; no blocker. |
 
 **Not planned elsewhere (gap this plan fills):**
 
-- Merging `farmslot` + `farmslot` project configs.
+- Merging legacy `farmslot` + `farmslot-companion` project configs into `farmslot-farm`.
 - Intra-project profile/app classifier.
 - Multi-surface validation plan on runs/tasks.
 - Companion `ensure-js-runtime` / `full` prepare profiles on unified project.
