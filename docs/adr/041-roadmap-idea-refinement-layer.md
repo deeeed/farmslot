@@ -41,7 +41,7 @@ RoadmapItem(stage=rough)
   -> interactive refinement
   -> RoadmapItem(stage=refined)
       ├─ manual developer path -> write/update ADR if needed
-      └─ productized path -> BacklogItem(s)
+      └─ productized path -> backlog markdown spec(s)
                          -> DispatchQueue -> RunFamily -> RunBundle evidence
 ```
 
@@ -197,7 +197,7 @@ Derived examples:
 
 ### Backlog and dispatch
 
-Backlog remains the execution handoff. `backlog.enqueue` remains the path into the dispatch queue. Roadmap promotion creates backlog items; it never calls `run.create` directly. ADR-011/TASK.md execution checklists remain per-run task tracking; roadmap acceptance criteria are product/planning gates and are copied into backlog items only at promotion.
+Backlog remains the execution handoff. `backlog.enqueue` remains the path into the dispatch queue. Roadmap promotion creates backlog markdown specs; it never calls `run.create` directly. ADR-011/TASK.md execution checklists remain per-run task tracking; roadmap acceptance criteria are product/planning gates and are copied into backlog items only at promotion.
 
 Backlog item additions:
 
