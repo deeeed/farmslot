@@ -62,6 +62,8 @@ interface SlotCheckResult {
   cdp: string;
   fixtures: string;
   branch: string;
+  session?: string;
+  repo?: string;
   agent: string;
   enabled: boolean;
   mode: string;
@@ -320,6 +322,8 @@ function buildRefreshSlotRow(r: SlotCheckResult, prev: PreviousSlotStatus) {
     cdp: r.cdp,
     fixtures: r.fixtures,
     branch: r.branch,
+    ...(r.session ? { session: r.session } : {}),
+    ...(r.repo ? { repo: r.repo } : {}),
     agent: r.agent,
     enabled: r.enabled,
     mode: r.mode,
@@ -608,6 +612,8 @@ async function checkSingleSlot(
     cdp: cdpStr,
     fixtures: fixStr,
     branch: branchStr,
+    session: vars.session || undefined,
+    repo: vars.remoteRepo,
     agent: agentStr,
     enabled: true,
     mode,

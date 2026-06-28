@@ -85,7 +85,7 @@ import {
   isSlotIdleBranch,
   remoteBranchRefspec,
   resolveMergeMainStrategy,
-  resolveSlotTrackingBranch,
+  resolveSlotTrackingBranchFromProject,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
 
@@ -562,7 +562,7 @@ async function slotPrepareInner(
   } else {
     if (!branch && current && current !== defaultBranch) {
       const linkedWorktree = await detectLinkedWorktree(vars);
-      const trackingBranch = resolveSlotTrackingBranch(
+      const trackingBranch = resolveSlotTrackingBranchFromProject(
         projectJson,
         vars,
         projectVars,

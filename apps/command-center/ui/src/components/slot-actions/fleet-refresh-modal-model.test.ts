@@ -7,7 +7,6 @@ import {
   appendFleetRefreshRowLog,
   buildFleetRefreshReviewRows,
   deselectFleetRefreshDangerousRows,
-  isFleetRefreshIdleBranch,
   findFleetRefreshRowByRequestId,
   fleetRefreshBlockedReason,
   fleetRefreshRunningProgress,
@@ -36,19 +35,30 @@ function slot(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
   } as SlotStatus;
 }
 
-test('isFleetRefreshIdleBranch treats ADR-042 tracking branches as idle', () => {
-  assert.equal(isFleetRefreshIdleBranch('main', 'main'), true);
-  assert.equal(isFleetRefreshIdleBranch('wt/ff-2', 'main'), true);
-  assert.equal(isFleetRefreshIdleBranch('feat/28-add-demo-red-banner', 'main'), false);
-});
+const farmslotFarmProject = {
+  'farmslot-farm': {
+    defaultBranch: 'main',
+    slotTrackingBranch: 'wt/{{session}}',
+    worktreeBase: '/Users/deeeed/dev/farmslot-wt',
+  },
+};
 
-test('buildFleetRefreshReviewRows treats idle wt/ff tracking branches as safe', () => {
+test('buildFleetRefreshReviewRows treats configured tracking branches as safe', () => {
   const result = buildFleetRefreshReviewRows(
-    [slot({ slot: 'ff-2', branch: 'wt/ff-2', project: 'farmslot-farm' })],
+    [
+      slot({
+        slot: 'macwork-ff-2',
+        branch: 'wt/ff-2',
+        project: 'farmslot-farm',
+        session: 'ff-2',
+        repo: '/Users/deeeed/dev/farmslot-wt/farmslot-2',
+      }),
+    ],
     { projects: [], machines: [] },
+    farmslotFarmProject,
   );
 
-  const row = result.rows.get('ff-2');
+  const row = result.rows.get('macwork-ff-2');
   assert.equal(row?.isStale, false);
   assert.equal(row?.mode, 'safe');
   assert.equal(row?.selected, true);

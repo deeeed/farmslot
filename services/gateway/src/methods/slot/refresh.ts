@@ -31,7 +31,7 @@ import {
   detectLinkedWorktree,
   isSlotIdleBranch,
   resetSlotRepoToIdle,
-  resolveSlotTrackingBranch,
+  resolveSlotTrackingBranchFromProject,
   slotIdleResetStepDetail,
 } from './slot-tracking.js';
 
@@ -44,7 +44,7 @@ export function refreshStaleBranchDetail(
   defaultBranch: string,
 ): string | null {
   if (!currentBranch) return null;
-  const trackingBranch = resolveSlotTrackingBranch(
+  const trackingBranch = resolveSlotTrackingBranchFromProject(
     projectJson,
     slotVars,
     projectVars,
@@ -155,12 +155,12 @@ export async function slotRefresh(
     const defaultBranch = getProjectField(projectJson, 'default_branch') || DEFAULT_BRANCH;
     const defaultBranchRefspec = `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`;
     const linkedWorktree = await detectLinkedWorktree(vars);
-    const trackingBranch = resolveSlotTrackingBranch(
-      projectJson,
-      vars,
-      projectVars,
-      linkedWorktree,
-    );
+  const trackingBranch = resolveSlotTrackingBranchFromProject(
+    projectJson,
+    vars,
+    projectVars,
+    linkedWorktree,
+  );
     const effectiveBranch = linkedWorktree ? trackingBranch : defaultBranch;
 
     // 1. SSH ping (remote slots only)

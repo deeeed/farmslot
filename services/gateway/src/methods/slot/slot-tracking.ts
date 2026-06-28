@@ -1,6 +1,16 @@
 import path from 'node:path';
 
-import { DEFAULT_BRANCH } from '@farmslot/protocol';
+import {
+  DEFAULT_BRANCH,
+  isLegacyWorktreeTrackingBranch,
+  isSlotIdleBranch,
+  remoteBranchRefspec,
+  resolveSlotTrackingBranch,
+  type ResetSlotRepoToIdleOptions,
+  type SlotIdleResetResult,
+  type SlotTrackingProjectConfig,
+  type SlotTrackingSlotContext,
+} from '@farmslot/protocol';
 
 import {
   execOnSlot,
@@ -17,19 +27,8 @@ import { REFRESH_INDEX_AND_UNLOCK_COMMAND } from './git-cleanup-commands.js';
 
 export type MergeMainStrategy = 'merge' | 'rebase';
 
-/** Legacy farmslot ff sandboxes; kept until all pools declare slot_tracking_branch. */
-export function isDefaultWorktreeTrackingBranch(branch: string): boolean {
-  return /^wt\/ff-[A-Za-z0-9._-]+$/.test(branch);
-}
-
-/** Linked worktrees use a .git *file* pointing at the main repo's worktree metadata. */
-export function isLinkedGitWorktreeMarker(stdout: string): boolean {
-  return stdout.trim() === 'linked';
-}
-
-export function remoteBranchRefspec(name: string): string {
-  return `+refs/heads/${name}:refs/remotes/origin/${name}`;
-}
+export { isLegacyWorktreeTrackingBranch, isSlotIdleBranch, remoteBranchRefspec, resolveSlotTrackingBranch };
+export const isDefaultWorktreeTrackingBranch = isLegacyWorktreeTrackingBranch;
 
 export function worktreeBaseResetRef(
   defaultBranch: string,
@@ -47,7 +46,21 @@ export function resolveMergeMainStrategy(
   return configured === 'rebase' ? 'rebase' : 'merge';
 }
 
-export function resolveSlotTrackingBranch(
+function projectTrackingConfig(
+  projectJson: RawProjectJson,
+  defaultBranch: string,
+): SlotTrackingProjectConfig {
+  return {
+    defaultBranch,
+    slotTrackingBranch: getProjectField(projectJson, 'slot_tracking_branch'),
+  };
+}
+
+function slotTrackingContext(vars: SlotVars): SlotTrackingSlotContext {
+  return { session: vars.session, slotId: vars.slotId };
+}
+
+export function resolveSlotTrackingBranchFromProject(
   projectJson: RawProjectJson,
   slotVars: SlotVars,
   projectVars: ProjectVars | undefined,
@@ -61,27 +74,17 @@ export function resolveSlotTrackingBranch(
     return expandTemplate(template, slotVars, projectVars);
   }
 
-  const session = slotVars.session?.trim();
-  if (session) return `wt/${session}`;
-
-  return defaultBranch;
+  return resolveSlotTrackingBranch(
+    projectTrackingConfig(projectJson, defaultBranch),
+    slotTrackingContext(slotVars),
+    true,
+    defaultBranch,
+  );
 }
 
-export function isSlotIdleBranch(
-  currentBranch: string,
-  trackingBranch: string,
-  defaultBranch: string,
-  linkedWorktree: boolean,
-): boolean {
-  if (!currentBranch) return false;
-  if (linkedWorktree) {
-    return (
-      currentBranch === trackingBranch ||
-      currentBranch === defaultBranch ||
-      isDefaultWorktreeTrackingBranch(currentBranch)
-    );
-  }
-  return currentBranch === defaultBranch;
+/** Linked worktrees use a .git *file* pointing at the main repo's worktree metadata. */
+export function isLinkedGitWorktreeMarker(stdout: string): boolean {
+  return stdout.trim() === 'linked';
 }
 
 export async function detectLinkedWorktree(vars: SlotVars): Promise<boolean> {
@@ -92,16 +95,7 @@ export async function detectLinkedWorktree(vars: SlotVars): Promise<boolean> {
   return isLinkedGitWorktreeMarker(linkedWorktreeR.stdout);
 }
 
-export interface SlotIdleResetResult {
-  trackingBranch: string;
-  previousBranch: string;
-  linkedWorktree: boolean;
-}
-
-export interface ResetSlotRepoToIdleOptions {
-  /** When known by the caller (e.g. slot.refresh), skip a second linked-worktree probe. */
-  linkedWorktree?: boolean;
-}
+export type { SlotIdleResetResult, ResetSlotRepoToIdleOptions };
 
 export async function resetSlotRepoToIdle(
   vars: SlotVars,
@@ -113,7 +107,7 @@ export async function resetSlotRepoToIdle(
   const repo = shellQuote(vars.remoteRepo);
   const linkedWorktree =
     options?.linkedWorktree ?? (await detectLinkedWorktree(vars));
-  const trackingBranch = resolveSlotTrackingBranch(
+  const trackingBranch = resolveSlotTrackingBranchFromProject(
     projectJson,
     vars,
     projectVars,

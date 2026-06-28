@@ -103,6 +103,10 @@ export interface ProjectConfig {
   name: string;
   repoUrl: string;
   defaultBranch: string;
+  /** Linked-worktree idle branch template (e.g. wt/{{session}}). See ADR-042. */
+  slotTrackingBranch?: string;
+  /** When set, slots whose repo path is under this directory use linked-worktree idle rules. */
+  worktreeBase?: string;
   apps?: string[];
   paths: { runtimeDir: string; artifactDir: string };
   defaults: Record<string, { runner: string; model: string }>;

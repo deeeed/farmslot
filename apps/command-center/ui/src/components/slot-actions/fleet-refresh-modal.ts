@@ -17,6 +17,7 @@ import { html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import type {
+  ConfigProjectsResult,
   FleetPrSummaryResult,
   FleetRefreshScheduledEvent,
   FleetRefreshSlotsResult,
@@ -38,6 +39,7 @@ import {
   buildFleetRefreshReviewRows,
   deselectFleetRefreshDangerousRows,
   findFleetRefreshRowByRequestId,
+  type FleetRefreshProjectConfig,
   type FleetRefreshRowState,
   fleetRefreshRunningProgress,
   groupFleetRefreshRows,
@@ -122,8 +124,25 @@ export class FleetRefreshModal extends FleetRefreshModalState {
     this._filteredOutCount = 0;
 
     let fleet: FleetStatusResult;
+    let projectConfigs: Record<string, FleetRefreshProjectConfig> = {};
     try {
-      fleet = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
+      const [fleetResult, projectsResult] = await Promise.all([
+        gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
+        gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {}).catch(() => ({
+          projects: [],
+        })),
+      ]);
+      fleet = fleetResult;
+      projectConfigs = Object.fromEntries(
+        (projectsResult.projects ?? []).map((project) => [
+          project.name,
+          {
+            defaultBranch: project.defaultBranch,
+            slotTrackingBranch: project.slotTrackingBranch,
+            worktreeBase: project.worktreeBase,
+          },
+        ]),
+      );
     } catch (err) {
       this._phase = 'error';
       this._error = `Fleet load failed: ${err instanceof Error ? err.message : 'unknown'}`;
@@ -133,6 +152,7 @@ export class FleetRefreshModal extends FleetRefreshModalState {
     const { rows, hidden, staleSlotIds, filteredOutCount } = buildFleetRefreshReviewRows(
       fleet.fleet.slots,
       this._filterSnapshot,
+      projectConfigs,
     );
 
     this._rows = rows;

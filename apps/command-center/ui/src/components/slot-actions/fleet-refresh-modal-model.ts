@@ -1,4 +1,10 @@
-import type { FleetPrSummaryEntry, FleetRefreshSlotStatus, SlotStatus } from '@farmslot/protocol';
+import type {
+  FleetPrSummaryEntry,
+  FleetRefreshSlotStatus,
+  ProjectConfig,
+  SlotStatus,
+} from '@farmslot/protocol';
+import { isSlotRefreshStaleBranch } from '@farmslot/protocol';
 
 export type FleetRefreshPhase = 'loading' | 'review' | 'running' | 'done' | 'error';
 
@@ -6,6 +12,11 @@ export interface FleetRefreshFilterSnapshot {
   projects: string[];
   machines: string[];
 }
+
+export type FleetRefreshProjectConfig = Pick<
+  ProjectConfig,
+  'defaultBranch' | 'slotTrackingBranch' | 'worktreeBase'
+>;
 
 export interface FleetRefreshRowState {
   slotId: string;
@@ -56,16 +67,10 @@ export type FleetRefreshBulkSelectionTarget = 'safe' | 'force-safe';
 
 const FLEET_REFRESH_DEFAULT_BRANCH = 'main';
 
-/** ADR-042 farmslot ff sandboxes idle on wt/ff-N @ origin/main — not `main` by name. */
-export function isFleetRefreshIdleBranch(branch: string, defaultBranch: string): boolean {
-  if (!branch) return false;
-  if (branch === defaultBranch) return true;
-  return /^wt\/ff-[A-Za-z0-9._-]+$/.test(branch);
-}
-
 export function buildFleetRefreshReviewRows(
   slots: readonly SlotStatus[],
   filterSnapshot: FleetRefreshFilterSnapshot,
+  projectConfigs: Readonly<Record<string, FleetRefreshProjectConfig>> = {},
 ): FleetRefreshReviewRows {
   const hidden: Array<{ slotId: string; reason: string }> = [];
   const rows: Map<string, FleetRefreshRowState> = new Map();
@@ -90,11 +95,13 @@ export function buildFleetRefreshReviewRows(
       continue;
     }
 
-    // Gateway truth lives in project.json default_branch but isn't surfaced via
-    // fleet.status. The bulk method re-checks with full project context at execution time.
-    const defaultBranch = FLEET_REFRESH_DEFAULT_BRANCH;
-    const isStale =
-      Boolean(slot.branch) && !isFleetRefreshIdleBranch(slot.branch, defaultBranch);
+    const projectCfg = projectConfigs[slot.project];
+    const defaultBranch = projectCfg?.defaultBranch ?? FLEET_REFRESH_DEFAULT_BRANCH;
+    const isStale = isSlotRefreshStaleBranch(slot.branch ?? '', projectCfg ?? { defaultBranch }, {
+      session: slot.session,
+      slotId: slot.slot,
+      repo: slot.repo,
+    });
     const row: FleetRefreshRowState = {
       slotId: slot.slot,
       machine: slot.machine,
@@ -102,7 +109,7 @@ export function buildFleetRefreshReviewRows(
       branch: slot.branch ?? '',
       defaultBranch,
       isStale,
-      selected: !isStale, // Safe rows auto-checked, Force rows opt-in
+      selected: !isStale,
       prAnnotation: null,
       status: 'idle',
       detail: '',
