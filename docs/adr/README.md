@@ -1,7 +1,7 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-06-27
+**Last updated:** 2026-06-28
 **Stale by:** 2026-09-08
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
@@ -47,7 +47,7 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [035](035-node-support-bundles.md)                     | Node Support Bundles                                                    | Accepted |
 | [036](036-cli-gateway-profiles.md)                     | CLI Gateway Profiles and Auth                                           | Accepted |
 | [037](037-prepare-profiles.md)                         | Prepare Profiles — Project-Defined Slot Entry Points                    | Accepted |
-| [038](038-gate-held-worker-session.md)                 | Gate-Held Worker Session at Publication Human Gate                    | Accepted |
-| [039](039-run-portable-bundles.md)                     | Portable Run Bundles for Cross-Gateway Reference Seeding              | Accepted |
-| [040](040-epic-work-graph-orchestration.md)            | Epic Work-Graph Orchestration                                         | Proposed |
-| [041](041-roadmap-idea-refinement-layer.md)             | Roadmap Idea Refinement Layer                                         | Proposed |
+| [038](038-gate-held-worker-session.md)                 | Gate-Held Worker Session at Publication Human Gate                      | Accepted |
+| [039](039-run-portable-bundles.md)                     | Portable Run Bundles for Cross-Gateway Reference Seeding                | Accepted |
+| [040](040-work-graph-orchestration.md)                 | Work-Graph Orchestration for Backlog Dependency DAGs                    | Proposed |
+| [041](041-roadmap-idea-refinement-layer.md)            | Roadmap Idea Refinement Layer                                           | Proposed |

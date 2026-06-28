@@ -3,7 +3,7 @@
 **Owner:** Arthur
 **Date:** 2026-06-27
 **Status:** Active execution plan (today)
-**Relates to:** [ADR-039](../adr/039-run-portable-bundles.md), [ADR-040](../adr/040-epic-work-graph-orchestration.md) (future), [ROADMAP-next.md](../ROADMAP-next.md), [worktree-operator-model.md](../operations/worktree-operator-model.md)
+**Relates to:** [ADR-039](../adr/039-run-portable-bundles.md), [ADR-040](../adr/040-work-graph-orchestration.md) (future), [ROADMAP-next.md](../ROADMAP-next.md), [worktree-operator-model.md](../operations/worktree-operator-model.md)
 
 ## Why this exists
 
@@ -30,11 +30,11 @@ Epic work graphs (ADR-040) come **after** steps 1–3 are boringly reliable.
 
 ## Operator model (steady state)
 
-| Plane | Port | Role |
-| ----- | ---- | ---- |
-| **Main operator** | 7777 / Companion `local` | Canonical `.runs/`, real dispatches, history you care about |
-| **Worktree sandbox** | 7778+ | Gateway code experiments, seeded references, throwaway trials |
-| **tmux runner** | — | Worker execution surface; must be **dispatched by Farmslot**, not ad hoc `claude` in repo |
+| Plane                | Port                     | Role                                                                                      |
+| -------------------- | ------------------------ | ----------------------------------------------------------------------------------------- |
+| **Main operator**    | 7777 / Companion `local` | Canonical `.runs/`, real dispatches, history you care about                               |
+| **Worktree sandbox** | 7778+                    | Gateway code experiments, seeded references, throwaway trials                             |
+| **tmux runner**      | —                        | Worker execution surface; must be **dispatched by Farmslot**, not ad hoc `claude` in repo |
 
 **Rule:** Even interactive dev with Grok/Claude/Codex in parallel should create **Run records** (lane `production` or `interactive dev`) so history is queryable and exportable.
 

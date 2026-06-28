@@ -1,4 +1,4 @@
-# ADR-040: Epic Work-Graph Orchestration
+# ADR-040: Work-Graph Orchestration for Backlog Dependency DAGs
 
 - **Status:** Proposed
 - **Date:** 2026-06-27
@@ -9,10 +9,9 @@
   - ADR-038 (gate-held worker session) — publication gate is a run-step gate the graph observes
   - ADR-039 (run portable bundles) — `artifact` edge evidence may reference a bundle path
   - PR #95 (backlog intake) — a work node is a thin pointer to exactly one backlog item
+  - ADR-041 (roadmap idea refinement) — roadmap can promote one refined item into many backlog items plus an optional work graph
 
-**Review signoffs:** Reconciled from independent planning/review proposals (2026-06-27
-tmux brainstorm). The consensus draft was approved with operational patches D13–D15 (§13, §15).
-Design only — not an implementation order until roadmap-approved.
+**Review signoffs:** Reconciled from independent planning/review proposals (2026-06-27 tmux brainstorm). The consensus draft was approved with operational patches D13–D15 (§13, §15). Design only — not an implementation order until roadmap-approved.
 
 ---
 
@@ -22,18 +21,18 @@ Farmslot orchestrates **one objective** end-to-end today. A family (`familyId` +
 `parentRunId`, ADR-024) carries a single ticket/PR from `fix-bug` → `review-pr` →
 `pr-complete` → `merge-main`, with ci-watch auto-chaining the mechanical follow-ups.
 Backlog (PR #95) is flat intake with a 1:1 item→run handoff and no edges. `run.blocked`
-means a *live run* is stopped at a human/engine decision inside its own pipeline.
+means a _live run_ is stopped at a human/engine decision inside its own pipeline.
 
 What is missing is a layer **above** the family that knows objective B must wait for
 objective A's PR to merge, and that schedules both across the fleet in parallel without a
-human babysitting each handoff. The user's end-state: pass an epic, Farmslot fans work out
+human babysitting each handoff. The user's end-state: pass a set of dispatchable objectives, Farmslot fans work out
 across runners, respects dependencies, auto-unlocks downstream work (including rebase +
 pr-complete on stacked PRs), and humans appear only at explicit surface gates (visual
 validation/demo, publication/code review, dangerous tier).
 
 Two hard problems this ADR must not get wrong:
 
-1. **Do not overload ADR-024 family.** `familyId`/`parentRunId` = *vertical* lineage for one
+1. **Do not overload ADR-024 family.** `familyId`/`parentRunId` = _vertical_ lineage for one
    objective. Cross-objective dependency is a different concept and needs a different
    namespace. Reusing `parentRunId` for a cross-objective edge corrupts branch naming,
    family-context inheritance, and readiness summaries.
@@ -52,7 +51,7 @@ The load-bearing model is **three orthogonal axes, each with its own identifier 
 none reusing another's key**:
 
 ```
-  WorkGraph (epic)            ← HORIZONTAL: ordering between objectives
+  WorkGraph (dependency DAG)  ← HORIZONTAL: ordering between dispatchable objectives
   ├── WorkNode A  ──edge──▶ WorkNode B  ──edge──▶ WorkNode C
   │      │                     │                     │
   │   backlogItemId         backlogItemId         backlogItemId   ← intake + dispatch config (PR #95)
@@ -68,19 +67,19 @@ none reusing another's key**:
 
 **Why family stays vertical (unchanged).** A family is a causal chain about one branch.
 Branch naming (`<flow>/<ticket>-<intent-slug>-<variant>`), context inheritance (root's
-`report.md`/`learnings.md`/`recipe.json`), and `parentRunId` ("this run *continues* that one
-on the same objective") are all correct *because* every member shares the root's scope.
+`report.md`/`learnings.md`/`recipe.json`), and `parentRunId` ("this run _continues_ that one
+on the same objective") are all correct _because_ every member shares the root's scope.
 
 **Why the graph stays horizontal (new).** Node B depends on node A's **terminal external
-state** (PR merged), not A's run lineage — it inherits A's *side effect* (merged code on
+state** (PR merged), not A's run lineage — it inherits A's _side effect_ (merged code on
 main), not A's context. Horizontal nodes run on different runners **in parallel** the instant
 their upstream edges clear. The graph never writes branch names or family artifacts; its only
-outputs are *enqueue / unlock* decisions.
+outputs are _enqueue / unlock_ decisions.
 
 **Invariant:** `workNodeId`, `familyId`, and `parentRunId` are distinct namespaces. A node
-*references* a family (via its backlog item) but never *is* one. `parentRunId` is never a
+_references_ a family (via its backlog item) but never _is_ one. `parentRunId` is never a
 graph edge; the graph-owned `waitingOn` is never a family follow-up. Wanting to set
-`parentRunId` to a run in a *different* family is the signal you actually need a `WorkEdge`.
+`parentRunId` to a run in a _different_ family is the signal you actually need a `WorkEdge`.
 
 **The scheduler is a readiness oracle + enqueuer, not a second orchestrator.** It evaluates
 edges, then **enqueues ready backlog items through the existing dispatch queue** (or, for
@@ -99,52 +98,57 @@ the idempotency ledger.
 ```ts
 // ---- Graph ----
 export interface WorkGraph {
-  id: string;                    // wg_<slug>
+  id: string; // wg_<slug>
   version: 1;
-  project: string;               // single-project in v1 (§12 non-goals)
+  project: string; // single-project in v1 (§12 non-goals)
   title: string;
   source: WorkGraphSource;
+  /** Shared label keys from ADR-041; propagated from roadmap/backlog when graph is drafted from promotion. */
+  labelKeys?: string[];
   status: WorkGraphStatus;
-  defaultFailurePolicy: NodeFailurePolicy;   // default 'halt'
-  scheduler: SchedulerLease;     // single-writer guard
+  defaultFailurePolicy: NodeFailurePolicy; // default 'halt'
+  scheduler: SchedulerLease; // single-writer guard
   createdAt: string;
   updatedAt: string;
 }
 
 export interface WorkGraphSource {
-  kind: 'manual' | 'jira-epic' | 'github-milestone';
-  ref?: string;                  // EPIC-123 / milestone url
+  kind: 'manual' | 'roadmap-promotion' | 'external-import';
+  ref?: string; // roadmap item/epic id, external issue/milestone url, or operator note
   url?: string;
 }
 
 export interface SchedulerLease {
-  leaseOwner?: string;           // gateway worker id
-  leaseUntil?: string;           // lease expiry (ISO)
+  leaseOwner?: string; // gateway worker id
+  leaseUntil?: string; // lease expiry (ISO)
   lastTickAt?: string;
 }
 
 export type WorkGraphStatus =
-  | 'planning'        // nodes/edges being authored, scheduler paused
-  | 'active'          // scheduler ticking
-  | 'paused'          // operator halt; in-flight runs continue, no new dispatch
-  | 'waiting'         // healthy: every incomplete node waits on upstream/gate/cap/backoff
+  | 'planning' // nodes/edges being authored, scheduler paused
+  | 'active' // scheduler ticking
+  | 'paused' // operator halt; in-flight runs continue, no new dispatch
+  | 'waiting' // healthy: every incomplete node waits on upstream/gate/cap/backoff
   | 'needs-attention' // operator must decide: node failed (policy=halt), cycle after edit, missing rebase metadata, gate rejection
-  | 'done'            // all required nodes terminal-success / skipped-by-policy / waived
-  | 'failed'          // unrecoverable (cycle at activate, or operator abandons)
+  | 'done' // all required nodes terminal-success / skipped-by-policy / waived
+  | 'failed' // unrecoverable (cycle at activate, or operator abandons)
   | 'archived';
 
 // ---- Node: thin pointer — NOT a run, NOT a family, NOT a second backlog row ----
 export interface WorkNode {
-  id: string;                    // wn_<short>
+  id: string; // wn_<short>
   graphId: string;
-  backlogItemId: string;         // 1:1 — ALL dispatch config (flow, lane, model, slots, priority) lives HERE
+  backlogItemId: string; // 1:1 — ALL dispatch config (flow, lane, model, slots, priority) lives HERE
+  /** Shared label keys from ADR-041; usually inherited from the backlog item / roadmap promotion. */
+  labelKeys?: string[];
   status: WorkNodeStatus;
-  // resolved lazily once the backlog item dispatches; lets the graph observe family
-  // terminal state without re-deriving it. Attempt HISTORY is derived from family/run queries,
-  // not stored on the node.
-  familyId?: string;
-  rootRunId?: string;
+  // resolved lazily once the backlog item dispatches; lets the graph observe the CURRENT
+  // family without re-deriving it. Retry may update currentFamilyId if lane policy creates
+  // a fresh family; supersededFamilyIds keeps restart/evidence history explicit.
+  currentFamilyId?: string;
+  currentRootRunId?: string;
   latestRunId?: string;
+  supersededFamilyIds?: string[];
   // rebase topology — recorded ONLY for nodes targeted by a rebase-onto edge
   baseRef?: string;
   upstreamBaseNodeIds?: string[];
@@ -156,38 +160,38 @@ export interface WorkNode {
 }
 
 export type WorkNodeStatus =
-  | 'planned'         // authored but graph not active / scheduler hasn't evaluated it yet
-  | 'waiting'         // active: ≥1 unsatisfied required upstream edge (≠ run.blocked)
-  | 'ready'           // all required edges satisfied; eligible to enqueue
-  | 'queued'          // backlog item enqueued to dispatch queue
-  | 'running'         // family active
-  | 'gated'           // family hit a run-step gate (publication/visual/dangerous)
-  | 'succeeded'       // family terminal-success (outbound edges satisfied independently)
-  | 'failed'          // family terminal-failure (raw outcome)
+  | 'planned' // authored but graph not active / scheduler hasn't evaluated it yet
+  | 'waiting' // active: ≥1 unsatisfied required upstream edge (≠ run.blocked)
+  | 'ready' // all required edges satisfied; eligible to enqueue
+  | 'queued' // backlog item enqueued to dispatch queue
+  | 'running' // family active
+  | 'gated' // family hit a run-step gate (publication/visual/dangerous)
+  | 'succeeded' // family terminal-success (outbound edges satisfied independently)
+  | 'failed' // family terminal-failure (raw outcome)
   | 'needs-attention' // failed with policy=isolate, missing rebase metadata, or gate rejection
-  | 'skipped';        // operator pruned, or upstream failed with policy=skip-dependents
+  | 'skipped'; // operator pruned, or upstream failed with policy=skip-dependents
 
 // ---- Edge: the core new behavior ----
 export interface WorkEdge {
-  id: string;                    // we_<short>
+  id: string; // we_<short>
   graphId: string;
-  fromNodeId: string;            // upstream
-  toNodeId: string;              // downstream
+  fromNodeId: string; // upstream
+  toNodeId: string; // downstream
   condition: EdgeCondition;
-  required: boolean;             // hard dep vs optional input
+  required: boolean; // hard dep vs optional input
   status: 'pending' | 'satisfied' | 'failed' | 'waived';
-  evidence?: EdgeEvidence;       // durable proof of satisfaction (merge SHA, artifact path, manual resolution)
-  unlock: UnlockAction;          // one unlock per edge in v1 (see §6 for node-level plan)
+  evidence?: EdgeEvidence; // durable proof of satisfaction (merge SHA, artifact path, manual resolution)
+  unlock: UnlockAction; // one unlock per edge in v1 (see §6 for node-level plan)
   lastEvaluatedAt?: string;
 }
 
 // Conditions are idempotently evaluable from EXTERNAL durable state, so a restart tick rebuilds them.
 export type EdgeCondition =
   | { kind: 'family-done'; outcome?: 'success' | 'terminal' } // family terminal; no PR semantics
-  | { kind: 'pr-open' }                                       // from's PR exists & open (stacked work)
-  | { kind: 'merged'; targetRef?: string }                    // DURABLE: merge SHA or GitHub closed+merged — NOT a terminal run state
-  | { kind: 'artifact'; artifactKind: string; path?: string } // named artifact present in from's bundle (ADR-039)
-  | { kind: 'manual'; gateId: string };                       // operator flips it (graph-native gate, §8)
+  | { kind: 'pr-open' } // v2: from's PR exists & open (stacked work)
+  | { kind: 'merged'; targetRef?: string } // v1: DURABLE merge SHA or GitHub closed+merged — NOT a terminal run state
+  | { kind: 'artifact'; artifactKind: string; path?: string } // v2: named artifact present in from's bundle (ADR-039)
+  | { kind: 'manual'; gateId: string }; // v1: operator flips it (graph-native gate, §8)
 
 export interface EdgeEvidence {
   mergeSha?: string;
@@ -199,14 +203,14 @@ export interface EdgeEvidence {
 
 // One unlock per edge in v1. The scheduler composes a node-level plan from all inbound edges (§6).
 export type UnlockAction =
-  | { kind: 'enqueue' }                                          // default: enqueue to's backlog item
-  | { kind: 'mark-ready' }                                       // mark eligible without enqueuing (operator/gate sequencing)
+  | { kind: 'enqueue' } // default: enqueue to's backlog item
+  | { kind: 'mark-ready' } // mark eligible without enqueuing (operator/gate sequencing)
   | { kind: 'rebase-onto'; flow: 'merge-main' | 'pr-complete' }; // stacked PRs — reuses ci-watch's chaining mechanism (§6)
 
 export type NodeFailurePolicy =
-  | 'halt'             // graph → needs-attention; no new enqueues (default)
-  | 'skip-dependents'  // transitive dependents → skipped; independent branches keep running
-  | 'isolate';         // only this node → needs-attention; dependents wait for operator
+  | 'halt' // graph → needs-attention; no new enqueues (default)
+  | 'skip-dependents' // transitive dependents → skipped; independent branches keep running
+  | 'isolate'; // only this node → needs-attention; dependents wait for operator
 
 export interface WaitingReason {
   kind: 'upstream' | 'manual-gate' | 'resource' | 'retry-backoff' | 'policy';
@@ -228,14 +232,23 @@ export interface GraphGateResolution {
 **Additive linkage (the only writes outside the graph store) — observation, not orchestration:**
 
 ```ts
-interface BacklogItem { workGraphId?: string; workNodeId?: string }
-interface QueueItem   { workGraphId?: string; workNodeId?: string }
-interface Run         { workGraphId?: string; workNodeId?: string }
+interface BacklogItem {
+  workGraphId?: string;
+  workNodeId?: string;
+}
+interface QueueItem {
+  workGraphId?: string;
+  workNodeId?: string;
+}
+interface Run {
+  workGraphId?: string;
+  workNodeId?: string;
+}
 ```
 
 `waitingOn` is **not** added to `Run`: a run that doesn't exist yet can't be "waiting." Upstream
 waiting is a `WorkNode` property; `RunStatus.blocked` stays a human/engine state for an
-*existing* run. The graph otherwise reads only existing run fields
+_existing_ run. The graph otherwise reads only existing run fields
 (`familyId`/`status`/`prNumber`/outcome) — one-directional observation.
 
 ---
@@ -243,6 +256,7 @@ waiting is a `WorkNode` property; `RunStatus.blocked` stays a human/engine state
 ## 4. State machines
 
 ### Graph
+
 ```
  planning ──activate(cycle check)──▶ active ⇄ paused
                                        │  │  └─ no runnable node ──▶ waiting ──▶ active
@@ -252,10 +266,12 @@ waiting is a `WorkNode` property; `RunStatus.blocked` stays a human/engine state
  needs-attention ──operator abandons──▶ failed
  any non-terminal ──▶ archived
 ```
+
 `waiting` is **healthy** (everything is correctly blocked on upstream/gate/cap/backoff).
 `needs-attention` means the scheduler cannot make a deterministic choice and a human must act.
 
 ### Node
+
 ```
  planned ──graph active──▶ waiting ──all required edges satisfied──▶ ready
    ▲                          ▲                                       │ scheduler enqueues backlog item
@@ -268,13 +284,15 @@ waiting is a `WorkNode` property; `RunStatus.blocked` stays a human/engine state
    │                                     gated ──gate resolved────────▶ running        ┌───┴────┐
    └────────── failed / needs-attention ◀── (onFailure policy) ──────────────────────┘    succeeded
 ```
-A node reaches `succeeded` on **family terminal-success**. Its *outbound* edges carry their
+
+A node reaches `succeeded` on **family terminal-success**. Its _outbound_ edges carry their
 own satisfied-bit; a `merged` edge only fires once the PR actually merges (possibly after the
 family's last run). So a node can be `succeeded` while a downstream `merged` edge is still
 `pending`. **UI must render "succeeded — merge edge pending," never a bare "done"** (consensus
 log D2).
 
 ### Edge
+
 ```
  pending ──(durable evidence observed)──▶ satisfied
     ▲   └──(required upstream terminal-failure)──▶ failed ──operator waives──▶ waived
@@ -282,9 +300,10 @@ log D2).
 ```
 
 ### Run-waiting vs run-blocked (hard-constraint #2)
+
 - **`run.blocked`** (existing) — a live run stopped at an engine/human decision inside its own
   pipeline. Owned by the run engine. **Unchanged.**
-- **`WorkNode.waiting`** (new) — *no run exists yet*; required upstream edges unsatisfied. Owned
+- **`WorkNode.waiting`** (new) — _no run exists yet_; required upstream edges unsatisfied. Owned
   by the scheduler. Nothing to block — the backlog item simply isn't enqueued.
 
 These never overlap: a node only leaves `waiting` when it is ready to create a run. Once a run
@@ -302,13 +321,19 @@ type WorkGraphEvent =
   | { kind: 'graph.created' | 'graph.updated'; graphId: string }
   | { kind: 'family.terminal'; familyId: string; outcome: 'success' | 'failure' | 'cancelled' }
   | { kind: 'run.status-changed'; runId: string; status: RunStatus }
-  | { kind: 'pr.opened' | 'pr.merged' | 'pr.closed'; repo: string; prNumber: number; mergeSha?: string }
+  | {
+      kind: 'pr.opened' | 'pr.merged' | 'pr.closed';
+      repo: string;
+      prNumber: number;
+      mergeSha?: string;
+    }
   | { kind: 'gate.opened' | 'gate.resolved'; gateId: string; runId?: string }
   | { kind: 'artifact.indexed'; runId: string; artifactKind: string }
-  | { kind: 'scheduler.tick'; graphId?: string };  // periodic (~60s) + on gateway boot
+  | { kind: 'scheduler.tick'; graphId?: string }; // periodic (~60s) + on gateway boot
 ```
 
 Event sources (all emit today or are cheap to add):
+
 - **`family.terminal`** — run engine already computes family completion
   (`buildRunFamilyReadinessSummaries`). Subscribe the scheduler.
 - **`pr.merged`** — ci-watch already polls PR state and detects merge. Emit a graph event
@@ -320,6 +345,7 @@ Event sources (all emit today or are cheap to add):
   rebuilds everything, so no event is "lost." Webhooks (v2) just lower `pr.merged` latency.
 
 **Scheduler loop (per tick / per event), under lease:**
+
 ```
 acquire/renew per-graph lease            // skip the graph if another worker holds the lease
 load graph + linked backlog/queue/runs + family summaries + PR facts + gates + artifact indexes
@@ -328,7 +354,7 @@ for each node:  recompute waitingOn + status projection
 for each node whose ALL required inbound edges are satisfied AND not gate-required:
    compute a NODE-LEVEL unlock plan from all inbound satisfied edges (deterministic order)
    execute via existing services (default: backlog.enqueue(backlogItemId))
-   record ActionKey in the idempotency ledger
+   record node-level ActionKey in the idempotency ledger
 persist graph + ledger atomically; broadcast graph update
 detect cycles at activate; an edge added to an active graph that introduces a cycle → needs-attention
 ```
@@ -339,35 +365,39 @@ isolation; it computes one deterministic node-level plan: if any required satisf
 `rebase-onto`, the rebase runs first (idempotently), then a single `enqueue`. `mark-ready` edges
 gate without enqueuing. Exactly one enqueue per node-readiness transition.
 
-**Idempotency ledger.** Every unlock records
-`ActionKey = ${graphId}:${nodeId}:${edgeId}:${actionKind}:${sourceVersion}` with
-`startedAt/completedAt/result`. If the gateway crashes after `backlog.enqueue` returns but
-before the graph persists, the next tick reconciles by `workGraphId+workNodeId` (the additive
-linkage fields): it finds the existing queue/run and marks the action complete instead of
-double-enqueuing. Conditions are idempotent for *reading*; the ledger covers the *write* side.
+**Idempotency ledger.** Every node-level unlock records
+`ActionKey = ${graphId}:${nodeId}:${actionKind}:${readinessVersion}` with
+`startedAt/completedAt/result`. `readinessVersion` is a deterministic hash of the graph version,
+the node id, satisfied required inbound edge ids, and the computed node-level action plan. It is
+not a single `edgeId`, because multiple inbound edges may satisfy together while still producing
+exactly one enqueue. If the gateway crashes after `backlog.enqueue` returns but before the graph
+persists, the next tick reconciles by `workGraphId+workNodeId` (the additive linkage fields): it
+finds the existing queue/run and marks the action complete instead of double-enqueuing.
+Conditions are idempotent for _reading_; the ledger covers the _write_ side.
 
 **Concurrency rules:**
+
 - One active root run per production-lane node. Multiple attempts allowed, but one active
   attempt unless the lane is explicitly `comparison`.
 - The scheduler may enqueue many ready nodes, but **never bypasses** the existing dispatch
   queue, slot scoring, or eval slot caps (D14). Parallel graph fan-out is throttled the same
-  way as flat backlog/queue dispatch — the graph only decides *which* items become eligible
-  to enqueue, not *how many slots* they may claim.
+  way as flat backlog/queue dispatch — the graph only decides _which_ items become eligible
+  to enqueue, not _how many slots_ they may claim.
 - A required failed upstream blocks dependents until retried, replaced, waived, or skipped.
 
 ---
 
 ## 6. Integration with backlog / queue / family / ci-watch / gates / bundles
 
-| Existing primitive | Graph reuse | New glue |
-|---|---|---|
-| **Backlog (PR #95)** | `WorkNode.backlogItemId` 1:1; `unlock` calls `backlog.enqueue`; all dispatch config lives on the item | `workGraphId`+`workNodeId` back-ref |
-| **Dispatch queue** | unchanged — graph enqueues, queue dispatches/throttles | `workGraphId`+`workNodeId` on `QueueItem` for reconcile |
-| **Family (ADR-024)** | graph reads `familyId`/terminal state; never writes family fields or `parentRunId` | resolve `familyId`+`rootRunId` onto node once first run dispatches |
-| **ci-watch chain** | intra-family auto `pr-complete`/`merge-main` stays exactly as-is | ci-watch *also* emits `pr.merged`(+SHA)/`family.terminal` graph events |
-| **Publication gate (ADR-038)** | `gated` node status mirrors the gate-held run | `gate.resolved` emits a graph event; downstream `merged` edges wait for the actual merge |
-| **Bundles (ADR-039)** | `artifact` edge condition resolves against a run bundle path | bundle path lookup in the edge evaluator; bundles are evidence, never the graph store |
-| **Webhooks (v2)** | low-latency `pr.merged`/gate facts | GitHub webhook receiver; reconciliation stays authoritative |
+| Existing primitive             | Graph reuse                                                                                           | New glue                                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **Backlog (PR #95)**           | `WorkNode.backlogItemId` 1:1; `unlock` calls `backlog.enqueue`; all dispatch config lives on the item | `workGraphId`+`workNodeId` back-ref                                                      |
+| **Dispatch queue**             | unchanged — graph enqueues, queue dispatches/throttles                                                | `workGraphId`+`workNodeId` on `QueueItem` for reconcile                                  |
+| **Family (ADR-024)**           | graph reads current family terminal state; never writes family fields or `parentRunId`                | resolve `currentFamilyId`+`currentRootRunId` onto node once first run dispatches         |
+| **ci-watch chain**             | intra-family auto `pr-complete`/`merge-main` stays exactly as-is                                      | ci-watch _also_ emits `pr.merged`(+SHA)/`family.terminal` graph events                   |
+| **Publication gate (ADR-038)** | `gated` node status mirrors the gate-held run                                                         | `gate.resolved` emits a graph event; downstream `merged` edges wait for the actual merge |
+| **Bundles (ADR-039)**          | `artifact` edge condition resolves against a run bundle path                                          | bundle path lookup in the edge evaluator; bundles are evidence, never the graph store    |
+| **Webhooks (v2)**              | low-latency `pr.merged`/gate facts                                                                    | GitHub webhook receiver; reconciliation stays authoritative                              |
 
 ### Backlog auto-dispatch exclusivity (D13)
 
@@ -377,14 +407,15 @@ double-enqueue.**
 
 Rules:
 
-1. When a backlog item is attached to an **active** work graph node (`workGraphId` +
-   `workNodeId` set), the **graph scheduler is the sole enqueue authority** for that item
-   while the graph is `active` or `paused` (paused: no new enqueues, in-flight unchanged).
+1. When a backlog item is attached to a non-terminal work graph node (`workGraphId` +
+   `workNodeId` set), the **graph scheduler is the sole enqueue authority** for that item.
+   This includes `planning`, `active`, `paused`, `waiting`, and `needs-attention`: paused means
+   no new enqueues, and waiting/needs-attention must not be bypassed by the operator UI.
 2. `backlog.autoDispatchTick` **skips** items with `workGraphId` set unless the parent graph
    is `archived`/`failed`/`done` and the item was explicitly detached.
-3. `backlog.enqueue` from the operator UI on a graph-linked item while the graph is `active`
-   is rejected or no-oped with a clear error — same as today's guard against duplicate
-   handoff; the graph path owns readiness.
+3. `backlog.enqueue` from the operator UI on a graph-linked item while the graph is non-terminal
+   is rejected with a clear error — same as today's guard against duplicate handoff; the graph
+   path owns readiness.
 4. Standalone backlog items (no `workGraphId`) keep today's flat auto-dispatch behaviour.
 
 This prevents races between the graph scheduler and the flat backlog tick from creating
@@ -403,7 +434,7 @@ A work node in the **production** lane has at most **one active root run** at a 
 (ADR-024 duplicate guard). The graph does **not** model comparison siblings or eval rubrics
 (ADR-030 stays orthogonal).
 
-If an epic objective needs multi-runner comparison:
+If a graph node needs multi-runner comparison:
 
 - Use ADR-024 `lane: comparison` + `variant` on the **backlog item / run.create** path for
   that node, with the graph treating the node as `running` until the comparison family
@@ -436,7 +467,7 @@ Two distinct gate locations — never conflated:
    - Dangerous safety-tier confirmation (ADR-023)
    - Engine ambiguity decisions inside a live run
 
-   They fire *during* a node's run, owned by the run engine. The graph observes them as node
+   They fire _during_ a node's run, owned by the run engine. The graph observes them as node
    status `gated` and does **not** advance downstream `merged` edges until the gate resolves and
    the PR actually merges. No new gate machinery.
 
@@ -451,20 +482,33 @@ Two distinct gate locations — never conflated:
    They are **never** represented as `RunStatus.blocked` unless a run already exists and is
    genuinely waiting on that gate.
 
-**Rule of thumb:** if the decision is whether an existing run may *continue or publish*, it's a
-run-step gate. If it's whether a node may *become schedulable relative to other nodes*, it's a
+**Rule of thumb:** if the decision is whether an existing run may _continue or publish_, it's a
+run-step gate. If it's whether a node may _become schedulable relative to other nodes_, it's a
 graph gate.
 
-Mapping the user's vision — *"human only at visual validation/demo and publication/code
-review"*: both map to **existing run-step gates**. ADR-040 adds **one** gate type (the `manual`
+Mapping the user's vision — _"human only at visual validation/demo and publication/code
+review"_: both map to **existing run-step gates**. ADR-040 adds **one** gate type (the `manual`
 edge) and otherwise defers entirely to the per-objective gates that already stop the line. No
-epic-level approval system is invented.
+graph-level approval system is invented.
 
 ---
 
-## 8. Epic intake (v1 vs deferred)
+## 8. Work-graph intake and roadmap positioning (v1 vs deferred)
 
-**v1 — deterministic, operator-authored over existing/imported backlog:**
+**v1 — deterministic, operator-authored over dispatchable backlog items:**
+
+ADR-041 is the roadmap/product-planning layer. Rough or refined roadmap items do not enter a
+work graph directly. The normal layered path is:
+
+```text
+RoadmapItem(stage=refined) -> promote -> BacklogItem(s) -> optional WorkGraph -> dispatch
+```
+
+Direct PR #95 backlog intake remains supported only for items that are already dispatchable.
+External themes or milestones that still need product discovery should import to roadmap first,
+not directly to backlog or work graph.
+
+**v1 — deterministic, operator-authored over existing/imported dispatchable backlog:**
 
 ```
 1. Operator creates or imports backlog items (existing: backlog.create, or jira/github import)
@@ -481,13 +525,15 @@ epic-level approval system is invented.
 Methods (v1): `workGraph.create / get / list / addNode / addEdge / updateNode / activate /
 pause / gateResolve / schedulerTick`.
 
-`source: 'jira-epic'` / `'github-milestone'` in v1 only **records provenance + bulk-creates
-nodes** from the epic's children (one node per Jira subtask / milestone issue → one backlog
-item). It does **not** infer edges — edges are operator-authored in v1.
+`source: 'external-import'` in v1 only **records provenance + bulk-creates nodes** from
+external children that are already dispatchable (one node per Jira subtask / milestone issue →
+one backlog item). It does **not** infer edges — edges are operator-authored in v1. Rough
+external themes import through ADR-041 roadmap first.
 
 **Deferred:**
+
 - Auto-edge inference (Jira "blocks" links, GitHub task-list refs) — v2.
-- LLM decomposition of a prose epic into nodes+edges — v3, always gated behind a
+- LLM decomposition of a prose roadmap item into nodes+edges — v3, always gated behind a
   human-reviews-the-graph step. **Never auto-activate an LLM-proposed graph** — a wrong edge
   silently serializes parallel work or unlocks downstream work prematurely. Prove the engine
   with hand-authored graphs first; the engine is identical regardless of who authored the edges.
@@ -498,6 +544,7 @@ item). It does **not** infer edges — edges are operator-authored in v1.
 
 **Per-node `onFailure` policy** (default `halt`), evaluated when a node's family reaches
 terminal-failure:
+
 - **`halt`** — graph → `needs-attention`; no new enqueues; in-flight nodes finish. Operator
   retries, replaces, edits edges, or aborts. Safest default — a failed upstream usually
   invalidates downstream assumptions.
@@ -506,9 +553,11 @@ terminal-failure:
   operator.
 
 **Retry vs replace (consensus log D7).** Retry re-enqueues the **same node's** backlog item and
-**stays attached to the same node** — attempt history is derived from the node's family/run
-lineage, not a separate array. Retry follows the node's existing lane rules (a new family member
-or, per lane policy, a fresh family) — it does **not** silently mint a new objective. Replacing a
+**stays attached to the same node**. If lane policy continues the existing family,
+`currentFamilyId` is unchanged. If lane policy creates a fresh family, the node moves the old
+`currentFamilyId` into `supersededFamilyIds` and sets `currentFamilyId/currentRootRunId` to the
+new family. Edge evaluation always uses `currentFamilyId`; historical evidence can query both
+current and superseded family ids. Retry does **not** silently mint a new objective. Replacing a
 node's objective is an explicit operator edit, not a retry.
 
 **Required vs optional edges.** A required failed upstream blocks dependents until retry,
@@ -520,7 +569,7 @@ optional input.
 "unmerged" signal → the edge satisfied-bit flips back to `pending` → downstream nodes that were
 `ready`/`queued` but **not yet `running`** revert to `waiting`. Already-`running` downstream
 nodes are **not** clawed back (can't un-dispatch a worker) — they're flagged for operator review.
-Honest boundary: the graph prevents premature *starts*; it can't undo *in-flight* work.
+Honest boundary: the graph prevents premature _starts_; it can't undo _in-flight_ work.
 
 **Cycle handling.** Cycles are rejected at `activate` (DFS, reject with the offending edge set →
 graph `failed`). A cycle introduced by editing an active graph is an **authoring error, not an
@@ -537,7 +586,7 @@ from external state rather than from consumed events; `manual` edges persist the
 ## 10. Phased rollout
 
 - **v0 (this doc).** ADR-040 Proposed — vocabulary, entity model, and review signoffs promoted
-  to `docs/adr/040-epic-work-graph-orchestration.md` (2026-06-27). No implementation code.
+  to `docs/adr/040-work-graph-orchestration.md` (2026-06-27). No implementation code.
 
 - **v1 — execution engine + stacked-PR proof, operator-authored graphs.**
   The brief requires v1 to prove **stacked-PR rebase-unlock AND parallel fan-out**
@@ -548,7 +597,7 @@ from external state rather than from consumed events; `manual` edges persist the
   - `workGraph.create/get/list/addNode/addEdge/updateNode/activate/pause/gateResolve` +
     `schedulerTick`.
   - Scheduler with **per-graph lease** + **idempotency ledger**, reacting to `family.terminal`
-    + `pr.merged` + `scheduler.tick`.
+    - `pr.merged` + `scheduler.tick`.
   - Conditions: `family-done`, `merged` (durable), `manual`. Unlock: `enqueue` + `rebase-onto`
     (via `buildCIWatchChainedRunParams`) + `mark-ready`.
   - `baseRef`/`upstreamBaseNodeIds` + rebase evidence for the stacked case.
@@ -561,16 +610,21 @@ from external state rather than from consumed events; `manual` edges persist the
 
   > If during v1 build the rebase path proves riskier than the basic scheduler warrants, it may
   > be split to a **v1.5** milestone — but the ADR's headline v1 goal is the stacked-PR proof,
-  > so it is planned *into* v1, not deferred by default.
+  > so it is planned _into_ v1, not deferred by default.
 
-- **v2 — intake + UI editing.** Jira-epic / GitHub-milestone bulk node creation with auto-edge
+- **v2 — intake + UI editing.** Jira/GitHub bulk source import with auto-edge
   inference from native dependency links; graph editor in Command Center; full DAG
   visualization; GitHub webhooks for low-latency `pr.merged`; `artifact`/bundle edge conditions;
   operator actions for retry/replace/waive/skip.
 
-- **v3 — LLM decomposition + advanced orchestration.** Prose-epic → proposed graph
+- **v3 — LLM decomposition + advanced orchestration.** Prose roadmap item → proposed graph
   (human-reviewed before activate); cross-project graphs; critical-path scheduling; priority
   inheritance; analytics; portable cross-gateway graph execution.
+
+**Roadmap relationship (ADR-041).** WorkGraph is an executable dependency DAG over already-created
+BacklogItems. A RoadmapEpic is a planning grouping and is never stored as a WorkGraph. Roadmap
+promotion may draft a graph plan, but activation creates a canonical `.work-graphs/{id}.json`
+record owned by this ADR; roadmap stores only provenance links and promotion snapshots.
 
 **Persistence (v1 decision): new gateway store, not extending backlog.** Backlog rows stay flat
 (PR #95's clean contract); graph/node/edge + ledger live in a sibling store. Node→backlog is a
@@ -583,18 +637,18 @@ model for many jobs" anti-pattern ADR-024 §0 warns against.
 
 (Detail in §9; summary for operators.)
 
-| Situation | Graph result | Operator options |
-|---|---|---|
-| Node family fails, `onFailure=halt` | graph `needs-attention` | retry / replace / waive / skip / cancel |
-| Node family fails, `skip-dependents` | dependents `skipped` | none required; independent branches run on |
-| Node family fails, `isolate` | node `needs-attention`, dependents `waiting` | hand-fix, then resume |
-| Required upstream edge `failed` | dependents blocked | retry upstream / waive edge / replace node |
-| Optional edge `failed` | downstream proceeds (if policy allows) | auto-waive records missing input |
-| Upstream PR reverted (downstream not running) | edge → `pending`, node → `waiting` | none; auto-reverts |
-| Upstream PR reverted (downstream running) | flagged for review | manual cancel if desired |
-| Cycle at activate | graph `failed` | fix edges, re-activate |
-| Cycle after edit | graph `needs-attention` | remove edge |
-| Gateway restart | tick recomputes from durable state | none; idempotent |
+| Situation                                     | Graph result                                 | Operator options                           |
+| --------------------------------------------- | -------------------------------------------- | ------------------------------------------ |
+| Node family fails, `onFailure=halt`           | graph `needs-attention`                      | retry / replace / waive / skip / cancel    |
+| Node family fails, `skip-dependents`          | dependents `skipped`                         | none required; independent branches run on |
+| Node family fails, `isolate`                  | node `needs-attention`, dependents `waiting` | hand-fix, then resume                      |
+| Required upstream edge `failed`               | dependents blocked                           | retry upstream / waive edge / replace node |
+| Optional edge `failed`                        | downstream proceeds (if policy allows)       | auto-waive records missing input           |
+| Upstream PR reverted (downstream not running) | edge → `pending`, node → `waiting`           | none; auto-reverts                         |
+| Upstream PR reverted (downstream running)     | flagged for review                           | manual cancel if desired                   |
+| Cycle at activate                             | graph `failed`                               | fix edges, re-activate                     |
+| Cycle after edit                              | graph `needs-attention`                      | remove edge                                |
+| Gateway restart                               | tick recomputes from durable state           | none; idempotent                           |
 
 ---
 
@@ -607,14 +661,14 @@ model for many jobs" anti-pattern ADR-024 §0 warns against.
 - **No fat node config** — dispatch policy (flow/lane/model/slots/priority) lives on the backlog
   item, never duplicated onto the node.
 - **No `WorkNodeAttempt[]` array on the node** — attempt history derives from family/run queries.
-- **No LLM epic decomposition** — v3, always human-reviewed before activate.
+- **No LLM graph decomposition** — v3, always human-reviewed before activate.
 - **No graph editing UI** — read-only in v1; editor in v2.
 - **No auto-edge inference** from Jira/GitHub links — v2.
 - **No cross-project graphs** — single-project in v1 (slot pools, default branches, project hooks
   are per-project).
 - **No clawing back in-flight downstream runs** on upstream revert — flagged for operator.
 - **No new human-gate machinery** — reuse ADR-038 / ADR-023 / recipe gates + the one `manual` edge.
-- **No holding slots for graph dependencies** — `waiting` nodes hold *nothing*; no run exists.
+- **No holding slots for graph dependencies** — `waiting` nodes hold _nothing_; no run exists.
 - **No experiments in the graph** — ADR-030 stays orthogonal; comparison work uses ADR-024
   comparison lane on the node's backlog/run path, not graph-internal fan-out (D15).
 - **No portable-bundle contents in graph state** — bundles are edge evidence, not the store.
@@ -630,23 +684,23 @@ Disputed points across the two proposals/reviews and the agreed resolution. Both
 gateway store, readiness-oracle scheduler, durable `merged` evidence, lease + ledger,
 `needs-attention`, no LLM in v1) before this reconciliation. The remaining disputes:
 
-| # | Disputed point | Proposal A | Proposal B | **Resolution** | Rationale |
-|---|---|---|---|---|---|
-| D1 | Node fatness | thin pointer (`backlogItemId` + edges + lazy family) | fat node (`flowType`/`priority`/`allowedSlots`/`dispatchPolicy`/`objectiveRef`) | **Thin pointer.** All dispatch config on the backlog item. | One source of truth; avoids the "overload one model" anti-pattern the alternative proposal warned against. The thin-pointer model won in review. |
-| D2 | Node terminal naming | node `done` on family-success | `succeeded`, UI shows merge-edge pending | **`succeeded` + edge pending shown separately; UI never renders bare "done."** | Same semantics; the clearer wording prevents operators reading "done" as "merged." |
-| D3 | Cycle after edit | hard `failed` | `needs-attention` | **`needs-attention`.** | A post-activate edit cycle is an authoring error, not an execution failure. The stricter failure-state proposal won in review. |
-| D4 | Unlock cardinality | one `unlock` per edge | `UnlockAction[]` array | **One unlock per edge in v1.** | Array + ledger is more machinery than v1 needs; revisit only if a real two-side-effect case appears. |
-| D5 | Unlock dispatch | fire the satisfying edge's action | node-level action plan from all inbound edges | **Node-level deterministic plan.** | Multiple inbound edges can satisfy together; per-edge firing risks conflicting/duplicate actions. Adopt the node-level plan. |
-| D6 | `rebase-onto` timing | v1 (highest-value feature) | v1.5 (highest branch-topology risk) | **v1**, scoped to the operator-authored stacked-PR proof; may split to v1.5 only if build risk demands. | BRIEF hard constraint: v1 must prove **stacked-PR rebase-unlock + parallel fan-out**. The headline goal can't be deferred. Both allowed "v1 if stacked PR is the first proof case" — it is. |
-| D7 | Retry semantics | "new family member or fresh family per lane rules" | attempts stay attached to same node | **Retry re-enqueues the same node, attached to the same node, per its lane rules; replace is an explicit operator edit.** | Prevents silent new-family/new-objective drift. Adopt the same-node framing while deferring lane-rule details. |
-| D8 | Run linkage | initially "no Run fields" | additive `workGraphId`/`workNodeId` on Run/QueueItem | **Additive back-refs on BacklogItem + QueueItem + Run.** No `waitingOn` on Run. | Restart reconciliation + UI joins need them; they're observation, not orchestration. Additive observation links are required for restart reconciliation. |
-| D9 | `WorkNodeAttempt[]` on node | derive from family/run | persist on node | **Derive from family/run; persist only the idempotency ledger.** | Storing attempts on the node duplicates family/run data and risks drift. |
-| D10 | Status set size | tight (`waiting` only) | `planned` + `waiting-upstream` distinction | **Keep both `planned` (authored/inactive) and `waiting` (active dependency wait); add `needs-attention`.** | The distinction is operationally real; one merged set with the extra status. |
-| D11 | "One new primitive" framing | only `WorkEdge` is new | `WorkGraph`/`WorkNode`/`WorkEdge` all first-class | **All three are first-class persisted records.** | Operators + scheduler need graph lifecycle, node status, waiting reasons; the edge is the core new *behavior* but not the only record. Adopt the first-class record model. |
-| D12 | `merged` evidence | "PR merged" | merge SHA / closed+merged, durable | **Durable evidence (merge SHA or GitHub closed+merged), never a transient terminal run.** | Makes restart reconciliation sound. Both agreed; pinned here. |
-| D13 | Backlog `autoDispatch` vs graph scheduler | (unstated in consensus) | (unstated) | **Graph-linked items: scheduler-only enqueue while graph is active/paused; flat auto-dispatch skips them.** | Operational review — prevents double-enqueue race with PR #95 `backlog.autoDispatchTick`. |
-| D14 | Eval slot caps under parallel fan-out | (implied queue owns throttling) | (implied) | **Graph never bypasses queue eval caps or slot selection.** | Operational review — explicit contract for parallel epic fan-out. |
-| D15 | Comparison-lane nodes in a graph | (unstated) | (unstated) | **Production node = one active root; comparison via ADR-024 lane on backlog/run, not graph-internal fan-out.** | Operational review — keeps eval methodology out of the DAG scheduler. |
+| #   | Disputed point                            | Proposal A                                           | Proposal B                                                                      | **Resolution**                                                                                                            | Rationale                                                                                                                                                                                   |
+| --- | ----------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Node fatness                              | thin pointer (`backlogItemId` + edges + lazy family) | fat node (`flowType`/`priority`/`allowedSlots`/`dispatchPolicy`/`objectiveRef`) | **Thin pointer.** All dispatch config on the backlog item.                                                                | One source of truth; avoids the "overload one model" anti-pattern the alternative proposal warned against. The thin-pointer model won in review.                                            |
+| D2  | Node terminal naming                      | node `done` on family-success                        | `succeeded`, UI shows merge-edge pending                                        | **`succeeded` + edge pending shown separately; UI never renders bare "done."**                                            | Same semantics; the clearer wording prevents operators reading "done" as "merged."                                                                                                          |
+| D3  | Cycle after edit                          | hard `failed`                                        | `needs-attention`                                                               | **`needs-attention`.**                                                                                                    | A post-activate edit cycle is an authoring error, not an execution failure. The stricter failure-state proposal won in review.                                                              |
+| D4  | Unlock cardinality                        | one `unlock` per edge                                | `UnlockAction[]` array                                                          | **One unlock per edge in v1.**                                                                                            | Array + ledger is more machinery than v1 needs; revisit only if a real two-side-effect case appears.                                                                                        |
+| D5  | Unlock dispatch                           | fire the satisfying edge's action                    | node-level action plan from all inbound edges                                   | **Node-level deterministic plan.**                                                                                        | Multiple inbound edges can satisfy together; per-edge firing risks conflicting/duplicate actions. Adopt the node-level plan.                                                                |
+| D6  | `rebase-onto` timing                      | v1 (highest-value feature)                           | v1.5 (highest branch-topology risk)                                             | **v1**, scoped to the operator-authored stacked-PR proof; may split to v1.5 only if build risk demands.                   | BRIEF hard constraint: v1 must prove **stacked-PR rebase-unlock + parallel fan-out**. The headline goal can't be deferred. Both allowed "v1 if stacked PR is the first proof case" — it is. |
+| D7  | Retry semantics                           | "new family member or fresh family per lane rules"   | attempts stay attached to same node                                             | **Retry re-enqueues the same node, attached to the same node, per its lane rules; replace is an explicit operator edit.** | Prevents silent new-family/new-objective drift. Adopt the same-node framing while deferring lane-rule details.                                                                              |
+| D8  | Run linkage                               | initially "no Run fields"                            | additive `workGraphId`/`workNodeId` on Run/QueueItem                            | **Additive back-refs on BacklogItem + QueueItem + Run.** No `waitingOn` on Run.                                           | Restart reconciliation + UI joins need them; they're observation, not orchestration. Additive observation links are required for restart reconciliation.                                    |
+| D9  | `WorkNodeAttempt[]` on node               | derive from family/run                               | persist on node                                                                 | **Derive from family/run; persist only the idempotency ledger.**                                                          | Storing attempts on the node duplicates family/run data and risks drift.                                                                                                                    |
+| D10 | Status set size                           | tight (`waiting` only)                               | `planned` + `waiting-upstream` distinction                                      | **Keep both `planned` (authored/inactive) and `waiting` (active dependency wait); add `needs-attention`.**                | The distinction is operationally real; one merged set with the extra status.                                                                                                                |
+| D11 | "One new primitive" framing               | only `WorkEdge` is new                               | `WorkGraph`/`WorkNode`/`WorkEdge` all first-class                               | **All three are first-class persisted records.**                                                                          | Operators + scheduler need graph lifecycle, node status, waiting reasons; the edge is the core new _behavior_ but not the only record. Adopt the first-class record model.                  |
+| D12 | `merged` evidence                         | "PR merged"                                          | merge SHA / closed+merged, durable                                              | **Durable evidence (merge SHA or GitHub closed+merged), never a transient terminal run.**                                 | Makes restart reconciliation sound. Both agreed; pinned here.                                                                                                                               |
+| D13 | Backlog `autoDispatch` vs graph scheduler | (unstated in consensus)                              | (unstated)                                                                      | **Graph-linked items: scheduler-only enqueue while graph is non-terminal; flat auto-dispatch skips them.**                | Operational review — prevents double-enqueue or premature enqueue races with PR #95 `backlog.autoDispatchTick`.                                                                             |
+| D14 | Eval slot caps under parallel fan-out     | (implied queue owns throttling)                      | (implied)                                                                       | **Graph never bypasses queue eval caps or slot selection.**                                                               | Operational review — explicit contract for parallel graph fan-out.                                                                                                                          |
+| D15 | Comparison-lane nodes in a graph          | (unstated)                                           | (unstated)                                                                      | **Production node = one active root; comparison via ADR-024 lane on backlog/run, not graph-internal fan-out.**            | Operational review — keeps eval methodology out of the DAG scheduler.                                                                                                                       |
 
 ---
 
@@ -655,16 +709,16 @@ gateway store, readiness-oracle scheduler, durable `merged` evidence, lease + le
 Only genuinely unresolved (architecture calls are made above):
 
 1. **`merged` target ref** — is "merged to the project default branch" the right universal
-   condition, or do some epics merge to a feature integration branch? (`targetRef` is in the type;
+   condition, or do some objective sets merge to a feature integration branch? (`targetRef` is in the type;
    default behaviour is the only open call.)
 2. **Default `onFailure`** — `halt` is the chosen default (safest). Do you want `skip-dependents`
-   as the default for *exploratory* epics so one dead objective doesn't freeze the whole graph?
-3. **Manual-gate placement** — is a `manual` *edge* enough for epic checkpoints, or do you want a
-   first-class "epic checkpoint" node that pauses everything downstream regardless of branch? (We
+   as the default for _exploratory_ graphs so one dead objective doesn't freeze the whole graph?
+3. **Manual-gate placement** — is a `manual` _edge_ enough for graph checkpoints, or do you want a
+   first-class "checkpoint" node that pauses everything downstream regardless of branch? (We
    lean edge-only for minimalism.)
 4. **Revert handling** — is "don't claw back in-flight runs, just flag" acceptable, or should the
    graph attempt cancellation of in-flight dependents when an upstream merge is reverted?
-5. **v2 intake priority** — Jira-epic or GitHub-milestone importer first?
+5. **v2 intake priority** — Jira or GitHub bulk-source importer first?
 6. **v1 Command Center surface** — is a list/table with waiting reasons enough for v1, or do you
    want the read-only DAG view in the first cut?
 7. **Stacked-PR base tracking depth** — is per-node `baseRef`/`upstreamBaseNodeIds` enough, or do

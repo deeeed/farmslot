@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 **Date:** 2026-06-28
-**Relates to:** [ADR-011](011-structured-task-tracking.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-027](027-unified-gateway-state.md), [ADR-039](039-run-portable-bundles.md), [ADR-040](040-epic-work-graph-orchestration.md)
+**Relates to:** [ADR-011](011-structured-task-tracking.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-027](027-unified-gateway-state.md), [ADR-039](039-run-portable-bundles.md), [ADR-040](040-work-graph-orchestration.md)
 
 ## Context
 
@@ -69,26 +69,26 @@ Required fields:
 - `project`: Farmslot project key or `global` / `unassigned`.
 - `title`.
 - `stage`: `rough | refining | refined | promoted | parked | archived`.
-- `labels`: shared label IDs.
+- `labelKeys`: optional shared label keys.
 - `epicId`: optional roadmap epic membership.
-- `source`: `manual | import | runner | external` plus optional path/ref.
+- `source`: `manual | import | agent | external` plus optional path/ref. `agent` means an agent proposed or captured the idea; refinement sessions are tracked separately.
 - `acceptanceCriteria`: required before promotion; optional while rough.
-- `promotion`: ledger of created backlog item IDs, work graph IDs, timestamps, and operator decisions.
+- `promotion`: ledger entries for created backlog items/work graphs, each with timestamp, operator decision, roadmap revision, and snapshot hash.
 - `createdAt`, `updatedAt`.
 - `body`: human-authored markdown.
 
 Stage semantics:
 
-| Stage | Meaning | Allowed next step |
-| ----- | ------- | ----------------- |
-| `rough` | Raw thought, unclear scope, may be only a paragraph. | refine, park, archive |
-| `refining` | Interactive runner or human refinement in progress. | refined, rough, parked |
-| `refined` | Spec has problem, proposed solution, non-goals, risks, and acceptance criteria. | promote, edit, park |
-| `promoted` | One or more backlog items/work graphs were created. | track, create additional backlog items explicitly |
-| `parked` | Worth keeping but not active. | rough/refining/refined |
-| `archived` | No longer considered. | restore only by explicit operator action |
+| Stage      | Meaning                                                                         | Allowed next step                                 |
+| ---------- | ------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `rough`    | Raw thought, unclear scope, may be only a paragraph.                            | refine, park, archive                             |
+| `refining` | Interactive runner or human refinement in progress.                             | refined, rough, parked                            |
+| `refined`  | Spec has problem, proposed solution, non-goals, risks, and acceptance criteria. | promote, edit, park                               |
+| `promoted` | One or more backlog items/work graphs were created.                             | track, create additional backlog items explicitly |
+| `parked`   | Worth keeping but not active.                                                   | rough/refining/refined                            |
+| `archived` | No longer considered.                                                           | restore only by explicit operator action          |
 
-A `RoadmapItem(stage=refined)` behaves like a Jira ticket draft: humans and agents can edit the markdown directly. Promotion writes a ledger instead of freezing an immutable revision.
+A `RoadmapItem(stage=refined)` behaves like a Jira ticket draft: humans and agents can edit the markdown directly. Because the item stays mutable after promotion, every promotion entry stores an immutable snapshot path/hash of the markdown and acceptance-criteria slice used to create downstream backlog/work-graph records.
 
 ### RefinementSession
 
@@ -116,20 +116,21 @@ Required fields:
 - `project`.
 - `title`.
 - `status`: `draft | active | done | parked | archived`.
-- `labels`: shared label IDs.
-- `items`: ordered roadmap item IDs, or a derived index from member frontmatter.
+- `labelKeys`: optional shared label keys.
+- `items`: derived from `RoadmapItem.epicId`; the epic file may cache ordering metadata, but item frontmatter is the canonical membership source.
 - `promotion`: optional links to work graph IDs produced from the epic.
 
 An epic is not a work graph. Epic membership answers “these belong together.” WorkGraph edges answer “this cannot execute until that condition is satisfied.”
 
 ### BacklogItem boundary
 
-Backlog is deliberately downstream of roadmap. A rough idea must never become a backlog item. A backlog item should be clear enough for an agent to dispatch without another product-discovery conversation. When one roadmap item requires several deployable changes, promotion creates several backlog items, each with its own objective and acceptance criteria slice.
+Backlog is deliberately downstream of roadmap. A rough idea must never become a backlog item. A backlog item should be clear enough for an agent to dispatch without another product-discovery conversation. When one roadmap item requires several deployable changes, promotion creates several backlog items, each with its own objective, structured acceptance-criteria slice, dispatch notes, and snapshot hash back to the roadmap revision that generated it.
 
 Promotion from roadmap to backlog requires:
 
 - `stage=refined`.
 - Acceptance criteria present.
+- For each generated backlog item: a title, structured `acceptanceCriteria`, `dispatchNotes`, flow/project metadata, and an immutable `roadmapSnapshotHash`.
 - Dispatch notes or enough context to generate a worker task.
 - Operator confirmation of one objective vs decomposition into multiple backlog items.
 
@@ -139,28 +140,40 @@ A single operator label vocabulary shared across product planning and execution.
 
 Required fields:
 
-- `id`: normalized slug, e.g. `mobile`, `demo`, `adr`, `high-risk`, `blocked-on-human`.
+- `key`: globally unique key. Global labels use `global:<slug>`; project labels use `project:<project>:<slug>`.
+- `slug`: normalized short slug, e.g. `mobile`, `demo`, `adr`, `high-risk`, `blocked-on-human`.
 - `name`: display label.
 - `color`: optional presentation token.
 - `description`: optional operator hint.
 - `scope`: `global | project`.
 - `project`: required only when `scope=project`.
-- `visibility`: `normal | hidden | system`.
+- `visibility`: `normal | hidden | system`. `hidden` suppresses default filter chips without deleting historical attachments; `system` is gateway-managed and not directly editable by users.
 - `createdAt`, `updatedAt`.
 
-All major records attach labels by ID:
+Records attach labels by `labelKeys`. Some fields exist today and some are proposed by this ADR:
 
 ```ts
-interface RoadmapItem { labels?: string[] }
-interface RoadmapEpic { labels?: string[] }
-interface BacklogItem { labels?: string[] }
-interface WorkGraph { labels?: string[] }
-interface WorkNode { labels?: string[] }
-interface RunFamilySummary { labels?: string[] }
-interface Run { tags?: string[] } // compatibility alias for shared label IDs
+interface RoadmapItem {
+  labelKeys?: string[];
+} // proposed
+interface RoadmapEpic {
+  labelKeys?: string[];
+} // proposed
+interface BacklogItem {
+  labelKeys?: string[];
+} // proposed
+interface WorkGraph {
+  labelKeys?: string[];
+} // proposed in ADR-040/041 reconciliation
+interface WorkNode {
+  labelKeys?: string[];
+} // proposed in ADR-040/041 reconciliation
+interface Run {
+  tags?: string[];
+} // existing compatibility alias; values normalize to label keys
 ```
 
-Long term, UI should say **Labels**. Existing run `tags` APIs remain as compatibility aliases and normalize into the same label IDs. External ticket labels from GitHub/Jira are provenance metadata; they do not become Farmslot labels unless explicitly imported or mapped.
+Run-family label filters are derived projections over member runs/backlog/work graph labels, not a separately owned `RunFamilySummary` label store. Long term, UI should say **Labels**. Existing run `tags` APIs remain as compatibility aliases and normalize into the same label keys. External ticket labels from GitHub/Jira are provenance metadata; they do not become Farmslot labels unless explicitly imported or mapped. Promotion propagates selected roadmap labels to generated backlog items and draft/active work graph records.
 
 ## Storage
 
@@ -173,7 +186,6 @@ Roadmap state is gateway-owned and markdown-first. Files must be sortable and ob
     items/YYYY-MM-DD-short-slug.md
     epics/YYYY-MM-DD-short-slug.md
     sessions/YYYY-MM-DD-short-slug.jsonl
-    graphs/YYYY-MM-DD-short-slug.graph.json
   inbox/items/YYYY-MM-DD-unassigned-short-slug.md
   cross-project/epics/YYYY-MM-DD-short-slug.md
 ```
@@ -186,14 +198,20 @@ id: ri_abc123
 kind: roadmap-item
 project: farmslot
 stage: refined
-labels: [roadmap, adr, command-center]
+labelKeys: [global:roadmap, global:adr, project:farmslot:command-center]
 epicId: re_pm_core
 acceptanceCriteria:
   - User can refine a raw roadmap item interactively.
   - Refined roadmap item can promote to one or more backlog items.
 promotion:
-  backlogItemIds: []
-  workGraphIds: []
+  entries:
+    - at: 2026-06-28T12:00:00Z
+      decision: create-backlog-items
+      roadmapRevision: 3
+      snapshotPath: snapshots/ri_abc123-20260628T120000.md
+      snapshotHash: sha256:...
+      backlogItemIds: []
+      workGraphIds: []
 ---
 
 # Title
@@ -223,7 +241,7 @@ The gate to mark refined is explicit: the item must have a problem statement, pr
 
 ### Organize
 
-The user attaches labels and optionally adds the roadmap item to a `RoadmapEpic`. Roadmap UI supports filtering by project, stage, label, and text search. Labels are identical to the labels used in run/backlog filters.
+The user attaches labels and optionally adds the roadmap item to a `RoadmapEpic`. Roadmap UI supports filtering by project, stage, label, and text search. Labels use the same `labelKeys` catalog as run/backlog filters.
 
 ### Promote
 
@@ -240,14 +258,14 @@ The decomposition boundary is execution clarity: each generated backlog item sho
 Promotion writes provenance both ways:
 
 - Roadmap item promotion ledger records created backlog/work-graph IDs.
-- Backlog items record `roadmapItemId`, optional `roadmapEpicId`, and inherited `labels`.
-- Work graphs record optional `roadmapEpicId` / `roadmapItemIds`.
+- Backlog items record `roadmapItemId`, optional `roadmapEpicId`, inherited `labelKeys`, structured `acceptanceCriteria`, `dispatchNotes`, and `roadmapSnapshotHash`.
+- Draft work graph plans inherit selected label keys from the roadmap item/epic. When activated, the canonical ADR-040 WorkGraph and WorkNodes record `roadmapEpicId` / `roadmapItemIds`, inherited `labelKeys`, and the originating promotion snapshot hash.
 
-Promotion is idempotent. Re-promoting an already-promoted item shows the existing ledger and requires an explicit “create additional backlog items” action. The ledger is the durable mapping from one roadmap item to N backlog items and optional work graph nodes.
+Promotion is idempotent. Re-promoting an already-promoted item shows the existing ledger and requires an explicit “create additional backlog items” action. The ledger is the durable mapping from one roadmap item revision to N backlog items and optional work graph nodes. Its idempotency key is the roadmap item id, roadmap revision/snapshot hash, operator decision id, and decomposition target id, so retrying a failed promotion cannot silently duplicate backlog items.
 
 ### Track
 
-Roadmap status can roll up from linked backlog/work-graph/run state, but roadmap does not mutate execution records after promotion except through explicit operator actions.
+Roadmap execution rollup is derived from linked backlog/work-graph/run state, but roadmap does not mutate execution records after promotion except through explicit operator actions. Rollup values such as `shipped`, `done`, or `attention-needed` are UI projections, not `stage` enum values.
 
 Derived examples:
 
@@ -267,13 +285,16 @@ Backlog item additions:
 interface BacklogItem {
   roadmapItemId?: string;
   roadmapEpicId?: string;
-  labels?: string[];
+  roadmapSnapshotHash?: string;
+  labelKeys?: string[];
+  acceptanceCriteria?: string[];
+  dispatchNotes?: string;
 }
 ```
 
 ### Work graphs
 
-A roadmap epic or refined roadmap item may draft a work graph, but the graph remains executable scheduling state. Work nodes point to backlog items, not roadmap items. Roadmap links to the graph for visualization and progress rollup.
+A roadmap epic or refined roadmap item may draft a work graph plan, but the active graph remains executable scheduling state owned by ADR-040. Roadmap storage does not own canonical graph JSON. Draft graph plans are either embedded in roadmap markdown/frontmatter during refinement or materialized directly as ADR-040 `.work-graphs/{id}.json` records at promotion/activation. Work nodes point to backlog items, not roadmap items. Roadmap links to the active graph for visualization and progress rollup.
 
 ### Runs and run families
 
@@ -289,7 +310,7 @@ Add a `#roadmap` / backlog-adjacent Command Center surface with four modes:
 
 1. **Inbox:** rough roadmap items, unassigned notes, imported personal roadmap items.
 2. **Refine:** selected roadmap item plus tmux runner panel and markdown editor.
-3. **Plan:** epics, labels, stage, sort order, and project filters.
+3. **Plan:** epics, labels, stage, derived rollup status, sort order, and project filters.
 4. **Promote:** decomposition UI that creates backlog items and optionally a work graph draft.
 
 Backlog UI should show roadmap provenance and labels. Run views should reuse the same label filter chips already available for run tags, backed by the shared label catalog.
@@ -325,9 +346,9 @@ Costs and risks:
 ## Rollout
 
 1. Define protocol contracts and markdown schema for roadmap items and shared labels.
-2. Add read-only gateway index over `.farmslot/roadmap` files.
+2. Add read-only gateway index over `.farmslot/roadmap` files with atomic writes and a single-writer lock for gateway mutations; human edits are picked up by reload/validation rather than live two-way sync.
 3. Add capture/edit APIs and label catalog APIs.
 4. Add refinement-session launch using tmux runner infrastructure, explicitly outside dispatch.
-5. Add promotion to backlog items with provenance and inherited labels.
-6. Add optional work-graph draft integration after ADR-040 is accepted.
+5. Add promotion to backlog items with structured acceptance criteria, dispatch notes, provenance snapshots, and inherited labels.
+6. Add optional work-graph draft integration after ADR-040 is accepted; activation writes canonical graphs to ADR-040 storage, not roadmap storage.
 7. Migrate run tag UI/API wording toward shared labels while keeping compatibility aliases.
