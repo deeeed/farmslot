@@ -4,8 +4,8 @@
  * Invoked by the git pre-push hook; also runnable manually via `yarn prepush:quality`.
  */
 import { spawnSync } from 'node:child_process';
-import { createInterface } from 'node:readline';
 import { dirname } from 'node:path';
+import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
