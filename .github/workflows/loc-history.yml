@@ -4,14 +4,21 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: '17 4 * * 1'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: loc-history
+  cancel-in-progress: false
 
 jobs:
-  verify:
-    name: Verify framework LOC snapshot
+  record:
+    name: Record framework LOC snapshot
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
@@ -29,5 +36,23 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
-      - name: Verify committed LOC history matches current tree
+      - name: Record current LOC snapshot
+        run: yarn quality:loc:record
+
+      - name: Validate LOC history JSON
+        run: python3 -m json.tool docs/reference/loc-history.json >/dev/null
+
+      - name: Verify recorded LOC history
         run: yarn quality:loc:verify
+
+      - name: Create LOC history PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/loc-history
+          delete-branch: true
+          commit-message: 'chore(quality): update LOC history'
+          title: 'chore(quality): update LOC history'
+          body: |
+            Automated LOC history snapshot update.
+
+            Keeps `docs/reference/loc-history.json` current without blocking feature PRs on snapshot drift.

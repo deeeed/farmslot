@@ -171,8 +171,8 @@ jobs:
       - name: Large-file warning
         run: yarn quality:large-files
 
-      - name: LOC history verify (squash-merge safe)
-        run: yarn quality:loc:verify
+      - name: LOC history drift advisory
+        run: yarn quality:loc:advisory
 
   package-readiness:
     name: Package publish readiness

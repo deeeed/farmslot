@@ -112,7 +112,7 @@ const TARGET_STEPS = {
     ['workspace changelogs', ['yarn', 'quality:changelogs']],
     ['import boundaries', ['yarn', 'quality:imports']],
     ['large-file warning', ['yarn', 'quality:large-files']],
-    ['loc verify', ['yarn', 'quality:loc:verify']],
+    ['loc advisory', ['yarn', 'quality:loc:advisory']],
   ],
   command_center: [
     ['recipe-harness build', ['yarn', 'workspace', '@farmslot/recipe-harness', 'build']],
