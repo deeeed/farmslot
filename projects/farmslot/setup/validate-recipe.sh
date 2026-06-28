@@ -8,7 +8,7 @@ PRIMARY_REPO="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # Homebrew/npm `capture-helper` is a Node shim whose candidate list can recurse into
 # itself (/opt/homebrew/bin/capture-helper), hanging doctor/record. Prefer the native
-# binary when CAPTURE_HELPER_PATH / SITEED_CAPTURE_HELPER_BIN are unset.
+# binary before a stale CAPTURE_HELPER_PATH that may point at a broken checkout.
 resolve_capture_helper_bin() {
   local candidate
   for candidate in \
