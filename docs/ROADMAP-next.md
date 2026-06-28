@@ -192,7 +192,7 @@ These were previously future-looking backlog items, but the codebase now shows t
 
 #### Captured but should be re-planned before execution
 
-- **Backlog Dispatch follow-ons** — PR #95 shipped V1 intake and guarded queue handoff. Do not reschedule the captured implementation lane as future work. Re-plan only concrete V2 items such as Jira/GitHub write-back, rough-idea refinement, auto-dispatch policy expansion, or backlog intelligence after real usage exposes a need.
+- **Backlog Dispatch follow-ons** — PR #95 shipped V1 intake and guarded queue handoff. Do not reschedule the captured implementation lane as future work. Re-plan only concrete V2 items such as Jira/GitHub write-back, ADR-041 roadmap refinement, auto-dispatch policy expansion, or backlog intelligence after real usage exposes a need. ADR-040 work graphs should wait until ADR-041 promotion plus the flat backlog path are proven.
 - **Dev flow publication gate follow-ons** — PR #96 shipped the publication model. Do not re-plan the original decision lane. Reopen only for evidence-driven tuning after real interactive/autonomous dev runs show a gap.
 - **Fuller cross-runner review skill/productization** — current `.agents/skills/fs-cross-review-loop/` and shipped bugfix-gate review-depth policy are enough for day-to-day use. Productize only if the gate/eval-package loop exposes gaps.
 - **Worker phase decomposition and sub-agent cost roll-up** — captured as a strategic lane, but should wait until eval packages provide a reliable way to compare harness changes. Run a new `$deep-interview`/`$plan --consensus` before implementation.
