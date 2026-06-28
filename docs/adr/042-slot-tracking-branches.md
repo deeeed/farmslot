@@ -1,6 +1,6 @@
 # ADR-042: Slot Tracking Branches for Worktrees and Idle State
 
-**Status:** Accepted
+**Status:** Accepted (implemented — PR #146 release/prepare parity, PR #147 refresh/fleet parity)
 **Date:** 2026-06-28
 **Relates to:** [ADR-022](022-slot-lifecycle-simplification.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-037](037-prepare-profiles.md), [ADR-039](039-run-portable-bundles.md)
 **Reference:** [Worktree operator model](../operations/worktree-operator-model.md)

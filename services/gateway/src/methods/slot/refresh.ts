@@ -60,10 +60,7 @@ export function refreshStaleBranchDetail(
 }
 
 /** True when refresh syncs via resetSlotRepoToIdle (force or linked safe) — not the primary fetch path. */
-export function refreshSyncUsesIdleReset(
-  mode: 'safe' | 'force',
-  linkedWorktree: boolean,
-): boolean {
+export function refreshSyncUsesIdleReset(mode: 'safe' | 'force', linkedWorktree: boolean): boolean {
   return mode === 'force' || linkedWorktree;
 }
 
@@ -112,6 +109,15 @@ export async function slotRefresh(
     emit('slot.refresh.step', { name, detail });
     out(`[${name}] ${detail}`);
   };
+  let refreshReported = false;
+  const reportRefreshFailure = (msg: string, emitErrLine = true): never => {
+    if (!refreshReported) {
+      if (emitErrLine) err(msg);
+      complete(1, msg);
+      refreshReported = true;
+    }
+    throw new Error(msg);
+  };
 
   if (activePrepareSlots.has(params.slotId)) {
     const msg = `Slot ${params.slotId} is already preparing/refreshing`;
@@ -126,8 +132,7 @@ export async function slotRefresh(
     if (!vars.slotEnabled) {
       const msg = `Slot ${params.slotId} is disabled`;
       step('skip', msg);
-      complete(1, msg);
-      throw new Error(msg);
+      reportRefreshFailure(msg, false);
     }
 
     // Lifecycle guard. Refresh — even in force mode — must never run on a slot
@@ -140,8 +145,7 @@ export async function slotRefresh(
     const blocked = slotRefreshBlockedReason(slotStatus);
     if (blocked) {
       step('skip', blocked);
-      complete(1, blocked);
-      throw new Error(blocked);
+      reportRefreshFailure(blocked, false);
     }
 
     let projectVars: ProjectVars | undefined;
@@ -168,10 +172,7 @@ export async function slotRefresh(
       step('ssh', `Checking ${vars.sshTarget}...`);
       const r = await execOnSlot(vars, 'echo ok');
       if (r.exitCode !== 0) {
-        const msg = `Cannot reach ${vars.sshTarget}`;
-        err(msg);
-        complete(1, msg);
-        throw new Error(msg);
+        reportRefreshFailure(`Cannot reach ${vars.sshTarget}`);
       }
       step('ssh', `Connected to ${vars.sshTarget}`);
     }
@@ -242,10 +243,9 @@ export async function slotRefresh(
     ).stdout.trim();
     const expectedHead = `refs/remotes/origin/${defaultBranch}`;
     if (originHead !== expectedHead) {
-      const msg = `origin/HEAD is '${originHead || 'unset'}' (expected '${expectedHead}')`;
-      err(msg);
-      complete(1, msg);
-      throw new Error(msg);
+      reportRefreshFailure(
+        `origin/HEAD is '${originHead || 'unset'}' (expected '${expectedHead}')`,
+      );
     }
     step('origin-head', `origin/HEAD = ${expectedHead}`);
 
@@ -260,10 +260,9 @@ export async function slotRefresh(
         `cd ${shellQuote(vars.remoteRepo)} && { ${CLEAR_INDEX_FLAGS_COMMAND}; }`,
       );
       if (flagSweep.exitCode !== 0) {
-        const msg = `failed to clear skip-worktree/assume-unchanged flags: ${flagSweep.stderr.slice(-200) || flagSweep.stdout.slice(-200)}`;
-        err(msg);
-        complete(1, msg);
-        throw new Error(msg);
+        reportRefreshFailure(
+          `failed to clear skip-worktree/assume-unchanged flags: ${flagSweep.stderr.slice(-200) || flagSweep.stdout.slice(-200)}`,
+        );
       }
       step('clean', 'reset --hard HEAD + clean -fd');
       const resetR = await execOnSlot(
@@ -271,17 +270,15 @@ export async function slotRefresh(
         `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard HEAD; }`,
       );
       if (resetR.exitCode !== 0) {
-        const msg = `reset --hard HEAD failed: ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`;
-        err(msg);
-        complete(1, msg);
-        throw new Error(msg);
+        reportRefreshFailure(
+          `reset --hard HEAD failed: ${resetR.stderr.slice(-200) || resetR.stdout.slice(-200)}`,
+        );
       }
       const cleanR = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && git clean -fd`);
       if (cleanR.exitCode !== 0) {
-        const msg = `git clean -fd failed: ${cleanR.stderr.slice(-200) || cleanR.stdout.slice(-200)}`;
-        err(msg);
-        complete(1, msg);
-        throw new Error(msg);
+        reportRefreshFailure(
+          `git clean -fd failed: ${cleanR.stderr.slice(-200) || cleanR.stdout.slice(-200)}`,
+        );
       }
       const idleReset = await resetSlotRepoToIdle(
         vars,
@@ -315,10 +312,9 @@ export async function slotRefresh(
         `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(defaultBranchRefspec)}`,
       );
       if (fetchR.exitCode !== 0) {
-        const msg = `git fetch origin ${defaultBranch} failed: ${fetchR.stderr.slice(-200) || fetchR.stdout.slice(-200)}`;
-        err(msg);
-        complete(1, msg);
-        throw new Error(msg);
+        reportRefreshFailure(
+          `git fetch origin ${defaultBranch} failed: ${fetchR.stderr.slice(-200) || fetchR.stdout.slice(-200)}`,
+        );
       }
       step('reset', `git reset --hard origin/${defaultBranch}`);
       const ffR = await execOnSlot(
@@ -326,10 +322,9 @@ export async function slotRefresh(
         `cd ${shellQuote(vars.remoteRepo)} && { ${REFRESH_INDEX_AND_UNLOCK_COMMAND}; git reset --hard origin/${defaultBranch}; }`,
       );
       if (ffR.exitCode !== 0) {
-        const msg = `fast-forward to origin/${defaultBranch} failed: ${ffR.stderr.slice(-200) || ffR.stdout.slice(-200)}`;
-        err(msg);
-        complete(1, msg);
-        throw new Error(msg);
+        reportRefreshFailure(
+          `fast-forward to origin/${defaultBranch} failed: ${ffR.stderr.slice(-200) || ffR.stdout.slice(-200)}`,
+        );
       }
     }
 
@@ -338,10 +333,9 @@ export async function slotRefresh(
       await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && git status --porcelain`)
     ).stdout.trim();
     if (dirtyAfter) {
-      const msg = `Working tree still dirty after reset to origin/${defaultBranch}:\n${dirtyAfter}`;
-      err(msg);
-      complete(1, msg);
-      throw new Error(msg);
+      reportRefreshFailure(
+        `Working tree still dirty after reset to origin/${defaultBranch}:\n${dirtyAfter}`,
+      );
     }
 
     const headAfter = (
@@ -383,12 +377,11 @@ export async function slotRefresh(
 
     return { requestId, refreshed: true, branch: effectiveBranch, advanced };
   } catch (e) {
-    // complete() was already emitted by the inner thrower; if we got here
-    // some unhandled path threw — surface it once.
     const msg = (e as Error).message ?? 'slot.refresh failed';
-    if (!(e as { _refreshReported?: boolean })._refreshReported) {
+    if (!refreshReported) {
       err(msg);
       complete(1, msg);
+      refreshReported = true;
     }
     throw e;
   } finally {

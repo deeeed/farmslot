@@ -1,7 +1,7 @@
 # ADR Implementation Status
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-06-28 (ADR-042 accepted; partial implementation)
+**Last updated:** 2026-06-28 (ADR-042 refresh parity shipped in PR #147)
 **Stale by:** 2026-09-08
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
@@ -232,18 +232,18 @@ ADR-041 is design intent only. It should not be implemented until a roadmap mile
 
 ## ADR-042 — Slot Tracking Branches (Accepted)
 
-**Implementation: Partial (core release/prepare parity shipped in PR #146)**
+**Implementation: Shipped (prepare/release/refresh parity in PR #146/#147)**
 
-| ADR requirement                                 | Status      | Evidence / gap                                                                      |
-| ----------------------------------------------- | ----------- | ----------------------------------------------------------------------------------- |
-| Idle = tracking branch @ `origin/defaultBranch` | Shipped     | `resetSlotRepoToIdle` on release; prepare idle guard + HEAD check                  |
-| Linked worktree reset without `checkout main`   | Shipped     | `slot-tracking.ts` + `release.ts`; E2E `macwork-ff-2` → `wt/ff-2 @ origin/main`     |
-| Project `slot_tracking_branch` template         | Shipped     | Schema + `farmslot-farm` `wt/{{session}}`; legacy `wt/ff-*` regex shim remains    |
-| `merge_main_strategy` rebase vs merge           | Shipped     | `resolveMergeMainStrategy` in prepare merge step                                    |
-| Shared idle-reset helper prepare + release      | Partial     | Release uses helper; prepare branch checkout still inlines reset (shared pure fns)  |
-| Fleet status shows tracking branch @ default    | Not started | `.farm-status.json` reports branch name only                                        |
+| ADR requirement                                 | Status  | Evidence / gap                                                                      |
+| ----------------------------------------------- | ------- | ----------------------------------------------------------------------------------- |
+| Idle = tracking branch @ `origin/defaultBranch` | Shipped | `resetSlotRepoToIdle` on prepare/release/refresh; shared `tracking-branch.ts`       |
+| Linked worktree reset without `checkout main`   | Shipped | `slot-tracking.ts`; fleet refresh probes `linked_worktree` into `.farm-status.json` |
+| Project `slot_tracking_branch` template         | Shipped | Schema + `farmslot-farm` `wt/{{session}}`; legacy `wt/ff-*` regex shim **removed**  |
+| `merge_main_strategy` rebase vs merge           | Shipped | `resolveMergeMainStrategy` in prepare merge step                                    |
+| Shared idle-reset helper prepare + release      | Shipped | `resetSlotRepoToIdle` on release + refresh; prepare uses `detectLinkedWorktree`     |
+| Fleet status shows tracking branch @ default    | Partial | `.farm-status.json` persists `linked_worktree`; `@ origin/main` display still TBD   |
 
-**Follow-ups:** bash `release-slot.sh` parity doc, fleet-status `@ origin/main` display, `resetSlotRepoToIdle` integration tests.
+**Follow-ups:** bash `release-slot.sh` parity doc, fleet-status `@ origin/main` display string.
 
 ---
 

@@ -81,7 +81,6 @@ import {
 } from './shared.js';
 import {
   detectLinkedWorktree,
-  isLinkedGitWorktreeMarker,
   isSlotIdleBranch,
   remoteBranchRefspec,
   resolveMergeMainStrategy,
@@ -89,10 +88,7 @@ import {
   worktreeBaseResetRef,
 } from './slot-tracking.js';
 
-export {
-  isLinkedGitWorktreeMarker,
-  worktreeBaseResetRef,
-} from './slot-tracking.js';
+export { isLinkedGitWorktreeMarker, worktreeBaseResetRef } from './slot-tracking.js';
 
 export async function slotPrepare(
   params: SlotPrepareParams,
@@ -762,11 +758,7 @@ async function slotPrepareInner(
         throw new Error(
           `git clean -fd failed on ${vars.slotId} (${vars.remoteRepo}): ${cleanR.stderr.slice(-200) || cleanR.stdout.slice(-200)}`,
         );
-      const linkedWorktreeR = await execOnSlot(
-        vars,
-        `test -f ${shellQuote(path.join(vars.remoteRepo, '.git'))} && echo linked || echo primary`,
-      );
-      const linkedWorktree = isLinkedGitWorktreeMarker(linkedWorktreeR.stdout);
+      const linkedWorktree = await detectLinkedWorktree(vars);
       const baseResetRef = worktreeBaseResetRef(defaultBranch, resolvedStartRef ?? null);
       if (linkedWorktree) {
         // Git worktrees cannot checkout `main` when it is active in the primary clone.
@@ -787,10 +779,7 @@ async function slotPrepareInner(
             `Working tree still dirty on ${vars.slotId} after worktree reset to ${baseResetRef}. Refusing to checkout ${branch}. Inspect with: cd ${shellQuote(vars.remoteRepo)} && git status\nDirty paths:\n${dirty}`,
           );
         }
-        step(
-          'branch',
-          `Worktree synced to ${baseResetRef} without checking out ${defaultBranch}`,
-        );
+        step('branch', `Worktree synced to ${baseResetRef} without checking out ${defaultBranch}`);
       } else {
         const coDefaultR = await execOnSlot(
           vars,

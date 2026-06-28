@@ -149,7 +149,9 @@ function taskFileRefFromRun(run: Run): string | null {
   if (!run.taskFile) return null;
   const marker = `${path.sep}tasks${path.sep}`;
   const index = run.taskFile.indexOf(marker);
-  return index === -1 ? run.taskFile : run.taskFile.slice(index + marker.length).replace(/\\/g, '/');
+  return index === -1
+    ? run.taskFile
+    : run.taskFile.slice(index + marker.length).replace(/\\/g, '/');
 }
 
 function newestActiveRunForSlot(runs: Run[], slotId: string): Run | null {
@@ -639,7 +641,11 @@ async function checkLinkedWorktree(vars: SlotVars): Promise<boolean> {
       { timeout: SLOT_CHECK_TIMEOUT_MS },
     );
     return isLinkedGitWorktreeMarker(r.stdout);
-  } catch {
+  } catch (e) {
+    console.warn(
+      `[fleet.refresh] ${vars.slotId}: linked worktree probe failed; treating as primary clone`,
+      (e as Error).message ?? e,
+    );
     return false;
   }
 }
