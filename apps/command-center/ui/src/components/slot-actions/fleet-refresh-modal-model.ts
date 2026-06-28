@@ -1,10 +1,11 @@
-import type {
-  FleetPrSummaryEntry,
-  FleetRefreshSlotStatus,
-  ProjectConfig,
-  SlotStatus,
+import {
+  DEFAULT_BRANCH,
+  isSlotRefreshStaleBranch,
+  type FleetPrSummaryEntry,
+  type FleetRefreshSlotStatus,
+  type ProjectConfig,
+  type SlotStatus,
 } from '@farmslot/protocol';
-import { isSlotRefreshStaleBranch } from '@farmslot/protocol';
 
 export type FleetRefreshPhase = 'loading' | 'review' | 'running' | 'done' | 'error';
 
@@ -65,8 +66,6 @@ export interface FleetRefreshRunningProgress {
 
 export type FleetRefreshBulkSelectionTarget = 'safe' | 'force-safe';
 
-const FLEET_REFRESH_DEFAULT_BRANCH = 'main';
-
 export function summarizeFleetRefreshEligibility(
   slots: readonly SlotStatus[],
   projectConfigs: Readonly<Record<string, FleetRefreshProjectConfig>> = {},
@@ -110,7 +109,7 @@ export function buildFleetRefreshReviewRows(
     }
 
     const projectCfg = projectConfigs[slot.project];
-    const defaultBranch = projectCfg?.defaultBranch ?? FLEET_REFRESH_DEFAULT_BRANCH;
+    const defaultBranch = projectCfg?.defaultBranch ?? DEFAULT_BRANCH;
     const isStale = isSlotRefreshStaleBranch(slot.branch ?? '', projectCfg ?? { defaultBranch }, {
       session: slot.session,
       slotId: slot.slot,

@@ -1,9 +1,13 @@
 import {
   DEFAULT_BRANCH,
+  isDispatchScoreStale,
   isSlotRefreshStaleBranch,
+  SLOT_STALE_BRANCH_SCORE_PENALTY,
   type SlotStatus,
   type SlotTrackingProjectConfig,
 } from '@farmslot/protocol';
+
+export { isDispatchScoreStale, SLOT_STALE_BRANCH_SCORE_PENALTY };
 
 import { JIRA_KEY_RE, normalizeTicketRef } from './ticket-ref.js';
 
@@ -13,7 +17,7 @@ const RED_HOST_PENALTY = 100;
 const YELLOW_HOST_PENALTY = 20;
 const TARGET_BRANCH_BONUS = 100;
 const FAMILY_AFFINITY_BONUS = 75;
-const STALE_BRANCH_PENALTY = 50;
+const STALE_BRANCH_PENALTY = SLOT_STALE_BRANCH_SCORE_PENALTY;
 const CDP_MISSING_PENALTY = 5;
 const DEVICE_MISSING_PENALTY = 5;
 const FIXTURE_STALE_PENALTY = 1;
@@ -118,6 +122,7 @@ export function resolveJiraTargetBranchFromFleet(
   slots: SlotStatus[],
   project: string,
   ticketOrPr: string,
+  projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
 ): string | undefined {
   const canonical = normalizeTicketRef(ticketOrPr);
   if (!JIRA_KEY_RE.test(canonical)) return undefined;
@@ -127,7 +132,7 @@ export function resolveJiraTargetBranchFromFleet(
         s.project === project &&
         isFreeSlot(s) &&
         s.branch &&
-        s.branch !== DEFAULT_BRANCH &&
+        isDispatchStaleBranch(s, projectConfigs) &&
         branchContainsJiraKey(s.branch, canonical),
     )?.branch || undefined
   );

@@ -3,13 +3,15 @@ import { html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { marked } from 'marked';
 
-import type {
-  BranchAffinityNudgePayload,
-  PRStatus,
-  RecipeRunArtifactGroup,
-  Run,
-  RunDecision,
-  SlotPickerPayload,
+import {
+  DEFAULT_BRANCH,
+  isDispatchScoreStale,
+  type BranchAffinityNudgePayload,
+  type PRStatus,
+  type RecipeRunArtifactGroup,
+  type Run,
+  type RunDecision,
+  type SlotPickerPayload,
 } from '@farmslot/protocol';
 
 import { colors, fonts } from '../../styles/theme-tokens.js';
@@ -463,7 +465,7 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
     </style>
     <div class="sp-list">
       ${freeOnes.map((c) => {
-        const isStale = c.score >= 50;
+        const isStale = isDispatchScoreStale(c.score);
         const selected = context.selectedSlotId === c.slotId;
         return html`
           <div
@@ -474,7 +476,7 @@ function renderSlotPicker(run: Run, decision: RunDecision, context: RunDecisionR
           >
             <div>
               <div class="sp-name">${c.slotId}</div>
-              <div class="sp-branch ${isStale ? 'stale' : ''}">${c.branch || 'main'}</div>
+              <div class="sp-branch ${isStale ? 'stale' : ''}">${c.branch || DEFAULT_BRANCH}</div>
             </div>
             <div class="sp-score ${c.score < 50 ? 'good' : 'bad'}">${c.score}</div>
             <div class="sp-lifecycle">${c.lifecycle}</div>
@@ -764,7 +766,7 @@ function renderBranchNudgeFreeSlots(
       }
     </style>
     ${candidates.map((c) => {
-      const isStale = c.score >= 50;
+      const isStale = isDispatchScoreStale(c.score);
       const selected = context.selectedSlotId === c.slotId;
       return html`
         <div
@@ -775,7 +777,7 @@ function renderBranchNudgeFreeSlots(
         >
           <div>
             <div class="bnp-name">${c.slotId}</div>
-            <div class="bnp-branch ${isStale ? 'stale' : ''}">${c.branch || 'main'}</div>
+            <div class="bnp-branch ${isStale ? 'stale' : ''}">${c.branch || DEFAULT_BRANCH}</div>
           </div>
           <div
             class="bnp-score ${c.score < 50 ? '' : ''}"

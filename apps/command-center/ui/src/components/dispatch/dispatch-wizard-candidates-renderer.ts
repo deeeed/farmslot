@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit';
 
-import type { DispatchCandidatesResult, SlotStatus } from '@farmslot/protocol';
+import { DEFAULT_BRANCH, type DispatchCandidatesResult, type SlotStatus } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -154,7 +154,7 @@ function renderCandidateRow(
         : nothing}
       <span class="cand-summary">
         <span class="cand-branch ${candidate.onMain ? '' : 'stale'}"
-          >${candidate.onMain ? 'main' : candidate.branch || 'main'}</span
+          >${candidate.branch || DEFAULT_BRANCH}</span
         >
         ${taskLabel ? html`<span class="cand-task">${taskLabel}</span>` : nothing}
         ${meta ? renderNudgeChips(meta) : nothing}

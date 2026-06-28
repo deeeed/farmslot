@@ -25,12 +25,18 @@ export interface SlotTrackingSlotContext {
   slotId?: string;
 }
 
+/** Farmslot ff sandbox tracking branches before pools declared slot_tracking_branch. */
+export const LEGACY_FF_WORKTREE_TRACKING_BRANCH_RE = /^wt\/ff-[A-Za-z0-9._-]+$/;
+
+/** Default linked-worktree branch prefix when slot_tracking_branch is unset. */
+export const LINKED_WORKTREE_SESSION_BRANCH_PREFIX = 'wt/';
+
 /**
  * Legacy linked-worktree names used before every pool declared slot_tracking_branch.
  * Kept until fleet/gateway callers resolve tracking branches from project config only.
  */
 export function isLegacyWorktreeTrackingBranch(branch: string): boolean {
-  return /^wt\/ff-[A-Za-z0-9._-]+$/.test(branch);
+  return LEGACY_FF_WORKTREE_TRACKING_BRANCH_RE.test(branch);
 }
 
 export function expandSlotTrackingTemplate(
@@ -57,7 +63,7 @@ export function resolveSlotTrackingBranch(
   }
 
   const session = ctx.session?.trim();
-  if (session) return `wt/${session}`;
+  if (session) return `${LINKED_WORKTREE_SESSION_BRANCH_PREFIX}${session}`;
 
   return defaultBranch;
 }
