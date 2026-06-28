@@ -43,6 +43,14 @@ config.resolver = {
   sourceExts: [...config.resolver.sourceExts, 'cjs', 'mjs'],
   // Rewrite .js imports to .ts for @farmslot/protocol (ESM convention)
   resolveRequest: (context, moduleName, platform) => {
+    // Companion must bundle protocol from dist — src/portable-bundle pulls node:path.
+    if (moduleName === '@farmslot/protocol' || moduleName.startsWith('@farmslot/protocol/')) {
+      const subpath = moduleName === '@farmslot/protocol'
+        ? 'index.js'
+        : `${moduleName.slice('@farmslot/protocol/'.length)}.js`;
+      const distFile = path.join(protocolRoot, 'dist', subpath);
+      return { filePath: distFile, type: 'sourceFile' };
+    }
     // For protocol internal .js imports — rewrite to .ts
     if (
       isProtocolModule(context.originModulePath) &&
