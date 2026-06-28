@@ -35,7 +35,7 @@ export function createMetroRecipeBridge(
   return {
     async send(
       command: ReactNativeBridgeCommand,
-      _context: ActionExecutionContext,
+      context: ActionExecutionContext,
     ): Promise<unknown> {
       const response = await fetchImpl(`${baseUrl}/farmslot-recipe/command`, {
         method: 'POST',
@@ -43,7 +43,10 @@ export function createMetroRecipeBridge(
         body: JSON.stringify({
           command: command.command,
           nodeId: command.nodeId,
-          payload: command.payload,
+          payload: {
+            ...command.payload,
+            artifacts_dir: context.artifactsDir,
+          },
           timeout_ms: timeoutMs,
         }),
       });

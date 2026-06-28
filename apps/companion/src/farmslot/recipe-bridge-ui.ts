@@ -47,6 +47,7 @@ export async function handleRecipeBridgeScreenshot(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       path: relativePath,
+      artifacts_dir: asOptionalString(payload?.artifacts_dir),
       simulator: process.env.SIMULATOR ?? process.env.IOS_SIMULATOR,
     }),
   });

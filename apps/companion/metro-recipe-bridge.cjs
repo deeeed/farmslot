@@ -202,9 +202,11 @@ async function handleSimctlScreenshot(req, res) {
     return;
   }
 
-  const artifactsDir = process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR;
+  const artifactsDir =
+    (typeof body.artifacts_dir === 'string' && body.artifacts_dir.trim()) ||
+    process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR;
   if (!artifactsDir) {
-    writeJson(res, 500, { ok: false, error: 'FARMSLOT_RECIPE_ARTIFACTS_DIR is not set.' });
+    writeJson(res, 500, { ok: false, error: 'Missing artifacts_dir for simctl screenshot.' });
     return;
   }
 
