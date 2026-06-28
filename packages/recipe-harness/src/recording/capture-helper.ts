@@ -230,6 +230,9 @@ function waitForExit<T>(
 function targetArgs(target: RecordingTarget): string[] {
   if (target.kind === 'pid') return ['--pid', String(target.pid)];
   if (target.kind === 'window-id') return ['--window-id', target.windowId];
+  if (target.kind === 'simulator') {
+    throw new Error('capture-helper does not support simulator targets; use the simctl recorder.');
+  }
   return ['--app-name', target.appName, '--window-name', target.windowName];
 }
 
@@ -237,6 +240,9 @@ export function manifestTarget(target: RecordingTarget): RecipeArtifactRecorderT
   if (target.kind === 'pid') return { selector: 'pid', value: String(target.pid) };
   if (target.kind === 'app-window') {
     return { selector: 'app-window', value: `${target.appName}:${target.windowName}` };
+  }
+  if (target.kind === 'simulator') {
+    return { selector: 'simulator', value: target.device };
   }
   return { selector: 'window-id', value: target.windowId };
 }
