@@ -73,7 +73,7 @@ test('slotSwitcherEntries includes phase when present', () => {
     'runner-local-1',
   );
 
-  assert.equal(entries[0]?.label, 'runner-local-1 · busy (preparing) · farmslot');
+  assert.equal(entries[0]?.label, 'runner-local-1 · busy (preparing) · farmslot-farm');
 });
 
 test('slotSwitcherSignature changes only for switcher-visible slot fields', () => {
