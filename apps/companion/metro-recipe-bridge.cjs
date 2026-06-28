@@ -109,6 +109,17 @@ async function handleHostCommand(req, res) {
     return;
   }
 
+  if (command === 'screenshot') {
+    try {
+      const result = captureSimctlScreenshot(payload);
+      writeJson(res, 200, result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      writeJson(res, 500, { ok: false, error: message });
+    }
+    return;
+  }
+
   const id = `cmd-${++nextCommandId}`;
   const timeoutMs =
     typeof body.timeout_ms === 'number' && Number.isFinite(body.timeout_ms)
@@ -187,27 +198,17 @@ async function handleAppResult(req, res) {
   writeJson(res, 200, { ok: true });
 }
 
-async function handleSimctlScreenshot(req, res) {
-  let body;
-  try {
-    body = await readJsonBody(req);
-  } catch {
-    writeJson(res, 400, { ok: false, error: 'Invalid JSON body.' });
-    return;
-  }
-
+function captureSimctlScreenshot(body) {
   const relativePath = typeof body.path === 'string' ? body.path.trim() : '';
   if (!relativePath) {
-    writeJson(res, 400, { ok: false, error: 'Missing screenshot path.' });
-    return;
+    throw new Error('Missing screenshot path.');
   }
 
   const artifactsDir =
     (typeof body.artifacts_dir === 'string' && body.artifacts_dir.trim()) ||
     process.env.FARMSLOT_RECIPE_ARTIFACTS_DIR;
   if (!artifactsDir) {
-    writeJson(res, 500, { ok: false, error: 'Missing artifacts_dir for simctl screenshot.' });
-    return;
+    throw new Error('Missing artifacts_dir for simctl screenshot.');
   }
 
   const simulator =
@@ -219,12 +220,25 @@ async function handleSimctlScreenshot(req, res) {
     ? relativePath
     : path.join(artifactsDir, relativePath);
 
+  mkdirSync(path.dirname(outputPath), { recursive: true });
+  execFileSync('xcrun', ['simctl', 'io', simulator, 'screenshot', outputPath], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return { ok: true, path: relativePath, outputPath };
+}
+
+async function handleSimctlScreenshot(req, res) {
+  let body;
   try {
-    mkdirSync(path.dirname(outputPath), { recursive: true });
-    execFileSync('xcrun', ['simctl', 'io', simulator, 'screenshot', outputPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    writeJson(res, 200, { ok: true, path: relativePath, outputPath });
+    body = await readJsonBody(req);
+  } catch {
+    writeJson(res, 400, { ok: false, error: 'Invalid JSON body.' });
+    return;
+  }
+
+  try {
+    const result = captureSimctlScreenshot(body);
+    writeJson(res, 200, result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     writeJson(res, 500, { ok: false, error: message });
