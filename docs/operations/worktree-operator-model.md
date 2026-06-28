@@ -23,7 +23,7 @@ farmslot runs export <runId> -o /tmp/baseline.farmrun
 farmslot runs export --family-id <familyId> -o /tmp/family.farmrun
 
 # Worktree sandbox — import writable copy (new run IDs)
-cd /Users/deeeed/dev/farmslot-worktrees/<branch>
+cd /Users/deeeed/dev/farmslot-wt/farmslot-<n>
 farmslot runs import /tmp/baseline.farmrun --root "$PWD"
 
 # When sandbox gateway is running on 7778:
