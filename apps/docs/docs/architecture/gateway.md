@@ -81,3 +81,7 @@ Automation can reduce toil, but the gateway should expose what happened and why.
 Command Center is a client of the gateway. It visualizes and controls the system, but it should not become a second orchestration backend.
 
 That separation keeps Farmslot usable from multiple surfaces: desktop, mobile, CLI, and future automation clients.
+
+## Example in this repository
+
+Farmslot dogfoods through `farmslot-farm`: pool slots point at checkouts, `project.json` owns prepare profiles and hooks, and the gateway orchestrates lifecycle without hardcoding app behavior. See [Farmslot monorepo example](../guides/farmslot-monorepo-example.md) for the unified slot model (`farmslot-{n}`, optional `ios-sim`, `sandbox-companion` for cross-surface work).

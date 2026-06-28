@@ -8,6 +8,8 @@ Farmslot should make it practical to bring any software project into the supervi
 
 Today, importing a project means describing the project, its slots, and its lifecycle hooks. The long-term goal is prompt-assisted import: point Farmslot at a repository, let an agent propose the project profile, and approve the generated setup instead of hand-writing every detail.
 
+For a full first-party walkthrough (monorepo, worktrees, prepare profiles, optional companion proof), see [Farmslot monorepo example](./farmslot-monorepo-example.md).
+
 ## Import model
 
 ```mermaid

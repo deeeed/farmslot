@@ -44,7 +44,7 @@ const artifactsDir = resolve(
 const copyToDocs = process.argv.includes('--copy-to-docs');
 const captureSeconds = Number(process.env.FARMSLOT_DEMO_CAPTURE_SECONDS || 8);
 const slot = readCompanionSlotConfig();
-const simulator = process.env.IOS_SIMULATOR || slot.simulator || 'fs-companion-1';
+const simulator = process.env.IOS_SIMULATOR || slot.simulator || 'fs-2';
 const metroPort = process.env.METRO_PORT || slot.port || '7677';
 const gatewayPort = process.env.GATEWAY_PORT || '7788';
 const gatewayHost = process.env.COMPANION_GATEWAY_HOST || detectLanHost();
@@ -181,7 +181,7 @@ function readCompanionSlotConfig() {
       };
     }
   }
-  return { simulator: 'fs-companion-1', port: '7677' };
+  return { simulator: 'fs-2', port: '8809' };
 }
 
 function fixtureNow(offsetMs = 0) {
@@ -300,7 +300,7 @@ const demoFleet = {
       completedAt: null,
       runner: 'codex',
       model: 'gpt-5.1',
-      deviceName: 'fs-companion-1',
+      deviceName: 'fs-2',
       taskPhase: 'Capture 2/3',
       taskStepProgress: 0.66,
     },

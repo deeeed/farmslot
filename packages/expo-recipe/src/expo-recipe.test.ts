@@ -200,9 +200,9 @@ test('resolves Expo recipe recording targets from flags or simulator defaults', 
     kind: 'window-id',
     windowId: '42',
   });
-  assert.deepEqual(resolveExpoRecordingTarget({ SIMULATOR: 'fs-companion-1' }), {
+  assert.deepEqual(resolveExpoRecordingTarget({ SIMULATOR: 'fs-2' }), {
     kind: 'simulator',
-    device: 'fs-companion-1',
+    device: 'fs-2',
   });
   assert.deepEqual(resolveExpoRecordingTarget({}), {
     kind: 'app-window',

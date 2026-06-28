@@ -38,10 +38,10 @@ projects/farmslot-farm/project.json
     sandbox-companion (optional composite)  # gateway sandbox + companion warm — operator-only shortcut
 ```
 
-Pool slots keep heterogeneous resources under `project: "farmslot-farm"`:
+Pool slots under `project: "farmslot-farm"` share one naming scheme:
 
-- `macwork-fs-main`, `macwork-ff-*` — `platform: cli`, gateway port
-- Future `macwork-fc-*` — `platform: ios`, Metro + simulator
+- `macwork-fs-main`, `macwork-ff-*` — `platform: cli`, gateway port, **optional** `resources.ios-sim` (`fs-{n}`)
+- Simulator boot is prepare-driven (`companion-warm`, `sandbox-companion`) — not a separate `fc-*` companion farm
 
 ### Validation plan (run metadata or task artifact)
 
@@ -57,8 +57,7 @@ For tickets that span surfaces:
       "surface": "companion",
       "kind": "recipe",
       "recipe": "mobile-companion.recipe.json",
-      "prepareProfile": "companion-warm",
-      "slot": "macwork-fc-1",
+      "prepareProfile": "sandbox-companion"
     },
   ],
 }
@@ -68,7 +67,7 @@ For tickets that span surfaces:
 
 - Gateway prepare is the default primary stack (Companion and CC consume the gateway).
 - Companion native prepare is additive when AC/labels/paths require device proof.
-- Multi-slot tasks pair gateway sandbox (e.g. `ff-2` @8809) with companion mobile slot pointed at that gateway URL.
+- Cross-surface tasks use **one slot** with `sandbox-companion` (gateway + Metro + sim on demand). Parallel ff slots are for parallel agents, not companion-vs-CC surface splitting.
 
 Existing multi-recipe shape: [docs/examples/recipes/farmslot/self-validation-suite.json](../examples/recipes/farmslot/self-validation-suite.json).
 
@@ -163,8 +162,7 @@ node apps/command-center/scripts/cdp.mjs eval '#runs' "document.title"
 # 3. Gateway RPC
 node apps/command-center/scripts/cdp.mjs gateway run.list '{}'
 
-# 4. Companion recipe (mobile slot or device-pinned agentic.local.conf)
-farmslot slot prepare macwork-fc-1 --prepare-profile companion-warm
+# 4. Companion recipe on the same slot (sim already warm from step 1)
 # hooks.recipe_run via docs/examples/recipes/farmslot/mobile-companion.recipe.json
 ```
 

@@ -56,7 +56,14 @@ See `apps/command-center/CLAUDE.md` for the full protocol. If CDP is unreachable
 
 ### Never Commit Directly to `main` — HARD RULE
 
-**Never commit or push to `main` on the farmslot root repo unless Arthur explicitly asks for it.** All farmslot changes go through a feature branch and a PR with review before merge. Before any `git commit` or `git push`, confirm you are on a branch — not `main`. Nested project repos under `projects/<name>/` follow their own git workflow; this rule is for the farmslot monorepo root only.
+**Never commit or push to `main` on the farmslot root repo unless Arthur explicitly asks for it.** All farmslot changes go through a feature branch and a PR with review before merge.
+
+Before **any** `git commit` or `git push`:
+
+1. Confirm current branch is **not** `main` (`git branch --show-current`).
+2. Confirm you are in a **git worktree checkout** (e.g. `farmslot-wt/farmslot-*`), not the bare root at `/Users/deeeed/dev/farmslot` — that path is `main`’s tree and must not receive commits.
+
+**Never stage, commit, or leave implementation diffs only on `main`.** Edit in a slot worktree on a feature branch; open a PR. Nested project repos under `projects/<name>/` follow their own git workflow; this rule is for the farmslot monorepo root only.
 
 ### Conventional Commits — HARD RULE
 

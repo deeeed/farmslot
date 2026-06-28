@@ -58,6 +58,7 @@ const sidebars = {
         'guides/local-demo-and-cli',
         'guides/recipe-skills-adoption',
         'guides/import-a-project',
+        'guides/farmslot-monorepo-example',
         'guides/project-type-onboarding',
         'guides/expo-project-integration',
         'guides/expo-recipe',
