@@ -28,6 +28,7 @@ FC_BRANCH="${FC_BRANCH:-feat/29-add-companion-demo-banner}"
 CC_TICKET="${CC_TICKET:-deeeed/farmslot#28}"
 FC_TICKET="${FC_TICKET:-deeeed/farmslot#29}"
 TRACK1_POLL_BUDGET_SEC="${TRACK1_POLL_BUDGET_SEC:-7200}"
+TRACK1_GATEWAY="${TRACK1_GATEWAY:-ws://127.0.0.1:7777/ws}"
 
 resolve_wt() {
   local name="$1"
@@ -577,7 +578,8 @@ log "companion typecheck exit=0 (branch in typecheck-companion-runB.log)"
 gateway_rpc() {
   local method="$1"
   local params="${2:-{}}"
-  FARMSLOT_GATEWAY="${FARMSLOT_GATEWAY:-ws://127.0.0.1:${FF_GATEWAY_PORT}/ws}" \
+  local gw_url="${3:-${FARMSLOT_GATEWAY:-ws://127.0.0.1:${FF_GATEWAY_PORT}/ws}}"
+  FARMSLOT_GATEWAY="$gw_url" \
     node "$PRIMARY_REPO/apps/command-center/scripts/cdp.mjs" gateway "$method" "$params" 2>>"$SCRATCH/e2e.log"
 }
 
@@ -596,7 +598,7 @@ dispatch_autonomous_run() {
     "$ticket" "$slot" "$branch" "$prepare_profile" "$app_field")
   log "dispatching Track 1 $label ($ticket on $slot branch $branch)"
   local dispatch_log="$SCRATCH/track1-dispatch-${label}.json"
-  gateway_rpc run.create "$payload" >"$dispatch_log" \
+  gateway_rpc run.create "$payload" >"$dispatch_log" "$TRACK1_GATEWAY" \
     || fail_step "Track 1 dispatch $label" 1
   python3 - <<'PY' "$dispatch_log"
 import json, sys
@@ -618,7 +620,7 @@ wait_run_blocked() {
   local status=""
   while (( SECONDS - started < TRACK1_POLL_BUDGET_SEC )); do
     local poll_log="$SCRATCH/track1-poll-${label}.json"
-    gateway_rpc run.get "$(printf '{"runId":"%s"}' "$run_id")" >"$poll_log" 2>/dev/null || true
+    gateway_rpc run.get "$(printf '{"runId":"%s"}' "$run_id")" >"$poll_log" "$TRACK1_GATEWAY" 2>/dev/null || true
     status="$(python3 - <<'PY' "$poll_log"
 import json, sys
 try:
@@ -644,7 +646,7 @@ PY
 assert_gate_invariants() {
   local label="$1"
   local run_id="$2"
-  GW_URL="${FARMSLOT_GATEWAY:-ws://127.0.0.1:${FF_GATEWAY_PORT}/ws}" \
+  GW_URL="$TRACK1_GATEWAY" \
     node "$PRIMARY_REPO/scripts/quality/assert-autonomous-gate-invariants.mjs" "$run_id" \
       >"$SCRATCH/track1-gate-${label}.log" 2>&1 \
       || fail_step "Track 1 gate invariants $label (see track1-gate-${label}.log)" 1
