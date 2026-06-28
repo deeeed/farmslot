@@ -3,10 +3,8 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import test from 'node:test';
-
-const execFileAsync = promisify(execFile);
+import { promisify } from 'node:util';
 
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 
@@ -23,6 +21,8 @@ import {
   shouldUseIsolatedRunsDir,
   updateRun,
 } from './store.js';
+
+const execFileAsync = promisify(execFile);
 
 async function cleanupRun(runId: string): Promise<void> {
   if (!getRun(runId)) {
