@@ -347,7 +347,7 @@ export class WorkGraphPanel extends LitElement {
         <div>
           <div class="detail-title">${this.graphTitleForNode(backlogById, node)}</div>
           <div class="detail-muted">
-            ${node.id} · ${item?.project ?? 'unknown project'} · ${node.status}
+            ${node.id} · ${this.projectForNode(backlogById, node)} · ${node.status}
           </div>
         </div>
         <div class="detail-grid">
