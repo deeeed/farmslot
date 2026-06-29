@@ -627,19 +627,17 @@ async function main() {
         actions: filteredManifest.supported_official_actions,
       }),
     ],
-    ...(hudEnabled
+    hud: hudEnabled
       ? {
-          hud: {
-            title: 'Command Center recipe',
-            display: {
-              layout: 'docked-bottom',
-              position: 'bottom',
-              showTitle: false,
-              showDebug: false,
-            },
+          title: 'Command Center recipe',
+          display: {
+            layout: 'docked-bottom',
+            position: 'bottom',
+            showTitle: false,
+            showDebug: false,
           },
         }
-      : {}),
+      : undefined,
     preconditions: buildPreconditions({
       uiUrl,
       gatewayPort: options.gatewayPort,
