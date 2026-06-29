@@ -17,6 +17,8 @@ export const WorkGraphMethods = {
   list: Methods.WORK_GRAPH_LIST,
   addNode: Methods.WORK_GRAPH_ADD_NODE,
   addEdge: Methods.WORK_GRAPH_ADD_EDGE,
+  removeNode: Methods.WORK_GRAPH_REMOVE_NODE,
+  removeEdge: Methods.WORK_GRAPH_REMOVE_EDGE,
   updateNode: Methods.WORK_GRAPH_UPDATE_NODE,
   activate: Methods.WORK_GRAPH_ACTIVATE,
   pause: Methods.WORK_GRAPH_PAUSE,
@@ -48,6 +50,22 @@ export interface WorkGraphAddNodeResult {
 
 export interface WorkGraphAddEdgeParams extends WorkGraphAddEdgeInput {}
 export interface WorkGraphAddEdgeResult {
+  graph: WorkGraphProjection;
+}
+
+export interface WorkGraphRemoveNodeParams {
+  graphId: string;
+  nodeId: string;
+}
+export interface WorkGraphRemoveNodeResult {
+  graph: WorkGraphProjection;
+}
+
+export interface WorkGraphRemoveEdgeParams {
+  graphId: string;
+  edgeId: string;
+}
+export interface WorkGraphRemoveEdgeResult {
   graph: WorkGraphProjection;
 }
 

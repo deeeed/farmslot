@@ -1,7 +1,7 @@
 // backlog-store.ts — durable backlog intake layer with handoff into dispatch queue
 
 import { randomUUID } from 'node:crypto';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -122,6 +122,7 @@ export function initBacklogStore(broadcast: BroadcastFn): void {
 }
 
 async function persist(): Promise<void> {
+  await mkdir(path.dirname(BACKLOG_FILE), { recursive: true });
   const tmpFile = `${BACKLOG_FILE}.tmp`;
   await writeFile(tmpFile, JSON.stringify(items, null, 2), 'utf-8');
   await rename(tmpFile, BACKLOG_FILE);
@@ -544,6 +545,28 @@ export function listBacklogItemSnapshots(): BacklogItem[] {
   }));
 }
 
+function assertBacklogItemWorkNodeLink(params: {
+  itemId: string;
+  graphId: string;
+  nodeId: string;
+}): BacklogItem {
+  const item = getItem(params.itemId);
+  if (item.workGraphId !== params.graphId || item.workNodeId !== params.nodeId) {
+    throw new Error(
+      `Backlog item ${params.itemId} is not linked to work graph ${params.graphId}/${params.nodeId}`,
+    );
+  }
+  return item;
+}
+
+export function assertBacklogItemAttachedToWorkNode(params: {
+  itemId: string;
+  graphId: string;
+  nodeId: string;
+}): void {
+  assertBacklogItemWorkNodeLink(params);
+}
+
 export async function attachBacklogItemToWorkNode(params: {
   itemId: string;
   graphId: string;
@@ -563,6 +586,22 @@ export async function attachBacklogItemToWorkNode(params: {
     item.workNodeId = params.nodeId;
     item.updatedAt = new Date().toISOString();
     await persistNow('work-graph-attach');
+    broadcastBacklog();
+    return item;
+  });
+}
+
+export async function detachBacklogItemFromWorkNode(params: {
+  itemId: string;
+  graphId: string;
+  nodeId: string;
+}): Promise<BacklogItem> {
+  return withBacklogMutation(async () => {
+    const item = assertBacklogItemWorkNodeLink(params);
+    delete item.workGraphId;
+    delete item.workNodeId;
+    item.updatedAt = new Date().toISOString();
+    await persistNow('work-graph-detach');
     broadcastBacklog();
     return item;
   });
@@ -658,6 +697,9 @@ export async function deleteBacklogItem(itemId: string): Promise<OkResult> {
     const hasActiveRunLink = runs.some(
       (run) => run.backlogItemId === itemId && !isTerminalRunStatus(run.status),
     );
+    if (item.workGraphId || item.workNodeId) {
+      throw new Error('Cannot delete backlog item linked to a work graph');
+    }
     if (hasQueueLink || hasActiveItemRunLink || hasActiveRunLink) {
       throw new Error('Cannot delete backlog item linked to active queue/run');
     }
