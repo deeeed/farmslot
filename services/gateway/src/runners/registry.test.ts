@@ -424,6 +424,33 @@ describe('cursor runner', () => {
     );
   });
 
+  it('recognizes a Codex task already executing (animated "Working (…)" timer) during readiness wait', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-3215-0601-200704/TASK.md');
+    const pane = `
+• Read temp/tasks/feat/tat-3215-0601-200704/TASK.md
+• Explored
+  └ Read recipe-quality.md, demo-red-banner.recipe.json
+• Working (2m 02s • esc to interrupt)
+
+› Use /skills to list available skills
+  gpt-5.5 default · ~/dev/farmslot-wt/farmslot-2
+`;
+
+    // Regression: codex was excluded from the progress detector, so the readiness gate
+    // never saw "task already running" and falsely timed out against the animated timer.
+    assert.equal(runnerPaneShowsTaskAlreadyRunning(pane, message, 'TASK.md', 'codex'), true);
+  });
+
+  it('does not flag an idle Codex prompt as a task already running', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-3215-0601-200704/TASK.md');
+    const idlePane = `
+› Use /skills to list available skills
+  gpt-5.5 default · ~/dev/farmslot-wt/farmslot-2
+`;
+
+    assert.equal(runnerPaneShowsTaskAlreadyRunning(idlePane, message, 'TASK.md', 'codex'), false);
+  });
+
   it('accepts post-launch prompt delivery when the runner queues it for the next tool call', async () => {
     const message = await dispatchPrompt('temp/tasks/feat/tat-3307-0609-103547/TASK.md');
     const before = `
@@ -596,7 +623,9 @@ describe('cursor runner', () => {
   });
 
   it('detects Codex instructions buffered after tmux wraps long task paths', async () => {
-    const message = await dispatchPrompt('temp/tasks/fix/eval-bf5e8c3f61bd-clean-extension-42435-harness-4d24c9dd-5057557b-0525-022117/SELF-REVIEW-FIX.md');
+    const message = await dispatchPrompt(
+      'temp/tasks/fix/eval-bf5e8c3f61bd-clean-extension-42435-harness-4d24c9dd-5057557b-0525-022117/SELF-REVIEW-FIX.md',
+    );
     const pane = `
 • Waiting for background terminal (2m 08s • esc to interrupt)
 
@@ -905,7 +934,10 @@ describe('buildLaunchCommand', () => {
       const vars = makeVars({ dispatchCmd: '' });
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT, { safetyTier: 'dangerous' });
       assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-      assert.match(cmd, /codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/);
+      assert.match(
+        cmd,
+        /codex --disable plugin_hooks --dangerously-bypass-approvals-and-sandbox .*--model gpt-5/,
+      );
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
       assert.doesNotMatch(cmd, /model_reasoning_effort/);
