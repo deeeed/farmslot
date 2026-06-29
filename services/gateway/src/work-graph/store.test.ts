@@ -38,9 +38,10 @@ async function freshStores() {
 async function createReadyBacklogItem(
   backlog: Awaited<ReturnType<typeof freshStores>>['backlog'],
   title: string,
+  project = 'farmslot-farm',
 ) {
   return backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project,
     title,
     sourceKind: 'manual',
     flowType: 'dev',
@@ -80,6 +81,77 @@ test('work graph rejects cycles while authoring edges', async () => {
       }),
     /cycle/i,
   );
+});
+
+test('work graph can use an owner scope different from backlog project', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const upstream = await createReadyBacklogItem(backlog, 'Gateway projection');
+  const downstream = await createReadyBacklogItem(backlog, 'Client integration');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Cross project graph',
+  });
+  const graphId = graph.graph.graph.id;
+
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: upstream.item.id });
+  const linked = await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_client',
+    backlogItemId: downstream.item.id,
+  });
+
+  assert.equal(linked.graph.nodes.length, 2);
+  assert.equal(linked.graph.graph.project, 'cross-project-epic');
+});
+
+test('completion edges do not block downstream start enqueue', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const contract = await createReadyBacklogItem(backlog, 'Shared contract');
+  const gateway = await createReadyBacklogItem(backlog, 'Gateway projection');
+  const client = await createReadyBacklogItem(backlog, 'Client can start early');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Completion blocker graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_contract', backlogItemId: contract.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: gateway.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_client', backlogItemId: client.item.id });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_contract_to_client_start',
+    fromNodeId: 'wn_contract',
+    toNodeId: 'wn_client',
+    condition: { kind: 'manual', gateId: 'start-approved' },
+    unlock: { kind: 'enqueue' },
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_gateway_to_client_completion',
+    fromNodeId: 'wn_gateway',
+    toNodeId: 'wn_client',
+    condition: { kind: 'merged', targetRef: 'main' },
+    blocks: 'completion',
+    unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+  });
+  await workGraph.gateResolve({
+    graphId,
+    edgeId: 'we_contract_to_client_start',
+    gateId: 'start-approved',
+    reason: 'start dependency is satisfied',
+    decision: 'approved',
+  });
+
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  const projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_client')?.status, 'queued');
+  assert.equal(
+    projection.edges.find((edge) => edge.id === 'we_gateway_to_client_completion')?.status,
+    'pending',
+  );
+  assert.equal(projection.graph.status, 'waiting');
 });
 
 test('work graph rejects unsafe explicit ids', async () => {

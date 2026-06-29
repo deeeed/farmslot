@@ -22,6 +22,8 @@ export type WorkNodeStatus =
 
 export type WorkEdgeStatus = 'pending' | 'satisfied' | 'failed' | 'waived';
 
+export type WorkEdgeBlocks = 'start' | 'completion';
+
 export type NodeFailurePolicy = 'halt' | 'skip-dependents' | 'isolate';
 
 export interface WorkGraphSource {
@@ -100,6 +102,7 @@ export interface WorkEdge {
   fromNodeId: string;
   toNodeId: string;
   condition: EdgeCondition;
+  blocks?: WorkEdgeBlocks;
   required: boolean;
   status: WorkEdgeStatus;
   evidence?: EdgeEvidence;
@@ -159,6 +162,7 @@ export interface WorkGraphAddEdgeInput {
   toNodeId: string;
   id?: string;
   condition: EdgeCondition;
+  blocks?: WorkEdgeBlocks;
   required?: boolean;
   unlock?: UnlockAction;
 }

@@ -5,6 +5,7 @@
 //   node scripts/cdp.mjs eval <hash|-|<route#hash>> <expr>  Evaluate JS in a page tab (- = first tab).
 //   node scripts/cdp.mjs eval <hash> --file <path>    Evaluate the file contents in page context.
 //   node scripts/cdp.mjs login <hash>                 Fill the auth form from env token/password.
+//   node scripts/cdp.mjs screenshot <hash> <path>      Capture a PNG screenshot of a page tab.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
 //   node scripts/cdp.mjs gateway <method> [paramsJson] Send a JSON-RPC request to ws://localhost:7777.
 //
@@ -15,7 +16,7 @@
 //
 // Exit codes: 0 on success, 1 on usage error, 2 on runtime error (no tab / WS failure).
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -118,6 +119,26 @@ async function evalInTab(hash, expr) {
       2,
     );
   return r.result?.value;
+}
+
+async function screenshotTab(hash, outputPath) {
+  const tab = await findTab(hash);
+  if (!tab) die(`no CDP tab matching hash=${hash || '(any)'}`, 2);
+  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  await call('Page.enable');
+  await call('Runtime.evaluate', {
+    expression: 'document.fonts?.ready ?? Promise.resolve()',
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  const result = await call('Page.captureScreenshot', {
+    format: 'png',
+    captureBeyondViewport: true,
+    fromSurface: true,
+  });
+  close();
+  writeFileSync(outputPath, Buffer.from(result.data, 'base64'));
+  return { path: outputPath };
 }
 
 async function loginInTab(hash) {
@@ -297,13 +318,18 @@ try {
     if (!hash) die('usage: cdp.mjs login <hash>');
     const result = await loginInTab(hash);
     console.log(JSON.stringify(result, null, 2));
+  } else if (cmd === 'screenshot') {
+    const [hash, outputPath] = rest;
+    if (!hash || !outputPath) die('usage: cdp.mjs screenshot <hash|-|route> <output.png>');
+    const result = await screenshotTab(hash, outputPath);
+    console.log(JSON.stringify(result, null, 2));
   } else if (cmd === 'gateway') {
     const [method, paramsJson] = rest;
     if (!method) die('usage: cdp.mjs gateway <method> [paramsJson]');
     const result = await gatewayRpc(method, paramsJson);
     console.log(JSON.stringify(result, null, 2));
   } else {
-    die('usage: cdp.mjs <tabs | eval | login | gateway> ...');
+    die('usage: cdp.mjs <tabs | eval | login | screenshot | gateway> ...');
   }
 } catch (err) {
   die(`cdp.mjs: ${err.message}`, 2);

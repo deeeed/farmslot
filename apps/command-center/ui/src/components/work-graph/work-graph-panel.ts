@@ -1,166 +1,26 @@
-import { css, html, LitElement, nothing } from 'lit';
-import { customElement, state } from 'lit/decorators.js';
+import { html, LitElement, nothing, svg, type SVGTemplateResult } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
 
-import type { WorkGraphProjection, WorkNode } from '@farmslot/protocol';
+import type { BacklogItem, WorkEdge, WorkGraphProjection, WorkNode } from '@farmslot/protocol';
 
 import { type AppState, getState, subscribe } from '../../state.js';
+import { colors } from '../../styles/theme-tokens.js';
+
+import { computeWorkGraphLayout, type WorkGraphLayoutNode } from './work-graph-layout.js';
+import { workGraphPanelStyles } from './work-graph-panel-styles.js';
 
 @customElement('work-graph-panel')
 export class WorkGraphPanel extends LitElement {
+  @property({ attribute: false }) demoGraphs: WorkGraphProjection[] | null = null;
+  @property({ attribute: false }) demoBacklogItems: BacklogItem[] | null = null;
+
   @state() private graphs: WorkGraphProjection[] = [];
+  @state() private backlogItems: BacklogItem[] = [];
   @state() private selectedProject = '';
+  @state() private selectedNodeId = '';
   private unsub?: () => void;
 
-  static styles = css`
-    :host {
-      display: block;
-      padding: 20px;
-      color: #e5e7eb;
-      font-family: 'SF Mono', 'Cascadia Code', monospace;
-    }
-
-    .header {
-      display: flex;
-      align-items: flex-end;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 16px;
-    }
-
-    h1 {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 700;
-    }
-
-    .subtitle {
-      margin-top: 6px;
-      color: #9ca3af;
-      font-size: 12px;
-    }
-
-    select {
-      background: #111827;
-      color: #e5e7eb;
-      border: 1px solid #374151;
-      border-radius: 8px;
-      padding: 8px 10px;
-      font: inherit;
-    }
-
-    .empty,
-    .graph {
-      border: 1px solid #263244;
-      border-radius: 12px;
-      background: #0f172a;
-    }
-
-    .empty {
-      padding: 24px;
-      color: #94a3b8;
-    }
-
-    .graph {
-      margin-bottom: 16px;
-      overflow: hidden;
-    }
-
-    .graph-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 14px 16px;
-      border-bottom: 1px solid #263244;
-      background: #111827;
-    }
-
-    .title {
-      font-size: 15px;
-      font-weight: 700;
-    }
-
-    .meta,
-    .small {
-      color: #94a3b8;
-      font-size: 11px;
-    }
-
-    .badges {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      justify-content: flex-end;
-    }
-
-    .badge {
-      border: 1px solid #334155;
-      border-radius: 999px;
-      padding: 3px 8px;
-      color: #cbd5e1;
-      background: #0b1220;
-      font-size: 11px;
-    }
-
-    .badge.active,
-    .badge.done,
-    .badge.succeeded {
-      color: #86efac;
-      border-color: #14532d;
-    }
-
-    .badge.waiting,
-    .badge.gated {
-      color: #fde68a;
-      border-color: #854d0e;
-    }
-
-    .badge.failed,
-    .badge.needs-attention {
-      color: #fca5a5;
-      border-color: #7f1d1d;
-    }
-
-    .nodes {
-      display: grid;
-      gap: 10px;
-      padding: 14px;
-    }
-
-    .node {
-      display: grid;
-      grid-template-columns: minmax(160px, 1fr) auto;
-      gap: 10px;
-      padding: 12px;
-      border: 1px solid #1f2937;
-      border-radius: 10px;
-      background: #0b1120;
-    }
-
-    .node-title {
-      font-weight: 700;
-      margin-bottom: 6px;
-    }
-
-    .refs {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 8px;
-    }
-
-    .ref {
-      color: #93c5fd;
-      font-size: 11px;
-    }
-
-    .waiting-list {
-      grid-column: 1 / -1;
-      margin: 4px 0 0;
-      padding-left: 18px;
-      color: #fbbf24;
-      font-size: 12px;
-    }
-  `;
+  static styles = workGraphPanelStyles;
 
   connectedCallback() {
     super.connectedCallback();
@@ -175,40 +35,341 @@ export class WorkGraphPanel extends LitElement {
 
   private sync(state: AppState) {
     this.graphs = state.workGraphs;
+    this.backlogItems = state.backlogItems;
     const projects = new Set(this.graphs.map((graph) => graph.graph.project));
     if (this.selectedProject && !projects.has(this.selectedProject)) this.selectedProject = '';
+    const nodeIds = new Set(this.graphs.flatMap((graph) => graph.nodes.map((node) => node.id)));
+    if (this.selectedNodeId && !nodeIds.has(this.selectedNodeId)) this.selectedNodeId = '';
   }
 
-  private graphTitleForNode(graph: WorkGraphProjection, node: WorkNode): string {
-    const backlogItem = getState().backlogItems.find((item) => item.id === node.backlogItemId);
-    return backlogItem?.title ?? node.backlogItemId;
+  private activeGraphs(): WorkGraphProjection[] {
+    return this.demoGraphs ?? this.graphs;
   }
 
-  private renderNode(graph: WorkGraphProjection, node: WorkNode) {
-    const waiting = node.waitingOn ?? [];
+  private activeBacklogItems(): BacklogItem[] {
+    return this.demoBacklogItems ?? this.backlogItems;
+  }
+
+  private backlogById(): Map<string, BacklogItem> {
+    return new Map(this.activeBacklogItems().map((item) => [item.id, item]));
+  }
+
+  private graphTitleForNode(backlogById: Map<string, BacklogItem>, node: WorkNode): string {
+    return backlogById.get(node.backlogItemId)?.title ?? node.backlogItemId;
+  }
+
+  private graphStats(graph: WorkGraphProjection): { good: number; warn: number; bad: number } {
+    return graph.nodes.reduce(
+      (acc, node) => {
+        if (['succeeded', 'ready'].includes(node.status)) acc.good += 1;
+        else if (['failed', 'needs-attention'].includes(node.status)) acc.bad += 1;
+        else acc.warn += 1;
+        return acc;
+      },
+      { good: 0, warn: 0, bad: 0 },
+    );
+  }
+
+  private colorForStatus(status: string): string {
+    if (['done', 'succeeded', 'ready', 'satisfied', 'waived'].includes(status)) {
+      return colors.statusOk;
+    }
+    if (['waiting', 'gated', 'pending', 'running', 'queued', 'active'].includes(status)) {
+      return colors.statusWarn;
+    }
+    if (['failed', 'needs-attention'].includes(status)) return colors.statusFail;
+    if (status === 'skipped') return colors.textMuted;
+    return colors.textSecondary;
+  }
+
+  private edgeConditionLabel(edge: WorkEdge): string {
+    if (edge.condition.kind === 'manual') return `manual gate:${edge.condition.gateId}`;
+    if (edge.condition.kind === 'family-done') {
+      return edge.condition.outcome ? `upstream ${edge.condition.outcome}` : 'upstream done';
+    }
+    return edge.condition.targetRef ? `merged ${edge.condition.targetRef}` : 'merged';
+  }
+
+  private edgeLabel(edge: WorkEdge): string {
+    const condition = this.edgeConditionLabel(edge);
+    const prefix = edge.blocks === 'completion' ? 'complete after ' : 'start after ';
+    if (edge.unlock.kind === 'rebase-onto') return `${prefix}${condition} → rebase`;
+    if (edge.unlock.kind === 'enqueue') return `${prefix}${condition} → enqueue`;
+    return `${prefix}${condition}`;
+  }
+
+  private diagramEdgeLabel(edge: WorkEdge): string {
+    if (edge.blocks === 'completion') return 'complete after rebase';
+    return '';
+  }
+
+  private unlockLabel(edge: WorkEdge): string {
+    if (edge.unlock.kind === 'rebase-onto') return `unlock: rebase ${edge.unlock.flow}`;
+    return `unlock: ${edge.unlock.kind}`;
+  }
+
+  private short(value: string, max = 28): string {
+    return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+  }
+
+  private markerId(graph: WorkGraphProjection): string {
+    return `wg-arrow-${graph.graph.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+  }
+
+  private selectNode(nodeId: string) {
+    this.selectedNodeId = this.selectedNodeId === nodeId ? '' : nodeId;
+  }
+
+  private selectedNode(graph: WorkGraphProjection): WorkNode | null {
+    return graph.nodes.find((node) => node.id === this.selectedNodeId) ?? graph.nodes[0] ?? null;
+  }
+
+  private renderLegend() {
     return html`
-      <div class="node">
+      <div class="legend" aria-label="Work graph status legend">
+        <span class="legend-chip" style=${`color:${colors.statusOk}`}
+          ><span class="dot"></span>unlocked</span
+        >
+        <span class="legend-chip" style=${`color:${colors.statusWarn}`}
+          ><span class="dot"></span>waiting</span
+        >
+        <span class="legend-chip" style=${`color:${colors.statusFail}`}
+          ><span class="dot"></span>attention</span
+        >
+      </div>
+    `;
+  }
+
+  private renderDiagramNode(
+    graph: WorkGraphProjection,
+    layoutNode: WorkGraphLayoutNode,
+    backlogById: Map<string, BacklogItem>,
+  ): SVGTemplateResult {
+    const { node, x, y, w, h } = layoutNode;
+    const color = this.colorForStatus(node.status);
+    const isSelected = this.selectedNodeId === node.id;
+    const item = backlogById.get(node.backlogItemId);
+    const title = this.graphTitleForNode(backlogById, node);
+    const tags = [...(node.tags ?? []), ...(item?.tags ?? [])].slice(0, 2);
+    const waitSuffix = node.waitingOn.length ? ` · ${node.waitingOn.length} wait` : '';
+    return svg`
+      <g
+        class=${`diagram-node ${isSelected ? 'selected' : ''}`}
+        transform=${`translate(${x}, ${y})`}
+        role="button"
+        tabindex="0"
+        aria-label=${`${title}, ${node.status}`}
+        @click=${() => this.selectNode(node.id)}
+        @keydown=${(event: KeyboardEvent) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            this.selectNode(node.id);
+          }
+        }}
+      >
+        <rect width=${w} height=${h} rx="12" stroke=${color}></rect>
+        <foreignObject x="12" y="12" width=${w - 24} height=${h - 24}>
+          <div class="diagram-node-content" xmlns="http://www.w3.org/1999/xhtml">
+            <div class="diagram-node-title">${title}</div>
+            <div class="diagram-node-meta node-project">
+              ${item?.project ?? 'unknown project'} · ${node.backlogItemId}
+            </div>
+            <div class="diagram-node-footer">
+              <span class="diagram-node-status" style=${`color:${color}`}>${node.status}${waitSuffix}</span>
+              ${
+                tags.length
+                  ? html`<span class="diagram-node-tags"
+                      >${tags.map((tag) => `#${tag}`).join(' ')}</span
+                    >`
+                  : nothing
+              }
+            </div>
+          </div>
+        </foreignObject>
+      </g>
+    `;
+  }
+
+  private renderDiagram(graph: WorkGraphProjection, backlogById: Map<string, BacklogItem>) {
+    const layout = computeWorkGraphLayout(graph);
+    const markerId = this.markerId(graph);
+    const selectedNode = this.selectedNodeId;
+    return html`
+      <div class="diagram-card">
+        <div class="diagram-toolbar">
+          <div>
+            <div class="diagram-title">Dependency map</div>
+            <div class="small">
+              Left-to-right columns show start dependencies; dashed edges are pending or
+              completion/rebase blockers.
+            </div>
+          </div>
+          ${this.renderLegend()}
+        </div>
+        <div class="diagram-scroll" aria-label=${`Dependency diagram for ${graph.graph.title}`}>
+          <svg
+            width=${layout.width}
+            height=${layout.height}
+            viewBox=${`0 0 ${layout.width} ${layout.height}`}
+            role="img"
+          >
+            <defs>
+              <marker
+                id=${markerId}
+                markerWidth="8"
+                markerHeight="6"
+                refX="8"
+                refY="3"
+                orient="auto"
+              >
+                <polygon points="0 0, 8 3, 0 6" fill=${colors.textMuted}></polygon>
+              </marker>
+            </defs>
+            ${layout.stages.map(
+              (stage) => svg`
+                <rect class="stage-band" x=${stage.x - 12} y="36" width=${stage.width + 24} height=${Math.max(80, layout.height - 54)} rx="14"></rect>
+                <text class="stage-label" x=${stage.x} y="24">${stage.label}</text>
+              `,
+            )}
+            ${layout.edges.map(({ edge, d, labelX, labelY }) => {
+              const color = this.colorForStatus(edge.status);
+              const selected = selectedNode === edge.fromNodeId || selectedNode === edge.toNodeId;
+              const label = this.diagramEdgeLabel(edge);
+              return svg`
+                <path
+                  class="edge"
+                  d=${d}
+                  stroke=${color}
+                  stroke-opacity=${selectedNode && !selected ? '0.16' : '0.76'}
+                  stroke-width=${selected ? '3' : '2'}
+                  stroke-dasharray=${edge.blocks === 'completion' ? '8 4' : edge.status === 'pending' ? '6 4' : 'none'}
+                  marker-end=${`url(#${markerId})`}
+                ></path>
+                ${label ? svg`<text class="edge-label" x=${labelX} y=${labelY} text-anchor="middle" fill=${color}>${label}</text>` : nothing}
+              `;
+            })}
+            ${layout.nodes.map((node) => this.renderDiagramNode(graph, node, backlogById))}
+          </svg>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderNodeCard(backlogById: Map<string, BacklogItem>, node: WorkNode) {
+    const item = backlogById.get(node.backlogItemId);
+    const title = this.graphTitleForNode(backlogById, node);
+    const refs = [
+      node.currentFamilyId ? `family ${node.currentFamilyId}` : '',
+      node.latestRunId ? `run ${node.latestRunId}` : '',
+      item?.specPath ? item.specPath : '',
+    ].filter(Boolean);
+    return html`
+      <button
+        class=${`node-card ${this.selectedNodeId === node.id ? 'selected' : ''}`}
+        @click=${() => this.selectNode(node.id)}
+      >
+        <div class="node-card-head">
+          <div>
+            <div class="node-title">${title}</div>
+            <div class="small">
+              ${node.id} · ${item?.project ?? 'unknown project'} · backlog ${node.backlogItemId}
+            </div>
+          </div>
+          <span class=${`badge ${node.status}`}>${node.status}</span>
+        </div>
+        ${refs.length
+          ? html`<div class="refs">
+              ${refs.map((ref) => html`<span class="ref">${ref}</span>`)}
+            </div>`
+          : nothing}
+        ${node.waitingOn.length
+          ? html`<ul class="waiting-list">
+              ${node.waitingOn.map((reason) => html`<li>${reason.detail}</li>`)}
+            </ul>`
+          : nothing}
+      </button>
+    `;
+  }
+
+  private renderDetailCell(label: string, value: unknown) {
+    return html`
+      <div class="detail-cell">
+        <div class="detail-label">${label}</div>
+        <div class="detail-value">${value || '—'}</div>
+      </div>
+    `;
+  }
+
+  private renderNodeDetail(
+    graph: WorkGraphProjection,
+    backlogById: Map<string, BacklogItem>,
+    node: WorkNode | null,
+  ) {
+    if (!node) return html`<div class="detail-card">No nodes in this graph.</div>`;
+    const item = backlogById.get(node.backlogItemId);
+    const incoming = graph.edges.filter((edge) => edge.toNodeId === node.id);
+    const outgoing = graph.edges.filter((edge) => edge.fromNodeId === node.id);
+    return html`
+      <div class="detail-card">
         <div>
-          <div class="node-title">${this.graphTitleForNode(graph, node)}</div>
-          <div class="small">${node.id} · backlog ${node.backlogItemId}</div>
-          <div class="refs">
-            ${node.currentFamilyId
-              ? html`<span class="ref">family ${node.currentFamilyId}</span>`
-              : nothing}
-            ${node.latestRunId ? html`<span class="ref">run ${node.latestRunId}</span>` : nothing}
+          <div class="detail-title">${this.graphTitleForNode(backlogById, node)}</div>
+          <div class="detail-muted">
+            ${node.id} · ${item?.project ?? 'unknown project'} · ${node.status}
           </div>
         </div>
-        <div><span class=${`badge ${node.status}`}>${node.status}</span></div>
-        ${waiting.length
-          ? html`<ul class="waiting-list">
-              ${waiting.map((reason) => html`<li>${reason.detail}</li>`)}
-            </ul>`
+        <div class="detail-grid">
+          ${this.renderDetailCell('Backlog', node.backlogItemId)}
+          ${this.renderDetailCell('Project', item?.project)}
+          ${this.renderDetailCell('Flow', item?.flowType)}
+          ${this.renderDetailCell('Family', node.currentFamilyId)}
+          ${this.renderDetailCell('Latest run', node.latestRunId)}
+          ${this.renderDetailCell('Base ref', node.baseRef)}
+          ${this.renderDetailCell(
+            'Failure policy',
+            node.onFailure ?? graph.graph.defaultFailurePolicy,
+          )}
+        </div>
+        ${item?.notes ? html`<div class="detail-muted">${item.notes}</div>` : nothing}
+        ${incoming.length || outgoing.length
+          ? html`
+              <div class="detail-muted">
+                ${incoming.length
+                  ? html`<strong>Inputs:</strong> ${incoming
+                        .map((edge) => this.edgeLabel(edge))
+                        .join(', ')}<br />`
+                  : nothing}
+                ${outgoing.length
+                  ? html`<strong>Unlocks:</strong> ${outgoing
+                        .map((edge) => this.unlockLabel(edge))
+                        .join(', ')}`
+                  : nothing}
+              </div>
+            `
           : nothing}
       </div>
     `;
   }
 
+  private renderSidePanel(graph: WorkGraphProjection, backlogById: Map<string, BacklogItem>) {
+    return html`
+      <aside class="side-panel">
+        <div class="side-head">
+          <div>
+            <div class="side-title">Backlog nodes</div>
+            <div class="small">Select a node to inspect gates, runs, and refs.</div>
+          </div>
+        </div>
+        <div class="side-content">
+          ${this.renderNodeDetail(graph, backlogById, this.selectedNode(graph))}
+          ${graph.nodes.map((node) => this.renderNodeCard(backlogById, node))}
+        </div>
+      </aside>
+    `;
+  }
+
   private renderGraph(graph: WorkGraphProjection) {
+    const backlogById = this.backlogById();
+    const stats = this.graphStats(graph);
     return html`
       <section class="graph">
         <div class="graph-head">
@@ -216,6 +377,11 @@ export class WorkGraphPanel extends LitElement {
             <div class="title">${graph.graph.title}</div>
             <div class="meta">
               ${graph.graph.id} · ${graph.graph.project} · updated ${graph.graph.updatedAt}
+            </div>
+            <div class="stat-row" aria-label="Graph node status summary">
+              <span class="stat good">${stats.good} unlocked</span>
+              <span class="stat warn">${stats.warn} waiting/running</span>
+              <span class="stat bad">${stats.bad} attention</span>
             </div>
           </div>
           <div class="badges">
@@ -225,25 +391,30 @@ export class WorkGraphPanel extends LitElement {
             ${(graph.graph.tags ?? []).map((tag) => html`<span class="badge">#${tag}</span>`)}
           </div>
         </div>
-        <div class="nodes">${graph.nodes.map((node) => this.renderNode(graph, node))}</div>
+        <div class="graph-body">
+          ${this.renderDiagram(graph, backlogById)} ${this.renderSidePanel(graph, backlogById)}
+        </div>
       </section>
     `;
   }
 
   render() {
-    const projects = [...new Set(this.graphs.map((graph) => graph.graph.project))].sort();
+    const allGraphs = this.activeGraphs();
+    const projects = [...new Set(allGraphs.map((graph) => graph.graph.project))].sort();
     const graphs = this.selectedProject
-      ? this.graphs.filter((graph) => graph.graph.project === this.selectedProject)
-      : this.graphs;
+      ? allGraphs.filter((graph) => graph.graph.project === this.selectedProject)
+      : allGraphs;
     return html`
       <div class="header">
         <div>
           <h1>Work Graphs</h1>
           <div class="subtitle">
-            Read-only ADR-040 dependency DAGs over dispatchable backlog items.
+            ADR-040 dependency DAGs that make multi-backlog implementations readable before they
+            dispatch.
           </div>
         </div>
         <select
+          aria-label="Filter work graphs by project"
           .value=${this.selectedProject}
           @change=${(event: Event) => {
             this.selectedProject = (event.target as HTMLSelectElement).value;
@@ -255,7 +426,9 @@ export class WorkGraphPanel extends LitElement {
       </div>
       ${graphs.length
         ? graphs.map((graph) => this.renderGraph(graph))
-        : html`<div class="empty">No work graphs found.</div>`}
+        : html`<div class="empty">
+            No work graphs found. Create a graph from backlog work to see the dependency map here.
+          </div>`}
     `;
   }
 }

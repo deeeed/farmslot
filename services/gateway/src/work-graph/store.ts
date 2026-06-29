@@ -171,6 +171,7 @@ function normalizeStoredSnapshot(raw: unknown): WorkGraphSnapshot | null {
     edges: snapshot.edges.map((edge) => ({
       ...edge,
       required: edge.required !== false,
+      blocks: edge.blocks ?? 'start',
       status: edge.status ?? 'pending',
       unlock: edge.unlock ?? { kind: 'enqueue' },
     })),
@@ -317,11 +318,6 @@ export async function addWorkGraphNode(
     assertBacklogAvailableForNode(params.backlogItemId, params.graphId);
     const backlogItem = getBacklogItemSnapshot(params.backlogItemId);
     if (!backlogItem) throw new Error(`Backlog item not found: ${params.backlogItemId}`);
-    if (backlogItem.project !== snapshot.graph.project) {
-      throw new Error(
-        `Backlog item project ${backlogItem.project} does not match graph project ${snapshot.graph.project}`,
-      );
-    }
     const nodeId = normalizeId('wn', params.id, backlogItem.title);
     if (snapshot.nodes.some((node) => node.id === nodeId))
       throw new Error(`Work node already exists: ${nodeId}`);
@@ -368,6 +364,7 @@ export async function addWorkGraphEdge(
       fromNodeId: params.fromNodeId,
       toNodeId: params.toNodeId,
       condition: params.condition,
+      blocks: params.blocks ?? 'start',
       required: params.required !== false,
       status: 'pending',
       unlock: params.unlock ?? { kind: 'enqueue' },
@@ -607,6 +604,14 @@ function computeWaiting(node: WorkNode, inbound: readonly WorkEdge[]): void {
     }));
 }
 
+function blocksStart(edge: WorkEdge): boolean {
+  return edge.blocks !== 'completion';
+}
+
+function startEdges(inbound: readonly WorkEdge[]): WorkEdge[] {
+  return inbound.filter(blocksStart);
+}
+
 function unlockActionKind(inbound: readonly WorkEdge[]): WorkGraphActionLedgerEntry['actionKind'] {
   if (inbound.some((edge) => edge.unlock.kind === 'mark-ready')) return 'mark-ready';
   if (inbound.some((edge) => edge.unlock.kind === 'rebase-onto')) return 'rebase-onto';
@@ -802,7 +807,10 @@ export async function schedulerTick(
         )
           continue;
         const inbound = snapshot.edges.filter((edge) => edge.toNodeId === node.id);
-        const failedRequired = inbound.filter((edge) => edge.required && edge.status === 'failed');
+        const startInbound = startEdges(inbound);
+        const failedRequired = startInbound.filter(
+          (edge) => edge.required && edge.status === 'failed',
+        );
         if (failedRequired.length > 0) {
           node.status = 'needs-attention';
           node.waitingOn = failedRequired.map((edge) => ({
@@ -815,21 +823,21 @@ export async function schedulerTick(
           snapshot.graph.status = 'needs-attention';
           continue;
         }
-        computeWaiting(node, inbound);
+        computeWaiting(node, startInbound);
         const blocked = node.waitingOn.length > 0;
         if (blocked) {
           node.status = 'waiting';
           node.updatedAt = now;
           continue;
         }
-        const requiredInbound = inbound.filter((edge) => edge.required);
+        const requiredInbound = startInbound.filter((edge) => edge.required);
         const satisfiedInbound = requiredInbound.filter(
           (edge) => edge.status === 'satisfied' || edge.status === 'waived',
         );
         if (requiredInbound.length === satisfiedInbound.length) {
           runnable++;
           try {
-            await executeNodeUnlock(snapshot, node, inbound, now);
+            await executeNodeUnlock(snapshot, node, startInbound, now);
           } catch (err) {
             recordNodeUnlockFailure(snapshot, node, inbound, now, errorMessage(err));
           }
@@ -839,7 +847,11 @@ export async function schedulerTick(
         const allDone =
           snapshot.nodes.length > 0 &&
           snapshot.nodes.every((node) => node.status === 'succeeded' || node.status === 'skipped');
-        snapshot.graph.status = allDone ? 'done' : runnable === 0 ? 'waiting' : 'active';
+        const allRequiredEdgesSettled = snapshot.edges.every(
+          (edge) => !edge.required || edge.status === 'satisfied' || edge.status === 'waived',
+        );
+        snapshot.graph.status =
+          allDone && allRequiredEdgesSettled ? 'done' : runnable === 0 ? 'waiting' : 'active';
       }
       snapshot.graph.updatedAt = now;
       await persistNow(snapshot);

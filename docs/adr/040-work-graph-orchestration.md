@@ -95,12 +95,14 @@ New protocol contracts (`packages/protocol/src/contracts/work-graph.ts`). Backlo
 the graph store owns relationships, scheduling projection, waiting reasons, edge evidence, and
 the idempotency ledger.
 
+A work graph is intentionally **cross-project** in v1. `WorkGraph.project` is a graph owner/scope label used for filtering and provenance; it is not a constraint that every node's backlog item has the same project. The motivating case is one epic whose execution spans multiple project farms (for example a source-of-truth package/release task followed by client tasks). Each node's actual project comes from its linked `BacklogItem.project`, so dispatch still uses the correct project hooks, slots, default branch, runner/model policy, and task template.
+
 ```ts
 // ---- Graph ----
 export interface WorkGraph {
   id: string; // wg_<slug>
   version: 1;
-  project: string; // single-project in v1 (§12 non-goals)
+  project: string; // graph owner/scope label; nodes may point to backlog items from multiple projects
   title: string;
   source: WorkGraphSource;
   /** Shared normalized tags, compatible with existing Run.tags. */
@@ -162,7 +164,7 @@ export interface WorkNode {
 export type WorkNodeStatus =
   | 'planned' // authored but graph not active / scheduler hasn't evaluated it yet
   | 'waiting' // active: ≥1 unsatisfied required upstream edge (≠ run.blocked)
-  | 'ready' // all required edges satisfied; eligible to enqueue
+  | 'ready' // all required start edges satisfied; eligible to enqueue
   | 'queued' // backlog item enqueued to dispatch queue
   | 'running' // family active
   | 'gated' // family hit a run-step gate (publication/visual/dangerous)
@@ -179,11 +181,19 @@ export interface WorkEdge {
   toNodeId: string; // downstream
   condition: EdgeCondition;
   required: boolean; // hard dep vs optional input
+  blocks?: 'start' | 'completion'; // default 'start'; completion blockers allow downstream start but block finalization/rebase
   status: 'pending' | 'satisfied' | 'failed' | 'waived';
   evidence?: EdgeEvidence; // durable proof of satisfaction (merge SHA, artifact path, manual resolution)
   unlock: UnlockAction; // one unlock per edge in v1 (see §6 for node-level plan)
   lastEvaluatedAt?: string;
 }
+
+// `blocks` separates two common dependency shapes:
+// - `start` (default): downstream backlog item must not enqueue until the edge is satisfied.
+// - `completion`: downstream work may start from an earlier contract/mock/base, but cannot
+//   finish/release until the edge is satisfied and its unlock action is handled. This is the
+//   stacked/cross-project rebase case: B can start while A is in progress, but after A merges
+//   B must rebase before completion.
 
 // Conditions are idempotently evaluable from EXTERNAL durable state, so a restart tick rebuilds them.
 export type EdgeCondition =
@@ -205,7 +215,7 @@ export interface EdgeEvidence {
 export type UnlockAction =
   | { kind: 'enqueue' } // default: enqueue to's backlog item
   | { kind: 'mark-ready' } // mark eligible without enqueuing (operator/gate sequencing)
-  | { kind: 'rebase-onto'; flow: 'merge-main' | 'pr-complete' }; // stacked PRs — reuses ci-watch's chaining mechanism (§6)
+  | { kind: 'rebase-onto'; flow: 'merge-main' | 'pr-complete' }; // completion blocker: rebase downstream onto upstream result (§6)
 
 export type NodeFailurePolicy =
   | 'halt' // graph → needs-attention; no new enqueues (default)
@@ -273,7 +283,7 @@ _existing_ run. The graph otherwise reads only existing run fields
 ### Node
 
 ```
- planned ──graph active──▶ waiting ──all required edges satisfied──▶ ready
+ planned ──graph active──▶ waiting ──all required start edges satisfied──▶ ready
    ▲                          ▲                                       │ scheduler enqueues backlog item
    │             (edge added / upstream reset)                        ▼
    │                                                                queued ──dispatch──▶ running
@@ -285,10 +295,7 @@ _existing_ run. The graph otherwise reads only existing run fields
    └────────── failed / needs-attention ◀── (onFailure policy) ──────────────────────┘    succeeded
 ```
 
-A node reaches `succeeded` on **family terminal-success**. Its _outbound_ edges carry their
-own satisfied-bit; a `merged` edge only fires once the PR actually merges (possibly after the
-family's last run). So a node can be `succeeded` while a downstream `merged` edge is still
-`pending`. **UI must render "succeeded — merge edge pending," never a bare "done"**.
+A node reaches `succeeded` on **family terminal-success** only after any required completion blockers have been handled. Its _outbound_ edges carry their own satisfied-bit; a `merged` edge only fires once the PR actually merges (possibly after the family's last run). So an upstream node can be `succeeded` while a downstream completion/rebase edge is still `pending`. **UI must render the edge state explicitly, never a bare "done" for the whole graph.**
 
 ### Edge
 
@@ -351,8 +358,8 @@ acquire/renew per-graph lease            // skip the graph if another worker hol
 load graph + linked backlog/queue/runs + family summaries + PR facts + gates + artifact indexes
 for each edge:  re-evaluate status from DURABLE source facts (pure, idempotent)
 for each node:  recompute waitingOn + status projection
-for each node whose ALL required inbound edges are satisfied:
-   compute a NODE-LEVEL unlock plan from all inbound satisfied edges (deterministic order)
+for each node whose ALL required `start` inbound edges are satisfied:
+   compute a NODE-LEVEL start unlock plan from satisfied `start` edges (deterministic order)
    if the plan permits enqueue (not mark-ready/manual-gate-only):
       execute via existing services (default: backlog.enqueue(backlogItemId))
    record node-level ActionKey in the idempotency ledger
@@ -360,16 +367,14 @@ persist graph + ledger atomically; broadcast graph update
 detect cycles at activate; an edge added to an active graph that introduces a cycle → needs-attention
 ```
 
-**Node-level unlock plan.** Multiple inbound edges may satisfy together with
-possibly conflicting actions. The scheduler does **not** fire the satisfying edge's action in
-isolation; it computes one deterministic node-level plan: if any required satisfied edge carries
-`rebase-onto`, the rebase runs first (idempotently), then a single `enqueue`. `mark-ready` edges
-gate without enqueuing. Exactly one enqueue per node-readiness transition.
+**Node-level unlock plan.** Multiple inbound `start` edges may satisfy together with possibly conflicting start actions. The scheduler does **not** fire the satisfying edge's action in isolation; it computes one deterministic node-level plan for start readiness. `mark-ready` edges gate without enqueuing. Exactly one enqueue per node-readiness transition.
+
+**Completion blockers.** `blocks: 'completion'` edges are evaluated and rendered like other edges, but they do not block the downstream node from starting. They block finalization/release readiness and are where `rebase-onto` belongs: after upstream durable evidence appears (usually `merged`), the downstream family must be rebased/continued before it can be treated as complete for graph purposes.
 
 **Idempotency ledger.** Every node-level unlock records
 `ActionKey = ${graphId}:${nodeId}:${actionKind}:${readinessVersion}` with
 `startedAt/completedAt/result`. `readinessVersion` is a deterministic hash of the graph version,
-the node id, satisfied required inbound edge ids, and the computed node-level action plan. It is
+the node id, satisfied required start-edge ids, and the computed node-level action plan. It is
 not a single `edgeId`, because multiple inbound edges may satisfy together while still producing
 exactly one enqueue. If the gateway crashes after `backlog.enqueue` returns but before the graph
 persists, the next tick reconciles by `workGraphId+workNodeId` (the additive linkage fields): it
@@ -399,6 +404,10 @@ Conditions are idempotent for _reading_; the ledger covers the _write_ side.
 | **Publication gate (ADR-038)** | `gated` node status mirrors the gate-held run                                                         | `gate.resolved` emits a graph event; downstream `merged` edges wait for the actual merge |
 | **Bundles (ADR-039)**          | `artifact` edge condition resolves against a run bundle path                                          | bundle path lookup in the edge evaluator; bundles are evidence, never the graph store    |
 | **Webhooks (v2)**              | low-latency `pr.merged`/gate facts                                                                    | GitHub webhook receiver; reconciliation stays authoritative                              |
+
+### Cross-project graph semantics
+
+A graph may contain backlog items from multiple projects. The graph-level `project` field is an owner/scope label, not a dispatch project. Every dispatch decision still reads `BacklogItem.project` from the node's linked backlog item, so project-specific hooks, slots, templates, default branches, and validation remain owned by the target project. Cross-project graphs therefore coordinate order; they do not merge project configuration.
 
 ### Backlog auto-dispatch exclusivity
 
@@ -523,11 +532,11 @@ Execution steps:
 2. workGraph.create({ project, title, source }) → status 'planning'
 3. workGraph.addNode({ graphId, backlogItemId })   ×N    (wrap existing items)
 4. workGraph.addEdge({ from, to, condition, required, unlock }) ×M
-5. Gateway validates: acyclic, project match, required fields, branch topology (if rebase edges)
+5. Gateway validates: acyclic graph, required fields, branch topology (if rebase/completion edges); nodes may reference backlog items from different projects
 6. workGraph.activate(graphId)  → cycle check → scheduler takes over
 7. Scheduler marks dependency-free nodes ready, enqueues them; queue creates root runs
 8. Family / run / PR / gate / artifact events unlock downstream nodes
-9. Graph 'done' when every required node is succeeded, skipped-by-policy, or explicitly waived
+9. Graph 'done' when every required node is succeeded/skipped and every required edge is satisfied or waived
 ```
 
 Methods (v1): `workGraph.create / get / list / addNode / addEdge / updateNode / activate /
@@ -607,13 +616,14 @@ from external state rather than from consumed events; `manual` edges persist the
     `schedulerTick`.
   - Scheduler with **per-graph lease** + **idempotency ledger**, reacting to `family.terminal`,
     `pr.merged`, and `scheduler.tick`.
-  - Conditions: `family-done`, `merged` (durable), `manual`. Unlock: `enqueue` + `rebase-onto`
+  - Cross-project nodes: graph owner/scope may differ from each linked `BacklogItem.project`; dispatch uses the backlog project.
+  - Conditions: `family-done`, `merged` (durable), `manual`. Edge `blocks`: `start` and `completion`. Unlock: `enqueue` + `rebase-onto`
     (via `buildCIWatchChainedRunParams`) + `mark-ready`.
   - `baseRef`/`upstreamBaseNodeIds` + rebase evidence for the stacked case.
   - Additive `workGraphId`/`workNodeId` back-refs on backlog/queue/run.
   - **Read-only Command Center surface**: graph list, node statuses, waiting reasons, linked
     runs (DAG render optional).
-  - **Proves:** parallel fan-out across runners + stacked-PR auto-rebase-unlock with
+  - **Proves:** parallel cross-project fan-out across runners + stacked/completion rebase-unlock with
     hand-authored edges. Validation: restart reconciliation, no duplicate enqueue, no
     `RunStatus.blocked` for uncreated downstream work.
 
@@ -627,7 +637,7 @@ from external state rather than from consumed events; `manual` edges persist the
   operator actions for retry/replace/waive/skip.
 
 - **v3 — LLM decomposition + advanced orchestration.** Proposed graph from existing backlog specs
-  (human-reviewed before activate); cross-project graphs; critical-path scheduling; priority
+  (human-reviewed before activate); critical-path scheduling; priority
   inheritance; analytics; portable cross-gateway graph execution.
 
 **Roadmap relationship (ADR-041).** WorkGraph is an executable dependency DAG over already-created
@@ -675,8 +685,6 @@ model for many jobs" anti-pattern ADR-024 §0 warns against.
   approval is the explicit `planning -> active` transition in `workGraph.activate`, not a
   separate run gate.
 - **No auto-edge inference** from Jira/GitHub links — v2.
-- **No cross-project graphs** — single-project in v1 (slot pools, default branches, project hooks
-  are per-project).
 - **No clawing back in-flight downstream runs** on upstream revert — flagged for operator.
 - **No new human-gate machinery** — reuse ADR-038 / ADR-023 / recipe gates + the one `manual` edge.
 - **No holding slots for graph dependencies** — `waiting` nodes hold _nothing_; no run exists.
