@@ -460,6 +460,21 @@ describe('cursor runner', () => {
     assert.equal(runnerPaneShowsTaskAlreadyRunning(idlePane, message, 'TASK.md', 'codex'), false);
   });
 
+  it('detects a Codex task already executing so the send-retry loop skips a duplicate send', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/28-0629-224637/TASK.md');
+    // Real incident: attempt 1 was accepted (codex Working) but its verify window closed
+    // before "Working" rendered, so the loop re-sent and the duplicate landed as a queued
+    // draft. The send loop now re-checks this guard before each send.
+    const pane = `
+• Ran .sandbox/farmslot-farm/worker-task/feat/28-0629-224637/mark 6
+• I'm running the baseline recipe now.
+• Working (3m 35s • esc to interrupt) · 1 background terminal running
+› Follow the checklist in temp/tasks/feat/28-0629-224637/TASK.md. After each step, run mark N before continuing.
+  tab to queue message                                                          87% context left
+`;
+    assert.equal(runnerPaneShowsTaskAlreadyRunning(pane, message, 'TASK.md', 'codex'), true);
+  });
+
   it('accepts post-launch prompt delivery when the runner queues it for the next tool call', async () => {
     const message = await dispatchPrompt('temp/tasks/feat/tat-3307-0609-103547/TASK.md');
     const before = `

@@ -1592,6 +1592,16 @@ export async function sendRunnerPostLaunchPrompt(
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
       )
     ).stdout;
+    // The previous attempt's prompt may have been accepted just after its verify
+    // window closed (e.g. codex only renders "Working" a few seconds after submit).
+    // Re-check before sending again, or we deliver a duplicate prompt that lands as a
+    // queued draft while the runner is already executing the task.
+    if (runnerPaneShowsTaskAlreadyRunning(preSendPane, message, marker, runner)) {
+      console.log(
+        `[${logPrefix}] task already executing in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
+      );
+      return;
+    }
     const sendCommand = runnerPaneShouldSubmitExistingInstruction(
       preSendPane,
       message,
