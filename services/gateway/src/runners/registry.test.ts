@@ -951,7 +951,12 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT);
       assert.match(
         cmd,
-        /unset CLAUDECODE && CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home' && cd \/tmp\/repo && \/usr\/local\/bin\/codex .*--model gpt-5/,
+        /unset CLAUDECODE && mkdir -p '\/tmp\/repo\/\.agent\/codex-home' .*export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home' && cd \/tmp\/repo && \/usr\/local\/bin\/codex .*--model gpt-5/,
+      );
+      // CODEX_HOME must be created and seeded with auth, or codex aborts on launch.
+      assert.match(
+        cmd,
+        /ln -sf "\$HOME\/\.codex\/auth\.json" '\/tmp\/repo\/\.agent\/codex-home\/auth\.json'/,
       );
       assert.match(cmd, /install-runner-observability\.mjs' --runner 'codex'/);
       assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
@@ -967,7 +972,7 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', PROMPT);
       assert.match(
         cmd,
-        /unset CLAUDECODE && CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home' && cd \/tmp\/repo && \/usr\/local\/bin\/codex/,
+        /unset CLAUDECODE && mkdir -p '\/tmp\/repo\/\.agent\/codex-home' .*export CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home' && cd \/tmp\/repo && \/usr\/local\/bin\/codex/,
       );
       assert.doesNotMatch(cmd, /model_reasoning_effort/);
     });
