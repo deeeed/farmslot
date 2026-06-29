@@ -483,6 +483,42 @@ test('captureRunDiffArtifacts preserves an existing durable diff snapshot', asyn
   assert.equal(await readFile(path.join(artifactsDir, 'diff.txt'), 'utf-8'), 'original diff');
 });
 
+test('captureRunDiffArtifacts captures iteration diff when contribution diff is reused', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'run-diff-artifacts-iteration-reuse-'));
+  const artifactsDir = path.join(dir, 'artifacts');
+  await mkdir(artifactsDir, { recursive: true });
+  const existing = {
+    source: 'artifact',
+    available: true,
+    files: 1,
+    additions: 2,
+    deletions: 3,
+    kind: 'contribution',
+    filter: 'source-code',
+    artifactPath: 'artifacts/diff.txt',
+    capturedAt: '2026-05-03T00:00:00.000Z',
+  };
+  await writeFile(path.join(artifactsDir, 'diff.txt'), 'original diff', 'utf-8');
+  await writeFile(path.join(artifactsDir, 'diff-stat.json'), JSON.stringify(existing), 'utf-8');
+
+  const result = await captureRunDiffArtifacts(
+    makeRun({
+      slotId: 'missing-slot-for-iteration-reuse-test',
+      taskFile: path.join(dir, 'TASK.md'),
+      worktreeHeadAtDispatch: 'abc123deadbeef',
+    }),
+  );
+
+  assert.equal(result.files, 1);
+  assert.equal(await readFile(path.join(artifactsDir, 'diff.txt'), 'utf-8'), 'original diff');
+  const iterationStat = JSON.parse(
+    await readFile(path.join(artifactsDir, 'iteration-diff-stat.json'), 'utf-8'),
+  );
+  assert.equal(iterationStat.kind, 'iteration');
+  assert.equal(iterationStat.available, false);
+  assert.equal(iterationStat.missingReason, 'slot-vars-unavailable');
+});
+
 test('captureRunDiffArtifacts preserves stale diff text as previous when recapture is unavailable', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'run-diff-artifacts-stale-'));
   const artifactsDir = path.join(dir, 'artifacts');
