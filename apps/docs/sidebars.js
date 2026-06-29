@@ -56,6 +56,7 @@ const sidebars = {
         'guides/getting-started.generated',
         'guides/adoption-path',
         'guides/local-demo-and-cli',
+        'guides/roadmap-to-work-graph',
         'guides/recipe-skills-adoption',
         'guides/import-a-project',
         'guides/farmslot-monorepo-example',

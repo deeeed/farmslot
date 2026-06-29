@@ -47,4 +47,4 @@ The loop can be adopted incrementally:
 4. route work through the gateway and Command Center;
 5. add backlog/dispatch policy, cross-runner review, and replay/eval loops.
 
-Visual validation, executable recipes, and proof artifacts are the trust layer. The gateway is the control plane. The full loop is the product.
+Visual validation, executable recipes, and proof artifacts are the trust layer. The gateway is the control plane. The full loop is the product. See [Roadmap to Work Graph](../guides/roadmap-to-work-graph.md) for the Command Center planning-to-dispatch flow.

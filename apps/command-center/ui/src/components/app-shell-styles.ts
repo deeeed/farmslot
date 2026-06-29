@@ -397,6 +397,9 @@ export function renderAppShellStyles(
         overflow: hidden;
         min-width: 0;
       }
+      farm-app .fa-main--capture {
+        width: 100vw;
+      }
       farm-app .fa-content {
         flex: 1;
         overflow: hidden;
