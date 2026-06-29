@@ -501,6 +501,35 @@ test('graph-linked backlog items reject manual enqueue and auto-dispatch skips t
   );
 });
 
+test('scheduler respects graph node auto-dispatch opt-out until re-enabled', async () => {
+  const { backlog, queue, workGraph } = await freshStores();
+  const item = await createReadyBacklogItem(backlog, 'Operator staged graph task');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Operator controlled graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_staged',
+    backlogItemId: item.item.id,
+  });
+  await backlog.updateBacklogItem({ itemId: item.item.id, autoDispatch: false });
+  await workGraph.activateWorkGraph({ graphId });
+
+  await workGraph.schedulerTick({ graphId });
+
+  let projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_staged')?.status, 'ready');
+  assert.equal(queue.getQueueSnapshot().length, 0);
+
+  await backlog.updateBacklogItem({ itemId: item.item.id, autoDispatch: true });
+  await workGraph.schedulerTick({ graphId });
+
+  projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_staged')?.status, 'queued');
+});
+
 test('scheduler reconciles restart/idempotency and does not duplicate graph enqueues', async () => {
   const { backlog, runs, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Upstream task');

@@ -914,6 +914,13 @@ async function executeNodeUnlock(
   const actionKey = `${snapshot.graph.id}:${node.id}:${actionKind}:${version}`;
   if (snapshot.ledger.some((entry) => entry.key === actionKey && entry.status === 'completed'))
     return;
+  const backlogItem = getBacklogItemSnapshot(node.backlogItemId);
+  if (actionKind === 'enqueue' && backlogItem?.autoDispatch === false) {
+    node.status = 'ready';
+    node.waitingOn = [];
+    node.updatedAt = now;
+    return;
+  }
   if (inbound.some((edge) => edge.unlock.kind === 'rebase-onto')) {
     node.status = 'needs-attention';
     node.waitingOn = [

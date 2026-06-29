@@ -39,7 +39,7 @@ function isSlotReady(slot: SlotStatus): boolean {
     slot.enabled !== false &&
     slot.dispatchable !== false &&
     slot.agent !== 'working' &&
-    (slot.lifecycle === 'ready' || slot.lifecycle === 'held')
+    slot.lifecycle === 'ready'
   );
 }
 

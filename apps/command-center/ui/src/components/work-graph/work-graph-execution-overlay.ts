@@ -2,7 +2,6 @@ import type {
   BacklogItem,
   QueueItem,
   Run,
-  RunStatus,
   SlotStatus,
   WorkGraphProjection,
   WorkNode,
@@ -105,20 +104,6 @@ export interface SlotPendingWork {
   schedulerReady: SlotPendingWorkItem[];
 }
 
-const ACTIVE_RUN_STATUSES = new Set<RunStatus>([
-  'created',
-  'grading',
-  'writing-task',
-  'slot-finding',
-  'preparing',
-  'dispatching',
-  'monitoring',
-  'self-reviewing',
-  'completing',
-  'ci-watching',
-  'paused',
-]);
-
 function titleForNode(node: WorkNode, backlogItem?: BacklogItem): string {
   if (node.kind === 'reference') return node.reference?.title ?? node.id;
   return backlogItem?.title ?? node.backlogItemId ?? node.id;
@@ -139,7 +124,7 @@ function isVisibleSlotReady(slot: SlotStatus): boolean {
     slot.enabled !== false &&
     slot.dispatchable !== false &&
     slot.agent !== 'working' &&
-    (slot.lifecycle === 'ready' || slot.lifecycle === 'held')
+    slot.lifecycle === 'ready'
   );
 }
 
@@ -150,7 +135,7 @@ function slotReason(slot: SlotStatus): string {
   if (slot.lifecycle === 'manual') return 'manual hold';
   if (slot.lifecycle === 'disabled') return 'disabled';
   if (slot.lifecycle === 'busy') return slot.phase ? `busy: ${slot.phase}` : 'busy';
-  if (slot.lifecycle === 'held') return 'held but dispatchable';
+  if (slot.lifecycle === 'held') return 'held; not a free dispatch slot';
   return 'ready';
 }
 
@@ -318,7 +303,7 @@ export function buildWorkGraphExecutionOverlay(
 
     const terminalStatus = terminalNodeStatus(node.status);
     if (terminalStatus) {
-      if (queueItem || (run && ACTIVE_RUN_STATUSES.has(run.status))) {
+      if (queueItem || (run && !isTerminalRunStatus(run.status))) {
         blockers.push({
           kind: queueItem ? 'queue' : 'run',
           severity: 'warning',
@@ -380,6 +365,39 @@ export function buildWorkGraphExecutionOverlay(
       };
     }
 
+    if (node.status === 'needs-attention') {
+      blockers.push(
+        ...node.waitingOn.map((reason) => ({
+          kind: 'policy' as const,
+          severity: 'blocking' as const,
+          message: reason.detail,
+        })),
+      );
+      if (backlogItem.lastDispatchError) {
+        blockers.push({
+          kind: 'policy',
+          severity: 'blocking',
+          message: backlogItem.lastDispatchError,
+        });
+      }
+      return {
+        graphId: input.graph.graph.id,
+        nodeId: node.id,
+        kind: node.kind,
+        title: titleForNode(node, backlogItem),
+        project,
+        graphStatus: node.status,
+        executionStatus: 'needs-attention',
+        summary: blockers[0]?.message ?? 'Graph node needs operator attention.',
+        blockers,
+        backlogItem,
+        queueItem,
+        run,
+        visibleCandidateSlots,
+        editableConfig: !queueItem && !run,
+      };
+    }
+
     if (run && !isTerminalRunStatus(run.status)) {
       const executionStatus = statusForRun(run);
       return {
@@ -405,6 +423,14 @@ export function buildWorkGraphExecutionOverlay(
     if (queueItem) {
       const blockedSlots = visibleCandidateSlots.filter((slot) => !slot.ready);
       const hasReadySlot = visibleCandidateSlots.some((slot) => slot.ready);
+      if (visibleCandidateSlots.length === 0) {
+        blockers.push({
+          kind: 'slot-unavailable',
+          severity: 'blocking',
+          message: 'No visible allowed slots match this queued work.',
+          queueItemId: queueItem.id,
+        });
+      }
       if (blockedSlots.length > 0 && !hasReadySlot) {
         blockers.push(
           ...blockedSlots.map((slot) => ({
@@ -423,12 +449,10 @@ export function buildWorkGraphExecutionOverlay(
         title: titleForNode(node, backlogItem),
         project,
         graphStatus: node.status,
-        executionStatus:
-          !hasReadySlot && visibleCandidateSlots.length > 0 ? 'waiting-for-slot' : 'queued',
-        summary:
-          !hasReadySlot && visibleCandidateSlots.length > 0
-            ? `Queued; waiting for visible allowed slot.`
-            : `Queued with priority ${queueItem.priority}.`,
+        executionStatus: !hasReadySlot ? 'waiting-for-slot' : 'queued',
+        summary: !hasReadySlot
+          ? `Queued; waiting for visible allowed slot.`
+          : `Queued with priority ${queueItem.priority}.`,
         blockers,
         backlogItem,
         queueItem,

@@ -158,6 +158,57 @@ test('overlay explains queued work waiting for allowed busy slot', () => {
   assert.match(node?.blockers[0]?.message ?? '', /busy/);
 });
 
+test('overlay treats held slots as not generally dispatch-ready', () => {
+  const overlay = buildWorkGraphExecutionOverlay({
+    graph: graph(),
+    backlogItems: [backlog({ allowedSlots: ['macwork-ff-1'], queuedQueueItemId: 'queue-1' })],
+    queueItems: [queue({ allowedSlots: ['macwork-ff-1'] })],
+    runs: [],
+    slots: [slot({ lifecycle: 'held' })],
+  });
+  const node = overlay.byNodeId.get('node-1');
+  assert.equal(node?.executionStatus, 'waiting-for-slot');
+  assert.match(node?.blockers[0]?.message ?? '', /held/);
+});
+
+test('overlay flags queued graph work with no visible candidate slots', () => {
+  const overlay = buildWorkGraphExecutionOverlay({
+    graph: graph(),
+    backlogItems: [backlog({ queuedQueueItemId: 'queue-1' })],
+    queueItems: [queue({ allowedSlots: ['missing-slot'] })],
+    runs: [],
+    slots: [slot()],
+  });
+  const node = overlay.byNodeId.get('node-1');
+  assert.equal(node?.executionStatus, 'waiting-for-slot');
+  assert.equal(node?.blockers[0]?.kind, 'slot-unavailable');
+});
+
+test('overlay preserves needs-attention graph status over dependency-ready fallthrough', () => {
+  const overlay = buildWorkGraphExecutionOverlay({
+    graph: graph({
+      nodes: [
+        {
+          id: 'node-1',
+          graphId: 'graph-1',
+          kind: 'backlog',
+          backlogItemId: 'backlog-1',
+          status: 'needs-attention',
+          waitingOn: [{ kind: 'policy', detail: 'Unlock failed: queue rejected item' }],
+          updatedAt: now,
+        },
+      ],
+    }),
+    backlogItems: [backlog({ lastDispatchError: 'queue rejected item' })],
+    queueItems: [],
+    runs: [],
+    slots: [slot()],
+  });
+  const node = overlay.byNodeId.get('node-1');
+  assert.equal(node?.executionStatus, 'needs-attention');
+  assert.match(node?.summary ?? '', /Unlock failed/);
+});
+
 test('overlay uses run state before queue state for active execution', () => {
   const overlay = buildWorkGraphExecutionOverlay({
     graph: graph(),
@@ -167,6 +218,29 @@ test('overlay uses run state before queue state for active execution', () => {
     slots: [slot({ lifecycle: 'busy', phase: 'review-gate', currentRunId: 'run-1' })],
   });
   assert.equal(overlay.byNodeId.get('node-1')?.executionStatus, 'gated');
+});
+
+test('overlay flags terminal graph nodes with live gated run linkage', () => {
+  const overlay = buildWorkGraphExecutionOverlay({
+    graph: graph({
+      nodes: [
+        {
+          id: 'node-1',
+          graphId: 'graph-1',
+          kind: 'backlog',
+          backlogItemId: 'backlog-1',
+          status: 'succeeded',
+          waitingOn: [],
+          updatedAt: now,
+        },
+      ],
+    }),
+    backlogItems: [backlog({ runId: 'run-1' })],
+    queueItems: [],
+    runs: [run({ status: 'human-gating' })],
+    slots: [slot({ lifecycle: 'busy', phase: 'review-gate', currentRunId: 'run-1' })],
+  });
+  assert.equal(overlay.byNodeId.get('node-1')?.executionStatus, 'needs-attention');
 });
 
 test('slot pending work groups queued and running graph work by slot', () => {

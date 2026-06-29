@@ -411,6 +411,17 @@ export class WorkGraphPanel extends LitElement {
       .sort((a, b) => a.machine.localeCompare(b.machine) || a.slot.localeCompare(b.slot));
   }
 
+  private runnerOptionsForItem(item: BacklogItem): string[] {
+    return [
+      ...new Set(
+        this.slotOptionsForItem(item)
+          .map((slot) => slot.runner)
+          .concat(item.runner ?? [])
+          .filter((runner): runner is string => Boolean(runner)),
+      ),
+    ].sort();
+  }
+
   private async updateBacklogConfig(
     item: BacklogItem,
     patch: {
@@ -451,7 +462,7 @@ export class WorkGraphPanel extends LitElement {
     const disabled = !view.editableConfig || this.configBusyItemId === item.id;
     const slotOptions = this.slotOptionsForItem(item);
     const selectedSlots = new Set(item.allowedSlots ?? []);
-    const runners = ['', 'claude', 'codex', 'cursor', 'grok', 'opencode'];
+    const runners = this.runnerOptionsForItem(item);
     return html`
       <div class="config-editor">
         <div class="config-head">
@@ -480,14 +491,14 @@ export class WorkGraphPanel extends LitElement {
         <label class="config-check">
           <input
             type="checkbox"
-            .checked=${item.autoDispatch === true}
+            .checked=${item.autoDispatch !== false}
             ?disabled=${disabled}
             @change=${(event: Event) =>
               this.updateBacklogConfig(item, {
                 autoDispatch: (event.target as HTMLInputElement).checked,
               })}
           />
-          Auto-dispatch when scheduler marks ready
+          Graph scheduler may enqueue this node
         </label>
         <div class="config-grid">
           <label class="config-field">
@@ -500,9 +511,8 @@ export class WorkGraphPanel extends LitElement {
                   runner: (event.target as HTMLSelectElement).value || null,
                 })}
             >
-              ${runners.map(
-                (runner) => html`<option value=${runner}>${runner || 'default'}</option>`,
-              )}
+              <option value="">default</option>
+              ${runners.map((runner) => html`<option value=${runner}>${runner}</option>`)}
             </select>
           </label>
           <label class="config-field">

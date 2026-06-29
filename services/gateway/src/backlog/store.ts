@@ -191,10 +191,8 @@ function normalizeRunnerHint(value: unknown): string | undefined {
 }
 
 function assertExecutionHintsCompatible(item: BacklogItem): void {
-  if (item.model && !runnerSupportsModel(item.runner, item.model)) {
-    throw new Error(
-      `model ${item.model} is not compatible with runner ${item.runner ?? 'default'}`,
-    );
+  if (item.runner && item.model && !runnerSupportsModel(item.runner, item.model)) {
+    throw new Error(`model ${item.model} is not compatible with runner ${item.runner}`);
   }
 }
 
