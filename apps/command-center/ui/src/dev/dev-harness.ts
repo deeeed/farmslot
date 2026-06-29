@@ -64,6 +64,7 @@ import '../components/evals/eval-cockpit.js';
 import '../components/queue/dispatch-queue-panel.js';
 import '../components/dispatch/dispatch-wizard.js';
 import '../components/backlog/backlog-panel.js';
+import '../components/work-graph/work-graph-panel.js';
 import '../components/resources/resource-panel.js';
 import '../components/device-grid/device-grid.js';
 import './chat-dev.js';
@@ -112,6 +113,7 @@ import {
 } from './mock-data.js';
 import { MOCK_CHANGED_LINES, MOCK_MODIFIED_SOURCE, MOCK_UNIFIED_DIFF } from './mock-diff-data.js';
 import { MockH264Source } from './mock-h264-source.js';
+import { mockWorkGraphBacklogItems, mockWorkGraphs } from './mock-work-graph-data.js';
 
 type DevRoute =
   | 'slot-card'
@@ -145,6 +147,7 @@ type DevRoute =
   | 'pipeline'
   | 'pipeline-mini'
   | 'flow-graph'
+  | 'work-graph'
   | 'review-workspace'
   | 'ready-workspace'
   | 'global-filter'
@@ -198,6 +201,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string }> = [
   { route: 'pipeline', label: 'Pipeline' },
   { route: 'pipeline-mini', label: 'Pipeline Mini' },
   { route: 'flow-graph', label: 'Flow Graph' },
+  { route: 'work-graph', label: 'Work Graph Epic Demo' },
   { route: 'review-workspace', label: 'Review Workspace' },
   { route: 'ready-workspace', label: 'Ready Workspace' },
   { route: 'global-filter', label: 'Global Filter' },
@@ -305,6 +309,7 @@ export class DevHarness extends LitElement {
       'pipeline',
       'pipeline-mini',
       'flow-graph',
+      'work-graph',
       'review-workspace',
       'ready-workspace',
       'global-filter',
@@ -426,6 +431,8 @@ export class DevHarness extends LitElement {
         return this.renderPipelineMini();
       case 'flow-graph':
         return this.renderFlowGraph();
+      case 'work-graph':
+        return this.renderWorkGraph();
       case 'review-workspace':
         return this.renderReviewWorkspace();
       case 'ready-workspace':
@@ -467,6 +474,13 @@ export class DevHarness extends LitElement {
       default:
         return this.renderIndex();
     }
+  }
+
+  private renderWorkGraph() {
+    return html`<work-graph-panel
+      .demoGraphs=${mockWorkGraphs}
+      .demoBacklogItems=${mockWorkGraphBacklogItems}
+    ></work-graph-panel>`;
   }
 
   private renderUpdateBanner() {

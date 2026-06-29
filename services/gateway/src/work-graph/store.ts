@@ -19,13 +19,20 @@ import {
   type WorkGraphSnapshot,
   type WorkGraphUpdateNodeParams,
   type WorkNode,
+  type WorkNodeReference,
+  type WorkReferenceStatus,
 } from '@farmslot/protocol';
 
-import { getQueueSnapshot, persistQueueNow } from '../backlog/dispatch-queue.js';
+import {
+  cancelGraphQueuedItem,
+  getQueueSnapshot,
+  persistQueueNow,
+} from '../backlog/dispatch-queue.js';
 import {
   attachBacklogItemToWorkNode,
   enqueueBacklogItem,
   getBacklogItemSnapshot,
+  markBacklogItemNeedsAttention,
   markBacklogItemReady,
 } from '../backlog/store.js';
 import { farmslotRoot } from '../fleet/state.js';
@@ -112,6 +119,7 @@ function project(snapshot: WorkGraphSnapshot): WorkGraphProjection {
     graph: { ...snapshot.graph, tags: snapshot.graph.tags ? [...snapshot.graph.tags] : undefined },
     nodes: snapshot.nodes.map((node) => ({
       ...node,
+      reference: node.reference ? cloneReference(node.reference) : undefined,
       tags: node.tags ? [...node.tags] : undefined,
       waitingOn: node.waitingOn.map((reason) => ({ ...reason })),
       supersededFamilyIds: node.supersededFamilyIds ? [...node.supersededFamilyIds] : undefined,
@@ -123,6 +131,13 @@ function project(snapshot: WorkGraphSnapshot): WorkGraphProjection {
     })),
     gates: snapshot.gates.map((gate) => ({ ...gate })),
     ledger: snapshot.ledger.map((entry) => ({ ...entry })),
+  };
+}
+
+function cloneReference(reference: WorkNodeReference): WorkNodeReference {
+  return {
+    ...reference,
+    labels: reference.labels ? [...reference.labels] : undefined,
   };
 }
 
@@ -167,10 +182,16 @@ function normalizeStoredSnapshot(raw: unknown): WorkGraphSnapshot | null {
       scheduler: snapshot.graph.scheduler ?? {},
       defaultFailurePolicy: snapshot.graph.defaultFailurePolicy ?? 'halt',
     },
-    nodes: snapshot.nodes.map((node) => ({ ...node, waitingOn: node.waitingOn ?? [] })),
+    nodes: snapshot.nodes.map((node) => ({
+      ...node,
+      kind: node.kind ?? 'backlog',
+      reference: node.reference ? cloneReference(node.reference) : undefined,
+      waitingOn: node.waitingOn ?? [],
+    })),
     edges: snapshot.edges.map((edge) => ({
       ...edge,
       required: edge.required !== false,
+      blocks: edge.blocks ?? 'start',
       status: edge.status ?? 'pending',
       unlock: edge.unlock ?? { kind: 'enqueue' },
     })),
@@ -304,6 +325,40 @@ function assertBacklogAvailableForNode(backlogItemId: string, graphId: string): 
   }
 }
 
+function isBacklogNode(node: WorkNode): boolean {
+  return node.kind === 'backlog';
+}
+
+function isReferenceNode(node: WorkNode): boolean {
+  return node.kind === 'reference';
+}
+
+function referenceStatusToNodeStatus(status: WorkReferenceStatus): WorkNode['status'] {
+  if (status === 'satisfied') return 'succeeded';
+  if (status === 'waived') return 'skipped';
+  if (status === 'failed') return 'failed';
+  if (status === 'blocked') return 'needs-attention';
+  return 'waiting';
+}
+
+function syncReferenceNode(node: WorkNode, now: string): void {
+  if (!isReferenceNode(node)) return;
+  const status = node.reference?.status ?? 'unknown';
+  node.status = referenceStatusToNodeStatus(status);
+  node.waitingOn =
+    status === 'pending' || status === 'unknown' || status === 'blocked'
+      ? [
+          {
+            kind: 'upstream',
+            detail: `Waiting on ${node.reference?.kind ?? 'external'} reference ${
+              node.reference?.ref ?? node.id
+            }`,
+          },
+        ]
+      : [];
+  node.updatedAt = now;
+}
+
 export async function addWorkGraphNode(
   params: WorkGraphAddNodeParams,
 ): Promise<{ graph: WorkGraphProjection }> {
@@ -311,38 +366,64 @@ export async function addWorkGraphNode(
     const snapshot = requireGraph(params.graphId);
     if (snapshot.graph.status !== 'planning')
       throw new Error('workGraph.addNode requires planning status');
-    if (snapshot.nodes.some((node) => node.backlogItemId === params.backlogItemId)) {
-      throw new Error(`Backlog item ${params.backlogItemId} is already attached to this graph`);
+    const kind = params.kind ?? (params.reference ? 'reference' : 'backlog');
+    if (kind === 'reference') {
+      if (params.backlogItemId) throw new Error('Reference work nodes cannot set backlogItemId');
+      if (!params.reference?.title?.trim() || !params.reference.ref?.trim()) {
+        throw new Error('Reference work nodes require reference.title and reference.ref');
+      }
+      if (!params.reference.status) {
+        throw new Error('Reference work nodes require reference.status');
+      }
+    } else if (!params.backlogItemId) {
+      throw new Error('Backlog work nodes require backlogItemId');
     }
-    assertBacklogAvailableForNode(params.backlogItemId, params.graphId);
-    const backlogItem = getBacklogItemSnapshot(params.backlogItemId);
-    if (!backlogItem) throw new Error(`Backlog item not found: ${params.backlogItemId}`);
-    if (backlogItem.project !== snapshot.graph.project) {
-      throw new Error(
-        `Backlog item project ${backlogItem.project} does not match graph project ${snapshot.graph.project}`,
-      );
+    const backlogItem = params.backlogItemId
+      ? getBacklogItemSnapshot(params.backlogItemId)
+      : undefined;
+    if (kind === 'backlog') {
+      if (snapshot.nodes.some((node) => node.backlogItemId === params.backlogItemId)) {
+        throw new Error(`Backlog item ${params.backlogItemId} is already attached to this graph`);
+      }
+      assertBacklogAvailableForNode(params.backlogItemId!, params.graphId);
+      if (!backlogItem) throw new Error(`Backlog item not found: ${params.backlogItemId}`);
     }
-    const nodeId = normalizeId('wn', params.id, backlogItem.title);
+    const title = kind === 'reference' ? params.reference!.title : backlogItem!.title;
+    const nodeId = normalizeId('wn', params.id, title);
     if (snapshot.nodes.some((node) => node.id === nodeId))
       throw new Error(`Work node already exists: ${nodeId}`);
     const now = new Date().toISOString();
     const node: WorkNode = {
       id: nodeId,
       graphId: snapshot.graph.id,
-      backlogItemId: backlogItem.id,
-      ...(normalizeRunTags(params.tags ?? backlogItem.tags).length
-        ? { tags: normalizeRunTags(params.tags ?? backlogItem.tags) }
+      kind,
+      ...(backlogItem ? { backlogItemId: backlogItem.id } : {}),
+      ...(kind === 'reference'
+        ? {
+            reference: {
+              ...params.reference!,
+              title: params.reference!.title.trim(),
+              ref: params.reference!.ref.trim(),
+              status: params.reference!.status,
+              labels: normalizeRunTags(params.reference!.labels),
+            },
+          }
+        : {}),
+      ...(normalizeRunTags(params.tags ?? backlogItem?.tags).length
+        ? { tags: normalizeRunTags(params.tags ?? backlogItem?.tags) }
         : {}),
       status: 'planned',
       waitingOn: [],
       ...(params.onFailure ? { onFailure: params.onFailure } : {}),
       updatedAt: now,
     };
-    await attachBacklogItemToWorkNode({
-      itemId: backlogItem.id,
-      graphId: snapshot.graph.id,
-      nodeId,
-    });
+    if (backlogItem) {
+      await attachBacklogItemToWorkNode({
+        itemId: backlogItem.id,
+        graphId: snapshot.graph.id,
+        nodeId,
+      });
+    }
     snapshot.nodes.push(node);
     snapshot.graph.updatedAt = now;
     await persistNow(snapshot);
@@ -358,16 +439,20 @@ export async function addWorkGraphEdge(
     const snapshot = requireGraph(params.graphId);
     if (snapshot.graph.status !== 'planning')
       throw new Error('workGraph.addEdge requires planning status');
-    if (!snapshot.nodes.some((node) => node.id === params.fromNodeId))
-      throw new Error(`fromNode not found: ${params.fromNodeId}`);
+    const fromNode = snapshot.nodes.find((node) => node.id === params.fromNodeId);
+    if (!fromNode) throw new Error(`fromNode not found: ${params.fromNodeId}`);
     if (!snapshot.nodes.some((node) => node.id === params.toNodeId))
       throw new Error(`toNode not found: ${params.toNodeId}`);
+    if (params.condition.kind === 'reference-status' && !isReferenceNode(fromNode)) {
+      throw new Error('reference-status edges must originate from reference nodes');
+    }
     const edge: WorkEdge = {
       id: normalizeId('we', params.id, `${params.fromNodeId}-${params.toNodeId}`),
       graphId: snapshot.graph.id,
       fromNodeId: params.fromNodeId,
       toNodeId: params.toNodeId,
       condition: params.condition,
+      blocks: params.blocks ?? 'start',
       required: params.required !== false,
       status: 'pending',
       unlock: params.unlock ?? { kind: 'enqueue' },
@@ -385,11 +470,31 @@ export async function addWorkGraphEdge(
 export async function updateWorkGraphNode(
   params: WorkGraphUpdateNodeParams,
 ): Promise<{ graph: WorkGraphProjection }> {
-  return withMutation(async () => {
+  const shouldReconcile = await withMutation(async () => {
     const snapshot = requireGraph(params.graphId);
     const node = snapshot.nodes.find((candidate) => candidate.id === params.nodeId);
     if (!node) throw new Error(`Work node not found: ${params.nodeId}`);
+    let referenceUpdated = false;
     if (params.status) node.status = params.status;
+    if (params.reference !== undefined) {
+      if (!isReferenceNode(node)) throw new Error('Only reference nodes can update reference data');
+      if (params.reference === null) throw new Error('Reference nodes require reference data');
+      if (!params.reference.title.trim() || !params.reference.ref.trim()) {
+        throw new Error('Reference work nodes require reference.title and reference.ref');
+      }
+      if (!params.reference.status)
+        throw new Error('Reference work nodes require reference.status');
+      node.reference = {
+        ...params.reference,
+        title: params.reference.title.trim(),
+        ref: params.reference.ref.trim(),
+        labels: normalizeRunTags(params.reference.labels),
+      };
+      referenceUpdated = true;
+      if (['waiting', 'needs-attention', 'done', 'failed'].includes(snapshot.graph.status)) {
+        snapshot.graph.status = 'active';
+      }
+    }
     if (params.tags !== undefined) {
       const tags = params.tags === null ? [] : normalizeRunTags(params.tags);
       if (tags.length) node.tags = tags;
@@ -414,8 +519,10 @@ export async function updateWorkGraphNode(
     snapshot.graph.updatedAt = node.updatedAt;
     await persistNow(snapshot);
     emit(snapshot);
-    return { graph: project(snapshot) };
+    return referenceUpdated && !['planning', 'paused', 'archived'].includes(snapshot.graph.status);
   });
+  if (shouldReconcile) await schedulerTick({ graphId: params.graphId });
+  return { graph: project(requireGraph(params.graphId)) };
 }
 
 export async function activateWorkGraph(params: {
@@ -428,6 +535,10 @@ export async function activateWorkGraph(params: {
     snapshot.graph.status = 'active';
     snapshot.graph.updatedAt = now;
     for (const node of snapshot.nodes) {
+      if (isReferenceNode(node)) {
+        syncReferenceNode(node, now);
+        continue;
+      }
       if (node.status === 'planned') {
         node.status = 'waiting';
         node.updatedAt = now;
@@ -479,6 +590,7 @@ function mergedEvidenceFromRuns(
 }
 
 function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): void {
+  if (!isBacklogNode(node)) return;
   const linkedRuns = runs.filter(
     (run) => run.workGraphId === node.graphId && run.workNodeId === node.id,
   );
@@ -533,6 +645,30 @@ function evaluateEdge(
     } else if (resolution?.decision === 'rejected') {
       edge.status = 'failed';
       edge.evidence = { manualResolution: resolution, observedAt: resolution.resolvedAt };
+    } else {
+      edge.status = 'pending';
+      delete edge.evidence;
+    }
+  } else if (edge.condition.kind === 'reference-status') {
+    const referenceStatus = from.reference?.status ?? 'unknown';
+    const expected = edge.condition.status ?? 'satisfied';
+    if (
+      referenceStatus === expected ||
+      (expected === 'satisfied' && referenceStatus === 'waived')
+    ) {
+      edge.status = referenceStatus === 'waived' ? 'waived' : 'satisfied';
+      edge.evidence = {
+        referenceStatus,
+        referenceRef: from.reference?.ref,
+        observedAt: from.reference?.updatedAt ?? now,
+      };
+    } else if ((referenceStatus === 'failed' || referenceStatus === 'blocked') && edge.required) {
+      edge.status = 'failed';
+      edge.evidence = {
+        referenceStatus,
+        referenceRef: from.reference?.ref,
+        observedAt: from.reference?.updatedAt ?? now,
+      };
     } else {
       edge.status = 'pending';
       delete edge.evidence;
@@ -603,8 +739,35 @@ function computeWaiting(node: WorkNode, inbound: readonly WorkEdge[]): void {
       detail:
         edge.condition.kind === 'manual'
           ? `Waiting on manual gate ${edge.condition.gateId}`
-          : `Waiting on upstream node ${edge.fromNodeId}`,
+          : edge.condition.kind === 'reference-status'
+            ? `Waiting on external reference ${edge.fromNodeId}`
+            : `Waiting on upstream node ${edge.fromNodeId}`,
     }));
+}
+
+function blocksStart(edge: WorkEdge): boolean {
+  return edge.blocks !== 'completion';
+}
+
+function startEdges(inbound: readonly WorkEdge[]): WorkEdge[] {
+  return inbound.filter(blocksStart);
+}
+
+function failedRequiredEdges(inbound: readonly WorkEdge[]): WorkEdge[] {
+  return inbound.filter((edge) => edge.required && edge.status === 'failed');
+}
+
+function satisfiedCompletionRebaseEdges(inbound: readonly WorkEdge[]): WorkEdge[] {
+  return inbound.filter(
+    (edge) =>
+      edge.blocks === 'completion' &&
+      edge.unlock.kind === 'rebase-onto' &&
+      edge.status === 'satisfied',
+  );
+}
+
+function canRequireCompletionUnlock(node: WorkNode): boolean {
+  return ['ready', 'queued', 'running', 'gated', 'succeeded'].includes(node.status);
 }
 
 function unlockActionKind(inbound: readonly WorkEdge[]): WorkGraphActionLedgerEntry['actionKind'] {
@@ -667,12 +830,47 @@ async function executeNodeUnlock(
   inbound: readonly WorkEdge[],
   now: string,
 ): Promise<void> {
+  if (!isBacklogNode(node) || !node.backlogItemId) {
+    node.status = 'waiting';
+    node.waitingOn = [{ kind: 'policy', detail: 'Reference nodes are not dispatchable' }];
+    node.updatedAt = now;
+    return;
+  }
   const actions = inbound.map((edge) => edge.unlock.kind).sort();
   const version = readinessVersion(snapshot, node, actions);
   const actionKind = unlockActionKind(inbound);
   const actionKey = `${snapshot.graph.id}:${node.id}:${actionKind}:${version}`;
   if (snapshot.ledger.some((entry) => entry.key === actionKey && entry.status === 'completed'))
     return;
+  if (inbound.some((edge) => edge.unlock.kind === 'rebase-onto')) {
+    node.status = 'needs-attention';
+    node.waitingOn = [
+      {
+        kind: 'policy',
+        detail: 'rebase-onto unlock requires ci-watch helper integration before execution',
+      },
+    ];
+    snapshot.graph.status = 'needs-attention';
+    const existing = snapshot.ledger.find((entry) => entry.key === actionKey);
+    if (existing) {
+      existing.status = 'failed';
+      existing.completedAt = existing.completedAt ?? now;
+      existing.result = 'helper-not-wired';
+    } else {
+      snapshot.ledger.push({
+        key: actionKey,
+        graphId: snapshot.graph.id,
+        nodeId: node.id,
+        actionKind: 'rebase-onto',
+        readinessVersion: version,
+        status: 'failed',
+        startedAt: now,
+        completedAt: now,
+        result: 'helper-not-wired',
+      });
+    }
+    return;
+  }
   const existingQueue = getQueueSnapshot().find(
     (item) => item.workGraphId === snapshot.graph.id && item.workNodeId === node.id,
   );
@@ -706,28 +904,6 @@ async function executeNodeUnlock(
       startedAt: now,
       completedAt: now,
       result: 'ready',
-    });
-    return;
-  }
-  if (inbound.some((edge) => edge.unlock.kind === 'rebase-onto')) {
-    node.status = 'needs-attention';
-    node.waitingOn = [
-      {
-        kind: 'policy',
-        detail: 'rebase-onto unlock requires ci-watch helper integration before execution',
-      },
-    ];
-    snapshot.graph.status = 'needs-attention';
-    snapshot.ledger.push({
-      key: actionKey,
-      graphId: snapshot.graph.id,
-      nodeId: node.id,
-      actionKind: 'rebase-onto',
-      readinessVersion: version,
-      status: 'failed',
-      startedAt: now,
-      completedAt: now,
-      result: 'helper-not-wired',
     });
     return;
   }
@@ -789,20 +965,9 @@ export async function schedulerTick(
       for (const edge of snapshot.edges) evaluateEdge(edge, snapshot, runs, now);
       let runnable = 0;
       for (const node of snapshot.nodes) {
-        if (
-          [
-            'queued',
-            'running',
-            'gated',
-            'succeeded',
-            'failed',
-            'needs-attention',
-            'skipped',
-          ].includes(node.status)
-        )
-          continue;
         const inbound = snapshot.edges.filter((edge) => edge.toNodeId === node.id);
-        const failedRequired = inbound.filter((edge) => edge.required && edge.status === 'failed');
+        const startInbound = startEdges(inbound);
+        const failedRequired = failedRequiredEdges(inbound);
         if (failedRequired.length > 0) {
           node.status = 'needs-attention';
           node.waitingOn = failedRequired.map((edge) => ({
@@ -815,21 +980,74 @@ export async function schedulerTick(
           snapshot.graph.status = 'needs-attention';
           continue;
         }
-        computeWaiting(node, inbound);
+        const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound);
+        if (completionRebaseInbound.length > 0 && canRequireCompletionUnlock(node)) {
+          try {
+            await executeNodeUnlock(snapshot, node, completionRebaseInbound, now);
+          } catch (err) {
+            recordNodeUnlockFailure(
+              snapshot,
+              node,
+              completionRebaseInbound,
+              now,
+              errorMessage(err),
+            );
+          }
+          continue;
+        }
+        if (isReferenceNode(node)) {
+          computeWaiting(node, startInbound);
+          if (node.waitingOn.length > 0) {
+            node.status = 'waiting';
+            node.updatedAt = now;
+          } else {
+            syncReferenceNode(node, now);
+          }
+          continue;
+        }
+        computeWaiting(node, startInbound);
         const blocked = node.waitingOn.length > 0;
         if (blocked) {
-          node.status = 'waiting';
+          if (['ready', 'queued', 'running', 'gated', 'succeeded'].includes(node.status)) {
+            const regressionReason =
+              'Start dependency regressed after this node became active; review queued/running work manually';
+            if (node.backlogItemId && node.status === 'queued') {
+              const cancelled = await cancelGraphQueuedItem({
+                workGraphId: snapshot.graph.id,
+                workNodeId: node.id,
+                reason: regressionReason,
+              });
+              await markBacklogItemNeedsAttention({
+                itemId: node.backlogItemId,
+                reason: regressionReason,
+                clearQueueLink: cancelled,
+              });
+            }
+            node.status = 'needs-attention';
+            node.waitingOn = [
+              ...node.waitingOn,
+              {
+                kind: 'policy',
+                detail: regressionReason,
+              },
+            ];
+            snapshot.graph.status = 'needs-attention';
+          } else {
+            node.status = 'waiting';
+          }
           node.updatedAt = now;
           continue;
         }
-        const requiredInbound = inbound.filter((edge) => edge.required);
+        if (['queued', 'running', 'gated', 'succeeded', 'failed', 'skipped'].includes(node.status))
+          continue;
+        const requiredInbound = startInbound.filter((edge) => edge.required);
         const satisfiedInbound = requiredInbound.filter(
           (edge) => edge.status === 'satisfied' || edge.status === 'waived',
         );
         if (requiredInbound.length === satisfiedInbound.length) {
           runnable++;
           try {
-            await executeNodeUnlock(snapshot, node, inbound, now);
+            await executeNodeUnlock(snapshot, node, startInbound, now);
           } catch (err) {
             recordNodeUnlockFailure(snapshot, node, inbound, now, errorMessage(err));
           }
@@ -839,7 +1057,11 @@ export async function schedulerTick(
         const allDone =
           snapshot.nodes.length > 0 &&
           snapshot.nodes.every((node) => node.status === 'succeeded' || node.status === 'skipped');
-        snapshot.graph.status = allDone ? 'done' : runnable === 0 ? 'waiting' : 'active';
+        const allRequiredEdgesSettled = snapshot.edges.every(
+          (edge) => !edge.required || edge.status === 'satisfied' || edge.status === 'waived',
+        );
+        snapshot.graph.status =
+          allDone && allRequiredEdgesSettled ? 'done' : runnable === 0 ? 'waiting' : 'active';
       }
       snapshot.graph.updatedAt = now;
       await persistNow(snapshot);

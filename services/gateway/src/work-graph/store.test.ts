@@ -38,9 +38,10 @@ async function freshStores() {
 async function createReadyBacklogItem(
   backlog: Awaited<ReturnType<typeof freshStores>>['backlog'],
   title: string,
+  project = 'farmslot-farm',
 ) {
   return backlog.createBacklogItem({
-    project: 'farmslot-farm',
+    project,
     title,
     sourceKind: 'manual',
     flowType: 'dev',
@@ -80,6 +81,334 @@ test('work graph rejects cycles while authoring edges', async () => {
       }),
     /cycle/i,
   );
+});
+
+test('work graph can use an owner scope different from backlog project', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const upstream = await createReadyBacklogItem(backlog, 'Gateway projection');
+  const downstream = await createReadyBacklogItem(backlog, 'Client integration');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Cross project graph',
+  });
+  const graphId = graph.graph.graph.id;
+
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: upstream.item.id });
+  const linked = await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_client',
+    backlogItemId: downstream.item.id,
+  });
+
+  assert.equal(linked.graph.nodes.length, 2);
+  assert.equal(linked.graph.graph.project, 'cross-project-epic');
+});
+
+test('reference blockers are v1 graph nodes but never dispatchable', async () => {
+  const { backlog, queue, workGraph } = await freshStores();
+  const downstream = await createReadyBacklogItem(backlog, 'Client release task');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'External blocker graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_external_pr',
+    kind: 'reference',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'pending',
+      project: 'metamask-core',
+      labels: ['external', 'pr'],
+    },
+  });
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_client_release',
+    backlogItemId: downstream.item.id,
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_pr_to_release',
+    fromNodeId: 'wn_external_pr',
+    toNodeId: 'wn_client_release',
+    condition: { kind: 'reference-status' },
+    unlock: { kind: 'enqueue' },
+  });
+
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  let projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_external_pr')?.kind, 'reference');
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_external_pr')?.status, 'waiting');
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_client_release')?.status, 'waiting');
+  assert.equal(queue.getQueueSnapshot().length, 0);
+
+  await workGraph.updateWorkGraphNode({
+    graphId,
+    nodeId: 'wn_external_pr',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'satisfied',
+      project: 'metamask-core',
+      evidence: 'Merged upstream',
+      updatedAt: new Date().toISOString(),
+    },
+  });
+  projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(
+    projection.edges.find((edge) => edge.id === 'we_pr_to_release')?.status,
+    'satisfied',
+  );
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_client_release')?.status, 'queued');
+  assert.equal(
+    projection.ledger.some(
+      (entry) => entry.nodeId === 'wn_client_release' && entry.actionKind === 'enqueue',
+    ),
+    true,
+  );
+
+  await workGraph.updateWorkGraphNode({
+    graphId,
+    nodeId: 'wn_external_pr',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'pending',
+      project: 'metamask-core',
+      updatedAt: new Date().toISOString(),
+    },
+  });
+  projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.edges.find((edge) => edge.id === 'we_pr_to_release')?.status, 'pending');
+  assert.equal(
+    projection.nodes.find((node) => node.id === 'wn_client_release')?.status,
+    'needs-attention',
+  );
+  assert.equal(projection.graph.status, 'needs-attention');
+});
+
+/* Reference evidence can change after a graph looked complete. Re-evaluate instead of leaving stale done state. */
+test('reference updates reactivate done graphs and surface regressed dependencies', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const downstream = await createReadyBacklogItem(backlog, 'Client already completed');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Completed reference graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_external_pr',
+    kind: 'reference',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'satisfied',
+      project: 'metamask-core',
+    },
+  });
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_client_release',
+    backlogItemId: downstream.item.id,
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_pr_to_release',
+    fromNodeId: 'wn_external_pr',
+    toNodeId: 'wn_client_release',
+    condition: { kind: 'reference-status' },
+    unlock: { kind: 'enqueue' },
+  });
+  await workGraph.updateWorkGraphNode({
+    graphId,
+    nodeId: 'wn_client_release',
+    status: 'succeeded',
+  });
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  let projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.graph.status, 'done');
+
+  await workGraph.updateWorkGraphNode({
+    graphId,
+    nodeId: 'wn_external_pr',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'pending',
+      project: 'metamask-core',
+      updatedAt: new Date().toISOString(),
+    },
+  });
+
+  projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.graph.status, 'needs-attention');
+  assert.equal(projection.edges.find((edge) => edge.id === 'we_pr_to_release')?.status, 'pending');
+  assert.equal(
+    projection.nodes.find((node) => node.id === 'wn_client_release')?.status,
+    'needs-attention',
+  );
+});
+
+test('completion edges do not block downstream start enqueue', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const contract = await createReadyBacklogItem(backlog, 'Shared contract');
+  const gateway = await createReadyBacklogItem(backlog, 'Gateway projection');
+  const client = await createReadyBacklogItem(backlog, 'Client can start early');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Completion blocker graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_contract', backlogItemId: contract.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: gateway.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_client', backlogItemId: client.item.id });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_contract_to_client_start',
+    fromNodeId: 'wn_contract',
+    toNodeId: 'wn_client',
+    condition: { kind: 'manual', gateId: 'start-approved' },
+    unlock: { kind: 'enqueue' },
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_gateway_to_client_completion',
+    fromNodeId: 'wn_gateway',
+    toNodeId: 'wn_client',
+    condition: { kind: 'merged', targetRef: 'main' },
+    blocks: 'completion',
+    unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+  });
+  await workGraph.gateResolve({
+    graphId,
+    edgeId: 'we_contract_to_client_start',
+    gateId: 'start-approved',
+    reason: 'start dependency is satisfied',
+    decision: 'approved',
+  });
+
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  const projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_client')?.status, 'queued');
+  assert.equal(
+    projection.edges.find((edge) => edge.id === 'we_gateway_to_client_completion')?.status,
+    'pending',
+  );
+  assert.equal(projection.graph.status, 'waiting');
+});
+
+test('satisfied completion rebase edges surface operator attention', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const gateway = await createReadyBacklogItem(backlog, 'Gateway projection');
+  const client = await createReadyBacklogItem(backlog, 'Client already started');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Completion rebase graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: gateway.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_client', backlogItemId: client.item.id });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_gateway_to_client_rebase',
+    fromNodeId: 'wn_gateway',
+    toNodeId: 'wn_client',
+    condition: { kind: 'manual', gateId: 'gateway-merged' },
+    blocks: 'completion',
+    unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+  });
+  await workGraph.updateWorkGraphNode({ graphId, nodeId: 'wn_client', status: 'succeeded' });
+  await workGraph.gateResolve({
+    graphId,
+    edgeId: 'we_gateway_to_client_rebase',
+    gateId: 'gateway-merged',
+    reason: 'upstream merged after client started',
+    decision: 'approved',
+  });
+
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  const projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.graph.status, 'needs-attention');
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_client')?.status, 'needs-attention');
+  assert.match(
+    projection.nodes.find((node) => node.id === 'wn_client')?.waitingOn[0]?.detail ?? '',
+    /rebase-onto unlock requires/,
+  );
+  assert.equal(
+    projection.ledger.find((entry) => entry.nodeId === 'wn_client')?.actionKind,
+    'rebase-onto',
+  );
+
+  await workGraph.gateResolve({
+    graphId,
+    edgeId: 'we_gateway_to_client_rebase',
+    gateId: 'gateway-merged',
+    reason: 'operator re-opened the same completion gate',
+    decision: 'approved',
+  });
+  const afterReopen = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(
+    afterReopen.ledger.filter(
+      (entry) => entry.nodeId === 'wn_client' && entry.actionKind === 'rebase-onto',
+    ).length,
+    1,
+  );
+});
+
+test('failed completion edges move dependents to needs-attention', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const gateway = await createReadyBacklogItem(backlog, 'Gateway projection');
+  const client = await createReadyBacklogItem(backlog, 'Client blocked at completion');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Failed completion graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_gateway', backlogItemId: gateway.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_client', backlogItemId: client.item.id });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_gateway_to_client_completion_gate',
+    fromNodeId: 'wn_gateway',
+    toNodeId: 'wn_client',
+    condition: { kind: 'manual', gateId: 'completion-rejected' },
+    blocks: 'completion',
+    unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+  });
+  await workGraph.updateWorkGraphNode({ graphId, nodeId: 'wn_client', status: 'succeeded' });
+  await workGraph.gateResolve({
+    graphId,
+    edgeId: 'we_gateway_to_client_completion_gate',
+    gateId: 'completion-rejected',
+    reason: 'completion gate rejected',
+    decision: 'rejected',
+  });
+
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  const projection = workGraph.getWorkGraph({ graphId }).graph;
+  const clientNode = projection.nodes.find((node) => node.id === 'wn_client');
+  assert.equal(projection.graph.status, 'needs-attention');
+  assert.equal(clientNode?.status, 'needs-attention');
+  assert.equal(clientNode?.waitingOn[0]?.edgeId, 'we_gateway_to_client_completion_gate');
 });
 
 test('work graph rejects unsafe explicit ids', async () => {
@@ -406,6 +735,13 @@ test('manual gate evaluation uses the latest resolution for the edge', async () 
   assert.equal(
     projection.edges.find((edge) => edge.id === 'we_corrected_gate')?.status,
     'satisfied',
+  );
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_gate_downstream')?.status, 'queued');
+  assert.equal(
+    projection.ledger.some(
+      (entry) => entry.nodeId === 'wn_gate_downstream' && entry.actionKind === 'enqueue',
+    ),
+    true,
   );
   assert.equal(projection.gates.length, 2);
   assert.equal(projection.gates[1]?.decision, 'approved');
