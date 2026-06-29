@@ -6,6 +6,8 @@ import {
   remoteBranchRefspec,
   type ResetSlotRepoToIdleOptions,
   resolveSlotTrackingBranch,
+  SLOT_DESTRUCTIVE_OPS,
+  type SlotDestructiveOp,
   type SlotIdleResetResult,
   type SlotTrackingProjectConfig,
   type SlotTrackingSlotContext,
@@ -97,6 +99,37 @@ export async function detectLinkedWorktree(vars: SlotVars): Promise<boolean> {
 
 export type { ResetSlotRepoToIdleOptions, SlotIdleResetResult };
 
+/**
+ * True when a slot's repo is the gateway's OWN operator root — i.e. the
+ * control-plane checkout the gateway process runs from. Happens when a pool
+ * slot uses `repo: "."` (resolved against farmslotRoot in core/config) or an
+ * explicit operator path like a `*-fs-main` slot. Only meaningful for local
+ * slots; a remote node that happens to share the path string is a different
+ * filesystem and is not the operator's repo.
+ */
+export function isOperatorRootSlot(vars: SlotVars): boolean {
+  return (
+    isLocal(vars.host, vars.machine) && path.resolve(vars.remoteRepo) === path.resolve(farmslotRoot)
+  );
+}
+
+/**
+ * Guard every destructive slot-lifecycle entry point (idle-reset, refresh,
+ * prepare, recycle/release). These run `git reset --hard origin/<default>` +
+ * `git clean -fd` on the slot repo; if the slot resolves to the operator root
+ * they would wipe the control-plane's own working tree (uncommitted work, no
+ * stash to recover from) on a fleet-refresh / idle-reset / dispatch timer. Fail
+ * hard so the misconfigured slot is surfaced instead of silently nuking the repo.
+ */
+export function assertSlotNotOperatorRoot(vars: SlotVars, operation: SlotDestructiveOp): void {
+  if (isOperatorRootSlot(vars)) {
+    throw new Error(
+      `Refusing to ${operation} slot ${vars.slotId}: its repo (${vars.remoteRepo}) is the gateway's own operator root. ` +
+        `Point this slot at a dedicated worktree (e.g. farmslot-wt/...) instead of the control-plane repo.`,
+    );
+  }
+}
+
 export async function resetSlotRepoToIdle(
   vars: SlotVars,
   projectJson: RawProjectJson,
@@ -104,23 +137,9 @@ export async function resetSlotRepoToIdle(
   defaultBranch: string,
   options?: ResetSlotRepoToIdleOptions,
 ): Promise<SlotIdleResetResult> {
-  // HARD GUARD: never run destructive idle-reset on the gateway's own operator
-  // repo. A pool slot whose repo resolves to the operator root — `repo: "."`
-  // (resolved against farmslotRoot in core/config) or an explicit operator path
-  // like a `*-fs-main` slot — would otherwise run
-  // `git checkout -- . && git clean -fd && git reset --hard origin/<default>`
-  // against the control-plane's own working tree on a fleet-refresh / idle-reset
-  // / release timer, destroying uncommitted work. Fail hard so the misconfigured
-  // slot is fixed rather than silently nuking the repo.
-  if (
-    isLocal(vars.host, vars.machine) &&
-    path.resolve(vars.remoteRepo) === path.resolve(farmslotRoot)
-  ) {
-    throw new Error(
-      `Refusing to idle-reset slot ${vars.slotId}: its repo (${vars.remoteRepo}) is the gateway's own operator root. ` +
-        `Point this slot at a dedicated worktree (e.g. farmslot-wt/...) instead of the control-plane repo.`,
-    );
-  }
+  // Backstop guard — every caller should also guard at its own entry, but this
+  // is the last line before `git checkout -- . && git clean -fd && reset --hard`.
+  assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.idleReset);
   const repo = shellQuote(vars.remoteRepo);
   const linkedWorktree = options?.linkedWorktree ?? (await detectLinkedWorktree(vars));
   const trackingBranch = resolveSlotTrackingBranchFromProject(

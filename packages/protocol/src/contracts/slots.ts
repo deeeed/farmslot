@@ -23,6 +23,19 @@ export type SlotPhase =
   | null; // ready/manual/disabled — no active phase
 export type PoolSlotMode = 'dispatch' | 'custom' | 'disabled';
 
+/**
+ * Slot-lifecycle operations that run destructive git (`reset --hard` / `clean
+ * -fd`) on a slot's repo. Used to label the operator-root safety guard so the
+ * operation name is a typed constant, not a free-form string at each call site.
+ */
+export const SLOT_DESTRUCTIVE_OPS = {
+  idleReset: 'idle-reset',
+  refresh: 'refresh',
+  prepare: 'prepare',
+  release: 'release',
+} as const;
+export type SlotDestructiveOp = (typeof SLOT_DESTRUCTIVE_OPS)[keyof typeof SLOT_DESTRUCTIVE_OPS];
+
 export type HealthStatus = 'ok' | 'warn' | 'fail' | 'unknown';
 
 export interface SlotHealth {

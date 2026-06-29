@@ -8,6 +8,7 @@
   "slots": [
     {
       "id": "demo-work-1",
+      "enabled": false,
       "repo": ".",
       "session": "demo-work-1",
       "resources": {
@@ -18,6 +19,7 @@
     },
     {
       "id": "demo-ff-1",
+      "enabled": false,
       "repo": ".",
       "session": "demo-1",
       "resources": {
