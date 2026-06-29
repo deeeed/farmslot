@@ -169,63 +169,77 @@ type DevRoute =
   | 'update-banner'
   | 'index';
 
-const DEV_ROUTES: Array<{ route: DevRoute; label: string }> = [
-  { route: 'slot-card', label: 'Slot Cards' },
-  { route: 'fleet-map', label: 'Fleet Map' },
-  { route: 'slot-actions', label: 'Slot Actions' },
-  { route: 'fleet-refresh', label: 'Fleet Refresh' },
-  { route: 'terminal', label: 'Terminal' },
-  { route: 'terminal-grid', label: 'Terminal Grid' },
-  { route: 'pr-board', label: 'PR Board' },
-  { route: 'decisions', label: 'Decisions' },
-  { route: 'violations', label: 'Violations' },
-  { route: 'progress', label: 'Progress' },
-  { route: 'diff', label: 'Diff Viewer' },
-  { route: 'diff-viewer-modal', label: 'Diff Modal' },
-  { route: 'code-editor', label: 'Code Editor' },
-  { route: 'file-tree', label: 'File Tree' },
-  { route: 'git-changes', label: 'Git Changes' },
-  { route: 'metro-log', label: 'Metro Log' },
-  { route: 'workspace', label: 'Workspace' },
-  { route: 'slot-view', label: 'Slot View' },
-  { route: 'slot-history', label: 'Slot History' },
-  { route: 'slot-load-run', label: 'Slot Load Run' },
-  { route: 'recipe-provenance-matrix', label: 'Recipe Provenance Matrix' },
-  { route: 'dispatch-wizard', label: 'Dispatch Wizard' },
-  { route: 'dispatch-queue', label: 'Dispatch Queue' },
-  { route: 'backlog', label: 'Backlog' },
-  { route: 'stream-feed', label: 'Stream Feed' },
-  { route: 'runs', label: 'Runs' },
-  { route: 'run-detail', label: 'Run Detail' },
-  { route: 'run-tag-editor', label: 'Run Tag Editor' },
-  { route: 'pipeline', label: 'Pipeline' },
-  { route: 'pipeline-mini', label: 'Pipeline Mini' },
-  { route: 'flow-graph', label: 'Flow Graph' },
-  { route: 'work-graph', label: 'Work Graph Epic Demo' },
-  { route: 'review-workspace', label: 'Review Workspace' },
-  { route: 'ready-workspace', label: 'Ready Workspace' },
-  { route: 'global-filter', label: 'Global Filter' },
-  { route: 'slot-selector', label: 'Slot Selector' },
-  { route: 'step-inspector', label: 'Step Inspector' },
-  { route: 'step-artifacts', label: 'Step Artifacts' },
-  { route: 'resource-panel', label: 'Resource Panel' },
-  { route: 'device-grid', label: 'Device Grid' },
-  { route: 'chat', label: 'Chat Co-Pilot' },
-  { route: 'machine-health', label: 'Machine Health' },
-  { route: 'config', label: 'Config Manager' },
-  { route: 'llm-settings', label: 'LLM Settings' },
-  { route: 'improvement', label: 'Improvement Playground' },
-  { route: 'recipe-graph', label: 'Recipe Graph' },
-  { route: 'family-observability', label: 'Retrospective' },
-  { route: 'eval-cockpit', label: 'Eval Cockpit' },
-  { route: 'intelligence-audit', label: 'Intelligence Audit' },
-  { route: 'intelligence-incidents', label: 'Intelligence Incidents (new)' },
-  { route: 'update-banner', label: 'Update Banner' },
+type DevHarnessGroup = 'screens' | 'components' | 'experiments';
+
+const DEV_ROUTE_GROUP_LABELS: Record<DevHarnessGroup, string> = {
+  screens: 'Screens',
+  components: 'Components',
+  experiments: 'Experiments',
+};
+
+const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup }> = [
+  { route: 'fleet-map', label: 'Fleet Map', group: 'screens' },
+  { route: 'terminal-grid', label: 'Terminal Grid', group: 'screens' },
+  { route: 'pr-board', label: 'PR Board', group: 'screens' },
+  { route: 'decisions', label: 'Decisions', group: 'screens' },
+  { route: 'workspace', label: 'Workspace', group: 'screens' },
+  { route: 'slot-view', label: 'Slot View', group: 'screens' },
+  { route: 'dispatch-wizard', label: 'Dispatch Wizard', group: 'screens' },
+  { route: 'dispatch-queue', label: 'Dispatch Queue', group: 'screens' },
+  { route: 'backlog', label: 'Backlog', group: 'screens' },
+  { route: 'work-graph', label: 'Work Graph Epic Demo', group: 'screens' },
+  { route: 'runs', label: 'Runs', group: 'screens' },
+  { route: 'run-detail', label: 'Run Detail', group: 'screens' },
+  { route: 'review-workspace', label: 'Review Workspace', group: 'screens' },
+  { route: 'ready-workspace', label: 'Ready Workspace', group: 'screens' },
+  { route: 'device-grid', label: 'Device Grid', group: 'screens' },
+  { route: 'chat', label: 'Chat Co-Pilot', group: 'screens' },
+  { route: 'machine-health', label: 'Machine Health', group: 'screens' },
+  { route: 'config', label: 'Config Manager', group: 'screens' },
+  { route: 'llm-settings', label: 'LLM Settings', group: 'screens' },
+  { route: 'family-observability', label: 'Retrospective', group: 'screens' },
+  { route: 'eval-cockpit', label: 'Eval Cockpit', group: 'screens' },
+  { route: 'intelligence-audit', label: 'Intelligence Audit', group: 'screens' },
+  { route: 'intelligence-incidents', label: 'Intelligence Incidents (new)', group: 'screens' },
+
+  { route: 'slot-card', label: 'Slot Cards', group: 'components' },
+  { route: 'slot-actions', label: 'Slot Actions', group: 'components' },
+  { route: 'fleet-refresh', label: 'Fleet Refresh', group: 'components' },
+  { route: 'terminal', label: 'Terminal', group: 'components' },
+  { route: 'violations', label: 'Violations', group: 'components' },
+  { route: 'progress', label: 'Progress', group: 'components' },
+  { route: 'diff', label: 'Diff Viewer', group: 'components' },
+  { route: 'diff-viewer-modal', label: 'Diff Modal', group: 'components' },
+  { route: 'code-editor', label: 'Code Editor', group: 'components' },
+  { route: 'file-tree', label: 'File Tree', group: 'components' },
+  { route: 'git-changes', label: 'Git Changes', group: 'components' },
+  { route: 'metro-log', label: 'Metro Log', group: 'components' },
+  { route: 'slot-history', label: 'Slot History', group: 'components' },
+  { route: 'slot-load-run', label: 'Slot Load Run', group: 'components' },
+  { route: 'stream-feed', label: 'Stream Feed', group: 'components' },
+  { route: 'run-tag-editor', label: 'Run Tag Editor', group: 'components' },
+  { route: 'pipeline', label: 'Pipeline', group: 'components' },
+  { route: 'pipeline-mini', label: 'Pipeline Mini', group: 'components' },
+  { route: 'global-filter', label: 'Global Filter', group: 'components' },
+  { route: 'slot-selector', label: 'Slot Selector', group: 'components' },
+  { route: 'step-inspector', label: 'Step Inspector', group: 'components' },
+  { route: 'step-artifacts', label: 'Step Artifacts', group: 'components' },
+  { route: 'resource-panel', label: 'Resource Panel', group: 'components' },
+  { route: 'update-banner', label: 'Update Banner', group: 'components' },
+
+  { route: 'recipe-provenance-matrix', label: 'Recipe Provenance Matrix', group: 'experiments' },
+  { route: 'flow-graph', label: 'Flow Graph', group: 'experiments' },
+  { route: 'improvement', label: 'Improvement Playground', group: 'experiments' },
+  { route: 'recipe-graph', label: 'Recipe Graph', group: 'experiments' },
 ];
+
+const DEV_ROUTE_GROUPS: DevHarnessGroup[] = ['screens', 'components', 'experiments'];
+const VALID_DEV_ROUTES = new Set<DevRoute>(DEV_ROUTES.map(({ route }) => route));
 
 @customElement('dev-harness')
 export class DevHarness extends LitElement {
   @state() private route: DevRoute = 'index';
+  @state() private _captureMode = false;
   @state() private _selectedFile = '';
   @state() private _recipeProvenanceScenarioId = 'decision-review';
   @state() private _metroLines: string[] = [];
@@ -267,6 +281,12 @@ export class DevHarness extends LitElement {
   private parseRoute() {
     const rawHash = location.hash.slice(1);
     const routePart = rawHash.split('?')[0];
+    const query = rawHash.includes('?') ? rawHash.slice(rawHash.indexOf('?') + 1) : '';
+    const params = new URLSearchParams(query);
+    this._captureMode =
+      params.get('capture') === '1' || params.get('demo') === '1' || params.get('focus') === '1';
+    this.classList.toggle('capture-mode', this._captureMode);
+
     if (routePart !== 'dev' && !routePart.startsWith('dev/')) {
       this._restoreSharedState();
       return;
@@ -277,59 +297,7 @@ export class DevHarness extends LitElement {
         : routePart.startsWith('dev/')
           ? routePart.slice('dev/'.length)
           : routePart;
-    const valid: DevRoute[] = [
-      'slot-card',
-      'fleet-map',
-      'slot-actions',
-      'fleet-refresh',
-      'terminal',
-      'terminal-grid',
-      'pr-board',
-      'decisions',
-      'violations',
-      'progress',
-      'diff',
-      'diff-viewer-modal',
-      'code-editor',
-      'file-tree',
-      'git-changes',
-      'metro-log',
-      'workspace',
-      'slot-view',
-      'slot-history',
-      'slot-load-run',
-      'recipe-provenance-matrix',
-      'dispatch-wizard',
-      'dispatch-queue',
-      'backlog',
-      'stream-feed',
-      'runs',
-      'run-detail',
-      'run-tag-editor',
-      'pipeline',
-      'pipeline-mini',
-      'flow-graph',
-      'work-graph',
-      'review-workspace',
-      'ready-workspace',
-      'global-filter',
-      'slot-selector',
-      'step-inspector',
-      'resource-panel',
-      'device-grid',
-      'chat',
-      'machine-health',
-      'config',
-      'llm-settings',
-      'improvement',
-      'recipe-graph',
-      'family-observability',
-      'eval-cockpit',
-      'intelligence-audit',
-      'intelligence-incidents',
-      'update-banner',
-    ];
-    const next = valid.includes(hash as DevRoute) ? (hash as DevRoute) : 'index';
+    const next = VALID_DEV_ROUTES.has(hash as DevRoute) ? (hash as DevRoute) : 'index';
     // Cleanup mock sources when navigating away from stream-feed
     if (this.route === 'stream-feed' && next !== 'stream-feed') {
       this._stopMockSources();
@@ -977,21 +945,28 @@ export class DevHarness extends LitElement {
 
   private renderIndex() {
     return html`
-      <div class="index-grid">
-        ${DEV_ROUTES.map(
-          (r) => html`
-            <div
-              class="index-card"
-              @click=${() => {
-                location.hash = `dev/${r.route}`;
-              }}
-            >
-              <h3>${r.label}</h3>
-              <p>Test ${r.label.toLowerCase()} with mock data</p>
+      ${DEV_ROUTE_GROUPS.map(
+        (group) => html`
+          <section class="index-section">
+            <h2>${DEV_ROUTE_GROUP_LABELS[group]}</h2>
+            <div class="index-grid">
+              ${DEV_ROUTES.filter((r) => r.group === group).map(
+                (r) => html`
+                  <div
+                    class="index-card"
+                    @click=${() => {
+                      location.hash = `dev/${r.route}`;
+                    }}
+                  >
+                    <h3>${r.label}</h3>
+                    <p>Test ${r.label.toLowerCase()} with mock data</p>
+                  </div>
+                `,
+              )}
             </div>
-          `,
-        )}
-      </div>
+          </section>
+        `,
+      )}
     `;
   }
 
@@ -3127,7 +3102,23 @@ All checks passed.`;
           margin: 0 0 ${spacing.sm} 0;
           color: ${colors.accent};
         }
+        dev-harness.capture-mode {
+          padding: 0;
+        }
         dev-harness .dh-nav {
+          display: flex;
+          flex-direction: column;
+          gap: ${spacing.md};
+        }
+        dev-harness .dh-nav-group-label {
+          margin-bottom: ${spacing.xs};
+          color: ${colors.textMuted};
+          font-size: ${fonts.sizeXs};
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        dev-harness .dh-nav-links {
           display: flex;
           gap: ${spacing.sm};
           flex-wrap: wrap;
@@ -3178,6 +3169,14 @@ All checks passed.`;
           white-space: pre-wrap;
           font-family: ${fonts.mono};
         }
+        dev-harness .index-section {
+          margin-bottom: ${spacing.xl};
+        }
+        dev-harness .index-section h2 {
+          margin: 0 0 ${spacing.md} 0;
+          color: ${colors.textPrimary};
+          font-size: ${fonts.sizeMd};
+        }
         dev-harness .index-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -3205,29 +3204,44 @@ All checks passed.`;
           font-size: ${fonts.sizeSm};
         }
       </style>
-      <div class="dh-header">
-        <h1>Dev Harness</h1>
-        <div class="dh-nav">
-          <a
-            class="${this.route === 'index' ? 'active' : ''}"
-            @click=${() => {
-              location.hash = 'dev';
-            }}
-            >Index</a
-          >
-          ${DEV_ROUTES.map(
-            (r) => html`
-              <a
-                class="${this.route === r.route ? 'active' : ''}"
-                @click=${() => {
-                  location.hash = `dev/${r.route}`;
-                }}
-                >${r.label}</a
-              >
-            `,
-          )}
-        </div>
-      </div>
+      ${this._captureMode
+        ? ''
+        : html`
+            <div class="dh-header">
+              <h1>Dev Harness</h1>
+              <div class="dh-nav">
+                <div>
+                  <a
+                    class="${this.route === 'index' ? 'active' : ''}"
+                    @click=${() => {
+                      location.hash = 'dev';
+                    }}
+                    >Index</a
+                  >
+                </div>
+                ${DEV_ROUTE_GROUPS.map(
+                  (group) => html`
+                    <div class="dh-nav-group">
+                      <div class="dh-nav-group-label">${DEV_ROUTE_GROUP_LABELS[group]}</div>
+                      <div class="dh-nav-links">
+                        ${DEV_ROUTES.filter((r) => r.group === group).map(
+                          (r) => html`
+                            <a
+                              class="${this.route === r.route ? 'active' : ''}"
+                              @click=${() => {
+                                location.hash = `dev/${r.route}`;
+                              }}
+                              >${r.label}</a
+                            >
+                          `,
+                        )}
+                      </div>
+                    </div>
+                  `,
+                )}
+              </div>
+            </div>
+          `}
       ${this.renderContent()}
     `;
   }

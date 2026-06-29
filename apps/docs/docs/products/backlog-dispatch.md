@@ -4,7 +4,7 @@ title: Backlog and dispatch queue
 
 # Backlog and dispatch queue
 
-The backlog and dispatch queue are the bridge between raw intent and available agent capacity.
+The backlog and dispatch queue are the bridge between raw intent and available agent capacity. For the hands-on Command Center flow, see [Roadmap to Work Graph](../guides/roadmap-to-work-graph.md).
 
 The long-term vision is that Farmslot can continuously ingest ideas, refine them with the human, break them down into actionable work, and dispatch the right item when a safe slot becomes available.
 

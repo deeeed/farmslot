@@ -184,6 +184,7 @@ export class FarmApp extends LitElement {
   @state() private _sidebarWidth = DEFAULT_SIDEBAR_WIDTH;
   @state() private _sidebarResizing = false;
   @state() private devHarnessLoaded = false;
+  @state() private devCaptureMode = false;
   @state() private authMode: 'token' | 'password' = localStorage.getItem(
     'farmslot.gateway.password',
   )
@@ -412,6 +413,7 @@ export class FarmApp extends LitElement {
   private parseHash() {
     const raw = location.hash.replace('#', '') || this.defaultRouteForEmptyHash();
     const hash = raw.split('?')[0];
+    this.devCaptureMode = this.isDevCaptureHash(raw);
     if (hash === 'dev' || hash.startsWith('dev/')) {
       this.route = 'dev';
       void this.loadDevHarness();
@@ -498,6 +500,16 @@ export class FarmApp extends LitElement {
   private getRouteFromHash(): Route {
     this.parseHash();
     return this.route;
+  }
+
+  private isDevCaptureHash(raw: string) {
+    const hash = raw.split('?')[0];
+    if (hash !== 'dev' && !hash.startsWith('dev/')) return false;
+    const query = raw.includes('?') ? raw.slice(raw.indexOf('?') + 1) : '';
+    const params = new URLSearchParams(query);
+    return (
+      params.get('capture') === '1' || params.get('demo') === '1' || params.get('focus') === '1'
+    );
   }
 
   private navigate(route: Route) {
@@ -1175,6 +1187,14 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       return this.renderAuthScreen();
     }
     const activeRunCount = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
+    if (this.route === 'dev' && this.devCaptureMode) {
+      return html`
+        ${renderAppShellStyles(this._sidebarExpanded, this._sidebarWidth, this._sidebarResizing)}
+        <div class="fa-main fa-main--capture">
+          <div class="fa-content">${this.renderContent()}</div>
+        </div>
+      `;
+    }
 
     return html`
       ${renderAppShellStyles(this._sidebarExpanded, this._sidebarWidth, this._sidebarResizing)}
