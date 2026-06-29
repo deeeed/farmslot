@@ -7,6 +7,7 @@ import {
   type BranchAffinityNudgePayload,
   DEFAULT_BRANCH,
   isDispatchScoreStale,
+  type PendingDecision,
   type PRStatus,
   type RecipeRunArtifactGroup,
   type Run,
@@ -52,8 +53,33 @@ export function decisionActionHelp(
   return DECISION_ACTION_FALLBACK_HELP[`${decisionType}::${action.id}`] ?? '';
 }
 
+/**
+ * Graft the lazy-backfilled `gateSummary` onto a gate decision that arrived via
+ * the RUN_UPDATED feed without it. Runs created before gateSummary was persisted
+ * carry no summary on `run.decisions`, but the `decision.list` snapshot
+ * (`state.decisions`) is enriched on read by the gateway. Match by id and copy
+ * the summary across so the gate-summary panel renders for historical runs too.
+ */
+function withGraftedGateSummary(
+  pending: RunDecision,
+  pendingDecisions: readonly PendingDecision[],
+): RunDecision {
+  const payload = pending.payload;
+  if (payload?.kind !== 'ready' && payload?.kind !== 'retrospective') return pending;
+  if (payload.gateSummary) return pending;
+  const enriched = pendingDecisions.find((d) => d.id === pending.id)?.payload;
+  const gateSummary =
+    enriched?.kind === 'ready' || enriched?.kind === 'retrospective'
+      ? enriched.gateSummary
+      : undefined;
+  if (!gateSummary) return pending;
+  return { ...pending, payload: { ...payload, gateSummary } };
+}
+
 export interface RunDecisionRenderContext {
   allRuns: Run[];
+  /** Enriched `decision.list` snapshot (state.decisions) — source of lazy-backfilled gateSummary. */
+  pendingDecisions: readonly PendingDecision[];
   bootstrapFailed: boolean;
   directRunRefreshFailed: boolean;
   actionsBlocked: boolean;
@@ -82,8 +108,9 @@ export interface RunDecisionRenderContext {
 
 export function renderRunGateSection(run: Run, context: RunDecisionRenderContext) {
   // Show gate section for ANY unresolved decision (not just ones with payload)
-  const pending = run.decisions.find((d) => !d.resolvedAt);
-  if (!pending) return nothing;
+  const rawPending = run.decisions.find((d) => !d.resolvedAt);
+  if (!rawPending) return nothing;
+  const pending = withGraftedGateSummary(rawPending, context.pendingDecisions);
 
   const kind = decisionPayloadKind(pending.payload);
   const isReview = kind === 'review';
