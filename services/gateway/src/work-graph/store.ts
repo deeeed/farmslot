@@ -367,6 +367,9 @@ export async function addWorkGraphNode(
       if (!params.reference?.title?.trim() || !params.reference.ref?.trim()) {
         throw new Error('Reference work nodes require reference.title and reference.ref');
       }
+      if (!params.reference.status) {
+        throw new Error('Reference work nodes require reference.status');
+      }
     } else if (!params.backlogItemId) {
       throw new Error('Backlog work nodes require backlogItemId');
     }
@@ -396,7 +399,7 @@ export async function addWorkGraphNode(
               ...params.reference!,
               title: params.reference!.title.trim(),
               ref: params.reference!.ref.trim(),
-              status: params.reference!.status ?? 'unknown',
+              status: params.reference!.status,
               labels: normalizeRunTags(params.reference!.labels),
             },
           }
@@ -462,10 +465,11 @@ export async function addWorkGraphEdge(
 export async function updateWorkGraphNode(
   params: WorkGraphUpdateNodeParams,
 ): Promise<{ graph: WorkGraphProjection }> {
-  return withMutation(async () => {
+  const shouldReconcile = await withMutation(async () => {
     const snapshot = requireGraph(params.graphId);
     const node = snapshot.nodes.find((candidate) => candidate.id === params.nodeId);
     if (!node) throw new Error(`Work node not found: ${params.nodeId}`);
+    let referenceUpdated = false;
     if (params.status) node.status = params.status;
     if (params.reference !== undefined) {
       if (!isReferenceNode(node)) throw new Error('Only reference nodes can update reference data');
@@ -473,12 +477,18 @@ export async function updateWorkGraphNode(
       if (!params.reference.title.trim() || !params.reference.ref.trim()) {
         throw new Error('Reference work nodes require reference.title and reference.ref');
       }
+      if (!params.reference.status)
+        throw new Error('Reference work nodes require reference.status');
       node.reference = {
         ...params.reference,
         title: params.reference.title.trim(),
         ref: params.reference.ref.trim(),
         labels: normalizeRunTags(params.reference.labels),
       };
+      referenceUpdated = true;
+      if (snapshot.graph.status === 'waiting' || snapshot.graph.status === 'needs-attention') {
+        snapshot.graph.status = 'active';
+      }
     }
     if (params.tags !== undefined) {
       const tags = params.tags === null ? [] : normalizeRunTags(params.tags);
@@ -504,8 +514,12 @@ export async function updateWorkGraphNode(
     snapshot.graph.updatedAt = node.updatedAt;
     await persistNow(snapshot);
     emit(snapshot);
-    return { graph: project(snapshot) };
+    return (
+      referenceUpdated && ['active', 'waiting', 'needs-attention'].includes(snapshot.graph.status)
+    );
   });
+  if (shouldReconcile) await schedulerTick({ graphId: params.graphId });
+  return { graph: project(requireGraph(params.graphId)) };
 }
 
 export async function activateWorkGraph(params: {

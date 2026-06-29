@@ -161,8 +161,6 @@ test('reference blockers are v1 graph nodes but never dispatchable', async () =>
       updatedAt: new Date().toISOString(),
     },
   });
-  await workGraph.schedulerTick({ graphId });
-
   projection = workGraph.getWorkGraph({ graphId }).graph;
   assert.equal(
     projection.edges.find((edge) => edge.id === 'we_pr_to_release')?.status,

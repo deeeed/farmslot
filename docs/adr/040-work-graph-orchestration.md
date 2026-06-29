@@ -715,6 +715,8 @@ backlog specs and chooses the dependencies that should affect execution. This pr
 from accidentally behaving like a queueable task while still allowing UI drilldown from roadmap epic
 → backlog specs → implementation WorkGraph → run families.
 
+**Multi-level graph UX (future ADR-041/Command Center work).** Command Center should eventually expose a Graphs index before the canvas: searchable graph artifacts with filters for level, project scope, labels/tags, status, and recently updated. The operator selects a specific graph to view; the UI must not silently infer a graph from all matching specs. Supported levels should remain explicit: roadmap/epic planning graphs, implementation WorkGraphs, and run/family execution graphs. Users should be able to work with a refinement agent to create proposed roadmap graphs or epics before any job is deployed. Those planning graphs make dependencies visible early, but remain non-dispatchable artifacts until the operator promotes parts of them into backlog specs and explicitly creates or updates an active WorkGraph. Backlog/spec detail views can show graph membership and offer “add to graph/create graph” actions, but selection still resolves to a concrete graph artifact.
+
 **Node configuration boundary (v1 decision).** Clicking a graph node should make execution
 readiness/configuration visible, but it must not move dispatch configuration into the graph. For a
 backlog node, the drilldown/editor opens the backing backlog spec and edits the BacklogItem fields
