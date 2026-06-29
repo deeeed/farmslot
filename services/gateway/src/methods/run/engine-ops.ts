@@ -85,6 +85,16 @@ export async function runRefreshMirror(
  * Re-bind an existing run onto a slot and re-drive PREPARE→DISPATCH with the
  * cheapest warm prepare profile (ADR-024 Activate-on-Slot addendum). Lets the
  * operator switch between hot runs across slots without a fresh `run.create`.
+ *
+ * NOTE: this re-runs the worker (resets PREPARE-onward, relaunches the runner on
+ * TASK.md) and therefore DESTROYS any gate state the run is parked at. It is no
+ * longer surfaced as a UI button — re-driving a healthy gate-held run on its own
+ * slot is a footgun (see ADR-024 addendum "UI surface removed"). It survives as
+ * an operator escape hatch reachable via RPC/CLI (`run.activateOnSlot`) for the
+ * rare real cases: re-running a terminal run, moving a run to a different slot,
+ * or recovering a dead worker. For "load this run's branch into a slot to
+ * inspect / replay the recipe" use the bind-only `slot.prepare` path instead —
+ * it does NOT re-drive the pipeline.
  */
 export async function runActivateOnSlot(
   params: RunActivateOnSlotParams,
