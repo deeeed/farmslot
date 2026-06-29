@@ -1020,7 +1020,7 @@ export async function schedulerTick(
               await markBacklogItemNeedsAttention({
                 itemId: node.backlogItemId,
                 reason: regressionReason,
-                clearQueueLink: Boolean(cancelled),
+                clearQueueLink: cancelled,
               });
             }
             node.status = 'needs-attention';
@@ -1038,17 +1038,7 @@ export async function schedulerTick(
           node.updatedAt = now;
           continue;
         }
-        if (
-          [
-            'queued',
-            'running',
-            'gated',
-            'succeeded',
-            'failed',
-            'needs-attention',
-            'skipped',
-          ].includes(node.status)
-        )
+        if (['queued', 'running', 'gated', 'succeeded', 'failed', 'skipped'].includes(node.status))
           continue;
         const requiredInbound = startInbound.filter((edge) => edge.required);
         const satisfiedInbound = requiredInbound.filter(

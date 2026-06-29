@@ -242,23 +242,22 @@ export async function cancelGraphQueuedItem(params: {
   workGraphId: string;
   workNodeId: string;
   reason: string;
-}): Promise<QueueItem | null> {
+}): Promise<boolean> {
   const idx = queue.findIndex(
     (item) =>
       item.status === 'queued' &&
       item.workGraphId === params.workGraphId &&
       item.workNodeId === params.workNodeId,
   );
-  if (idx < 0) return null;
+  if (idx < 0) return false;
   const [item] = queue.splice(idx, 1);
-  if (!item) return null;
-  const cancelled: QueueItem = { ...item, status: 'cancelled' };
+  if (!item) return false;
   await enqueuePersist('graph-dependency-regressed');
   console.log(
     `[dispatch-queue] cancelled graph queue item ${item.id.slice(0, 8)}: ${params.reason}`,
   );
   broadcastQueue();
-  return cancelled;
+  return true;
 }
 
 export function updateItem(params: DispatchQueueUpdateParams): QueueItem {

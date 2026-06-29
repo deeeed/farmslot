@@ -736,6 +736,13 @@ test('manual gate evaluation uses the latest resolution for the edge', async () 
     projection.edges.find((edge) => edge.id === 'we_corrected_gate')?.status,
     'satisfied',
   );
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_gate_downstream')?.status, 'queued');
+  assert.equal(
+    projection.ledger.some(
+      (entry) => entry.nodeId === 'wn_gate_downstream' && entry.actionKind === 'enqueue',
+    ),
+    true,
+  );
   assert.equal(projection.gates.length, 2);
   assert.equal(projection.gates[1]?.decision, 'approved');
 });
