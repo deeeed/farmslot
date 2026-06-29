@@ -63,7 +63,7 @@ export async function slotRelease(
   const vars = await loadSlotVars(params.slotId);
   // Release runs idle-reset + the project recycle hook (both can reset --hard
   // the slot repo) — guard so the operator root is never recycled.
-  assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.release);
+  await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.release);
   await applySelectedApp(vars);
 
   let projectVars: ProjectVars | undefined;

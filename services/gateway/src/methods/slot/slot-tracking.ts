@@ -108,7 +108,7 @@ export type { ResetSlotRepoToIdleOptions, SlotIdleResetResult };
  * slots; a remote node that happens to share the path string is a different
  * filesystem and is not the operator's repo.
  */
-export function isOperatorRootSlot(vars: SlotVars): boolean {
+export async function isOperatorRootSlot(vars: SlotVars): Promise<boolean> {
   if (!isLocal(vars.host, vars.machine)) return false;
   // Resolve symlinks too — a slot repo pointing at a symlink to the operator
   // root must still be caught. realpathSync throws when the path does not exist
@@ -120,7 +120,22 @@ export function isOperatorRootSlot(vars: SlotVars): boolean {
       return path.resolve(p);
     }
   };
-  return canonical(vars.remoteRepo) === canonical(farmslotRoot);
+  const opRoot = canonical(farmslotRoot);
+  // Exact (or symlinked) match — the cheap path, no git needed.
+  if (canonical(vars.remoteRepo) === opRoot) return true;
+  // Subdirectory-of-operator case: a slot pointing at any directory INSIDE the
+  // operator checkout (e.g. `repo: "services/gateway"`) shares the same git
+  // worktree, so `git -C <subdir> reset --hard` still nukes the operator tree.
+  // Resolve the slot repo's owning worktree root and compare. This correctly
+  // ALLOWS nested separate repos (projects/<name>, which have their own root)
+  // and sibling linked worktrees (farmslot-wt/..., a different root).
+  const top = (
+    await execOnSlot(
+      vars,
+      `git -C ${shellQuote(vars.remoteRepo)} rev-parse --show-toplevel 2>/dev/null`,
+    )
+  ).stdout.trim();
+  return top.length > 0 && canonical(top) === opRoot;
 }
 
 /**
@@ -131,8 +146,11 @@ export function isOperatorRootSlot(vars: SlotVars): boolean {
  * stash to recover from) on a fleet-refresh / idle-reset / dispatch timer. Fail
  * hard so the misconfigured slot is surfaced instead of silently nuking the repo.
  */
-export function assertSlotNotOperatorRoot(vars: SlotVars, operation: SlotDestructiveOp): void {
-  if (isOperatorRootSlot(vars)) {
+export async function assertSlotNotOperatorRoot(
+  vars: SlotVars,
+  operation: SlotDestructiveOp,
+): Promise<void> {
+  if (await isOperatorRootSlot(vars)) {
     throw new Error(
       `Refusing to ${operation} slot ${vars.slotId}: its repo (${vars.remoteRepo}) is the gateway's own operator root. ` +
         `Point this slot at a dedicated worktree (e.g. farmslot-wt/...) instead of the control-plane repo.`,
@@ -149,7 +167,7 @@ export async function resetSlotRepoToIdle(
 ): Promise<SlotIdleResetResult> {
   // Backstop guard — every caller should also guard at its own entry, but this
   // is the last line before `git checkout -- . && git clean -fd && reset --hard`.
-  assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.idleReset);
+  await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.idleReset);
   const repo = shellQuote(vars.remoteRepo);
   const linkedWorktree = options?.linkedWorktree ?? (await detectLinkedWorktree(vars));
   const trackingBranch = resolveSlotTrackingBranchFromProject(

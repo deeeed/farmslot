@@ -494,7 +494,7 @@ export async function executeFindSlotStep(
       const vars = await loadSlotVars(pickedSlotId);
       // Entry guard mirroring the other destructive-op call sites — never reset
       // the gateway's own operator root (resetSlotRepoToIdle also backstops this).
-      assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.idleReset);
+      await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.idleReset);
       let projectVars;
       let projectJson = {};
       try {

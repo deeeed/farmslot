@@ -118,7 +118,7 @@ export async function slotPrepare(
     const vars = await loadSlotVars(params.slotId);
     // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
     // slot repo — never against the gateway's own operator root.
-    assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.prepare);
+    await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.prepare);
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
     const result = await slotPrepareInner(params, stream, signal, opts);

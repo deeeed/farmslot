@@ -108,6 +108,20 @@ test('resetSlotRepoToIdle refuses to reset the gateway operator root (no destruc
   );
 });
 
+test('resetSlotRepoToIdle refuses a slot pointing at a SUBDIRECTORY of the operator root', async () => {
+  // A local slot misconfigured to point inside the operator checkout (e.g.
+  // repo: "services/gateway") shares the same git worktree — `git -C <subdir>
+  // reset --hard` would still nuke the operator tree. The guard resolves the
+  // owning worktree root (git rev-parse --show-toplevel) and rejects it.
+  const subdir = path.join(farmslotRoot, 'services');
+  await assert.rejects(
+    resetSlotRepoToIdle(slotVars(subdir, 'fs-sub'), {}, undefined, 'main', {
+      linkedWorktree: false,
+    }),
+    /operator root/,
+  );
+});
+
 test('resetSlotRepoToIdle returns primary clone to default branch @ origin/main', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'farmslot-slot-tracking-'));
   const primary = path.join(root, 'primary');
