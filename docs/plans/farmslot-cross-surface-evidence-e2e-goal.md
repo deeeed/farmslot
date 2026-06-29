@@ -20,9 +20,9 @@ Validate the **full farmslot operator loop twice** — once per app — with mat
 
 **Success bar:** every step green through gate-held blocked state. No recipe `fail`, no video ENOENT, no worker `BLOCKED` SIGNAL, no screenshot-only fallback unless video capture is fixed first.
 
-| Run   | App              | Slot           | Ticket                                                                                   |
-| ----- | ---------------- | -------------- | ---------------------------------------------------------------------------------------- |
-| **A** | Command Center   | `macwork-ff-2` | [deeeed/farmslot#28](https://github.com/deeeed/farmslot/issues/28) (exists)              |
+| Run   | App              | Slot                           | Ticket                                                                                   |
+| ----- | ---------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
+| **A** | Command Center   | `macwork-ff-2`                 | [deeeed/farmslot#28](https://github.com/deeeed/farmslot/issues/28) (exists)              |
 | **B** | Mobile Companion | `macwork-ff-2` (same worktree) | [deeeed/farmslot#29](https://github.com/deeeed/farmslot/issues/29) (create before Run B) |
 
 Both tasks are **DO NOT MERGE** smoke work. Success means pipeline + evidence UX, not merge to `main`.
@@ -80,7 +80,9 @@ runner:      claude / opus
 publication: draft PR (after gate approve — not during worker run)
 ```
 
-Worktree: `farmslot-wt/farmslot-2` · gateway port **8809** · CDP **9323**
+Worktree: `farmslot-wt/farmslot-2` · CDP **9324** (per pool; not operator `9323`)
+
+**Dispatch from operator main** (`~/dev/farmslot`, gateway **7777**, UI **5174**) — `yarn farmslot run create` with **no** `--url ws://localhost:8809`. Slot port **8809** / Vite **5876** are the **validation stack** started by prepare `sandbox` for recipes only; see [worktree-operator-model.md](../operations/worktree-operator-model.md).
 
 Reuse existing `app-shell.ts` banner work when still valid; worker should not re-implement from scratch.
 

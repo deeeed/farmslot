@@ -105,6 +105,8 @@ If CDP is not available, at minimum use `node scripts/cdp.mjs gateway <method>` 
 | Gateway RPC        | `node apps/command-center/scripts/cdp.mjs gateway …` |
 | Gateway only       | `yarn workspace @farmslot/gateway dev`               |
 
+**Worktree slot dispatch:** `run.create` for `macwork-ff-*` uses the **operator** gateway (`7777`, default CLI URL). Slot ports `8808+` are for recipe/CDP validation after prepare `sandbox` — do not pass `--url ws://localhost:8809` when dispatching. See [worktree-operator-model.md](../../docs/operations/worktree-operator-model.md).
+
 `farmdev` → `scripts/dev.sh` → `yarn dev` → `concurrently` with `@farmslot/gateway dev` (`tsx watch src/index.ts`) and Vite. **Code changes reload the gateway automatically** — do not manually restart after editing gateway source if `farmdev` is up. Pool JSON changes are picked up via file watcher + `fleetRefresh` (no restart).
 
 Bare `yarn dev` skips `.env.ports` unless ports are already exported — prefer `yarn farmdev` on the main operator tree.
