@@ -11,17 +11,21 @@ const INSTALLER = path.join(ROOT, 'scripts', 'install-runner-observability.mjs')
 
 function installToTempDir(runner = 'claude') {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-'));
-  execFileSync(process.execPath, [
-    INSTALLER,
-    '--runner',
-    runner,
-    '--repo',
-    repo,
-    '--runtime-dir',
-    '.agent',
-    '--slot-id',
-    'install-test',
-  ], { stdio: 'pipe' });
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      runner,
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      'install-test',
+    ],
+    { stdio: 'pipe' },
+  );
   const obsDir = path.join(repo, '.agent', '.observability');
   const hookPath = path.join(obsDir, 'bin', 'farmslot-observability-hook.mjs');
   return { repo, obsDir, hookPath };
@@ -100,17 +104,21 @@ test('codex install merges farmslot hook alongside existing codex hooks', () => 
     )}\n`,
   );
 
-  execFileSync(process.execPath, [
-    INSTALLER,
-    '--runner',
-    'codex',
-    '--repo',
-    repo,
-    '--runtime-dir',
-    '.agent',
-    '--slot-id',
-    'install-test-codex',
-  ], { stdio: 'pipe' });
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'codex',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      'install-test-codex',
+    ],
+    { stdio: 'pipe' },
+  );
 
   const hooksDoc = JSON.parse(fs.readFileSync(path.join(repo, '.codex', 'hooks.json'), 'utf8'));
   const stopEntries = hooksDoc.hooks.Stop;
@@ -149,4 +157,51 @@ test('codex install merges farmslot hook alongside existing codex hooks', () => 
   runHook(hookPath, obsDir, { hook_event_name: 'UserPromptSubmit', session_id: 'c1' }, 'codex');
   const row = JSON.parse(fs.readFileSync(path.join(obsDir, 'hooks.jsonl'), 'utf8').trim());
   assert.equal(row.runner, 'codex');
+});
+
+test('codex install never writes through a stale codex-home config.toml symlink to the global config', () => {
+  // Regression: a codex-home/config.toml symlinked to the operator's global ~/.codex/config.toml
+  // (left by an older launch path) made the installer read the global config, append its hook-trust
+  // block, and write it BACK through the symlink — corrupting the global config (duplicate [features],
+  // which broke codex everywhere). The installer must drop the symlink and write a real isolated file.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-symlink-'));
+  const sentinel = path.join(repo, 'sentinel-global.toml');
+  fs.writeFileSync(sentinel, '[features]\nhooks = true\n\n[notice]\nx = 1\n');
+  const codexHome = path.join(repo, '.agent', 'codex-home');
+  fs.mkdirSync(codexHome, { recursive: true });
+  const homeConfig = path.join(codexHome, 'config.toml');
+  fs.symlinkSync(sentinel, homeConfig);
+  const before = fs.readFileSync(sentinel, 'utf8');
+
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'codex',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      'install-test-symlink',
+    ],
+    { stdio: 'pipe' },
+  );
+
+  assert.equal(
+    fs.readFileSync(sentinel, 'utf8'),
+    before,
+    'global config (symlink target) must be untouched — no write-through',
+  );
+  assert.ok(
+    !fs.lstatSync(homeConfig).isSymbolicLink(),
+    'stale symlink must be replaced by a real isolated file',
+  );
+  const homeContent = fs.readFileSync(homeConfig, 'utf8');
+  assert.equal(
+    (homeContent.match(/^\[features\]/gm) || []).length,
+    1,
+    'home config must have a single [features] section (no duplicate-key corruption)',
+  );
 });

@@ -323,13 +323,28 @@ function bootstrapCodexHome({ repoPath, runtimeDir, hooksPath }) {
   const trustHooksPath = canonicalCodexPath(codexHomeHooksPath);
   const trustToml = buildCodexHookTrustToml(trustHooksPath, hooks);
   const configPath = path.join(codexHomeDir, 'config.toml');
+  // Never read or write through a symlink. A stale codex-home/config.toml symlinked to
+  // the operator's global ~/.codex/config.toml would make us read the global config,
+  // append our hook-trust block, and write it BACK to global — corrupting it (duplicate
+  // [features]). Drop any symlink so we always operate on a real, isolated file.
   let content = '';
-  if (fs.existsSync(configPath)) content = fs.readFileSync(configPath, 'utf8');
+  let existingStat = null;
+  try {
+    existingStat = fs.lstatSync(configPath);
+  } catch {
+    existingStat = null;
+  }
+  if (existingStat?.isSymbolicLink()) {
+    fs.rmSync(configPath);
+  } else if (existingStat) {
+    content = fs.readFileSync(configPath, 'utf8');
+  }
   content = stripCodexHookTrustSections(content);
   const featureBlock = '[features]\nhooks = true\n';
   const canonicalRepoPath = canonicalCodexPath(repoPath);
   const projectBlock = `[projects."${escapeTomlBasicString(canonicalRepoPath)}"]\ntrust_level = "trusted"\n`;
-  const merged = [content, featureBlock, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
+  const merged =
+    [content, featureBlock, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
   fs.writeFileSync(configPath, merged);
   const userAuth = path.join(os.homedir(), '.codex', 'auth.json');
   const destAuth = path.join(codexHomeDir, 'auth.json');
@@ -493,7 +508,7 @@ function ensureCodexHooksFeature(configPath, markerPath) {
   if (fs.existsSync(configPath)) content = fs.readFileSync(configPath, 'utf8');
   if (/\[features\][\s\S]*?\bhooks\s*=\s*true\b/m.test(content)) return;
   const block = '\n[features]\nhooks = true\n';
-  fs.writeFileSync(configPath, (content.trimEnd() ? content.trimEnd() + block : block.trimStart()));
+  fs.writeFileSync(configPath, content.trimEnd() ? content.trimEnd() + block : block.trimStart());
 }
 
 function writeObservabilityInstallManifest(obsDir, manifest) {
