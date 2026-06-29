@@ -99,6 +99,28 @@ export class GateSummaryPanel extends LitElement {
       color: ${unsafeCSS(colors.statusOk)};
       font-weight: 600;
     }
+    .gs-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: ${unsafeCSS(fonts.sizeXs)};
+    }
+    .gs-table th {
+      text-align: right;
+      color: ${unsafeCSS(colors.textMuted)};
+      font-weight: 500;
+      padding: 2px 6px;
+      border-bottom: 1px solid ${unsafeCSS(colors.textMuted)}33;
+    }
+    .gs-table th:first-child {
+      text-align: left;
+    }
+    .gs-table td {
+      text-align: right;
+      padding: 2px 6px;
+    }
+    .gs-table td:first-child {
+      text-align: left;
+    }
     code {
       color: ${unsafeCSS(colors.textMuted)};
       font-size: ${unsafeCSS(fonts.sizeXs)};
@@ -152,9 +174,48 @@ export class GateSummaryPanel extends LitElement {
           <span>${d.reWorkCount} review${d.reWorkCount === 1 ? '' : 's'} triggered re-work</span>
           <span>${d.unresolvedTotal} unresolved total</span>
         </div>
+        ${d.reWork
+          ? html`<div class="gs-row gs-rework">
+              <span
+                >Re-work cost: ${d.reWork.tokens} tokens over ${d.reWork.loops} fix
+                loop${d.reWork.loops === 1 ? '' : 's'}${d.reWork.nudgeCount
+                  ? ` · ${d.reWork.nudgeCount} nudge${d.reWork.nudgeCount === 1 ? '' : 's'}`
+                  : ''}</span
+              >
+            </div>`
+          : nothing}
+
+        <div class="gs-section-title">Tokens by model</div>
+        ${d.tokens.byModel.length
+          ? html`<table class="gs-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>In</th>
+                  <th>Out</th>
+                  <th>Cache</th>
+                  <th>Total</th>
+                  <th>Turns</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${d.tokens.byModel.map(
+                  (m) =>
+                    html`<tr>
+                      <td>${m.model}</td>
+                      <td>${m.input}</td>
+                      <td>${m.output}</td>
+                      <td>${m.cacheRead}</td>
+                      <td class="gs-total">${m.total}</td>
+                      <td>${m.turns || '—'}</td>
+                    </tr>`,
+                )}
+              </tbody>
+            </table>`
+          : html`<div class="gs-dim">No token usage recorded</div>`}
 
         <details>
-          <summary>Cost — ${d.tokens.grandTotal} tokens to reach this gate</summary>
+          <summary>Cost breakdown — ${d.tokens.grandTotal} tokens to reach this gate</summary>
           <div class="gs-token-row">
             <span>${d.tokens.mainWorker.label} (${d.tokens.mainWorker.model})</span>
             <span>${d.tokens.mainWorker.total}</span>
@@ -179,6 +240,17 @@ export class GateSummaryPanel extends LitElement {
                 ${d.tokens.sessionPaths.map((p) => html`<div><code>${p}</code></div>`)}`
             : nothing}
         </details>
+        ${d.checklist.length
+          ? html`<details>
+              <summary>Checklist timing — ${d.checklist.length} steps</summary>
+              ${d.checklist.map(
+                (s) =>
+                  html`<div class="gs-token-row">
+                    <span>${s.stepNumber}. ${s.label}</span><span>${s.duration}</span>
+                  </div>`,
+              )}
+            </details>`
+          : nothing}
       </div>
     `;
   }

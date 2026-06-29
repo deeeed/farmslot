@@ -6,6 +6,7 @@ import {
   type AgentRole,
   agentRoleWindow,
   DEFAULT_BRANCH,
+  SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
 } from '@farmslot/protocol';
 
@@ -47,6 +48,7 @@ import { slotPrepare } from './prepare.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
 import { applySelectedApp, type EventEmitter } from './shared.js';
 import {
+  assertSlotNotOperatorRoot,
   detectLinkedWorktree,
   isSlotIdleBranch,
   resetSlotRepoToIdle,
@@ -59,6 +61,9 @@ export async function slotRelease(
   emit: EventEmitter,
 ): Promise<{ released: boolean }> {
   const vars = await loadSlotVars(params.slotId);
+  // Release runs idle-reset + the project recycle hook (both can reset --hard
+  // the slot repo) — guard so the operator root is never recycled.
+  await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.release);
   await applySelectedApp(vars);
 
   let projectVars: ProjectVars | undefined;
@@ -279,9 +284,7 @@ export async function slotRelease(
 
     step('git', `Returning slot to idle baseline...`);
     const idleReset = await resetSlotRepoToIdle(vars, projectJson, projectVars, defaultBranch);
-    idleBranchAfterRelease = idleReset.linkedWorktree
-      ? idleReset.trackingBranch
-      : defaultBranch;
+    idleBranchAfterRelease = idleReset.linkedWorktree ? idleReset.trackingBranch : defaultBranch;
     step('git', slotIdleResetStepDetail(idleReset, defaultBranch));
 
     // Recycle app

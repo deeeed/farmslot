@@ -1,4 +1,8 @@
 import type { ArtifactRef, SelfReviewIssue } from '../recipes/step-io.js';
+import type {
+  WorkerSignalChecklistEvent,
+  WorkerSignalChecklistTiming,
+} from '../transport/signal.js';
 
 import type { AgentContext, SafetyTier } from './agents.js';
 import type { FailureCategory, RunRecoveryProposalConfidence } from './chat.js';
@@ -365,6 +369,16 @@ export interface GateSummary {
   };
   review: ReviewSummary;
   tokens: GateTokenSummary;
+  /**
+   * Per-step checklist timing derived from the worker's persisted
+   * `checklistTiming` (SIGNAL.json). Optional — absent when the run predates
+   * timing persistence or the worker never marked steps. `perStepMs` holds the
+   * duration of each step (delta between consecutive `checkedAt` timestamps).
+   */
+  checklist?: {
+    events: WorkerSignalChecklistEvent[];
+    perStepMs: Array<{ stepNumber: number; label: string; durationMs: number }>;
+  };
   /** Flow-specific extras (e.g. CI-watch counts for a `ci` gate). */
   custom?: Record<string, unknown>;
   capturedAt?: string;
@@ -417,8 +431,46 @@ export interface GateTokenSummary {
     total: number;
     turns: number;
   };
-  /** Per independent review (from {@link IndependentReviewStatus.usage}). */
-  reviews: Array<{ id: string; model: string | null; total: number }>;
+  /**
+   * Per independent review (from {@link IndependentReviewStatus.usage}). The
+   * input/output/cache split is present when the review's usage record carried
+   * it; older entries may only have `total`.
+   */
+  reviews: Array<{
+    id: string;
+    model: string | null;
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheCreation?: number;
+    total: number;
+  }>;
+  /**
+   * Token totals grouped by model across worker + reviews + family fix-loops.
+   * The single scannable "what did each model cost us, in tokens" rollup. `input`
+   * etc. sum only the entries that carried a split; `total` always covers every
+   * entry for that model.
+   */
+  byModel: Array<{
+    model: string | null;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheCreation: number;
+    total: number;
+    turns: number;
+  }>;
+  /**
+   * Work attributable to review-triggered re-work — family fix-loops plus human
+   * nudges. Tokens/turns only; dollar cost is intentionally deferred (pricing is
+   * unreliable across enterprise/subscription accounts).
+   */
+  reWork?: {
+    tokens: number;
+    loops: number;
+    turns?: number;
+    nudgeCount?: number;
+  };
   /** pr-complete / merge-main fix loops in the same family that ran after this gate's run. */
   familyChainedLoops?: Array<{
     runId: string;
@@ -840,6 +892,8 @@ export interface RunMetrics {
   outcome?: 'success' | 'failure' | 'partial' | 'cancelled';
   disposition?: WorkerTerminalDisposition;
   terminalEvidence?: WorkerTerminalEvidence;
+  /** Per-step checklist timing from the worker's SIGNAL.json, persisted at finalize so it survives task-dir pruning. */
+  checklistTiming?: WorkerSignalChecklistTiming;
   costEstimate?: number;
   // Session-truth fields populated from the worker's transcript via session-usage.sh.
   // Help diagnose cost anomalies (e.g. dispatched sonnet but fast-mode forced opus).

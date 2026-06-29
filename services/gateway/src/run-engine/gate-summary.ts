@@ -37,6 +37,64 @@ function num(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+/** One token-bearing entry folded into the per-model rollup. */
+interface TokenContribution {
+  model: string | null;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheCreation: number;
+  total: number;
+  turns: number;
+}
+
+/**
+ * Group token contributions by model into the `byModel` rollup. `input` etc. sum
+ * only the entries that carried a split (reviews may report `total` alone); each
+ * model's `total` always covers every contribution. Keyed by model id, null
+ * preserved as its own bucket. Sorted by total descending — biggest spender first.
+ */
+function rollupByModel(contributions: readonly TokenContribution[]): GateTokenSummary['byModel'] {
+  const byKey = new Map<string, GateTokenSummary['byModel'][number]>();
+  for (const c of contributions) {
+    if (c.total <= 0) continue;
+    const key = c.model ?? '∅';
+    const acc = byKey.get(key) ?? {
+      model: c.model,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheCreation: 0,
+      total: 0,
+      turns: 0,
+    };
+    acc.input += c.input;
+    acc.output += c.output;
+    acc.cacheRead += c.cacheRead;
+    acc.cacheCreation += c.cacheCreation;
+    acc.total += c.total;
+    acc.turns += c.turns;
+    byKey.set(key, acc);
+  }
+  return [...byKey.values()].sort((a, b) => b.total - a.total);
+}
+
+/** Derive per-step durations from append-only checklist events (delta between consecutive marks). */
+function buildChecklist(run: Run): GateSummary['checklist'] {
+  const timing = run.metrics.checklistTiming;
+  if (!timing?.events?.length) return undefined;
+  const events = [...timing.events].sort((a, b) => a.checkedAt.localeCompare(b.checkedAt));
+  let prev: number | null = null;
+  const perStepMs = events.map((e) => {
+    const at = Date.parse(e.checkedAt);
+    // First marked step has no prior mark to delta against — report 0 rather than guess.
+    const durationMs = prev != null && Number.isFinite(at) ? Math.max(0, at - prev) : 0;
+    if (Number.isFinite(at)) prev = at;
+    return { stepNumber: e.stepNumber, label: e.label, durationMs };
+  });
+  return { events, perStepMs };
+}
+
 function isSelfReviewEntry(review: IndependentReviewStatus): boolean {
   // `source` is the explicit signal; fall back to the id-prefix registry.
   if (review.source === 'self-review') return true;
@@ -231,6 +289,10 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
     .map((r) => ({
       id: r.id,
       model: r.usage?.actualModel ?? r.model ?? null,
+      input: num(r.usage?.inputTokens),
+      output: num(r.usage?.outputTokens),
+      cacheRead: num(r.usage?.cacheRead),
+      cacheCreation: num(r.usage?.cacheCreation),
       total: num(r.usage?.totalTokens),
     }));
 
@@ -248,9 +310,37 @@ export function buildTokenSummary(run: Run): GateTokenSummary {
     ...familyChainedLoops.map((c) => c.perTurnSessionPath),
   ].filter((p): p is string => typeof p === 'string' && p.length > 0);
 
+  const byModel = rollupByModel([
+    { ...mainWorker },
+    ...reviewTokens.map((r) => ({
+      model: r.model,
+      input: r.input,
+      output: r.output,
+      cacheRead: r.cacheRead,
+      cacheCreation: r.cacheCreation,
+      total: r.total,
+      turns: 0,
+    })),
+    ...familyChainedLoops.map((c) => ({ model: c.model, ...c.tokens, turns: 0 })),
+  ]);
+
+  // Re-work = the post-gate family fix-loops plus human nudges on the main run.
+  const reWorkTokens = familyChainedLoops.reduce((sum, c) => sum + c.tokens.total, 0);
+  const nudgeCount = num(m.nudgeCount);
+  const reWork =
+    familyChainedLoops.length > 0 || nudgeCount > 0
+      ? {
+          tokens: reWorkTokens,
+          loops: familyChainedLoops.length,
+          ...(nudgeCount > 0 ? { nudgeCount } : {}),
+        }
+      : undefined;
+
   return {
     mainWorker,
     reviews: reviewTokens,
+    byModel,
+    ...(reWork ? { reWork } : {}),
     ...(familyChainedLoops.length ? { familyChainedLoops } : {}),
     familyTotalTokens,
     perTurnDetailsAvailable: runnerSessionPaths.length > 0,
@@ -269,6 +359,7 @@ export function buildGateSummary(
 ): GateSummary {
   const review = buildReviewSummary(run);
   const tokens = buildTokenSummary(run);
+  const checklist = buildChecklist(run);
   const worker = {
     model: workerModel(run),
     turns: num(run.metrics.sessionTurns),
@@ -283,6 +374,7 @@ export function buildGateSummary(
     worker,
     review,
     tokens,
+    ...(checklist ? { checklist } : {}),
     capturedAt: new Date().toISOString(),
   };
 }

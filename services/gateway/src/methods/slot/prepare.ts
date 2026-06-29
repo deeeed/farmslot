@@ -4,7 +4,12 @@ import path from 'node:path';
 
 import { type FSWatcher, watch as chokidarWatch } from 'chokidar';
 
-import { DEFAULT_BRANCH, type PreparePhase, type SlotPrepareParams } from '@farmslot/protocol';
+import {
+  DEFAULT_BRANCH,
+  type PreparePhase,
+  SLOT_DESTRUCTIVE_OPS,
+  type SlotPrepareParams,
+} from '@farmslot/protocol';
 
 import {
   applyProjectCommandEnv,
@@ -80,6 +85,7 @@ import {
   type SlotPrepareResult,
 } from './shared.js';
 import {
+  assertSlotNotOperatorRoot,
   detectLinkedWorktree,
   isSlotIdleBranch,
   remoteBranchRefspec,
@@ -110,6 +116,9 @@ export async function slotPrepare(
   let sentinel: PrepareSentinelLock | null = null;
   try {
     const vars = await loadSlotVars(params.slotId);
+    // Prepare runs `git reset --hard origin/<branch>` + `git clean -fd` on the
+    // slot repo — never against the gateway's own operator root.
+    await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.prepare);
     sentinel = await acquirePrepareSentinel(vars, params);
     if (sentinel) startPrepareSentinelHeartbeat(sentinel);
     const result = await slotPrepareInner(params, stream, signal, opts);

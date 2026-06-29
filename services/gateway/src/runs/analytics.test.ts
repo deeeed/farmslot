@@ -98,6 +98,69 @@ test('buildAnalyticsRecord flattens a clean done run', () => {
   assert.equal(rec.steps.length, 4);
 });
 
+test('buildAnalyticsRecord captures worker tokens (by actual model); absent usage → null', () => {
+  const withTokens = buildAnalyticsRecord(
+    makeRun({
+      id: 'tok-1',
+      metrics: {
+        nudgeCount: 0,
+        model: 'opus',
+        actualModel: 'claude-opus-4-8',
+        runner: 'claude',
+        outcome: 'success',
+        sessionTotalTokens: 1260,
+      },
+    }),
+  );
+  assert.equal(withTokens.totalTokens, 1260);
+  assert.deepEqual(withTokens.tokensByModel, { 'claude-opus-4-8': 1260 });
+
+  // No usage reported → null total, empty by-model map.
+  const noTokens = buildAnalyticsRecord(makeRun({ id: 'tok-0' }));
+  assert.equal(noTokens.totalTokens, null);
+  assert.deepEqual(noTokens.tokensByModel, {});
+});
+
+test('aggregateAnalytics rolls up token distribution and tokens-by-model', () => {
+  const recs = [
+    buildAnalyticsRecord(
+      makeRun({
+        id: 'agg-1',
+        metrics: { nudgeCount: 0, model: 'opus', actualModel: 'opus', runner: 'claude' },
+      }),
+    ),
+    buildAnalyticsRecord(
+      makeRun({
+        id: 'agg-2',
+        metrics: {
+          nudgeCount: 0,
+          model: 'opus',
+          actualModel: 'opus',
+          runner: 'claude',
+          sessionTotalTokens: 1000,
+        },
+      }),
+    ),
+    buildAnalyticsRecord(
+      makeRun({
+        id: 'agg-3',
+        metrics: {
+          nudgeCount: 0,
+          model: 'sonnet',
+          actualModel: 'sonnet',
+          runner: 'claude',
+          sessionTotalTokens: 500,
+        },
+      }),
+    ),
+  ];
+  const res = aggregateAnalytics(recs, {}, '2026-06-22T00:00:00.000Z');
+  // Distribution counts only runs that reported usage (n=2).
+  assert.equal(res.tokens.n, 2);
+  assert.equal(res.tokens.max, 1000);
+  assert.deepEqual(res.tokensByModel, { opus: 1000, sonnet: 500 });
+});
+
 test('failure attribution: failed step + keyword-classified reason', () => {
   const base = Date.parse('2026-06-22T10:00:00.000Z');
   const rec = buildAnalyticsRecord(

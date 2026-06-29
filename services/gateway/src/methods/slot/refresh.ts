@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_BRANCH,
+  SLOT_DESTRUCTIVE_OPS,
   type SlotRefreshParams,
   type SlotRefreshResult,
   type SlotStatus,
@@ -28,6 +29,7 @@ import {
 } from './git-cleanup-commands.js';
 import { activePrepareSlots, type EventEmitter } from './shared.js';
 import {
+  assertSlotNotOperatorRoot,
   detectLinkedWorktree,
   isSlotIdleBranch,
   resetSlotRepoToIdle,
@@ -134,6 +136,10 @@ export async function slotRefresh(
       step('skip', msg);
       reportRefreshFailure(msg, false);
     }
+    // Force refresh runs `git reset --hard HEAD` + `git clean -fd` inline below,
+    // before the guarded idle-reset helper — guard at the entry so an
+    // operator-root slot can never wipe the control-plane working tree.
+    await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.refresh);
 
     // Lifecycle guard. Refresh — even in force mode — must never run on a slot
     // that is actively serving a worker or holding state for one. The UI's

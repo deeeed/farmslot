@@ -10,6 +10,7 @@ import {
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
+import { formatTokenCount } from '../../utils/review-gate-display.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 
 function fmtMs(ms: number | null): string {
@@ -476,6 +477,32 @@ export class AnalyticsPanel extends LitElement {
     `;
   }
 
+  /** Token usage card: per-run total distribution + total tokens by model. No $ — counts only. */
+  private renderTokens(r: AnalyticsQueryResult) {
+    const byModel = Object.entries(r.tokensByModel).sort((a, b) => b[1] - a[1]);
+    return html`
+      <div class="card">
+        <h3>Tokens (per-run total)</h3>
+        ${r.tokens.n === 0
+          ? html`<span class="muted">no usage captured</span>`
+          : html`<div class="stat-line">
+                p50 <span class="muted">${formatTokenCount(r.tokens.p50 ?? 0)}</span> · p90
+                <span class="muted">${formatTokenCount(r.tokens.p90 ?? 0)}</span> · max
+                <span class="muted">${formatTokenCount(r.tokens.max ?? 0)}</span> · n=${r.tokens.n}
+              </div>
+              <h3>Total tokens by model</h3>
+              <div class="kv">
+                ${byModel.map(
+                  ([k, v]) =>
+                    html`<span class="chip"
+                      >${k}<span class="v">${formatTokenCount(v)}</span></span
+                    >`,
+                )}
+              </div>`}
+      </div>
+    `;
+  }
+
   render() {
     const r = this.result;
     return html`
@@ -483,8 +510,9 @@ export class AnalyticsPanel extends LitElement {
         <div>
           <h2>Pipeline Analytics</h2>
           <div class="subtitle">
-            Per-step bottlenecks, failure attribution, loop counts, and wait time across terminal
-            runs. Cost/tokens are intentionally excluded until per-runner extraction is reliable.
+            Per-step bottlenecks, failure attribution, loop counts, wait time, and token usage
+            across terminal runs. Token counts are shown; dollar cost is deferred (pricing varies by
+            account and must be overridable per project).
           </div>
         </div>
         <div class="toolbar">
@@ -537,7 +565,7 @@ export class AnalyticsPanel extends LitElement {
                     ${this.renderCounts('Failures by reason', r.failureByReason, true)}
                     ${this.renderCounts('CI results', r.ci.resultBreakdown)}
                     ${this.renderCounts('Self-review loops', r.selfReviewLoops.distribution)}
-                    ${this.renderCounts('Runs by model', r.byModel)}
+                    ${this.renderCounts('Runs by model', r.byModel)} ${this.renderTokens(r)}
                     ${this.renderCounts('Runs by runner', r.byRunner)}
                     ${this.renderCounts('Runs by template', r.byTemplate)}
                     <div class="card">
