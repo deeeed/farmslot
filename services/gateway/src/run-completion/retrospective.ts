@@ -8,18 +8,16 @@ import {
   DEFAULT_TASK_DIR,
   Events,
   FLOW_WORKER_REPORT_ARTIFACTS,
+  GATE_SUMMARY_KINDS,
   type RetrospectivePayload,
   type Run,
   type RunDecision,
 } from '@farmslot/protocol';
 
-import {
-  loadProjectVars,
-  loadSlotVars,
-  resolveProjectTaskDirName,
-} from '../core/config.js';
+import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { slotFileExists, slotReadFile } from '../core/slot-io.js';
 import { getFamilyRuns } from '../family-observability/context.js';
+import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { getAllRuns, getRun, updateRun } from '../runs/store.js';
 
 // ─── Worker report ───
@@ -49,9 +47,7 @@ export async function readWorkerReport(run: Run): Promise<string | null> {
         : null;
       if (taskRelDir) {
         const pv = await loadProjectVars(run.project).catch(() => null);
-        const taskDirName = pv
-          ? resolveProjectTaskDirName(pv.projectJson)
-          : DEFAULT_TASK_DIR;
+        const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
         for (const fileName of candidates) {
           const workerReport = path.join(
             vars.remoteRepo,
@@ -556,9 +552,14 @@ export async function buildRetrospectivePayload(
       ? `## Original fix-bug learnings\n${rootLearnings}\n\n## Reviewer-driven delta\n${deltaLearnings}`
       : ownLearnings?.trim().slice(0, LEARNING_SUMMARY_MAX_CHARS));
 
+  // Same consolidated narrative the publication gate builds — derived once,
+  // reused here so the retrospective shows the full worker → reviews → cost story.
+  const gateSummary = buildGateSummary(run, GATE_SUMMARY_KINDS.review);
+
   return {
     kind: 'retrospective',
     outcome,
+    gateSummary,
     whatThisIs: context?.rootRun
       ? 'Family-level retrospective. It combines the root run, follow-up learnings, review-comment triage, and terminal PR outcome; "Accept for Learning" feeds the combined content into the improvement engine.'
       : 'Completed runs create a retrospective decision so you can decide whether this run should feed the self-improvement loop.',

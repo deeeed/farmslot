@@ -2,6 +2,8 @@ import { html, nothing } from 'lit';
 
 import type { ArtifactRef, PublicationTarget, ReadyGatePayload } from '@farmslot/protocol';
 
+import '../reviews/gate-summary-panel.js';
+
 import {
   publishEvidenceDisplayRows,
   summarizeReviewCounts,
@@ -36,6 +38,9 @@ export function renderReadyPackagePanel(ctx: ReadyPackagePanelContext) {
   ).length;
   return html`
     <div class="rdy-package-panel">
+      ${ctx.payload.gateSummary
+        ? html`<gate-summary-panel .summary=${ctx.payload.gateSummary}></gate-summary-panel>`
+        : nothing}
       <div class="rdy-package-summary">
         <strong>Pre-publication cockpit</strong>
         ${ctx.packageArtifact && ctx.payload.prPackage

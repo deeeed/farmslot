@@ -2,6 +2,8 @@ import { html, nothing } from 'lit';
 
 import type { FamilyObservabilityRunSummary, RunDecision } from '@farmslot/protocol';
 
+import '../reviews/gate-summary-panel.js';
+
 import {
   retrospectiveCiWatchLabel,
   retrospectiveCommentsSummary,
@@ -28,6 +30,9 @@ export function renderPendingRetrospectiveDecision(options: PendingRetrospective
         ${payload?.whatThisIs ??
         'Review this completed run and decide whether it should feed the self-improvement loop.'}
       </div>
+      ${payload?.gateSummary
+        ? html`<gate-summary-panel .summary=${payload.gateSummary}></gate-summary-panel>`
+        : nothing}
       <div class="retro-grid">
         <div>
           <span class="muted">Outcome</span><strong>${payload?.outcome ?? 'unknown'}</strong>

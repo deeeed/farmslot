@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   type EvidenceManifestEntry,
   type EvidenceRefreshOverrideRecord,
+  GATE_SUMMARY_KINDS,
   type IndependentReviewStatus,
   PipelineSteps,
   type ReadyGateInputSnapshot,
@@ -64,6 +65,7 @@ import {
   restampStaleApprovingReviewsForEvidenceRefresh,
   validatePackageApprovalSelection,
 } from './gate-policy.js';
+import { buildGateSummary } from './gate-summary.js';
 import { loadProjectVarsOrNull } from './project-vars.js';
 import {
   publicationReviewPolicyForRun,
@@ -544,10 +546,16 @@ export async function executeReadyGate(runId: string): Promise<string> {
       );
     }
   }
+  // Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost).
+  const gateSummary = buildGateSummary(current, GATE_SUMMARY_KINDS.publication, {
+    gatePolicy: preparedPackage?.gatePolicy,
+  });
+
   const readyPayload: ReadyGatePayload = {
     kind: 'ready',
     prNumber,
     repo: ciRepo,
+    gateSummary,
     diffStat: preparedPackage?.diffStat ?? diffStat,
     workerReport: report ?? '',
     branch: preparedPackage?.branch ?? current.branch ?? '',
@@ -600,7 +608,13 @@ export async function executeReadyGate(runId: string): Promise<string> {
         approvedPackage,
         reviewDepth,
       );
-      await applyEvidenceRefreshOverride(runId, approvedPackage, decision, reviewDepth, selectionData);
+      await applyEvidenceRefreshOverride(
+        runId,
+        approvedPackage,
+        decision,
+        reviewDepth,
+        selectionData,
+      );
     }
     if (isPublishApprovalAction(actionId)) {
       if (!approvedPackage) throw new Error('Publication approval requires a prepared package');
@@ -658,6 +672,7 @@ export async function executeReadyGate(runId: string): Promise<string> {
         ...beforeFinalUpdate.engineState,
         publishGate: {
           ...beforeFinalUpdate.engineState?.publishGate,
+          gateSummary,
           publicationTarget: target,
           ...(isPublishApprovalAction(actionId)
             ? {

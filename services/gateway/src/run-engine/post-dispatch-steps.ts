@@ -424,7 +424,11 @@ export async function executeSelfReviewStep(
   }
 
   if (current.mode !== 'interactive') {
-    const benignSkipReasons = new Set(['disabled', 'worker-signal-trivial']);
+    const benignSkipReasons = new Set([
+      'disabled',
+      'disabled-for-project',
+      'worker-signal-trivial',
+    ]);
     if (result.skipped && !benignSkipReasons.has(result.reason ?? '')) {
       throw new Error(`Self-review did not complete: ${result.reason ?? 'unknown'}`);
     }
@@ -544,7 +548,10 @@ export async function executeHumanGateStep(
     console.log(
       `[run-engine] run ${runId.slice(0, 8)} — human-gate skipped (disabled for ${current.flowType})`,
     );
-    return { inputs, outputs: { skipped: true, reason: 'disabled' } };
+    return {
+      inputs,
+      outputs: { skipped: true, reason: `human-gate-disabled-for-${current.flowType}` },
+    };
   }
 
   // Update slot lifecycle so UI shows the slot is waiting for review while the

@@ -24,7 +24,13 @@ import {
   attachLiveRecipeContext,
   listRecipeRunArtifactGroupsForRun,
 } from '../../live-recipe/context.js';
+import { enrichDecisionsWithGateSummary } from '../../run-engine/gate-summary.js';
 import { getRun, listRuns, listRunsForSlotHistory } from '../../runs/store.js';
+
+/** Serve a run to the UI with live-recipe context + lazy gate-summary backfill. */
+async function presentRun(run: Run): Promise<Run> {
+  return enrichDecisionsWithGateSummary(await attachLiveRecipeContext(run));
+}
 
 function isReviewableTerminalRun(run: Run): boolean {
   return run.taskFile != null && (run.status === 'done' || run.status === 'failed');
@@ -43,7 +49,7 @@ export function resolveBoundTerminalRunForSlot(
 export async function runGet(params: RunGetParams): Promise<RunGetResult> {
   const run = getRun(params.runId);
   if (!run) throw new Error(`Run not found: ${params.runId}`);
-  return { run: await attachLiveRecipeContext(run) };
+  return { run: await presentRun(run) };
 }
 
 export async function runList(params: RunListParams): Promise<RunListResult> {
@@ -78,10 +84,10 @@ export async function runForSlot(params: RunForSlotParams): Promise<RunForSlotRe
   const slot = (await loadFleetStatus()).slots.find((s) => s.slot === params.slotId);
   const boundTerminal = resolveBoundTerminalRunForSlot(slot?.currentRunId);
   if (boundTerminal) {
-    return { run: await attachLiveRecipeContext(boundTerminal) };
+    return { run: await presentRun(boundTerminal) };
   }
   const activeRun = selectActiveRunForSlot(params.slotId, active, slot?.currentRunId);
-  if (activeRun) return { run: await attachLiveRecipeContext(activeRun) };
+  if (activeRun) return { run: await presentRun(activeRun) };
   // Fall back to the most-recent reviewable run that ran on this slot so an
   // idle slot still surfaces its just-completed task's recipe panel + evidence.
   // Filter to runs that actually completed enough to be reviewable (taskFile
@@ -95,7 +101,7 @@ export async function runForSlot(params: RunForSlotParams): Promise<RunForSlotRe
     (r) => r.taskFile != null && (r.status === 'done' || r.status === 'failed'),
   );
   if (!reviewable) return { run: null };
-  return { run: await attachLiveRecipeContext(reviewable) };
+  return { run: await presentRun(reviewable) };
 }
 
 export async function runRecipeRunsForSlot(

@@ -12,6 +12,7 @@ import type {
 
 import { loadPendingDecisions } from '../observability/fleet-monitor.js';
 import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
+import { enrichDecisionsWithGateSummary } from '../run-engine/gate-summary.js';
 import { listRuns } from '../runs/store.js';
 
 import { runResolveDecision } from './run.js';
@@ -38,11 +39,14 @@ export async function decisionList(): Promise<DecisionListResult> {
 
   const runDecisions: PendingDecision[] = [];
   for (const run of runs) {
-    for (const d of run.decisions) {
+    // Lazy gate-summary backfill so historical gate/retrospective decisions
+    // carry the consolidated narrative without a migration.
+    const enrichedRun = enrichDecisionsWithGateSummary(run);
+    for (const d of enrichedRun.decisions) {
       if (d.resolvedAt) continue;
       const payload =
         d.type === 'retrospective' && !d.payload
-          ? await buildRetrospectivePayload(run, null)
+          ? await buildRetrospectivePayload(enrichedRun, null)
           : d.payload;
       runDecisions.push({
         id: d.id,
