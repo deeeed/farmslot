@@ -324,6 +324,124 @@ export interface GatePolicy {
   reason: string;
 }
 
+/**
+ * Canonical {@link GateSummary.kind} values — one per gate surface. Use these
+ * instead of bare string literals. The `kind` field stays widenable (`| string`)
+ * so a new flow can introduce its own without a protocol change.
+ */
+export const GATE_SUMMARY_KINDS = {
+  publication: 'publication',
+  bugfix: 'bugfix',
+  demo: 'demo',
+  review: 'review',
+  ci: 'ci',
+} as const;
+
+export type GateSummaryKind = (typeof GATE_SUMMARY_KINDS)[keyof typeof GATE_SUMMARY_KINDS];
+
+/**
+ * Consolidated, flow-agnostic "what happened to reach this gate" snapshot.
+ *
+ * One model reused across every gate/retrospective surface (publication gate,
+ * retrospective, family observability). Outcome-first: the worker phase and the
+ * review outcomes are the headline; token cost is a supporting section.
+ *
+ * Built by `buildGateSummary` in the gateway by *projecting* already-captured
+ * state ({@link IndependentReviewStatus}, {@link RunMetrics}, family runs) — it
+ * does not re-derive review state or re-read artifacts.
+ */
+export interface GateSummary {
+  /** Which gate surface produced this. Generic so new flows can extend it. */
+  kind: GateSummaryKind | (string & {});
+  flowType?: FlowType;
+  /** Who owns/authorizes the gate and why (reused from the gate policy). */
+  gatePolicy?: GatePolicy;
+  /** One-line human narrative, e.g. "Worker done in 55 turns; self-review skipped (lightweight dev); 0 reviews triggered re-work." */
+  headline?: string;
+  worker: {
+    model: string | null;
+    turns: number;
+    outcome?: 'success' | 'failure' | 'partial' | 'cancelled';
+  };
+  review: ReviewSummary;
+  tokens: GateTokenSummary;
+  /** Flow-specific extras (e.g. CI-watch counts for a `ci` gate). */
+  custom?: Record<string, unknown>;
+  capturedAt?: string;
+}
+
+/** Review outcomes for a gate, projected from self-review + independent reviews. */
+export interface ReviewSummary {
+  selfReview?: {
+    status: 'skipped' | 'done' | 'failed' | 'pending';
+    /** Descriptive reason when skipped/failed, e.g. "disabled-lightweight-dev-flow". */
+    reason?: string;
+    verdict?: string;
+    feedbackSent: boolean;
+    unresolvedCount: number;
+    triggeredReWork: boolean;
+    artifactPaths?: string[];
+  };
+  /** Projected from {@link IndependentReviewStatus} — outcome-first, no raw artifacts. */
+  independentReviews: Array<{
+    id: string;
+    model?: string | null;
+    crossRunner: boolean;
+    loopNumber: number;
+    verdict: 'pending' | 'pass' | 'issues' | 'failed' | 'cancelled' | 'skipped';
+    unresolvedCount: number;
+    feedbackSent: boolean;
+    /** `feedbackSent` followed by another attempt/loop — i.e. the review caused re-work. */
+    triggeredReWork: boolean;
+    attempts: number;
+    stale?: boolean;
+    startedAt?: string;
+    completedAt?: string;
+  }>;
+  /** Reviews required by the gate's {@link ReviewDepthPolicy}, if any. */
+  requiredReviews?: number;
+  passingReviews: number;
+  totalUnresolved: number;
+  didAnyReviewTriggerReWork: boolean;
+  summaryText?: string;
+}
+
+/** Token cost of reaching a gate, including chained family fix-loops. */
+export interface GateTokenSummary {
+  mainWorker: {
+    model: string | null;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheCreation: number;
+    total: number;
+    turns: number;
+  };
+  /** Per independent review (from {@link IndependentReviewStatus.usage}). */
+  reviews: Array<{ id: string; model: string | null; total: number }>;
+  /** pr-complete / merge-main fix loops in the same family that ran after this gate's run. */
+  familyChainedLoops?: Array<{
+    runId: string;
+    flowType: FlowType;
+    role: 'fix-loop' | 'review';
+    model: string | null;
+    tokens: {
+      input: number;
+      output: number;
+      total: number;
+      cacheRead: number;
+      cacheCreation: number;
+    };
+    perTurnSessionPath?: string;
+    createdAt: string;
+  }>;
+  /** mainWorker + reviews + all familyChainedLoops. */
+  familyTotalTokens: number;
+  perTurnDetailsAvailable: boolean;
+  /** All runner-session JSONL paths backing this summary, for per-turn drill-down. */
+  runnerSessionPaths?: string[];
+}
+
 export interface ReadyGatePrPackage {
   id: string;
   packageHash: string;
@@ -391,6 +509,8 @@ export interface ReadyGatePayload {
   reviewDepth?: ReviewDepthPolicy;
   independentReviews?: IndependentReviewStatus[];
   gatePolicy?: GatePolicy;
+  /** Consolidated "what happened to reach this gate" snapshot (worker → reviews → cost). */
+  gateSummary?: GateSummary;
   validationSummary?: string;
   publicationTarget?: PublicationTarget;
   publicationStatus?: PublicationStatus;
@@ -547,6 +667,8 @@ export interface RetrospectivePayload {
   rootLearnings?: string;
   deltaLearnings?: string;
   commentsTriageSummary?: CommentsTriageSummary;
+  /** Consolidated "what happened" snapshot, shared with the publication gate. */
+  gateSummary?: GateSummary;
 }
 
 /** Engine-collision decision payload — surfaces the prior runs that own the colliding
@@ -1160,6 +1282,8 @@ export interface RunEngineState {
     independentReviews?: IndependentReviewStatus[];
     supersededPackageIds?: string[];
     feedbackArtifactPath?: string;
+    /** Consolidated gate narrative snapshot, persisted so historical redisplay needs no recompute. */
+    gateSummary?: GateSummary;
   };
   /** Artifact-first experiment trial linkage for artifact-only reference/template regression candidates. */
   evalExperiment?: {

@@ -1,5 +1,6 @@
 import type {
   ArtifactRef,
+  GateSummary,
   IndependentReviewAttempt,
   IndependentReviewStatus,
   ReadyGatePayload,
@@ -375,6 +376,109 @@ export function publishEvidenceDisplayRows(
     }
   }
   return rows;
+}
+
+/** Compact human token count: 3722374 → "3.72M", 51819 → "51.8k", 940 → "940". */
+export function formatTokenCount(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return `${value}`;
+}
+
+export interface GateSummaryTokenRow {
+  label: string;
+  model: string;
+  total: string;
+}
+
+export interface GateSummaryReviewRow {
+  label: string;
+  verdict: string;
+  attempts: number;
+  unresolvedCount: number;
+  crossRunner: boolean;
+  triggeredReWork: boolean;
+}
+
+/**
+ * Derived, formatted view of a {@link GateSummary} for the shared gate-summary
+ * panel. Reads only from the GateSummary projection (no ReadyGatePayload), so
+ * the same selector + panel render at the publication gate AND the retrospective.
+ */
+export interface GateSummaryDisplay {
+  headline: string;
+  policyLabel: string | null;
+  worker: string;
+  selfReview: { status: string; reason: string | null; verdict: string | null } | null;
+  reviews: GateSummaryReviewRow[];
+  passingLabel: string;
+  reWorkCount: number;
+  unresolvedTotal: number;
+  tokens: {
+    mainWorker: GateSummaryTokenRow;
+    reviews: GateSummaryTokenRow[];
+    chainedLoops: Array<GateSummaryTokenRow & { flowType: string }>;
+    grandTotal: string;
+    sessionPaths: string[];
+  };
+}
+
+export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
+  const review = summary.review;
+  const reviewRows: GateSummaryReviewRow[] = review.independentReviews.map((r) => ({
+    label: r.crossRunner ? 'External review' : 'Independent review',
+    verdict: r.verdict,
+    attempts: r.attempts,
+    unresolvedCount: r.unresolvedCount,
+    crossRunner: r.crossRunner,
+    triggeredReWork: r.triggeredReWork,
+  }));
+  const reWorkCount = reviewRows.filter((r) => r.triggeredReWork).length;
+  const requiredLabel =
+    review.requiredReviews != null
+      ? `${review.passingReviews}/${review.requiredReviews}`
+      : `${review.passingReviews}`;
+
+  const t = summary.tokens;
+  return {
+    headline: summary.headline ?? review.summaryText ?? '',
+    policyLabel: summary.gatePolicy
+      ? `${summary.gatePolicy.owner}-owned${summary.gatePolicy.reason ? ` · ${summary.gatePolicy.reason}` : ''}`
+      : null,
+    worker: `${summary.worker.model ?? 'unknown model'} · ${summary.worker.turns} turns${summary.worker.outcome ? ` · ${summary.worker.outcome}` : ''}`,
+    selfReview: review.selfReview
+      ? {
+          status: review.selfReview.status,
+          reason: review.selfReview.reason ?? null,
+          verdict: review.selfReview.verdict ?? null,
+        }
+      : null,
+    reviews: reviewRows,
+    passingLabel: `${requiredLabel} passing`,
+    reWorkCount,
+    unresolvedTotal: review.totalUnresolved,
+    tokens: {
+      mainWorker: {
+        label: 'Worker',
+        model: t.mainWorker.model ?? 'unknown',
+        total: formatTokenCount(t.mainWorker.total),
+      },
+      reviews: t.reviews.map((r) => ({
+        label: r.id,
+        model: r.model ?? 'unknown',
+        total: formatTokenCount(r.total),
+      })),
+      chainedLoops: (t.familyChainedLoops ?? []).map((c) => ({
+        label: c.runId.slice(0, 8),
+        flowType: c.flowType,
+        model: c.model ?? 'unknown',
+        total: formatTokenCount(c.tokens.total),
+      })),
+      grandTotal: formatTokenCount(t.familyTotalTokens),
+      sessionPaths: t.runnerSessionPaths ?? [],
+    },
+  };
 }
 
 export function fixDeltaAbsenceReason(

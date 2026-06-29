@@ -33,10 +33,7 @@ import {
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import {
-  buildLaunchCommand,
-  RUNNER_LAUNCH_READY_TIMEOUT_MS,
-} from '../runners/launch-command.js';
+import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import {
   normalizeRunner,
   runnerDefaultModel,
@@ -157,7 +154,7 @@ export async function executeSelfReview(
     debugSelfReviewLog(
       `[self-review] run ${runId.slice(0, 8)} — disabled for project ${run.project}`,
     );
-    return { skipped: true, reason: 'disabled', retryCount: 0 };
+    return { skipped: true, reason: 'disabled-for-project', retryCount: 0 };
   }
 
   const vars = await loadSlotVars(slotId);
