@@ -1,16 +1,15 @@
 name: LOC History
 
+# Manual-only. The framework LOC snapshot is fully replayable on demand, so it
+# does not need to run on every push to main (where it only ever produced a
+# red post-merge check and noisy auto-PRs). Run it by hand from the Actions tab
+# when you want to refresh docs/reference/loc-history.json, then commit the diff
+# through a normal PR.
 on:
-  push:
-    branches:
-      - main
-  schedule:
-    - cron: '17 4 * * 1'
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: loc-history
@@ -44,30 +43,17 @@ jobs:
       - name: Validate LOC history JSON
         run: python3 -m json.tool docs/reference/loc-history.json >/dev/null
 
-      # Post-record sanity check: catches record/serialization regressions before opening a PR.
+      # Post-record sanity check: catches record/serialization regressions.
       - name: Verify recorded LOC history
         run: yarn quality:loc:verify
 
-      - name: Detect LOC history drift
-        id: loc-drift
+      # Surface the refreshed snapshot for the operator to commit through a normal
+      # PR. No auto-commit/auto-PR: keeps history clean and needs no elevated perms.
+      - name: Show LOC history diff
         run: |
           if git diff --quiet -- docs/reference/loc-history.json; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "LOC history unchanged after record; skipping PR."
+            echo "LOC history unchanged."
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "LOC history changed after record; will open PR."
+            echo "LOC history changed — copy the diff below into a normal PR:"
+            git --no-pager diff -- docs/reference/loc-history.json
           fi
-
-      - name: Create LOC history PR
-        if: steps.loc-drift.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          base: main
-          branch: chore/loc-history
-          commit-message: 'chore(quality): update LOC history'
-          title: 'chore(quality): update LOC history'
-          body: |
-            Automated LOC history snapshot update.
-
-            Keeps `docs/reference/loc-history.json` current without blocking feature PRs on snapshot drift.
