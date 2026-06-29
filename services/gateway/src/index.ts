@@ -145,6 +145,13 @@ const ENABLE_LOCAL_HEALTH_POLL =
 const STARTUP_BRANCH_PREWARM =
   process.env.FARMSLOT_STARTUP_BRANCH_PREWARM === '1' ||
   process.env.FARMSLOT_STARTUP_BRANCH_PREWARM === 'true';
+// Control-plane orchestration (run recovery, auto-recovery, prepare-lock reconcile,
+// orphan reconciler). MUST stay off for per-worktree validation/recipe stacks: those
+// share the operator's FARMSLOT_RUNS_DIR, so if they orchestrate they recover the
+// operator's in-flight runs and re-drive prepare — whose pre-launch sweep kills the
+// operator's live prepare-* tmux window (deterministic prepare failure on fresh boot).
+// Only the operator/primary gateway orchestrates; sandbox-dev.sh sets the disable flag.
+const ENABLE_ORCHESTRATION = process.env.FARMSLOT_DISABLE_ORCHESTRATION !== '1';
 
 async function main(): Promise<void> {
   const releaseGatewaySingletonLock = acquireGatewaySingletonLock();
@@ -495,11 +502,17 @@ async function main(): Promise<void> {
 
   // Recover active runs after the port is open so slow recovery cannot make the
   // UI's Vite proxy see ECONNREFUSED while the gateway is still booting.
-  recoverActiveRuns()
-    .then(() => scanFailedRunsForAutoRecovery())
-    .catch((err) => {
-      console.error(`[run-engine] recovery error: ${(err as Error).message}`);
-    });
+  if (ENABLE_ORCHESTRATION) {
+    recoverActiveRuns()
+      .then(() => scanFailedRunsForAutoRecovery())
+      .catch((err) => {
+        console.error(`[run-engine] recovery error: ${(err as Error).message}`);
+      });
+  } else {
+    console.log(
+      '[run-engine] orchestration disabled (validation stack; FARMSLOT_DISABLE_ORCHESTRATION=1)',
+    );
+  }
   // Sweep stuck "analyzing" improvement placeholders — gateway crash mid-LLM
   // would otherwise leave the inbox card spinning forever. Synchronous so we
   // don't race the first post-recovery decision broadcast.
@@ -508,10 +521,12 @@ async function main(): Promise<void> {
   } catch (err) {
     console.error(`[improvement] placeholder recovery error: ${(err as Error).message}`);
   }
-  reconcileStalePrepareLocks().catch((err) => {
-    console.error(`[slot.prepare] startup reconcile error: ${(err as Error).message}`);
-  });
-  startOrphanReconciler();
+  if (ENABLE_ORCHESTRATION) {
+    reconcileStalePrepareLocks().catch((err) => {
+      console.error(`[slot.prepare] startup reconcile error: ${(err as Error).message}`);
+    });
+    startOrphanReconciler();
+  }
 
   // Bootstrap fleet from pool configs if file is missing or cache is empty.
   if (needsBootstrap) {

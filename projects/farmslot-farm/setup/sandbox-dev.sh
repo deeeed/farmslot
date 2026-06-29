@@ -301,6 +301,11 @@ case "$ACTION" in
       cd "$REPO_ROOT"
       export GATEWAY_PORT="$GATEWAY_PORT"
       export VITE_PORT="$VITE_PORT"
+      # This is a per-worktree validation/recipe stack, not the control plane. It
+      # shares the operator's run history (FARMSLOT_RUNS_DIR) for read-only display,
+      # so it must NOT orchestrate: run recovery here would re-drive the operator's
+      # in-flight prepare and kill the operator's live prepare-* tmux window.
+      export FARMSLOT_DISABLE_ORCHESTRATION=1
       export VITE_FARMSLOT_DEMO_BANNER="${VITE_FARMSLOT_DEMO_BANNER:-}"
       if [[ -n "${FARMSLOT_RUNS_DIR:-}" ]]; then
         export FARMSLOT_RUNS_DIR
