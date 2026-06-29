@@ -148,6 +148,10 @@ test('validates runner action manifests and rejects undeclared recipe actions', 
 
   assert.equal(manifestResult.status, 'valid');
   assert.deepEqual(manifestResult.findings, []);
+  assert.ok(
+    manifest.supported_official_actions.includes('app.hud'),
+    'farmslot-v1 manifest must declare app.hud for Command Center proof HUD',
+  );
   assert.equal(recipeResult.status, 'valid');
   assert.deepEqual(recipeResult.findings, []);
 

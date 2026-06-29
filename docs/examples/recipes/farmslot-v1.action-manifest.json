@@ -13,6 +13,9 @@
     "ui.set_input",
     "ui.wait_for",
     "ui.screenshot",
+    "app.status",
+    "app.lifecycle",
+    "app.hud",
     "cdp.target",
     "end"
   ],
@@ -37,9 +40,7 @@
           "node": {
             "action": "ui.wait_for",
             "selector": "recipe-graph",
-            "text_contains": [
-              "VALIDATE"
-            ],
+            "text_contains": ["VALIDATE"],
             "timeout_ms": 10000,
             "next": "capture",
             "intent": "Wait for selector, text, event, or UI state in Farmslot review surfaces"
@@ -68,9 +69,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "value"
-        ],
+        "required": ["value"],
         "additionalProperties": true
       },
       "examples": [
@@ -85,6 +84,25 @@
           }
         }
       ]
+    },
+    "app.hud": {
+      "description": "Reviewer proof HUD injected into the Command Center browser session during recipe playback and video capture. Automatic running/pass/fail updates come from the harness lifecycle; use explicit app.hud nodes only for extra annotations.",
+      "examples": [
+        {
+          "node": {
+            "action": "app.hud",
+            "intent": "Open the slot shell and verify the recipe drawer is visible",
+            "status": "running",
+            "next": "wait-for-panel"
+          }
+        }
+      ]
+    },
+    "app.status": {
+      "description": "Read the current Command Center browser location and document title via CDP."
+    },
+    "app.lifecycle": {
+      "description": "Reload or navigate back in the Command Center browser session during recipe proof."
     }
   },
   "pre_conditions": [
