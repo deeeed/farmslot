@@ -47,7 +47,7 @@ while [ "$#" -gt 0 ]; do
       cat <<'USAGE'
 Usage: write-runtime-context.sh --repo <repo> --slot-id <slot> [options]
 
-Writes <repo>/temp/runtime/agentic-runtime.json. Optional fields:
+Writes <repo>/<runtime-dir>/agentic-runtime.json (default runtime-dir: temp/runtime). Optional fields:
   --project <name> --machine <name> --runtime-owner <owner> --platform <platform>
   --cdp-port <port> --watcher-port <port> --metro-port <port> --dev-server-port <port>
   --simulator <name> --adb-serial <serial> --runtime-dir <dir> --strict true|false
@@ -60,7 +60,10 @@ done
 
 [ -n "$REPO" ] || { echo "Missing --repo" >&2; exit 2; }
 REPO_ABS="$(cd "$REPO" && pwd -P)"
-OUT_DIR="$REPO_ABS/temp/runtime"
+case "$RUNTIME_DIR" in
+  ""|/*|*..*|*[!A-Za-z0-9._/-]*) echo "Invalid --runtime-dir: $RUNTIME_DIR" >&2; exit 2 ;;
+esac
+OUT_DIR="$REPO_ABS/$RUNTIME_DIR"
 OUT="$OUT_DIR/agentic-runtime.json"
 ENV_OUT="$OUT_DIR/agentic-runtime.env"
 mkdir -p "$OUT_DIR"

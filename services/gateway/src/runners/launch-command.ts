@@ -81,9 +81,19 @@ export function assertRunnerLaunchPrerequisites(
   // launch time as a missing-binary error rather than here.
 }
 
-export function buildCodexHomeEnv(repo: string, runtimeDir = '.agent'): string {
+export function buildCodexHomeSetup(repo: string, runtimeDir = '.agent'): string {
   const codexHome = path.posix.join(repo, runtimeDir, 'codex-home');
-  return `CODEX_HOME=${shellQuote(codexHome)}`;
+  const q = shellQuote(codexHome);
+  // Codex refuses to start when CODEX_HOME does not exist ("Error finding codex
+  // home"), which leaves dispatch with an empty pane and a false ready-timeout.
+  // Create the per-worktree home and seed auth/config from the host's ~/.codex
+  // (symlinked so OAuth token refreshes stay shared), then export CODEX_HOME.
+  return (
+    `mkdir -p ${q} && ` +
+    `ln -sf "$HOME/.codex/auth.json" ${shellQuote(`${codexHome}/auth.json`)} && ` +
+    `{ [ -e "$HOME/.codex/config.toml" ] && ln -sf "$HOME/.codex/config.toml" ${shellQuote(`${codexHome}/config.toml`)} || true; } && ` +
+    `export CODEX_HOME=${q}`
+  );
 }
 
 export function buildCodexExecLaunch(options: {
@@ -102,8 +112,8 @@ export function buildCodexExecLaunch(options: {
   const flagList = runnerFlagsForTier('codex', options.safetyTier);
   const flagFragment = flagList.length ? ` ${flagList.join(' ')}` : '';
   const prompt = options.prompt?.trim() ? ` ${shellQuote(options.prompt)}` : '';
-  const codexHomeEnv = buildCodexHomeEnv(options.repo, options.runtimeDir ?? '.agent');
-  return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeEnv} ${options.binary} --disable plugin_hooks${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
+  const codexHomeSetup = buildCodexHomeSetup(options.repo, options.runtimeDir ?? '.agent');
+  return `unset CLAUDECODE && cd ${shellQuote(options.repo)} && ${codexHomeSetup} && ${options.binary} --disable plugin_hooks${flagFragment}${effortFlag}${workerConfigFlags}${modelFlag}${prompt}`;
 }
 
 function codexReasoningEffortFlag(effort?: string | null): string {
@@ -262,7 +272,7 @@ export function buildLaunchCommand(
     );
     if (cmdIsRunnerAware) {
       return withRunnerObservabilityInstall(
-        `unset CLAUDECODE && ${buildCodexHomeEnv(repo, opts.runtimeDir)} && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort)}`,
+        `unset CLAUDECODE && ${buildCodexHomeSetup(repo, opts.runtimeDir)} && ${injectCodexReasoningEffortFlag(expanded, vars, opts.effort)}`,
         installCommand,
       );
     }
