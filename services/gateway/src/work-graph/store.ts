@@ -612,6 +612,23 @@ function startEdges(inbound: readonly WorkEdge[]): WorkEdge[] {
   return inbound.filter(blocksStart);
 }
 
+function failedRequiredEdges(inbound: readonly WorkEdge[]): WorkEdge[] {
+  return inbound.filter((edge) => edge.required && edge.status === 'failed');
+}
+
+function satisfiedCompletionRebaseEdges(inbound: readonly WorkEdge[]): WorkEdge[] {
+  return inbound.filter(
+    (edge) =>
+      edge.blocks === 'completion' &&
+      edge.unlock.kind === 'rebase-onto' &&
+      edge.status === 'satisfied',
+  );
+}
+
+function canRequireCompletionUnlock(node: WorkNode): boolean {
+  return ['ready', 'queued', 'running', 'gated', 'succeeded'].includes(node.status);
+}
+
 function unlockActionKind(inbound: readonly WorkEdge[]): WorkGraphActionLedgerEntry['actionKind'] {
   if (inbound.some((edge) => edge.unlock.kind === 'mark-ready')) return 'mark-ready';
   if (inbound.some((edge) => edge.unlock.kind === 'rebase-onto')) return 'rebase-onto';
@@ -678,6 +695,28 @@ async function executeNodeUnlock(
   const actionKey = `${snapshot.graph.id}:${node.id}:${actionKind}:${version}`;
   if (snapshot.ledger.some((entry) => entry.key === actionKey && entry.status === 'completed'))
     return;
+  if (inbound.some((edge) => edge.unlock.kind === 'rebase-onto')) {
+    node.status = 'needs-attention';
+    node.waitingOn = [
+      {
+        kind: 'policy',
+        detail: 'rebase-onto unlock requires ci-watch helper integration before execution',
+      },
+    ];
+    snapshot.graph.status = 'needs-attention';
+    snapshot.ledger.push({
+      key: actionKey,
+      graphId: snapshot.graph.id,
+      nodeId: node.id,
+      actionKind: 'rebase-onto',
+      readinessVersion: version,
+      status: 'failed',
+      startedAt: now,
+      completedAt: now,
+      result: 'helper-not-wired',
+    });
+    return;
+  }
   const existingQueue = getQueueSnapshot().find(
     (item) => item.workGraphId === snapshot.graph.id && item.workNodeId === node.id,
   );
@@ -711,28 +750,6 @@ async function executeNodeUnlock(
       startedAt: now,
       completedAt: now,
       result: 'ready',
-    });
-    return;
-  }
-  if (inbound.some((edge) => edge.unlock.kind === 'rebase-onto')) {
-    node.status = 'needs-attention';
-    node.waitingOn = [
-      {
-        kind: 'policy',
-        detail: 'rebase-onto unlock requires ci-watch helper integration before execution',
-      },
-    ];
-    snapshot.graph.status = 'needs-attention';
-    snapshot.ledger.push({
-      key: actionKey,
-      graphId: snapshot.graph.id,
-      nodeId: node.id,
-      actionKind: 'rebase-onto',
-      readinessVersion: version,
-      status: 'failed',
-      startedAt: now,
-      completedAt: now,
-      result: 'helper-not-wired',
     });
     return;
   }
@@ -794,23 +811,9 @@ export async function schedulerTick(
       for (const edge of snapshot.edges) evaluateEdge(edge, snapshot, runs, now);
       let runnable = 0;
       for (const node of snapshot.nodes) {
-        if (
-          [
-            'queued',
-            'running',
-            'gated',
-            'succeeded',
-            'failed',
-            'needs-attention',
-            'skipped',
-          ].includes(node.status)
-        )
-          continue;
         const inbound = snapshot.edges.filter((edge) => edge.toNodeId === node.id);
         const startInbound = startEdges(inbound);
-        const failedRequired = startInbound.filter(
-          (edge) => edge.required && edge.status === 'failed',
-        );
+        const failedRequired = failedRequiredEdges(inbound);
         if (failedRequired.length > 0) {
           node.status = 'needs-attention';
           node.waitingOn = failedRequired.map((edge) => ({
@@ -823,6 +826,33 @@ export async function schedulerTick(
           snapshot.graph.status = 'needs-attention';
           continue;
         }
+        const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound);
+        if (completionRebaseInbound.length > 0 && canRequireCompletionUnlock(node)) {
+          try {
+            await executeNodeUnlock(snapshot, node, completionRebaseInbound, now);
+          } catch (err) {
+            recordNodeUnlockFailure(
+              snapshot,
+              node,
+              completionRebaseInbound,
+              now,
+              errorMessage(err),
+            );
+          }
+          continue;
+        }
+        if (
+          [
+            'queued',
+            'running',
+            'gated',
+            'succeeded',
+            'failed',
+            'needs-attention',
+            'skipped',
+          ].includes(node.status)
+        )
+          continue;
         computeWaiting(node, startInbound);
         const blocked = node.waitingOn.length > 0;
         if (blocked) {

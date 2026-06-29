@@ -36,9 +36,10 @@ export class WorkGraphPanel extends LitElement {
   private sync(state: AppState) {
     this.graphs = state.workGraphs;
     this.backlogItems = state.backlogItems;
-    const projects = new Set(this.graphs.map((graph) => graph.graph.project));
+    const graphs = this.activeGraphs();
+    const projects = new Set(graphs.map((graph) => graph.graph.project));
     if (this.selectedProject && !projects.has(this.selectedProject)) this.selectedProject = '';
-    const nodeIds = new Set(this.graphs.flatMap((graph) => graph.nodes.map((node) => node.id)));
+    const nodeIds = new Set(graphs.flatMap((graph) => graph.nodes.map((node) => node.id)));
     if (this.selectedNodeId && !nodeIds.has(this.selectedNodeId)) this.selectedNodeId = '';
   }
 
@@ -108,10 +109,6 @@ export class WorkGraphPanel extends LitElement {
     return `unlock: ${edge.unlock.kind}`;
   }
 
-  private short(value: string, max = 28): string {
-    return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
-  }
-
   private markerId(graph: WorkGraphProjection): string {
     return `wg-arrow-${graph.graph.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   }
@@ -141,7 +138,6 @@ export class WorkGraphPanel extends LitElement {
   }
 
   private renderDiagramNode(
-    graph: WorkGraphProjection,
     layoutNode: WorkGraphLayoutNode,
     backlogById: Map<string, BacklogItem>,
   ): SVGTemplateResult {
@@ -248,7 +244,7 @@ export class WorkGraphPanel extends LitElement {
                 ${label ? svg`<text class="edge-label" x=${labelX} y=${labelY} text-anchor="middle" fill=${color}>${label}</text>` : nothing}
               `;
             })}
-            ${layout.nodes.map((node) => this.renderDiagramNode(graph, node, backlogById))}
+            ${layout.nodes.map((node) => this.renderDiagramNode(node, backlogById))}
           </svg>
         </div>
       </div>
