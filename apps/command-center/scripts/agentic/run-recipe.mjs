@@ -376,35 +376,44 @@ async function resolveWebVideoRecorder(cdpPort, captureHelperPath) {
   );
 }
 
-async function resolveRecordingTarget(options) {
+export async function resolveRecordingTarget(options, deps = {}) {
+  const pidOnPort = deps.pidListeningOnPort ?? pidListeningOnPort;
+  const captureTarget = deps.resolveCaptureHelperTarget ?? resolveCaptureHelperTarget;
   if (options.recordPid > 0) {
     return { kind: 'pid', pid: options.recordPid };
   }
-  const windowName =
-    options.recordWindowName ||
-    process.env.FARMSLOT_RECORD_WINDOW_NAME ||
-    'Farmslot Command Center';
+  // Only an EXPLICITLY configured window name may pick a window by title. The old
+  // default 'Farmslot Command Center' is shared by every slot's UI and the operator's
+  // own browser tabs, so matching it implicitly recorded the wrong window (e.g. ff-2's
+  // recipe video captured mme-5). Without an explicit name we anchor on the recipe's
+  // own CDP Chrome (cdpPort) — deterministic and slot-specific.
+  const explicitWindowName =
+    options.recordWindowName || process.env.FARMSLOT_RECORD_WINDOW_NAME || '';
   const appName = options.recordAppName;
-  try {
-    const parsed = await resolveCaptureHelperTarget([
-      '--app-name',
-      appName,
-      '--window-name',
-      windowName,
-    ]);
-    if (parsed.selected?.id != null) {
-      return { kind: 'window-id', windowId: String(parsed.selected.id) };
+  if (explicitWindowName) {
+    try {
+      const parsed = await captureTarget([
+        '--app-name',
+        appName,
+        '--window-name',
+        explicitWindowName,
+      ]);
+      if (parsed.selected?.id != null) {
+        return { kind: 'window-id', windowId: String(parsed.selected.id) };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[run-recipe] capture-helper window resolve failed (${explicitWindowName}): ${message}`,
+      );
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[run-recipe] capture-helper window resolve failed (${windowName}): ${message}`);
   }
-  const cdpPid = await pidListeningOnPort(options.cdpPort);
+  const cdpPid = await pidOnPort(options.cdpPort);
   if (cdpPid) return { kind: 'pid', pid: cdpPid };
   return {
     kind: 'app-window',
     appName,
-    windowName,
+    windowName: explicitWindowName || 'Farmslot Command Center',
   };
 }
 
@@ -692,6 +701,9 @@ async function main() {
   if (result.status !== 'pass') process.exit(1);
 }
 
-main().catch((error) => {
-  die(error instanceof Error ? error.message : String(error), 2);
-});
+// Only run the CLI when executed directly, not when imported for isolated tests.
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main().catch((error) => {
+    die(error instanceof Error ? error.message : String(error), 2);
+  });
+}
