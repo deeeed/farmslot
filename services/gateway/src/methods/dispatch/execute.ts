@@ -46,6 +46,7 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../../runners/launch-command.js';
 import {
+  assertSupportedRunnerSpelling,
   normalizeRunner,
   runnerDefaultModel,
   runnerNeedsPostLaunchPrompt,
@@ -640,12 +641,13 @@ export async function dispatchExecute(
     flowTypeToKey(flowType) ||
     flowTypeToKey(workerHeadingFlowType);
   const selectedApp = params.app || extractField(taskContent, /^APP:\s*(\S+)/m) || '';
-  const runner = normalizeRunner(
+  const requestedRunner =
     params.runner ||
-      extractField(taskContent, /^\*\*Runner:\*\*\s*`?([^`\n]+)/m) ||
-      (defaultFlowKey ? getProjectField(projectJson, `defaults.${defaultFlowKey}.runner`) : '') ||
-      'claude',
-  );
+    extractField(taskContent, /^\*\*Runner:\*\*\s*`?([^`\n]+)/m) ||
+    (defaultFlowKey ? getProjectField(projectJson, `defaults.${defaultFlowKey}.runner`) : '') ||
+    'claude';
+  assertSupportedRunnerSpelling(requestedRunner);
+  const runner = normalizeRunner(requestedRunner);
   const model =
     params.model ||
     extractField(taskContent, /^\*\*Model:\*\*\s*`?([^`\n]+)/m) ||

@@ -24,7 +24,7 @@ Introduce one configurable non-LLM runner named **`scripted`** and a small execu
 
 `scripted` is a real runner id, not a testing hack. It executes deterministic scenarios or project-owned commands through the same dispatch/run/monitor path as other runners.
 
-The existing `fake` id becomes legacy implementation debt to remove or alias during migration. New UI, protocol, docs, and tests should use `scripted`.
+The existing `fake` id is removed as a public runner spelling. New UI, protocol, docs, and tests use `scripted` only.
 
 ### 2. `scripted` has two v1 modes
 
@@ -95,8 +95,8 @@ Gateway-created scripted commands must never use `npx farmslot`, a bare `farmslo
 The launch contract is:
 
 ```sh
-FARMSLOT_ROOT=<gateway checkout> \
-node <gateway checkout>/packages/cli/bin/farmslot.mjs scripted-runner ...
+FARMSLOT_ROOT="$PWD" \
+node "$PWD/packages/cli/bin/farmslot.mjs" scripted-runner ...
 ```
 
 The CLI must print provenance at start:
@@ -107,7 +107,7 @@ The CLI must print provenance at start:
 - git SHA, when available
 - scripted mode/scenario/commandRef
 
-E2E validation must assert that the runner provenance matches the gateway checkout under test.
+E2E validation must assert that the runner provenance matches the worker checkout under test.
 
 ### 7. Scenario mode is validation-lane friendly, not production magic
 
@@ -170,7 +170,7 @@ Minimum validation before accepting the implementation:
 - e2e: scripted scenario failure reaches terminal failure, not false success
 - e2e: scripted command failure preserves command exit evidence
 - e2e: worker `scripted` can coexist with an LLM self-review policy
-- provenance: e2e asserts CLI path/SHA matches the gateway checkout
+- provenance: e2e asserts CLI path/SHA matches the worker checkout
 
 ## Alternatives Considered
 

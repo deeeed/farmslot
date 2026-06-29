@@ -44,7 +44,6 @@ describe('runnerDefaultSafetyTier (ADR-023 §3: policy, not capability)', () => 
     assert.equal(runnerDefaultSafetyTier('opencode'), 'sandboxed');
     assert.equal(runnerDefaultSafetyTier('cursor'), 'sandboxed');
     assert.equal(runnerDefaultSafetyTier('scripted'), 'sandboxed');
-    assert.equal(runnerDefaultSafetyTier('fake'), 'sandboxed');
     assert.equal(runnerDefaultSafetyTier('none'), 'sandboxed');
   });
 
@@ -86,8 +85,8 @@ describe('runnerFlagsForTier', () => {
     ]);
   });
 
-  it('opencode, scripted, legacy fake, none emit no flags at any tier', () => {
-    for (const runner of ['opencode', 'scripted', 'fake', 'none'] as const) {
+  it('opencode, scripted, and none emit no flags at any tier', () => {
+    for (const runner of ['opencode', 'scripted', 'none'] as const) {
       for (const tier of ['sandboxed', 'full-auto', 'dangerous'] as const) {
         assert.deepEqual(runnerFlagsForTier(runner, tier), []);
       }
@@ -100,7 +99,6 @@ describe('runnerFlagsForTier', () => {
     assert.deepEqual(runnerFlagsForTier('codex'), []);
     assert.deepEqual(runnerFlagsForTier('claude'), []);
     assert.deepEqual(runnerFlagsForTier('scripted'), []);
-    assert.deepEqual(runnerFlagsForTier('fake'), []);
   });
 });
 
@@ -303,7 +301,6 @@ describe('RunnerDefinition.defaultSafetyTier registry field', () => {
     assert.equal(getRunnerDefinition('opencode').defaultSafetyTier, 'sandboxed');
     assert.equal(getRunnerDefinition('cursor').defaultSafetyTier, 'sandboxed');
     assert.equal(getRunnerDefinition('scripted').defaultSafetyTier, 'sandboxed');
-    assert.equal(getRunnerDefinition('fake').defaultSafetyTier, 'sandboxed');
     assert.equal(getRunnerDefinition('none').defaultSafetyTier, 'sandboxed');
   });
 

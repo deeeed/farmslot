@@ -34,7 +34,7 @@ This leaves dispatch/workgraph/backlog flows hard to validate quickly and increa
 ### Runner ids
 
 - Add `scripted`.
-- Keep `fake` only as a temporary alias or migration shim if needed by existing state. New code and docs should use `scripted`.
+- Remove `fake` as a public runner spelling; do not add a compatibility alias in new code.
 
 ### Protocol/config
 
@@ -109,8 +109,8 @@ Scenario mode requires `FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1`.
 Replace unsafe launch with checkout-local CLI invocation:
 
 ```sh
-FARMSLOT_ROOT=<gateway checkout> \
-node <gateway checkout>/packages/cli/bin/farmslot.mjs scripted-runner \
+FARMSLOT_ROOT="$PWD" \
+node "$PWD/packages/cli/bin/farmslot.mjs" scripted-runner \
   --task-dir <taskDir> \
   --mode scenario \
   --scenario success
@@ -129,7 +129,7 @@ Add:
 
 ```sh
 farmslot scripted-runner --task-dir <path> --mode scenario --scenario success
-farmslot scripted-runner --task-dir <path> --mode command --command-ref smoke
+farmslot scripted-runner --task-dir <path> --mode command --project <project> --command-ref smoke
 ```
 
 The command should be intentionally small: parse config, run the scripted mode, write artifacts, and exit with the intended status.
@@ -185,7 +185,7 @@ V1 only needs to preserve or map existing self-review runner/model config. Do no
 ## Acceptance Criteria
 
 - `scripted` is the only new public runner concept.
-- Existing `fake` references are removed or isolated behind a temporary compatibility shim.
+- Existing `fake` runner references are removed from public runner selection and launch paths.
 - Gateway launch never uses global/path-resolved Farmslot.
 - Scenario mode cannot run unless explicitly enabled by env.
 - Command mode can only run declared project command refs.
@@ -209,7 +209,5 @@ Do not document placeholder root test commands as accepted validation. Add expli
 
 ## Open Questions Before Coding
 
-1. Should `fake` be a hard removal or a one-release alias to `scripted` for old persisted run records?
-2. Which existing project config loader should command mode use to avoid duplicating hook/project resolution?
-3. Should scenario artifacts use the exact current worker template artifact names, or a minimal stable runner-validation artifact set?
-4. Which CI job should own the scripted dispatch E2E: repo quality, gateway quality, or a separate optional/dev job?
+1. Should scenario artifacts use the exact current worker template artifact names, or a minimal stable runner-validation artifact set?
+2. Which CI job should own the scripted dispatch E2E: repo quality, gateway quality, or a separate optional/dev job?

@@ -65,7 +65,11 @@ import {
   readFreshTerminalSignalForRun,
   resolveMonitorDecision,
 } from '../run-engine/run-monitor.js';
-import { normalizeRunner, runnerSupportsModel } from '../runners/registry.js';
+import {
+  assertSupportedRunnerSpelling,
+  normalizeRunner,
+  runnerSupportsModel,
+} from '../runners/registry.js';
 import { assertScriptedRunnerConfig } from '../runners/scripted-config.js';
 import {
   createRun,
@@ -281,6 +285,7 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
     }
   }
 
+  assertSupportedRunnerSpelling(params.runner);
   const normalizedRunner = params.runner ? normalizeRunner(params.runner) : undefined;
   assertScriptedRunnerConfig({
     runner: normalizedRunner,

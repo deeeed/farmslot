@@ -172,6 +172,7 @@ export interface ScriptedCommandLaunchConfig {
 
 function buildScriptedRunnerLaunch(options: {
   repo: string;
+  projectName: string;
   taskDir: string;
   scripted: ScriptedRunnerConfig;
   command?: ScriptedCommandLaunchConfig;
@@ -194,9 +195,8 @@ function buildScriptedRunnerLaunch(options: {
     if (!options.command) {
       throw new Error(`scripted command mode requires a resolved project commandRef`);
     }
-    base.push('--mode', 'command', '--command-ref', shellQuote(options.scripted.commandRef));
-    base.push('--command', shellQuote(options.command.command));
-    if (options.command.cwd) base.push('--cwd', shellQuote(options.command.cwd));
+    base.push('--mode', 'command', '--project', shellQuote(options.projectName));
+    base.push('--command-ref', shellQuote(options.scripted.commandRef));
     const timeoutMs = options.scripted.timeoutMs ?? options.command.timeoutMs;
     if (timeoutMs !== undefined) base.push('--timeout-ms', String(timeoutMs));
   }
@@ -270,6 +270,7 @@ export function buildLaunchCommand(
     }
     return buildScriptedRunnerLaunch({
       repo,
+      projectName: vars.projectName,
       taskDir: opts.taskDir,
       scripted: opts.scripted,
       command: opts.scriptedCommand,

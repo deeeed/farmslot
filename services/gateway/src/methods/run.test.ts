@@ -1103,6 +1103,34 @@ test('runCreate accepts scripted scenario when dev feature flag is enabled', asy
   assert.deepEqual(result.run.scripted, { mode: 'scenario', scenario: 'success', stepDelayMs: 0 });
 });
 
+test('runCreate rejects legacy fake runner spelling', async (t) => {
+  const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
+  const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  t.after(() => {
+    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
+    if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+  });
+
+  await assert.rejects(
+    () =>
+      runCreate(
+        {
+          flowType: 'dev',
+          project: 'farmslot-farm',
+          ticketOrPr: `fake runner ${Date.now()}`,
+          mode: 'interactive',
+          runner: 'fake',
+        },
+        () => {},
+      ),
+    /runner 'fake' is no longer supported/,
+  );
+});
+
 test('runCreate validates scripted commandRef against project config', async (t) => {
   const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
   const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;

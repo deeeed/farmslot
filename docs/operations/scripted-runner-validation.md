@@ -92,7 +92,7 @@ The gateway rejects undeclared `commandRef` values. Do not pass arbitrary shell 
 - Scenario mode requires `FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1`.
 - Command mode must resolve through project config.
 - The launched worker command uses checkout-local CLI:
-  `FARMSLOT_ROOT=<checkout> node <checkout>/packages/cli/bin/farmslot.mjs scripted-runner ...`.
+  `FARMSLOT_ROOT="$PWD" node "$PWD/packages/cli/bin/farmslot.mjs" scripted-runner ...`.
 
 ## Artifacts
 

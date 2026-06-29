@@ -73,7 +73,7 @@ yarn farmslot run create \
 ## Pass/fail checklist
 
 - [ ] run reaches expected terminal outcome
-- [ ] launch command includes `node <checkout>/packages/cli/bin/farmslot.mjs scripted-runner`
+- [ ] launch command includes `node "$PWD/packages/cli/bin/farmslot.mjs" scripted-runner`
 - [ ] launch command does not include `npx farmslot` or bare `farmslot`
 - [ ] `SIGNAL.json` exists in the worker task directory
 - [ ] `artifacts/report.md` and `artifacts/scripted-runner-provenance.json` exist

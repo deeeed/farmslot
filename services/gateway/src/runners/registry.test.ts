@@ -10,6 +10,7 @@ async function dispatchPrompt(taskFile: string): Promise<string> {
   return resolveWorkerDispatchPrompt('farmslot-farm', { taskFile });
 }
 import {
+  assertSupportedRunnerSpelling,
   detectRunnerLaunchBlocker,
   getRunnerDefinition,
   getRunnerObservability,
@@ -69,9 +70,9 @@ describe('scripted runner', () => {
     assert.ok(pattern.test('scripted-runner'));
   });
 
-  it('normalizes legacy fake runner ids to scripted', () => {
-    assert.equal(normalizeRunner('fake'), 'scripted');
-    assert.equal(getRunnerDefinition('fake').id, 'scripted');
+  it('rejects legacy fake runner ids instead of publishing them as aliases', () => {
+    assert.equal(normalizeRunner('fake'), 'fake');
+    assert.throws(() => assertSupportedRunnerSpelling('fake'), /use runner 'scripted'/);
   });
 });
 
@@ -761,7 +762,7 @@ describe('custom runner fallback behavior', () => {
   it('uses the broad catch-all when no runner is specified', () => {
     assert.equal(
       runnerProcessPatternSource(undefined),
-      'claude|codex|opencode|cursor-agent|grok|scripted-runner|farmslot-fake-runner|fake-runner',
+      'claude|codex|opencode|cursor-agent|grok|scripted-runner',
     );
   });
 });
@@ -777,7 +778,6 @@ describe('persistsSessionFiles capability', () => {
     assert.equal(runnerPersistsSessionFiles('opencode'), false);
     assert.equal(runnerPersistsSessionFiles('cursor'), false);
     assert.equal(runnerPersistsSessionFiles('scripted'), false);
-    assert.equal(runnerPersistsSessionFiles('fake'), false);
     assert.equal(runnerPersistsSessionFiles('none'), false);
   });
 
@@ -1191,9 +1191,9 @@ describe('buildLaunchCommand', () => {
         scripted: { mode: 'command', commandRef: 'smoke' },
         scriptedCommand: { command: 'yarn test:smoke', timeoutMs: 120000, cwd: 'apps/demo' },
       });
-      assert.match(cmd, /--mode command --command-ref 'smoke'/);
-      assert.match(cmd, /--command 'yarn test:smoke'/);
-      assert.match(cmd, /--cwd 'apps\/demo'/);
+      assert.match(cmd, /--mode command --project 'test-project' --command-ref 'smoke'/);
+      assert.doesNotMatch(cmd, /--command /);
+      assert.doesNotMatch(cmd, /--cwd /);
       assert.match(cmd, /--timeout-ms 120000/);
     });
 

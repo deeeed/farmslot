@@ -53,7 +53,7 @@ function writeTempProject() {
         scripted: {
           commands: {
             fail: {
-              command: 'node -e "process.exit(7)"',
+              command: 'node -e "setTimeout(() => process.exit(7), 3000)"',
               timeout_ms: 5000,
             },
           },
@@ -187,7 +187,10 @@ ${pane.stdout || pane.stderr}`);
       () => {},
     );
     assert.equal(commandResult.dispatched, true);
-    assert.match(commandResult.launchCommand ?? '', /--mode command --command-ref 'fail'/);
+    assert.match(
+      commandResult.launchCommand ?? '',
+      new RegExp(`--mode command --project '${projectName}' --command-ref 'fail'`),
+    );
     assert.doesNotMatch(commandResult.launchCommand ?? '', /FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1/);
     const commandTaskDirMatch = commandResult.launchCommand?.match(/--task-dir '([^']+)'/);
     const workerCommandTaskDir = path.join(

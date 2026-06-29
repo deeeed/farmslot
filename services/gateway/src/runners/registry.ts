@@ -123,8 +123,13 @@ async function classifyRunnerPaneStateBestEffortLazy(opts: {
 const DEFAULT_RUNNER = 'claude';
 const RUNNER_ALIASES: Record<string, string> = {
   'claude-code': 'claude',
-  fake: 'scripted',
 };
+
+export function assertSupportedRunnerSpelling(runnerId?: string | null): void {
+  if ((runnerId ?? '').trim().toLowerCase() === 'fake') {
+    throw new Error("runner 'fake' is no longer supported; use runner 'scripted'");
+  }
+}
 
 // Anthropic-family model names (claude). Codex on a ChatGPT account rejects
 // these at the API layer ("'opus' is not supported with ChatGPT account"),
@@ -464,7 +469,7 @@ export function runnerProcessPatternSource(runnerId?: string | null): string {
   if (runnerId == null || runnerId === '' || normalized === DEFAULT_RUNNER) {
     // Broad fallback for unknown/legacy slots — callers should prefer an explicit runner
     // whenever available to avoid matching unrelated panes on mixed-runner machines.
-    return 'claude|codex|opencode|cursor-agent|grok|scripted-runner|farmslot-fake-runner|fake-runner';
+    return 'claude|codex|opencode|cursor-agent|grok|scripted-runner';
   }
   if (!isKnownRunner(runnerId)) return normalized;
   const matchers = getRunnerDefinition(runnerId).processMatchers;

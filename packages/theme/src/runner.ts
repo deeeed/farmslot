@@ -5,7 +5,6 @@ export const RUNNER_COLORS: Record<string, string> = {
   cursor: '#8b5cf6',
   grok: '#14b8a6',
   scripted: '#a78bfa',
-  fake: '#a78bfa',
 };
 
 export function runnerColor(runner: string | null | undefined): string | null {

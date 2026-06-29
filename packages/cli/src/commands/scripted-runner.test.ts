@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,29 @@ import { runScriptedRunner } from './scripted-runner.js';
 
 function makeTaskDir(): string {
   return mkdtempSync(path.join(tmpdir(), 'farmslot-scripted-runner-'));
+}
+
+function makeFarmslotRoot(projectName: string, command: string): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-scripted-root-'));
+  mkdirSync(path.join(root, 'packages/cli'), { recursive: true });
+  writeFileSync(path.join(root, 'packages/cli/package.json'), '{"version":"0.0.0-test"}\n');
+  mkdirSync(path.join(root, 'projects', projectName), { recursive: true });
+  writeFileSync(
+    path.join(root, 'projects', projectName, 'project.json'),
+    `${JSON.stringify(
+      {
+        name: projectName,
+        scripted: {
+          commands: {
+            'fail-smoke': { command },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return root;
 }
 
 test('scripted scenario success writes report, provenance, and terminal success signal', async (t) => {
@@ -52,15 +75,24 @@ test('scripted scenario rejects without dev feature flag', async (t) => {
   );
 });
 
-test('scripted command failure writes exit evidence and terminal failure signal', async (t) => {
+test('scripted command failure resolves project-owned commandRef evidence', async (t) => {
   const taskDir = makeTaskDir();
-  t.after(() => rmSync(taskDir, { recursive: true, force: true }));
+  const projectName = 'scripted-test-project';
+  const farmslotRoot = makeFarmslotRoot(projectName, 'printf command-output && exit 7');
+  const previousRoot = process.env.FARMSLOT_ROOT;
+  process.env.FARMSLOT_ROOT = farmslotRoot;
+  t.after(() => {
+    if (previousRoot === undefined) delete process.env.FARMSLOT_ROOT;
+    else process.env.FARMSLOT_ROOT = previousRoot;
+    rmSync(taskDir, { recursive: true, force: true });
+    rmSync(farmslotRoot, { recursive: true, force: true });
+  });
 
   const exitCode = await runScriptedRunner({
     taskDir,
     mode: 'command',
+    project: projectName,
     commandRef: 'fail-smoke',
-    command: 'printf command-output && exit 7',
   });
 
   assert.equal(exitCode, 7);
@@ -72,4 +104,10 @@ test('scripted command failure writes exit evidence and terminal failure signal'
     'utf-8',
   );
   assert.equal(stdout, 'command-output');
+  const result = JSON.parse(
+    await readFile(path.join(taskDir, 'artifacts/scripted-command-result.json'), 'utf-8'),
+  );
+  assert.equal(result.project, projectName);
+  assert.equal(result.commandRef, 'fail-smoke');
+  assert.equal(result.exitCode, 7);
 });

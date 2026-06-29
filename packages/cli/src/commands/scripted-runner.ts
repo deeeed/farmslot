@@ -12,8 +12,7 @@ export interface ScriptedRunnerOptions {
   scenario?: 'success' | 'failure' | 'timeout';
   stepDelayMs?: string | number;
   commandRef?: string;
-  command?: string;
-  cwd?: string;
+  project?: string;
   timeoutMs?: string | number;
 }
 
@@ -23,6 +22,12 @@ interface CommandResult {
   timedOut: boolean;
   stdout: string;
   stderr: string;
+}
+
+interface ProjectScriptedCommand {
+  command: string;
+  cwd?: string;
+  timeoutMs?: number;
 }
 
 function parseNonNegativeInt(value: string | number | undefined, fallback: number): number {
@@ -82,6 +87,42 @@ async function gitSha(farmslotRoot: string): Promise<string | null> {
   return result.stdout.trim() || null;
 }
 
+async function resolveProjectScriptedCommand(
+  farmslotRoot: string,
+  project: string,
+  commandRef: string,
+): Promise<ProjectScriptedCommand> {
+  const projectConfigPath = path.join(farmslotRoot, 'projects', project, 'project.json');
+  let parsed: {
+    scripted?: {
+      commands?: Record<
+        string,
+        { command?: unknown; cwd?: unknown; timeout_ms?: unknown; timeoutMs?: unknown }
+      >;
+    };
+  };
+  try {
+    parsed = JSON.parse(await readFile(projectConfigPath, 'utf-8'));
+  } catch (err) {
+    throw new Error(
+      `Failed to read project config for scripted command '${commandRef}' at ${projectConfigPath}: ${(err as Error).message}`,
+    );
+  }
+  const raw = parsed.scripted?.commands?.[commandRef];
+  if (!raw || typeof raw.command !== 'string' || !raw.command.trim()) {
+    throw new Error(`scripted commandRef '${commandRef}' is not declared for project ${project}`);
+  }
+  const timeoutMs = raw.timeout_ms ?? raw.timeoutMs;
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || Number(timeoutMs) <= 0)) {
+    throw new Error(`scripted.commands.${commandRef}.timeout_ms must be a positive integer`);
+  }
+  return {
+    command: raw.command,
+    ...(typeof raw.cwd === 'string' && raw.cwd.trim() ? { cwd: raw.cwd } : {}),
+    ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+  };
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -133,6 +174,19 @@ export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise
   const artifactsDir = path.join(taskDir, 'artifacts');
   await mkdir(artifactsDir, { recursive: true });
 
+  let scriptedCommand: ProjectScriptedCommand | null = null;
+  let commandCwd = process.cwd();
+  if (options.mode === 'command') {
+    if (!options.commandRef?.trim()) throw new Error('--command-ref is required for command mode');
+    if (!options.project?.trim()) throw new Error('--project is required for command mode');
+    scriptedCommand = await resolveProjectScriptedCommand(
+      farmslotRoot,
+      options.project,
+      options.commandRef,
+    );
+    commandCwd = path.resolve(process.cwd(), scriptedCommand.cwd ?? '.');
+  }
+
   const provenance = {
     kind: 'farmslot-scripted-runner',
     cliEntrypoint: process.argv[1] ?? null,
@@ -141,8 +195,9 @@ export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise
     gitSha: await gitSha(farmslotRoot),
     mode: options.mode,
     scenario: options.scenario ?? null,
+    project: options.project ?? null,
     commandRef: options.commandRef ?? null,
-    cwd: options.cwd ?? process.cwd(),
+    cwd: commandCwd,
     startedAt: new Date().toISOString(),
   };
   await writeTextFile(
@@ -177,16 +232,25 @@ export async function runScriptedRunner(options: ScriptedRunnerOptions): Promise
       }
     }
   } else if (options.mode === 'command') {
-    if (!options.commandRef?.trim()) throw new Error('--command-ref is required for command mode');
-    if (!options.command?.trim()) throw new Error('--command is required for command mode');
-    const cwd = path.resolve(process.cwd(), options.cwd ?? '.');
-    const timeoutMs = parsePositiveInt(options.timeoutMs);
-    const result = await runCommand(options.command, cwd, timeoutMs);
+    if (!scriptedCommand) throw new Error('scripted command mode requires a project commandRef');
+    const timeoutMs = parsePositiveInt(options.timeoutMs) ?? scriptedCommand.timeoutMs;
+    const result = await runCommand(scriptedCommand.command, commandCwd, timeoutMs);
     await writeTextFile(path.join(artifactsDir, 'scripted-command.stdout.txt'), result.stdout);
     await writeTextFile(path.join(artifactsDir, 'scripted-command.stderr.txt'), result.stderr);
     await writeTextFile(
       path.join(artifactsDir, 'scripted-command-result.json'),
-      `${JSON.stringify({ commandRef: options.commandRef, cwd, exitCode: result.exitCode, signal: result.signal, timedOut: result.timedOut }, null, 2)}\n`,
+      `${JSON.stringify(
+        {
+          commandRef: options.commandRef,
+          project: options.project,
+          cwd: commandCwd,
+          exitCode: result.exitCode,
+          signal: result.signal,
+          timedOut: result.timedOut,
+        },
+        null,
+        2,
+      )}\n`,
     );
     if (result.timedOut || result.exitCode !== 0) {
       status = 'failed';
@@ -233,9 +297,8 @@ export function registerScriptedRunnerCommand(program: Command): void {
     .option('--scenario <name>', 'Scenario mode: success, failure, or timeout')
     .option('--step-delay-ms <ms>', 'Scenario step delay in ms')
     .option('--command-ref <name>', 'Project-owned command reference name')
-    .option('--command <command>', 'Resolved project-owned command string')
-    .option('--cwd <path>', 'Command working directory relative to the launched repo')
-    .option('--timeout-ms <ms>', 'Command timeout in ms')
+    .option('--project <name>', 'Project whose project.json owns the command ref')
+    .option('--timeout-ms <ms>', 'Command timeout override in ms')
     .action(async (opts: ScriptedRunnerOptions) => {
       const exitCode = await runScriptedRunner(opts);
       process.exitCode = exitCode;
