@@ -206,6 +206,37 @@ test('enrichDecisionsWithGateSummary lazily backfills a ready gate decision with
   assert.equal(original.gateSummary, undefined);
 });
 
+test('enrichDecisionsWithGateSummary backfills a retrospective decision with the review kind', () => {
+  const run = makeRun({
+    metrics: metrics({ sessionTotalTokens: 500, sessionTurns: 5 }),
+    decisions: [
+      {
+        id: 'retrospective-1',
+        type: 'retrospective',
+        title: 'Retrospective',
+        description: '',
+        actions: [],
+        createdAt: '2026-04-15T00:00:00.000Z',
+        payload: {
+          kind: 'retrospective',
+          outcome: 'success',
+          whatThisIs: 'test',
+          actionEffects: [],
+        },
+      },
+    ],
+  });
+
+  const enriched = enrichDecisionsWithGateSummary(run);
+  const payload = enriched.decisions[0].payload;
+  assert.ok(payload?.kind === 'retrospective'); // narrows to RetrospectivePayload
+  assert.ok(payload.gateSummary);
+  assert.equal(payload.gateSummary.kind, 'review');
+  assert.equal(payload.gateSummary.gatePolicy, undefined); // review backfill omits gatePolicy
+});
+
+// Family-loop rollup is unit-tested directly in `aggregateFamilyChainedLoops` above;
+// this case exercises the main-worker projection with an empty store (no loops).
 test('buildTokenSummary projects main-worker tokens from run metrics', () => {
   const run = makeRun({
     id: 'solo',

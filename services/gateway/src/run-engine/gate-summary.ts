@@ -297,6 +297,15 @@ function buildHeadline(worker: GateSummary['worker'], review: ReviewSummary): st
  * enriched decisions when anything changed, otherwise the run unchanged. Gate
  * surfaces (runGet, runForSlot, decisionList) call this so historical runs show
  * the panel without a migration or backfill job.
+ *
+ * Deliberate tradeoff — this rebuilds the summary on every read for a run that
+ * lacks one, rather than persisting it back to the store. The cost is bounded:
+ * `buildGateSummary` is a pure in-memory projection (the only fan-out is
+ * `listRuns({ familyId })`, an in-memory filter), and only PRE-feature runs ever
+ * hit this path — every run created after this ships persists `gateSummary` at
+ * gate time, so the rebuild set shrinks to a fixed, rarely-viewed tail. We avoid
+ * persist-on-read on purpose: writing from a read path (especially the
+ * multi-run `decisionList`) adds I/O and races for no correctness benefit.
  */
 export function enrichDecisionsWithGateSummary(run: Run): Run {
   if (!run.decisions?.length) return run;

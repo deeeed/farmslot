@@ -53,6 +53,10 @@ export async function runGet(params: RunGetParams): Promise<RunGetResult> {
 }
 
 export async function runList(params: RunListParams): Promise<RunListResult> {
+  // No gate-summary enrichment here on purpose: the list surface renders run
+  // summaries, not decision payloads. The lazy backfill happens where decisions
+  // are consumed individually (runGet/runForSlot via presentRun, and
+  // decisionList) — enriching every run in a list would be wasted work.
   const result = listRuns(params);
   return attachRunListSummaries(result, params);
 }

@@ -6,6 +6,7 @@ import type { IndependentReviewStatus, ReadyGatePayload } from '@farmslot/protoc
 import {
   classifyReviewFreshness,
   fixDeltaAbsenceReason,
+  formatTokenCount,
   publishEvidenceDisplayRows,
   readyReviewBlockingDisplayReason,
   reviewAttemptLabel,
@@ -247,4 +248,19 @@ test('readyReviewBlockingDisplayReason cites stale reviews even when fresh quoru
   assert.equal(summary.trustedPassingReviews, 1);
   assert.equal(summary.staleIgnoredReviews, 1);
   assert.match(readyReviewBlockingDisplayReason(fixture), /stale review ignored/i);
+});
+
+test('formatTokenCount renders compact units and safe fallbacks', () => {
+  // Non-positive / non-finite fall back to '0'.
+  assert.equal(formatTokenCount(0), '0');
+  assert.equal(formatTokenCount(-1), '0');
+  assert.equal(formatTokenCount(NaN), '0');
+  assert.equal(formatTokenCount(Infinity), '0');
+  // Unit boundaries.
+  assert.equal(formatTokenCount(999), '999');
+  assert.equal(formatTokenCount(1000), '1.0k');
+  assert.equal(formatTokenCount(51819), '51.8k');
+  assert.equal(formatTokenCount(999_999), '1000.0k');
+  assert.equal(formatTokenCount(1_000_000), '1.00M');
+  assert.equal(formatTokenCount(3_722_374), '3.72M');
 });
