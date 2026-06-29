@@ -105,10 +105,17 @@ export interface RunAnalyticsRecord {
    */
   humanReviewersRequestingChanges: number | null;
   hostLoad: HostLoadSnapshot | null;
-  /** Total session tokens (worker), when captured; null when the runner did not report usage. */
-  totalTokens: number | null;
-  /** Session tokens keyed by model id, when captured. Empty when no usage was reported. */
-  tokensByModel: Record<string, number>;
+  /**
+   * Total session tokens (worker), when captured; null when the runner reported
+   * no usage. Optional: records emitted before token capture shipped omit it
+   * entirely (readers treat absent and null alike).
+   */
+  totalTokens?: number | null;
+  /**
+   * Session tokens keyed by model id, when captured. Empty when no usage was
+   * reported; absent on pre-token-capture records (readers default to `{}`).
+   */
+  tokensByModel?: Record<string, number>;
   /** Compact template identity for grouping; null when no provenance was captured. */
   templateKey: string | null;
   /** True when produced by the one-time backfill rather than a live terminal transition. */

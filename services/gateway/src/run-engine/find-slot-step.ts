@@ -7,6 +7,7 @@ import {
   type Run,
   type RunDecision,
   type RunDecisionPayload,
+  SLOT_DESTRUCTIVE_OPS,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
 } from '@farmslot/protocol';
 
@@ -29,6 +30,7 @@ import {
   slotScore,
 } from '../methods/dispatch/slot-scoring.js';
 import {
+  assertSlotNotOperatorRoot,
   resetSlotRepoToIdle,
   slotIdleResetStepDetail,
 } from '../methods/slot/slot-tracking.js';
@@ -438,7 +440,9 @@ export async function executeFindSlotStep(
     !run.slotId &&
     (freeSlots.length === 0 ||
       freeSlots.every((s) =>
-        isDispatchScoreStale(slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })),
+        isDispatchScoreStale(
+          slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
+        ),
       ))
   ) {
     const reason = freeSlots.length === 0 ? 'no_free_slots' : 'all_stale';
@@ -488,6 +492,9 @@ export async function executeFindSlotStep(
     // If user requested reset, do it before proceeding
     if (resolvedDecision?.selectionData?.resetBranch) {
       const vars = await loadSlotVars(pickedSlotId);
+      // Entry guard mirroring the other destructive-op call sites — never reset
+      // the gateway's own operator root (resetSlotRepoToIdle also backstops this).
+      assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.idleReset);
       let projectVars;
       let projectJson = {};
       try {

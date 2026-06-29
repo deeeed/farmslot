@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -108,9 +109,18 @@ export type { ResetSlotRepoToIdleOptions, SlotIdleResetResult };
  * filesystem and is not the operator's repo.
  */
 export function isOperatorRootSlot(vars: SlotVars): boolean {
-  return (
-    isLocal(vars.host, vars.machine) && path.resolve(vars.remoteRepo) === path.resolve(farmslotRoot)
-  );
+  if (!isLocal(vars.host, vars.machine)) return false;
+  // Resolve symlinks too — a slot repo pointing at a symlink to the operator
+  // root must still be caught. realpathSync throws when the path does not exist
+  // yet (e.g. an uncreated worktree); fall back to lexical resolution then.
+  const canonical = (p: string): string => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  return canonical(vars.remoteRepo) === canonical(farmslotRoot);
 }
 
 /**
