@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { resolveRecordingTarget } from './run-recipe.mjs';
+import { gatewayTokenSeedScript, resolveRecordingTarget } from './run-recipe.mjs';
 
 // Regression: the recipe video recorder used to pick a window by the shared default
 // title "Farmslot Command Center". That title belongs to every slot's UI and the
@@ -74,5 +74,20 @@ describe('resolveRecordingTarget', () => {
       resolveCaptureHelperTarget: async () => ({ selected: { id: '1' } }),
     });
     assert.equal(target.kind, 'app-window');
+  });
+});
+
+describe('gatewayTokenSeedScript', () => {
+  it('seeds the localStorage keys the UI reads so the slot UI authenticates on load', () => {
+    const script = gatewayTokenSeedScript('tok-123');
+    assert.match(script, /localStorage\.setItem\('farmslot\.gateway\.authMode', 'token'\)/);
+    assert.match(script, /localStorage\.setItem\('farmslot\.gateway\.token', "tok-123"\)/);
+  });
+
+  it('JSON-escapes the token so quotes/backslashes cannot break out of the script', () => {
+    const script = gatewayTokenSeedScript('a"b\\c');
+    // The token must be embedded as a valid JSON string literal.
+    assert.ok(script.includes(JSON.stringify('a"b\\c')));
+    assert.doesNotMatch(script, /token', 'a"b/);
   });
 });
