@@ -61,6 +61,15 @@ export async function slotRelease(
   emit: EventEmitter,
 ): Promise<{ released: boolean }> {
   const vars = await loadSlotVars(params.slotId);
+  const forceReset = params.forceReset ?? false;
+  const preserveAgents = params.preserveAgents ?? false;
+  const gateHeldRun = findActiveGateHeldRunForSlot(params.slotId);
+  if (gateHeldRun && !preserveAgents && !forceReset) {
+    throw new Error(
+      `Slot ${params.slotId} is gate-held for run ${gateHeldRun.id} — resolve or cancel the publication gate before release`,
+    );
+  }
+
   // Release runs idle-reset + the project recycle hook (both can reset --hard
   // the slot repo) — guard so the operator root is never recycled.
   await assertSlotNotOperatorRoot(vars, SLOT_DESTRUCTIVE_OPS.release);
@@ -79,16 +88,8 @@ export async function slotRelease(
   const keepWarm = params.keepWarm ?? false;
   const keepWork = params.keepWork ?? false;
   const skipArtifacts = params.skipArtifacts ?? false;
-  const forceReset = params.forceReset ?? false;
   const detachRuns = params.detachRuns ?? true;
-  const preserveAgents = params.preserveAgents ?? false;
   const requestId = params.requestId ?? `release-${randomUUID()}`;
-  const gateHeldRun = findActiveGateHeldRunForSlot(params.slotId);
-  if (gateHeldRun && !preserveAgents && !forceReset) {
-    throw new Error(
-      `Slot ${params.slotId} is gate-held for run ${gateHeldRun.id} — resolve or cancel the publication gate before release`,
-    );
-  }
   const startTime = Date.now();
 
   const out = (line: string) =>

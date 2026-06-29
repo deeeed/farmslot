@@ -41,6 +41,7 @@ import {
   normalizeTicketRef,
   validateTicketRef,
 } from '../methods/dispatch/ticket-ref.js';
+import { normalizeRunner, runnerSupportsModel } from '../runners/registry.js';
 import { getAllRuns } from '../runs/store.js';
 
 import { addItem, getQueueSnapshot, persistQueueNow, tryDispatchNext } from './dispatch-queue.js';
@@ -78,6 +79,9 @@ const BACKLOG_UPDATE_KEYS = new Set([
   'priority',
   'allowedSlots',
   'autoDispatch',
+  'runner',
+  'model',
+  'effort',
 ]);
 
 let _broadcast: BroadcastFn | null = null;
@@ -173,6 +177,25 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+function normalizeExecutionHint(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') throw new Error(`${field} must be a string`);
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${field} cannot be empty`);
+  return normalized;
+}
+
+function normalizeRunnerHint(value: unknown): string | undefined {
+  const runner = normalizeExecutionHint(value, 'runner');
+  return runner ? normalizeRunner(runner) : undefined;
+}
+
+function assertExecutionHintsCompatible(item: BacklogItem): void {
+  if (item.runner && item.model && !runnerSupportsModel(item.runner, item.model)) {
+    throw new Error(`model ${item.model} is not compatible with runner ${item.runner}`);
+  }
+}
+
 function normalizeOptionalSpecPath(value: unknown): string | undefined {
   const specPath = normalizeOptionalString(value);
   if (!specPath) return undefined;
@@ -256,6 +279,11 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
   const specPath = rawSpecPath && !rawSpecPath.includes('\0') ? rawSpecPath : undefined;
   const workGraphId = normalizeOptionalString(raw.workGraphId);
   const workNodeId = normalizeOptionalString(raw.workNodeId);
+  const runner = normalizeOptionalString(raw.runner)
+    ? normalizeRunner(normalizeOptionalString(raw.runner))
+    : undefined;
+  const model = normalizeOptionalString(raw.model);
+  const effort = normalizeOptionalString(raw.effort);
   return {
     id,
     project,
@@ -276,6 +304,9 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
       ? { allowedSlots: normalizeStringArray(raw.allowedSlots) }
       : {}),
     ...(typeof raw.autoDispatch === 'boolean' ? { autoDispatch: raw.autoDispatch } : {}),
+    ...(runner ? { runner } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
     createdAt,
     updatedAt,
     ...(typeof raw.queuedQueueItemId === 'string'
@@ -492,6 +523,9 @@ export async function createBacklogItem(
     const tags = normalizeRunTags(params.tags);
     const roadmapItemId = normalizeOptionalString(params.roadmapItemId);
     const specPath = normalizeOptionalSpecPath(params.specPath);
+    const runner = normalizeRunnerHint(params.runner);
+    const model = normalizeExecutionHint(params.model, 'model');
+    const effort = normalizeExecutionHint(params.effort, 'effort');
     const now = new Date().toISOString();
     const item: BacklogItem = {
       id: randomUUID(),
@@ -509,9 +543,13 @@ export async function createBacklogItem(
       priority: params.priority ?? 10,
       ...(allowedSlots ? { allowedSlots } : {}),
       ...(typeof params.autoDispatch === 'boolean' ? { autoDispatch: params.autoDispatch } : {}),
+      ...(runner ? { runner } : {}),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
       createdAt: now,
       updatedAt: now,
     };
+    assertExecutionHintsCompatible(item);
     if (item.status === 'ready') await assertBacklogSpecReady(item);
     items.push(item);
     schedulePersist('create');
@@ -670,6 +708,24 @@ export async function updateBacklogItem(params: BacklogUpdateParams): Promise<Ba
         else item.allowedSlots = normalizeAllowedSlots(params.allowedSlots);
       }
       if (params.autoDispatch !== undefined) item.autoDispatch = params.autoDispatch;
+      if (params.runner !== undefined) {
+        const runner = params.runner === null ? undefined : normalizeRunnerHint(params.runner);
+        if (runner) item.runner = runner;
+        else delete item.runner;
+      }
+      if (params.model !== undefined) {
+        const model =
+          params.model === null ? undefined : normalizeExecutionHint(params.model, 'model');
+        if (model) item.model = model;
+        else delete item.model;
+      }
+      if (params.effort !== undefined) {
+        const effort =
+          params.effort === null ? undefined : normalizeExecutionHint(params.effort, 'effort');
+        if (effort) item.effort = effort;
+        else delete item.effort;
+      }
+      assertExecutionHintsCompatible(item);
       if (item.status === 'ready') await assertBacklogSpecReady(item);
       item.updatedAt = new Date().toISOString();
     } catch (err) {
@@ -845,6 +901,9 @@ export async function enqueueBacklogItem(
         initialContext: await buildInitialContext(item),
         ticketData: await buildManualTicketData(item),
         allowedSlots: item.allowedSlots,
+        runner: item.runner,
+        model: item.model,
+        effort: item.effort,
         // Backlog handoff persists queue+backlog links before dispatch can consume the queue item.
         autoDispatch: false,
       };

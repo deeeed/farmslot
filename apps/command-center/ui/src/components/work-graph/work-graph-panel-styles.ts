@@ -436,4 +436,105 @@ export const workGraphPanelStyles = css`
     font-size: ${unsafeCSS(fonts.sizeXs)};
     overflow-wrap: anywhere;
   }
+
+  .detail-summary {
+    border: 1px solid ${unsafeCSS(colors.accent)}44;
+    border-radius: ${unsafeCSS(radii.md)};
+    padding: ${unsafeCSS(spacing.md)};
+    color: ${unsafeCSS(colors.textPrimary)};
+    background: ${unsafeCSS(colors.accent)}12;
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+    line-height: 1.5;
+  }
+
+  .candidate-slots,
+  .config-head,
+  .config-grid,
+  .slot-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: ${unsafeCSS(spacing.sm)};
+  }
+
+  .config-editor {
+    display: grid;
+    gap: ${unsafeCSS(spacing.md)};
+    border: 1px solid ${unsafeCSS(colors.bgCard)};
+    border-radius: ${unsafeCSS(radii.md)};
+    padding: ${unsafeCSS(spacing.md)};
+    background: ${unsafeCSS(colors.bgSurface)};
+  }
+
+  .config-head {
+    align-items: start;
+    justify-content: space-between;
+  }
+
+  .config-error {
+    color: ${unsafeCSS(colors.statusFail)};
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+  }
+
+  .config-field,
+  .config-check {
+    display: grid;
+    gap: 5px;
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+  }
+
+  .config-check {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .config-field input,
+  .config-field select {
+    min-width: 0;
+    background: ${unsafeCSS(colors.bgInput)};
+    color: ${unsafeCSS(colors.textPrimary)};
+    border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+    border-radius: ${unsafeCSS(radii.sm)};
+    padding: 6px 8px;
+    font: inherit;
+  }
+
+  .config-grid .config-field {
+    flex: 1 1 110px;
+  }
+
+  .slot-picker {
+    display: grid;
+    gap: ${unsafeCSS(spacing.sm)};
+  }
+
+  .slot-picker button {
+    justify-self: start;
+    border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+    border-radius: ${unsafeCSS(radii.sm)};
+    background: transparent;
+    color: ${unsafeCSS(colors.textSecondary)};
+    padding: 5px 8px;
+    font: inherit;
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+    cursor: pointer;
+  }
+
+  .slot-option {
+    display: inline-grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 7px;
+    align-items: center;
+    border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+    border-radius: ${unsafeCSS(radii.sm)};
+    padding: 6px 8px;
+    color: ${unsafeCSS(colors.textPrimary)};
+    background: ${unsafeCSS(colors.bgInput)};
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+  }
+
+  .slot-option small {
+    grid-column: 2;
+    color: ${unsafeCSS(colors.textMuted)};
+  }
 `;

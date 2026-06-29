@@ -41,6 +41,10 @@ import {
 import { getRunForSlot } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { summarizeFleetRefreshEligibility } from '../slot-actions/fleet-refresh-modal-model.js';
+import {
+  buildSlotPendingWork,
+  type SlotPendingWork,
+} from '../work-graph/work-graph-execution-overlay.js';
 
 import {
   type FleetCanvasGroupBy,
@@ -85,6 +89,7 @@ export class FleetCanvas extends LitElement {
   @state() private slotResourceDefs: Map<string, SlotResource[]> = new Map();
   @state() private slotThumbnails: Map<string, { data: string; ts: number }> = new Map();
   @state() private slotDecisions: Map<string, number> = new Map();
+  @state() private slotPendingWork: Map<string, SlotPendingWork> = new Map();
   @state() private viewMode: FleetCanvasViewMode = 'card';
   @state() private actionsModalSlotId = '';
   @state() private fleetRefreshOpen = false;
@@ -467,6 +472,14 @@ export class FleetCanvas extends LitElement {
       if (d.slotId) decMap.set(d.slotId, (decMap.get(d.slotId) ?? 0) + 1);
     }
     this.slotDecisions = decMap;
+    this.slotPendingWork = buildSlotPendingWork({
+      slots: this.slots,
+      queueItems: s.queueItems,
+      runs: s.runs,
+      backlogItems: s.backlogItems,
+      workGraphs: s.workGraphs,
+      includeSchedulerReady: true,
+    });
   }
 
   private buildSlotRuns() {
@@ -829,6 +842,7 @@ export class FleetCanvas extends LitElement {
           .machineHealthMap=${this.machineHealthMap}
           .slotThumbnails=${this.slotThumbnails}
           .slotDecisions=${this.slotDecisions}
+          .slotPendingWork=${this.slotPendingWork}
           .nodeInfo=${this.nodeInfo.get(g.key)}
           .nodeInfoMap=${this.nodeInfo}
           .gatewayProtocolVersion=${this.gatewayProtocolVersion}

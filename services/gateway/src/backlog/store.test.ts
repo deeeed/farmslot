@@ -14,12 +14,16 @@ process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
 process.env.FARMSLOT_BACKLOG_SPEC_DIR = specRoot;
 
-test.after(() =>
-  Promise.all([
+test.after(async () => {
+  const backlog = await import('./store.js');
+  const queue = await import('./dispatch-queue.js');
+  await backlog.flushBacklogForTests();
+  await queue.persistQueueNow();
+  await Promise.all([
     rm(testDir, { recursive: true, force: true }),
     rm(specRoot, { recursive: true, force: true }),
-  ]),
-);
+  ]);
+});
 
 async function writeSpec(name: string, markdown: string): Promise<string> {
   await mkdir(specRoot, { recursive: true });
@@ -569,4 +573,71 @@ test('backlog load does not overwrite terminal status from linked run observatio
   const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
   assert.equal(item?.status, 'done');
   assert.equal(item?.lastObservedRunStatus, undefined);
+});
+
+test('backlog execution hints persist and propagate to queued dispatch', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Dispatch with hints',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    runner: ' codex ',
+    model: 'gpt-5.5',
+    effort: 'high',
+  });
+
+  assert.equal(created.item.runner, 'codex');
+  assert.equal(created.item.model, 'gpt-5.5');
+  assert.equal(created.item.effort, 'high');
+
+  const updated = await backlog.updateBacklogItem({
+    itemId: created.item.id,
+    model: 'gpt-5.6',
+    effort: null,
+  });
+  assert.equal(updated.item.model, 'gpt-5.6');
+  assert.equal(updated.item.effort, undefined);
+
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(enqueued.queueItem.runner, 'codex');
+  assert.equal(enqueued.queueItem.model, 'gpt-5.6');
+  assert.equal(enqueued.queueItem.effort, undefined);
+});
+
+test('backlog rejects incompatible runner/model hints', async () => {
+  const { backlog } = await freshStores();
+  await assert.rejects(
+    () =>
+      backlog.createBacklogItem({
+        project: 'farmslot-farm',
+        title: 'Bad hints',
+        sourceKind: 'manual',
+        flowType: 'dev',
+        runner: 'codex',
+        model: 'opus',
+      }),
+    /not compatible/,
+  );
+});
+
+test('backlog allows model-only hints until a runner is selected', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Model hint only',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    model: 'gpt-5.6',
+  });
+
+  assert.equal(created.item.runner, undefined);
+  assert.equal(created.item.model, 'gpt-5.6');
+
+  await assert.rejects(
+    () => backlog.updateBacklogItem({ itemId: created.item.id, runner: 'claude' }),
+    /not compatible/,
+  );
 });
