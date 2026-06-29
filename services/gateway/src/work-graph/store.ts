@@ -704,17 +704,24 @@ async function executeNodeUnlock(
       },
     ];
     snapshot.graph.status = 'needs-attention';
-    snapshot.ledger.push({
-      key: actionKey,
-      graphId: snapshot.graph.id,
-      nodeId: node.id,
-      actionKind: 'rebase-onto',
-      readinessVersion: version,
-      status: 'failed',
-      startedAt: now,
-      completedAt: now,
-      result: 'helper-not-wired',
-    });
+    const existing = snapshot.ledger.find((entry) => entry.key === actionKey);
+    if (existing) {
+      existing.status = 'failed';
+      existing.completedAt = existing.completedAt ?? now;
+      existing.result = 'helper-not-wired';
+    } else {
+      snapshot.ledger.push({
+        key: actionKey,
+        graphId: snapshot.graph.id,
+        nodeId: node.id,
+        actionKind: 'rebase-onto',
+        readinessVersion: version,
+        status: 'failed',
+        startedAt: now,
+        completedAt: now,
+        result: 'helper-not-wired',
+      });
+    }
     return;
   }
   const existingQueue = getQueueSnapshot().find(

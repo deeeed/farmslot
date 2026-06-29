@@ -197,6 +197,21 @@ test('satisfied completion rebase edges surface operator attention', async () =>
     projection.ledger.find((entry) => entry.nodeId === 'wn_client')?.actionKind,
     'rebase-onto',
   );
+
+  await workGraph.gateResolve({
+    graphId,
+    edgeId: 'we_gateway_to_client_rebase',
+    gateId: 'gateway-merged',
+    reason: 'operator re-opened the same completion gate',
+    decision: 'approved',
+  });
+  const afterReopen = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(
+    afterReopen.ledger.filter(
+      (entry) => entry.nodeId === 'wn_client' && entry.actionKind === 'rebase-onto',
+    ).length,
+    1,
+  );
 });
 
 test('failed completion edges move dependents to needs-attention', async () => {

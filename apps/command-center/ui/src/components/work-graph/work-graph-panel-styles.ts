@@ -22,7 +22,6 @@ export const workGraphPanelStyles = css`
     margin: 0;
     font-size: ${unsafeCSS(fonts.sizeXl)};
     font-weight: 800;
-    letter-spacing: -0.03em;
   }
 
   .subtitle {
@@ -73,7 +72,6 @@ export const workGraphPanelStyles = css`
   .title {
     font-size: ${unsafeCSS(fonts.sizeLg)};
     font-weight: 800;
-    letter-spacing: -0.02em;
   }
 
   .meta,
