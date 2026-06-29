@@ -83,16 +83,18 @@ export function assertRunnerLaunchPrerequisites(
 
 export function buildCodexHomeSetup(repo: string, runtimeDir = '.agent'): string {
   const codexHome = path.posix.join(repo, runtimeDir, 'codex-home');
-  const q = shellQuote(codexHome);
-  // Codex refuses to start when CODEX_HOME does not exist ("Error finding codex
-  // home"), which leaves dispatch with an empty pane and a false ready-timeout.
-  // Create the per-worktree home and seed auth/config from the host's ~/.codex
-  // (symlinked so OAuth token refreshes stay shared), then export CODEX_HOME.
+  // Codex refuses to start when CODEX_HOME points at a non-existent dir ("Error
+  // finding codex home"), which leaves dispatch with an empty pane and a false
+  // ready-timeout. The observability install (bootstrapCodexHome) provisions this
+  // isolated home (auth + isolated config.toml with hook-trust + hooks.json) so the
+  // host's ~/.codex config is never written. Use it ONLY when that install actually
+  // provisioned it (auth present); otherwise fall back to the global ~/.codex with no
+  // farmslot observability, so a codex worker launches regardless. We never create or
+  // write the home here — that keeps the global config clean and avoids a half-built
+  // home that codex would reject.
   return (
-    `mkdir -p ${q} && ` +
-    `ln -sf "$HOME/.codex/auth.json" ${shellQuote(`${codexHome}/auth.json`)} && ` +
-    `{ [ -e "$HOME/.codex/config.toml" ] && ln -sf "$HOME/.codex/config.toml" ${shellQuote(`${codexHome}/config.toml`)} || true; } && ` +
-    `export CODEX_HOME=${q}`
+    `if [ -e ${shellQuote(`${codexHome}/auth.json`)} ]; then export CODEX_HOME=${shellQuote(codexHome)}; ` +
+    `else echo "[farmslot] codex-home not provisioned; using global ~/.codex without observability" >&2; fi`
   );
 }
 
