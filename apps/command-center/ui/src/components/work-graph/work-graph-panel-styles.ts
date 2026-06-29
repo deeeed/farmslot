@@ -331,6 +331,7 @@ export const workGraphPanelStyles = css`
 
   .node-card,
   .detail-card {
+    box-sizing: border-box;
     width: 100%;
     color: inherit;
     text-align: left;
