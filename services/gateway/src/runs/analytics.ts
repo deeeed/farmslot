@@ -180,6 +180,18 @@ function templateKey(run: Run): string | null {
   return `${p.templateName}@${p.templateVariant ?? 'default'}`;
 }
 
+/**
+ * Worker session tokens for this run, attributed to the model that actually ran
+ * (`actualModel` over the dispatched `model` — fast-mode can swap them). `total`
+ * is null when the runner reported no usage; `byModel` is empty in that case.
+ */
+function workerTokens(run: Run): { total: number | null; byModel: Record<string, number> } {
+  const total = numberOrNull(run.metrics?.sessionTotalTokens);
+  if (total == null || total <= 0) return { total, byModel: {} };
+  const model = run.metrics?.actualModel ?? run.metrics?.model ?? 'unknown';
+  return { total, byModel: { [model]: total } };
+}
+
 /** Flatten a terminal Run into a compact analytics record. Pure — no I/O. */
 export function buildAnalyticsRecord(
   run: Run,
@@ -206,6 +218,7 @@ export function buildAnalyticsRecord(
   const failedStep = run.status === 'done' ? null : failingStep(run);
   const failureReason = run.status === 'done' ? null : classifyFailureReason(run, failedStep);
   const ci = ciOutputs(run);
+  const tokens = workerTokens(run);
 
   return {
     schemaVersion: ANALYTICS_RECORD_SCHEMA_VERSION,
@@ -236,6 +249,8 @@ export function buildAnalyticsRecord(
     ciInlineFixAttempts: ci.inlineFix,
     humanReviewersRequestingChanges: humanReviewersRequestingChanges(run),
     hostLoad: hostLoadFromRun(run),
+    totalTokens: tokens.total,
+    tokensByModel: tokens.byModel,
     templateKey: templateKey(run),
     ...(opts?.backfilled ? { backfilled: true } : {}),
   };
@@ -369,6 +384,8 @@ export function aggregateAnalytics(
   const pollValues: number[] = [];
   const inlineFixValues: number[] = [];
   const nudgeByModel = new Map<string, { sum: number; n: number }>();
+  const tokenValues: number[] = [];
+  const tokensByModelAgg: Record<string, number> = {};
   let nudgeSum = 0;
   let zeroNudge = 0;
 
@@ -396,6 +413,10 @@ export function aggregateAnalytics(
     if (r.ciResult) ciResultBreakdown[r.ciResult] = (ciResultBreakdown[r.ciResult] ?? 0) + 1;
     if (r.ciPollCount != null) pollValues.push(r.ciPollCount);
     if (r.ciInlineFixAttempts != null) inlineFixValues.push(r.ciInlineFixAttempts);
+    if (r.totalTokens != null) tokenValues.push(r.totalTokens);
+    for (const [m, t] of Object.entries(r.tokensByModel ?? {})) {
+      tokensByModelAgg[m] = (tokensByModelAgg[m] ?? 0) + t;
+    }
     nudgeSum += r.nudgeCount;
     if (r.nudgeCount === 0) zeroNudge++;
     const m = nudgeByModel.get(r.model ?? 'unknown') ?? { sum: 0, n: 0 };
@@ -428,6 +449,8 @@ export function aggregateAnalytics(
     parseFailures,
     byStatus,
     byModel,
+    tokensByModel: tokensByModelAgg,
+    tokens: durationStats(tokenValues),
     byRunner,
     byTemplate,
     bottleneck,

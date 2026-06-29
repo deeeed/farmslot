@@ -5,6 +5,7 @@ import type { IndependentReviewStatus, RunMetrics } from '@farmslot/protocol';
 
 import {
   aggregateFamilyChainedLoops,
+  buildGateSummary,
   buildReviewSummary,
   buildTokenSummary,
   enrichDecisionsWithGateSummary,
@@ -261,4 +262,95 @@ test('buildTokenSummary projects main-worker tokens from run metrics', () => {
   assert.equal(tokens.familyTotalTokens, 3722374); // no reviews, no family loops in store
   assert.equal(tokens.perTurnDetailsAvailable, true);
   assert.deepEqual(tokens.runnerSessionPaths, ['/sessions/solo.jsonl']);
+});
+
+test('buildTokenSummary rolls up tokens by model, reads the review usage split, and reports re-work', () => {
+  const run = makeRun({
+    id: 'rollup',
+    familyId: 'rollup',
+    flowType: 'dev',
+    metrics: metrics({
+      actualModel: 'claude-opus-4-8',
+      nudgeCount: 3,
+      sessionInputTokens: 1000,
+      sessionOutputTokens: 200,
+      sessionCacheRead: 50,
+      sessionCacheCreation: 10,
+      sessionTotalTokens: 1260,
+      sessionTurns: 12,
+    }),
+    engineState: {
+      publishGate: {
+        independentReviews: [
+          {
+            id: 'independent-review-1',
+            source: 'human-gate',
+            crossRunner: true,
+            loopNumber: 1,
+            verdict: 'pass',
+            unresolvedCount: 0,
+            feedbackSent: false,
+            usage: {
+              actualModel: 'claude-opus-4-8',
+              inputTokens: 300,
+              outputTokens: 100,
+              cacheRead: 20,
+              cacheCreation: 5,
+              totalTokens: 425,
+              measuredAt: '2026-04-16T00:00:00.000Z',
+              source: 'runner-transcript',
+            },
+          },
+        ],
+      },
+    },
+  });
+
+  const tokens = buildTokenSummary(run);
+
+  // Review usage split is read in full (not just total).
+  assert.equal(tokens.reviews[0].total, 425);
+  assert.equal(tokens.reviews[0].input, 300);
+  assert.equal(tokens.reviews[0].cacheRead, 20);
+
+  // Both worker + review are claude-opus-4-8 → one rolled-up model bucket.
+  assert.equal(tokens.byModel.length, 1);
+  const opus = tokens.byModel[0];
+  assert.equal(opus.model, 'claude-opus-4-8');
+  assert.equal(opus.total, 1260 + 425);
+  assert.equal(opus.input, 1000 + 300);
+  assert.equal(opus.turns, 12); // worker turns; reviews contribute 0
+
+  // No family loops, but 3 nudges → re-work surfaced from nudges alone.
+  assert.ok(tokens.reWork);
+  assert.equal(tokens.reWork.tokens, 0);
+  assert.equal(tokens.reWork.loops, 0);
+  assert.equal(tokens.reWork.nudgeCount, 3);
+});
+
+test('buildGateSummary derives per-step checklist durations from persisted timing', () => {
+  const run = makeRun({
+    metrics: metrics({
+      sessionTotalTokens: 100,
+      sessionTurns: 3,
+      checklistTiming: {
+        schemaVersion: 1,
+        source: 'TASK.md',
+        events: [
+          { stepNumber: 1, label: 'Setup', checkedAt: '2026-04-16T00:00:00.000Z' },
+          { stepNumber: 2, label: 'Implement', checkedAt: '2026-04-16T00:01:30.000Z' },
+          { stepNumber: 3, label: 'Verify', checkedAt: '2026-04-16T00:02:00.000Z' },
+        ],
+      },
+    }),
+  });
+
+  const summary = buildGateSummary(run, 'publication');
+  assert.ok(summary.checklist);
+  assert.equal(summary.checklist.perStepMs.length, 3);
+  // First step has no prior mark → 0; subsequent steps are deltas.
+  assert.equal(summary.checklist.perStepMs[0].durationMs, 0);
+  assert.equal(summary.checklist.perStepMs[1].durationMs, 90_000);
+  assert.equal(summary.checklist.perStepMs[2].durationMs, 30_000);
+  assert.equal(summary.checklist.perStepMs[1].label, 'Implement');
 });

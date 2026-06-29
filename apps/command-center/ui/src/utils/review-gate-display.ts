@@ -392,6 +392,32 @@ export interface GateSummaryTokenRow {
   total: string;
 }
 
+/** Per-model token rollup row — raw `totalRaw` retained for bar widths / sorting. */
+export interface GateSummaryModelRow {
+  model: string;
+  input: string;
+  output: string;
+  cacheRead: string;
+  total: string;
+  totalRaw: number;
+  turns: number;
+}
+
+export interface GateSummaryChecklistRow {
+  stepNumber: number;
+  label: string;
+  duration: string;
+}
+
+/** Compact human duration: 1500 → "1.5s", 65000 → "1.1m". */
+export function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
+  return `${(ms / 3_600_000).toFixed(1)}h`;
+}
+
 export interface GateSummaryReviewRow {
   label: string;
   verdict: string;
@@ -415,10 +441,13 @@ export interface GateSummaryDisplay {
   passingLabel: string;
   reWorkCount: number;
   unresolvedTotal: number;
+  reWork: { tokens: string; loops: number; nudgeCount: number } | null;
+  checklist: GateSummaryChecklistRow[];
   tokens: {
     mainWorker: GateSummaryTokenRow;
     reviews: GateSummaryTokenRow[];
     chainedLoops: Array<GateSummaryTokenRow & { flowType: string }>;
+    byModel: GateSummaryModelRow[];
     grandTotal: string;
     sessionPaths: string[];
   };
@@ -458,6 +487,18 @@ export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
     passingLabel: `${requiredLabel} passing`,
     reWorkCount,
     unresolvedTotal: review.totalUnresolved,
+    reWork: t.reWork
+      ? {
+          tokens: formatTokenCount(t.reWork.tokens),
+          loops: t.reWork.loops,
+          nudgeCount: t.reWork.nudgeCount ?? 0,
+        }
+      : null,
+    checklist: (summary.checklist?.perStepMs ?? []).map((s) => ({
+      stepNumber: s.stepNumber,
+      label: s.label,
+      duration: formatDurationMs(s.durationMs),
+    })),
     tokens: {
       mainWorker: {
         label: 'Worker',
@@ -474,6 +515,15 @@ export function gateSummaryDisplay(summary: GateSummary): GateSummaryDisplay {
         flowType: c.flowType,
         model: c.model ?? 'unknown',
         total: formatTokenCount(c.tokens.total),
+      })),
+      byModel: t.byModel.map((m) => ({
+        model: m.model ?? 'unknown',
+        input: formatTokenCount(m.input),
+        output: formatTokenCount(m.output),
+        cacheRead: formatTokenCount(m.cacheRead),
+        total: formatTokenCount(m.total),
+        totalRaw: m.total,
+        turns: m.turns,
       })),
       grandTotal: formatTokenCount(t.familyTotalTokens),
       sessionPaths: t.runnerSessionPaths ?? [],

@@ -6,8 +6,10 @@ import type { FlowType, RunLane, RunStatus } from './runs.js';
 // from the prunable run-history store. Holds distilled metrics only — never
 // transcripts or large step outputs. See docs/plans/pipeline-ops-analytics-goal.md.
 //
-// Cost/tokens are intentionally absent: those fields are unreliable across runners
-// (0% populated at design time) and are deferred to the sub-agent cost roll-up lane.
+// Token counts ARE captured (extraction became reliable via the gate-summary
+// projection). Dollar cost stays absent on purpose — pricing varies by
+// enterprise/subscription account and must be overridable per project, not a
+// hardcoded table; it is deferred to a later cost lane.
 
 /** Bumped when the on-disk record shape changes in a non-additive way. */
 export const ANALYTICS_RECORD_SCHEMA_VERSION = 1;
@@ -103,6 +105,10 @@ export interface RunAnalyticsRecord {
    */
   humanReviewersRequestingChanges: number | null;
   hostLoad: HostLoadSnapshot | null;
+  /** Total session tokens (worker), when captured; null when the runner did not report usage. */
+  totalTokens: number | null;
+  /** Session tokens keyed by model id, when captured. Empty when no usage was reported. */
+  tokensByModel: Record<string, number>;
   /** Compact template identity for grouping; null when no provenance was captured. */
   templateKey: string | null;
   /** True when produced by the one-time backfill rather than a live terminal transition. */
@@ -176,6 +182,10 @@ export interface AnalyticsQueryResult {
   parseFailures: number;
   byStatus: Record<string, number>;
   byModel: Record<string, number>;
+  /** Total session tokens summed by model id across matched runs. */
+  tokensByModel: Record<string, number>;
+  /** Distribution of per-run total session tokens. */
+  tokens: DurationStats;
   byRunner: Record<string, number>;
   byTemplate: Record<string, number>;
   bottleneck: BottleneckEntry[];

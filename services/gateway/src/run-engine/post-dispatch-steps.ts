@@ -283,12 +283,14 @@ export async function executeMonitorStep(
   await updateSlotStatus(current.slotId, { agent: 'idle' });
   const after = getRun(runId)!;
   const workerSignal = monitorResult?.workerSignal ?? null;
-  if (workerSignal?.disposition || workerSignal?.evidence) {
+  if (workerSignal?.disposition || workerSignal?.evidence || workerSignal?.checklistTiming) {
     updateRun(runId, {
       metrics: {
         ...after.metrics,
         ...(workerSignal.disposition ? { disposition: workerSignal.disposition } : {}),
         ...(workerSignal.evidence ? { terminalEvidence: workerSignal.evidence } : {}),
+        // Persist per-step timing so it survives task-dir pruning and feeds the gate summary.
+        ...(workerSignal.checklistTiming ? { checklistTiming: workerSignal.checklistTiming } : {}),
       },
     });
   }
