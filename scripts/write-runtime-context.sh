@@ -162,6 +162,10 @@ env = {
     'RECIPE_RUNTIME_OWNER': ctx.get('runtimeOwner'),
     'RECIPE_CDP_PORT': ctx.get('cdpPort'),
     'CDP_PORT': ctx.get('cdpPort'),
+    # debug-chrome.sh / cdp.mjs read FARMSLOT_CDP_PORT; without it they default to the
+    # operator's 9323 instead of this slot's CDP, so recipes/screenshots/video can hit
+    # the operator's Chrome. Export it so slot tooling targets the slot by default.
+    'FARMSLOT_CDP_PORT': ctx.get('cdpPort'),
     'RECIPE_WATCHER_PORT': ctx.get('watcherPort'),
     'WATCHER_PORT': ctx.get('watcherPort'),
     'RECIPE_METRO_PORT': ctx.get('metroPort'),
