@@ -508,6 +508,83 @@ test('snapshot counts binary-only reviewed input as explicit empty review input'
   assert.equal(entry.missingData.includes('input-diff'), false);
 });
 
+test('snapshot prefers iteration diff for follow-up pr-complete over GitHub input', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'family-observability-pr-complete-iteration-'));
+  const taskDir = path.join(base, 'followup');
+  await writeArtifact(taskDir, 'TASK.md', '# PR complete');
+  await writeArtifact(
+    taskDir,
+    'artifacts/diff-stat.json',
+    JSON.stringify({
+      source: 'artifact',
+      available: true,
+      files: 682,
+      additions: 12736,
+      deletions: 14645,
+      kind: 'contribution',
+      filter: 'source-code',
+      artifactPath: 'artifacts/diff.txt',
+      baseRef: 'origin/main',
+      capturedAt: '2026-05-08T15:03:05.900Z',
+    }),
+  );
+  await writeArtifact(
+    taskDir,
+    'artifacts/iteration-diff-stat.json',
+    JSON.stringify({
+      source: 'artifact',
+      available: true,
+      files: 2,
+      additions: 8,
+      deletions: 1,
+      kind: 'iteration',
+      filter: 'source-code',
+      artifactPath: 'artifacts/iteration-diff.txt',
+      baseRef: 'dispatchHead:abc123',
+      capturedAt: '2026-05-08T15:03:05.900Z',
+    }),
+  );
+  await writeArtifact(taskDir, 'inputs/diff.txt', 'diff --git a/app/a.ts b/app/a.ts');
+  await writeArtifact(
+    taskDir,
+    'inputs/diff-stat.json',
+    JSON.stringify({
+      source: 'artifact',
+      available: true,
+      files: 3,
+      additions: 236,
+      deletions: 66,
+      kind: 'review-input',
+      filter: 'source-code',
+      artifactPath: 'inputs/diff.txt',
+      repository: 'example-org/example-mobile',
+      prNumber: 29800,
+      baseRef: 'main',
+      capturedAt: '2026-05-08T15:02:50.064Z',
+    }),
+  );
+
+  const snapshot = await buildFamilyObservabilitySnapshotFromRuns([
+    makeRun({
+      id: 'pr-complete-follow-up',
+      familyId: 'family-pr-complete-iteration',
+      parentRunId: 'root-run',
+      flowType: 'pr-complete',
+      ticketOrPr: 'example-org/example-mobile#29800',
+      taskFile: path.join(taskDir, 'TASK.md'),
+      prNumber: 29800,
+    }),
+  ]);
+
+  assert(snapshot.familyChangeLedger);
+  assert.equal(snapshot.diffStat.files, 2);
+  assert.equal(snapshot.diffStat.additions, 8);
+  const entry = snapshot.familyChangeLedger.entries[0];
+  assert.equal(entry.changeKind, 'follow-up');
+  assert.equal(entry.iterationDiff?.available, true);
+  assert.equal(snapshot.familyChangeLedger.summary.totalContributionAdditions, 8);
+});
+
 test('snapshot prefers PR input diff over stale pr-complete contribution diff', async () => {
   const base = await mkdtemp(
     path.join(os.tmpdir(), 'family-observability-pr-complete-input-wins-'),

@@ -188,7 +188,7 @@ test('iteration ledger appends fallback cards when ledger entries are partial', 
     presentation.cards.map((card) => card.runId),
     [root.runId, missingFromLedger.runId],
   );
-  assert.equal(presentation.cards[1].diffLabel, '4 files · +8 -2');
+  assert.equal(presentation.cards[1].diffLabel, 'produced code delta · 4 files · +8 -2');
 });
 
 test('iteration ledger calls out CI-driven follow-ups', () => {

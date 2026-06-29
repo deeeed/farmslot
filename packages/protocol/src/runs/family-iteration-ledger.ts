@@ -144,13 +144,16 @@ function iterationReason(
 }
 
 function contributionDiffLabel(entry: FamilyChangeLedgerEntry): string {
-  const diff = entry.contributionDiff.available
-    ? entry.contributionDiff
-    : entry.legacyDiffFallback?.available
-      ? entry.legacyDiffFallback
-      : null;
+  const diff = entry.iterationDiff?.available
+    ? entry.iterationDiff
+    : entry.contributionDiff.available
+      ? entry.contributionDiff
+      : entry.legacyDiffFallback?.available
+        ? entry.legacyDiffFallback
+        : null;
   if (!diff) return 'no code delta';
-  return `${diff.files} files · +${diff.additions} -${diff.deletions}`;
+  const scope = entry.iterationDiff?.available ? 'iteration delta' : 'produced code delta';
+  return `${scope} · ${diff.files} files · +${diff.additions} -${diff.deletions}`;
 }
 
 function reviewedInputLabel(entry: FamilyChangeLedgerEntry): string {

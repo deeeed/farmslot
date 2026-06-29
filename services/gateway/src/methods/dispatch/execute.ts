@@ -773,6 +773,13 @@ export async function dispatchExecute(
       throw new Error(`Prepare failed: ${(err as Error).message}`);
     }
   }
+  if (params.runId) {
+    const { captureWorktreeHeadSha } = await import('../../run-engine/diff-artifacts.js');
+    const worktreeHeadAtDispatch = await captureWorktreeHeadSha(params.slotId);
+    if (worktreeHeadAtDispatch) {
+      updateRunStore(params.runId, { worktreeHeadAtDispatch });
+    }
+  }
   if (selectedApp) {
     await updateSlotStatus(params.slotId, { app: selectedApp });
   }
