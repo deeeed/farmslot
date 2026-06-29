@@ -25,7 +25,11 @@ import { isTerminalWorkerSignal, normalizeWorkerSignal } from '../tasks/worker-s
 import { claudeHookObservability } from './claude-observability.js';
 import { disagreementReason, logRunnerObservabilityAgreement } from './observability-agreement.js';
 import { runnerActivityIsBusy, runnerObservabilityDirForSlot } from './observability-files.js';
-import { instructionNeedle, normalizeInstructionText, runnerPromptDigest } from './observability-prompt-digest.js';
+import {
+  instructionNeedle,
+  normalizeInstructionText,
+  runnerPromptDigest,
+} from './observability-prompt-digest.js';
 import {
   computePromptAcceptedSinceMs,
   isObservabilityReadingAuthoritative,
@@ -35,7 +39,12 @@ import {
   selectPendingFromObservabilityAndPane,
 } from './observability-send-decision.js';
 import { writeRunnerPromptSentinel } from './observability-sentinel.js';
-import type { ObservabilityReading, ObservabilityScope, RunnerActivity, RunnerObservability } from './observability-types.js';
+import type {
+  ObservabilityReading,
+  ObservabilityScope,
+  RunnerActivity,
+  RunnerObservability,
+} from './observability-types.js';
 import { classifyRunnerPaneStateBestEffort } from './pane-classifier.js';
 
 /**
@@ -675,9 +684,13 @@ function paneLineLooksShellPrompt(line: string): boolean {
   return /^[^\s@]+@[^\s]+\s+\S+\s+[%$#]\s*$/.test(line.trim());
 }
 
-function runnerPaneShowsCurrentInteractiveProgress(pane: string, runnerId?: string | null): boolean {
+function runnerPaneShowsCurrentInteractiveProgress(
+  pane: string,
+  runnerId?: string | null,
+): boolean {
   const runner = normalizeRunner(runnerId);
-  if (runner !== 'cursor' && runner !== 'grok' && runner !== 'claude') return false;
+  if (runner !== 'cursor' && runner !== 'grok' && runner !== 'claude' && runner !== 'codex')
+    return false;
   const tail = pane
     .split('\n')
     .map((line) => line.trim())
@@ -686,11 +699,14 @@ function runnerPaneShowsCurrentInteractiveProgress(pane: string, runnerId?: stri
   let progressIndex = -1;
   for (let i = tail.length - 1; i >= 0; i--) {
     if (
-      (runner === 'claude'
-        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing)[…\.]?/i.test(
+      // Codex renders bullet-prefixed progress (`• Working (2m 02s • esc to interrupt)`,
+      // `• Explored`, `• Ran …`) with an animated timer rather than the braille spinner,
+      // so it shares claude's matcher. Without this, codex progress is never recognized as
+      // "task already running" and the readiness gate falsely times out against the timer.
+      (runner === 'claude' || runner === 'codex'
+        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored)[…\.]?/i.test(
             tail[i] ?? '',
-          ) ||
-          /running in the background|esc to interrupt/i.test(tail[i] ?? '')
+          ) || /running in the background|esc to interrupt/i.test(tail[i] ?? '')
         : /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running|Starting session)\b(?:\s+\d+\s+tokens)?/i.test(
             tail[i] ?? '',
           )) ||
@@ -865,9 +881,7 @@ async function readRunnerActivityFromObservability(
   }
 }
 
-type HookPendingDecision =
-  | { kind: 'hook'; pending: boolean }
-  | { kind: 'fallback' };
+type HookPendingDecision = { kind: 'hook'; pending: boolean } | { kind: 'fallback' };
 
 async function resolvePendingInstructionObsFirst(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -1110,9 +1124,7 @@ async function submitRunnerInstruction(
       const sentinel = await writeRunnerPromptSentinel(vars, message);
       sentAtMs = sentinel.sentAt;
     } catch (error) {
-      console.warn(
-        `[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`,
-      );
+      console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
     }
     await execOnSlot(vars, tmuxSendTextCommand(target, message, { enter: true }));
   } else {
