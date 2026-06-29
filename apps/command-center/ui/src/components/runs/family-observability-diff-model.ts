@@ -28,6 +28,7 @@ export function familyLedgerEntry(
 }
 
 export function ledgerDiffScopeLabel(entry: FamilyChangeLedgerEntry): string {
+  if (entry.iterationDiff?.available) return 'iteration delta';
   if (entry.changeKind === 'review-input' && entry.inputDiff?.available) {
     return 'reviewed input snapshot';
   }
@@ -38,6 +39,9 @@ export function ledgerDiffScopeLabel(entry: FamilyChangeLedgerEntry): string {
 }
 
 export function ledgerDiffLabel(entry: FamilyChangeLedgerEntry): string {
+  if (entry.iterationDiff?.available) {
+    return `iteration delta +${entry.iterationDiff.additions} -${entry.iterationDiff.deletions}`;
+  }
   if (entry.changeKind === 'review-input' && entry.inputDiff?.available) {
     return `reviewed PR input +${entry.inputDiff.additions} -${entry.inputDiff.deletions}`;
   }
@@ -74,6 +78,9 @@ export function runDiffLabel(
   run: Pick<FamilyObservabilityRunSummary, 'diffStat' | 'runId'>,
 ): string {
   const entry = familyLedgerEntry(snapshot, run.runId);
+  if (entry?.iterationDiff?.available) {
+    return `iteration delta +${entry.iterationDiff.additions} -${entry.iterationDiff.deletions}`;
+  }
   if (entry?.contributionDiff.available) {
     return `produced code delta +${entry.contributionDiff.additions} -${entry.contributionDiff.deletions}`;
   }
@@ -131,6 +138,16 @@ export function ledgerDiffArtifact(
     );
   }
   return (
+    (entry.iterationDiff
+      ? diffArtifactFromProvenance(
+          snapshot,
+          entry.runId,
+          entry.familyId,
+          entry.iterationDiff,
+          'iteration-diff',
+          'task-artifact',
+        )
+      : null) ??
     diffArtifactFromProvenance(
       snapshot,
       entry.runId,

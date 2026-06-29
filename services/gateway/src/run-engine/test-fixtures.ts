@@ -58,6 +58,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     reviewTier: overrides.reviewTier,
     safetyTier: overrides.safetyTier,
     startRef: overrides.startRef,
+    worktreeHeadAtDispatch: overrides.worktreeHeadAtDispatch,
     completedAt: overrides.completedAt,
     error: overrides.error,
     monitorState: overrides.monitorState,

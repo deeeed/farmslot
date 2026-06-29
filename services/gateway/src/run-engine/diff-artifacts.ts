@@ -33,6 +33,7 @@ import {
 } from '../core/source-diff-filter.js';
 import { shellQuote } from '../core/tmux.js';
 import { fetchGitHubPR, fetchPRDiffFiles } from '../external/github.js';
+import { remoteBranchRefspec } from '../methods/slot/slot-tracking.js';
 
 import {
   atomicWriteTextFile,
@@ -255,12 +256,13 @@ function shouldReuseUnavailableDiffArtifact(
   return nowMs - capturedAtMs < UNAVAILABLE_DIFF_RECAPTURE_COOLDOWN_MS;
 }
 
-async function readRunDiffArtifactState(
+async function readDiffStatArtifactState(
   taskFile: string | null | undefined,
+  statBasename: string,
   expectedKind?: FamilyDiffKind,
 ): Promise<ExistingRunDiffArtifactState | null> {
   if (!taskFile) return null;
-  const diffStatPath = path.join(path.dirname(taskFile), 'artifacts', 'diff-stat.json');
+  const diffStatPath = path.join(path.dirname(taskFile), 'artifacts', `${statBasename}-stat.json`);
   if (!existsSync(diffStatPath)) return null;
   try {
     const parsed: unknown = JSON.parse(await readFile(diffStatPath, 'utf-8'));
@@ -300,6 +302,19 @@ async function readRunDiffArtifactState(
     );
     return null;
   }
+}
+
+async function readRunDiffArtifactState(
+  taskFile: string | null | undefined,
+  expectedKind?: FamilyDiffKind,
+): Promise<ExistingRunDiffArtifactState | null> {
+  return readDiffStatArtifactState(taskFile, 'diff', expectedKind);
+}
+
+async function readIterationDiffArtifactState(
+  taskFile: string | null | undefined,
+): Promise<ExistingRunDiffArtifactState | null> {
+  return readDiffStatArtifactState(taskFile, 'iteration-diff', 'iteration');
 }
 
 export async function readExistingRunDiffArtifacts(
@@ -347,7 +362,7 @@ export function runSourceDiffNumstatCommand(
     'untracked=$(mktemp "${TMPDIR:-/tmp}/farmslot-untracked.XXXXXX")',
     'trap \'rm -f "$untracked"\' EXIT',
     `git -c core.quotePath=false ls-files --others --exclude-standard -z ${pathspecClause} > "$untracked"`,
-    'while IFS= read -r -d \'\' file; do',
+    "while IFS= read -r -d '' file; do",
     '  [ -f "$file" ] || continue',
     '  lines=$(wc -l < "$file" | tr -d \'[:space:]\')',
     '  printf \'%s\\t0\\t%s\\n\' "${lines:-0}" "$file"',
@@ -371,7 +386,7 @@ export function cappedRunSourceDiffCommand(
     `git -c core.quotePath=false ls-files --others --exclude-standard -z ${pathspecClause} > "$untracked"`,
     '{',
     `  ${GIT_DIFF_NO_QUOTE_PATH} "$tracked_base" ${pathspecClause}`,
-    '  while IFS= read -r -d \'\' file; do',
+    "  while IFS= read -r -d '' file; do",
     '    [ -f "$file" ] || continue',
     '    set +e',
     '    git -c core.quotePath=false diff --no-index -- /dev/null "$file"',
@@ -392,17 +407,65 @@ export function contributionDiffBaseSpec(
   defaultBranch: string,
 ): { baseRef: string; commitish: string } {
   const requested = run.startRef?.requestedRef?.trim();
-  if (!requested) return { baseRef: defaultBranch, commitish: defaultBranch };
+  if (!requested) {
+    const remote = `origin/${defaultBranch}`;
+    return { baseRef: remote, commitish: remote };
+  }
   return {
     baseRef: `startRef:${requested}`,
     commitish: run.startRef?.resolvedSha?.trim() || requested,
   };
 }
 
+export async function captureWorktreeHeadSha(
+  slotId: string | null | undefined,
+): Promise<string | null> {
+  if (!slotId) return null;
+  try {
+    const vars = await loadSlotVars(slotId);
+    const head = await execOnSlot(vars, 'git rev-parse HEAD', { timeout: 10000 });
+    return head.exitCode === 0 ? head.stdout.trim() : null;
+  } catch (err) {
+    console.warn(
+      `[run-engine] worktree head capture failed for slot ${slotId}: ${(err as Error).message.slice(0, 200)}`,
+    );
+    return null;
+  }
+}
+
+type CaptureRunDiffSnapshotOptions = {
+  baseSpec?: { baseRef: string; commitish: string };
+  /** When true (default), diff from merge-base(base, HEAD); when false, diff from base..HEAD. */
+  useMergeBase?: boolean;
+  kind?: FamilyDiffKind;
+  diffArtifactPath?: string;
+};
+
+async function ensureRemoteDefaultBranchFetched(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  defaultBranch: string,
+  commitish: string,
+): Promise<string | null> {
+  const remoteRef = `origin/${defaultBranch}`;
+  if (commitish !== remoteRef) return null;
+  const fetchResult = await execOnSlot(
+    vars,
+    `git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+    { timeout: 15000 },
+  );
+  if (fetchResult.exitCode === 0) return null;
+  return (
+    fetchResult.stderr.trim() ||
+    fetchResult.stdout.trim() ||
+    `git fetch origin ${defaultBranch} failed on ${vars.slotId}`
+  );
+}
+
 export async function captureRunDiffSnapshot(
   run: Run,
+  options: CaptureRunDiffSnapshotOptions = {},
 ): Promise<FamilyDiffProvenance & { diffText?: string }> {
-  const diffKind = diffKindForFlow(run.flowType);
+  const diffKind = options.kind ?? diffKindForFlow(run.flowType);
   if (!run.slotId) return unavailableDiff('missing-slot', diffKind);
   if (!run.branch) return unavailableDiff('missing-branch', diffKind);
   const runBranch = run.branch;
@@ -416,9 +479,19 @@ export async function captureRunDiffSnapshot(
 
   const { defaultBranch, sourceFilter, configSource, configFallbackReason, configFallbackError } =
     await resolveDiffCaptureSettings(run.project);
-  const baseSpec = contributionDiffBaseSpec(run, defaultBranch);
+  const baseSpec = options.baseSpec ?? contributionDiffBaseSpec(run, defaultBranch);
+  const useMergeBase = options.useMergeBase ?? true;
+  const diffArtifactPath = options.diffArtifactPath ?? 'artifacts/diff.txt';
   const sourcePathspecList = sourceCodeGitPathspecs(sourceFilter);
   try {
+    const fetchError = await ensureRemoteDefaultBranchFetched(
+      vars,
+      defaultBranch,
+      baseSpec.commitish,
+    );
+    if (fetchError) {
+      return unavailableDiff('base-ref-unavailable', diffKind, fetchError);
+    }
     const headRefResult = await execOnSlot(vars, 'git rev-parse HEAD', { timeout: 10000 });
     if (headRefResult.exitCode !== 0) {
       return unavailableDiff(
@@ -441,19 +514,20 @@ export async function captureRunDiffSnapshot(
     }
     const baseSha = baseRefResult.stdout.trim();
     const headSha = headRefResult.stdout.trim();
-    const mergeBaseResult = await execOnSlot(
-      vars,
-      `git merge-base ${shellQuote(baseSha)} HEAD`,
-      { timeout: 10000 },
-    );
-    if (mergeBaseResult.exitCode !== 0) {
-      return unavailableDiff(
-        'base-ref-unavailable',
-        diffKind,
-        mergeBaseResult.stderr.trim() || mergeBaseResult.stdout.trim(),
-      );
+    let trackedDiffBase = baseSha;
+    if (useMergeBase) {
+      const mergeBaseResult = await execOnSlot(vars, `git merge-base ${shellQuote(baseSha)} HEAD`, {
+        timeout: 10000,
+      });
+      if (mergeBaseResult.exitCode !== 0) {
+        return unavailableDiff(
+          'base-ref-unavailable',
+          diffKind,
+          mergeBaseResult.stderr.trim() || mergeBaseResult.stdout.trim(),
+        );
+      }
+      trackedDiffBase = mergeBaseResult.stdout.trim();
     }
-    const trackedDiffBase = mergeBaseResult.stdout.trim();
     const noSourceDiffSnapshot = (): FamilyDiffProvenance & { diffText: string } => ({
       source: 'artifact',
       available: false,
@@ -529,7 +603,7 @@ export async function captureRunDiffSnapshot(
       ...stat,
       kind: diffKind,
       filter: 'source-code',
-      artifactPath: 'artifacts/diff.txt',
+      artifactPath: diffArtifactPath,
       baseRef: baseSpec.baseRef,
       baseSha,
       headRef: runBranch,
@@ -556,26 +630,57 @@ export async function captureRunDiffArtifacts(run: Run): Promise<FamilyDiffProve
   return withRunArtifactMutation(run.id, () => captureRunDiffArtifactsUnlocked(run));
 }
 
-async function captureRunDiffArtifactsUnlocked(run: Run): Promise<FamilyDiffProvenance> {
-  const existingState = await readRunDiffArtifactState(run.taskFile, diffKindForFlow(run.flowType));
-  if (existingState?.reuse) return existingState.provenance;
-  const snapshot = await captureRunDiffSnapshot(run);
-  if (!run.taskFile) return snapshot;
-  const taskDir = path.dirname(run.taskFile);
-  const artifactsDir = path.join(taskDir, 'artifacts');
-  await mkdir(artifactsDir, { recursive: true });
+async function writeDiffArtifactPair(
+  artifactsDir: string,
+  basename: string,
+  snapshot: FamilyDiffProvenance & { diffText?: string },
+): Promise<void> {
   const { diffText, ...provenance } = snapshot;
-  const diffTextPath = path.join(artifactsDir, 'diff.txt');
-  const diffStatPath = path.join(artifactsDir, 'diff-stat.json');
+  const diffTextPath = path.join(artifactsDir, `${basename}.txt`);
+  const diffStatPath = path.join(artifactsDir, `${basename}-stat.json`);
   if (snapshot.source === 'artifact' && snapshot.available) {
     await atomicWriteTextFile(diffTextPath, diffText ?? '');
     await atomicWriteTextFile(diffStatPath, JSON.stringify(provenance));
   } else {
     await atomicWriteTextFile(diffStatPath, JSON.stringify(provenance));
-    await preservePreviousDiffText(diffTextPath, artifactsDir, snapshot.capturedAt);
+    if (basename === 'diff') {
+      await preservePreviousDiffText(diffTextPath, artifactsDir, snapshot.capturedAt);
+    }
     await rm(diffTextPath, { force: true });
   }
-  return provenance;
+}
+
+async function captureRunDiffArtifactsUnlocked(run: Run): Promise<FamilyDiffProvenance> {
+  const existingState = await readRunDiffArtifactState(run.taskFile, diffKindForFlow(run.flowType));
+  const existingIterationState = await readIterationDiffArtifactState(run.taskFile);
+  const snapshot = existingState?.reuse
+    ? existingState.provenance
+    : await captureRunDiffSnapshot(run);
+  const dispatchHead = run.worktreeHeadAtDispatch?.trim();
+  let iterationSnapshot: (FamilyDiffProvenance & { diffText?: string }) | null = null;
+  if (dispatchHead && !existingIterationState?.reuse) {
+    iterationSnapshot = await captureRunDiffSnapshot(run, {
+      baseSpec: { baseRef: `dispatchHead:${dispatchHead}`, commitish: dispatchHead },
+      useMergeBase: false,
+      kind: 'iteration',
+      diffArtifactPath: 'artifacts/iteration-diff.txt',
+    });
+  }
+  if (!run.taskFile) return snapshot;
+  const taskDir = path.dirname(run.taskFile);
+  const artifactsDir = path.join(taskDir, 'artifacts');
+  await mkdir(artifactsDir, { recursive: true });
+  if (!existingState?.reuse) {
+    await writeDiffArtifactPair(artifactsDir, 'diff', snapshot);
+  }
+  if (iterationSnapshot) {
+    await writeDiffArtifactPair(artifactsDir, 'iteration-diff', iterationSnapshot);
+  }
+  if ('diffText' in snapshot) {
+    const { diffText: _diffText, ...provenance } = snapshot;
+    return provenance;
+  }
+  return snapshot;
 }
 
 const MAX_PREVIOUS_DIFF_BACKUPS = 3;

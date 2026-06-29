@@ -147,6 +147,11 @@ test('run source diff commands include dirty worktree source and exclude task ar
   assert.doesNotMatch(diff.stdout, /\.task\/feat\/123\/TASK\.md/);
 });
 
+test('contributionDiffBaseSpec defaults to origin/default branch', () => {
+  const base = contributionDiffBaseSpec(makeRun({}), 'main');
+  assert.deepEqual(base, { baseRef: 'origin/main', commitish: 'origin/main' });
+});
+
 test('contributionDiffBaseSpec uses replay startRef instead of default branch', () => {
   const base = contributionDiffBaseSpec(
     makeRun({

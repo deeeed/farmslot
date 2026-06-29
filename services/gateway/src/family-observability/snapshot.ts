@@ -33,6 +33,7 @@ import {
   isPrReviewDiffAuthoritative,
   readDiffProvenance,
   readInputDiffProvenance,
+  readIterationDiffProvenance,
 } from './change-ledger.js';
 import { buildEvalExperimentProjections } from './eval-experiments.js';
 import { isMissingPathError, readJsonIfExists, readTextIfExists, statIfPresent } from './io.js';
@@ -633,9 +634,12 @@ async function buildRunSummary(
     {}) as Record<string, unknown>;
   const diffProvenance = await readDiffProvenance(taskDir, completeOutputs, run.flowType);
   const inputDiffProvenance = await readInputDiffProvenance(taskDir);
-  const displayDiffProvenance = isPrReviewDiffAuthoritative(run.flowType, inputDiffProvenance)
-    ? inputDiffProvenance!
-    : diffProvenance;
+  const iterationDiffProvenance = await readIterationDiffProvenance(taskDir);
+  const displayDiffProvenance = iterationDiffProvenance?.available
+    ? iterationDiffProvenance
+    : isPrReviewDiffAuthoritative(run.flowType, inputDiffProvenance, run.parentRunId)
+      ? inputDiffProvenance!
+      : diffProvenance;
   const diffStat = {
     files: displayDiffProvenance.files,
     additions: displayDiffProvenance.additions,
@@ -689,7 +693,7 @@ async function buildRunSummary(
   if (ambiguousRecovery) missingData.push('recipe-provenance-ambiguous');
   if (!recipeQualityEvaluation.artifact) missingData.push('recipe-quality');
   if (
-    !isPrReviewDiffAuthoritative(run.flowType, inputDiffProvenance) &&
+    !isPrReviewDiffAuthoritative(run.flowType, inputDiffProvenance, run.parentRunId) &&
     !isExpectedAbsentContributionDiff(run.flowType, diffProvenance) &&
     !diffStat.available &&
     !isExpectedNoSourceDiff(diffProvenance)
@@ -697,7 +701,7 @@ async function buildRunSummary(
     missingData.push(diffProvenance.missingReason ?? 'diff-stat');
   }
   if (
-    !isPrReviewDiffAuthoritative(run.flowType, inputDiffProvenance) &&
+    !isPrReviewDiffAuthoritative(run.flowType, inputDiffProvenance, run.parentRunId) &&
     run.flowType !== 'review-pr' &&
     diffProvenance.source === 'legacy-step-output'
   ) {

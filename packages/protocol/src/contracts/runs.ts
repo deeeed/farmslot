@@ -1229,6 +1229,8 @@ export interface Run {
   importProvenance?: RunImportProvenance;
   /** Imported reference-only runs must not be re-dispatched or activated on slot. */
   readOnly?: boolean;
+  /** Slot HEAD SHA captured at dispatch (after prepare) — base for per-run iteration diff. */
+  worktreeHeadAtDispatch?: string | null;
 }
 
 export type { RunImportProvenance } from './run-bundles.js';
@@ -1333,7 +1335,7 @@ export interface RunCiWatchState {
 
 export type FamilyDiffProvenanceSource = 'artifact' | 'legacy-step-output' | 'unavailable';
 
-export type FamilyDiffKind = 'contribution' | 'review-input' | 'legacy';
+export type FamilyDiffKind = 'contribution' | 'review-input' | 'legacy' | 'iteration';
 
 export interface FamilyDiffProvenance {
   source: FamilyDiffProvenanceSource;
@@ -1380,7 +1382,10 @@ export function isFamilyDiffProvenance(value: unknown): value is FamilyDiffProve
     (rec.source === 'artifact' ||
       rec.source === 'legacy-step-output' ||
       rec.source === 'unavailable') &&
-    (rec.kind === 'contribution' || rec.kind === 'review-input' || rec.kind === 'legacy') &&
+    (rec.kind === 'contribution' ||
+      rec.kind === 'review-input' ||
+      rec.kind === 'legacy' ||
+      rec.kind === 'iteration') &&
     typeof rec.available === 'boolean' &&
     isCount(rec.files) &&
     isCount(rec.additions) &&
@@ -1474,6 +1479,8 @@ export interface FamilyChangeLedgerEntry {
   completedAt?: string;
   changeKind: 'contribution' | 'review-input' | 'follow-up' | 'legacy' | 'none';
   contributionDiff: FamilyDiffProvenance;
+  /** Code delta produced during this run only (dispatch HEAD → complete HEAD). */
+  iterationDiff?: FamilyDiffProvenance;
   inputDiff?: FamilyDiffProvenance;
   legacyDiffFallback?: FamilyDiffProvenance;
   inputCommit?: FamilyInputCommitMetadata;

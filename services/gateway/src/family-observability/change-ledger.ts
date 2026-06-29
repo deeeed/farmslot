@@ -88,7 +88,11 @@ export function isExpectedAbsentContributionDiff(
 export function isPrReviewDiffAuthoritative(
   flowType: Run['flowType'],
   inputDiff: FamilyDiffProvenance | undefined,
+  parentRunId?: string | null,
 ): boolean {
+  // Follow-up pr-complete runs should surface iteration/contribution delta, not
+  // the full GitHub PR input diff on every round.
+  if (flowType === 'pr-complete' && parentRunId) return false;
   return Boolean(inputDiff?.available && (flowType === 'pr-complete' || flowType === 'review-pr'));
 }
 
@@ -195,6 +199,25 @@ export async function readInputCommit(
   return raw ?? undefined;
 }
 
+export async function readIterationDiffProvenance(
+  taskDir: string | null,
+): Promise<FamilyDiffProvenance | undefined> {
+  if (!taskDir) return undefined;
+  const raw = await readJsonIfExists<unknown>(
+    path.join(taskDir, 'artifacts', 'iteration-diff-stat.json'),
+  );
+  if (isFamilyDiffProvenance(raw) && raw.kind === 'iteration') return raw;
+  return undefined;
+}
+
+function ledgerContributionStat(entry: FamilyChangeLedgerEntry): FamilyDiffProvenance | undefined {
+  if (entry.iterationDiff?.available) return entry.iterationDiff;
+  if (entry.contributionDiff.available) return entry.contributionDiff;
+  if (entry.contributionDiff.partialStat) return entry.contributionDiff;
+  if (entry.legacyDiffFallback?.available) return entry.legacyDiffFallback;
+  return undefined;
+}
+
 export async function buildFamilyChangeLedger(
   runs: Run[],
   runSummaries: FamilyObservabilityRunSummary[],
@@ -208,8 +231,13 @@ export async function buildFamilyChangeLedger(
       const completeOutputs = (run?.steps.find((step) => step.name === 'complete')?.outputs ??
         {}) as Record<string, unknown>;
       const contributionDiff = await readDiffProvenance(taskDir, completeOutputs, summary.flowType);
+      const iterationDiff = await readIterationDiffProvenance(taskDir);
       const inputDiff = await readInputDiffProvenance(taskDir);
-      const authoritativeInputDiff = isPrReviewDiffAuthoritative(summary.flowType, inputDiff);
+      const authoritativeInputDiff = isPrReviewDiffAuthoritative(
+        summary.flowType,
+        inputDiff,
+        summary.parentRunId,
+      );
       const inputCommit = await readInputCommit(taskDir);
       const reviewSignalsRaw = taskDir ? await readCommentsTriageSummary(taskDir) : null;
       const reviewSignals = reviewSignalsRaw
@@ -266,7 +294,7 @@ export async function buildFamilyChangeLedger(
         completedAt: summary.completedAt,
         changeKind: authoritativeInputDiff
           ? 'review-input'
-          : contributionDiff.available
+          : iterationDiff?.available || contributionDiff.available
             ? summary.parentRunId
               ? 'follow-up'
               : 'contribution'
@@ -278,6 +306,7 @@ export async function buildFamilyChangeLedger(
                   ? 'legacy'
                   : 'none',
         contributionDiff,
+        ...(iterationDiff ? { iterationDiff } : {}),
         ...(inputDiff ? { inputDiff } : {}),
         ...(contributionDiff.source === 'legacy-step-output'
           ? { legacyDiffFallback: contributionDiff }
@@ -297,6 +326,7 @@ export async function buildFamilyChangeLedger(
         entry.contributionDiff.partialStat;
       if (
         entry.contributionDiff.available ||
+        entry.iterationDiff?.available ||
         hasPartialContributionDiff ||
         entry.inputDiff?.available
       ) {
@@ -307,15 +337,16 @@ export async function buildFamilyChangeLedger(
       const contributionDiffIsCanonical = !isPrReviewDiffAuthoritative(
         entry.flowType,
         entry.inputDiff,
+        entry.parentRunId,
       );
+      const contributionStat = ledgerContributionStat(entry);
       if (
         contributionDiffIsCanonical &&
-        (entry.contributionDiff.available || hasPartialContributionDiff)
+        contributionStat &&
+        (contributionStat.available || contributionStat.partialStat)
       ) {
         acc.runsWithContributionDiff += 1;
-        const stat = entry.contributionDiff.available
-          ? entry.contributionDiff
-          : entry.contributionDiff.partialStat!;
+        const stat = contributionStat.available ? contributionStat : contributionStat.partialStat!;
         acc.totalContributionFiles += stat.files;
         acc.totalContributionAdditions += stat.additions;
         acc.totalContributionDeletions += stat.deletions;

@@ -120,6 +120,56 @@ Rebase is opt-in because some runner templates and operator habits assume merge 
 ## Non-goals
 
 - Auto-provisioning worktrees or changing `worktree_base` layout.
-- Replacing worker-side `merge-main` / `pr-complete` templates.
+- Replacing worker-side `merge-main` / `pr-complete` templates. _(Superseded by 2026-06-29 addendum for `pr-complete` rebase policy; `merge-main` templates unchanged.)_
 - Enforcing linear history on `main` (branch protection remains a GitHub concern).
 - Cross-project tracking branch names (each project owns its template).
+
+---
+
+## Addendum: Worker branch integration and family diff accuracy (2026-06-29)
+
+**Status:** Accepted  
+**Relates to:** [ADR-024](024-run-lanes-and-run-family-model.md) (family observability)
+
+### Context
+
+Multi-round `pr-complete` families were accumulating merge commits on every follow-up when
+`main` moved, and family history recorded **cumulative branch-vs-main** diffs — making each
+round look like a massive change even when the worker only fixed a review comment.
+
+ADR-042 §4 covered prepare-time `merge_main_strategy` for `review-pr` only. Worker templates
+for `pr-complete` still mandated `git merge origin/main` on every run (see MetaMask pack).
+
+### Decision
+
+1. **Worker integration (`pr-complete`)** — rebase onto `origin/${defaultBranch}` when the branch
+   is behind; skip when `origin/${defaultBranch}` is already an ancestor of `HEAD`. Record
+   `integration-status` in task artifacts (`skipped` | `rebased` | `blocked`). Push with
+   `--force-with-lease` after a rebase.
+
+2. **Worker integration (`merge-main`)** — unchanged: explicit merge flow for hard conflicts.
+
+3. **Prepare-time (`review-pr`)** — projects MAY set `"merge_main_strategy": "rebase"` in
+   `project.json` (same field as §4).
+
+4. **Contribution diff base** — gateway captures cumulative contribution diff against
+   `origin/${defaultBranch}` (after fetch), not stale local `main`.
+
+5. **Iteration diff** — at dispatch, gateway records `worktreeHeadAtDispatch` on the run. At
+   complete, it also captures `dispatchHead..HEAD` as `iteration` provenance
+   (`artifacts/iteration-diff-stat.json`). Family ledger and run summaries prefer iteration
+   delta for follow-up runs; cumulative diff remains available for total PR scope.
+
+6. **Follow-up `pr-complete` ledger** — when `parentRunId` is set, GitHub PR input diff is not
+   treated as the authoritative display diff (iteration/contribution wins).
+
+### Consequences
+
+- Agent branches stay linear; fewer stacked merge commits across ci-watch chains.
+- Family iteration cards show per-run code delta instead of repeating the full PR diff.
+- Rebased pushes require `--force-with-lease` (agent feature branches only; not `main`).
+
+### Non-goals (unchanged)
+
+- Gateway auto-merge during prepare for `pr-complete` / `merge-main` (worker still owns integration).
+- Enforcing linear history on protected branches.
