@@ -54,24 +54,26 @@ export function decisionActionHelp(
 }
 
 /**
- * Graft the lazy-backfilled `gateSummary` onto a gate decision that arrived via
- * the RUN_UPDATED feed without it. Runs created before gateSummary was persisted
- * carry no summary on `run.decisions`, but the `decision.list` snapshot
- * (`state.decisions`) is enriched on read by the gateway. Match by id and copy
- * the summary across so the gate-summary panel renders for historical runs too.
+ * Graft the lazy-backfilled `gateSummary` onto the pending READY (publication)
+ * gate decision when it arrived via the RUN_UPDATED feed without one. Runs
+ * created before gateSummary was persisted carry no summary on `run.decisions`,
+ * but the `decision.list` snapshot (`state.decisions`) is enriched on read by
+ * the gateway. Match by id and copy the summary across so `<gate-summary-panel>`
+ * renders for historical runs too.
+ *
+ * Scoped to `ready` only: that is the sole decision kind whose run-detail branch
+ * mounts the panel. Retrospective gate summaries surface in the family /
+ * retrospective view (also enriched); run-detail's retrospective branch just
+ * links there, so grafting it here would be dead state.
  */
 function withGraftedGateSummary(
   pending: RunDecision,
   pendingDecisions: readonly PendingDecision[],
 ): RunDecision {
   const payload = pending.payload;
-  if (payload?.kind !== 'ready' && payload?.kind !== 'retrospective') return pending;
-  if (payload.gateSummary) return pending;
+  if (payload?.kind !== 'ready' || payload.gateSummary) return pending;
   const enriched = pendingDecisions.find((d) => d.id === pending.id)?.payload;
-  const gateSummary =
-    enriched?.kind === 'ready' || enriched?.kind === 'retrospective'
-      ? enriched.gateSummary
-      : undefined;
+  const gateSummary = enriched?.kind === 'ready' ? enriched.gateSummary : undefined;
   if (!gateSummary) return pending;
   return { ...pending, payload: { ...payload, gateSummary } };
 }
