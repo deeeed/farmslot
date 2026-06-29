@@ -1162,9 +1162,10 @@ describe('buildLaunchCommand', () => {
   });
 
   describe('scripted runner', () => {
-    it('uses the checkout-local CLI and never npx/global farmslot', () => {
+    it('uses the worker checkout-local CLI and never npx/global farmslot', () => {
       const vars = makeVars({
         dispatchCmd: 'cd {repo} && {claude_path} --model {model}',
+        remoteRepo: '/tmp/worker-checkout',
       });
       const cmd = buildLaunchCommand(vars, 'scripted', null, PROMPT, {
         taskDir: TASK_DIR,
@@ -1172,8 +1173,10 @@ describe('buildLaunchCommand', () => {
       });
       assert.match(
         cmd,
-        /FARMSLOT_ROOT='[^']+' FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 node '[^']+\/packages\/cli\/bin\/farmslot\.mjs' scripted-runner/,
+        /^cd '\/tmp\/worker-checkout' && FARMSLOT_ROOT="\$PWD" FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 node "\$PWD\/packages\/cli\/bin\/farmslot\.mjs" scripted-runner/,
       );
+      assert.doesNotMatch(cmd, /FARMSLOT_ROOT='[^']+'/);
+      assert.doesNotMatch(cmd, /node '[^']+\/packages\/cli/);
       assert.match(cmd, /--task-dir '\.task\/fix\/abc'/);
       assert.match(cmd, /FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1/);
       assert.match(cmd, /--mode scenario --scenario success --step-delay-ms 0/);

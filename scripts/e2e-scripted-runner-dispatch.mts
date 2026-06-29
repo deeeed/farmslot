@@ -10,8 +10,10 @@ import { dispatchExecute } from '../services/gateway/src/methods/dispatch/execut
 const root = process.cwd();
 const runId = `${process.pid}-${Date.now()}`;
 const slotId = `scripted-e2e-${runId}`;
+const projectName = `scripted-e2e-${runId}`;
 const session = slotId;
 const poolFile = path.join(root, 'pool', `${slotId}.json`);
+const projectDir = path.join(root, 'projects', projectName);
 const sourceTaskRoot = path.join(root, 'temp', 'scripted-runner-e2e', runId);
 const scenarios = (
   process.argv.includes('--failure-only') ? ['failure'] : ['success', 'failure']
@@ -37,13 +39,39 @@ async function pollSignal(signalPath: string) {
   throw new Error(`Timed out waiting for ${signalPath}`);
 }
 
+function writeTempProject() {
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(
+    path.join(projectDir, 'project.json'),
+    `${JSON.stringify(
+      {
+        name: projectName,
+        paths: {
+          runtime_dir: '.agent',
+          artifact_dir: '.task',
+        },
+        scripted: {
+          commands: {
+            fail: {
+              command: 'node -e "process.exit(7)"',
+              timeout_ms: 5000,
+            },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
 function writeTempPool() {
   writeFileSync(
     poolFile,
     `${JSON.stringify(
       {
         machine: 'scripted-e2e',
-        project: 'farmslot-farm',
+        project: projectName,
         platform: 'cli',
         host: 'localhost',
         ssh_user: process.env.USER || 'dev',
@@ -68,6 +96,7 @@ async function main() {
   process.env.NODE_TEST_CONTEXT = '1';
   process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS = '1';
   mkdirSync(path.dirname(poolFile), { recursive: true });
+  writeTempProject();
   writeTempPool();
   run('tmux', ['kill-session', '-t', session], { ignoreFailure: true });
   run('tmux', ['new-session', '-d', '-s', session, '-c', root]);
@@ -98,7 +127,7 @@ async function main() {
       assert.equal(result.dispatched, true);
       assert.match(
         result.launchCommand ?? '',
-        /packages\/cli\/bin\/farmslot\.mjs' scripted-runner/,
+        /FARMSLOT_ROOT="\$PWD" .*node "\$PWD\/packages\/cli\/bin\/farmslot\.mjs" scripted-runner/,
       );
       assert.match(result.launchCommand ?? '', /FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1/);
       assert.doesNotMatch(result.launchCommand ?? '', /npx farmslot/);
@@ -123,12 +152,65 @@ ${pane.stdout || pane.stderr}`);
       }
       assert.equal(signal.outcome, scenario === 'success' ? 'success' : 'failure');
       assert.equal(signal.status, scenario === 'success' ? 'complete' : 'failed');
+      const provenance = JSON.parse(
+        await readFile(
+          path.join(workerTaskDir, 'artifacts', 'scripted-runner-provenance.json'),
+          'utf-8',
+        ),
+      );
+      assert.equal(provenance.kind, 'farmslot-scripted-runner');
+      assert.equal(provenance.farmslotRoot, root);
+      assert.equal(provenance.gitSha, run('git', ['rev-parse', 'HEAD']).stdout.trim());
       console.log(`scripted ${scenario}: ${signal.status}/${signal.outcome}`);
       rmSync(workerTaskDir, { recursive: true, force: true });
     }
+
+    const commandTaskName = `scripted-command-failure-${runId}`;
+    const commandTaskDir = path.join(sourceTaskRoot, 'tasks', 'dev', commandTaskName);
+    mkdirSync(commandTaskDir, { recursive: true });
+    writeFileSync(
+      path.join(commandTaskDir, 'TASK.md'),
+      `# Worker: dev\n\n- Task profile: dev\n**Runner:** scripted\n\nValidate scripted command failure.\n`,
+      'utf-8',
+    );
+
+    const commandResult = await dispatchExecute(
+      {
+        slotId,
+        taskFile: path.join(commandTaskDir, 'TASK.md'),
+        mode: 'validation',
+        runner: 'scripted',
+        skipPrepare: true,
+        force: true,
+        scripted: { mode: 'command', commandRef: 'fail' },
+      },
+      () => {},
+    );
+    assert.equal(commandResult.dispatched, true);
+    assert.match(commandResult.launchCommand ?? '', /--mode command --command-ref 'fail'/);
+    assert.doesNotMatch(commandResult.launchCommand ?? '', /FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1/);
+    const commandTaskDirMatch = commandResult.launchCommand?.match(/--task-dir '([^']+)'/);
+    const workerCommandTaskDir = path.join(
+      root,
+      commandTaskDirMatch?.[1] ?? `.task/dev/${commandTaskName}`,
+    );
+    const commandSignal = await pollSignal(path.join(workerCommandTaskDir, 'SIGNAL.json'));
+    assert.equal(commandSignal.outcome, 'failure');
+    assert.equal(commandSignal.status, 'failed');
+    const commandEvidence = JSON.parse(
+      await readFile(
+        path.join(workerCommandTaskDir, 'artifacts', 'scripted-command-result.json'),
+        'utf-8',
+      ),
+    );
+    assert.equal(commandEvidence.commandRef, 'fail');
+    assert.equal(commandEvidence.exitCode, 7);
+    console.log(`scripted command failure: ${commandSignal.status}/${commandSignal.outcome}`);
+    rmSync(workerCommandTaskDir, { recursive: true, force: true });
   } finally {
     run('tmux', ['kill-session', '-t', session], { ignoreFailure: true });
     rmSync(poolFile, { force: true });
+    rmSync(projectDir, { recursive: true, force: true });
     rmSync(sourceTaskRoot, { recursive: true, force: true });
     for (const scenario of scenarios) {
       rmSync(path.join(root, '.task', 'dev', `scripted-${scenario}-${runId}`), {
@@ -136,6 +218,10 @@ ${pane.stdout || pane.stderr}`);
         force: true,
       });
     }
+    rmSync(path.join(root, '.task', 'dev', `scripted-command-failure-${runId}`), {
+      recursive: true,
+      force: true,
+    });
     if (previousScenarioFlag === undefined) delete process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
     else process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS = previousScenarioFlag;
     if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;

@@ -11,7 +11,6 @@ import type { loadSlotVars } from '../core/config.js';
 import { expandDispatchCmd } from '../core/hooks.js';
 import { shellExpressionForRemotePath } from '../core/remote-paths.js';
 import { shellQuote } from '../core/tmux.js';
-import { farmslotRoot } from '../projects/repo-root.js';
 
 import {
   normalizeRunner,
@@ -177,12 +176,11 @@ function buildScriptedRunnerLaunch(options: {
   scripted: ScriptedRunnerConfig;
   command?: ScriptedCommandLaunchConfig;
 }): string {
-  const cliPath = path.join(farmslotRoot, 'packages/cli/bin/farmslot.mjs');
   const base = [
-    `FARMSLOT_ROOT=${shellQuote(farmslotRoot)}`,
+    'FARMSLOT_ROOT="$PWD"',
     ...(options.scripted.mode === 'scenario' ? ['FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1'] : []),
     'node',
-    shellQuote(cliPath),
+    '"$PWD/packages/cli/bin/farmslot.mjs"',
     'scripted-runner',
     '--task-dir',
     shellQuote(options.taskDir),
