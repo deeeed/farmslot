@@ -11,6 +11,7 @@ import {
   type SlotTrackingSlotContext,
 } from '@farmslot/protocol';
 
+import { isLocal } from '../../core/exec.js';
 import {
   execOnSlot,
   expandTemplate,
@@ -20,6 +21,7 @@ import {
   type SlotVars,
 } from '../../core/index.js';
 import { shellQuote } from '../../core/tmux.js';
+import { farmslotRoot } from '../../projects/repo-root.js';
 import type { StartRefResolution } from '../../projects/start-ref-resolution.js';
 
 import { REFRESH_INDEX_AND_UNLOCK_COMMAND } from './git-cleanup-commands.js';
@@ -102,9 +104,25 @@ export async function resetSlotRepoToIdle(
   defaultBranch: string,
   options?: ResetSlotRepoToIdleOptions,
 ): Promise<SlotIdleResetResult> {
+  // HARD GUARD: never run destructive idle-reset on the gateway's own operator
+  // repo. A pool slot whose repo resolves to the operator root — `repo: "."`
+  // (resolved against farmslotRoot in core/config) or an explicit operator path
+  // like a `*-fs-main` slot — would otherwise run
+  // `git checkout -- . && git clean -fd && git reset --hard origin/<default>`
+  // against the control-plane's own working tree on a fleet-refresh / idle-reset
+  // / release timer, destroying uncommitted work. Fail hard so the misconfigured
+  // slot is fixed rather than silently nuking the repo.
+  if (
+    isLocal(vars.host, vars.machine) &&
+    path.resolve(vars.remoteRepo) === path.resolve(farmslotRoot)
+  ) {
+    throw new Error(
+      `Refusing to idle-reset slot ${vars.slotId}: its repo (${vars.remoteRepo}) is the gateway's own operator root. ` +
+        `Point this slot at a dedicated worktree (e.g. farmslot-wt/...) instead of the control-plane repo.`,
+    );
+  }
   const repo = shellQuote(vars.remoteRepo);
-  const linkedWorktree =
-    options?.linkedWorktree ?? (await detectLinkedWorktree(vars));
+  const linkedWorktree = options?.linkedWorktree ?? (await detectLinkedWorktree(vars));
   const trackingBranch = resolveSlotTrackingBranchFromProject(
     projectJson,
     vars,
@@ -117,10 +135,7 @@ export async function resetSlotRepoToIdle(
     await execOnSlot(vars, `git -C ${repo} rev-parse --abbrev-ref HEAD 2>/dev/null`)
   ).stdout.trim();
 
-  await execOnSlot(
-    vars,
-    `cd ${repo} && git checkout -- . 2>/dev/null; git clean -fd 2>/dev/null`,
-  );
+  await execOnSlot(vars, `cd ${repo} && git checkout -- . 2>/dev/null; git clean -fd 2>/dev/null`);
 
   const fetchR = await execOnSlot(
     vars,

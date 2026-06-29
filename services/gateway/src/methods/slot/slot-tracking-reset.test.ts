@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '../../core/config.js';
+import { farmslotRoot } from '../../projects/repo-root.js';
 
 import { resetSlotRepoToIdle } from './slot-tracking.js';
 
@@ -92,6 +93,19 @@ test('resetSlotRepoToIdle returns linked worktree to tracking branch @ origin/ma
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
+});
+
+test('resetSlotRepoToIdle refuses to reset the gateway operator root (no destructive git runs)', async () => {
+  // A local slot whose repo resolves to farmslotRoot (e.g. a `*-fs-main` slot or
+  // `repo: "."`) must be rejected BEFORE any checkout/clean/reset touches the
+  // control-plane working tree. We point the slot at the real operator root; the
+  // guard throws before running git, so the operator repo is never mutated.
+  await assert.rejects(
+    resetSlotRepoToIdle(slotVars(farmslotRoot, 'fs-main'), {}, undefined, 'main', {
+      linkedWorktree: false,
+    }),
+    /operator root/,
+  );
 });
 
 test('resetSlotRepoToIdle returns primary clone to default branch @ origin/main', async () => {
