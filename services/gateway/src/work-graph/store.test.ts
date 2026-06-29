@@ -104,6 +104,79 @@ test('work graph can use an owner scope different from backlog project', async (
   assert.equal(linked.graph.graph.project, 'cross-project-epic');
 });
 
+test('reference blockers are v1 graph nodes but never dispatchable', async () => {
+  const { backlog, queue, workGraph } = await freshStores();
+  const downstream = await createReadyBacklogItem(backlog, 'Client release task');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'External blocker graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_external_pr',
+    kind: 'reference',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'pending',
+      project: 'metamask-core',
+      labels: ['external', 'pr'],
+    },
+  });
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_client_release',
+    backlogItemId: downstream.item.id,
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_pr_to_release',
+    fromNodeId: 'wn_external_pr',
+    toNodeId: 'wn_client_release',
+    condition: { kind: 'reference-status' },
+    unlock: { kind: 'enqueue' },
+  });
+
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  let projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_external_pr')?.kind, 'reference');
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_external_pr')?.status, 'waiting');
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_client_release')?.status, 'waiting');
+  assert.equal(queue.getQueueSnapshot().length, 0);
+
+  await workGraph.updateWorkGraphNode({
+    graphId,
+    nodeId: 'wn_external_pr',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'satisfied',
+      project: 'metamask-core',
+      evidence: 'Merged upstream',
+      updatedAt: new Date().toISOString(),
+    },
+  });
+  await workGraph.schedulerTick({ graphId });
+
+  projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(
+    projection.edges.find((edge) => edge.id === 'we_pr_to_release')?.status,
+    'satisfied',
+  );
+  assert.equal(projection.nodes.find((node) => node.id === 'wn_client_release')?.status, 'queued');
+  assert.equal(
+    projection.ledger.some(
+      (entry) => entry.nodeId === 'wn_client_release' && entry.actionKind === 'enqueue',
+    ),
+    true,
+  );
+});
+
 test('completion edges do not block downstream start enqueue', async () => {
   const { backlog, workGraph } = await freshStores();
   const contract = await createReadyBacklogItem(backlog, 'Shared contract');

@@ -25,6 +25,7 @@ function projection(overrides: Partial<WorkGraphProjection> = {}): WorkGraphProj
       {
         id: 'root',
         graphId: 'wg_test',
+        kind: 'backlog',
         backlogItemId: 'bl_root',
         status: 'succeeded',
         waitingOn: [],
@@ -33,6 +34,7 @@ function projection(overrides: Partial<WorkGraphProjection> = {}): WorkGraphProj
       {
         id: 'downstream',
         graphId: 'wg_test',
+        kind: 'backlog',
         backlogItemId: 'bl_downstream',
         status: 'waiting',
         waitingOn: [{ kind: 'upstream', upstreamNodeId: 'root', detail: 'root must finish' }],
@@ -123,6 +125,7 @@ test('completion edges do not determine start-layout depth', () => {
         {
           id: 'parallel',
           graphId: 'wg_test',
+          kind: 'backlog',
           backlogItemId: 'bl_parallel',
           status: 'ready',
           waitingOn: [],

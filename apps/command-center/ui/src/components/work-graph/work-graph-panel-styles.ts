@@ -126,6 +126,7 @@ export const workGraphPanelStyles = css`
   .badge.gated,
   .badge.running,
   .badge.queued,
+  .badge.candidate,
   .badge.pending,
   .stat.warn {
     color: ${unsafeCSS(colors.statusWarn)};
@@ -134,6 +135,8 @@ export const workGraphPanelStyles = css`
 
   .badge.failed,
   .badge.needs-attention,
+  .badge.blocked,
+  .badge.missing-spec,
   .stat.bad {
     color: ${unsafeCSS(colors.statusFail)};
     border-color: ${unsafeCSS(colors.statusFail)}66;
@@ -272,6 +275,15 @@ export const workGraphPanelStyles = css`
       transform 120ms ease;
   }
 
+  .diagram-node.reference-node rect {
+    fill: #171123;
+    stroke-dasharray: 5 4;
+  }
+
+  .diagram-node.reference-node .diagram-node-meta {
+    color: ${unsafeCSS(colors.accent)};
+  }
+
   .diagram-node:hover rect,
   .diagram-node:focus-visible rect,
   .diagram-node.selected rect {
@@ -299,12 +311,14 @@ export const workGraphPanelStyles = css`
 
   .diagram-node-meta,
   .diagram-node-status,
-  .diagram-node-tags {
+  .diagram-node-tags,
+  .diagram-node-spec {
     font-size: 10px;
   }
 
   .diagram-node-meta,
-  .diagram-node-tags {
+  .diagram-node-tags,
+  .diagram-node-spec {
     color: ${unsafeCSS(colors.textSecondary)};
   }
 
@@ -357,6 +371,12 @@ export const workGraphPanelStyles = css`
     grid-template-columns: minmax(0, 1fr) auto;
     gap: ${unsafeCSS(spacing.md)};
     align-items: start;
+  }
+
+  .node-card-badges {
+    display: grid;
+    justify-items: end;
+    gap: 5px;
   }
 
   .node-title,

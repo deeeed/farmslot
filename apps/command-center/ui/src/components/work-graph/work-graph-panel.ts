@@ -56,7 +56,28 @@ export class WorkGraphPanel extends LitElement {
   }
 
   private graphTitleForNode(backlogById: Map<string, BacklogItem>, node: WorkNode): string {
-    return backlogById.get(node.backlogItemId)?.title ?? node.backlogItemId;
+    if (node.kind === 'reference') return node.reference?.title ?? node.id;
+    return node.backlogItemId
+      ? (backlogById.get(node.backlogItemId)?.title ?? node.backlogItemId)
+      : node.id;
+  }
+
+  private projectForNode(backlogById: Map<string, BacklogItem>, node: WorkNode): string {
+    if (node.kind === 'reference') return node.reference?.project ?? 'external';
+    return node.backlogItemId
+      ? (backlogById.get(node.backlogItemId)?.project ?? 'unknown project')
+      : 'unknown project';
+  }
+
+  private nodeKindLabel(node: WorkNode): string {
+    return node.kind === 'reference'
+      ? `reference:${node.reference?.kind ?? 'external'}`
+      : 'backlog';
+  }
+
+  private specStatusLabel(item: BacklogItem | undefined, node: WorkNode): string {
+    if (node.kind === 'reference') return node.reference?.status ?? 'unknown';
+    return item?.status ?? 'missing-spec';
   }
 
   private graphStats(graph: WorkGraphProjection): { good: number; warn: number; bad: number } {
@@ -85,6 +106,9 @@ export class WorkGraphPanel extends LitElement {
 
   private edgeConditionLabel(edge: WorkEdge): string {
     if (edge.condition.kind === 'manual') return `manual gate:${edge.condition.gateId}`;
+    if (edge.condition.kind === 'reference-status') {
+      return `reference ${edge.condition.status ?? 'satisfied'}`;
+    }
     if (edge.condition.kind === 'family-done') {
       return edge.condition.outcome ? `upstream ${edge.condition.outcome}` : 'upstream done';
     }
@@ -100,8 +124,8 @@ export class WorkGraphPanel extends LitElement {
   }
 
   private diagramEdgeLabel(edge: WorkEdge): string {
-    if (edge.blocks === 'completion') return 'complete after rebase';
-    return '';
+    if (edge.blocks !== 'completion') return '';
+    return edge.unlock.kind === 'rebase-onto' ? 'complete after rebase' : 'complete after gate';
   }
 
   private unlockLabel(edge: WorkEdge): string {
@@ -144,13 +168,19 @@ export class WorkGraphPanel extends LitElement {
     const { node, x, y, w, h } = layoutNode;
     const color = this.colorForStatus(node.status);
     const isSelected = this.selectedNodeId === node.id;
-    const item = backlogById.get(node.backlogItemId);
+    const item = node.backlogItemId ? backlogById.get(node.backlogItemId) : undefined;
     const title = this.graphTitleForNode(backlogById, node);
-    const tags = [...(node.tags ?? []), ...(item?.tags ?? [])].slice(0, 2);
+    const tags = [
+      ...(node.tags ?? []),
+      ...(item?.tags ?? []),
+      ...(node.reference?.labels ?? []),
+    ].slice(0, 2);
     const waitSuffix = node.waitingOn.length ? ` · ${node.waitingOn.length} wait` : '';
+    const specStatus = this.specStatusLabel(item, node);
+    const project = this.projectForNode(backlogById, node);
     return svg`
       <g
-        class=${`diagram-node ${isSelected ? 'selected' : ''}`}
+        class=${`diagram-node ${node.kind === 'reference' ? 'reference-node' : ''} ${isSelected ? 'selected' : ''}`}
         transform=${`translate(${x}, ${y})`}
         role="button"
         tabindex="0"
@@ -168,10 +198,11 @@ export class WorkGraphPanel extends LitElement {
           <div class="diagram-node-content" xmlns="http://www.w3.org/1999/xhtml">
             <div class="diagram-node-title">${title}</div>
             <div class="diagram-node-meta node-project">
-              ${item?.project ?? 'unknown project'} · ${node.backlogItemId}
+              ${project} · ${this.nodeKindLabel(node)}
             </div>
             <div class="diagram-node-footer">
               <span class="diagram-node-status" style=${`color:${color}`}>${node.status}${waitSuffix}</span>
+              <span class="diagram-node-spec">spec:${specStatus}</span>
               ${
                 tags.length
                   ? html`<span class="diagram-node-tags"
@@ -252,12 +283,15 @@ export class WorkGraphPanel extends LitElement {
   }
 
   private renderNodeCard(backlogById: Map<string, BacklogItem>, node: WorkNode) {
-    const item = backlogById.get(node.backlogItemId);
+    const item = node.backlogItemId ? backlogById.get(node.backlogItemId) : undefined;
     const title = this.graphTitleForNode(backlogById, node);
+    const specStatus = this.specStatusLabel(item, node);
     const refs = [
       node.currentFamilyId ? `family ${node.currentFamilyId}` : '',
       node.latestRunId ? `run ${node.latestRunId}` : '',
       item?.specPath ? item.specPath : '',
+      node.reference?.url ? node.reference.url : '',
+      node.reference?.evidence ? node.reference.evidence : '',
     ].filter(Boolean);
     return html`
       <button
@@ -268,10 +302,13 @@ export class WorkGraphPanel extends LitElement {
           <div>
             <div class="node-title">${title}</div>
             <div class="small">
-              ${node.id} · ${item?.project ?? 'unknown project'} · backlog ${node.backlogItemId}
+              ${node.id} · ${this.projectForNode(backlogById, node)} · ${this.nodeKindLabel(node)}
             </div>
           </div>
-          <span class=${`badge ${node.status}`}>${node.status}</span>
+          <div class="node-card-badges">
+            <span class=${`badge ${node.status}`}>${node.status}</span>
+            <span class=${`badge ${specStatus}`}>spec:${specStatus}</span>
+          </div>
         </div>
         ${refs.length
           ? html`<div class="refs">
@@ -302,7 +339,7 @@ export class WorkGraphPanel extends LitElement {
     node: WorkNode | null,
   ) {
     if (!node) return html`<div class="detail-card">No nodes in this graph.</div>`;
-    const item = backlogById.get(node.backlogItemId);
+    const item = node.backlogItemId ? backlogById.get(node.backlogItemId) : undefined;
     const incoming = graph.edges.filter((edge) => edge.toNodeId === node.id);
     const outgoing = graph.edges.filter((edge) => edge.fromNodeId === node.id);
     return html`
@@ -314,9 +351,13 @@ export class WorkGraphPanel extends LitElement {
           </div>
         </div>
         <div class="detail-grid">
+          ${this.renderDetailCell('Type', this.nodeKindLabel(node))}
+          ${this.renderDetailCell('Spec status', this.specStatusLabel(item, node))}
           ${this.renderDetailCell('Backlog', node.backlogItemId)}
-          ${this.renderDetailCell('Project', item?.project)}
+          ${this.renderDetailCell('Reference', node.reference?.ref)}
+          ${this.renderDetailCell('Project', this.projectForNode(backlogById, node))}
           ${this.renderDetailCell('Flow', item?.flowType)}
+          ${this.renderDetailCell('External status', node.reference?.status)}
           ${this.renderDetailCell('Family', node.currentFamilyId)}
           ${this.renderDetailCell('Latest run', node.latestRunId)}
           ${this.renderDetailCell('Base ref', node.baseRef)}
@@ -326,6 +367,9 @@ export class WorkGraphPanel extends LitElement {
           )}
         </div>
         ${item?.notes ? html`<div class="detail-muted">${item.notes}</div>` : nothing}
+        ${node.reference?.evidence
+          ? html`<div class="detail-muted">${node.reference.evidence}</div>`
+          : nothing}
         ${incoming.length || outgoing.length
           ? html`
               <div class="detail-muted">
@@ -351,8 +395,8 @@ export class WorkGraphPanel extends LitElement {
       <aside class="side-panel">
         <div class="side-head">
           <div>
-            <div class="side-title">Backlog nodes</div>
-            <div class="small">Select a node to inspect gates, runs, and refs.</div>
+            <div class="side-title">Graph nodes</div>
+            <div class="small">Select backlog work or external blockers to inspect refs.</div>
           </div>
         </div>
         <div class="side-content">

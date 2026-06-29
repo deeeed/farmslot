@@ -24,6 +24,7 @@ test('work graph protocol exports method constants and v1 projection shape', () 
       {
         id: 'wn_demo',
         graphId: 'wg_demo',
+        kind: 'backlog',
         backlogItemId: 'backlog-1',
         status: 'waiting',
         waitingOn: [{ kind: 'upstream', edgeId: 'we_demo', detail: 'Waiting on upstream' }],

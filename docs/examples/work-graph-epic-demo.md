@@ -4,7 +4,7 @@ Status: example fixture supporting ADR-040 work graph orchestration and ADR-041 
 
 This example explains the read-only **Graphs** UI with a hypothetical cross-project Farmslot epic:
 
-> rough idea → backlog items → dependency edges → run families → rebase/human gates → rollout
+> rough idea → backlog items + external blockers → dependency edges → run families → rebase/human gates → rollout
 
 The demo is intentionally fixture-backed. It does not enqueue runs or mutate real worktrees.
 
@@ -40,7 +40,7 @@ FARMSLOT_CDP_PORT=9323 \
 
 ## The model
 
-- **Graph nodes are backlog items.** A graph is not a run graph. Runs/families appear only as metadata on the backlog node that dispatched them.
+- **Graph nodes are backlog items or references.** Backlog nodes are dispatchable Farmslot work. Reference nodes are external blockers/milestones such as Jira, GitHub PRs, package publishes, or manual release gates; they are never dispatched.
 - **Backlog items may belong to different projects.** The demo uses roadmap, protocol, gateway, CLI, Command Center, Companion, validation, docs, and release-ops projects.
 - **Edges define ordering and gates.** An edge says what upstream condition must happen before a downstream item can start, continue, rebase, enqueue, or be marked ready.
 - **Some work can start before all edges are satisfied.** Example: UI and Companion can start from the shared contract, but they cannot complete until the gateway projection merges and they rebase.
@@ -49,7 +49,7 @@ FARMSLOT_CDP_PORT=9323 \
 
 ## How to read the graph
 
-- **Each box is a backlog item / work node.** The title comes from the backing backlog spec; the detail panel shows the owning project.
+- **Each box is a work node.** Backlog boxes link to specs/runs. Dashed purple reference boxes link to external refs/evidence.
 - **Left-to-right columns show dependency depth.** Items with no prerequisites are leftmost; deeper items depend on upstream backlog items.
 - **Arrows are graph edges.** Edge labels explain the condition and unlock action, for example `merged main → rebase` or `upstream success → enqueue`.
 - **Green means unlocked/satisfied.** Example: the refined idea and shared contract are complete.
@@ -70,10 +70,12 @@ FARMSLOT_CDP_PORT=9323 \
 | Add graph authoring controls                     | command-center     | Starts only after visualization plus human UX gate.                                            |
 | Validate cross-project graph workflow end to end | validation-recipes | Waits for CLI, authoring, companion status, and evidence gates.                                |
 | Document graph semantics with screenshots        | docs               | Can proceed independently from the stable fixture.                                             |
+| External core controller PR merged               | metamask-core      | Reference blocker; client completion waits for this external PR, but Farmslot does not own it. |
+| Shared package version published                 | npm                | Reference milestone; release can proceed once this package publish is recorded.                |
 | Roll out epic after evidence and gates pass      | release-ops        | Final backlog item; waits on E2E evidence and docs/manual gates.                               |
 
 ## Why this exists
 
 The production `#work-graphs` route is read-only today: it visualizes graph data already created by the gateway. The `#dev/work-graph` fixture gives a stable, screenshotable example so operators and reviewers can understand how one feature becomes multiple dependency-linked backlog items before authoring/refinement controls exist.
 
-The important generalization is not “Core/Mobile/Extension” or any specific project taxonomy. The important abstraction is: **a backlog item can depend on another backlog item for start, rebase, validation, human approval, or release readiness.**
+The important generalization is not “Core/Mobile/Extension” or any specific project taxonomy. The important abstraction is: **a backlog item can depend on another backlog item or a non-dispatchable external blocker for start, rebase, validation, human approval, or release readiness.**

@@ -19,6 +19,8 @@ import {
   type WorkGraphSnapshot,
   type WorkGraphUpdateNodeParams,
   type WorkNode,
+  type WorkNodeReference,
+  type WorkReferenceStatus,
 } from '@farmslot/protocol';
 
 import { getQueueSnapshot, persistQueueNow } from '../backlog/dispatch-queue.js';
@@ -112,6 +114,7 @@ function project(snapshot: WorkGraphSnapshot): WorkGraphProjection {
     graph: { ...snapshot.graph, tags: snapshot.graph.tags ? [...snapshot.graph.tags] : undefined },
     nodes: snapshot.nodes.map((node) => ({
       ...node,
+      reference: node.reference ? cloneReference(node.reference) : undefined,
       tags: node.tags ? [...node.tags] : undefined,
       waitingOn: node.waitingOn.map((reason) => ({ ...reason })),
       supersededFamilyIds: node.supersededFamilyIds ? [...node.supersededFamilyIds] : undefined,
@@ -123,6 +126,13 @@ function project(snapshot: WorkGraphSnapshot): WorkGraphProjection {
     })),
     gates: snapshot.gates.map((gate) => ({ ...gate })),
     ledger: snapshot.ledger.map((entry) => ({ ...entry })),
+  };
+}
+
+function cloneReference(reference: WorkNodeReference): WorkNodeReference {
+  return {
+    ...reference,
+    labels: reference.labels ? [...reference.labels] : undefined,
   };
 }
 
@@ -167,7 +177,12 @@ function normalizeStoredSnapshot(raw: unknown): WorkGraphSnapshot | null {
       scheduler: snapshot.graph.scheduler ?? {},
       defaultFailurePolicy: snapshot.graph.defaultFailurePolicy ?? 'halt',
     },
-    nodes: snapshot.nodes.map((node) => ({ ...node, waitingOn: node.waitingOn ?? [] })),
+    nodes: snapshot.nodes.map((node) => ({
+      ...node,
+      kind: node.kind ?? 'backlog',
+      reference: node.reference ? cloneReference(node.reference) : undefined,
+      waitingOn: node.waitingOn ?? [],
+    })),
     edges: snapshot.edges.map((edge) => ({
       ...edge,
       required: edge.required !== false,
@@ -305,6 +320,40 @@ function assertBacklogAvailableForNode(backlogItemId: string, graphId: string): 
   }
 }
 
+function isBacklogNode(node: WorkNode): boolean {
+  return node.kind === 'backlog';
+}
+
+function isReferenceNode(node: WorkNode): boolean {
+  return node.kind === 'reference';
+}
+
+function referenceStatusToNodeStatus(status: WorkReferenceStatus): WorkNode['status'] {
+  if (status === 'satisfied') return 'succeeded';
+  if (status === 'waived') return 'skipped';
+  if (status === 'failed') return 'failed';
+  if (status === 'blocked') return 'needs-attention';
+  return 'waiting';
+}
+
+function syncReferenceNode(node: WorkNode, now: string): void {
+  if (!isReferenceNode(node)) return;
+  const status = node.reference?.status ?? 'unknown';
+  node.status = referenceStatusToNodeStatus(status);
+  node.waitingOn =
+    status === 'pending' || status === 'unknown' || status === 'blocked'
+      ? [
+          {
+            kind: 'upstream',
+            detail: `Waiting on ${node.reference?.kind ?? 'external'} reference ${
+              node.reference?.ref ?? node.id
+            }`,
+          },
+        ]
+      : [];
+  node.updatedAt = now;
+}
+
 export async function addWorkGraphNode(
   params: WorkGraphAddNodeParams,
 ): Promise<{ graph: WorkGraphProjection }> {
@@ -312,33 +361,61 @@ export async function addWorkGraphNode(
     const snapshot = requireGraph(params.graphId);
     if (snapshot.graph.status !== 'planning')
       throw new Error('workGraph.addNode requires planning status');
-    if (snapshot.nodes.some((node) => node.backlogItemId === params.backlogItemId)) {
-      throw new Error(`Backlog item ${params.backlogItemId} is already attached to this graph`);
+    const kind = params.kind ?? (params.reference ? 'reference' : 'backlog');
+    if (kind === 'reference') {
+      if (params.backlogItemId) throw new Error('Reference work nodes cannot set backlogItemId');
+      if (!params.reference?.title?.trim() || !params.reference.ref?.trim()) {
+        throw new Error('Reference work nodes require reference.title and reference.ref');
+      }
+    } else if (!params.backlogItemId) {
+      throw new Error('Backlog work nodes require backlogItemId');
     }
-    assertBacklogAvailableForNode(params.backlogItemId, params.graphId);
-    const backlogItem = getBacklogItemSnapshot(params.backlogItemId);
-    if (!backlogItem) throw new Error(`Backlog item not found: ${params.backlogItemId}`);
-    const nodeId = normalizeId('wn', params.id, backlogItem.title);
+    const backlogItem = params.backlogItemId
+      ? getBacklogItemSnapshot(params.backlogItemId)
+      : undefined;
+    if (kind === 'backlog') {
+      if (snapshot.nodes.some((node) => node.backlogItemId === params.backlogItemId)) {
+        throw new Error(`Backlog item ${params.backlogItemId} is already attached to this graph`);
+      }
+      assertBacklogAvailableForNode(params.backlogItemId!, params.graphId);
+      if (!backlogItem) throw new Error(`Backlog item not found: ${params.backlogItemId}`);
+    }
+    const title = kind === 'reference' ? params.reference!.title : backlogItem!.title;
+    const nodeId = normalizeId('wn', params.id, title);
     if (snapshot.nodes.some((node) => node.id === nodeId))
       throw new Error(`Work node already exists: ${nodeId}`);
     const now = new Date().toISOString();
     const node: WorkNode = {
       id: nodeId,
       graphId: snapshot.graph.id,
-      backlogItemId: backlogItem.id,
-      ...(normalizeRunTags(params.tags ?? backlogItem.tags).length
-        ? { tags: normalizeRunTags(params.tags ?? backlogItem.tags) }
+      kind,
+      ...(backlogItem ? { backlogItemId: backlogItem.id } : {}),
+      ...(kind === 'reference'
+        ? {
+            reference: {
+              ...params.reference!,
+              title: params.reference!.title.trim(),
+              ref: params.reference!.ref.trim(),
+              status: params.reference!.status ?? 'unknown',
+              labels: normalizeRunTags(params.reference!.labels),
+            },
+          }
+        : {}),
+      ...(normalizeRunTags(params.tags ?? backlogItem?.tags).length
+        ? { tags: normalizeRunTags(params.tags ?? backlogItem?.tags) }
         : {}),
       status: 'planned',
       waitingOn: [],
       ...(params.onFailure ? { onFailure: params.onFailure } : {}),
       updatedAt: now,
     };
-    await attachBacklogItemToWorkNode({
-      itemId: backlogItem.id,
-      graphId: snapshot.graph.id,
-      nodeId,
-    });
+    if (backlogItem) {
+      await attachBacklogItemToWorkNode({
+        itemId: backlogItem.id,
+        graphId: snapshot.graph.id,
+        nodeId,
+      });
+    }
     snapshot.nodes.push(node);
     snapshot.graph.updatedAt = now;
     await persistNow(snapshot);
@@ -354,10 +431,13 @@ export async function addWorkGraphEdge(
     const snapshot = requireGraph(params.graphId);
     if (snapshot.graph.status !== 'planning')
       throw new Error('workGraph.addEdge requires planning status');
-    if (!snapshot.nodes.some((node) => node.id === params.fromNodeId))
-      throw new Error(`fromNode not found: ${params.fromNodeId}`);
+    const fromNode = snapshot.nodes.find((node) => node.id === params.fromNodeId);
+    if (!fromNode) throw new Error(`fromNode not found: ${params.fromNodeId}`);
     if (!snapshot.nodes.some((node) => node.id === params.toNodeId))
       throw new Error(`toNode not found: ${params.toNodeId}`);
+    if (params.condition.kind === 'reference-status' && !isReferenceNode(fromNode)) {
+      throw new Error('reference-status edges must originate from reference nodes');
+    }
     const edge: WorkEdge = {
       id: normalizeId('we', params.id, `${params.fromNodeId}-${params.toNodeId}`),
       graphId: snapshot.graph.id,
@@ -387,6 +467,19 @@ export async function updateWorkGraphNode(
     const node = snapshot.nodes.find((candidate) => candidate.id === params.nodeId);
     if (!node) throw new Error(`Work node not found: ${params.nodeId}`);
     if (params.status) node.status = params.status;
+    if (params.reference !== undefined) {
+      if (!isReferenceNode(node)) throw new Error('Only reference nodes can update reference data');
+      if (params.reference === null) throw new Error('Reference nodes require reference data');
+      if (!params.reference.title.trim() || !params.reference.ref.trim()) {
+        throw new Error('Reference work nodes require reference.title and reference.ref');
+      }
+      node.reference = {
+        ...params.reference,
+        title: params.reference.title.trim(),
+        ref: params.reference.ref.trim(),
+        labels: normalizeRunTags(params.reference.labels),
+      };
+    }
     if (params.tags !== undefined) {
       const tags = params.tags === null ? [] : normalizeRunTags(params.tags);
       if (tags.length) node.tags = tags;
@@ -425,6 +518,10 @@ export async function activateWorkGraph(params: {
     snapshot.graph.status = 'active';
     snapshot.graph.updatedAt = now;
     for (const node of snapshot.nodes) {
+      if (isReferenceNode(node)) {
+        syncReferenceNode(node, now);
+        continue;
+      }
       if (node.status === 'planned') {
         node.status = 'waiting';
         node.updatedAt = now;
@@ -476,6 +573,7 @@ function mergedEvidenceFromRuns(
 }
 
 function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): void {
+  if (!isBacklogNode(node)) return;
   const linkedRuns = runs.filter(
     (run) => run.workGraphId === node.graphId && run.workNodeId === node.id,
   );
@@ -530,6 +628,30 @@ function evaluateEdge(
     } else if (resolution?.decision === 'rejected') {
       edge.status = 'failed';
       edge.evidence = { manualResolution: resolution, observedAt: resolution.resolvedAt };
+    } else {
+      edge.status = 'pending';
+      delete edge.evidence;
+    }
+  } else if (edge.condition.kind === 'reference-status') {
+    const referenceStatus = from.reference?.status ?? 'unknown';
+    const expected = edge.condition.status ?? 'satisfied';
+    if (
+      referenceStatus === expected ||
+      (expected === 'satisfied' && referenceStatus === 'waived')
+    ) {
+      edge.status = referenceStatus === 'waived' ? 'waived' : 'satisfied';
+      edge.evidence = {
+        referenceStatus,
+        referenceRef: from.reference?.ref,
+        observedAt: from.reference?.updatedAt ?? now,
+      };
+    } else if ((referenceStatus === 'failed' || referenceStatus === 'blocked') && edge.required) {
+      edge.status = 'failed';
+      edge.evidence = {
+        referenceStatus,
+        referenceRef: from.reference?.ref,
+        observedAt: from.reference?.updatedAt ?? now,
+      };
     } else {
       edge.status = 'pending';
       delete edge.evidence;
@@ -600,7 +722,9 @@ function computeWaiting(node: WorkNode, inbound: readonly WorkEdge[]): void {
       detail:
         edge.condition.kind === 'manual'
           ? `Waiting on manual gate ${edge.condition.gateId}`
-          : `Waiting on upstream node ${edge.fromNodeId}`,
+          : edge.condition.kind === 'reference-status'
+            ? `Waiting on external reference ${edge.fromNodeId}`
+            : `Waiting on upstream node ${edge.fromNodeId}`,
     }));
 }
 
@@ -689,6 +813,12 @@ async function executeNodeUnlock(
   inbound: readonly WorkEdge[],
   now: string,
 ): Promise<void> {
+  if (!isBacklogNode(node) || !node.backlogItemId) {
+    node.status = 'waiting';
+    node.waitingOn = [{ kind: 'policy', detail: 'Reference nodes are not dispatchable' }];
+    node.updatedAt = now;
+    return;
+  }
   const actions = inbound.map((edge) => edge.unlock.kind).sort();
   const version = readinessVersion(snapshot, node, actions);
   const actionKind = unlockActionKind(inbound);
@@ -845,6 +975,16 @@ export async function schedulerTick(
               now,
               errorMessage(err),
             );
+          }
+          continue;
+        }
+        if (isReferenceNode(node)) {
+          computeWaiting(node, startInbound);
+          if (node.waitingOn.length > 0) {
+            node.status = 'waiting';
+            node.updatedAt = now;
+          } else {
+            syncReferenceNode(node, now);
           }
           continue;
         }

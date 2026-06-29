@@ -24,6 +24,26 @@ export type WorkEdgeStatus = 'pending' | 'satisfied' | 'failed' | 'waived';
 
 export type WorkEdgeBlocks = 'start' | 'completion';
 
+export type WorkNodeKind = 'backlog' | 'reference';
+
+export type WorkReferenceKind =
+  | 'jira'
+  | 'github-pr'
+  | 'github-issue'
+  | 'package-release'
+  | 'artifact'
+  | 'manual'
+  | 'url'
+  | 'other';
+
+export type WorkReferenceStatus =
+  | 'unknown'
+  | 'pending'
+  | 'blocked'
+  | 'satisfied'
+  | 'failed'
+  | 'waived';
+
 export type NodeFailurePolicy = 'halt' | 'skip-dependents' | 'isolate';
 
 export interface WorkGraphSource {
@@ -55,7 +75,9 @@ export interface WorkGraph {
 export interface WorkNode {
   id: string;
   graphId: string;
-  backlogItemId: string;
+  kind: WorkNodeKind;
+  backlogItemId?: string;
+  reference?: WorkNodeReference;
   tags?: string[];
   status: WorkNodeStatus;
   currentFamilyId?: string;
@@ -69,10 +91,24 @@ export interface WorkNode {
   updatedAt: string;
 }
 
+export interface WorkNodeReference {
+  kind: WorkReferenceKind;
+  title: string;
+  ref: string;
+  status: WorkReferenceStatus;
+  url?: string;
+  project?: string;
+  owner?: string;
+  evidence?: string;
+  labels?: string[];
+  updatedAt?: string;
+}
+
 export type EdgeCondition =
   | { kind: 'family-done'; outcome?: 'success' | 'terminal' }
   | { kind: 'merged'; targetRef?: string }
-  | { kind: 'manual'; gateId: string };
+  | { kind: 'manual'; gateId: string }
+  | { kind: 'reference-status'; status?: WorkReferenceStatus };
 
 export type UnlockAction =
   | { kind: 'enqueue' }
@@ -92,6 +128,8 @@ export interface GraphGateResolution {
 export interface EdgeEvidence {
   mergeSha?: string;
   prNumber?: number;
+  referenceStatus?: WorkReferenceStatus;
+  referenceRef?: string;
   manualResolution?: GraphGateResolution;
   observedAt: string;
 }
@@ -150,7 +188,9 @@ export interface WorkGraphCreateInput {
 
 export interface WorkGraphAddNodeInput {
   graphId: string;
-  backlogItemId: string;
+  kind?: WorkNodeKind;
+  backlogItemId?: string;
+  reference?: WorkNodeReference;
   id?: string;
   tags?: string[];
   onFailure?: NodeFailurePolicy;
@@ -171,6 +211,7 @@ export interface WorkGraphUpdateNodeInput {
   graphId: string;
   nodeId: string;
   status?: WorkNodeStatus;
+  reference?: WorkNodeReference | null;
   tags?: string[] | null;
   onFailure?: NodeFailurePolicy | null;
   baseRef?: string | null;

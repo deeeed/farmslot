@@ -51,15 +51,16 @@ The load-bearing model is **three orthogonal axes, each with its own identifier 
 none reusing another's key**:
 
 ```
-  WorkGraph (dependency DAG)  ← HORIZONTAL: ordering between dispatchable objectives
-  ├── WorkNode A  ──edge──▶ WorkNode B  ──edge──▶ WorkNode C
-  │      │                     │                     │
-  │   backlogItemId         backlogItemId         backlogItemId   ← intake + dispatch config (PR #95)
-  │      │                     │                     │
-  │   familyId=fa           familyId=fb           familyId=fc     ← VERTICAL: lineage of one objective
-  │   ├ fix-bug (root run)
-  │   ├ review-pr (parentRunId→root)
-  │   ├ pr-complete (parentRunId→root)
+  WorkGraph (implementation DAG / execution view)  ← HORIZONTAL: ordering across work + blockers
+  ├── WorkNode A ──edge──▶ WorkNode B ──edge──▶ WorkNode C ──edge──▶ WorkNode D
+  │      │                    │                    │                    │
+  │   backlogItemId       reference          backlogItemId          reference
+  │   dispatch config     external PR        dispatch config        package publish
+  │      │                                     │
+  │   familyId=fa                            familyId=fc            ← VERTICAL: lineage of one objective
+  │   ├ fix-bug (root run)                   ├ fix-bug (root run)
+  │   ├ review-pr (parentRunId→root)         ├ review-pr (parentRunId→root)
+  │   ├ pr-complete (parentRunId→root)       └ merge-main (parentRunId→root)
   │   └ merge-main (parentRunId→root)
   │
   Experiment (ADR-030)        ← ORTHOGONAL: eval comparison; cuts across, owns neither
@@ -95,7 +96,7 @@ New protocol contracts (`packages/protocol/src/contracts/work-graph.ts`). Backlo
 the graph store owns relationships, scheduling projection, waiting reasons, edge evidence, and
 the idempotency ledger.
 
-A work graph is intentionally **cross-project** in v1. `WorkGraph.project` is a graph owner/scope label used for filtering and provenance; it is not a constraint that every node's backlog item has the same project. The motivating case is one epic whose execution spans multiple project farms (for example a source-of-truth package/release task followed by client tasks). Each node's actual project comes from its linked `BacklogItem.project`, so dispatch still uses the correct project hooks, slots, default branch, runner/model policy, and task template.
+A work graph is intentionally **cross-project** in v1. `WorkGraph.project` is a graph owner/scope label used for filtering and provenance; it is not a constraint that every node belongs to the same project. The motivating case is one epic whose execution spans multiple project farms and external milestones (for example a source-of-truth package/release task followed by client tasks). Dispatchable backlog nodes use their linked `BacklogItem.project`, so dispatch still uses the correct project hooks, slots, default branch, runner/model policy, and task template. Reference nodes represent external blockers or milestones and are never dispatched.
 
 ```ts
 // ---- Graph ----
@@ -136,11 +137,33 @@ export type WorkGraphStatus =
   | 'failed' // unrecoverable (cycle at activate, or operator abandons)
   | 'archived';
 
+export type WorkNodeKind = 'backlog' | 'reference';
+
+export type WorkReferenceKind =
+  | 'jira'
+  | 'github-pr'
+  | 'github-issue'
+  | 'package-release'
+  | 'artifact'
+  | 'manual'
+  | 'url'
+  | 'other';
+
+export type WorkReferenceStatus =
+  | 'unknown'
+  | 'pending'
+  | 'blocked'
+  | 'satisfied'
+  | 'failed'
+  | 'waived';
+
 // ---- Node: thin pointer — NOT a run, NOT a family, NOT a second backlog row ----
 export interface WorkNode {
   id: string; // wn_<short>
   graphId: string;
-  backlogItemId: string; // 1:1 — ALL dispatch config (flow, lane, model, slots, priority) lives HERE
+  kind: WorkNodeKind;
+  backlogItemId?: string; // required for kind='backlog'; ALL dispatch config lives HERE
+  reference?: WorkNodeReference; // required for kind='reference'; never dispatchable
   /** Shared normalized tags, usually inherited from the backlog item. */
   tags?: string[];
   status: WorkNodeStatus;
@@ -159,6 +182,19 @@ export interface WorkNode {
   // failure policy override (else inherits graph.defaultFailurePolicy)
   onFailure?: NodeFailurePolicy;
   updatedAt: string;
+}
+
+export interface WorkNodeReference {
+  kind: WorkReferenceKind;
+  title: string;
+  ref: string; // e.g. JIRA-123, org/repo#42, @scope/pkg@1.2.3, manual milestone key
+  status: WorkReferenceStatus;
+  url?: string;
+  project?: string; // optional external/project label for filtering
+  owner?: string;
+  evidence?: string; // short human-readable proof/status note
+  labels?: string[]; // normalized with the same label/tag rules as runs/backlog
+  updatedAt?: string;
 }
 
 export type WorkNodeStatus =
@@ -198,18 +234,23 @@ export interface WorkEdge {
 // Conditions are idempotently evaluable from EXTERNAL durable state, so a restart tick rebuilds them.
 export type EdgeCondition =
   | { kind: 'family-done'; outcome?: 'success' | 'terminal' } // family terminal; no PR semantics
-  | { kind: 'pr-open' } // v2: from's PR exists & open (stacked work)
-  | { kind: 'merged'; targetRef?: string } // v1: DURABLE merge SHA or GitHub closed+merged — NOT a terminal run state
-  | { kind: 'artifact'; artifactKind: string; path?: string } // v2: named artifact present in from's bundle (ADR-039)
-  | { kind: 'manual'; gateId: string }; // v1: operator flips it (graph-native gate, §7)
+  | { kind: 'merged'; targetRef?: string } // DURABLE merge SHA or GitHub closed+merged — NOT a terminal run state
+  | { kind: 'manual'; gateId: string } // operator flips it (graph-native gate, §7)
+  | { kind: 'reference-status'; status?: WorkReferenceStatus }; // v1 external blocker/reference node status
 
 export interface EdgeEvidence {
   mergeSha?: string;
   prNumber?: number;
-  artifactPath?: string;
+  referenceStatus?: WorkReferenceStatus;
+  referenceRef?: string;
   manualResolution?: GraphGateResolution;
   observedAt: string;
 }
+
+// Future condition extensions stay out of the v1 final type until implemented.
+// Expected additions are `{ kind: 'pr-open' }` for stacked work and
+// `{ kind: 'artifact'; artifactKind: string; path?: string }` for ADR-039
+// artifact-backed edges.
 
 // One unlock per edge in v1. The scheduler composes a node-level plan from all inbound edges (§6).
 export type UnlockAction =
@@ -395,19 +436,20 @@ Conditions are idempotent for _reading_; the ledger covers the _write_ side.
 
 ## 6. Integration with backlog / queue / family / ci-watch / gates / bundles
 
-| Existing primitive             | Graph reuse                                                                                           | New glue                                                                                 |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| **Backlog (PR #95)**           | `WorkNode.backlogItemId` 1:1; `unlock` calls `backlog.enqueue`; all dispatch config lives on the item | `workGraphId`+`workNodeId` back-ref                                                      |
-| **Dispatch queue**             | unchanged — graph enqueues, queue dispatches/throttles                                                | `workGraphId`+`workNodeId` on `QueueItem` for reconcile                                  |
-| **Family (ADR-024)**           | graph reads current family terminal state; never writes family fields or `parentRunId`                | resolve `currentFamilyId`+`currentRootRunId` onto node once first run dispatches         |
-| **ci-watch chain**             | intra-family auto `pr-complete`/`merge-main` stays exactly as-is                                      | ci-watch _also_ emits `pr.merged`(+SHA)/`family.terminal` graph events                   |
-| **Publication gate (ADR-038)** | `gated` node status mirrors the gate-held run                                                         | `gate.resolved` emits a graph event; downstream `merged` edges wait for the actual merge |
-| **Bundles (ADR-039)**          | `artifact` edge condition resolves against a run bundle path                                          | bundle path lookup in the edge evaluator; bundles are evidence, never the graph store    |
-| **Webhooks (v2)**              | low-latency `pr.merged`/gate facts                                                                    | GitHub webhook receiver; reconciliation stays authoritative                              |
+| Existing primitive             | Graph reuse                                                                                                                      | New glue                                                                                 |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **Backlog (PR #95)**           | `WorkNode.kind='backlog'` points to one `backlogItemId`; `unlock` calls `backlog.enqueue`; all dispatch config lives on the item | `workGraphId`+`workNodeId` back-ref                                                      |
+| **External blockers**          | `WorkNode.kind='reference'` records typed refs/status/evidence; never dispatches                                                 | `reference-status` edges block/unblock downstream work                                   |
+| **Dispatch queue**             | unchanged — graph enqueues, queue dispatches/throttles                                                                           | `workGraphId`+`workNodeId` on `QueueItem` for reconcile                                  |
+| **Family (ADR-024)**           | graph reads current family terminal state; never writes family fields or `parentRunId`                                           | resolve `currentFamilyId`+`currentRootRunId` onto node once first run dispatches         |
+| **ci-watch chain**             | intra-family auto `pr-complete`/`merge-main` stays exactly as-is                                                                 | ci-watch _also_ emits `pr.merged`(+SHA)/`family.terminal` graph events                   |
+| **Publication gate (ADR-038)** | `gated` node status mirrors the gate-held run                                                                                    | `gate.resolved` emits a graph event; downstream `merged` edges wait for the actual merge |
+| **Bundles (ADR-039)**          | `artifact` edge condition resolves against a run bundle path                                                                     | bundle path lookup in the edge evaluator; bundles are evidence, never the graph store    |
+| **Webhooks (v2)**              | low-latency `pr.merged`/gate facts                                                                                               | GitHub webhook receiver; reconciliation stays authoritative                              |
 
 ### Cross-project graph semantics
 
-A graph may contain backlog items from multiple projects. The graph-level `project` field is an owner/scope label, not a dispatch project. Every dispatch decision still reads `BacklogItem.project` from the node's linked backlog item, so project-specific hooks, slots, templates, default branches, and validation remain owned by the target project. Cross-project graphs therefore coordinate order; they do not merge project configuration.
+A graph may contain backlog items from multiple projects plus reference nodes from external systems. The graph-level `project` field is an owner/scope label, not a dispatch project. Every dispatch decision still reads `BacklogItem.project` from the node's linked backlog item, so project-specific hooks, slots, templates, default branches, and validation remain owned by the target project. Reference nodes have only typed refs/status/evidence and are never dispatched. Cross-project graphs therefore coordinate order; they do not merge project configuration.
 
 ### Backlog auto-dispatch exclusivity
 
@@ -417,7 +459,7 @@ double-enqueue.**
 
 Rules:
 
-0. A `BacklogItem` may be attached to at most one non-archived `WorkNode`; graph node creation
+0. A `BacklogItem` may be attached to at most one non-archived backlog `WorkNode`; graph node creation
    and updates must reject attempts to reuse the same backlog item in another live graph.
 1. When a backlog item is attached to a work graph node (`workGraphId` + `workNodeId` set),
    graph-owned scheduler/retry/reopen/detach actions are the only enqueue authority for that
@@ -512,40 +554,41 @@ graph-level approval system is invented.
 
 ## 8. Work-graph intake and roadmap positioning (v1 vs deferred)
 
-**v1 — deterministic, operator-authored over dispatchable backlog items:**
+**v1 — deterministic, operator-authored over backlog work plus reference blockers:**
 
 ADR-041 is the roadmap/product-planning layer. Rough or refined roadmap items do not enter a
 work graph directly. The normal layered path is:
 
 ```text
-RoadmapItem(stage=refined) -> promote -> Backlog markdown spec(s) -> optional manual WorkGraph -> dispatch
+RoadmapItem(stage=refined) -> promote -> Backlog markdown spec(s) + optional references -> WorkGraph -> dispatch
 ```
 
 Direct PR #95 backlog intake remains supported only for items that are already dispatchable.
-External themes or milestones that still need product discovery should import to roadmap first,
-not directly to backlog or work graph.
+External themes that still need product discovery should import to roadmap first. External
+blockers/milestones that are already known but not Farmslot-owned may enter the work graph as
+reference nodes.
 
 Execution steps:
 
 ```
-1. Operator creates, imports, or receives dispatchable backlog items
+1. Operator creates, imports, or receives dispatchable backlog items and known external references
 2. workGraph.create({ project, title, source }) → status 'planning'
-3. workGraph.addNode({ graphId, backlogItemId })   ×N    (wrap existing items)
+3. workGraph.addNode({ graphId, backlogItemId }) ×N and/or workGraph.addNode({ graphId, kind:'reference', reference }) ×R
 4. workGraph.addEdge({ from, to, condition, required, unlock }) ×M
-5. Gateway validates: acyclic graph, required fields, branch topology (if rebase/completion edges); nodes may reference backlog items from different projects
+5. Gateway validates: acyclic graph, required fields, branch topology (if rebase/completion edges); nodes may reference backlog items from different projects and external blocker refs
 6. workGraph.activate(graphId)  → cycle check → scheduler takes over
-7. Scheduler marks dependency-free nodes ready, enqueues them; queue creates root runs
-8. Family / run / PR / gate / artifact events unlock downstream nodes
+7. Scheduler marks dependency-free backlog nodes ready/enqueued; reference nodes only expose status/evidence
+8. Family / run / PR / gate / reference / artifact events unlock downstream nodes
 9. Graph 'done' when every required node is succeeded/skipped and every required edge is satisfied or waived
 ```
 
 Methods (v1): `workGraph.create / get / list / addNode / addEdge / updateNode / activate /
 pause / gateResolve / schedulerTick`.
 
-`source: 'external-import'` in v1 only **records provenance + bulk-creates nodes** from
-external children that are already dispatchable (one node per Jira subtask / milestone issue →
-one backlog item). It does **not** infer edges — edges are operator-authored in v1. Rough
-external themes import through ADR-041 roadmap first.
+`source: 'external-import'` in v1 only **records provenance + bulk-creates explicit nodes** from
+external children: dispatchable items become backlog nodes, non-owned blockers become reference
+nodes. It does **not** infer edges — edges are operator-authored in v1. Rough external themes import
+through ADR-041 roadmap first.
 
 **Deferred:**
 
@@ -617,12 +660,13 @@ from external state rather than from consumed events; `manual` edges persist the
   - Scheduler with **per-graph lease** + **idempotency ledger**, reacting to `family.terminal`,
     `pr.merged`, and `scheduler.tick`.
   - Cross-project nodes: graph owner/scope may differ from each linked `BacklogItem.project`; dispatch uses the backlog project.
-  - Conditions: `family-done`, `merged` (durable), `manual`. Edge `blocks`: `start` and `completion`. Unlock: `enqueue` + `rebase-onto`
+  - Nodes: dispatchable `backlog` nodes plus non-dispatchable `reference` nodes for external blockers/milestones.
+  - Conditions: `family-done`, `merged` (durable), `manual`, `reference-status`. Edge `blocks`: `start` and `completion`. Unlock: `enqueue` + `rebase-onto`
     (via `buildCIWatchChainedRunParams`) + `mark-ready`.
   - `baseRef`/`upstreamBaseNodeIds` + rebase evidence for the stacked case.
   - Additive `workGraphId`/`workNodeId` back-refs on backlog/queue/run.
   - **Read-only Command Center surface**: graph list, node statuses, waiting reasons, linked
-    runs (DAG render optional).
+    runs, and typed external blockers/milestones in the same DAG.
   - **Proves:** parallel cross-project fan-out across runners + stacked/completion rebase-unlock with
     hand-authored edges. Validation: restart reconciliation, no duplicate enqueue, no
     `RunStatus.blocked` for uncreated downstream work.
@@ -633,17 +677,53 @@ from external state rather than from consumed events; `manual` edges persist the
 
 - **v2 — intake + UI editing.** Jira/GitHub bulk source import with auto-edge
   inference from native dependency links; graph editor in Command Center; full DAG
-  visualization; GitHub webhooks for low-latency `pr.merged`; `artifact`/bundle edge conditions;
+  visualization; GitHub webhooks for low-latency `pr.merged` and reference status refresh; `artifact`/bundle edge conditions;
   operator actions for retry/replace/waive/skip.
 
 - **v3 — LLM decomposition + advanced orchestration.** Proposed graph from existing backlog specs
   (human-reviewed before activate); critical-path scheduling; priority
   inheritance; analytics; portable cross-gateway graph execution.
 
-**Roadmap relationship (ADR-041).** WorkGraph is an executable dependency DAG over already-created
-BacklogItems. Roadmap does not own graph state and does not create graph records in ADR-041 v1.
-If an operator later wants dependency scheduling, they create a WorkGraph manually from existing
-backlog items; graph progress can be shown as a derived link from those backlog items.
+**Roadmap relationship (ADR-041).** WorkGraph v1 is an implementation orchestration DAG over backlog specs and execution blockers.
+Roadmap still owns idea/epic intent, while Backlog owns dispatchable implementation specs. A
+roadmap item may link to zero or more backlog items and zero or more WorkGraphs, but roadmap-level
+visualization remains a separate ADR-041 concern. WorkGraph can be displayed as an epic execution
+view, cross-project release train, project-specific subset, or operator-defined implementation
+slice, but its active scheduler semantics apply only to backlog/reference nodes inside the graph.
+
+**Reference blockers and drilldown (v1 decision).** v1 supports generic reference nodes for work
+or milestones not implemented through Farmslot: Jira tickets owned by another team, GitHub PRs,
+release approvals, package publishes, artifacts, or manual operational milestones. A reference node
+has a typed source ref, status/evidence, labels, and human-readable notes. It is non-dispatchable by
+default and therefore cannot own acceptance criteria, runner/model policy, slots, or task templates.
+If Farmslot should own the work, the operator promotes it into a backlog item with acceptance
+criteria and dispatch config, then links that backlog item into the graph. Otherwise it stays a
+reference node or edge condition/evidence, clearly distinct from dispatchable backlog nodes so the
+scheduler never tries to enqueue work Farmslot does not own.
+
+Drilldown is intentionally shallow in v1: a backlog node links to its backlog markdown/spec and run
+family; a reference node links to its external URL/ref/evidence. Nested epic decomposition stays in roadmap/ADR-041. Implementation drilldown is modeled with
+multiple WorkGraphs and shared tags/source refs rather than a separate hierarchy table in ADR-040.
+Promotion from roadmap/LLM planning into an active orchestration graph remains explicit and
+human-reviewed, because only active WorkGraphs affect scheduler behavior.
+
+**Roadmap graph boundary.** Long-term roadmap visualization should not reuse active WorkGraph
+semantics. A roadmap graph is a high-level planning view over epics, rough/refined ideas, external
+milestones, and conceptual dependencies. It is non-dispatchable and has no scheduler authority. An
+implementation WorkGraph begins when the operator expands/refines roadmap intent into concrete
+backlog specs and chooses the dependencies that should affect execution. This prevents a rough idea
+from accidentally behaving like a queueable task while still allowing UI drilldown from roadmap epic
+→ backlog specs → implementation WorkGraph → run families.
+
+**Node configuration boundary (v1 decision).** Clicking a graph node should make execution
+readiness/configuration visible, but it must not move dispatch configuration into the graph. For a
+backlog node, the drilldown/editor opens the backing backlog spec and edits the BacklogItem fields
+that already own execution policy: status/readiness, acceptance criteria in markdown, tags, priority,
+flow type, allowed slots, auto-dispatch policy, and any future runner/model selection. For a
+reference node, the editor only changes reference fields: type, URL/ref, status, evidence, owner,
+and labels. The graph can visualize both layers at once — graph execution state
+(`waiting/running/gated/succeeded`) and spec/reference readiness (`candidate/ready/done/pending`) —
+but the scheduler still dispatches only backlog nodes whose backing spec is ready.
 
 **Persistence (v1 decision): new gateway store, not extending backlog.** Backlog rows stay flat
 (PR #95's clean contract); graph/node/edge + ledger live in a sibling store. Node→backlog is a
