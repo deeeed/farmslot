@@ -532,13 +532,13 @@ The dispatch UI defaults ordinary PR-complete dispatches to autonomous and expos
 
 ### Problem
 
-§7 and the branch-affinity nudge addendum cover reusing a *busy* slot mid-task. They do not cover the common operator move of switching between *hot* runs that share a ticket — a `dev` run, its `pr-complete` follow-ups, and `comparison`-lane / publish-gate siblings. Re-engaging a prior or sibling run requires a fresh `run.create` + dispatch even when a warm slot already holds the branch, because slot history (`run/slot-history.ts`) is read-only. The rebuild cost itself is already solved by ADR-037 prepare profiles — the default `ensure-js-runtime` profile does a warm branch switch with no clean rebuild (mobile `--preflight-mode fast`, extension incremental webpack-watch) — so the missing piece is orchestration, not rebuild avoidance.
+§7 and the branch-affinity nudge addendum cover reusing a _busy_ slot mid-task. They do not cover the common operator move of switching between _hot_ runs that share a ticket — a `dev` run, its `pr-complete` follow-ups, and `comparison`-lane / publish-gate siblings. Re-engaging a prior or sibling run requires a fresh `run.create` + dispatch even when a warm slot already holds the branch, because slot history (`run/slot-history.ts`) is read-only. The rebuild cost itself is already solved by ADR-037 prepare profiles — the default `ensure-js-runtime` profile does a warm branch switch with no clean rebuild (mobile `--preflight-mode fast`, extension incremental webpack-watch) — so the missing piece is orchestration, not rebuild avoidance.
 
 Verified case (2026-06-23): family `TAT-3382` ran `dev → pr-complete → pr-complete` on one branch, all reusing `macwork-mme-1`; re-engaging the prior run still went through a fresh dispatch.
 
 ### Decision
 
-Add an operator action `run.activateOnSlot(runId, slotId?)` that makes an *existing* run live on a slot without a fresh `run.create`:
+Add an operator action `run.activateOnSlot(runId, slotId?)` that makes an _existing_ run live on a slot without a fresh `run.create`:
 
 - It **re-binds the existing run record** to the chosen slot — the run stays the system of record, unlike the nudge path which creates a new run and stomps `current_run_id`.
 - It selects the **cheapest viable prepare profile** via the existing ADR-037 `requires`/`fallback` chain (`attach` when the slot is already on the run's branch and healthy → `ensure-js-runtime` when warm with current deps → `full` otherwise).
@@ -555,6 +555,17 @@ Extend `findAffinitySlot` (`methods/dispatch/preview.ts:88`) eligibility so a re
 
 - Auto-activate without operator confirmation; cross-PR activation.
 - Holding multiple hot branches per slot (worktree-per-branch) and a per-SHA build cache — unnecessary under the delta-only model, where only the branch delta is run-specific.
+
+### Update (2026-06-29): UI surface removed — RPC/CLI escape hatch retained
+
+The one-click **Activate-on-Slot** button (run-detail, slot-view run panel, slot-history modal) is removed. Operator experience showed it was a footgun: it was offered whenever a run was terminal **or `blocked`**, including a healthy run parked at a publication-review gate **already bound to that same slot**. Clicking it re-drove PREPARE→DISPATCH, relaunched the worker, and destroyed the gate state — a heavy, surprising action behind a name that read like "make this run live so I can drive the recipe".
+
+What changed:
+
+- **UI**: the activate buttons are gone. The surviving run→slot affordance is the **bind-only** path (`slot.prepare`, surfaced as "Load slot with run" / the slot-load-run modal) — it warm-switches the slot onto the run's branch and binds the run so recipe-replay is available, **without re-driving the pipeline or relaunching the worker**. Button tooltips now spell out what each action does.
+- **Protocol + gateway**: `run.activateOnSlot` (the re-drive) is **kept** as an operator escape hatch, reachable via RPC/CLI only (`node apps/command-center/scripts/cdp.mjs gateway run.activateOnSlot '{…}'`). It remains the right tool for the genuine cases the addendum targeted — re-running a terminal run, moving a run to a _different_ slot, or recovering a dead worker — none of which apply to a gate-held run on its own slot.
+
+The `slotId`-omitted warm-auto-pick and recently-released-slot follow-ups (a1/a2) stay deferred and are now lower priority, since the only consumer is the RPC/CLI hatch rather than a primary UI flow.
 
 ## References
 

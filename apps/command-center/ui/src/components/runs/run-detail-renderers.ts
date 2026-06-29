@@ -58,7 +58,6 @@ export interface RunDetailViewContext {
   _confirmForceComplete: (runId: string) => void;
   _requestCopilotRunDiagnosis: (run: Run) => void;
   _buildRerunAlongsideHref: (run: Run) => string;
-  _activateOnSlot: (run: Run) => void | Promise<void>;
   _slotBranchForRun: (run: Run) => string;
   _slotHealthForRun: (run: Run) => import('@farmslot/protocol').SlotHealth | null;
   _setRunTags: (run: Run, tags: string[]) => void | Promise<void>;
@@ -392,24 +391,11 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             <a
               class="gate-action-btn"
               style="border:1px solid ${colors.accent}; color:${colors.accent}; padding:4px 12px; font-size:11px; text-decoration:none; border-radius:3px"
-              title="Open dispatch wizard prefilled to fork a comparison-lane sibling of this run (different runner/model)."
+              title="Fork a new comparison run from this one (own slot + worker) so you can compare runners/models side by side. Opens the dispatch wizard prefilled; the original run is untouched."
               href=${ctx._buildRerunAlongsideHref(r)}
             >
               Re-run alongside →
             </a>
-          `
-        : nothing}
-      ${r.slotId && canActivateRunOnSlot(r.status)
-        ? html`
-            <button
-              class="gate-action-btn"
-              style="border:1px solid ${colors.accent}; color:${colors.accent}; padding:4px 12px; font-size:11px; border-radius:3px"
-              title="Re-bind this run onto ${r.slotId} and re-drive prepare+dispatch with the cheapest warm profile (attach → falls back to the project warm default). No new run is created."
-              ?disabled=${actionsBlocked}
-              @click=${() => ctx._activateOnSlot(r)}
-            >
-              Activate on ${r.slotId} →
-            </button>
           `
         : nothing}
       ${r.slotId && r.branch && canActivateRunOnSlot(r.status)
@@ -420,7 +406,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               project=${r.project}
               run-id=${r.id}
               run-branch=${r.branch}
-              button-label="Switch ${r.slotId} to branch →"
+              button-label="Load ${r.slotId} with this run →"
               button-style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
               .slotHealth=${ctx._slotHealthForRun(r)}
               ?disabled=${actionsBlocked}

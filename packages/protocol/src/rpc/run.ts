@@ -290,6 +290,12 @@ export interface RunReplayStepResult {
  * Re-bind an existing run onto a slot and re-drive PREPARE→DISPATCH with the
  * cheapest warm prepare profile, instead of creating a fresh run (ADR-024
  * Activate-on-Slot addendum). Used to switch between hot runs across slots.
+ *
+ * RPC/CLI-only: no UI button calls this (re-driving a gate-held run is a
+ * footgun — it relaunches the worker and destroys gate state). The UI's
+ * "Load slot with run" affordance uses the bind-only `slot.prepare` path, which
+ * does NOT re-drive the pipeline. Reach for this only to re-run a terminal run,
+ * move a run to another slot, or recover a dead worker.
  */
 export interface RunActivateOnSlotParams {
   runId: string;

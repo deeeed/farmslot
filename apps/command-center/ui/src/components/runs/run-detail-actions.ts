@@ -249,34 +249,17 @@ export function resolveSlotPick(
 }
 
 /**
- * Re-bind an existing run onto a slot and re-drive prepare→dispatch with the
- * cheapest warm profile (ADR-024 Activate-on-Slot). Shared by run-detail,
- * slot-view, and the slot-history modal so all three entry points behave
- * identically — no new run is created.
- */
-export async function activateRunOnSlot(runId: string, slotId: string): Promise<void> {
-  if (!slotId) {
-    console.warn(`activateRunOnSlot: ignoring run ${runId.slice(0, 8)} — no target slotId`);
-    return;
-  }
-  try {
-    await gateway.request(Methods.RUN_ACTIVATE_ON_SLOT, {
-      runId,
-      slotId,
-      prepareProfile: 'attach',
-    });
-  } catch (err) {
-    alert(`Activate on ${slotId} failed: ${(err as Error).message}`);
-  }
-}
-
-/**
  * Warm-switch a slot onto this run's branch and bind the run to it, then open
  * slot-view. Uses strict slot.prepare (default attach profile; bind-only when
  * slotBranch already matches — no merge-main, no silent profile escalation).
- * Unlike activateRunOnSlot this does NOT re-drive the run pipeline, so the run
- * record is left intact; the recipe-replay button in slot-view becomes
- * available because the slot is bound to this run.
+ *
+ * This is the only run→slot binding the UI exposes ("Load slot with run"): it
+ * does NOT re-drive the run pipeline, so the run record is left intact and the
+ * recipe-replay button in slot-view becomes available because the slot is bound
+ * to this run. The heavier `run.activateOnSlot` RPC (which resets PREPARE→DISPATCH
+ * and relaunches the worker) is intentionally not surfaced as a button — it
+ * destroys gate state and is an operator escape hatch reachable via RPC/CLI only
+ * (see ADR-024 Activate-on-Slot addendum).
  */
 export interface SwitchSlotToRunBranchOptions {
   /** Named prepare profile (default: attach). */
