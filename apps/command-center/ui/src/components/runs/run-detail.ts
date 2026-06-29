@@ -738,6 +738,7 @@ export class RunDetail extends RunDetailState {
   private renderGateSection(run: Run) {
     return renderRunGateSection(run, {
       allRuns: getState().runs,
+      pendingDecisions: getState().decisions,
       bootstrapFailed: this._bootstrapFailed,
       directRunRefreshFailed: this._directRunRefreshFailed,
       actionsBlocked: this._actionsBlocked(),

@@ -104,6 +104,19 @@ const PATH_FILTERS = {
   ],
 };
 
+// The fast default pre-push lane: the cheap, push-specific meta gates only. It
+// deliberately omits repo-wide `format:check` (~40s) and `lint` (~65s) — those
+// dominate the wall time and are already covered by pre-commit (eslint --fix +
+// prettier on changed files at every commit) and by CI on the PR. Full mode
+// (FARMSLOT_FULL_PREPUSH=1) runs the complete `repo` target below.
+const FAST_REPO_STEPS = [
+  ['workspace structure', ['yarn', 'quality:structure']],
+  ['workspace changelogs', ['yarn', 'quality:changelogs']],
+  ['import boundaries', ['yarn', 'quality:imports']],
+  ['large-file warning', ['yarn', 'quality:large-files']],
+  ['loc advisory', ['yarn', 'quality:loc:advisory']],
+];
+
 const TARGET_STEPS = {
   repo: [
     ['format check', ['yarn', 'format:check']],
@@ -228,20 +241,48 @@ if (changedFiles.length === 0) {
   process.exit(0);
 }
 
-const activeTargets = Object.entries(PATH_FILTERS)
+const matchedTargets = Object.entries(PATH_FILTERS)
   .filter(([, patterns]) => filterMatches(changedFiles, patterns))
   .map(([target]) => target);
 
+// Pre-push must be a fast pass, not a minutes-long CI mirror. By default run only
+// the cheap repo-wide meta gates (structure, changelogs, imports, large-file +
+// loc advisories — see FAST_REPO_STEPS); repo-wide format/lint and the
+// per-workspace `<ws> quality` (typecheck + tests + build) are deferred. Those
+// are CI's job (.github/workflows/farmslot-quality.yml runs the same matrix on
+// the PR) and the per-workspace tests also carry a known git-isolation leak;
+// format/lint are already enforced per-commit on changed files. Opt into the
+// full local mirror with FARMSLOT_FULL_PREPUSH=1.
+const FAST_TARGETS = new Set(['repo']);
+const full = process.env.FARMSLOT_FULL_PREPUSH === '1';
+const activeTargets = full ? matchedTargets : matchedTargets.filter((t) => FAST_TARGETS.has(t));
+const skippedTargets = full ? [] : matchedTargets.filter((t) => !FAST_TARGETS.has(t));
+
 console.log(
-  `farmslot pre-push: ${changedFiles.length} changed file(s); running ${activeTargets.length} quality target(s).`,
+  `farmslot pre-push: ${changedFiles.length} changed file(s); running ${activeTargets.length} ${full ? 'full' : 'fast'} quality target(s).`,
 );
-console.log(`  targets: ${activeTargets.join(', ')}`);
-console.log('  skip with: FARMSLOT_SKIP_PREPUSH=1 git push --no-verify');
+console.log(`  targets: ${activeTargets.join(', ') || '(none)'}`);
+if (!full) {
+  console.log('  fast lane: repo-wide format/lint deferred to pre-commit + CI');
+}
+if (skippedTargets.length > 0) {
+  console.log(
+    `  deferred to CI (run locally with FARMSLOT_FULL_PREPUSH=1): ${skippedTargets.join(', ')}`,
+  );
+}
+console.log('  skip entirely with: FARMSLOT_SKIP_PREPUSH=1 git push --no-verify');
 
 for (const target of activeTargets) {
-  for (const [label, command] of TARGET_STEPS[target] ?? []) {
+  // In fast mode the repo target runs only the cheap meta gates; lint/format are
+  // deferred to pre-commit (changed files) + CI. Full mode runs everything.
+  const steps = !full && target === 'repo' ? FAST_REPO_STEPS : (TARGET_STEPS[target] ?? []);
+  for (const [label, command] of steps) {
     runStep(`${target}: ${label}`, command);
   }
 }
 
-console.log('\nfarmslot pre-push: all targeted quality gates passed.');
+console.log(
+  `\nfarmslot pre-push: ${full ? 'all targeted' : 'fast'} quality gates passed.${
+    full ? '' : ' Full typecheck/tests/build run in CI.'
+  }`,
+);
