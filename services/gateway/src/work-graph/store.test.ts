@@ -856,3 +856,93 @@ test('failed required upstream edges move dependents to needs-attention', async 
   assert.equal(blocked?.status, 'needs-attention');
   assert.equal(blocked?.waitingOn[0]?.edgeId, 'we_failed_dependency');
 });
+
+test('implicit backlog node ids stay unique for long similar titles', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const first = await createReadyBacklogItem(
+    backlog,
+    'Roadmap graph composer implementation shared prefix API slice',
+  );
+  const second = await createReadyBacklogItem(
+    backlog,
+    'Roadmap graph composer implementation shared prefix UI slice',
+  );
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Implicit node id graph',
+  });
+  const graphId = graph.graph.graph.id;
+
+  await workGraph.addWorkGraphNode({ graphId, backlogItemId: first.item.id });
+  const projection = await workGraph.addWorkGraphNode({ graphId, backlogItemId: second.item.id });
+
+  assert.equal(projection.graph.nodes.length, 2);
+  assert.equal(new Set(projection.graph.nodes.map((node) => node.id)).size, 2);
+});
+
+test('planning graph removal detaches backlog nodes and removes incident edges', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const first = await createReadyBacklogItem(backlog, 'Composable first task');
+  const second = await createReadyBacklogItem(backlog, 'Composable second task');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Editable planning graph',
+  });
+  const graphId = graph.graph.graph.id;
+
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_first', backlogItemId: first.item.id });
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_second', backlogItemId: second.item.id });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_first_second',
+    fromNodeId: 'wn_first',
+    toNodeId: 'wn_second',
+    condition: { kind: 'family-done' },
+  });
+
+  let linked = backlog.getBacklogItemSnapshot(first.item.id);
+  assert.equal(linked?.workGraphId, graphId);
+  assert.equal(linked?.workNodeId, 'wn_first');
+  await assert.rejects(() => backlog.deleteBacklogItem(first.item.id), /linked to a work graph/);
+
+  const withoutEdge = await workGraph.removeWorkGraphEdge({ graphId, edgeId: 'we_first_second' });
+  assert.equal(withoutEdge.graph.edges.length, 0);
+
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_first_second_again',
+    fromNodeId: 'wn_first',
+    toNodeId: 'wn_second',
+    condition: { kind: 'family-done' },
+  });
+  const withoutNode = await workGraph.removeWorkGraphNode({ graphId, nodeId: 'wn_first' });
+  assert.equal(
+    withoutNode.graph.nodes.some((node) => node.id === 'wn_first'),
+    false,
+  );
+  assert.equal(withoutNode.graph.edges.length, 0);
+  linked = backlog.getBacklogItemSnapshot(first.item.id);
+  assert.equal(linked?.workGraphId, undefined);
+  assert.equal(linked?.workNodeId, undefined);
+});
+
+test('active graph removal is rejected', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const item = await createReadyBacklogItem(backlog, 'Active graph task');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Active graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_active', backlogItemId: item.item.id });
+  await workGraph.activateWorkGraph({ graphId });
+
+  await assert.rejects(
+    () => workGraph.removeWorkGraphNode({ graphId, nodeId: 'wn_active' }),
+    /planning status/,
+  );
+  await assert.rejects(
+    () => workGraph.removeWorkGraphEdge({ graphId, edgeId: 'we_missing' }),
+    /planning status/,
+  );
+});

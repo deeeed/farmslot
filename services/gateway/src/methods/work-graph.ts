@@ -7,6 +7,8 @@ import type {
   WorkGraphGetParams,
   WorkGraphListRpcParams,
   WorkGraphPauseParams,
+  WorkGraphRemoveEdgeParams,
+  WorkGraphRemoveNodeParams,
   WorkGraphSchedulerTickParams,
   WorkGraphUpdateNodeParams,
 } from '@farmslot/protocol';
@@ -20,6 +22,8 @@ import {
   getWorkGraph,
   listWorkGraphs,
   pauseWorkGraph,
+  removeWorkGraphEdge,
+  removeWorkGraphNode,
   schedulerTick,
   updateWorkGraphNode,
 } from '../work-graph/store.js';
@@ -29,6 +33,10 @@ export const workGraphGet = (params: WorkGraphGetParams) => getWorkGraph(params)
 export const workGraphList = (params: WorkGraphListRpcParams = {}) => listWorkGraphs(params);
 export const workGraphAddNode = (params: WorkGraphAddNodeParams) => addWorkGraphNode(params);
 export const workGraphAddEdge = (params: WorkGraphAddEdgeParams) => addWorkGraphEdge(params);
+export const workGraphRemoveNode = (params: WorkGraphRemoveNodeParams) =>
+  removeWorkGraphNode(params);
+export const workGraphRemoveEdge = (params: WorkGraphRemoveEdgeParams) =>
+  removeWorkGraphEdge(params);
 export const workGraphUpdateNode = (params: WorkGraphUpdateNodeParams) =>
   updateWorkGraphNode(params);
 export const workGraphActivate = (params: WorkGraphActivateParams) => activateWorkGraph(params);

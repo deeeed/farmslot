@@ -157,6 +157,8 @@ import {
   type WorkGraphGetParams,
   type WorkGraphListRpcParams,
   type WorkGraphPauseParams,
+  type WorkGraphRemoveEdgeParams,
+  type WorkGraphRemoveNodeParams,
   type WorkGraphSchedulerTickParams,
   type WorkGraphUpdateNodeParams,
   type WorkspaceMetroSubscribeParams,
@@ -356,6 +358,8 @@ import {
   workGraphGet,
   workGraphList,
   workGraphPause,
+  workGraphRemoveEdge,
+  workGraphRemoveNode,
   workGraphSchedulerTick,
   workGraphUpdateNode,
 } from '../methods/work-graph.js';
@@ -515,6 +519,10 @@ export async function routeMethod(
       return workGraphAddNode(p as WorkGraphAddNodeParams);
     case Methods.WORK_GRAPH_ADD_EDGE:
       return workGraphAddEdge(p as WorkGraphAddEdgeParams);
+    case Methods.WORK_GRAPH_REMOVE_NODE:
+      return workGraphRemoveNode(p as WorkGraphRemoveNodeParams);
+    case Methods.WORK_GRAPH_REMOVE_EDGE:
+      return workGraphRemoveEdge(p as WorkGraphRemoveEdgeParams);
     case Methods.WORK_GRAPH_UPDATE_NODE:
       return workGraphUpdateNode(p as WorkGraphUpdateNodeParams);
     case Methods.WORK_GRAPH_ACTIVATE:

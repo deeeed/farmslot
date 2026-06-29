@@ -2,6 +2,7 @@ import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 
 import type {
+  BacklogItem,
   RoadmapItem,
   RoadmapItemStage,
   RoadmapListResult,
@@ -9,8 +10,11 @@ import type {
   RoadmapRefineResult,
   RoadmapSaveResult,
   SlotStatus,
+  WorkGraphProjection,
 } from '@farmslot/protocol';
 import { Methods, ROADMAP_ITEM_STAGES } from '@farmslot/protocol';
+
+import './roadmap-graph-composer.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
@@ -71,6 +75,8 @@ function defaultSpecBody(item: RoadmapItem | null): string {
 export class RoadmapPanel extends LitElement {
   @state() private _allItems: RoadmapItem[] = [];
   @state() private _slots: SlotStatus[] = [];
+  @state() private _backlogItems: BacklogItem[] = [];
+  @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _selectedId = '';
   @state() private _filterProject = 'all';
@@ -98,6 +104,7 @@ export class RoadmapPanel extends LitElement {
   @state() private _refineCommand = '';
 
   @state() private _promotionDrafts: PromotionDraft[] = [];
+
   private _unsubscribeConnection?: () => void;
   private _unsubscribeState?: () => void;
 
@@ -285,6 +292,8 @@ export class RoadmapPanel extends LitElement {
   private _syncState(state: AppState) {
     const previousProjects = this._globalFilters.projects.join('\0');
     this._slots = state.fleet?.slots ?? [];
+    this._backlogItems = state.backlogItems;
+    this._workGraphs = state.workGraphs;
     this._globalFilters = state.globalFilters;
     if (previousProjects !== this._globalFilters.projects.join('\0')) {
       const visibleItems = this._items;
@@ -937,7 +946,23 @@ export class RoadmapPanel extends LitElement {
           ></textarea>
         </label>
       </div>
-      ${this._renderPromotionEditor(item)}`;
+      ${this._renderPromotionEditor(item)}
+      ${item.promotion?.length
+        ? html`<roadmap-graph-composer
+            .item=${item}
+            .backlogItems=${this._backlogItems}
+            .workGraphs=${this._workGraphs}
+            .tagsInput=${this._editTags}
+            @roadmap-graph-message=${(event: CustomEvent<string>) => {
+              this._message = event.detail;
+              this._error = '';
+            }}
+            @roadmap-graph-error=${(event: CustomEvent<string>) => {
+              this._error = event.detail;
+              this._message = '';
+            }}
+          ></roadmap-graph-composer>`
+        : nothing}`;
   }
 
   render() {

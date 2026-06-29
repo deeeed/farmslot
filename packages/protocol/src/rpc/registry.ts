@@ -55,6 +55,8 @@ export const Methods = {
   WORK_GRAPH_LIST: 'workGraph.list',
   WORK_GRAPH_ADD_NODE: 'workGraph.addNode',
   WORK_GRAPH_ADD_EDGE: 'workGraph.addEdge',
+  WORK_GRAPH_REMOVE_NODE: 'workGraph.removeNode',
+  WORK_GRAPH_REMOVE_EDGE: 'workGraph.removeEdge',
   WORK_GRAPH_UPDATE_NODE: 'workGraph.updateNode',
   WORK_GRAPH_ACTIVATE: 'workGraph.activate',
   WORK_GRAPH_PAUSE: 'workGraph.pause',

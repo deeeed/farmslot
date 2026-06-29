@@ -29,7 +29,9 @@ import {
   persistQueueNow,
 } from '../backlog/dispatch-queue.js';
 import {
+  assertBacklogItemAttachedToWorkNode,
   attachBacklogItemToWorkNode,
+  detachBacklogItemFromWorkNode,
   enqueueBacklogItem,
   getBacklogItemSnapshot,
   markBacklogItemNeedsAttention,
@@ -155,12 +157,14 @@ function normalizeId(prefix: string, input: string | undefined, title = ''): str
     }
     return explicit;
   }
-  const slug = title
+  const slugBase = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-  return `${prefix}_${slug || randomUUID().slice(0, 8)}`;
+    .replace(/^-+|-+$/g, '');
+  const slug = slugBase.slice(0, 40);
+  const suffix =
+    slugBase.length > 40 ? `-${createHash('sha1').update(slugBase).digest('hex').slice(0, 8)}` : '';
+  return `${prefix}_${slug || randomUUID().slice(0, 8)}${suffix}`;
 }
 
 function requireGraph(graphId: string): WorkGraphSnapshot {
@@ -389,7 +393,11 @@ export async function addWorkGraphNode(
       if (!backlogItem) throw new Error(`Backlog item not found: ${params.backlogItemId}`);
     }
     const title = kind === 'reference' ? params.reference!.title : backlogItem!.title;
-    const nodeId = normalizeId('wn', params.id, title);
+    const implicitIdSeed =
+      kind === 'reference'
+        ? `${title}-${params.reference!.kind}-${params.reference!.ref}`
+        : `${title}-${backlogItem!.id}`;
+    const nodeId = normalizeId('wn', params.id, implicitIdSeed);
     if (snapshot.nodes.some((node) => node.id === nodeId))
       throw new Error(`Work node already exists: ${nodeId}`);
     const now = new Date().toISOString();
@@ -462,6 +470,70 @@ export async function addWorkGraphEdge(
     snapshot.edges.push(edge);
     snapshot.graph.updatedAt = new Date().toISOString();
     await persistNow(snapshot);
+    emit(snapshot);
+    return { graph: project(snapshot) };
+  });
+}
+
+export async function removeWorkGraphEdge(params: {
+  graphId: string;
+  edgeId: string;
+}): Promise<{ graph: WorkGraphProjection }> {
+  return withMutation(async () => {
+    const snapshot = requireGraph(params.graphId);
+    if (snapshot.graph.status !== 'planning') {
+      throw new Error('workGraph.removeEdge requires planning status');
+    }
+    const edgeIndex = snapshot.edges.findIndex((edge) => edge.id === params.edgeId);
+    if (edgeIndex < 0) throw new Error(`Work edge not found: ${params.edgeId}`);
+    snapshot.edges.splice(edgeIndex, 1);
+    snapshot.graph.updatedAt = new Date().toISOString();
+    await persistNow(snapshot);
+    emit(snapshot);
+    return { graph: project(snapshot) };
+  });
+}
+
+export async function removeWorkGraphNode(params: {
+  graphId: string;
+  nodeId: string;
+}): Promise<{ graph: WorkGraphProjection }> {
+  return withMutation(async () => {
+    const snapshot = requireGraph(params.graphId);
+    if (snapshot.graph.status !== 'planning') {
+      throw new Error('workGraph.removeNode requires planning status');
+    }
+    const nodeIndex = snapshot.nodes.findIndex((node) => node.id === params.nodeId);
+    if (nodeIndex < 0) throw new Error(`Work node not found: ${params.nodeId}`);
+    const node = snapshot.nodes[nodeIndex]!;
+    if (node.backlogItemId) {
+      assertBacklogItemAttachedToWorkNode({
+        itemId: node.backlogItemId,
+        graphId: snapshot.graph.id,
+        nodeId: node.id,
+      });
+    }
+    const previousNodes = snapshot.nodes;
+    const previousEdges = snapshot.edges;
+    snapshot.nodes = snapshot.nodes.filter((candidate) => candidate.id !== params.nodeId);
+    snapshot.edges = snapshot.edges.filter(
+      (edge) => edge.fromNodeId !== params.nodeId && edge.toNodeId !== params.nodeId,
+    );
+    snapshot.graph.updatedAt = new Date().toISOString();
+    try {
+      if (node.backlogItemId) {
+        await detachBacklogItemFromWorkNode({
+          itemId: node.backlogItemId,
+          graphId: snapshot.graph.id,
+          nodeId: node.id,
+        });
+      }
+      await persistNow(snapshot);
+    } catch (err) {
+      snapshot.nodes = previousNodes;
+      snapshot.edges = previousEdges;
+      throw err;
+    }
     emit(snapshot);
     return { graph: project(snapshot) };
   });
