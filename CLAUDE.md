@@ -61,9 +61,17 @@ See `apps/command-center/CLAUDE.md` for the full protocol. If CDP is unreachable
 Before **any** `git commit` or `git push`:
 
 1. Confirm current branch is **not** `main` (`git branch --show-current`).
-2. Confirm you are in a **git worktree checkout** (e.g. `farmslot-wt/farmslot-*`), not the bare root at `/Users/deeeed/dev/farmslot` — that path is `main`’s tree and must not receive commits.
+2. Confirm you are in a **git worktree checkout** (a `farmslot-wt/farmslot-*` slot worktree or a `farmslot-worktrees/<slug>` feature worktree), not the bare root at `/Users/deeeed/dev/farmslot` — that path is `main`’s tree and must not receive commits.
 
-**Never stage, commit, or leave implementation diffs only on `main`.** Edit in a slot worktree on a feature branch; open a PR. Nested project repos under `projects/<name>/` follow their own git workflow; this rule is for the farmslot monorepo root only.
+**Never stage, commit, or leave implementation diffs only on `main`.** Edit on a feature branch in a worktree; open a PR. Nested project repos under `projects/<name>/` follow their own git workflow; this rule is for the farmslot monorepo root only.
+
+**Manual changes get their own worktree — not a slot worktree.** `farmslot-wt/farmslot-*` are owned by dispatched runs; never hand-edit there. For an ad-hoc framework/UI/docs change you make by hand, spin a dedicated worktree off `main`:
+
+```bash
+git worktree add -b <type>/<slug> /Users/deeeed/dev/farmslot-worktrees/<slug> main
+```
+
+Edit, commit, and open the PR from there; `git worktree remove` it after merge. This keeps `main`’s tree commit-free and clear of the slot worktrees.
 
 ### Conventional Commits — HARD RULE
 
