@@ -53,6 +53,10 @@ import {
   WORKER_ENV_PREFIX,
 } from '../../runners/registry.js';
 import {
+  assertScriptedRunnerConfig,
+  resolveScriptedCommandFromRawProjectJson,
+} from '../../runners/scripted-config.js';
+import {
   captureRunnerSessionMetadata,
   isRunnerAliveUnderPane,
   listRunnerSessionFiles,
@@ -653,6 +657,20 @@ export async function dispatchExecute(
     extractField(taskContent, /^\*\*Effort:\*\*\s*`?([^`\n]+)/m) ||
     (defaultFlowKey ? getProjectField(projectJson, `defaults.${defaultFlowKey}.effort`) : '') ||
     currentRun?.effort;
+  const scripted = currentRun?.scripted ?? params.scripted;
+  const scriptedCommand =
+    runner === 'scripted' && scripted?.mode === 'command'
+      ? resolveScriptedCommandFromRawProjectJson(scripted.commandRef, projectJson, vars.projectName)
+      : undefined;
+  assertScriptedRunnerConfig({
+    runner,
+    scripted,
+    projectName: vars.projectName,
+    projectConfig:
+      scripted?.mode === 'command' && scriptedCommand
+        ? { scripted: { commands: { [scripted.commandRef]: scriptedCommand } } }
+        : null,
+  });
   assertRunnerLaunchPrerequisites(vars, runner);
 
   step(
@@ -923,6 +941,8 @@ export async function dispatchExecute(
   let agentLaunch = buildLaunchCommand(vars, runner, model, taskPrompt, {
     taskFile: `${workerTaskDir}/TASK.md`,
     taskDir: workerTaskDir,
+    scripted,
+    scriptedCommand,
     claudeUsesDispatchCmd: true,
     effort,
     safetyTier,

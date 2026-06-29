@@ -193,6 +193,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
     prepareProfile: params.prepareProfile,
     model: params.model,
     runner: params.runner,
+    scripted: params.scripted,
     effort: params.effort,
     mode: params.mode,
     devInteractiveProfile: params.devInteractiveProfile,

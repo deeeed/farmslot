@@ -45,7 +45,6 @@ import type {
   RunnerActivity,
   RunnerObservability,
 } from './observability-types.js';
-import { classifyRunnerPaneStateBestEffort } from './pane-classifier.js';
 
 /**
  * Env prefix for worker sessions.
@@ -104,9 +103,27 @@ export interface RunnerDefinition {
   observabilityHeartbeatMs?: number | null;
 }
 
+interface PaneClassifierResult {
+  state: string;
+  confidence: number;
+  reason: string;
+  suggestedAction?: string;
+}
+
+async function classifyRunnerPaneStateBestEffortLazy(opts: {
+  runner: string;
+  target: string;
+  pane: string;
+  expected: string;
+}): Promise<PaneClassifierResult> {
+  const { classifyRunnerPaneStateBestEffort } = await import('./pane-classifier.js');
+  return classifyRunnerPaneStateBestEffort(opts);
+}
+
 const DEFAULT_RUNNER = 'claude';
 const RUNNER_ALIASES: Record<string, string> = {
   'claude-code': 'claude',
+  fake: 'scripted',
 };
 
 // Anthropic-family model names (claude). Codex on a ChatGPT account rejects
@@ -254,10 +271,10 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     acceptsModel: () => true,
     observabilityScope: 'none',
   },
-  fake: {
-    id: 'fake',
+  scripted: {
+    id: 'scripted',
     defaultLaunchMode: 'exec',
-    processMatchers: ['farmslot-fake-runner', 'fake-runner'],
+    processMatchers: ['farmslot scripted-runner', 'scripted-runner'],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
     supportsTmuxNudges: false,
@@ -447,7 +464,7 @@ export function runnerProcessPatternSource(runnerId?: string | null): string {
   if (runnerId == null || runnerId === '' || normalized === DEFAULT_RUNNER) {
     // Broad fallback for unknown/legacy slots — callers should prefer an explicit runner
     // whenever available to avoid matching unrelated panes on mixed-runner machines.
-    return 'claude|codex|opencode|cursor-agent|grok|farmslot-fake-runner|fake-runner';
+    return 'claude|codex|opencode|cursor-agent|grok|scripted-runner|farmslot-fake-runner|fake-runner';
   }
   if (!isKnownRunner(runnerId)) return normalized;
   const matchers = getRunnerDefinition(runnerId).processMatchers;
@@ -1460,8 +1477,7 @@ export async function sendRunnerPostLaunchPrompt(
   }
 
   let timeoutPaneForFailure = '';
-  let classifierForFailure: Awaited<ReturnType<typeof classifyRunnerPaneStateBestEffort>> | null =
-    null;
+  let classifierForFailure: PaneClassifierResult | null = null;
   if (!ready) {
     timeoutPaneForFailure = (
       await execOnSlot(
@@ -1469,7 +1485,7 @@ export async function sendRunnerPostLaunchPrompt(
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
       )
     ).stdout;
-    classifierForFailure = await classifyRunnerPaneStateBestEffort({
+    classifierForFailure = await classifyRunnerPaneStateBestEffortLazy({
       runner,
       target,
       pane: timeoutPaneForFailure,
@@ -1526,7 +1542,7 @@ export async function sendRunnerPostLaunchPrompt(
             tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null | tail -80`),
           )
         ).stdout;
-        classifierForFailure = await classifyRunnerPaneStateBestEffort({
+        classifierForFailure = await classifyRunnerPaneStateBestEffortLazy({
           runner,
           target,
           pane: timeoutPaneForFailure,
@@ -1547,7 +1563,7 @@ export async function sendRunnerPostLaunchPrompt(
       ).stdout;
     const classifier =
       classifierForFailure ??
-      (await classifyRunnerPaneStateBestEffort({
+      (await classifyRunnerPaneStateBestEffortLazy({
         runner,
         target,
         pane: timeoutPane,

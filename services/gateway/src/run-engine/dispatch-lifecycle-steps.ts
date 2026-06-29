@@ -357,6 +357,7 @@ export async function executeDispatchStep(
       mode: current.mode,
       model: current.metrics.model || undefined,
       runner: current.metrics.runner || undefined,
+      scripted: current.scripted,
       effort: current.effort,
       app: current.app,
     },

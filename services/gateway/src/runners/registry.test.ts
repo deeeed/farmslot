@@ -42,31 +42,36 @@ import {
 } from './registry.js';
 import { assertCodexWorkerDoesNotInjectMcpOverrides, makeVars } from './test-fixtures.js';
 
-describe('fake runner', () => {
+describe('scripted runner', () => {
   it('has exec launch mode', () => {
-    assert.equal(getRunnerDefinition('fake').defaultLaunchMode, 'exec');
+    assert.equal(getRunnerDefinition('scripted').defaultLaunchMode, 'exec');
   });
 
   it('does not support interactive prompt', () => {
-    assert.equal(runnerSupportsInteractivePrompt('fake'), false);
+    assert.equal(runnerSupportsInteractivePrompt('scripted'), false);
   });
 
   it('does not support tmux nudges', () => {
-    assert.equal(runnerSupportsTmuxNudges('fake'), false);
+    assert.equal(runnerSupportsTmuxNudges('scripted'), false);
   });
 
   it('does not need post-launch prompt', () => {
-    assert.equal(runnerNeedsPostLaunchPrompt('fake'), false);
+    assert.equal(runnerNeedsPostLaunchPrompt('scripted'), false);
   });
 
   it('has null continue command', () => {
-    assert.equal(runnerContinueCommand('fake'), null);
+    assert.equal(runnerContinueCommand('scripted'), null);
   });
 
-  it('matches fake-runner process patterns', () => {
-    const pattern = runnerProcessPattern('fake');
-    assert.ok(pattern.test('farmslot-fake-runner'));
-    assert.ok(pattern.test('fake-runner'));
+  it('matches scripted-runner process patterns', () => {
+    const pattern = runnerProcessPattern('scripted');
+    assert.ok(pattern.test('farmslot scripted-runner'));
+    assert.ok(pattern.test('scripted-runner'));
+  });
+
+  it('normalizes legacy fake runner ids to scripted', () => {
+    assert.equal(normalizeRunner('fake'), 'scripted');
+    assert.equal(getRunnerDefinition('fake').id, 'scripted');
   });
 });
 
@@ -756,7 +761,7 @@ describe('custom runner fallback behavior', () => {
   it('uses the broad catch-all when no runner is specified', () => {
     assert.equal(
       runnerProcessPatternSource(undefined),
-      'claude|codex|opencode|cursor-agent|grok|farmslot-fake-runner|fake-runner',
+      'claude|codex|opencode|cursor-agent|grok|scripted-runner|farmslot-fake-runner|fake-runner',
     );
   });
 });
@@ -771,6 +776,7 @@ describe('persistsSessionFiles capability', () => {
   it('returns false for runners without disk-backed session state', () => {
     assert.equal(runnerPersistsSessionFiles('opencode'), false);
     assert.equal(runnerPersistsSessionFiles('cursor'), false);
+    assert.equal(runnerPersistsSessionFiles('scripted'), false);
     assert.equal(runnerPersistsSessionFiles('fake'), false);
     assert.equal(runnerPersistsSessionFiles('none'), false);
   });
@@ -1155,23 +1161,48 @@ describe('buildLaunchCommand', () => {
     });
   });
 
-  describe('fake runner', () => {
-    it('uses the local npx harness and ignores dispatch_cmd entirely', () => {
+  describe('scripted runner', () => {
+    it('uses the checkout-local CLI and never npx/global farmslot', () => {
       const vars = makeVars({
         dispatchCmd: 'cd {repo} && {claude_path} --model {model}',
       });
-      const cmd = buildLaunchCommand(vars, 'fake', 'sonnet', PROMPT, { taskDir: TASK_DIR });
-      assert.equal(
+      const cmd = buildLaunchCommand(vars, 'scripted', null, PROMPT, {
+        taskDir: TASK_DIR,
+        scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 0 },
+      });
+      assert.match(
         cmd,
-        `cd '/tmp/repo' && npx farmslot fake-runner --task-dir '${TASK_DIR}' --scenario success --step-delay-ms 500`,
+        /FARMSLOT_ROOT='[^']+' FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1 node '[^']+\/packages\/cli\/bin\/farmslot\.mjs' scripted-runner/,
       );
+      assert.match(cmd, /--task-dir '\.task\/fix\/abc'/);
+      assert.match(cmd, /FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1/);
+      assert.match(cmd, /--mode scenario --scenario success --step-delay-ms 0/);
+      assert.doesNotMatch(cmd, /npx farmslot/);
+      assert.doesNotMatch(cmd, /(^|\s)farmslot fake-runner/);
     });
 
-    it('throws when taskDir is missing (fake harness needs it)', () => {
+    it('passes only resolved project-owned command config for command mode', () => {
+      const vars = makeVars();
+      const cmd = buildLaunchCommand(vars, 'scripted', null, PROMPT, {
+        taskDir: TASK_DIR,
+        scripted: { mode: 'command', commandRef: 'smoke' },
+        scriptedCommand: { command: 'yarn test:smoke', timeoutMs: 120000, cwd: 'apps/demo' },
+      });
+      assert.match(cmd, /--mode command --command-ref 'smoke'/);
+      assert.match(cmd, /--command 'yarn test:smoke'/);
+      assert.match(cmd, /--cwd 'apps\/demo'/);
+      assert.match(cmd, /--timeout-ms 120000/);
+    });
+
+    it('throws when taskDir or scripted config is missing', () => {
       const vars = makeVars();
       assert.throws(
-        () => buildLaunchCommand(vars, 'fake', null, PROMPT),
-        /Runner 'fake' requires opts.taskDir/,
+        () => buildLaunchCommand(vars, 'scripted', null, PROMPT),
+        /Runner 'scripted' requires opts.taskDir/,
+      );
+      assert.throws(
+        () => buildLaunchCommand(vars, 'scripted', null, PROMPT, { taskDir: TASK_DIR }),
+        /Runner 'scripted' requires opts.scripted/,
       );
     });
   });

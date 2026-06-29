@@ -220,6 +220,17 @@ export interface RawProjectJson {
   backlog?: {
     auto_dispatch?: { enabled?: boolean };
   };
+  scripted?: {
+    commands?: Record<
+      string,
+      {
+        command?: string;
+        timeout_ms?: number;
+        timeoutMs?: number;
+        cwd?: string;
+      }
+    >;
+  };
   roadmap?: {
     refinement_prompt?: string;
     refinement_prompt_path?: string;
@@ -457,6 +468,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   validateAutoRecoveryConfig(projectJson, projectConfig);
   validateBacklogConfig(projectJson, projectConfig);
   validateRoadmapConfig(projectJson, projectConfig);
+  validateScriptedConfig(projectJson, projectConfig);
   validateEvalHarnessesConfig(projectJson, projectConfig);
   validatePublicationReviewConfig(projectJson, projectConfig);
   validatePrepareConfig(projectJson, projectConfig);
@@ -625,6 +637,40 @@ export function validateRoadmapConfig(projectJson: RawProjectJson, projectConfig
   }
   if (cfg.runner_command !== undefined && typeof cfg.runner_command !== 'string') {
     throw new Error(`${projectConfig}: roadmap.runner_command must be a string`);
+  }
+}
+
+export function validateScriptedConfig(projectJson: RawProjectJson, projectConfig: string): void {
+  const cfg = projectJson.scripted;
+  if (!cfg) return;
+  if (typeof cfg !== 'object' || Array.isArray(cfg)) {
+    throw new Error(`${projectConfig}: scripted must be an object`);
+  }
+  if (cfg.commands === undefined) return;
+  if (typeof cfg.commands !== 'object' || Array.isArray(cfg.commands)) {
+    throw new Error(`${projectConfig}: scripted.commands must be an object`);
+  }
+  for (const [name, commandConfig] of Object.entries(cfg.commands)) {
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+      throw new Error(`${projectConfig}: scripted.commands key "${name}" is invalid`);
+    }
+    if (!commandConfig || typeof commandConfig !== 'object' || Array.isArray(commandConfig)) {
+      throw new Error(`${projectConfig}: scripted.commands.${name} must be an object`);
+    }
+    if (typeof commandConfig.command !== 'string' || !commandConfig.command.trim()) {
+      throw new Error(
+        `${projectConfig}: scripted.commands.${name}.command must be a non-empty string`,
+      );
+    }
+    const timeoutMs = commandConfig.timeout_ms ?? commandConfig.timeoutMs;
+    if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs <= 0)) {
+      throw new Error(
+        `${projectConfig}: scripted.commands.${name}.timeout_ms must be a positive integer`,
+      );
+    }
+    if (commandConfig.cwd !== undefined && typeof commandConfig.cwd !== 'string') {
+      throw new Error(`${projectConfig}: scripted.commands.${name}.cwd must be a string`);
+    }
   }
 }
 

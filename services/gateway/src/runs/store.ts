@@ -482,6 +482,7 @@ export function createRun(params: RunCreateParams): Run {
     app: params.app,
     ...(params.prepareProfile ? { prepareProfile: params.prepareProfile } : {}),
     effort: params.effort,
+    scripted: params.scripted,
     slotId: params.slotId ?? null,
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
@@ -500,7 +501,7 @@ export function createRun(params: RunCreateParams): Run {
     metrics: {
       nudgeCount: 0,
       model: resolvedModel,
-      runner: params.runner ?? null,
+      runner: normalizedRunner,
       runnerSessionId: null,
       runnerSessionPath: null,
     },

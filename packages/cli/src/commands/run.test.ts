@@ -251,3 +251,31 @@ test('parseTaskPath reports malformed task metadata with file context', () => {
 
   assert.throws(() => parseTaskPath(taskFile), /Invalid task metadata .*template-provenance\.json/);
 });
+
+test('run create builds scripted scenario config', () => {
+  const params = buildRunCreateParams({
+    project: 'farmslot-farm',
+    flowType: 'dev',
+    ticket: 'DEV-1',
+    runner: 'scripted',
+    scriptedScenario: 'success',
+    scriptedStepDelayMs: '0',
+  });
+
+  assert.deepEqual(params.scripted, { mode: 'scenario', scenario: 'success', stepDelayMs: 0 });
+});
+
+test('run create rejects ambiguous scripted config', () => {
+  assert.throws(
+    () =>
+      buildRunCreateParams({
+        project: 'farmslot-farm',
+        flowType: 'dev',
+        ticket: 'DEV-1',
+        runner: 'scripted',
+        scriptedScenario: 'success',
+        scriptedCommandRef: 'smoke',
+      }),
+    /either --scripted-scenario or --scripted-command-ref/,
+  );
+});

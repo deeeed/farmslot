@@ -81,6 +81,7 @@ const BACKLOG_UPDATE_KEYS = new Set([
   'autoDispatch',
   'runner',
   'model',
+  'scripted',
   'effort',
 ]);
 
@@ -545,6 +546,7 @@ export async function createBacklogItem(
       ...(typeof params.autoDispatch === 'boolean' ? { autoDispatch: params.autoDispatch } : {}),
       ...(runner ? { runner } : {}),
       ...(model ? { model } : {}),
+      ...(params.scripted ? { scripted: params.scripted } : {}),
       ...(effort ? { effort } : {}),
       createdAt: now,
       updatedAt: now,
@@ -718,6 +720,10 @@ export async function updateBacklogItem(params: BacklogUpdateParams): Promise<Ba
           params.model === null ? undefined : normalizeExecutionHint(params.model, 'model');
         if (model) item.model = model;
         else delete item.model;
+      }
+      if (params.scripted !== undefined) {
+        if (params.scripted === null) delete item.scripted;
+        else item.scripted = params.scripted;
       }
       if (params.effort !== undefined) {
         const effort =
@@ -903,6 +909,7 @@ export async function enqueueBacklogItem(
         allowedSlots: item.allowedSlots,
         runner: item.runner,
         model: item.model,
+        scripted: item.scripted,
         effort: item.effort,
         // Backlog handoff persists queue+backlog links before dispatch can consume the queue item.
         autoDispatch: false,

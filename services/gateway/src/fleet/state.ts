@@ -197,6 +197,29 @@ function normalizeTmuxWorkerFilters(raw: unknown): TmuxWorkerFilterConfig | unde
   };
 }
 
+function normalizeProjectScripted(rawScripted: unknown): ProjectConfig['scripted'] | undefined {
+  if (!isRecord(rawScripted)) return undefined;
+  const rawCommands = rawScripted.commands;
+  if (!isRecord(rawCommands)) return undefined;
+  const commands: NonNullable<ProjectConfig['scripted']>['commands'] = {};
+  for (const [name, rawCommand] of Object.entries(rawCommands)) {
+    if (!isRecord(rawCommand)) continue;
+    const command = rawCommand.command;
+    if (typeof command !== 'string' || !command.trim()) continue;
+    const timeoutRaw = rawCommand.timeout_ms ?? rawCommand.timeoutMs;
+    commands[name] = {
+      command,
+      ...(typeof timeoutRaw === 'number' && Number.isInteger(timeoutRaw) && timeoutRaw > 0
+        ? { timeoutMs: timeoutRaw }
+        : {}),
+      ...(typeof rawCommand.cwd === 'string' && rawCommand.cwd.trim()
+        ? { cwd: rawCommand.cwd }
+        : {}),
+    };
+  }
+  return Object.keys(commands).length > 0 ? { commands } : undefined;
+}
+
 function normalizePublicationReview(
   raw: Record<string, unknown>,
 ): ProjectConfig['publicationReview'] | undefined {
@@ -691,6 +714,7 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
         const autoRecovery = normalizeRawProjectAutoRecovery(raw.auto_recovery);
         const backlog = normalizeRawProjectBacklog(raw.backlog);
         const roadmap = normalizeRawProjectRoadmap(raw.roadmap);
+        const scripted = normalizeProjectScripted(raw.scripted);
         const prepare = normalizeRawProjectPrepare(raw.prepare, raw.name || dir);
         const publicationReview = normalizePublicationReview(raw);
         const recipeRunSupportsPlaybackSlow = raw.recipe_run_supports_playback_slow === true;
@@ -800,6 +824,7 @@ export async function loadProjectConfigs(): Promise<ProjectConfig[]> {
           ...(backlog ? { backlog } : {}),
           ...(roadmap ? { roadmap } : {}),
           ...(prepare ? { prepare } : {}),
+          ...(scripted ? { scripted } : {}),
           ...(publicationReview ? { publicationReview } : {}),
           ...(recipeRunSupportsPlaybackSlow ? { recipeRunSupportsPlaybackSlow: true } : {}),
           ...(recipeRunSupportsVideoRecording ? { recipeRunSupportsVideoRecording: true } : {}),

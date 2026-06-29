@@ -6,7 +6,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const entry = resolve(root, 'src', 'entry.ts');
+const entry = resolve(
+  root,
+  'src',
+  process.argv[2] === 'scripted-runner' ? 'scripted-runner-entry.ts' : 'entry.ts',
+);
 
 // Walk up to find tsx binary in node_modules/.bin (handles yarn hoisting)
 function findBin(name) {

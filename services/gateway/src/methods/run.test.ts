@@ -1029,3 +1029,142 @@ test('createRun treats explicit Cursor unknown model as unset', async (t) => {
 
   assert.equal(run.metrics.model, DEFAULT_CURSOR_MODEL);
 });
+
+test('runCreate rejects scripted scenario without dev feature flag', async (t) => {
+  const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
+  const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  const previousScenarioFlag = process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  delete process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+  t.after(() => {
+    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
+    if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+    if (previousScenarioFlag === undefined) delete process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+    else process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS = previousScenarioFlag;
+  });
+
+  await assert.rejects(
+    () =>
+      runCreate(
+        {
+          flowType: 'dev',
+          project: 'farmslot-farm',
+          ticketOrPr: `scripted scenario ${Date.now()}`,
+          mode: 'interactive',
+          runner: 'scripted',
+          scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 0 },
+        },
+        () => {},
+      ),
+    /FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1/,
+  );
+});
+
+test('runCreate accepts scripted scenario when dev feature flag is enabled', async (t) => {
+  const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
+  const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  const previousScenarioFlag = process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS = '1';
+  const created: string[] = [];
+  t.after(async () => {
+    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
+    if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+    if (previousScenarioFlag === undefined) delete process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS;
+    else process.env.FARMSLOT_ENABLE_SCRIPTED_SCENARIOS = previousScenarioFlag;
+    for (const id of created.reverse()) {
+      const run = getRun(id);
+      if (!run) continue;
+      updateRun(id, { status: 'done', completedAt: new Date().toISOString() });
+      await deleteRun(id);
+    }
+  });
+
+  const result = await runCreate(
+    {
+      flowType: 'dev',
+      project: 'farmslot-farm',
+      ticketOrPr: `scripted scenario ${Date.now()}`,
+      mode: 'interactive',
+      runner: 'scripted',
+      scripted: { mode: 'scenario', scenario: 'success', stepDelayMs: 0 },
+    },
+    () => {},
+  );
+  created.push(result.run.id);
+
+  assert.equal(result.run.metrics.runner, 'scripted');
+  assert.deepEqual(result.run.scripted, { mode: 'scenario', scenario: 'success', stepDelayMs: 0 });
+});
+
+test('runCreate validates scripted commandRef against project config', async (t) => {
+  const previousNodeTestContext = process.env.NODE_TEST_CONTEXT;
+  const previousDisableStart = process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+  process.env.NODE_TEST_CONTEXT = '1';
+  process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = '1';
+  const projectDir = mkdtempSync(path.join(projectsDir, 'run-test-scripted-'));
+  const project = path.basename(projectDir);
+  const templatesDir = path.join(projectDir, 'templates', 'worker');
+  mkdirSync(templatesDir, { recursive: true });
+  writeFileSync(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      name: project,
+      scripted: { commands: { smoke: { command: 'printf smoke', timeout_ms: 1000 } } },
+    }),
+    'utf-8',
+  );
+  writeFileSync(path.join(templatesDir, 'dev-interactive.md'), 'Scripted dev template\n', 'utf-8');
+  const created: string[] = [];
+  t.after(async () => {
+    if (previousNodeTestContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = previousNodeTestContext;
+    if (previousDisableStart === undefined) delete process.env.FARMSLOT_DISABLE_RUN_ENGINE_START;
+    else process.env.FARMSLOT_DISABLE_RUN_ENGINE_START = previousDisableStart;
+    invalidateProjectVarsCache(project);
+    rmSync(projectDir, { recursive: true, force: true });
+    for (const id of created.reverse()) {
+      const run = getRun(id);
+      if (!run) continue;
+      updateRun(id, { status: 'done', completedAt: new Date().toISOString() });
+      await deleteRun(id);
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      runCreate(
+        {
+          flowType: 'dev',
+          project,
+          ticketOrPr: 'scripted command missing',
+          mode: 'interactive',
+          runner: 'scripted',
+          scripted: { mode: 'command', commandRef: 'missing' },
+        },
+        () => {},
+      ),
+    /commandRef 'missing' is not declared/,
+  );
+
+  const result = await runCreate(
+    {
+      flowType: 'dev',
+      project,
+      ticketOrPr: 'scripted command smoke',
+      mode: 'interactive',
+      runner: 'scripted',
+      scripted: { mode: 'command', commandRef: 'smoke' },
+    },
+    () => {},
+  );
+  created.push(result.run.id);
+
+  assert.deepEqual(result.run.scripted, { mode: 'command', commandRef: 'smoke' });
+});
