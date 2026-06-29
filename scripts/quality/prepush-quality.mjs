@@ -228,15 +228,31 @@ if (changedFiles.length === 0) {
   process.exit(0);
 }
 
-const activeTargets = Object.entries(PATH_FILTERS)
+const matchedTargets = Object.entries(PATH_FILTERS)
   .filter(([, patterns]) => filterMatches(changedFiles, patterns))
   .map(([target]) => target);
 
+// Pre-push must be a fast pass, not a minutes-long CI mirror. By default run only
+// the cheap repo-wide static gates (format, lint, structure, imports, large-file
+// + loc advisories). The per-workspace `<ws> quality` targets run full
+// typecheck + tests + build — that is CI's job (.github/workflows/farmslot-quality.yml
+// runs the same targets on the PR) and it also carries a known test git-isolation
+// leak. Opt into the full local mirror with FARMSLOT_FULL_PREPUSH=1.
+const FAST_TARGETS = new Set(['repo']);
+const full = process.env.FARMSLOT_FULL_PREPUSH === '1';
+const activeTargets = full ? matchedTargets : matchedTargets.filter((t) => FAST_TARGETS.has(t));
+const skippedTargets = full ? [] : matchedTargets.filter((t) => !FAST_TARGETS.has(t));
+
 console.log(
-  `farmslot pre-push: ${changedFiles.length} changed file(s); running ${activeTargets.length} quality target(s).`,
+  `farmslot pre-push: ${changedFiles.length} changed file(s); running ${activeTargets.length} ${full ? 'full' : 'fast'} quality target(s).`,
 );
-console.log(`  targets: ${activeTargets.join(', ')}`);
-console.log('  skip with: FARMSLOT_SKIP_PREPUSH=1 git push --no-verify');
+console.log(`  targets: ${activeTargets.join(', ') || '(none)'}`);
+if (skippedTargets.length > 0) {
+  console.log(
+    `  deferred to CI (run locally with FARMSLOT_FULL_PREPUSH=1): ${skippedTargets.join(', ')}`,
+  );
+}
+console.log('  skip entirely with: FARMSLOT_SKIP_PREPUSH=1 git push --no-verify');
 
 for (const target of activeTargets) {
   for (const [label, command] of TARGET_STEPS[target] ?? []) {
@@ -244,4 +260,8 @@ for (const target of activeTargets) {
   }
 }
 
-console.log('\nfarmslot pre-push: all targeted quality gates passed.');
+console.log(
+  `\nfarmslot pre-push: ${full ? 'all targeted' : 'fast'} quality gates passed.${
+    full ? '' : ' Full typecheck/tests/build run in CI.'
+  }`,
+);
