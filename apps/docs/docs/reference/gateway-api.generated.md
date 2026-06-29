@@ -176,6 +176,12 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `resource.health`                    | resource     | bounded-write | —      | —      | Resource Health gateway method.                    |
 | `resource.list`                      | resource     | read-only     | —      | —      | Resource List gateway method.                      |
 | `resource.watch.setEnabled`          | resource     | bounded-write | —      | —      | Resource Watch SetEnabled gateway method.          |
+| `roadmap.delete`                     | roadmap      | high-impact   | —      | —      | Roadmap Delete gateway method.                     |
+| `roadmap.get`                        | roadmap      | read-only     | —      | —      | Roadmap Get gateway method.                        |
+| `roadmap.list`                       | roadmap      | read-only     | —      | —      | Roadmap List gateway method.                       |
+| `roadmap.promote`                    | roadmap      | bounded-write | —      | —      | Roadmap Promote gateway method.                    |
+| `roadmap.refine`                     | roadmap      | bounded-write | —      | —      | Roadmap Refine gateway method.                     |
+| `roadmap.save`                       | roadmap      | bounded-write | —      | —      | Roadmap Save gateway method.                       |
 | `run.activateOnSlot`                 | run          | bounded-write | —      | —      | Run ActivateOnSlot gateway method.                 |
 | `run.archive`                        | run          | bounded-write | —      | —      | Run Archive gateway method.                        |
 | `run.autoRecovery.stop`              | run          | bounded-write | —      | —      | Run AutoRecovery Stop gateway method.              |
@@ -254,6 +260,16 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `tmux.synchronizePanes`              | tmux         | bounded-write | —      | —      | Tmux SynchronizePanes gateway method.              |
 | `tmux.worker.list`                   | tmux         | read-only     | —      | —      | Tmux Worker List gateway method.                   |
 | `tmux.zoomPane`                      | tmux         | bounded-write | —      | —      | Tmux ZoomPane gateway method.                      |
+| `workGraph.activate`                 | workGraph    | bounded-write | —      | —      | WorkGraph Activate gateway method.                 |
+| `workGraph.addEdge`                  | workGraph    | bounded-write | —      | —      | WorkGraph AddEdge gateway method.                  |
+| `workGraph.addNode`                  | workGraph    | bounded-write | —      | —      | WorkGraph AddNode gateway method.                  |
+| `workGraph.create`                   | workGraph    | bounded-write | —      | —      | WorkGraph Create gateway method.                   |
+| `workGraph.gateResolve`              | workGraph    | bounded-write | —      | —      | WorkGraph GateResolve gateway method.              |
+| `workGraph.get`                      | workGraph    | read-only     | —      | —      | WorkGraph Get gateway method.                      |
+| `workGraph.list`                     | workGraph    | read-only     | —      | —      | WorkGraph List gateway method.                     |
+| `workGraph.pause`                    | workGraph    | lifecycle     | —      | —      | WorkGraph Pause gateway method.                    |
+| `workGraph.schedulerTick`            | workGraph    | bounded-write | —      | —      | WorkGraph SchedulerTick gateway method.            |
+| `workGraph.updateNode`               | workGraph    | bounded-write | —      | —      | WorkGraph UpdateNode gateway method.               |
 | `workspace.metro.subscribe`          | workspace    | bounded-write | —      | —      | Workspace Metro Subscribe gateway method.          |
 | `workspace.metro.unsubscribe`        | workspace    | bounded-write | —      | —      | Workspace Metro Unsubscribe gateway method.        |
 
@@ -310,5 +326,6 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `terminal.exited`               | terminal  | Terminal Exited gateway event.               |
 | `terminal.mode`                 | terminal  | Terminal Mode gateway event.                 |
 | `tmux.worker.inventory.updated` | tmux      | Tmux Worker Inventory Updated gateway event. |
+| `workGraph.updated`             | workGraph | WorkGraph Updated gateway event.             |
 | `worker.signal`                 | worker    | Worker Signal gateway event.                 |
 | `workspace.metro.data`          | workspace | Workspace Metro Data gateway event.          |
