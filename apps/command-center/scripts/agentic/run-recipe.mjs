@@ -615,6 +615,7 @@ async function main() {
     recordingTarget = await ensureCapturableRecordingTarget(recordingTarget);
   }
 
+  const hudEnabled = filteredManifest.supported_official_actions.includes('app.hud');
   const runner = createRecipeRunner({
     actionManifest: filteredManifest,
     adapters: [
@@ -626,6 +627,19 @@ async function main() {
         actions: filteredManifest.supported_official_actions,
       }),
     ],
+    ...(hudEnabled
+      ? {
+          hud: {
+            title: 'Command Center recipe',
+            display: {
+              layout: 'docked-bottom',
+              position: 'bottom',
+              showTitle: false,
+              showDebug: false,
+            },
+          },
+        }
+      : {}),
     preconditions: buildPreconditions({
       uiUrl,
       gatewayPort: options.gatewayPort,

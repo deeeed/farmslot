@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "title": "Command Center demo red monitoring banner",
-  "description": "Proves the demo-gated Farmslot monitoring banner is absent by default and present when the demo env flag is enabled on the slot sandbox.",
+  "description": "Proves the demo-gated Farmslot monitoring banner is absent by default and present when the demo env flag is enabled on the slot sandbox. Use the slot sandbox Vite port (from pool .env.ports, typically 5876 on macwork-ff-*) — not the operator UI on 5174.",
   "inputs": {
-    "ui_url": "http://localhost:5174",
+    "ui_url": "http://localhost:5876",
     "slot_id": "macwork-ff-2",
     "gateway_port": "8809",
     "banner_text": "FARMSLOT DEMO: PARALLEL RUN MONITORING"
