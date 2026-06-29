@@ -349,6 +349,26 @@ async function connectPage(cdpPort, preferredHash) {
   return CdpWebPage.connectToTarget(selected);
 }
 
+// Seed the same localStorage keys the UI reads (ui/src/gateway-url.ts) so the slot UI
+// authenticates to the slot gateway on load — without the worker having to log the recipe
+// browser in (which wastes setup tokens and surfaces as "token missing").
+export function gatewayTokenSeedScript(token) {
+  return `try { localStorage.setItem('farmslot.gateway.authMode', 'token'); localStorage.setItem('farmslot.gateway.token', ${JSON.stringify(token)}); } catch (e) {}`;
+}
+
+async function resolveGatewayToken(projectRoot) {
+  const fromEnv = process.env.FARMSLOT_GATEWAY_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const raw = await readFile(path.join(projectRoot, '.env.local-auth'), 'utf8');
+    const match = raw.match(/^FARMSLOT_GATEWAY_TOKEN=(.+)$/m);
+    if (match) return match[1].trim();
+  } catch {
+    // .env.local-auth is optional (gateway may run auth=none); fall through to no token.
+  }
+  return '';
+}
+
 async function pidListeningOnPort(port) {
   try {
     const { stdout } = await execFileAsync('lsof', [`-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
@@ -601,13 +621,26 @@ async function main() {
     ),
   };
 
+  const gatewayToken = await resolveGatewayToken(options.projectRoot);
   let preferredHash = '';
   const cdpTransport = createCdpWebUiTransport({
     async getPage(input) {
       if (input.action === 'ui.navigate') {
         preferredHash = hashFromNavigateTarget(String(input.node.url ?? input.node.target ?? ''));
       }
-      return connectPage(options.cdpPort, preferredHash);
+      const page = await connectPage(options.cdpPort, preferredHash);
+      if (gatewayToken) {
+        try {
+          await page.evaluate(gatewayTokenSeedScript(gatewayToken));
+        } catch (error) {
+          console.warn(
+            `[run-recipe] failed to seed gateway token into recipe browser: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
+      return page;
     },
   });
 
