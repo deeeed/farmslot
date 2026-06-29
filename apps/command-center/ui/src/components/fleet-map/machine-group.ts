@@ -23,6 +23,7 @@ import {
   spacing,
 } from '../../styles/theme-tokens.js';
 import { flowColor, flowLabel, formatElapsed, runStatusColor } from '../runs/run-utils.js';
+import type { SlotPendingWork } from '../work-graph/work-graph-execution-overlay.js';
 
 import { slotBranchDisplay } from './slot-branch-display.js';
 
@@ -37,6 +38,7 @@ export class MachineGroup extends LitElement {
   @property({ attribute: false }) slotThumbnails: Map<string, { data: string; ts: number }> =
     new Map();
   @property({ attribute: false }) slotDecisions: Map<string, number> = new Map();
+  @property({ attribute: false }) slotPendingWork: Map<string, SlotPendingWork> = new Map();
   @property({ attribute: false }) nodeInfo?: NodeInfo;
   @property({ attribute: false }) nodeInfoMap: Map<string, NodeInfo> = new Map();
   @property({ attribute: false }) machineHealthMap: Map<string, MachineHealth> = new Map();
@@ -416,6 +418,7 @@ ${deployHint}"
               .linkedRun=${this.slotRuns.get(s.slot)}
               .thumbnailData=${this.slotThumbnails.get(s.slot)}
               .pendingDecisions=${this.slotDecisions.get(s.slot) ?? 0}
+              .pendingWork=${this.slotPendingWork.get(s.slot)}
               ?expanded=${this.expandedSlotId === s.slot}
               @slot-expand=${(e: CustomEvent) => this.handleSlotExpand(e.detail.slotId)}
             ></slot-card>`,
@@ -508,7 +511,13 @@ ${deployHint}"
               ? `/${s.currentVariant}`
               : ''}
         </td>
-        <td class="muted">${s.currentRunId && !s.currentFamilyId ? 'legacy-id' : '-'}</td>
+        <td class="muted">
+          ${this.slotPendingWork.get(s.slot)?.queued.length
+            ? `${this.slotPendingWork.get(s.slot)?.queued.length} queued`
+            : s.currentRunId && !s.currentFamilyId
+              ? 'legacy-id'
+              : '-'}
+        </td>
         <td class="progress-cell">
           ${progress
             ? html`

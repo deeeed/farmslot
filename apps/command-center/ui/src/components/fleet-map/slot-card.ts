@@ -16,6 +16,7 @@ import {
   spacing,
 } from '../../styles/theme-tokens.js';
 import { runStatusColor } from '../runs/run-utils.js';
+import type { SlotPendingWork } from '../work-graph/work-graph-execution-overlay.js';
 
 import { slotBranchDisplay } from './slot-branch-display.js';
 
@@ -28,6 +29,7 @@ export class SlotCard extends LitElement {
   @property({ attribute: false }) thumbnailData?: { data: string; ts: number };
   @property({ type: Boolean }) expanded = false;
   @property({ type: Number }) pendingDecisions = 0;
+  @property({ attribute: false }) pendingWork?: SlotPendingWork;
 
   static styles = css`
     :host {
@@ -310,6 +312,28 @@ export class SlotCard extends LitElement {
       flex: 1;
       min-width: 0;
     }
+    .pending-work-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: ${unsafeCSS(spacing.md)};
+      padding: 2px 7px;
+      border-radius: 3px;
+      background: ${unsafeCSS(colors.accent)}18;
+      border: 1px solid ${unsafeCSS(colors.accent)}55;
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: 9px;
+      font-weight: 700;
+      color: ${unsafeCSS(colors.accent)};
+    }
+    .pending-work-list {
+      margin-top: 4px;
+      color: ${unsafeCSS(colors.textMuted)};
+      font-family: ${unsafeCSS(fonts.mono)};
+      font-size: 9px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
     .decision-badge {
       display: inline-flex;
       align-items: center;
@@ -481,6 +505,7 @@ export class SlotCard extends LitElement {
                   </div>`
                 : ''}
             </div>
+            ${this.renderPendingWork()}
             ${this.pendingDecisions > 0
               ? html`
                   <div
@@ -528,6 +553,34 @@ export class SlotCard extends LitElement {
     if (/^[A-Z]+-\d+$/.test(taskId)) return taskId;
     // Fallback: truncate long prefixes
     return taskId.length > 20 ? '...' + taskId.slice(-16) : taskId;
+  }
+
+  private renderPendingWork() {
+    const pending = this.pendingWork;
+    if (!pending) return '';
+    const queued = pending.queued.length;
+    const running = pending.running.length;
+    const ready = pending.schedulerReady.length;
+    if (queued + running + ready === 0) return '';
+    const label = [
+      queued ? `${queued} queued` : '',
+      running ? `${running} running` : '',
+      ready ? `${ready} scheduler-ready, not queued` : '',
+    ]
+      .filter(Boolean)
+      .join(' / ');
+    const firstItems = [...pending.running, ...pending.queued, ...pending.schedulerReady].slice(
+      0,
+      3,
+    );
+    return html`
+      <div class="pending-work-badge" title="Graph/backlog work visible for this slot">
+        ${label}
+      </div>
+      <div class="pending-work-list">
+        ${firstItems.map((item) => html`<div>${item.kind}: ${item.title}</div>`)}
+      </div>
+    `;
   }
 
   private renderRunBadge(run: Run) {

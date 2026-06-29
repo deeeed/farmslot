@@ -2,10 +2,12 @@ import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
+  BacklogItem,
   DispatchQueueReorderResult,
   DispatchQueueUpdateResult,
   QueueItem,
   SlotStatus,
+  WorkGraphProjection,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
@@ -32,6 +34,37 @@ function kindLabel(item: QueueItem): string {
   return item.queueKind === 'eval-cell' ? 'eval' : item.flowType;
 }
 
+function isSlotReady(slot: SlotStatus): boolean {
+  return (
+    slot.enabled !== false &&
+    slot.dispatchable !== false &&
+    slot.agent !== 'working' &&
+    (slot.lifecycle === 'ready' || slot.lifecycle === 'held')
+  );
+}
+
+function graphContext(
+  item: QueueItem,
+  backlogItems: BacklogItem[],
+  workGraphs: WorkGraphProjection[],
+): string {
+  const backlog = item.backlogItemId
+    ? backlogItems.find((candidate) => candidate.id === item.backlogItemId)
+    : undefined;
+  const graph = item.workGraphId
+    ? workGraphs.find((candidate) => candidate.graph.id === item.workGraphId)
+    : undefined;
+  const parts = [
+    graph ? `graph:${graph.graph.title}` : item.workGraphId ? `graph:${item.workGraphId}` : '',
+    item.workNodeId ? `node:${item.workNodeId}` : '',
+    backlog?.title ? `spec:${backlog.title}` : '',
+    item.runner || item.model || item.effort
+      ? `exec:${[item.runner, item.model, item.effort].filter(Boolean).join('/')}`
+      : '',
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
 @customElement('dispatch-queue-panel')
 export class DispatchQueuePanel extends LitElement {
   @property({ attribute: false }) items: QueueItem[] = [];
@@ -44,6 +77,8 @@ export class DispatchQueuePanel extends LitElement {
   @state() private _error = '';
   @state() private _pickerItemId = '';
   @state() private _slots: SlotStatus[] = [];
+  @state() private _backlogItems: BacklogItem[] = [];
+  @state() private _workGraphs: WorkGraphProjection[] = [];
   private _unsub?: () => void;
 
   static styles = css`
@@ -128,6 +163,12 @@ export class DispatchQueuePanel extends LitElement {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .meta.graph {
+      color: ${unsafeCSS(colors.accent)};
+    }
+    .meta.warn {
+      color: ${unsafeCSS(colors.statusWarn)};
     }
     .kind {
       color: ${unsafeCSS(colors.accent)};
@@ -265,6 +306,8 @@ export class DispatchQueuePanel extends LitElement {
 
   private _syncState(state: AppState): void {
     this._slots = state.fleet?.slots ?? [];
+    this._backlogItems = state.backlogItems;
+    this._workGraphs = state.workGraphs;
   }
 
   private async _remove(item: QueueItem): Promise<void> {
@@ -419,6 +462,18 @@ export class DispatchQueuePanel extends LitElement {
     `;
   }
 
+  private _queueBlocker(item: QueueItem): string {
+    const candidates = this._slots.filter((slot) => {
+      if (slot.project !== item.project) return false;
+      if (item.slotId) return slot.slot === item.slotId;
+      if (item.allowedSlots?.length) return item.allowedSlots.includes(slot.slot);
+      return true;
+    });
+    if (candidates.length === 0) return 'waiting for visible allowed slot(s)';
+    if (candidates.some((slot) => isSlotReady(slot))) return '';
+    return 'waiting for allowed slot(s)';
+  }
+
   private async _reorder(targetId: string): Promise<void> {
     if (!this._dragId || this._dragId === targetId) return;
     const next = [...this.items];
@@ -482,6 +537,14 @@ export class DispatchQueuePanel extends LitElement {
                             ? ` · ${item.evalCell.capGroupId}`
                             : ''}</span
                         >
+                        ${graphContext(item, this._backlogItems, this._workGraphs)
+                          ? html`<span class="meta graph"
+                              >${graphContext(item, this._backlogItems, this._workGraphs)}</span
+                            >`
+                          : nothing}
+                        ${this._queueBlocker(item)
+                          ? html`<span class="meta warn">${this._queueBlocker(item)}</span>`
+                          : nothing}
                       </div>
                       <span class="kind">${kindLabel(item)}</span>
                       ${this._renderSlotControl(item)}

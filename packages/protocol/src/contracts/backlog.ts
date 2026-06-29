@@ -47,6 +47,9 @@ export interface BacklogItem {
   priority: number;
   allowedSlots?: string[];
   autoDispatch?: boolean;
+  runner?: string;
+  model?: string;
+  effort?: string;
   createdAt: string;
   updatedAt: string;
   queuedQueueItemId?: string;
@@ -75,6 +78,9 @@ export interface BacklogCreateInput {
   priority?: number;
   allowedSlots?: string[];
   autoDispatch?: boolean;
+  runner?: string;
+  model?: string;
+  effort?: string;
   status?: Extract<BacklogStatus, 'candidate' | 'ready'>;
 }
 
@@ -91,6 +97,9 @@ export interface BacklogUpdateInput {
   priority?: number;
   allowedSlots?: string[] | null;
   autoDispatch?: boolean;
+  runner?: string | null;
+  model?: string | null;
+  effort?: string | null;
 }
 
 export interface BacklogEnqueueResultData {
