@@ -42,10 +42,29 @@ if (tests.length === 0) {
   process.exit(1);
 }
 
+// Git exports GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (etc.) into hook
+// environments (pre-commit, pre-push). A test that spawns `git` to build a
+// temp-dir fixture inherits these and — despite setting its own `cwd` — operates
+// on the REAL repo: bogus `init` commits land on the checked-out branch and
+// `git init --bare` flips `core.bare`. Strip the location vars so fixture git
+// commands stay confined to their own working directory. No-op outside hooks.
+const GIT_LOCATION_ENV = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_NAMESPACE',
+  'GIT_PREFIX',
+];
+const childEnv = { ...process.env };
+for (const key of GIT_LOCATION_ENV) delete childEnv[key];
+
 function run(args) {
   const result = spawnSync('yarn', args, {
     cwd,
-    env: process.env,
+    env: childEnv,
     stdio: 'inherit',
     shell: false,
   });
