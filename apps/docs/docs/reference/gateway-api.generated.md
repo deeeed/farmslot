@@ -268,6 +268,8 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `workGraph.get`                      | workGraph    | read-only     | —      | —      | WorkGraph Get gateway method.                      |
 | `workGraph.list`                     | workGraph    | read-only     | —      | —      | WorkGraph List gateway method.                     |
 | `workGraph.pause`                    | workGraph    | lifecycle     | —      | —      | WorkGraph Pause gateway method.                    |
+| `workGraph.removeEdge`               | workGraph    | bounded-write | —      | —      | WorkGraph RemoveEdge gateway method.               |
+| `workGraph.removeNode`               | workGraph    | bounded-write | —      | —      | WorkGraph RemoveNode gateway method.               |
 | `workGraph.schedulerTick`            | workGraph    | bounded-write | —      | —      | WorkGraph SchedulerTick gateway method.            |
 | `workGraph.updateNode`               | workGraph    | bounded-write | —      | —      | WorkGraph UpdateNode gateway method.               |
 | `workspace.metro.subscribe`          | workspace    | bounded-write | —      | —      | Workspace Metro Subscribe gateway method.          |

@@ -5,6 +5,8 @@ import { Methods, WorkGraphMethods, type WorkGraphProjection } from '../../src/i
 
 test('work graph protocol exports method constants and v1 projection shape', () => {
   assert.equal(WorkGraphMethods.create, Methods.WORK_GRAPH_CREATE);
+  assert.equal(WorkGraphMethods.removeNode, Methods.WORK_GRAPH_REMOVE_NODE);
+  assert.equal(WorkGraphMethods.removeEdge, Methods.WORK_GRAPH_REMOVE_EDGE);
   assert.equal(WorkGraphMethods.schedulerTick, 'workGraph.schedulerTick');
 
   const projection: WorkGraphProjection = {
