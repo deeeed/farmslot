@@ -23,11 +23,16 @@ import {
   type WorkReferenceStatus,
 } from '@farmslot/protocol';
 
-import { getQueueSnapshot, persistQueueNow } from '../backlog/dispatch-queue.js';
+import {
+  cancelGraphQueuedItem,
+  getQueueSnapshot,
+  persistQueueNow,
+} from '../backlog/dispatch-queue.js';
 import {
   attachBacklogItemToWorkNode,
   enqueueBacklogItem,
   getBacklogItemSnapshot,
+  markBacklogItemNeedsAttention,
   markBacklogItemReady,
 } from '../backlog/store.js';
 import { farmslotRoot } from '../fleet/state.js';
@@ -486,7 +491,7 @@ export async function updateWorkGraphNode(
         labels: normalizeRunTags(params.reference.labels),
       };
       referenceUpdated = true;
-      if (snapshot.graph.status === 'waiting' || snapshot.graph.status === 'needs-attention') {
+      if (['waiting', 'needs-attention', 'done', 'failed'].includes(snapshot.graph.status)) {
         snapshot.graph.status = 'active';
       }
     }
@@ -514,9 +519,7 @@ export async function updateWorkGraphNode(
     snapshot.graph.updatedAt = node.updatedAt;
     await persistNow(snapshot);
     emit(snapshot);
-    return (
-      referenceUpdated && ['active', 'waiting', 'needs-attention'].includes(snapshot.graph.status)
-    );
+    return referenceUpdated && !['planning', 'paused', 'archived'].includes(snapshot.graph.status);
   });
   if (shouldReconcile) await schedulerTick({ graphId: params.graphId });
   return { graph: project(requireGraph(params.graphId)) };
@@ -1002,6 +1005,39 @@ export async function schedulerTick(
           }
           continue;
         }
+        computeWaiting(node, startInbound);
+        const blocked = node.waitingOn.length > 0;
+        if (blocked) {
+          if (['ready', 'queued', 'running', 'gated', 'succeeded'].includes(node.status)) {
+            const regressionReason =
+              'Start dependency regressed after this node became active; review queued/running work manually';
+            if (node.backlogItemId && node.status === 'queued') {
+              const cancelled = await cancelGraphQueuedItem({
+                workGraphId: snapshot.graph.id,
+                workNodeId: node.id,
+                reason: regressionReason,
+              });
+              await markBacklogItemNeedsAttention({
+                itemId: node.backlogItemId,
+                reason: regressionReason,
+                clearQueueLink: Boolean(cancelled),
+              });
+            }
+            node.status = 'needs-attention';
+            node.waitingOn = [
+              ...node.waitingOn,
+              {
+                kind: 'policy',
+                detail: regressionReason,
+              },
+            ];
+            snapshot.graph.status = 'needs-attention';
+          } else {
+            node.status = 'waiting';
+          }
+          node.updatedAt = now;
+          continue;
+        }
         if (
           [
             'queued',
@@ -1014,13 +1050,6 @@ export async function schedulerTick(
           ].includes(node.status)
         )
           continue;
-        computeWaiting(node, startInbound);
-        const blocked = node.waitingOn.length > 0;
-        if (blocked) {
-          node.status = 'waiting';
-          node.updatedAt = now;
-          continue;
-        }
         const requiredInbound = startInbound.filter((edge) => edge.required);
         const satisfiedInbound = requiredInbound.filter(
           (edge) => edge.status === 'satisfied' || edge.status === 'waived',

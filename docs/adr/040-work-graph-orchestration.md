@@ -26,9 +26,10 @@ means a _live run_ is stopped at a human/engine decision inside its own pipeline
 What is missing is a layer **above** the family that knows objective B must wait for
 objective A's PR to merge, and that schedules both across the fleet in parallel without a
 human babysitting each handoff. The user's end-state: pass a set of dispatchable objectives, Farmslot fans work out
-across runners, respects dependencies, auto-unlocks downstream work (including rebase +
-pr-complete on stacked PRs), and humans appear only at explicit surface gates (visual
-validation/demo, publication/code review, dangerous tier).
+across runners, respects dependencies, unlocks downstream work, and humans appear only at
+explicit surface gates (visual validation/demo, publication/code review, dangerous tier).
+Stacked-PR `rebase-onto` is modeled in v1 as a completion blocker with operator attention;
+automated ci-watch chaining can replace that attention path once the helper integration is wired.
 
 Two hard problems this ADR must not get wrong:
 
@@ -83,9 +84,10 @@ graph edge; the graph-owned `waitingOn` is never a family follow-up. Wanting to 
 `parentRunId` to a run in a _different_ family is the signal you actually need a `WorkEdge`.
 
 **The scheduler is a readiness oracle + enqueuer, not a second orchestrator.** It evaluates
-edges, then **enqueues ready backlog items through the existing dispatch queue** (or, for
-stacked rebase, reuses ci-watch's chaining mechanism). It **never calls `run.create`
-directly.** ADR-013's gateway-mediated dispatch stays the single execution path
+edges, then **enqueues ready backlog items through the existing dispatch queue**. For stacked
+rebase, v1 records the `rebase-onto` completion blocker and surfaces operator attention until
+the existing ci-watch chaining helper is wired into the graph scheduler. It **never calls
+`run.create` directly.** ADR-013's gateway-mediated dispatch stays the single execution path
 (hard-constraint #5).
 
 ---
@@ -504,15 +506,16 @@ If a graph node needs multi-runner comparison:
 The graph never fans out multiple comparison variants of the same node internally — that
 would conflate horizontal scheduling with eval methodology.
 
-**`rebase-onto` (stacked PRs) — the one place the graph triggers a flow, not just an enqueue.**
-When edge `A ──merged──▶ B` fires and B's PR already exists, the scheduler dispatches
-`merge-main`/`pr-complete` on **B's existing family** to rebase onto the newly-merged main —
-reusing **`buildCIWatchChainedRunParams`'s exact mechanism** (the same path ci-watch already
-uses intra-family). The graph only supplies the trigger ci-watch would otherwise supply, so
-there is still exactly one run-creation path. The downstream node records `baseRef` /
-`upstreamBaseNodeIds` / rebase run ID / before+after SHAs as evidence, since ADR-024 branch
-naming is per-family and cross-family base relationships aren't recorded anywhere today. The
-upstream merge **never** becomes `parentRunId` of the downstream run.
+**`rebase-onto` (stacked PRs) — completion blocker, not a new run path.**
+When edge `A ──merged──▶ B` fires and B's PR already exists, v1 marks B as needing operator
+attention for a downstream rebase/continue step. That keeps the dependency visible without
+forging runs or inventing a second orchestration path. A follow-up can wire this to
+**`buildCIWatchChainedRunParams`'s exact mechanism** (the same path ci-watch already uses
+intra-family); at that point the graph should only supply the trigger ci-watch would otherwise
+supply. The downstream node records `baseRef` / `upstreamBaseNodeIds` / rebase run ID /
+before+after SHAs as evidence when that integration exists, since ADR-024 branch naming is
+per-family and cross-family base relationships aren't recorded anywhere today. The upstream
+merge **never** becomes `parentRunId` of the downstream run.
 
 ---
 
@@ -647,10 +650,10 @@ from external state rather than from consumed events; `manual` edges persist the
 
 - **v0 (this doc).** ADR-040 Proposed — vocabulary and entity model only. No implementation code.
 
-- **v1 — execution engine + stacked-PR proof, operator-authored graphs.**
-  The brief requires v1 to prove **stacked-PR rebase-unlock AND parallel fan-out**
-  (hard constraint), so `rebase-onto` is **in v1**, scoped to the operator-authored stacked-PR
-  proof case. Ships:
+- **v1 — execution engine + stacked-PR visibility, operator-authored graphs.**
+  The brief requires v1 to prove parallel fan-out and represent stacked-PR completion blockers,
+  so `rebase-onto` is **in v1** as a modeled completion unlock that currently surfaces operator
+  attention instead of launching the chained run automatically. Ships:
   - `work-graph.ts` contracts (`version: 1`; future incompatible schema changes require a
     version bump plus read/migration handling); gateway JSON snapshot store
     (`services/gateway/src/work-graph/store.ts`, `.work-graphs/{id}.json`) with atomic
@@ -661,9 +664,8 @@ from external state rather than from consumed events; `manual` edges persist the
     `pr.merged`, and `scheduler.tick`.
   - Cross-project nodes: graph owner/scope may differ from each linked `BacklogItem.project`; dispatch uses the backlog project.
   - Nodes: dispatchable `backlog` nodes plus non-dispatchable `reference` nodes for external blockers/milestones.
-  - Conditions: `family-done`, `merged` (durable), `manual`, `reference-status`. Edge `blocks`: `start` and `completion`. Unlock: `enqueue` + `rebase-onto`
-    (via `buildCIWatchChainedRunParams`) + `mark-ready`.
-  - `baseRef`/`upstreamBaseNodeIds` + rebase evidence for the stacked case.
+  - Conditions: `family-done`, `merged` (durable), `manual`, `reference-status`. Edge `blocks`: `start` and `completion`. Unlock: `enqueue` + `mark-ready` + `rebase-onto` as an operator-attention completion blocker until `buildCIWatchChainedRunParams` is wired.
+  - `baseRef`/`upstreamBaseNodeIds` + rebase evidence fields for the stacked case.
   - Additive `workGraphId`/`workNodeId` back-refs on backlog/queue/run.
   - **Read-only Command Center surface**: graph list, node statuses, waiting reasons, linked
     runs, and typed external blockers/milestones in the same DAG.
@@ -757,8 +759,9 @@ model for many jobs" anti-pattern ADR-024 §0 warns against.
 
 - **No overloading ADR-024 family / `parentRunId` / branch naming** for cross-objective deps.
 - **No new `RunStatus.blocked` meaning** for dependency-waiting.
-- **No scheduler-forged runs** — unlock is `enqueue` / `mark-ready` / `rebase-onto` (the last via
-  ci-watch's mechanism). ADR-013 stays the only execution path.
+- **No scheduler-forged runs** — unlock is `enqueue` / `mark-ready` / `rebase-onto`; v1
+  `rebase-onto` surfaces operator attention until it can reuse ci-watch's existing mechanism.
+  ADR-013 stays the only execution path.
 - **No fat node config** — dispatch policy (flow/lane/model/slots/priority) lives on the backlog
   item, never duplicated onto the node.
 - **No `WorkNodeAttempt[]` array on the node** — attempt history derives from family/run queries.

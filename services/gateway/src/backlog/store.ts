@@ -684,6 +684,23 @@ export async function markBacklogItemReady(
   });
 }
 
+export async function markBacklogItemNeedsAttention(params: {
+  itemId: string;
+  reason: string;
+  clearQueueLink?: boolean;
+}): Promise<{ item: BacklogItem }> {
+  return withBacklogMutation(async () => {
+    const item = getItem(params.itemId);
+    item.status = 'needs-attention';
+    item.lastDispatchError = params.reason;
+    if (params.clearQueueLink) delete item.queuedQueueItemId;
+    item.updatedAt = new Date().toISOString();
+    await persistNow('work-graph-needs-attention');
+    broadcastBacklog();
+    return { item };
+  });
+}
+
 async function buildInitialContext(item: BacklogItem): Promise<string> {
   const specMarkdown = await readBacklogSpecMarkdown(item);
   return [

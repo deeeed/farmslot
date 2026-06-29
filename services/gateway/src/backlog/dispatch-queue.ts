@@ -238,6 +238,29 @@ export function removeItem(itemId: string): void {
   broadcastQueue();
 }
 
+export async function cancelGraphQueuedItem(params: {
+  workGraphId: string;
+  workNodeId: string;
+  reason: string;
+}): Promise<QueueItem | null> {
+  const idx = queue.findIndex(
+    (item) =>
+      item.status === 'queued' &&
+      item.workGraphId === params.workGraphId &&
+      item.workNodeId === params.workNodeId,
+  );
+  if (idx < 0) return null;
+  const [item] = queue.splice(idx, 1);
+  if (!item) return null;
+  const cancelled: QueueItem = { ...item, status: 'cancelled' };
+  await enqueuePersist('graph-dependency-regressed');
+  console.log(
+    `[dispatch-queue] cancelled graph queue item ${item.id.slice(0, 8)}: ${params.reason}`,
+  );
+  broadcastQueue();
+  return cancelled;
+}
+
 export function updateItem(params: DispatchQueueUpdateParams): QueueItem {
   const item = queue.find((q) => q.id === params.itemId);
   if (!item) throw new Error(`Queue item not found: ${params.itemId}`);

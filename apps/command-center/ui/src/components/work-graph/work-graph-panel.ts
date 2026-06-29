@@ -17,7 +17,7 @@ export class WorkGraphPanel extends LitElement {
   @state() private graphs: WorkGraphProjection[] = [];
   @state() private backlogItems: BacklogItem[] = [];
   @state() private selectedProject = '';
-  @state() private selectedNodeId = '';
+  @state() private selectedNodeKey = '';
   private unsub?: () => void;
 
   static styles = workGraphPanelStyles;
@@ -39,8 +39,10 @@ export class WorkGraphPanel extends LitElement {
     const graphs = this.activeGraphs();
     const projects = new Set(graphs.map((graph) => graph.graph.project));
     if (this.selectedProject && !projects.has(this.selectedProject)) this.selectedProject = '';
-    const nodeIds = new Set(graphs.flatMap((graph) => graph.nodes.map((node) => node.id)));
-    if (this.selectedNodeId && !nodeIds.has(this.selectedNodeId)) this.selectedNodeId = '';
+    const nodeKeys = new Set(
+      graphs.flatMap((graph) => graph.nodes.map((node) => this.nodeKey(graph, node.id))),
+    );
+    if (this.selectedNodeKey && !nodeKeys.has(this.selectedNodeKey)) this.selectedNodeKey = '';
   }
 
   private activeGraphs(): WorkGraphProjection[] {
@@ -137,12 +139,23 @@ export class WorkGraphPanel extends LitElement {
     return `wg-arrow-${graph.graph.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   }
 
-  private selectNode(nodeId: string) {
-    this.selectedNodeId = this.selectedNodeId === nodeId ? '' : nodeId;
+  private nodeKey(graph: WorkGraphProjection, nodeId: string): string {
+    return `${graph.graph.id}:${nodeId}`;
+  }
+
+  private selectNode(graph: WorkGraphProjection, nodeId: string) {
+    const key = this.nodeKey(graph, nodeId);
+    this.selectedNodeKey = this.selectedNodeKey === key ? '' : key;
+  }
+
+  private isSelectedNode(graph: WorkGraphProjection, nodeId: string): boolean {
+    return this.selectedNodeKey === this.nodeKey(graph, nodeId);
   }
 
   private selectedNode(graph: WorkGraphProjection): WorkNode | null {
-    return graph.nodes.find((node) => node.id === this.selectedNodeId) ?? graph.nodes[0] ?? null;
+    return (
+      graph.nodes.find((node) => this.isSelectedNode(graph, node.id)) ?? graph.nodes[0] ?? null
+    );
   }
 
   private renderLegend() {
@@ -162,12 +175,13 @@ export class WorkGraphPanel extends LitElement {
   }
 
   private renderDiagramNode(
+    graph: WorkGraphProjection,
     layoutNode: WorkGraphLayoutNode,
     backlogById: Map<string, BacklogItem>,
   ): SVGTemplateResult {
     const { node, x, y, w, h } = layoutNode;
     const color = this.colorForStatus(node.status);
-    const isSelected = this.selectedNodeId === node.id;
+    const isSelected = this.isSelectedNode(graph, node.id);
     const item = node.backlogItemId ? backlogById.get(node.backlogItemId) : undefined;
     const title = this.graphTitleForNode(backlogById, node);
     const tags = [
@@ -185,11 +199,11 @@ export class WorkGraphPanel extends LitElement {
         role="button"
         tabindex="0"
         aria-label=${`${title}, ${node.status}`}
-        @click=${() => this.selectNode(node.id)}
+        @click=${() => this.selectNode(graph, node.id)}
         @keydown=${(event: KeyboardEvent) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
-            this.selectNode(node.id);
+            this.selectNode(graph, node.id);
           }
         }}
       >
@@ -220,7 +234,9 @@ export class WorkGraphPanel extends LitElement {
   private renderDiagram(graph: WorkGraphProjection, backlogById: Map<string, BacklogItem>) {
     const layout = computeWorkGraphLayout(graph);
     const markerId = this.markerId(graph);
-    const selectedNode = this.selectedNodeId;
+    const selectedNode = this.selectedNodeKey.startsWith(`${graph.graph.id}:`)
+      ? this.selectedNodeKey.slice(graph.graph.id.length + 1)
+      : '';
     return html`
       <div class="diagram-card">
         <div class="diagram-toolbar">
@@ -275,14 +291,18 @@ export class WorkGraphPanel extends LitElement {
                 ${label ? svg`<text class="edge-label" x=${labelX} y=${labelY} text-anchor="middle" fill=${color}>${label}</text>` : nothing}
               `;
             })}
-            ${layout.nodes.map((node) => this.renderDiagramNode(node, backlogById))}
+            ${layout.nodes.map((node) => this.renderDiagramNode(graph, node, backlogById))}
           </svg>
         </div>
       </div>
     `;
   }
 
-  private renderNodeCard(backlogById: Map<string, BacklogItem>, node: WorkNode) {
+  private renderNodeCard(
+    graph: WorkGraphProjection,
+    backlogById: Map<string, BacklogItem>,
+    node: WorkNode,
+  ) {
     const item = node.backlogItemId ? backlogById.get(node.backlogItemId) : undefined;
     const title = this.graphTitleForNode(backlogById, node);
     const specStatus = this.specStatusLabel(item, node);
@@ -295,8 +315,8 @@ export class WorkGraphPanel extends LitElement {
     ].filter(Boolean);
     return html`
       <button
-        class=${`node-card ${this.selectedNodeId === node.id ? 'selected' : ''}`}
-        @click=${() => this.selectNode(node.id)}
+        class=${`node-card ${this.isSelectedNode(graph, node.id) ? 'selected' : ''}`}
+        @click=${() => this.selectNode(graph, node.id)}
       >
         <div class="node-card-head">
           <div>
@@ -401,7 +421,7 @@ export class WorkGraphPanel extends LitElement {
         </div>
         <div class="side-content">
           ${this.renderNodeDetail(graph, backlogById, this.selectedNode(graph))}
-          ${graph.nodes.map((node) => this.renderNodeCard(backlogById, node))}
+          ${graph.nodes.map((node) => this.renderNodeCard(graph, backlogById, node))}
         </div>
       </aside>
     `;

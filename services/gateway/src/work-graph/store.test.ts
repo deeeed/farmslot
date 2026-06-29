@@ -173,6 +173,93 @@ test('reference blockers are v1 graph nodes but never dispatchable', async () =>
     ),
     true,
   );
+
+  await workGraph.updateWorkGraphNode({
+    graphId,
+    nodeId: 'wn_external_pr',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'pending',
+      project: 'metamask-core',
+      updatedAt: new Date().toISOString(),
+    },
+  });
+  projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.edges.find((edge) => edge.id === 'we_pr_to_release')?.status, 'pending');
+  assert.equal(
+    projection.nodes.find((node) => node.id === 'wn_client_release')?.status,
+    'needs-attention',
+  );
+  assert.equal(projection.graph.status, 'needs-attention');
+});
+
+/* Reference evidence can change after a graph looked complete. Re-evaluate instead of leaving stale done state. */
+test('reference updates reactivate done graphs and surface regressed dependencies', async () => {
+  const { backlog, workGraph } = await freshStores();
+  const downstream = await createReadyBacklogItem(backlog, 'Client already completed');
+  const graph = await workGraph.createWorkGraph({
+    project: 'cross-project-epic',
+    title: 'Completed reference graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_external_pr',
+    kind: 'reference',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'satisfied',
+      project: 'metamask-core',
+    },
+  });
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_client_release',
+    backlogItemId: downstream.item.id,
+  });
+  await workGraph.addWorkGraphEdge({
+    graphId,
+    id: 'we_pr_to_release',
+    fromNodeId: 'wn_external_pr',
+    toNodeId: 'wn_client_release',
+    condition: { kind: 'reference-status' },
+    unlock: { kind: 'enqueue' },
+  });
+  await workGraph.updateWorkGraphNode({
+    graphId,
+    nodeId: 'wn_client_release',
+    status: 'succeeded',
+  });
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  let projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.graph.status, 'done');
+
+  await workGraph.updateWorkGraphNode({
+    graphId,
+    nodeId: 'wn_external_pr',
+    reference: {
+      kind: 'github-pr',
+      title: 'External controller PR',
+      ref: 'metamask/core#1842',
+      status: 'pending',
+      project: 'metamask-core',
+      updatedAt: new Date().toISOString(),
+    },
+  });
+
+  projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.graph.status, 'needs-attention');
+  assert.equal(projection.edges.find((edge) => edge.id === 'we_pr_to_release')?.status, 'pending');
+  assert.equal(
+    projection.nodes.find((node) => node.id === 'wn_client_release')?.status,
+    'needs-attention',
+  );
 });
 
 test('completion edges do not block downstream start enqueue', async () => {
