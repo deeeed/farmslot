@@ -523,10 +523,11 @@ export class TerminalView extends TerminalViewState {
     try {
       const snap = await gateway.request<{ lines: string[] }>(
         worker ? Methods.TERMINAL_WORKER_SNAPSHOT : Methods.TERMINAL_SNAPSHOT,
-        { ...this._targetParams(), lines: Math.max(rows, 80) },
+        { ...this._targetParams(), lines: rows },
       );
       if (subscribeSeq !== this._subscribeSeq || !snap.lines.length) return;
-      this._terminal.write(`${snap.lines.join('\n')}\n`);
+      // convertEol is false in PTY mode — bare \n only advances row, not column.
+      this._terminal.write(`${snap.lines.slice(0, rows).join('\r\n')}\r\n`);
       this._terminal.scrollToBottom();
       this._log('seed-snapshot', `lines=${snap.lines.length}`);
     } catch (err) {
