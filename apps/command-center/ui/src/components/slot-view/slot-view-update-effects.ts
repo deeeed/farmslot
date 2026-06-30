@@ -7,6 +7,47 @@ import { slotViewPendingReviewDecision, slotViewReviewDrawerKey } from './slot-v
 import { refreshSlotViewRecipeRunnerOptions } from './slot-view-recipe-runner-effects.js';
 import { connectSlotViewLayoutObserver } from './slot-view-resize-effects.js';
 
+/** Reset slot-local state before render when navigating to a different slot. */
+export function prepareSlotViewSlotChange(view: SlotView): void {
+  view._fileUrlReady = false;
+  view._cancelFileRestoreRetry();
+  view._cancelResourceRestoreRetry();
+  view._resetRecipePanelState();
+  view._dismissedReviewDrawerKey = '';
+  view._openFiles = [];
+  view._activeFile = '';
+  view._activeResourceId = '';
+  view._pinnedFolder = '';
+  view._pinnedEntries = [];
+  view._branchDiffBase = 'main';
+  view._branchDiffFiles = [];
+  view._branchDiffHead = '';
+  view._selectedAgentContextId = view._selectedAgentContextIds[view.slotId] ?? 'primary';
+  view._unavailableContextKeys = new Set();
+  view._revealLine = 0;
+  view._showInlineComments = false;
+  view._resourcePanelOpen = !!view._requestedResourceFromUrl();
+  if (view._isLive) {
+    if (gateway.connectionState === 'connected') {
+      void view._beginLiveRecovery();
+    } else {
+      view._liveInitPending = true;
+      view._recoveryPhase = 'stale';
+      view._recoveryMessage = 'Waiting for gateway reconnect';
+      view._wsLoading = false;
+      view._wsError = '';
+    }
+  } else {
+    view._teardownLive();
+  }
+}
+
+export function handleSlotViewWillUpdate(view: SlotView, changed: Map<string, unknown>): void {
+  if (!changed.has('slotId') || !view.slotId || view.slotId === view._prevSlotId) return;
+  prepareSlotViewSlotChange(view);
+  view._prevSlotId = view.slotId;
+}
+
 export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unknown>): void {
   // Auto-focus new file input when prompt opens
   if (changed.has('_newFilePrompt') && view._newFilePrompt) {
@@ -16,40 +57,6 @@ export function handleSlotViewUpdated(view: SlotView, changed: Map<string, unkno
     });
   }
   if (changed.has('slotId') && view.slotId) {
-    if (view.slotId !== view._prevSlotId) {
-      view._prevSlotId = view.slotId;
-      view._fileUrlReady = false;
-      view._cancelFileRestoreRetry();
-      view._cancelResourceRestoreRetry();
-      view._resetRecipePanelState();
-      view._dismissedReviewDrawerKey = '';
-      view._openFiles = [];
-      view._activeFile = '';
-      view._activeResourceId = '';
-      view._pinnedFolder = '';
-      view._pinnedEntries = [];
-      view._branchDiffBase = 'main';
-      view._branchDiffFiles = [];
-      view._branchDiffHead = '';
-      view._selectedAgentContextId = view._selectedAgentContextIds[view.slotId] ?? 'primary';
-      view._unavailableContextKeys = new Set();
-      view._revealLine = 0;
-      view._showInlineComments = false;
-      view._resourcePanelOpen = !!view._requestedResourceFromUrl();
-      if (view._isLive) {
-        if (gateway.connectionState === 'connected') {
-          void view._beginLiveRecovery();
-        } else {
-          view._liveInitPending = true;
-          view._recoveryPhase = 'stale';
-          view._recoveryMessage = 'Waiting for gateway reconnect';
-          view._wsLoading = false;
-          view._wsError = '';
-        }
-      } else {
-        view._teardownLive();
-      }
-    }
     view._loadSlot();
     void view._refreshLinkedRun(view._linkedRun?.status ?? null);
   }

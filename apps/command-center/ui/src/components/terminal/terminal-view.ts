@@ -16,8 +16,13 @@ import { gateway } from '../../gateway-client.js';
 import { isRetryableTerminalSubscribeError, isRoleWindowMissingError } from './terminal-errors.js';
 import {
   extractOsc52Clipboard,
+  parseWorkerRef,
+  terminalHasTarget,
+  terminalPriorTargetIdentity,
   terminalRoleExitDecision,
   terminalTargetChanged,
+  terminalTargetParams,
+  terminalTargetStateFromIdentity,
 } from './terminal-view-model.js';
 import {
   renderTerminalChrome,
@@ -89,6 +94,14 @@ export class TerminalView extends TerminalViewState {
       workerRefJson: this.workerRefJson,
     });
     if (!targetChanged || !this._terminal) return;
+    const priorTarget = terminalPriorTargetIdentity(changed, {
+      slotId: this.slotId,
+      runId: this.runId,
+      role: this.role,
+      contextId: this.contextId,
+      workerRefJson: this.workerRefJson,
+    });
+    const priorPostmortem = this._postmortem;
     this._log(
       'updated → target changed',
       `target=${this._targetLabel()} run=${this.runId || '-'} role=${this.role || '-'} context=${this.contextId || '-'}`,
@@ -96,7 +109,7 @@ export class TerminalView extends TerminalViewState {
     this._postmortem = false;
     this._lastSubscribeError = '';
     this._subscribeOkAt = 0;
-    this._teardownStreams();
+    this._teardownStreams(true, priorTarget, priorPostmortem);
     this._terminal.clear();
     this._taskMarkdown = '';
     this._mode = 'none';
@@ -468,17 +481,30 @@ export class TerminalView extends TerminalViewState {
   }
 
   // Tear down stream subscriptions only — keeps terminal + resize observer alive
-  private _teardownStreams(remoteUnsubscribe = true) {
+  private _teardownStreams(
+    remoteUnsubscribe = true,
+    priorTarget?: ReturnType<typeof terminalPriorTargetIdentity>,
+    priorPostmortem = false,
+  ) {
     this._log('teardownStreams');
     this._subscribeSeq++;
     this._stopTmuxPoll();
-    if (remoteUnsubscribe && this._hasTarget() && gateway.connectionState === 'connected') {
-      gateway
-        .request(
-          this._workerRef() ? Methods.TERMINAL_WORKER_UNSUBSCRIBE : Methods.TERMINAL_UNSUBSCRIBE,
-          this._targetParams(),
-        )
-        .catch((err) => this._warn('terminal unsubscribe', err));
+    if (remoteUnsubscribe && gateway.connectionState === 'connected') {
+      const unsubscribeState = priorTarget
+        ? terminalTargetStateFromIdentity(priorTarget, {
+            postmortem: priorPostmortem,
+            worker: parseWorkerRef(priorTarget.workerRefJson),
+          })
+        : this._targetState();
+      if (terminalHasTarget(unsubscribeState)) {
+        const worker = unsubscribeState.worker;
+        gateway
+          .request(
+            worker ? Methods.TERMINAL_WORKER_UNSUBSCRIBE : Methods.TERMINAL_UNSUBSCRIBE,
+            terminalTargetParams(unsubscribeState),
+          )
+          .catch((err) => this._warn('terminal unsubscribe', err));
+      }
     }
     this._xtermDataDisposable?.dispose();
     this._xtermDataDisposable = undefined;

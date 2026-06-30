@@ -99,6 +99,7 @@ import {
   isManualBacklogRef,
   isValidTicketForFlow,
 } from './run/ticket-policy.js';
+import { normalizeRunCreateMode } from './run-create-mode.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -218,6 +219,8 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   // policy > runner intrinsic fallback. Applied before createRun so the run
   // persists the resolved tier and chained runs inherit it.
   params.safetyTier = resolveCreateSafetyTier(params.safetyTier, projectConfig?.defaultSafetyTier);
+
+  await normalizeRunCreateMode(params, projectConfig);
 
   const { lane, variant } = normalizeRunClassification(params);
   params.lane = lane;

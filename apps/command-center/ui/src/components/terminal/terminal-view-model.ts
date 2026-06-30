@@ -121,6 +121,36 @@ export function terminalTargetChanged(
   });
 }
 
+/** Build the pre-update terminal identity from Lit's changed-property map. */
+export function terminalPriorTargetIdentity(
+  changed: Map<string, unknown>,
+  current: TerminalTargetIdentity,
+): TerminalTargetIdentity {
+  const read = (key: keyof TerminalTargetIdentity) =>
+    changed.has(key) ? ((changed.get(key) as string | undefined) ?? '') : current[key];
+  return {
+    slotId: read('slotId'),
+    runId: read('runId'),
+    role: read('role') as TerminalTargetIdentity['role'],
+    contextId: read('contextId'),
+    workerRefJson: read('workerRefJson'),
+  };
+}
+
+export function terminalTargetStateFromIdentity(
+  identity: TerminalTargetIdentity,
+  opts: { postmortem?: boolean; worker?: TmuxWorkerRef | null } = {},
+): TerminalTargetState {
+  return {
+    slotId: identity.slotId,
+    runId: identity.runId,
+    role: identity.role as TerminalTargetState['role'],
+    contextId: identity.contextId,
+    worker: opts.worker ?? parseWorkerRef(identity.workerRefJson),
+    postmortem: opts.postmortem ?? false,
+  };
+}
+
 export function terminalRoleExitDecision(params: {
   exitCode: number | undefined;
   subscribeOkAt: number;
