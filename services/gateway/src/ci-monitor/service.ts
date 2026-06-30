@@ -27,6 +27,7 @@ import {
   readCIWatchPhaseSnapshot,
   readDedup,
   recordInlineFixSuccess,
+  resetInlineFixConsecutiveAttempts,
 } from './state.js';
 export type { CICheckTimelineEntry, CIOutcome, InlineCIFix } from './state.js';
 export {
@@ -659,8 +660,29 @@ export async function monitorCI(
       if (actionId === 'abort') return buildOutcome('aborted');
       if (actionId === 'dispatch-pr-complete') return buildOutcome('failed', failedNames, actionId);
       if (actionId === 'retry') {
+        resetInlineFixConsecutiveAttempts(runId);
         await rerunFailedChecks(prNumber, ciRepo);
-        forceNextRefresh = await waitForNextPoll('polling', { dedupReason: 'CI rerun requested' });
+        markTimeoutProgress('CI rerun requested', {
+          checkFingerprint,
+          headSha: headShaNow,
+        });
+        mergeCIWatchOutputPatch(runId, {
+          phase: 'polling',
+          fixInProgress: false,
+          fixTrigger: null,
+          activeTaskFile: null,
+          nextPollAt: null,
+          dedupReason: 'CI rerun requested',
+        });
+        checkTimeline.push({
+          timestamp: new Date().toISOString(),
+          status: 'ci-rerun-requested',
+          detail: 'operator retry — immediate poll',
+        });
+        console.log(
+          `[ci-monitor] run ${runId.slice(0, 8)} — operator retry CI: reset inline-fix window, polling now`,
+        );
+        forceNextRefresh = true;
         continue;
       }
       return buildOutcome('passed');

@@ -117,6 +117,13 @@ export function readDedup(runId: string): RunCiWatchState {
   return getRun(runId)?.ciWatchState ?? emptyCiWatchState();
 }
 
+/** Operator chose Retry CI — allow inline fix another consecutive-attempt window. */
+export function resetInlineFixConsecutiveAttempts(runId: string): void {
+  mutateDedup(runId, (s) => {
+    s.consecutiveAttempts = 0;
+  });
+}
+
 // Mutators must replace nested objects wholesale (e.g. `s.dedup = { signature, commitSha }`)
 // rather than mutating fields in-place — the spread below is shallow.
 export function mutateDedup(runId: string, mutator: (s: RunCiWatchState) => void): RunCiWatchState {
