@@ -15,7 +15,6 @@ import {
 } from '@farmslot/protocol';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
-import { quarantineLeakedRun } from '../runs/store.js';
 import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
 const S = PipelineSteps;
@@ -109,6 +108,7 @@ export interface RunRecoveryCollaborators {
   getProjectField: (projectJson: RawProjectJson, field: string) => string;
   setRunFlags: (runId: string, flags: { warmRecovery?: true }) => void;
   resetSlot: (slotId: string) => Promise<void>;
+  quarantineLeakedRun: (run: Run) => Promise<void>;
 }
 
 const STEP_TO_STATUS: Record<string, Run['status']> = {
@@ -154,7 +154,7 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       console.warn(
         `[run-engine] skipping recovery for leaked gateway test run ${run.id.slice(0, 8)}`,
       );
-      await quarantineLeakedRun(run);
+      await deps.quarantineLeakedRun(run);
       continue;
     }
 

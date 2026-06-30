@@ -3,10 +3,15 @@
 
 import type { Run, RunCreateParams } from '@farmslot/protocol';
 
-const DRIFT_TICKET = /^(?:PUBLISH|EVIDENCE)-DRIFT-[0-9A-F]+$/i;
-const DRIFT_TASK_DIR = /farmslot-(?:package|evidence)-drift-/;
-const DRIFT_DECISION_IDS = new Set(['publish-gate-drift', 'publish-gate-evidence-drift']);
-const DRIFT_INITIAL_CONTEXT = /^Exercise (?:current package|selected evidence) drift approval$/;
+const DRIFT_TICKET = /^(?:PUBLISH|EVIDENCE)-(?:DRIFT|SELECTION)-[0-9A-F]+$/i;
+const DRIFT_TASK_DIR = /farmslot-(?:package|evidence)-(?:drift|selection)-/;
+const DRIFT_DECISION_IDS = new Set([
+  'publish-gate-drift',
+  'publish-gate-evidence-drift',
+  'publish-gate-evidence-selection',
+]);
+const DRIFT_INITIAL_CONTEXT =
+  /^Exercise (?:current package drift approval|selected evidence drift approval|selected evidence approval mismatch)$/;
 
 function ticketLooksLikeDriftFixture(ticket: string | null | undefined): boolean {
   return typeof ticket === 'string' && DRIFT_TICKET.test(ticket);

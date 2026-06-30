@@ -89,10 +89,6 @@ const RUNS_DIR = resolveRunsDir();
 const PRODUCTION_RUNS_DIR = path.join(farmslotRoot, '.runs');
 const QUARANTINE_DIR = path.join(RUNS_DIR, 'quarantine');
 
-export function getRunsDir(): string {
-  return RUNS_DIR;
-}
-
 function isProductionRunsDir(): boolean {
   return RUNS_DIR === PRODUCTION_RUNS_DIR;
 }

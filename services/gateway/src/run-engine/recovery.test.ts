@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { recoveryHealthIsReady, type RunRecoveryCollaborators } from './recovery.js';
+import {
+  recoverActiveRuns,
+  recoveryHealthIsReady,
+  type RunRecoveryCollaborators,
+} from './recovery.js';
 
 test('recoveryHealthIsReady requires configured ready indicator to match', () => {
   assert.equal(recoveryHealthIsReady({ exitCode: 0, stdout: 'OK\n' }, 'OK'), true);
@@ -43,20 +47,14 @@ function minimalActiveRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
-test('recoverActiveRuns quarantines leaked gateway test runs before orchestration', async (t) => {
+test('recoverActiveRuns quarantines leaked gateway test runs before orchestration', async () => {
   let quarantined = false;
-  t.mock.module('../runs/store.js', {
-    namedExports: {
-      quarantineLeakedRun: async () => {
-        quarantined = true;
-      },
-    },
-  });
-
-  const { recoverActiveRuns } = await import('./recovery.js');
   const deps = {
     listRuns: () => ({ runs: [minimalActiveRun()] }),
     loadFleetStatus: async () => ({ slots: [] }),
+    quarantineLeakedRun: async () => {
+      quarantined = true;
+    },
   } as unknown as RunRecoveryCollaborators;
 
   await recoverActiveRuns(deps);

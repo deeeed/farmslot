@@ -36,6 +36,13 @@ function minimalRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
+test('isLeakedGatewayTestRun detects evidence selection fixture ticket', () => {
+  assert.equal(
+    isLeakedGatewayTestRun(minimalRun({ ticketOrPr: 'EVIDENCE-SELECTION-ABC123' })),
+    true,
+  );
+});
+
 test('isLeakedGatewayTestRun detects publish drift fixture ticket', () => {
   assert.equal(
     isLeakedGatewayTestRun(minimalRun({ ticketOrPr: 'PUBLISH-DRIFT-19F18DBCB68' })),
@@ -67,6 +74,28 @@ test('isLeakedGatewayTestRun detects publish-gate drift decision id', () => {
         decisions: [
           {
             id: 'publish-gate-drift',
+            type: 'engine_human_gate',
+            title: 'Ready',
+            description: 'Ready',
+            actions: [],
+            createdAt: '2026-04-15T00:00:00.000Z',
+          },
+        ],
+      }),
+    ),
+    true,
+  );
+});
+
+test('isLeakedGatewayTestRun detects evidence selection task dir and decision id', () => {
+  assert.equal(
+    isLeakedGatewayTestRun(
+      minimalRun({
+        ticketOrPr: 'PROJ-99',
+        taskFile: '/var/folders/xx/farmslot-evidence-selection-AbCdEf/task.md',
+        decisions: [
+          {
+            id: 'publish-gate-evidence-selection',
             type: 'engine_human_gate',
             title: 'Ready',
             description: 'Ready',
