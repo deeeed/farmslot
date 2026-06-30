@@ -5,6 +5,7 @@ import { property, query, state } from 'lit/decorators.js';
 
 import type { AgentRole, TmuxWorkerRef } from '@farmslot/protocol';
 
+import type { TerminalAttachPhase } from './terminal-view-attach-model.js';
 import {
   parseWorkerRef,
   terminalHasTarget,
@@ -36,6 +37,7 @@ export abstract class TerminalViewState extends LitElement {
   @state() protected _connected = false;
   @state() protected _taskMarkdown = '';
   @state() protected _mode: TerminalMode = 'none';
+  @state() protected _attachPhase: TerminalAttachPhase = 'idle';
   @state() protected _exited = false;
   @state() protected _reconnecting = false;
   @state() protected _recoveryMessage = '';
@@ -73,6 +75,8 @@ export abstract class TerminalViewState extends LitElement {
   protected _tmuxListBackoffUntil = 0;
   protected _ptyReady = false; // true after first resize settles
   protected _subscribeSeq = 0;
+  protected _ptySizeCommitSeq = 0;
+  protected _ptySizeCommitPromise?: Promise<void>;
   protected _ptyInputBound = false;
 
   protected _workerRef(): TmuxWorkerRef | null {

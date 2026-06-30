@@ -109,6 +109,7 @@ export class TerminalView extends TerminalViewState {
     this._postmortem = false;
     this._lastSubscribeError = '';
     this._subscribeOkAt = 0;
+    this._attachPhase = 'idle';
     this._teardownStreams(true, priorTarget, priorPostmortem);
     this._terminal.clear();
     this._taskMarkdown = '';
@@ -163,6 +164,7 @@ export class TerminalView extends TerminalViewState {
     this._syncRunSummary();
     this._dataCount = 0;
     this._ptyReady = false;
+    this._attachPhase = 'connecting';
     // Reset the OK timestamp on every (re)subscribe — including reconnect-without-prop-change
     // — so the fast-fail-on-exit window measures THIS attach, not a stale prior one.
     this._subscribeOkAt = 0;
@@ -182,6 +184,9 @@ export class TerminalView extends TerminalViewState {
       if (this._mode === 'pty') {
         this._setupPtyMode();
         this._startTmuxPoll();
+        void this._commitInitialPtySize(subscribeSeq);
+      } else if (this._mode === 'poll') {
+        this._attachPhase = 'live';
       }
     });
 
@@ -205,10 +210,19 @@ export class TerminalView extends TerminalViewState {
       this._subscribeOkAt = Date.now();
       this._reconnecting = false;
       this._recoveryMessage = '';
+      if (this._mode === 'poll') {
+        this._attachPhase = 'live';
+      } else if (this._ptyReady) {
+        this._attachPhase = 'live';
+      } else if (this._mode === 'pty') {
+        this._attachPhase = 'sizing';
+        void this._commitInitialPtySize(subscribeSeq);
+      }
     } catch (err) {
       if (subscribeSeq !== this._subscribeSeq) return;
       this._lastSubscribeError = err instanceof Error ? err.message : String(err);
       this._log('subscribe FAILED', String(err));
+      this._attachPhase = 'idle';
       this._terminal?.writeln(`\x1b[31m[Failed to subscribe to ${this._targetLabel()}]\x1b[0m`);
       this._reconnecting = gateway.connectionState === 'connected';
       this._recoveryMessage =
@@ -433,30 +447,121 @@ export class TerminalView extends TerminalViewState {
     });
     this._ptyInputBound = true;
 
-    // Terminal already knows its dimensions — send resize immediately so the
-    // PTY gets the correct size and tmux redraws. No need to wait for the
-    // ResizeObserver (which won't fire if the container size hasn't changed).
-    if (this._terminal.cols > 0 && this._terminal.rows > 0) {
-      this._ptyReady = true;
-      this._log('immediate-resize', `cols=${this._terminal.cols} rows=${this._terminal.rows}`);
-      gateway
-        .request(this._workerRef() ? Methods.TERMINAL_WORKER_RESIZE : Methods.TERMINAL_RESIZE, {
-          ...this._targetParams(),
-          cols: this._terminal.cols,
-          rows: this._terminal.rows,
-        })
-        .catch((err) => this._warn('terminal resize', err));
-    }
-
     // Focus terminal for keyboard capture
     this._terminal.focus();
   }
 
+  private async _commitInitialPtySize(subscribeSeq: number): Promise<void> {
+    if (subscribeSeq !== this._subscribeSeq) return;
+    if (!this._terminal || this._mode !== 'pty' || this._ptyReady) return;
+    if (this._ptySizeCommitSeq === subscribeSeq && this._ptySizeCommitPromise) {
+      return this._ptySizeCommitPromise;
+    }
+    this._ptySizeCommitSeq = subscribeSeq;
+    this._ptySizeCommitPromise = this._runCommitInitialPtySize(subscribeSeq);
+    try {
+      await this._ptySizeCommitPromise;
+    } finally {
+      if (this._ptySizeCommitSeq === subscribeSeq) {
+        this._ptySizeCommitPromise = undefined;
+      }
+    }
+  }
+
+  private async _runCommitInitialPtySize(subscribeSeq: number): Promise<void> {
+    if (subscribeSeq !== this._subscribeSeq) return;
+    if (!this._terminal || this._mode !== 'pty' || this._ptyReady) return;
+
+    this._attachPhase = 'sizing';
+    this._fitAddon?.fit();
+    const cols = this._terminal.cols;
+    const rows = this._terminal.rows;
+    if (cols <= 0 || rows <= 0) {
+      this._log('commit-pty-size-deferred', 'waiting for layout');
+      return;
+    }
+
+    this._log('commit-pty-size', `cols=${cols} rows=${rows}`);
+    try {
+      await gateway.request(
+        this._workerRef() ? Methods.TERMINAL_WORKER_RESIZE : Methods.TERMINAL_RESIZE,
+        {
+          ...this._targetParams(),
+          cols,
+          rows,
+        },
+      );
+    } catch (err) {
+      this._warn('terminal resize', err);
+    }
+    if (subscribeSeq !== this._subscribeSeq) return;
+
+    // Accept PTY bytes before redraw nudge so we keep the full screen tmux emits.
+    this._ptyReady = true;
+    await this._nudgePtyRedraw(cols, rows, subscribeSeq);
+    if (subscribeSeq !== this._subscribeSeq) return;
+    await this._seedPtyViewportIfEmpty(subscribeSeq);
+    if (subscribeSeq !== this._subscribeSeq) return;
+
+    this._terminal.scrollToBottom();
+    this._attachPhase = 'live';
+    this._reconnecting = false;
+    this._recoveryMessage = '';
+  }
+
+  /** When SIGWINCH redraw is dropped during sizing, seed from tmux capture-pane once. */
+  private async _seedPtyViewportIfEmpty(subscribeSeq: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (subscribeSeq !== this._subscribeSeq || !this._terminal || this._mode !== 'pty') return;
+    const rows = this._terminal.rows;
+    const hasVisible = Array.from({ length: rows }, (_, i) =>
+      this._terminal!.buffer.active.getLine(i)?.translateToString(true),
+    ).some((line) => line?.trim());
+    if (hasVisible) return;
+
+    const worker = this._workerRef();
+    try {
+      const snap = await gateway.request<{ lines: string[] }>(
+        worker ? Methods.TERMINAL_WORKER_SNAPSHOT : Methods.TERMINAL_SNAPSHOT,
+        { ...this._targetParams(), lines: rows },
+      );
+      if (subscribeSeq !== this._subscribeSeq || !snap.lines.length) return;
+      // convertEol is false in PTY mode — bare \n only advances row, not column.
+      this._terminal.write(`${snap.lines.slice(0, rows).join('\r\n')}\r\n`);
+      this._terminal.scrollToBottom();
+      this._log('seed-snapshot', `lines=${snap.lines.length}`);
+    } catch (err) {
+      this._warn('pty viewport seed', err);
+    }
+  }
+
+  /** Shrink by one column then restore — forces tmux to redraw the full pane. */
+  private async _nudgePtyRedraw(
+    cols: number,
+    rows: number,
+    subscribeSeq = this._subscribeSeq,
+  ): Promise<void> {
+    if (subscribeSeq !== this._subscribeSeq) return;
+    if (cols <= 1 || rows <= 0) return;
+    const method = this._workerRef() ? Methods.TERMINAL_WORKER_RESIZE : Methods.TERMINAL_RESIZE;
+    const params = () => ({ ...this._targetParams(), rows });
+    try {
+      await gateway.request(method, { ...params(), cols: cols - 1 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (subscribeSeq !== this._subscribeSeq) return;
+      await gateway.request(method, { ...params(), cols });
+    } catch (err) {
+      this._warn('terminal redraw nudge', err);
+    }
+  }
+
   private _sendResize() {
     if (this._mode !== 'pty' || !this._terminal) return;
-    const first = !this._ptyReady;
-    this._ptyReady = true;
-    this._log('resize', `cols=${this._terminal.cols} rows=${this._terminal.rows} first=${first}`);
+    if (!this._ptyReady) {
+      void this._commitInitialPtySize(this._subscribeSeq);
+      return;
+    }
+    this._log('resize', `cols=${this._terminal.cols} rows=${this._terminal.rows}`);
     gateway
       .request(this._workerRef() ? Methods.TERMINAL_WORKER_RESIZE : Methods.TERMINAL_RESIZE, {
         ...this._targetParams(),
@@ -488,6 +593,8 @@ export class TerminalView extends TerminalViewState {
   ) {
     this._log('teardownStreams');
     this._subscribeSeq++;
+    this._ptySizeCommitSeq = 0;
+    this._ptySizeCommitPromise = undefined;
     this._stopTmuxPoll();
     if (remoteUnsubscribe && gateway.connectionState === 'connected') {
       const unsubscribeState = priorTarget
@@ -577,6 +684,7 @@ export class TerminalView extends TerminalViewState {
   private async _handleReconnect() {
     if (!this._hasTarget() || this._reconnecting) return;
     this._reconnecting = true;
+    this._attachPhase = 'connecting';
     this._recoveryMessage = 'Reinitializing terminal…';
     this._exited = false;
     this._lastSubscribeError = '';
@@ -639,6 +747,7 @@ export class TerminalView extends TerminalViewState {
     if (state === 'disconnected') {
       this._log('gateway disconnected');
       this._reconnecting = true;
+      this._attachPhase = 'idle';
       this._recoveryMessage = 'Waiting for gateway';
       this._mode = 'none';
       this._exited = false;
@@ -655,6 +764,7 @@ export class TerminalView extends TerminalViewState {
     if (this._reconnecting || !this._unsubData) {
       this._log('gateway connected → passive resubscribe');
       this._reconnecting = true;
+      this._attachPhase = 'connecting';
       this._recoveryMessage = 'Recovering terminal…';
       this._terminal.clear();
       this._terminal.writeln('\x1b[2m[Recovering terminal from gateway…]\x1b[0m');
@@ -880,6 +990,7 @@ export class TerminalView extends TerminalViewState {
       isWorkerTarget: Boolean(worker),
       lifecycle: this._lifecycle,
       mode: this._mode,
+      attachPhase: this._attachPhase,
       agent: this._agent,
       runner: this._runner,
       model: this._model,
