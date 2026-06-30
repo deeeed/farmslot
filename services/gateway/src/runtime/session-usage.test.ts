@@ -1,7 +1,37 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
-import { parseSessionUsageOutput } from './session-usage.js';
+import { parseSessionUsageOutput, pickRunSessionTranscript } from './session-usage.js';
+
+function transcriptAt(dir: string, name: string, mtimeMs: number): string {
+  const p = path.join(dir, name);
+  writeFileSync(p, '{}');
+  utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
+  return p;
+}
+
+test('pickRunSessionTranscript picks the in-window transcript and rejects a prior run', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'pick-session-'));
+  const dispatchedAt = '2026-06-30T10:00:00.000Z';
+  const completedAt = '2026-06-30T10:30:00.000Z';
+  const dispatchMs = Date.parse(dispatchedAt);
+  // Prior run on the same slot, last written 10 minutes before this run dispatched.
+  const prior = transcriptAt(dir, 'prior.jsonl', dispatchMs - 10 * 60_000);
+  // This run's transcript, last written mid-run.
+  const current = transcriptAt(dir, 'current.jsonl', dispatchMs + 15 * 60_000);
+
+  // listRunnerSessionFiles returns newest-first; the prior file is older.
+  assert.equal(pickRunSessionTranscript([current, prior], dispatchedAt, completedAt), current);
+  // With ONLY the prior run's transcript, nothing in-window → null (never mis-attributed).
+  assert.equal(pickRunSessionTranscript([prior], dispatchedAt, completedAt), null);
+});
+
+test('pickRunSessionTranscript returns null for an unparseable dispatch time', () => {
+  assert.equal(pickRunSessionTranscript(['/whatever.jsonl'], 'not-a-date'), null);
+});
 
 test('parseSessionUsageOutput normalizes runner session cost fields', () => {
   const usage = parseSessionUsageOutput(

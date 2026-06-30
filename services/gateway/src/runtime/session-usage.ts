@@ -68,18 +68,21 @@ export function unavailableRunnerSessionUsage({
 
 /**
  * Pick the transcript that belongs to THIS run's dispatch window. `paths` is
- * newest-first; we return the newest whose mtime falls between the run's dispatch
- * and completion (with a small clock-skew buffer). Bounding to the window stops a
- * later/earlier run's session in the same slot repo from being charged to this run.
+ * newest-first; we return the newest whose mtime is at/after the run's dispatch
+ * and at/before its completion. Discovery is local-only, so there is no clock skew
+ * to absorb — a transcript last written BEFORE this run's dispatch belongs to a
+ * prior run on the same slot and must be excluded, never charged to this run. A
+ * small post-completion grace covers the gap between recording `completedAt` and
+ * the runner's final transcript flush.
  */
-function pickRunSessionTranscript(
+export function pickRunSessionTranscript(
   paths: string[],
   dispatchedAt: string,
   completedAt?: string | null,
 ): string | null {
-  const start = Date.parse(dispatchedAt) - 5 * 60_000;
+  const start = Date.parse(dispatchedAt);
   if (!Number.isFinite(start)) return null;
-  const end = (completedAt ? Date.parse(completedAt) : Date.now()) + 5 * 60_000;
+  const end = (completedAt ? Date.parse(completedAt) : Date.now()) + 60_000;
   for (const candidate of paths) {
     let mtime: number;
     try {
