@@ -41,6 +41,7 @@ import {
 } from '../runners/registry.js';
 
 import { emitAnalyticsForTerminalRun } from './analytics.js';
+import { isLeakedGatewayTestFixture, isLeakedGatewayTestRun } from './test-run-leak.js';
 
 // ADR-023 shipped 2026-04-20. Runs persisted before this date have no
 // safetyTier field and were executed under the pre-refactor hardcoded
@@ -85,7 +86,16 @@ function resolveRunsDir(): string {
   return path.join(farmslotRoot, '.runs');
 }
 const RUNS_DIR = resolveRunsDir();
+const PRODUCTION_RUNS_DIR = path.join(farmslotRoot, '.runs');
 const QUARANTINE_DIR = path.join(RUNS_DIR, 'quarantine');
+
+export function getRunsDir(): string {
+  return RUNS_DIR;
+}
+
+function isProductionRunsDir(): boolean {
+  return RUNS_DIR === PRODUCTION_RUNS_DIR;
+}
 const runs = new Map<string, Run>();
 
 const ACTIVE_STATUSES: Set<RunStatus> = new Set([
@@ -223,6 +233,12 @@ async function ensureDir(): Promise<void> {
 }
 
 async function persist(run: Run): Promise<void> {
+  if (isProductionRunsDir() && (isLeakedGatewayTestRun(run) || isSyntheticLeak(run))) {
+    console.warn(
+      `[run-store] refusing to persist leaked test fixture run ${run.id} to production .runs/`,
+    );
+    return;
+  }
   await ensureDir();
   const filePath = path.join(RUNS_DIR, `${run.id}.json`);
   if (runs.get(run.id) !== run) return;
@@ -292,6 +308,16 @@ async function quarantineRunFile(id: string, filePath: string, run?: Run): Promi
   console.warn(`[run-store] quarantined synthetic/leaked run ${id} -> ${dst}`);
 }
 
+export async function quarantineLeakedRun(run: Run): Promise<void> {
+  const filePath = path.join(RUNS_DIR, `${run.id}.json`);
+  await quarantineRunFile(run.id, filePath, run);
+  runs.delete(run.id);
+}
+
+function isRunStoreLeak(run: Run): boolean {
+  return isSyntheticLeak(run) || isLeakedGatewayTestRun(run);
+}
+
 export async function loadAllRuns(): Promise<void> {
   await ensureDir();
   let files: string[];
@@ -309,6 +335,11 @@ export async function loadAllRuns(): Promise<void> {
       const filePath = path.join(RUNS_DIR, file);
       const raw = await readFile(filePath, 'utf-8');
       const run: Run = JSON.parse(raw);
+      if (isLeakedGatewayTestRun(run)) {
+        await quarantineRunFile(run.id, filePath, run);
+        quarantined++;
+        continue;
+      }
       if (isSyntheticLeak(run)) {
         if (syntheticLeakPurgeEnabled()) {
           await quarantineRunFile(run.id, filePath, run);
@@ -398,6 +429,11 @@ export async function loadAllRuns(): Promise<void> {
 export function createRun(params: RunCreateParams): Run {
   if (Array.isArray(params.allowedSlots) && params.allowedSlots.length === 0) {
     throw new Error('Cannot create run: active slot filters resolved to no matching slots');
+  }
+  if (isProductionRunsDir() && isLeakedGatewayTestFixture(params)) {
+    throw new Error(
+      'Refusing to create gateway test fixture run in production .runs/ — run tests via run-tsx-tests.mjs or set NODE_TEST_CONTEXT=1',
+    );
   }
   const now = new Date().toISOString();
   const id = randomUUID();
@@ -867,7 +903,7 @@ export async function cleanupRuns(
   // Delete leaked test fixtures. They never represented real worker execution,
   // so archiving them would only move noisy data elsewhere.
   for (const [id, run] of runs) {
-    if (!isSyntheticLeak(run)) continue;
+    if (!isRunStoreLeak(run)) continue;
     syntheticRunsDeleted.push(id);
     if (!dryRun) {
       const filePath = path.join(RUNS_DIR, `${id}.json`);
