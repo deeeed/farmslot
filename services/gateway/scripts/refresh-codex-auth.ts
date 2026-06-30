@@ -1,6 +1,6 @@
 #!/usr/bin/env -S npx tsx
 // refresh-codex-auth.ts — silently refresh the access token on every
-// openai-codex OAuth profile in ~/.farmslot/auth-profiles.json using the
+// openai-codex OAuth profile in <FARMSLOT_HOME>/auth-profiles.json (default ~/.farmslot) using the
 // stored refresh token. No browser flow, no manual paste. Exits non-zero
 // if any profile is missing a refresh token or if pi-ai rejects it.
 //

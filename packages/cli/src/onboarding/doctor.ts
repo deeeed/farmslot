@@ -130,8 +130,12 @@ function workspaceSection(ws: Workspace | null): {
     });
   }
   const resolvedHome = farmslotHome();
-  // Normalize both sides so a trailing slash / non-canonical FARMSLOT_HOME is not a false divergence.
-  const homeMismatch = state?.home_dir != null && resolve(state.home_dir) !== resolve(resolvedHome);
+  // Compare via the shared resolver (expands tilde) + resolve() so a trailing slash or a
+  // tilde/relative persisted value is not a false divergence.
+  const homeMismatch =
+    state?.home_dir != null &&
+    resolve(farmslotHome({ FARMSLOT_HOME: state.home_dir } as NodeJS.ProcessEnv)) !==
+      resolve(resolvedHome);
   checks.push({
     name: 'home',
     ok: true,

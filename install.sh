@@ -542,8 +542,8 @@ step_doctor() {
 # app for tmux control on the go. Reads y/n from /dev/tty so a piped `curl | bash`
 # can still prompt; a non-interactive install (CI, no tty) skips without hanging.
 # One-time GitHub star ask — inline bash so we don't need a public CLI command.
-# Reads from /dev/tty so `curl | bash` still prompts; shares ~/.farmslot/state/
-# star-prompt.json with the CLI doctor/up hook.
+# Reads from /dev/tty so `curl | bash` still prompts; shares <FARMSLOT_HOME>/state/
+# star-prompt.json (default ~/.farmslot) with the CLI doctor/up hook.
 step_star() {
   case "${FARMSLOT_NO_STAR_PROMPT:-}" in 1|true) return ;; esac
   if ! command -v gh >/dev/null 2>&1; then

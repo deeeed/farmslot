@@ -1,6 +1,6 @@
 // auth-resolve.ts — Auth cascade for LLM providers
 // Resolution order:
-//   1. Farmslot's own store (~/.farmslot/auth-profiles.json)
+//   1. Farmslot's own store (<FARMSLOT_HOME>/auth-profiles.json, default ~/.farmslot)
 //   2. OpenClaw import (~/.openclaw/agents/main/agent/auth-profiles.json)
 //   3. Env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
 //   4. null → caller falls back to CLI
