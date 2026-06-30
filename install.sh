@@ -122,13 +122,21 @@ ask_yes_no() {
   case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
 }
 
-# expand_tilde PATH — turn a leading ~ into $HOME ('read -r' keeps it literal otherwise).
+# expand_tilde PATH — turn a leading ~ / ~/ into $HOME ('read -r' keeps it literal
+# otherwise). A ~user form is left untouched (rare for an install dir; pass an absolute
+# path instead).
 expand_tilde() {
   case "$1" in
     '~') printf '%s' "$HOME" ;;
     '~/'*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
     *) printf '%s' "$1" ;;
   esac
+}
+
+# shell_squote VALUE — single-quote a value for safe literal use in a shell rc line,
+# escaping embedded single quotes; keeps paths with spaces / $ / " / backticks safe.
+shell_squote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
 # ask_value VARNAME "label" "default" — prompt for a path on the tty; empty reply keeps
@@ -153,7 +161,9 @@ shell_rc_file() {
 # append the export to the shell rc; idempotent. Non-interactive keeps the manual note.
 offer_path_update() {
   local bindir="$1" rc line
-  line="export PATH=\"${bindir}:\$PATH\""
+  # Quote the dir so special chars can't produce a broken/unsafe rc line; the exact
+  # same line is reused for the idempotence check below.
+  line="export PATH=$(shell_squote "$bindir"):\$PATH"
   rc="$(shell_rc_file)"
   if tty_available && [ -n "$rc" ] && ask_yes_no "${bindir} is not on PATH. Add it to ${rc}?"; then
     if [ -f "$rc" ] && grep -qF "$line" "$rc"; then
@@ -545,7 +555,7 @@ step_star() {
   if ! tty_available; then
     return
   fi
-  local star_state="${FARMSLOT_HOME:-${HOME}/.farmslot}/state/star-prompt.json"
+  local star_state="${HOME_DIR}/state/star-prompt.json"
   if [ -f "$star_state" ]; then
     return
   fi

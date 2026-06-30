@@ -84,3 +84,24 @@ export function readState(ws: Workspace): WorkspaceState | null {
 export function writeState(ws: Workspace, state: WorkspaceState): void {
   writeFileSync(ws.statePath, JSON.stringify(state, null, 2) + '\n');
 }
+
+/**
+ * Hydrate `FARMSLOT_HOME` from the install-time `state.home_dir` when the env var is
+ * not already set. Call this once at CLI startup, before anything resolves the home
+ * (gateway profiles, pid/log, doctor, the spawned gateway which inherits this env) —
+ * otherwise a custom install home silently reverts to ~/.farmslot in any new shell.
+ */
+export function bootstrapFarmslotHome(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.FARMSLOT_HOME) return;
+  const ws = resolveWorkspace(env);
+  if (!ws || !existsSync(ws.statePath)) return;
+  let state: WorkspaceState | null;
+  try {
+    state = readState(ws);
+  } catch {
+    // A corrupt state.json is surfaced (and repaired) by `farmslot doctor`; it must not
+    // break every other command. Leave FARMSLOT_HOME at its default and continue.
+    return;
+  }
+  if (state?.home_dir) env.FARMSLOT_HOME = state.home_dir;
+}
