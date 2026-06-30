@@ -2,10 +2,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const COMPLETE_COMMANDS = new Set(['complete', 'finish']);
 const START_COMMANDS = new Set(['start']);
+const TERMINAL_COMMANDS = new Set(['complete', 'no-change', 'blocked']);
+const NO_CHANGE_REPORT = path.join('artifacts', 'no-change-report.md');
+
 const usageLine =
-  'usage: mark <step-number|start|complete> [--status ...] [--outcome ...] [--disposition ...] [--reason text] [--needsSelfReview true|false] [--mark-last]';
+  'usage: mark <step-number|start|complete|no-change|blocked> [--reason text] [--already-fixed] [--mark-last] [--no-self-review]';
 
 function printHelp() {
   console.log(
@@ -14,9 +16,11 @@ function printHelp() {
       '',
       'Bootstrap: ./mark start — worker-owned SIGNAL.json with status running (no checklist box).',
       'Progress: ./mark 1, ./mark 2, ... — checks the box and appends checklistTiming.',
-      'Terminal: ./mark complete [--outcome success] — merges into SIGNAL.json; never truncates history.',
-      'Optional: --mark-last also checks the last unchecked checklist item.',
-      'Do not use echo > SIGNAL.json.',
+      'Terminal:',
+      '  ./mark complete [--mark-last] [--no-self-review]',
+      '  ./mark no-change --reason "..." [--already-fixed] [--mark-last]',
+      '  ./mark blocked --reason "..." [--mark-last]',
+      'Do not write SIGNAL.json by hand or with echo.',
     ].join('\n'),
   );
 }
@@ -40,21 +44,11 @@ if (stepRaw === '--help' || stepRaw === '-h') {
 }
 if (!taskPath || !signalPath || !stepRaw) usage();
 
-const allowedStatus = new Set(['running', 'complete', 'blocked', 'failed', 'done']);
-const allowedOutcome = new Set(['success', 'partial', 'failure']);
-const allowedDisposition = new Set([
-  'fixed',
-  'blocked',
-  'failed',
-  'already_fixed',
-  'not_reproducible',
-]);
-
 const opts = {};
 for (let i = 0; i < rest.length; i += 1) {
   const key = rest[i];
-  if (key === '--mark-last') {
-    opts.markLast = true;
+  if (key === '--mark-last' || key === '--already-fixed' || key === '--no-self-review') {
+    opts[key.slice(2)] = true;
     continue;
   }
   const value = rest[i + 1];
@@ -63,25 +57,23 @@ for (let i = 0; i < rest.length; i += 1) {
   i += 1;
 }
 
-if (opts.status && !allowedStatus.has(opts.status)) usage();
-if (opts.outcome && !allowedOutcome.has(opts.outcome)) usage();
-if (opts.disposition && !allowedDisposition.has(opts.disposition)) usage();
-if (opts.needsSelfReview && opts.needsSelfReview !== 'true' && opts.needsSelfReview !== 'false') {
-  usage();
-}
-
 const stepToken = String(stepRaw).toLowerCase();
-const isCompleteCommand = COMPLETE_COMMANDS.has(stepToken);
 const isStartCommand = START_COMMANDS.has(stepToken);
+const terminalCommand = TERMINAL_COMMANDS.has(stepToken) ? stepToken : null;
 let stepNumber = null;
-if (!isCompleteCommand && !isStartCommand) {
+if (!isStartCommand && !terminalCommand) {
   stepNumber = Number(stepRaw);
   if (!Number.isInteger(stepNumber) || stepNumber < 1) usage();
 }
-if (isStartCommand && (opts.status || opts.outcome || opts.disposition || opts.markLast)) usage();
-if (isCompleteCommand && !opts.status) opts.status = 'complete';
 
-const TERMINAL_STATUS = new Set(['complete', 'blocked', 'failed', 'done']);
+if (isStartCommand && Object.keys(opts).length > 0) usage();
+if (terminalCommand === 'no-change' || terminalCommand === 'blocked') {
+  if (!opts.reason?.trim()) {
+    console.error(`${terminalCommand} requires --reason`);
+    process.exit(1);
+  }
+}
+
 const SIGNAL_PASSTHROUGH_KEYS = ['role', 'contextId', 'prNumber'];
 
 function pickSignalPassthrough(signal) {
@@ -92,8 +84,34 @@ function pickSignalPassthrough(signal) {
   return out;
 }
 
-function buildSignalUpdate(signal, opts, target, timing, events, now, taskPath) {
-  const isTerminal = Boolean(opts.status && TERMINAL_STATUS.has(opts.status));
+function resolveTerminalPreset(command) {
+  switch (command) {
+    case 'complete':
+      return { status: 'complete', outcome: 'success', disposition: 'fixed' };
+    case 'no-change':
+      return {
+        status: 'complete',
+        outcome: 'success',
+        disposition: opts['already-fixed'] ? 'already_fixed' : 'not_reproducible',
+      };
+    case 'blocked':
+      return { status: 'blocked', outcome: 'partial', disposition: 'blocked' };
+    default:
+      usage();
+      return null;
+  }
+}
+
+function assertNoChangeReport(taskDir) {
+  const reportAbs = path.join(taskDir, NO_CHANGE_REPORT);
+  if (!fs.existsSync(reportAbs) || fs.statSync(reportAbs).size === 0) {
+    console.error(`missing required report: ${NO_CHANGE_REPORT}`);
+    process.exit(1);
+  }
+  return NO_CHANGE_REPORT;
+}
+
+function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPath, taskDir) {
   const base = {
     ...pickSignalPassthrough(signal),
     step: target?.label ?? signal.step ?? 'complete',
@@ -104,20 +122,28 @@ function buildSignalUpdate(signal, opts, target, timing, events, now, taskPath) 
     },
     timestamp: now,
   };
-  if (isTerminal) {
-    return {
-      ...base,
-      status: opts.status,
-      ...(opts.outcome ? { outcome: opts.outcome } : {}),
-      ...(opts.disposition ? { disposition: opts.disposition } : {}),
-      ...(opts.reason ? { reason: opts.reason } : {}),
-      ...(opts.needsSelfReview ? { needsSelfReview: opts.needsSelfReview === 'true' } : {}),
-    };
+
+  if (!terminal) {
+    return { ...base, status: 'running' };
   }
-  return {
+
+  const preset = resolveTerminalPreset(terminal.command);
+  const next = {
     ...base,
-    status: 'running',
+    status: preset.status,
+    outcome: preset.outcome,
+    disposition: preset.disposition,
+    ...(opts.reason ? { reason: opts.reason } : {}),
+    ...(terminal.command === 'complete' && opts['no-self-review']
+      ? { needsSelfReview: false }
+      : {}),
   };
+
+  if (terminal.command === 'no-change') {
+    next.evidence = { reportPath: assertNoChangeReport(taskDir) };
+  }
+
+  return next;
 }
 
 function atomicWrite(file, content, mode) {
@@ -204,9 +230,10 @@ function resolveTarget(taskPath, stepNumber, markLast) {
     : { stepNumber: null, label: 'complete' };
 }
 
+const taskDir = path.dirname(signalPath);
 const target = isStartCommand
   ? { stepNumber: null, label: 'started' }
-  : resolveTarget(taskPath, stepNumber, Boolean(isCompleteCommand && opts.markLast));
+  : resolveTarget(taskPath, stepNumber, Boolean(terminalCommand && opts['mark-last']));
 
 const now = new Date().toISOString();
 const signal = readJson(signalPath);
@@ -227,14 +254,23 @@ if (
   events.push({ stepNumber: target.stepNumber, label: target.label, checkedAt: now });
 }
 
-const next = buildSignalUpdate(signal, opts, target, timing, events, now, taskPath);
+const next = buildSignalUpdate(
+  signal,
+  terminalCommand ? { command: terminalCommand } : null,
+  target,
+  timing,
+  events,
+  now,
+  taskPath,
+  taskDir,
+);
 atomicWrite(signalPath, `${JSON.stringify(next, null, 2)}\n`, 0o644);
 
 if (isStartCommand) {
   console.log('signal started');
-} else if (isCompleteCommand) {
+} else if (terminalCommand) {
   console.log(
-    `signal complete: status=${next.status}${next.outcome ? ` outcome=${next.outcome}` : ''}`,
+    `signal ${terminalCommand}: status=${next.status} disposition=${next.disposition ?? 'n/a'}`,
   );
 } else {
   console.log(`marked ${target.stepNumber}: ${target.label}`);

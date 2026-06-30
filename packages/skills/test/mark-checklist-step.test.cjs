@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -24,79 +24,93 @@ assert.equal(parsed.checklistTiming.events.length, 1);
 assert.equal(parsed.checklistTiming.events[0].stepNumber, 1);
 assert.equal(parsed.checklistTiming.events[0].label, 'First gate');
 
-result = spawnSync(
-  process.execPath,
-  [helper, task, signal, '2', '--status', 'complete', '--outcome', 'success'],
-  { encoding: 'utf8' },
-);
+result = spawnSync(process.execPath, [helper, task, signal, '2'], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(readFileSync(signal, 'utf8'));
+assert.equal(parsed.status, 'running');
+assert.equal(parsed.checklistTiming.events.length, 2);
+
+result = spawnSync(process.execPath, [helper, task, signal, 'complete', '--mark-last'], {
+  encoding: 'utf8',
+});
 assert.equal(result.status, 0, result.stderr);
 parsed = JSON.parse(readFileSync(signal, 'utf8'));
 assert.equal(parsed.status, 'complete');
 assert.equal(parsed.outcome, 'success');
+assert.equal(parsed.disposition, 'fixed');
 assert.equal(parsed.checklistTiming.events.length, 2);
-assert.equal(parsed.checklistTiming.events[1].stepNumber, 2);
-assert.equal(parsed.checklistTiming.events[1].label, 'Second gate validate');
 
-result = spawnSync(process.execPath, [helper, task, signal, '1', '--status', 'complet'], {
-  encoding: 'utf8',
-});
-assert.equal(result.status, 2);
-
-const poisonDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-poison-'));
-const poisonTask = path.join(poisonDir, 'TASK.md');
-const poisonSignal = path.join(poisonDir, 'SIGNAL.json');
-writeFileSync(poisonTask, ['- [ ] Gate step'].join('\n'));
-writeFileSync(
-  poisonSignal,
-  JSON.stringify({
-    status: 'working',
-    outcome: 'in_progress',
-    step: 'stale',
-    timestamp: '2026-06-26T19:00:00.000Z',
-  }),
-);
-result = spawnSync(process.execPath, [helper, poisonTask, poisonSignal, '1'], {
-  encoding: 'utf8',
-});
-assert.equal(result.status, 0, result.stderr);
-parsed = JSON.parse(readFileSync(poisonSignal, 'utf8'));
-assert.equal(parsed.status, 'running');
-assert.equal(parsed.outcome, undefined);
-assert.equal(parsed.checklistTiming.events.length, 1);
-
-const completeDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-complete-'));
-const completeTask = path.join(completeDir, 'CHECKLIST.md');
-const completeSignal = path.join(completeDir, 'SIGNAL.json');
-writeFileSync(completeTask, ['- [ ] Step A', '- [ ] Step B'].join('\n'));
-result = spawnSync(process.execPath, [helper, completeTask, completeSignal, '1'], {
-  encoding: 'utf8',
-});
-assert.equal(result.status, 0, result.stderr);
+const noChangeDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-nochange-'));
+const noChangeTask = path.join(noChangeDir, 'TASK.md');
+const noChangeSignal = path.join(noChangeDir, 'SIGNAL.json');
+const reportDir = path.join(noChangeDir, 'artifacts');
+mkdirSync(reportDir, { recursive: true });
+writeFileSync(path.join(reportDir, 'no-change-report.md'), '# no change\n');
+writeFileSync(noChangeTask, '- [ ] Investigate bug');
+spawnSync(process.execPath, [helper, noChangeTask, noChangeSignal, 'start'], { encoding: 'utf8' });
+spawnSync(process.execPath, [helper, noChangeTask, noChangeSignal, '1'], { encoding: 'utf8' });
 result = spawnSync(
   process.execPath,
-  [helper, completeTask, completeSignal, 'complete', '--outcome', 'success'],
+  [
+    helper,
+    noChangeTask,
+    noChangeSignal,
+    'no-change',
+    '--reason',
+    'bug not reproducible',
+    '--mark-last',
+  ],
   { encoding: 'utf8' },
 );
 assert.equal(result.status, 0, result.stderr);
-parsed = JSON.parse(readFileSync(completeSignal, 'utf8'));
-assert.equal(parsed.status, 'complete');
-assert.equal(parsed.outcome, 'success');
-assert.equal(parsed.checklistTiming.events.length, 1);
+parsed = JSON.parse(readFileSync(noChangeSignal, 'utf8'));
+assert.equal(parsed.disposition, 'not_reproducible');
+assert.equal(parsed.evidence.reportPath, 'artifacts/no-change-report.md');
 
-const echoRiskDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-echo-risk-'));
-const echoTask = path.join(echoRiskDir, 'CHECKLIST.md');
-const echoSignal = path.join(echoRiskDir, 'SIGNAL.json');
-writeFileSync(echoTask, '- [ ] Only step');
-spawnSync(process.execPath, [helper, echoTask, echoSignal, '1'], { encoding: 'utf8' });
 result = spawnSync(
   process.execPath,
-  [helper, echoTask, echoSignal, 'complete', '--outcome', 'success', '--mark-last'],
+  [
+    helper,
+    noChangeTask,
+    noChangeSignal,
+    'no-change',
+    '--reason',
+    'already fixed on main',
+    '--already-fixed',
+  ],
   { encoding: 'utf8' },
 );
 assert.equal(result.status, 0, result.stderr);
-parsed = JSON.parse(readFileSync(echoSignal, 'utf8'));
-assert.equal(parsed.checklistTiming.events.length, 1);
-assert.match(readFileSync(echoTask, 'utf8'), /- \[x\] Only step/);
+parsed = JSON.parse(readFileSync(noChangeSignal, 'utf8'));
+assert.equal(parsed.disposition, 'already_fixed');
+
+const missingReportDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-nochange-missing-'));
+const missingReportTask = path.join(missingReportDir, 'TASK.md');
+const missingReportSignal = path.join(missingReportDir, 'SIGNAL.json');
+writeFileSync(missingReportTask, '- [ ] Investigate bug');
+result = spawnSync(
+  process.execPath,
+  [helper, missingReportTask, missingReportSignal, 'no-change', '--reason', 'missing report'],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 1);
+
+const blockedDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-blocked-'));
+const blockedTask = path.join(blockedDir, 'TASK.md');
+const blockedSignal = path.join(blockedDir, 'SIGNAL.json');
+writeFileSync(blockedTask, '- [ ] Step A');
+spawnSync(process.execPath, [helper, blockedTask, blockedSignal, 'start'], { encoding: 'utf8' });
+result = spawnSync(
+  process.execPath,
+  [helper, blockedTask, blockedSignal, 'blocked', '--reason', 'CDP offline'],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(readFileSync(blockedSignal, 'utf8'));
+assert.equal(parsed.status, 'blocked');
+assert.equal(parsed.outcome, 'partial');
+assert.equal(parsed.disposition, 'blocked');
+assert.equal(parsed.reason, 'CDP offline');
 
 const startDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-start-'));
 const startTask = path.join(startDir, 'TASK.md');
@@ -106,19 +120,12 @@ result = spawnSync(process.execPath, [helper, startTask, startSignal, 'start'], 
   encoding: 'utf8',
 });
 assert.equal(result.status, 0, result.stderr);
-assert.match(readFileSync(startTask, 'utf8'), /- \[ \] \*\*1\. Update Status\*\*/);
 parsed = JSON.parse(readFileSync(startSignal, 'utf8'));
 assert.equal(parsed.status, 'running');
 assert.equal(parsed.step, 'started');
 assert.equal(parsed.checklistTiming.events.length, 0);
-assert.match(result.stdout, /signal started/);
-
-result = spawnSync(process.execPath, [helper, startTask, startSignal, '1'], { encoding: 'utf8' });
-assert.equal(result.status, 0, result.stderr);
-parsed = JSON.parse(readFileSync(startSignal, 'utf8'));
-assert.equal(parsed.checklistTiming.events.length, 1);
 
 result = spawnSync(process.execPath, [helper, task, signal, '--help'], { encoding: 'utf8' });
 assert.equal(result.status, 0);
-assert.match(result.stdout, /Terminal: \.\/mark complete/);
-assert.match(result.stdout, /Bootstrap: \.\/mark start/);
+assert.match(result.stdout, /mark no-change/);
+assert.match(result.stdout, /mark blocked/);

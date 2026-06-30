@@ -37,16 +37,6 @@ export function isNoCodeTerminalDisposition(
   return disposition === 'already_fixed' || disposition === 'not_reproducible';
 }
 
-function hasEvidenceArtifact(signal: WorkerSignal): boolean {
-  return Boolean(
-    signal.evidence?.reportPath?.trim() ||
-    (Array.isArray(signal.evidence?.artifacts) &&
-      signal.evidence.artifacts.some(
-        (artifact) => typeof artifact === 'string' && artifact.trim().length > 0,
-      )),
-  );
-}
-
 function invalidNoChangeSignal(signal: WorkerSignal, reason: string): WorkerSignal {
   return {
     ...signal,
@@ -58,13 +48,13 @@ function invalidNoChangeSignal(signal: WorkerSignal, reason: string): WorkerSign
 }
 
 function validateNoChangeEvidence(signal: WorkerSignal): string | null {
-  if (signal.evidence?.noCodeChange !== true) return 'evidence.noCodeChange must be true';
-  if (!hasEvidenceArtifact(signal)) return 'evidence.reportPath or evidence.artifacts is required';
-  if (
-    signal.disposition === 'not_reproducible' &&
-    signal.evidence?.reproductionAttempted !== true
-  ) {
-    return 'not_reproducible requires evidence.reproductionAttempted=true';
+  const reportPath = signal.evidence?.reportPath?.trim();
+  if (!reportPath) {
+    return 'evidence.reportPath is required (use ./mark no-change after writing artifacts/no-change-report.md)';
+  }
+  const normalized = reportPath.replace(/^\.\//, '').replace(/\\/g, '/');
+  if (normalized !== 'artifacts/no-change-report.md') {
+    return 'evidence.reportPath must be artifacts/no-change-report.md';
   }
   return null;
 }
@@ -76,23 +66,6 @@ export type WorkerSignalNormalizationResult =
 export function normalizeWorkerSignal(signal: WorkerSignal): WorkerSignalNormalizationResult {
   const rawStatus = String((signal as { status?: unknown }).status ?? '');
   if (!rawStatus) return { ok: false, reason: 'missing status' };
-
-  if (rawStatus === 'done-partial') {
-    const rawOutcome = (signal as { outcome?: unknown }).outcome;
-    const outcomeReason =
-      typeof rawOutcome === 'string' && rawOutcome !== 'partial' ? rawOutcome : null;
-    return {
-      ok: true,
-      signal: {
-        ...signal,
-        status: 'blocked',
-        outcome: 'partial',
-        disposition: 'blocked',
-        reason: [outcomeReason, signal.reason].filter(Boolean).join(': '),
-      },
-      warning: 'normalized legacy done-partial worker signal to blocked/partial',
-    };
-  }
 
   const status = signal.status;
   if (!['running', 'blocked', 'complete', 'failed', 'done'].includes(status)) {

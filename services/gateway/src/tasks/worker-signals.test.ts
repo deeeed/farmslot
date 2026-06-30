@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { WorkerSignal } from '@farmslot/protocol';
+
 import {
   isNoCodeTerminalDisposition,
   isTerminalWorkerSignal,
@@ -32,22 +34,16 @@ test('terminalWorkerSignalFromRaw parses only terminal worker signals', () => {
   );
 });
 
-test('done-partial worker signals normalize to blocked partial terminal signals', () => {
-  const signal = terminalWorkerSignalFromRaw(
-    JSON.stringify({
-      status: 'done-partial',
-      outcome: 'blocked-external-runtime-gap',
-      reason: 'capture-helper screenshot failed',
-      timestamp: '2026-06-22T09:47:23Z',
-    }),
-  );
+test('normalizeWorkerSignal rejects unknown terminal statuses', () => {
+  const result = normalizeWorkerSignal({
+    status: 'done-partial',
+    outcome: 'partial',
+    reason: 'capture-helper screenshot failed',
+    timestamp: '2026-06-22T09:47:23Z',
+  } as unknown as WorkerSignal);
 
-  assert.equal(signal?.status, 'blocked');
-  assert.equal(signal?.outcome, 'partial');
-  assert.equal(signal?.disposition, 'blocked');
-  assert.match(signal?.reason ?? '', /blocked-external-runtime-gap/);
-  assert.match(signal?.reason ?? '', /capture-helper screenshot failed/);
-  assert.equal(isTerminalWorkerSignal(signal!), true);
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? '' : result.reason, /unknown status/);
 });
 
 test('signal freshness compares against durable context floors', () => {
@@ -62,15 +58,13 @@ test('signal freshness compares against durable context floors', () => {
   );
 });
 
-test('normalizeWorkerSignal accepts evidence-backed no-change terminal dispositions', () => {
+test('normalizeWorkerSignal accepts report-backed no-change terminal dispositions', () => {
   const result = normalizeWorkerSignal({
     status: 'complete',
     outcome: 'success',
     disposition: 'not_reproducible',
     evidence: {
-      noCodeChange: true,
-      reproductionAttempted: true,
-      reportPath: '.task/proj-1/artifacts/no-change-report.md',
+      reportPath: 'artifacts/no-change-report.md',
     },
     timestamp: '2026-05-05T01:00:00Z',
   });
@@ -108,12 +102,11 @@ test('normalizeWorkerSignal preserves optional checklist timing metadata', () =>
   );
 });
 
-test('normalizeWorkerSignal converts insufficient no-change evidence to blocked partial', () => {
+test('normalizeWorkerSignal converts missing no-change report path to blocked partial', () => {
   const result = normalizeWorkerSignal({
     status: 'complete',
     outcome: 'success',
     disposition: 'not_reproducible',
-    evidence: { noCodeChange: true },
     timestamp: '2026-05-05T01:00:00Z',
   });
 
@@ -121,10 +114,21 @@ test('normalizeWorkerSignal converts insufficient no-change evidence to blocked 
   assert.equal(result.ok && result.signal.status, 'blocked');
   assert.equal(result.ok && result.signal.outcome, 'partial');
   assert.equal(result.ok && result.signal.disposition, 'blocked');
-  assert.match(
-    result.ok ? (result.signal.reason ?? '') : '',
-    /reproductionAttempted|reportPath|artifacts/,
-  );
+  assert.match(result.ok ? (result.signal.reason ?? '') : '', /reportPath/);
+});
+
+test('normalizeWorkerSignal rejects non-canonical no-change report paths', () => {
+  const result = normalizeWorkerSignal({
+    status: 'complete',
+    outcome: 'success',
+    disposition: 'not_reproducible',
+    evidence: { reportPath: 'artifacts/other-report.md' },
+    timestamp: '2026-05-05T01:00:00Z',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.signal.status, 'blocked');
+  assert.match(result.ok ? (result.signal.reason ?? '') : '', /artifacts\/no-change-report\.md/);
 });
 
 test('normalizeWorkerSignal rejects non-no-change inconsistent tuples', () => {

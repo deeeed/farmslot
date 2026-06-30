@@ -964,8 +964,6 @@ export interface WorkerTerminalEvidence {
   reportPath?: string;
   artifacts?: string[];
   confidence?: 'low' | 'medium' | 'high';
-  noCodeChange?: boolean;
-  reproductionAttempted?: boolean;
 }
 
 /**
