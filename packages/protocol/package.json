@@ -319,6 +319,11 @@
       "types": "./dist/node/capture-helper-path.d.ts",
       "import": "./dist/node/capture-helper-path.js",
       "default": "./dist/node/capture-helper-path.js"
+    },
+    "./node/farmslot-home": {
+      "types": "./dist/node/farmslot-home.d.ts",
+      "import": "./dist/node/farmslot-home.js",
+      "default": "./dist/node/farmslot-home.js"
     }
   },
   "scripts": {

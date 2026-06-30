@@ -1,8 +1,8 @@
 import { appendFile, mkdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { Events, type IntelligenceAction } from '@farmslot/protocol';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { getRun, updateRun } from '../runs/store.js';
 
@@ -16,7 +16,7 @@ type Emit = (event: string, payload: unknown) => void;
 export function intelligenceAuditDir(): string {
   return (
     process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR ??
-    path.join(homedir(), '.farmslot', 'logs', 'intelligence-actions')
+    path.join(farmslotHome(), 'logs', 'intelligence-actions')
   );
 }
 export function intelligenceAuditPathForDate(date = new Date()): string {

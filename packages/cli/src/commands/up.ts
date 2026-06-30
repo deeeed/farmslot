@@ -10,18 +10,15 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { hostname, networkInterfaces } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import type { Command } from 'commander';
 
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
+
 import { bold, cyan, dim, green, red } from '../colors.js';
 import { probeGatewayAuth } from '../gateway-auth.js';
-import {
-  DEFAULT_GATEWAY_URL,
-  loadProfiles,
-  profilesPath,
-  saveProfiles,
-} from '../gateway-profiles.js';
+import { DEFAULT_GATEWAY_URL, loadProfiles, saveProfiles } from '../gateway-profiles.js';
 import { repoRoot } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
@@ -76,10 +73,6 @@ function openUrl(url: string): boolean {
   return (
     spawnSync(opener, [url], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0
   );
-}
-
-function farmslotHome(): string {
-  return dirname(profilesPath());
 }
 
 function pidFilePath(): string {

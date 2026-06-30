@@ -21,6 +21,9 @@
 #   FARMSLOT_REPO_URL   git source for fresh mode  (default: the canonical repo URL)
 #   FARMSLOT_REPO_REF   branch/ref for fresh mode  (default: the remote default branch)
 #   FARMSLOT_BIN_DIR    dir for the PATH symlink   (default: ~/.local/bin)
+#   FARMSLOT_HOME       machine state/home dir     (default: ~/.farmslot)
+# Interactive installs (a real terminal) are prompted to confirm/customize the three
+# locations above; values pinned via env, and non-interactive (CI/piped) installs, stay silent.
 #   FARMSLOT_MINIMAL    set to skip the dashboard build + pair-your-phone step
 #   FARMSLOT_PAIR       set to 1 to pair non-interactively (no prompt)
 #   FARMSLOT_NO_STAR_PROMPT  set to 1 to skip the GitHub star prompt
@@ -33,6 +36,12 @@ set -euo pipefail
 
 WORKSPACE="${FARMSLOT_WORKSPACE:-${HOME}/dev/farmslot-workspace}"
 BIN_DIR="${FARMSLOT_BIN_DIR:-${HOME}/.local/bin}"
+HOME_DIR="${FARMSLOT_HOME:-${HOME}/.farmslot}"
+# Track which locations the user pinned via env, so step_configure only prompts the rest
+# and a fully-pinned (CI / curl|bash with env) install stays silent.
+WORKSPACE_FROM_ENV="${FARMSLOT_WORKSPACE:+1}"
+BIN_DIR_FROM_ENV="${FARMSLOT_BIN_DIR:+1}"
+HOME_FROM_ENV="${FARMSLOT_HOME:+1}"
 # Fresh (piped) installs clone this repo; override with FARMSLOT_REPO_URL.
 # Dev/test mode (run from a checkout) uses the checkout itself as the source.
 DEFAULT_REPO_URL="https://github.com/deeeed/farmslot.git"
@@ -111,6 +120,74 @@ ask_yes_no() {
   printf '  %s [y/N] ' "$prompt" >/dev/tty
   read -r reply </dev/tty || reply=""
   case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
+}
+
+# expand_tilde PATH — turn a leading ~ into $HOME ('read -r' keeps it literal otherwise).
+expand_tilde() {
+  case "$1" in
+    '~') printf '%s' "$HOME" ;;
+    '~/'*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+# ask_value VARNAME "label" "default" — prompt for a path on the tty; empty reply keeps
+# the default. Bash 'printf -v' assigns back to the named variable.
+ask_value() {
+  local __var="$1" label="$2" def="$3" reply
+  printf '  %s [%s]: ' "$label" "$def" >/dev/tty
+  read -r reply </dev/tty || reply=""
+  if [ -n "$reply" ]; then printf -v "$__var" '%s' "$reply"; else printf -v "$__var" '%s' "$def"; fi
+}
+
+# Best-effort shell rc file for an optional PATH edit.
+shell_rc_file() {
+  case "${SHELL:-}" in
+    *zsh) printf '%s' "${ZDOTDIR:-$HOME}/.zshrc" ;;
+    *bash) [ -f "$HOME/.bashrc" ] && printf '%s' "$HOME/.bashrc" || printf '%s' "$HOME/.bash_profile" ;;
+    *) printf '%s' "$HOME/.profile" ;;
+  esac
+}
+
+# offer_path_update BIN_DIR — when BIN_DIR is not on PATH, offer (interactive only) to
+# append the export to the shell rc; idempotent. Non-interactive keeps the manual note.
+offer_path_update() {
+  local bindir="$1" rc line
+  line="export PATH=\"${bindir}:\$PATH\""
+  rc="$(shell_rc_file)"
+  if tty_available && [ -n "$rc" ] && ask_yes_no "${bindir} is not on PATH. Add it to ${rc}?"; then
+    if [ -f "$rc" ] && grep -qF "$line" "$rc"; then
+      green "  [OK] already in ${rc}"
+    else
+      printf '\n# Added by farmslot install\n%s\n' "$line" >>"$rc"
+      green "  [OK] added to ${rc} — open a new terminal or run: source ${rc}"
+    fi
+  else
+    echo "  note: ${bindir} is not on PATH — add: ${line}"
+  fi
+}
+
+# step_configure — choose install locations interactively (tty only). Each path the user
+# did NOT pin via env is prompted with its default; a fully-pinned or non-interactive
+# (CI / piped) install stays silent and reproducible. Always finalizes (tilde-expand +
+# export FARMSLOT_HOME) so every child process resolves the same home.
+step_configure() {
+  local prompted=
+  if tty_available; then
+    bold "── Install locations ──"
+    [ -z "$WORKSPACE_FROM_ENV" ] && { ask_value WORKSPACE "Install location (workspace)" "$WORKSPACE"; prompted=1; }
+    [ -z "$BIN_DIR_FROM_ENV" ] && { ask_value BIN_DIR "CLI symlink dir" "$BIN_DIR"; prompted=1; }
+    [ -z "$HOME_FROM_ENV" ] && { ask_value HOME_DIR "State/home dir" "$HOME_DIR"; prompted=1; }
+  fi
+  WORKSPACE="$(expand_tilde "$WORKSPACE")"
+  BIN_DIR="$(expand_tilde "$BIN_DIR")"
+  HOME_DIR="$(expand_tilde "$HOME_DIR")"
+  if [ -n "$prompted" ]; then
+    printf '\n  workspace: %s\n  bin dir:   %s\n  home dir:  %s\n' "$WORKSPACE" "$BIN_DIR" "$HOME_DIR" >/dev/tty
+    ask_yes_no "Proceed with these locations?" \
+      || fail "install cancelled" "re-run, or set FARMSLOT_WORKSPACE / FARMSLOT_BIN_DIR / FARMSLOT_HOME to choose non-interactively"
+  fi
+  export FARMSLOT_HOME="$HOME_DIR"
 }
 
 activate_version_managers() {
@@ -437,13 +514,13 @@ step_cli() {
   green "  [OK] symlink ${BIN_DIR}/farmslot"
   case ":$PATH:" in
     *":${BIN_DIR}:"*) ;;
-    *) echo "  note: ${BIN_DIR} is not on PATH — add: export PATH=\"${BIN_DIR}:\$PATH\"" ;;
+    *) offer_path_update "$BIN_DIR" ;;
   esac
 }
 
 step_workspace() {
   bold "── Workspace ──"
-  FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" workspace init --source-mode "$SOURCE_MODE" --source "$SOURCE" --bin-dir "$BIN_DIR"
+  FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" workspace init --source-mode "$SOURCE_MODE" --source "$SOURCE" --bin-dir "$BIN_DIR" --home-dir "$HOME_DIR"
 }
 
 step_doctor() {
@@ -535,9 +612,10 @@ step_pair() {
 }
 
 main() {
+  bold "=== farmslot install ==="
+  step_configure
   step_detect_source
   activate_version_managers
-  bold "=== farmslot install ==="
   echo "  workspace: ${WORKSPACE}"
   echo "  source:    ${SOURCE} (${SOURCE_MODE})"
   echo ""

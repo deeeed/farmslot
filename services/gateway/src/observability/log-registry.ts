@@ -2,8 +2,9 @@
 
 import { createHash } from 'node:crypto';
 import { lstat, readdir, realpath } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import path from 'node:path';
+
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { intelligenceAuditDir } from '../auto-recovery/audit-writer.js';
 import { isPathInside } from '../core/path.js';
@@ -93,7 +94,7 @@ function warnSkippedLogSource(source: string, err: unknown): void {
 function configuredLogDir(): string {
   return process.env.FARMSLOT_LOG_DIR
     ? path.resolve(process.env.FARMSLOT_LOG_DIR)
-    : path.join(homedir(), '.farmslot', 'logs');
+    : path.join(farmslotHome(), 'logs');
 }
 
 function extraLogDirs(): string[] {

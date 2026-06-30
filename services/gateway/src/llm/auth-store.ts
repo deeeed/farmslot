@@ -1,11 +1,13 @@
 // auth-store.ts — Auth profile store for LLM credentials
 // Adapted from OpenClaw auth-profiles (ADR-014).
-// Farmslot's own store at ~/.farmslot/auth-profiles.json.
+// Farmslot's own store at <FARMSLOT_HOME>/auth-profiles.json (default ~/.farmslot).
 
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 // ─── Types ───
 
@@ -42,7 +44,7 @@ export interface AuthProfileStore {
 
 // ─── Paths ───
 
-const FARMSLOT_STORE_DIR = path.join(homedir(), '.farmslot');
+const FARMSLOT_STORE_DIR = farmslotHome();
 const FARMSLOT_STORE_PATH = path.join(FARMSLOT_STORE_DIR, 'auth-profiles.json');
 const OPENCLAW_STORE_PATH = path.join(
   homedir(),
