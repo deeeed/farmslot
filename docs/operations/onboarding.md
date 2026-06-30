@@ -20,12 +20,14 @@ What it does:
   it prints fix hints and stops.
 - activates existing `asdf`/`nvm` installs in non-interactive shells and uses
   them to install/switch to the repo's recommended Node version when needed.
-- on macOS, checks for the standalone `capture-helper` CLI and can install it
+- on macOS, checks for the standalone `capture-helper` package and can install it
   with Homebrew or `npm install -g @siteed/capture-helper` unless
-  `FARMSLOT_SKIP_CAPTURE_HELPER=1` is set. Grant Screen Recording permission to
-  the terminal app on first capture so Command Center can show live visual
-  evidence. The legacy embedded helper under `tools/capture-helper/` is not used
-  by the installer.
+  `FARMSLOT_SKIP_CAPTURE_HELPER=1` is set. The installer doctors the package's
+  native binary when available (`CAPTURE_HELPER_PATH` / `SITEED_CAPTURE_HELPER_BIN`
+  can override it), avoiding wrapper shims for capture paths. Grant Screen
+  Recording permission to the terminal app on first capture so Command Center can
+  show live visual evidence. The legacy embedded helper under `tools/capture-helper/`
+  has been removed.
 - creates the workspace (default `~/dev/farmslot-workspace`, override with
   `FARMSLOT_WORKSPACE`): `farmslot/` clone, `repos/`, `runs/`, `state.json`
 - installs dependencies, builds the CLI's workspace packages, symlinks

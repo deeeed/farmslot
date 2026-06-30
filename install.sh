@@ -26,6 +26,7 @@
 #   FARMSLOT_NO_STAR_PROMPT  set to 1 to skip the GitHub star prompt
 #   FARMSLOT_AUTO_INSTALL  set to 1 to install missing common tools with Homebrew
 #   FARMSLOT_SKIP_CAPTURE_HELPER  set to 1 to skip external capture-helper install/check
+#   CAPTURE_HELPER_PATH / SITEED_CAPTURE_HELPER_BIN  explicit native helper binary override
 #   FARMSLOT_CAPTURE_HELPER_NPM_PACKAGE  npm package name (default: @siteed/capture-helper)
 #   FARMSLOT_CAPTURE_HELPER_BREW_FORMULA brew formula name (default: capture-helper)
 set -euo pipefail
@@ -220,12 +221,22 @@ check_runner() {
   fi
 }
 
+capture_helper_bin() {
+  local helper_script="${CLONE:-}/scripts/lib/capture-helper.sh"
+  [ -f "$helper_script" ] || return 1
+  # shellcheck disable=SC1090
+  FARMSLOT_CAPTURE_HELPER_REPO_ROOT="$CLONE" . "$helper_script"
+  resolve_capture_helper_bin
+}
+
 capture_helper_doctor() {
-  python3 - <<'PY'
+  local helper="$1"
+  python3 - "$helper" <<'PYDOCTOR'
 import subprocess, sys
+helper = sys.argv[1]
 try:
     subprocess.run(
-        ["capture-helper", "doctor", "--json"],
+        [helper, "doctor", "--json"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         timeout=20,
@@ -233,7 +244,7 @@ try:
     )
 except Exception:
     sys.exit(1)
-PY
+PYDOCTOR
 }
 
 # ── Steps ────────────────────────────────────────────────────────────────────
@@ -374,7 +385,9 @@ step_capture_helper() {
   bold "── Capture helper ──"
   local npm_pkg="${FARMSLOT_CAPTURE_HELPER_NPM_PACKAGE:-@siteed/capture-helper}"
   local brew_formula="${FARMSLOT_CAPTURE_HELPER_BREW_FORMULA:-capture-helper}"
-  if ! command -v capture-helper >/dev/null 2>&1; then
+  local helper_bin=""
+  helper_bin="$(capture_helper_bin || true)"
+  if [ -z "$helper_bin" ]; then
     if command -v brew >/dev/null 2>&1 \
       && ask_yes_no "capture-helper is missing. Install ${brew_formula} with Homebrew now?"; then
       if brew install "$brew_formula"; then
@@ -383,18 +396,20 @@ step_capture_helper() {
         yellow "  [WARN] Homebrew install failed for ${brew_formula}; trying npm if allowed"
       fi
     fi
-    if ! command -v capture-helper >/dev/null 2>&1 \
+    helper_bin="$(capture_helper_bin || true)"
+    if [ -z "$helper_bin" ] \
       && command -v npm >/dev/null 2>&1 \
       && ask_yes_no "Install ${npm_pkg} globally with npm now?"; then
       npm install -g "$npm_pkg"
+      helper_bin="$(capture_helper_bin || true)"
     fi
   fi
-  if command -v capture-helper >/dev/null 2>&1; then
-    if capture_helper_doctor; then
-      green "  [OK] capture-helper doctor"
+  if [ -n "$helper_bin" ]; then
+    if capture_helper_doctor "$helper_bin"; then
+      green "  [OK] capture-helper doctor (${helper_bin})"
     else
-      yellow "  [WARN] capture-helper is installed but doctor failed or timed out"
-      echo "  fix: run 'capture-helper doctor --json' and grant Screen Recording permission if requested"
+      yellow "  [WARN] capture-helper is installed but doctor failed or timed out (${helper_bin})"
+      echo "  fix: run '${helper_bin}' doctor --json and grant Screen Recording permission if requested"
     fi
   else
     yellow "  [WARN] capture-helper not installed — live screenshots/video will be unavailable"

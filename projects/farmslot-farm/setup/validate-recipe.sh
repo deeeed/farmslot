@@ -6,23 +6,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRIMARY_REPO="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Homebrew/npm `capture-helper` is a Node shim whose candidate list can recurse into
-# itself (/opt/homebrew/bin/capture-helper), hanging doctor/record. Prefer the native
-# binary before a stale CAPTURE_HELPER_PATH that may point at a broken checkout.
-resolve_capture_helper_bin() {
-  local candidate
-  for candidate in \
-    "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
-    "${CAPTURE_HELPER_PATH:-}" \
-    "${SITEED_CAPTURE_HELPER_BIN:-}"; do
-    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
-      printf '%s' "${candidate}"
-      return 0
-    fi
-  done
-  return 1
-}
-if helper_bin="$(resolve_capture_helper_bin)"; then
+# Honor explicit helper overrides first, normalizing npm/Homebrew wrapper shims
+# to the package native binary so doctor/record do not recurse through shims.
+# Without an override, prefer the standalone package's native binary.
+# shellcheck disable=SC1091
+. "${PRIMARY_REPO}/scripts/lib/capture-helper.sh"
+if helper_bin="$(FARMSLOT_CAPTURE_HELPER_REPO_ROOT="${PRIMARY_REPO}" resolve_capture_helper_bin)"; then
   export CAPTURE_HELPER_PATH="${helper_bin}"
   export SITEED_CAPTURE_HELPER_BIN="${helper_bin}"
 fi

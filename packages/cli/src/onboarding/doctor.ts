@@ -4,6 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
+import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
+
 import { probeGatewayAuth } from '../gateway-auth.js';
 import { loadProfiles, profileCredential } from '../gateway-profiles.js';
 
@@ -349,8 +351,8 @@ function captureHelperSection(): DoctorSection {
       ],
     };
   }
-  const bin = commandPath('capture-helper');
-  if (!bin) {
+  const bin = captureHelperPath();
+  if (bin === 'capture-helper' && !commandPath('capture-helper')) {
     return {
       title: 'Capture',
       checks: [

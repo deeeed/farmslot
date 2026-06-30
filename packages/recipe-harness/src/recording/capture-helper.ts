@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 
 import type { RecipeArtifactRecorderTarget } from '@farmslot/protocol';
+import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
 
 import type {
   ActiveVideoRecording,
@@ -39,8 +40,7 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
   #version: string | undefined;
 
   constructor(options: CaptureHelperVideoRecorderOptions) {
-    this.#captureHelperPath =
-      options.captureHelperPath ?? process.env.CAPTURE_HELPER_PATH ?? 'capture-helper';
+    this.#captureHelperPath = options.captureHelperPath ?? captureHelperPath();
     this.#stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
 

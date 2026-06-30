@@ -15,6 +15,7 @@ import {
   type ResponseFrame,
 } from '@farmslot/protocol';
 
+import { captureHelperPath } from './commands/capture-helper-path.js';
 import { exec } from './commands/exec.js';
 import {
   fsCheckIgnore,
@@ -172,7 +173,7 @@ async function collectCaptureCapabilities(): Promise<RecipeRuntimeCapabilityDecl
     return captureCapabilities('unsupported', 'capture-helper capture is macOS-only');
   }
   try {
-    const helper = shellQuote(process.env.CAPTURE_HELPER_PATH ?? 'capture-helper');
+    const helper = shellQuote(captureHelperPath());
     const { stdout, stderr, exitCode } = await exec({
       cmd: `${helper} doctor --json`,
       timeout: 10_000,

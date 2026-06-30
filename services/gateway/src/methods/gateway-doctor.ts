@@ -10,6 +10,7 @@ import {
   type GatewayDoctorSectionDefinition,
   type GatewayDoctorSectionId,
 } from '@farmslot/protocol';
+import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
 
 import { getAllNodes } from '../fleet/machine-registry.js';
 import { loadPoolConfigs, loadProjectConfigs } from '../fleet/state.js';
@@ -179,7 +180,8 @@ async function workspaceSection(): Promise<GatewayDoctorSection> {
 }
 
 async function captureHelperSection(): Promise<GatewayDoctorSection> {
-  const command = await runCommand('capture-helper', ['doctor', '--json']);
+  const helper = captureHelperPath();
+  const command = await runCommand(helper, ['doctor', '--json']);
   const ok = command.ok && captureDoctorPassed(command.stdout);
   return {
     id: 'capture',
@@ -190,7 +192,7 @@ async function captureHelperSection(): Promise<GatewayDoctorSection> {
         label: 'capture-helper',
         ok,
         detail: ok
-          ? 'capture-helper doctor passed'
+          ? `${helper} doctor passed`
           : command.stderr || command.stdout || 'capture-helper doctor failed',
         hint: ok
           ? undefined

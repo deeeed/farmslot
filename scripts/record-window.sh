@@ -14,13 +14,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [[ -n "${CAPTURE_HELPER_PATH:-}" ]]; then
-  CAPTURE_HELPER="$CAPTURE_HELPER_PATH"
-elif command -v capture-helper >/dev/null 2>&1; then
-  CAPTURE_HELPER="$(command -v capture-helper)"
-elif [[ -x "$SCRIPT_DIR/../node_modules/.bin/capture-helper" ]]; then
-  CAPTURE_HELPER="$SCRIPT_DIR/../node_modules/.bin/capture-helper"
-else
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/lib/capture-helper.sh"
+
+CAPTURE_HELPER="$(FARMSLOT_CAPTURE_HELPER_REPO_ROOT="$REPO_ROOT" resolve_capture_helper_bin || true)"
+if [[ -z "$CAPTURE_HELPER" ]]; then
   CAPTURE_HELPER="capture-helper"
 fi
 FFMPEG="${FFMPEG:-/opt/homebrew/bin/ffmpeg}"

@@ -46,9 +46,6 @@ projects/*/.src/
 # Scoring results (contain ticket titles/descriptions from private trackers)
 projects/*/scores/
 
-# Compiled binaries
-tools/capture-helper/capture-helper
-
 # Secrets
 .env.sonar.local
 .env
