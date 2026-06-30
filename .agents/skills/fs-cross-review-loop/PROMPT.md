@@ -25,7 +25,7 @@ The optional third pane is chosen during the interaction. The operator may skip 
 
 ## Non-negotiable boundary
 
-The orchestrator may run tmux-only control commands such as pane discovery, capture, and send-keys.
+The orchestrator may run tmux-only control commands such as pane discovery and capture. For compose sends to worker/reviewer panes, it must use `tmux-model-driver` (`pane-state.sh`, `send-and-verify.sh`) — never raw `send-keys` + `C-m` for Claude/Codex.
 
 The orchestrator must not:
 

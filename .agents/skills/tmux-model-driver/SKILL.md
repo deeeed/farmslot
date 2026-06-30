@@ -42,12 +42,12 @@ If verification fails, stop and reassess instead of spamming more keys.
 
 Cross-review, orchestration, and multi-step PR work use the **interactive tmux compose path** in the existing model pane. That is the safe default.
 
-| Goal | Path | Notes |
-|------|------|-------|
-| Cross-review / worker nudges / review loops | Interactive model pane | `send-keys -l` then named `Enter` |
-| One-shot smoke from an agent terminal | `claude -p` / `codex exec` in a real shell | OK outside tmux; not a tmux-pane substitute |
-| `claude -p` inside a tmux shell pane | Avoid | Launch script can exit with no visible output; orchestrator thinks review ran when it did not |
-| Extra shell pane + `claude -p` for review | Avoid | Corrupts cross-review routing; keep reviewer in its dedicated model pane |
+| Goal                                        | Path                                       | Notes                                                                                         |
+| ------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| Cross-review / worker nudges / review loops | Interactive model pane                     | `send-keys -l` then named `Enter`                                                             |
+| One-shot smoke from an agent terminal       | `claude -p` / `codex exec` in a real shell | OK outside tmux; not a tmux-pane substitute                                                   |
+| `claude -p` inside a tmux shell pane        | Avoid                                      | Launch script can exit with no visible output; orchestrator thinks review ran when it did not |
+| Extra shell pane + `claude -p` for review   | Avoid                                      | Corrupts cross-review routing; keep reviewer in its dedicated model pane                      |
 
 `claude -p` can work from a direct terminal, but it is a poor fit for tmux orchestration: no compose progress (`Cooking…`), weak pane verification, and easy false success when the process exits silently.
 
@@ -149,7 +149,7 @@ Rules:
 
 Success signals (any of these):
 
-- `Cooking…` / `Baked for` / tool lines (`⏺ Bash`, `Reading N files`)
+- `Cooking…` / `Pollinating…` / `Effecting…` / `Baked for` / tool lines (`⏺ Bash`, `Reading N files`)
 - prompt echoed above an empty `❯`, not trapped inside the compose border
 - session status shows `thinking` / `session:Nm`
 
@@ -277,10 +277,10 @@ The runner-validation harness uses the same pattern as `.runner-validate-launch.
 
 Some runners show a post-launch gate before compose is available.
 
-| Runner | Blocker | Auto action |
-|--------|---------|-------------|
-| Grok | `project-directory` | `Enter` on `(current)` row |
-| Cursor | `workspace-trust` | `a` |
+| Runner | Blocker             | Auto action                |
+| ------ | ------------------- | -------------------------- |
+| Grok   | `project-directory` | `Enter` on `(current)` row |
+| Cursor | `workspace-trust`   | `a`                        |
 
 Detection lives in `pane-state.sh` (optional `[runner-id]` scopes Grok/Cursor blockers; includes `auth-required`). Harness `lib/pane-blockers.mjs` and `resolveLaunchBlockers()` delegate here — keep patterns aligned with `services/gateway/src/runners/registry.ts` `detectRunnerLaunchBlocker`.
 
@@ -399,23 +399,23 @@ That is not "Codex broken". It is a wrapper-contract failure and should be track
 
 ## Common Failures
 
-| Failure | Fix |
-| ------- | --- |
-| Sent shell command into interactive Claude | detect state first; exit to shell or send Claude-language instruction instead |
-| Sent instruction but it stayed pending at `❯` | use named `Enter` (not `C-m`); re-capture; for cross-review stay in interactive pane — do not fall back to `claude -p` in tmux |
-| Launched `claude -p` in tmux shell pane for review | driver bug; use interactive model pane (`send-keys -l` + `Enter`) or run `-p` only from agent terminal |
-| `send-and-verify.sh` said submitted but Claude still composing | verifier false positive; wait for `Cooking…` / tool output, not script JSON alone |
-| Started a new benchmark inside an old Claude session | exit to shell and relaunch fresh process; do not rely on prior session state |
-| Sent `claude ...` while still inside Claude | shell-launch guard failed; return to shell first |
-| Thought dim scrollback text was pending input | ghost-input guard failed; re-capture and verify active prompt line |
-| Claude showed `ctrl+g to edit in Nvim` after a nudge | input was buffered, not submitted; verifier must not mark success |
-| Assumed Claude and Codex prompts behave the same | use runner-specific adapters |
-| Kept nudging a busy pane | classify `busy` and wait or interrupt intentionally |
-| Grok launched but prompt never reached compose | project-directory blocker still up; run `resolve-launch-blockers.sh` |
-| Cursor launched but compose unavailable | workspace-trust blocker; send `a` via blocker resolver |
-| Long `codex exec` / `cursor-agent` line split mid-command | launch-script guard failed; use `send-shell-script.sh` |
-| Codex hooks never fired in smoke | used marker-only wait; wait for Stop hook or use hook-smoke scenario |
-| Grok `-p` works but interactive path fails | two paths differ; use interaction-smoke protocol for production parity |
+| Failure                                                        | Fix                                                                                                                            |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Sent shell command into interactive Claude                     | detect state first; exit to shell or send Claude-language instruction instead                                                  |
+| Sent instruction but it stayed pending at `❯`                  | use named `Enter` (not `C-m`); re-capture; for cross-review stay in interactive pane — do not fall back to `claude -p` in tmux |
+| Launched `claude -p` in tmux shell pane for review             | driver bug; use interactive model pane (`send-keys -l` + `Enter`) or run `-p` only from agent terminal                         |
+| `send-and-verify.sh` said submitted but Claude still composing | verifier false positive; wait for `Cooking…` / tool output, not script JSON alone                                              |
+| Started a new benchmark inside an old Claude session           | exit to shell and relaunch fresh process; do not rely on prior session state                                                   |
+| Sent `claude ...` while still inside Claude                    | shell-launch guard failed; return to shell first                                                                               |
+| Thought dim scrollback text was pending input                  | ghost-input guard failed; re-capture and verify active prompt line                                                             |
+| Claude showed `ctrl+g to edit in Nvim` after a nudge           | input was buffered, not submitted; verifier must not mark success                                                              |
+| Assumed Claude and Codex prompts behave the same               | use runner-specific adapters                                                                                                   |
+| Kept nudging a busy pane                                       | classify `busy` and wait or interrupt intentionally                                                                            |
+| Grok launched but prompt never reached compose                 | project-directory blocker still up; run `resolve-launch-blockers.sh`                                                           |
+| Cursor launched but compose unavailable                        | workspace-trust blocker; send `a` via blocker resolver                                                                         |
+| Long `codex exec` / `cursor-agent` line split mid-command      | launch-script guard failed; use `send-shell-script.sh`                                                                         |
+| Codex hooks never fired in smoke                               | used marker-only wait; wait for Stop hook or use hook-smoke scenario                                                           |
+| Grok `-p` works but interactive path fails                     | two paths differ; use interaction-smoke protocol for production parity                                                         |
 
 ## Output
 
