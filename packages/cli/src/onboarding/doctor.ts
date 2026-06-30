@@ -130,7 +130,8 @@ function workspaceSection(ws: Workspace | null): {
     });
   }
   const resolvedHome = farmslotHome();
-  const homeMismatch = state?.home_dir != null && state.home_dir !== resolvedHome;
+  // Normalize both sides so a trailing slash / non-canonical FARMSLOT_HOME is not a false divergence.
+  const homeMismatch = state?.home_dir != null && resolve(state.home_dir) !== resolve(resolvedHome);
   checks.push({
     name: 'home',
     ok: true,
