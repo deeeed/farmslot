@@ -7,7 +7,7 @@ const flags = new Set(process.argv.slice(3));
 
 if (!taskDir) {
   console.error(
-    'usage: check-task-artifact-contract.mjs <task-dir> [--require-recipe-coverage-if-recipe]',
+    'usage: check-task-artifact-contract.mjs <task-dir> [--require-recipe-quality-if-recipe] [--require-recipe-coverage-if-recipe]',
   );
   process.exit(2);
 }
@@ -90,6 +90,29 @@ function addRef(refs, value) {
     return;
   }
   refs.add(normalized);
+}
+
+function validateRecipeQualityArtifact() {
+  const text = readText('artifacts/recipe-quality.json');
+  if (!text) return;
+  let artifact;
+  try {
+    artifact = JSON.parse(text);
+  } catch (error) {
+    issues.push(`recipe-quality.json: invalid JSON: ${error.message}`);
+    return;
+  }
+  if (!isRecord(artifact)) {
+    issues.push('recipe-quality.json: expected object');
+    return;
+  }
+  if (artifact.version !== 1) issues.push('recipe-quality.json: version must be 1');
+  if (!['pass', 'warn', 'fail'].includes(artifact.verdict)) {
+    issues.push('recipe-quality.json: verdict must be pass, warn, or fail');
+  }
+  if (!isRecord(artifact.compact) || !['PASS', 'WARN', 'FAIL'].includes(artifact.compact.verdict)) {
+    issues.push('recipe-quality.json: compact.verdict must be PASS, WARN, or FAIL');
+  }
 }
 
 function parseManifest() {
@@ -207,11 +230,19 @@ function parseManifest() {
 const hasRecipe = fileExists('artifacts/recipe.json');
 if (
   hasRecipe &&
+  flags.has('--require-recipe-quality-if-recipe') &&
+  !fileExists('artifacts/recipe-quality.json')
+) {
+  issues.push('recipe.json exists but artifacts/recipe-quality.json is missing');
+}
+if (
+  hasRecipe &&
   flags.has('--require-recipe-coverage-if-recipe') &&
   !fileExists('artifacts/recipe-coverage.md')
 ) {
   issues.push('recipe.json exists but artifacts/recipe-coverage.md is missing');
 }
+validateRecipeQualityArtifact();
 
 const parsed = parseManifest();
 const coverage = readText('artifacts/recipe-coverage.md');

@@ -196,7 +196,7 @@ function renderCompareLeaderboard(
 }
 
 /** Pull the run's gate-summary (worker/self-review/sub-agent per-model breakdown) off its decisions. */
-function runGateSummary(run: FamilyObservabilityRunSummary): GateSummary | undefined {
+export function runGateSummary(run: FamilyObservabilityRunSummary): GateSummary | undefined {
   return run.decisions
     ?.map((decision) =>
       decision.payload?.kind === 'ready' || decision.payload?.kind === 'retrospective'

@@ -111,8 +111,8 @@ Reuse existing `app-shell.ts` banner work when still valid; worker should not re
 
 - `recipe-run/summary.json`: `"status": "pass"`, `"failed": 0`
 - Promoted under `artifacts/`: `before-*.png`, `after-*.png`, `after.mp4`
-- `evidence-manifest.json`, `recipe-coverage.md`, `recipe-quality.json`
-- `node scripts/quality/check-task-artifact-contract.mjs <TASK_DIR> --require-recipe-quality-if-recipe --require-recipe-coverage-if-recipe` → exit 0
+- `evidence-manifest.json`, `recipe-coverage.md` (the gateway computes recipe-quality from recipe.json + coverage — workers do not author `recipe-quality.json`)
+- `node scripts/quality/check-task-artifact-contract.mjs <TASK_DIR> --require-recipe-coverage-if-recipe` → exit 0
 - `artifacts/pr-description.md` with Screenshots/Recordings placeholder
 - `artifacts/report.md` listing evidence paths
 - Worker `./mark complete --mark-last`; **do not** `/exit` (gate-held session)
