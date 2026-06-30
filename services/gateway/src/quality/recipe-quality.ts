@@ -38,12 +38,17 @@ export interface RecipeQualityEvaluation {
 }
 
 interface RecipeQualityEvaluationInput {
-  // slotId required so persistArtifact can scope cache invalidation per slot
-  // and resolve the worker artifacts dir via resolveWorkerTaskDir.
   run: Pick<Run, 'id' | 'flowType' | 'project' | 'taskFile' | 'slotId'>;
   workerReport?: string | null;
   recipeJson?: string | null;
   recipeCoverage?: string | null;
+  /**
+   * Artifacts directory to read recipe-quality.json from. Defaults to the run's
+   * own task-dir artifacts; callers serving a different artifact root (worker,
+   * inherited, promoted) pass it so the SAME structural-merged signal is computed
+   * for that root — the per-run badge and family leaderboard never diverge.
+   */
+  artifactDir?: string | null;
 }
 
 interface StructuralRecipeEvaluation {
@@ -572,10 +577,6 @@ function mergeStructuralEvaluation(
   };
 }
 
-function hasRecipeQualityRequirement(taskText: string | null): boolean {
-  return Boolean(taskText?.includes(RECIPE_QUALITY_MARKER));
-}
-
 function buildFallbackEvaluation(
   input: RecipeQualityEvaluationInput & {
     legacyTask: boolean;
@@ -595,38 +596,6 @@ function buildFallbackEvaluation(
   if (recipeJson) sourceSignals.push('recipe.json');
   if (workerReport) sourceSignals.push('report.md');
 
-  if (artifactRequired) {
-    const artifact = buildArtifact({
-      verdict: 'fail',
-      reasons: ['Required recipe-quality artifact is missing for a task that now mandates it.'],
-      betterVersionGuidance: [
-        'Write artifacts/recipe-quality.json from the recipe-writing or recipe-review flow.',
-        'Include compact verdict, reasons, better-version guidance, and structured dimensions.',
-      ],
-      producer: 'gateway',
-      legacyTask,
-      artifactRequired,
-      sourceSignals,
-      run,
-      dimensions: {
-        evidence_contract_basics: {
-          status: 'fail',
-          reason: 'No recipe-quality.json artifact was present.',
-          evidence: sourceSignals,
-        },
-      },
-      structuralFindings: [
-        {
-          code: 'missing-required-recipe-quality-artifact',
-          message: 'The task requires recipe-quality.json but it was not produced.',
-          evidence: sourceSignals,
-        },
-      ],
-      proofMode: recipeJson ? 'mixed' : 'unknown',
-    });
-    return { artifact, signal: buildSignal(run.id, artifact) };
-  }
-
   if (hasRatio(recipeCoverage)) {
     const artifact = buildArtifact({
       verdict: 'warn',
@@ -634,7 +603,7 @@ function buildFallbackEvaluation(
         'Only legacy recipe-coverage.md was available; shared recipe-quality.json was missing.',
       ],
       betterVersionGuidance: [
-        'Promote the legacy coverage audit into artifacts/recipe-quality.json.',
+        'Keep recipe-coverage.md complete; the gateway derives recipe-quality from it.',
       ],
       producer: 'fallback:recipe-coverage',
       fallbackSource: 'fallback:recipe-coverage',
@@ -686,7 +655,7 @@ function buildFallbackEvaluation(
         'Only report.md was available; no structured recipe-quality artifact or recipe evidence was present.',
       ],
       betterVersionGuidance: [
-        'Emit recipe-quality.json so quality does not depend on prose fallback.',
+        'Add recipe.json + recipe-coverage.md so quality derives from real proof, not prose.',
       ],
       producer: 'fallback:report',
       fallbackSource: 'fallback:report',
@@ -745,9 +714,9 @@ export async function loadRecipeQualityEvaluation(
   const taskDir = taskDirFromRun(run);
   const taskText = run.taskFile ? await readTextIfExists(run.taskFile) : null;
   const legacyTask = !taskText?.includes(RECIPE_QUALITY_MARKER);
-  const artifactRequired = hasRecipeQualityRequirement(taskText);
-  const artifactText = taskDir
-    ? await readTextIfExists(path.join(taskDir, 'artifacts', RECIPE_QUALITY_FILENAME))
+  const artifactsDir = input.artifactDir ?? (taskDir ? path.join(taskDir, 'artifacts') : null);
+  const artifactText = artifactsDir
+    ? await readTextIfExists(path.join(artifactsDir, RECIPE_QUALITY_FILENAME))
     : null;
   const structural = evaluateRecipeStructure(input.recipeJson);
 
@@ -776,7 +745,9 @@ export async function loadRecipeQualityEvaluation(
   const evaluation = buildFallbackEvaluation({
     ...input,
     legacyTask,
-    artifactRequired,
+    // The gateway is the sole producer: recipe-quality.json is never "required"
+    // from the worker, so a missing file is regenerated from structure, not failed.
+    artifactRequired: false,
   });
   const artifact = mergeStructuralEvaluation(evaluation.artifact, structural);
   return { artifact, signal: buildSignal(run.id, artifact) };

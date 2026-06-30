@@ -134,7 +134,8 @@ test('loadRecipeQualityEvaluation regenerates from recipe structure when the exi
   });
 
   assert.ok(isRecipeQualityArtifact(evaluation.artifact));
-  assert.equal(evaluation.artifact.meta.producer, 'gateway');
+  // Regenerated from the recipe structure (not salvaged, not fabricated into a fail).
+  assert.notEqual(evaluation.artifact.meta.producer, 'worker');
   assert.equal(
     await readFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), 'utf-8'),
     invalidArtifact,
@@ -245,7 +246,11 @@ test('loadRecipeQualityEvaluation warns when legacy recipe coverage exists witho
   await assert.rejects(readFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), 'utf-8'));
 });
 
-test('loadRecipeQualityEvaluation fails when required artifact is missing for explicit opt-in task', async () => {
+test('loadRecipeQualityEvaluation does not hard-fail on a missing artifact (gateway is sole producer)', async () => {
+  // Even when the task text mentions artifacts/recipe-quality.json, a missing file
+  // is no longer a hard "required artifact missing" fail — it is regenerated from
+  // the recipe structure, so legacy/non-farmslot tasks that still mention the old
+  // artifact are not penalized.
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-required-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(
@@ -260,9 +265,12 @@ test('loadRecipeQualityEvaluation fails when required artifact is missing for ex
     recipeJson: '{"entry":"start"}\n',
   });
 
-  assert.equal(evaluation.artifact.verdict, 'fail');
-  assert.equal(evaluation.signal.semantic, 'bad');
-  assert.match(evaluation.artifact.compact.reasons.join(' '), /missing/i);
+  assert.ok(isRecipeQualityArtifact(evaluation.artifact));
+  assert.equal(evaluation.artifact.meta.artifact_required, false);
+  assert.doesNotMatch(
+    evaluation.artifact.compact.reasons.join(' '),
+    /required.*missing|missing.*required/i,
+  );
 });
 
 test('loadRecipeQualityEvaluation warns for dev task without recipe artifacts', async () => {

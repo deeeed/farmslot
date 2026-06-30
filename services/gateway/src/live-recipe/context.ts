@@ -754,15 +754,12 @@ async function readLatestValidRecipeRunPointerFromRoots(
  */
 async function currentArtifactsGroupStatus(
   run: Run,
-  context: Pick<LiveRecipeContext, 'recipeJson' | 'artifactRoot' | 'recipeQualityArtifact'>,
+  context: Pick<LiveRecipeContext, 'recipeJson' | 'artifactRoot'>,
 ): Promise<RecipeRunArtifactGroupStatus> {
-  // Prefer the schema-valid artifact already parsed for THIS artifact root
-  // (worker / inherited / promoted / remote) so a valid existing file is reused,
-  // not ignored. Otherwise derive from the canonical evaluator — the same source
-  // the family leaderboard uses. good/ok -> pass (recipe proved the feature), fail
-  // -> fail.
-  const verdict = context.recipeQualityArtifact?.verdict;
-  if (verdict) return verdict === 'fail' ? 'fail' : 'pass';
+  // Derive the badge through the canonical evaluator — the same source the family
+  // leaderboard uses — pointed at THIS artifact root so a schema-valid file there
+  // is reused and structurally merged (not the raw verdict, which could disagree
+  // with the leaderboard). good/ok -> pass (recipe proved the feature), bad -> fail.
   if (!context.artifactRoot) return 'unknown';
   const recipeCoverage = await readPortableTextIfExists(
     run,
@@ -770,6 +767,7 @@ async function currentArtifactsGroupStatus(
   );
   const { signal } = await loadRecipeQualityEvaluation({
     run,
+    artifactDir: context.artifactRoot,
     recipeJson: context.recipeJson,
     recipeCoverage,
   });
