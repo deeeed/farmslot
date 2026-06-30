@@ -105,6 +105,31 @@ function sameRepoUrl(a: string, b: string): boolean {
   return normalize(a) === normalize(b);
 }
 
+function updatePackSubmodules(
+  dest: string,
+  ws: Workspace,
+  stdio: 'inherit' | [number, number, number],
+): void {
+  run('git', ['-C', dest, 'submodule', 'sync', '--recursive', '--quiet'], {
+    cwd: ws.root,
+    stdio,
+  });
+  try {
+    run(
+      'git',
+      ['-C', dest, 'submodule', 'update', '--init', '--recursive', '--remote', '--quiet'],
+      {
+        cwd: ws.root,
+        stdio,
+      },
+    );
+  } catch (err) {
+    throw new AddError(
+      `${err instanceof Error ? err.message : String(err)} — submodule update failed in ${dest}; fix submodule access (SSH keys) or remove that clone and re-run project add`,
+    );
+  }
+}
+
 /** Resolve a pack source (local dir or git URL) to a local pack directory. */
 export function resolvePackSource(
   source: string,
@@ -131,34 +156,16 @@ export function resolvePackSource(
       });
       // reset --hard moves submodule POINTERS but not their working trees —
       // sync+update or the pack would keep serving stale project content.
-      run('git', ['-C', dest, 'submodule', 'sync', '--recursive', '--quiet'], {
-        cwd: ws.root,
-        stdio,
-      });
-      try {
-        run(
-          'git',
-          ['-C', dest, 'submodule', 'update', '--init', '--recursive', '--remote', '--quiet'],
-          {
-            cwd: ws.root,
-            stdio,
-          },
-        );
-      } catch (err) {
-        // Re-throw with recovery guidance: a partial clone (e.g. private
-        // submodule auth failure) hits this on every retry otherwise.
-        throw new AddError(
-          `${err instanceof Error ? err.message : String(err)} — submodule update failed in ${dest}; fix submodule access (SSH keys) or remove that clone and re-run project add`,
-        );
-      }
+      updatePackSubmodules(dest, ws, stdio);
     } else {
       mkdirSync(join(ws.root, 'packs'), { recursive: true });
-      // Packs may mount their project dirs as submodules (separate repos per
-      // project); a plain clone would leave those dirs empty and fail validation.
-      run('git', ['clone', '--quiet', '--recurse-submodules', source, dest], {
+      // Clone the pack shell, then init/update submodules at each project's
+      // tracked branch (usually main) — not the stale gitlink in the pack commit.
+      run('git', ['clone', '--quiet', source, dest], {
         cwd: ws.root,
         stdio,
       });
+      updatePackSubmodules(dest, ws, stdio);
     }
     return dest;
   }
