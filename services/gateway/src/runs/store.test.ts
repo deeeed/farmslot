@@ -21,6 +21,7 @@ import {
   shouldUseIsolatedRunsDir,
   updateRun,
 } from './store.js';
+import { isLeakedGatewayTestRun } from './test-run-leak.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -485,6 +486,68 @@ test('isSyntheticLeak detects completed fixture runs without touching real run s
   assert.equal(isSyntheticLeak(emptySteps), false);
 });
 
+test('cleanupRuns quarantines gateway test fixture leaks', async () => {
+  const leaked = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PUBLISH-DRIFT-${Date.now().toString(16).toUpperCase()}`,
+    mode: 'autonomous',
+    initialContext: 'Exercise current package drift approval',
+  });
+  updateRun(leaked.id, {
+    status: 'failed',
+    taskFile: '/tmp/farmslot-package-drift-abc123/task.md',
+  });
+  assert.equal(isLeakedGatewayTestRun(getRun(leaked.id)!), true);
+
+  const preview = await cleanupRuns(true);
+  assert.equal(preview.syntheticRunsDeleted.includes(leaked.id), true);
+
+  const result = await cleanupRuns(false);
+  assert.equal(result.syntheticRunsDeleted.includes(leaked.id), true);
+  assert.equal(getRun(leaked.id), undefined);
+});
+
+test('loadAllRuns quarantines persisted gateway test fixture leaks', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'farmslot-run-leak-'));
+  const runId = '5dd53883-bb8f-4f24-a20e-a20ab2856974';
+  const leaked = {
+    id: runId,
+    familyId: runId,
+    parentRunId: null,
+    familyRootTicketOrPr: 'PUBLISH-DRIFT-19F18DBCB68',
+    lane: 'production',
+    variant: null,
+    flowType: 'fix-bug',
+    mode: 'autonomous',
+    status: 'failed',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PUBLISH-DRIFT-19F18DBCB68',
+    slotId: 'macwork-ff-2',
+    taskFile: '/var/folders/xx/farmslot-package-drift-AbCdEf/task.md',
+    steps: [{ name: 'write-task', status: 'done', statusReason: 'missing task file' }],
+    decisions: [],
+    metrics: {},
+    createdAt: '2026-06-30T14:08:05.000Z',
+    updatedAt: '2026-06-30T14:25:00.000Z',
+    completedAt: '2026-06-30T14:25:00.000Z',
+  };
+  await writeFile(path.join(tmp, `${runId}.json`), JSON.stringify(leaked));
+  const gatewayRoot = path.resolve(import.meta.dirname, '../..');
+  const script = `
+    process.env.FARMSLOT_RUNS_DIR = ${JSON.stringify(tmp)};
+    const { loadAllRuns, getRun } = await import('./src/runs/store.js');
+    await loadAllRuns();
+    if (getRun(${JSON.stringify(runId)})) process.exit(2);
+    const { readdir } = await import('node:fs/promises');
+    const quarantine = await readdir(${JSON.stringify(path.join(tmp, 'quarantine'))}, { withFileTypes: false }).catch(() => []);
+    if (!quarantine.some((name) => name.includes(${JSON.stringify(runId)}))) process.exit(3);
+  `;
+  await execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+    cwd: gatewayRoot,
+  });
+});
+
 test('cleanupRuns quarantines synthetic fixture leaks', async () => {
   const synthetic = createRun({
     flowType: 'review-pr',
@@ -612,11 +675,9 @@ test('loadAllRuns migrates legacy farmslot project to farmslot-farm', async () =
     const run = getRun(${JSON.stringify(runId)});
     if (!run || run.project !== 'farmslot-farm') process.exit(2);
   `;
-  await execFileAsync(
-    process.execPath,
-    ['--import', 'tsx', '--input-type=module', '-e', script],
-    { cwd: gatewayRoot },
-  );
+  await execFileAsync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], {
+    cwd: gatewayRoot,
+  });
   const disk = JSON.parse(await readFile(path.join(tmp, `${runId}.json`), 'utf8'));
   assert.equal(disk.project, 'farmslot-farm');
 });

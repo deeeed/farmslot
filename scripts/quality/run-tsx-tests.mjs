@@ -58,7 +58,7 @@ const GIT_LOCATION_ENV = [
   'GIT_NAMESPACE',
   'GIT_PREFIX',
 ];
-const childEnv = { ...process.env };
+const childEnv = { ...process.env, NODE_TEST_CONTEXT: '1' };
 for (const key of GIT_LOCATION_ENV) delete childEnv[key];
 
 function run(args) {

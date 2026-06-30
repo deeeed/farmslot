@@ -15,6 +15,7 @@ import {
 } from '@farmslot/protocol';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
+import { isLeakedGatewayTestRun } from '../runs/test-run-leak.js';
 
 const S = PipelineSteps;
 const RECONCILE_INTERVAL_MS = 60_000; // 60s
@@ -107,6 +108,7 @@ export interface RunRecoveryCollaborators {
   getProjectField: (projectJson: RawProjectJson, field: string) => string;
   setRunFlags: (runId: string, flags: { warmRecovery?: true }) => void;
   resetSlot: (slotId: string) => Promise<void>;
+  quarantineLeakedRun: (run: Run) => Promise<void>;
 }
 
 const STEP_TO_STATUS: Record<string, Run['status']> = {
@@ -148,6 +150,14 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
   console.log(`[run-engine] recovering ${active.length} active run(s)`);
 
   for (const run of active) {
+    if (isLeakedGatewayTestRun(run)) {
+      console.warn(
+        `[run-engine] skipping recovery for leaked gateway test run ${run.id.slice(0, 8)}`,
+      );
+      await deps.quarantineLeakedRun(run);
+      continue;
+    }
+
     const expectedSteps = FLOW_STEPS[run.flowType];
     if (expectedSteps) {
       const existingNames = new Set(run.steps.map((s) => s.name));
