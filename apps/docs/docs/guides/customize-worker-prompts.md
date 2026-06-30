@@ -36,6 +36,25 @@ The default flow-to-template mapping is:
 | `pr-complete`     | `pr-complete.md`     | Continue a PR after follow-up findings, comments, CI, or review. |
 | `merge-main`      | `merge-main.md`      | Resolve main-branch merge fallout.                               |
 
+### Secondary templates (not flow-dispatch defaults)
+
+These templates are **not** selected from the dispatch wizard flow picker. The gateway writes them into the active task directory during a run and nudges the connected worker session:
+
+| Template             | Written as           | Signal file                   | When used                                                                                                                                                 |
+| -------------------- | -------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci-fix.md`          | `CI-FIX.md`          | `CI-FIX-SIGNAL.json`          | CI-watch inline fix for lint/format/type failures or actionable bot comments — avoids a full chained `pr-complete` when the worker session is still warm. |
+| `self-review.md`     | (in-task artifact)   | (runner observability)        | Internal quality pass during monitor; child pass of the current run, not a new family root.                                                               |
+| `self-review-fix.md` | `SELF-REVIEW-FIX.md` | `SELF-REVIEW-FIX-SIGNAL.json` | Follow-up when self-review finds fixable issues before publish/CI-watch.                                                                                  |
+
+Resolution order for `ci-fix.md`:
+
+1. `projects/<project>/templates/worker/ci-fix.md` — project-owned, with repo-specific validation commands (preferred).
+2. `templates/worker/ci-fix.md` at the Farmslot repo root — generic default used when the project has no override.
+
+If neither file exists, CI-watch inline fix is skipped and the operator gets a decision card (or auto-dispatch for configured categories such as test failures).
+
+Project-specific validation belongs in the project override. The Farmslot default intentionally uses conservative `yarn lint` / `yarn lint:tsc` placeholders so new projects get a working inline-fix path before they customize.
+
 A project can override any of these by adding a file with the same name. It can also provide variants such as `fix-bug-fast.md` or `review-pr-full.md`; the selected variant is rendered for that run without mutating the source template.
 
 ## Observable prompt shape

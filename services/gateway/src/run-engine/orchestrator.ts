@@ -25,7 +25,14 @@ import { resetSlot } from '../core/state.js';
 import { loadFleetStatus, setPrHealthOverlay } from '../fleet/state.js';
 import { clearStalePrepareProcess } from '../methods/slot.js';
 import { scanArtifacts } from '../run-completion/orchestrator.js';
-import { createRun, getRun, listRuns, updateRun, updateRunStep } from '../runs/store.js';
+import {
+  createRun,
+  getRun,
+  listRuns,
+  quarantineLeakedRun,
+  updateRun,
+  updateRunStep,
+} from '../runs/store.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
 import { buildCIWatchChainedRunParams } from './ci-watch-chain.js';
@@ -645,6 +652,7 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     getProjectField,
     setRunFlags,
     resetSlot,
+    quarantineLeakedRun,
   };
 }
 

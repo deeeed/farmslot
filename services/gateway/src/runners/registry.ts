@@ -584,9 +584,15 @@ export function detectRunnerLaunchBlocker(
     };
   }
 
-  const lines = normalizeInstructionText(pane)
+  // Normalize each physical line independently. normalizeInstructionText
+  // collapses ALL whitespace (newlines included), so normalizing the whole pane
+  // first and splitting afterward yields a single blob — that lets an "auth"
+  // word in one line combine with a "needed/required" word in an unrelated line
+  // (e.g. a prior worker's recap still on screen), and defeats the per-line MCP
+  // guard. Splitting first keeps the documented line-by-line semantics.
+  const lines = pane
     .split('\n')
-    .map((line) => line.trim().toLowerCase())
+    .map((line) => normalizeInstructionText(line).toLowerCase())
     .filter(Boolean);
   if (lines.some((line) => runnerLineShowsAuthBlocker(line))) {
     return {
