@@ -14,6 +14,7 @@ export function farmslotHome(env: NodeJS.ProcessEnv = process.env): string {
   return join(homedir(), '.farmslot');
 }
 
+// Only `~` and `~/...` expand to $HOME; a `~user` form is left literal (pass an absolute path).
 function expandTilde(p: string): string {
   return p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(1)) : p;
 }
