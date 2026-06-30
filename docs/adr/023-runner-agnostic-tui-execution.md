@@ -137,7 +137,7 @@ Four duplicated launch blocks in gateway code have been collapsed into a single 
 
 `SafetyTier` (`'sandboxed'` / `'full-auto'` / `'dangerous'`) ships as a first-class field on `Run` objects. Dispatch resolution follows explicit param > parent run tier > runner default, enabling inheritance during chained (self-review, ci-monitor) and relaunch flows without silent escalation. The UI displays the tier as a badge on run-list display.
 
-Codex exec-mode validation has been conducted on live slots; the exec-mode tolerance is documented in §1. All three runners (claude, codex, fake/none) now declare their default safety tier via `runnerDefaultSafetyTier()`.
+Codex exec-mode validation has been conducted on live slots; the exec-mode tolerance is documented in §1. Registered runners now declare their default safety tier via `runnerDefaultSafetyTier()`; the non-LLM built-ins are `none` and `scripted`.
 
 ### Deferred Work
 

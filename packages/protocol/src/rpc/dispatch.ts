@@ -130,6 +130,8 @@ export interface DispatchQueueAddParams {
   prepareProfile?: string;
   model?: string;
   runner?: string;
+  /** Worker scripted-runner config when runner='scripted'. */
+  scripted?: import('../contracts/index.js').ScriptedRunnerConfig;
   effort?: string;
   mode?: 'interactive' | 'autonomous' | 'validation';
   devInteractiveProfile?: import('../contracts/index.js').DevInteractiveProfile;
@@ -224,6 +226,8 @@ export interface DispatchExecuteParams {
   skipPrepare?: boolean;
   model?: string;
   runner?: string;
+  /** Worker scripted-runner config when runner='scripted'. */
+  scripted?: import('../contracts/index.js').ScriptedRunnerConfig;
   effort?: string;
   app?: string;
   /** Runner execution safety tier (ADR-023). Resolved by run-engine before dispatch. */

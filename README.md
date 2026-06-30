@@ -58,7 +58,7 @@ Details: [Getting started](https://farmslot.io/docs/guides/getting-started)
 bash scripts/dev.sh
 ```
 
-Open [http://localhost:7777](http://localhost:7777) to use Command Center with the local fake-runner demo slot. For CLI and agent access, see [Local demo and CLI access](https://farmslot.io/docs/guides/local-demo-and-cli).
+Open [http://localhost:7777](http://localhost:7777) to use Command Center with the local scripted-runner demo path. For CLI and agent access, see [Local demo and CLI access](https://farmslot.io/docs/guides/local-demo-and-cli).
 
 ## Learn more
 

@@ -108,6 +108,47 @@ export interface RunCreateCliOptions {
   familyRootTicketOrPr?: string;
   lane?: string;
   variant?: string;
+  scriptedScenario?: string;
+  scriptedStepDelayMs?: string;
+  scriptedCommandRef?: string;
+  scriptedTimeoutMs?: string;
+}
+
+function optionalPositiveInteger(value: string | undefined, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0)
+    throw new Error(`${field} must be a positive integer`);
+  return parsed;
+}
+
+function optionalNonNegativeInteger(value: string | undefined, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0)
+    throw new Error(`${field} must be a non-negative integer`);
+  return parsed;
+}
+
+function buildScriptedConfig(opts: RunCreateCliOptions): Record<string, unknown> | undefined {
+  if (opts.scriptedScenario && opts.scriptedCommandRef) {
+    throw new Error('Use either --scripted-scenario or --scripted-command-ref, not both.');
+  }
+  if (opts.scriptedScenario) {
+    return {
+      mode: 'scenario',
+      scenario: opts.scriptedScenario,
+      stepDelayMs: optionalNonNegativeInteger(opts.scriptedStepDelayMs, '--scripted-step-delay-ms'),
+    };
+  }
+  if (opts.scriptedCommandRef) {
+    return {
+      mode: 'command',
+      commandRef: opts.scriptedCommandRef,
+      timeoutMs: optionalPositiveInteger(opts.scriptedTimeoutMs, '--scripted-timeout-ms'),
+    };
+  }
+  return undefined;
 }
 
 export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, unknown> {
@@ -118,6 +159,8 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     throw new Error('Provide --ticket <jira-or-github-ref> or --task <TASK.md>.');
   }
 
+  const scripted = buildScriptedConfig(opts);
+
   const base = {
     slotId: opts.slot || undefined,
     skipPrepare: opts.skipPrepare || undefined,
@@ -125,6 +168,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     mode: opts.mode || undefined,
     runner: opts.runner || undefined,
     model: opts.model || undefined,
+    ...(scripted ? { scripted } : {}),
     app: opts.app || undefined,
     familyId: opts.familyId || undefined,
     parentRunId: opts.parentRunId || undefined,
@@ -177,6 +221,16 @@ export function registerRunCommand(program: Command): void {
       'Runner override (claude, codex, opencode, or a runner-aware custom config)',
     )
     .option('--model <name>', 'Model override')
+    .option(
+      '--scripted-scenario <name>',
+      'Scripted scenario for runner=scripted (success, failure, timeout)',
+    )
+    .option('--scripted-step-delay-ms <ms>', 'Scripted scenario step delay in ms')
+    .option(
+      '--scripted-command-ref <name>',
+      'Project-owned scripted command ref for runner=scripted',
+    )
+    .option('--scripted-timeout-ms <ms>', 'Scripted command timeout override in ms')
     .option('--app <path>', 'Project-specific app selector, e.g. apps/sherpa-voice')
     .option('--family-id <id>', 'Run family id for comparison/follow-up lineage')
     .option('--parent-run-id <id>', 'Parent run id for explicit lineage')

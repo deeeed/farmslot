@@ -1,6 +1,11 @@
 import path from 'node:path';
 
-import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL, type SafetyTier } from '@farmslot/protocol';
+import {
+  DEFAULT_CURSOR_MODEL,
+  DEFAULT_GROK_MODEL,
+  type SafetyTier,
+  type ScriptedRunnerConfig,
+} from '@farmslot/protocol';
 
 import type { loadSlotVars } from '../core/config.js';
 import { expandDispatchCmd } from '../core/hooks.js';
@@ -159,6 +164,45 @@ function dispatchCmdIsRunnerAware(dispatchCmd: string | undefined | null, runner
   return false;
 }
 
+export interface ScriptedCommandLaunchConfig {
+  command: string;
+  timeoutMs?: number;
+  cwd?: string;
+}
+
+function buildScriptedRunnerLaunch(options: {
+  repo: string;
+  projectName: string;
+  taskDir: string;
+  scripted: ScriptedRunnerConfig;
+  command?: ScriptedCommandLaunchConfig;
+}): string {
+  const base = [
+    'FARMSLOT_ROOT="$PWD"',
+    ...(options.scripted.mode === 'scenario' ? ['FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1'] : []),
+    'node',
+    '"$PWD/packages/cli/bin/farmslot.mjs"',
+    'scripted-runner',
+    '--task-dir',
+    shellQuote(options.taskDir),
+  ];
+  if (options.scripted.mode === 'scenario') {
+    base.push('--mode', 'scenario', '--scenario', options.scripted.scenario);
+    if (options.scripted.stepDelayMs !== undefined) {
+      base.push('--step-delay-ms', String(options.scripted.stepDelayMs));
+    }
+  } else {
+    if (!options.command) {
+      throw new Error(`scripted command mode requires a resolved project commandRef`);
+    }
+    base.push('--mode', 'command', '--project', shellQuote(options.projectName));
+    base.push('--command-ref', shellQuote(options.scripted.commandRef));
+    const timeoutMs = options.scripted.timeoutMs ?? options.command.timeoutMs;
+    if (timeoutMs !== undefined) base.push('--timeout-ms', String(timeoutMs));
+  }
+  return `cd ${shellQuote(options.repo)} && ${base.join(' ')}`;
+}
+
 export interface BuildLaunchOptions {
   /** Override the repo used for inline `cd` (defaults to `vars.remoteRepo`). */
   repo?: string;
@@ -166,11 +210,12 @@ export interface BuildLaunchOptions {
   taskFile?: string;
   /** Reasoning effort passed through to dispatch_cmd expansion. */
   effort?: string;
-  /**
-   * Required when `runner === 'fake'`: the relative task directory the fake
-   * runner consumes (e.g. `.task/fix/…`).
-   */
+  /** Relative worker task directory consumed by exec-mode runners such as `scripted`. */
   taskDir?: string;
+  /** Required when runner is scripted. */
+  scripted?: ScriptedRunnerConfig;
+  /** Resolved project-owned command for scripted.command mode. */
+  scriptedCommand?: ScriptedCommandLaunchConfig;
   /**
    * When true, the Claude runner routes through `expandDispatchCmd` and
    * requires a pool `dispatch_cmd` (production dispatch flow).
@@ -215,12 +260,21 @@ export function buildLaunchCommand(
   // none runner: no launch command (silent sentinel; callers decide what to do).
   if (runner === 'none') return '';
 
-  // fake runner: self-contained npx harness; ignores dispatch_cmd entirely.
-  if (runner === 'fake') {
+  // scripted runner: checkout-local non-LLM harness; ignores dispatch_cmd entirely.
+  if (runner === 'scripted') {
     if (!opts.taskDir) {
-      throw new Error(`Runner 'fake' requires opts.taskDir to locate the harness task directory`);
+      throw new Error(`Runner 'scripted' requires opts.taskDir to locate the task directory`);
     }
-    return `cd '${repo}' && npx farmslot fake-runner --task-dir '${opts.taskDir}' --scenario success --step-delay-ms 500`;
+    if (!opts.scripted) {
+      throw new Error(`Runner 'scripted' requires opts.scripted`);
+    }
+    return buildScriptedRunnerLaunch({
+      repo,
+      projectName: vars.projectName,
+      taskDir: opts.taskDir,
+      scripted: opts.scripted,
+      command: opts.scriptedCommand,
+    });
   }
 
   const safetyFlagsString = runnerFlagsForTier(runner, tier).join(' ');

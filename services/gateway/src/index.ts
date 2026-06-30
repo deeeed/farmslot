@@ -329,6 +329,7 @@ async function main(): Promise<void> {
       startRefSource: item.startRef?.source,
       model: item.model,
       runner: item.runner,
+      scripted: item.scripted,
       effort: item.effort,
       mode: item.mode,
       devInteractiveProfile: item.devInteractiveProfile,

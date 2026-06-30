@@ -77,3 +77,31 @@ export interface AgentContextSelector {
 }
 
 export type SafetyTier = 'sandboxed' | 'full-auto' | 'dangerous';
+
+export type ScriptedRunnerScenario = 'success' | 'failure' | 'timeout';
+
+export type ScriptedRunnerConfig =
+  | {
+      mode: 'scenario';
+      scenario: ScriptedRunnerScenario;
+      stepDelayMs?: number;
+    }
+  | {
+      mode: 'command';
+      commandRef: string;
+      timeoutMs?: number;
+    };
+
+export interface ExecutorRef {
+  runner: string;
+  model?: string | null;
+  scripted?: ScriptedRunnerConfig;
+  safetyTier?: SafetyTier;
+}
+
+export interface ExecutorPolicy {
+  worker?: ExecutorRef;
+  selfReview?: ExecutorRef;
+  ciRepair?: ExecutorRef;
+  validation?: ExecutorRef;
+}

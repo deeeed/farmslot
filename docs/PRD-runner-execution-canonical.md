@@ -54,7 +54,7 @@ Command Center, automation/orchestration, and core platform layers must consume 
 
 - [ROADMAP.md](ROADMAP.md)
 - [ROADMAP-next.md](ROADMAP-next.md)
-- ADR-023, ADR-024, ADR-025, ADR-027
+- ADR-023, ADR-024, ADR-025, ADR-027, ADR-043
 
 ## Success Condition for This Chunk
 

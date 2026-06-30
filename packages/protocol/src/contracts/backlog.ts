@@ -1,3 +1,4 @@
+import type { ScriptedRunnerConfig } from './agents.js';
 import type { QueueItem } from './dispatch.js';
 import type { FlowType, RunStatus } from './runs.js';
 
@@ -49,6 +50,7 @@ export interface BacklogItem {
   autoDispatch?: boolean;
   runner?: string;
   model?: string;
+  scripted?: ScriptedRunnerConfig;
   effort?: string;
   createdAt: string;
   updatedAt: string;
@@ -80,6 +82,7 @@ export interface BacklogCreateInput {
   autoDispatch?: boolean;
   runner?: string;
   model?: string;
+  scripted?: ScriptedRunnerConfig;
   effort?: string;
   status?: Extract<BacklogStatus, 'candidate' | 'ready'>;
 }
@@ -99,6 +102,7 @@ export interface BacklogUpdateInput {
   autoDispatch?: boolean;
   runner?: string | null;
   model?: string | null;
+  scripted?: ScriptedRunnerConfig | null;
   effort?: string | null;
 }
 

@@ -73,6 +73,17 @@ git checkout -b <type>/<slug>   # from the operator checkout on main
 
 Commit on that branch and open the PR; never commit on `main` itself. `farmslot-wt/farmslot-*` are owned by dispatched runs — never hand-edit there. Only spin a dedicated `farmslot-worktrees/<slug>` worktree when Arthur **explicitly requests** one.
 
+After creating a dedicated worktree, bootstrap its Yarn install before validation:
+
+```bash
+cd <new-worktree>
+yarn install --immutable
+```
+
+Fresh worktrees do not share Yarn install state with the operator checkout, so typecheck/docs commands can fail until this is done.
+
+For fast orchestration validation, prefer the checkout-local `scripted` runner workflow in `docs/operations/scripted-runner-validation.md`. Scenario mode requires `FARMSLOT_ENABLE_SCRIPTED_SCENARIOS=1`; command mode must use project-owned `scripted.commands` refs. Never validate with global `farmslot` or `npx farmslot`.
+
 ### Conventional Commits — HARD RULE
 
 **Every PR title and commit message must follow the [Conventional Commits](https://www.conventionalcommits.org/) spec.** Format: `<type>(<scope>)?: <subject>`.

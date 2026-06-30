@@ -1,7 +1,7 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-06-28
+**Last updated:** 2026-06-29
 **Stale by:** 2026-09-08
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
@@ -52,3 +52,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [040](040-work-graph-orchestration.md)                 | Work-Graph Orchestration for Backlog Dependency DAGs                    | Proposed |
 | [041](041-roadmap-idea-refinement-layer.md)            | Operator Roadmap Idea Refinement Layer                                  | Proposed |
 | [042](042-slot-tracking-branches.md)                   | Slot Tracking Branches for Worktrees and Idle State                     | Accepted |
+| [043](043-scripted-runner-execution-policy.md)         | Scripted Runner and Per-Step Executor Policy                            | Proposed |

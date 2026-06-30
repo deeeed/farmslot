@@ -50,6 +50,8 @@ export interface QueueItem {
   prepareProfile?: string;
   model?: string;
   runner?: string;
+  /** Worker scripted-runner config when runner='scripted'. */
+  scripted?: import('./agents.js').ScriptedRunnerConfig;
   effort?: string;
   mode?: 'interactive' | 'autonomous' | 'validation';
   devInteractiveProfile?: DevInteractiveProfile;

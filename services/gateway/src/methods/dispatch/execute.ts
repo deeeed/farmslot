@@ -46,12 +46,17 @@ import {
   RUNNER_LAUNCH_READY_TIMEOUT_MS,
 } from '../../runners/launch-command.js';
 import {
+  assertSupportedRunnerSpelling,
   normalizeRunner,
   runnerDefaultModel,
   runnerNeedsPostLaunchPrompt,
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../../runners/registry.js';
+import {
+  assertScriptedRunnerConfig,
+  resolveScriptedCommandFromRawProjectJson,
+} from '../../runners/scripted-config.js';
 import {
   captureRunnerSessionMetadata,
   isRunnerAliveUnderPane,
@@ -636,12 +641,13 @@ export async function dispatchExecute(
     flowTypeToKey(flowType) ||
     flowTypeToKey(workerHeadingFlowType);
   const selectedApp = params.app || extractField(taskContent, /^APP:\s*(\S+)/m) || '';
-  const runner = normalizeRunner(
+  const requestedRunner =
     params.runner ||
-      extractField(taskContent, /^\*\*Runner:\*\*\s*`?([^`\n]+)/m) ||
-      (defaultFlowKey ? getProjectField(projectJson, `defaults.${defaultFlowKey}.runner`) : '') ||
-      'claude',
-  );
+    extractField(taskContent, /^\*\*Runner:\*\*\s*`?([^`\n]+)/m) ||
+    (defaultFlowKey ? getProjectField(projectJson, `defaults.${defaultFlowKey}.runner`) : '') ||
+    'claude';
+  assertSupportedRunnerSpelling(requestedRunner);
+  const runner = normalizeRunner(requestedRunner);
   const model =
     params.model ||
     extractField(taskContent, /^\*\*Model:\*\*\s*`?([^`\n]+)/m) ||
@@ -653,6 +659,20 @@ export async function dispatchExecute(
     extractField(taskContent, /^\*\*Effort:\*\*\s*`?([^`\n]+)/m) ||
     (defaultFlowKey ? getProjectField(projectJson, `defaults.${defaultFlowKey}.effort`) : '') ||
     currentRun?.effort;
+  const scripted = currentRun?.scripted ?? params.scripted;
+  const scriptedCommand =
+    runner === 'scripted' && scripted?.mode === 'command'
+      ? resolveScriptedCommandFromRawProjectJson(scripted.commandRef, projectJson, vars.projectName)
+      : undefined;
+  assertScriptedRunnerConfig({
+    runner,
+    scripted,
+    projectName: vars.projectName,
+    projectConfig:
+      scripted?.mode === 'command' && scriptedCommand
+        ? { scripted: { commands: { [scripted.commandRef]: scriptedCommand } } }
+        : null,
+  });
   assertRunnerLaunchPrerequisites(vars, runner);
 
   step(
@@ -923,6 +943,8 @@ export async function dispatchExecute(
   let agentLaunch = buildLaunchCommand(vars, runner, model, taskPrompt, {
     taskFile: `${workerTaskDir}/TASK.md`,
     taskDir: workerTaskDir,
+    scripted,
+    scriptedCommand,
     claudeUsesDispatchCmd: true,
     effort,
     safetyTier,

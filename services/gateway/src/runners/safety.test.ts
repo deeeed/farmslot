@@ -43,7 +43,7 @@ describe('runnerDefaultSafetyTier (ADR-023 §3: policy, not capability)', () => 
     assert.equal(runnerDefaultSafetyTier('codex'), 'sandboxed');
     assert.equal(runnerDefaultSafetyTier('opencode'), 'sandboxed');
     assert.equal(runnerDefaultSafetyTier('cursor'), 'sandboxed');
-    assert.equal(runnerDefaultSafetyTier('fake'), 'sandboxed');
+    assert.equal(runnerDefaultSafetyTier('scripted'), 'sandboxed');
     assert.equal(runnerDefaultSafetyTier('none'), 'sandboxed');
   });
 
@@ -85,8 +85,8 @@ describe('runnerFlagsForTier', () => {
     ]);
   });
 
-  it('opencode, fake, none emit no flags at any tier', () => {
-    for (const runner of ['opencode', 'fake', 'none'] as const) {
+  it('opencode, scripted, and none emit no flags at any tier', () => {
+    for (const runner of ['opencode', 'scripted', 'none'] as const) {
       for (const tier of ['sandboxed', 'full-auto', 'dangerous'] as const) {
         assert.deepEqual(runnerFlagsForTier(runner, tier), []);
       }
@@ -98,7 +98,7 @@ describe('runnerFlagsForTier', () => {
     // dispatch param has to opt in to any dangerous flag.
     assert.deepEqual(runnerFlagsForTier('codex'), []);
     assert.deepEqual(runnerFlagsForTier('claude'), []);
-    assert.deepEqual(runnerFlagsForTier('fake'), []);
+    assert.deepEqual(runnerFlagsForTier('scripted'), []);
   });
 });
 
@@ -152,7 +152,10 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { effort: 'xhigh' });
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(cmd, /codex --disable plugin_hooks --config 'model_reasoning_effort="xhigh"' .*--model gpt-5/);
+    assert.match(
+      cmd,
+      /codex --disable plugin_hooks --config 'model_reasoning_effort="xhigh"' .*--model gpt-5/,
+    );
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
   });
 
@@ -297,7 +300,7 @@ describe('RunnerDefinition.defaultSafetyTier registry field', () => {
     assert.equal(getRunnerDefinition('codex').defaultSafetyTier, 'sandboxed');
     assert.equal(getRunnerDefinition('opencode').defaultSafetyTier, 'sandboxed');
     assert.equal(getRunnerDefinition('cursor').defaultSafetyTier, 'sandboxed');
-    assert.equal(getRunnerDefinition('fake').defaultSafetyTier, 'sandboxed');
+    assert.equal(getRunnerDefinition('scripted').defaultSafetyTier, 'sandboxed');
     assert.equal(getRunnerDefinition('none').defaultSafetyTier, 'sandboxed');
   });
 
@@ -385,10 +388,7 @@ describe('buildCursorAgentLaunch', () => {
       prompt: 'hi',
       repo: '/tmp/repo',
     });
-    assert.equal(
-      cmd,
-      "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'hi'",
-    );
+    assert.equal(cmd, "cd '/tmp/repo' && cursor-agent --sandbox enabled --model composer-2.5 'hi'");
   });
 
   it('shell-quotes prompt text for Cursor argv launch', () => {

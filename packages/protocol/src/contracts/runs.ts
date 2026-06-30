@@ -4,7 +4,7 @@ import type {
   WorkerSignalChecklistTiming,
 } from '../transport/signal.js';
 
-import type { AgentContext, SafetyTier } from './agents.js';
+import type { AgentContext, SafetyTier, ScriptedRunnerConfig } from './agents.js';
 import type { FailureCategory, RunRecoveryProposalConfidence } from './chat.js';
 import type { TaskTemplateSelection, TemplateProvenance } from './evals.js';
 import type { EvidenceQualityReport, RecipeQualityArtifact } from './recipes.js';
@@ -1212,6 +1212,8 @@ export interface Run {
   /** Named prepare profile requested for this run (ADR-037). */
   prepareProfile?: string;
   effort?: string;
+  /** Worker scripted-runner config when metrics.runner='scripted'. */
+  scripted?: ScriptedRunnerConfig;
   slotId: string | null;
   branch: string | null;
   /** Completion side-effect policy; artifact-only suppresses publication/PR mutation paths. */

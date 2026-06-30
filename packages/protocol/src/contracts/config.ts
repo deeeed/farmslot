@@ -61,6 +61,16 @@ export interface ProjectPublicationReviewFlowConfig {
   requireCrossRunner?: boolean;
 }
 
+export interface ProjectScriptedCommandConfig {
+  command: string;
+  timeoutMs?: number;
+  cwd?: string;
+}
+
+export interface ProjectScriptedConfig {
+  commands?: Record<string, ProjectScriptedCommandConfig>;
+}
+
 export interface ProjectRoadmapConfig {
   /** Inline project-specific roadmap refinement prompt template. */
   refinementPrompt?: string;
@@ -180,6 +190,8 @@ export interface ProjectConfig {
   backlog?: ProjectBacklogConfig;
   roadmap?: ProjectRoadmapConfig;
   prepare?: ProjectPrepareConfig;
+  /** Project-owned non-LLM commands addressable by scripted.commandRef. */
+  scripted?: ProjectScriptedConfig;
   /** When true, UI may offer slow playback and gateway appends --slow to recipe_run. */
   recipeRunSupportsPlaybackSlow?: boolean;
   /** When true, UI may offer video recording and gateway appends --record-video=full-run to recipe_run. */

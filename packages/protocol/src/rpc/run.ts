@@ -95,6 +95,8 @@ export interface RunCreateParams {
   prNumber?: number;
   model?: string;
   runner?: string;
+  /** Worker scripted-runner config when runner='scripted'. */
+  scripted?: import('../contracts/index.js').ScriptedRunnerConfig;
   effort?: string;
   app?: string;
   mode?: 'interactive' | 'autonomous' | 'validation';

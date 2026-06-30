@@ -34,6 +34,7 @@ import { invalidateLiveRecipeContextMemo } from '../live-recipe/context.js';
 import { invalidateRecipeRunGroupCache } from '../methods/filesystem.js';
 import { normalizeStartRefRequest } from '../projects/start-ref-policy.js';
 import {
+  assertSupportedRunnerSpelling,
   normalizeRunner,
   runnerDefaultModel,
   runnerDefaultSafetyTier,
@@ -409,6 +410,7 @@ export function createRun(params: RunCreateParams): Run {
   // lock in Claude's fallback tier, then later FIND_SLOT can promote to a
   // different runner (e.g. Codex) whose default tier wouldn't be honored. In
   // that case, FIND_SLOT resolves the tier once the runner is chosen.
+  assertSupportedRunnerSpelling(params.runner);
   const runnerExplicit = typeof params.runner === 'string' && params.runner.trim() !== '';
   // Reject invalid safetyTier values at the boundary — params come from
   // WebSocket JSON where the type system can't enforce SafetyTier. An
@@ -482,6 +484,7 @@ export function createRun(params: RunCreateParams): Run {
     app: params.app,
     ...(params.prepareProfile ? { prepareProfile: params.prepareProfile } : {}),
     effort: params.effort,
+    scripted: params.scripted,
     slotId: params.slotId ?? null,
     branch: params.branch ?? null,
     completionPolicy: params.completionPolicy,
@@ -500,7 +503,7 @@ export function createRun(params: RunCreateParams): Run {
     metrics: {
       nudgeCount: 0,
       model: resolvedModel,
-      runner: params.runner ?? null,
+      runner: normalizedRunner,
       runnerSessionId: null,
       runnerSessionPath: null,
     },

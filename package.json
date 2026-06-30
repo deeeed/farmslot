@@ -52,7 +52,8 @@
     "smoke:framework-p1": "node scripts/quality/smoke-framework-p1.mjs",
     "check:node-support": "tsx scripts/check-node-support-bundles.ts",
     "test:onboarding": "bash scripts/quality/test-onboarding.sh",
-    "cc:build:pages": "node scripts/build-hosted-command-center.mjs"
+    "cc:build:pages": "node scripts/build-hosted-command-center.mjs",
+    "e2e:scripted-runner": "tsx scripts/e2e-scripted-runner-dispatch.mts"
   },
   "license": "MIT",
   "resolutions": {

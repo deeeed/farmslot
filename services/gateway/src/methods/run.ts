@@ -65,7 +65,12 @@ import {
   readFreshTerminalSignalForRun,
   resolveMonitorDecision,
 } from '../run-engine/run-monitor.js';
-import { runnerSupportsModel } from '../runners/registry.js';
+import {
+  assertSupportedRunnerSpelling,
+  normalizeRunner,
+  runnerSupportsModel,
+} from '../runners/registry.js';
+import { assertScriptedRunnerConfig } from '../runners/scripted-config.js';
 import {
   createRun,
   getAllRuns,
@@ -126,22 +131,20 @@ export function assertDuplicateRunAllowed(
   if (!params.familyId) {
     throw new Error('Comparison lane duplicates require an explicit familyId.');
   }
-  const conflicting = sameTicket.find(
-    (r) => {
-      if (r.lane === 'comparison') {
-        return r.familyId !== params.familyId || (r.variant ?? null) === (params.variant ?? null);
-      }
-      if (
-        r.lane === 'production' &&
-        (r.id === params.familyId ||
-          r.id === params.parentRunId ||
-          (r.familyId === params.familyId && r.id === r.familyId))
-      ) {
-        return false;
-      }
-      return true;
-    },
-  );
+  const conflicting = sameTicket.find((r) => {
+    if (r.lane === 'comparison') {
+      return r.familyId !== params.familyId || (r.variant ?? null) === (params.variant ?? null);
+    }
+    if (
+      r.lane === 'production' &&
+      (r.id === params.familyId ||
+        r.id === params.parentRunId ||
+        (r.familyId === params.familyId && r.id === r.familyId))
+    ) {
+      return false;
+    }
+    return true;
+  });
   if (conflicting) {
     throw new Error(
       `Comparison duplicate blocked for ${params.ticketOrPr}: conflicting active run ${conflicting.id.slice(0, 8)} ` +
@@ -281,6 +284,15 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
       assertTicketRefMatchesProjectRepo(params.ticketOrPr, params.project, projectConfig?.ci?.repo);
     }
   }
+
+  assertSupportedRunnerSpelling(params.runner);
+  const normalizedRunner = params.runner ? normalizeRunner(params.runner) : undefined;
+  assertScriptedRunnerConfig({
+    runner: normalizedRunner,
+    scripted: params.scripted,
+    projectName: params.project,
+    projectConfig,
+  });
 
   // Runner+model compat. Codex on a ChatGPT account rejects Anthropic model
   // names with HTTP 400; the symmetric mismatch will bite Claude eventually

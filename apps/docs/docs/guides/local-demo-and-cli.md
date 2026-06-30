@@ -14,7 +14,7 @@ From the repository root:
 bash scripts/dev.sh
 ```
 
-Open [http://localhost:7777](http://localhost:7777). The local demo pool exposes `demo-ff-1`, a fake runner slot that is safe to inspect and dispatch against while learning the product.
+Open [http://localhost:7777](http://localhost:7777). The local demo pool exposes `demo-ff-1`, a scripted-runner validation path that is safe to inspect and dispatch against while learning the product.
 
 Command Center is the primary operator surface: use it to see the fleet, inspect slot readiness, watch runs, review artifacts, and steer work.
 
@@ -61,15 +61,15 @@ farmslot rpc protocol.capabilities '{}'
 ready -> dispatching -> working -> recycling -> ready
 ```
 
-| CLI command                  | Purpose                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------ |
-| `farmslot fleet status`      | Fleet-wide overview of machines, slots, health, and current runs.        |
-| `farmslot slot check <id>`   | Read-only deep health check for one slot.                                |
-| `farmslot slot prepare <id>` | Sync fixtures, checkout branch, and run project preflight.               |
-| `farmslot dispatch preview`  | Preview slot/project fit before creating a run.                          |
-| `farmslot run create ...`    | Create a supervised run from a Jira/GitHub ref or an existing `TASK.md`. |
+| CLI command                  | Purpose                                                                    |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| `farmslot fleet status`      | Fleet-wide overview of machines, slots, health, and current runs.          |
+| `farmslot slot check <id>`   | Read-only deep health check for one slot.                                  |
+| `farmslot slot prepare <id>` | Sync fixtures, checkout branch, and run project preflight.                 |
+| `farmslot dispatch preview`  | Preview slot/project fit before creating a run.                            |
+| `farmslot run create ...`    | Create a supervised run from a Jira/GitHub ref or an existing `TASK.md`.   |
 | `farmslot slot release <id>` | Collect artifacts, clean up, and optionally re-prepare with `--keep-warm`. |
-| `farmslot rpc <method>`      | Raw gateway escape hatch for protocol methods and agent integrations.    |
+| `farmslot rpc <method>`      | Raw gateway escape hatch for protocol methods and agent integrations.      |
 
 Create runs from either source:
 

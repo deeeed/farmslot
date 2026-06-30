@@ -8,11 +8,11 @@ Farmslot dogfoods on itself: this repository is both the framework and a first-p
 
 ## What you are modeling
 
-| Layer | File / concept | Role |
-| ----- | -------------- | ---- |
-| **Pool** | `pool/<machine>.json` | Machines, slots, ports, optional simulators, tmux sessions |
-| **Project** | `projects/farmslot-farm/project.json` | Hooks, prepare profiles, fixtures, recipe wiring for Command Center + Companion |
-| **Operator** | Main clone or worktree checkout | Where agents edit code; each slot points at one checkout |
+| Layer        | File / concept                        | Role                                                                            |
+| ------------ | ------------------------------------- | ------------------------------------------------------------------------------- |
+| **Pool**     | `pool/<machine>.json`                 | Machines, slots, ports, optional simulators, tmux sessions                      |
+| **Project**  | `projects/farmslot-farm/project.json` | Hooks, prepare profiles, fixtures, recipe wiring for Command Center + Companion |
+| **Operator** | Main clone or worktree checkout       | Where agents edit code; each slot points at one checkout                        |
 
 ```mermaid
 flowchart TB
@@ -56,7 +56,7 @@ The committed demo pool is [`pool/farmslot-demo.json`](https://github.com/deeeed
 bash scripts/dev.sh
 ```
 
-Open [http://localhost:7777](http://localhost:7777). Slot `demo-ff-1` uses `project: farmslot-farm`, `platform: cli`, and the repo root as its checkout. This is enough to explore Command Center, dispatch preview, and the fake-runner slot described in [Local demo and CLI](./local-demo-and-cli.md).
+Open [http://localhost:7777](http://localhost:7777). Slot `demo-ff-1` uses `project: farmslot-farm`, `platform: cli`, and the repo root as its checkout. This is enough to explore Command Center, dispatch preview, and the scripted-runner validation path described in [Local demo and CLI](./local-demo-and-cli.md).
 
 The same pool file also documents `demo-ff-2` — disabled by default — with optional `ios-sim` and a second gateway port. Enable it when you want to practice `companion-warm` or `sandbox-companion` locally without a private machine pool:
 
@@ -90,12 +90,12 @@ Production-style slots point each agent at its own checkout and port block:
 }
 ```
 
-| Field | Meaning |
-| ----- | ------- |
-| `platform: cli` | Default prepare is gateway-only (`sandbox`) |
-| `dev-server.port` | This checkout's gateway WebSocket/HTTP port |
-| `ios-sim` | Optional; idle until `companion-warm`, `companion-full`, or `sandbox-companion` |
-| `cdp_port` | Command Center recipe / CDP probes for this slot (when configured) |
+| Field             | Meaning                                                                         |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `platform: cli`   | Default prepare is gateway-only (`sandbox`)                                     |
+| `dev-server.port` | This checkout's gateway WebSocket/HTTP port                                     |
+| `ios-sim`         | Optional; idle until `companion-warm`, `companion-full`, or `sandbox-companion` |
+| `cdp_port`        | Command Center recipe / CDP probes for this slot (when configured)              |
 
 Simulator names align with slot index (`fs-2` for `farmslot-2`), not a parallel companion namespace.
 
@@ -103,14 +103,14 @@ Simulator names align with slot index (`fs-2` for `farmslot-2`), not a parallel 
 
 Defined in `projects/farmslot-farm/project.json` under `prepare.profiles`:
 
-| Profile | When to use | What boots |
-| ------- | ----------- | ---------- |
-| `sandbox` | Gateway / Command Center work | Gateway on slot port |
-| `attach` | Gateway already running | Health check only |
-| `typecheck` | Static verification, no gateway lifecycle | Typecheck hooks |
-| `companion-warm` | Mobile-only proof | Metro + dev client (+ sim when configured) |
-| `companion-full` | Native drift / cold companion build | Native rebuild then warm |
-| `sandbox-companion` | **One ticket spans CC + Companion** | Gateway, then companion warm on same checkout |
+| Profile             | When to use                               | What boots                                    |
+| ------------------- | ----------------------------------------- | --------------------------------------------- |
+| `sandbox`           | Gateway / Command Center work             | Gateway on slot port                          |
+| `attach`            | Gateway already running                   | Health check only                             |
+| `typecheck`         | Static verification, no gateway lifecycle | Typecheck hooks                               |
+| `companion-warm`    | Mobile-only proof                         | Metro + dev client (+ sim when configured)    |
+| `companion-full`    | Native drift / cold companion build       | Native rebuild then warm                      |
+| `sandbox-companion` | **One ticket spans CC + Companion**       | Gateway, then companion warm on same checkout |
 
 CLI examples (replace slot id with yours):
 
@@ -130,10 +130,10 @@ Operator override always wins: if you already set `prepareProfile`, the gate doe
 
 ## Two improvement paths while building Farmslot
 
-| Path | Use when | Record | Prove |
-| ---- | -------- | ------ | ----- |
-| **Agent-direct** | Framework bug; repro is a unit test or local command | GitHub issue (`dogfood` label) | PR + `yarn typecheck` + targeted tests |
-| **Run-mediated** | Needs slot, worker, recipe, device, or publication gate | Issue + `run.create` | Recipe artifacts + gate invariants |
+| Path             | Use when                                                | Record                         | Prove                                  |
+| ---------------- | ------------------------------------------------------- | ------------------------------ | -------------------------------------- |
+| **Agent-direct** | Framework bug; repro is a unit test or local command    | GitHub issue (`dogfood` label) | PR + `yarn typecheck` + targeted tests |
+| **Run-mediated** | Needs slot, worker, recipe, device, or publication gate | Issue + `run.create`           | Recipe artifacts + gate invariants     |
 
 While the framework is still moving quickly, framework fixes usually land via **agent-direct** work on an isolated worktree branch. Product dogfood (demo banners, cross-surface evidence) uses **run-mediated** dispatch on a configured slot once stabilization checklist items are green.
 
