@@ -349,6 +349,26 @@ test('selectActiveRunSlotIds resolves active runs from agentContexts when curren
   ]);
 });
 
+test('selectActiveRunSlotIds includes failed runs like the Runs active tab', () => {
+  const slots = [
+    makeSlot('macwork-mm-7', {
+      lifecycle: 'ready',
+      currentRunId: 'run-failed',
+    }),
+  ];
+  const runs = [
+    makeRun('run-failed', {
+      slotId: 'macwork-mm-7',
+      status: 'failed',
+      updatedAt: '2026-06-30T12:00:00.000Z',
+    }),
+  ];
+
+  assert.deepEqual(selectActiveRunSlotIds(slots, runs, { projects: [], machines: [] }), [
+    'macwork-mm-7',
+  ]);
+});
+
 test('selectPinnedSlotIds preserves pin order and respects global filters', () => {
   const slots = [
     makeSlot('macwork-mm-1'),

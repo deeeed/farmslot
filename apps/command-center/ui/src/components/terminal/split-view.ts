@@ -31,6 +31,7 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned, listPinnedSlots, togglePinnedSlot } from '../../utils/pinned-slots.js';
+import { isRunListActiveRun } from '../runs/run-list-model.js';
 
 import {
   filterSlotsByGlobalFilters,
@@ -519,11 +520,11 @@ export class TerminalSplitView extends LitElement {
     try {
       const [fleetResult, runResult] = await Promise.all([
         gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {}),
-        gateway.request<RunListResult>(Methods.RUN_LIST, { active: true, limit: 1000 }),
+        gateway.request<RunListResult>(Methods.RUN_LIST, { limit: 1000 }),
       ]);
       const activeRuns = selectActiveRunSlotIds(
         fleetResult.fleet.slots,
-        runResult.runs ?? [],
+        (runResult.runs ?? []).filter(isRunListActiveRun),
         this._globalFilters,
       );
       this._selectedSlots = activeRuns;
