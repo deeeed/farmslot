@@ -44,8 +44,6 @@ export interface AuthProfileStore {
 
 // ─── Paths ───
 
-const FARMSLOT_STORE_DIR = farmslotHome();
-const FARMSLOT_STORE_PATH = path.join(FARMSLOT_STORE_DIR, 'auth-profiles.json');
 const OPENCLAW_STORE_PATH = path.join(
   homedir(),
   '.openclaw',
@@ -55,8 +53,10 @@ const OPENCLAW_STORE_PATH = path.join(
   'auth-profiles.json',
 );
 
+// Resolve at call time, not import time: the gateway's .env (which may set FARMSLOT_HOME)
+// is loaded after this module is imported, so a captured const would miss it.
 export function getFarmslotStorePath(): string {
-  return FARMSLOT_STORE_PATH;
+  return path.join(farmslotHome(), 'auth-profiles.json');
 }
 
 export function getOpenClawStorePath(): string {
