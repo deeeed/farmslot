@@ -10,6 +10,7 @@ import {
   type FamilyObservabilityStep,
   type FamilyRecipeProvenance,
   FLOW_WORKER_REPORT_ARTIFACTS,
+  GATE_SUMMARY_KINDS,
   parseGitHubRef,
   prNumberFromRunInput,
   type RecipeQualitySignal,
@@ -23,6 +24,7 @@ import {
   buildRetrospectivePayload,
   readCommentsTriageSummary,
 } from '../run-completion/orchestrator.js';
+import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { runDurationMs } from '../runs/run-duration.js';
 import { getAllRuns } from '../runs/store.js';
 
@@ -649,11 +651,24 @@ async function buildRunSummary(
   const recipeQuality = recipeQualityEvaluation.signal;
   const decisions = await Promise.all(
     (run.decisions ?? []).map(async (decision) => {
-      if (decision.type !== 'retrospective' || decision.payload) return decision;
-      return {
-        ...decision,
-        payload: await buildRetrospectivePayload(run, workerReport),
-      };
+      let payload = decision.payload;
+      if (decision.type === 'retrospective' && !payload) {
+        payload = await buildRetrospectivePayload(run, workerReport);
+      }
+      // Rebuild gateSummary from the live run (single source: run.metrics) so the
+      // comparison/retrospective view never serves a token/byModel breakdown frozen
+      // at gate time. buildGateSummary is a pure projection.
+      if (payload?.kind === 'ready') {
+        payload = {
+          ...payload,
+          gateSummary: buildGateSummary(run, GATE_SUMMARY_KINDS.publication, {
+            gatePolicy: payload.prPackage?.gatePolicy ?? payload.gatePolicy,
+          }),
+        };
+      } else if (payload?.kind === 'retrospective') {
+        payload = { ...payload, gateSummary: buildGateSummary(run, GATE_SUMMARY_KINDS.review) };
+      }
+      return payload === decision.payload ? decision : { ...decision, payload };
     }),
   );
 
