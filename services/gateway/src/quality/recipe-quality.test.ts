@@ -116,7 +116,11 @@ test('loadRecipeQualityEvaluation preserves a valid worker artifact', async () =
   assert.equal(evaluation.signal.semantic, 'good');
 });
 
-test('loadRecipeQualityEvaluation can evaluate invalid artifacts without rewriting them', async () => {
+test('loadRecipeQualityEvaluation regenerates from recipe structure when the existing artifact is non-conformant (read-only)', async () => {
+  // The gateway is the sole producer: a non-conformant file (e.g. an old worker
+  // hand-authored compact shape) is never salvaged or fabricated into a fail — it
+  // is regenerated from the recipe structure. With persistInvalidArtifact:false the
+  // on-disk file is left untouched.
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-readonly-invalid-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Task\nWrite artifacts/recipe-quality.json\n');
@@ -130,46 +134,11 @@ test('loadRecipeQualityEvaluation can evaluate invalid artifacts without rewriti
     persistInvalidArtifact: false,
   });
 
-  assert.equal(evaluation.artifact.verdict, 'fail');
+  assert.ok(isRecipeQualityArtifact(evaluation.artifact));
+  assert.equal(evaluation.artifact.meta.producer, 'gateway');
   assert.equal(
     await readFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), 'utf-8'),
     invalidArtifact,
-  );
-});
-
-test('loadRecipeQualityEvaluation can adapt legacy recipe-quality artifacts read-only', async () => {
-  const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-legacy-'));
-  const taskDir = path.join(base, 'task');
-  const taskFile = await writeTaskFile(taskDir, '# Legacy task\n');
-  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
-  const legacyArtifact = JSON.stringify(
-    {
-      version: 1,
-      overall: 'pass',
-      checks: [
-        { name: 'covers_feature', verdict: 'pass', evidence: 'AC1 and AC2 passed live.' },
-        { name: 'visual_evidence', verdict: 'pass', evidence: 'after.mp4 captured the flow.' },
-      ],
-      notes: ['Live validation passed.'],
-    },
-    null,
-    2,
-  );
-  await writeFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), legacyArtifact, 'utf-8');
-
-  const evaluation = await loadRecipeQualityEvaluation({
-    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'fix-bug' }),
-    recipeJson: '{"workflow":{"entry":"start","nodes":{"start":{"action":"assert"}}}}',
-    persistInvalidArtifact: false,
-    acceptLegacyArtifact: true,
-  });
-
-  assert.equal(evaluation.artifact.verdict, 'pass');
-  assert.equal(evaluation.signal.semantic, 'good');
-  assert.equal(evaluation.artifact.dimensions.covers_feature.status, 'pass');
-  assert.equal(
-    await readFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), 'utf-8'),
-    legacyArtifact,
   );
 });
 
