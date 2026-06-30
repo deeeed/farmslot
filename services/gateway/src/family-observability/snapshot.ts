@@ -23,6 +23,7 @@ import {
   buildRetrospectivePayload,
   readCommentsTriageSummary,
 } from '../run-completion/orchestrator.js';
+import { runDurationMs } from '../runs/run-duration.js';
 import { getAllRuns } from '../runs/store.js';
 
 import { dedupeArtifacts, inferInputPurpose, inferPurpose, stepArtifacts } from './artifacts.js';
@@ -760,7 +761,7 @@ async function buildRunSummary(
     humanGrade: run.humanGrade,
     proofTargets,
     decisions,
-    metrics: run.metrics,
+    metrics: { ...run.metrics, durationMs: runDurationMs(run) ?? run.metrics.durationMs },
     links: run.links,
     missingData,
   };

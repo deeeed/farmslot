@@ -10,6 +10,7 @@ import type {
   Run,
 } from '@farmslot/protocol';
 
+import { runDurationMs } from '../runs/run-duration.js';
 import { listRuns } from '../runs/store.js';
 
 const TERMINAL_STATUSES = new Set(['done', 'failed', 'cancelled']);
@@ -18,14 +19,6 @@ const GRADE_ORDER: Record<string, number> = { good: 3, ok: 2, bad: 1 };
 
 function isTerminal(run: Run): boolean {
   return TERMINAL_STATUSES.has(run.status);
-}
-
-function runDurationMs(run: Run): number {
-  if (run.metrics.durationMs) return run.metrics.durationMs;
-  if (run.completedAt && run.createdAt) {
-    return new Date(run.completedAt).getTime() - new Date(run.createdAt).getTime();
-  }
-  return 0;
 }
 
 function collectStepOutputs(run: Run): Record<string, unknown> {
@@ -65,7 +58,7 @@ export function finetuneIndex(params: FinetuneIndexParams): FinetuneIndexResult 
       outcome: r.metrics.outcome ?? r.status,
       humanGrade: grade,
       model: r.metrics.model ?? 'unknown',
-      durationMs: runDurationMs(r),
+      durationMs: runDurationMs(r) ?? 0,
       stepCount: r.steps.filter((s) => s.status === 'done').length,
       hasGrade,
     };
@@ -102,7 +95,7 @@ export function finetuneExportSFT(params: FinetuneExportSFTParams): FinetuneExpo
     output: {
       stepOutputs: collectStepOutputs(r),
       metrics: {
-        durationMs: runDurationMs(r),
+        durationMs: runDurationMs(r) ?? 0,
         nudgeCount: r.metrics.nudgeCount,
         outcome: r.metrics.outcome ?? r.status,
       },
