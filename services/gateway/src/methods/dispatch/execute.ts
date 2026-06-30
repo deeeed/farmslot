@@ -275,6 +275,33 @@ done
   }
 }
 
+/**
+ * True when the runner process is alive under ANY pane of the target window.
+ * A tmux window can hold more than one pane (a leftover split from a prior
+ * session, a sandbox layout, etc.), and the runner may launch into any of
+ * them — so probing only the first pane (`list-panes … | head -1`) misreads a
+ * live worker in a sibling pane as "no runner process".
+ */
+async function isRunnerAliveInAnyPane(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+): Promise<boolean> {
+  const panePids = (
+    await execOnSlot(
+      vars,
+      tmuxShellSnippet(`list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null`),
+    )
+  ).stdout
+    .split('\n')
+    .map((pid) => pid.trim())
+    .filter(Boolean);
+  for (const panePid of panePids) {
+    if (await isRunnerAliveUnderPane(vars, panePid, runner)) return true;
+  }
+  return false;
+}
+
 export async function waitForRunnerProcessExit(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -283,16 +310,7 @@ export async function waitForRunnerProcessExit(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const panePid = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
-        ),
-      )
-    ).stdout.trim();
-    if (!panePid) return;
-    if (!(await isRunnerAliveUnderPane(vars, panePid, runner))) return;
+    if (!(await isRunnerAliveInAnyPane(vars, target, runner))) return;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error(`Timed out waiting for ${runner} process to exit from ${target}`);
@@ -344,15 +362,7 @@ async function assertRunnerProcessStarted(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const panePid = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(
-          `list-panes -t ${shellQuote(target)} -F '#{pane_pid}' 2>/dev/null | head -1`,
-        ),
-      )
-    ).stdout.trim();
-    if (panePid && (await isRunnerAliveUnderPane(vars, panePid, runner))) return;
+    if (await isRunnerAliveInAnyPane(vars, target, runner)) return;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   const pane = await execOnSlot(
