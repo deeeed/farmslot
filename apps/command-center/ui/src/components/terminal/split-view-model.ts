@@ -9,23 +9,24 @@ import type {
 } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
+import { isRunListActiveRun } from '../runs/run-list-model.js';
 
-/**
- * Worker-pane run phases for the terminal grid. Intentionally narrower than
- * sidebar "active" runs (which include blocked, failed, preparing, etc.) —
- * Active Runs opens agent terminals, not orchestrator/CI-watch panes.
- */
-const ACTIVE_RUN_TERMINAL_STATUSES = new Set<RunStatus>([
-  'monitoring',
-  'self-reviewing',
-  'completing',
-]);
-
-/** Mirrors gateway fleet active-run priority for stable pane ordering. */
+/** Stable pane ordering when multiple active runs share a slot. */
 const ACTIVE_RUN_TERMINAL_PRIORITY: Partial<Record<RunStatus, number>> = {
+  blocked: 7,
+  'human-gating': 7,
   monitoring: 6,
   'self-reviewing': 5,
   completing: 5,
+  'ci-watching': 4,
+  paused: 4,
+  preparing: 3,
+  dispatching: 3,
+  'slot-finding': 2,
+  'writing-task': 2,
+  grading: 2,
+  created: 1,
+  failed: 1,
 };
 
 const ACTIVE_RUN_SLOT_LIMIT = 8;
@@ -192,27 +193,42 @@ function compareTerminalRuns(a: Run, b: Run): number {
   return Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt);
 }
 
-function terminalRunForSlot(
+function activeRunForSlot(
   slot: SlotStatus,
   runs: readonly Run[],
   runsById: Map<string, Run>,
 ): Run | null {
   let best: Run | null = null;
   for (const run of runs) {
-    if (run.slotId !== slot.slot || !ACTIVE_RUN_TERMINAL_STATUSES.has(run.status)) continue;
+    if (run.slotId !== slot.slot || !isRunListActiveRun(run)) continue;
     if (!best || compareTerminalRuns(run, best) > 0) best = run;
   }
   if (best) return best;
 
-  const linked = slot.currentRunId ? runsById.get(slot.currentRunId) : undefined;
-  if (linked && ACTIVE_RUN_TERMINAL_STATUSES.has(linked.status)) return linked;
-  return null;
+  if (slot.currentRunId) {
+    const linked = runsById.get(slot.currentRunId);
+    if (linked && isRunListActiveRun(linked)) return linked;
+  }
+
+  for (const context of slot.agentContexts ?? []) {
+    if (!context.runId) continue;
+    const contextRun = runsById.get(context.runId);
+    if (!contextRun || !isRunListActiveRun(contextRun)) continue;
+    if (!best || compareTerminalRuns(contextRun, best) > 0) best = contextRun;
+  }
+  return best;
 }
 
 export function slotHasActiveRunTerminal(slot: SlotStatus, runsById: Map<string, Run>): boolean {
-  if (!slot.currentRunId) return false;
-  const run = runsById.get(slot.currentRunId);
-  if (run) return ACTIVE_RUN_TERMINAL_STATUSES.has(run.status);
+  if (slot.currentRunId) {
+    const run = runsById.get(slot.currentRunId);
+    if (run) return isRunListActiveRun(run);
+  }
+  for (const context of slot.agentContexts ?? []) {
+    if (!context.runId) continue;
+    const run = runsById.get(context.runId);
+    if (run && isRunListActiveRun(run)) return true;
+  }
   return slot.lifecycle === 'busy' && slot.phase === 'working';
 }
 
@@ -224,9 +240,9 @@ export function isActiveRunTerminalSlot(
   if (slot.lifecycle === 'manual') {
     return Boolean(slot.taskFile && slot.agent === 'working');
   }
-  if (slot.lifecycle === 'disabled' || slot.lifecycle === 'held') return false;
+  if (slot.lifecycle === 'disabled') return false;
 
-  if (terminalRunForSlot(slot, runs, runsById)) return true;
+  if (activeRunForSlot(slot, runs, runsById)) return true;
   return slotHasActiveRunTerminal(slot, runsById);
 }
 
@@ -237,7 +253,7 @@ function activeRunSlotSortKey(
 ): [priority: number, updatedAt: number] {
   if (slot.lifecycle === 'manual') return [0, 0];
 
-  const run = terminalRunForSlot(slot, runs, runsById);
+  const run = activeRunForSlot(slot, runs, runsById);
   if (run) {
     return [activeRunTerminalPriority(run.status), Date.parse(run.updatedAt || run.createdAt)];
   }
@@ -273,4 +289,14 @@ export function selectActiveRunSlotIds(
     .sort((a, b) => compareActiveRunSlots(a, b, runs, runsById))
     .slice(0, limit)
     .map((slot) => slot.slot);
+}
+
+export function selectPinnedSlotIds(
+  slots: readonly SlotStatus[],
+  pinnedSlotIds: readonly string[],
+  filters: GlobalFilters,
+  limit = ACTIVE_RUN_SLOT_LIMIT,
+): string[] {
+  const visible = new Set(filterSlotsByGlobalFilters(slots, filters).map((slot) => slot.slot));
+  return pinnedSlotIds.filter((slotId) => visible.has(slotId)).slice(0, limit);
 }

@@ -8,6 +8,11 @@ import { dispositionLabel } from './run-utils.js';
 
 export const TERMINAL_STATUSES = new Set<RunStatus>(['done', 'failed', 'cancelled']);
 
+/** Matches Runs list "Active" tab — non-terminal runs, with failed kept visible. */
+export function isRunListActiveRun(run: Pick<Run, 'status'>): boolean {
+  return !TERMINAL_STATUSES.has(run.status) || run.status === 'failed';
+}
+
 function runMatchesMachineFilter(slotId: string | null | undefined, machines: string[]): boolean {
   if (machines.length === 0) return true;
   const normalized = slotId?.trim();
@@ -58,7 +63,7 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
     );
   }
   if (input.tab === 'active') {
-    result = result.filter((run) => !TERMINAL_STATUSES.has(run.status) || run.status === 'failed');
+    result = result.filter((run) => isRunListActiveRun(run));
   }
   if (input.tab === 'history') {
     result = result.filter((run) => TERMINAL_STATUSES.has(run.status));
