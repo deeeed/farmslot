@@ -10,6 +10,9 @@ pool/*.json
 # Generated runtime artifacts and overlays; never commit transient Farmslot state.
 temp/
 .agent/
+# Codex runner provisioning (config.toml + hooks.json) written into the repo
+# root at dispatch by scripts/install-runner-observability.mjs — never commit.
+.codex/
 
 # Co-pilot session history (raw JSON, transient)
 copilot/sessions/
