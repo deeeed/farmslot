@@ -1,10 +1,13 @@
 import { execFile } from 'node:child_process';
+import { statSync } from 'node:fs';
+import path from 'node:path';
 
 import type { RunnerSessionUsage } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
 import { farmslotRoot } from '../fleet/state.js';
+import { listRunnerSessionFiles } from '../runners/session-process.js';
 
 function parseNumberLine(lines: string[], prefix: string): number | null {
   const line = lines.find((candidate) => candidate.startsWith(prefix));
@@ -63,33 +66,79 @@ export function unavailableRunnerSessionUsage({
   };
 }
 
+/**
+ * Pick the transcript that belongs to THIS run's dispatch window. `paths` is
+ * newest-first; we return the newest whose mtime falls between the run's dispatch
+ * and completion (with a small clock-skew buffer). Bounding to the window stops a
+ * later/earlier run's session in the same slot repo from being charged to this run.
+ */
+function pickRunSessionTranscript(
+  paths: string[],
+  dispatchedAt: string,
+  completedAt?: string | null,
+): string | null {
+  const start = Date.parse(dispatchedAt) - 5 * 60_000;
+  if (!Number.isFinite(start)) return null;
+  const end = (completedAt ? Date.parse(completedAt) : Date.now()) + 5 * 60_000;
+  for (const candidate of paths) {
+    let mtime: number;
+    try {
+      mtime = statSync(candidate).mtimeMs;
+    } catch {
+      // Transcript discovery races with CLI-owned files; skip any that vanished.
+      continue;
+    }
+    if (mtime >= start && mtime <= end) return candidate;
+  }
+  return null;
+}
+
 export async function extractRunnerSessionUsage({
   slotId,
   vars,
   runner,
   runnerSessionId,
   runnerSessionPath,
+  dispatchedAt,
+  completedAt,
 }: {
   slotId: string;
   vars?: SlotVars;
   runner?: string | null;
   runnerSessionId?: string | null;
   runnerSessionPath?: string | null;
+  /** Run dispatch time — required to safely re-discover a missing transcript path. */
+  dispatchedAt?: string | null;
+  /** Run completion time — upper-bounds re-discovery to the run's own session. */
+  completedAt?: string | null;
 }): Promise<RunnerSessionUsage> {
+  // Remote slots first: never re-discover or extract a transcript remotely.
+  if (vars && !isLocal(vars.host, vars.machine)) {
+    return unavailableRunnerSessionUsage({
+      runner,
+      runnerSessionId,
+      runnerSessionPath: runnerSessionPath ?? null,
+      error: 'runner transcript usage extraction for remote slots is not implemented',
+    });
+  }
+  // Local: the session path is captured once at dispatch. If that poll missed
+  // (rollout not yet written, or pre-fix gateway), re-discover it at read time so
+  // extraction is idempotent — but only a transcript inside this run's dispatch
+  // window, so another run's session can't be mis-attributed.
+  if (!runnerSessionPath && vars && runner && dispatchedAt) {
+    const discovered = await listRunnerSessionFiles(vars, runner);
+    const chosen = pickRunSessionTranscript(discovered, dispatchedAt, completedAt);
+    if (chosen) {
+      runnerSessionPath = chosen;
+      runnerSessionId = runnerSessionId ?? path.basename(chosen, '.jsonl');
+    }
+  }
   if (!runnerSessionPath) {
     return unavailableRunnerSessionUsage({
       runner,
       runnerSessionId,
       runnerSessionPath: null,
       error: 'runner did not expose a session transcript path',
-    });
-  }
-  if (vars && !isLocal(vars.host, vars.machine)) {
-    return unavailableRunnerSessionUsage({
-      runner,
-      runnerSessionId,
-      runnerSessionPath,
-      error: 'runner transcript usage extraction for remote slots is not implemented',
     });
   }
   const env: NodeJS.ProcessEnv = {

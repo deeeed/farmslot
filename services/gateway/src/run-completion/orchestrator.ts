@@ -183,6 +183,8 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
       runner: run.metrics.runner,
       runnerSessionId: run.metrics.runnerSessionId,
       runnerSessionPath: run.metrics.runnerSessionPath,
+      dispatchedAt: run.createdAt,
+      completedAt: run.completedAt,
     });
     const costUsd = usage.costUsd ?? null;
     const inputTokens = usage.inputTokens ?? null;
