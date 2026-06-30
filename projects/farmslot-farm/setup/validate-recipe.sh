@@ -6,27 +6,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRIMARY_REPO="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Prefer the standalone package's native binary over npm/Homebrew shims. Some
-# wrapper shims can recurse into themselves when SITEED_CAPTURE_HELPER_BIN points
-# at a shim path, hanging doctor/record and leaking capture-helper processes.
-resolve_capture_helper_bin() {
-  local npm_root=""
-  npm_root="$(npm root -g 2>/dev/null || true)"
-  local candidate
-  for candidate in \
-    "${CAPTURE_HELPER_PATH:-}" \
-    "${SITEED_CAPTURE_HELPER_BIN:-}" \
-    "${PRIMARY_REPO}/node_modules/@siteed/capture-helper/native/capture-helper" \
-    "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
-    "${npm_root}/@siteed/capture-helper/native/capture-helper"; do
-    if [[ -n "${candidate}" && -x "${candidate}" && "${candidate}" != */node_modules/.bin/capture-helper ]]; then
-      printf '%s' "${candidate}"
-      return 0
-    fi
-  done
-  return 1
-}
-if helper_bin="$(resolve_capture_helper_bin)"; then
+# Honor explicit helper overrides first, normalizing npm/Homebrew wrapper shims
+# to the package native binary so doctor/record do not recurse through shims.
+# Without an override, prefer the standalone package's native binary.
+# shellcheck disable=SC1091
+. "${PRIMARY_REPO}/scripts/lib/capture-helper.sh"
+if helper_bin="$(FARMSLOT_CAPTURE_HELPER_REPO_ROOT="${PRIMARY_REPO}" resolve_capture_helper_bin)"; then
   export CAPTURE_HELPER_PATH="${helper_bin}"
   export SITEED_CAPTURE_HELPER_BIN="${helper_bin}"
 fi

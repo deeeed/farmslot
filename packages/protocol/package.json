@@ -314,6 +314,11 @@
       "types": "./dist/rpc/workspace.d.ts",
       "import": "./dist/rpc/workspace.js",
       "default": "./dist/rpc/workspace.js"
+    },
+    "./node/capture-helper-path": {
+      "types": "./dist/node/capture-helper-path.d.ts",
+      "import": "./dist/node/capture-helper-path.js",
+      "default": "./dist/node/capture-helper-path.js"
     }
   },
   "scripts": {

@@ -46,7 +46,7 @@ What it does:
   can override it), avoiding wrapper shims for capture paths. Grant Screen
   Recording permission to the terminal app on first capture so Command Center can
   show live visual evidence. The legacy embedded helper under `tools/capture-helper/`
-  is not used by the installer.
+  has been removed.
 - creates the workspace (default `~/dev/farmslot-workspace`, override with
   `FARMSLOT_WORKSPACE`): `farmslot/` clone, `repos/`, `runs/`, `state.json`
 - installs dependencies, builds the CLI's workspace packages, symlinks

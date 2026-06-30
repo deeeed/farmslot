@@ -16,29 +16,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-resolve_capture_helper_bin() {
-  local npm_root=""
-  npm_root="$(npm root -g 2>/dev/null || true)"
-  local candidate
-  for candidate in \
-    "${CAPTURE_HELPER_PATH:-}" \
-    "${SITEED_CAPTURE_HELPER_BIN:-}" \
-    "$REPO_ROOT/node_modules/@siteed/capture-helper/native/capture-helper" \
-    "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
-    "${npm_root}/@siteed/capture-helper/native/capture-helper"; do
-    if [[ -n "$candidate" && -x "$candidate" && "$candidate" != */node_modules/.bin/capture-helper ]]; then
-      printf '%s' "$candidate"
-      return 0
-    fi
-  done
-  if command -v capture-helper >/dev/null 2>&1; then
-    command -v capture-helper
-    return 0
-  fi
-  return 1
-}
+# shellcheck disable=SC1091
+. "$REPO_ROOT/scripts/lib/capture-helper.sh"
 
-CAPTURE_HELPER="$(resolve_capture_helper_bin || true)"
+CAPTURE_HELPER="$(FARMSLOT_CAPTURE_HELPER_REPO_ROOT="$REPO_ROOT" resolve_capture_helper_bin || true)"
 if [[ -z "$CAPTURE_HELPER" ]]; then
   CAPTURE_HELPER="capture-helper"
 fi

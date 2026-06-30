@@ -559,12 +559,12 @@ test('capture-helper recorder stop sends SIGINT and returns recorder metadata', 
       helperPath,
       `#!/usr/bin/env node
 const { writeFileSync } = require('node:fs');
-writeFileSync(${JSON.stringify(readyPath)}, 'ready');
 const output = process.argv[process.argv.indexOf('--output') + 1];
 process.on('SIGINT', () => {
   writeFileSync(output, 'fake mp4');
   process.exit(0);
 });
+writeFileSync(${JSON.stringify(readyPath)}, 'ready');
 setInterval(() => {}, 1000);
 `,
     );
@@ -601,8 +601,8 @@ test('capture-helper recorder stop times out when the helper ignores SIGINT', as
       helperPath,
       `#!/usr/bin/env node
 const { writeFileSync } = require('node:fs');
-writeFileSync(${JSON.stringify(readyPath)}, 'ready');
 process.on('SIGINT', () => {});
+writeFileSync(${JSON.stringify(readyPath)}, 'ready');
 setInterval(() => {}, 1000);
 `,
     );

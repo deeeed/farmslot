@@ -222,35 +222,11 @@ check_runner() {
 }
 
 capture_helper_bin() {
-  local npm_root=""
-  npm_root="$(npm root -g 2>/dev/null || true)"
-  local command_path=""
-  command_path="$(command -v capture-helper 2>/dev/null || true)"
-  local command_real=""
-  if [ -n "$command_path" ]; then
-    command_real="$(python3 - "$command_path" <<'PYREAL' 2>/dev/null || true
-import os, sys
-print(os.path.realpath(sys.argv[1]))
-PYREAL
-)"
-  fi
-  local candidate
-  for candidate in \
-    "${CAPTURE_HELPER_PATH:-}" \
-    "${SITEED_CAPTURE_HELPER_BIN:-}" \
-    "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
-    "${npm_root}/@siteed/capture-helper/native/capture-helper" \
-    "${command_real%/bin/capture-helper.js}/native/capture-helper"; do
-    if [[ -n "$candidate" && -x "$candidate" && "$candidate" != */node_modules/.bin/capture-helper ]]; then
-      printf '%s' "$candidate"
-      return 0
-    fi
-  done
-  if [ -n "$command_path" ]; then
-    printf '%s' "$command_path"
-    return 0
-  fi
-  return 1
+  local helper_script="${CLONE:-}/scripts/lib/capture-helper.sh"
+  [ -f "$helper_script" ] || return 1
+  # shellcheck disable=SC1090
+  FARMSLOT_CAPTURE_HELPER_REPO_ROOT="$CLONE" . "$helper_script"
+  resolve_capture_helper_bin
 }
 
 capture_helper_doctor() {
