@@ -624,11 +624,16 @@ function buildFallbackEvaluation(
   }
 
   if (recipeJson) {
+    // The gateway is the sole producer: recipe quality is derived from the recipe
+    // structure. Start at `pass` and let mergeStructuralEvaluation worst-merge the
+    // structural verdict in — a structurally valid recipe earns `good`, a weak one
+    // `warn`, a broken one `fail`. (Previously hardcoded `warn`, which capped every
+    // worker that stopped hand-authoring recipe-quality.json at `ok`.)
     const artifact = buildArtifact({
-      verdict: 'warn',
-      reasons: ['Recipe JSON existed, but no canonical recipe-quality artifact was produced.'],
+      verdict: 'pass',
+      reasons: ['Recipe quality derived from recipe structure (gateway sole producer).'],
       betterVersionGuidance: [
-        'Add a recipe-quality audit instead of relying on recipe presence alone.',
+        'Keep recipe.json + recipe-coverage.md complete so structure fully proves the claim.',
       ],
       producer: 'fallback:recipe-json',
       fallbackSource: 'fallback:recipe-json',
@@ -638,8 +643,8 @@ function buildFallbackEvaluation(
       run,
       dimensions: {
         evidence_contract_basics: {
-          status: 'warn',
-          reason: 'Recipe artifact is present, but quality semantics were inferred only loosely.',
+          status: 'pass',
+          reason: 'Recipe quality is derived from the recipe structure.',
           evidence: ['recipe.json'],
         },
       },
