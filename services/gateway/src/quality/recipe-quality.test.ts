@@ -119,8 +119,8 @@ test('loadRecipeQualityEvaluation preserves a valid worker artifact', async () =
 test('loadRecipeQualityEvaluation regenerates from recipe structure when the existing artifact is non-conformant (read-only)', async () => {
   // The gateway is the sole producer: a non-conformant file (e.g. an old worker
   // hand-authored compact shape) is never salvaged or fabricated into a fail — it
-  // is regenerated from the recipe structure. With persistInvalidArtifact:false the
-  // on-disk file is left untouched.
+  // is regenerated from the recipe structure, and the evaluator never writes on read,
+  // so the on-disk file is left untouched.
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-readonly-invalid-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Task\nWrite artifacts/recipe-quality.json\n');
@@ -131,7 +131,6 @@ test('loadRecipeQualityEvaluation regenerates from recipe structure when the exi
   const evaluation = await loadRecipeQualityEvaluation({
     run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'fix-bug' }),
     recipeJson: '{"workflow":{"entry":"start","nodes":{"start":{"action":"assert"}}}}',
-    persistInvalidArtifact: false,
   });
 
   assert.ok(isRecipeQualityArtifact(evaluation.artifact));

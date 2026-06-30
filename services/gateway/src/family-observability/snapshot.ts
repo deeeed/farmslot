@@ -212,7 +212,6 @@ async function resolveHistoricalRecipeProvenance(
     workerReport,
     recipeJson,
     recipeCoverage: await readRunArtifactText(sourceRun, 'recipe-coverage.md'),
-    persistInvalidArtifact: false,
   });
   const recoveredSourceArtifacts = (await buildRunArtifacts(sourceRun)).map((artifact) => ({
     ...artifact,
@@ -624,7 +623,6 @@ async function buildRunSummary(
     recipeCoverage: taskDir
       ? await readTextIfExists(path.join(taskDir, 'artifacts', 'recipe-coverage.md'))
       : null,
-    persistInvalidArtifact: false,
   });
   const recipeQualityEvaluation =
     !recipeJson && resolvedRecovery

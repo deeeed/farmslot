@@ -6,7 +6,9 @@ const taskDir = process.argv[2];
 const flags = new Set(process.argv.slice(3));
 
 if (!taskDir) {
-  console.error('usage: check-task-artifact-contract.mjs <task-dir> [--require-recipe-quality-if-recipe] [--require-recipe-coverage-if-recipe]');
+  console.error(
+    'usage: check-task-artifact-contract.mjs <task-dir> [--require-recipe-coverage-if-recipe]',
+  );
   process.exit(2);
 }
 
@@ -74,7 +76,8 @@ function normalizeArtifactPath(value) {
   if (!normalized || path.posix.isAbsolute(normalized) || normalized.includes('\0')) return null;
   const segments = normalized.split('/').filter(Boolean);
   if (segments.some((segment) => segment === '.' || segment === '..')) return null;
-  const withoutArtifacts = segments[0] === 'artifacts' ? segments.slice(1).join('/') : segments.join('/');
+  const withoutArtifacts =
+    segments[0] === 'artifacts' ? segments.slice(1).join('/') : segments.join('/');
   if (!withoutArtifacts || !mediaExt.test(withoutArtifacts)) return null;
   return `artifacts/${withoutArtifacts}`;
 }
@@ -87,29 +90,6 @@ function addRef(refs, value) {
     return;
   }
   refs.add(normalized);
-}
-
-function validateRecipeQualityArtifact() {
-  const text = readText('artifacts/recipe-quality.json');
-  if (!text) return;
-  let artifact;
-  try {
-    artifact = JSON.parse(text);
-  } catch (error) {
-    issues.push(`recipe-quality.json: invalid JSON: ${error.message}`);
-    return;
-  }
-  if (!isRecord(artifact)) {
-    issues.push('recipe-quality.json: expected object');
-    return;
-  }
-  if (artifact.version !== 1) issues.push('recipe-quality.json: version must be 1');
-  if (!['pass', 'warn', 'fail'].includes(artifact.verdict)) {
-    issues.push('recipe-quality.json: verdict must be pass, warn, or fail');
-  }
-  if (!isRecord(artifact.compact) || !['PASS', 'WARN', 'FAIL'].includes(artifact.compact.verdict)) {
-    issues.push('recipe-quality.json: compact.verdict must be PASS, WARN, or FAIL');
-  }
 }
 
 function parseManifest() {
@@ -130,7 +110,10 @@ function parseManifest() {
   if (manifest.version !== undefined && typeof manifest.version !== 'number') {
     issues.push('manifest.version: expected number');
   }
-  if (manifest.preferred_mode !== undefined && !['screenshots', 'video'].includes(manifest.preferred_mode)) {
+  if (
+    manifest.preferred_mode !== undefined &&
+    !['screenshots', 'video'].includes(manifest.preferred_mode)
+  ) {
     issues.push('manifest.preferred_mode: expected screenshots or video');
   }
   optionalString(manifest, 'summary', 'manifest');
@@ -143,12 +126,14 @@ function parseManifest() {
         const prefix = `manifest.before_after_pairs[${index}]`;
         if (!isRecord(entry)) return issues.push(`${prefix}: expected object`);
         unknownKeys(entry, allowedPairKeys, prefix);
-        if (typeof entry.label !== 'string' || !entry.label.trim()) issues.push(`${prefix}.label: expected non-empty string`);
+        if (typeof entry.label !== 'string' || !entry.label.trim())
+          issues.push(`${prefix}.label: expected non-empty string`);
         optionalStringArray(entry, 'covers', prefix);
         optionalString(entry, 'before', prefix);
         optionalString(entry, 'after', prefix);
         optionalString(entry, 'note', prefix);
-        if (entry.before === undefined && entry.after === undefined) issues.push(`${prefix}: expected before or after`);
+        if (entry.before === undefined && entry.after === undefined)
+          issues.push(`${prefix}: expected before or after`);
       });
     }
   }
@@ -161,9 +146,11 @@ function parseManifest() {
         const prefix = `manifest.standalone[${index}]`;
         if (!isRecord(entry)) return issues.push(`${prefix}: expected object`);
         unknownKeys(entry, allowedStandaloneKeys, prefix);
-        if (typeof entry.label !== 'string' || !entry.label.trim()) issues.push(`${prefix}.label: expected non-empty string`);
+        if (typeof entry.label !== 'string' || !entry.label.trim())
+          issues.push(`${prefix}.label: expected non-empty string`);
         optionalStringArray(entry, 'covers', prefix);
-        if (typeof entry.file !== 'string' || !entry.file.trim()) issues.push(`${prefix}.file: expected non-empty string`);
+        if (typeof entry.file !== 'string' || !entry.file.trim())
+          issues.push(`${prefix}.file: expected non-empty string`);
         optionalString(entry, 'note', prefix);
       });
     }
@@ -177,7 +164,10 @@ function parseManifest() {
       optionalString(manifest.videos, 'before', 'manifest.videos');
       optionalString(manifest.videos, 'after', 'manifest.videos');
       optionalString(manifest.videos, 'note', 'manifest.videos');
-      if (manifest.videos.preferred !== undefined && typeof manifest.videos.preferred !== 'boolean') {
+      if (
+        manifest.videos.preferred !== undefined &&
+        typeof manifest.videos.preferred !== 'boolean'
+      ) {
         issues.push('manifest.videos.preferred: expected boolean');
       }
     }
@@ -192,7 +182,8 @@ function parseManifest() {
         if (typeof entry === 'string') return;
         if (!isRecord(entry)) return issues.push(`${prefix}: expected string or object`);
         unknownKeys(entry, allowedOmitKeys, prefix);
-        if (typeof entry.file !== 'string' || !entry.file.trim()) issues.push(`${prefix}.file: expected non-empty string`);
+        if (typeof entry.file !== 'string' || !entry.file.trim())
+          issues.push(`${prefix}.file: expected non-empty string`);
         optionalString(entry, 'reason', prefix);
       });
     }
@@ -214,19 +205,22 @@ function parseManifest() {
 }
 
 const hasRecipe = fileExists('artifacts/recipe.json');
-if (hasRecipe && flags.has('--require-recipe-quality-if-recipe') && !fileExists('artifacts/recipe-quality.json')) {
-  issues.push('recipe.json exists but artifacts/recipe-quality.json is missing');
-}
-if (hasRecipe && flags.has('--require-recipe-coverage-if-recipe') && !fileExists('artifacts/recipe-coverage.md')) {
+if (
+  hasRecipe &&
+  flags.has('--require-recipe-coverage-if-recipe') &&
+  !fileExists('artifacts/recipe-coverage.md')
+) {
   issues.push('recipe.json exists but artifacts/recipe-coverage.md is missing');
 }
-validateRecipeQualityArtifact();
 
 const parsed = parseManifest();
 const coverage = readText('artifacts/recipe-coverage.md');
 if (coverage && /\|\s*(visual|mixed)\s*\|/i.test(coverage)) {
   const refCount = parsed?.refs?.size ?? 0;
-  if (refCount === 0) issues.push('recipe-coverage.md declares visual/mixed proof but evidence-manifest has no media references');
+  if (refCount === 0)
+    issues.push(
+      'recipe-coverage.md declares visual/mixed proof but evidence-manifest has no media references',
+    );
 }
 
 if (issues.length > 0) {

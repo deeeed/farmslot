@@ -34,8 +34,7 @@ Verdict per AC: `PROVEN` | `WEAK` | `UNTESTABLE` | `MISSING`.
 When the PR includes `recipe.json` or a **Validation Recipe** section:
 
 - Apply `fs-recipe-quality` (recipe-only or recipe+evidence mode).
-- Write `{{TASK_DIR}}/artifacts/recipe-coverage.md` with a per-AC matrix.
-- Write `{{TASK_DIR}}/artifacts/recipe-quality.json` when you generate or repair a review recipe.
+- Write `{{TASK_DIR}}/artifacts/recipe-coverage.md` with a per-AC matrix (gateway computes recipe-quality).
 - **Forbidden:** silent AC skips, DOM-only proof for visible claims, fabricated `?sha=` URLs, CDP fallback claimed as native capture-helper without doctor note.
 
 If the author omitted a recipe for a UI change, flag it — do not invent proof.

@@ -44,7 +44,6 @@ interface RecipeQualityEvaluationInput {
   workerReport?: string | null;
   recipeJson?: string | null;
   recipeCoverage?: string | null;
-  persistInvalidArtifact?: boolean;
 }
 
 interface StructuralRecipeEvaluation {

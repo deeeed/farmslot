@@ -754,8 +754,15 @@ async function readLatestValidRecipeRunPointerFromRoots(
  */
 async function currentArtifactsGroupStatus(
   run: Run,
-  context: Pick<LiveRecipeContext, 'recipeJson' | 'artifactRoot'>,
+  context: Pick<LiveRecipeContext, 'recipeJson' | 'artifactRoot' | 'recipeQualityArtifact'>,
 ): Promise<RecipeRunArtifactGroupStatus> {
+  // Prefer the schema-valid artifact already parsed for THIS artifact root
+  // (worker / inherited / promoted / remote) so a valid existing file is reused,
+  // not ignored. Otherwise derive from the canonical evaluator — the same source
+  // the family leaderboard uses. good/ok -> pass (recipe proved the feature), fail
+  // -> fail.
+  const verdict = context.recipeQualityArtifact?.verdict;
+  if (verdict) return verdict === 'fail' ? 'fail' : 'pass';
   if (!context.artifactRoot) return 'unknown';
   const recipeCoverage = await readPortableTextIfExists(
     run,
@@ -765,7 +772,6 @@ async function currentArtifactsGroupStatus(
     run,
     recipeJson: context.recipeJson,
     recipeCoverage,
-    persistInvalidArtifact: false,
   });
   if (signal.semantic === 'good' || signal.semantic === 'ok') return 'pass';
   if (signal.semantic === 'bad') return 'fail';
