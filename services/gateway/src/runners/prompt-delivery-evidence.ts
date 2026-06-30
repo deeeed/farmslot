@@ -4,6 +4,7 @@ import { resolveTmuxPaneId, shellQuote } from '../core/tmux.js';
 
 import {
   deriveRunnerActivity,
+  filterHooksByPane,
   parseHookJsonl,
   promptAcceptedFromHooks,
   promptTurnStartedFromHooks,
@@ -98,7 +99,8 @@ export async function probeRunnerHandoffAck(
     };
   }
 
-  const activity = deriveRunnerActivity(hooks, null);
+  const scopedHooks = filterHooksByPane(hooks, paneId);
+  const activity = deriveRunnerActivity(scopedHooks, null);
   if (
     activity &&
     isObservabilityReadingAuthoritative(activity) &&

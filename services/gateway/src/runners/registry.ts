@@ -1658,11 +1658,13 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    const shouldSubmitOnly =
-      attempt > 1 ||
-      runnerPaneShouldSubmitExistingInstruction(preSendPane, message, marker, runner, {
-        allowMarkerOnly: attempt > 1,
-      });
+    const shouldSubmitOnly = runnerPaneShouldSubmitExistingInstruction(
+      preSendPane,
+      message,
+      marker,
+      runner,
+      { allowMarkerOnly: attempt > 1 },
+    );
     let sendCommand: string;
     if (shouldSubmitOnly) {
       sendCommand = tmuxShellSnippet(
