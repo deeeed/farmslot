@@ -5,6 +5,7 @@ import { existsSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
 import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { probeGatewayAuth } from '../gateway-auth.js';
 import { loadProfiles, profileCredential } from '../gateway-profiles.js';
@@ -111,6 +112,7 @@ function workspaceSection(ws: Workspace | null): {
       hint: existsSync(dir) ? undefined : 're-run install.sh to repair the workspace layout',
     });
   }
+  checks.push({ name: 'home', ok: true, detail: farmslotHome() });
   let state: WorkspaceState | null = null;
   try {
     state = readState(ws);
@@ -306,32 +308,39 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
     return current;
   };
 
+  // This workspace's own install-time symlink (state.bin_dir/farmslot). A valid one
+  // means the install succeeded even if a *different* farmslot is earlier on PATH.
+  const installedLink = state?.bin_dir ? join(state.bin_dir, 'farmslot') : null;
+  const ownLinkOk =
+    installedLink !== null &&
+    existsSync(installedLink) &&
+    isInside(resolveLink(installedLink), root);
+
   const binPath = commandPath('farmslot');
-  if (binPath) {
-    const target = resolveLink(binPath);
-    const pointsHere = isInside(target, root);
+  if (binPath && isInside(resolveLink(binPath), root)) {
+    checks.push({ name: 'farmslot on PATH', ok: true, detail: binPath });
+  } else if (ownLinkOk) {
+    // The workspace symlink is valid; PATH either resolves to a different farmslot
+    // first (custom BIN_DIR) or isn't updated yet. Warn with guidance — never fail,
+    // so a custom install location cannot abort install.sh at the doctor gate.
+    const onPath = Boolean(binPath);
     checks.push({
       name: 'farmslot on PATH',
-      ok: pointsHere,
-      detail: pointsHere ? binPath : `${binPath} -> ${target} (outside this workspace)`,
-      hint: pointsHere ? undefined : 're-run install.sh to repoint the symlink',
+      ok: true,
+      warn: true,
+      detail: onPath
+        ? `${binPath} -> ${resolveLink(binPath as string)} (a different farmslot is first on PATH; this workspace: ${installedLink})`
+        : `${installedLink} exists but ${state?.bin_dir} is not on PATH`,
+      hint: `to use this workspace's CLI, put ${state?.bin_dir} ahead on your PATH: export PATH="${state?.bin_dir}:$PATH"`,
     });
   } else {
-    // Not on PATH — if the install-time symlink exists and points here, the
-    // install is fine and only the shell PATH needs updating: warn, not fail.
-    const installedLink = state?.bin_dir ? join(state.bin_dir, 'farmslot') : null;
-    const linkOk =
-      installedLink !== null &&
-      existsSync(installedLink) &&
-      isInside(resolveLink(installedLink), root);
     checks.push({
       name: 'farmslot on PATH',
-      ok: linkOk,
-      warn: linkOk,
-      detail: linkOk ? `${installedLink} exists but ${state?.bin_dir} is not on PATH` : 'not found',
-      hint: linkOk
-        ? `add to your shell profile: export PATH="${state?.bin_dir}:$PATH"`
-        : 're-run install.sh to create the PATH symlink',
+      ok: false,
+      detail: binPath
+        ? `${binPath} -> ${resolveLink(binPath)} (outside this workspace)`
+        : 'not found',
+      hint: 're-run install.sh to create/repoint the symlink',
     });
   }
   return { title: 'CLI', checks };

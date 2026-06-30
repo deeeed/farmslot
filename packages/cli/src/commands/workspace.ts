@@ -27,6 +27,7 @@ interface WorkspaceInitOptions {
   sourceMode: 'local' | 'git';
   source: string;
   binDir?: string;
+  homeDir?: string;
 }
 
 export function registerWorkspaceCommand(program: Command): void {
@@ -43,6 +44,10 @@ export function registerWorkspaceCommand(program: Command): void {
       'local checkout path or git URL farmslot was installed from',
     )
     .option('--bin-dir <path>', 'directory holding the farmslot PATH symlink')
+    .option(
+      '--home-dir <path>',
+      'machine-level home for gateway profiles/auth/logs (persisted FARMSLOT_HOME)',
+    )
     .action((opts: WorkspaceInitOptions, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       if (opts.sourceMode !== 'local' && opts.sourceMode !== 'git') {
@@ -109,6 +114,7 @@ export function registerWorkspaceCommand(program: Command): void {
         machine,
         pool_file: poolRelPath,
         bin_dir: opts.binDir ?? existing?.bin_dir,
+        home_dir: opts.homeDir ?? existing?.home_dir,
         packs: existing?.packs ?? {},
         pool_migrations: existing?.pool_migrations ?? { applied: [] },
       };

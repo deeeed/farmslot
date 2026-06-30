@@ -1,10 +1,11 @@
 // llm/config.ts — Gateway-level LLM provider configuration
-// Persisted to ~/.farmslot/llm-config.json.
+// Persisted to <FARMSLOT_HOME>/llm-config.json (default ~/.farmslot).
 // Cascade: config file → env vars → hardcoded defaults.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
+
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 export interface LLMConfig {
   defaultProvider: string;
@@ -13,7 +14,7 @@ export interface LLMConfig {
   improvementModel: string;
 }
 
-const CONFIG_DIR = path.join(homedir(), '.farmslot');
+const CONFIG_DIR = farmslotHome();
 const CONFIG_PATH = path.join(CONFIG_DIR, 'llm-config.json');
 
 const DEFAULTS: LLMConfig = {

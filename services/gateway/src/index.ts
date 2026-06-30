@@ -15,6 +15,7 @@ import os from 'node:os';
 import { dirname, resolve } from 'node:path';
 
 import { type EvalTrialStartParams, Events, primaryRoleForFlow } from '@farmslot/protocol';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import {
   initAutoRecovery,
@@ -253,7 +254,7 @@ async function main(): Promise<void> {
   const { getLLMConfig } = await import('./llm/config.js');
   const llmCfg = getLLMConfig();
   console.log(
-    `[chat] LLM provider: ${llmCfg.defaultProvider}, copilot: ${llmCfg.copilotModel}, intelligence: ${llmCfg.intelligenceModel} (config: ~/.farmslot/llm-config.json)`,
+    `[chat] LLM provider: ${llmCfg.defaultProvider}, copilot: ${llmCfg.copilotModel}, intelligence: ${llmCfg.intelligenceModel} (config: ${resolve(farmslotHome(), 'llm-config.json')})`,
   );
   console.log(
     `[chat-actions] direct-issue=${process.env.COPILOT_PROPOSED_ACTIONS_DIRECT_ISSUE === '0' ? 'disabled' : 'enabled'}`,

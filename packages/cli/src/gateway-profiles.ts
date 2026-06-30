@@ -4,10 +4,10 @@
 // plus the pairing/auth credential obtained via `farmslot login`. Workspace
 // state stays untouched — profiles follow the operator, not the checkout.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import type { GatewayAuthMode } from '@farmslot/protocol';
+import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 export type { GatewayAuthMode };
 
@@ -27,8 +27,7 @@ export interface GatewayProfilesFile {
 export const DEFAULT_GATEWAY_URL = 'ws://localhost:7777';
 
 export function profilesPath(env: NodeJS.ProcessEnv = process.env): string {
-  const home = env.FARMSLOT_HOME ?? join(homedir(), '.farmslot');
-  return join(home, 'gateways.json');
+  return join(farmslotHome(env), 'gateways.json');
 }
 
 export function loadProfiles(path: string = profilesPath()): GatewayProfilesFile {

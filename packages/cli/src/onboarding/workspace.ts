@@ -30,6 +30,9 @@ export interface WorkspaceState {
   pool_file: string; // relative to the farmslot clone, e.g. pool/myhost.json
   /** Where install.sh put the farmslot PATH symlink. */
   bin_dir?: string;
+  /** Machine-level home (gateway profiles, auth, logs) chosen at install — the
+   * persisted value of FARMSLOT_HOME so later commands recover a custom location. */
+  home_dir?: string;
   packs: Record<string, PackState>;
   pool_migrations: { applied: string[] };
 }
