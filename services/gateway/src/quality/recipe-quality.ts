@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -38,14 +38,17 @@ export interface RecipeQualityEvaluation {
 }
 
 interface RecipeQualityEvaluationInput {
-  // slotId required so persistArtifact can scope cache invalidation per slot
-  // and resolve the worker artifacts dir via resolveWorkerTaskDir.
   run: Pick<Run, 'id' | 'flowType' | 'project' | 'taskFile' | 'slotId'>;
   workerReport?: string | null;
   recipeJson?: string | null;
   recipeCoverage?: string | null;
-  persistInvalidArtifact?: boolean;
-  acceptLegacyArtifact?: boolean;
+  /**
+   * Artifacts directory to read recipe-quality.json from. Defaults to the run's
+   * own task-dir artifacts; callers serving a different artifact root (worker,
+   * inherited, promoted) pass it so the SAME structural-merged signal is computed
+   * for that root — the per-run badge and family leaderboard never diverge.
+   */
+  artifactDir?: string | null;
 }
 
 interface StructuralRecipeEvaluation {
@@ -300,68 +303,6 @@ function buildArtifact(params: {
       source_signals: sourceSignals,
     },
   };
-}
-
-function normalizeLegacyVerdict(value: unknown): RecipeQualityVerdict | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.toLowerCase();
-  if (normalized === 'pass' || normalized === 'passed' || normalized === 'ok') return 'pass';
-  if (normalized === 'warn' || normalized === 'warning') return 'warn';
-  if (normalized === 'fail' || normalized === 'failed' || normalized === 'error') return 'fail';
-  return null;
-}
-
-function dimensionKey(value: string, index: number): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '') || `legacy_check_${index + 1}`
-  );
-}
-
-function buildLegacyRecipeQualityArtifact(
-  parsed: Record<string, unknown>,
-  input: RecipeQualityEvaluationInput,
-  legacyTask: boolean,
-  artifactRequired: boolean,
-): RecipeQualityArtifact | null {
-  const overall = normalizeLegacyVerdict(parsed.overall ?? parsed.verdict);
-  if (!overall) return null;
-  const dimensions: RecipeQualityArtifact['dimensions'] = {};
-  const reasons: string[] = [];
-  const checks = Array.isArray(parsed.checks) ? parsed.checks : [];
-  checks.forEach((check, index) => {
-    if (!check || typeof check !== 'object') return;
-    const rec = check as Record<string, unknown>;
-    const name = typeof rec.name === 'string' ? rec.name : `legacy check ${index + 1}`;
-    const verdict = normalizeLegacyVerdict(rec.verdict) ?? 'warn';
-    const evidence = typeof rec.evidence === 'string' ? rec.evidence : undefined;
-    dimensions[dimensionKey(name, index)] = {
-      status: verdict,
-      reason: evidence ?? `Legacy check ${name} reported ${verdict}.`,
-      evidence: evidence ? [evidence] : ['legacy recipe-quality.json'],
-    };
-    if (reasons.length < 3) reasons.push(`${name}: ${verdict}`);
-  });
-  const notes = Array.isArray(parsed.notes)
-    ? parsed.notes.filter((note): note is string => typeof note === 'string')
-    : [];
-  return buildArtifact({
-    verdict: overall,
-    reasons: reasons.length > 0 ? reasons : [`Legacy recipe-quality.json reported ${overall}.`],
-    betterVersionGuidance: [
-      'Regenerate recipe-quality.json with the current shared schema when this recipe is next touched.',
-    ],
-    producer: 'gateway',
-    legacyTask,
-    artifactRequired,
-    sourceSignals: ['legacy recipe-quality.json', ...(input.recipeJson ? ['recipe.json'] : [])],
-    run: input.run,
-    dimensions,
-    contextualFindings: notes.map((note) => ({ code: 'legacy-note', message: note })),
-    proofMode: input.recipeJson ? 'mixed' : 'unknown',
-  });
 }
 
 function evaluateRecipeStructure(
@@ -636,10 +577,6 @@ function mergeStructuralEvaluation(
   };
 }
 
-function hasRecipeQualityRequirement(taskText: string | null): boolean {
-  return Boolean(taskText?.includes(RECIPE_QUALITY_MARKER));
-}
-
 function buildFallbackEvaluation(
   input: RecipeQualityEvaluationInput & {
     legacyTask: boolean;
@@ -659,38 +596,6 @@ function buildFallbackEvaluation(
   if (recipeJson) sourceSignals.push('recipe.json');
   if (workerReport) sourceSignals.push('report.md');
 
-  if (artifactRequired) {
-    const artifact = buildArtifact({
-      verdict: 'fail',
-      reasons: ['Required recipe-quality artifact is missing for a task that now mandates it.'],
-      betterVersionGuidance: [
-        'Write artifacts/recipe-quality.json from the recipe-writing or recipe-review flow.',
-        'Include compact verdict, reasons, better-version guidance, and structured dimensions.',
-      ],
-      producer: 'gateway',
-      legacyTask,
-      artifactRequired,
-      sourceSignals,
-      run,
-      dimensions: {
-        evidence_contract_basics: {
-          status: 'fail',
-          reason: 'No recipe-quality.json artifact was present.',
-          evidence: sourceSignals,
-        },
-      },
-      structuralFindings: [
-        {
-          code: 'missing-required-recipe-quality-artifact',
-          message: 'The task requires recipe-quality.json but it was not produced.',
-          evidence: sourceSignals,
-        },
-      ],
-      proofMode: recipeJson ? 'mixed' : 'unknown',
-    });
-    return { artifact, signal: buildSignal(run.id, artifact) };
-  }
-
   if (hasRatio(recipeCoverage)) {
     const artifact = buildArtifact({
       verdict: 'warn',
@@ -698,7 +603,7 @@ function buildFallbackEvaluation(
         'Only legacy recipe-coverage.md was available; shared recipe-quality.json was missing.',
       ],
       betterVersionGuidance: [
-        'Promote the legacy coverage audit into artifacts/recipe-quality.json.',
+        'Keep recipe-coverage.md complete; the gateway derives recipe-quality from it.',
       ],
       producer: 'fallback:recipe-coverage',
       fallbackSource: 'fallback:recipe-coverage',
@@ -719,11 +624,16 @@ function buildFallbackEvaluation(
   }
 
   if (recipeJson) {
+    // The gateway is the sole producer: recipe quality is derived from the recipe
+    // structure. Start at `pass` and let mergeStructuralEvaluation worst-merge the
+    // structural verdict in — a structurally valid recipe earns `good`, a weak one
+    // `warn`, a broken one `fail`. (Previously hardcoded `warn`, which capped every
+    // worker that stopped hand-authoring recipe-quality.json at `ok`.)
     const artifact = buildArtifact({
-      verdict: 'warn',
-      reasons: ['Recipe JSON existed, but no canonical recipe-quality artifact was produced.'],
+      verdict: 'pass',
+      reasons: ['Recipe quality derived from recipe structure (gateway sole producer).'],
       betterVersionGuidance: [
-        'Add a recipe-quality audit instead of relying on recipe presence alone.',
+        'Keep recipe.json + recipe-coverage.md complete so structure fully proves the claim.',
       ],
       producer: 'fallback:recipe-json',
       fallbackSource: 'fallback:recipe-json',
@@ -733,8 +643,8 @@ function buildFallbackEvaluation(
       run,
       dimensions: {
         evidence_contract_basics: {
-          status: 'warn',
-          reason: 'Recipe artifact is present, but quality semantics were inferred only loosely.',
+          status: 'pass',
+          reason: 'Recipe quality is derived from the recipe structure.',
           evidence: ['recipe.json'],
         },
       },
@@ -750,7 +660,7 @@ function buildFallbackEvaluation(
         'Only report.md was available; no structured recipe-quality artifact or recipe evidence was present.',
       ],
       betterVersionGuidance: [
-        'Emit recipe-quality.json so quality does not depend on prose fallback.',
+        'Add recipe.json + recipe-coverage.md so quality derives from real proof, not prose.',
       ],
       producer: 'fallback:report',
       fallbackSource: 'fallback:report',
@@ -802,42 +712,6 @@ function buildFallbackEvaluation(
   return { artifact, signal: buildSignal(run.id, artifact) };
 }
 
-// Lazy-resolved live-recipe-context module — recipe-quality is in a circular
-// import with live-recipe-context (which imports `isRecipeQualityArtifact`
-// from here). Static import would deadlock at module load. Resolved once,
-// then served from the closure cache so persistArtifact's hot path doesn't
-// re-trigger the dynamic-import resolver per call.
-let liveRecipeCtxMod: typeof import('../live-recipe/context.js') | null = null;
-async function lrcMod() {
-  return (liveRecipeCtxMod ??= await import('../live-recipe/context.js'));
-}
-
-async function persistArtifact(
-  taskDir: string | null,
-  artifact: RecipeQualityArtifact,
-  run: Pick<Run, 'id' | 'slotId' | 'taskFile' | 'project'>,
-): Promise<void> {
-  if (!taskDir) return;
-  const artifactsDir = path.join(taskDir, 'artifacts');
-  const artifactPath = path.join(artifactsDir, RECIPE_QUALITY_FILENAME);
-  await mkdir(path.dirname(artifactPath), { recursive: true });
-  await writeFile(artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf-8');
-  // Drop both the cached recipe-quality.json read AND the per-run memo so the
-  // next attachLiveRecipeContext sees the fresh artifact. Slot-scoped so other
-  // slots' caches stay intact (round-3 invariant). Invalidate BOTH prefixes —
-  // local (where we just wrote) AND worker (loadLiveRecipeContextForRun tries
-  // worker first via shouldPreferLocalPortableArtifacts; entries warmed there
-  // would otherwise linger 5s after this rewrite).
-  const { invalidateArtifactTextCache, invalidateLiveRecipeContextMemo, resolveWorkerTaskDir } =
-    await lrcMod();
-  invalidateArtifactTextCache(artifactsDir, run.slotId);
-  const workerTaskDir = await resolveWorkerTaskDir(run);
-  if (workerTaskDir) {
-    invalidateArtifactTextCache(path.join(workerTaskDir, 'artifacts'), run.slotId);
-  }
-  invalidateLiveRecipeContextMemo(run.id);
-}
-
 export async function loadRecipeQualityEvaluation(
   input: RecipeQualityEvaluationInput,
 ): Promise<RecipeQualityEvaluation> {
@@ -845,12 +719,17 @@ export async function loadRecipeQualityEvaluation(
   const taskDir = taskDirFromRun(run);
   const taskText = run.taskFile ? await readTextIfExists(run.taskFile) : null;
   const legacyTask = !taskText?.includes(RECIPE_QUALITY_MARKER);
-  const artifactRequired = hasRecipeQualityRequirement(taskText);
-  const artifactText = taskDir
-    ? await readTextIfExists(path.join(taskDir, 'artifacts', RECIPE_QUALITY_FILENAME))
+  const artifactsDir = input.artifactDir ?? (taskDir ? path.join(taskDir, 'artifacts') : null);
+  const artifactText = artifactsDir
+    ? await readTextIfExists(path.join(artifactsDir, RECIPE_QUALITY_FILENAME))
     : null;
   const structural = evaluateRecipeStructure(input.recipeJson);
 
+  // The gateway is the sole producer of recipe-quality.json (ADR/roadmap:
+  // run-metrics consolidation). A previously-generated, schema-valid artifact is
+  // reused for idempotency; anything else (absent, unparseable, or non-conformant)
+  // is regenerated from the recipe structure — never salvaged or fabricated into a
+  // misleading fail. Workers no longer hand-author this file.
   if (artifactText) {
     try {
       const parsed = JSON.parse(artifactText);
@@ -858,62 +737,22 @@ export async function loadRecipeQualityEvaluation(
         const artifact = mergeStructuralEvaluation(parsed as RecipeQualityArtifact, structural);
         return { artifact, signal: buildSignal(run.id, artifact) };
       }
-      if (input.acceptLegacyArtifact && parsed && typeof parsed === 'object') {
-        const artifact = buildLegacyRecipeQualityArtifact(
-          parsed as Record<string, unknown>,
-          input,
-          legacyTask,
-          artifactRequired,
-        );
-        if (artifact) {
-          const merged = mergeStructuralEvaluation(artifact, structural);
-          return { artifact: merged, signal: buildSignal(run.id, merged) };
-        }
-      }
-    } catch {
-      // Fall through to canonical fail artifact generation.
+      console.warn(
+        `[recipe-quality] ${RECIPE_QUALITY_FILENAME} did not match the shared schema; regenerating from recipe structure.`,
+      );
+    } catch (error) {
+      console.warn(
+        `[recipe-quality] failed to parse ${RECIPE_QUALITY_FILENAME}; regenerating from recipe structure: ${(error as Error).message}`,
+      );
     }
-
-    const artifact = buildArtifact({
-      verdict: 'fail',
-      reasons: ['recipe-quality.json existed but did not match the shared contract.'],
-      betterVersionGuidance: [
-        'Regenerate recipe-quality.json with the shared schema and verdict vocabulary.',
-        'Keep shared schema keys fixed; only farm wording/examples should vary.',
-      ],
-      producer: 'gateway',
-      legacyTask,
-      artifactRequired,
-      sourceSignals: [RECIPE_QUALITY_FILENAME],
-      run,
-      dimensions: {
-        evidence_contract_basics: {
-          status: 'fail',
-          reason: 'The artifact could not be parsed as the shared schema.',
-          evidence: [RECIPE_QUALITY_FILENAME],
-        },
-      },
-      structuralFindings: [
-        {
-          code: 'invalid-recipe-quality-artifact',
-          message:
-            'Existing recipe-quality.json was invalid and was replaced by a canonical fail artifact.',
-          evidence: [RECIPE_QUALITY_FILENAME],
-        },
-      ],
-      proofMode: 'unknown',
-    });
-    const merged = mergeStructuralEvaluation(artifact, structural);
-    if (input.persistInvalidArtifact !== false) {
-      await persistArtifact(taskDir, merged, run);
-    }
-    return { artifact: merged, signal: buildSignal(run.id, merged) };
   }
 
   const evaluation = buildFallbackEvaluation({
     ...input,
     legacyTask,
-    artifactRequired,
+    // The gateway is the sole producer: recipe-quality.json is never "required"
+    // from the worker, so a missing file is regenerated from structure, not failed.
+    artifactRequired: false,
   });
   const artifact = mergeStructuralEvaluation(evaluation.artifact, structural);
   return { artifact, signal: buildSignal(run.id, artifact) };

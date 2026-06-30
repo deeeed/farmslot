@@ -31,7 +31,7 @@ import {
 import { MAX_ARTIFACT_TREE_DEPTH, slotReadFile } from '../core/slot-io.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
-import { isRecipeQualityArtifact } from '../quality/recipe-quality.js';
+import { isRecipeQualityArtifact, loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
 
 import {
   artifactScanFilters,
@@ -698,9 +698,7 @@ export async function resolveWorkerTaskDir(run: LiveRecipeReadCtx): Promise<stri
     const orchRoot = getOrchestratorTaskRoot(run.project, pv?.projectJson ?? null);
     const taskRelDir = resolveTaskRelDir(run.taskFile, orchRoot);
     if (taskRelDir === null) return null;
-    const taskDirName = pv
-      ? resolveProjectTaskDirName(pv.projectJson)
-      : DEFAULT_TASK_DIR;
+    const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
     return path.join(vars.remoteRepo, taskDirName, taskRelDir);
   } catch {
     return null;
@@ -748,6 +746,36 @@ async function readLatestValidRecipeRunPointerFromRoots(
   return staleFallback;
 }
 
+/**
+ * Badge status for the current-artifacts group, derived from the gateway's
+ * canonical recipe-quality evaluator — the same single source the family
+ * leaderboard reads — so the per-run badge and the leaderboard can never disagree.
+ * good/ok map to pass (the recipe proved the feature; ok = warn), bad to fail.
+ */
+async function currentArtifactsGroupStatus(
+  run: Run,
+  context: Pick<LiveRecipeContext, 'recipeJson' | 'artifactRoot'>,
+): Promise<RecipeRunArtifactGroupStatus> {
+  // Derive the badge through the canonical evaluator — the same source the family
+  // leaderboard uses — pointed at THIS artifact root so a schema-valid file there
+  // is reused and structurally merged (not the raw verdict, which could disagree
+  // with the leaderboard). good/ok -> pass (recipe proved the feature), bad -> fail.
+  if (!context.artifactRoot) return 'unknown';
+  const recipeCoverage = await readPortableTextIfExists(
+    run,
+    path.join(context.artifactRoot, 'recipe-coverage.md'),
+  );
+  const { signal } = await loadRecipeQualityEvaluation({
+    run,
+    artifactDir: context.artifactRoot,
+    recipeJson: context.recipeJson,
+    recipeCoverage,
+  });
+  if (signal.semantic === 'good' || signal.semantic === 'ok') return 'pass';
+  if (signal.semantic === 'bad') return 'fail';
+  return 'unknown';
+}
+
 export async function listRecipeRunArtifactGroupsForRun(
   run: Run,
 ): Promise<RecipeRunArtifactGroup[]> {
@@ -777,7 +805,7 @@ export async function listRecipeRunArtifactGroupsForRun(
       label: 'Recipe package',
       groupKind: 'current-artifacts',
       promoted: false,
-      status: 'unknown',
+      status: await currentArtifactsGroupStatus(run, current),
       ...current,
     });
     break;
@@ -791,7 +819,7 @@ export async function listRecipeRunArtifactGroupsForRun(
         label: 'Inherited recipe package',
         groupKind: 'current-artifacts',
         promoted: false,
-        status: 'unknown',
+        status: await currentArtifactsGroupStatus(run, inherited),
         ...inherited,
       });
     }

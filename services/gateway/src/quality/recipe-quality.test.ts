@@ -116,7 +116,11 @@ test('loadRecipeQualityEvaluation preserves a valid worker artifact', async () =
   assert.equal(evaluation.signal.semantic, 'good');
 });
 
-test('loadRecipeQualityEvaluation can evaluate invalid artifacts without rewriting them', async () => {
+test('loadRecipeQualityEvaluation regenerates from recipe structure when the existing artifact is non-conformant (read-only)', async () => {
+  // The gateway is the sole producer: a non-conformant file (e.g. an old worker
+  // hand-authored compact shape) is never salvaged or fabricated into a fail — it
+  // is regenerated from the recipe structure, and the evaluator never writes on read,
+  // so the on-disk file is left untouched.
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-readonly-invalid-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Task\nWrite artifacts/recipe-quality.json\n');
@@ -127,49 +131,14 @@ test('loadRecipeQualityEvaluation can evaluate invalid artifacts without rewriti
   const evaluation = await loadRecipeQualityEvaluation({
     run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'fix-bug' }),
     recipeJson: '{"workflow":{"entry":"start","nodes":{"start":{"action":"assert"}}}}',
-    persistInvalidArtifact: false,
   });
 
-  assert.equal(evaluation.artifact.verdict, 'fail');
+  assert.ok(isRecipeQualityArtifact(evaluation.artifact));
+  // Regenerated from the recipe structure (not salvaged, not fabricated into a fail).
+  assert.notEqual(evaluation.artifact.meta.producer, 'worker');
   assert.equal(
     await readFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), 'utf-8'),
     invalidArtifact,
-  );
-});
-
-test('loadRecipeQualityEvaluation can adapt legacy recipe-quality artifacts read-only', async () => {
-  const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-legacy-'));
-  const taskDir = path.join(base, 'task');
-  const taskFile = await writeTaskFile(taskDir, '# Legacy task\n');
-  await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
-  const legacyArtifact = JSON.stringify(
-    {
-      version: 1,
-      overall: 'pass',
-      checks: [
-        { name: 'covers_feature', verdict: 'pass', evidence: 'AC1 and AC2 passed live.' },
-        { name: 'visual_evidence', verdict: 'pass', evidence: 'after.mp4 captured the flow.' },
-      ],
-      notes: ['Live validation passed.'],
-    },
-    null,
-    2,
-  );
-  await writeFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), legacyArtifact, 'utf-8');
-
-  const evaluation = await loadRecipeQualityEvaluation({
-    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'fix-bug' }),
-    recipeJson: '{"workflow":{"entry":"start","nodes":{"start":{"action":"assert"}}}}',
-    persistInvalidArtifact: false,
-    acceptLegacyArtifact: true,
-  });
-
-  assert.equal(evaluation.artifact.verdict, 'pass');
-  assert.equal(evaluation.signal.semantic, 'good');
-  assert.equal(evaluation.artifact.dimensions.covers_feature.status, 'pass');
-  assert.equal(
-    await readFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), 'utf-8'),
-    legacyArtifact,
   );
 });
 
@@ -277,7 +246,11 @@ test('loadRecipeQualityEvaluation warns when legacy recipe coverage exists witho
   await assert.rejects(readFile(path.join(taskDir, 'artifacts', 'recipe-quality.json'), 'utf-8'));
 });
 
-test('loadRecipeQualityEvaluation fails when required artifact is missing for explicit opt-in task', async () => {
+test('loadRecipeQualityEvaluation does not hard-fail on a missing artifact (gateway is sole producer)', async () => {
+  // Even when the task text mentions artifacts/recipe-quality.json, a missing file
+  // is no longer a hard "required artifact missing" fail — it is regenerated from
+  // the recipe structure, so legacy/non-farmslot tasks that still mention the old
+  // artifact are not penalized.
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-required-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(
@@ -292,9 +265,12 @@ test('loadRecipeQualityEvaluation fails when required artifact is missing for ex
     recipeJson: '{"entry":"start"}\n',
   });
 
-  assert.equal(evaluation.artifact.verdict, 'fail');
-  assert.equal(evaluation.signal.semantic, 'bad');
-  assert.match(evaluation.artifact.compact.reasons.join(' '), /missing/i);
+  assert.ok(isRecipeQualityArtifact(evaluation.artifact));
+  assert.equal(evaluation.artifact.meta.artifact_required, false);
+  assert.doesNotMatch(
+    evaluation.artifact.compact.reasons.join(' '),
+    /required.*missing|missing.*required/i,
+  );
 });
 
 test('loadRecipeQualityEvaluation warns for dev task without recipe artifacts', async () => {
@@ -339,7 +315,9 @@ test('loadRecipeQualityEvaluation warns for review-pr task without recipe artifa
   assert.equal(evaluation.signal.source, 'report');
 });
 
-test('loadRecipeQualityEvaluation warns when legacy recipe json exists without canonical artifact', async () => {
+test('loadRecipeQualityEvaluation derives pass from a structurally valid recipe (no hand-authored artifact)', async () => {
+  // Gateway is sole producer: with no recipe-quality.json, the verdict comes from
+  // the recipe structure — a fully valid recipe earns `pass`/good, not a capped warn.
   const base = await mkdtemp(path.join(os.tmpdir(), 'recipe-quality-legacy-recipe-json-'));
   const taskDir = path.join(base, 'task');
   const taskFile = await writeTaskFile(taskDir, '# Legacy task\n');
@@ -358,7 +336,8 @@ test('loadRecipeQualityEvaluation warns when legacy recipe json exists without c
     recipeJson,
   });
 
-  assert.equal(evaluation.artifact.verdict, 'warn');
+  assert.equal(evaluation.artifact.verdict, 'pass');
+  assert.equal(evaluation.signal.semantic, 'good');
   assert.equal(evaluation.artifact.meta.artifact_required, false);
   assert.equal(evaluation.signal.source, 'recipe-json');
 });
@@ -471,7 +450,9 @@ test('loadRecipeQualityEvaluation accepts direct-format entry/nodes recipes', as
     }),
   });
 
-  assert.equal(evaluation.artifact.verdict, 'warn');
+  // Gateway is sole producer: a structurally valid recipe earns `pass` from the
+  // structural evaluation even without a hand-authored recipe-quality.json.
+  assert.equal(evaluation.artifact.verdict, 'pass');
   assert.equal(evaluation.artifact.dimensions.graph_integrity.status, 'pass');
   assert.doesNotMatch(
     JSON.stringify(evaluation.artifact.structural_findings),

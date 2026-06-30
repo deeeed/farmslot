@@ -115,8 +115,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 - [ ] **11. Read every screenshot** — Read tool on each PNG. Build per-AC matrix (see `review-quality.md`). Verify hosted URLs return HTTP 200 when used in PR body.
 - [ ] **12. fs-recipe-quality pass** — when `recipe.json` exists in PR body, inherited inputs, or author artifacts:
   - Critique recipe graph + evidence fit
-  - Write `{{TASK_DIR}}/artifacts/recipe-coverage.md`
-  - Write `{{TASK_DIR}}/artifacts/recipe-quality.json` if you repair/generate review recipe
+  - Write `{{TASK_DIR}}/artifacts/recipe-coverage.md` (gateway computes recipe-quality)
   - **light:** skip 12 if no recipe; note in report
 
 ### Live validation (13–16) [standard+full]

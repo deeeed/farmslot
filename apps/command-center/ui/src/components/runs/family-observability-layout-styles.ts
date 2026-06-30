@@ -268,6 +268,27 @@ export const familyObservabilityLayoutStyles = css`
     cursor: pointer;
     text-align: center;
   }
+  .compare-section-label {
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-weight: 600;
+    font-size: 12px;
+    margin: ${unsafeCSS(spacing.md)} 0 ${unsafeCSS(spacing.sm)};
+  }
+  .compare-gate-grid {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(280px, 1fr);
+    gap: ${unsafeCSS(spacing.md)};
+    overflow-x: auto;
+  }
+  .compare-gate-col.selected {
+    outline: 1px solid ${unsafeCSS(colors.accent)};
+    border-radius: 6px;
+  }
+  .compare-gate-col > .lane-label {
+    font-weight: 600;
+    margin-bottom: ${unsafeCSS(spacing.xs)};
+  }
   .compare-evidence-hint {
     color: ${unsafeCSS(colors.textMuted)};
     font-size: 11px;
