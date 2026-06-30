@@ -4,6 +4,8 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+## 0.7.0 - 2026-06-30
+
 - Add Gateway Doctor catalog/report fields plus section-scoped request parameters for progressive clients.
 
 ## 0.6.0 - 2026-06-02

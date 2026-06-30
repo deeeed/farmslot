@@ -4,7 +4,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+## 0.3.2 - 2026-06-30
+
 - Document `orchestrateRuntimeUp` `build` decision as terminal — hosts must call again after native build finishes.
+- Use the installed `capture-helper` package for capture runs.
 
 ## 0.3.1 - 2026-06-26
 
