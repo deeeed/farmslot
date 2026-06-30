@@ -1,5 +1,5 @@
-import type { FlowType } from '../contracts/runs.js';
 import type { WorkerTemplateOption } from '../contracts/config.js';
+import type { FlowType } from '../contracts/runs.js';
 
 export type DispatchRunMode = 'interactive' | 'autonomous';
 export type RunCreateMode = DispatchRunMode | 'validation';
@@ -60,11 +60,7 @@ export function resolveRunCreateMode(input: {
   taskTemplateFileName?: string | null;
   templateOptions?: ReadonlyArray<WorkerTemplateOption>;
 }): RunCreateMode {
-  if (
-    input.mode === 'interactive' ||
-    input.mode === 'autonomous' ||
-    input.mode === 'validation'
-  ) {
+  if (input.mode === 'interactive' || input.mode === 'autonomous' || input.mode === 'validation') {
     return input.mode;
   }
   const selectedFileName =

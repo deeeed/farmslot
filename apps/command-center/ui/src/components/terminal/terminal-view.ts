@@ -18,13 +18,11 @@ import {
   extractOsc52Clipboard,
   parseWorkerRef,
   terminalHasTarget,
-  terminalMatchesTarget,
   terminalPriorTargetIdentity,
   terminalRoleExitDecision,
   terminalTargetChanged,
-  terminalTargetStateFromIdentity,
-  terminalTargetLabel,
   terminalTargetParams,
+  terminalTargetStateFromIdentity,
 } from './terminal-view-model.js';
 import {
   renderTerminalChrome,

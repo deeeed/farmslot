@@ -81,7 +81,6 @@ import {
   updateRunStep,
 } from '../runs/store.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
-import { normalizeRunCreateMode } from './run-create-mode.js';
 
 import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
@@ -100,6 +99,7 @@ import {
   isManualBacklogRef,
   isValidTicketForFlow,
 } from './run/ticket-policy.js';
+import { normalizeRunCreateMode } from './run-create-mode.js';
 
 type Emit = (event: string, payload: unknown) => void;
 

@@ -1,8 +1,4 @@
-import {
-  resolveRunCreateMode,
-  type ProjectConfig,
-  type RunCreateParams,
-} from '@farmslot/protocol';
+import { type ProjectConfig, resolveRunCreateMode, type RunCreateParams } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
 import { listWorkerTemplateOptions } from '../tasks/worker-template-options.js';
