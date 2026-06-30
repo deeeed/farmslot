@@ -48,8 +48,13 @@ function invalidNoChangeSignal(signal: WorkerSignal, reason: string): WorkerSign
 }
 
 function validateNoChangeEvidence(signal: WorkerSignal): string | null {
-  if (!signal.evidence?.reportPath?.trim()) {
+  const reportPath = signal.evidence?.reportPath?.trim();
+  if (!reportPath) {
     return 'evidence.reportPath is required (use ./mark no-change after writing artifacts/no-change-report.md)';
+  }
+  const normalized = reportPath.replace(/^\.\//, '').replace(/\\/g, '/');
+  if (normalized !== 'artifacts/no-change-report.md') {
+    return 'evidence.reportPath must be artifacts/no-change-report.md';
   }
   return null;
 }

@@ -67,6 +67,23 @@ parsed = JSON.parse(readFileSync(noChangeSignal, 'utf8'));
 assert.equal(parsed.disposition, 'not_reproducible');
 assert.equal(parsed.evidence.reportPath, 'artifacts/no-change-report.md');
 
+result = spawnSync(
+  process.execPath,
+  [
+    helper,
+    noChangeTask,
+    noChangeSignal,
+    'no-change',
+    '--reason',
+    'already fixed on main',
+    '--already-fixed',
+  ],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(readFileSync(noChangeSignal, 'utf8'));
+assert.equal(parsed.disposition, 'already_fixed');
+
 const missingReportDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-nochange-missing-'));
 const missingReportTask = path.join(missingReportDir, 'TASK.md');
 const missingReportSignal = path.join(missingReportDir, 'SIGNAL.json');

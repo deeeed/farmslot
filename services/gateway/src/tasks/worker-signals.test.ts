@@ -117,6 +117,20 @@ test('normalizeWorkerSignal converts missing no-change report path to blocked pa
   assert.match(result.ok ? (result.signal.reason ?? '') : '', /reportPath/);
 });
 
+test('normalizeWorkerSignal rejects non-canonical no-change report paths', () => {
+  const result = normalizeWorkerSignal({
+    status: 'complete',
+    outcome: 'success',
+    disposition: 'not_reproducible',
+    evidence: { reportPath: 'artifacts/other-report.md' },
+    timestamp: '2026-05-05T01:00:00Z',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.signal.status, 'blocked');
+  assert.match(result.ok ? (result.signal.reason ?? '') : '', /artifacts\/no-change-report\.md/);
+});
+
 test('normalizeWorkerSignal rejects non-no-change inconsistent tuples', () => {
   const result = normalizeWorkerSignal({
     status: 'failed',
