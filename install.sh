@@ -241,7 +241,7 @@ PYREAL
     "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
     "${npm_root}/@siteed/capture-helper/native/capture-helper" \
     "${command_real%/bin/capture-helper.js}/native/capture-helper"; do
-    if [ -n "$candidate" ] && [ -x "$candidate" ] && [ "$candidate" != */node_modules/.bin/capture-helper ]; then
+    if [[ -n "$candidate" && -x "$candidate" && "$candidate" != */node_modules/.bin/capture-helper ]]; then
       printf '%s' "$candidate"
       return 0
     fi

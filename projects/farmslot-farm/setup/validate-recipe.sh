@@ -14,11 +14,11 @@ resolve_capture_helper_bin() {
   npm_root="$(npm root -g 2>/dev/null || true)"
   local candidate
   for candidate in \
+    "${CAPTURE_HELPER_PATH:-}" \
+    "${SITEED_CAPTURE_HELPER_BIN:-}" \
     "${PRIMARY_REPO}/node_modules/@siteed/capture-helper/native/capture-helper" \
     "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
-    "${npm_root}/@siteed/capture-helper/native/capture-helper" \
-    "${SITEED_CAPTURE_HELPER_BIN:-}" \
-    "${CAPTURE_HELPER_PATH:-}"; do
+    "${npm_root}/@siteed/capture-helper/native/capture-helper"; do
     if [[ -n "${candidate}" && -x "${candidate}" && "${candidate}" != */node_modules/.bin/capture-helper ]]; then
       printf '%s' "${candidate}"
       return 0

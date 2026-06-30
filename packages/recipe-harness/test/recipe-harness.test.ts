@@ -49,6 +49,19 @@ async function createTempRoot(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'farmslot-recipe-harness-'));
 }
 
+async function waitForFile(filePath: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await readFile(filePath);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw new Error(`Timed out waiting for ${filePath}`);
+}
+
 async function listRelativeFiles(root: string): Promise<string[]> {
   const output: string[] = [];
   async function visit(relativeDir: string): Promise<void> {
@@ -541,10 +554,12 @@ test('capture-helper recorder stop sends SIGINT and returns recorder metadata', 
   const tempRoot = await createTempRoot();
   try {
     const helperPath = path.join(tempRoot, 'fake-capture-helper.cjs');
+    const readyPath = path.join(tempRoot, 'ready.txt');
     await writeFile(
       helperPath,
       `#!/usr/bin/env node
 const { writeFileSync } = require('node:fs');
+writeFileSync(${JSON.stringify(readyPath)}, 'ready');
 const output = process.argv[process.argv.indexOf('--output') + 1];
 process.on('SIGINT', () => {
   writeFileSync(output, 'fake mp4');
@@ -563,7 +578,7 @@ setInterval(() => {}, 1000);
       nodeId: 'recipe-run',
       record: 'full_run',
     });
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitForFile(readyPath);
     const result = await active.stop();
 
     assert.match(await readFile(outputPath, 'utf-8'), /fake mp4/);
@@ -581,9 +596,12 @@ test('capture-helper recorder stop times out when the helper ignores SIGINT', as
   const tempRoot = await createTempRoot();
   try {
     const helperPath = path.join(tempRoot, 'stuck-capture-helper.cjs');
+    const readyPath = path.join(tempRoot, 'stuck-ready.txt');
     await writeFile(
       helperPath,
       `#!/usr/bin/env node
+const { writeFileSync } = require('node:fs');
+writeFileSync(${JSON.stringify(readyPath)}, 'ready');
 process.on('SIGINT', () => {});
 setInterval(() => {}, 1000);
 `,
@@ -601,7 +619,7 @@ setInterval(() => {}, 1000);
       record: 'full_run',
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitForFile(readyPath);
     await assert.rejects(() => active.stop(), /did not stop within 50ms after SIGINT/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
