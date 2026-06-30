@@ -291,6 +291,20 @@ describe('cursor runner', () => {
     assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
   });
 
+  it('does not combine auth words across unrelated lines of leftover pane prose', () => {
+    // Prior worker's recap left on screen: "auth" and "needed" live on separate
+    // lines and neither line is itself an auth blocker. Flattening the whole pane
+    // used to merge them into one false auth-required match.
+    const pane = [
+      'writes need auth + hit a hook, and two things stacked:',
+      '1. osxkeychain credential helper blocks waiting for keychain access.',
+      'Install the observability hooks where needed before launch.',
+      '❯ ',
+    ].join('\n');
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'claude'), null);
+  });
+
   it('detects Codex instructions buffered at the live composer without progress', async () => {
     const message = await dispatchPrompt('temp/tasks/fix/demo/SELF-REVIEW-FIX.md');
     const pane = `
