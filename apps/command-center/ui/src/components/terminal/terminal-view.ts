@@ -456,6 +456,7 @@ export class TerminalView extends TerminalViewState {
     if (!this._terminal || this._mode !== 'pty' || this._ptyReady) return;
 
     this._attachPhase = 'sizing';
+    this._fitAddon?.fit();
     const cols = this._terminal.cols;
     const rows = this._terminal.rows;
     if (cols <= 0 || rows <= 0) {
@@ -478,11 +479,62 @@ export class TerminalView extends TerminalViewState {
     }
     if (subscribeSeq !== this._subscribeSeq) return;
 
-    this._terminal.clear();
+    // Start accepting PTY bytes before forcing a redraw. While sizing we dropped
+    // the SIGWINCH screen from the initial cols-1 attach; clearing xterm here left
+    // only status-line fragments (the ''''/hhhh garbage). Bounce size after we're
+    // listening so tmux emits a full screen we keep.
     this._ptyReady = true;
     this._attachPhase = 'live';
     this._reconnecting = false;
     this._recoveryMessage = '';
+    await this._nudgePtyRedraw(cols, rows, subscribeSeq);
+    await this._seedPtyViewportIfEmpty(subscribeSeq);
+    this._terminal.scrollToBottom();
+  }
+
+  /** When SIGWINCH redraw is dropped during sizing, seed from tmux capture-pane once. */
+  private async _seedPtyViewportIfEmpty(subscribeSeq: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (subscribeSeq !== this._subscribeSeq || !this._terminal || this._mode !== 'pty') return;
+    const rows = this._terminal.rows;
+    const hasVisible = Array.from({ length: rows }, (_, i) =>
+      this._terminal!.buffer.active.getLine(i)?.translateToString(true),
+    ).some((line) => line?.trim());
+    if (hasVisible) return;
+
+    const worker = this._workerRef();
+    try {
+      const snap = await gateway.request<{ lines: string[] }>(
+        worker ? Methods.TERMINAL_WORKER_SNAPSHOT : Methods.TERMINAL_SNAPSHOT,
+        { ...this._targetParams(), lines: Math.max(rows, 80) },
+      );
+      if (subscribeSeq !== this._subscribeSeq || !snap.lines.length) return;
+      this._terminal.write(`${snap.lines.join('\n')}\n`);
+      this._terminal.scrollToBottom();
+      this._log('seed-snapshot', `lines=${snap.lines.length}`);
+    } catch (err) {
+      this._warn('pty viewport seed', err);
+    }
+  }
+
+  /** Shrink by one column then restore — forces tmux to redraw the full pane. */
+  private async _nudgePtyRedraw(
+    cols: number,
+    rows: number,
+    subscribeSeq = this._subscribeSeq,
+  ): Promise<void> {
+    if (subscribeSeq !== this._subscribeSeq) return;
+    if (cols <= 1 || rows <= 0) return;
+    const method = this._workerRef() ? Methods.TERMINAL_WORKER_RESIZE : Methods.TERMINAL_RESIZE;
+    const params = () => ({ ...this._targetParams(), rows });
+    try {
+      await gateway.request(method, { ...params(), cols: cols - 1 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (subscribeSeq !== this._subscribeSeq) return;
+      await gateway.request(method, { ...params(), cols });
+    } catch (err) {
+      this._warn('terminal redraw nudge', err);
+    }
   }
 
   private _sendResize() {

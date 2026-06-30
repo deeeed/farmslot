@@ -151,7 +151,10 @@ async function assertInteractiveTargetReady(
 
 async function resolveBareSession(slotId: string): Promise<{ target: string; session: string }> {
   const vars = await loadSlotVars(slotId);
-  const session = await resolveTmuxSession(slotId, vars);
+  // Strict: use the slot's canonical session name (pool `session` field) and let
+  // reinit create it. Repo-path discovery can attach to unrelated sessions in the
+  // same worktree (e.g. farmslot-demo-banner-ff2) and stream garbage status UI.
+  const session = await resolveTmuxSession(slotId, vars, { strict: true });
   return { target: session, session };
 }
 

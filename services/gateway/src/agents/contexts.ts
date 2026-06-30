@@ -170,7 +170,7 @@ export async function resolveAgentTarget(
     const targetSession = target.split(':')[0] || target;
     // Validate the target session belongs to this slot
     const vars = await loadSlotVars(slotId);
-    const expectedSession = await resolveTmuxSession(slotId, vars);
+    const expectedSession = await resolveTmuxSession(slotId, vars, { strict: true });
     if (targetSession !== expectedSession) {
       throw new Error(
         `Target session ${targetSession} does not belong to slot ${slotId} (expected ${expectedSession})`,
@@ -222,7 +222,7 @@ export async function resolveAgentTarget(
   }
 
   const vars = await loadSlotVars(slotId);
-  const session = await resolveTmuxSession(slotId, vars);
+  const session = await resolveTmuxSession(slotId, vars, { strict: true });
   const role = ctx?.role ?? selector?.role;
   const contextId = ctx?.id ?? (role ? contextIdFor(role) : undefined);
   // Only construct a role-scoped window target when no context exists (explicit
