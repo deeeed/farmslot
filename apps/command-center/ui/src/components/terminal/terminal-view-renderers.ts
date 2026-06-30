@@ -4,6 +4,12 @@ import { Methods } from '@farmslot/protocol';
 
 import { isSlotPinned, togglePinnedSlot } from '../../utils/pinned-slots.js';
 
+import {
+  terminalAttachOverlay,
+  type TerminalAttachPhase,
+  terminalShowsLiveBadge,
+} from './terminal-view-attach-model.js';
+
 export type TerminalMode = 'pty' | 'poll' | 'none';
 
 export interface TmuxWindowSummary {
@@ -22,12 +28,15 @@ export function renderRunnerBadge(runner: string, model: string, agent: string) 
   </span>`;
 }
 
-export function renderTerminalModeBadge(mode: TerminalMode) {
-  if (mode === 'pty') {
+export function renderTerminalModeBadge(mode: TerminalMode, attachPhase: TerminalAttachPhase) {
+  if (terminalShowsLiveBadge(mode, attachPhase)) {
     return html`<span class="badge mode-pty">LIVE</span>`;
   }
-  if (mode === 'poll') {
+  if (mode === 'poll' && attachPhase === 'live') {
     return html`<span class="badge mode-poll">OBSERVE</span>`;
+  }
+  if (mode === 'pty' && attachPhase !== 'idle') {
+    return html`<span class="badge mode-connecting">ATTACH</span>`;
   }
   return '';
 }
@@ -216,6 +225,7 @@ export interface TerminalChromeContext {
   isWorkerTarget: boolean;
   lifecycle: string;
   mode: TerminalMode;
+  attachPhase: TerminalAttachPhase;
   agent: string;
   runner: string;
   model: string;
@@ -246,7 +256,8 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
       ${!ctx.isWorkerTarget && ctx.lifecycle
         ? html` <span class="badge ${ctx.lifecycle}">${ctx.lifecycle}</span> `
         : ''}
-      ${renderRunnerBadge(ctx.runner, ctx.model, ctx.agent)} ${renderTerminalModeBadge(ctx.mode)}
+      ${renderRunnerBadge(ctx.runner, ctx.model, ctx.agent)}
+      ${renderTerminalModeBadge(ctx.mode, ctx.attachPhase)}
       ${ctx.agent && ctx.agent !== ctx.lifecycle
         ? html`<span class="agent-state">${ctx.agent}</span>`
         : ''}
@@ -296,19 +307,25 @@ export function renderTerminalChrome(ctx: TerminalChromeContext) {
       : ''}
     ${ctx.toolbar}
     <div class="terminal-wrap">
-      ${ctx.reconnecting || (ctx.hasTarget && ctx.mode === 'none')
-        ? html`
-            <div class="loading-overlay">
-              <div class="spinner">
-                <span class="spinner-dots">...</span>
-                <span class="spinner-text"
-                  >${ctx.recoveryMessage ||
-                  (ctx.reconnecting ? 'Reconnecting' : 'Connecting')}</span
-                >
+      ${(() => {
+        const overlay = terminalAttachOverlay({
+          hasTarget: ctx.hasTarget,
+          attachPhase: ctx.attachPhase,
+          reconnecting: ctx.reconnecting,
+          recoveryMessage: ctx.recoveryMessage,
+          mode: ctx.mode,
+        });
+        return overlay.show
+          ? html`
+              <div class="loading-overlay">
+                <div class="spinner">
+                  <span class="spinner-dots">...</span>
+                  <span class="spinner-text">${overlay.message}</span>
+                </div>
               </div>
-            </div>
-          `
-        : ''}
+            `
+          : '';
+      })()}
       <div class="terminal-container"></div>
       ${ctx.copyToast ? html`<div class="copy-toast">Copied</div>` : ''}
     </div>

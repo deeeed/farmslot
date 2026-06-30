@@ -91,6 +91,11 @@ export const terminalViewStyles = css`
     color: #999;
   }
 
+  .badge.mode-connecting {
+    background: ${unsafeCSS(colors.accent)}22;
+    color: ${unsafeCSS(colors.accent)};
+  }
+
   .runner-badge {
     display: inline-flex;
     align-items: baseline;
