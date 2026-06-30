@@ -215,7 +215,10 @@ export function registerRunCommand(program: Command): void {
       '--prepare-profile <name>',
       "Named prepare profile from the project's prepare.profiles (ADR-037)",
     )
-    .option('--mode <mode>', 'Run mode (interactive, autonomous, validation)')
+    .option(
+      '--mode <mode>',
+      'Run mode (interactive, autonomous, validation). Omitted mode uses dispatch-wizard defaults (gateway applies on create).',
+    )
     .option(
       '--runner <name>',
       'Runner override (claude, codex, opencode, or a runner-aware custom config)',

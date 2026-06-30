@@ -81,6 +81,7 @@ import {
   updateRunStep,
 } from '../runs/store.js';
 import { resolveWorkerTemplateSelectionForRun } from '../tasks/worker-template-options.js';
+import { normalizeRunCreateMode } from './run-create-mode.js';
 
 import { resolveDispatchTargetBranch } from './dispatch/target-branch.js';
 import {
@@ -218,6 +219,8 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   // policy > runner intrinsic fallback. Applied before createRun so the run
   // persists the resolved tier and chained runs inherit it.
   params.safetyTier = resolveCreateSafetyTier(params.safetyTier, projectConfig?.defaultSafetyTier);
+
+  await normalizeRunCreateMode(params);
 
   const { lane, variant } = normalizeRunClassification(params);
   params.lane = lane;
