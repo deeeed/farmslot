@@ -201,7 +201,7 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
   "dependencies": {
     "ws": "^8.18.0",
     "tsx": "^4.19.0",
-    "@siteed/capture-helper": "^0.1.8"
+    "@siteed/capture-helper": "^0.2.1"
   }
 }
 PKGJSON
@@ -228,8 +228,14 @@ if [[ "$HAS_YARN" == *"yes" ]]; then
 else
   run "cd $REMOTE_DIR && PATH=$NODE_DIR:\$PATH npm install 2>&1 | tail -5"
 fi
+CAPTURE_HELPER_REMOTE="$REMOTE_DIR/node_modules/@siteed/capture-helper/native/capture-helper"
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
-  run "test -x $REMOTE_DIR/node_modules/.bin/capture-helper"
+  run "test -x $CAPTURE_HELPER_REMOTE"
+  if run "PATH=$NODE_DIR:\$PATH $NODE_PATH -e 'const { spawnSync } = require(\"node:child_process\"); const bin = process.argv[1]; const result = spawnSync(bin, [\"doctor\", \"--json\"], { encoding: \"utf8\", timeout: 15000, maxBuffer: 1024 * 1024 }); if (result.status !== 0) { process.stderr.write(result.stderr || result.stdout || (result.error && result.error.message) || \"capture-helper doctor failed\"); process.exit(1); }' $CAPTURE_HELPER_REMOTE"; then
+    echo "[deploy] capture-helper doctor ok"
+  else
+    echo "[deploy] WARNING: capture-helper doctor failed on $MACHINE; grant Screen Recording permission or run: $CAPTURE_HELPER_REMOTE doctor --open-permissions" >&2
+  fi
 fi
 
 # --- rsync protocol AFTER yarn install (yarn wipes unmanaged node_modules) ---
@@ -240,7 +246,6 @@ rsync -a --delete "$PROTOCOL_SRC/dist/" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules
 rsync -a "$PROTOCOL_SRC/package.json" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/package.json"
 
 # --- Install service (platform-specific) ---
-CAPTURE_HELPER_REMOTE="$REMOTE_DIR/node_modules/.bin/capture-helper"
 
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
   PLIST_NAME="com.farmslot.node"

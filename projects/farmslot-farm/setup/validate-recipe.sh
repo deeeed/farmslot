@@ -6,16 +6,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRIMARY_REPO="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Homebrew/npm `capture-helper` is a Node shim whose candidate list can recurse into
-# itself (/opt/homebrew/bin/capture-helper), hanging doctor/record. Prefer the native
-# binary before a stale CAPTURE_HELPER_PATH that may point at a broken checkout.
+# Prefer the standalone package's native binary over npm/Homebrew shims. Some
+# wrapper shims can recurse into themselves when SITEED_CAPTURE_HELPER_BIN points
+# at a shim path, hanging doctor/record and leaking capture-helper processes.
 resolve_capture_helper_bin() {
+  local npm_root=""
+  npm_root="$(npm root -g 2>/dev/null || true)"
   local candidate
   for candidate in \
+    "${PRIMARY_REPO}/node_modules/@siteed/capture-helper/native/capture-helper" \
     "${HOME}/.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper" \
-    "${CAPTURE_HELPER_PATH:-}" \
-    "${SITEED_CAPTURE_HELPER_BIN:-}"; do
-    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+    "${npm_root}/@siteed/capture-helper/native/capture-helper" \
+    "${SITEED_CAPTURE_HELPER_BIN:-}" \
+    "${CAPTURE_HELPER_PATH:-}"; do
+    if [[ -n "${candidate}" && -x "${candidate}" && "${candidate}" != */node_modules/.bin/capture-helper ]]; then
       printf '%s' "${candidate}"
       return 0
     fi

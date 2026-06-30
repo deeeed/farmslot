@@ -40,7 +40,10 @@ class CaptureHelperVideoRecorder implements VideoRecorder {
 
   constructor(options: CaptureHelperVideoRecorderOptions) {
     this.#captureHelperPath =
-      options.captureHelperPath ?? process.env.CAPTURE_HELPER_PATH ?? 'capture-helper';
+      options.captureHelperPath ??
+      process.env.CAPTURE_HELPER_PATH ??
+      process.env.SITEED_CAPTURE_HELPER_BIN ??
+      'capture-helper';
     this.#stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
   }
 

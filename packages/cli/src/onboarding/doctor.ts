@@ -1,8 +1,8 @@
 // onboarding/doctor.ts — health checks for an installed farmslot workspace.
 // Standalone `farmslot doctor`; install.sh / project add / update all end with it.
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, readlinkSync, statSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 
 import { probeGatewayAuth } from '../gateway-auth.js';
 import { loadProfiles, profileCredential } from '../gateway-profiles.js';
@@ -335,6 +335,46 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
   return { title: 'CLI', checks };
 }
 
+function captureHelperDoctorBin(): string | null {
+  const candidates = [
+    process.env.CAPTURE_HELPER_PATH,
+    process.env.SITEED_CAPTURE_HELPER_BIN,
+    join(
+      process.env.HOME ?? '',
+      '.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper',
+    ),
+    globalCaptureHelperNativeBin(),
+    commandCaptureHelperNativeBin(),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  for (const candidate of candidates) {
+    if (candidate.endsWith('/node_modules/.bin/capture-helper')) continue;
+    if (existsSync(candidate)) return candidate;
+  }
+  return commandPath('capture-helper');
+}
+
+function globalCaptureHelperNativeBin(): string | null {
+  const npm = commandPath('npm');
+  if (!npm) return null;
+  const result = spawnSync(npm, ['root', '-g'], { encoding: 'utf-8', timeout: 2_000 });
+  const root = result.status === 0 ? result.stdout.trim() : '';
+  if (!root) return null;
+  return join(root, '@siteed/capture-helper/native/capture-helper');
+}
+
+function commandCaptureHelperNativeBin(): string | null {
+  const bin = commandPath('capture-helper');
+  if (!bin) return null;
+  try {
+    const real = realpathSync(bin);
+    if (!real.endsWith('/bin/capture-helper.js')) return null;
+    return join(dirname(dirname(real)), 'native/capture-helper');
+  } catch {
+    return null;
+  }
+}
+
 function captureHelperSection(): DoctorSection {
   if (process.platform !== 'darwin') {
     return {
@@ -349,7 +389,7 @@ function captureHelperSection(): DoctorSection {
       ],
     };
   }
-  const bin = commandPath('capture-helper');
+  const bin = captureHelperDoctorBin();
   if (!bin) {
     return {
       title: 'Capture',

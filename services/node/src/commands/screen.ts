@@ -9,6 +9,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 
+import { captureHelperPath } from './capture-helper-path.js';
 import { ensureLiveBrowserPid } from './screen-browser-pid.js';
 import { buildStreamSink, createSinkStats, trackSinkFrame } from './screen-sinks.js';
 export { screenshotForSlot } from './screen-screenshot.js';
@@ -33,7 +34,7 @@ let machineCapture: MachineCapture | null = null;
 const MACOS_CAPTURE_WAIT_TIMEOUT_MS = 60_000;
 const RECORDING_MAX_QUEUE_BYTES = 4 * 1024 * 1024;
 
-const CAPTURE_HELPER_PATH = process.env.CAPTURE_HELPER_PATH ?? 'capture-helper';
+const CAPTURE_HELPER_PATH = captureHelperPath();
 
 function log(action: string, slotId: string, detail?: string) {
   const parts = [`[screen] ${action} slot=${slotId}`];
