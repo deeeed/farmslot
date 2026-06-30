@@ -15,6 +15,7 @@ import type { loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
   firstWindowTarget,
+  resolveTmuxPaneId,
   resolveTmuxSession,
   shellQuote,
   tmuxSendTextCommand,
@@ -45,6 +46,7 @@ import type {
   RunnerActivity,
   RunnerObservability,
 } from './observability-types.js';
+import { probeRunnerHandoffAck } from './prompt-delivery-evidence.js';
 
 /**
  * Env prefix for worker sessions.
@@ -665,7 +667,7 @@ export function runnerPaneHasProgressAfterInstruction(pane: string, message: str
   if (idx === -1) return false;
   const after = compactPane.slice(idx + needle.length);
   return (
-    /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|Starting session|Thinking|Thought|Turn completed|UserPromptSubmit hook|SessionStart hook)\b/i.test(
+    /\b(Working|Running|Reading|Explored|Edited|Editing|Ran|Starting session|Thinking|Thought|Turn completed|UserPromptSubmit hook|SessionStart hook|Effecting|Pollinating)\b/i.test(
       after,
     ) || /[•✔✖]\s/.test(after)
   );
@@ -726,7 +728,7 @@ function runnerPaneShowsCurrentInteractiveProgress(
       // so it shares claude's matcher. Without this, codex progress is never recognized as
       // "task already running" and the readiness gate falsely times out against the timer.
       (runner === 'claude' || runner === 'codex'
-        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored)[…\.]?/i.test(
+        ? /(?:[✻✢✽✶✷✸✹✺✼✣*•]\s*)?(Spinning|Running|Working|Reading|Thinking|Composing|Editing|Explored|Effecting|Pollinating)[…\.]?/i.test(
             tail[i] ?? '',
           ) || /running in the background|esc to interrupt/i.test(tail[i] ?? '')
         : /[⠁-⣿⠀]+\s*(Reading|Composing|Working|Editing|Running|Starting session)\b(?:\s+\d+\s+tokens)?/i.test(
@@ -1010,7 +1012,25 @@ async function runnerShowsPromptDeliveryAccepted(
   postPane: string,
   previousPane: string,
   marker: string,
+  opts: {
+    launchAckSignalPath?: string | null;
+  } = {},
 ): Promise<boolean> {
+  const def = getRunnerDefinition(runner);
+  if (def.observabilityScope === 'event-driven') {
+    const paneId = await resolveTmuxPaneId(vars, target);
+    const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
+      paneId,
+      launchAckSignalPath: opts.launchAckSignalPath,
+      preferHooks: true,
+    });
+    if (handoff.accepted) {
+      console.log(
+        `[runner-observability] prompt handoff accepted via ${handoff.source}: ${handoff.reason}`,
+      );
+      return true;
+    }
+  }
   if (runnerPaneShowsPromptAccepted(postPane, previousPane, message, marker, runner)) {
     return true;
   }
@@ -1365,6 +1385,9 @@ export async function sendRunnerPostLaunchPrompt(
     maxAttempts?: number;
     blockerSnapshotPath?: string;
     signalPath?: string;
+    launchAckSignalPath?: string;
+    softAcceptOnHandoffAck?: boolean;
+    handoffAckSinceMs?: number;
   } = {},
 ): Promise<void> {
   const runner = normalizeRunner(runnerId);
@@ -1373,6 +1396,8 @@ export async function sendRunnerPostLaunchPrompt(
   const pollIntervalMs = opts.pollIntervalMs ?? 1500;
   const verifyWaitMs = opts.verifyWaitMs ?? 2000;
   const maxAttempts = opts.maxAttempts ?? 3;
+  const softAcceptOnHandoffAck = opts.softAcceptOnHandoffAck !== false;
+  const handoffAckSinceMs = opts.handoffAckSinceMs ?? Date.now();
 
   const readyStart = Date.now();
   let lastPane = '';
@@ -1613,6 +1638,16 @@ export async function sendRunnerPostLaunchPrompt(
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
       )
     ).stdout;
+    const preSendHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
+      launchAckSignalPath: opts.launchAckSignalPath,
+      preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+    });
+    if (preSendHandoff.accepted) {
+      console.log(
+        `[${logPrefix}] prompt handoff already accepted before attempt ${attempt}/${maxAttempts}: ${preSendHandoff.reason}`,
+      );
+      return;
+    }
     // The previous attempt's prompt may have been accepted just after its verify
     // window closed (e.g. codex only renders "Working" a few seconds after submit).
     // Re-check before sending again, or we deliver a duplicate prompt that lands as a
@@ -1623,17 +1658,24 @@ export async function sendRunnerPostLaunchPrompt(
       );
       return;
     }
-    const sendCommand = runnerPaneShouldSubmitExistingInstruction(
-      preSendPane,
-      message,
-      marker,
-      runner,
-      { allowMarkerOnly: attempt > 1 },
-    )
-      ? tmuxShellSnippet(
-          `send-keys -t ${shellQuote(target)} ${runnerBufferedInstructionSubmitKey(preSendPane, runner)} 2>/dev/null`,
-        )
-      : tmuxSendTextCommand(target, message, { enter: true });
+    const shouldSubmitOnly =
+      attempt > 1 ||
+      runnerPaneShouldSubmitExistingInstruction(preSendPane, message, marker, runner, {
+        allowMarkerOnly: attempt > 1,
+      });
+    let sendCommand: string;
+    if (shouldSubmitOnly) {
+      sendCommand = tmuxShellSnippet(
+        `send-keys -t ${shellQuote(target)} ${runnerBufferedInstructionSubmitKey(preSendPane, runner)} 2>/dev/null`,
+      );
+    } else {
+      try {
+        await writeRunnerPromptSentinel(vars, message);
+      } catch (error) {
+        console.warn(`[${logPrefix}] failed to write prompt sentinel: ${(error as Error).message}`);
+      }
+      sendCommand = tmuxSendTextCommand(target, message, { enter: true });
+    }
     const sentAtMs = Date.now();
     const promptResult = await execOnSlot(vars, sendCommand);
     if (promptResult.exitCode !== 0) {
@@ -1659,6 +1701,7 @@ export async function sendRunnerPostLaunchPrompt(
         postPane,
         lastPane,
         marker,
+        { launchAckSignalPath: opts.launchAckSignalPath },
       )
     ) {
       console.log(
@@ -1704,6 +1747,18 @@ export async function sendRunnerPostLaunchPrompt(
     if (signalResult.exitCode === 0 && runnerSignalShowsCompletion(signalResult.stdout)) {
       console.log(
         `[${logPrefix}] prompt delivery verifier missed completed task; accepting ${opts.signalPath}`,
+      );
+      return;
+    }
+  }
+  if (softAcceptOnHandoffAck) {
+    const handoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
+      launchAckSignalPath: opts.launchAckSignalPath,
+      preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+    });
+    if (handoff.accepted) {
+      console.warn(
+        `[${logPrefix}] prompt delivery pane verifier failed but handoff evidence accepted via ${handoff.source}: ${handoff.reason}`,
       );
       return;
     }

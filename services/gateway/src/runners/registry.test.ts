@@ -439,6 +439,24 @@ describe('cursor runner', () => {
     );
   });
 
+  it('recognizes Claude Effecting progress labels during readiness wait', async () => {
+    const message = await dispatchPrompt('temp/tasks/feat/tat-3463-0630-074758/SELF-REVIEW.md');
+    const pane = `
+❯ Follow the checklist in temp/tasks/feat/tat-3463-0630-074758/SELF-REVIEW.md. After each step, run
+  temp/tasks/feat/tat-3463-0630-074758/mark N before continuing.
+
+✻ Effecting… (1m 24s · thought for 2s)
+
+───────────────────────────────────────────────────────────────────────────────
+  fs · Opus 4.8 · ctx:5%
+`;
+
+    assert.equal(
+      runnerPaneShowsTaskAlreadyRunning(pane, message, 'SELF-REVIEW.md', 'claude'),
+      true,
+    );
+  });
+
   it('recognizes a Codex task already executing (animated "Working (…)" timer) during readiness wait', async () => {
     const message = await dispatchPrompt('temp/tasks/feat/tat-3215-0601-200704/TASK.md');
     const pane = `

@@ -11,12 +11,7 @@ export interface ObservabilityReading<T> {
   observedAt: number;
 }
 
-export type RunnerActivity =
-  | 'idle'
-  | 'composing'
-  | 'tool-running'
-  | 'awaiting-input'
-  | 'unknown';
+export type RunnerActivity = 'idle' | 'composing' | 'tool-running' | 'awaiting-input' | 'unknown';
 
 export type ObservabilityScope = 'event-driven' | 'pane-only' | 'none';
 
@@ -35,6 +30,7 @@ export interface HookRecord {
   cwd?: string;
   runnerPromptDigest?: string;
   sentAt?: number;
+  tmuxPane?: string;
 }
 
 export interface StatuslineRecord {

@@ -1,3 +1,5 @@
+import { resolveTmuxPaneId } from '../core/tmux.js';
+
 import {
   activeToolFromHooks,
   contextPctFromStatusline,
@@ -38,8 +40,9 @@ export const claudeHookObservability: RunnerObservability = {
     return lastTurnCompletedFromHooks(hooks);
   },
 
-  async promptAccepted(vars, _target, promptDigest, sinceMs) {
+  async promptAccepted(vars, target, promptDigest, sinceMs) {
     const { hooks } = await loadObservabilitySnapshot(vars);
-    return promptAcceptedFromHooks(hooks, promptDigest, sinceMs);
+    const paneId = await resolveTmuxPaneId(vars, target);
+    return promptAcceptedFromHooks(hooks, promptDigest, sinceMs, 500, Date.now(), paneId);
   },
 };

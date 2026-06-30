@@ -16,6 +16,7 @@ import { markAgentContextStatus, upsertAgentContext } from '../agents/contexts.j
 import { loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import {
+  ensureTmuxWindowMinimumSize,
   resolveTmuxSession,
   respawnTmuxWindowWithCommand,
   shellQuote,
@@ -23,10 +24,8 @@ import {
   tmuxShellSnippet,
 } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import {
-  buildLaunchCommand,
-  RUNNER_LAUNCH_READY_TIMEOUT_MS,
-} from '../runners/launch-command.js';
+import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
+import { probeRunnerHandoffAck } from '../runners/prompt-delivery-evidence.js';
 import {
   runnerLineLooksWaiting,
   runnerNeedsPostLaunchPrompt,
@@ -147,6 +146,7 @@ export async function runReviewAgent(
         },
       })) ?? reviewContext;
     await new Promise((r) => setTimeout(r, 500));
+    await ensureTmuxWindowMinimumSize(vars, `${session}:${REVIEW_WINDOW}`);
 
     // Log active windows so we can see what's in the session
     const winList = (
@@ -190,6 +190,7 @@ export async function runReviewAgent(
     });
     launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
     const reviewTarget = `${session}:${REVIEW_WINDOW}`;
+    const handoffAckSinceMs = Date.now();
     debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
     await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd);
     await new Promise((r) => setTimeout(r, TMUX_WINDOW_RESPAWN_SETTLE_MS));
@@ -210,20 +211,40 @@ export async function runReviewAgent(
     // Use the same runner-neutral post-launch protocol as dispatch: wait for a
     // stable runner prompt, send, then verify that the pane echoes our marker.
     if (runnerNeedsPostLaunchPrompt(runner)) {
-      await sendRunnerPostLaunchPrompt(
-        vars,
-        reviewTarget,
-        runner,
-        taskPrompt,
-        'SELF-REVIEW.md',
-        'self-review',
-        {
-          readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
-          maxAttempts: 5,
-          blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
-          signalPath: `${taskDir}/SELF-REVIEW-SIGNAL.json`,
-        },
-      );
+      try {
+        await sendRunnerPostLaunchPrompt(
+          vars,
+          reviewTarget,
+          runner,
+          taskPrompt,
+          'SELF-REVIEW.md',
+          'self-review',
+          {
+            readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
+            maxAttempts: 5,
+            blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
+            signalPath: `${taskDir}/SELF-REVIEW-SIGNAL.json`,
+            launchAckSignalPath: `${taskDir}/SELF-REVIEW-SIGNAL.json`,
+            handoffAckSinceMs,
+            softAcceptOnHandoffAck: true,
+          },
+        );
+      } catch (err) {
+        const handoff = await probeRunnerHandoffAck(
+          vars,
+          reviewTarget,
+          taskPrompt,
+          handoffAckSinceMs,
+          {
+            launchAckSignalPath: `${taskDir}/SELF-REVIEW-SIGNAL.json`,
+            preferHooks: true,
+          },
+        );
+        if (!handoff.accepted) throw err;
+        console.warn(
+          `[self-review] prompt delivery verifier failed but continuing: ${handoff.reason}`,
+        );
+      }
     }
 
     // 6. Watch SELF-REVIEW.md for progress + wait for completion
