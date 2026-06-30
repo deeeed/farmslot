@@ -30,7 +30,8 @@ import '../shared/hydrating-placeholder.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { isSlotPinned, togglePinnedSlot } from '../../utils/pinned-slots.js';
+import { isSlotPinned, listPinnedSlots, togglePinnedSlot } from '../../utils/pinned-slots.js';
+import { isRunListActiveRun } from '../runs/run-list-model.js';
 
 import {
   filterSlotsByGlobalFilters,
@@ -42,6 +43,7 @@ import {
   parseWatchItems,
   parseWorkerRefs,
   selectActiveRunSlotIds,
+  selectPinnedSlotIds,
   STORAGE_KEY,
   type TerminalPane,
   watchEntryDescription,
@@ -518,11 +520,11 @@ export class TerminalSplitView extends LitElement {
     try {
       const [fleetResult, runResult] = await Promise.all([
         gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {}),
-        gateway.request<RunListResult>(Methods.RUN_LIST, { active: true, limit: 1000 }),
+        gateway.request<RunListResult>(Methods.RUN_LIST, { limit: 1000 }),
       ]);
       const activeRuns = selectActiveRunSlotIds(
         fleetResult.fleet.slots,
-        runResult.runs ?? [],
+        (runResult.runs ?? []).filter(isRunListActiveRun),
         this._globalFilters,
       );
       this._selectedSlots = activeRuns;
@@ -532,6 +534,24 @@ export class TerminalSplitView extends LitElement {
       this._save();
     } catch (err) {
       console.warn('[terminal-split-view] failed to open active run slots', err);
+    }
+  }
+
+  private async _showPinnedSlots() {
+    try {
+      const fleetResult = await gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {});
+      const pinned = selectPinnedSlotIds(
+        fleetResult.fleet.slots,
+        listPinnedSlots().map((pin) => pin.slotId),
+        this._globalFilters,
+      );
+      this._selectedSlots = pinned;
+      this._selectedWorkers = [];
+      this._layout = 'auto';
+      this._expandedSlot = null;
+      this._save();
+    } catch (err) {
+      console.warn('[terminal-split-view] failed to open pinned slots', err);
     }
   }
 
@@ -822,7 +842,8 @@ export class TerminalSplitView extends LitElement {
           ? html` <button class="layout-btn" @click=${this._addSlotSelector}>+</button> `
           : ''}
         <button class="layout-btn" @click=${this._showActiveRuns}>Active Runs</button>
-        <button class="layout-btn" @click=${this._openWatchlist}>Open Watchlist</button>
+        <button class="layout-btn" @click=${this._showPinnedSlots}>Pinned</button>
+        <button class="layout-btn" @click=${this._openWatchlist}>Watchlist</button>
         <div class="layout-btns">
           ${(['auto', '1x1', '2x1', '2x2', '3x2', '4x2'] as LayoutMode[]).map(
             (l) => html`

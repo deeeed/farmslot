@@ -19,6 +19,7 @@ import {
   parseWatchItems,
   parseWorkerRefs,
   selectActiveRunSlotIds,
+  selectPinnedSlotIds,
   slotHasActiveRunTerminal,
   tmuxRefTitle,
   watchEntryDescription,
@@ -273,7 +274,7 @@ test('slotHasActiveRunTerminal falls back to fleet phase when run list lags', ()
   assert.equal(isActiveRunTerminalSlot(slot, [], new Map()), true);
 });
 
-test('selectActiveRunSlotIds excludes held blocked runs and respects global filters', () => {
+test('selectActiveRunSlotIds includes held blocked runs and respects global filters', () => {
   const slots = [
     makeSlot('macwork-mm-2', {
       lifecycle: 'held',
@@ -297,15 +298,89 @@ test('selectActiveRunSlotIds excludes held blocked runs and respects global filt
     }),
   ];
 
-  assert.deepEqual(
-    selectActiveRunSlotIds(slots, runs, { projects: [], machines: ['macwork'] }),
-    [],
-  );
+  assert.deepEqual(selectActiveRunSlotIds(slots, runs, { projects: [], machines: ['macwork'] }), [
+    'macwork-mm-2',
+  ]);
   assert.deepEqual(
     filterSlotsByGlobalFilters(slots, {
       projects: ['metamask-mobile-farm'],
       machines: ['macwork'],
     }).map((slot) => slot.slot),
     ['macwork-mm-2'],
+  );
+});
+
+test('selectActiveRunSlotIds resolves active runs from agentContexts when currentRunId is null', () => {
+  const slots = [
+    makeSlot('macwork-core-2', {
+      lifecycle: 'ready',
+      agent: 'idle',
+      currentRunId: null,
+      platform: 'cli',
+      project: 'metamask-core-farm',
+      agentContexts: [
+        {
+          id: 'primary',
+          role: 'primary',
+          label: 'Primary',
+          status: 'blocked',
+          runId: 'run-core-2',
+          taskFile: 'temp/tasks/fix/9311/TASK.md',
+          signalFile: 'temp/tasks/fix/9311/SIGNAL.json',
+          runner: 'claude',
+          model: 'opus',
+          target: { session: 'core-2', window: 'zsh', pane: '1', target: 'core-2:zsh' },
+          nudgeCount: 0,
+        },
+      ],
+    }),
+  ];
+  const runs = [
+    makeRun('run-core-2', {
+      slotId: 'macwork-core-2',
+      project: 'metamask-core-farm',
+      status: 'blocked',
+      updatedAt: '2026-06-30T12:19:07.998Z',
+    }),
+  ];
+
+  assert.deepEqual(selectActiveRunSlotIds(slots, runs, { projects: [], machines: ['macwork'] }), [
+    'macwork-core-2',
+  ]);
+});
+
+test('selectActiveRunSlotIds includes failed runs like the Runs active tab', () => {
+  const slots = [
+    makeSlot('macwork-mm-7', {
+      lifecycle: 'ready',
+      currentRunId: 'run-failed',
+    }),
+  ];
+  const runs = [
+    makeRun('run-failed', {
+      slotId: 'macwork-mm-7',
+      status: 'failed',
+      updatedAt: '2026-06-30T12:00:00.000Z',
+    }),
+  ];
+
+  assert.deepEqual(selectActiveRunSlotIds(slots, runs, { projects: [], machines: [] }), [
+    'macwork-mm-7',
+  ]);
+});
+
+test('selectPinnedSlotIds preserves pin order and respects global filters', () => {
+  const slots = [
+    makeSlot('macwork-mm-1'),
+    makeSlot('macwork-mm-2'),
+    makeSlot('mini-mm-1', { machine: 'mini' }),
+  ];
+
+  assert.deepEqual(
+    selectPinnedSlotIds(slots, ['macwork-mm-2', 'mini-mm-1', 'macwork-mm-1'], {
+      projects: [],
+      machines: ['macwork'],
+    }),
+    ['macwork-mm-2', 'macwork-mm-1'],
   );
 });
