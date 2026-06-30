@@ -4,7 +4,10 @@ import type {
   FamilyObservabilityArtifact,
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
+  GateSummary,
 } from '@farmslot/protocol';
+
+import '../reviews/gate-summary-panel.js';
 
 import {
   buildComparisonLeaderboard,
@@ -192,10 +195,23 @@ function renderCompareLeaderboard(
   `;
 }
 
+/** Pull the run's gate-summary (worker/self-review/sub-agent per-model breakdown) off its decisions. */
+function runGateSummary(run: FamilyObservabilityRunSummary): GateSummary | undefined {
+  return run.decisions
+    ?.map((decision) =>
+      decision.payload?.kind === 'ready' || decision.payload?.kind === 'retrospective'
+        ? decision.payload.gateSummary
+        : undefined,
+    )
+    .find((summary): summary is GateSummary => Boolean(summary));
+}
+
 function renderCompareMatrix(
   options: FamilyComparisonPanelRenderOptions,
   leaderboard: CompareLeaderboard,
 ) {
+  const gateSummaries = leaderboard.rows.map((row) => ({ row, summary: runGateSummary(row.run) }));
+  const hasGateSummaries = gateSummaries.some((entry) => entry.summary);
   // Transpose the leaderboard: metric rows × run columns. Run columns keep the
   // leaderboard's sort order so the most efficient lane stays leftmost.
   return html`
@@ -236,6 +252,27 @@ function renderCompareMatrix(
         </tbody>
       </table>
     </div>
+    ${hasGateSummaries
+      ? html`
+          <div class="compare-section-label">
+            Per-model breakdown (worker · self-review · sub-agents)
+          </div>
+          <div class="compare-gate-grid">
+            ${gateSummaries.map(
+              ({ row, summary }) => html`
+                <div
+                  class="compare-gate-col ${options.selectedRunId === row.runId ? 'selected' : ''}"
+                >
+                  <div class="lane-label">${row.label}</div>
+                  ${summary
+                    ? html`<gate-summary-panel .summary=${summary}></gate-summary-panel>`
+                    : html`<div class="muted">No gate summary</div>`}
+                </div>
+              `,
+            )}
+          </div>
+        `
+      : nothing}
   `;
 }
 
