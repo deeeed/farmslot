@@ -5,9 +5,11 @@ import {
   extractOsc52Clipboard,
   parseWorkerRef,
   terminalMatchesTarget,
+  terminalPriorTargetIdentity,
   terminalRoleExitDecision,
   terminalTargetLabel,
   terminalTargetParams,
+  terminalTargetStateFromIdentity,
 } from './terminal-view-model.js';
 
 test('parseWorkerRef preserves optional tmux coordinates and rejects malformed refs', () => {
@@ -175,6 +177,34 @@ test('terminalRoleExitDecision preserves role fast-fail postmortem thresholds', 
       postmortem: true,
     }).shouldEnterPostmortem,
     false,
+  );
+});
+
+test('terminalPriorTargetIdentity reconstructs the pre-update subscribe target', () => {
+  const changed = new Map<string, unknown>([
+    ['slotId', 'slot-a'],
+    ['runId', 'run-a'],
+  ]);
+  const prior = terminalPriorTargetIdentity(changed, {
+    slotId: 'slot-b',
+    runId: 'run-b',
+    role: 'dev',
+    contextId: 'ctx-b',
+    workerRefJson: '',
+  });
+
+  assert.deepEqual(prior, {
+    slotId: 'slot-a',
+    runId: 'run-a',
+    role: 'dev',
+    contextId: 'ctx-b',
+    workerRefJson: '',
+  });
+  assert.deepEqual(
+    terminalTargetParams(
+      terminalTargetStateFromIdentity(prior, { postmortem: false, worker: null }),
+    ),
+    { slotId: 'slot-a', runId: 'run-a', role: 'dev', contextId: 'ctx-b' },
   );
 });
 

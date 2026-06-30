@@ -738,7 +738,9 @@ export function renderSlotViewBody(
                               ${view._renderAgentContexts()}
                               <terminal-view
                                 .slotId=${view.slotId}
-                                .runId=${view._linkedRun?.id ?? ''}
+                                .runId=${view._linkedRun?.slotId === view.slotId
+                                  ? (view._linkedRun?.id ?? '')
+                                  : ''}
                                 .role=${view._selectedAgentContext()?.role === 'primary'
                                   ? ''
                                   : (view._selectedAgentContext()?.role ?? '')}

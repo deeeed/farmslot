@@ -179,7 +179,7 @@ import {
   shouldShowSlotViewTaskUi,
 } from './slot-view-task-model.js';
 import { updateSlotViewTreeChildren } from './slot-view-tree-model.js';
-import { handleSlotViewUpdated } from './slot-view-update-effects.js';
+import { handleSlotViewUpdated, handleSlotViewWillUpdate } from './slot-view-update-effects.js';
 import {
   cancelSlotViewFileRestoreRetry,
   cancelSlotViewResourceRestoreRetry,
@@ -255,6 +255,10 @@ export class SlotView extends SlotViewRecipePresenter {
   disconnectedCallback() {
     super.disconnectedCallback();
     disconnectSlotView(this);
+  }
+
+  willUpdate(changed: Map<string, unknown>) {
+    handleSlotViewWillUpdate(this, changed);
   }
 
   updated(changed: Map<string, unknown>) {
