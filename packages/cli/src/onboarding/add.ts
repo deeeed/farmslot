@@ -136,10 +136,14 @@ export function resolvePackSource(
         stdio,
       });
       try {
-        run('git', ['-C', dest, 'submodule', 'update', '--init', '--recursive', '--quiet'], {
-          cwd: ws.root,
-          stdio,
-        });
+        run(
+          'git',
+          ['-C', dest, 'submodule', 'update', '--init', '--recursive', '--remote', '--quiet'],
+          {
+            cwd: ws.root,
+            stdio,
+          },
+        );
       } catch (err) {
         // Re-throw with recovery guidance: a partial clone (e.g. private
         // submodule auth failure) hits this on every retry otherwise.
