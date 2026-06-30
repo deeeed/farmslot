@@ -100,7 +100,7 @@ Signal shape:
   bash {{recipe_validate_wrapper}} ... --slow 2000 --record-video=full-run --task-dir {{TASK_DIR}}
   ```
 - [ ] **8c. Evidence manifest** — `evidence-manifest.json` with before/after pairs + `videos.after: artifacts/after.mp4` for gateway PR embed.
-- [ ] **8d. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` + `recipe-quality.json` and run `check-task-artifact-contract.mjs` with recipe flags.
+- [ ] **8d. Recipe coverage** — when `recipe.json` exists, write `recipe-coverage.md` (gateway computes recipe-quality) and run `check-task-artifact-contract.mjs --require-recipe-coverage-if-recipe`.
 - [ ] **9. Self-review** — read the diff (`git diff`) against `{{review_quality_path}}`. Check for: inline type duplication (use `@farmslot/protocol`), swallowed exceptions, unnecessary helpers, comments that restate code.
 - [ ] **10. Commit** — single commit following the repo's Lore commit protocol.
 - [ ] **11. Prepare local PR package** — keep the branch local; do not run `git push`, `gh pr create`, `gh pr edit`, or `gh pr comment`.

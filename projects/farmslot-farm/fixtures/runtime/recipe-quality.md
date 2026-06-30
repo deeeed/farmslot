@@ -85,14 +85,12 @@ Rules:
 - For UI features, `videos.after` is **required** unless capture-helper doctor fails (document the doctor error in `videos.note` and keep screenshots).
 - `pr-description.md` **Screenshots/Recordings** section stays a placeholder — gateway replaces it from this manifest.
 
-Also write:
-- `{{TASK_DIR}}/artifacts/recipe-coverage.md`
-- `{{TASK_DIR}}/artifacts/recipe-quality.json`
+Also write `{{TASK_DIR}}/artifacts/recipe-coverage.md`. Do **not** author `recipe-quality.json` — the gateway computes recipe quality from your `recipe.json` + coverage.
 
 Validate before done:
 
 ```bash
-node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-quality-if-recipe --require-recipe-coverage-if-recipe
+node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe
 ```
 
 ## Examples
