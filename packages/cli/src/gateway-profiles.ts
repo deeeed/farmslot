@@ -1,6 +1,6 @@
 // gateway-profiles.ts — kubeconfig-style gateway profiles for the CLI (ADR-036).
 //
-// Machine-level store at ~/.farmslot/gateways.json (0600): named gateway URLs
+// Machine-level store at <FARMSLOT_HOME>/gateways.json (0600, default ~/.farmslot): named gateway URLs
 // plus the pairing/auth credential obtained via `farmslot login`. Workspace
 // state stays untouched — profiles follow the operator, not the checkout.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';

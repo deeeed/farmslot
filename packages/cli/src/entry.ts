@@ -20,6 +20,7 @@ import { registerSlotCommand } from './commands/slot.js';
 import { registerUpCommand } from './commands/up.js';
 import { registerUpdateCommand } from './commands/update.js';
 import { registerWorkspaceCommand } from './commands/workspace.js';
+import { bootstrapFarmslotHome } from './onboarding/workspace.js';
 
 const program = new Command();
 
@@ -52,6 +53,11 @@ registerProjectCommand(program);
 registerUpdateCommand(program);
 registerAuthCommands(program);
 registerAnalyticsCommand(program);
+
+// Recover a custom install home (FARMSLOT_HOME) from persisted workspace state before
+// any command resolves gateway profiles / pid / logs. No-op when the env var is set or
+// no workspace exists.
+bootstrapFarmslotHome();
 
 // parseAsync: async command actions (update) must reject through commander,
 // not become unhandled rejections.

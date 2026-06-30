@@ -4,7 +4,7 @@
 // all-interfaces bind, so a phone (see `farmslot pair`) can reach it, and serves
 // the built Command Center dashboard on the same port. It registers a `local`
 // authed profile for subsequent commands (pair, fleet, …). `farmslot down`
-// stops it. pid + log live under ~/.farmslot.
+// stops it. pid + log live under <FARMSLOT_HOME> (default ~/.farmslot).
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

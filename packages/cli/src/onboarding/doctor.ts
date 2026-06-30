@@ -8,7 +8,7 @@ import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { probeGatewayAuth } from '../gateway-auth.js';
-import { loadProfiles, profileCredential } from '../gateway-profiles.js';
+import { loadProfiles, profileCredential, profilesPath } from '../gateway-profiles.js';
 
 import { readPool } from './pool-config.js';
 import { checkPrereqs, commandPath, detectRunners, runnerHint } from './prereqs.js';
@@ -112,7 +112,6 @@ function workspaceSection(ws: Workspace | null): {
       hint: existsSync(dir) ? undefined : 're-run install.sh to repair the workspace layout',
     });
   }
-  checks.push({ name: 'home', ok: true, detail: farmslotHome() });
   let state: WorkspaceState | null = null;
   try {
     state = readState(ws);
@@ -130,6 +129,19 @@ function workspaceSection(ws: Workspace | null): {
       hint: 're-run install.sh to repair state.json',
     });
   }
+  const resolvedHome = farmslotHome();
+  const homeMismatch = state?.home_dir != null && state.home_dir !== resolvedHome;
+  checks.push({
+    name: 'home',
+    ok: true,
+    warn: homeMismatch,
+    detail: homeMismatch
+      ? `${resolvedHome} (install-time home was ${state?.home_dir})`
+      : resolvedHome,
+    hint: homeMismatch
+      ? 'FARMSLOT_HOME overrides the install-time home; unset it or re-run install.sh to realign'
+      : undefined,
+  });
   return { section: { title: 'Workspace', checks }, state };
 }
 
@@ -317,19 +329,19 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
     isInside(resolveLink(installedLink), root);
 
   const binPath = commandPath('farmslot');
-  if (binPath && isInside(resolveLink(binPath), root)) {
+  const binTarget = binPath ? resolveLink(binPath) : null;
+  if (binPath && binTarget && isInside(binTarget, root)) {
     checks.push({ name: 'farmslot on PATH', ok: true, detail: binPath });
   } else if (ownLinkOk) {
     // The workspace symlink is valid; PATH either resolves to a different farmslot
     // first (custom BIN_DIR) or isn't updated yet. Warn with guidance — never fail,
     // so a custom install location cannot abort install.sh at the doctor gate.
-    const onPath = Boolean(binPath);
     checks.push({
       name: 'farmslot on PATH',
       ok: true,
       warn: true,
-      detail: onPath
-        ? `${binPath} -> ${resolveLink(binPath as string)} (a different farmslot is first on PATH; this workspace: ${installedLink})`
+      detail: binPath
+        ? `${binPath} -> ${binTarget} (a different farmslot is first on PATH; this workspace: ${installedLink})`
         : `${installedLink} exists but ${state?.bin_dir} is not on PATH`,
       hint: `to use this workspace's CLI, put ${state?.bin_dir} ahead on your PATH: export PATH="${state?.bin_dir}:$PATH"`,
     });
@@ -337,9 +349,7 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
     checks.push({
       name: 'farmslot on PATH',
       ok: false,
-      detail: binPath
-        ? `${binPath} -> ${resolveLink(binPath)} (outside this workspace)`
-        : 'not found',
+      detail: binPath ? `${binPath} -> ${binTarget} (outside this workspace)` : 'not found',
       hint: 're-run install.sh to create/repoint the symlink',
     });
   }
@@ -485,7 +495,7 @@ async function gatewaySection(): Promise<DoctorSection> {
           name: 'profile store',
           ok: false,
           detail: err instanceof Error ? err.message : String(err),
-          hint: 'fix or remove ~/.farmslot/gateways.json',
+          hint: `fix or remove ${profilesPath()}`,
         },
       ],
     };
