@@ -1,8 +1,9 @@
 import type {
-  PoolConfig,
+  ConfigPoolResult,
   ResourceListResult,
   SlotActionListResult,
   TaskProgressResult,
+  TerminalSnapshotResult,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
@@ -36,7 +37,7 @@ export function loadSlotViewSlot(view: SlotView): void {
 
 export async function fetchSlotViewRepoPath(view: SlotView, machine: string): Promise<void> {
   try {
-    const res = await gateway.request<{ pool: PoolConfig }>(Methods.CONFIG_POOL, { machine });
+    const res = await gateway.request<ConfigPoolResult>(Methods.CONFIG_POOL, { machine });
     const slotCfg = res.pool.slots.find((slot) => slot.id === view.slotId);
     if (slotCfg) view._repoPath = slotCfg.repo;
   } catch (err) {
@@ -86,15 +87,12 @@ export async function fetchSlotViewActions(view: SlotView): Promise<void> {
 export async function parseSlotViewTaskSteps(view: SlotView): Promise<void> {
   try {
     const selectedContext = view._selectedAgentContext();
-    const snap = await gateway.request<{ slotId: string; lines: string[]; timestamp: number }>(
-      Methods.TERMINAL_SNAPSHOT,
-      {
-        slotId: view.slotId,
-        ...(view._linkedRun ? { runId: view._linkedRun.id } : {}),
-        ...(selectedContext ? { contextId: selectedContext.id, role: selectedContext.role } : {}),
-        lines: 500,
-      },
-    );
+    const snap = await gateway.request<TerminalSnapshotResult>(Methods.TERMINAL_SNAPSHOT, {
+      slotId: view.slotId,
+      ...(view._linkedRun ? { runId: view._linkedRun.id } : {}),
+      ...(selectedContext ? { contextId: selectedContext.id, role: selectedContext.role } : {}),
+      lines: 500,
+    });
     const steps: TaskStep[] = [];
     for (const line of snap.lines) {
       const match = line.match(/^- \[([ x])\] (.+)/);

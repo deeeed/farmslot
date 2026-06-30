@@ -7,6 +7,8 @@ import path from 'node:path';
 
 import type {
   ConfigPoolParams,
+  ConfigPoolRawResult,
+  ConfigPoolResult,
   ConfigPoolsResult,
   ConfigPoolUpdateParams,
   ConfigPoolUpdateResult,
@@ -25,7 +27,6 @@ import type {
   ConfigTemplatePreviewResult,
   ConfigTemplatesParams,
   ConfigTemplatesResult,
-  PoolConfig,
   TemplatePreview,
 } from '@farmslot/protocol';
 
@@ -176,7 +177,7 @@ export async function configPools(): Promise<ConfigPoolsResult> {
   return { pools };
 }
 
-export async function configPool(params: ConfigPoolParams): Promise<{ pool: PoolConfig }> {
+export async function configPool(params: ConfigPoolParams): Promise<ConfigPoolResult> {
   const pool = await loadPoolConfig(params.machine);
   if (!pool) throw new Error(`Pool not found: ${params.machine}`);
   return { pool };
@@ -195,7 +196,7 @@ export async function configProject(params: ConfigProjectParams): Promise<Config
 
 // ─── Raw pool JSON for editor ───
 
-export async function configPoolRaw(params: ConfigPoolParams): Promise<{ raw: string }> {
+export async function configPoolRaw(params: ConfigPoolParams): Promise<ConfigPoolRawResult> {
   const files = await readdir(poolDir);
   for (const file of files) {
     if (!file.endsWith('.json') || file === 'example.json') continue;

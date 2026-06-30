@@ -7,6 +7,7 @@ import type {
   RoadmapItem,
   UnlockAction,
   WorkEdgeBlocks,
+  WorkGraphAddNodeResult,
   WorkGraphProjection,
   WorkReferenceKind,
   WorkReferenceStatus,
@@ -264,19 +265,16 @@ export class RoadmapGraphComposer extends LitElement {
     }
     this.busy = 'graph-create';
     try {
-      const created = await gateway.request<{ graph: WorkGraphProjection }>(
-        Methods.WORK_GRAPH_CREATE,
-        {
-          project: item.project,
-          title: this.graphTitle.trim() || `${item.title} execution graph`,
-          source: { kind: 'manual', ref: item.id },
-          tags: tagsFromInput(this.tagsInput),
-        },
-      );
+      const created = await gateway.request<WorkGraphAddNodeResult>(Methods.WORK_GRAPH_CREATE, {
+        project: item.project,
+        title: this.graphTitle.trim() || `${item.title} execution graph`,
+        source: { kind: 'manual', ref: item.id },
+        tags: tagsFromInput(this.tagsInput),
+      });
       let graph = created.graph;
       for (const backlogItemId of backlogIds) {
         graph = (
-          await gateway.request<{ graph: WorkGraphProjection }>(Methods.WORK_GRAPH_ADD_NODE, {
+          await gateway.request<WorkGraphAddNodeResult>(Methods.WORK_GRAPH_ADD_NODE, {
             graphId: graph.graph.id,
             backlogItemId,
           })

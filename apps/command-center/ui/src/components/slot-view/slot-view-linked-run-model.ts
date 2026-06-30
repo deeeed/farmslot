@@ -1,11 +1,9 @@
-import type { Run } from '@farmslot/protocol';
+import { isTerminalRunStatus, type Run, type RunStatus } from '@farmslot/protocol';
 
 export type SlotViewLinkedRunSource = 'cache' | 'rpc';
 
-const TERMINAL_RUN_STATUSES = new Set(['done', 'failed', 'cancelled']);
-
 export function isSlotViewTerminalRunStatus(status: string | null | undefined): boolean {
-  return status !== null && status !== undefined && TERMINAL_RUN_STATUSES.has(status);
+  return status !== null && status !== undefined && isTerminalRunStatus(status as RunStatus);
 }
 
 /** Pick which run slot-view should treat as linked after cache + RPC hydration. */

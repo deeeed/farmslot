@@ -30,6 +30,14 @@ export interface ConfigPoolParams {
   machine: string;
 }
 
+export interface ConfigPoolResult {
+  pool: PoolConfig;
+}
+
+export interface ConfigPoolRawResult {
+  raw: string;
+}
+
 export interface ConfigProjectParams {
   project: string;
 }

@@ -5,9 +5,12 @@ import type {
   DevInteractiveCompletionAction,
   FamilyObservabilityArtifact,
   PRStatus,
+  PRStatusResult,
   RecipeRunArtifactGroup,
   Run,
   RunDecision,
+  RunGetResult,
+  RunListResult,
   TaskProgressResult,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
@@ -292,7 +295,7 @@ export class RunDetail extends RunDetailState {
     this.liveTimeoutPrStatusFailed = false;
     this._lastLiveTimeoutFetchAt = Date.now();
     try {
-      const res = await gateway.request<{ pr: PRStatus }>(
+      const res = await gateway.request<PRStatusResult>(
         Methods.PR_STATUS,
         { pr: run.prNumber, project: run.project, force: true },
         30_000,
@@ -351,7 +354,7 @@ export class RunDetail extends RunDetailState {
     this._directRunRefreshFailed = false;
     this._directRunUnavailable = false;
     try {
-      const res = await gateway.request<{ run: Run }>(Methods.RUN_GET, { runId });
+      const res = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
       if (!requestStillCurrent()) return;
       if (res.run) {
         this._directRun = res.run;
@@ -491,7 +494,7 @@ export class RunDetail extends RunDetailState {
 
   private async fetchSiblings(run: Run) {
     try {
-      const res = await gateway.request<{ runs: Run[] }>(Methods.RUN_LIST, {
+      const res = await gateway.request<RunListResult>(Methods.RUN_LIST, {
         familyId: run.familyId,
       });
       this.siblings = sortRunsForFamilyView((res.runs ?? []).filter((r) => r.id !== run.id));

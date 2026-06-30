@@ -1,4 +1,4 @@
-import type { DiagnosticsRunResult } from '@farmslot/protocol';
+import type { DiagnosticsRunResult, GitFilesResult, SearchQueryResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -47,10 +47,11 @@ export async function executeSlotViewSearch(view: SlotView) {
   view._searchResults = [];
   view._searchTruncated = false;
   try {
-    const result = await gateway.request<{
-      matches: Array<{ file: string; line: number; column: number; text: string }>;
-      truncated: boolean;
-    }>('search.query', { slotId: view.slotId, pattern: view._searchQuery, maxResults: 200 });
+    const result = await gateway.request<SearchQueryResult>(Methods.SEARCH_QUERY, {
+      slotId: view.slotId,
+      pattern: view._searchQuery,
+      maxResults: 200,
+    });
     view._searchResults = result.matches;
     view._searchTruncated = result.truncated;
   } catch (err) {
@@ -68,7 +69,7 @@ export function openSlotViewSearchResult(view: SlotView, file: string, _line: nu
 export async function loadSlotViewFileIndex(view: SlotView) {
   if (view._fileIndex.length > 0 || !view._isLive) return;
   try {
-    const result = await gateway.request<{ files: string[] }>(Methods.GIT_FILES, {
+    const result = await gateway.request<GitFilesResult>(Methods.GIT_FILES, {
       slotId: view.slotId,
     });
     view._fileIndex = result.files;

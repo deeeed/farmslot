@@ -9,6 +9,7 @@ import type {
   RunCleanupResult,
   RunEvidenceSummary,
   RunFamilyReadinessSummary,
+  RunListResult,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
 import { Methods, normalizeRunTags, summarizeRunEvidence } from '@farmslot/protocol';
@@ -118,7 +119,7 @@ export class RunList extends RunListState {
         this.tagRunsError = null;
         return;
       }
-      const res = await gateway.request<{ runs: Run[] }>(Methods.RUN_LIST, { tags: [tag] });
+      const res = await gateway.request<RunListResult>(Methods.RUN_LIST, { tags: [tag] });
       this.tagFilter = tag;
       this.tagRuns = res.runs ?? [];
       this.tagRunsError = null;
@@ -137,7 +138,7 @@ export class RunList extends RunListState {
       return;
     }
     try {
-      const res = await gateway.request<{ runs: Run[] }>(Methods.RUN_LIST, {
+      const res = await gateway.request<RunListResult>(Methods.RUN_LIST, {
         familyId: this.familyFilter,
       });
       this.familyRuns = res.runs ?? [];

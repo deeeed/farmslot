@@ -2,7 +2,7 @@ import { html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
-  PoolConfig,
+  ConfigPoolResult,
   ScriptComplete,
   ScriptOutput,
   SlotHealth,
@@ -151,7 +151,7 @@ export class SlotDetail extends LitElement {
 
   private async _fetchRepoPath(machine: string) {
     try {
-      const res = await gateway.request<{ pool: PoolConfig }>(Methods.CONFIG_POOL, { machine });
+      const res = await gateway.request<ConfigPoolResult>(Methods.CONFIG_POOL, { machine });
       const slotCfg = res.pool.slots.find((s) => s.id === this.slotId);
       if (slotCfg) this._repoPath = slotCfg.repo;
     } catch {

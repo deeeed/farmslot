@@ -62,6 +62,7 @@ import {
   type FsRenameParams,
   type FsRevealParams,
   type FsWriteParams,
+  type GatewayDoctorParams,
   type GatewayStatusParams,
   type GitBranchDiffParams,
   type GitDiffParams,
@@ -432,7 +433,7 @@ export async function routeMethod(
     case Methods.GATEWAY_STATUS:
       return gatewayStatus(p as GatewayStatusParams);
     case Methods.GATEWAY_DOCTOR:
-      return gatewayDoctor();
+      return gatewayDoctor(p as GatewayDoctorParams);
 
     // Fleet
     case Methods.FLEET_STATUS:

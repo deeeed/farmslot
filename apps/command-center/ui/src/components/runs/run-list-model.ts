@@ -1,4 +1,5 @@
 import type { FlowType, Run, RunLane, RunStatus } from '@farmslot/protocol';
+import { TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
@@ -6,7 +7,7 @@ import { colors } from '../../styles/theme-tokens.js';
 import type { SortOption, StatusFilter, TabFilter } from './run-list-state.js';
 import { dispositionLabel } from './run-utils.js';
 
-export const TERMINAL_STATUSES = new Set<RunStatus>(['done', 'failed', 'cancelled']);
+export const TERMINAL_STATUSES = new Set<RunStatus>(TERMINAL_RUN_STATUSES);
 
 /** Matches Runs list "Active" tab — non-terminal runs, with failed kept visible. */
 export function isRunListActiveRun(run: Pick<Run, 'status'>): boolean {

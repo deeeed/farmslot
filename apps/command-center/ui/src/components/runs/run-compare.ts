@@ -3,10 +3,13 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
   FamilyObservabilityArtifact,
+  FamilyObservabilityGetResult,
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
   FamilyObservabilityStep,
   Run,
+  RunGetResult,
+  RunListResult,
   RunStep,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
@@ -114,7 +117,7 @@ export class RunCompare extends LitElement {
 
   private async fetchDirectRun(side: 'a' | 'b', runId: string): Promise<void> {
     try {
-      const result = await gateway.request<{ run: Run }>(Methods.RUN_GET, { runId });
+      const result = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
       if (side === 'a') {
         if (this.runIdA !== runId) return;
         this.directRunA = result.run;
@@ -135,7 +138,7 @@ export class RunCompare extends LitElement {
 
   private async fetchSiblings(familyId: string, exclude: string[]) {
     try {
-      const res = await gateway.request<{ runs: Run[] }>(Methods.RUN_LIST, { familyId });
+      const res = await gateway.request<RunListResult>(Methods.RUN_LIST, { familyId });
       this.siblings = sortRunsForFamilyView(
         (res.runs ?? []).filter((r) => !exclude.includes(r.id)),
       );
@@ -152,7 +155,7 @@ export class RunCompare extends LitElement {
     this.snapshotFamilyId = familyId;
     this.familySnapshotError = '';
     try {
-      const result = await gateway.request<{ snapshot: FamilyObservabilitySnapshot }>(
+      const result = await gateway.request<FamilyObservabilityGetResult>(
         Methods.FAMILY_OBSERVABILITY_GET,
         { familyId },
       );

@@ -4,6 +4,7 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import type {
   FleetStatus,
+  FleetStatusResult,
   RunListResult,
   SlotStatus,
   TmuxWorkerInventoryUpdatedPayload,
@@ -436,7 +437,7 @@ export class TerminalSplitView extends LitElement {
 
   private async _fetchSlots() {
     try {
-      const result = await gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {});
+      const result = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
       this._availableSlots = this._applyFilters(result.fleet.slots).map((s) => s.slot);
     } catch (err) {
       console.warn('[terminal-split-view] failed to refresh fleet slots', err);
@@ -519,7 +520,7 @@ export class TerminalSplitView extends LitElement {
   private async _showActiveRuns() {
     try {
       const [fleetResult, runResult] = await Promise.all([
-        gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {}),
+        gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {}),
         gateway.request<RunListResult>(Methods.RUN_LIST, { limit: 1000 }),
       ]);
       const activeRuns = selectActiveRunSlotIds(
@@ -539,7 +540,7 @@ export class TerminalSplitView extends LitElement {
 
   private async _showPinnedSlots() {
     try {
-      const fleetResult = await gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {});
+      const fleetResult = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
       const pinned = selectPinnedSlotIds(
         fleetResult.fleet.slots,
         listPinnedSlots().map((pin) => pin.slotId),

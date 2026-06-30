@@ -36,6 +36,34 @@ export interface GatewayStatusResult {
   update: GatewayUpdateStatus;
 }
 
+export type GatewayDoctorSectionId =
+  | 'gateway'
+  | 'workspace'
+  | 'capture'
+  | 'browser'
+  | 'simulator'
+  | 'android';
+
+export interface GatewayDoctorSectionDefinition {
+  id: GatewayDoctorSectionId;
+  label: string;
+  description: string;
+}
+
+export interface GatewayDoctorParams {
+  /**
+   * Omit or set true to run the requested doctor sections.
+   * Set false to return the gateway-owned section catalog without running checks.
+   * Useful for progressive UIs that need to render the report skeleton before
+   * requesting section results.
+   */
+  run?: boolean;
+  /** Run only one doctor section. Omit sectionId/sectionIds to run every section. */
+  sectionId?: GatewayDoctorSectionId;
+  /** Run multiple specific sections in gateway-defined order. */
+  sectionIds?: GatewayDoctorSectionId[];
+}
+
 export interface GatewayDoctorCheck {
   id: string;
   label: string;
@@ -46,13 +74,31 @@ export interface GatewayDoctorCheck {
 }
 
 export interface GatewayDoctorSection {
-  id: string;
+  id: GatewayDoctorSectionId;
   label: string;
   checks: GatewayDoctorCheck[];
 }
 
+export type GatewayDoctorSectionStatus = 'pending' | 'running' | 'complete' | 'error';
+
+/**
+ * Progressive doctor section state shared by gateway-aware clients.
+ *
+ * The gateway owns section identity, labels, and report payloads. Clients may
+ * update `status`, `error`, and `checkedAt` while requesting sections
+ * incrementally, but should not invent a parallel section model.
+ */
+export interface GatewayDoctorSectionReport extends GatewayDoctorSectionDefinition {
+  status: GatewayDoctorSectionStatus;
+  section: GatewayDoctorSection | null;
+  error: string;
+  checkedAt: string | null;
+}
+
 export interface GatewayDoctorResult {
   generatedAt: string;
+  availableSections: GatewayDoctorSectionDefinition[];
+  requestedSectionIds: GatewayDoctorSectionId[];
   summary: {
     ok: number;
     warn: number;

@@ -3,12 +3,13 @@ import { customElement } from 'lit/decorators.js';
 
 import type {
   FamilyObservabilityArtifact,
+  FamilyObservabilityGetResult,
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
   FamilyReport,
   LLMConfigGetResult,
-  Run,
   RunDecision,
+  RunGetResult,
 } from '@farmslot/protocol';
 import { Events, isRunEvidenceVideoArtifact, Methods } from '@farmslot/protocol';
 
@@ -167,7 +168,7 @@ export class FamilyObservability extends FamilyObservabilityState {
       this._fullRunError = nextErr;
     }
     try {
-      const res = await gateway.request<{ run: Run }>(Methods.RUN_GET, { runId });
+      const res = await gateway.request<RunGetResult>(Methods.RUN_GET, { runId });
       if (!this.isConnected) return;
       if (this._fullRuns.get(runId) === res.run) return;
       const next = new Map(this._fullRuns);
@@ -307,7 +308,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     this.loading = true;
     this.error = '';
     try {
-      const result = await gateway.request<{ snapshot: FamilyObservabilitySnapshot }>(
+      const result = await gateway.request<FamilyObservabilityGetResult>(
         Methods.FAMILY_OBSERVABILITY_GET,
         { familyId: this.familyId },
       );

@@ -5,8 +5,9 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import type {
-  FleetStatus,
+  FleetStatusResult,
   ResourceControlAction,
+  ResourceListResult,
   ResourceStatus,
   ResourceStatusUpdatedPayload,
   ResourceStreamStatus,
@@ -448,7 +449,7 @@ export class DeviceGrid extends LitElement {
 
   private async _fetchAllResources() {
     try {
-      const result = await gateway.request<{ fleet: FleetStatus }>(Methods.FLEET_STATUS, {});
+      const result = await gateway.request<FleetStatusResult>(Methods.FLEET_STATUS, {});
       const filtered = this._applyFilters(result.fleet.slots);
 
       const resources: AvailableResource[] = [];
@@ -458,10 +459,9 @@ export class DeviceGrid extends LitElement {
       const entries = await Promise.allSettled(
         filtered.map(async (slot) => {
           try {
-            const res = await gateway.request<{ resources: SlotResource[] }>(
-              Methods.RESOURCE_LIST,
-              { slotId: slot.slot },
-            );
+            const res = await gateway.request<ResourceListResult>(Methods.RESOURCE_LIST, {
+              slotId: slot.slot,
+            });
             return { slot, resources: res.resources };
           } catch {
             return { slot, resources: [] as SlotResource[] };

@@ -1,5 +1,6 @@
 import {
   hasLiveRecipeEvidence,
+  isTerminalRunStatus,
   type Run,
   RUN_SELF_LEARNING_MISSING_SIGNALS,
   type RunDecisionPayload,
@@ -11,10 +12,8 @@ import {
 } from '../contracts/index.js';
 import type { RunListResult } from '../rpc/index.js';
 
-const TERMINAL_STATUSES = new Set<Run['status']>(['done', 'failed', 'cancelled']);
-
 function isTerminalRun(run: Run): boolean {
-  return TERMINAL_STATUSES.has(run.status);
+  return isTerminalRunStatus(run.status);
 }
 
 function isSuccessfulRun(run: Run): boolean {

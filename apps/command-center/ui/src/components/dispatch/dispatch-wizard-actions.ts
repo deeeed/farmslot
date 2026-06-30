@@ -3,7 +3,7 @@ import type {
   FlowType,
   ReviewDepthPolicy,
   ReviewLoopRequest,
-  Run,
+  RunCreateResult,
   TaskTemplateSelection,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
@@ -77,7 +77,7 @@ export function buildDispatchWizardPayloadDraft(
 }
 
 export async function dispatchRunCreateFromDraft(draft: DispatchPayloadDraft): Promise<string> {
-  const result = await gateway.request<{ run: Run }>(
+  const result = await gateway.request<RunCreateResult>(
     Methods.RUN_CREATE,
     buildRunCreateParams(draft),
   );

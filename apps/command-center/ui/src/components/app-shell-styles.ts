@@ -160,6 +160,23 @@ export function renderAppShellStyles(
         background: ${colors.accent}22;
         color: ${colors.accent};
       }
+      farm-app .fa-nav-icon {
+        width: 20px;
+        height: 20px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        box-sizing: border-box;
+      }
+      farm-app .fa-nav-btn--alpha .fa-nav-icon {
+        border-color: ${colors.statusWarn}44;
+      }
+      farm-app .fa-nav-btn--alpha.active .fa-nav-icon {
+        border: 1px solid ${colors.statusWarn}77;
+      }
       farm-app .fa-nav-label {
         font-size: ${fonts.sizeSm};
         font-weight: 500;
@@ -202,6 +219,18 @@ export function renderAppShellStyles(
         justify-content: center;
         padding: 0 3px;
       }
+      farm-app .fa-alpha-badge {
+        margin-left: auto;
+        border: 1px solid ${colors.statusWarn}66;
+        border-radius: 999px;
+        color: ${colors.statusWarn};
+        background: ${colors.statusWarn}14;
+        font-size: 8px;
+        font-weight: 900;
+        line-height: 1;
+        padding: 3px 5px;
+        letter-spacing: 0.04em;
+      }
       farm-app .fa-sidebar-resize {
         display: ${sidebarExpanded ? 'block' : 'none'};
         position: absolute;
@@ -218,6 +247,8 @@ export function renderAppShellStyles(
       farm-app .fa-version-footer {
         margin: 0 6px 4px;
         padding: 0 8px 4px;
+        border: 0;
+        background: transparent;
         color: ${colors.textMuted};
         font-family: ${fonts.mono};
         font-size: 10px;
@@ -225,7 +256,11 @@ export function renderAppShellStyles(
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        user-select: text;
+        text-align: left;
+        cursor: pointer;
+      }
+      farm-app .fa-version-footer:hover {
+        color: ${colors.accent};
       }
       farm-app .fa-version-footer--compact {
         padding: 0 4px 4px;
@@ -403,6 +438,181 @@ export function renderAppShellStyles(
       farm-app .fa-content {
         flex: 1;
         overflow: hidden;
+      }
+      farm-app .fa-content--stacked {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      farm-app .fa-screen-body {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+      }
+      farm-app .fa-route-alpha-banner {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 14px;
+        border-bottom: 1px solid ${colors.statusWarn}33;
+        background: ${colors.statusWarn}0f;
+        color: ${colors.textSecondary};
+        font-size: ${fonts.sizeSm};
+        flex-shrink: 0;
+      }
+      farm-app .fa-route-alpha-banner span {
+        border: 1px solid ${colors.statusWarn}77;
+        border-radius: 999px;
+        color: ${colors.statusWarn};
+        background: ${colors.statusWarn}18;
+        font-size: 10px;
+        font-weight: 900;
+        padding: 3px 7px;
+        letter-spacing: 0.06em;
+      }
+      farm-app .fa-route-alpha-banner strong {
+        color: ${colors.textPrimary};
+      }
+      farm-app .fa-route-alpha-banner em {
+        color: ${colors.textMuted};
+        font-style: normal;
+      }
+      farm-app .fa-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 90;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.66);
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      farm-app .fa-version-modal {
+        width: min(900px, 100%);
+        max-height: min(760px, 92vh);
+        overflow: auto;
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 14px;
+        background: ${colors.bgSurface};
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+        padding: 18px;
+      }
+      farm-app .fa-version-modal-head,
+      farm-app .fa-version-actions,
+      farm-app .fa-node-version-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      farm-app .fa-version-modal h2,
+      farm-app .fa-version-modal h3 {
+        margin: 0;
+      }
+      farm-app .fa-version-kicker {
+        color: ${colors.textMuted};
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 4px;
+      }
+      farm-app .fa-modal-close,
+      farm-app .fa-version-actions button,
+      farm-app .fa-version-actions a {
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 8px;
+        background: ${colors.bgCard};
+        color: ${colors.textSecondary};
+        font-family: ${fonts.mono};
+        font-size: ${fonts.sizeSm};
+        padding: 8px 10px;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      farm-app .fa-version-actions button:hover,
+      farm-app .fa-version-actions a:hover,
+      farm-app .fa-modal-close:hover {
+        color: ${colors.accent};
+        border-color: ${colors.accent}88;
+      }
+      farm-app .fa-version-actions {
+        justify-content: flex-start;
+        margin: 16px 0;
+        flex-wrap: wrap;
+      }
+      farm-app .fa-version-error {
+        border: 1px solid ${colors.statusFail}66;
+        border-radius: 8px;
+        background: ${colors.statusFail}18;
+        color: ${colors.statusFail};
+        padding: 10px;
+        margin-bottom: 14px;
+      }
+      farm-app .fa-version-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 12px;
+      }
+      farm-app .fa-version-card,
+      farm-app .fa-version-node-section {
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 10px;
+        background: ${colors.bgCard};
+        padding: 12px;
+      }
+      farm-app .fa-version-card h3,
+      farm-app .fa-version-node-section h3 {
+        font-size: ${fonts.sizeMd};
+        margin-bottom: 10px;
+      }
+      farm-app .fa-version-row {
+        display: grid;
+        grid-template-columns: 92px minmax(0, 1fr);
+        gap: 8px;
+        padding: 5px 0;
+        color: ${colors.textMuted};
+        font-size: ${fonts.sizeSm};
+      }
+      farm-app .fa-version-row strong {
+        color: ${colors.textSecondary};
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+      farm-app .fa-version-node-section {
+        margin-top: 12px;
+      }
+      farm-app .fa-node-version-row {
+        border-top: 1px solid ${colors.bgCardHover};
+        padding: 10px 0;
+      }
+      farm-app .fa-node-version-row:first-of-type {
+        border-top: 0;
+      }
+      farm-app .fa-node-version-row div {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      farm-app .fa-node-version-row span,
+      farm-app .fa-version-empty {
+        color: ${colors.textMuted};
+        font-size: ${fonts.sizeSm};
+      }
+      farm-app .fa-node-version-pill {
+        border: 1px solid ${colors.bgCardHover};
+        border-radius: 999px;
+        padding: 5px 8px;
+        white-space: nowrap;
+      }
+      farm-app .fa-node-version-pill.ok {
+        color: ${colors.statusOk};
+        border-color: ${colors.statusOk}66;
+      }
+      farm-app .fa-node-version-pill.warn {
+        color: ${colors.statusWarn};
+        border-color: ${colors.statusWarn}66;
       }
       farm-app .onboarding-shell {
         min-height: 100%;
