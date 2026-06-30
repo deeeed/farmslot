@@ -9,6 +9,8 @@ import type {
   GatewayStatusResult,
   GatewayUpdateStatus,
   GitHubRateLimitPayload,
+  NodeInfo,
+  NodesListResult,
   PairingCandidate,
   PairingCandidatesResult,
   PairingCreateResult,
@@ -18,7 +20,7 @@ import type {
   TmuxWorkerListResult,
   TmuxWorkerSummary,
 } from '@farmslot/protocol';
-import { Events, isTerminalRunStatus, Methods } from '@farmslot/protocol';
+import { Events, GATEWAY_DOCTOR_SECTIONS, isTerminalRunStatus, Methods } from '@farmslot/protocol';
 
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
@@ -110,6 +112,7 @@ interface NavItem {
   route: Route;
   icon: string;
   label: string;
+  maturity?: 'alpha';
 }
 
 interface CopilotPromptRequestDetail {
@@ -131,16 +134,16 @@ const NAV_ITEMS: NavItem[] = [
   { route: 'terminal', icon: '>', label: 'Terminals' },
   { route: 'devices', icon: '=', label: 'Devices' },
   { route: 'dispatch', icon: '!', label: 'Dispatch' },
-  { route: 'roadmap', icon: 'r', label: 'Roadmap' },
-  { route: 'backlog', icon: '+', label: 'Backlog' },
-  { route: 'work-graphs', icon: 'g', label: 'Graphs' },
+  { route: 'roadmap', icon: 'r', label: 'Roadmap', maturity: 'alpha' },
+  { route: 'backlog', icon: '+', label: 'Backlog', maturity: 'alpha' },
+  { route: 'work-graphs', icon: 'g', label: 'Graphs', maturity: 'alpha' },
   { route: 'prs', icon: '&', label: 'PRs' },
   { route: 'decisions', icon: '?', label: 'Decisions' },
   { route: 'runs', icon: '@', label: 'Runs' },
-  { route: 'intelligence', icon: 'i', label: 'Intelligence' },
-  { route: 'analytics', icon: '^', label: 'Analytics' },
+  { route: 'intelligence', icon: 'i', label: 'Intelligence', maturity: 'alpha' },
+  { route: 'analytics', icon: '^', label: 'Analytics', maturity: 'alpha' },
   { route: 'evals', icon: '$', label: 'Evals' },
-  { route: 'finetune', icon: '%', label: 'Finetune' },
+  { route: 'finetune', icon: '%', label: 'Finetune', maturity: 'alpha' },
   { route: 'config', icon: '~', label: 'Config' },
   { route: 'doctor', icon: '+', label: 'Doctor' },
 ];
@@ -150,6 +153,7 @@ const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
 const UPDATE_DISMISS_KEY = 'farmslot:update-banner-dismissed-sha';
 // Re-poll gateway freshness hourly; the gateway itself caches the git fetch.
 const UPDATE_POLL_MS = 60 * 60_000;
+const ALPHA_COPY = 'Alpha surface — early, under-tested, and subject to change.';
 type PairingTarget = Pick<PairingCandidate, 'gatewayUrl' | 'kind' | 'profileName'>;
 
 const DEFAULT_PAIRING_PROFILE_NAME = 'Farmslot Remote';
@@ -171,6 +175,12 @@ export class FarmApp extends LitElement {
   @state() private hydrated = false;
   @state() private githubQuota: GitHubRateLimitPayload | null = null;
   @state() private updateStatus: GatewayUpdateStatus | null = null;
+  @state() private versionDetailsOpen = false;
+  @state() private versionDetailsLoading = false;
+  @state() private versionDetailsError = '';
+  @state() private versionDetailsStatus: GatewayStatusResult | null = null;
+  @state() private versionDetailsNodes: NodesListResult | null = null;
+  @state() private versionDetailsCopied = false;
   @state() private updateDismissedSha: string | null = localStorage.getItem(UPDATE_DISMISS_KEY);
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
@@ -336,15 +346,171 @@ export class FarmApp extends LitElement {
     const sha = this.updateStatus?.localSha;
     const branch = this.updateStatus?.branch;
     const identity = sha ? `${sha}${branch ? ` · ${branch}` : ''}` : '…';
-    const title = `Command Center v${version}${sha ? ` · ${identity}` : ''}`;
+    const title = `Command Center v${version}${sha ? ` · ${identity}` : ''}. Open version details.`;
     const line = this._sidebarExpanded ? `v${version} · ${identity}` : `v${version}`;
 
     return html`
-      <div
+      <button
         class="fa-version-footer ${this._sidebarExpanded ? '' : 'fa-version-footer--compact'}"
         title=${title}
+        @click=${() => this.openVersionDetails()}
       >
         ${line}
+      </button>
+    `;
+  }
+
+  private async openVersionDetails(): Promise<void> {
+    this.versionDetailsOpen = true;
+    await this.refreshVersionDetails();
+  }
+
+  private async refreshVersionDetails(): Promise<void> {
+    if (gateway.connectionState !== 'connected') {
+      this.versionDetailsError = 'Waiting for gateway connection…';
+      return;
+    }
+    this.versionDetailsLoading = true;
+    this.versionDetailsError = '';
+    this.versionDetailsCopied = false;
+    try {
+      const [status, nodes] = await Promise.all([
+        gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, { refresh: true }, 30_000),
+        gateway.request<NodesListResult>(Methods.NODES_LIST, {}, 10_000),
+      ]);
+      this.versionDetailsStatus = status;
+      this.versionDetailsNodes = nodes;
+      this.updateStatus = status.update;
+    } catch (error) {
+      this.versionDetailsError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.versionDetailsLoading = false;
+    }
+  }
+
+  private async copyVersionDiagnostics(): Promise<void> {
+    const diagnostics = {
+      commandCenter: {
+        version: COMMAND_CENTER_APP_VERSION,
+      },
+      gateway: {
+        url: gateway.gatewayUrl,
+        status: this.versionDetailsStatus,
+      },
+      nodes: this.versionDetailsNodes,
+      doctorSections: GATEWAY_DOCTOR_SECTIONS,
+      capturedAt: new Date().toISOString(),
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+      this.versionDetailsCopied = true;
+      this.versionDetailsError = '';
+    } catch (error) {
+      this.versionDetailsError = `Copy failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  private renderVersionDetailsModal() {
+    if (!this.versionDetailsOpen) return nothing;
+    const status = this.versionDetailsStatus;
+    const nodes = this.versionDetailsNodes;
+    const update = status?.update ?? this.updateStatus;
+    const releaseState = resolveReleaseState(update);
+
+    return html`
+      <div class="fa-modal-backdrop" @click=${() => (this.versionDetailsOpen = false)}>
+        <section class="fa-version-modal" @click=${(event: Event) => event.stopPropagation()}>
+          <div class="fa-version-modal-head">
+            <div>
+              <div class="fa-version-kicker">Farmslot diagnostics</div>
+              <h2>Version details</h2>
+            </div>
+            <button class="fa-modal-close" @click=${() => (this.versionDetailsOpen = false)}>
+              Close
+            </button>
+          </div>
+          <div class="fa-version-actions">
+            <button
+              @click=${() => this.refreshVersionDetails()}
+              ?disabled=${this.versionDetailsLoading}
+            >
+              ${this.versionDetailsLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+            <button
+              @click=${() => this.copyVersionDiagnostics()}
+              ?disabled=${this.versionDetailsLoading}
+            >
+              ${this.versionDetailsCopied ? 'Copied' : 'Copy diagnostics JSON'}
+            </button>
+            <a href="#doctor" @click=${() => (this.versionDetailsOpen = false)}>Open Doctor</a>
+          </div>
+          ${this.versionDetailsError
+            ? html`<div class="fa-version-error">${this.versionDetailsError}</div>`
+            : nothing}
+          <div class="fa-version-grid">
+            ${this.renderVersionCard('Command Center UI', [
+              ['version', COMMAND_CENTER_APP_VERSION],
+              ['channel', releaseState],
+              ['gateway', gateway.gatewayUrl],
+            ])}
+            ${this.renderVersionCard('Gateway', [
+              ['version', status?.version ?? '…'],
+              ['branch', update?.branch ?? '…'],
+              ['local sha', update?.localSha || 'unknown'],
+              ['remote sha', update?.remoteSha ?? 'unknown'],
+              ['freshness', update?.error ?? updateFreshnessLabel(update)],
+            ])}
+            ${this.renderVersionCard('Protocol', [
+              ['gateway protocol', nodes?.gatewayProtocolVersion ?? '…'],
+              ['connected nodes', String(nodes?.nodes.length ?? 0)],
+              [
+                'doctor sections',
+                GATEWAY_DOCTOR_SECTIONS.map((section) => section.label).join(', '),
+              ],
+            ])}
+          </div>
+          <section class="fa-version-node-section">
+            <h3>Connected nodes</h3>
+            ${nodes?.nodes.length
+              ? nodes.nodes.map((node) =>
+                  this.renderNodeVersionRow(node, nodes.gatewayProtocolVersion),
+                )
+              : html`<div class="fa-version-empty">No connected nodes.</div>`}
+          </section>
+        </section>
+      </div>
+    `;
+  }
+
+  private renderVersionCard(title: string, rows: Array<[string, string]>) {
+    return html`
+      <section class="fa-version-card">
+        <h3>${title}</h3>
+        ${rows.map(
+          ([label, value]) => html`
+            <div class="fa-version-row">
+              <span>${label}</span>
+              <strong>${value}</strong>
+            </div>
+          `,
+        )}
+      </section>
+    `;
+  }
+
+  private renderNodeVersionRow(node: NodeInfo, gatewayProtocolVersion: string) {
+    const match = node.versionMatch ?? node.protocolVersion === gatewayProtocolVersion;
+    return html`
+      <div class="fa-node-version-row">
+        <div>
+          <strong>${node.machine}</strong>
+          <span
+            >pid ${node.pid} · connected ${new Date(node.connectedAt).toLocaleTimeString()}</span
+          >
+        </div>
+        <span class="fa-node-version-pill ${match ? 'ok' : 'warn'}">
+          node ${node.protocolVersion ?? 'unknown'} / gateway ${gatewayProtocolVersion}
+        </span>
       </div>
     `;
   }
@@ -1052,6 +1218,23 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
     }
   }
 
+  private renderMainContent() {
+    const item = NAV_ITEMS.find((navItem) => navItem.route === this.route);
+    if (item?.maturity !== 'alpha') {
+      return html`<div class="fa-content">${this.renderContent()}</div>`;
+    }
+    return html`
+      <div class="fa-content fa-content--stacked">
+        <div class="fa-route-alpha-banner" title=${ALPHA_COPY}>
+          <span>ALPHA</span>
+          <strong>${item.label}</strong>
+          <em>${ALPHA_COPY}</em>
+        </div>
+        <div class="fa-screen-body">${this.renderContent()}</div>
+      </div>
+    `;
+  }
+
   private renderPairingPanel() {
     if (!this.pairingOpen) return '';
     return html`
@@ -1209,13 +1392,19 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         ${NAV_ITEMS.map(
           (item) => html`
             <a
-              class="fa-nav-btn ${this.route === item.route ? 'active' : ''}"
+              class="fa-nav-btn ${this.route === item.route ? 'active' : ''} ${item.maturity ===
+              'alpha'
+                ? 'fa-nav-btn--alpha'
+                : ''}"
               href="#${item.route}"
               title="${item.label}"
             >
-              ${item.icon}${this._sidebarExpanded
+              <span class="fa-nav-icon">${item.icon}</span>${this._sidebarExpanded
                 ? html`<span class="fa-nav-label">${item.label}</span>`
                 : ''}
+              ${item.maturity === 'alpha' && this._sidebarExpanded
+                ? html`<span class="fa-alpha-badge" title=${ALPHA_COPY}>ALPHA</span>`
+                : nothing}
               ${item.route === 'decisions' && this.decisionCount > 0
                 ? html`<span class="fa-badge-count">${this.decisionCount}</span>`
                 : ''}
@@ -1270,7 +1459,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         >
         </fleet-summary-bar>
         <global-filter-bar .slots=${this.fleetSlots}> </global-filter-bar>
-        <div class="fa-content">${this.renderContent()}</div>
+        ${this.renderMainContent()}
       </div>
       <chat-panel
         .open=${this.chatOpen}
@@ -1282,7 +1471,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           if (!this.chatOpen) this.chatUnread++;
         }}
       ></chat-panel>
-      ${this.renderPairingPanel()}
+      ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()}
     `;
   }
 }
@@ -1310,6 +1499,28 @@ function resolveDefaultRemotePairingGatewayUrl(): string {
   const env = (import.meta as ImportMetaWithEnv).env;
   if (env.VITE_FARMSLOT_REMOTE_GATEWAY_URL) return env.VITE_FARMSLOT_REMOTE_GATEWAY_URL;
   return '';
+}
+
+function resolveReleaseState(update: GatewayUpdateStatus | null | undefined): string {
+  if (!update) return 'unknown';
+  if (update.error) return 'unknown';
+  if (update.commitsAhead > 0) return 'UNSTABLE local ahead';
+  if (update.branch !== 'main') return `UNSTABLE ${update.branch}`;
+  if (update.updateAvailable) return `dev main (${update.commitsBehind} behind)`;
+  return 'dev main';
+}
+
+function updateFreshnessLabel(update: GatewayUpdateStatus | null | undefined): string {
+  if (!update) return 'checking…';
+  if (update.updateAvailable) {
+    return `${update.commitsBehind} commit(s) behind origin/${update.branch}`;
+  }
+  if (update.commitsAhead > 0) {
+    return `${update.commitsAhead} commit(s) ahead of origin/${update.branch}`;
+  }
+  return update.lastChecked
+    ? `up to date (${new Date(update.lastChecked).toLocaleTimeString()})`
+    : 'up to date';
 }
 
 declare global {

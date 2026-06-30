@@ -36,6 +36,28 @@ export interface GatewayStatusResult {
   update: GatewayUpdateStatus;
 }
 
+export type GatewayDoctorSectionId =
+  | 'gateway'
+  | 'workspace'
+  | 'capture'
+  | 'browser'
+  | 'simulator'
+  | 'android';
+
+export const GATEWAY_DOCTOR_SECTIONS: Array<{ id: GatewayDoctorSectionId; label: string }> = [
+  { id: 'gateway', label: 'Gateway' },
+  { id: 'workspace', label: 'Workspace' },
+  { id: 'capture', label: 'Evidence capture' },
+  { id: 'browser', label: 'Browser/CDP' },
+  { id: 'simulator', label: 'iOS simulator' },
+  { id: 'android', label: 'Android' },
+];
+
+export interface GatewayDoctorParams {
+  /** Run only one doctor section. Omit to run every section. */
+  sectionId?: GatewayDoctorSectionId;
+}
+
 export interface GatewayDoctorCheck {
   id: string;
   label: string;
@@ -46,7 +68,7 @@ export interface GatewayDoctorCheck {
 }
 
 export interface GatewayDoctorSection {
-  id: string;
+  id: GatewayDoctorSectionId;
   label: string;
   checks: GatewayDoctorCheck[];
 }

@@ -2,10 +2,13 @@ import { execFile as execFileCb } from 'node:child_process';
 import os from 'node:os';
 import { promisify } from 'node:util';
 
-import type {
-  GatewayDoctorCheck,
-  GatewayDoctorResult,
-  GatewayDoctorSection,
+import {
+  GATEWAY_DOCTOR_SECTIONS,
+  type GatewayDoctorCheck,
+  type GatewayDoctorParams,
+  type GatewayDoctorResult,
+  type GatewayDoctorSection,
+  type GatewayDoctorSectionId,
 } from '@farmslot/protocol';
 
 import { getAllNodes } from '../fleet/machine-registry.js';
@@ -22,16 +25,28 @@ interface CommandResult {
   stderr: string;
 }
 
-export async function gatewayDoctor(): Promise<GatewayDoctorResult> {
-  const [gateway, workspace, capture, browser, simulator, android] = await Promise.all([
-    gatewaySection(),
-    workspaceSection(),
-    captureHelperSection(),
-    browserSection(),
-    simulatorSection(),
-    androidSection(),
-  ]);
-  const sections = [gateway, workspace, capture, browser, simulator, android];
+type GatewayDoctorRunner = () => Promise<GatewayDoctorSection>;
+
+const SECTION_RUNNERS: Record<GatewayDoctorSectionId, GatewayDoctorRunner> = {
+  gateway: gatewaySection,
+  workspace: workspaceSection,
+  capture: captureHelperSection,
+  browser: browserSection,
+  simulator: simulatorSection,
+  android: androidSection,
+};
+
+export async function gatewayDoctor(
+  params: GatewayDoctorParams = {},
+): Promise<GatewayDoctorResult> {
+  const sectionIds = params.sectionId
+    ? [params.sectionId]
+    : GATEWAY_DOCTOR_SECTIONS.map((section) => section.id);
+  const sections = await Promise.all(sectionIds.map((sectionId) => SECTION_RUNNERS[sectionId]()));
+  return doctorResult(sections);
+}
+
+function doctorResult(sections: GatewayDoctorSection[]): GatewayDoctorResult {
   const checks = sections.flatMap((section) => section.checks);
   return {
     generatedAt: new Date().toISOString(),
