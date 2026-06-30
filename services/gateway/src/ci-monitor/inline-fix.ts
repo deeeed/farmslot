@@ -21,6 +21,7 @@ import {
   resolveProjectTaskDirName,
 } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
+import { expandTemplate } from '../core/hooks.js';
 import {
   respawnTmuxWindowWithCommand,
   shellQuote,
@@ -29,10 +30,7 @@ import {
 } from '../core/tmux.js';
 import { ghRequest } from '../integrations/github-client.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
-import {
-  buildLaunchCommand,
-  RUNNER_LAUNCH_READY_TIMEOUT_MS,
-} from '../runners/launch-command.js';
+import { buildLaunchCommand, RUNNER_LAUNCH_READY_TIMEOUT_MS } from '../runners/launch-command.js';
 import {
   normalizeRunner,
   resolvePrimaryWorkerTarget,
@@ -243,6 +241,40 @@ function buildCIIssuesString(comments: BotComment[], failedChecks: string[]): st
   return lines.join('\n');
 }
 
+const CI_FIX_TEMPLATE_NAME = 'ci-fix.md';
+
+/** Project-owned ci-fix template, then Farmslot default at `templates/worker/ci-fix.md`. */
+export async function resolveCiFixTemplatePath(project: string): Promise<string | null> {
+  const projectPath = path.join(
+    farmslotRoot,
+    'projects',
+    project,
+    'templates',
+    'worker',
+    CI_FIX_TEMPLATE_NAME,
+  );
+  try {
+    await readFile(projectPath, 'utf-8');
+    return projectPath;
+  } catch {
+    // fall through
+  }
+
+  const defaultPath = path.join(farmslotRoot, 'templates', 'worker', CI_FIX_TEMPLATE_NAME);
+  try {
+    await readFile(defaultPath, 'utf-8');
+    console.warn(
+      `[ci-monitor] project '${project}' has no templates/worker/${CI_FIX_TEMPLATE_NAME}; using Farmslot default`,
+    );
+    return defaultPath;
+  } catch {
+    console.warn(
+      `[ci-monitor] no ci-fix template for project '${project}' and no Farmslot default at templates/worker/${CI_FIX_TEMPLATE_NAME}`,
+    );
+    return null;
+  }
+}
+
 /** Resolve the slot's task directory path (relative within the repo) */
 async function resolveSlotTaskDir(runId: string, project: string): Promise<string | null> {
   try {
@@ -281,39 +313,39 @@ async function writeCIFixTask(
         ? 'comments'
         : 'failures';
 
-  // Read template
+  const templatePath = await resolveCiFixTemplatePath(run.project);
+  if (!templatePath) return null;
+
   let template: string;
   try {
-    const templatePath = path.join(
-      farmslotRoot,
-      'projects',
-      run.project,
-      'templates',
-      'worker',
-      'ci-fix.md',
-    );
     template = await readFile(templatePath, 'utf-8');
   } catch {
-    // Fallback: simple one-liner if template not found
     return null;
   }
 
-  // Expand placeholders
+  // Expand CI-watch placeholders, then standard slot/project template vars.
   const vars = await loadSlotVars(slotId);
+  const pv = await loadProjectVars(run.project);
   const branch = run.branch ?? 'unknown';
-  const replacements: Record<string, string> = {
+  const defaultBranch =
+    typeof pv.projectJson.default_branch === 'string' && pv.projectJson.default_branch.trim()
+      ? pv.projectJson.default_branch.trim()
+      : 'main';
+  const ciReplacements: Record<string, string> = {
     TASK_DIR: taskDir,
     PR_NUMBER: String(prNumber),
     GH_REPO: ciRepo,
     BRANCH: branch,
+    DEFAULT_BRANCH: defaultBranch,
     CI_ISSUES: ciIssues,
     CI_ISSUE_TYPE: ciIssueType,
   };
 
   let expanded = template;
-  for (const [key, val] of Object.entries(replacements)) {
+  for (const [key, val] of Object.entries(ciReplacements)) {
     expanded = expanded.replaceAll(`{{${key}}}`, val);
   }
+  expanded = expandTemplate(expanded, vars, pv);
 
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = `${taskDir}/CI-FIX.md`;
