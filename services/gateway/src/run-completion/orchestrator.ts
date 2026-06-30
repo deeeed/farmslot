@@ -177,13 +177,18 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
   if (!run || !run.slotId) return empty;
   try {
     const vars = await loadSlotVars(run.slotId);
+    // Bound transcript re-discovery to when the runner actually launched — the
+    // dispatch step start, not run.createdAt (which precedes write-task/prepare and
+    // would widen the window to unrelated same-repo transcripts).
+    const dispatchedAt =
+      run.steps.find((step) => step.name === 'dispatch')?.startedAt ?? run.createdAt;
     const usage = await extractRunnerSessionUsage({
       slotId: run.slotId,
       vars,
       runner: run.metrics.runner,
       runnerSessionId: run.metrics.runnerSessionId,
       runnerSessionPath: run.metrics.runnerSessionPath,
-      dispatchedAt: run.createdAt,
+      dispatchedAt,
       completedAt: run.completedAt,
     });
     const costUsd = usage.costUsd ?? null;
