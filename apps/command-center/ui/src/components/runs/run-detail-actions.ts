@@ -3,6 +3,7 @@ import type {
   Run,
   RunDecision,
   RunInteractiveDevResolveResult,
+  RunProbeWorkerSignalResult,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
@@ -121,6 +122,42 @@ export function confirmForceComplete(runId: string, context: ConfirmTimerContext
 
 export interface ConfirmDecisionContext extends ConfirmTimerContext {
   jumpToSuccessorWhenAvailable: (originRunId: string) => void;
+}
+
+export interface InteractiveHandoffSignalContext {
+  actionsBlocked: () => boolean;
+  busy: () => boolean;
+  setBusy: (busy: boolean) => void;
+  setError: (error: string | null) => void;
+}
+
+export async function checkInteractiveHandoffSignal(
+  runId: string,
+  decision: RunDecision,
+  context: InteractiveHandoffSignalContext,
+): Promise<void> {
+  if (context.actionsBlocked() || context.busy()) return;
+  context.setBusy(true);
+  context.setError(null);
+  try {
+    const probe = await gateway.request<RunProbeWorkerSignalResult>(
+      Methods.RUN_PROBE_WORKER_SIGNAL,
+      { runId },
+    );
+    if (!probe.ok) {
+      context.setError(probe.message);
+      return;
+    }
+    await gateway.request(Methods.RUN_RESOLVE_DECISION, {
+      runId,
+      decisionId: decision.id,
+      actionId: 'signal-written',
+    });
+  } catch (err) {
+    context.setError((err as Error).message);
+  } finally {
+    context.setBusy(false);
+  }
 }
 
 export function confirmRunDecision(

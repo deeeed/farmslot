@@ -34,6 +34,7 @@ import type { RecipeCompleteDetail } from '../workspace/recipe-output-panel.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 import {
+  checkInteractiveHandoffSignal,
   confirmForceComplete,
   confirmRunDecision,
   jumpToSuccessorWhenAvailable,
@@ -162,6 +163,8 @@ export class RunDetail extends RunDetailState {
       this._directRunRefreshing = false;
       this._directRunRequestSeq++;
       this._resetRecipeRuns();
+      this._handoffSignalCheckBusy = false;
+      this._handoffSignalCheckError = null;
     }
     this._hydrating = isHydrating(s, 'runs');
     this._bootstrapFailed = s.bootstrapFailed.runs;
@@ -762,6 +765,10 @@ export class RunDetail extends RunDetailState {
       },
       confirmResolve: (runId, decision, actionId) =>
         this._confirmResolve(runId, decision, actionId),
+      checkInteractiveHandoffSignal: (runId, decision) =>
+        this._checkInteractiveHandoffSignal(runId, decision),
+      handoffSignalCheckBusy: this._handoffSignalCheckBusy,
+      handoffSignalCheckError: this._handoffSignalCheckError,
       resolveSlotPick: (runId, decisionId) => this._resolveSlotPick(runId, decisionId),
       resolveBranchNudgePick: (runId, decisionId) =>
         this._resolveBranchNudgePick(runId, decisionId),
@@ -799,6 +806,19 @@ export class RunDetail extends RunDetailState {
       ...this._confirmTimerContext(),
       jumpToSuccessorWhenAvailable: (originRunId) =>
         this._jumpToSuccessorWhenAvailable(originRunId),
+    });
+  }
+
+  private async _checkInteractiveHandoffSignal(runId: string, decision: RunDecision) {
+    await checkInteractiveHandoffSignal(runId, decision, {
+      actionsBlocked: () => this._actionsBlocked(),
+      busy: () => this._handoffSignalCheckBusy,
+      setBusy: (busy) => {
+        this._handoffSignalCheckBusy = busy;
+      },
+      setError: (error) => {
+        this._handoffSignalCheckError = error;
+      },
     });
   }
 

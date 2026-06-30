@@ -214,6 +214,7 @@ export const Methods = {
   RUN_INTERACTIVE_DEV_RESOLVE: 'run.interactiveDev.resolve',
   RUN_FOR_SLOT: 'run.forSlot',
   RUN_RESOLVE_DECISION: 'run.resolveDecision',
+  RUN_PROBE_WORKER_SIGNAL: 'run.probeWorkerSignal',
   RUN_GRADE: 'run.grade',
   RUN_GET_GRADE: 'run.getGrade',
   RUN_PROPOSE_IMPROVEMENT: 'run.proposeImprovement',

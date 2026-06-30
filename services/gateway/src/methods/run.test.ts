@@ -21,6 +21,7 @@ import {
   resolveCreateSafetyTier,
   runCreate,
   runInteractiveDevResolve,
+  runProbeWorkerSignal,
   runRehydratePrNumber,
   runResolveDecision,
 } from './run.js';
@@ -945,7 +946,7 @@ test('runResolveDecision rejects interactive PR-complete handoff resume without 
     title: 'Interactive handoff',
     description: 'Worker stopped for human handoff',
     actions: [
-      { id: 'signal-written', label: 'I wrote SIGNAL.json', style: 'primary' },
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' },
       { id: 'abort', label: 'Abort Run', style: 'danger' },
     ],
     createdAt: new Date().toISOString(),
@@ -972,6 +973,26 @@ test('runResolveDecision rejects interactive PR-complete handoff resume without 
   );
   assert.equal(getRun(run.id)?.status, 'blocked');
   assert.equal(getRun(run.id)?.decisions[0]?.resolvedAt, undefined);
+});
+
+test('runProbeWorkerSignal reports missing slot when run is unbound', async (t) => {
+  const run = createRun({
+    flowType: 'pr-complete',
+    project: 'example-mobile-farm',
+    ticketOrPr: `example-org/example-mobile#${Date.now()}`,
+    mode: 'interactive',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  const probe = await runProbeWorkerSignal({ runId: run.id });
+  assert.equal(probe.ok, false);
+  assert.equal(probe.code, 'no_slot');
+  assert.match(probe.message, /no slot bound/i);
 });
 
 test('runRehydratePrNumber rejects unpublished autonomous dev runs before PR lookup', async (t) => {
