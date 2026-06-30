@@ -8,12 +8,12 @@ import {
   type IntelligenceActionGuard,
   type IntelligenceActionOutcomeReason,
   type IntelligenceActionProposedType,
+  isTerminalRunStatus,
   type MonitorViolation,
   type PipelineStep,
   PipelineSteps,
   RECOVERABLE_FAILURE_CATEGORIES,
   type Run,
-  type RunStatus,
 } from '@farmslot/protocol';
 
 import { loadProjectVars, normalizeRawProjectAutoRecovery } from '../core/config.js';
@@ -41,7 +41,6 @@ interface AutoRecoveryConfig {
   llmTimeoutMs: number;
 }
 
-const TERMINAL_STATUSES = new Set<RunStatus>(['done', 'failed', 'cancelled']);
 const DEFAULT_LLM_TIMEOUT_MS = 20_000;
 // Minimum viable budget for one bounded classification call. The budget ledger
 // pessimistically reserves all remaining daily budget before the provider call
@@ -133,7 +132,7 @@ function isAutoRecoveryCandidateRun(run: Run): boolean {
 }
 
 function isTerminalRunForAutoRecovery(run: Run): boolean {
-  return TERMINAL_STATUSES.has(run.status) || isMonitorBlockedRecoveryCandidate(run);
+  return isTerminalRunStatus(run.status) || isMonitorBlockedRecoveryCandidate(run);
 }
 
 function failureText(run: Run): string {
@@ -202,7 +201,7 @@ function rememberBounded(set: Set<string>, key: string): boolean {
 
 function findActiveRunForViolation(violation: MonitorViolation): Run | undefined {
   const candidates = getAllRuns()
-    .filter((run) => run.slotId === violation.slotId && !TERMINAL_STATUSES.has(run.status))
+    .filter((run) => run.slotId === violation.slotId && !isTerminalRunStatus(run.status))
     .sort(
       (a, b) => Date.parse(b.updatedAt ?? b.createdAt) - Date.parse(a.updatedAt ?? a.createdAt),
     );

@@ -1,24 +1,23 @@
 // methods/finetune.ts — Fine-tuning data export (C3)
 
-import type {
-  FinetuneExportDPOParams,
-  FinetuneExportDPOResult,
-  FinetuneExportSFTParams,
-  FinetuneExportSFTResult,
-  FinetuneIndexParams,
-  FinetuneIndexResult,
-  Run,
+import {
+  type FinetuneExportDPOParams,
+  type FinetuneExportDPOResult,
+  type FinetuneExportSFTParams,
+  type FinetuneExportSFTResult,
+  type FinetuneIndexParams,
+  type FinetuneIndexResult,
+  isTerminalRunStatus,
+  type Run,
 } from '@farmslot/protocol';
 
 import { runDurationMs } from '../runs/run-duration.js';
 import { listRuns } from '../runs/store.js';
 
-const TERMINAL_STATUSES = new Set(['done', 'failed', 'cancelled']);
-
 const GRADE_ORDER: Record<string, number> = { good: 3, ok: 2, bad: 1 };
 
 function isTerminal(run: Run): boolean {
-  return TERMINAL_STATUSES.has(run.status);
+  return isTerminalRunStatus(run.status);
 }
 
 function collectStepOutputs(run: Run): Record<string, unknown> {

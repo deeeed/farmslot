@@ -1,6 +1,7 @@
 import { customElement } from 'lit/decorators.js';
 
 import type {
+  ConfigTemplateOptionsResult,
   EvalSuiteCapGetResult,
   EvalSuiteCapUpdateResult,
   EvalTaskProfile,
@@ -8,7 +9,6 @@ import type {
   QueueItem,
   ResultPackageManifest,
   Run,
-  WorkerTemplateOption,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
@@ -512,7 +512,7 @@ export class EvalCockpit extends EvalCockpitState {
     this._candidateTemplateOptionsLoading = true;
     this._candidateTemplateOptionsError = '';
     try {
-      const res = await gateway.request<{ options: WorkerTemplateOption[] }>(
+      const res = await gateway.request<ConfigTemplateOptionsResult>(
         Methods.CONFIG_TEMPLATE_OPTIONS,
         { project, flowType: taskProfile },
       );

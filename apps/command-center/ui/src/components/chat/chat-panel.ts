@@ -3,14 +3,17 @@ import { customElement } from 'lit/decorators.js';
 
 import type {
   ChatClientContext,
+  ChatHistoryResult,
   ChatListActionsResult,
   ChatMemorySavedPayload,
   ChatMessage,
+  ChatNewResult,
   ChatNextStep,
   ChatResponsePayload,
   ChatSendIntent,
   ChatSessionContextResult,
-  ChatSessionSummary,
+  ChatSessionCreateResult,
+  ChatSessionsResult,
   CopilotObserverNotificationPayload,
 } from '@farmslot/protocol';
 import { Events, Methods } from '@farmslot/protocol';
@@ -111,10 +114,7 @@ export class ChatPanel extends ChatPanelState {
 
   private async loadSessions() {
     try {
-      const result = await gateway.request<{ sessions: ChatSessionSummary[] }>(
-        Methods.CHAT_SESSIONS,
-        {},
-      );
+      const result = await gateway.request<ChatSessionsResult>(Methods.CHAT_SESSIONS, {});
       this.sessionSummaries = result.sessions;
     } catch (err) {
       const message = errorMessage(err);
@@ -184,7 +184,7 @@ export class ChatPanel extends ChatPanelState {
 
   private async loadHistory(sessionId = this.activeSessionId()) {
     try {
-      const result = await gateway.request<{ messages: ChatMessage[] }>(Methods.CHAT_HISTORY, {
+      const result = await gateway.request<ChatHistoryResult>(Methods.CHAT_HISTORY, {
         sessionId,
       });
       if (sessionId !== this.activeSessionId()) return;
@@ -347,7 +347,7 @@ export class ChatPanel extends ChatPanelState {
     this.sending = true;
     const sessionId = this.activeSessionId();
     try {
-      const result = await gateway.request<{ savedPath?: string }>(Methods.CHAT_NEW, { sessionId });
+      const result = await gateway.request<ChatNewResult>(Methods.CHAT_NEW, { sessionId });
       if (sessionId !== this.activeSessionId()) return;
       this.messages = [];
       this.sessionCost = 0;
@@ -434,7 +434,7 @@ export class ChatPanel extends ChatPanelState {
 
   private async createManualSession() {
     try {
-      const result = await gateway.request<{ session: ChatSessionSummary }>(
+      const result = await gateway.request<ChatSessionCreateResult>(
         Methods.CHAT_SESSION_CREATE,
         {},
       );

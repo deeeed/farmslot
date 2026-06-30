@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import {
   DEFAULT_BRANCH,
   isSlotRefreshStaleBranch,
+  isTerminalRunStatus,
   type PRForSlotParams,
   type PRForSlotResult,
   type PRListParams,
@@ -95,7 +96,6 @@ interface FetchPRDataOptions {
 
 type EventEmitter = (event: string, payload: unknown) => void;
 const MAX_PR_DASHBOARD_CANDIDATES = 200;
-const TERMINAL_RUN_STATUSES = new Set(['done', 'failed', 'cancelled']);
 const PR_DASHBOARD_TERMINAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type PrSlotProjectConfig = {
@@ -176,6 +176,7 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
       p.name,
       {
         defaultBranch: p.defaultBranch || DEFAULT_BRANCH,
+        isTerminalRunStatus,
         slotTrackingBranch: p.slotTrackingBranch,
       },
     ]),
@@ -216,7 +217,7 @@ export async function prList(params?: PRListParams): Promise<PRListResult> {
     if (params?.project && run.project !== params.project) continue;
     if (run.prNumber == null) continue;
     if (prInfo.has(run.prNumber)) continue;
-    if (TERMINAL_RUN_STATUSES.has(run.status)) {
+    if (isTerminalRunStatus(run.status)) {
       const freshness = run.completedAt ?? run.updatedAt;
       const ageMs = freshness ? now - Date.parse(freshness) : Infinity;
       if (!Number.isFinite(ageMs) || ageMs > PR_DASHBOARD_TERMINAL_TTL_MS) continue;
@@ -968,6 +969,7 @@ export async function prForSlot(params: PRForSlotParams): Promise<PRForSlotResul
   const projectConfigs = {
     [slot.project]: {
       defaultBranch: projectConfig?.defaultBranch || DEFAULT_BRANCH,
+      isTerminalRunStatus,
       slotTrackingBranch: projectConfig?.slotTrackingBranch,
     },
   };

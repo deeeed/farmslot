@@ -17,6 +17,7 @@ import {
   githubPullUrl,
   isInternalRunArtifactPath,
   isPublishEvidenceArtifact,
+  isTerminalRunStatus as protocolIsTerminalRunStatus,
   parseGitHubRef,
 } from '@farmslot/protocol';
 import { flowColor as _flowColor, flowLabel as _flowLabel } from '@farmslot/theme';
@@ -449,7 +450,7 @@ function purposeForArtifactPath(path: string): string {
 }
 
 export function isTerminalRunStatus(status: RunStatus): boolean {
-  return status === 'done' || status === 'failed' || status === 'cancelled';
+  return protocolIsTerminalRunStatus(status);
 }
 
 export function routeForRun(run: Pick<Run, 'id'>): string {

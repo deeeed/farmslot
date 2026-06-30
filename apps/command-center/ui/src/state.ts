@@ -41,6 +41,7 @@ import {
   buildRunProjectAnalyticsSummaries,
   DEFAULT_BRANCH,
   Events,
+  isTerminalRunStatus,
   Methods,
 } from '@farmslot/protocol';
 
@@ -244,10 +245,8 @@ const PR_PRODUCING_FLOWS = new Set<Run['flowType']>([
   'pr-complete',
   'merge-main',
 ]);
-const TERMINAL_RUN_STATUSES = new Set<Run['status']>(['done', 'failed', 'cancelled']);
-
 function isActiveRun(run: Run): boolean {
-  return !TERMINAL_RUN_STATUSES.has(run.status);
+  return !isTerminalRunStatus(run.status);
 }
 
 function isReviewableTerminalRun(run: Run): boolean {

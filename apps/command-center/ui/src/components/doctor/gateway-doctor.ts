@@ -3,30 +3,18 @@ import { customElement, state } from 'lit/decorators.js';
 
 import type {
   GatewayDoctorResult,
-  GatewayDoctorSection,
   GatewayDoctorSectionDefinition,
   GatewayDoctorSectionId,
+  GatewayDoctorSectionReport,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
-type DoctorSectionStatus = 'pending' | 'running' | 'complete' | 'error';
-
-interface DoctorSectionState {
-  id: GatewayDoctorSectionId;
-  label: string;
-  description: string;
-  status: DoctorSectionStatus;
-  section: GatewayDoctorSection | null;
-  error: string;
-  checkedAt: string | null;
-}
-
 @customElement('gateway-doctor')
 export class GatewayDoctor extends LitElement {
-  @state() private sections: DoctorSectionState[] = [];
+  @state() private sections: GatewayDoctorSectionReport[] = [];
   @state() private loading = false;
   @state() private error = '';
   private unsubscribeConnection: (() => void) | null = null;
@@ -205,7 +193,7 @@ export class GatewayDoctor extends LitElement {
     }
   }
 
-  private async loadCatalog(): Promise<DoctorSectionState[]> {
+  private async loadCatalog(): Promise<GatewayDoctorSectionReport[]> {
     if (gateway.connectionState !== 'connected') {
       this.error = 'Waiting for gateway connection…';
       return [];
@@ -278,7 +266,10 @@ export class GatewayDoctor extends LitElement {
     }
   }
 
-  private updateSection(id: GatewayDoctorSectionId, patch: Partial<DoctorSectionState>): void {
+  private updateSection(
+    id: GatewayDoctorSectionId,
+    patch: Partial<GatewayDoctorSectionReport>,
+  ): void {
     this.sections = this.sections.map((section) =>
       section.id === id ? { ...section, ...patch } : section,
     );
@@ -313,7 +304,7 @@ export class GatewayDoctor extends LitElement {
     `;
   }
 
-  private renderSection(sectionState: DoctorSectionState) {
+  private renderSection(sectionState: GatewayDoctorSectionReport) {
     const section = sectionState.section;
     const statusLabel = sectionStatusLabel(sectionState);
     return html`
@@ -359,7 +350,9 @@ export class GatewayDoctor extends LitElement {
   }
 }
 
-function initialSectionStates(definitions: GatewayDoctorSectionDefinition[]): DoctorSectionState[] {
+function initialSectionStates(
+  definitions: GatewayDoctorSectionDefinition[],
+): GatewayDoctorSectionReport[] {
   return definitions.map((section) => ({
     id: section.id,
     label: section.label,
@@ -371,7 +364,7 @@ function initialSectionStates(definitions: GatewayDoctorSectionDefinition[]): Do
   }));
 }
 
-function doctorSummary(sections: DoctorSectionState[]) {
+function doctorSummary(sections: GatewayDoctorSectionReport[]) {
   const checks = sections.flatMap((section) => section.section?.checks ?? []);
   return {
     ok: checks.filter((check) => check.ok && !check.warn).length,
@@ -384,7 +377,7 @@ function doctorSummary(sections: DoctorSectionState[]) {
   };
 }
 
-function sectionStatusLabel(section: DoctorSectionState): string {
+function sectionStatusLabel(section: GatewayDoctorSectionReport): string {
   if (section.status === 'complete' && section.section) {
     const checks = section.section.checks;
     if (checks.some((check) => !check.ok)) return 'fail';
@@ -394,7 +387,7 @@ function sectionStatusLabel(section: DoctorSectionState): string {
   return section.status;
 }
 
-function sectionStatusClass(section: DoctorSectionState): string {
+function sectionStatusClass(section: GatewayDoctorSectionReport): string {
   const label = sectionStatusLabel(section);
   if (label === 'ok') return 'ok';
   if (label === 'warn' || label === 'running') return 'warn';
@@ -402,7 +395,7 @@ function sectionStatusClass(section: DoctorSectionState): string {
   return 'muted';
 }
 
-function sectionPlaceholder(section: DoctorSectionState): string {
+function sectionPlaceholder(section: GatewayDoctorSectionReport): string {
   if (section.status === 'running') return 'Running checks for this section…';
   if (section.status === 'error') return 'Section failed before checks were returned.';
   return 'Pending — this section will run independently.';

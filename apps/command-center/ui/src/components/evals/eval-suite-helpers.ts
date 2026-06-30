@@ -1,10 +1,11 @@
-import type {
-  DiffStat,
-  EvalExperimentSource,
-  EvalPackageSource,
-  EvalTaskProfile,
-  PRStatus,
-  Run,
+import {
+  type DiffStat,
+  type EvalExperimentSource,
+  type EvalPackageSource,
+  type EvalTaskProfile,
+  isTerminalRunStatus,
+  type PRStatus,
+  type Run,
 } from '@farmslot/protocol';
 
 export type EvalCaseSourceKind = EvalExperimentSource['kind'];
@@ -81,7 +82,6 @@ export interface EvalCaseFilters {
 export type EvalCaseSortKey = 'date' | 'title' | 'kind' | 'project' | 'profile' | 'status';
 export type EvalCaseSortDirection = 'asc' | 'desc';
 
-const TERMINAL_RUN_STATUSES = new Set(['done', 'failed', 'cancelled']);
 const EVAL_RUN_FLOW_TYPES = new Set(['fix-bug', 'dev']);
 const RUN_FLOW_LABELS: Record<string, string> = {
   'fix-bug': 'BUG',
@@ -405,7 +405,7 @@ export function catalogItemFromPr(pr: PRStatus, latestRun?: Run): EvalCaseCatalo
   const merged = pr.merged || pr.prState === 'MERGED' || pr.recommendation === 'MERGED';
   const runFlowWarning = latestRun ? unsupportedRunFlowWarning(latestRun) : null;
   const runBacked = Boolean(
-    merged && latestRun && TERMINAL_RUN_STATUSES.has(latestRun.status) && !runFlowWarning,
+    merged && latestRun && isTerminalRunStatus(latestRun.status) && !runFlowWarning,
   );
   const source: EvalExperimentSource =
     runBacked && latestRun
@@ -415,7 +415,7 @@ export function catalogItemFromPr(pr: PRStatus, latestRun?: Run): EvalCaseCatalo
     ? [
         ...(latestRun && !runBacked
           ? [
-              `Matching Farmslot run ${latestRun.id.slice(0, 8)} exists but cannot seed this eval yet: ${!TERMINAL_RUN_STATUSES.has(latestRun.status) ? `run is ${latestRun.status}` : (runFlowWarning ?? 'unsupported run')}. Falling back to GitHub PR diff.`,
+              `Matching Farmslot run ${latestRun.id.slice(0, 8)} exists but cannot seed this eval yet: ${!isTerminalRunStatus(latestRun.status) ? `run is ${latestRun.status}` : (runFlowWarning ?? 'unsupported run')}. Falling back to GitHub PR diff.`,
             ]
           : []),
       ]
@@ -464,7 +464,7 @@ export function catalogItemFromPr(pr: PRStatus, latestRun?: Run): EvalCaseCatalo
 
 export function catalogItemFromRun(run: Run): EvalCaseCatalogItem {
   const source: EvalExperimentSource = { kind: 'prior-run', runId: run.id };
-  const terminal = TERMINAL_RUN_STATUSES.has(run.status);
+  const terminal = isTerminalRunStatus(run.status);
   const flowWarning = unsupportedRunFlowWarning(run);
   const sourceKey = canonicalSourceIdentity(source);
   return {

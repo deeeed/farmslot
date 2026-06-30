@@ -1,3 +1,4 @@
+import type { RecipeCommandResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -24,7 +25,7 @@ export async function copySlotViewRecipeCommand(
     selectedRun: useSelectedRecipeRun ? view._selectedRecipeRun() : null,
   });
   try {
-    const result = await gateway.request<{ command: string }>(Methods.RECIPE_COMMAND, params);
+    const result = await gateway.request<RecipeCommandResult>(Methods.RECIPE_COMMAND, params);
     await navigator.clipboard.writeText(result.command);
     view._recipeCommandFeedback = 'copied';
     setTimeout(() => {

@@ -1,5 +1,6 @@
 import type {
   ConfigProjectsResult,
+  ConfigTemplateOptionsResult,
   DispatchCandidatesResult,
   DispatchPreviewResult,
   FlowType,
@@ -25,10 +26,10 @@ export async function requestTemplateOptions(
   project: string,
   flowType: FlowType,
 ): Promise<WorkerTemplateOption[]> {
-  const res = await gateway.request<{ options: WorkerTemplateOption[] }>(
-    Methods.CONFIG_TEMPLATE_OPTIONS,
-    { project, flowType },
-  );
+  const res = await gateway.request<ConfigTemplateOptionsResult>(Methods.CONFIG_TEMPLATE_OPTIONS, {
+    project,
+    flowType,
+  });
   return res.options;
 }
 

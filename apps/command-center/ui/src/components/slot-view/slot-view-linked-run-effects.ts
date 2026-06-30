@@ -1,4 +1,4 @@
-import type { Run } from '@farmslot/protocol';
+import type { Run, RunForSlotResult, RunGetResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -110,7 +110,7 @@ export async function refreshSlotViewLinkedRun(
   try {
     if (requestedRunId && !cachedRun) {
       try {
-        const direct = await gateway.request<{ run: Run }>(Methods.RUN_GET, {
+        const direct = await gateway.request<RunGetResult>(Methods.RUN_GET, {
           runId: requestedRunId,
         });
         if (refreshToken !== view._linkedRunRefreshToken) return nextPrevRunStatus;
@@ -130,7 +130,7 @@ export async function refreshSlotViewLinkedRun(
       }
     }
 
-    const result = await gateway.request<{ run: Run | null }>(Methods.RUN_FOR_SLOT, {
+    const result = await gateway.request<RunForSlotResult>(Methods.RUN_FOR_SLOT, {
       slotId: view.slotId,
     });
     if (refreshToken !== view._linkedRunRefreshToken) return nextPrevRunStatus;

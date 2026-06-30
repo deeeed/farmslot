@@ -380,7 +380,6 @@ export class FarmApp extends LitElement {
       ]);
       this.versionDetailsStatus = status;
       this.versionDetailsNodes = nodes;
-      this.updateStatus = status.update;
     } catch (error) {
       this.versionDetailsError = error instanceof Error ? error.message : String(error);
     } finally {
