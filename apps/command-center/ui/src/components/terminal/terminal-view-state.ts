@@ -75,6 +75,8 @@ export abstract class TerminalViewState extends LitElement {
   protected _tmuxListBackoffUntil = 0;
   protected _ptyReady = false; // true after first resize settles
   protected _subscribeSeq = 0;
+  protected _ptySizeCommitSeq = 0;
+  protected _ptySizeCommitPromise?: Promise<void>;
   protected _ptyInputBound = false;
 
   protected _workerRef(): TmuxWorkerRef | null {

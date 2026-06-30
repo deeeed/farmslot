@@ -454,6 +454,23 @@ export class TerminalView extends TerminalViewState {
   private async _commitInitialPtySize(subscribeSeq: number): Promise<void> {
     if (subscribeSeq !== this._subscribeSeq) return;
     if (!this._terminal || this._mode !== 'pty' || this._ptyReady) return;
+    if (this._ptySizeCommitSeq === subscribeSeq && this._ptySizeCommitPromise) {
+      return this._ptySizeCommitPromise;
+    }
+    this._ptySizeCommitSeq = subscribeSeq;
+    this._ptySizeCommitPromise = this._runCommitInitialPtySize(subscribeSeq);
+    try {
+      await this._ptySizeCommitPromise;
+    } finally {
+      if (this._ptySizeCommitSeq === subscribeSeq) {
+        this._ptySizeCommitPromise = undefined;
+      }
+    }
+  }
+
+  private async _runCommitInitialPtySize(subscribeSeq: number): Promise<void> {
+    if (subscribeSeq !== this._subscribeSeq) return;
+    if (!this._terminal || this._mode !== 'pty' || this._ptyReady) return;
 
     this._attachPhase = 'sizing';
     this._fitAddon?.fit();
@@ -479,17 +496,17 @@ export class TerminalView extends TerminalViewState {
     }
     if (subscribeSeq !== this._subscribeSeq) return;
 
-    // Start accepting PTY bytes before forcing a redraw. While sizing we dropped
-    // the SIGWINCH screen from the initial cols-1 attach; clearing xterm here left
-    // only status-line fragments (the ''''/hhhh garbage). Bounce size after we're
-    // listening so tmux emits a full screen we keep.
+    // Accept PTY bytes before redraw nudge so we keep the full screen tmux emits.
     this._ptyReady = true;
+    await this._nudgePtyRedraw(cols, rows, subscribeSeq);
+    if (subscribeSeq !== this._subscribeSeq) return;
+    await this._seedPtyViewportIfEmpty(subscribeSeq);
+    if (subscribeSeq !== this._subscribeSeq) return;
+
+    this._terminal.scrollToBottom();
     this._attachPhase = 'live';
     this._reconnecting = false;
     this._recoveryMessage = '';
-    await this._nudgePtyRedraw(cols, rows, subscribeSeq);
-    await this._seedPtyViewportIfEmpty(subscribeSeq);
-    this._terminal.scrollToBottom();
   }
 
   /** When SIGWINCH redraw is dropped during sizing, seed from tmux capture-pane once. */
@@ -575,6 +592,8 @@ export class TerminalView extends TerminalViewState {
   ) {
     this._log('teardownStreams');
     this._subscribeSeq++;
+    this._ptySizeCommitSeq = 0;
+    this._ptySizeCommitPromise = undefined;
     this._stopTmuxPoll();
     if (remoteUnsubscribe && gateway.connectionState === 'connected') {
       const unsubscribeState = priorTarget

@@ -30,7 +30,7 @@ function detectGarbage(joined) {
   const stripped = joined.replace(/[─│\s]+/g, '');
   if (!stripped.trim()) return { garbage: false, reason: 'chrome-only' };
   if (/(.)\1{24,}/.test(stripped)) return { garbage: true, reason: 'repeated-char-run' };
-  if (/['`*p)\\]!]{16,}/.test(stripped)) return { garbage: true, reason: 'powerline-fallback' };
+  if (/[\]'`*p)!\\]{16,}/.test(stripped)) return { garbage: true, reason: 'powerline-fallback' };
   if ((joined.match(/farmslot-demo-banner/g) || []).length > 1)
     return { garbage: true, reason: 'stacked-banner' };
   return { garbage: false, reason: 'ok' };
