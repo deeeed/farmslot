@@ -107,7 +107,7 @@ export function renderInteractiveHandoffGate(
             <li>Mark checklist progress: <code>./mark 1</code>, <code>./mark 2</code>, …</li>
             <li>
               When done, write a terminal signal:
-              <code>./mark complete --outcome success</code>
+              <code>./mark complete</code> or <code>./mark no-change --reason "…"</code>
             </li>
             <li>Click <strong>Check SIGNAL.json &amp; resume</strong>.</li>
           </ol>

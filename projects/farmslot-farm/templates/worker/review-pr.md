@@ -1,7 +1,7 @@
 # Worker: Review-PR — #{{PR_NUMBER}}
 
 > **Signal file:** `./mark N` for progress; `SIGNAL.json` only when done. TASK `STATUS` ≠ SIGNAL `status`.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete --outcome success` (never `echo > SIGNAL.json`).
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete | mark no-change --reason "…" | mark blocked --reason "…"` (never hand-write `SIGNAL.json`).
 
 **CRITICAL: Never pause or wait for user input. Complete ALL steps in a single uninterrupted run.**
 
@@ -157,7 +157,7 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 
 ### Finish (23)
 
-- [ ] **23. Done** — `STATUS: done`, then `{{TASK_DIR}}/mark complete --outcome success --mark-last`. **Read-only** — no commits, no pushes.
+- [ ] **23. Done** — `STATUS: done`, then `{{TASK_DIR}}/mark complete --mark-last`. **Read-only** — no commits, no pushes.
 
 ## Rules
 

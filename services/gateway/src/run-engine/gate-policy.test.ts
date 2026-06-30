@@ -108,8 +108,6 @@ test('buildNoChangeGateInputs renders full evidence into desc + payload', () => 
       reportPath: 'artifacts/no-change-report.md',
       artifacts: ['artifacts/proof-1.png', 'artifacts/proof-2.png'],
       confidence: 'high',
-      reproductionAttempted: true,
-      noCodeChange: true,
     },
     report: 'Verified on main @ abc1234. AC1, AC2, AC3 all pass.',
   });
@@ -120,7 +118,7 @@ test('buildNoChangeGateInputs renders full evidence into desc + payload', () => 
   assert.match(desc, /- artifact: `artifacts\/proof-1\.png`/);
   assert.match(desc, /- artifact: `artifacts\/proof-2\.png`/);
   assert.match(desc, /- confidence: high/);
-  assert.match(desc, /- reproduction attempted: yes/);
+  assert.doesNotMatch(desc, /reproduction attempted/);
   assert.match(desc, /Report excerpt:\n\nVerified on main @ abc1234/);
 
   assert.equal(payload.kind, 'no-change');

@@ -1019,8 +1019,6 @@ export function mockRuns(): Run[] {
           reportPath: 'artifacts/no-change-report.md',
           artifacts: ['artifacts/already-fixed-ac1.png'],
           confidence: 'high',
-          noCodeChange: true,
-          reproductionAttempted: true,
         },
         durationMs: 2930000,
       },

@@ -1,7 +1,7 @@
 # Worker: Feature — {{TICKET_ID}}
 
 > **Signal file:** `./mark N` for progress; `SIGNAL.json` only when done. TASK `STATUS` ≠ SIGNAL `status`.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete --outcome success` (never `echo > SIGNAL.json`).
+> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete | mark no-change --reason "…" | mark blocked --reason "…"` (never hand-write `SIGNAL.json`).
 
 ---
 
@@ -147,7 +147,7 @@ Skip only when every AC is backend-only with zero UI surface — state why in th
 - [ ] **15. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
 - [ ] **16. Report + signal** — write `{{TASK_DIR}}/artifacts/report.md` (list evidence paths: screenshots + `after.mp4`), set `STATUS: done`, then:
   ```bash
-  {{TASK_DIR}}/mark complete --outcome success --mark-last
+  {{TASK_DIR}}/mark complete --mark-last
   ```
   **Do NOT `/exit`.** Stay alive for the publication gate.
 

@@ -212,7 +212,6 @@ export function buildNoChangeGateInputs(args: {
     evidence?.reportPath ? `- report: \`${evidence.reportPath}\`` : null,
     ...(evidence?.artifacts?.map((artifact) => `- artifact: \`${artifact}\``) ?? []),
     evidence?.confidence ? `- confidence: ${evidence.confidence}` : null,
-    evidence?.reproductionAttempted ? '- reproduction attempted: yes' : null,
   ].filter((line): line is string => Boolean(line));
   const desc = [
     `Worker reported **${noChangeDispositionLabel(disposition)}** for ${ticketOrPr}.`,
