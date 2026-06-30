@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import type { loadSlotVars } from '../core/config.js';
+import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
@@ -12,6 +12,9 @@ export async function listRunnerSessionFiles(
 ): Promise<string[]> {
   if (!runnerPersistsSessionFiles(runner)) return [];
   const repo = vars.remoteRepo;
+  // Codex runs with CODEX_HOME=<repo>/<runtimeDir>/codex-home (see buildCodexHomeSetup), so its
+  // rollouts live there. Resolve the SAME runtime dir the launcher uses — no globbing/guessing.
+  const runtimeDir = await resolveProjectRuntimeDir(vars.projectName);
   const script = `
 python3 - <<'PY'
 import json
@@ -20,6 +23,7 @@ from time import time
 from urllib.parse import quote
 repo = ${JSON.stringify(repo)}
 runner = ${JSON.stringify(runner)}
+runtime_dir = ${JSON.stringify(runtimeDir)}
 home = Path.home()
 paths = []
 if runner == 'claude':
@@ -41,7 +45,12 @@ elif runner == 'grok':
                 # Grok writes summary.json at runtime; skip partial/unreadable files during discovery.
                 continue
 else:
-    sessions_root = home / '.codex' / 'sessions'
+    # The worker's CODEX_HOME is the exact <repo>/<runtimeDir>/codex-home the launcher set, so
+    # its rollouts live there — not ~/.codex/sessions. Use that exact path; only fall back to the
+    # global home if the per-slot home is absent (e.g. observability install was skipped).
+    sessions_root = Path(repo) / runtime_dir / 'codex-home' / 'sessions'
+    if not sessions_root.is_dir():
+        sessions_root = home / '.codex' / 'sessions'
     if sessions_root.is_dir():
         cutoff = time() - (7 * 24 * 60 * 60)
         seen = 0
