@@ -220,7 +220,7 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   // persists the resolved tier and chained runs inherit it.
   params.safetyTier = resolveCreateSafetyTier(params.safetyTier, projectConfig?.defaultSafetyTier);
 
-  await normalizeRunCreateMode(params);
+  await normalizeRunCreateMode(params, projectConfig);
 
   const { lane, variant } = normalizeRunClassification(params);
   params.lane = lane;

@@ -17,7 +17,12 @@ export function defaultWorkerTemplateFileName(flowType: FlowType | string): stri
   return DEFAULT_WORKER_TEMPLATE_BY_FLOW[flowType] ?? `${flowType}.md`;
 }
 
-/** Baseline mode when no template-aware override applies (ADR-018). */
+/**
+ * Baseline mode when no template-aware override applies (ADR-018).
+ * `dev`, `review-pr`, and `merge-main` fall through to interactive — the
+ * dispatch wizard promotes them to autonomous only when an interactive
+ * sibling template exists (see selectedTemplateMode).
+ */
 export function modeForFlow(flowType: FlowType): DispatchRunMode {
   if (flowType === 'pr-complete') return 'autonomous';
   return flowType === 'fix-bug' ? 'autonomous' : 'interactive';
