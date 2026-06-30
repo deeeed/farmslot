@@ -3,11 +3,11 @@ import os from 'node:os';
 import { promisify } from 'node:util';
 
 import {
-  GATEWAY_DOCTOR_SECTIONS,
   type GatewayDoctorCheck,
   type GatewayDoctorParams,
   type GatewayDoctorResult,
   type GatewayDoctorSection,
+  type GatewayDoctorSectionDefinition,
   type GatewayDoctorSectionId,
 } from '@farmslot/protocol';
 
@@ -18,6 +18,39 @@ import { gatewayStatus } from './gateway-status.js';
 
 const execFile = promisify(execFileCb);
 const CHECK_TIMEOUT_MS = 5_000;
+
+const DOCTOR_SECTION_DEFINITIONS: GatewayDoctorSectionDefinition[] = [
+  {
+    id: 'gateway',
+    label: 'Gateway',
+    description: 'Gateway version, checkout freshness, and connected node summary.',
+  },
+  {
+    id: 'workspace',
+    label: 'Workspace',
+    description: 'Imported projects and configured farm slots.',
+  },
+  {
+    id: 'capture',
+    label: 'Evidence capture',
+    description: 'External screenshot/video capture helper readiness.',
+  },
+  {
+    id: 'browser',
+    label: 'Browser/CDP',
+    description: 'Chrome/Chromium and active CDP debugging session detection.',
+  },
+  {
+    id: 'simulator',
+    label: 'iOS simulator',
+    description: 'macOS Xcode simulator tooling availability.',
+  },
+  {
+    id: 'android',
+    label: 'Android',
+    description: 'ADB availability and connected Android device summary.',
+  },
+];
 
 interface CommandResult {
   ok: boolean;
@@ -39,17 +72,41 @@ const SECTION_RUNNERS: Record<GatewayDoctorSectionId, GatewayDoctorRunner> = {
 export async function gatewayDoctor(
   params: GatewayDoctorParams = {},
 ): Promise<GatewayDoctorResult> {
-  const sectionIds = params.sectionId
-    ? [params.sectionId]
-    : GATEWAY_DOCTOR_SECTIONS.map((section) => section.id);
+  const sectionIds = requestedDoctorSectionIds(params);
+  if (params.run === false) return doctorResult(sectionIds, []);
   const sections = await Promise.all(sectionIds.map((sectionId) => SECTION_RUNNERS[sectionId]()));
-  return doctorResult(sections);
+  return doctorResult(sectionIds, sections);
 }
 
-function doctorResult(sections: GatewayDoctorSection[]): GatewayDoctorResult {
+function requestedDoctorSectionIds(params: GatewayDoctorParams): GatewayDoctorSectionId[] {
+  if (params.sectionId && params.sectionIds?.length) {
+    throw new Error('gateway.doctor accepts sectionId or sectionIds, not both');
+  }
+  const requested = params.sectionId
+    ? [params.sectionId]
+    : params.sectionIds && params.sectionIds.length > 0
+      ? params.sectionIds
+      : DOCTOR_SECTION_DEFINITIONS.map((section) => section.id);
+  const requestedSet = new Set(requested.map(assertDoctorSectionId));
+  return DOCTOR_SECTION_DEFINITIONS.map((section) => section.id).filter((sectionId) =>
+    requestedSet.has(sectionId),
+  );
+}
+
+function assertDoctorSectionId(sectionId: string): GatewayDoctorSectionId {
+  if (sectionId in SECTION_RUNNERS) return sectionId as GatewayDoctorSectionId;
+  throw new Error(`Unknown gateway.doctor sectionId: ${sectionId}`);
+}
+
+function doctorResult(
+  requestedSectionIds: GatewayDoctorSectionId[],
+  sections: GatewayDoctorSection[],
+): GatewayDoctorResult {
   const checks = sections.flatMap((section) => section.checks);
   return {
     generatedAt: new Date().toISOString(),
+    availableSections: DOCTOR_SECTION_DEFINITIONS,
+    requestedSectionIds,
     summary: {
       ok: checks.filter((check) => check.ok && !check.warn).length,
       warn: checks.filter((check) => check.ok && check.warn).length,

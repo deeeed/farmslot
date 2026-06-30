@@ -44,18 +44,22 @@ export type GatewayDoctorSectionId =
   | 'simulator'
   | 'android';
 
-export const GATEWAY_DOCTOR_SECTIONS: Array<{ id: GatewayDoctorSectionId; label: string }> = [
-  { id: 'gateway', label: 'Gateway' },
-  { id: 'workspace', label: 'Workspace' },
-  { id: 'capture', label: 'Evidence capture' },
-  { id: 'browser', label: 'Browser/CDP' },
-  { id: 'simulator', label: 'iOS simulator' },
-  { id: 'android', label: 'Android' },
-];
+export interface GatewayDoctorSectionDefinition {
+  id: GatewayDoctorSectionId;
+  label: string;
+  description: string;
+}
 
 export interface GatewayDoctorParams {
-  /** Run only one doctor section. Omit to run every section. */
+  /**
+   * Return the gateway-owned section catalog without running checks.
+   * Useful for progressive UIs that need to render the report skeleton first.
+   */
+  run?: boolean;
+  /** Run only one doctor section. Omit sectionId/sectionIds to run every section. */
   sectionId?: GatewayDoctorSectionId;
+  /** Run multiple specific sections in gateway-defined order. */
+  sectionIds?: GatewayDoctorSectionId[];
 }
 
 export interface GatewayDoctorCheck {
@@ -75,6 +79,8 @@ export interface GatewayDoctorSection {
 
 export interface GatewayDoctorResult {
   generatedAt: string;
+  availableSections: GatewayDoctorSectionDefinition[];
+  requestedSectionIds: GatewayDoctorSectionId[];
   summary: {
     ok: number;
     warn: number;

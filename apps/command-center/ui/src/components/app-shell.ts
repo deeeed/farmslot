@@ -20,7 +20,7 @@ import type {
   TmuxWorkerListResult,
   TmuxWorkerSummary,
 } from '@farmslot/protocol';
-import { Events, GATEWAY_DOCTOR_SECTIONS, isTerminalRunStatus, Methods } from '@farmslot/protocol';
+import { Events, isTerminalRunStatus, Methods } from '@farmslot/protocol';
 
 import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
@@ -398,7 +398,6 @@ export class FarmApp extends LitElement {
         status: this.versionDetailsStatus,
       },
       nodes: this.versionDetailsNodes,
-      doctorSections: GATEWAY_DOCTOR_SECTIONS,
       capturedAt: new Date().toISOString(),
     };
     try {
@@ -463,10 +462,6 @@ export class FarmApp extends LitElement {
             ${this.renderVersionCard('Protocol', [
               ['gateway protocol', nodes?.gatewayProtocolVersion ?? '…'],
               ['connected nodes', String(nodes?.nodes.length ?? 0)],
-              [
-                'doctor sections',
-                GATEWAY_DOCTOR_SECTIONS.map((section) => section.label).join(', '),
-              ],
             ])}
           </div>
           <section class="fa-version-node-section">
@@ -516,6 +511,10 @@ export class FarmApp extends LitElement {
   }
 
   private onGlobalKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && this.versionDetailsOpen) {
+      this.versionDetailsOpen = false;
+      return;
+    }
     if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       this.toggleChat();

@@ -4,9 +4,10 @@ import { customElement, state } from 'lit/decorators.js';
 import type {
   GatewayDoctorResult,
   GatewayDoctorSection,
+  GatewayDoctorSectionDefinition,
   GatewayDoctorSectionId,
 } from '@farmslot/protocol';
-import { GATEWAY_DOCTOR_SECTIONS, Methods } from '@farmslot/protocol';
+import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
@@ -16,6 +17,7 @@ type DoctorSectionStatus = 'pending' | 'running' | 'complete' | 'error';
 interface DoctorSectionState {
   id: GatewayDoctorSectionId;
   label: string;
+  description: string;
   status: DoctorSectionStatus;
   section: GatewayDoctorSection | null;
   error: string;
@@ -24,7 +26,7 @@ interface DoctorSectionState {
 
 @customElement('gateway-doctor')
 export class GatewayDoctor extends LitElement {
-  @state() private sections: DoctorSectionState[] = initialSectionStates();
+  @state() private sections: DoctorSectionState[] = [];
   @state() private loading = false;
   @state() private error = '';
   private unsubscribeConnection: (() => void) | null = null;
@@ -125,6 +127,12 @@ export class GatewayDoctor extends LitElement {
       font-size: ${unsafeCSS(fonts.sizeSm)};
       font-weight: 500;
     }
+    .section-description {
+      padding: 0 ${unsafeCSS(spacing.md)} ${unsafeCSS(spacing.md)};
+      color: ${unsafeCSS(colors.textMuted)};
+      font-size: ${unsafeCSS(fonts.sizeSm)};
+      line-height: 1.5;
+    }
     .check {
       display: grid;
       grid-template-columns: 90px 180px 1fr;
@@ -171,9 +179,10 @@ export class GatewayDoctor extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     this.unsubscribeConnection = gateway.onConnectionChange((state) => {
-      if (state === 'connected' && !this.hasCompletedSection()) void this.refreshAll();
+      if (state === 'connected' && !this.hasCompletedSection())
+        void this.loadCatalogAndRefreshAll();
     });
-    if (gateway.connectionState === 'connected') void this.refreshAll();
+    if (gateway.connectionState === 'connected') void this.loadCatalogAndRefreshAll();
     else this.error = 'Waiting for gateway connection…';
   }
 
@@ -187,6 +196,31 @@ export class GatewayDoctor extends LitElement {
     return this.sections.some((section) => section.status === 'complete');
   }
 
+  private async loadCatalogAndRefreshAll(): Promise<void> {
+    try {
+      await this.loadCatalog();
+      await this.refreshAll();
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private async loadCatalog(): Promise<DoctorSectionState[]> {
+    if (gateway.connectionState !== 'connected') {
+      this.error = 'Waiting for gateway connection…';
+      return [];
+    }
+    const result = await gateway.request<GatewayDoctorResult>(
+      Methods.GATEWAY_DOCTOR,
+      { run: false },
+      10_000,
+    );
+    const sections = initialSectionStates(result.availableSections);
+    this.sections = sections;
+    this.error = '';
+    return sections;
+  }
+
   private async refreshAll(): Promise<void> {
     if (gateway.connectionState !== 'connected') {
       this.error = 'Waiting for gateway connection…';
@@ -194,11 +228,23 @@ export class GatewayDoctor extends LitElement {
     }
     this.loading = true;
     this.error = '';
-    this.sections = initialSectionStates();
-    for (const section of GATEWAY_DOCTOR_SECTIONS) {
-      await this.refreshSection(section.id);
+    try {
+      const sections = this.sections.length > 0 ? this.sections : await this.loadCatalog();
+      this.sections = sections.map((section) => ({
+        ...section,
+        status: 'pending',
+        section: null,
+        error: '',
+        checkedAt: null,
+      }));
+      for (const section of sections) {
+        await this.refreshSection(section.id);
+      }
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.loading = false;
     }
-    this.loading = false;
   }
 
   private async refreshSection(id: GatewayDoctorSectionId): Promise<void> {
@@ -289,6 +335,9 @@ export class GatewayDoctor extends LitElement {
           </div>
         </div>
         ${sectionState.error ? html`<div class="error">${sectionState.error}</div>` : nothing}
+        ${sectionState.description
+          ? html`<div class="section-description">${sectionState.description}</div>`
+          : nothing}
         ${section
           ? section.checks.map(
               (check) => html`
@@ -310,10 +359,11 @@ export class GatewayDoctor extends LitElement {
   }
 }
 
-function initialSectionStates(): DoctorSectionState[] {
-  return GATEWAY_DOCTOR_SECTIONS.map((section) => ({
+function initialSectionStates(definitions: GatewayDoctorSectionDefinition[]): DoctorSectionState[] {
+  return definitions.map((section) => ({
     id: section.id,
     label: section.label,
+    description: section.description,
     status: 'pending',
     section: null,
     error: '',
