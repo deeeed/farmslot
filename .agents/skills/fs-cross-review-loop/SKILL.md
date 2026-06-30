@@ -213,6 +213,20 @@ Escalate to the human when:
 - the PR requires external credentials, devices, or production access the orchestrator cannot inspect;
 - review panes are not stable enough to trust.
 
+## Compose dispatch (required)
+
+Cross-review orchestrators must use [.agents/skills/tmux-model-driver](../tmux-model-driver/SKILL.md). Do **not** send reviewer prompts with raw `tmux send-keys` + `C-m` — Claude/Codex compose treats `C-m` as newline, not submit.
+
+Minimum protocol for every worker/reviewer nudge:
+
+1. Resolve pane id (`tmux list-panes -a -F '#{pane_id} …'`).
+2. Run `pane-state.sh <pane-id> [runner]`; resolve launch blockers before composing.
+3. Pipe the prompt into `send-and-verify.sh <pane-id> <action-kind>` where `action-kind` is `claude`, `codex`, `cursor`, or `shell`.
+4. Re-capture the pane. If verification is `pending_input`, `input_buffered`, or `likely_pending_input`, send named `Enter` again (or `Tab` when Codex shows `tab to queue message`) — never fall back to `claude -p` inside tmux.
+5. Treat handoff as successful only when runner progress appears (`Cooking…`, `Pollinating…`, `Effecting…`, `Working (`, tool lines) or the compose box is empty at `❯`.
+
+Long prompts: write to a temp file in the worktree and send a one-line instruction to read it, or use `send-shell-script.sh` for shell launches — do not paste multi-kilobyte prompts through `send-keys -l` in narrow panes.
+
 ## Tmux Safety Rules
 
 - Use stable pane IDs such as `%12`, not only window titles.
@@ -220,7 +234,7 @@ Escalate to the human when:
 - Do not send secrets or production credentials into review panes.
 - Do not let review panes write files unless the operator explicitly promotes a reviewer into a worker.
 - Do not kill or interrupt a pane unless it is clearly the review pane assigned to this loop.
-- If using `tmux-model-driver`, follow its pane-state checks before sending instructions.
+- **Required:** follow `tmux-model-driver` pane-state checks and `send-and-verify.sh` before every compose send.
 - Do not run codebase inspection commands from the orchestrator pane. Ask an assigned review pane to inspect and report.
 
 ## Artifacts
@@ -269,4 +283,4 @@ Do not implement a one-shot cross-review that cannot repeat after worker fixes. 
 ## Related
 
 - PR evidence decoration skill — separate concern, not part of loop
-- `tmux-model-driver` skill — guards to apply when sending feedback to worker/reviewer panes
+- `tmux-model-driver` skill — **required** for compose dispatch to worker/reviewer panes (submit key, buffered-input retry, progress verification)

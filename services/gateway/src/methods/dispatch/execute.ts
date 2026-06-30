@@ -1046,6 +1046,7 @@ export async function dispatchExecute(
     // in monitor.
     if (runnerNeedsPostLaunchPrompt(runner)) {
       step('task', 'Waiting for agent ready...');
+      const handoffAckSinceMs = Date.now();
       await sendRunnerPostLaunchPrompt(
         vars,
         workerTarget,
@@ -1057,6 +1058,9 @@ export async function dispatchExecute(
           readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
           blockerSnapshotPath: `${workerTaskDir}/artifacts/runner-blockers/dispatch-launch.txt`,
           signalPath: `${workerTaskDir}/SIGNAL.json`,
+          launchAckSignalPath: `${workerTaskDir}/SIGNAL.json`,
+          handoffAckSinceMs,
+          softAcceptOnHandoffAck: true,
         },
       );
       step('task', 'Task prompt delivered and verified');

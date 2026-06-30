@@ -119,7 +119,10 @@ export function deriveRunnerActivity(
     .sort((a, b) => b - a)[0];
   if (freshest == null || !isFreshObservedAt(freshest, now)) return null;
 
-  if (lastPreToolUse && (lastPostToolUseAt == null || lastPreToolUse.observedAt > lastPostToolUseAt)) {
+  if (
+    lastPreToolUse &&
+    (lastPostToolUseAt == null || lastPreToolUse.observedAt > lastPostToolUseAt)
+  ) {
     return {
       value: 'tool-running',
       source: 'hook',
@@ -127,7 +130,10 @@ export function deriveRunnerActivity(
       observedAt: lastPreToolUse.observedAt,
     };
   }
-  if (lastComposing && (lastTurnStop == null || lastComposing.observedAt > lastTurnStop.observedAt)) {
+  if (
+    lastComposing &&
+    (lastTurnStop == null || lastComposing.observedAt > lastTurnStop.observedAt)
+  ) {
     return {
       value: 'composing',
       source: 'hook',
@@ -210,7 +216,11 @@ export function contextPctFromStatusline(
   if (!statusline) return null;
   const observedAt = observedAtFromRecord(statusline);
   const ctxPct = statusline.ctxPct ?? statusline.contextPct;
-  if (typeof ctxPct !== 'number' || !Number.isFinite(ctxPct) || !isFreshObservedAt(observedAt, now)) {
+  if (
+    typeof ctxPct !== 'number' ||
+    !Number.isFinite(ctxPct) ||
+    !isFreshObservedAt(observedAt, now)
+  ) {
     return null;
   }
   const rounded = Math.round(ctxPct);
@@ -249,15 +259,73 @@ export async function readRunnerObservabilityFiles(
   };
 }
 
+export function filterHooksByPane(
+  hooks: readonly HookRecord[],
+  paneId?: string | null,
+): HookRecord[] {
+  if (!paneId) return [...hooks];
+  return hooks.filter((record) => !record.tmuxPane || record.tmuxPane === paneId);
+}
+
+export function promptTurnStartedFromHooks(
+  hooks: readonly HookRecord[],
+  sinceMs: number,
+  paneId?: string | null,
+  now = Date.now(),
+  graceMs = 500,
+): ObservabilityReading<boolean> | null {
+  const scoped = filterHooksByPane(hooks, paneId);
+  let latestToolUseAt: number | null = null;
+  let latestPromptSubmitAt: number | null = null;
+  for (const record of scoped) {
+    const event = hookEventName(record);
+    const observedAt = observedAtFromRecord(record);
+    if (observedAt == null || observedAt < sinceMs) continue;
+    if (event === 'PreToolUse') {
+      if (latestToolUseAt == null || observedAt > latestToolUseAt) latestToolUseAt = observedAt;
+    }
+    if (event === 'UserPromptSubmit') {
+      if (latestPromptSubmitAt == null || observedAt > latestPromptSubmitAt) {
+        latestPromptSubmitAt = observedAt;
+      }
+    }
+  }
+  if (latestToolUseAt != null) {
+    return {
+      value: true,
+      source: 'hook',
+      confidence: 'high',
+      observedAt: latestToolUseAt,
+    };
+  }
+  if (latestPromptSubmitAt != null) {
+    return {
+      value: true,
+      source: 'hook',
+      confidence: 'medium',
+      observedAt: latestPromptSubmitAt,
+    };
+  }
+  if (now - sinceMs < graceMs) return null;
+  return {
+    value: false,
+    source: 'hook',
+    confidence: 'medium',
+    observedAt: now,
+  };
+}
+
 export function promptAcceptedFromHooks(
   hooks: readonly HookRecord[],
   promptDigest: string,
   sinceMs: number,
   graceMs = 500,
   now = Date.now(),
+  paneId?: string | null,
 ): ObservabilityReading<boolean> | null {
+  const scoped = filterHooksByPane(hooks, paneId);
   let latest: { observedAt: number; digest?: string } | null = null;
-  for (const record of hooks) {
+  for (const record of scoped) {
     const event = hookEventName(record);
     if (event !== 'UserPromptSubmit') continue;
     const observedAt = observedAtFromRecord(record);
@@ -267,6 +335,8 @@ export function promptAcceptedFromHooks(
     }
   }
   if (!latest) {
+    const turnStarted = promptTurnStartedFromHooks(scoped, sinceMs, paneId, now, graceMs);
+    if (turnStarted?.value === true) return turnStarted;
     if (now - sinceMs < graceMs) return null;
     return {
       value: false,
@@ -278,8 +348,25 @@ export function promptAcceptedFromHooks(
   const matched =
     typeof latest.digest === 'string' &&
     (latest.digest === promptDigest || latest.digest.startsWith(promptDigest));
+  if (matched) {
+    return {
+      value: true,
+      source: 'hook',
+      confidence: 'high',
+      observedAt: latest.observedAt,
+    };
+  }
+  const turnStarted = promptTurnStartedFromHooks(scoped, sinceMs, paneId, now, graceMs);
+  if (turnStarted?.value === true) {
+    return {
+      value: true,
+      source: 'hook',
+      confidence: 'medium',
+      observedAt: turnStarted.observedAt,
+    };
+  }
   return {
-    value: matched,
+    value: false,
     source: 'hook',
     confidence: latest.digest ? 'high' : 'medium',
     observedAt: latest.observedAt,

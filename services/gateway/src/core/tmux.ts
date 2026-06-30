@@ -163,6 +163,57 @@ export async function respawnTmuxWindowWithCommand(
   }
 }
 
+export const TMUX_ROLE_WINDOW_MIN_WIDTH = 80;
+export const TMUX_ROLE_WINDOW_MIN_HEIGHT = 24;
+
+export async function resolveTmuxPaneId(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+): Promise<string | null> {
+  const result = await execOnSlot(
+    vars,
+    tmuxShellSnippet(`list-panes -t ${shellQuote(target)} -F '#{pane_id}' 2>/dev/null | head -1`),
+  );
+  const paneId = result.stdout.trim();
+  return paneId || null;
+}
+
+/**
+ * Role windows (dev, self-review, ci-fix) need enough lines for capture-pane
+ * verification and operator forensics. Tiny windows (e.g. 114x5) truncate prompts
+ * and hide progress markers.
+ */
+export async function ensureTmuxWindowMinimumSize(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  minWidth = TMUX_ROLE_WINDOW_MIN_WIDTH,
+  minHeight = TMUX_ROLE_WINDOW_MIN_HEIGHT,
+): Promise<void> {
+  const dims = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `display-message -t ${shellQuote(target)} -p '#{window_width} #{window_height}' 2>/dev/null`,
+    ),
+  );
+  const [widthRaw, heightRaw] = dims.stdout.trim().split(/\s+/);
+  const width = Number.parseInt(widthRaw ?? '', 10);
+  const height = Number.parseInt(heightRaw ?? '', 10);
+  const nextWidth = Number.isFinite(width) ? Math.max(width, minWidth) : minWidth;
+  const nextHeight = Number.isFinite(height) ? Math.max(height, minHeight) : minHeight;
+  if (nextWidth === width && nextHeight === height) return;
+  const resized = await execOnSlot(
+    vars,
+    tmuxShellSnippet(
+      `resize-window -t ${shellQuote(target)} -x ${nextWidth} -y ${nextHeight} 2>/dev/null`,
+    ),
+  );
+  if (resized.exitCode !== 0) {
+    throw new Error(
+      `Failed to resize tmux window ${target} to at least ${minWidth}x${minHeight}: ${resized.stderr || resized.stdout || `exit ${resized.exitCode}`}`,
+    );
+  }
+}
+
 export async function firstWindowTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,

@@ -5,8 +5,10 @@ import {
   activeToolFromHooks,
   contextPctFromStatusline,
   deriveRunnerActivity,
+  filterHooksByPane,
   parseHookJsonl,
   promptAcceptedFromHooks,
+  promptTurnStartedFromHooks,
   runnerActivityIsBusy,
 } from './observability-files.js';
 
@@ -46,9 +48,7 @@ test('deriveRunnerActivity detects composing and tool-running from hooks', () =>
   assert.equal(composing?.value, 'composing');
 
   const toolRunning = deriveRunnerActivity(
-    [
-      { hook_event_name: 'PreToolUse', observedAt: NOW - 1_000, tool_name: 'Edit' },
-    ],
+    [{ hook_event_name: 'PreToolUse', observedAt: NOW - 1_000, tool_name: 'Edit' }],
     null,
     NOW,
   );
@@ -57,9 +57,7 @@ test('deriveRunnerActivity detects composing and tool-running from hooks', () =>
 
 test('activeToolFromHooks returns unmatched PreToolUse tool name', () => {
   const reading = activeToolFromHooks(
-    [
-      { hook_event_name: 'PreToolUse', observedAt: NOW - 1_000, tool_name: 'Bash' },
-    ],
+    [{ hook_event_name: 'PreToolUse', observedAt: NOW - 1_000, tool_name: 'Bash' }],
     NOW,
   );
   assert.deepEqual(reading, {
@@ -71,10 +69,7 @@ test('activeToolFromHooks returns unmatched PreToolUse tool name', () => {
 });
 
 test('contextPctFromStatusline returns rounded fresh ctx percent', () => {
-  const reading = contextPctFromStatusline(
-    { ctxPct: 23.6, observedAt: NOW - 500 },
-    NOW,
-  );
+  const reading = contextPctFromStatusline({ ctxPct: 23.6, observedAt: NOW - 500 }, NOW);
   assert.deepEqual(reading, {
     value: 24,
     source: 'statusline',
@@ -92,7 +87,13 @@ test('runnerActivityIsBusy treats composing and tool-running as busy', () => {
 test('promptAcceptedFromHooks matches digest after grace window', () => {
   const since = NOW - 10_000;
   const reading = promptAcceptedFromHooks(
-    [{ hook_event_name: 'UserPromptSubmit', observedAt: NOW - 1_000, runnerPromptDigest: 'abc123' }],
+    [
+      {
+        hook_event_name: 'UserPromptSubmit',
+        observedAt: NOW - 1_000,
+        runnerPromptDigest: 'abc123',
+      },
+    ],
     'abc123',
     since,
     0,
@@ -102,6 +103,34 @@ test('promptAcceptedFromHooks matches digest after grace window', () => {
     value: true,
     source: 'hook',
     confidence: 'high',
+    observedAt: NOW - 1_000,
+  });
+});
+
+test('filterHooksByPane scopes hook records to target pane', () => {
+  const hooks = filterHooksByPane(
+    [
+      { hook_event_name: 'PreToolUse', observedAt: NOW, tmuxPane: '%129' },
+      { hook_event_name: 'PreToolUse', observedAt: NOW, tmuxPane: '%91' },
+    ],
+    '%129',
+  );
+  assert.equal(hooks.length, 1);
+  assert.equal(hooks[0]?.tmuxPane, '%129');
+});
+
+test('promptTurnStartedFromHooks treats UserPromptSubmit as medium-confidence ack', () => {
+  const since = NOW - 10_000;
+  const reading = promptTurnStartedFromHooks(
+    [{ hook_event_name: 'UserPromptSubmit', observedAt: NOW - 1_000, tmuxPane: '%129' }],
+    since,
+    '%129',
+    NOW,
+  );
+  assert.deepEqual(reading, {
+    value: true,
+    source: 'hook',
+    confidence: 'medium',
     observedAt: NOW - 1_000,
   });
 });
