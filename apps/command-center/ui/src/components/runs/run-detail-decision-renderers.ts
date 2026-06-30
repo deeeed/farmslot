@@ -23,6 +23,7 @@ import {
   renderCollisionDescription,
   renderCollisionPriorRuns,
 } from './run-detail-collision-renderers.js';
+import { renderInteractiveHandoffGate } from './run-detail-interactive-handoff-renderers.js';
 
 /**
  * Client-side fallback help text for decision actions where the gateway didn't persist a
@@ -101,6 +102,9 @@ export interface RunDecisionRenderContext {
   confirmResolve: (runId: string, decision: RunDecision, actionId: string) => void;
   resolveSlotPick: (runId: string, decisionId: string) => void;
   resolveBranchNudgePick: (runId: string, decisionId: string) => void;
+  checkInteractiveHandoffSignal: (runId: string, decision: RunDecision) => void;
+  handoffSignalCheckBusy: boolean;
+  handoffSignalCheckError: string | null;
   handleRecipeRunArtifacts: (
     run: Run,
     detail: RecipeCompleteDetail,
@@ -120,6 +124,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
   const isSlotPicker = kind === 'slot_picker';
   const isBranchNudge = kind === 'branch_affinity_nudge';
   const isCollision = pending.type === 'engine_collision';
+  const isInteractiveHandoff = pending.type === 'monitor_interactive_handoff';
   const isRetrospective = pending.type === 'retrospective' || kind === 'retrospective';
   const hasPayload = isReview || isReady;
   const retrospectiveHref = `#family/${run.familyId}?run=${encodeURIComponent(run.id)}`;
@@ -135,11 +140,13 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
           ? "Worker on this PR's branch is busy — choose how to dispatch"
           : isCollision
             ? 'Task dir collision — prior runs exist'
-            : isRetrospective
-              ? 'Retrospective ready for review'
-              : recoveredTimeout
-                ? 'CI timeout recovered'
-                : 'Action required';
+            : isInteractiveHandoff
+              ? 'Worker stopped — finish manually'
+              : isRetrospective
+                ? 'Retrospective ready for review'
+                : recoveredTimeout
+                  ? 'CI timeout recovered'
+                  : 'Action required';
   const retrospectivePayload = isRetrospective
     ? (pending.payload as
         | {
@@ -290,66 +297,80 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
                       ${renderBranchAffinityNudge(run, pending, context)}
                     </div>
                   `
-                : html`
-                    <div class="gate-body">
-                      ${pending.type === 'ci_ci_timeout'
-                        ? renderCITimeoutDecisionDescription(pending, context)
-                        : isCollision
-                          ? renderCollisionDescription(pending, run.project, context.allRuns)
+                : isInteractiveHandoff
+                  ? renderInteractiveHandoffGate(run, pending, {
+                      actionsBlocked: context.actionsBlocked,
+                      pendingConfirm: context.pendingConfirm,
+                      signalCheckBusy: context.handoffSignalCheckBusy,
+                      signalCheckError: context.handoffSignalCheckError,
+                      confirmResolve: context.confirmResolve,
+                      checkSignalAndResume: context.checkInteractiveHandoffSignal,
+                    })
+                  : html`
+                      <div class="gate-body">
+                        ${pending.type === 'ci_ci_timeout'
+                          ? renderCITimeoutDecisionDescription(pending, context)
+                          : isCollision
+                            ? renderCollisionDescription(pending, run.project, context.allRuns)
+                            : html`
+                                <div class="gate-description md-body">
+                                  ${unsafeHTML(
+                                    DOMPurify.sanitize(
+                                      marked.parse(pending.description ?? '', {
+                                        async: false,
+                                      }) as string,
+                                    ),
+                                  )}
+                                </div>
+                              `}
+                        ${isCollision
+                          ? renderCollisionPriorRuns(pending, context.allRuns)
+                          : nothing}
+                        ${recoveredTimeout
+                          ? html`
+                              <div
+                                class="gate-description"
+                                style="padding-top:0; margin-bottom:0; color:${colors.textMuted}; font-size:${fonts.sizeXs}"
+                              >
+                                Resuming CI-watch automatically because the current watched checks
+                                are green.
+                              </div>
+                            `
                           : html`
-                              <div class="gate-description md-body">
-                                ${unsafeHTML(
-                                  DOMPurify.sanitize(
-                                    marked.parse(pending.description ?? '', {
-                                      async: false,
-                                    }) as string,
-                                  ),
-                                )}
+                              <div class="gate-actions">
+                                ${pending.actions.map((a) => {
+                                  const confirming = context.pendingConfirm === a.id;
+                                  const help = decisionActionHelp(pending.type, a);
+                                  return html`
+                                    <div class="gate-action-cell">
+                                      <button
+                                        class="gate-action-btn ${confirming
+                                          ? 'gate-confirming'
+                                          : ''}"
+                                        style="${confirming
+                                          ? ''
+                                          : a.style === 'primary'
+                                            ? `background:${colors.accent}; border-color:${colors.accent}; color:#fff`
+                                            : a.style === 'danger'
+                                              ? `border-color:${colors.statusFail}; color:${colors.statusFail}`
+                                              : `border-color:${colors.textMuted}; color:${colors.textMuted}`}"
+                                        ?disabled=${context.actionsBlocked}
+                                        title=${help}
+                                        @click=${() =>
+                                          context.confirmResolve(run.id, pending, a.id)}
+                                      >
+                                        ${confirming ? `Confirm ${a.label}?` : a.label}
+                                      </button>
+                                      ${help
+                                        ? html`<div class="gate-action-help">${help}</div>`
+                                        : nothing}
+                                    </div>
+                                  `;
+                                })}
                               </div>
                             `}
-                      ${isCollision ? renderCollisionPriorRuns(pending, context.allRuns) : nothing}
-                      ${recoveredTimeout
-                        ? html`
-                            <div
-                              class="gate-description"
-                              style="padding-top:0; margin-bottom:0; color:${colors.textMuted}; font-size:${fonts.sizeXs}"
-                            >
-                              Resuming CI-watch automatically because the current watched checks are
-                              green.
-                            </div>
-                          `
-                        : html`
-                            <div class="gate-actions">
-                              ${pending.actions.map((a) => {
-                                const confirming = context.pendingConfirm === a.id;
-                                const help = decisionActionHelp(pending.type, a);
-                                return html`
-                                  <div class="gate-action-cell">
-                                    <button
-                                      class="gate-action-btn ${confirming ? 'gate-confirming' : ''}"
-                                      style="${confirming
-                                        ? ''
-                                        : a.style === 'primary'
-                                          ? `background:${colors.accent}; border-color:${colors.accent}; color:#fff`
-                                          : a.style === 'danger'
-                                            ? `border-color:${colors.statusFail}; color:${colors.statusFail}`
-                                            : `border-color:${colors.textMuted}; color:${colors.textMuted}`}"
-                                      ?disabled=${context.actionsBlocked}
-                                      title=${help}
-                                      @click=${() => context.confirmResolve(run.id, pending, a.id)}
-                                    >
-                                      ${confirming ? `Confirm ${a.label}?` : a.label}
-                                    </button>
-                                    ${help
-                                      ? html`<div class="gate-action-help">${help}</div>`
-                                      : nothing}
-                                  </div>
-                                `;
-                              })}
-                            </div>
-                          `}
-                    </div>
-                  `}
+                      </div>
+                    `}
     </div>
   `;
 }

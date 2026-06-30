@@ -35,6 +35,7 @@ export const RunMethods = {
   interactiveDevResolve: Methods.RUN_INTERACTIVE_DEV_RESOLVE,
   forSlot: Methods.RUN_FOR_SLOT,
   resolveDecision: Methods.RUN_RESOLVE_DECISION,
+  probeWorkerSignal: Methods.RUN_PROBE_WORKER_SIGNAL,
   grade: Methods.RUN_GRADE,
   getGrade: Methods.RUN_GET_GRADE,
   proposeImprovement: Methods.RUN_PROPOSE_IMPROVEMENT,
@@ -408,6 +409,12 @@ export interface RunResolveDecisionParams {
 export interface RunResolveDecisionResult {
   run: Run;
 }
+
+export interface RunProbeWorkerSignalParams {
+  runId: string;
+}
+
+export type RunProbeWorkerSignalResult = import('../transport/signal.js').WorkerSignalProbeResult;
 
 export interface RunGradeParams {
   runId: string;

@@ -43,3 +43,25 @@ export interface WorkerSignalChecklistEvent {
   /** UTC ISO8601 timestamp when the item changed from unchecked to checked. */
   checkedAt: string;
 }
+
+/** Structured probe result for operator "check SIGNAL.json" flows. */
+export type WorkerSignalProbeCode =
+  | 'ready'
+  | 'no_slot'
+  | 'missing_path'
+  | 'missing'
+  | 'invalid_json'
+  | 'invalid_schema'
+  | 'non_terminal'
+  | 'context_mismatch'
+  | 'stale';
+
+export interface WorkerSignalProbeResult {
+  ok: boolean;
+  code: WorkerSignalProbeCode;
+  message: string;
+  /** Repo-relative signal path when known (for example `.task/.../SIGNAL.json`). */
+  signalFile?: string | null;
+  status?: string;
+  signal?: WorkerSignal;
+}

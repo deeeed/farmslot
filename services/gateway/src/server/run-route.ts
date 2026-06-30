@@ -33,6 +33,7 @@ import {
   type RunInteractiveDevResolveParams,
   type RunListParams,
   type RunPauseParams,
+  type RunProbeWorkerSignalParams,
   type RunProposeImprovementParams,
   type RunRecipeRunsForRunParams,
   type RunRecipeRunsForSlotParams,
@@ -61,6 +62,7 @@ import { operatorSnapshot, runContextBundle, runRecoveryProposal } from '../meth
 import {
   runCreate,
   runInteractiveDevResolve,
+  runProbeWorkerSignal,
   runRehydratePrNumber,
   runResolveDecision,
 } from '../methods/run.js';
@@ -169,6 +171,8 @@ export async function routeRunMethod(
       return handled(runRecipeRunsForSlot(p as RunRecipeRunsForSlotParams));
     case Methods.RUN_RECIPE_RUNS_FOR_RUN:
       return handled(runRecipeRunsForRun(p as RunRecipeRunsForRunParams));
+    case Methods.RUN_PROBE_WORKER_SIGNAL:
+      return handled(runProbeWorkerSignal(p as RunProbeWorkerSignalParams));
     case Methods.RUN_RESOLVE_DECISION: {
       const params = p as RunResolveDecisionParams;
       // Forward all per-request emits as broadcasts so RUN_UPDATED, the inner

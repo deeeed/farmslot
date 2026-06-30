@@ -9,6 +9,7 @@ import {
   isTerminalRunStatus,
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
+  primaryRoleForFlow,
   type ReadyGatePayload,
   type ReadyGatePrPackage,
   type Run,
@@ -16,6 +17,8 @@ import {
   type RunCreateResult,
   type RunInteractiveDevResolveParams,
   type RunInteractiveDevResolveResult,
+  type RunProbeWorkerSignalParams,
+  type RunProbeWorkerSignalResult,
   type RunRehydratePrNumberParams,
   type RunRehydratePrNumberResult,
   type RunResolveDecisionParams,
@@ -23,6 +26,7 @@ import {
   type SafetyTier,
 } from '@farmslot/protocol';
 
+import { selectAgentContext } from '../agents/contexts.js';
 import { isValidManualBacklogRunHandoff } from '../backlog/store.js';
 import { resolveCIDecision } from '../ci-monitor/service.js';
 import { getProjectField, loadProjectVars, loadSlotVars } from '../core/config.js';
@@ -62,6 +66,7 @@ import {
 } from '../run-engine/orchestrator.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
 import {
+  probeWorkerSignalForRun,
   readFreshTerminalSignalForRun,
   resolveMonitorDecision,
 } from '../run-engine/run-monitor.js';
@@ -908,6 +913,15 @@ async function assertReadyPublishResolveIsFresh(
       `Package changed; refresh package and re-review before publishing (approved HEAD ${currentPackage.headSha.slice(0, 12)} but live HEAD is ${liveHead ? liveHead.slice(0, 12) : 'unknown'})`,
     );
   }
+}
+
+export async function runProbeWorkerSignal(
+  params: RunProbeWorkerSignalParams,
+): Promise<RunProbeWorkerSignalResult> {
+  const run = getRun(params.runId);
+  if (!run) throw new Error(`Run not found: ${params.runId}`);
+  const ctx = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+  return probeWorkerSignalForRun(params.runId, run.slotId, ctx);
 }
 
 export async function runResolveDecision(

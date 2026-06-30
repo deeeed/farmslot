@@ -16,6 +16,7 @@ import {
   type RunDecision,
   type RunMonitorState,
   type WorkerSignal,
+  type WorkerSignalProbeResult,
 } from '@farmslot/protocol';
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
@@ -242,48 +243,159 @@ async function resolveSignalJsonPathForRun(
   return taskFile ? `${vars.remoteRepo}/${taskDir}/${taskFile}/SIGNAL.json` : undefined;
 }
 
+export const INTERACTIVE_HANDOFF_DESCRIPTION =
+  'The agent did not write a terminal signal. Finish the PR work in the slot (or verify the signal file), then resume the run.';
+
+function displaySignalPath(
+  monitorContext:
+    | (MonitorContextIdentity & Pick<AgentContext, 'taskFile' | 'signalFile'>)
+    | null
+    | undefined,
+  absolutePath?: string,
+): string | null {
+  return monitorContext?.signalFile ?? absolutePath ?? null;
+}
+
+export async function probeWorkerSignalForRun(
+  runId: string,
+  slotId?: string | null,
+  monitorContext?: AgentContext | null,
+): Promise<WorkerSignalProbeResult> {
+  const run = getRun(runId);
+  if (!run) {
+    return { ok: false, code: 'missing', message: 'Run not found.', signalFile: null };
+  }
+  const ctx = monitorContext ?? selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+  const relSignalFile = ctx?.signalFile ?? null;
+
+  if (!slotId) {
+    return {
+      ok: false,
+      code: 'no_slot',
+      message: 'Run has no slot bound — cannot read SIGNAL.json.',
+      signalFile: relSignalFile,
+    };
+  }
+
+  let signalJsonPath: string | undefined;
+  try {
+    signalJsonPath = await resolveSignalJsonPathForRun(run, slotId, ctx);
+  } catch (err) {
+    return {
+      ok: false,
+      code: 'missing_path',
+      message: `Could not resolve SIGNAL.json path: ${(err as Error).message}`,
+      signalFile: relSignalFile,
+    };
+  }
+
+  if (!signalJsonPath) {
+    return {
+      ok: false,
+      code: 'missing_path',
+      message: 'Could not resolve SIGNAL.json path for this run.',
+      signalFile: relSignalFile,
+    };
+  }
+
+  const displayPath = displaySignalPath(ctx, signalJsonPath);
+
+  try {
+    const vars = await loadSlotVars(slotId);
+    const result = await execOnSlot(vars, `cat ${shellQuote(signalJsonPath)} 2>/dev/null`);
+    if (result.exitCode !== 0 || !result.stdout.trim()) {
+      return {
+        ok: false,
+        code: 'missing',
+        message: `No SIGNAL.json at ${displayPath ?? signalJsonPath}. Write one when manual work is done.`,
+        signalFile: displayPath,
+      };
+    }
+
+    let parsed: WorkerSignal;
+    try {
+      parsed = JSON.parse(result.stdout) as WorkerSignal;
+    } catch {
+      return {
+        ok: false,
+        code: 'invalid_json',
+        message: 'SIGNAL.json is not valid JSON.',
+        signalFile: displayPath,
+      };
+    }
+
+    const normalized = normalizeWorkerSignal(parsed);
+    if (!normalized.ok) {
+      return {
+        ok: false,
+        code: 'invalid_schema',
+        message: `SIGNAL.json invalid: ${normalized.reason}`,
+        signalFile: displayPath,
+        status: String((parsed as { status?: unknown }).status ?? ''),
+      };
+    }
+
+    const sig = normalized.signal;
+    if (!isTerminalWorkerSignal(sig)) {
+      return {
+        ok: false,
+        code: 'non_terminal',
+        message: `SIGNAL.json exists but status is "${sig.status}". Run \`./mark complete\` when done.`,
+        signalFile: displayPath,
+        status: sig.status,
+        signal: sig,
+      };
+    }
+
+    const boundSig = bindSignalToMonitorContext(sig, ctx);
+    if (!signalMatchesMonitorContext(boundSig, ctx)) {
+      return {
+        ok: false,
+        code: 'context_mismatch',
+        message: "SIGNAL.json doesn't match this worker context (role/contextId).",
+        signalFile: displayPath,
+        status: boundSig.status,
+        signal: boundSig,
+      };
+    }
+
+    const latestRun = getRun(runId) ?? run;
+    if (!isWorkerSignalFreshForRun(latestRun, boundSig)) {
+      return {
+        ok: false,
+        code: 'stale',
+        message: 'SIGNAL.json is older than this run — write a fresh terminal signal.',
+        signalFile: displayPath,
+        status: boundSig.status,
+        signal: boundSig,
+      };
+    }
+
+    return {
+      ok: true,
+      code: 'ready',
+      message: 'Terminal SIGNAL.json is valid — ready to resume.',
+      signalFile: displayPath,
+      status: boundSig.status,
+      signal: boundSig,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      code: 'missing',
+      message: `Failed to read SIGNAL.json: ${(err as Error).message}`,
+      signalFile: displayPath,
+    };
+  }
+}
+
 export async function readFreshTerminalSignalForRun(
   runId: string,
   slotId?: string | null,
   monitorContext?: AgentContext | null,
 ): Promise<WorkerSignal | undefined> {
-  if (!slotId) return undefined;
-  const run = getRun(runId);
-  if (!run) return undefined;
-  try {
-    const ctx =
-      monitorContext ?? selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
-    const signalJsonPath = await resolveSignalJsonPathForRun(run, slotId, ctx);
-    if (!signalJsonPath) return undefined;
-    const vars = await loadSlotVars(slotId);
-    const result = await execOnSlot(vars, `cat ${shellQuote(signalJsonPath)} 2>/dev/null`);
-    if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
-    const parsed = JSON.parse(result.stdout) as WorkerSignal;
-    const normalized = normalizeWorkerSignal(parsed);
-    if (!normalized.ok) {
-      console.warn(
-        `[run-monitor] run ${runId.slice(0, 8)} — ignoring invalid SIGNAL.json: ${normalized.reason}`,
-      );
-      return undefined;
-    }
-    const sig = normalized.signal;
-    if (!isTerminalWorkerSignal(sig)) return undefined;
-    const boundSig = bindSignalToMonitorContext(sig, ctx);
-    if (!signalMatchesMonitorContext(boundSig, ctx)) return undefined;
-    const latestRun = getRun(runId) ?? run;
-    if (!isWorkerSignalFreshForRun(latestRun, boundSig)) {
-      console.log(
-        `[run-monitor] run ${runId.slice(0, 8)} — ignoring stale SIGNAL.json: status=${boundSig.status} timestamp=${boundSig.timestamp}`,
-      );
-      return undefined;
-    }
-    return boundSig;
-  } catch (err) {
-    console.warn(
-      `[run-monitor] failed to read SIGNAL.json for run ${runId.slice(0, 8)}: ${(err as Error).message}`,
-    );
-    return undefined;
-  }
+  const probe = await probeWorkerSignalForRun(runId, slotId, monitorContext);
+  return probe.ok ? probe.signal : undefined;
 }
 
 function launchCommandForRun(run: Run): unknown {
@@ -445,7 +557,7 @@ export async function monitorRun(
         const actionId = await createBlockedDecision(
           runId,
           'interactive_handoff',
-          'Interactive PR-complete worker is no longer active and did not write a terminal signal. Inspect the slot, do any manual PR work, then write SIGNAL.json or abort the run.',
+          INTERACTIVE_HANDOFF_DESCRIPTION,
         );
         if (actionId === 'abort') {
           return { pollCount: 0, exitReason: 'aborted', violations: allViolations, snapshots };
@@ -548,7 +660,7 @@ export async function monitorRun(
             const actionId = await createBlockedDecision(
               runId,
               'interactive_handoff',
-              'Interactive PR-complete worker stopped without a terminal signal. Inspect the slot, do any manual PR work, then write SIGNAL.json or abort the run.',
+              INTERACTIVE_HANDOFF_DESCRIPTION,
             );
             if (actionId === 'abort') {
               exitReason = 'aborted';
@@ -608,7 +720,7 @@ export async function monitorRun(
             const actionId = await createBlockedDecision(
               runId,
               'interactive_handoff',
-              `Interactive PR-complete is waiting for operator handoff (${v.message}). Inspect the slot, do any manual PR work, then write SIGNAL.json or abort the run.`,
+              `${INTERACTIVE_HANDOFF_DESCRIPTION}\n\nMonitor note: ${v.message}`,
             );
             if (actionId === 'abort') {
               exitReason = 'aborted';
@@ -705,7 +817,7 @@ export async function monitorRun(
           const actionId = await createBlockedDecision(
             runId,
             'interactive_handoff',
-            `Interactive PR-complete exceeded ${config.totalTimeoutMs / 60000} minute timeout. Inspect the slot, do any manual PR work, then write SIGNAL.json or abort the run.`,
+            `${INTERACTIVE_HANDOFF_DESCRIPTION}\n\nMonitor note: exceeded ${config.totalTimeoutMs / 60000} minute timeout.`,
           );
           if (actionId === 'abort') {
             exitReason = 'aborted';
@@ -948,6 +1060,8 @@ async function createBlockedDecision(
   const run = getRun(runId);
   if (!run) throw new Error('Run not found');
 
+  const monitorCtx = selectAgentContext(run, { role: primaryRoleForFlow(run.flowType) });
+
   const decision: RunDecision = {
     id: randomUUID(),
     type: `monitor_${reason}`,
@@ -956,11 +1070,19 @@ async function createBlockedDecision(
     actions:
       reason === 'interactive_handoff'
         ? [
-            { id: 'signal-written', label: 'I wrote SIGNAL.json', style: 'primary' },
+            {
+              id: 'signal-written',
+              label: 'Check SIGNAL.json & resume',
+              style: 'primary',
+              description:
+                'Reads SIGNAL.json on the slot. Resumes the run only if it contains a fresh terminal status.',
+            },
             { id: 'abort', label: 'Abort Run', style: 'danger' },
           ]
         : actions,
     createdAt: new Date().toISOString(),
+    context:
+      reason === 'interactive_handoff' ? { signalFile: monitorCtx?.signalFile ?? null } : undefined,
   };
 
   run.decisions.push(decision);

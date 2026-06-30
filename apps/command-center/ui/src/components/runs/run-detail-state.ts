@@ -31,6 +31,8 @@ export abstract class RunDetailState extends LitElement {
   @state() _pendingConfirm: string | null = null;
   @state() _rescueInProgress = false;
   @state() _interactiveDevActionInProgress: string | null = null;
+  @state() _handoffSignalCheckBusy = false;
+  @state() _handoffSignalCheckError: string | null = null;
   @state() _selectedSlotId: string | null = null;
   @state() _resetBranch = false;
   @state() _branchNudgeShowPicker = false;
