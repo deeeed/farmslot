@@ -27,6 +27,11 @@ test('pickRunSessionTranscript picks the in-window transcript and rejects a prio
   assert.equal(pickRunSessionTranscript([current, prior], dispatchedAt, completedAt), current);
   // With ONLY the prior run's transcript, nothing in-window → null (never mis-attributed).
   assert.equal(pickRunSessionTranscript([prior], dispatchedAt, completedAt), null);
+
+  // Two transcripts in-window (e.g. a concurrent/manual same-repo session) → null,
+  // never a guess.
+  const other = transcriptAt(dir, 'other.jsonl', dispatchMs + 20 * 60_000);
+  assert.equal(pickRunSessionTranscript([other, current, prior], dispatchedAt, completedAt), null);
 });
 
 test('pickRunSessionTranscript returns null for an unparseable dispatch time', () => {

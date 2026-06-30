@@ -67,13 +67,14 @@ export function unavailableRunnerSessionUsage({
 }
 
 /**
- * Pick the transcript that belongs to THIS run's dispatch window. `paths` is
- * newest-first; we return the newest whose mtime is at/after the run's dispatch
- * and at/before its completion. Discovery is local-only, so there is no clock skew
- * to absorb — a transcript last written BEFORE this run's dispatch belongs to a
- * prior run on the same slot and must be excluded, never charged to this run. A
- * small post-completion grace covers the gap between recording `completedAt` and
- * the runner's final transcript flush.
+ * Pick the transcript that belongs to THIS run's dispatch window — only when it is
+ * unambiguous. A candidate's mtime must be at/after the run's dispatch and at/before
+ * its completion (discovery is local-only, so there is no clock skew to absorb — a
+ * transcript last written before dispatch belongs to a prior run on the same slot;
+ * a small post-completion grace covers the final transcript flush). If zero or more
+ * than one transcript falls in the window (e.g. a concurrent/manual same-repo
+ * session, or a next run started within the grace), we return null rather than
+ * guess, so usage is never mis-attributed to this run.
  */
 export function pickRunSessionTranscript(
   paths: string[],
@@ -83,6 +84,7 @@ export function pickRunSessionTranscript(
   const start = Date.parse(dispatchedAt);
   if (!Number.isFinite(start)) return null;
   const end = (completedAt ? Date.parse(completedAt) : Date.now()) + 60_000;
+  const inWindow: string[] = [];
   for (const candidate of paths) {
     let mtime: number;
     try {
@@ -91,9 +93,9 @@ export function pickRunSessionTranscript(
       // Transcript discovery races with CLI-owned files; skip any that vanished.
       continue;
     }
-    if (mtime >= start && mtime <= end) return candidate;
+    if (mtime >= start && mtime <= end) inWindow.push(candidate);
   }
-  return null;
+  return inWindow.length === 1 ? inWindow[0] : null;
 }
 
 export async function extractRunnerSessionUsage({
