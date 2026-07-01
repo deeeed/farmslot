@@ -10,9 +10,10 @@ import { join } from 'node:path';
 /** Checkout env files the CLI reads, in order. `.env.ports` is the primary dev-config file. */
 export const CHECKOUT_ENV_FILES = ['.env.ports', '.env'] as const;
 
-/** Parse a dotenv-style file: `KEY=VALUE` per line, `#` comments, optional surrounding quotes.
- * Values are left literal (no `$VAR` expansion); a leading `~` is fine — farmslotHome() and
- * the CLI's own path handling expand it, matching how the shell would. */
+/** Parse a minimal `KEY=VALUE`-per-line env file: full-line `#` comments only (no inline
+ * comments), an optional `export ` prefix, and one pair of surrounding quotes stripped (no
+ * escape sequences). Values are left literal (no `$VAR` expansion); a leading `~` is fine —
+ * farmslotHome() and the CLI's own path handling expand it, matching shell `source`. */
 export function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of text.split('\n')) {
@@ -36,8 +37,8 @@ export function parseEnvFile(text: string): Record<string, string> {
 
 /**
  * Load `<checkoutRoot>/.env.ports` then `.env` into `env`, without overriding values already
- * present (shell wins). Absent files and read errors are ignored — config must never crash
- * the CLI, and the shell env still applies.
+ * present (shell wins). Absent files are skipped; a present-but-unreadable file throws so a
+ * misconfigured checkout can't silently apply the wrong FARMSLOT_HOME / GW_URL.
  */
 export function loadCheckoutEnv(checkoutRoot: string, env: NodeJS.ProcessEnv = process.env): void {
   for (const name of CHECKOUT_ENV_FILES) {
@@ -46,9 +47,12 @@ export function loadCheckoutEnv(checkoutRoot: string, env: NodeJS.ProcessEnv = p
     let text: string;
     try {
       text = readFileSync(path, 'utf-8');
-    } catch {
-      // Unreadable env file (perms/race) — skip it; the shell environment still applies.
-      continue;
+    } catch (err) {
+      // A file that vanished between existsSync and read (ENOENT race) is fine to skip;
+      // anything else (e.g. EACCES) means the config is present but unreadable — surface it
+      // rather than silently applying the wrong config.
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw new Error(`cannot read ${path}: ${err instanceof Error ? err.message : String(err)}`);
     }
     for (const [key, value] of Object.entries(parseEnvFile(text))) {
       if (env[key] === undefined) env[key] = value;
