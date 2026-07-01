@@ -4307,6 +4307,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@farmslot/capabilities@workspace:*, @farmslot/capabilities@workspace:packages/capabilities":
+  version: 0.0.0-use.local
+  resolution: "@farmslot/capabilities@workspace:packages/capabilities"
+  dependencies:
+    "@farmslot/protocol": "workspace:*"
+    "@types/node": "npm:^22.0.0"
+    typescript: "npm:^5.6.0"
+  languageName: unknown
+  linkType: soft
+
 "@farmslot/cli@workspace:packages/cli":
   version: 0.0.0-use.local
   resolution: "@farmslot/cli@workspace:packages/cli"
@@ -4410,6 +4420,7 @@ __metadata:
   resolution: "@farmslot/gateway@workspace:services/gateway"
   dependencies:
     "@earendil-works/pi-ai": "npm:0.74.2"
+    "@farmslot/capabilities": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@farmslot/run-bundle": "workspace:*"
     "@sinclair/typebox": "npm:^0.34.49"
@@ -4486,6 +4497,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/node@workspace:services/node"
   dependencies:
+    "@farmslot/capabilities": "workspace:*"
     "@farmslot/protocol": "workspace:*"
     "@types/node": "npm:^22.0.0"
     "@types/ws": "npm:^8.5.0"

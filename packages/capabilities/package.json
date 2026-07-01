@@ -1,0 +1,41 @@
+{
+  "name": "@farmslot/capabilities",
+  "version": "0.1.0",
+  "description": "Machine-local capability primitives (fs-watch, screen capture) shared by the node (primary owner) and the gateway (local fallback when no node) — ADR-046.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./fs-watch": {
+      "types": "./dist/fs-watch.d.ts",
+      "import": "./dist/fs-watch.js",
+      "default": "./dist/fs-watch.js"
+    },
+    "./screen-frame": {
+      "types": "./dist/screen-frame.d.ts",
+      "import": "./dist/screen-frame.js",
+      "default": "./dist/screen-frame.js"
+    },
+    "./screen-capture": {
+      "types": "./dist/screen-capture.d.ts",
+      "import": "./dist/screen-capture.js",
+      "default": "./dist/screen-capture.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --noEmit --project tsconfig.json"
+  },
+  "dependencies": {
+    "@farmslot/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

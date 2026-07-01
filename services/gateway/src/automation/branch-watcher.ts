@@ -1,10 +1,14 @@
 // branch-watcher.ts — Watches .git/HEAD for all enabled slots, broadcasts branch changes.
-// ADR-046: all machines — local and remote — watch through their node's fs.watch. The
-// gateway no longer runs a local chokidar watch (the node owns machine-local monitoring).
-// No node for a machine ⇒ its branch monitoring is degraded (the 60s poll still refreshes),
-// and it (re)starts automatically when that machine's node connects.
+// ADR-046: the node owns machine-local monitoring, so watches route through the machine's
+// node fs.watch (local via loopback, uniform with remote). When a LOCAL machine has no node,
+// the gateway falls back to the SAME watch primitive directly (@farmslot/capabilities) so
+// local branch tracking still works live — one implementation, node primary, gateway backup.
+// A remote machine with no node degrades to the 60s poll (its files aren't on this host).
+// Watches upgrade back to the node automatically when that machine's node connects.
 
 import path from 'node:path';
+
+import { type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal as checkIsLocal } from '../core/exec.js';
@@ -24,6 +28,8 @@ interface BranchWatch {
   host: string;
   sshTarget: string;
   lastBranch?: string;
+  // Set only for the gateway-local fallback watch (local slot, no node). Stopped on unwatch.
+  localWatch?: FileWatchHandle;
 }
 
 const activeWatches = new Map<string, BranchWatch>();
@@ -97,9 +103,11 @@ export async function watchBranch(slotId: string): Promise<void> {
     lastBranch: slot.branch || undefined,
   };
 
-  // Watch through the machine's node — local and remote alike (ADR-046). Without a node
-  // the watch is still registered so the 60s poll refreshes it; it upgrades to live
-  // fs.watch when that machine's node connects (node.connect → restartBranchWatchesForMachine).
+  // Prefer the machine's node — local and remote alike (ADR-046). Fallbacks when absent:
+  //  • local slot  → the gateway watches the file directly via the shared primitive (backup).
+  //  • remote slot → degraded to the 60s poll (the file lives on another host).
+  // Either way it upgrades to the node's fs.watch when that machine's node connects
+  // (node.connect → restartBranchWatchesForMachine).
   const node = getNode(slot.machine);
   if (node) {
     try {
@@ -110,9 +118,14 @@ export async function watchBranch(slotId: string): Promise<void> {
         `[branch-watcher] failed to start watch for ${slotId}: ${(err as Error).message}`,
       );
     }
+  } else if (slotIsLocal) {
+    bw.localWatch = watchFile(gitHeadPath, (content) => debouncedUpdate(slotId, content));
+    console.log(
+      `[branch-watcher] no node for ${slot.machine} — gateway-local fallback watch for ${slotId}: ${gitHeadPath}`,
+    );
   } else {
     console.log(
-      `[branch-watcher] no node for ${slot.machine} — branch monitoring degraded (poll only) for ${slotId}`,
+      `[branch-watcher] no node for remote ${slot.machine} — branch monitoring degraded (poll only) for ${slotId}`,
     );
   }
 
@@ -130,6 +143,7 @@ export async function unwatchBranch(slotId: string): Promise<void> {
   if (timer) clearTimeout(timer);
   debounceTimers.delete(slotId);
 
+  bw.localWatch?.stop();
   activeWatches.delete(slotId);
   console.log(`[branch-watcher] stopped watching ${slotId}`);
 }

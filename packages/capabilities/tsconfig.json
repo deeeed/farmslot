@@ -1,0 +1,13 @@
+{
+  "extends": "../../apps/command-center/tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {
+      "@farmslot/protocol": ["../protocol/src/index.ts"],
+      "@farmslot/protocol/*": ["../protocol/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

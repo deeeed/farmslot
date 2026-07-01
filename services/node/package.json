@@ -12,6 +12,7 @@
     "quality": "yarn typecheck && yarn test"
   },
   "dependencies": {
+    "@farmslot/capabilities": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "ws": "^8.18.0"
   },
