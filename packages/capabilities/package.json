@@ -29,7 +29,8 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "typecheck": "tsc --noEmit --project tsconfig.json"
+    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "quality": "yarn typecheck"
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*"
