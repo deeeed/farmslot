@@ -128,8 +128,11 @@ export function registerUninstallCommand(program: Command): void {
       try {
         state = readState(ws);
       } catch {
-        // Corrupt/absent state: still uninstall, using default home and no symlink removal.
-        output.write(dim('  (no readable state.json — using default home, skipping symlink)\n'));
+        // Corrupt/absent state: still remove the workspace, but a readable state is the only
+        // proof the fallback home dir belongs to THIS install — so it is force-kept below.
+        output.write(
+          dim('  (no readable state.json — keeping the home dir and skipping symlink)\n'),
+        );
       }
 
       const purge = Boolean(flags.purge);
@@ -159,13 +162,23 @@ export function registerUninstallCommand(program: Command): void {
             const n = countEntries(ws.runsDir);
             history = await askDisposition(rl, 'Run history', `(${n} archived)`, 'runs');
           }
-          if (fromFlags(flags.keepHome, flags.deleteHome, flags.backupHome) === null) {
-            const dir = state?.home_dir ?? farmslotHome();
+          if (
+            state !== null &&
+            fromFlags(flags.keepHome, flags.deleteHome, flags.backupHome) === null
+          ) {
+            const dir = state.home_dir ?? farmslotHome();
             home = await askDisposition(rl, 'Home / credentials', dir, 'home');
           }
         } finally {
           rl.close();
         }
+      }
+
+      // A readable state is the only proof the fallback home belongs to this install — so
+      // never delete/back it up without one, even under --purge/--delete-home.
+      if (state === null && home.disposition !== 'keep') {
+        output.write(dim('  keeping home (no state.json to confirm it belongs to this install)\n'));
+        home = { disposition: 'keep' };
       }
 
       let plan: UninstallPlan;
