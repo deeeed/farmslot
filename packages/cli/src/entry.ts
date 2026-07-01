@@ -17,6 +17,7 @@ import { registerRpcCommand } from './commands/rpc.js';
 import { registerRunCommand } from './commands/run.js';
 import { registerRunsCommand } from './commands/runs.js';
 import { registerSlotCommand } from './commands/slot.js';
+import { registerUninstallCommand } from './commands/uninstall.js';
 import { registerUpCommand } from './commands/up.js';
 import { registerUpdateCommand } from './commands/update.js';
 import { registerWorkspaceCommand } from './commands/workspace.js';
@@ -51,6 +52,7 @@ registerDoctorCommand(program);
 registerWorkspaceCommand(program);
 registerProjectCommand(program);
 registerUpdateCommand(program);
+registerUninstallCommand(program);
 registerAuthCommands(program);
 registerAnalyticsCommand(program);
 

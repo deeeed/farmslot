@@ -2,6 +2,9 @@
 
 Two commands take a fresh machine to working farm slots; one keeps it current.
 
+For a visual walk-through of the full lifecycle (what runs, what lands where, what
+you customize, and how to remove it), see [onboarding-flow.md](onboarding-flow.md).
+
 ## Install
 
 ```bash
@@ -92,6 +95,26 @@ farmslot update
 
 Note: the update engine itself runs from the pre-update code — when an update
 changes `farmslot update`'s own logic, run it twice to pick the new engine up.
+
+## Remove it
+
+```bash
+farmslot uninstall
+```
+
+Removes this installation at its recorded locations (reads `state.json`, so a custom
+`FARMSLOT_WORKSPACE`/`BIN_DIR`/`HOME` is handled): the framework clone, product-repo
+clones, `state.json`, and the `farmslot` PATH symlink. **Run history**
+(`<workspace>/runs/`) and the **home dir** (gateway auth/profiles) default to _keep_ —
+each is an interactive keep / back-up / delete choice.
+
+- `--dry-run` — print the plan, remove nothing
+- `--yes` — non-interactive; keeps history + home unless `--purge`
+- `--purge` — also delete history + home/credentials
+- `--backup-history <path>` / `--backup-home <path>` — archive before removing
+
+Only a `farmslot` symlink that resolves into this workspace is removed; a foreign one
+on your `PATH` is left untouched.
 
 ## Manage multiple gateways
 
