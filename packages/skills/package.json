@@ -16,7 +16,9 @@
     },
     "./skills/*": "./skills/*/SKILL.md",
     "./schemas/*": "./schemas/*",
-    "./scripts/mark-checklist-step.cjs": "./scripts/mark-checklist-step.cjs"
+    "./scripts/mark-checklist-step.cjs": "./scripts/mark-checklist-step.cjs",
+    "./scripts/worker-terminal-contract.cjs": "./scripts/worker-terminal-contract.cjs",
+    "./scripts/check-task-artifact-contract.mjs": "./scripts/check-task-artifact-contract.mjs"
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
@@ -64,6 +66,7 @@
     "dist/**/*.js.map",
     "schemas/**/*.json",
     "scripts/**/*.cjs",
+    "scripts/**/*.mjs",
     "skills/**/*.md",
     "templates/**/*.json"
   ],

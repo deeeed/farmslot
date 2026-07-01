@@ -14,6 +14,7 @@ import {
   type TaskSchema,
   type TaskSchemaPhase,
   type TemplateProvenance,
+  WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
 
 import {
@@ -44,6 +45,10 @@ import {
 } from './artifact-only-guard.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
+import {
+  readWorkerTerminalProjectConfig,
+  resolveWorkerTerminalContract,
+} from './worker-terminal-contract.js';
 
 // Remote deployment dir — kept in sync with REMOTE_AGENT_DIR in core/hooks.ts
 const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
@@ -867,6 +872,18 @@ export async function writeTaskFile(
   await writeFile(
     path.join(taskAbsDir, TEMPLATE_PROVENANCE_INPUT),
     `${JSON.stringify(templateProvenance, null, 2)}\n`,
+    'utf-8',
+  );
+
+  const workerTerminalConfig = readWorkerTerminalProjectConfig(
+    projectVars.projectJson as Record<string, unknown>,
+  );
+  const terminalContract = resolveWorkerTerminalContract(workerTerminalConfig, run.flowType, {
+    mode: run.mode ?? undefined,
+  });
+  await writeFile(
+    path.join(taskAbsDir, WORKER_TERMINAL_CONTRACT_INPUT),
+    `${JSON.stringify(terminalContract, null, 2)}\n`,
     'utf-8',
   );
 

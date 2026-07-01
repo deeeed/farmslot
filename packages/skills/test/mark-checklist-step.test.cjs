@@ -12,8 +12,13 @@ const signal = path.join(dir, 'SIGNAL.json');
 
 writeFileSync(
   task,
-  ['# Checklist', '', '- [ ] First gate', '- [ ] **Second gate** — validate'].join('\n'),
+  ['# Worker: Feature — DEMO-1', '', '- [x] First gate', '- [x] **Second gate** — validate'].join(
+    '\n',
+  ),
 );
+mkdirSync(path.join(dir, 'artifacts'), { recursive: true });
+writeFileSync(path.join(dir, 'artifacts', 'learnings.md'), '- Nothing relevant — smoke test.\n');
+writeFileSync(path.join(dir, 'artifacts', 'report.md'), '# Report\n\nSmoke test complete.\n');
 
 let result = spawnSync(process.execPath, [helper, task, signal, '1'], { encoding: 'utf8' });
 assert.equal(result.status, 0, result.stderr);
@@ -40,12 +45,30 @@ assert.equal(parsed.outcome, 'success');
 assert.equal(parsed.disposition, 'fixed');
 assert.equal(parsed.checklistTiming.events.length, 2);
 
+const devDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-dev-pr-'));
+const devTask = path.join(devDir, 'TASK.md');
+const devSignal = path.join(devDir, 'SIGNAL.json');
+mkdirSync(path.join(devDir, 'artifacts'), { recursive: true });
+writeFileSync(devTask, ['# Worker: dev — DEMO-PR', '', '- [x] Ship feature'].join('\n'));
+writeFileSync(path.join(devDir, 'artifacts', 'learnings.md'), '- Shipped.\n');
+writeFileSync(path.join(devDir, 'artifacts', 'pr-description.md'), '# PR\n\nDone.\n');
+result = spawnSync(process.execPath, [helper, devTask, devSignal, 'complete', '--mark-last'], {
+  encoding: 'utf8',
+});
+assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(readFileSync(devSignal, 'utf8'));
+assert.equal(parsed.evidence?.reportPath, 'artifacts/pr-description.md');
+
 const noChangeDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-nochange-'));
 const noChangeTask = path.join(noChangeDir, 'TASK.md');
 const noChangeSignal = path.join(noChangeDir, 'SIGNAL.json');
 const reportDir = path.join(noChangeDir, 'artifacts');
 mkdirSync(reportDir, { recursive: true });
 writeFileSync(path.join(reportDir, 'no-change-report.md'), '# no change\n');
+writeFileSync(
+  path.join(reportDir, 'learnings.md'),
+  '- Bug not reproducible after investigation.\n',
+);
 writeFileSync(noChangeTask, '- [ ] Investigate bug');
 spawnSync(process.execPath, [helper, noChangeTask, noChangeSignal, 'start'], { encoding: 'utf8' });
 spawnSync(process.execPath, [helper, noChangeTask, noChangeSignal, '1'], { encoding: 'utf8' });
@@ -94,6 +117,58 @@ result = spawnSync(
   { encoding: 'utf8' },
 );
 assert.equal(result.status, 1);
+
+const missingLearningsDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-no-learn-'));
+const missingLearningsTask = path.join(missingLearningsDir, 'TASK.md');
+const missingLearningsSignal = path.join(missingLearningsDir, 'SIGNAL.json');
+mkdirSync(path.join(missingLearningsDir, 'artifacts'), { recursive: true });
+writeFileSync(path.join(missingLearningsDir, 'artifacts', 'report.md'), '# report\n');
+writeFileSync(
+  missingLearningsTask,
+  ['# Worker: Feature — DEMO-4', '', '- [x] Only step'].join('\n'),
+);
+result = spawnSync(
+  process.execPath,
+  [helper, missingLearningsTask, missingLearningsSignal, 'complete', '--mark-last'],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 1);
+assert.match(result.stderr, /learnings\.md/);
+
+const incompleteChecklistDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-checklist-'));
+const incompleteTask = path.join(incompleteChecklistDir, 'TASK.md');
+const incompleteSignal = path.join(incompleteChecklistDir, 'SIGNAL.json');
+mkdirSync(path.join(incompleteChecklistDir, 'artifacts'), { recursive: true });
+writeFileSync(path.join(incompleteChecklistDir, 'artifacts', 'learnings.md'), '- ok\n');
+writeFileSync(path.join(incompleteChecklistDir, 'artifacts', 'report.md'), '# report\n');
+writeFileSync(
+  incompleteTask,
+  ['# Worker: Feature — DEMO-2', '', '- [ ] Step A', '- [ ] Step B'].join('\n'),
+);
+result = spawnSync(
+  process.execPath,
+  [helper, incompleteTask, incompleteSignal, 'complete', '--mark-last'],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 1);
+assert.match(result.stderr, /checklist incomplete/);
+
+const missingWorkerReportDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-no-report-'));
+const missingWorkerReportTask = path.join(missingWorkerReportDir, 'TASK.md');
+const missingWorkerReportSignal = path.join(missingWorkerReportDir, 'SIGNAL.json');
+mkdirSync(path.join(missingWorkerReportDir, 'artifacts'), { recursive: true });
+writeFileSync(path.join(missingWorkerReportDir, 'artifacts', 'learnings.md'), '- ok\n');
+writeFileSync(
+  missingWorkerReportTask,
+  ['# Worker: Feature — DEMO-3', '', '- [x] Only step'].join('\n'),
+);
+result = spawnSync(
+  process.execPath,
+  [helper, missingWorkerReportTask, missingWorkerReportSignal, 'complete', '--mark-last'],
+  { encoding: 'utf8' },
+);
+assert.equal(result.status, 1);
+assert.match(result.stderr, /missing required (artifact|worker report)/);
 
 const blockedDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-blocked-'));
 const blockedTask = path.join(blockedDir, 'TASK.md');

@@ -144,11 +144,13 @@ Skip only when every AC is backend-only with zero UI surface — state why in th
 
 - [ ] **13. Self-review** — read the diff against `{{review_quality_path}}` antipatterns; no inline protocol duplication or comment noise.
 - [ ] **14. Commit** — atomic commit(s) following Conventional Commits.
-- [ ] **15. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
-- [ ] **16. Report + signal** — write `{{TASK_DIR}}/artifacts/report.md` (list evidence paths: screenshots + `after.mp4`), set `STATUS: done`, then:
+- [ ] **15. Write `{{TASK_DIR}}/artifacts/pr-description.md`** — include root cause, fix summary, test results, and evidence paths (screenshots + `after.mp4`). Include `## **Screenshots/Recordings**` placeholder (`_Evidence will be added after upload._`); gateway replaces from `evidence-manifest.json`. Append `## **Validation Recipe**` with `recipe.json` in a `<details>` block when present.
+- [ ] **16. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+- [ ] **17. Signal completion** — set `STATUS: done`, then:
   ```bash
   {{TASK_DIR}}/mark complete --mark-last
   ```
+  `./mark complete --mark-last` validates learnings, pr-description, checklist completion, and artifact contract.
   **Do NOT `/exit`.** Stay alive for the publication gate.
 
 ## Recipe rules

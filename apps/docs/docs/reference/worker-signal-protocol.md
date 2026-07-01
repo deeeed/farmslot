@@ -8,9 +8,9 @@ title: Worker signal protocol
 runner-neutral way to observe terminal task state without parsing Claude, Codex,
 Cursor, Grok, or shell output.
 
-The canonical protocol type is `WorkerSignal` in
-`packages/protocol/src/transport/signal.ts`. This page is the reader-facing
-contract for task templates, project integrations, and UI/API consumers.
+**Start here if you author templates or run workers (Farmslot or skills-only):**
+[Finish a worker run](worker-run-finish.md) — portable checklist, `./mark`, and what Farmslot adds on top.
+This page is the technical reference for the `SIGNAL.json` file itself.
 
 ## Ownership boundary
 
@@ -74,6 +74,32 @@ Workers must not hand-write `SIGNAL.json`. Use the `mark` helper only.
 
 `mark` sets `status`, `outcome`, `disposition`, and `evidence.reportPath` for you.
 For `no-change`, the report file must exist before the command succeeds.
+
+### Packaged evidence enforced at terminal
+
+On terminal success (`complete`, `no-change`), `./mark` validates worker-owned
+artifacts before writing `SIGNAL.json`. The **expected files** are documented in
+[Finish a worker run](worker-run-finish.md).
+
+Typical checks:
+
+| Check                                | `complete`                                       | `no-change`               | Waive              |
+| ------------------------------------ | ------------------------------------------------ | ------------------------- | ------------------ |
+| `artifacts/learnings.md` (non-empty) | yes                                              | yes                       | `--skip-learnings` |
+| Flow worker report                   | `report.md` / `review.md` / `comments-report.md` | `no-change-report.md`     | —                  |
+| Checklist all `[x]`                  | when `--mark-last`                               | when `--mark-last`        | `--skip-checklist` |
+| Recipe artifacts                     | when `recipe.json` exists                        | when `recipe.json` exists | —                  |
+
+Write **3–5 markdown bullets** on key learnings or struggles during the session.
+When nothing relevant, one bullet is enough: `- Nothing relevant — straightforward run; no blockers or surprises.`
+
+Projects may optionally declare overrides in `project.json` → `worker_terminal`
+(see [ADR-045](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md)); the gateway
+may also write `inputs/worker-terminal-contract.json` for a run. **Most teams
+only need the finish checklist above.**
+
+Orchestration consumers (retrospective, improvement engine, family readiness) read
+the same artifact store documented in [ADR-026](https://github.com/deeeed/farmslot/blob/main/docs/adr/026-self-improvement-recursive-loop.md).
 
 ## Status and outcome matrix
 

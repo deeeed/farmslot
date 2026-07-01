@@ -4,6 +4,11 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
+- Colocate finish-contract scripts in `packages/skills/scripts/` (`mark-checklist-step.cjs`, `worker-terminal-contract.cjs`, `check-task-artifact-contract.mjs`) as the canonical source for `@farmslot/skills` and consensys-skills delegation.
+- **dev / fix-bug:** terminal `./mark complete` requires `artifacts/learnings.md` + `artifacts/pr-description.md` (not `report.md`).
+- `./mark` infers dev/fix-bug flow from embedded checklist `Skill:` header (standalone recipe skills).
+- Export `./scripts/worker-terminal-contract.cjs` and `./scripts/check-task-artifact-contract.mjs` from the package.
+
 ## 0.1.1 - 2026-06-30
 
 - Single-path mark CLI for worker terminal signals.

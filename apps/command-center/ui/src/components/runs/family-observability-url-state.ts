@@ -4,8 +4,14 @@ import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 
 import type { CompareTab } from './family-observability-comparison-renderers.js';
 import type { FamilyEvidenceFilter } from './family-observability-evidence.js';
+import type {
+  FamilyTokenScope,
+  FamilyTokenTrajectory,
+} from './family-observability-token-model.js';
 
 const COMPARE_TABS: CompareTab[] = ['leaderboard', 'matrix', 'evidence', 'cards'];
+const TOKEN_SCOPES: FamilyTokenScope[] = ['family', 'run'];
+const TOKEN_TRAJECTORIES: FamilyTokenTrajectory[] = ['all-runs', 'pr-complete-milestones'];
 
 export interface FamilyCompareView {
   tab: CompareTab | null;
@@ -44,11 +50,49 @@ export interface FamilyDiffSelection {
 export function familyRunHash(
   familyId: string,
   runId: string,
-  options: { evidence?: FamilyEvidenceFilter } = {},
+  options: {
+    evidence?: FamilyEvidenceFilter;
+    tokens?: FamilyTokenScope;
+    trajectory?: FamilyTokenTrajectory;
+  } = {},
 ): string {
   const params = new URLSearchParams({ run: runId });
   if (options.evidence) params.set('evidence', options.evidence);
+  if (options.tokens && options.tokens !== 'family') params.set('tokens', options.tokens);
+  if (options.trajectory && options.trajectory !== 'all-runs') {
+    params.set('trajectory', options.trajectory);
+  }
   return buildHash(`family/${familyId}`, params);
+}
+
+export function tokenViewFromFamilyHash(hash: string = location.hash): {
+  scope: FamilyTokenScope;
+  trajectory: FamilyTokenTrajectory;
+} {
+  const { params } = parseHashRoute(hash);
+  const scope = params.get('tokens');
+  const trajectory = params.get('trajectory');
+  return {
+    scope: TOKEN_SCOPES.includes(scope as FamilyTokenScope)
+      ? (scope as FamilyTokenScope)
+      : 'family',
+    trajectory: TOKEN_TRAJECTORIES.includes(trajectory as FamilyTokenTrajectory)
+      ? (trajectory as FamilyTokenTrajectory)
+      : 'all-runs',
+  };
+}
+
+export function familyTokenViewHash(
+  scope: FamilyTokenScope,
+  trajectory: FamilyTokenTrajectory,
+  hash: string = location.hash,
+): string {
+  const { route, params } = parseHashRoute(hash);
+  if (scope === 'family') params.delete('tokens');
+  else params.set('tokens', scope);
+  if (trajectory === 'all-runs') params.delete('trajectory');
+  else params.set('trajectory', trajectory);
+  return buildHash(route, params);
 }
 
 export function evidenceFilterFromFamilyHash(

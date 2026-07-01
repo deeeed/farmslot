@@ -116,6 +116,55 @@ export interface RelatedRunSummary {
   updatedAt: string;
 }
 
+export interface FamilyObservabilityTokenRunPoint {
+  runId: string;
+  label: string;
+  flowType: FlowType;
+  lane: RunLane;
+  status: RunStatus;
+  createdAt: string;
+  model: string | null;
+  runner: string | null;
+  workerTokens: number;
+  reviewTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheCreation: number;
+  /** Worker + review tokens attributed to this run (excludes sibling fix-loops). */
+  stepTokens: number;
+  stepCostEstimate: number | null;
+  cumulativeTokens: number;
+  cumulativeCostEstimate: number | null;
+  /** Tokens added at this step vs the previous chronological run. */
+  deltaTokens: number;
+  deltaCostEstimate: number | null;
+  hasMetrics: boolean;
+}
+
+export interface FamilyObservabilityTokenModelBreakdown {
+  model: string;
+  runCount: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheCreation: number;
+  total: number;
+  costEstimate: number | null;
+}
+
+/** Canonical family token rollup — worker sessions plus review usage, one row per run. */
+export interface FamilyObservabilityTokenSummary {
+  familyTotalTokens: number;
+  familyTotalCostEstimate: number | null;
+  runsWithMetrics: number;
+  runsMissingMetrics: number;
+  missingRunIds: string[];
+  runPoints: FamilyObservabilityTokenRunPoint[];
+  milestoneRunPoints: FamilyObservabilityTokenRunPoint[];
+  byModel: FamilyObservabilityTokenModelBreakdown[];
+}
+
 export interface FamilyObservabilitySnapshot {
   familyId: string;
   familyRootTicketOrPr: string;
@@ -134,6 +183,7 @@ export interface FamilyObservabilitySnapshot {
   learnings: FamilyLearningEntry[];
   runs: FamilyObservabilityRunSummary[];
   experiments?: EvalExperimentProjection[];
+  tokenSummary?: FamilyObservabilityTokenSummary;
   /** Other runs that share the same ticket or GitHub PR number but live in a different family (prior attempts, separate lineages). */
   relatedByTicket: RelatedRunSummary[];
   missingData: string[];

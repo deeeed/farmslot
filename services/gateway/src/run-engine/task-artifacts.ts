@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { DiffStat, Run } from '@farmslot/protocol';
+import { type DiffStat, FLOW_WORKER_REPORT_ARTIFACTS, type Run } from '@farmslot/protocol';
 
 import { getRun } from '../runs/store.js';
 
@@ -10,7 +10,14 @@ import { captureRunDiffArtifacts } from './diff-artifacts.js';
 
 export async function readWorkerReport(runId: string): Promise<string | null> {
   const run = getRun(runId)!;
-  return (await readTaskArtifactText(run.taskFile, 'report.md')) ?? null;
+  const candidates = FLOW_WORKER_REPORT_ARTIFACTS[
+    run.flowType as keyof typeof FLOW_WORKER_REPORT_ARTIFACTS
+  ] ?? ['report.md', 'pr-description.md'];
+  for (const filename of candidates) {
+    const text = await readTaskArtifactText(run.taskFile, filename);
+    if (text?.trim()) return text;
+  }
+  return null;
 }
 
 export async function readTaskArtifactText(

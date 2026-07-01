@@ -69,14 +69,15 @@ bash {{recipe_validate_wrapper}} \
 
 When the operator says the interactive session is complete:
 
-1. Write `{{TASK_DIR}}/artifacts/report.md` with files changed, summary, validation run (include recipe exit code + artifact paths), and any remaining risks.
+1. Write `{{TASK_DIR}}/artifacts/pr-description.md` with files changed, summary, validation run (include recipe exit code + artifact paths), and any remaining risks — or update the draft from mid-run if already started.
 2. If screenshots/videos prove the change, write `{{TASK_DIR}}/artifacts/evidence-manifest.json` with strict top-level keys: `version`, `preferred_mode`, `summary`, `before_after_pairs`, `standalone`, `omit`, `videos`. Use `before_after_pairs` for comparisons; omit the manifest when there is no visual evidence.
 3. When `artifacts/recipe.json` exists, run:
    ```bash
-   node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe
+   node {{farmslot_dir}}/scripts/quality/check-task-artifact-contract.mjs {{TASK_DIR}} --require-recipe-coverage-if-recipe --require-learnings
    ```
-4. Set the task status line to `STATUS: done`.
-5. Write the completion signal:
+4. Write `{{TASK_DIR}}/artifacts/learnings.md` — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+5. Set the task status line to `STATUS: done`.
+6. Write the completion signal:
 
 ```bash
 {{TASK_DIR}}/mark complete --mark-last

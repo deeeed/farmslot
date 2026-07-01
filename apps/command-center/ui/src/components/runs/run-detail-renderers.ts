@@ -20,6 +20,8 @@ import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
+import { ticketUrlForRun } from './family-observability-link-model.js';
+import { familyRunHash } from './family-observability-url-state.js';
 import {
   canReplayRunSteps,
   INTERACTIVE_DEV_ACTIONS,
@@ -288,6 +290,14 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
     ctx.siblings.filter((s) => s.lane === 'comparison').length + (r.lane === 'comparison' ? 1 : 0);
   const actionsBlocked = ctx._actionsBlocked();
   const prLink = prLinkForRun(r);
+  const ticketUrl = ticketUrlForRun(r.ticketOrPr, r, ctx.siblings);
+  const familyRootUrl =
+    r.familyRootTicketOrPr && r.familyRootTicketOrPr !== r.ticketOrPr
+      ? ticketUrlForRun(r.familyRootTicketOrPr, r, ctx.siblings)
+      : ticketUrl;
+  const familyHref = familyRunHash(r.familyId, r.id);
+  const familyRunScopeHref = familyRunHash(r.familyId, r.id, { tokens: 'run' });
+  const isTerminal = r.status === 'done' || r.status === 'failed' || r.status === 'cancelled';
 
   return html`
     <div
@@ -333,7 +343,18 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         `
       : nothing}
     <div class="header">
-      <h2>${r.ticketOrPr}</h2>
+      <h2>
+        ${ticketUrl
+          ? html`<a
+              href=${ticketUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style="color:inherit; text-decoration:none"
+              title="Open work item"
+              >${r.ticketOrPr}</a
+            >`
+          : r.ticketOrPr}
+      </h2>
       <span class="status-badge" style="border:1px solid ${sc}; color:${sc}">${r.status}</span>
       ${disposition
         ? html`<span
@@ -442,12 +463,26 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       </div>
       <div class="meta-item">
         <div class="meta-label">Family</div>
-        <div class="meta-value">${r.familyId.slice(0, 8)}</div>
+        <div class="meta-value">
+          <a href=${familyHref} style="color:${colors.accent}; text-decoration:none"
+            >${r.familyId.slice(0, 8)}</a
+          >
+        </div>
       </div>
-      ${r.familyRootTicketOrPr
+      ${r.familyRootTicketOrPr && r.familyRootTicketOrPr !== r.ticketOrPr
         ? html`<div class="meta-item">
             <div class="meta-label">Family root</div>
-            <div class="meta-value">${r.familyRootTicketOrPr}</div>
+            <div class="meta-value">
+              ${familyRootUrl
+                ? html`<a
+                    href=${familyRootUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style="color:${colors.accent}; text-decoration:none"
+                    >${r.familyRootTicketOrPr}</a
+                  >`
+                : r.familyRootTicketOrPr}
+            </div>
           </div>`
         : nothing}
       ${prLink
@@ -624,18 +659,14 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             </div>
           </div>`
         : nothing}
-      ${r.status === 'done'
-        ? html`<div class="meta-item">
-            <div class="meta-label">Retrospective</div>
-            <div class="meta-value">
-              <a
-                href="#family/${r.familyId}?run=${encodeURIComponent(r.id)}"
-                style="color:${colors.accent}; text-decoration:none"
-                >open</a
-              >
-            </div>
-          </div>`
-        : nothing}
+      <div class="meta-item">
+        <div class="meta-label">${isTerminal ? 'Retrospective' : 'Family view'}</div>
+        <div class="meta-value">
+          <a href=${familyRunScopeHref} style="color:${colors.accent}; text-decoration:none"
+            >open</a
+          >
+        </div>
+      </div>
       ${ctx.prStatus
         ? html`<div class="meta-item">
             <div class="meta-label">Workflow milestone</div>

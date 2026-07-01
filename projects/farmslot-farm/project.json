@@ -233,5 +233,16 @@
     "recipe_quality_path": "{{runtime_dir}}/recipe-quality.md",
     "review_quality_path": "{{runtime_dir}}/review-quality.md",
     "recipe_example_banner": "{{farmslot_dir}}/docs/examples/recipes/farmslot/demo-red-banner.recipe.json"
+  },
+  "worker_terminal": {
+    "requireSignal": true,
+    "whenPresent": [
+      {
+        "path": "artifacts/recipe.json",
+        "alsoRequire": ["artifacts/recipe-coverage.md", "artifacts/evidence-manifest.json"],
+        "requireRecipeQuality": true,
+        "requireRecipeCoverage": true
+      }
+    ]
   }
 }

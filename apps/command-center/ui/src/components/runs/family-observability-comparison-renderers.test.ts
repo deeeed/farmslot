@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { FamilyObservabilityRunSummary, GateSummary } from '@farmslot/protocol';
 
-import { runGateSummary } from './family-observability-comparison-renderers.js';
+import { runGateSummary } from './family-observability-gate-model.js';
 
 const GATE_SUMMARY = {
   kind: 'publication',

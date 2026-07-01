@@ -154,10 +154,11 @@ Apply **fs-recipe-quality** when auditing recipes or evidence (`.agents/skills/f
 
 - [ ] **21. Write `{{TASK_DIR}}/artifacts/review.md`** — use report contract in `{{review_quality_path}}`. Include Recipe Coverage matrix, Evidence Audit, Recommended Action. Coverage &lt; 100% without UNTESTABLE rationale → `REQUEST_CHANGES` or explicit escalation.
 - [ ] **22. Write `{{TASK_DIR}}/artifacts/line-comments.json`** — inline findings with severities; empty array if none.
+- [ ] **23. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — review completed without novel findings.`
 
-### Finish (23)
+### Finish (24)
 
-- [ ] **23. Done** — `STATUS: done`, then `{{TASK_DIR}}/mark complete --mark-last`. **Read-only** — no commits, no pushes.
+- [ ] **24. Done** — `STATUS: done`, then `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, review report, checklist, artifact contract). **Read-only** — no commits, no pushes.
 
 ## Rules
 

@@ -78,6 +78,9 @@ export abstract class FamilyObservabilityState extends LitElement {
   @state() _diffModal: FamilyDiffModalState | null = null;
   _diffModalOpener: HTMLElement | null = null;
   @state() _replayingStep = false;
+  @state() _tokenScope: import('./family-observability-token-model.js').FamilyTokenScope = 'family';
+  @state() _tokenTrajectory: import('./family-observability-token-model.js').FamilyTokenTrajectory =
+    'all-runs';
   @state() _replayError = '';
   _mdPreviewCache = new Map<string, MdFetchEntry<string>>();
   _pairsCache: {

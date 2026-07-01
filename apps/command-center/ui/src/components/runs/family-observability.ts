@@ -96,7 +96,9 @@ import {
   familyCompareViewHash,
   familyEvidenceFilterHash,
   familyRunHash,
+  familyTokenViewHash,
   slotHistoryHashForRun,
+  tokenViewFromFamilyHash,
 } from './family-observability-url-state.js';
 import type { SemanticPickerDetail } from './grade-semantic-picker.js';
 import { isSemanticChoice } from './grade-semantic-picker.js';
@@ -114,6 +116,8 @@ export class FamilyObservability extends FamilyObservabilityState {
     if (!this.familyId) return;
     const newHash = familyRunHash(this.familyId, runId, {
       evidence: this._evidenceFilter === 'all' ? undefined : this._evidenceFilter,
+      tokens: this._tokenScope === 'family' ? undefined : this._tokenScope,
+      trajectory: this._tokenTrajectory === 'all-runs' ? undefined : this._tokenTrajectory,
     });
     if (window.location.hash !== newHash) {
       history.replaceState(null, '', newHash);
@@ -193,6 +197,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     window.addEventListener('hashchange', this._onHashChange);
     this._applyEvidenceFilterFromHash();
     this._applyCompareViewFromHash();
+    this._applyTokenViewFromHash();
     void this._loadSnapshot();
     this._fleetSlots = getState().fleet?.slots ?? [];
     this._prs = getState().prs ?? [];
@@ -260,7 +265,22 @@ export class FamilyObservability extends FamilyObservabilityState {
     this._applyDiffModalFromHash();
     this._applyEvidenceFilterFromHash();
     this._applyCompareViewFromHash();
+    this._applyTokenViewFromHash();
   };
+
+  private _applyTokenViewFromHash(): void {
+    const view = tokenViewFromFamilyHash();
+    this._tokenScope = view.scope;
+    this._tokenTrajectory = view.trajectory;
+  }
+
+  private _persistTokenViewHash(): void {
+    if (!this.familyId) return;
+    const newHash = familyTokenViewHash(this._tokenScope, this._tokenTrajectory);
+    if (window.location.hash !== newHash) {
+      history.replaceState(null, '', newHash);
+    }
+  }
 
   private _applyEvidenceFilterFromHash(): void {
     const filter = evidenceFilterFromFamilyHash();
@@ -681,6 +701,16 @@ export class FamilyObservability extends FamilyObservabilityState {
       },
       onLightboxModeChange: (mode) => {
         this._lightboxMode = mode;
+      },
+      tokenScope: this._tokenScope,
+      tokenTrajectory: this._tokenTrajectory,
+      onTokenScopeChange: (scope) => {
+        this._tokenScope = scope;
+        this._persistTokenViewHash();
+      },
+      onTokenTrajectoryChange: (trajectory) => {
+        this._tokenTrajectory = trajectory;
+        this._persistTokenViewHash();
       },
     });
   }

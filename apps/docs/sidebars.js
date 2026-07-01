@@ -73,6 +73,9 @@ const sidebars = {
       label: 'Reference',
       items: [
         'reference/gateway-api',
+        'reference/worker-run-finish',
+        'reference/worker-artifacts-by-flow',
+        'reference/worker-template-quality',
         'reference/worker-signal-protocol',
         'reference/prepare-lifecycle',
         'reference/recipe-protocol-v1',

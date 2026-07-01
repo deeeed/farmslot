@@ -4,7 +4,6 @@ import type {
   FamilyObservabilityArtifact,
   FamilyObservabilityRunSummary,
   FamilyObservabilitySnapshot,
-  GateSummary,
 } from '@farmslot/protocol';
 
 import '../reviews/gate-summary-panel.js';
@@ -23,6 +22,7 @@ import {
   evidenceRowArtifacts,
   type EvidenceUncomparedRun,
 } from './family-observability-evidence-matrix.js';
+import { runGateSummary } from './family-observability-gate-model.js';
 import { familyPrUrl } from './family-observability-link-model.js';
 import { evidenceSummary } from './family-observability-output-model.js';
 import { runStatusColor } from './run-utils.js';
@@ -195,16 +195,7 @@ function renderCompareLeaderboard(
   `;
 }
 
-/** Pull the run's gate-summary (worker/self-review/sub-agent per-model breakdown) off its decisions. */
-export function runGateSummary(run: FamilyObservabilityRunSummary): GateSummary | undefined {
-  return run.decisions
-    ?.map((decision) =>
-      decision.payload?.kind === 'ready' || decision.payload?.kind === 'retrospective'
-        ? decision.payload.gateSummary
-        : undefined,
-    )
-    .find((summary): summary is GateSummary => Boolean(summary));
-}
+export { runGateSummary } from './family-observability-gate-model.js';
 
 function renderCompareMatrix(
   options: FamilyComparisonPanelRenderOptions,

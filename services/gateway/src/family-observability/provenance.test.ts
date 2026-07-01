@@ -487,7 +487,7 @@ test('snapshot honors FLOW_WORKER_REPORT_ARTIFACTS for pr-complete (comments-rep
   assert.equal(summary.missingData.includes('worker-report'), false);
 });
 
-test('snapshot does NOT flag worker-learnings missing for pr-complete without actionable comments', async () => {
+test('snapshot flags worker-learnings missing for pr-complete without learnings.md', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-observability-no-actionable-'));
   const taskDir = path.join(base, 'pr-complete');
   await writeArtifact(taskDir, 'TASK.md', '# pr-complete');
@@ -517,7 +517,7 @@ test('snapshot does NOT flag worker-learnings missing for pr-complete without ac
     }),
   ]);
 
-  assert.equal(snapshot.runs[0].missingData.includes('worker-learnings'), false);
+  assert.equal(snapshot.runs[0].missingData.includes('worker-learnings'), true);
 });
 
 test('snapshot DOES flag worker-learnings missing for pr-complete with actionable comments but no learnings.md', async () => {

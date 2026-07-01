@@ -1,8 +1,22 @@
-import type { FamilyObservabilityRunSummary, RunLink } from '@farmslot/protocol';
+import type { FamilyObservabilityRunSummary, Run, RunLink } from '@farmslot/protocol';
 import { githubPullUrl, parseGitHubRef } from '@farmslot/protocol';
 
 type RunWithLinks = Pick<FamilyObservabilityRunSummary, 'links' | 'runId' | 'ticketOrPr'>;
 type RunWithPr = Pick<FamilyObservabilityRunSummary, 'links' | 'prNumber' | 'runId' | 'ticketOrPr'>;
+
+function asLinkRun(run: Pick<Run, 'id' | 'links' | 'ticketOrPr'>): RunWithLinks {
+  return { runId: run.id, links: run.links, ticketOrPr: run.ticketOrPr };
+}
+
+/** Resolve an external ticket/PR URL for a run detail surface. */
+export function ticketUrlForRun(
+  ticketOrPr: string,
+  run: Pick<Run, 'id' | 'links' | 'ticketOrPr'>,
+  siblings: readonly Pick<Run, 'id' | 'links' | 'ticketOrPr'>[] = [],
+): string | null {
+  const linkRuns = [asLinkRun(run), ...siblings.map(asLinkRun)];
+  return familyTicketUrl(ticketOrPr, linkRuns, asLinkRun(run));
+}
 
 /** Extract the PR number from a GitHub-style URL, anchored on a delimiter so `/pull/5` doesn't match `/pull/50`. */
 export function pullNumberFromUrl(url: string): string | null {

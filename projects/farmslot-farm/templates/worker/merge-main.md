@@ -31,4 +31,5 @@ STATUS: pending
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
 - [ ] **7. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: conflicts resolved, files changed, validation results.
-- [ ] **8. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark complete --mark-last`
+- [ ] **8. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
+- [ ] **9. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark complete --mark-last`

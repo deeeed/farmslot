@@ -31,5 +31,6 @@ STATUS: pending
   cd apps/command-center && yarn typecheck
   cd apps/command-center && yarn exec tsx ../../services/gateway/src/*.test.ts
   ```
-- [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: files changed, issue addressed, validation results.
-- [ ] **9. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark complete --mark-last`
+- [ ] **8. Write report** — create `{{TASK_DIR}}/artifacts/comments-report.md` with: files changed, issue addressed, validation results.
+- [ ] **9. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- No reviewer-driven learnings — no actionable comment fixes on this run.`
+- [ ] **10. Update status and signal** — set `STATUS: done`, then run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, report, checklist, artifact contract)

@@ -17,6 +17,7 @@ import {
   type RunMonitorState,
   type WorkerSignal,
   type WorkerSignalProbeResult,
+  type WorkerTerminalContractDocument,
 } from '@farmslot/protocol';
 
 import { resolveAgentTarget, selectAgentContext } from '../agents/contexts.js';
@@ -44,6 +45,7 @@ import {
   normalizeWorkerSignal,
   signalFreshAfterAll,
 } from '../tasks/worker-signals.js';
+import { loadTerminalContractForRun } from '../tasks/worker-terminal-contract.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -402,6 +404,15 @@ function launchCommandForRun(run: Run): unknown {
   return run.steps.find((step) => step.name === PipelineSteps.DISPATCH)?.outputs?.launchCommand;
 }
 
+export function shouldHoldForMissingTerminalSignal(
+  contract: Pick<WorkerTerminalContractDocument, 'requireSignal'> | null | undefined,
+  run: Pick<Run, 'flowType' | 'mode'>,
+): boolean {
+  if (contract) return contract.requireSignal;
+  if (run.flowType === 'pr-complete' && run.mode === 'interactive') return false;
+  return true;
+}
+
 export function shouldHoldForInteractivePrComplete(run: Pick<Run, 'flowType' | 'mode'>): boolean {
   return run.flowType === 'pr-complete' && run.mode === 'interactive';
 }
@@ -426,6 +437,9 @@ export async function monitorRun(
   };
 
   const config = await loadMonitorConfig(run.project);
+  const terminalContract = await loadTerminalContractForRun(initialRun, slotId);
+  const holdIfMissingSignal = (current: Pick<Run, 'flowType' | 'mode'>) =>
+    shouldHoldForMissingTerminalSignal(terminalContract, current);
   const now = Date.now();
 
   // Accumulated metrics
@@ -553,7 +567,7 @@ export async function monitorRun(
       console.log(
         `[run-monitor] run ${runId.slice(0, 8)} — worker already done on start (agent=${startupAgent})`,
       );
-      if (shouldHoldForInteractivePrComplete(run)) {
+      if (holdIfMissingSignal(run)) {
         const actionId = await createBlockedDecision(
           runId,
           'interactive_handoff',
@@ -573,7 +587,7 @@ export async function monitorRun(
           };
         }
       }
-      if (!shouldHoldForInteractivePrComplete(run)) {
+      if (!holdIfMissingSignal(run)) {
         return { pollCount: 0, exitReason: 'worker-done', violations: allViolations, snapshots };
       }
     }
@@ -655,7 +669,7 @@ export async function monitorRun(
           console.log(
             `[run-monitor] run ${runId.slice(0, 8)} — worker done (agent=${agentStatus}, confirmed=${recoveredStatus})`,
           );
-          if (shouldHoldForInteractivePrComplete(currentRun)) {
+          if (holdIfMissingSignal(currentRun)) {
             snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
             const actionId = await createBlockedDecision(
               runId,
@@ -813,7 +827,7 @@ export async function monitorRun(
         );
         snapshots.push({ timestamp: new Date().toISOString(), trigger: 'decision' });
         const timeoutRun = getRun(runId);
-        if (timeoutRun && shouldHoldForInteractivePrComplete(timeoutRun)) {
+        if (timeoutRun && holdIfMissingSignal(timeoutRun)) {
           const actionId = await createBlockedDecision(
             runId,
             'interactive_handoff',
