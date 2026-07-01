@@ -42,8 +42,13 @@ export interface UninstallPlan {
 
 /** Refuse to operate on obviously unsafe roots (a bug in state.json must never rm $HOME). */
 function assertSafeRoot(dir: string): void {
-  const home = process.env.HOME ?? '';
-  if (!dir || !isAbsolute(dir) || dir === '/' || dir === home || resolve(dir) === resolve(home)) {
+  if (!dir || !isAbsolute(dir)) {
+    throw new Error(`refusing to uninstall an unsafe path: ${dir}`);
+  }
+  // Canonicalize first: a workspace/home that is a symlink to / or $HOME must not slip past.
+  const canon = canonicalPath(dir);
+  const home = process.env.HOME ? canonicalPath(process.env.HOME) : '';
+  if (canon === '/' || canon === home) {
     throw new Error(`refusing to uninstall an unsafe path: ${dir}`);
   }
 }
