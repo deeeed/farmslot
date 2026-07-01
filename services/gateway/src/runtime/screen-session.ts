@@ -5,6 +5,10 @@
 
 import { type ChildProcess, spawn } from 'node:child_process';
 
+import {
+  createH264FrameSplitter,
+  type H264FrameSplitter,
+} from '@farmslot/capabilities/screen-h264';
 import type { BrowserContextParams, ResourceRelaunchedPayload } from '@farmslot/protocol';
 
 import { loadProjectVars, loadSlotVars } from '../core/config.js';
@@ -40,7 +44,7 @@ interface ScreenSession {
   height: number;
   handlers: Set<ScreenFrameHandler>;
   id: number;
-  buffer: Buffer;
+  h264?: H264FrameSplitter; // set only for direct Android capture
   mode: 'direct' | 'node';
   machine?: string; // set when mode='node'
 }
@@ -136,15 +140,13 @@ function spawnAndroid(
     height: 0,
     handlers: new Set(),
     id,
-    buffer: Buffer.alloc(0),
     mode: 'direct',
   };
 
-  // Parse raw Annex B stream — split on 00 00 00 01 start codes, group into frames
-  proc.stdout!.on('data', (chunk: Buffer) => {
-    ss.buffer = Buffer.concat([ss.buffer, chunk]);
-    drainAnnexB(ss);
-  });
+  // Parse raw Annex B stream via the shared splitter (@farmslot/capabilities) — the same
+  // parser the node uses. Emits grouped H.264 frames, multicast to this session's handlers.
+  ss.h264 = createH264FrameSplitter((payload, keyFrame) => emitFrame(ss, payload, keyFrame));
+  proc.stdout!.on('data', (chunk: Buffer) => ss.h264!.push(chunk));
 
   wireStderrLogs(proc, ss);
 
@@ -174,95 +176,6 @@ function spawnAndroid(
 
   sessions.set(sessionKey, ss);
   return ss;
-}
-
-// Streaming Annex B parser — accumulates NALs, emits grouped frames
-// SPS(7) + PPS(8) + IDR(5) = keyframe, slice(1) = P-frame
-function drainAnnexB(ss: ScreenSession): void {
-  const buf = ss.buffer;
-  const startCodes: number[] = [];
-
-  // Find all 4-byte start codes
-  for (let i = 0; i <= buf.length - 4; i++) {
-    if (buf[i] === 0 && buf[i + 1] === 0 && buf[i + 2] === 0 && buf[i + 3] === 1) {
-      startCodes.push(i);
-    }
-  }
-
-  if (startCodes.length < 2) return; // need at least 2 start codes to extract a NAL
-
-  // Group NALs into frames and emit complete ones
-  // Keep at least one start code in the buffer (the last NAL may be incomplete)
-  let consumed = 0;
-  let frameStart = -1;
-  let frameIsKey = false;
-  let frameData: Buffer[] = [];
-
-  for (let i = 0; i < startCodes.length - 1; i++) {
-    const nalStart = startCodes[i];
-    const nalEnd = startCodes[i + 1];
-    const nalType = buf[nalStart + 4] & 0x1f;
-
-    if (nalType === 7 || nalType === 8) {
-      // SPS or PPS — start accumulating a keyframe
-      if (frameStart === -1) frameStart = nalStart;
-      frameIsKey = true;
-      frameData.push(buf.subarray(nalStart, nalEnd));
-    } else if (nalType === 5) {
-      // IDR slice — part of keyframe
-      if (frameStart === -1) {
-        frameStart = nalStart;
-        frameIsKey = true;
-      }
-      frameData.push(buf.subarray(nalStart, nalEnd));
-      // Emit keyframe (SPS+PPS+IDR complete)
-      emitFrame(ss, concatBuffers(frameData), true);
-      consumed = nalEnd;
-      frameStart = -1;
-      frameIsKey = false;
-      frameData = [];
-    } else if (nalType === 1) {
-      // P-slice — standalone frame
-      if (frameData.length > 0) {
-        // Flush accumulated SPS/PPS without IDR (shouldn't happen, but safe)
-        emitFrame(ss, concatBuffers(frameData), frameIsKey);
-        frameData = [];
-        frameIsKey = false;
-        frameStart = -1;
-      }
-      emitFrame(
-        ss,
-        new Uint8Array(buf.buffer, buf.byteOffset + nalStart, nalEnd - nalStart),
-        false,
-      );
-      consumed = nalEnd;
-    }
-    // Skip other NAL types (SEI=6, AUD=9, etc.)
-    else {
-      if (frameStart !== -1) {
-        // Part of ongoing frame accumulation
-        frameData.push(buf.subarray(nalStart, nalEnd));
-      } else {
-        consumed = nalEnd;
-      }
-    }
-  }
-
-  // Keep unconsumed data (last incomplete NAL + any accumulated frame data)
-  if (consumed > 0) {
-    ss.buffer = Buffer.from(buf.subarray(frameData.length > 0 ? frameStart! : consumed));
-  }
-}
-
-function concatBuffers(parts: Buffer[]): Uint8Array {
-  const total = parts.reduce((s, p) => s + p.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const p of parts) {
-    out.set(p, offset);
-    offset += p.length;
-  }
-  return out;
 }
 
 // --- Shared helpers ---
@@ -464,7 +377,6 @@ export async function subscribeScreen(
         height: 0,
         handlers: new Set(),
         id,
-        buffer: Buffer.alloc(0),
         mode: 'node',
         machine,
       };

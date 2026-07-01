@@ -4,6 +4,7 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http';
 
 import { WebSocket, WebSocketServer } from 'ws';
 
+import { decodeNodeFrame } from '@farmslot/capabilities/screen-frame';
 import {
   chatActionRejectCode,
   type EventFrame,
@@ -406,20 +407,11 @@ export function createWebSocketServer(
 }
 
 function handleNodeBinaryFrame(raw: Buffer): void {
-  // Decode node frame: [0xAF][flags][width:u16][height:u16][slotIdLen:u8][slotId...][payload...]
-  const flags = raw[1];
-  const keyFrame = (flags & 1) !== 0;
-  const width = raw.readUInt16BE(2);
-  const height = raw.readUInt16BE(4);
-  const slotIdLen = raw[6];
-  if (raw.length < 7 + slotIdLen) return;
-  const slotId = raw.subarray(7, 7 + slotIdLen).toString('utf-8');
-  const payload = new Uint8Array(
-    raw.buffer,
-    raw.byteOffset + 7 + slotIdLen,
-    raw.length - 7 - slotIdLen,
-  );
-  ingestNodeFrame(slotId, payload, keyFrame, width, height);
+  // Envelope decoded by the shared codec (@farmslot/capabilities) — same source of truth
+  // the node uses to encode. Magic already checked by the caller.
+  const decoded = decodeNodeFrame(raw);
+  if (!decoded) return;
+  ingestNodeFrame(decoded.slotId, decoded.payload, decoded.keyFrame, decoded.width, decoded.height);
 }
 
 async function sendHello(ws: WebSocket): Promise<void> {

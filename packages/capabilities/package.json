@@ -21,10 +21,10 @@
       "import": "./dist/screen-frame.js",
       "default": "./dist/screen-frame.js"
     },
-    "./screen-capture": {
-      "types": "./dist/screen-capture.d.ts",
-      "import": "./dist/screen-capture.js",
-      "default": "./dist/screen-capture.js"
+    "./screen-h264": {
+      "types": "./dist/screen-h264.d.ts",
+      "import": "./dist/screen-h264.js",
+      "default": "./dist/screen-h264.js"
     }
   },
   "scripts": {

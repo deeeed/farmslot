@@ -57,11 +57,27 @@ So the two axes are orthogonal:
 
 The local node's gateway channel is a **loopback** WebSocket carrying RPC requests/results; the actual file and process operations happen locally. Making the local node mandatory changes _who owns_ local capabilities (node, not gateway) and gives the machine real fleet presence — it does **not** add SSH, a network hop, or remote file access for local slots.
 
+### Shared capability primitives — the `@farmslot/capabilities` package
+
+Some machine-local capabilities have a **degraded gateway fallback**: when a local machine has no node, the gateway still performs the capability directly rather than losing it entirely (Arthur's requirement — the farm keeps working without a node, just degraded). To have the fallback **without duplicating logic**, the primitive lives once in a new node-only workspace package, `@farmslot/capabilities`, imported by both the node (primary owner) and the gateway (local fallback). One implementation, two callers.
+
+Modules (each a plain, self-describing primitive — no hidden state shared across callers):
+
+| Module (`@farmslot/capabilities/…`)                        | What it is                                                                      | Node uses it for             | Gateway uses it for                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------- |
+| `fs-watch` — `watchFile()`                                 | native `fs.watch` + "watch parent dir until the file appears" + tilde expansion | the `fs.watch` RPC           | local branch (`.git/HEAD`) watch when a **local** machine has no node |
+| `screen-frame` — `encodeNodeFrame()` / `decodeNodeFrame()` | the node→gateway capture-frame binary envelope codec (magic `0xAF`)             | encoding every capture frame | decoding relayed node frames                                          |
+| `screen-h264` — `createH264FrameSplitter()`                | splits a raw `adb screenrecord` H.264 byte stream into individual video frames  | the node's Android capture   | the gateway's direct Android capture                                  |
+
+**Not every capability gets a gateway fallback.** macOS screen capture is deliberately **single-owner** — one capture-helper process per machine owns ScreenCaptureKit and all its windows (see `services/node/src/commands/screen.ts`). A second owner in the gateway would fight the node over the same windows, so macOS capture stays **node-only** (the mandatory co-launched node covers it); only the shared codec + H.264 splitter are lifted, not a second macOS capture engine. Execution (`execLocal`) and one-off file reads likewise stay gateway-side (see Decision item 3) — they are cheap and node-independent, so they are not moved into this package.
+
+The package is node-only runtime code (uses `node:fs` / `node:child_process`); it depends on `@farmslot/protocol` for shared constants (e.g. the frame magic) but keeps `Buffer`-based runtime helpers out of the UI-shared protocol bundle.
+
 ## Consequences
 
 **Positive**
 
-- One uniform **monitoring** path for all machines; the local watch reimplementations (chokidar branch watch, local device feed) go away, so there is one place to maintain.
+- One uniform **monitoring** path for all machines; the duplicated primitives (the gateway's `chokidar` branch watch, and the frame codec + H.264 splitter copied into both services) collapse into `@farmslot/capabilities`, so there is one place to maintain.
 - Local slots gain the node's monitoring layers (fs-watch, resource-watch, screen, metrics) that were skipped without a node.
 - Honest fleet: the gateway host appears as an online node; `farmslot doctor` reports it.
 - Clean, documented separation of concerns; execution stays simple and gateway-local.
@@ -75,10 +91,11 @@ The local node's gateway channel is a **loopback** WebSocket carrying RPC reques
 ## Migration / rollout
 
 1. **This ADR + `farmslot up` co-launch** (reuse `services/node` + token auth); fleet + doctor reflect the node; degraded when absent. **[done]**
-2. Unify **monitoring** through the node, dropping the gateway's local reimplementations:
-   - branch / `.git/HEAD` watch → node `fs.watch` (drop the local `chokidar` branch in `branch-watcher.ts`). **[done]**
+2. Unify **monitoring** through the node, and lift the primitives it and the gateway both need into `@farmslot/capabilities` (node primary, gateway local fallback — no duplication):
+   - branch / `.git/HEAD` watch → node `fs.watch`; the gateway reuses the same `watchFile` primitive as a **local** fallback when a local machine has no node (drops the old `chokidar` reimplementation). **[done]**
+   - capture frame codec + Android H.264 splitter → shared `screen-frame` / `screen-h264` (were copied verbatim into both services). **[done]**
    - resource watch → already node-based (`resource-manager.ts`); activates for local once the node connects.
-   - screen / device feed → node `screen` (drop the gateway's direct capture-helper for local). **[follow-up]**
+   - macOS screen capture → stays **node-only** by design (single-owner ScreenCaptureKit; a gateway fallback would fight the node). Covered by the mandatory co-launched node.
 3. Execution is **not** migrated — `execLocal` and one-off local file reads (ADR-009 §A) stay gateway-side by design.
 
 Until the local node is co-launched, the "local host shows NODE OFFLINE" badge is cosmetic (local slots still work via `execLocal`); the fleet now renders it as **degraded** instead.
