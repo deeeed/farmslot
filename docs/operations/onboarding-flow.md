@@ -34,7 +34,7 @@ A pack ships an `install.sh` that bootstraps everything. It:
 
 ```
   ┌─────────────────────────────────────────────────────────────────────┐
-  │  ~/dev/farmslot-workspace/          ← FARMSLOT_WORKSPACE (default)    │
+  │  ~/farmslot/                        ← FARMSLOT_WORKSPACE (default)    │
   │    farmslot/        framework clone (scripts, gateway, UI, CLI)      │
   │    repos/           product repo clones — one per slot                │
   │    runs/            run archives (dispatched task history)            │

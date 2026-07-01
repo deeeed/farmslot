@@ -13,13 +13,16 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
 ```
 
 Copy, paste, done — prerequisites are checked (never auto-installed), a
-workspace lands in `~/dev/farmslot-workspace/`, and the run ends with a green
+workspace lands in `~/farmslot/`, and the run ends with a green
 `farmslot doctor`. Early preview: `main` moves daily, run `farmslot update`
 often.
 
 :::
 
 Two commands take a fresh machine to working farm slots; one keeps it current.
+
+For a visual walk-through of the full lifecycle (what runs, what lands where, what
+you customize, and how to remove it), see [onboarding-flow.md](https://github.com/deeeed/farmslot/blob/main/docs/operations/onboarding-flow.md).
 
 ## Install
 
@@ -47,7 +50,7 @@ What it does:
   Recording permission to the terminal app on first capture so Command Center can
   show live visual evidence. The legacy embedded helper under `tools/capture-helper/`
   has been removed.
-- creates the workspace (default `~/dev/farmslot-workspace`, override with
+- creates the workspace (default `~/farmslot`, override with
   `FARMSLOT_WORKSPACE`): `farmslot/` clone, `repos/`, `runs/`, `state.json`
 - installs dependencies, builds the CLI's workspace packages, symlinks
   `farmslot` into `FARMSLOT_BIN_DIR` (default `~/.local/bin`)
@@ -111,6 +114,26 @@ farmslot update
 
 Note: the update engine itself runs from the pre-update code — when an update
 changes `farmslot update`'s own logic, run it twice to pick the new engine up.
+
+## Remove it
+
+```bash
+farmslot uninstall
+```
+
+Removes this installation at its recorded locations (reads `state.json`, so a custom
+`FARMSLOT_WORKSPACE`/`BIN_DIR`/`HOME` is handled): the framework clone, product-repo
+clones, `state.json`, and the `farmslot` PATH symlink. **Run history**
+(`<workspace>/runs/`) and the **home dir** (gateway auth/profiles) default to _keep_ —
+each is an interactive keep / back-up / delete choice.
+
+- `--dry-run` — print the plan, remove nothing
+- `--yes` — non-interactive; keeps history + home unless `--purge`
+- `--purge` — also delete history + home/credentials
+- `--backup-history <path>` / `--backup-home <path>` — archive before removing
+
+Only a `farmslot` symlink that resolves into this workspace is removed; a foreign one
+on your `PATH` is left untouched.
 
 ## Manage multiple gateways
 
