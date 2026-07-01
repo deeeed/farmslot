@@ -265,6 +265,12 @@ export function runModeDiffersFromDefault(run: Partial<Pick<Run, 'flowType' | 'm
   return run.mode !== modeForFlow(run.flowType);
 }
 
+export function runChainedModeDrift(
+  run: Partial<Pick<Run, 'flowType' | 'mode' | 'parentRunId'>>,
+): boolean {
+  return Boolean(run.parentRunId && runModeDiffersFromDefault(run));
+}
+
 export function runTemplateFileName(run: Pick<Run, 'steps'>): string | null {
   const outputs = run.steps.find((step) => step.name === 'write-task')?.outputs as
     | { templateName?: string }

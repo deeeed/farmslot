@@ -27,6 +27,7 @@ import {
   pickFamilyComparePair,
   prLinkForRun,
   routeForRun,
+  runChainedModeDrift,
   runDisplayLabel,
   runDisplayTitle,
   runModeDiffersFromDefault,
@@ -284,6 +285,16 @@ test('runModeLabel and runModeDiffersFromDefault surface mode for all flows', ()
   );
   assert.equal(
     runModeDiffersFromDefault(makeRun({ flowType: 'pr-complete', mode: 'autonomous' })),
+    false,
+  );
+  assert.equal(
+    runChainedModeDrift(
+      makeRun({ flowType: 'pr-complete', mode: 'interactive', parentRunId: 'parent-1' }),
+    ),
+    true,
+  );
+  assert.equal(
+    runChainedModeDrift(makeRun({ flowType: 'dev', mode: 'autonomous', parentRunId: null })),
     false,
   );
   assert.equal(

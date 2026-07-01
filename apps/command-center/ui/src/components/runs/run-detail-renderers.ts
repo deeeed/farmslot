@@ -36,9 +36,9 @@ import {
   pickComparisonPartner,
   prLinkForRun,
   routeForRun,
+  runChainedModeDrift,
   runDisplayLabel,
   runDisplayTitle,
-  runModeDiffersFromDefault,
   runModeLabel,
   runStatusColor,
   runTemplateFileName,
@@ -480,12 +480,11 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             <div class="meta-value">${runTemplateFileName(r)}</div>
           </div>`
         : nothing}
-      ${runModeDiffersFromDefault(r) && r.parentRunId
+      ${runChainedModeDrift(r)
         ? html`<div class="meta-item" style="grid-column:1/-1">
             <div class="meta-label">Mode note</div>
             <div class="meta-value" style="color:${colors.statusWarn}">
-              Chained run inherited ${r.mode} from parent; ${r.flowType} normally defaults to
-              ${modeForFlow(r.flowType)}.
+              Chained ${r.flowType} run is ${r.mode}; flow baseline is ${modeForFlow(r.flowType)}.
             </div>
           </div>`
         : nothing}

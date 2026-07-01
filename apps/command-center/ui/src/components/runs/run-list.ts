@@ -56,11 +56,11 @@ import {
   groupRunsByFamily,
   pickFamilyComparePair,
   routeForRun,
+  runChainedModeDrift,
   runDisplayColor,
   runDisplayLabel,
   runDisplayTitle,
   type RunFamilyGroup,
-  runModeDiffersFromDefault,
   runModeLabel,
   runStatusColor,
   summarizeEligibilityReasons,
@@ -563,11 +563,11 @@ export class RunList extends RunListState {
           ${runModeLabel(run)
             ? html`<span
                 class="badge status-badge"
-                style="--status-color:${runModeDiffersFromDefault(run)
+                style="--status-color:${runChainedModeDrift(run)
                   ? colors.statusWarn
                   : colors.textMuted}"
-                title=${runModeDiffersFromDefault(run)
-                  ? `${run.flowType} normally defaults to ${modeForFlow(run.flowType)}`
+                title=${runChainedModeDrift(run)
+                  ? `Chained ${run.flowType} run is ${run.mode}; flow baseline is ${modeForFlow(run.flowType)}`
                   : `Run mode: ${run.mode}`}
                 >${run.mode}</span
               >`
