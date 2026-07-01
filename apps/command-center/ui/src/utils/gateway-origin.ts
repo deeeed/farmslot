@@ -10,6 +10,13 @@ export interface GatewayOriginLocation {
   hostname: string;
 }
 
+/** Browser page context for shaping gateway HTTP URLs (Vite proxy vs hosted /cc). */
+export interface GatewayHttpLocation {
+  href: string;
+  origin: string;
+  pathname: string;
+}
+
 export function gatewayHttpOrigin(locationLike = currentLocation()): string {
   const stored =
     typeof localStorage !== 'undefined' ? localStorage.getItem(GATEWAY_URL_STORAGE_KEY) : null;
@@ -23,6 +30,7 @@ export function gatewayHttpOrigin(locationLike = currentLocation()): string {
   return `${locationLike.protocol}//${locationLike.hostname}:7777`;
 }
 
+/** Append gateway credentials to same-origin gateway API URLs (query token for img/fetch). */
 export function gatewayApiUrl(path: string): string {
   const gatewayOrigin = gatewayHttpOrigin();
   const absolute =
@@ -38,6 +46,68 @@ export function gatewayApiUrl(path: string): string {
     absolute.searchParams.set('token', queryCredential);
   }
   return absolute.toString();
+}
+
+/** Authenticated gateway API URL — alias for gatewayApiUrl. */
+export function gatewayAuthenticatedUrl(pathOrUrl: string): string {
+  return gatewayApiUrl(pathOrUrl);
+}
+
+/** Authenticated URL for img/video/href consumers (absolute URL, token in query when needed). */
+export function gatewayResourceUrl(pathOrUrl: string): string {
+  return gatewayAuthenticatedUrl(pathOrUrl);
+}
+
+export function readGatewayHttpLocation(): GatewayHttpLocation | null {
+  if (typeof window === 'undefined') return null;
+  return {
+    href: window.location.href,
+    origin: window.location.origin,
+    pathname: window.location.pathname,
+  };
+}
+
+/**
+ * Strip a gateway absolute URL to a same-origin path so dev-mode requests go through
+ * Vite's /api proxy. Hosted /cc/ keeps the full gateway URL (UI and gateway differ).
+ */
+export function sameOriginGatewayHttpUrl(
+  url: string,
+  locationLike: GatewayHttpLocation | null = readGatewayHttpLocation(),
+  gatewayOrigin = gatewayHttpOrigin(),
+): string {
+  if (!locationLike) return url;
+  const hostedCommandCenter =
+    locationLike.pathname === '/cc' || locationLike.pathname.startsWith('/cc/');
+  try {
+    const parsed = new URL(url, locationLike.href);
+    if (
+      parsed.origin === locationLike.origin ||
+      (parsed.origin === gatewayOrigin && !hostedCommandCenter)
+    ) {
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
+/** Authenticated URL shaped for browser fetch() — dev proxy path or hosted absolute URL. */
+export function gatewayProxiedFetchUrl(
+  pathOrUrl: string,
+  locationLike: GatewayHttpLocation | null = readGatewayHttpLocation(),
+): string {
+  return sameOriginGatewayHttpUrl(gatewayAuthenticatedUrl(pathOrUrl), locationLike);
+}
+
+/** fetch() wrapper for gateway /api/* endpoints with auth + dev proxy shaping. */
+export function gatewayHttpFetch(
+  pathOrUrl: string,
+  init?: RequestInit,
+  locationLike: GatewayHttpLocation | null = readGatewayHttpLocation(),
+): Promise<Response> {
+  return fetch(gatewayProxiedFetchUrl(pathOrUrl, locationLike), init);
 }
 
 function currentLocation(): GatewayOriginLocation {

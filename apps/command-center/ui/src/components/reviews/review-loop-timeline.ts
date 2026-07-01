@@ -10,7 +10,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import {
   fixDeltaAbsenceReason,
   reviewAttemptLabel,
@@ -90,24 +90,6 @@ function parseReviewFeedbackIssues(markdown: string): ParsedIssue[] {
     issues.push({ file, line, description });
   }
   return issues;
-}
-
-function sameOriginFetchUrl(url: string): string {
-  try {
-    const parsed = new URL(url, window.location.href);
-    const gatewayOrigin = gatewayHttpOrigin();
-    const hostedCommandCenter =
-      window.location.pathname === '/cc' || window.location.pathname.startsWith('/cc/');
-    if (
-      parsed.origin === window.location.origin ||
-      (parsed.origin === gatewayOrigin && !hostedCommandCenter)
-    ) {
-      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-    }
-    return url;
-  } catch {
-    return url;
-  }
 }
 
 @customElement('review-loop-timeline')
@@ -455,7 +437,7 @@ export class ReviewLoopTimeline extends LitElement {
     const existing = this._legacyIssues.get(key);
     if (existing) return existing;
     this._legacyIssues.set(key, { status: 'loading' });
-    fetch(sameOriginFetchUrl(this.artifactUrl(feedback)))
+    gatewayHttpFetch(this.artifactUrl(feedback))
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.text();

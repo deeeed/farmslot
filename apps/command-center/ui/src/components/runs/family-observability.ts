@@ -19,7 +19,7 @@ import './grade-semantic-picker.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
-import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
 import type { LightboxPair } from '../shared/media-lightbox-types.js';
 import type { RecipeOutputPanel } from '../workspace/recipe-output-panel.js';
@@ -77,7 +77,6 @@ import {
   selectedFamilyRun,
 } from './family-observability-lightbox-model.js';
 import {
-  familyMarkdownPreviewFetchPath,
   familyMarkdownPreviewText,
   renderFamilyMarkdownPreview,
 } from './family-observability-markdown-preview.js';
@@ -943,8 +942,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     const key = familyArtifactKey(artifact);
     if (this._mdPreviewCache.has(key)) return;
     putCapped(this._mdPreviewCache, key, { status: 'loading' }, MD_CACHE_LIMIT);
-    const fetchUrl = familyMarkdownPreviewFetchPath(GATEWAY_BASE, url);
-    fetch(fetchUrl)
+    gatewayHttpFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();

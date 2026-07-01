@@ -8,7 +8,12 @@ import {
   persistGatewayAuthForHttp,
 } from '../gateway-url.js';
 
-import { gatewayApiUrl, gatewayHttpOrigin } from './gateway-origin.js';
+import {
+  gatewayApiUrl,
+  gatewayHttpFetch,
+  gatewayHttpOrigin,
+  gatewayProxiedFetchUrl,
+} from './gateway-origin.js';
 
 test('gatewayHttpOrigin falls back to the current host on local pages', () => {
   assert.equal(
@@ -69,6 +74,87 @@ test('gatewayApiUrl does not append gateway credentials to off-gateway absolute 
       'https://example.com/artifact.png',
     );
   });
+});
+
+test('gatewayProxiedFetchUrl authenticates and strips gateway origin for local dev pages', () => {
+  withMockLocalStorage(() => {
+    localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, 'dev-token');
+
+    assert.equal(
+      gatewayProxiedFetchUrl('/api/run-artifact?runId=1&path=a.diff', {
+        href: 'http://localhost:5175/#family/demo',
+        origin: 'http://localhost:5175',
+        pathname: '/',
+      }),
+      '/api/run-artifact?runId=1&path=a.diff&token=dev-token',
+    );
+  });
+});
+
+test('gatewayProxiedFetchUrl keeps hosted /cc artifact URLs absolute with token', () => {
+  withMockLocalStorage(() => {
+    localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, 'hosted-token');
+
+    assert.equal(
+      gatewayProxiedFetchUrl('/api/run-artifact?runId=1&path=a', {
+        href: 'https://farmslot.io/cc/#family/demo',
+        origin: 'https://farmslot.io',
+        pathname: '/cc/',
+      }),
+      'http://localhost:7777/api/run-artifact?runId=1&path=a&token=hosted-token',
+    );
+  });
+});
+
+test('gatewayHttpFetch uses authenticated proxied URL without double token injection', async () => {
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const store = new Map<string, string>([[GATEWAY_TOKEN_STORAGE_KEY, 'dev-token']]);
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem(key: string): string | null {
+        return store.get(key) ?? null;
+      },
+      setItem(key: string, value: string): void {
+        store.set(key, value);
+      },
+      removeItem(key: string): void {
+        store.delete(key);
+      },
+    },
+  });
+
+  const calls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    calls.push(String(input));
+    return Promise.resolve(new Response('ok', { status: 200 }));
+  }) as typeof fetch;
+
+  try {
+    await gatewayHttpFetch('/api/run-artifact?runId=1&path=a.diff', undefined, {
+      href: 'http://localhost:5175/#family/demo',
+      origin: 'http://localhost:5175',
+      pathname: '/',
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0], '/api/run-artifact?runId=1&path=a.diff&token=dev-token');
+    assert.equal(
+      gatewayProxiedFetchUrl('/api/run-artifact?runId=1&path=a.diff&token=dev-token', {
+        href: 'http://localhost:5175/#family/demo',
+        origin: 'http://localhost:5175',
+        pathname: '/',
+      }),
+      '/api/run-artifact?runId=1&path=a.diff&token=dev-token',
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousStorage) {
+      Object.defineProperty(globalThis, 'localStorage', previousStorage);
+    } else {
+      delete (globalThis as { localStorage?: Storage }).localStorage;
+    }
+  }
 });
 
 function withMockLocalStorage(fn: () => void): void {

@@ -4,7 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import '../diff-viewer/diff-review.js';
 
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
-import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 
 interface DiffFileEntry {
   path: string;
@@ -179,7 +179,7 @@ export class DiffViewerModal extends LitElement {
     }
     this._loading = true;
     try {
-      const response = await fetch(this._sameOriginUrl(this.artifactUrl));
+      const response = await gatewayHttpFetch(this.artifactUrl);
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
       this._loadedText = await response.text();
       this._selectDefault();
@@ -188,26 +188,6 @@ export class DiffViewerModal extends LitElement {
       this._error = err instanceof Error ? err.message : String(err);
     } finally {
       this._loading = false;
-    }
-  }
-
-  // Convert same-host absolute gateway URLs to path-only URLs so dev-mode
-  // fetches go through Vite's /api proxy instead of failing browser CORS.
-  private _sameOriginUrl(url: string): string {
-    try {
-      const parsed = new URL(url, window.location.href);
-      const gatewayOrigin = gatewayHttpOrigin();
-      const hostedCommandCenter =
-        window.location.pathname === '/cc' || window.location.pathname.startsWith('/cc/');
-      if (
-        parsed.origin === window.location.origin ||
-        (parsed.origin === gatewayOrigin && !hostedCommandCenter)
-      ) {
-        return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-      }
-      return url;
-    } catch {
-      return url;
     }
   }
 

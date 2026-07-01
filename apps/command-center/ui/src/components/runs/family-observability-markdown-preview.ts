@@ -2,17 +2,23 @@ import { html } from 'lit';
 
 import type { FamilyObservabilityArtifact } from '@farmslot/protocol';
 
+import { gatewayProxiedFetchUrl } from '../../utils/gateway-origin.js';
 import type { MdFetchEntry } from '../../utils/markdown.js';
 
 import { familyArtifactKey } from './family-observability-artifact-model.js';
 
+/** Legacy wrapper — prefer gatewayProxiedFetchUrl in new code. */
 export function familyMarkdownPreviewFetchPath(
   gatewayBase: string,
   url: string,
   locationPathname = typeof window !== 'undefined' ? window.location.pathname : '/',
 ): string {
-  const hostedCommandCenter = locationPathname === '/cc' || locationPathname.startsWith('/cc/');
-  return !hostedCommandCenter && url.startsWith(gatewayBase) ? url.slice(gatewayBase.length) : url;
+  void gatewayBase;
+  return gatewayProxiedFetchUrl(url, {
+    href: typeof window !== 'undefined' ? window.location.href : 'http://localhost/',
+    origin: typeof window !== 'undefined' ? window.location.origin : 'http://localhost',
+    pathname: locationPathname,
+  });
 }
 
 export function familyMarkdownPreviewText(markdown: string): string {
