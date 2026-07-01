@@ -32,6 +32,7 @@ export abstract class DispatchWizardState extends LitElement {
   @property({ attribute: false }) mockCandidates: DispatchCandidatesResult['candidates'] | null =
     null;
   @property({ attribute: false }) mockProjectConfigs: ProjectConfig[] | null = null;
+  @property({ attribute: false }) mockPriorRuns: Run[] | null = null;
   @property({ attribute: false }) mockInitial: DispatchWizardMockInitialState | null = null;
 
   @state() _flowType: FlowType | null = null;
@@ -96,6 +97,8 @@ export abstract class DispatchWizardState extends LitElement {
   /** Prior runs sharing the typed ticket — populated by debounced run.list lookup so the wizard can
    *  offer an in-wizard comparison fork without forcing the operator to open run-detail first. */
   @state() _priorRuns: Run[] = [];
+  @state() _comparePickerOpen = false;
+  @state() _comparePickerSearch = '';
   /** Operator-supplied variant suffix used only when the default <runner>-<model> tag would
    *  collide with an existing sibling (same-runner+same-model template/recipe edit comparison). */
   @state() _variantInput = '';

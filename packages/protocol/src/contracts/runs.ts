@@ -1254,6 +1254,11 @@ export interface Run {
   /** Work graph node that scheduled this run via backlog/queue. */
   workGraphId?: string;
   workNodeId?: string;
+  /** Backlog launch-plan linkage for baseline/comparison candidate sets (ADR-044). */
+  launchPlanId?: string;
+  launchCandidateId?: string;
+  launchGroupId?: string;
+  launchSlotPolicy?: import('./backlog.js').BacklogLaunchSlotPolicy['kind'];
   completedAt?: string;
   error?: string;
   /**

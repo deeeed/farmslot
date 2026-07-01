@@ -592,6 +592,13 @@ export function getCachedFleet(): FleetStatus | null {
   return cachedFleet;
 }
 
+export function setCachedFleetForTests(fleet: FleetStatus | null): void {
+  if (process.env.NODE_TEST_CONTEXT !== '1') {
+    throw new Error('setCachedFleetForTests is only available during tests');
+  }
+  cachedFleet = fleet;
+}
+
 export function onStateChange(handler: StateChangeHandler): void {
   changeHandlers.push(handler);
 }

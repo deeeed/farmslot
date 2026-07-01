@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
+import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
+
 const testDir = mkdtempSync(path.join(os.tmpdir(), 'farmslot-work-graph-test-'));
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
@@ -13,11 +15,68 @@ process.env.FARMSLOT_RUNS_DIR = path.join(testDir, 'runs');
 
 test.after(() => rm(testDir, { recursive: true, force: true }));
 
+function testSlot(slot: string, project = 'farmslot-farm'): SlotStatus {
+  return {
+    slot,
+    machine: 'test-machine',
+    platform: 'cli',
+    project,
+    health: { ssh: 'OK', devserver: 'OK', device: 'OK', cdp: 'OK', fixtures: 'OK' },
+    branch: 'main',
+    session: slot,
+    repo: '.',
+    linkedWorktree: false,
+    agent: 'idle',
+    enabled: true,
+    dispatchable: false,
+    lifecycle: 'manual',
+    phase: null,
+    warm: false,
+    taskId: null,
+    taskFile: null,
+    currentRunId: null,
+    currentFlowType: null,
+    currentTicketOrPr: null,
+    currentMode: null,
+    currentFamilyId: null,
+    currentLane: null,
+    currentVariant: null,
+    dispatchedAt: null,
+    completedAt: null,
+    runner: null,
+    model: null,
+    deviceName: null,
+    taskPhase: null,
+    taskStepProgress: null,
+    resourceRollup: 'none',
+  };
+}
+
+function testFleet(): FleetStatus {
+  const slots = [testSlot('macwork-ff-1'), testSlot('macwork-ff-2'), testSlot('macwork-ff-3')];
+  return {
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    slots,
+    summary: {
+      total: slots.length,
+      ready: 0,
+      busy: 0,
+      held: 0,
+      manual: slots.length,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+  };
+}
+
 async function freshStores() {
   const backlog = await import('../backlog/store.js');
   const queue = await import('../backlog/dispatch-queue.js');
   const runs = await import('../runs/store.js');
+  const fleetState = await import('../fleet/state.js');
   const workGraph = await import('./store.js');
+  fleetState.setCachedFleetForTests(testFleet());
   await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
   await rm(process.env.FARMSLOT_DISPATCH_QUEUE_FILE!, { force: true });
   await rm(process.env.FARMSLOT_WORK_GRAPH_DIR!, { recursive: true, force: true });
@@ -102,6 +161,54 @@ test('work graph can use an owner scope different from backlog project', async (
 
   assert.equal(linked.graph.nodes.length, 2);
   assert.equal(linked.graph.graph.project, 'cross-project-epic');
+});
+
+test('work graph keeps launch-plan backlog item as one node and queues baseline only', async () => {
+  const { backlog, queue, workGraph } = await freshStores();
+  const item = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Compare launch candidates',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_graph',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+        {
+          id: 'comparison',
+          role: 'comparison',
+          runner: 'claude',
+          model: 'sonnet',
+          variant: 'claude-sonnet',
+          slotPolicy: { kind: 'spread' },
+        },
+      ],
+    },
+  });
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Launch plan graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_launch', backlogItemId: item.item.id });
+
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  const projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.nodes.length, 1);
+  assert.equal(projection.nodes[0]?.backlogItemId, item.item.id);
+  const queued = queue.getQueueSnapshot().filter((entry) => entry.backlogItemId === item.item.id);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0]?.launchCandidateId, 'baseline');
 });
 
 test('reference blockers are v1 graph nodes but never dispatchable', async () => {

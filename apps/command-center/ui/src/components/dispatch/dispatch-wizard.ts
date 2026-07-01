@@ -495,7 +495,8 @@ export class DispatchWizard extends DispatchWizardState {
       // Dev harness seeds prior runs into shared state instead of a live gateway.
       const runs = await lookupPriorRunsForDispatchWizard({
         mockMode: this.mockMode,
-        stateRuns: getState().runs ?? [],
+        stateRuns:
+          this.mockMode && this.mockPriorRuns ? this.mockPriorRuns : (getState().runs ?? []),
         search: candidate,
         normalizedTicket: this._normalizedTicket,
       });
@@ -621,6 +622,9 @@ export class DispatchWizard extends DispatchWizardState {
       }
       void this._fetchCandidates(prefill.project);
       this._syncSelectedAppForProject(prefill.project);
+    }
+    if (prefill.ticketId && !prefill.comparison) {
+      this._schedulePriorRunsLookup(prefill.ticketId);
     }
   }
 
@@ -848,6 +852,8 @@ export class DispatchWizard extends DispatchWizardState {
         ticketOrPr: this._ticketId,
       }),
       priorRuns: this._priorRuns,
+      comparePickerOpen: this._comparePickerOpen,
+      comparePickerSearch: this._comparePickerSearch,
       variantCollision: this._variantCollision,
       variantInput: this._variantInput,
       publicationReviewsEnabled: publicationReviewsEnabled(this._flowType, mode),
@@ -908,6 +914,12 @@ export class DispatchWizard extends DispatchWizardState {
         location.hash = 'evals';
       },
       forkFromPriorRun: (run) => this._forkFromPriorRun(run),
+      setComparePickerOpen: (open) => {
+        this._comparePickerOpen = open;
+      },
+      setComparePickerSearch: (search) => {
+        this._comparePickerSearch = search;
+      },
       exitComparisonMode: () => this._exitComparisonMode(),
       setVariantInput: (variantInput) => {
         this._variantInput = variantInput;

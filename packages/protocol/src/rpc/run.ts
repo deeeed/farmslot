@@ -142,6 +142,11 @@ export interface RunCreateParams {
   /** Internal work-graph handoff link. Public run.create rejects this; workGraph.schedulerTick owns it. */
   workGraphId?: string;
   workNodeId?: string;
+  /** Internal backlog launch-plan linkage. Public run.create rejects this; backlog.enqueue owns it. */
+  launchPlanId?: string;
+  launchCandidateId?: string;
+  launchGroupId?: string;
+  launchSlotPolicy?: import('../contracts/index.js').BacklogLaunchSlotPolicy['kind'];
   /** Dev-only interactive policy. Defaults to lightweight for interactive dev runs. */
   devInteractiveProfile?: import('../contracts/index.js').DevInteractiveProfile;
   /** Shared normalized tags for planning/execution filtering. */

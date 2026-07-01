@@ -31,12 +31,20 @@ export async function dispatchQueueAdd(
     backlogItemId?: unknown;
     workGraphId?: unknown;
     workNodeId?: unknown;
+    launchPlanId?: unknown;
+    launchCandidateId?: unknown;
+    launchGroupId?: unknown;
+    launchSlotPolicy?: unknown;
     ticketData?: unknown;
   };
   if (
     rawParams.backlogItemId !== undefined ||
     rawParams.workGraphId !== undefined ||
     rawParams.workNodeId !== undefined ||
+    rawParams.launchPlanId !== undefined ||
+    rawParams.launchCandidateId !== undefined ||
+    rawParams.launchGroupId !== undefined ||
+    rawParams.launchSlotPolicy !== undefined ||
     rawParams.ticketData !== undefined
   ) {
     throw new Error(

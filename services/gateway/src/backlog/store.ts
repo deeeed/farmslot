@@ -6,12 +6,17 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  assertBacklogLaunchPlan,
   type BacklogAutoDispatchTickParams,
   type BacklogAutoDispatchTickResult,
   type BacklogBlockedItem,
   type BacklogCreateParams,
   type BacklogEnqueueResult,
   type BacklogItem,
+  type BacklogLaunchCandidate,
+  type BacklogLaunchCandidateProjection,
+  type BacklogLaunchPlan,
+  type BacklogLaunchSlotPolicy,
   type BacklogListParams,
   type BacklogListResult,
   type BacklogMarkReadyParams,
@@ -83,6 +88,7 @@ const BACKLOG_UPDATE_KEYS = new Set([
   'model',
   'scripted',
   'effort',
+  'launchPlan',
 ]);
 
 let _broadcast: BroadcastFn | null = null;
@@ -195,6 +201,13 @@ function assertExecutionHintsCompatible(item: BacklogItem): void {
   if (item.runner && item.model && !runnerSupportsModel(item.runner, item.model)) {
     throw new Error(`model ${item.model} is not compatible with runner ${item.runner}`);
   }
+  for (const candidate of item.launchPlan?.candidates ?? []) {
+    const runner = candidate.runner ?? item.runner;
+    const model = candidate.model ?? item.model;
+    if (runner && model && !runnerSupportsModel(runner, model)) {
+      throw new Error(`model ${model} is not compatible with runner ${runner}`);
+    }
+  }
 }
 
 function normalizeOptionalSpecPath(value: unknown): string | undefined {
@@ -285,6 +298,48 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
     : undefined;
   const model = normalizeOptionalString(raw.model);
   const effort = normalizeOptionalString(raw.effort);
+  const launchPlan = normalizeLaunchPlan(raw.launchPlan);
+  const launchPlanState = isRecord(raw.launchPlanState)
+    ? {
+        launchGroupId: normalizeOptionalString(raw.launchPlanState.launchGroupId) ?? '',
+        ...(normalizeOptionalString(raw.launchPlanState.baselineRunId)
+          ? { baselineRunId: normalizeOptionalString(raw.launchPlanState.baselineRunId) }
+          : {}),
+        ...(normalizeOptionalString(raw.launchPlanState.baselineQueueItemId)
+          ? {
+              baselineQueueItemId: normalizeOptionalString(raw.launchPlanState.baselineQueueItemId),
+            }
+          : {}),
+        candidates: Array.isArray(raw.launchPlanState.candidates)
+          ? raw.launchPlanState.candidates
+              .filter(isRecord)
+              .map((candidate): BacklogLaunchCandidateProjection | null => {
+                const candidateId = normalizeOptionalString(candidate.candidateId);
+                const status = normalizeOptionalString(candidate.status);
+                if (!candidateId || !status) return null;
+                return {
+                  candidateId,
+                  status: status as BacklogLaunchCandidateProjection['status'],
+                  ...(normalizeOptionalString(candidate.queueItemId)
+                    ? { queueItemId: normalizeOptionalString(candidate.queueItemId) }
+                    : {}),
+                  ...(normalizeOptionalString(candidate.runId)
+                    ? { runId: normalizeOptionalString(candidate.runId) }
+                    : {}),
+                  ...(normalizeOptionalString(candidate.slotId)
+                    ? { slotId: normalizeOptionalString(candidate.slotId) }
+                    : {}),
+                  ...(normalizeOptionalString(candidate.waitingReason)
+                    ? { waitingReason: normalizeOptionalString(candidate.waitingReason) }
+                    : {}),
+                };
+              })
+              .filter((candidate): candidate is BacklogLaunchCandidateProjection =>
+                Boolean(candidate),
+              )
+          : [],
+      }
+    : undefined;
   return {
     id,
     project,
@@ -308,6 +363,8 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
     ...(runner ? { runner } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
+    ...(launchPlan ? { launchPlan } : {}),
+    ...(launchPlanState?.launchGroupId ? { launchPlanState } : {}),
     createdAt,
     updatedAt,
     ...(typeof raw.queuedQueueItemId === 'string'
@@ -326,7 +383,98 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
   };
 }
 
+function ensureLaunchPlanState(item: BacklogItem): NonNullable<BacklogItem['launchPlanState']> {
+  if (!item.launchPlan) throw new Error('launchPlanState requires launchPlan');
+  if (!item.launchPlanState) {
+    item.launchPlanState = {
+      launchGroupId: `${item.id}:${item.launchPlan.id}`,
+      candidates: item.launchPlan.candidates.map((candidate) => ({
+        candidateId: candidate.id,
+        status: 'planned',
+      })),
+    };
+  }
+  return item.launchPlanState;
+}
+
+function projectionForCandidate(
+  item: BacklogItem,
+  candidateId: string,
+): BacklogLaunchCandidateProjection | null {
+  const state = item.launchPlanState;
+  if (!state) return null;
+  let projection = state.candidates.find((candidate) => candidate.candidateId === candidateId);
+  if (!projection) {
+    projection = { candidateId, status: 'planned' };
+    state.candidates.push(projection);
+  }
+  return projection;
+}
+
+function statusFromRun(run: Run): BacklogLaunchCandidateProjection['status'] {
+  if (run.status === 'done') return 'succeeded';
+  if (run.status === 'failed') return 'failed';
+  if (run.status === 'cancelled') return 'cancelled';
+  if (run.status === 'human-gating') return 'gated';
+  if (run.status === 'blocked') return 'blocked';
+  return 'running';
+}
+
+function rollUpLaunchPlanStatus(item: BacklogItem): void {
+  const projections = item.launchPlanState?.candidates ?? [];
+  if (projections.length === 0) return;
+  if (projections.some((candidate) => candidate.status === 'failed')) item.status = 'failed';
+  else if (
+    projections.some(
+      (candidate) => candidate.status === 'cancelled' || candidate.status === 'blocked',
+    )
+  ) {
+    item.status = 'needs-attention';
+  } else if (projections.every((candidate) => candidate.status === 'succeeded')) {
+    item.status = 'done';
+  } else if (
+    projections.some((candidate) => candidate.status === 'running' || candidate.status === 'gated')
+  ) {
+    item.status = 'running';
+  } else if (projections.some((candidate) => candidate.status === 'queued')) {
+    item.status = 'queued';
+  }
+}
+
+function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
+  if (!item.launchPlan || !run.launchCandidateId) return false;
+  const previous = JSON.stringify({
+    status: item.status,
+    state: item.launchPlanState,
+    runId: item.runId,
+  });
+  ensureLaunchPlanState(item);
+  const projection = projectionForCandidate(item, run.launchCandidateId);
+  if (!projection) return false;
+  projection.runId = run.id;
+  projection.slotId = run.slotId ?? undefined;
+  delete projection.queueItemId;
+  projection.status = statusFromRun(run);
+  if (run.launchCandidateId === launchCandidateByRole(item, 'baseline')?.id) {
+    item.runId = run.id;
+    item.lastObservedRunStatus = run.status;
+    item.launchPlanState!.baselineRunId = run.id;
+    delete item.queuedQueueItemId;
+  }
+  rollUpLaunchPlanStatus(item);
+  const changed =
+    previous !==
+    JSON.stringify({
+      status: item.status,
+      state: item.launchPlanState,
+      runId: item.runId,
+    });
+  if (changed) item.updatedAt = new Date().toISOString();
+  return changed;
+}
+
 function applyRunObservation(item: BacklogItem, run: Run): boolean {
+  if (item.launchPlan && run.launchCandidateId) return applyLaunchPlanRunObservation(item, run);
   const previousStatus = item.status;
   const previousRunId = item.runId;
   const previousObservedStatus = item.lastObservedRunStatus;
@@ -348,16 +496,66 @@ function applyRunObservation(item: BacklogItem, run: Run): boolean {
   return changed;
 }
 
-function reconcileBacklogLinks(): boolean {
+async function reconcileBacklogLinks(): Promise<boolean> {
   let changed = false;
   const queueItems = getQueueSnapshot();
   const queueByBacklogId = new Map<string, QueueItem>();
+  const queueByCandidate = new Map<string, QueueItem>();
   for (const queueItem of queueItems) {
     if (queueItem.backlogItemId) queueByBacklogId.set(queueItem.backlogItemId, queueItem);
+    if (queueItem.backlogItemId && queueItem.launchPlanId && queueItem.launchCandidateId) {
+      queueByCandidate.set(
+        launchCandidateKey(
+          queueItem.backlogItemId,
+          queueItem.launchPlanId,
+          queueItem.launchCandidateId,
+        ),
+        queueItem,
+      );
+    }
   }
-  const runsById = new Map(getAllRuns().map((run) => [run.id, run]));
+  const allRuns = getAllRuns();
+  const runsById = new Map(allRuns.map((run) => [run.id, run]));
+  const runByCandidate = new Map<string, Run>();
+  for (const run of allRuns) {
+    if (run.backlogItemId && run.launchPlanId && run.launchCandidateId) {
+      runByCandidate.set(
+        launchCandidateKey(run.backlogItemId, run.launchPlanId, run.launchCandidateId),
+        run,
+      );
+    }
+  }
 
   for (const item of items) {
+    if (item.launchPlan) {
+      ensureLaunchPlanState(item);
+      let baselineRun: Run | undefined;
+      for (const candidate of item.launchPlan.candidates) {
+        const projection = projectionForCandidate(item, candidate.id);
+        const key = launchCandidateKey(item.id, item.launchPlan.id, candidate.id);
+        const run = runByCandidate.get(key);
+        if (run) {
+          if (candidate.role === 'baseline') baselineRun = run;
+          if (applyLaunchPlanRunObservation(item, run)) changed = true;
+          continue;
+        }
+        const queued = queueByCandidate.get(key);
+        if (queued && projection && projection.queueItemId !== queued.id) {
+          projection.status = 'queued';
+          projection.queueItemId = queued.id;
+          if (candidate.role === 'baseline') {
+            item.queuedQueueItemId = queued.id;
+            item.launchPlanState!.baselineQueueItemId = queued.id;
+          }
+          changed = true;
+        }
+      }
+      if (baselineRun && (await materializeMissingComparisonCandidates(item, baselineRun))) {
+        changed = true;
+      }
+      rollUpLaunchPlanStatus(item);
+      continue;
+    }
     if (item.runId) {
       const run = runsById.get(item.runId);
       if (run) {
@@ -407,7 +605,7 @@ export async function loadBacklog(): Promise<void> {
       if (normalized) items.push(normalized);
     }
     console.log(`[backlog] loaded ${items.length} items from disk`);
-    if (reconcileBacklogLinks()) schedulePersist('load-reconcile');
+    if (await reconcileBacklogLinks()) schedulePersist('load-reconcile');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return;
@@ -461,17 +659,59 @@ function normalizeAllowedSlots(value: string[] | null | undefined): string[] | u
   return unique;
 }
 
-async function assertAllowedSlotsBelongToProject(item: BacklogItem): Promise<void> {
-  if (!item.allowedSlots || item.allowedSlots.length === 0) return;
+function cloneLaunchPlan(plan: BacklogLaunchPlan): BacklogLaunchPlan {
+  return {
+    ...plan,
+    candidates: plan.candidates.map((candidate) => ({
+      ...candidate,
+      ...(candidate.variant !== undefined ? { variant: candidate.variant.trim() } : {}),
+      slotPolicy:
+        candidate.slotPolicy.kind === 'exact'
+          ? { kind: 'exact', slotId: candidate.slotPolicy.slotId }
+          : candidate.slotPolicy.kind === 'pool'
+            ? { kind: 'pool', allowedSlots: [...candidate.slotPolicy.allowedSlots] }
+            : {
+                kind: 'spread',
+                ...(candidate.slotPolicy.allowedSlots
+                  ? { allowedSlots: [...candidate.slotPolicy.allowedSlots] }
+                  : {}),
+              },
+    })),
+  };
+}
+
+function normalizeLaunchPlan(value: unknown): BacklogLaunchPlan | undefined {
+  if (value === undefined || value === null) return undefined;
+  assertBacklogLaunchPlan(value);
+  return cloneLaunchPlan(value);
+}
+
+function slotsForLaunchPolicy(policy: BacklogLaunchSlotPolicy): string[] | undefined {
+  if (policy.kind === 'exact') return [policy.slotId];
+  if (policy.kind === 'pool') return policy.allowedSlots;
+  return policy.allowedSlots;
+}
+
+function launchCandidateByRole(item: BacklogItem, role: BacklogLaunchCandidate['role']) {
+  return item.launchPlan?.candidates.find((candidate) => candidate.role === role);
+}
+
+async function assertSlotsBelongToProject(project: string, allowedSlots?: string[]): Promise<void> {
+  if (!allowedSlots || allowedSlots.length === 0) return;
   const fleet = await loadFleetStatus();
-  for (const slotId of item.allowedSlots) {
+  for (const slotId of allowedSlots) {
     const slot = fleet.slots.find((candidate) => candidate.slot === slotId);
     if (!slot) throw new Error(`allowed slot not found: ${slotId}`);
-    if (slot.project !== item.project) {
-      throw new Error(
-        `allowed slot ${slotId} belongs to project ${slot.project}, not ${item.project}`,
-      );
+    if (slot.project !== project) {
+      throw new Error(`allowed slot ${slotId} belongs to project ${slot.project}, not ${project}`);
     }
+  }
+}
+
+async function assertAllowedSlotsBelongToProject(item: BacklogItem): Promise<void> {
+  await assertSlotsBelongToProject(item.project, item.allowedSlots);
+  for (const candidate of item.launchPlan?.candidates ?? []) {
+    await assertSlotsBelongToProject(item.project, slotsForLaunchPolicy(candidate.slotPolicy));
   }
 }
 
@@ -527,6 +767,7 @@ export async function createBacklogItem(
     const runner = normalizeRunnerHint(params.runner);
     const model = normalizeExecutionHint(params.model, 'model');
     const effort = normalizeExecutionHint(params.effort, 'effort');
+    const launchPlan = normalizeLaunchPlan(params.launchPlan);
     const now = new Date().toISOString();
     const item: BacklogItem = {
       id: randomUUID(),
@@ -548,6 +789,7 @@ export async function createBacklogItem(
       ...(model ? { model } : {}),
       ...(params.scripted ? { scripted: params.scripted } : {}),
       ...(effort ? { effort } : {}),
+      ...(launchPlan ? { launchPlan } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -573,6 +815,13 @@ export function getBacklogItemSnapshot(itemId: string): BacklogItem | null {
         ...item,
         tags: item.tags ? [...item.tags] : undefined,
         allowedSlots: item.allowedSlots ? [...item.allowedSlots] : undefined,
+        launchPlan: item.launchPlan ? cloneLaunchPlan(item.launchPlan) : undefined,
+        launchPlanState: item.launchPlanState
+          ? {
+              ...item.launchPlanState,
+              candidates: item.launchPlanState.candidates.map((candidate) => ({ ...candidate })),
+            }
+          : undefined,
       }
     : null;
 }
@@ -582,6 +831,13 @@ export function listBacklogItemSnapshots(): BacklogItem[] {
     ...item,
     tags: item.tags ? [...item.tags] : undefined,
     allowedSlots: item.allowedSlots ? [...item.allowedSlots] : undefined,
+    launchPlan: item.launchPlan ? cloneLaunchPlan(item.launchPlan) : undefined,
+    launchPlanState: item.launchPlanState
+      ? {
+          ...item.launchPlanState,
+          candidates: item.launchPlanState.candidates.map((candidate) => ({ ...candidate })),
+        }
+      : undefined,
   }));
 }
 
@@ -731,6 +987,15 @@ export async function updateBacklogItem(params: BacklogUpdateParams): Promise<Ba
         if (effort) item.effort = effort;
         else delete item.effort;
       }
+      if (params.launchPlan !== undefined) {
+        if (params.launchPlan === null) {
+          delete item.launchPlan;
+          delete item.launchPlanState;
+        } else {
+          item.launchPlan = normalizeLaunchPlan(params.launchPlan);
+          delete item.launchPlanState;
+        }
+      }
       assertExecutionHintsCompatible(item);
       if (item.status === 'ready') await assertBacklogSpecReady(item);
       item.updatedAt = new Date().toISOString();
@@ -805,6 +1070,43 @@ export async function markBacklogItemNeedsAttention(params: {
   });
 }
 
+function launchCandidateKey(
+  backlogItemId: string,
+  launchPlanId: string,
+  candidateId: string,
+): string {
+  return JSON.stringify([backlogItemId, launchPlanId, candidateId]);
+}
+
+async function materializeMissingComparisonCandidates(
+  item: BacklogItem,
+  baselineRun: Run,
+): Promise<boolean> {
+  if (!item.launchPlan) return false;
+  let changed = false;
+  for (const comparison of item.launchPlan.candidates.filter(
+    (candidate) => candidate.role === 'comparison',
+  )) {
+    const existingProjection = projectionForCandidate(item, comparison.id);
+    if (existingProjection?.queueItemId || existingProjection?.runId) continue;
+    const comparisonQueueItem = addItem(
+      await buildBacklogQueueParams(
+        item,
+        { workGraphId: item.workGraphId, workNodeId: item.workNodeId },
+        comparison,
+        baselineRun,
+      ),
+    );
+    if (existingProjection) {
+      existingProjection.status = 'queued';
+      existingProjection.queueItemId = comparisonQueueItem.id;
+      changed = true;
+    }
+    await persistQueueNow();
+  }
+  return changed;
+}
+
 async function buildInitialContext(item: BacklogItem): Promise<string> {
   const specMarkdown = await readBacklogSpecMarkdown(item);
   return [
@@ -833,6 +1135,57 @@ async function buildManualTicketData(
     labels: normalizeRunTags(['backlog', ...(item.tags ?? [])]),
     comments: [],
     linkedTickets: [],
+  };
+}
+
+function queueFieldsForSlotPolicy(policy: BacklogLaunchSlotPolicy): {
+  slotId?: string;
+  allowedSlots?: string[];
+} {
+  if (policy.kind === 'exact') return { slotId: policy.slotId, allowedSlots: [policy.slotId] };
+  if (policy.kind === 'pool') return { allowedSlots: policy.allowedSlots };
+  return policy.allowedSlots ? { allowedSlots: policy.allowedSlots } : {};
+}
+
+async function buildBacklogQueueParams(
+  item: BacklogItem,
+  options: { workGraphId?: string; workNodeId?: string },
+  candidate?: BacklogLaunchCandidate,
+  baselineRun?: Run,
+): Promise<InternalDispatchQueueAddParams> {
+  const slotFields = candidate ? queueFieldsForSlotPolicy(candidate.slotPolicy) : {};
+  const isComparison = candidate?.role === 'comparison';
+  return {
+    backlogItemId: item.id,
+    workGraphId: options.workGraphId,
+    workNodeId: options.workNodeId,
+    launchPlanId: item.launchPlan?.id,
+    launchCandidateId: candidate?.id,
+    launchGroupId: item.launchPlanState?.launchGroupId,
+    launchSlotPolicy: candidate?.slotPolicy.kind,
+    label: candidate
+      ? `Backlog: ${item.title} — ${candidate.label ?? candidate.id}`
+      : `Backlog: ${item.title}`,
+    flowType: item.flowType,
+    project: item.project,
+    ticketOrPr: item.sourceRef,
+    familyId: isComparison ? (baselineRun?.familyId ?? baselineRun?.id) : undefined,
+    parentRunId: isComparison ? baselineRun?.id : undefined,
+    familyRootTicketOrPr: isComparison ? item.sourceRef : undefined,
+    lane: isComparison ? 'comparison' : undefined,
+    variant: isComparison ? candidate.variant?.trim() : undefined,
+    priority: item.priority,
+    tags: item.tags,
+    initialContext: await buildInitialContext(item),
+    ticketData: await buildManualTicketData(item),
+    allowedSlots: candidate ? slotFields.allowedSlots : item.allowedSlots,
+    slotId: slotFields.slotId,
+    runner: candidate?.runner ?? item.runner,
+    model: candidate?.model ?? item.model,
+    scripted: item.scripted,
+    effort: candidate?.effort ?? item.effort,
+    // Backlog handoff persists queue+backlog links before dispatch can consume the queue item.
+    autoDispatch: false,
   };
 }
 
@@ -882,42 +1235,49 @@ export async function enqueueBacklogItem(
       if (item.status !== 'ready' || item.queuedQueueItemId || item.runId) {
         throw new Error('Backlog item changed while enqueue validation was running');
       }
-      const existingQueueItem = getQueueSnapshot().find(
-        (queueItem) => queueItem.backlogItemId === item.id,
+      const baselineCandidate = item.launchPlan ? launchCandidateByRole(item, 'baseline') : null;
+      if (item.launchPlan) ensureLaunchPlanState(item);
+      const existingQueueItem = getQueueSnapshot().find((queueItem) =>
+        baselineCandidate
+          ? queueItem.backlogItemId === item.id &&
+            queueItem.launchPlanId === item.launchPlan?.id &&
+            queueItem.launchCandidateId === baselineCandidate.id
+          : queueItem.backlogItemId === item.id,
       );
       if (existingQueueItem) {
         item.status = 'queued';
         item.queuedQueueItemId = existingQueueItem.id;
+        if (baselineCandidate) {
+          const projection = projectionForCandidate(item, baselineCandidate.id);
+          if (projection) {
+            projection.status = 'queued';
+            projection.queueItemId = existingQueueItem.id;
+          }
+          item.launchPlanState!.baselineQueueItemId = existingQueueItem.id;
+        }
         delete item.lastDispatchError;
         item.updatedAt = new Date().toISOString();
         await persistNow('enqueue-existing');
         broadcastBacklog();
         return { item, queueItem: existingQueueItem };
       }
-      const queueParams: InternalDispatchQueueAddParams = {
-        backlogItemId: item.id,
-        workGraphId: options.workGraphId,
-        workNodeId: options.workNodeId,
-        label: `Backlog: ${item.title}`,
-        flowType: item.flowType,
-        project: item.project,
-        ticketOrPr: item.sourceRef,
-        priority: item.priority,
-        tags: item.tags,
-        initialContext: await buildInitialContext(item),
-        ticketData: await buildManualTicketData(item),
-        allowedSlots: item.allowedSlots,
-        runner: item.runner,
-        model: item.model,
-        scripted: item.scripted,
-        effort: item.effort,
-        // Backlog handoff persists queue+backlog links before dispatch can consume the queue item.
-        autoDispatch: false,
-      };
+      const queueParams = await buildBacklogQueueParams(
+        item,
+        options,
+        baselineCandidate ?? undefined,
+      );
       const queueItem = addItem(queueParams);
       await persistQueueNow();
       item.status = 'queued';
       item.queuedQueueItemId = queueItem.id;
+      if (baselineCandidate) {
+        const projection = projectionForCandidate(item, baselineCandidate.id);
+        if (projection) {
+          projection.status = 'queued';
+          projection.queueItemId = queueItem.id;
+        }
+        item.launchPlanState!.baselineQueueItemId = queueItem.id;
+      }
       delete item.lastDispatchError;
       item.updatedAt = new Date().toISOString();
       await persistNow('enqueue');
@@ -1015,17 +1375,39 @@ export async function upcomingBacklogItems(
   return { ready: eligible, blocked };
 }
 
-export async function markBacklogRunStarted(
-  backlogItemId: string | undefined,
-  runId: string,
-): Promise<void> {
+export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Promise<void> {
+  const backlogItemId = queueItem.backlogItemId;
   if (!backlogItemId) return;
   await withBacklogMutation(async () => {
     const item = items.find((candidate) => candidate.id === backlogItemId);
     if (!item) return;
     if (TERMINAL_STATUSES.has(item.status)) return;
+    if (item.launchPlan && queueItem.launchCandidateId) {
+      ensureLaunchPlanState(item);
+      item.launchPlanState!.launchGroupId =
+        queueItem.launchGroupId ?? item.launchPlanState!.launchGroupId;
+      const projection = projectionForCandidate(item, queueItem.launchCandidateId);
+      if (projection) {
+        projection.status = 'running';
+        projection.runId = run.id;
+        projection.slotId = run.slotId ?? queueItem.slotId;
+        delete projection.queueItemId;
+      }
+      if (queueItem.launchCandidateId === launchCandidateByRole(item, 'baseline')?.id) {
+        item.runId = run.id;
+        item.lastObservedRunStatus = run.status;
+        item.launchPlanState!.baselineRunId = run.id;
+        delete item.queuedQueueItemId;
+        await materializeMissingComparisonCandidates(item, run);
+      }
+      rollUpLaunchPlanStatus(item);
+      item.updatedAt = new Date().toISOString();
+      schedulePersist('launch-run-started');
+      broadcastBacklog();
+      return;
+    }
     item.status = 'running';
-    item.runId = runId;
+    item.runId = run.id;
     item.lastObservedRunStatus = 'monitoring';
     delete item.queuedQueueItemId;
     item.updatedAt = new Date().toISOString();

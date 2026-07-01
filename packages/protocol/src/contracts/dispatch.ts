@@ -34,6 +34,11 @@ export interface QueueItem {
   /** Work graph node that authorized this queued backlog dispatch. */
   workGraphId?: string;
   workNodeId?: string;
+  /** Backlog launch-plan linkage for baseline/comparison candidate sets (ADR-044). */
+  launchPlanId?: string;
+  launchCandidateId?: string;
+  launchGroupId?: string;
+  launchSlotPolicy?: import('./backlog.js').BacklogLaunchSlotPolicy['kind'];
   label?: string;
   flowType: FlowType;
   project: string;

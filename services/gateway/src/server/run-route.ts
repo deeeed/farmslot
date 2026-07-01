@@ -129,14 +129,22 @@ export async function routeRunMethod(
         backlogItemId?: unknown;
         workGraphId?: unknown;
         workNodeId?: unknown;
+        launchPlanId?: unknown;
+        launchCandidateId?: unknown;
+        launchGroupId?: unknown;
+        launchSlotPolicy?: unknown;
       };
       if (
         runParams.backlogItemId !== undefined ||
         runParams.workGraphId !== undefined ||
-        runParams.workNodeId !== undefined
+        runParams.workNodeId !== undefined ||
+        runParams.launchPlanId !== undefined ||
+        runParams.launchCandidateId !== undefined ||
+        runParams.launchGroupId !== undefined ||
+        runParams.launchSlotPolicy !== undefined
       ) {
         throw new Error(
-          'run.create cannot accept backlog/work-graph handoff metadata; use backlog.enqueue or workGraph.schedulerTick',
+          'run.create cannot accept backlog/work-graph launch metadata; use backlog.enqueue or workGraph.schedulerTick',
         );
       }
       return handled(runCreate(runParams, emit));

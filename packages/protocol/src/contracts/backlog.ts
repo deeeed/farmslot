@@ -26,6 +26,146 @@ export interface ProjectBacklogConfig {
   autoDispatch?: BacklogAutoDispatchPolicy;
 }
 
+export type BacklogLaunchSlotPolicy =
+  | { kind: 'exact'; slotId: string }
+  | { kind: 'pool'; allowedSlots: string[] }
+  | { kind: 'spread'; allowedSlots?: string[] };
+
+export type BacklogLaunchCandidateRole = 'baseline' | 'comparison';
+
+export interface BacklogLaunchCandidate {
+  id: string;
+  role: BacklogLaunchCandidateRole;
+  label?: string;
+  runner?: string;
+  model?: string;
+  effort?: string;
+  /** Required for comparison candidates; baseline candidates must omit it. */
+  variant?: string;
+  slotPolicy: BacklogLaunchSlotPolicy;
+}
+
+export interface BacklogLaunchPlan {
+  id: string;
+  version: 1;
+  candidates: BacklogLaunchCandidate[];
+}
+
+export type BacklogLaunchCandidateStatus =
+  | 'planned'
+  | 'queued'
+  | 'running'
+  | 'gated'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'blocked';
+
+export interface BacklogLaunchCandidateProjection {
+  candidateId: string;
+  status: BacklogLaunchCandidateStatus;
+  queueItemId?: string;
+  runId?: string;
+  slotId?: string;
+  waitingReason?: string;
+}
+
+export interface BacklogLaunchPlanState {
+  launchGroupId: string;
+  baselineRunId?: string;
+  baselineQueueItemId?: string;
+  candidates: BacklogLaunchCandidateProjection[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function assertSlotPolicy(
+  policy: unknown,
+  path: string,
+): asserts policy is BacklogLaunchSlotPolicy {
+  if (!isRecord(policy)) throw new Error(`${path}.slotPolicy is required`);
+  if (policy.kind === 'exact') {
+    if (!nonEmptyString(policy.slotId)) throw new Error(`${path}.slotPolicy.slotId is required`);
+    return;
+  }
+  if (policy.kind === 'pool') {
+    if (
+      !Array.isArray(policy.allowedSlots) ||
+      policy.allowedSlots.filter(nonEmptyString).length === 0
+    ) {
+      throw new Error(`${path}.slotPolicy.allowedSlots must contain at least one slot`);
+    }
+    return;
+  }
+  if (policy.kind === 'spread') {
+    if (
+      policy.allowedSlots !== undefined &&
+      (!Array.isArray(policy.allowedSlots) ||
+        policy.allowedSlots.some((slot) => !nonEmptyString(slot)))
+    ) {
+      throw new Error(`${path}.slotPolicy.allowedSlots must contain only non-empty slots`);
+    }
+    return;
+  }
+  throw new Error(`${path}.slotPolicy.kind must be exact, pool, or spread`);
+}
+
+export function assertBacklogLaunchPlan(value: unknown): asserts value is BacklogLaunchPlan {
+  if (!isRecord(value)) throw new Error('launchPlan must be an object');
+  if (!nonEmptyString(value.id)) throw new Error('launchPlan.id is required');
+  if (value.version !== 1) throw new Error('launchPlan.version must be 1');
+  if (!Array.isArray(value.candidates) || value.candidates.length === 0) {
+    throw new Error('launchPlan.candidates must contain at least one candidate');
+  }
+  let baselineCount = 0;
+  const ids = new Set<string>();
+  const variants = new Set<string>();
+  value.candidates.forEach((candidate, index) => {
+    const path = `launchPlan.candidates[${index}]`;
+    if (!isRecord(candidate)) throw new Error(`${path} must be an object`);
+    if (!nonEmptyString(candidate.id)) throw new Error(`${path}.id is required`);
+    if (ids.has(candidate.id)) throw new Error(`duplicate launch candidate id: ${candidate.id}`);
+    ids.add(candidate.id);
+    if (candidate.role !== 'baseline' && candidate.role !== 'comparison') {
+      throw new Error(`${path}.role must be baseline or comparison`);
+    }
+    if (candidate.role === 'baseline') {
+      baselineCount += 1;
+      if (
+        candidate.variant !== undefined &&
+        candidate.variant !== null &&
+        String(candidate.variant).trim()
+      ) {
+        throw new Error('baseline launch candidate must not set variant');
+      }
+    } else {
+      if (!nonEmptyString(candidate.variant)) {
+        throw new Error('comparison launch candidate requires variant');
+      }
+      const variant = candidate.variant.trim();
+      if (variants.has(variant)) throw new Error(`duplicate comparison variant: ${variant}`);
+      variants.add(variant);
+    }
+    for (const field of ['label', 'runner', 'model', 'effort'] as const) {
+      if (
+        candidate[field] !== undefined &&
+        candidate[field] !== null &&
+        typeof candidate[field] !== 'string'
+      ) {
+        throw new Error(`${path}.${field} must be a string`);
+      }
+    }
+    assertSlotPolicy(candidate.slotPolicy, path);
+  });
+  if (baselineCount !== 1) throw new Error('launchPlan requires exactly one baseline candidate');
+}
+
 export interface BacklogItem {
   id: string;
   project: string;
@@ -52,6 +192,8 @@ export interface BacklogItem {
   model?: string;
   scripted?: ScriptedRunnerConfig;
   effort?: string;
+  launchPlan?: BacklogLaunchPlan;
+  launchPlanState?: BacklogLaunchPlanState;
   createdAt: string;
   updatedAt: string;
   queuedQueueItemId?: string;
@@ -84,6 +226,7 @@ export interface BacklogCreateInput {
   model?: string;
   scripted?: ScriptedRunnerConfig;
   effort?: string;
+  launchPlan?: BacklogLaunchPlan;
   status?: Extract<BacklogStatus, 'candidate' | 'ready'>;
 }
 
@@ -104,6 +247,7 @@ export interface BacklogUpdateInput {
   model?: string | null;
   scripted?: ScriptedRunnerConfig | null;
   effort?: string | null;
+  launchPlan?: BacklogLaunchPlan | null;
 }
 
 export interface BacklogEnqueueResultData {
