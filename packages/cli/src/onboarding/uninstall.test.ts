@@ -165,3 +165,15 @@ test('canonical containment catches a symlinked home ancestor', () => {
     rmSync(real, { recursive: true, force: true });
   }
 });
+
+test('a workspace symlinked to $HOME is still rejected', () => {
+  const home = process.env.HOME;
+  if (!home) return;
+  const link = join(tmpdir(), `fs-wslink-${process.pid}`);
+  symlinkSync(home, link); // link -> $HOME; a lexical guard would miss it
+  try {
+    assert.throws(() => buildUninstallPlan(workspaceAt(link), baseState(), KEEP), /unsafe path/);
+  } finally {
+    rmSync(link, { force: true });
+  }
+});
