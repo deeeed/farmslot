@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 
-import { buildUninstallPlan } from './uninstall.js';
+import { buildUninstallPlan, executeUninstallPlan } from './uninstall.js';
 import { workspaceAt, type WorkspaceState } from './workspace.js';
 
 const KEEP = { history: 'keep', home: 'keep', dryRun: false } as const;
@@ -175,6 +175,31 @@ test('a workspace symlinked to $HOME is still rejected', () => {
     assert.throws(() => buildUninstallPlan(workspaceAt(link), baseState(), KEEP), /unsafe path/);
   } finally {
     rmSync(link, { force: true });
+  }
+});
+
+test('executeUninstallPlan removes install artifacts and skips stop when no pidfiles', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-exec-'));
+  const homeDir = join(tmpdir(), `fs-home-exec-${root.slice(-8)}`);
+  mkdirSync(join(root, 'farmslot'), { recursive: true });
+  mkdirSync(join(root, 'repos'), { recursive: true });
+  mkdirSync(homeDir, { recursive: true });
+  writeFileSync(join(root, 'state.json'), '{}');
+  try {
+    const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
+      history: 'keep',
+      home: 'delete',
+      dryRun: false,
+    });
+    const steps: string[] = [];
+    await executeUninstallPlan(plan, { step: (label) => steps.push(label) });
+    assert.ok(!existsSync(join(root, 'farmslot')), 'farmslot dir removed');
+    assert.ok(!existsSync(homeDir), 'home dir removed');
+    // No pidfiles present → the stop step is a no-op (no "stopped …" step emitted).
+    assert.ok(!steps.some((s) => s.startsWith('stopped ')));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
   }
 });
 
