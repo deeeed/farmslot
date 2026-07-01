@@ -1,11 +1,10 @@
 // branch-watcher.ts — Watches .git/HEAD for all enabled slots, broadcasts branch changes.
-// Local slots: chokidar file watch.
-// Remote slots: agent fs.watch via WS.
+// ADR-046: all machines — local and remote — watch through their node's fs.watch. The
+// gateway no longer runs a local chokidar watch (the node owns machine-local monitoring).
+// No node for a machine ⇒ its branch monitoring is degraded (the 60s poll still refreshes),
+// and it (re)starts automatically when that machine's node connects.
 
-import { existsSync } from 'node:fs';
 import path from 'node:path';
-
-import { type FSWatcher, watch } from 'chokidar';
 
 import { loadSlotVars, type SlotVars } from '../core/config.js';
 import { execOnSlot, isLocal as checkIsLocal } from '../core/exec.js';
@@ -24,7 +23,6 @@ interface BranchWatch {
   machine: string;
   host: string;
   sshTarget: string;
-  watcher?: FSWatcher;
   lastBranch?: string;
 }
 
@@ -88,60 +86,38 @@ export async function watchBranch(slotId: string): Promise<void> {
   const slotIsLocal = checkIsLocal(vars.host, vars.machine);
   const gitHeadPath = await resolveGitHeadPath(vars.remoteRepo, vars);
 
-  if (slotIsLocal) {
-    if (!existsSync(gitHeadPath)) {
-      console.log(`[branch-watcher] .git/HEAD not found at ${gitHeadPath} — skipping`);
-      return;
-    }
+  const bw: BranchWatch = {
+    slotId,
+    gitHeadPath,
+    repoPath: vars.remoteRepo,
+    isLocal: slotIsLocal,
+    machine: slot.machine,
+    host: vars.host,
+    sshTarget: vars.sshTarget,
+    lastBranch: slot.branch || undefined,
+  };
 
-    const bw: BranchWatch = {
-      slotId,
-      gitHeadPath,
-      repoPath: vars.remoteRepo,
-      isLocal: true,
-      machine: slot.machine,
-      host: vars.host,
-      sshTarget: vars.sshTarget,
-      lastBranch: slot.branch || undefined,
-    };
-
-    const chokidarWatcher = watch(gitHeadPath, { persistent: false, ignoreInitial: true });
-    chokidarWatcher.on('change', () => debouncedUpdate(slotId));
-    bw.watcher = chokidarWatcher;
-
-    activeWatches.set(slotId, bw);
-    await readAndEmit(slotId);
-    console.log(`[branch-watcher] watching local ${slotId}: ${gitHeadPath}`);
-  } else {
-    const node = getNode(slot.machine);
-    if (!node) {
-      console.log(`[branch-watcher] no node for ${slot.machine} — skipping remote watch`);
-      return;
-    }
-
+  // Watch through the machine's node — local and remote alike (ADR-046). Without a node
+  // the watch is still registered so the 60s poll refreshes it; it upgrades to live
+  // fs.watch when that machine's node connects (node.connect → restartBranchWatchesForMachine).
+  const node = getNode(slot.machine);
+  if (node) {
     try {
       await sendNodeRequest(node, 'fs.watch', { path: gitHeadPath });
-      const bw: BranchWatch = {
-        slotId,
-        gitHeadPath,
-        repoPath: vars.remoteRepo,
-        isLocal: false,
-        machine: slot.machine,
-        host: vars.host,
-        sshTarget: vars.sshTarget,
-        lastBranch: slot.branch || undefined,
-      };
-      activeWatches.set(slotId, bw);
-      await readAndEmit(slotId);
-      console.log(
-        `[branch-watcher] watching remote ${slotId} via node ${slot.machine}: ${gitHeadPath}`,
-      );
+      console.log(`[branch-watcher] watching ${slotId} via node ${slot.machine}: ${gitHeadPath}`);
     } catch (err) {
       console.log(
-        `[branch-watcher] failed to start remote watch for ${slotId}: ${(err as Error).message}`,
+        `[branch-watcher] failed to start watch for ${slotId}: ${(err as Error).message}`,
       );
     }
+  } else {
+    console.log(
+      `[branch-watcher] no node for ${slot.machine} — branch monitoring degraded (poll only) for ${slotId}`,
+    );
   }
+
+  activeWatches.set(slotId, bw);
+  await readAndEmit(slotId);
 }
 
 // ─── Stop watching a slot ───
@@ -149,10 +125,6 @@ export async function watchBranch(slotId: string): Promise<void> {
 export async function unwatchBranch(slotId: string): Promise<void> {
   const bw = activeWatches.get(slotId);
   if (!bw) return;
-
-  if (bw.watcher) {
-    await bw.watcher.close();
-  }
 
   const timer = debounceTimers.get(slotId);
   if (timer) clearTimeout(timer);
@@ -170,7 +142,7 @@ export function handleBranchFsChanged(payload: {
   content: string;
 }): boolean {
   for (const [slotId, bw] of activeWatches) {
-    if (!bw.isLocal && bw.machine === payload.machine && bw.gitHeadPath === payload.path) {
+    if (bw.machine === payload.machine && bw.gitHeadPath === payload.path) {
       debouncedUpdate(slotId, payload.content);
       return true;
     }
@@ -243,8 +215,9 @@ async function pollRemoteBranches(): Promise<void> {
   if (remotePollInFlight) return;
   remotePollInFlight = true;
   try {
-    for (const [slotId, bw] of activeWatches) {
-      if (bw.isLocal) continue;
+    // Poll every registered watch (local + remote) — a fallback refresh in case a node
+    // fs.changed event was missed or the machine's node is not connected.
+    for (const slotId of activeWatches.keys()) {
       await readAndEmit(slotId);
     }
   } finally {
@@ -257,7 +230,6 @@ export async function restartBranchWatchesForMachine(machine: string): Promise<v
   for (const slot of fleet.slots) {
     if (!slot.enabled || slot.machine !== machine) continue;
     const existing = activeWatches.get(slot.slot);
-    if (existing && existing.isLocal) continue;
     if (existing) {
       await unwatchBranch(slot.slot);
     }

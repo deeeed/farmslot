@@ -26,9 +26,9 @@ That decision (an `isLocalSlot()` split) was pragmatic for early milestones, but
 **Make a co-located local node mandatory.** Every machine that runs slots — including the gateway host — runs a node; the gateway owns orchestration only.
 
 1. **`farmslot up` starts and supervises a local node.** The node connects to the gateway over a loopback WebSocket and registers with capabilities exactly like a remote node (auth via the existing gateway token). Its lifecycle is tied to `up` (start, health, restart).
-2. **All slots route through their machine's node.** Local slots use the loopback node's `exec` / `fs` / `screen` / watch handlers — the same RPC path as remote slots — instead of the gateway's `execLocal` and local reimplementations.
-3. **Supersede [ADR-009 §A](009-slot-workspace.md):** local slots no longer use gateway `fs` + `child_process` directly. File access, execution, and watching for local slots go through the local node, uniform with remote.
-4. **The fleet shows the local node online** because it is a real registered node.
+2. **Machine-local MONITORING routes through the node** — branch/file-change watching (`fs.watch`), resource watching, and screen/device capture flow through the machine's node (local via loopback), uniform with remote. The gateway stops running its local reimplementations for these (the branch-watcher `chokidar`; local capture-helper). Without a node, monitoring is degraded (a periodic poll still refreshes the branch) and upgrades to live watches when the node connects (`node.connect` → `restartBranchWatchesForMachine` / `sendWatchInstructions`).
+3. **EXECUTION stays gateway-side for local slots — deliberately NOT rerouted.** One-off commands (`execLocal`) and one-off file reads/writes (the [ADR-009 §A](009-slot-workspace.md) slot-workspace path) keep running directly in the gateway for local slots — cheap, unchanged, and it works even when the node is down. Rerouting execution through the node would add a hop for no functional gain; the node is about **monitoring + presence**, not execution. ADR-009 §A therefore still stands for one-off local reads; only continuous _watching_ (which ADR-009 did not cover) moves to the node.
+4. **The fleet shows the local node online** because it is a real registered node; `farmslot doctor` reports its presence (degraded when absent).
 
 ### Gateway vs node responsibilities (canonical map)
 
@@ -61,23 +61,24 @@ The local node's gateway channel is a **loopback** WebSocket carrying RPC reques
 
 **Positive**
 
-- One uniform execution + capability path for all machines; the `isLocalSlot()` execution split goes away.
-- Local slots gain the full node layer (fs-watch, resource-watch, screen, metrics) with no gateway reimplementation.
-- Honest fleet: the gateway host appears as an online node.
-- Clean, documented separation of concerns between the two services.
+- One uniform **monitoring** path for all machines; the local watch reimplementations (chokidar branch watch, local device feed) go away, so there is one place to maintain.
+- Local slots gain the node's monitoring layers (fs-watch, resource-watch, screen, metrics) that were skipped without a node.
+- Honest fleet: the gateway host appears as an online node; `farmslot doctor` reports it.
+- Clean, documented separation of concerns; execution stays simple and gateway-local.
 
 **Negative / cost**
 
 - New lifecycle: `farmslot up` must supervise the local node (spawn, health-check, restart on crash) — one more managed process.
-- Migration must remove/deprecate the gateway's local reimplementations (`execLocal` streaming path, local device feed) once the local node handles them, without regressing terminals or evidence capture.
-- Loopback WS needs auth (reuse the gateway token) and must not incur meaningful latency for local exec.
+- Monitoring becomes node-dependent: no node ⇒ no live branch/file/screen watches (degraded); the 60s branch poll and `execLocal` execution still work.
+- Loopback WS needs auth (reuse the gateway token).
 
 ## Migration / rollout
 
-1. **This ADR** — record the decision, supersede ADR-009 §A, publish the responsibility map.
-2. `farmslot up` co-launches + supervises a loopback local node (reuse `services/node` + the token auth).
-3. Route local slots through the local node (replace the `isLocalSlot() → execLocal` branches with node RPC over loopback), starting with `exec`, then `fs`/watch, then `screen`.
-4. Dedup: retire the gateway's local reimplementations as each capability moves to the node.
-5. Fleet UI: render the local/gateway-host node as online (remove the misleading `NODE OFFLINE`).
+1. **This ADR + `farmslot up` co-launch** (reuse `services/node` + token auth); fleet + doctor reflect the node; degraded when absent. **[done]**
+2. Unify **monitoring** through the node, dropping the gateway's local reimplementations:
+   - branch / `.git/HEAD` watch → node `fs.watch` (drop the local `chokidar` branch in `branch-watcher.ts`). **[done]**
+   - resource watch → already node-based (`resource-manager.ts`); activates for local once the node connects.
+   - screen / device feed → node `screen` (drop the gateway's direct capture-helper for local). **[follow-up]**
+3. Execution is **not** migrated — `execLocal` and one-off local file reads (ADR-009 §A) stay gateway-side by design.
 
-Until step 2 ships, the current behavior stands and the "local host shows NODE OFFLINE" badge should be treated as cosmetic (local slots still work via `execLocal`).
+Until the local node is co-launched, the "local host shows NODE OFFLINE" badge is cosmetic (local slots still work via `execLocal`); the fleet now renders it as **degraded** instead.
