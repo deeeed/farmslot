@@ -177,3 +177,24 @@ test('a workspace symlinked to $HOME is still rejected', () => {
     rmSync(link, { force: true });
   }
 });
+
+test('rejects a backup path that already exists (no overwrite)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-'));
+  const dest = join(tmpdir(), `fs-existing-backup-${process.pid}.tgz`);
+  writeFileSync(dest, 'important');
+  try {
+    assert.throws(
+      () =>
+        buildUninstallPlan(workspaceAt(root), baseState(), {
+          history: 'backup',
+          home: 'keep',
+          historyBackupPath: dest, // exists, outside the workspace → overwrite refused
+          dryRun: false,
+        }),
+      /already exists/,
+    );
+  } finally {
+    rmSync(dest, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});

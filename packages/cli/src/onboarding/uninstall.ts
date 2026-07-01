@@ -78,6 +78,18 @@ function isInsideDir(child: string, dir: string): boolean {
   return c === d || c.startsWith(d + sep);
 }
 
+/** A backup destination must not already exist (no overwrite) nor sit inside a removed dir. */
+function assertBackupDest(dest: string, removedDirs: string[]): void {
+  if (existsSync(dest)) {
+    throw new Error(`backup path already exists (refusing to overwrite): ${dest}`);
+  }
+  for (const danger of removedDirs) {
+    if (isInsideDir(dest, danger)) {
+      throw new Error(`backup ${dest} is inside a removed path (${danger})`);
+    }
+  }
+}
+
 /** The PATH symlink is only ours to remove if it is a symlink resolving inside the workspace. */
 function resolveOwnedSymlink(binDir: string | undefined, workspaceRoot: string): string | null {
   if (!binDir) return null;
@@ -113,22 +125,13 @@ export function buildUninstallPlan(
   if (rootR === homeR || rootR.startsWith(homeR + sep) || homeR.startsWith(rootR + sep)) {
     throw new Error(`refusing to uninstall: home dir ${homeDir} overlaps the workspace ${ws.root}`);
   }
-  // A backup written inside a directory that will be removed is destroyed with it.
+  // A backup written inside a removed dir is destroyed with it; an existing dest would be
+  // overwritten. Reject both, before anything is deleted.
   if (opts.history === 'backup' && opts.historyBackupPath) {
-    for (const danger of [ws.runsDir, ws.root, homeDir]) {
-      if (isInsideDir(opts.historyBackupPath, danger)) {
-        throw new Error(
-          `history backup ${opts.historyBackupPath} is inside a removed path (${danger})`,
-        );
-      }
-    }
+    assertBackupDest(opts.historyBackupPath, [ws.runsDir, ws.root, homeDir]);
   }
   if (opts.home === 'backup' && opts.homeBackupPath) {
-    for (const danger of [ws.root, homeDir]) {
-      if (isInsideDir(opts.homeBackupPath, danger)) {
-        throw new Error(`home backup ${opts.homeBackupPath} is inside a removed path (${danger})`);
-      }
-    }
+    assertBackupDest(opts.homeBackupPath, [ws.root, homeDir]);
   }
   return {
     workspaceRoot: ws.root,

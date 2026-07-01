@@ -32,6 +32,7 @@ interface UninstallFlags {
   keepHome?: boolean;
   deleteHome?: boolean;
   backupHome?: string;
+  force?: boolean;
 }
 
 interface Resolved {
@@ -117,6 +118,10 @@ export function registerUninstallCommand(program: Command): void {
     .option('--keep-home', 'keep the farmslot home dir (gateway auth/profiles/logs)')
     .option('--delete-home', 'delete the farmslot home dir')
     .option('--backup-home <path>', 'archive the home dir to <path>, then remove it')
+    .option(
+      '--force',
+      'proceed even without a readable state.json (removes the workspace only; home always kept)',
+    )
     .action(async (flags: UninstallFlags, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
       const ws = resolveWorkspace();
@@ -133,6 +138,15 @@ export function registerUninstallCommand(program: Command): void {
         output.write(
           dim('  (no readable state.json — keeping the home dir and skipping symlink)\n'),
         );
+      }
+
+      // A readable state.json is the proof this is a farmslot workspace we own. Without it a
+      // wrong FARMSLOT_WORKSPACE could point at unrelated dirs — refuse unless explicitly forced.
+      if (state === null && !flags.force) {
+        output.error(
+          'no readable state.json — refusing to remove install dirs without proof they belong to farmslot; re-run install.sh to repair, or pass --force (workspace only; the home dir is always kept without state)',
+        );
+        process.exit(1);
       }
 
       const purge = Boolean(flags.purge);
