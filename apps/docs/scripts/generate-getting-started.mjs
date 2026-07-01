@@ -11,10 +11,15 @@ const source = resolve(repoRoot, 'docs', 'operations', 'onboarding.md');
 const target = resolve(repoRoot, 'apps', 'docs', 'docs', 'guides', 'getting-started.generated.md');
 
 const body = readFileSync(source, 'utf-8')
-  // Repo-relative links don't resolve on the website — point at the repo.
+  // Repo-relative links don't resolve on the website — point at the repo. Target the
+  // link URL (`](...)`) so the display text is left intact.
   .replaceAll(
     '../reference/project-packs.md',
     'https://github.com/deeeed/farmslot/blob/main/docs/reference/project-packs.md',
+  )
+  .replaceAll(
+    '](onboarding-flow.md)',
+    '](https://github.com/deeeed/farmslot/blob/main/docs/operations/onboarding-flow.md)',
   );
 
 // Do-not-edit notice lives in YAML frontmatter comments: MDX comments in the
