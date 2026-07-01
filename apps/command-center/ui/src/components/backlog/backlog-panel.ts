@@ -1075,7 +1075,8 @@ export class BacklogPanel extends LitElement {
         </button>
         <button
           class="secondary"
-          ?disabled=${item.status !== 'queued' || this._busy.endsWith(item.id)}
+          ?disabled=${!['queued', 'dispatching'].includes(item.status) ||
+          this._busy.endsWith(item.id)}
           @click=${() => this._dequeue(item)}
         >
           Dequeue
