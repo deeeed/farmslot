@@ -24,7 +24,7 @@
     },
     "review": {
       "runner": "claude",
-      "model": "opus"
+      "model": "sonnet"
     }
   },
   "hooks": {
