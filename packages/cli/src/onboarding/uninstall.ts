@@ -6,7 +6,15 @@
 // an explicit keep | backup | delete decision — the caller prompts; this module only
 // builds and executes a plan.
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, readdirSync, realpathSync, rmdirSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmdirSync,
+  rmSync,
+} from 'node:fs';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
@@ -167,6 +175,74 @@ function removePath(p: string): void {
   rmSync(p, { recursive: true, force: true });
 }
 
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function readPidFile(path: string): number | null {
+  if (!existsSync(path)) return null;
+  try {
+    const pid = Number(readFileSync(path, 'utf-8').trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    // An unreadable pidfile just means we can't target that service — skip it.
+    return null;
+  }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    // ESRCH/EPERM: not a process we can signal — treat as not running.
+    return false;
+  }
+}
+
+/** True when pid's command line runs out of `workspaceRoot` — so a stale pidfile whose pid
+ *  the OS reused for an unrelated process can never be signalled by uninstall. */
+function pidBelongsToWorkspace(pid: number, workspaceRoot: string): boolean {
+  const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
+  if (res.status !== 0 || !res.stdout) return false;
+  return res.stdout.includes(workspaceRoot);
+}
+
+/** Stop a farmslot service (gateway/node) recorded in `pidFile` before its files are removed.
+ *  Otherwise a live gateway keeps writing state (e.g. .monitor_state.json) into the tree being
+ *  deleted → ENOTEMPTY. The `up` command starts these detached (process-group leaders), so a
+ *  group kill (-pid) takes down the tsx wrapper + node + esbuild children together. */
+async function stopService(
+  pidFile: string,
+  label: string,
+  workspaceRoot: string,
+  hooks: UninstallHooks,
+): Promise<void> {
+  const pid = readPidFile(pidFile);
+  if (!pid || !isAlive(pid)) return;
+  if (!pidBelongsToWorkspace(pid, workspaceRoot)) return;
+
+  let signalled = false;
+  const signal = (sig: NodeJS.Signals): void => {
+    try {
+      process.kill(-pid, sig); // whole detached group first
+      signalled = true;
+    } catch {
+      try {
+        process.kill(pid, sig); // fall back to the single process
+        signalled = true;
+      } catch {
+        // Already gone between checks — nothing to signal.
+      }
+    }
+  };
+
+  signal('SIGTERM');
+  for (let i = 0; i < 20 && isAlive(pid); i++) await delay(250); // up to ~5s for a clean exit
+  if (isAlive(pid)) signal('SIGKILL');
+  // Only report a stop we actually issued — the process may have exited on its own between
+  // the alive check and the signal, in which case we did nothing.
+  if (signalled) hooks.step(`stopped ${label} (pid ${pid})`);
+}
+
 /** Apply a directory's keep|backup|delete decision. Returns whether it was removed. */
 function disposeOf(
   dir: string,
@@ -192,8 +268,17 @@ function disposeOf(
   }
 }
 
-export function executeUninstallPlan(plan: UninstallPlan, hooks: UninstallHooks): void {
+export async function executeUninstallPlan(
+  plan: UninstallPlan,
+  hooks: UninstallHooks,
+): Promise<void> {
   if (plan.dryRun) return;
+
+  // 0. Stop running services first. Their pidfiles live in homeDir (removed in step 1), and a
+  //    live gateway/node keeps writing into the workspace being deleted → ENOTEMPTY. Must run
+  //    before homeDir is touched, regardless of the home keep/backup/delete decision.
+  await stopService(join(plan.homeDir, 'node.pid'), 'local node', plan.workspaceRoot, hooks);
+  await stopService(join(plan.homeDir, 'gateway.pid'), 'gateway', plan.workspaceRoot, hooks);
 
   // 1. History + home first — if a backup fails it throws before anything is destroyed.
   disposeOf(plan.runsDir, plan.history, plan.historyBackupPath, hooks);

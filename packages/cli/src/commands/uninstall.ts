@@ -241,7 +241,7 @@ export function registerUninstallCommand(program: Command): void {
       }
 
       const steps: string[] = [];
-      executeUninstallPlan(plan, {
+      await executeUninstallPlan(plan, {
         step: (label) => {
           steps.push(label);
           if (!output.json) output.write(`${green('[OK]')} ${label}\n`);
