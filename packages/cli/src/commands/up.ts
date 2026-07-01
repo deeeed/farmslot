@@ -252,15 +252,21 @@ function writeUpResult(params: {
     return;
   }
 
-  const opened = params.openBrowser && params.dashboardBuilt && openUrl(fallbackDashboard);
+  // Open the hosted Command Center by default: its connect link auto-registers this
+  // gateway, so there is nothing local to run. Chrome/Edge treat ws://localhost as a
+  // secure context, so the HTTPS page reaches the local gateway. The local UI (if
+  // built) stays as a printed fallback for browsers that block ws://localhost.
+  const opened = params.openBrowser && openUrl(hostedDashboard);
   params.output.write(`${green(params.status)} ${dim(`pid ${params.pid}`)}\n`);
   params.output.write(
-    `  ${dim('command center')} ${cyan(fallbackDashboard)}${
-      opened ? dim(' (opened)') : ''
-    }${params.dashboardBuilt ? '' : dim(' (build local UI first: yarn --cwd apps/command-center/ui build)')}\n`,
+    `  ${dim('dashboard')}      ${cyan(hostedDashboard)}${opened ? dim(' (opened — auto-connects this gateway)') : ''}\n`,
   );
   params.output.write(
-    `  ${dim('hosted')}        ${cyan(hostedDashboard)} ${dim('(served after Pages deploy; HTTPS browsers may block plain local ws:// gateways)')}\n`,
+    `  ${dim('local ui')}       ${cyan(fallbackDashboard)} ${dim(
+      params.dashboardBuilt
+        ? '(fallback if your browser blocks ws://localhost from HTTPS)'
+        : '(optional — build: yarn --cwd apps/command-center/ui build)',
+    )}\n`,
   );
   params.output.write(`  ${dim('gateway')}        ${cyan(`ws://localhost:${params.port}/ws`)}\n`);
   params.output.write(

@@ -145,8 +145,16 @@ export function authenticateGatewayClient(params: {
   clientIp: string;
 }): GatewayAuthResult {
   const { auth, limiter } = params.runtime;
-  const rateLimited = limiter.check(params.clientIp);
-  if (rateLimited) return rateLimited;
+  // Rate limiting only matters for remote brute-force. A loopback client (the local
+  // browser or hosted Command Center connecting to ws://localhost) already implies
+  // same-machine trust — a local process can read the token file anyway. Rate-limiting
+  // it just locks out a *valid* token for the whole window after a few stale-token
+  // retries share the 127.0.0.1 bucket. Skip the limiter for loopback callers.
+  const rateLimitApplies = !isLoopbackClientIp(params.clientIp);
+  if (rateLimitApplies) {
+    const rateLimited = limiter.check(params.clientIp);
+    if (rateLimited) return rateLimited;
+  }
 
   if (auth.mode === 'none') {
     limiter.reset(params.clientIp);
@@ -157,7 +165,7 @@ export function authenticateGatewayClient(params: {
     if (!auth.token) return { ok: false, reason: 'token_missing_config' };
     if (!params.connectParams.token) return { ok: false, reason: 'token_missing' };
     if (!safeEqualSecret(params.connectParams.token, auth.token)) {
-      limiter.recordFailure(params.clientIp);
+      if (rateLimitApplies) limiter.recordFailure(params.clientIp);
       return { ok: false, reason: 'token_mismatch' };
     }
     limiter.reset(params.clientIp);
@@ -167,11 +175,22 @@ export function authenticateGatewayClient(params: {
   if (!auth.password) return { ok: false, reason: 'password_missing_config' };
   if (!params.connectParams.password) return { ok: false, reason: 'password_missing' };
   if (!safeEqualSecret(params.connectParams.password, auth.password)) {
-    limiter.recordFailure(params.clientIp);
+    if (rateLimitApplies) limiter.recordFailure(params.clientIp);
     return { ok: false, reason: 'password_mismatch' };
   }
   limiter.reset(params.clientIp);
   return { ok: true, mode: 'password' };
+}
+
+// A loopback client IP, tolerant of the IPv4-mapped IPv6 form Node reports
+// (e.g. ::ffff:127.0.0.1) in addition to 127.x / ::1 / localhost.
+function isLoopbackClientIp(ip: string): boolean {
+  return isLoopbackHost(
+    ip
+      .trim()
+      .toLowerCase()
+      .replace(/^::ffff:/, ''),
+  );
 }
 
 export function requireAuthenticatedSession(
