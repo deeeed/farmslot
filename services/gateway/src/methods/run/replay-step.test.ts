@@ -60,6 +60,35 @@ test('runReplayStep rejects read-only imported reference runs', async (t) => {
   );
 });
 
+test('runReplayStep rejects monitor replay when dispatch is still running', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  updateRun(run.id, {
+    status: 'dispatching',
+    slotId: 'macwork-ff-1',
+    steps: run.steps.map((step) =>
+      step.name === 'write-task' || step.name === 'find-slot' || step.name === 'prepare'
+        ? { ...step, status: 'done' }
+        : step.name === 'dispatch'
+          ? { ...step, status: 'running', startedAt: new Date().toISOString() }
+          : step,
+    ),
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+  await assert.rejects(
+    () => runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, () => {}),
+    /dispatch has not completed/,
+  );
+});
+
 test('runReplayStep rejects non-authorized triggeredBy actor before replay', async (t) => {
   const run = createRun({
     flowType: 'fix-bug',

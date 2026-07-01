@@ -149,16 +149,21 @@ function assertReplayAfterDispatchAllowed(
   if (dispatchIdx < 0 || targetIdx <= dispatchIdx) return;
 
   const dispatchStep = existing.steps.find((candidate) => candidate.name === PS.DISPATCH);
-  if (!dispatchStep || dispatchStep.status === 'pending') {
+  if (!dispatchStep) {
     throw new Error(
       `Cannot replay ${replayStepName}: dispatch has not completed — replay from dispatch instead`,
     );
   }
-  if (dispatchStep.status === 'failed' && !isQueuedPromptDispatchFalseNegative(existing)) {
+  if (dispatchStep.status === 'done') return;
+  if (dispatchStep.status === 'failed' && isQueuedPromptDispatchFalseNegative(existing)) return;
+  if (dispatchStep.status === 'failed') {
     throw new Error(
       `Cannot replay ${replayStepName}: dispatch failed — replay from dispatch instead`,
     );
   }
+  throw new Error(
+    `Cannot replay ${replayStepName}: dispatch has not completed — replay from dispatch instead`,
+  );
 }
 
 type SlotReclaimCheck =
