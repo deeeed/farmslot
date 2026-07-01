@@ -136,3 +136,26 @@ test('rejects a backup path inside a directory being removed', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('canonical containment catches a symlinked home ancestor', () => {
+  const real = mkdtempSync(join(tmpdir(), 'fs-real-'));
+  const wsRoot = join(real, 'ws');
+  mkdirSync(wsRoot, { recursive: true });
+  const link = join(tmpdir(), `fs-link-${process.pid}-${real.slice(-8)}`);
+  symlinkSync(real, link); // link -> real, and real contains wsRoot
+  try {
+    // home_dir reaches the workspace's real ancestor via a symlink — a lexical check
+    // would miss it; the canonical guard must still refuse.
+    assert.throws(
+      () =>
+        buildUninstallPlan(workspaceAt(wsRoot), baseState({ home_dir: link }), {
+          ...KEEP,
+          home: 'delete',
+        }),
+      /contains the workspace/,
+    );
+  } finally {
+    rmSync(link, { force: true });
+    rmSync(real, { recursive: true, force: true });
+  }
+});

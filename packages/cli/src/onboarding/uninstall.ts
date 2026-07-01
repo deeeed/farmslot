@@ -48,10 +48,28 @@ function assertSafeRoot(dir: string): void {
   }
 }
 
-/** True when `child` resolves to `dir` or a path inside it. */
+/**
+ * Canonical absolute path: realpath the deepest existing ancestor (resolving symlinks),
+ * then re-append any non-existent remainder — so a symlinked parent can't defeat the
+ * containment checks below (e.g. a home dir that reaches the workspace via a symlink).
+ */
+function canonicalPath(p: string): string {
+  let cur = resolve(p);
+  const tail: string[] = [];
+  while (!existsSync(cur)) {
+    const parent = resolve(cur, '..');
+    if (parent === cur) break; // reached the filesystem root
+    tail.unshift(cur.slice(parent.length + 1));
+    cur = parent;
+  }
+  const base = realpathSync(cur);
+  return tail.length ? join(base, ...tail) : base;
+}
+
+/** True when `child` resolves (canonically) to `dir` or a path inside it. */
 function isInsideDir(child: string, dir: string): boolean {
-  const c = resolve(child);
-  const d = resolve(dir);
+  const c = canonicalPath(child);
+  const d = canonicalPath(dir);
   return c === d || c.startsWith(d + sep);
 }
 
@@ -84,8 +102,8 @@ export function buildUninstallPlan(
   // A home dir that equals or contains the workspace would take kept run history with it
   // when deleted — refuse rather than risk clobbering the workspace (e.g. a state.json
   // with home_dir pointing at an ancestor like ~/dev).
-  const rootR = resolve(ws.root);
-  const homeR = resolve(homeDir);
+  const rootR = canonicalPath(ws.root);
+  const homeR = canonicalPath(homeDir);
   if (rootR === homeR || rootR.startsWith(homeR + sep)) {
     throw new Error(`refusing to uninstall: home dir ${homeDir} contains the workspace ${ws.root}`);
   }
