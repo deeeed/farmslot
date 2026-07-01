@@ -13,7 +13,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
 ```
 
 Copy, paste, done — prerequisites are checked (never auto-installed), a
-workspace lands in `~/dev/farmslot-workspace/`, and the run ends with a green
+workspace lands in `~/farmslot/`, and the run ends with a green
 `farmslot doctor`. Early preview: `main` moves daily, run `farmslot update`
 often.
 
@@ -47,7 +47,7 @@ What it does:
   Recording permission to the terminal app on first capture so Command Center can
   show live visual evidence. The legacy embedded helper under `tools/capture-helper/`
   has been removed.
-- creates the workspace (default `~/dev/farmslot-workspace`, override with
+- creates the workspace (default `~/farmslot`, override with
   `FARMSLOT_WORKSPACE`): `farmslot/` clone, `repos/`, `runs/`, `state.json`
 - installs dependencies, builds the CLI's workspace packages, symlinks
   `farmslot` into `FARMSLOT_BIN_DIR` (default `~/.local/bin`)

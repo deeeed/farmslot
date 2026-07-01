@@ -4,7 +4,7 @@
 #   curl -fsSL <repo>/install.sh | bash        # fresh machine (clones FARMSLOT_REPO_URL)
 #   bash install.sh                            # from a checkout (dev/test mode: checkout is the source)
 #
-# Everything lands under FARMSLOT_WORKSPACE (default ~/dev/farmslot-workspace):
+# Everything lands under FARMSLOT_WORKSPACE (default ~/farmslot):
 #   farmslot/   — farmslot clone
 #   repos/      — product repo clones (one per slot)
 #   runs/       — run archives
@@ -17,7 +17,7 @@
 # before the repo exists, so there is nothing on disk to source yet).
 #
 # Env:
-#   FARMSLOT_WORKSPACE  workspace dir              (default: ~/dev/farmslot-workspace)
+#   FARMSLOT_WORKSPACE  workspace dir              (default: ~/farmslot)
 #   FARMSLOT_REPO_URL   git source for fresh mode  (default: the canonical repo URL)
 #   FARMSLOT_REPO_REF   branch/ref for fresh mode  (default: the remote default branch)
 #   FARMSLOT_BIN_DIR    dir for the PATH symlink   (default: ~/.local/bin)
@@ -34,7 +34,7 @@
 #   FARMSLOT_CAPTURE_HELPER_BREW_FORMULA brew formula name (default: capture-helper)
 set -euo pipefail
 
-WORKSPACE="${FARMSLOT_WORKSPACE:-${HOME}/dev/farmslot-workspace}"
+WORKSPACE="${FARMSLOT_WORKSPACE:-${HOME}/farmslot}"
 BIN_DIR="${FARMSLOT_BIN_DIR:-${HOME}/.local/bin}"
 HOME_DIR="${FARMSLOT_HOME:-${HOME}/.farmslot}"
 # Track which locations the user pinned via env, so step_configure only prompts the rest

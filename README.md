@@ -10,7 +10,7 @@ Project-agnostic orchestration for dispatching autonomous coding agents to a fle
 curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | bash
 ```
 
-Checks prerequisites, sets up `~/dev/farmslot-workspace/`, and ends with a green `farmslot doctor`. On macOS, missing common tools are offered via Homebrew prompts; use `FARMSLOT_AUTO_INSTALL=1` for non-interactive Homebrew installs. Existing `asdf`/`nvm` Node setups are honored, and the standalone `capture-helper` CLI is checked/installed for live evidence capture. If you have [GitHub CLI](https://cli.github.com/) signed in, the installer may ask once to star the repo (`gh repo star deeeed/farmslot`). Multi-project packs can start with `farmslot project add <pack> --no-setup`, then build one farm later with `--project <name>`. [Getting started →](https://farmslot.io/docs/guides/getting-started)
+Checks prerequisites, sets up `~/farmslot/`, and ends with a green `farmslot doctor`. On macOS, missing common tools are offered via Homebrew prompts; use `FARMSLOT_AUTO_INSTALL=1` for non-interactive Homebrew installs. Existing `asdf`/`nvm` Node setups are honored, and the standalone `capture-helper` CLI is checked/installed for live evidence capture. If you have [GitHub CLI](https://cli.github.com/) signed in, the installer may ask once to star the repo (`gh repo star deeeed/farmslot`). Multi-project packs can start with `farmslot project add <pack> --no-setup`, then build one farm later with `--project <name>`. [Getting started →](https://farmslot.io/docs/guides/getting-started)
 
 > Why the name? I know. It stuck: agentic dev farming across many isolated slots. Naming is harder than scheduling the agents.
 
