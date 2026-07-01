@@ -1280,14 +1280,21 @@ export async function enqueueBacklogItem(
       if (item.status !== 'ready' || item.queuedQueueItemId || item.runId) {
         throw new Error('Backlog item changed while enqueue validation was running');
       }
+      for (const stale of getQueueSnapshot().filter(
+        (queueItem) => queueItem.backlogItemId === item.id && queueItem.status === 'cancelled',
+      )) {
+        removeQueueItemInternal(stale.id, 'backlog-enqueue-purge-cancelled');
+      }
       const baselineCandidate = item.launchPlan ? launchCandidateByRole(item, 'baseline') : null;
       if (item.launchPlan) ensureLaunchPlanState(item);
-      const existingQueueItem = getQueueSnapshot().find((queueItem) =>
-        baselineCandidate
-          ? queueItem.backlogItemId === item.id &&
-            queueItem.launchPlanId === item.launchPlan?.id &&
-            queueItem.launchCandidateId === baselineCandidate.id
-          : queueItem.backlogItemId === item.id,
+      const existingQueueItem = getQueueSnapshot().find(
+        (queueItem) =>
+          (baselineCandidate
+            ? queueItem.backlogItemId === item.id &&
+              queueItem.launchPlanId === item.launchPlan?.id &&
+              queueItem.launchCandidateId === baselineCandidate.id
+            : queueItem.backlogItemId === item.id) &&
+          (queueItem.status === 'queued' || queueItem.status === 'dispatching'),
       );
       if (existingQueueItem) {
         item.status = 'queued';
@@ -1364,7 +1371,9 @@ export async function dequeueBacklogItem(params: {
     if (linkedQueueItems.some((queueItem) => queueItem.status === 'dispatching')) {
       throw new Error('Cannot dequeue backlog item while dispatch is in progress');
     }
-    for (const queueItem of linkedQueueItems.filter((candidate) => candidate.status === 'queued')) {
+    for (const queueItem of linkedQueueItems.filter(
+      (candidate) => candidate.status === 'queued' || candidate.status === 'cancelled',
+    )) {
       removeQueueItemInternal(queueItem.id, 'backlog-dequeue');
     }
     if (item.launchPlan && item.launchPlanState) {

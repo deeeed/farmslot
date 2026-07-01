@@ -820,6 +820,35 @@ test('backlog.dequeue removes linked queue items and returns item to ready', asy
   assert.equal(queue.listItems().length, 1);
 });
 
+test('backlog.dequeue purges cancelled linked queue rows before re-enqueue', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Cancelled queue row round trip',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    allowedSlots: ['macwork-ff-1'],
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  const linked = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id);
+  assert.ok(linked);
+  linked.status = 'cancelled';
+  await queue.persistQueueNow();
+
+  const dequeued = await backlog.dequeueBacklogItem({ itemId: created.item.id });
+  assert.equal(dequeued.item.status, 'ready');
+  assert.equal(
+    queue.getQueueSnapshot().filter((item) => item.backlogItemId === created.item.id).length,
+    0,
+  );
+
+  const reEnqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(reEnqueued.item.status, 'queued');
+  assert.equal(reEnqueued.queueItem.status, 'queued');
+  assert.equal(queue.listItems().length, 1);
+});
+
 test('backlog.dequeue clears stale baseline run linkage on launch-plan re-enqueue', async () => {
   const { backlog, queue, runStore } = await freshStores();
   const created = await backlog.createBacklogItem({
