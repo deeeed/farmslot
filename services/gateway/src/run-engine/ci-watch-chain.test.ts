@@ -149,6 +149,32 @@ test('buildCIWatchChainedRunParams forwards allowedSlots so the filter follows t
   assert.equal(emptyAllowed.createParams.allowedSlots, undefined);
 });
 
+test('buildCIWatchChainedRunParams uses flow baseline mode for chained pr-complete even when parent is interactive', () => {
+  const current = makeRun({
+    id: 'interactive-dev-parent',
+    flowType: 'dev',
+    mode: 'interactive',
+    prNumber: 44002,
+    ticketOrPr: 'TAT-3461',
+  });
+  const chain = buildCIWatchChainedRunParams(current, 'dispatch-pr-complete', 'owner/repo');
+  assert(chain);
+  assert.equal(chain.createParams.mode, 'autonomous');
+});
+
+test('buildCIWatchChainedRunParams uses flow baseline mode for chained merge-main', () => {
+  const current = makeRun({
+    id: 'autonomous-parent',
+    flowType: 'pr-complete',
+    mode: 'autonomous',
+    prNumber: 500,
+    ticketOrPr: 'owner/repo#500',
+  });
+  const chain = buildCIWatchChainedRunParams(current, 'dispatch-merge-main', 'owner/repo');
+  assert(chain);
+  assert.equal(chain.createParams.mode, 'interactive');
+});
+
 test('buildCIWatchChainedRunParams treats prNumber 0 as the invalid sentinel and falls back to ticketOrPr', () => {
   const current = makeRun({
     id: 'sentinel-zero',

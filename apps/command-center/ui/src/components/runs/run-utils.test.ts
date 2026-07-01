@@ -27,9 +27,13 @@ import {
   pickFamilyComparePair,
   prLinkForRun,
   routeForRun,
+  runChainedModeDrift,
   runDisplayLabel,
   runDisplayTitle,
+  runModeDiffersFromDefault,
+  runModeLabel,
   runStatusColor,
+  runTemplateFileName,
   sortProjectAnalyticsForDisplay,
   sortRunsForFamilyView,
   summarizeEligibilityReasons,
@@ -267,6 +271,49 @@ test('collectRunEvidenceArtifacts prefers curated package evidence and drops run
       },
     ],
   );
+});
+
+test('runModeLabel and runModeDiffersFromDefault surface mode for all flows', () => {
+  assert.equal(runModeLabel(makeRun({ flowType: 'dev', mode: 'interactive' })), 'interactive');
+  assert.equal(
+    runModeLabel(makeRun({ flowType: 'pr-complete', mode: 'interactive' })),
+    'interactive',
+  );
+  assert.equal(
+    runModeDiffersFromDefault(makeRun({ flowType: 'pr-complete', mode: 'interactive' })),
+    true,
+  );
+  assert.equal(
+    runModeDiffersFromDefault(makeRun({ flowType: 'pr-complete', mode: 'autonomous' })),
+    false,
+  );
+  assert.equal(
+    runChainedModeDrift(
+      makeRun({ flowType: 'pr-complete', mode: 'interactive', parentRunId: 'parent-1' }),
+    ),
+    true,
+  );
+  assert.equal(
+    runChainedModeDrift(makeRun({ flowType: 'dev', mode: 'autonomous', parentRunId: null })),
+    false,
+  );
+  assert.equal(
+    runDisplayTitle(makeRun({ flowType: 'pr-complete', mode: 'autonomous' })),
+    'pr-complete · autonomous',
+  );
+});
+
+test('runTemplateFileName reads write-task outputs', () => {
+  const run = makeRun({
+    steps: [
+      {
+        name: 'write-task',
+        status: 'done',
+        outputs: { templateName: 'pr-complete-interactive.md' },
+      },
+    ],
+  });
+  assert.equal(runTemplateFileName(run), 'pr-complete-interactive.md');
 });
 
 test('eval candidate runs display as eval without adding a flow type', () => {
