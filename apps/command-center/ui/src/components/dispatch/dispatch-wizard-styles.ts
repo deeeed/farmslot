@@ -138,6 +138,110 @@ export const dispatchWizardStyles = css`
     font-size: 10px;
   }
 
+  .prior-runs-copy {
+    line-height: 1.45;
+  }
+
+  .prior-runs-open {
+    align-self: flex-start;
+    border: 1px solid ${unsafeCSS(colors.accent)}88;
+    border-radius: 4px;
+    background: ${unsafeCSS(colors.accent)}22;
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-family: ${unsafeCSS(fonts.mono)};
+    font-size: 12px;
+    padding: 7px 10px;
+    cursor: pointer;
+  }
+
+  .prior-runs-open:hover {
+    border-color: ${unsafeCSS(colors.accent)};
+  }
+
+  .compare-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.62);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .compare-picker-modal {
+    width: min(760px, calc(100vw - 48px));
+    max-height: min(720px, calc(100vh - 48px));
+    border: 1px solid ${unsafeCSS(colors.accent)}66;
+    border-radius: 8px;
+    background: ${unsafeCSS(colors.bgSurface)};
+    box-shadow: 0 20px 80px rgba(0, 0, 0, 0.45);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .compare-picker-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .compare-picker-title {
+    color: ${unsafeCSS(colors.accent)};
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 11px;
+  }
+
+  .compare-picker-subtitle {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 11px;
+    margin-top: 4px;
+  }
+
+  .compare-picker-close {
+    border: 1px solid #2a2a44;
+    border-radius: 4px;
+    background: ${unsafeCSS(colors.bgCard)};
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-family: ${unsafeCSS(fonts.mono)};
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px 9px;
+    cursor: pointer;
+  }
+
+  .compare-picker-search {
+    background: ${unsafeCSS(colors.bgInput)};
+    border: 1px solid ${unsafeCSS(colors.accent)}66;
+    border-radius: 4px;
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-family: ${unsafeCSS(fonts.mono)};
+    font-size: 12px;
+    padding: 9px 10px;
+    outline: none;
+  }
+
+  .compare-picker-list {
+    min-height: 120px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .compare-picker-empty {
+    color: ${unsafeCSS(colors.textMuted)};
+    border: 1px dashed #2a2a44;
+    border-radius: 4px;
+    padding: 16px;
+    text-align: center;
+  }
+
   .prior-runs-family {
     display: flex;
     flex-direction: column;
@@ -185,6 +289,34 @@ export const dispatchWizardStyles = css`
     text-overflow: ellipsis;
     white-space: nowrap;
     color: ${unsafeCSS(colors.textMuted)};
+  }
+
+  .prior-run-main {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .prior-run-title {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-weight: 600;
+  }
+
+  .prior-run-meta,
+  .prior-run-summary {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .prior-run-cta {
+    color: ${unsafeCSS(colors.accent)};
+    white-space: nowrap;
+    font-size: 11px;
   }
 
   /* ── Profile-fit prepare suggestion banner ── */

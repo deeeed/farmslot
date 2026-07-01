@@ -104,6 +104,54 @@ test('work graph can use an owner scope different from backlog project', async (
   assert.equal(linked.graph.graph.project, 'cross-project-epic');
 });
 
+test('work graph keeps launch-plan backlog item as one node and queues baseline only', async () => {
+  const { backlog, queue, workGraph } = await freshStores();
+  const item = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Compare launch candidates',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_graph',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+        {
+          id: 'comparison',
+          role: 'comparison',
+          runner: 'claude',
+          model: 'sonnet',
+          variant: 'claude-sonnet',
+          slotPolicy: { kind: 'spread' },
+        },
+      ],
+    },
+  });
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Launch plan graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({ graphId, id: 'wn_launch', backlogItemId: item.item.id });
+
+  await workGraph.activateWorkGraph({ graphId });
+  await workGraph.schedulerTick({ graphId });
+
+  const projection = workGraph.getWorkGraph({ graphId }).graph;
+  assert.equal(projection.nodes.length, 1);
+  assert.equal(projection.nodes[0]?.backlogItemId, item.item.id);
+  const queued = queue.getQueueSnapshot().filter((entry) => entry.backlogItemId === item.item.id);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0]?.launchCandidateId, 'baseline');
+});
+
 test('reference blockers are v1 graph nodes but never dispatchable', async () => {
   const { backlog, queue, workGraph } = await freshStores();
   const downstream = await createReadyBacklogItem(backlog, 'Client release task');

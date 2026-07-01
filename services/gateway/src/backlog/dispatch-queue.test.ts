@@ -589,6 +589,100 @@ test('selectQueueDispatchSlot avoids mismatched held comparison slot and falls b
   assert.equal(selectQueueDispatchSlot(slots, item), 'ready-slot');
 });
 
+test('selectQueueDispatchSlot spreads launch candidates away from active siblings when possible', async () => {
+  const activeSibling = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-launch-spread',
+    slotId: 'slot-a',
+    launchGroupId: 'launch-group-1',
+    launchPlanId: 'launch-plan-1',
+    launchCandidateId: 'baseline',
+    launchSlotPolicy: 'exact',
+  });
+  const slots = [
+    {
+      slot: 'slot-a',
+      machine: 'demo',
+      platform: 'cli',
+      project: 'farmslot-farm',
+      health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+      branch: 'main',
+      agent: 'idle',
+      enabled: true,
+      dispatchable: true,
+      lifecycle: 'ready',
+      phase: null,
+      warm: false,
+      taskId: null,
+      taskFile: null,
+      currentRunId: null,
+      currentFlowType: null,
+      currentTicketOrPr: null,
+      currentMode: null,
+      currentFamilyId: null,
+      currentLane: null,
+      currentVariant: null,
+      dispatchedAt: null,
+      completedAt: null,
+      runner: 'claude',
+      model: 'sonnet',
+      deviceName: null,
+      taskPhase: null,
+      taskStepProgress: null,
+    },
+    {
+      slot: 'slot-b',
+      machine: 'demo',
+      platform: 'cli',
+      project: 'farmslot-farm',
+      health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+      branch: 'main',
+      agent: 'idle',
+      enabled: true,
+      dispatchable: true,
+      lifecycle: 'ready',
+      phase: null,
+      warm: false,
+      taskId: null,
+      taskFile: null,
+      currentRunId: null,
+      currentFlowType: null,
+      currentTicketOrPr: null,
+      currentMode: null,
+      currentFamilyId: null,
+      currentLane: null,
+      currentVariant: null,
+      dispatchedAt: null,
+      completedAt: null,
+      runner: 'claude',
+      model: 'sonnet',
+      deviceName: null,
+      taskPhase: null,
+      taskStepProgress: null,
+    },
+  ] as SlotStatus[];
+  const item: QueueItem = {
+    id: 'queue-launch-spread',
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-launch-spread',
+    launchGroupId: 'launch-group-1',
+    launchSlotPolicy: 'spread',
+    allowedSlots: ['slot-a', 'slot-b'],
+    priority: 1,
+    createdAt: '2026-06-30T00:00:00.000Z',
+    status: 'queued',
+  };
+
+  try {
+    assert.equal(selectQueueDispatchSlot(slots, item), 'slot-b');
+    assert.equal(selectQueueDispatchSlot(slots, { ...item, allowedSlots: ['slot-a'] }), 'slot-a');
+  } finally {
+    await cleanupRun(activeSibling.id);
+  }
+});
+
 test('canDispatchQueuedItemToSlot accepts held affinity slots but rejects working slots', () => {
   assert.equal(
     canDispatchQueuedItemToSlot({

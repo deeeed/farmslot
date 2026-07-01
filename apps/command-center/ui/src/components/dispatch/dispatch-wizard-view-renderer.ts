@@ -69,6 +69,8 @@ interface DispatchWizardViewContext {
   variantPreview: string;
   comparisonBranchHint: string | null;
   priorRuns: readonly Run[];
+  comparePickerOpen: boolean;
+  comparePickerSearch: string;
   variantCollision: boolean;
   variantInput: string;
   publicationReviewsEnabled: boolean;
@@ -103,6 +105,8 @@ interface DispatchWizardViewContext {
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
   openEvals: () => void;
   forkFromPriorRun: (run: Run) => void;
+  setComparePickerOpen: (open: boolean) => void;
+  setComparePickerSearch: (value: string) => void;
   exitComparisonMode: () => void;
   setVariantInput: (value: string) => void;
   setPublicationReviewRunner: (id: number, runner: ReviewRunnerId) => void;
@@ -155,8 +159,12 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
           ${renderPriorRunsBanner({
             comparisonLane: ctx.comparisonLane,
             priorRuns: ctx.priorRuns,
+            pickerOpen: ctx.comparePickerOpen,
+            pickerSearch: ctx.comparePickerSearch,
             ticketId: ctx.ticketId,
             forkFromPriorRun: ctx.forkFromPriorRun,
+            setPickerOpen: ctx.setComparePickerOpen,
+            setPickerSearch: ctx.setComparePickerSearch,
           })}
           ${renderComparisonModeIndicator({
             comparisonLane: ctx.comparisonLane,

@@ -6,6 +6,9 @@ import type {
   BacklogCreateResult,
   BacklogEnqueueResult,
   BacklogItem,
+  BacklogLaunchCandidate,
+  BacklogLaunchPlan,
+  BacklogLaunchSlotPolicy,
   BacklogMarkReadyResult,
   BacklogSourceKind,
   BacklogStatus,
@@ -20,6 +23,7 @@ import '../shared/slot-selector-modal.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { DEFAULT_MODEL, MODELS_BY_RUNNER, RUNNER_OPTIONS } from '../../utils/runner-options.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import {
   planningBadgeStyles,
@@ -36,12 +40,67 @@ const BACKLOG_PROJECT_PARAM = 'backlogProject';
 const BACKLOG_STATUS_PARAM = 'backlogStatus';
 const BACKLOG_SLOT_SELECTOR_PARAM = 'slotSelector';
 const CUSTOM_PROJECT = '__custom__';
+const NEW_PLAN_KEY = '__new__';
+
+type DraftSlotPolicyKind = BacklogLaunchSlotPolicy['kind'];
+
+interface DraftLaunchCandidate {
+  id: string;
+  role: 'baseline' | 'comparison';
+  runner: string;
+  model: string;
+  effort: string;
+  variant: string;
+  slotPolicyKind: DraftSlotPolicyKind;
+  slotsText: string;
+}
+
+interface DraftLaunchPlan {
+  enabled: boolean;
+  planId: string;
+  candidates: DraftLaunchCandidate[];
+}
+
+interface LaunchSlotSelectorState {
+  key: string;
+  index: number;
+}
 
 function slotsText(item: BacklogItem): string {
   const slots = item.allowedSlots ?? [];
   if (slots.length === 0) return 'Any eligible slot';
   if (slots.length === 1) return slots[0];
   return `${slots.length} slots`;
+}
+
+function defaultCandidate(role: DraftLaunchCandidate['role'], index: number): DraftLaunchCandidate {
+  const runner = role === 'baseline' ? 'claude' : index % 2 === 0 ? 'claude' : 'codex';
+  const model = role === 'baseline' ? 'opus' : DEFAULT_MODEL[runner];
+  return {
+    id: role === 'baseline' ? 'baseline' : `comparison-${index}`,
+    role,
+    runner,
+    model,
+    effort: '',
+    variant: role === 'comparison' ? `${runner}-${model.replace(/[^a-z0-9]+/gi, '-')}` : '',
+    slotPolicyKind: role === 'baseline' ? 'exact' : 'spread',
+    slotsText: '',
+  };
+}
+
+function defaultLaunchPlanDraft(): DraftLaunchPlan {
+  return {
+    enabled: false,
+    planId: `lp_${crypto.randomUUID()}`,
+    candidates: [defaultCandidate('baseline', 0), defaultCandidate('comparison', 1)],
+  };
+}
+
+function splitSlots(value: string): string[] {
+  return value
+    .split(',')
+    .map((slot) => slot.trim())
+    .filter(Boolean);
 }
 
 @customElement('backlog-panel')
@@ -67,7 +126,11 @@ export class BacklogPanel extends LitElement {
   @state() private _draftAllowedSlots: string[] = [];
   @state() private _draftAutoDispatch = false;
   @state() private _slotSelectorOpen = false;
+  @state() private _launchSlotSelector: LaunchSlotSelectorState | null = null;
   @state() private _notesDrafts: Record<string, string> = {};
+  @state() private _launchDrafts: Record<string, DraftLaunchPlan> = {
+    [NEW_PLAN_KEY]: defaultLaunchPlanDraft(),
+  };
 
   private _unsub?: () => void;
   private _onHashChange = () => this._applyUrlStateFromHash();
@@ -191,6 +254,27 @@ export class BacklogPanel extends LitElement {
       .rows {
         display: grid;
         gap: ${unsafeCSS(spacing.sm)};
+      }
+      .launch-plan {
+        border: 1px solid ${unsafeCSS(colors.accent)}33;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        padding: ${unsafeCSS(spacing.sm)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.sm)};
+        margin-top: ${unsafeCSS(spacing.sm)};
+      }
+      .launch-row {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.sm)};
+        padding: ${unsafeCSS(spacing.sm)};
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 6px;
+        align-items: end;
+      }
+      .launch-row .wide {
+        grid-column: span 2;
       }
       .row {
         border: 1px solid ${unsafeCSS(colors.textMuted)}22;
@@ -376,6 +460,337 @@ export class BacklogPanel extends LitElement {
       : selected.map((slot) => renderPlanningBadge(slot, 'positive'));
   }
 
+  private _draftFromPlan(plan: BacklogLaunchPlan | undefined): DraftLaunchPlan {
+    if (!plan) return defaultLaunchPlanDraft();
+    return {
+      enabled: true,
+      planId: plan.id,
+      candidates: plan.candidates.map((candidate) => {
+        const slotPolicy = candidate.slotPolicy;
+        return {
+          id: candidate.id,
+          role: candidate.role,
+          runner: candidate.runner ?? 'claude',
+          model: candidate.model ?? DEFAULT_MODEL[candidate.runner ?? 'claude'],
+          effort: candidate.effort ?? '',
+          variant: candidate.variant ?? '',
+          slotPolicyKind: slotPolicy.kind,
+          slotsText:
+            slotPolicy.kind === 'exact'
+              ? slotPolicy.slotId
+              : (slotPolicy.allowedSlots ?? []).join(', '),
+        } satisfies DraftLaunchCandidate;
+      }),
+    };
+  }
+
+  private _launchDraft(key: string, item?: BacklogItem): DraftLaunchPlan {
+    const draft = this._launchDrafts[key];
+    if (draft) return draft;
+    return this._draftFromPlan(item?.launchPlan);
+  }
+
+  private _setLaunchDraft(key: string, draft: DraftLaunchPlan) {
+    this._launchDrafts = { ...this._launchDrafts, [key]: draft };
+  }
+
+  private _launchPlanFromDraft(key: string, item?: BacklogItem): BacklogLaunchPlan | undefined {
+    const draft = this._launchDraft(key, item);
+    if (!draft.enabled) return undefined;
+    return {
+      id: draft.planId,
+      version: 1,
+      candidates: draft.candidates.map((candidate): BacklogLaunchCandidate => {
+        const slots = splitSlots(candidate.slotsText);
+        const slotPolicy: BacklogLaunchSlotPolicy =
+          candidate.slotPolicyKind === 'exact'
+            ? { kind: 'exact', slotId: slots[0] ?? '' }
+            : candidate.slotPolicyKind === 'pool'
+              ? { kind: 'pool', allowedSlots: slots }
+              : slots.length > 0
+                ? { kind: 'spread', allowedSlots: slots }
+                : { kind: 'spread' };
+        return {
+          id: candidate.id,
+          role: candidate.role,
+          runner: candidate.runner || undefined,
+          model: candidate.model || undefined,
+          effort: candidate.effort || undefined,
+          variant: candidate.role === 'comparison' ? candidate.variant : undefined,
+          slotPolicy,
+        };
+      }),
+    };
+  }
+
+  private _updateLaunchCandidate(
+    key: string,
+    index: number,
+    patch: Partial<DraftLaunchCandidate>,
+    item?: BacklogItem,
+  ) {
+    const draft = this._launchDraft(key, item);
+    const candidates = draft.candidates.map((candidate, i) =>
+      i === index ? { ...candidate, ...patch } : candidate,
+    );
+    this._setLaunchDraft(key, { ...draft, candidates });
+  }
+
+  private _itemForLaunchSelector(key: string): BacklogItem | undefined {
+    return key === NEW_PLAN_KEY ? undefined : this._items.find((item) => item.id === key);
+  }
+
+  private _launchSelectorProject(key: string): string {
+    return key === NEW_PLAN_KEY
+      ? this._draftProject
+      : (this._itemForLaunchSelector(key)?.project ?? '');
+  }
+
+  private _setLaunchCandidateSlots(event: CustomEvent<SlotSelectorChangeDetail>) {
+    const selector = this._launchSlotSelector;
+    if (!selector) return;
+    const item = this._itemForLaunchSelector(selector.key);
+    const draft = this._launchDraft(selector.key, item);
+    const candidate = draft.candidates[selector.index];
+    const selected =
+      candidate?.slotPolicyKind === 'exact'
+        ? event.detail.selected.slice(0, 1)
+        : event.detail.selected;
+    this._updateLaunchCandidate(
+      selector.key,
+      selector.index,
+      { slotsText: selected.join(', ') },
+      item,
+    );
+  }
+
+  private _renderLaunchSlotSelectorModal() {
+    const selector = this._launchSlotSelector;
+    if (!selector) return nothing;
+    const item = this._itemForLaunchSelector(selector.key);
+    const draft = this._launchDraft(selector.key, item);
+    const candidate = draft.candidates[selector.index];
+    const selected = splitSlots(candidate?.slotsText ?? '');
+    return html`<slot-selector-modal
+      .open=${true}
+      .slots=${this._slots}
+      .selected=${selected}
+      .filters=${this._globalFilters}
+      .project=${this._launchSelectorProject(selector.key)}
+      heading=${`Choose ${candidate?.role ?? 'launch'} candidate slots`}
+      @slot-selector-change=${this._setLaunchCandidateSlots}
+      @slot-selector-close=${() => (this._launchSlotSelector = null)}
+    ></slot-selector-modal>`;
+  }
+
+  private _renderLaunchPlanEditor(key: string, item?: BacklogItem) {
+    const draft = this._launchDraft(key, item);
+    return html`<div class="launch-plan" data-testid="backlog-launch-plan-editor">
+      <label>
+        <span>Launch plan</span>
+        <input
+          type="checkbox"
+          .checked=${draft.enabled}
+          @change=${(e: Event) =>
+            this._setLaunchDraft(key, {
+              ...draft,
+              enabled: (e.target as HTMLInputElement).checked,
+            })}
+        />
+      </label>
+      ${draft.enabled
+        ? html`
+            <div class="meta">
+              One baseline plus comparison candidates. Slot policy uses existing dispatch queue
+              constraints.
+            </div>
+            ${draft.candidates.map((candidate, index) =>
+              this._renderLaunchCandidateRow(key, draft, candidate, index, item),
+            )}
+            <div class="actions">
+              <button
+                class="secondary"
+                type="button"
+                @click=${() =>
+                  this._setLaunchDraft(key, {
+                    ...draft,
+                    candidates: [
+                      ...draft.candidates,
+                      defaultCandidate('comparison', draft.candidates.length),
+                    ],
+                  })}
+              >
+                Add comparison
+              </button>
+            </div>
+          `
+        : nothing}
+    </div>`;
+  }
+
+  private _renderLaunchCandidateRow(
+    key: string,
+    draft: DraftLaunchPlan,
+    candidate: DraftLaunchCandidate,
+    index: number,
+    item?: BacklogItem,
+  ) {
+    const models = MODELS_BY_RUNNER[candidate.runner] ?? [];
+    return html`<div class="launch-row" data-testid="backlog-launch-candidate">
+      <div>
+        <div class="field-label">${candidate.role}</div>
+        ${renderPlanningBadge(candidate.id, candidate.role === 'baseline' ? 'positive' : 'default')}
+      </div>
+      <label
+        >Runner
+        <select
+          .value=${candidate.runner}
+          @change=${(e: Event) => {
+            const runner = (e.target as HTMLSelectElement).value;
+            this._updateLaunchCandidate(
+              key,
+              index,
+              {
+                runner,
+                model: DEFAULT_MODEL[runner],
+                variant:
+                  candidate.role === 'comparison'
+                    ? `${runner}-${DEFAULT_MODEL[runner].replace(/[^a-z0-9]+/gi, '-')}`
+                    : '',
+              },
+              item,
+            );
+          }}
+        >
+          ${RUNNER_OPTIONS.map((runner) => html`<option value=${runner}>${runner}</option>`)}
+        </select>
+      </label>
+      <label
+        >Model
+        <select
+          .value=${candidate.model}
+          @change=${(e: Event) =>
+            this._updateLaunchCandidate(
+              key,
+              index,
+              { model: (e.target as HTMLSelectElement).value },
+              item,
+            )}
+        >
+          ${models.map((model) => html`<option value=${model}>${model}</option>`)}
+        </select>
+      </label>
+      ${candidate.role === 'comparison'
+        ? html`<label
+            >Variant
+            <input
+              .value=${candidate.variant}
+              @input=${(e: Event) =>
+                this._updateLaunchCandidate(
+                  key,
+                  index,
+                  { variant: (e.target as HTMLInputElement).value },
+                  item,
+                )}
+            />
+          </label>`
+        : nothing}
+      <label
+        >Effort
+        <input
+          placeholder="default"
+          .value=${candidate.effort}
+          @input=${(e: Event) =>
+            this._updateLaunchCandidate(
+              key,
+              index,
+              { effort: (e.target as HTMLInputElement).value },
+              item,
+            )}
+        />
+      </label>
+      <label
+        >Slot policy
+        <select
+          .value=${candidate.slotPolicyKind}
+          @change=${(e: Event) =>
+            this._updateLaunchCandidate(
+              key,
+              index,
+              { slotPolicyKind: (e.target as HTMLSelectElement).value as DraftSlotPolicyKind },
+              item,
+            )}
+        >
+          <option value="exact">exact</option>
+          <option value="pool">pool</option>
+          <option value="spread">spread</option>
+        </select>
+      </label>
+      <label class="wide"
+        >Slot ids
+        <input
+          placeholder=${candidate.slotPolicyKind === 'exact'
+            ? 'slot-a'
+            : 'slot-a, slot-b (blank = all eligible for spread)'}
+          .value=${candidate.slotsText}
+          @input=${(e: Event) =>
+            this._updateLaunchCandidate(
+              key,
+              index,
+              { slotsText: (e.target as HTMLInputElement).value },
+              item,
+            )}
+        />
+      </label>
+      <button
+        class="secondary"
+        type="button"
+        ?disabled=${!this._launchSelectorProject(key)}
+        @click=${() => (this._launchSlotSelector = { key, index })}
+      >
+        Choose visually
+      </button>
+      ${candidate.role === 'comparison'
+        ? html`<button
+            class="secondary"
+            type="button"
+            ?disabled=${draft.candidates.filter((row) => row.role === 'comparison').length <= 1}
+            @click=${() =>
+              this._setLaunchDraft(key, {
+                ...draft,
+                candidates: draft.candidates.filter((_, i) => i !== index),
+              })}
+          >
+            Remove
+          </button>`
+        : nothing}
+    </div>`;
+  }
+
+  private _renderLaunchPlanSummary(item: BacklogItem) {
+    if (!item.launchPlan) return nothing;
+    const state = item.launchPlanState;
+    return html`<div class="launch-plan" data-testid="backlog-launch-plan-summary">
+      <div class="field-label">Launch plan</div>
+      ${item.launchPlan.candidates.map((candidate) => {
+        const projection = state?.candidates.find((row) => row.candidateId === candidate.id);
+        return html`<div class="meta">
+          ${renderPlanningBadge(
+            candidate.role,
+            candidate.role === 'baseline' ? 'positive' : 'default',
+          )}
+          ${renderPlanningBadge(candidate.variant ?? candidate.id)}
+          ${candidate.runner ?? item.runner ?? 'runner?'} /
+          ${candidate.model ?? item.model ?? 'model?'} · ${candidate.slotPolicy.kind}
+          ${projection
+            ? html` · ${renderPlanningBadge(projection.status)}
+              ${projection.slotId ? renderPlanningBadge(projection.slotId, 'positive') : nothing}`
+            : nothing}
+        </div>`;
+      })}
+    </div>`;
+  }
+
   private async _createItem(event: Event) {
     event.preventDefault();
     this._error = '';
@@ -397,12 +812,14 @@ export class BacklogPanel extends LitElement {
         priority: Number(this._draftPriority) || 10,
         allowedSlots: this._allowedSlotsFromDraft(),
         autoDispatch: this._draftAutoDispatch,
+        launchPlan: this._launchPlanFromDraft(NEW_PLAN_KEY),
       });
       this._draftTitle = '';
       this._draftSourceRef = '';
       this._draftNotes = '';
       this._draftTags = '';
       this._draftAllowedSlots = [];
+      this._setLaunchDraft(NEW_PLAN_KEY, defaultLaunchPlanDraft());
       this._message = 'Backlog item created';
     } catch (err) {
       this._error = (err as Error).message;
@@ -432,6 +849,15 @@ export class BacklogPanel extends LitElement {
     );
     const { [item.id]: _saved, ...remainingDrafts } = this._notesDrafts;
     this._notesDrafts = remainingDrafts;
+  }
+
+  private async _saveLaunchPlan(item: BacklogItem) {
+    await this._runItemAction(item.id, 'launch plan', () =>
+      gateway.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, {
+        itemId: item.id,
+        launchPlan: this._launchPlanFromDraft(item.id, item) ?? null,
+      }),
+    );
   }
 
   private async _autoDispatch() {
@@ -554,6 +980,7 @@ export class BacklogPanel extends LitElement {
           @input=${(e: Event) => (this._draftNotes = (e.target as HTMLTextAreaElement).value)}
         ></textarea>
       </label>
+      ${this._renderLaunchPlanEditor(NEW_PLAN_KEY)}
       <div class="actions" style="margin-top: 10px;">
         <button ?disabled=${this._busy === 'create' || !this._draftProject}>Create</button>
       </div>
@@ -599,6 +1026,7 @@ export class BacklogPanel extends LitElement {
         </div>
       </div>
       ${item.lastDispatchError ? html`<div class="error">${item.lastDispatchError}</div>` : nothing}
+      ${this._renderLaunchPlanSummary(item)} ${this._renderLaunchPlanEditor(item.id, item)}
       <label
         >Agent notes
         <textarea
@@ -618,6 +1046,13 @@ export class BacklogPanel extends LitElement {
           @click=${() => this._saveNotes(item)}
         >
           Save notes
+        </button>
+        <button
+          class="secondary"
+          ?disabled=${this._busy.endsWith(item.id)}
+          @click=${() => this._saveLaunchPlan(item)}
+        >
+          Save launch plan
         </button>
         <button
           ?disabled=${item.status !== 'candidate' || this._busy.endsWith(item.id)}
@@ -680,6 +1115,7 @@ export class BacklogPanel extends LitElement {
             : this._filtered.map((item) => this._renderRow(item))}
         </div>
       </div>
+      ${this._renderLaunchSlotSelectorModal()}
     </section>`;
   }
 }

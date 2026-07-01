@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import type { BacklogItem } from '../../src/index.js';
 import {
+  assertBacklogLaunchPlan,
   BACKLOG_SOURCE_KINDS,
   BACKLOG_STATUSES,
   BacklogMethods,
@@ -49,4 +50,67 @@ test('backlog protocol carries optional roadmap spec metadata and tags', () => {
   assert.deepEqual(item.tags, ['roadmap']);
   assert.equal(item.roadmapItemId, 'ri_123');
   assert.equal(item.specPath, '.backlog/specs/markdown-spec.md');
+});
+
+test('backlog launch plan validates baseline and comparison variants', () => {
+  assert.doesNotThrow(() =>
+    assertBacklogLaunchPlan({
+      id: 'lp_1',
+      version: 1,
+      candidates: [
+        {
+          id: 'base',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'slot-a' },
+        },
+        {
+          id: 'sonnet',
+          role: 'comparison',
+          runner: 'claude',
+          model: 'sonnet',
+          variant: 'claude-sonnet',
+          slotPolicy: { kind: 'pool', allowedSlots: ['slot-b', 'slot-c'] },
+        },
+      ],
+    }),
+  );
+
+  assert.throws(
+    () =>
+      assertBacklogLaunchPlan({
+        id: 'lp_bad',
+        version: 1,
+        candidates: [
+          { id: 'base-a', role: 'baseline', slotPolicy: { kind: 'spread' } },
+          { id: 'base-b', role: 'baseline', slotPolicy: { kind: 'spread' } },
+        ],
+      }),
+    /exactly one baseline/,
+  );
+
+  assert.throws(
+    () =>
+      assertBacklogLaunchPlan({
+        id: 'lp_dup',
+        version: 1,
+        candidates: [
+          { id: 'base', role: 'baseline', slotPolicy: { kind: 'spread' } },
+          {
+            id: 'a',
+            role: 'comparison',
+            variant: 'same',
+            slotPolicy: { kind: 'spread' },
+          },
+          {
+            id: 'b',
+            role: 'comparison',
+            variant: 'same',
+            slotPolicy: { kind: 'spread' },
+          },
+        ],
+      }),
+    /duplicate comparison variant/,
+  );
 });

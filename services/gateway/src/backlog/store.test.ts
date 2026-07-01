@@ -225,6 +225,89 @@ test('backlog store serializes concurrent enqueue for the same item', async () =
   assert.equal(item?.lastDispatchError, undefined);
 });
 
+test('launch plan queues baseline first and materializes comparison candidates idempotently', async () => {
+  const { backlog, queue, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Compare model variants',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_compare',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+        {
+          id: 'sonnet',
+          role: 'comparison',
+          runner: 'claude',
+          model: 'sonnet',
+          variant: 'claude-sonnet',
+          slotPolicy: { kind: 'pool', allowedSlots: ['macwork-ff-2', 'macwork-ff-3'] },
+        },
+        {
+          id: 'codex',
+          role: 'comparison',
+          runner: 'codex',
+          model: 'gpt-5.5',
+          variant: 'codex-gpt-55',
+          slotPolicy: { kind: 'spread', allowedSlots: ['macwork-ff-1', 'macwork-ff-2'] },
+        },
+      ],
+    },
+  });
+
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(enqueued.queueItem.launchPlanId, 'lp_compare');
+  assert.equal(enqueued.queueItem.launchCandidateId, 'baseline');
+  assert.equal(enqueued.queueItem.launchSlotPolicy, 'exact');
+  assert.equal(enqueued.queueItem.slotId, 'macwork-ff-1');
+  assert.deepEqual(enqueued.queueItem.allowedSlots, ['macwork-ff-1']);
+  assert.equal(
+    queue.getQueueSnapshot().filter((item) => item.backlogItemId === created.item.id).length,
+    1,
+  );
+
+  const baselineRun = runStore.createRun({
+    flowType: enqueued.queueItem.flowType,
+    project: enqueued.queueItem.project,
+    ticketOrPr: enqueued.queueItem.ticketOrPr,
+    backlogItemId: enqueued.queueItem.backlogItemId,
+    launchPlanId: enqueued.queueItem.launchPlanId,
+    launchCandidateId: enqueued.queueItem.launchCandidateId,
+    launchGroupId: enqueued.queueItem.launchGroupId,
+    launchSlotPolicy: enqueued.queueItem.launchSlotPolicy,
+    runner: enqueued.queueItem.runner,
+    model: enqueued.queueItem.model,
+    slotId: enqueued.queueItem.slotId,
+  });
+
+  await backlog.markBacklogRunStarted(enqueued.queueItem, baselineRun);
+  await backlog.markBacklogRunStarted(enqueued.queueItem, baselineRun);
+
+  const queued = queue
+    .getQueueSnapshot()
+    .filter((item) => item.backlogItemId === created.item.id)
+    .sort((a, b) => (a.launchCandidateId ?? '').localeCompare(b.launchCandidateId ?? ''));
+  assert.equal(queued.length, 3);
+  const sonnet = queued.find((item) => item.launchCandidateId === 'sonnet');
+  assert.equal(sonnet?.lane, 'comparison');
+  assert.equal(sonnet?.familyId, baselineRun.familyId);
+  assert.equal(sonnet?.parentRunId, baselineRun.id);
+  assert.equal(sonnet?.variant, 'claude-sonnet');
+  assert.deepEqual(sonnet?.allowedSlots, ['macwork-ff-2', 'macwork-ff-3']);
+  const codex = queued.find((item) => item.launchCandidateId === 'codex');
+  assert.equal(codex?.launchSlotPolicy, 'spread');
+  assert.deepEqual(codex?.allowedSlots, ['macwork-ff-1', 'macwork-ff-2']);
+});
+
 test('manual backlog enqueue rejects invalid allowedSlots before queueing', async () => {
   const { backlog, queue } = await freshStores();
   const created = await backlog.createBacklogItem({
@@ -354,6 +437,17 @@ test('public dispatch queue add rejects backlog handoff metadata', async () => {
           screenshots: [],
           labels: [],
         },
+      } as never),
+    /cannot accept backlog handoff metadata/,
+  );
+  await assert.rejects(
+    () =>
+      dispatch.dispatchQueueAdd({
+        flowType: 'dev',
+        project: 'farmslot-farm',
+        ticketOrPr: 'FS-123',
+        launchPlanId: 'lp_1',
+        launchCandidateId: 'baseline',
       } as never),
     /cannot accept backlog handoff metadata/,
   );

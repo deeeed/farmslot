@@ -2773,6 +2773,7 @@ All checks passed.`;
           }}
           .mockCandidates=${candidates}
           .mockProjectConfigs=${projectConfigs}
+          .mockPriorRuns=${priorRuns}
         ></dispatch-wizard>
       </div>
     `;
@@ -2793,6 +2794,59 @@ All checks passed.`;
         priority: 5,
         allowedSlots: ['runner-local-mobile-1'],
         autoDispatch: true,
+        launchPlan: {
+          id: 'lp-dev-compare',
+          version: 1,
+          candidates: [
+            {
+              id: 'baseline',
+              role: 'baseline',
+              runner: 'claude',
+              model: 'opus',
+              slotPolicy: { kind: 'exact', slotId: 'runner-local-mobile-1' },
+            },
+            {
+              id: 'sonnet',
+              role: 'comparison',
+              runner: 'claude',
+              model: 'sonnet',
+              variant: 'claude-sonnet',
+              slotPolicy: {
+                kind: 'pool',
+                allowedSlots: ['runner-local-mobile-2', 'runner-local-mobile-3'],
+              },
+            },
+            {
+              id: 'codex',
+              role: 'comparison',
+              runner: 'codex',
+              model: 'gpt-5.5',
+              variant: 'codex-gpt-55',
+              slotPolicy: {
+                kind: 'spread',
+                allowedSlots: ['runner-local-mobile-1', 'runner-local-mobile-2'],
+              },
+            },
+          ],
+        },
+        launchPlanState: {
+          launchGroupId: 'lg-dev-compare',
+          baselineQueueItemId: 'q-base',
+          candidates: [
+            {
+              candidateId: 'baseline',
+              status: 'running',
+              runId: 'run-base',
+              slotId: 'runner-local-mobile-1',
+            },
+            { candidateId: 'sonnet', status: 'queued', queueItemId: 'q-sonnet' },
+            {
+              candidateId: 'codex',
+              status: 'blocked',
+              waitingReason: 'waiting for spread slot outside active sibling',
+            },
+          ],
+        },
         createdAt: new Date(now - 60 * 60_000).toISOString(),
         updatedAt: new Date(now - 10 * 60_000).toISOString(),
       },

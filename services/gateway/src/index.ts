@@ -340,6 +340,10 @@ async function main(): Promise<void> {
       backlogItemId: item.backlogItemId,
       workGraphId: item.workGraphId,
       workNodeId: item.workNodeId,
+      launchPlanId: item.launchPlanId,
+      launchCandidateId: item.launchCandidateId,
+      launchGroupId: item.launchGroupId,
+      launchSlotPolicy: item.launchSlotPolicy,
       devChecklist: item.devChecklist,
       reviewDepth: item.reviewDepth,
       pendingReviewPlan: item.pendingReviewPlan,
@@ -347,7 +351,7 @@ async function main(): Promise<void> {
     const { run } = await runCreate(runParams, broadcastEvent);
     item.runId = run.id;
     try {
-      await markBacklogRunStarted(item.backlogItemId, run.id);
+      await markBacklogRunStarted(item, run);
     } catch (err) {
       // The run is already durable at this point. Re-throwing would make the
       // queue retry and create a duplicate run for the same backlog item, so

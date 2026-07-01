@@ -153,6 +153,11 @@ export interface DispatchQueueAddParams {
   reviewDepth?: import('../contracts/index.js').ReviewDepthPolicy;
   /** Same semantics as RunCreateParams.pendingReviewPlan — extra publication reviews for auto-dispatch. */
   pendingReviewPlan?: import('../contracts/index.js').ReviewLoopRequest[];
+  /** Internal ADR-044 launch-plan linkage. Public dispatch.queue.add rejects these fields. */
+  launchPlanId?: string;
+  launchCandidateId?: string;
+  launchGroupId?: string;
+  launchSlotPolicy?: import('../contracts/index.js').BacklogLaunchSlotPolicy['kind'];
   /** Eval matrix cell metadata. Required when queueKind is eval-cell. */
   evalCell?: EvalQueueCell;
   priority?: number;

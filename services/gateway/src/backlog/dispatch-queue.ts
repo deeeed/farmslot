@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import {
   type DispatchQueueUpdateParams,
+  isTerminalRunStatus,
   normalizeRunTags,
   type QueueItem,
   type SlotStatus,
@@ -171,6 +172,26 @@ function assertEvalQueueItem(params: InternalDispatchQueueAddParams): void {
 export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
   assertAllowedSlots(params.allowedSlots, 'queue dispatch');
   assertEvalQueueItem(params);
+  if (params.backlogItemId && params.launchPlanId && params.launchCandidateId) {
+    const existing = queue.find(
+      (item) =>
+        item.backlogItemId === params.backlogItemId &&
+        item.launchPlanId === params.launchPlanId &&
+        item.launchCandidateId === params.launchCandidateId,
+    );
+    if (existing) return existing;
+    const existingRun = getAllRuns().find(
+      (run) =>
+        run.backlogItemId === params.backlogItemId &&
+        run.launchPlanId === params.launchPlanId &&
+        run.launchCandidateId === params.launchCandidateId,
+    );
+    if (existingRun && !isTerminalRunStatus(existingRun.status)) {
+      throw new Error(
+        `Launch candidate ${params.launchCandidateId} already has active run ${existingRun.id}`,
+      );
+    }
+  }
   const startRef = normalizeStartRefRequest(params);
   const tags = normalizeRunTags(params.tags);
   const item: QueueItem = {
@@ -179,6 +200,10 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
     backlogItemId: params.backlogItemId,
     workGraphId: params.workGraphId,
     workNodeId: params.workNodeId,
+    launchPlanId: params.launchPlanId,
+    launchCandidateId: params.launchCandidateId,
+    launchGroupId: params.launchGroupId,
+    launchSlotPolicy: params.launchSlotPolicy,
     label: params.label,
     flowType: params.flowType,
     project: params.project,
@@ -343,6 +368,31 @@ export function buildQueuePreviewParams(item: QueueItem) {
 }
 
 export function selectQueueDispatchSlot(slots: SlotStatus[], item: QueueItem): string | null {
+  if (item.launchSlotPolicy === 'spread' && item.launchGroupId) {
+    const activeSiblingSlots = new Set(
+      getAllRuns()
+        .filter(
+          (run) =>
+            run.launchGroupId === item.launchGroupId &&
+            run.id !== item.runId &&
+            !isTerminalRunStatus(run.status) &&
+            run.slotId,
+        )
+        .map((run) => run.slotId as string),
+    );
+    if (activeSiblingSlots.size > 0) {
+      const allowed = (item.allowedSlots ?? slots.map((slot) => slot.slot)).filter(
+        (slotId) => !activeSiblingSlots.has(slotId),
+      );
+      if (allowed.length > 0) {
+        const preview = resolveDispatchPreviewFromFleet(
+          { ...buildQueuePreviewParams(item), allowedSlots: allowed },
+          slots,
+        );
+        return preview.preview.slotId;
+      }
+    }
+  }
   const preview = resolveDispatchPreviewFromFleet(buildQueuePreviewParams(item), slots);
   return preview.preview.slotId;
 }

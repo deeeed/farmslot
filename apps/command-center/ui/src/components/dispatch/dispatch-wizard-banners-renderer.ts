@@ -72,8 +72,12 @@ export function renderReplayEntryPoint(ctx: ReplayEntryPointRenderContext) {
 export interface PriorRunsBannerRenderContext {
   comparisonLane: boolean;
   priorRuns: readonly Run[];
+  pickerOpen: boolean;
+  pickerSearch: string;
   ticketId: string;
   forkFromPriorRun: (run: Run) => void;
+  setPickerOpen: (open: boolean) => void;
+  setPickerSearch: (value: string) => void;
 }
 
 export function renderPriorRunsBanner(ctx: PriorRunsBannerRenderContext) {
@@ -86,9 +90,80 @@ export function renderPriorRunsBanner(ctx: PriorRunsBannerRenderContext) {
         ${totalRuns} prior run${totalRuns === 1 ? '' : 's'} for ${ctx.ticketId.trim()} — run another
         same-family candidate
       </div>
-      ${[...groups.entries()].map(([familyId, runs]) => renderPriorRunsFamily(ctx, familyId, runs))}
+      <div class="prior-runs-copy">
+        Pick the run to compare against. Dispatch will keep the same family and create a
+        comparison-lane sibling with its own runner/model/slot.
+      </div>
+      <button
+        class="prior-runs-open"
+        data-testid="dispatch-compare-picker-open"
+        @click=${() => ctx.setPickerOpen(true)}
+      >
+        Choose run to compare… (${totalRuns})
+      </button>
+      ${[...groups.entries()]
+        .slice(0, 2)
+        .map(([familyId, runs]) => renderPriorRunsFamily(ctx, familyId, runs.slice(0, 2)))}
+      ${renderPriorRunsPickerModal(ctx)}
     </div>
   `;
+}
+
+function renderPriorRunsPickerModal(ctx: PriorRunsBannerRenderContext) {
+  if (!ctx.pickerOpen) return nothing;
+  const query = ctx.pickerSearch.trim().toLowerCase();
+  const filtered = query
+    ? ctx.priorRuns.filter((run) => priorRunSearchText(run).includes(query))
+    : ctx.priorRuns;
+  return html`
+    <div class="compare-picker-backdrop" @click=${() => ctx.setPickerOpen(false)}>
+      <div class="compare-picker-modal" @click=${(event: Event) => event.stopPropagation()}>
+        <div class="compare-picker-head">
+          <div>
+            <div class="compare-picker-title">Choose comparison baseline</div>
+            <div class="compare-picker-subtitle">
+              ${ctx.ticketId.trim()} · ${ctx.priorRuns.length} prior
+              run${ctx.priorRuns.length === 1 ? '' : 's'}
+            </div>
+          </div>
+          <button class="compare-picker-close" @click=${() => ctx.setPickerOpen(false)}>×</button>
+        </div>
+        <input
+          class="compare-picker-search"
+          data-testid="dispatch-compare-run-search"
+          placeholder="Search family, run id, lane, variant, runner, model, status, summary…"
+          .value=${ctx.pickerSearch}
+          @input=${(event: InputEvent) =>
+            ctx.setPickerSearch((event.target as HTMLInputElement).value)}
+        />
+        <div class="compare-picker-list">
+          ${filtered.length === 0
+            ? html`<div class="compare-picker-empty">No prior runs match this search.</div>`
+            : filtered.map((run) => renderPriorRunPickerRow(ctx, run))}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function priorRunSearchText(run: Run): string {
+  return [
+    run.id,
+    run.familyId,
+    run.parentRunId,
+    run.ticketOrPr,
+    run.project,
+    run.flowType,
+    run.status,
+    run.lane,
+    run.variant,
+    run.metrics?.runner,
+    run.metrics?.model,
+    run.summary,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
 }
 
 function renderPriorRunsFamily(
@@ -107,22 +182,39 @@ function renderPriorRunsFamily(
 }
 
 function renderPriorRunRow(ctx: PriorRunsBannerRenderContext, run: Run) {
+  return renderPriorRunCard(ctx, run, 'prior-run-row');
+}
+
+function renderPriorRunPickerRow(ctx: PriorRunsBannerRenderContext, run: Run) {
+  return renderPriorRunCard(ctx, run, 'prior-run-row compare-picker-row');
+}
+
+function renderPriorRunCard(ctx: PriorRunsBannerRenderContext, run: Run, className: string) {
   return html`
     <button
-      class="prior-run-row"
-      @click=${() => ctx.forkFromPriorRun(run)}
+      class=${className}
+      data-testid="dispatch-compare-run-card"
+      @click=${() => {
+        ctx.forkFromPriorRun(run);
+        ctx.setPickerOpen(false);
+      }}
       title="Run another comparison candidate in this existing family (parentRunId=${run.id.slice(
         0,
         8,
       )})"
     >
-      <span class="prior-run-cell">${run.lane}${run.variant ? `/${run.variant}` : ''}</span>
-      <span class="prior-run-cell muted"
-        >${run.metrics?.runner ?? '?'}/${run.metrics?.model ?? '?'}</span
-      >
-      <span class="prior-run-cell muted">${run.status}</span>
-      <span class="prior-run-cell muted">${run.createdAt.slice(0, 16).replace('T', ' ')}</span>
-      <span class="prior-run-cell summary">${run.summary ?? ''}</span>
+      <span class="prior-run-main">
+        <span class="prior-run-title">
+          Compare against ${run.lane}${run.variant ? `/${run.variant}` : ''} run
+        </span>
+        <span class="prior-run-meta">
+          family ${run.familyId.slice(0, 8)} · run ${run.id.slice(0, 8)} ·
+          ${run.metrics?.runner ?? '?'}/${run.metrics?.model ?? '?'} · ${run.status} ·
+          ${run.createdAt.slice(0, 16).replace('T', ' ')}
+        </span>
+        ${run.summary ? html`<span class="prior-run-summary">${run.summary}</span>` : nothing}
+      </span>
+      <span class="prior-run-cta">Use as baseline →</span>
     </button>
   `;
 }
