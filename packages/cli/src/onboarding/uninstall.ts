@@ -220,12 +220,15 @@ async function stopService(
   if (!pid || !isAlive(pid)) return;
   if (!pidBelongsToWorkspace(pid, workspaceRoot)) return;
 
+  let signalled = false;
   const signal = (sig: NodeJS.Signals): void => {
     try {
       process.kill(-pid, sig); // whole detached group first
+      signalled = true;
     } catch {
       try {
         process.kill(pid, sig); // fall back to the single process
+        signalled = true;
       } catch {
         // Already gone between checks — nothing to signal.
       }
@@ -235,7 +238,9 @@ async function stopService(
   signal('SIGTERM');
   for (let i = 0; i < 20 && isAlive(pid); i++) await delay(250); // up to ~5s for a clean exit
   if (isAlive(pid)) signal('SIGKILL');
-  hooks.step(`stopped ${label} (pid ${pid})`);
+  // Only report a stop we actually issued — the process may have exited on its own between
+  // the alive check and the signal, in which case we did nothing.
+  if (signalled) hooks.step(`stopped ${label} (pid ${pid})`);
 }
 
 /** Apply a directory's keep|backup|delete decision. Returns whether it was removed. */
