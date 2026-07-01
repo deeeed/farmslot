@@ -48,6 +48,28 @@ const rateLimited = authenticateGatewayClient({
 });
 assert.equal(rateLimited.rateLimited, true);
 
+// Loopback clients bypass the rate limiter: a valid token authenticates even after a
+// prior failure that would lock out a remote IP (max=1). Covers the mapped IPv6 form.
+for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
+  const loopbackLimited = { auth: runtime.auth, limiter: new GatewayAuthRateLimiter(1, 60_000) };
+  authenticateGatewayClient({
+    runtime: loopbackLimited,
+    connectParams: { clientKind: 'ui', token: 'bad' },
+    clientIp: ip,
+  });
+  const loopbackOk = authenticateGatewayClient({
+    runtime: loopbackLimited,
+    connectParams: { clientKind: 'ui', token: 'abc' },
+    clientIp: ip,
+  });
+  assert.equal(
+    loopbackOk.ok,
+    true,
+    `loopback ${ip} should auth with a valid token despite prior failure`,
+  );
+  assert.notEqual(loopbackOk.rateLimited, true, `loopback ${ip} should not be rate-limited`);
+}
+
 const cookieRuntime = createGatewayAuthRuntime({ FARMSLOT_GATEWAY_TOKEN: 'cookie-token' });
 const cookieResponse = createFakeResponse();
 const cookieAuthorized = authorizeHttpRequest({
