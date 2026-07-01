@@ -7,7 +7,9 @@ import { resolveWorkspace } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
 interface ProjectAddCliOptions {
-  noSetup?: boolean;
+  // Commander stores `--no-setup` as `setup: false` (negated-boolean convention),
+  // defaulting to `true`. There is no `noSetup` property — read `setup` instead.
+  setup?: boolean;
   project?: string[];
 }
 
@@ -52,7 +54,9 @@ export function registerProjectCommand(program: Command): void {
             childOutputToStderr: output.json,
           },
           {
-            noSetup: Boolean(opts.noSetup),
+            // `--no-setup` → opts.setup === false. (Reading opts.noSetup was always
+            // undefined, so --no-setup was silently ignored and setup always ran.)
+            noSetup: opts.setup === false,
             projects: opts.project,
           },
         );
