@@ -348,7 +348,7 @@ function cliSection(ws: Workspace | null, state: WorkspaceState | null): DoctorS
       detail: binPath
         ? `${binPath} -> ${binTarget} (a different farmslot is first on PATH; this workspace: ${installedLink})`
         : `${installedLink} exists but ${state?.bin_dir} is not on PATH`,
-      hint: `to use this workspace's CLI, put ${state?.bin_dir} ahead on your PATH: export PATH="${state?.bin_dir}:$PATH"`,
+      hint: `to use this workspace's CLI, put ${state?.bin_dir} ahead on your PATH: export PATH='${(state?.bin_dir ?? '').replace(/'/g, "'\\''")}':"$PATH"`,
     });
   } else {
     checks.push({

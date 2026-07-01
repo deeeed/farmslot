@@ -148,11 +148,18 @@ ask_value() {
   if [ -n "$reply" ]; then printf -v "$__var" '%s' "$reply"; else printf -v "$__var" '%s' "$def"; fi
 }
 
-# Best-effort shell rc file for an optional PATH edit.
+# Best-effort shell rc file for an optional PATH edit. On macOS, interactive login bash
+# sources ~/.bash_profile (not ~/.bashrc), so prefer it there; Linux bash reads ~/.bashrc.
 shell_rc_file() {
   case "${SHELL:-}" in
     *zsh) printf '%s' "${ZDOTDIR:-$HOME}/.zshrc" ;;
-    *bash) [ -f "$HOME/.bashrc" ] && printf '%s' "$HOME/.bashrc" || printf '%s' "$HOME/.bash_profile" ;;
+    *bash)
+      if [ "$(uname)" = "Darwin" ]; then
+        [ -f "$HOME/.bash_profile" ] && printf '%s' "$HOME/.bash_profile" || printf '%s' "$HOME/.bashrc"
+      else
+        [ -f "$HOME/.bashrc" ] && printf '%s' "$HOME/.bashrc" || printf '%s' "$HOME/.bash_profile"
+      fi
+      ;;
     *) printf '%s' "$HOME/.profile" ;;
   esac
 }
