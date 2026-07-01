@@ -124,19 +124,32 @@ def latest_codex_session(repo_path: str):
     return session_file, snap
 
 
+def grok_sessions_dirs(repo_path: str):
+    keys = {quote(repo_path, safe=''), quote(grok_repo_key(repo_path), safe='')}
+    dirs = []
+    for key in keys:
+        candidate = home / '.grok' / 'sessions' / key
+        if candidate.is_dir():
+            dirs.append(candidate)
+    return dirs
+
+
 def latest_grok_session(repo_path: str):
-    sessions_dir = home / '.grok' / 'sessions' / quote(grok_repo_key(repo_path), safe='')
-    if not sessions_dir.is_dir():
-        return None, None
     candidates = []
-    for summary_path in sessions_dir.glob('*/summary.json'):
-        try:
-            summary = json.loads(summary_path.read_text())
-            if grok_cwd_matches(summary.get('info', {}).get('cwd'), repo_path):
-                candidates.append(summary_path.parent)
-        except Exception:
-            # Grok may leave partial summary files while the TUI is writing; skip those.
-            continue
+    seen = set()
+    for sessions_dir in grok_sessions_dirs(repo_path):
+        for summary_path in sessions_dir.glob('*/summary.json'):
+            try:
+                summary = json.loads(summary_path.read_text())
+                if grok_cwd_matches(summary.get('info', {}).get('cwd'), repo_path):
+                    parent = summary_path.parent
+                    if parent in seen:
+                        continue
+                    seen.add(parent)
+                    candidates.append(parent)
+            except Exception:
+                # Grok may leave partial summary files while the TUI is writing; skip those.
+                continue
     if not candidates:
         return None, None
     session_dir = max(candidates, key=lambda p: p.stat().st_mtime)

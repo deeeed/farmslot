@@ -45,6 +45,10 @@ export function grokCwdMatches(summaryCwd, repo) {
   return repoPathMatches(summaryCwd, repo);
 }
 
+export function grokSessionDirKeys(repo) {
+  return [...new Set([encodeURIComponent(repo), encodeURIComponent(grokRepoKey(repo))])];
+}
+
 export function grokSessionsDir(repo) {
   return path.join(os.homedir(), '.grok', 'sessions', encodeURIComponent(grokRepoKey(repo)));
 }
@@ -151,19 +155,21 @@ export function listSessionCandidates(runner, repo, runtimeDir = '.agent') {
       .sort((a, b) => statMtimeMs(b) - statMtimeMs(a));
   }
   if (runner === 'grok') {
-    const sessionsDir = grokSessionsDir(repo);
-    if (!fs.existsSync(sessionsDir)) return [];
-    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const paths = [];
-    for (const entry of fs.readdirSync(sessionsDir)) {
-      const summaryPath = path.join(sessionsDir, entry, 'summary.json');
-      if (!fs.existsSync(summaryPath)) continue;
-      if (statMtimeMs(summaryPath) < cutoff) continue;
-      try {
-        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-        if (grokCwdMatches(summary?.info?.cwd, repo)) paths.push(path.dirname(summaryPath));
-      } catch {
-        // Grok may write summary.json incrementally during launch.
+    for (const key of grokSessionDirKeys(repo)) {
+      const sessionsDir = path.join(os.homedir(), '.grok', 'sessions', key);
+      if (!fs.existsSync(sessionsDir)) continue;
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      for (const entry of fs.readdirSync(sessionsDir)) {
+        const summaryPath = path.join(sessionsDir, entry, 'summary.json');
+        if (!fs.existsSync(summaryPath)) continue;
+        if (statMtimeMs(summaryPath) < cutoff) continue;
+        try {
+          const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+          if (grokCwdMatches(summary?.info?.cwd, repo)) paths.push(path.dirname(summaryPath));
+        } catch {
+          // Grok may write summary.json incrementally during launch.
+        }
       }
     }
     return paths.sort((a, b) => statMtimeMs(b) - statMtimeMs(a));

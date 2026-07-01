@@ -74,16 +74,24 @@ if runner == 'claude':
     if session_dir.is_dir():
         paths = [str(p) for p in sorted(session_dir.glob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)]
 elif runner == 'grok':
-    sessions_dir = home / '.grok' / 'sessions' / quote(grok_repo_key(repo), safe='')
-    if sessions_dir.is_dir():
-        cutoff = time() - (7 * 24 * 60 * 60)
+    keys = {quote(repo, safe=''), quote(grok_repo_key(repo), safe='')}
+    cutoff = time() - (7 * 24 * 60 * 60)
+    seen = set()
+    for key in keys:
+        sessions_dir = home / '.grok' / 'sessions' / key
+        if not sessions_dir.is_dir():
+            continue
         for summary_path in sorted(sessions_dir.glob('*/summary.json'), key=lambda p: p.stat().st_mtime, reverse=True):
             try:
                 if summary_path.stat().st_mtime < cutoff:
                     continue
                 summary = json.loads(summary_path.read_text())
                 if grok_cwd_matches(summary.get('info', {}).get('cwd'), repo):
-                    paths.append(str(summary_path.parent))
+                    parent = str(summary_path.parent)
+                    if parent in seen:
+                        continue
+                    seen.add(parent)
+                    paths.append(parent)
             except Exception:
                 # Grok writes summary.json at runtime; skip partial/unreadable files during discovery.
                 continue
