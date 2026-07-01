@@ -820,6 +820,86 @@ test('backlog.dequeue removes linked queue items and returns item to ready', asy
   assert.equal(queue.listItems().length, 1);
 });
 
+test('backlog.dequeue rejects non-queued items', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Not queued',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+
+  await assert.rejects(
+    () => backlog.dequeueBacklogItem({ itemId: created.item.id }),
+    /Cannot dequeue backlog item in status ready/,
+  );
+});
+
+test('backlog.dequeue rejects work-graph-linked items', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Graph-linked dequeue guard',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  created.item.status = 'queued';
+  created.item.workGraphId = 'graph-1';
+  created.item.workNodeId = 'node-1';
+
+  await assert.rejects(
+    () => backlog.dequeueBacklogItem({ itemId: created.item.id }),
+    /linked to a work graph/,
+  );
+});
+
+test('backlog.dequeue rejects items linked to active runs', async () => {
+  const { backlog, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Active run dequeue guard',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  const run = runStore.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+  });
+  created.item.status = 'queued';
+  created.item.runId = run.id;
+
+  await assert.rejects(
+    () => backlog.dequeueBacklogItem({ itemId: created.item.id }),
+    /Cannot dequeue backlog item with active run/,
+  );
+});
+
+test('backlog.dequeue rejects while linked queue item is dispatching', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Dispatching queue guard',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    allowedSlots: ['macwork-ff-1'],
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  const linked = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id);
+  assert.ok(linked);
+  linked.status = 'dispatching';
+
+  await assert.rejects(
+    () => backlog.dequeueBacklogItem({ itemId: created.item.id }),
+    /Cannot dequeue backlog item while dispatch is in progress/,
+  );
+});
+
 test('backlog.dequeue purges cancelled linked queue rows before re-enqueue', async () => {
   const { backlog, queue } = await freshStores();
   const created = await backlog.createBacklogItem({

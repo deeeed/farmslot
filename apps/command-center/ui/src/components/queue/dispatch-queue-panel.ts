@@ -15,6 +15,8 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
+import { isOrphanedBacklogQueueItemForUi } from './dispatch-queue-panel-model.js';
+
 function labelFor(item: QueueItem): string {
   return (
     item.label?.trim() ||
@@ -311,10 +313,7 @@ export class DispatchQueuePanel extends LitElement {
   }
 
   private _isOrphan(item: QueueItem): boolean {
-    return (
-      Boolean(item.backlogItemId) &&
-      !this._backlogItems.some((candidate) => candidate.id === item.backlogItemId)
-    );
+    return isOrphanedBacklogQueueItemForUi(item, this._backlogItems);
   }
 
   private async _remove(item: QueueItem): Promise<void> {

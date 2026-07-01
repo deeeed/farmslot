@@ -37,7 +37,7 @@ export function runArtifactFetchUrl(runId: string, artifact: Pick<ArtifactRef, '
 }
 
 export function runArtifactUrl(runId: string, artifact: Pick<ArtifactRef, 'path'>): string {
-  return gatewayResourceUrl(runArtifactApiPath(runId, artifact));
+  return runArtifactFetchUrl(runId, artifact);
 }
 
 export function recipeRunArtifactUrl(
