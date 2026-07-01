@@ -99,3 +99,14 @@ The package is node-only runtime code (uses `node:fs` / `node:child_process`); i
 3. Execution is **not** migrated — `execLocal` and one-off local file reads (ADR-009 §A) stay gateway-side by design.
 
 Until the local node is co-launched, the "local host shows NODE OFFLINE" badge is cosmetic (local slots still work via `execLocal`); the fleet now renders it as **degraded** instead.
+
+## Future direction (not in scope — needs its own roadmap entry)
+
+The `@farmslot/capabilities` package suggests a cleaner end-state for the whole gateway/node split, worth recording but **not** built here:
+
+> Move each machine-local capability — `exec`, `fs` (read/write/watch), resource watch, screen, system metrics, tmux — into `@farmslot/capabilities` as a plain library. Then:
+>
+> - the **node** becomes a _thin transport layer_: a WebSocket server that maps RPC frames onto the shared library and streams results back. Almost no logic of its own — ideal for a small remote deploy bundle.
+> - the **gateway**, for a single-machine (all-local) install, calls the **same library directly** as the degraded fallback when no node is connected — so the farm runs fully local with or without a node, and the "does it work without a node" answer is "yes, via the shared library" for every capability, not just branch watch.
+
+This generalizes the pattern this ADR introduces (currently: fs-watch, frame codec, H.264 splitter) to the full capability surface. It is a sizeable refactor with real regression surface (the stateful macOS capture engine, tmux/pty, resource-manager), and it revisits the Decision-item-3 "execution stays gateway-side" line, so it must be scoped and approved as its own ADR/roadmap item before any code moves. Flagged here so the package is understood as the _seed_ of a shared capability layer, not a one-off util grab-bag.
