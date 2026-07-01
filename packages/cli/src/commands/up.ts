@@ -7,7 +7,15 @@
 // stops it. pid + log live under <FARMSLOT_HOME> (default ~/.farmslot).
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import http from 'node:http';
 import { hostname, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
@@ -16,7 +24,7 @@ import type { Command } from 'commander';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
-import { bold, cyan, dim, green, red } from '../colors.js';
+import { bold, cyan, dim, green, red, yellow } from '../colors.js';
 import { probeGatewayAuth } from '../gateway-auth.js';
 import { DEFAULT_GATEWAY_URL, loadProfiles, saveProfiles } from '../gateway-profiles.js';
 import { repoRoot } from '../onboarding/workspace.js';
@@ -83,6 +91,21 @@ function logFilePath(): string {
   return join(farmslotHome(), 'gateway.log');
 }
 
+function nodePidFilePath(): string {
+  return join(farmslotHome(), 'node.pid');
+}
+
+function nodeLogFilePath(): string {
+  return join(farmslotHome(), 'node.log');
+}
+
+function readNodePid(): number | null {
+  const path = nodePidFilePath();
+  if (!existsSync(path)) return null;
+  const pid = Number(readFileSync(path, 'utf-8').trim());
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -95,6 +118,17 @@ function isAlive(pid: number): boolean {
     // ESRCH/EPERM both mean "not a process we can signal" — treat as not running.
     return false;
   }
+}
+
+// The node.pid file can go stale and the OS can reuse that pid for an unrelated process.
+// Before trusting it (skip respawn) or killing it, confirm the pid is actually THIS repo's
+// node — its command line runs `tsx services/node/src/index.ts` from repoRoot. Prevents both
+// "won't start because a foreign pid looks alive" and "down() kills an unrelated process".
+function isLocalNodeProcess(pid: number): boolean {
+  const entry = join(repoRoot, 'services', 'node', 'src', 'index.ts');
+  const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
+  if (res.status !== 0 || !res.stdout) return false;
+  return res.stdout.includes(entry);
 }
 
 /** SIGTERM, wait up to 5s for exit, escalate to SIGKILL — shared by down() and failed boots. */
@@ -274,13 +308,72 @@ function writeUpResult(params: {
   );
 }
 
-async function up(port: number, output: OutputContext, openBrowser: boolean): Promise<void> {
+// Co-launch a local node so the gateway host is a real, ONLINE node in the fleet and
+// local slots get the node's capability layers (device feed, file-watch, resource-watch,
+// metrics). It connects to this gateway over loopback with the same token — no separate
+// launchd service, so dev (7801) and prod (7777) each get their own node with no
+// cross-gateway conflict. Best-effort: if it can't start, the farm runs degraded, never
+// fatal. See ADR-046.
+async function startLocalNode(port: number, token: string, output: OutputContext): Promise<void> {
+  const existing = readNodePid();
+  if (existing && isAlive(existing) && isLocalNodeProcess(existing)) return; // already running
+  if (existing) rmSync(nodePidFilePath(), { force: true }); // stale/foreign pid — clear and start fresh
+
+  const tsx = join(repoRoot, 'node_modules', '.bin', 'tsx');
+  const entry = join(repoRoot, 'services', 'node', 'src', 'index.ts');
+  if (!existsSync(tsx) || !existsSync(entry)) {
+    output.write(
+      `${yellow('  local node not started')} ${dim('(node service missing — degraded)')}\n`,
+    );
+    return;
+  }
+
+  const machine = hostname().replace(/\.local$/, '');
+  const logFd = openSync(nodeLogFilePath(), 'a');
+  const child = spawn(tsx, [entry], {
+    cwd: repoRoot,
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
+    env: {
+      ...process.env,
+      GATEWAY_URL: `ws://127.0.0.1:${port}`,
+      MACHINE_NAME: machine,
+      FARMSLOT_GATEWAY_TOKEN: token,
+      FARMSLOT_GATEWAY_AUTH_MODE: 'token',
+    },
+  });
+  closeSync(logFd); // the detached child owns its own dup of the fd now
+  if (child.pid === undefined) {
+    output.write(`${yellow('  local node failed to spawn')} ${dim('(degraded)')}\n`);
+    return;
+  }
+  writeFileSync(nodePidFilePath(), `${child.pid}\n`);
+  child.unref();
+
+  // Soft readiness: confirm it didn't immediately exit (auth/token/crash surfaces here).
+  // Full "registered" confirmation is left to the fleet; the node log has the detail.
+  await delay(2500);
+  if (!isAlive(child.pid)) {
+    rmSync(nodePidFilePath(), { force: true });
+    output.write(
+      `${yellow('  local node exited on startup')} ${dim(`— see ${nodeLogFilePath()} (degraded)`)}\n`,
+    );
+  }
+}
+
+async function up(
+  port: number,
+  output: OutputContext,
+  openBrowser: boolean,
+  startNode: boolean,
+): Promise<void> {
   const existingPid = readPid();
   if (existingPid && isAlive(existingPid)) {
     if (await waitForHealth(port, 2000)) {
       const token = ensureTokenAuthEnv();
       await verifyTokenAuth(port, token, output);
       const localActive = registerLocalProfile(port, token);
+      if (startNode) await startLocalNode(port, token, output);
       writeUpResult({
         output,
         status: 'gateway already running',
@@ -358,6 +451,7 @@ async function up(port: number, output: OutputContext, openBrowser: boolean): Pr
   }
   await verifyTokenAuth(port, token, output);
   const localActive = registerLocalProfile(port, token);
+  if (startNode) await startLocalNode(port, token, output);
 
   writeUpResult({
     output,
@@ -372,6 +466,15 @@ async function up(port: number, output: OutputContext, openBrowser: boolean): Pr
 }
 
 async function down(output: OutputContext): Promise<void> {
+  // Stop the co-launched local node first (best-effort), then the gateway. Only kill it if
+  // the pid is really this repo's node — a stale pidfile could otherwise point at a reused pid.
+  const nodePid = readNodePid();
+  if (nodePid && isAlive(nodePid) && isLocalNodeProcess(nodePid)) {
+    await killGracefully(nodePid);
+    output.write(`${red('local node stopped')} ${dim(`pid ${nodePid}`)}\n`);
+  }
+  rmSync(nodePidFilePath(), { force: true });
+
   const pid = readPid();
   if (!pid || !isAlive(pid)) {
     rmSync(pidFilePath(), { force: true });
@@ -389,9 +492,11 @@ export function registerUpCommand(program: Command): void {
     .description('Start the local gateway + dashboard as a background service')
     .option('--port <port>', 'gateway port', '7777')
     .option('--no-open', 'print Command Center URLs without opening a browser')
-    .action(async (opts: { port: string; open?: boolean }, cmd: Command) => {
+    .option('--no-node', 'do not co-launch the local node (degraded: no device feed/file-watch)')
+    .action(async (opts: { port: string; open?: boolean; node?: boolean }, cmd: Command) => {
       const output = new OutputContext(cmd.optsWithGlobals().json ?? false);
-      await up(Number(opts.port), output, opts.open !== false && !output.json);
+      const startNode = opts.node !== false && process.env.FARMSLOT_SKIP_LOCAL_NODE !== '1';
+      await up(Number(opts.port), output, opts.open !== false && !output.json, startNode);
     });
 
   program

@@ -21,10 +21,11 @@ Key constraints:
 
 **Chosen: Route through existing `isLocalSlot()` pattern** (same as `terminal.ts`).
 
-> **Superseded in part by [ADR-046](046-mandatory-local-node.md) (Proposed):** the local-bypass
-> below (local slots use gateway `fs` + `child_process` directly) is being replaced by a mandatory
-> co-located local node so local and remote slots route uniformly through a node. The rest of this
-> ADR (lazy tree, gitignore filtering, read-only view) still stands.
+> **Still current, with a scope note — see [ADR-046](046-mandatory-local-node.md):** the local
+> one-off reads/execution below (gateway `fs` + `child_process` directly) **stand** — ADR-046
+> deliberately does NOT reroute execution or one-off file reads through the node. ADR-046 only
+> moves continuous _monitoring_ (branch/file-change watching, resource, screen) to the machine's
+> node, which this ADR did not cover.
 
 - Local slots: gateway uses Node.js `fs` + `child_process` directly
 - Remote slots: gateway routes through agent WS (agent already has `exec`, `fs.read`)

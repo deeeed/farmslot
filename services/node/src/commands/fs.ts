@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { constants, createReadStream, existsSync, type FSWatcher, watch } from 'node:fs';
+import { constants, createReadStream } from 'node:fs';
 import {
   access,
   chmod,
@@ -13,17 +13,9 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 
-// Pool configs can declare remote repos as `~/...`. The gateway composes
-// absolute-looking paths but `~` is a shell token, not a filesystem prefix —
-// node:fs treats it literally. Expand to $HOME before any disk op.
-function expandTilde(p: string): string {
-  if (p === '~') return homedir();
-  if (p.startsWith('~/')) return `${homedir()}/${p.slice(2)}`;
-  return p;
-}
+import { expandTilde, type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
 
 export interface FsEntry {
   name: string;
@@ -196,8 +188,9 @@ export async function fsExists(params: { path: string }): Promise<{ exists: bool
   }
 }
 
-// Track active watchers by request ID
-const activeWatchers = new Map<string, FSWatcher>();
+// Track active watch handles by request ID. The watch primitive itself lives in
+// @farmslot/capabilities so the gateway can reuse it as a local fallback (ADR-046).
+const activeWatchers = new Map<string, FileWatchHandle>();
 
 export function fsWatchStart(
   requestId: string,
@@ -206,50 +199,13 @@ export function fsWatchStart(
 ): void {
   // Clean up existing watcher for this ID if any
   fsWatchStop(requestId);
-
-  const targetPath = expandTilde(params.path);
-
-  if (existsSync(targetPath)) {
-    // File exists — watch it directly
-    const watcher = watch(targetPath, { persistent: false }, async () => {
-      try {
-        const content = await readFile(targetPath, 'utf-8');
-        onChange(content);
-      } catch {
-        /* file may be mid-write */
-      }
-    });
-    activeWatchers.set(requestId, watcher);
-  } else {
-    // File doesn't exist yet — watch parent directory for its creation
-    const dir = dirname(targetPath);
-    if (!existsSync(dir)) {
-      console.log(`[fs.watch] parent dir doesn't exist: ${dir} — skipping watch`);
-      return;
-    }
-    const target = basename(targetPath);
-    const watcher = watch(dir, { persistent: false }, async (_, filename) => {
-      if (filename !== target) return;
-      if (!existsSync(targetPath)) return;
-      // File appeared — read and notify
-      try {
-        const content = await readFile(targetPath, 'utf-8');
-        onChange(content);
-      } catch {
-        /* file may be mid-write */
-      }
-      // Switch to watching the file directly for subsequent changes
-      watcher.close();
-      fsWatchStart(requestId, params, onChange);
-    });
-    activeWatchers.set(requestId, watcher);
-  }
+  activeWatchers.set(requestId, watchFile(params.path, onChange));
 }
 
 export function fsWatchStop(requestId: string): boolean {
-  const watcher = activeWatchers.get(requestId);
-  if (watcher) {
-    watcher.close();
+  const handle = activeWatchers.get(requestId);
+  if (handle) {
+    handle.stop();
     activeWatchers.delete(requestId);
     return true;
   }
@@ -257,8 +213,8 @@ export function fsWatchStop(requestId: string): boolean {
 }
 
 export function fsWatchStopAll(): void {
-  for (const watcher of activeWatchers.values()) {
-    watcher.close();
+  for (const handle of activeWatchers.values()) {
+    handle.stop();
   }
   activeWatchers.clear();
 }

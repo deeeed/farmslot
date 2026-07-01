@@ -9,6 +9,9 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 
+import { encodeNodeFrame } from '@farmslot/capabilities/screen-frame';
+import { createH264FrameSplitter } from '@farmslot/capabilities/screen-h264';
+
 import { captureHelperPath } from './capture-helper-path.js';
 import { ensureLiveBrowserPid } from './screen-browser-pid.js';
 import { buildStreamSink, createSinkStats, trackSinkFrame } from './screen-sinks.js';
@@ -26,8 +29,6 @@ import type {
   TargetSelector,
 } from './screen-types.js';
 export type { ScreenCaptureConfig, StartProbeParams, StartRecordingParams };
-
-const NODE_FRAME_MAGIC = 0xaf;
 
 const androidCaptures = new Map<string, AndroidCapture>();
 let machineCapture: MachineCapture | null = null;
@@ -51,26 +52,6 @@ function captureKey(
   config: Pick<ScreenCaptureConfig, 'slotId' | 'resourceId' | 'platform'>,
 ): string {
   return `${config.slotId}:${config.resourceId ?? config.platform}`;
-}
-
-function encodeAgentFrame(
-  slotId: string,
-  payload: Uint8Array,
-  keyFrame: boolean,
-  width: number,
-  height: number,
-): Buffer {
-  const slotBytes = Buffer.from(slotId, 'utf-8');
-  const headerSize = 7 + slotBytes.length;
-  const buf = Buffer.alloc(headerSize + payload.length);
-  buf[0] = NODE_FRAME_MAGIC;
-  buf[1] = keyFrame ? 1 : 0;
-  buf.writeUInt16BE(width, 2);
-  buf.writeUInt16BE(height, 4);
-  buf[6] = slotBytes.length;
-  slotBytes.copy(buf, 7);
-  buf.set(payload, headerSize);
-  return buf;
 }
 
 // --- Framed stdout parser (capture-helper --framed) ---
@@ -102,88 +83,6 @@ function parseFramedStdout(mc: MachineCapture, chunk: Buffer): void {
 
     mc.buffer = mc.buffer.subarray(totalLen);
   }
-}
-
-// --- Annex B parser (Android adb screenrecord) ---
-
-function drainAnnexB(cap: AndroidCapture): void {
-  const buf = cap.buffer;
-  const startCodes: number[] = [];
-
-  for (let i = 0; i <= buf.length - 4; i++) {
-    if (buf[i] === 0 && buf[i + 1] === 0 && buf[i + 2] === 0 && buf[i + 3] === 1) {
-      startCodes.push(i);
-    }
-  }
-
-  if (startCodes.length < 2) return;
-
-  let consumed = 0;
-  let frameStart = -1;
-  let frameIsKey = false;
-  let frameData: Buffer[] = [];
-
-  for (let i = 0; i < startCodes.length - 1; i++) {
-    const nalStart = startCodes[i];
-    const nalEnd = startCodes[i + 1];
-    const nalType = buf[nalStart + 4] & 0x1f;
-
-    if (nalType === 7 || nalType === 8) {
-      if (frameStart === -1) frameStart = nalStart;
-      frameIsKey = true;
-      frameData.push(buf.subarray(nalStart, nalEnd));
-    } else if (nalType === 5) {
-      if (frameStart === -1) {
-        frameStart = nalStart;
-        frameIsKey = true;
-      }
-      frameData.push(buf.subarray(nalStart, nalEnd));
-      emitAndroidFrame(cap, concatBuffers(frameData), true);
-      consumed = nalEnd;
-      frameStart = -1;
-      frameIsKey = false;
-      frameData = [];
-    } else if (nalType === 1) {
-      if (frameData.length > 0) {
-        emitAndroidFrame(cap, concatBuffers(frameData), frameIsKey);
-        frameData = [];
-        frameIsKey = false;
-        frameStart = -1;
-      }
-      emitAndroidFrame(
-        cap,
-        new Uint8Array(buf.buffer, buf.byteOffset + nalStart, nalEnd - nalStart),
-        false,
-      );
-      consumed = nalEnd;
-    } else {
-      if (frameStart !== -1) {
-        frameData.push(buf.subarray(nalStart, nalEnd));
-      } else {
-        consumed = nalEnd;
-      }
-    }
-  }
-
-  if (consumed > 0) {
-    cap.buffer = Buffer.from(buf.subarray(frameData.length > 0 ? frameStart! : consumed));
-  }
-}
-
-function concatBuffers(parts: Buffer[]): Uint8Array {
-  const total = parts.reduce((s, p) => s + p.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const p of parts) {
-    out.set(p, offset);
-    offset += p.length;
-  }
-  return out;
-}
-
-function emitAndroidFrame(cap: AndroidCapture, payload: Uint8Array, keyFrame: boolean): void {
-  const frame = encodeAgentFrame(cap.slotId, payload, keyFrame, cap.width, cap.height);
-  cap.onFrame(frame);
 }
 
 // --- Stderr parser ---
@@ -455,7 +354,7 @@ function emitMacSessionFrame(
   session.lastKeyFrame = keyFrame;
   for (const sink of session.sinks.values()) {
     if (sink.sinkType === 'stream') {
-      const frame = encodeAgentFrame(sink.slotId, payload, keyFrame, session.width, session.height);
+      const frame = encodeNodeFrame(sink.slotId, payload, keyFrame, session.width, session.height);
       trackSinkFrame(sink, frame.length);
       sink.onFrame(frame);
       continue;
@@ -473,7 +372,7 @@ function replayBootstrapFrame(session: MacWindowSession, sink: CaptureSink): voi
   if (!session.lastPayload) return;
   const payload = session.lastPayload;
   if (sink.sinkType === 'stream') {
-    const frame = encodeAgentFrame(
+    const frame = encodeNodeFrame(
       sink.slotId,
       payload,
       session.lastKeyFrame,
@@ -759,16 +658,17 @@ function spawnAndroid(
     slotId,
     width: 0,
     height: 0,
-    buffer: Buffer.alloc(0),
+    // Shared H.264 splitter (@farmslot/capabilities) encodes each frame and hands it off.
+    // width/height are read live — they arrive on stderr after the first frames.
+    h264: createH264FrameSplitter((payload, keyFrame) =>
+      cap.onFrame(encodeNodeFrame(cap.slotId, payload, keyFrame, cap.width, cap.height)),
+    ),
     onFrame,
     restartCount,
     config,
   };
 
-  proc.stdout!.on('data', (chunk: Buffer) => {
-    cap.buffer = Buffer.concat([cap.buffer, chunk]);
-    drainAnnexB(cap);
-  });
+  proc.stdout!.on('data', (chunk: Buffer) => cap.h264.push(chunk));
 
   wireAndroidStderr(proc, cap);
 

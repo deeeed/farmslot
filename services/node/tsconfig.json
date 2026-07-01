@@ -3,7 +3,9 @@
   "compilerOptions": {
     "paths": {
       "@farmslot/protocol": ["../../packages/protocol/src/index.ts"],
-      "@farmslot/protocol/*": ["../../packages/protocol/src/*"]
+      "@farmslot/protocol/*": ["../../packages/protocol/src/*"],
+      "@farmslot/capabilities": ["../../packages/capabilities/src/index.ts"],
+      "@farmslot/capabilities/*": ["../../packages/capabilities/src/*"]
     }
   },
   "include": ["src/**/*.ts"]

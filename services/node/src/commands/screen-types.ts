@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
 import type { WriteStream } from 'node:fs';
 
+import type { H264FrameSplitter } from '@farmslot/capabilities/screen-h264';
 import type { BrowserContextParams } from '@farmslot/protocol';
 
 export interface ScreenCaptureConfig extends BrowserContextParams {
@@ -20,7 +21,7 @@ export interface AndroidCapture {
   slotId: string;
   width: number;
   height: number;
-  buffer: Buffer;
+  h264: H264FrameSplitter;
   onFrame: (frame: Buffer) => void;
   restartCount: number;
   config: ScreenCaptureConfig;

@@ -139,13 +139,24 @@ async function gatewaySection(): Promise<GatewayDoctorSection> {
     hint: status.update.updateAvailable ? status.update.updateCommand : undefined,
   });
   const nodes = getAllNodes();
+  const localMachine = os.hostname().replace(/\.local$/, '');
+  const localNodeUp = nodes.some((n) => n.machine === localMachine);
+  const remoteCount = nodes.filter((n) => n.machine !== localMachine).length;
   checks.push({
     id: 'nodes',
     label: 'Nodes',
     ok: true,
-    warn: nodes.length === 0,
-    detail: nodes.length === 0 ? 'no remote nodes connected' : `${nodes.length} node(s) connected`,
-    hint: nodes.length === 0 ? 'Remote nodes are optional for a local-only farm.' : undefined,
+    // The local node is what powers live monitoring (branch/file/screen/resource watches)
+    // for local slots and the machine's fleet presence — warn when it is absent (degraded).
+    warn: !localNodeUp,
+    detail: localNodeUp
+      ? `local node connected${remoteCount > 0 ? ` (+${remoteCount} remote)` : ''}`
+      : nodes.length === 0
+        ? 'no node connected — monitoring degraded (slots still run)'
+        : `local node not connected (${remoteCount} remote) — local monitoring degraded`,
+    hint: localNodeUp
+      ? undefined
+      : 'Live branch/file/screen/resource watches are off until a node connects. `farmslot up` co-launches the local node; remote machines: bash scripts/deploy-node.sh <machine>.',
   });
   return { id: 'gateway', label: 'Gateway', checks };
 }

@@ -1,8 +1,8 @@
-# ADR-046: Mandatory Co-located Local Node — Unify Execution Under the Node Layer
+# ADR-046: Mandatory Co-located Local Node — Unify Monitoring Under the Node Layer
 
 **Status:** Proposed
 **Date:** 2026-07-01
-**Relates to:** [ADR-008](008-remote-communication.md) (extends), [ADR-009](009-slot-workspace.md) (**supersedes §A local-bypass**), [ADR-001](001-gateway-architecture.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-020](020-agent-to-node-rename.md), [ADR-035](035-node-support-bundles.md)
+**Relates to:** [ADR-008](008-remote-communication.md) (extends), [ADR-009](009-slot-workspace.md) (scope note — its §A local reads/exec still stand), [ADR-001](001-gateway-architecture.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-020](020-agent-to-node-rename.md), [ADR-035](035-node-support-bundles.md)
 
 ## Context
 
@@ -26,9 +26,9 @@ That decision (an `isLocalSlot()` split) was pragmatic for early milestones, but
 **Make a co-located local node mandatory.** Every machine that runs slots — including the gateway host — runs a node; the gateway owns orchestration only.
 
 1. **`farmslot up` starts and supervises a local node.** The node connects to the gateway over a loopback WebSocket and registers with capabilities exactly like a remote node (auth via the existing gateway token). Its lifecycle is tied to `up` (start, health, restart).
-2. **All slots route through their machine's node.** Local slots use the loopback node's `exec` / `fs` / `screen` / watch handlers — the same RPC path as remote slots — instead of the gateway's `execLocal` and local reimplementations.
-3. **Supersede [ADR-009 §A](009-slot-workspace.md):** local slots no longer use gateway `fs` + `child_process` directly. File access, execution, and watching for local slots go through the local node, uniform with remote.
-4. **The fleet shows the local node online** because it is a real registered node.
+2. **Machine-local MONITORING routes through the node** — branch/file-change watching (`fs.watch`), resource watching, and screen/device capture flow through the machine's node (local via loopback), uniform with remote. The gateway stops running its local reimplementations for these (the branch-watcher `chokidar`; local capture-helper). Without a node, monitoring is degraded (a periodic poll still refreshes the branch) and upgrades to live watches when the node connects (`node.connect` → `restartBranchWatchesForMachine` / `sendWatchInstructions`).
+3. **EXECUTION stays gateway-side for local slots — deliberately NOT rerouted.** One-off commands (`execLocal`) and one-off file reads/writes (the [ADR-009 §A](009-slot-workspace.md) slot-workspace path) keep running directly in the gateway for local slots — cheap, unchanged, and it works even when the node is down. Rerouting execution through the node would add a hop for no functional gain; the node is about **monitoring + presence**, not execution. ADR-009 §A therefore still stands for one-off local reads; only continuous _watching_ (which ADR-009 did not cover) moves to the node.
+4. **The fleet shows the local node online** because it is a real registered node; `farmslot doctor` reports its presence (degraded when absent).
 
 ### Gateway vs node responsibilities (canonical map)
 
@@ -57,27 +57,56 @@ So the two axes are orthogonal:
 
 The local node's gateway channel is a **loopback** WebSocket carrying RPC requests/results; the actual file and process operations happen locally. Making the local node mandatory changes _who owns_ local capabilities (node, not gateway) and gives the machine real fleet presence — it does **not** add SSH, a network hop, or remote file access for local slots.
 
+### Shared capability primitives — the `@farmslot/capabilities` package
+
+Some machine-local capabilities have a **degraded gateway fallback**: when a local machine has no node, the gateway still performs the capability directly rather than losing it entirely (Arthur's requirement — the farm keeps working without a node, just degraded). To have the fallback **without duplicating logic**, the primitive lives once in a new node-only workspace package, `@farmslot/capabilities`, imported by both the node (primary owner) and the gateway (local fallback). One implementation, two callers.
+
+Modules (each a plain, self-describing primitive — no hidden state shared across callers):
+
+| Module (`@farmslot/capabilities/…`)                        | What it is                                                                      | Node uses it for             | Gateway uses it for                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------- |
+| `fs-watch` — `watchFile()`                                 | native `fs.watch` + "watch parent dir until the file appears" + tilde expansion | the `fs.watch` RPC           | local branch (`.git/HEAD`) watch when a **local** machine has no node |
+| `screen-frame` — `encodeNodeFrame()` / `decodeNodeFrame()` | the node→gateway capture-frame binary envelope codec (magic `0xAF`)             | encoding every capture frame | decoding relayed node frames                                          |
+| `screen-h264` — `createH264FrameSplitter()`                | splits a raw `adb screenrecord` H.264 byte stream into individual video frames  | the node's Android capture   | the gateway's direct Android capture                                  |
+
+**Not every capability gets a gateway fallback.** macOS screen capture is deliberately **single-owner** — one capture-helper process per machine owns ScreenCaptureKit and all its windows (see `services/node/src/commands/screen.ts`). A second owner in the gateway would fight the node over the same windows, so macOS capture stays **node-only** (the mandatory co-launched node covers it); only the shared codec + H.264 splitter are lifted, not a second macOS capture engine. Execution (`execLocal`) and one-off file reads likewise stay gateway-side (see Decision item 3) — they are cheap and node-independent, so they are not moved into this package.
+
+The package is node-only runtime code (uses `node:fs` / `node:child_process`); it depends on `@farmslot/protocol` for shared constants (e.g. the frame magic) but keeps `Buffer`-based runtime helpers out of the UI-shared protocol bundle.
+
 ## Consequences
 
 **Positive**
 
-- One uniform execution + capability path for all machines; the `isLocalSlot()` execution split goes away.
-- Local slots gain the full node layer (fs-watch, resource-watch, screen, metrics) with no gateway reimplementation.
-- Honest fleet: the gateway host appears as an online node.
-- Clean, documented separation of concerns between the two services.
+- One uniform **monitoring** path for all machines; the duplicated primitives (the gateway's `chokidar` branch watch, and the frame codec + H.264 splitter copied into both services) collapse into `@farmslot/capabilities`, so there is one place to maintain.
+- Local slots gain the node's monitoring layers (fs-watch, resource-watch, screen, metrics) that were skipped without a node.
+- Honest fleet: the gateway host appears as an online node; `farmslot doctor` reports it.
+- Clean, documented separation of concerns; execution stays simple and gateway-local.
 
 **Negative / cost**
 
 - New lifecycle: `farmslot up` must supervise the local node (spawn, health-check, restart on crash) — one more managed process.
-- Migration must remove/deprecate the gateway's local reimplementations (`execLocal` streaming path, local device feed) once the local node handles them, without regressing terminals or evidence capture.
-- Loopback WS needs auth (reuse the gateway token) and must not incur meaningful latency for local exec.
+- Monitoring becomes node-dependent: no node ⇒ no live branch/file/screen watches (degraded); the 60s branch poll and `execLocal` execution still work.
+- Loopback WS needs auth (reuse the gateway token).
 
 ## Migration / rollout
 
-1. **This ADR** — record the decision, supersede ADR-009 §A, publish the responsibility map.
-2. `farmslot up` co-launches + supervises a loopback local node (reuse `services/node` + the token auth).
-3. Route local slots through the local node (replace the `isLocalSlot() → execLocal` branches with node RPC over loopback), starting with `exec`, then `fs`/watch, then `screen`.
-4. Dedup: retire the gateway's local reimplementations as each capability moves to the node.
-5. Fleet UI: render the local/gateway-host node as online (remove the misleading `NODE OFFLINE`).
+1. **This ADR + `farmslot up` co-launch** (reuse `services/node` + token auth); fleet + doctor reflect the node; degraded when absent. **[done]**
+2. Unify **monitoring** through the node, and lift the primitives it and the gateway both need into `@farmslot/capabilities` (node primary, gateway local fallback — no duplication):
+   - branch / `.git/HEAD` watch → node `fs.watch`; the gateway reuses the same `watchFile` primitive as a **local** fallback when a local machine has no node (drops the old `chokidar` reimplementation). **[done]**
+   - capture frame codec + Android H.264 splitter → shared `screen-frame` / `screen-h264` (were copied verbatim into both services). **[done]**
+   - resource watch → already node-based (`resource-manager.ts`); activates for local once the node connects.
+   - macOS screen capture → stays **node-only** by design (single-owner ScreenCaptureKit; a gateway fallback would fight the node). Covered by the mandatory co-launched node.
+3. Execution is **not** migrated — `execLocal` and one-off local file reads (ADR-009 §A) stay gateway-side by design.
 
-Until step 2 ships, the current behavior stands and the "local host shows NODE OFFLINE" badge should be treated as cosmetic (local slots still work via `execLocal`).
+Until the local node is co-launched, the "local host shows NODE OFFLINE" badge is cosmetic (local slots still work via `execLocal`); the fleet now renders it as **degraded** instead.
+
+## Future direction (not in scope — needs its own roadmap entry)
+
+The `@farmslot/capabilities` package suggests a cleaner end-state for the whole gateway/node split, worth recording but **not** built here:
+
+> Move each machine-local capability — `exec`, `fs` (read/write/watch), resource watch, screen, system metrics, tmux — into `@farmslot/capabilities` as a plain library. Then:
+>
+> - the **node** becomes a _thin transport layer_: a WebSocket server that maps RPC frames onto the shared library and streams results back. Almost no logic of its own — ideal for a small remote deploy bundle.
+> - the **gateway**, for a single-machine (all-local) install, calls the **same library directly** as the degraded fallback when no node is connected — so the farm runs fully local with or without a node, and the "does it work without a node" answer is "yes, via the shared library" for every capability, not just branch watch.
+
+This generalizes the pattern this ADR introduces (currently: fs-watch, frame codec, H.264 splitter) to the full capability surface. It is a sizeable refactor with real regression surface (the stateful macOS capture engine, tmux/pty, resource-manager), and it revisits the Decision-item-3 "execution stays gateway-side" line, so it must be scoped and approved as its own ADR/roadmap item before any code moves. Flagged here so the package is understood as the _seed_ of a shared capability layer, not a one-off util grab-bag.
