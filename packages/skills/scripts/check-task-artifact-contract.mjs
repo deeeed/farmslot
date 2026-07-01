@@ -28,7 +28,7 @@ for (let i = 0; i < rawArgs.length; i += 1) {
 
 if (!taskDir) {
   console.error(
-    'usage: check-task-artifact-contract.mjs <task-dir> [--contract path] [--terminal complete|no-change|blocked] [--require-recipe-quality-if-recipe] [--require-recipe-coverage-if-recipe] [--require-learnings]',
+    'usage: check-task-artifact-contract.mjs <task-dir> [--contract path] [--terminal complete|no-change|blocked] [--require-recipe-quality-if-recipe] [--require-recipe-coverage-if-recipe] [--require-learnings] [--skip-learnings]',
   );
   process.exit(2);
 }
@@ -286,6 +286,7 @@ if (contractPath && existsSync(contractPath) && terminalCommand) {
   const contract = JSON.parse(readFileSync(contractPath, 'utf8'));
   const expanded = expandedArtifactsForCommand(contract, terminalCommand, fileExists);
   for (const artifactPath of expanded.artifacts) {
+    if (flags.has('--skip-learnings') && artifactPath === 'artifacts/learnings.md') continue;
     if (artifactPath.endsWith('.md') && !readText(artifactPath)?.trim()) {
       issues.push(`${artifactPath}: required non-empty artifact (worker terminal contract)`);
     }

@@ -127,7 +127,7 @@ Once a valid terminal signal exists, Farmslot runs advance (self-review, publica
 
 ### Optional: project overrides (Farmslot farms)
 
-Most farms need nothing beyond [Worker artifacts by flow](worker-artifacts-by-flow.md). Projects that want explicit per-flow lists can add `worker_terminal` in `project.json`; the gateway then writes `inputs/worker-terminal-contract.json` for each run and `./mark` reads it. See [ADR-045](../../../docs/adr/045-worker-terminal-contract.md).
+Most farms need nothing beyond [Worker artifacts by flow](worker-artifacts-by-flow.md). Projects that want explicit per-flow lists can add `worker_terminal` in `project.json`; the gateway then writes `inputs/worker-terminal-contract.json` for each run and `./mark` reads it. See [ADR-045](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md).
 
 ```text
 Skill/template checklist  →  worker writes artifacts  →  ./mark validates  →  SIGNAL.json
@@ -142,4 +142,4 @@ Skill/template checklist  →  worker writes artifacts  →  ./mark validates  �
 - Signal schema, freshness, blocked/failed shapes → [Worker signal protocol](worker-signal-protocol.md)
 - Optional template authoring lint + review skill → [Worker template quality (optional)](worker-template-quality.md)
 - Farmslot worker templates → [Customize worker prompts](../guides/customize-worker-prompts.md)
-- Per-project artifact lists (`project.json` `worker_terminal`) → [ADR-045](../../../docs/adr/045-worker-terminal-contract.md)
+- Per-project artifact lists (`project.json` `worker_terminal`) → [ADR-045](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md)

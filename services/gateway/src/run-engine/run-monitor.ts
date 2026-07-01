@@ -726,7 +726,7 @@ export async function monitorRun(
             return { pollCount, exitReason, violations: allViolations, snapshots };
           }
 
-          if (holdIfMissingSignal(latestRun)) {
+          if (shouldHoldForInteractivePrComplete(latestRun)) {
             console.log(
               `[run-monitor] run ${runId.slice(0, 8)} — interactive PR-complete handoff (${v.type}), blocking instead of nudging`,
             );

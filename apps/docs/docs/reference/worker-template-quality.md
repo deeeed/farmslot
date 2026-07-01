@@ -75,4 +75,4 @@ See also [Worker signal protocol](worker-signal-protocol.md) and [Customize work
 | ci-fix        | `learnings.md`, `report.md`                                                      |
 | self-review   | `learnings.md` (no report required)                                              |
 
-Projects may override lists via `worker_terminal` in `project.json` — see [ADR-045](../../../docs/adr/045-worker-terminal-contract.md).
+Projects may override lists via `worker_terminal` in `project.json` — see [ADR-045](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md).

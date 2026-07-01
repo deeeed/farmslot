@@ -264,6 +264,7 @@ function assertArtifactContract(taskDir, contract, terminalCommand) {
   if (fs.existsSync(contractPath)) {
     args.push('--contract', contractPath);
     if (terminalCommand) args.push('--terminal', terminalCommand);
+    if (opts['skip-learnings']) args.push('--skip-learnings');
   } else {
     if (!opts['skip-learnings']) args.push('--require-learnings');
     if (fs.existsSync(path.join(taskDir, 'artifacts', 'recipe.json'))) {
@@ -331,10 +332,12 @@ function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPa
       : {}),
   };
 
+  const contract = terminal ? loadTerminalContract(_taskDir, taskPath) : null;
   if (terminal.command === 'no-change') {
-    next.evidence = { reportPath: NO_CHANGE_REPORT };
+    next.evidence = {
+      reportPath: contract?.commands?.['no-change']?.report ?? NO_CHANGE_REPORT,
+    };
   } else if (terminal.command === 'complete') {
-    const contract = loadTerminalContract(_taskDir, taskPath);
     const reportPath = contract?.commands?.complete?.report;
     if (reportPath) next.evidence = { reportPath };
   }

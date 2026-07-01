@@ -71,5 +71,5 @@ Built-in defaults live in [`worker-terminal-contract.cjs`](https://github.com/de
 ## Related
 
 - [Finish a worker run](worker-run-finish.md) — three-step worker checklist
-- [ADR-045: Worker terminal contract](../../../docs/adr/045-worker-terminal-contract.md) — project.json overrides
+- [ADR-045: Worker terminal contract](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md) — project.json overrides
 - [Recipe skills adoption kit](../guides/recipe-skills-adoption.md) — standalone skills path

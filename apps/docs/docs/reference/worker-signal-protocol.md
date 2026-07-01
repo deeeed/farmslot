@@ -94,12 +94,12 @@ Write **3–5 markdown bullets** on key learnings or struggles during the sessio
 When nothing relevant, one bullet is enough: `- Nothing relevant — straightforward run; no blockers or surprises.`
 
 Projects may optionally declare overrides in `project.json` → `worker_terminal`
-(see [ADR-045](../../../docs/adr/045-worker-terminal-contract.md)); the gateway
+(see [ADR-045](https://github.com/deeeed/farmslot/blob/main/docs/adr/045-worker-terminal-contract.md)); the gateway
 may also write `inputs/worker-terminal-contract.json` for a run. **Most teams
 only need the finish checklist above.**
 
 Orchestration consumers (retrospective, improvement engine, family readiness) read
-the same artifact store documented in [ADR-026](../../../docs/adr/026-self-improvement-recursive-loop.md).
+the same artifact store documented in [ADR-026](https://github.com/deeeed/farmslot/blob/main/docs/adr/026-self-improvement-recursive-loop.md).
 
 ## Status and outcome matrix
 
