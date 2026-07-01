@@ -7,7 +7,7 @@
 // builds and executes a plan.
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readdirSync, realpathSync, rmdirSync, rmSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { isAbsolute, join, resolve, sep } from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
@@ -43,9 +43,16 @@ export interface UninstallPlan {
 /** Refuse to operate on obviously unsafe roots (a bug in state.json must never rm $HOME). */
 function assertSafeRoot(dir: string): void {
   const home = process.env.HOME ?? '';
-  if (!dir || dir === '/' || dir === home || resolve(dir) === resolve(home)) {
+  if (!dir || !isAbsolute(dir) || dir === '/' || dir === home || resolve(dir) === resolve(home)) {
     throw new Error(`refusing to uninstall an unsafe path: ${dir}`);
   }
+}
+
+/** True when `child` resolves to `dir` or a path inside it. */
+function isInsideDir(child: string, dir: string): boolean {
+  const c = resolve(child);
+  const d = resolve(dir);
+  return c === d || c.startsWith(d + sep);
 }
 
 /** The PATH symlink is only ours to remove if it is a symlink resolving inside the workspace. */
@@ -74,6 +81,31 @@ export function buildUninstallPlan(
   assertSafeRoot(ws.root);
   const homeDir = state?.home_dir ?? farmslotHome();
   assertSafeRoot(homeDir);
+  // A home dir that equals or contains the workspace would take kept run history with it
+  // when deleted — refuse rather than risk clobbering the workspace (e.g. a state.json
+  // with home_dir pointing at an ancestor like ~/dev).
+  const rootR = resolve(ws.root);
+  const homeR = resolve(homeDir);
+  if (rootR === homeR || rootR.startsWith(homeR + sep)) {
+    throw new Error(`refusing to uninstall: home dir ${homeDir} contains the workspace ${ws.root}`);
+  }
+  // A backup written inside a directory that will be removed is destroyed with it.
+  if (opts.history === 'backup' && opts.historyBackupPath) {
+    for (const danger of [ws.runsDir, ws.root, homeDir]) {
+      if (isInsideDir(opts.historyBackupPath, danger)) {
+        throw new Error(
+          `history backup ${opts.historyBackupPath} is inside a removed path (${danger})`,
+        );
+      }
+    }
+  }
+  if (opts.home === 'backup' && opts.homeBackupPath) {
+    for (const danger of [ws.root, homeDir]) {
+      if (isInsideDir(opts.homeBackupPath, danger)) {
+        throw new Error(`home backup ${opts.homeBackupPath} is inside a removed path (${danger})`);
+      }
+    }
+  }
   return {
     workspaceRoot: ws.root,
     installDirs: [ws.farmslotDir, ws.reposDir],
@@ -159,12 +191,18 @@ export function executeUninstallPlan(plan: UninstallPlan, hooks: UninstallHooks)
   }
 
   // 3. Remove the now-empty workspace dir (kept history leaves it in place on purpose).
-  try {
-    if (existsSync(plan.workspaceRoot) && readdirSync(plan.workspaceRoot).length === 0) {
-      rmdirSync(plan.workspaceRoot);
-      hooks.step(`removed empty workspace ${plan.workspaceRoot}`);
+  if (existsSync(plan.workspaceRoot)) {
+    try {
+      if (readdirSync(plan.workspaceRoot).length === 0) {
+        rmdirSync(plan.workspaceRoot);
+        hooks.step(`removed empty workspace ${plan.workspaceRoot}`);
+      } else {
+        hooks.step(`kept non-empty workspace ${plan.workspaceRoot} (contains kept files)`);
+      }
+    } catch (err) {
+      hooks.step(
+        `could not remove workspace ${plan.workspaceRoot}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
-  } catch {
-    // Non-empty (history kept, or a stray file) — leave it; the report tells the user.
   }
 }

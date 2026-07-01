@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 
 import { buildUninstallPlan } from './uninstall.js';
@@ -93,6 +93,45 @@ test('dispositions and backup paths pass through to the plan', () => {
     assert.equal(plan.home, 'delete');
     assert.equal(plan.homeDir, join(root, '.home'));
     assert.equal(plan.dryRun, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a non-absolute or ancestor home dir', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-'));
+  try {
+    assert.throws(
+      () => buildUninstallPlan(workspaceAt(root), baseState({ home_dir: 'relative/home' }), KEEP),
+      /unsafe path/,
+    );
+    // A home dir that contains the workspace would take kept history with it.
+    assert.throws(
+      () =>
+        buildUninstallPlan(workspaceAt(root), baseState({ home_dir: resolve(root, '..') }), {
+          ...KEEP,
+          home: 'delete',
+        }),
+      /contains the workspace/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a backup path inside a directory being removed', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-'));
+  try {
+    assert.throws(
+      () =>
+        buildUninstallPlan(workspaceAt(root), baseState(), {
+          history: 'backup',
+          home: 'keep',
+          historyBackupPath: join(root, 'runs', 'backup.tgz'), // inside runs → destroyed with it
+          dryRun: false,
+        }),
+      /inside a removed path/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
