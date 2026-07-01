@@ -5,13 +5,9 @@ import type {
   SelfReviewIssue,
 } from '@farmslot/protocol';
 
-import { gatewayApiUrl, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 import { formatDuration } from './run-utils.js';
-
-export function stepInspectorGatewayBase(): string {
-  return gatewayHttpOrigin();
-}
 
 // Keys to render as command blocks with copy button
 export const COMMAND_KEYS = new Set(['cliCommand', 'failedCommand', 'launchCommand']);
@@ -189,11 +185,6 @@ export function stepArtifactsForRunStep(
     }));
 }
 
-export function stepArtifactUrl(
-  artifact: FamilyObservabilityArtifact,
-  gatewayBase = stepInspectorGatewayBase(),
-): string {
-  return gatewayApiUrl(
-    `${gatewayBase}/api/run-artifact?runId=${artifact.runId}&path=${encodeURIComponent(artifact.path)}`,
-  );
+export function stepArtifactUrl(artifact: FamilyObservabilityArtifact): string {
+  return runArtifactUrl(artifact.runId, artifact);
 }

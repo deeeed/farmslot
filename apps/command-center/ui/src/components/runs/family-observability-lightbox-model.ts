@@ -38,21 +38,19 @@ export function familyVisibleLightboxArtifacts(
 }
 
 export function familyLightboxItemsForArtifacts(
-  gatewayBase: string,
   artifacts: readonly FamilyObservabilityArtifact[],
   snapshot: FamilyObservabilitySnapshot | null,
 ) {
   return artifacts.map((artifact) =>
-    familyLightboxItem(gatewayBase, artifact, familyRunForArtifact(snapshot, artifact)),
+    familyLightboxItem(artifact, familyRunForArtifact(snapshot, artifact)),
   );
 }
 
 export function familyLightboxPairsForSnapshot(
-  gatewayBase: string,
   snapshot: FamilyObservabilitySnapshot | null,
 ): LightboxPair[] {
   return buildFamilyLightboxPairs(snapshot?.evidence ?? [], (artifact) =>
-    familyLightboxItem(gatewayBase, artifact, familyRunForArtifact(snapshot, artifact)),
+    familyLightboxItem(artifact, familyRunForArtifact(snapshot, artifact)),
   );
 }
 

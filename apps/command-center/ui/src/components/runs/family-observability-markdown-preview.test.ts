@@ -42,14 +42,11 @@ test('familyMarkdownPreviewFetchPath strips gateway base for proxied artifact fe
   withMockLocalStorage(() => {
     localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, 'dev-token');
     assert.equal(
-      familyMarkdownPreviewFetchPath(
-        'http://localhost:7777',
-        'http://localhost:7777/api/run-artifact?x=1',
-      ),
+      familyMarkdownPreviewFetchPath('http://localhost:7777/api/run-artifact?x=1'),
       '/api/run-artifact?x=1&token=dev-token',
     );
     assert.equal(
-      familyMarkdownPreviewFetchPath('http://localhost:7777', '/api/run-artifact?x=1'),
+      familyMarkdownPreviewFetchPath('/api/run-artifact?x=1'),
       '/api/run-artifact?x=1&token=dev-token',
     );
   });
@@ -59,11 +56,7 @@ test('familyMarkdownPreviewFetchPath keeps hosted /cc artifact URLs absolute wit
   withMockLocalStorage(() => {
     localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, 'hosted-token');
     assert.equal(
-      familyMarkdownPreviewFetchPath(
-        'http://localhost:7777',
-        'http://localhost:7777/api/run-artifact?x=1&token=t',
-        '/cc/',
-      ),
+      familyMarkdownPreviewFetchPath('http://localhost:7777/api/run-artifact?x=1&token=t', '/cc/'),
       'http://localhost:7777/api/run-artifact?x=1&token=t',
     );
     assert.equal(

@@ -14,7 +14,7 @@ import {
   buildArtifactUrlResolver,
   rewriteMarkdownArtifactUrls,
 } from '../../utils/artifact-markdown.js';
-import { gatewayApiUrl, gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { gatewayHttpFetch, gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import {
   currentRecoveryEpoch,
   isRecoveryEpochCurrent,
@@ -86,8 +86,6 @@ import {
 } from './workspace-url-state.js';
 
 type TabId = ReadyWorkspaceTab;
-
-const GATEWAY_BASE = gatewayHttpOrigin();
 
 const DEV_FALLBACK_DIFF = `diff --git a/src/gate.ts b/src/gate.ts
 index 1111111..2222222 100644
@@ -238,11 +236,11 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     if (artifact?.sha256) params.set('v', artifact.sha256.slice(0, 12));
     else if (typeof artifact?.sizeBytes === 'number') params.set('v', `s${artifact.sizeBytes}`);
     if (typeof artifact?.sizeBytes === 'number') params.set('vsize', String(artifact.sizeBytes));
-    return gatewayApiUrl(`${GATEWAY_BASE}/api/run-artifact?${params.toString()}`);
+    return gatewayResourceUrl(`/api/run-artifact?${params.toString()}`);
   }
 
   _recipeRunArtifactUrl(group: RecipeRunArtifactGroup, artifact: ArtifactRef): string {
-    return recipeRunArtifactUrl(GATEWAY_BASE, this.runId, group, artifact);
+    return recipeRunArtifactUrl(this.runId, group, artifact);
   }
 
   _selectedRecipeRun(): RecipeRunArtifactGroup | null {

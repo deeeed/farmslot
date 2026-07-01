@@ -5,7 +5,7 @@ import {
 } from '@farmslot/protocol';
 
 import { artifactKind } from '../../utils/artifact-kind.js';
-import { gatewayApiUrl, gatewayProxiedFetchUrl } from '../../utils/gateway-origin.js';
+import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
 export type ArtifactGroup = 'before' | 'after' | 'review' | 'other';
 export type ArtifactFilter = 'all' | ArtifactGroup;
 export type ArtifactTypeFilter = 'all' | 'image' | 'video' | 'markdown' | 'json' | 'diff' | 'other';
@@ -33,19 +33,14 @@ export function runArtifactApiPath(runId: string, artifact: Pick<ArtifactRef, 'p
 }
 
 export function runArtifactFetchUrl(runId: string, artifact: Pick<ArtifactRef, 'path'>): string {
-  return gatewayProxiedFetchUrl(runArtifactApiPath(runId, artifact));
+  return gatewayResourceUrl(runArtifactApiPath(runId, artifact));
 }
 
-export function runArtifactUrl(
-  gatewayBase: string,
-  runId: string,
-  artifact: Pick<ArtifactRef, 'path'>,
-): string {
-  return gatewayApiUrl(`${gatewayBase}${runArtifactApiPath(runId, artifact)}`);
+export function runArtifactUrl(runId: string, artifact: Pick<ArtifactRef, 'path'>): string {
+  return gatewayResourceUrl(runArtifactApiPath(runId, artifact));
 }
 
 export function recipeRunArtifactUrl(
-  gatewayBase: string,
   runId: string,
   group: Pick<RecipeRunArtifactGroup, 'id' | 'groupKind'>,
   artifact: Pick<ArtifactRef, 'path' | 'sha256' | 'sizeBytes'>,
@@ -55,7 +50,7 @@ export function recipeRunArtifactUrl(
   if (artifact.sha256) params.set('v', artifact.sha256.slice(0, 12));
   else if (typeof artifact.sizeBytes === 'number') params.set('v', `s${artifact.sizeBytes}`);
   if (typeof artifact.sizeBytes === 'number') params.set('vsize', String(artifact.sizeBytes));
-  return gatewayApiUrl(`${gatewayBase}/api/run-artifact?${params.toString()}`);
+  return gatewayResourceUrl(`/api/run-artifact?${params.toString()}`);
 }
 
 export function workspaceArtifactGroup(

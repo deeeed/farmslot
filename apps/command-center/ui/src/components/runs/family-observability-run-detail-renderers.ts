@@ -23,7 +23,6 @@ interface FamilyRunSummaryGridOptions {
 
 interface FamilySummaryStepsOptions {
   run: FamilyObservabilityRunSummary;
-  gatewayBase: string;
   onOpenStepArtifact: (
     artifacts: FamilyObservabilityArtifact[],
     index: number,
@@ -101,8 +100,7 @@ export function renderFamilySummarySteps(options: FamilySummaryStepsOptions) {
               .artifacts=${step.artifacts ?? []}
               .learnings=${step.learnings ?? []}
               .missingData=${step.missingData ?? []}
-              .artifactUrl=${(artifact: FamilyObservabilityArtifact) =>
-                familyArtifactUrl(options.gatewayBase, artifact)}
+              .artifactUrl=${(artifact: FamilyObservabilityArtifact) => familyArtifactUrl(artifact)}
               @step-artifact-click=${(
                 event: CustomEvent<{
                   artifacts: FamilyObservabilityArtifact[];

@@ -27,6 +27,11 @@ export function gatewayHttpOrigin(locationLike = currentLocation()): string {
       // Stored gateway URLs are user-editable; ignore malformed values and use the local default.
     }
   }
+  // Browser dashboard: WS defaults to same host (/ws via Vite proxy). Keep HTTP on that
+  // origin instead of guessing :7777 — dev often runs gateway on another port (7801).
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
   return `${locationLike.protocol}//${locationLike.hostname}:7777`;
 }
 
@@ -53,9 +58,9 @@ export function gatewayAuthenticatedUrl(pathOrUrl: string): string {
   return gatewayApiUrl(pathOrUrl);
 }
 
-/** Authenticated URL for img/video/href consumers (absolute URL, token in query when needed). */
+/** Authenticated URL for img/video/href — same-origin /api proxy in local dev, absolute on hosted /cc. */
 export function gatewayResourceUrl(pathOrUrl: string): string {
-  return gatewayAuthenticatedUrl(pathOrUrl);
+  return gatewayProxiedFetchUrl(pathOrUrl);
 }
 
 export function readGatewayHttpLocation(): GatewayHttpLocation | null {

@@ -3,6 +3,8 @@ import { test } from 'node:test';
 
 import type { Run, RunStep } from '@farmslot/protocol';
 
+import { GATEWAY_TOKEN_STORAGE_KEY } from '../../gateway-url.js';
+
 import {
   extractStepCostInfo,
   reviewLoopAttempts,
@@ -226,18 +228,46 @@ test('reviewLoopAttempts falls back to index-based loop numbers', () => {
 });
 
 test('stepArtifactUrl encodes run artifact paths', () => {
-  assert.equal(
-    stepArtifactUrl(
-      {
-        runId: 'run-1',
-        familyId: 'family-1',
-        stepName: 'verify',
-        path: 'artifacts/a b.png',
-        purpose: 'screenshot',
-        source: 'step-output',
-      },
-      'http://gateway.local',
-    ),
-    'http://gateway.local/api/run-artifact?runId=run-1&path=artifacts%2Fa%20b.png',
-  );
+  withMockLocalStorage(() => {
+    localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, 'dev-token');
+    const url = stepArtifactUrl({
+      runId: 'run-1',
+      familyId: 'family-1',
+      stepName: 'verify',
+      path: 'artifacts/a b.png',
+      purpose: 'screenshot',
+      source: 'step-output',
+    });
+    assert.match(url, /runId=run-1/);
+    assert.match(url, /path=artifacts(%2F|%252F)a(\+|%20|%2520)b\.png/);
+    assert.match(url, /token=dev-token/);
+  });
 });
+
+function withMockLocalStorage(fn: () => void): void {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem(key: string): string | null {
+        return store.get(key) ?? null;
+      },
+      setItem(key: string, value: string): void {
+        store.set(key, value);
+      },
+      removeItem(key: string): void {
+        store.delete(key);
+      },
+    },
+  });
+  try {
+    fn();
+  } finally {
+    if (previous) {
+      Object.defineProperty(globalThis, 'localStorage', previous);
+    } else {
+      delete (globalThis as { localStorage?: Storage }).localStorage;
+    }
+  }
+}

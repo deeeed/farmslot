@@ -9,11 +9,9 @@ import { familyArtifactKey } from './family-observability-artifact-model.js';
 
 /** Legacy wrapper — prefer gatewayProxiedFetchUrl in new code. */
 export function familyMarkdownPreviewFetchPath(
-  gatewayBase: string,
   url: string,
   locationPathname = typeof window !== 'undefined' ? window.location.pathname : '/',
 ): string {
-  void gatewayBase;
   return gatewayProxiedFetchUrl(url, {
     href: typeof window !== 'undefined' ? window.location.href : 'http://localhost/',
     origin: typeof window !== 'undefined' ? window.location.origin : 'http://localhost',

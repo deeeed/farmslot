@@ -117,8 +117,8 @@ test('family lightbox item and pair derivation keeps run provenance and compare 
       artifact('captures/after-login.png', 'after'),
     ],
   });
-  const items = familyLightboxItemsForArtifacts('http://localhost:7777', snap.evidence, snap);
-  const pairs = familyLightboxPairsForSnapshot('http://localhost:7777', snap);
+  const items = familyLightboxItemsForArtifacts(snap.evidence, snap);
+  const pairs = familyLightboxPairsForSnapshot(snap);
 
   assert.equal(items[1].path, 'captures/after-login.png');
   assert.equal(items[1].provenance, 'fix @ fix/demo');

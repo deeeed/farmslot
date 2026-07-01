@@ -27,7 +27,7 @@ test('run artifact URL helpers preserve shared run artifact encoding', () => {
     '/api/run-artifact?runId=run%3A1&path=artifacts%2Freview%20notes%2Fdiff.txt',
   );
   assert.equal(
-    runArtifactUrl('http://localhost:7777', 'run:1', artifact),
+    runArtifactUrl('run:1', artifact),
     'http://localhost:7777/api/run-artifact?runId=run%3A1&path=artifacts%2Freview%20notes%2Fdiff.txt',
   );
   withMockLocalStorage(() => {
@@ -70,7 +70,6 @@ function withMockLocalStorage(fn: () => void): void {
 
 test('recipeRunArtifactUrl preserves recipe-run scope and cache busting hints', () => {
   const url = recipeRunArtifactUrl(
-    'http://localhost:7777',
     'run-1',
     { id: 'live-run:abc', groupKind: 'live-run' },
     {
@@ -91,13 +90,11 @@ test('recipeRunArtifactUrl changes when content hash changes for the same recipe
     sizeBytes: 321,
   };
   const first = recipeRunArtifactUrl(
-    'http://localhost:7777',
     'run-1',
     { id: 'live-run:abc', groupKind: 'live-run' },
     { ...base, sha256: '1111111111117890' },
   );
   const second = recipeRunArtifactUrl(
-    'http://localhost:7777',
     'run-1',
     { id: 'live-run:abc', groupKind: 'live-run' },
     { ...base, sha256: '2222222222227890' },
@@ -107,7 +104,6 @@ test('recipeRunArtifactUrl changes when content hash changes for the same recipe
 
 test('recipeRunArtifactUrl uses size cache busting for current artifacts without recipe scope', () => {
   const url = recipeRunArtifactUrl(
-    'http://localhost:7777',
     'run-1',
     { id: 'current-artifacts', groupKind: 'current-artifacts' },
     {
