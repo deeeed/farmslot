@@ -3,7 +3,6 @@ import type {
   BacklogCreateParams,
   BacklogDeleteParams,
   BacklogDequeueParams,
-  BacklogDequeueParams,
   BacklogEnqueueParams,
   BacklogListParams,
   BacklogMarkReadyParams,

@@ -16,6 +16,7 @@ export const DispatchMethods = {
   queueAdd: Methods.DISPATCH_QUEUE_ADD,
   queueList: Methods.DISPATCH_QUEUE_LIST,
   queueRemove: Methods.DISPATCH_QUEUE_REMOVE,
+  queueRemoveOrphan: Methods.DISPATCH_QUEUE_REMOVE_ORPHAN,
   queueUpdate: Methods.DISPATCH_QUEUE_UPDATE,
   queueReorder: Methods.DISPATCH_QUEUE_REORDER,
 } as const;
