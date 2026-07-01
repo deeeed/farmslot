@@ -357,25 +357,31 @@ export class MachineGroup extends LitElement {
 
     if (offlineMachines.length === 0) return nothing;
 
+    // A machine with no connected node is DEGRADED, not down: its slots still run
+    // (local execution goes through the gateway), but there is no live device feed /
+    // file-watch / metrics until a node connects. Local host: `farmslot up` co-launches
+    // it. Remote: deploy-node.sh.
+    const fixHint =
+      'Slots still run; live device feed / file-watch / metrics are unavailable until a node connects.\nLocal host: restart `farmslot up`.\nRemote:';
+
     if (offlineMachines.length === machines.length) {
-      // All machines offline
       const hint = machines.map((m) => `bash scripts/deploy-node.sh ${m}`).join('\n');
       return html`<span
-        class="node-badge offline"
-        title="No node agents connected. Fix:
+        class="node-badge stale"
+        title="Node not connected — degraded. ${fixHint}
 ${hint}"
-        >NODE OFFLINE</span
+        >NODE DEGRADED</span
       >`;
     }
 
-    // Mixed: show per-machine offline badges
+    // Mixed: show per-machine degraded badges
     return offlineMachines.map((m) => {
       const deployHint = `bash scripts/deploy-node.sh ${m}`;
       return html`<span
-        class="node-badge offline"
-        title="No node agent connected for ${m}. Fix:
+        class="node-badge stale"
+        title="Node not connected for ${m} — degraded. ${fixHint}
 ${deployHint}"
-        >${m} OFFLINE</span
+        >${m} DEGRADED</span
       >`;
     });
   }

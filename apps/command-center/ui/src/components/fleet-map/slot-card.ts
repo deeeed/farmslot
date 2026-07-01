@@ -412,7 +412,9 @@ export class SlotCard extends LitElement {
         <div class="slot-id">
           <span
             class="presence-dot"
-            title="${this.nodeOnline ? 'node online' : 'node offline'}"
+            title="${this.nodeOnline
+              ? 'node online'
+              : 'node not connected — degraded (slot still runs)'}"
             style="background: ${this.nodeOnline
               ? colors.statusOk
               : colors.statusUnknown}; display:inline-block; vertical-align:middle; margin-right:4px;"
