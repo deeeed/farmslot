@@ -477,6 +477,14 @@ step_capture_helper() {
   [ "$(uname)" = "Darwin" ] || return
   case "${FARMSLOT_SKIP_CAPTURE_HELPER:-}" in 1|true) return ;; esac
   bold "── Capture helper ──"
+  # capture-helper records screenshots/video as visual proof of agent runs. Its
+  # doctor check probes ScreenCaptureKit, which can trigger a macOS Screen
+  # Recording prompt aimed at the launching app (your terminal/IDE/SSH agent),
+  # not capture-helper itself. Warn first so the prompt is not a surprise.
+  echo "  capture-helper provides live screenshots/video evidence of agent runs."
+  echo "  macOS may prompt for Screen Recording permission — grant it to your"
+  echo "  terminal/IDE app (System Settings > Privacy & Security > Screen & System"
+  echo "  Audio Recording). Deny is fine here; it only disables evidence capture."
   local npm_pkg="${FARMSLOT_CAPTURE_HELPER_NPM_PACKAGE:-@siteed/capture-helper}"
   local brew_formula="${FARMSLOT_CAPTURE_HELPER_BREW_FORMULA:-capture-helper}"
   local helper_bin=""
