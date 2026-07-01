@@ -98,7 +98,10 @@ Farmslot does not need a custom parser for every project. The gateway can derive
 ## Signal file
 
 Workers write a signal file beside the rendered task. This gives the gateway a runner-neutral completion path even when terminal text is noisy.
-See the canonical [Worker signal protocol](../reference/worker-signal-protocol.md) for the full schema, freshness rules, compatibility policy, and optional checklist timing extension.
+
+**End-of-run checklist (start here):** [Finish a worker run](../reference/worker-run-finish.md).
+
+Technical reference: [Worker signal protocol](../reference/worker-signal-protocol.md) (schema, freshness, checklist timing).
 Rendered tasks also include a `mark` helper, so templates can tell workers: after completing checklist item `N`, run `{{TASK_DIR}}/mark N` using the visible 1-based step number; if unsure, run `{{TASK_DIR}}/mark --help`; for the final item, add `--status complete --outcome success`.
 
 ```json
@@ -181,3 +184,13 @@ Long term, project import should generate a starter template set:
 5. ask the operator to approve or edit before dispatch.
 
 This keeps imports low-friction while preserving the operator-visible format that makes Farmslot observable.
+
+## Optional template quality (authoring only)
+
+Before merging template changes, run deterministic lint locally:
+
+```bash
+yarn quality:worker-templates projects/<your-farm>
+```
+
+For a second pass (succinctness, contradictions, checklist flow), use the **`fs-worker-template-quality`** agent skill — see [Worker template quality (optional)](../reference/worker-template-quality.md). Neither tool is invoked during dispatch; runtime finish still uses `./mark` and packaged artifacts ([Finish a worker run](../reference/worker-run-finish.md)).

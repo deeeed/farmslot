@@ -30,6 +30,7 @@
     "quality:loc:record": "node scripts/quality/count-loc.mjs --scope framework --record",
     "quality:loc:verify": "node scripts/quality/count-loc.mjs --scope framework --verify",
     "quality:loc:trend": "node scripts/quality/count-loc.mjs --trend",
+    "quality:worker-templates": "node scripts/quality/check-worker-template-contract.mjs",
     "typecheck:command-center": "yarn --cwd apps/command-center typecheck",
     "typecheck:companion": "yarn --cwd apps/companion typecheck",
     "lint:type-escapes": "yarn --cwd apps/command-center lint:type-escapes",

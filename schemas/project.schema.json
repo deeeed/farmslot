@@ -611,9 +611,9 @@
         },
         "runner": {
           "type": "string",
-          "description": "Runner for the review agent.",
-          "enum": ["claude", "codex", "opencode", "none"],
-          "examples": ["claude", "codex"]
+          "description": "Runner for the review agent. Use `same` to reuse the worker's runner.",
+          "enum": ["claude", "codex", "opencode", "none", "same"],
+          "examples": ["claude", "codex", "same"]
         },
         "model": {
           "type": "string",
@@ -714,6 +714,52 @@
           "type": "integer",
           "default": 2,
           "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "worker_terminal": {
+      "type": "object",
+      "description": "Worker terminal contract — required SIGNAL.json via ./mark and packaged artifacts per flow/command (ADR-045).",
+      "properties": {
+        "requireSignal": {
+          "type": "boolean",
+          "description": "When true, worker must write terminal SIGNAL.json via ./mark before the run monitor completes.",
+          "default": true
+        },
+        "complete": { "$ref": "#/$defs/worker_terminal_command_spec" },
+        "no-change": { "$ref": "#/$defs/worker_terminal_command_spec" },
+        "blocked": { "$ref": "#/$defs/worker_terminal_command_spec" },
+        "flows": {
+          "type": "object",
+          "description": "Per-flow overrides keyed by flow type (dev, fix-bug, review-pr, …).",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "complete": { "$ref": "#/$defs/worker_terminal_command_spec" },
+              "no-change": { "$ref": "#/$defs/worker_terminal_command_spec" },
+              "blocked": { "$ref": "#/$defs/worker_terminal_command_spec" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "whenPresent": {
+          "type": "array",
+          "description": "Conditional artifact requirements when a trigger path exists in the task dir.",
+          "items": {
+            "type": "object",
+            "required": ["path", "alsoRequire"],
+            "properties": {
+              "path": { "type": "string" },
+              "alsoRequire": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "requireRecipeQuality": { "type": "boolean" },
+              "requireRecipeCoverage": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -1071,6 +1117,21 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "worker_terminal_command_spec": {
+      "type": "object",
+      "properties": {
+        "report": {
+          "type": "string",
+          "description": "Primary worker report path written into SIGNAL.json evidence.reportPath."
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Required non-empty artifact paths relative to the task dir."
+        }
+      },
+      "additionalProperties": false
+    },
     "source_diff_filter_rule": {
       "type": "object",
       "description": "Source diff filter rule lists.",

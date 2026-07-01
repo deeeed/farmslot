@@ -37,7 +37,7 @@ STATUS: pending
 
 ### Early no-change exit (before code/PR mutations)
 
-After `STATUS: working`, first decide if a code fix is still needed. If the bug is already fixed or cannot be reproduced in a valid target environment, do not create a fake commit/PR. Write `{{TASK_DIR}}/artifacts/no-change-report.md`, then:
+After `STATUS: working`, first decide if a code fix is still needed. If the bug is already fixed or cannot be reproduced in a valid target environment, do not create a fake commit/PR. Write `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md` (investigation notes — or `- Nothing relevant — bug not reproducible/already fixed.`), then:
 
 ```bash
 {{TASK_DIR}}/mark no-change --reason "<one sentence>"
@@ -107,7 +107,7 @@ Add `--already-fixed` when the bug is already fixed on the current branch. Use `
     "videos": { "after": "artifacts/after.mp4", "preferred": true, "note": "Full recipe replay at 2s slow playback" }
   }
   ```
-- [ ] **13. Write report** — create `{{TASK_DIR}}/artifacts/report.md` with: files changed, root cause, fix summary, test results.
+- [ ] **13. Write `{{TASK_DIR}}/artifacts/learnings.md`** — required packaged evidence for family retrospective and improvement. Use 3–5 bullets on key learnings or struggles during the session; if nothing relevant: `- Nothing relevant — straightforward run; no blockers or surprises.`
 - [ ] **14. Update status** — set `STATUS: done`.
-- [ ] **15. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last`
+- [ ] **15. Write completion signal** — run: `{{TASK_DIR}}/mark complete --mark-last` (validates learnings, pr-description, checklist, artifact contract)
       **Do NOT `/exit`.** Stay alive and idle in this session — the operator may attach at the publication gate to ask why/how questions before publish.

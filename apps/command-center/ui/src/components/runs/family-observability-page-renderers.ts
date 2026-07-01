@@ -23,6 +23,7 @@ import {
   renderFamilyMetricsGrid,
   renderFamilyTopbar,
 } from './family-observability-shell-renderers.js';
+import { renderFamilyTokenPanel } from './family-observability-token-renderers.js';
 
 type RenderResult = TemplateResult | typeof nothing;
 
@@ -78,6 +79,14 @@ export interface FamilyObservabilityPageInput {
   onLightboxNavigate: (index: number) => void;
   onLightboxPairNavigate: (index: number) => void;
   onLightboxModeChange: (mode: 'single' | 'compare') => void;
+  tokenScope: import('./family-observability-token-model.js').FamilyTokenScope;
+  tokenTrajectory: import('./family-observability-token-model.js').FamilyTokenTrajectory;
+  onTokenScopeChange: (
+    scope: import('./family-observability-token-model.js').FamilyTokenScope,
+  ) => void;
+  onTokenTrajectoryChange: (
+    trajectory: import('./family-observability-token-model.js').FamilyTokenTrajectory,
+  ) => void;
 }
 
 export function renderFamilyObservabilityPage(input: FamilyObservabilityPageInput): TemplateResult {
@@ -95,6 +104,16 @@ export function renderFamilyObservabilityPage(input: FamilyObservabilityPageInpu
     ${renderFamilyMetricsGrid({
       snapshot,
       renderFamilyDiffLink: input.renderFamilyDiffLink,
+    })}
+    ${renderFamilyTokenPanel({
+      snapshot,
+      selectedRun,
+      selectedRunId: input.selectedRunId,
+      scope: input.tokenScope,
+      trajectory: input.tokenTrajectory,
+      onScopeChange: input.onTokenScopeChange,
+      onTrajectoryChange: input.onTokenTrajectoryChange,
+      onSelectRun: input.onSelectRun,
     })}
     <div class="content-grid family-run-focus">
       ${renderFamilyRunSelector({

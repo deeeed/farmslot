@@ -7,7 +7,9 @@ import {
   familyDiffModalHash,
   familyEvidenceFilterHash,
   familyRunHash,
+  familyTokenViewHash,
   slotHistoryHashForRun,
+  tokenViewFromFamilyHash,
 } from './family-observability-url-state.js';
 
 test('familyRunHash preserves route shape and encodes run id', () => {
@@ -15,6 +17,36 @@ test('familyRunHash preserves route shape and encodes run id', () => {
   assert.equal(
     familyRunHash('family-1', 'run id/1', { evidence: 'videos' }),
     '#family/family-1?run=run+id%2F1&evidence=videos',
+  );
+  assert.equal(
+    familyRunHash('family-1', 'run-a', { tokens: 'run', trajectory: 'pr-complete-milestones' }),
+    '#family/family-1?run=run-a&tokens=run&trajectory=pr-complete-milestones',
+  );
+});
+
+test('tokenViewFromFamilyHash parses token scope and trajectory', () => {
+  assert.deepEqual(
+    tokenViewFromFamilyHash('#family/fam-1?run=abc&tokens=run&trajectory=pr-complete-milestones'),
+    { scope: 'run', trajectory: 'pr-complete-milestones' },
+  );
+  assert.deepEqual(tokenViewFromFamilyHash('#family/fam-1?run=abc'), {
+    scope: 'family',
+    trajectory: 'all-runs',
+  });
+});
+
+test('familyTokenViewHash updates token params without dropping existing params', () => {
+  assert.equal(
+    familyTokenViewHash('run', 'pr-complete-milestones', '#family/fam-1?run=abc'),
+    '#family/fam-1?run=abc&tokens=run&trajectory=pr-complete-milestones',
+  );
+  assert.equal(
+    familyTokenViewHash(
+      'family',
+      'all-runs',
+      '#family/fam-1?run=abc&tokens=run&trajectory=pr-complete-milestones',
+    ),
+    '#family/fam-1?run=abc',
   );
 });
 

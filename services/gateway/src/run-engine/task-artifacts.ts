@@ -10,7 +10,11 @@ import { captureRunDiffArtifacts } from './diff-artifacts.js';
 
 export async function readWorkerReport(runId: string): Promise<string | null> {
   const run = getRun(runId)!;
-  return (await readTaskArtifactText(run.taskFile, 'report.md')) ?? null;
+  for (const filename of ['report.md', 'pr-description.md']) {
+    const text = await readTaskArtifactText(run.taskFile, filename);
+    if (text?.trim()) return text;
+  }
+  return null;
 }
 
 export async function readTaskArtifactText(

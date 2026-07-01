@@ -20,10 +20,7 @@ import {
 
 import { readPortableTextIfExists } from '../live-recipe/context.js';
 import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
-import {
-  buildRetrospectivePayload,
-  readCommentsTriageSummary,
-} from '../run-completion/orchestrator.js';
+import { buildRetrospectivePayload } from '../run-completion/orchestrator.js';
 import { buildGateSummary } from '../run-engine/gate-summary.js';
 import { runDurationMs } from '../runs/run-duration.js';
 import { getAllRuns } from '../runs/store.js';
@@ -41,6 +38,7 @@ import {
 import { buildEvalExperimentProjections } from './eval-experiments.js';
 import { isMissingPathError, readJsonIfExists, readTextIfExists, statIfPresent } from './io.js';
 import { buildFamilyStateSummary, sortRunsByFreshness } from './state.js';
+import { buildFamilyObservabilityTokenSummary } from './token-summary.js';
 
 const FAMILY_EVIDENCE_PURPOSES = new Set([
   'screenshot',
@@ -692,15 +690,9 @@ async function buildRunSummary(
     };
   });
 
-  const actionableCommentsCount =
-    taskDir && run.flowType === 'pr-complete'
-      ? ((await readCommentsTriageSummary(taskDir))?.fixed ?? 0)
-      : 0;
-  const learningsExpected = run.flowType !== 'pr-complete' || actionableCommentsCount > 0;
-
   const missingData: string[] = [];
   if (!effectiveWorkerReport) missingData.push('worker-report');
-  if (!effectiveWorkerLearnings && learningsExpected) missingData.push('worker-learnings');
+  if (!effectiveWorkerLearnings) missingData.push('worker-learnings');
   if (!effectiveRecipeJson) missingData.push('recipe-json');
   if (ambiguousRecovery) missingData.push('recipe-provenance-ambiguous');
   if (!recipeQualityEvaluation.artifact) missingData.push('recipe-quality');
@@ -912,6 +904,7 @@ export async function buildFamilyObservabilitySnapshotFromRuns(
     learnings,
     runs: runSummaries,
     experiments: experiments.length ? experiments : undefined,
+    tokenSummary: buildFamilyObservabilityTokenSummary(familyRuns, familyId),
     relatedByTicket: buildRelatedByTicket(familyRuns, allRuns),
     missingData: [...new Set(missingData)],
   };

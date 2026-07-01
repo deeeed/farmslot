@@ -13,6 +13,8 @@ const STEPS = [
   ['theme quality', ['yarn', 'workspace', '@farmslot/theme', 'quality']],
   ['recipe harness quality', ['yarn', 'workspace', '@farmslot/recipe-harness', 'quality']],
   ['protocol tests', ['yarn', 'test:protocol']],
+  ['worker template contract', ['node', 'scripts/quality/worker-terminal-contract.test.cjs']],
+  ['worker template lint', ['node', 'scripts/quality/check-worker-template-contract.mjs']],
   ['recipe harness tests', ['yarn', 'test:recipe-harness']],
   ['ui tests', ['yarn', 'test:ui']],
   ['recipe operational gates', ['yarn', 'test:recipe-operational-gates']],

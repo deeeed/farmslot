@@ -1,0 +1,72 @@
+const assert = require('node:assert/strict');
+const {
+  resolveWorkerTerminalContract,
+  lintWorkerTemplateAgainstContract,
+  lintWorkerTemplateStructure,
+  expandedArtifactsForCommand,
+} = require('./worker-terminal-contract.cjs');
+
+const devContract = resolveWorkerTerminalContract(null, 'dev');
+assert.equal(devContract.requireSignal, true);
+assert.deepEqual(devContract.commands.complete.artifacts, [
+  'artifacts/learnings.md',
+  'artifacts/pr-description.md',
+]);
+assert.equal(devContract.commands.complete.report, 'artifacts/pr-description.md');
+
+const interactivePrComplete = resolveWorkerTerminalContract(null, 'pr-complete', {
+  mode: 'interactive',
+});
+assert.equal(interactivePrComplete.requireSignal, false);
+
+const projectContract = resolveWorkerTerminalContract(
+  {
+    flows: {
+      dev: {
+        complete: { report: 'artifacts/report.md', artifacts: ['artifacts/custom.md'] },
+      },
+    },
+  },
+  'dev',
+);
+assert.deepEqual(projectContract.commands.complete.artifacts, [
+  'artifacts/report.md',
+  'artifacts/custom.md',
+]);
+
+const templateOk = [
+  '# Worker: Dev',
+  '- [ ] Write `artifacts/learnings.md`',
+  '- [ ] Write `artifacts/pr-description.md`',
+  '- [ ] Run `./mark complete --mark-last`',
+].join('\n');
+assert.deepEqual(lintWorkerTemplateAgainstContract(templateOk, devContract), []);
+
+const templateBad = ['# Worker', '- [ ] Done'].join('\n');
+assert.match(lintWorkerTemplateAgainstContract(templateBad, devContract)[0], /must instruct.*mark/);
+
+const expanded = expandedArtifactsForCommand(
+  devContract,
+  'complete',
+  (rel) => rel === 'artifacts/recipe.json',
+);
+assert.equal(expanded.requireRecipeQuality, true);
+assert.ok(expanded.artifacts.includes('artifacts/recipe-coverage.md'));
+
+const structureBad = [
+  '# Worker',
+  '## Task',
+  'TASK_DIR: {{TASK_DIR}}',
+  '## Checklist',
+  '- [ ] **1. One**',
+  '- [ ] **1. Duplicate**',
+  '- [ ] Write `{TASK_DIR}/artifacts/learnings.md`',
+  '- [ ] `{{TASK_DIR}}/mark complete --mark-last`',
+].join('\n');
+assert.match(
+  lintWorkerTemplateStructure(structureBad).join(' '),
+  /duplicate checklist step number/,
+);
+assert.match(lintWorkerTemplateStructure(structureBad).join(' '), /double braces/);
+
+console.log('worker-terminal-contract: ok');

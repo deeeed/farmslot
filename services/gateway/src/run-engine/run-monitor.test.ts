@@ -5,6 +5,7 @@ import {
   bindSignalToMonitorContext,
   isWorkerSignalFreshForRun,
   shouldHoldForInteractivePrComplete,
+  shouldHoldForMissingTerminalSignal,
   signalMatchesMonitorContext,
 } from './run-monitor.js';
 
@@ -112,6 +113,40 @@ test('bindSignalToMonitorContext preserves explicit mismatched signal tags', () 
   assert.equal(signal.role, 'fix-bug');
   assert.equal(signal.contextId, 'fix-bug');
   assert.equal(signalMatchesMonitorContext(signal, monitorContext), false);
+});
+
+test('shouldHoldForMissingTerminalSignal respects contract and interactive pr-complete default', () => {
+  assert.equal(
+    shouldHoldForMissingTerminalSignal(
+      { requireSignal: true } as any,
+      {
+        flowType: 'dev',
+        mode: 'autonomous',
+      } as any,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldHoldForMissingTerminalSignal(
+      { requireSignal: false } as any,
+      {
+        flowType: 'pr-complete',
+        mode: 'interactive',
+      } as any,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldHoldForMissingTerminalSignal(null, {
+      flowType: 'pr-complete',
+      mode: 'interactive',
+    } as any),
+    false,
+  );
+  assert.equal(
+    shouldHoldForMissingTerminalSignal(null, { flowType: 'dev', mode: 'autonomous' } as any),
+    true,
+  );
 });
 
 test('shouldHoldForInteractivePrComplete only gates interactive PR-complete handoff runs', () => {

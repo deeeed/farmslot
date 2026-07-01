@@ -11,6 +11,11 @@ import { colors } from '../../styles/theme-tokens.js';
 
 import { familyOriginLabel, prStateColor } from './family-observability-display-model.js';
 import { familyTicketUrl } from './family-observability-link-model.js';
+import {
+  familyCostMetricLabel,
+  familyTokenMetricLabel,
+  resolveFamilyTokenSummary,
+} from './family-observability-token-model.js';
 
 interface FamilyTopbarRenderOptions {
   snapshot: FamilyObservabilitySnapshot;
@@ -97,6 +102,7 @@ export function renderFamilyTopbar(options: FamilyTopbarRenderOptions): Template
 
 export function renderFamilyMetricsGrid(options: FamilyMetricsRenderOptions): TemplateResult {
   const { snapshot } = options;
+  const tokenSummary = resolveFamilyTokenSummary(snapshot);
   return html`
     <div class="metrics-grid">
       <div class="metric-card">
@@ -130,6 +136,14 @@ export function renderFamilyMetricsGrid(options: FamilyMetricsRenderOptions): Te
             ? ` · ${snapshot.recipeQuality.score}`
             : ''}
         </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Family tokens</div>
+        <div class="metric-value">${familyTokenMetricLabel(tokenSummary)}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Est. cost</div>
+        <div class="metric-value">${familyCostMetricLabel(tokenSummary)}</div>
       </div>
     </div>
   `;

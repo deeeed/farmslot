@@ -12,6 +12,8 @@ A team should be able to add a small set of agent skills to an existing project 
 
 No Command Center, gateway, pool file, or multi-machine setup should be required for that first win. The skills teach the agent how to create proof: choose the right validation target, write a small recipe, run it locally when possible, and produce artifacts a reviewer can trust.
 
+Standalone skill runs use the **same finish protocol** as Farmslot workers (`CHECKLIST.md`, `artifacts/`, `./mark`, `SIGNAL.json`). See [Finish a worker run](../reference/worker-run-finish.md) for the portable checklist and how Farmslot adds monitor/family layers when you graduate to full dispatch.
+
 ## Product thesis
 
 `@farmslot/skills` should be the low-friction adoption kit for Farmslot.
