@@ -30,6 +30,10 @@ interface BranchWatch {
   lastBranch?: string;
   // Set only for the gateway-local fallback watch (local slot, no node). Stopped on unwatch.
   localWatch?: FileWatchHandle;
+  // Set when the watch runs through the machine's node — the fs.watch request id, so
+  // unwatch can send fs.watch.stop and the node doesn't leak the watcher (or double-watch
+  // after a reconnect). Mirrors services/gateway/src/tasks/watcher.ts.
+  nodeWatchRequestId?: string;
 }
 
 const activeWatches = new Map<string, BranchWatch>();
@@ -111,7 +115,16 @@ export async function watchBranch(slotId: string): Promise<void> {
   const node = getNode(slot.machine);
   if (node) {
     try {
-      await sendNodeRequest(node, 'fs.watch', { path: gitHeadPath });
+      await sendNodeRequest(
+        node,
+        'fs.watch',
+        { path: gitHeadPath },
+        {
+          onRequestId: (id) => {
+            bw.nodeWatchRequestId = id;
+          },
+        },
+      );
       console.log(`[branch-watcher] watching ${slotId} via node ${slot.machine}: ${gitHeadPath}`);
     } catch (err) {
       console.log(
@@ -144,6 +157,20 @@ export async function unwatchBranch(slotId: string): Promise<void> {
   debounceTimers.delete(slotId);
 
   bw.localWatch?.stop();
+  if (bw.nodeWatchRequestId) {
+    // Tell the node to drop its fs.watch — otherwise it leaks the watcher and, after a
+    // reconnect, would double-watch. Best-effort: if the node is gone the watch dies with it.
+    const node = getNode(bw.machine);
+    if (node) {
+      void sendNodeRequest(node, 'fs.watch.stop', { requestId: bw.nodeWatchRequestId }).catch(
+        (err: unknown) => {
+          console.log(
+            `[branch-watcher] fs.watch.stop failed for ${slotId}: ${(err as Error).message}`,
+          );
+        },
+      );
+    }
+  }
   activeWatches.delete(slotId);
   console.log(`[branch-watcher] stopped watching ${slotId}`);
 }

@@ -39,8 +39,14 @@ export function watchFile(filePath: string, onChange: (content: string) => void)
         try {
           const content = await readFile(targetPath, 'utf-8');
           onChange(content);
-        } catch {
-          /* file may be mid-write */
+        } catch (err) {
+          // ENOENT is expected: git rewrites HEAD via an atomic rename, so the path is
+          // briefly absent between the watch firing and the read — the next event re-reads.
+          // Anything else (permissions, I/O) is a real fault and is surfaced, not hidden.
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT') {
+            console.warn(`[fs.watch] read failed for ${targetPath}: ${(err as Error).message}`);
+          }
         }
       });
     } else {
@@ -58,8 +64,14 @@ export function watchFile(filePath: string, onChange: (content: string) => void)
         try {
           const content = await readFile(targetPath, 'utf-8');
           onChange(content);
-        } catch {
-          /* file may be mid-write */
+        } catch (err) {
+          // ENOENT is expected: git rewrites HEAD via an atomic rename, so the path is
+          // briefly absent between the watch firing and the read — the next event re-reads.
+          // Anything else (permissions, I/O) is a real fault and is surfaced, not hidden.
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT') {
+            console.warn(`[fs.watch] read failed for ${targetPath}: ${(err as Error).message}`);
+          }
         }
         if (watcher) watcher.close();
         watcher = null;

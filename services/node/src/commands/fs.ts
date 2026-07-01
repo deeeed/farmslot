@@ -13,19 +13,9 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 
-import { type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
-
-// Pool configs can declare remote repos as `~/...`. The gateway composes
-// absolute-looking paths but `~` is a shell token, not a filesystem prefix —
-// node:fs treats it literally. Expand to $HOME before any disk op.
-function expandTilde(p: string): string {
-  if (p === '~') return homedir();
-  if (p.startsWith('~/')) return `${homedir()}/${p.slice(2)}`;
-  return p;
-}
+import { expandTilde, type FileWatchHandle, watchFile } from '@farmslot/capabilities/fs-watch';
 
 export interface FsEntry {
   name: string;

@@ -7,7 +7,15 @@
 // stops it. pid + log live under <FARMSLOT_HOME> (default ~/.farmslot).
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import http from 'node:http';
 import { hostname, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
@@ -110,6 +118,17 @@ function isAlive(pid: number): boolean {
     // ESRCH/EPERM both mean "not a process we can signal" — treat as not running.
     return false;
   }
+}
+
+// The node.pid file can go stale and the OS can reuse that pid for an unrelated process.
+// Before trusting it (skip respawn) or killing it, confirm the pid is actually THIS repo's
+// node — its command line runs `tsx services/node/src/index.ts` from repoRoot. Prevents both
+// "won't start because a foreign pid looks alive" and "down() kills an unrelated process".
+function isLocalNodeProcess(pid: number): boolean {
+  const entry = join(repoRoot, 'services', 'node', 'src', 'index.ts');
+  const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
+  if (res.status !== 0 || !res.stdout) return false;
+  return res.stdout.includes(entry);
 }
 
 /** SIGTERM, wait up to 5s for exit, escalate to SIGKILL — shared by down() and failed boots. */
@@ -297,7 +316,8 @@ function writeUpResult(params: {
 // fatal. See ADR-046.
 async function startLocalNode(port: number, token: string, output: OutputContext): Promise<void> {
   const existing = readNodePid();
-  if (existing && isAlive(existing)) return; // already running under this home
+  if (existing && isAlive(existing) && isLocalNodeProcess(existing)) return; // already running
+  if (existing) rmSync(nodePidFilePath(), { force: true }); // stale/foreign pid — clear and start fresh
 
   const tsx = join(repoRoot, 'node_modules', '.bin', 'tsx');
   const entry = join(repoRoot, 'services', 'node', 'src', 'index.ts');
@@ -322,6 +342,7 @@ async function startLocalNode(port: number, token: string, output: OutputContext
       FARMSLOT_GATEWAY_AUTH_MODE: 'token',
     },
   });
+  closeSync(logFd); // the detached child owns its own dup of the fd now
   if (child.pid === undefined) {
     output.write(`${yellow('  local node failed to spawn')} ${dim('(degraded)')}\n`);
     return;
@@ -445,9 +466,10 @@ async function up(
 }
 
 async function down(output: OutputContext): Promise<void> {
-  // Stop the co-launched local node first (best-effort), then the gateway.
+  // Stop the co-launched local node first (best-effort), then the gateway. Only kill it if
+  // the pid is really this repo's node — a stale pidfile could otherwise point at a reused pid.
   const nodePid = readNodePid();
-  if (nodePid && isAlive(nodePid)) {
+  if (nodePid && isAlive(nodePid) && isLocalNodeProcess(nodePid)) {
     await killGracefully(nodePid);
     output.write(`${red('local node stopped')} ${dim(`pid ${nodePid}`)}\n`);
   }
