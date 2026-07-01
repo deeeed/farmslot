@@ -5,7 +5,7 @@ import {
 } from '@farmslot/protocol';
 
 import { artifactKind } from '../../utils/artifact-kind.js';
-import { gatewayApiUrl } from '../../utils/gateway-origin.js';
+import { gatewayApiUrl, gatewayProxiedFetchUrl } from '../../utils/gateway-origin.js';
 export type ArtifactGroup = 'before' | 'after' | 'review' | 'other';
 export type ArtifactFilter = 'all' | ArtifactGroup;
 export type ArtifactTypeFilter = 'all' | 'image' | 'video' | 'markdown' | 'json' | 'diff' | 'other';
@@ -25,10 +25,15 @@ export function isWorkspaceDiffArtifact(artifact: Pick<ArtifactRef, 'path' | 'pu
   return DIFF_EXTS.test(artifact.path) || artifact.purpose.includes('diff');
 }
 
+/** Internal path template — always pair with gatewayAuthenticatedUrl or gatewayProxiedFetchUrl. */
 export function runArtifactApiPath(runId: string, artifact: Pick<ArtifactRef, 'path'>): string {
   return `/api/run-artifact?runId=${encodeURIComponent(runId)}&path=${encodeURIComponent(
     artifact.path,
   )}`;
+}
+
+export function runArtifactFetchUrl(runId: string, artifact: Pick<ArtifactRef, 'path'>): string {
+  return gatewayProxiedFetchUrl(runArtifactApiPath(runId, artifact));
 }
 
 export function runArtifactUrl(

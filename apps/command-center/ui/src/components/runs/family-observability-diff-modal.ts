@@ -2,7 +2,8 @@ import { html, nothing, type TemplateResult } from 'lit';
 
 import type { FamilyObservabilityArtifact, FamilyObservabilitySnapshot } from '@farmslot/protocol';
 
-import { familyArtifactApiPath } from './family-observability-artifact-model.js';
+import { runArtifactFetchUrl } from '../workspace/workspace-artifacts.js';
+
 import {
   diffSelectionFromFamilyHash,
   familyDiffModalHash,
@@ -50,7 +51,7 @@ export function familyDiffModalState(
   const title = `${scopeTitle} · ${labelPrefix}`;
   return {
     title,
-    artifactUrl: familyArtifactApiPath(artifact),
+    artifactUrl: runArtifactFetchUrl(artifact.runId, artifact),
     artifact,
   };
 }

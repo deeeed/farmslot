@@ -14,7 +14,7 @@ import {
   buildArtifactUrlResolver,
   rewriteMarkdownArtifactUrls,
 } from '../../utils/artifact-markdown.js';
-import { gatewayApiUrl, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { gatewayApiUrl, gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 import {
   currentRecoveryEpoch,
   isRecoveryEpochCurrent,
@@ -314,7 +314,7 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
     this._legacyTaskPromptError = '';
     try {
       const params = new URLSearchParams({ runId: this.runId, path: 'TASK.md' });
-      const response = await fetch(gatewayApiUrl(`/api/run-artifact?${params}`));
+      const response = await gatewayHttpFetch(`/api/run-artifact?${params}`);
       if (!response.ok) throw new Error(`${response.status}`);
       this._legacyTaskPromptText = await response.text();
     } catch (error) {

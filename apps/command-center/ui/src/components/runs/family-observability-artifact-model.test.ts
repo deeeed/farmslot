@@ -8,8 +8,8 @@ import type {
 } from '@farmslot/protocol';
 
 import {
-  familyArtifactApiPath,
   familyArtifactCaption,
+  familyArtifactFetchUrl,
   familyArtifactKey,
   familyArtifactKind,
   familyArtifactProvenance,
@@ -40,8 +40,8 @@ test('family artifact URL helpers preserve run artifact paths', () => {
     familyArtifactUrl('http://localhost:7777', item),
     /artifacts%2Fscreenshots%2Fafter\.png/,
   );
-  assert.match(familyArtifactApiPath(item), /run-1234567890/);
-  assert.match(familyArtifactApiPath(item), /artifacts%2Fscreenshots%2Fafter\.png/);
+  assert.match(familyArtifactFetchUrl(item), /run-1234567890/);
+  assert.match(familyArtifactFetchUrl(item), /artifacts%2Fscreenshots%2Fafter\.png/);
 });
 
 test('family artifact captions and bucket summaries match existing display format', () => {

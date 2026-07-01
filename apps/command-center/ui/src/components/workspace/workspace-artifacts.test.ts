@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { GATEWAY_TOKEN_STORAGE_KEY } from '../../gateway-url.js';
 import { buildBeforeAfterPairs } from '../../utils/artifact-pairs.js';
 
 import {
@@ -9,6 +10,7 @@ import {
   isWorkspaceEvidenceArtifact,
   recipeRunArtifactUrl,
   runArtifactApiPath,
+  runArtifactFetchUrl,
   runArtifactUrl,
   workspaceArtifactBasename,
   workspaceArtifactGroup,
@@ -28,7 +30,43 @@ test('run artifact URL helpers preserve shared run artifact encoding', () => {
     runArtifactUrl('http://localhost:7777', 'run:1', artifact),
     'http://localhost:7777/api/run-artifact?runId=run%3A1&path=artifacts%2Freview%20notes%2Fdiff.txt',
   );
+  withMockLocalStorage(() => {
+    localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, 'dev-token');
+    const fetchUrl = runArtifactFetchUrl('run:1', artifact);
+    const parsed = new URL(fetchUrl, 'http://localhost:7777');
+    assert.equal(parsed.searchParams.get('runId'), 'run:1');
+    assert.equal(parsed.searchParams.get('path'), 'artifacts/review notes/diff.txt');
+    assert.equal(parsed.searchParams.get('token'), 'dev-token');
+  });
 });
+
+function withMockLocalStorage(fn: () => void): void {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem(key: string): string | null {
+        return store.get(key) ?? null;
+      },
+      setItem(key: string, value: string): void {
+        store.set(key, value);
+      },
+      removeItem(key: string): void {
+        store.delete(key);
+      },
+    },
+  });
+  try {
+    fn();
+  } finally {
+    if (previous) {
+      Object.defineProperty(globalThis, 'localStorage', previous);
+    } else {
+      delete (globalThis as { localStorage?: Storage }).localStorage;
+    }
+  }
+}
 
 test('recipeRunArtifactUrl preserves recipe-run scope and cache busting hints', () => {
   const url = recipeRunArtifactUrl(

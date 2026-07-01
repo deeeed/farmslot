@@ -10,7 +10,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import '../diff-viewer/diff-review.js';
 
 import { type ArtifactKind, artifactKind } from '../../utils/artifact-kind.js';
-import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
 
 import {
@@ -21,7 +21,6 @@ import {
 import {
   formatLightboxTextPreview,
   type MediaLightboxTextPreviewKind,
-  sameOriginLightboxFetchUrl,
 } from './media-lightbox-preview-model.js';
 import { MD_CACHE_LIMIT, MediaLightboxState } from './media-lightbox-state.js';
 import { mediaLightboxStyles } from './media-lightbox-styles.js';
@@ -841,20 +840,10 @@ export class MediaLightbox extends MediaLightboxState {
     `;
   }
 
-  private _sameOriginUrl(url: string): string {
-    return sameOriginLightboxFetchUrl({
-      url,
-      locationHref: window.location.href,
-      windowOrigin: window.location.origin,
-      gatewayOrigin: gatewayHttpOrigin(),
-    });
-  }
-
   private _ensureTextPreview(url: string, kind: MediaLightboxTextPreviewKind): void {
     if (this._mdCache.has(url)) return;
     putCapped(this._mdCache, url, { status: 'loading' }, MD_CACHE_LIMIT);
-    const fetchUrl = this._sameOriginUrl(url);
-    fetch(fetchUrl)
+    gatewayHttpFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();

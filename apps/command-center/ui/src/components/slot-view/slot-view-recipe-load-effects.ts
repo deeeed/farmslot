@@ -1,3 +1,4 @@
+import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import type { createSlotViewRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 
 import { traceEntriesToEvidenceManifest } from './slot-view-live-effects.js';
@@ -25,7 +26,7 @@ export async function loadSelectedSlotViewRecipeFlow(
   view._selectedRecipeFlowLoading = true;
   view._selectedRecipeFlowError = '';
   try {
-    const response = await fetch(view._artifactUrl(recipeHost, selectedFlow.path));
+    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, selectedFlow.path));
     if (loadToken !== view._selectedRecipeFlowLoadToken) return;
     if (!response.ok) throw new Error(`${response.status}`);
     const recipeFlowJson = await response.text();
@@ -69,7 +70,7 @@ export async function loadSelectedSlotViewRecipeArtifactPreview(
   view._selectedRecipeArtifactLoading = true;
   view._selectedRecipeArtifactError = '';
   try {
-    const response = await fetch(view._artifactUrl(recipeHost, artifact.path));
+    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, artifact.path));
     if (loadToken !== view._selectedRecipeArtifactPreviewLoadToken) return;
     if (!response.ok) throw new Error(`${response.status}`);
     const artifactText = await response.text();
@@ -114,7 +115,7 @@ export async function loadSelectedSlotViewRecipeEvidenceManifest(
   try {
     const artifact = manifest ?? trace;
     if (!artifact) return;
-    const response = await fetch(view._artifactUrl(recipeHost, artifact.path));
+    const response = await gatewayHttpFetch(view._artifactUrl(recipeHost, artifact.path));
     if (loadToken !== view._selectedRecipeEvidenceManifestLoadToken) return;
     if (!response.ok) throw new Error(String(response.status));
     const json = await response.json();

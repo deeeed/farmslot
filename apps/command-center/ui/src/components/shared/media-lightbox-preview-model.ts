@@ -1,3 +1,4 @@
+import { sameOriginGatewayHttpUrl } from '../../utils/gateway-origin.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 
 export type MediaLightboxTextPreviewKind = 'markdown' | 'json' | 'diff';
@@ -13,20 +14,15 @@ export interface SameOriginLightboxFetchUrlInput {
 // flow through the vite proxy (and therefore pick up gateway CORS handling).
 // Off-origin URLs are returned unchanged so the browser's CORS check still applies.
 export function sameOriginLightboxFetchUrl(input: SameOriginLightboxFetchUrlInput): string {
-  try {
-    const parsed = new URL(input.url, input.locationHref);
-    const current = new URL(input.locationHref);
-    const hostedCommandCenter = current.pathname === '/cc' || current.pathname.startsWith('/cc/');
-    if (
-      parsed.origin === input.windowOrigin ||
-      (parsed.origin === input.gatewayOrigin && !hostedCommandCenter)
-    ) {
-      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-    }
-    return input.url;
-  } catch {
-    return input.url;
-  }
+  return sameOriginGatewayHttpUrl(
+    input.url,
+    {
+      href: input.locationHref,
+      origin: input.windowOrigin,
+      pathname: new URL(input.locationHref).pathname,
+    },
+    input.gatewayOrigin,
+  );
 }
 
 export function formatLightboxTextPreview(

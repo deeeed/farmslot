@@ -7,7 +7,7 @@ import type {
 import { artifactKind } from '../../utils/artifact-kind.js';
 import { formatBytes } from '../../utils/format.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
-import { runArtifactApiPath, runArtifactUrl } from '../workspace/workspace-artifacts.js';
+import { runArtifactFetchUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 export function familyArtifactUrl(
   gatewayBase: string,
@@ -16,8 +16,8 @@ export function familyArtifactUrl(
   return runArtifactUrl(gatewayBase, artifact.runId, artifact);
 }
 
-export function familyArtifactApiPath(artifact: FamilyObservabilityArtifact): string {
-  return runArtifactApiPath(artifact.runId, artifact);
+export function familyArtifactFetchUrl(artifact: FamilyObservabilityArtifact): string {
+  return runArtifactFetchUrl(artifact.runId, artifact);
 }
 
 export function familyArtifactKey(
