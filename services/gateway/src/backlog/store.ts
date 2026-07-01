@@ -496,36 +496,50 @@ function applyRunObservation(item: BacklogItem, run: Run): boolean {
   return changed;
 }
 
-function reconcileBacklogLinks(): boolean {
+async function reconcileBacklogLinks(): Promise<boolean> {
   let changed = false;
   const queueItems = getQueueSnapshot();
   const queueByBacklogId = new Map<string, QueueItem>();
+  const queueByCandidate = new Map<string, QueueItem>();
   for (const queueItem of queueItems) {
     if (queueItem.backlogItemId) queueByBacklogId.set(queueItem.backlogItemId, queueItem);
+    if (queueItem.backlogItemId && queueItem.launchPlanId && queueItem.launchCandidateId) {
+      queueByCandidate.set(
+        launchCandidateKey(
+          queueItem.backlogItemId,
+          queueItem.launchPlanId,
+          queueItem.launchCandidateId,
+        ),
+        queueItem,
+      );
+    }
   }
-  const runsById = new Map(getAllRuns().map((run) => [run.id, run]));
+  const allRuns = getAllRuns();
+  const runsById = new Map(allRuns.map((run) => [run.id, run]));
+  const runByCandidate = new Map<string, Run>();
+  for (const run of allRuns) {
+    if (run.backlogItemId && run.launchPlanId && run.launchCandidateId) {
+      runByCandidate.set(
+        launchCandidateKey(run.backlogItemId, run.launchPlanId, run.launchCandidateId),
+        run,
+      );
+    }
+  }
 
   for (const item of items) {
     if (item.launchPlan) {
       ensureLaunchPlanState(item);
+      let baselineRun: Run | undefined;
       for (const candidate of item.launchPlan.candidates) {
         const projection = projectionForCandidate(item, candidate.id);
-        const run = getAllRuns().find(
-          (candidateRun) =>
-            candidateRun.backlogItemId === item.id &&
-            candidateRun.launchPlanId === item.launchPlan?.id &&
-            candidateRun.launchCandidateId === candidate.id,
-        );
+        const key = launchCandidateKey(item.id, item.launchPlan.id, candidate.id);
+        const run = runByCandidate.get(key);
         if (run) {
+          if (candidate.role === 'baseline') baselineRun = run;
           if (applyLaunchPlanRunObservation(item, run)) changed = true;
           continue;
         }
-        const queued = queueItems.find(
-          (queueItem) =>
-            queueItem.backlogItemId === item.id &&
-            queueItem.launchPlanId === item.launchPlan?.id &&
-            queueItem.launchCandidateId === candidate.id,
-        );
+        const queued = queueByCandidate.get(key);
         if (queued && projection && projection.queueItemId !== queued.id) {
           projection.status = 'queued';
           projection.queueItemId = queued.id;
@@ -535,6 +549,9 @@ function reconcileBacklogLinks(): boolean {
           }
           changed = true;
         }
+      }
+      if (baselineRun && (await materializeMissingComparisonCandidates(item, baselineRun))) {
+        changed = true;
       }
       rollUpLaunchPlanStatus(item);
       continue;
@@ -588,7 +605,7 @@ export async function loadBacklog(): Promise<void> {
       if (normalized) items.push(normalized);
     }
     console.log(`[backlog] loaded ${items.length} items from disk`);
-    if (reconcileBacklogLinks()) schedulePersist('load-reconcile');
+    if (await reconcileBacklogLinks()) schedulePersist('load-reconcile');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return;
@@ -647,6 +664,7 @@ function cloneLaunchPlan(plan: BacklogLaunchPlan): BacklogLaunchPlan {
     ...plan,
     candidates: plan.candidates.map((candidate) => ({
       ...candidate,
+      ...(candidate.variant !== undefined ? { variant: candidate.variant.trim() } : {}),
       slotPolicy:
         candidate.slotPolicy.kind === 'exact'
           ? { kind: 'exact', slotId: candidate.slotPolicy.slotId }
@@ -1052,6 +1070,43 @@ export async function markBacklogItemNeedsAttention(params: {
   });
 }
 
+function launchCandidateKey(
+  backlogItemId: string,
+  launchPlanId: string,
+  candidateId: string,
+): string {
+  return JSON.stringify([backlogItemId, launchPlanId, candidateId]);
+}
+
+async function materializeMissingComparisonCandidates(
+  item: BacklogItem,
+  baselineRun: Run,
+): Promise<boolean> {
+  if (!item.launchPlan) return false;
+  let changed = false;
+  for (const comparison of item.launchPlan.candidates.filter(
+    (candidate) => candidate.role === 'comparison',
+  )) {
+    const existingProjection = projectionForCandidate(item, comparison.id);
+    if (existingProjection?.queueItemId || existingProjection?.runId) continue;
+    const comparisonQueueItem = addItem(
+      await buildBacklogQueueParams(
+        item,
+        { workGraphId: item.workGraphId, workNodeId: item.workNodeId },
+        comparison,
+        baselineRun,
+      ),
+    );
+    if (existingProjection) {
+      existingProjection.status = 'queued';
+      existingProjection.queueItemId = comparisonQueueItem.id;
+      changed = true;
+    }
+    await persistQueueNow();
+  }
+  return changed;
+}
+
 async function buildInitialContext(item: BacklogItem): Promise<string> {
   const specMarkdown = await readBacklogSpecMarkdown(item);
   return [
@@ -1118,7 +1173,7 @@ async function buildBacklogQueueParams(
     parentRunId: isComparison ? baselineRun?.id : undefined,
     familyRootTicketOrPr: isComparison ? item.sourceRef : undefined,
     lane: isComparison ? 'comparison' : undefined,
-    variant: isComparison ? candidate.variant : undefined,
+    variant: isComparison ? candidate.variant?.trim() : undefined,
     priority: item.priority,
     tags: item.tags,
     initialContext: await buildInitialContext(item),
@@ -1343,26 +1398,7 @@ export async function markBacklogRunStarted(queueItem: QueueItem, run: Run): Pro
         item.lastObservedRunStatus = run.status;
         item.launchPlanState!.baselineRunId = run.id;
         delete item.queuedQueueItemId;
-        const comparisons = item.launchPlan.candidates.filter(
-          (candidate) => candidate.role === 'comparison',
-        );
-        for (const comparison of comparisons) {
-          const existingProjection = projectionForCandidate(item, comparison.id);
-          if (existingProjection?.queueItemId || existingProjection?.runId) continue;
-          const comparisonQueueItem = addItem(
-            await buildBacklogQueueParams(
-              item,
-              { workGraphId: item.workGraphId, workNodeId: item.workNodeId },
-              comparison,
-              run,
-            ),
-          );
-          if (existingProjection) {
-            existingProjection.status = 'queued';
-            existingProjection.queueItemId = comparisonQueueItem.id;
-          }
-        }
-        await persistQueueNow();
+        await materializeMissingComparisonCandidates(item, run);
       }
       rollUpLaunchPlanStatus(item);
       item.updatedAt = new Date().toISOString();

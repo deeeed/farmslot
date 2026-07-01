@@ -1,6 +1,6 @@
 # ADR-044: Backlog Launch Plans and Comparison Candidate Sets
 
-**Status:** Proposed  
+**Status:** Accepted
 **Date:** 2026-06-30  
 **Relates to:** [ADR-013](013-gateway-mediated-orchestration.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-030](030-replay-provenance-and-reference-evals.md), [ADR-038](038-gate-held-worker-session.md), [ADR-040](040-work-graph-orchestration.md), [ADR-043](043-scripted-runner-execution-policy.md), [ROADMAP-next](../ROADMAP-next.md)
 

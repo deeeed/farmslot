@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
+import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
+
 import { validateTicketRef } from '../methods/dispatch/ticket-ref.js';
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -13,6 +15,61 @@ const specRoot = path.join(farmslotRoot, '.sandbox', `backlog-spec-test-${proces
 process.env.FARMSLOT_BACKLOG_FILE = path.join(testDir, 'backlog.json');
 process.env.FARMSLOT_DISPATCH_QUEUE_FILE = path.join(testDir, 'queue.json');
 process.env.FARMSLOT_BACKLOG_SPEC_DIR = specRoot;
+
+function testSlot(slot: string, project = 'farmslot-farm'): SlotStatus {
+  return {
+    slot,
+    machine: 'test-machine',
+    platform: 'cli',
+    project,
+    health: { ssh: 'OK', devserver: 'OK', device: 'OK', cdp: 'OK', fixtures: 'OK' },
+    branch: 'main',
+    session: slot,
+    repo: '.',
+    linkedWorktree: false,
+    agent: 'idle',
+    enabled: true,
+    dispatchable: false,
+    lifecycle: 'manual',
+    phase: null,
+    warm: false,
+    taskId: null,
+    taskFile: null,
+    currentRunId: null,
+    currentFlowType: null,
+    currentTicketOrPr: null,
+    currentMode: null,
+    currentFamilyId: null,
+    currentLane: null,
+    currentVariant: null,
+    dispatchedAt: null,
+    completedAt: null,
+    runner: null,
+    model: null,
+    deviceName: null,
+    taskPhase: null,
+    taskStepProgress: null,
+    resourceRollup: 'none',
+  };
+}
+
+function testFleet(): FleetStatus {
+  const slots = [testSlot('macwork-ff-1'), testSlot('macwork-ff-2'), testSlot('macwork-ff-3')];
+  return {
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    slots,
+    summary: {
+      total: slots.length,
+      ready: 0,
+      busy: 0,
+      held: 0,
+      manual: slots.length,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+  };
+}
 
 test.after(async () => {
   const backlog = await import('./store.js');
@@ -36,7 +93,9 @@ async function freshStores() {
   const backlog = await import('./store.js');
   const queue = await import('./dispatch-queue.js');
   const dispatch = await import('../methods/dispatch/index.js');
+  const fleetState = await import('../fleet/state.js');
   const runStore = await import('../runs/store.js');
+  fleetState.setCachedFleetForTests(testFleet());
   await backlog.flushBacklogForTests();
   await queue.persistQueueNow();
   await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });

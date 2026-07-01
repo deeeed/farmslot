@@ -53,4 +53,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [041](041-roadmap-idea-refinement-layer.md)            | Operator Roadmap Idea Refinement Layer                                  | Proposed |
 | [042](042-slot-tracking-branches.md)                   | Slot Tracking Branches for Worktrees and Idle State                     | Accepted |
 | [043](043-scripted-runner-execution-policy.md)         | Scripted Runner and Per-Step Executor Policy                            | Proposed |
-| [044](044-backlog-launch-plans.md)                     | Backlog Launch Plans and Comparison Candidate Sets                      | Proposed |
+| [044](044-backlog-launch-plans.md)                     | Backlog Launch Plans and Comparison Candidate Sets                      | Accepted |
