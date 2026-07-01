@@ -433,6 +433,11 @@ function isNonRetryableEvalQueueError(err: unknown): boolean {
   );
 }
 
+function liveQueuedItem(itemId: string): QueueItem | null {
+  const item = queue.find((candidate) => candidate.id === itemId);
+  return item?.status === 'queued' ? item : null;
+}
+
 async function tryDispatchNextOnce(): Promise<void> {
   if (!_broadcast || !_createAndStartRun) return;
 
@@ -441,7 +446,9 @@ async function tryDispatchNextOnce(): Promise<void> {
 
   const fleet = await loadFleetStatus();
 
-  for (const item of pending) {
+  for (const pendingItem of pending) {
+    const item = liveQueuedItem(pendingItem.id);
+    if (!item) continue;
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const usage = evalSuiteCapUsage(item.evalCell.capGroupId, queue);
       if (usage.active + usage.dispatching >= usage.cap) {
