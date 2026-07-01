@@ -57,3 +57,9 @@ For every runner upgrade, run a tiny prompt such as `Reply exactly TOKEN_CHECK_O
 5. Verdict: `exact`, `partial`, or `unavailable`.
 
 Do not merge runner usage changes unless the extractor output matches the provider source for the tiny prompt or the runner is explicitly documented as unavailable.
+
+## Automated validation
+
+- **L1 fixtures:** `services/gateway/src/runtime/session-usage-script.test.ts` invokes `scripts/session-usage.sh` with committed per-runner session fixtures.
+- **L3–L4 tmux:** `token-usage-smoke` in [runner-validation-harness.md](../operations/runner-validation-harness.md) polls the same script on a live-resolved session path (no duplicated JS token logic).
+- **L5 manual:** this section's `TOKEN_CHECK_OK` protocol after runner CLI upgrades.

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-01T09:21:10.459Z",
+  "host": "macwork",
+  "scenario": "session-attribution-smoke",
+  "runner": "grok",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-attr-7d0MDC",
+  "slotId": "runner-validate-macwork-grok",
+  "session": "runner-validate-grok-session-attribution-smoke-60965",
+  "dispatchedModel": "grok-build",
+  "stalePath": "/Users/deeeed/.grok/sessions/%2Fprivate%2Fvar%2Ffolders%2F98%2F_mm6pm_d0nj7vj72jwq0hc_00000gn%2FT%2Frunner-validate-grok-attr-7d0MDC/runner-stale",
+  "resolvedPath": "/Users/deeeed/.grok/sessions/%2Fprivate%2Fvar%2Ffolders%2F98%2F_mm6pm_d0nj7vj72jwq0hc_00000gn%2FT%2Frunner-validate-grok-attr-7d0MDC/019f1cfa-e78f-74b1-bbf5-5583a86028c3",
+  "resolvedSource": "filesystem",
+  "hookTranscriptPath": null,
+  "hookTmuxPane": null,
+  "staleModel": "grok-2-1212",
+  "actualModel": "grok-build-0.1",
+  "modelMatch": true,
+  "staleWouldMismatch": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash .tmux-driver-launch.sh\n\n2026-07-01T09:20:34.438517Z ERROR worker quit with fatal: Transport channel clos\ned, when Client(reqwest::Error { kind: Request, url: \"http://localhost:8124/mcp/\n\", source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect\nerror\", 127.0.0.1:8124, Os { code: 61, kind: ConnectionRefused, message: \"Connec\ntion refused\" })) })\nTMUX_HOOK_OK\nbash-5.3$\nbash-5.3$"
+}

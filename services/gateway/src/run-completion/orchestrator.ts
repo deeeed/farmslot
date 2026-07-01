@@ -11,6 +11,7 @@ import {
   type DiffStat,
   type GatePolicy,
   type IndependentReviewStatus,
+  modelsMatch,
   type PublicationStatus,
   type PublicationTarget,
   type ReadyGatePrPackage,
@@ -27,6 +28,7 @@ import { findPRNumber, persistRunPrNumber } from '../integrations/pr-linkage.js'
 import { effectiveRequiredReviewCount } from '../quality/review-policy.js';
 import { inferReviewSourceKind, reviewCompositeKey } from '../quality/review-sources.js';
 import { publicationReviewPolicyForRun } from '../run-engine/publication-policy.js';
+import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { extractRunnerSessionUsage } from '../runtime/session-usage.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
@@ -177,12 +179,15 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
   if (!run || !run.slotId) return empty;
   try {
     const vars = await loadSlotVars(run.slotId);
+    const resolved = await resolveRunnerSessionForRun(run, vars);
+    const runnerSessionPath = resolved?.runnerSessionPath ?? run.metrics.runnerSessionPath;
+    const runnerSessionId = resolved?.runnerSessionId ?? run.metrics.runnerSessionId;
     const usage = await extractRunnerSessionUsage({
       slotId: run.slotId,
       vars,
       runner: run.metrics.runner,
-      runnerSessionId: run.metrics.runnerSessionId,
-      runnerSessionPath: run.metrics.runnerSessionPath,
+      runnerSessionId,
+      runnerSessionPath,
     });
     const costUsd = usage.costUsd ?? null;
     const inputTokens = usage.inputTokens ?? null;
@@ -203,6 +208,19 @@ export async function extractAndPersistSessionCost(runId: string): Promise<Sessi
     if (cacheRead !== null) metricsPatch.sessionCacheRead = cacheRead;
     if (totalTokens !== null) metricsPatch.sessionTotalTokens = totalTokens;
     if (actualModel) metricsPatch.actualModel = actualModel;
+    if (actualModel && run.metrics.model && !modelsMatch(run.metrics.model, actualModel)) {
+      console.warn(
+        `[run-completion] model drift: dispatched=${run.metrics.model} actual=${actualModel} run=${runId}`,
+      );
+    }
+    if (
+      resolved &&
+      (resolved.runnerSessionPath !== run.metrics.runnerSessionPath ||
+        resolved.runnerSessionId !== run.metrics.runnerSessionId)
+    ) {
+      metricsPatch.runnerSessionPath = resolved.runnerSessionPath;
+      metricsPatch.runnerSessionId = resolved.runnerSessionId;
+    }
     if (Object.keys(metricsPatch).length > 0) {
       updateRun(runId, { metrics: { ...run.metrics, ...metricsPatch } });
       console.log(

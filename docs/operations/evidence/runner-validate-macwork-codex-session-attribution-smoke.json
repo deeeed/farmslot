@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-01T09:18:28.779Z",
+  "host": "macwork",
+  "scenario": "session-attribution-smoke",
+  "runner": "codex",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-attr-dPtg5W",
+  "slotId": "runner-validate-macwork-codex",
+  "session": "runner-validate-codex-session-attribution-smoke-23580",
+  "dispatchedModel": "gpt-5.4",
+  "stalePath": "/Users/deeeed/.codex/sessions/runner-stale/session.jsonl",
+  "resolvedPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-attr-dPtg5W/.agent/codex-home/sessions/2026/07/01/rollout-2026-07-01T11-18-24-019f1cf8-f2aa-72f3-a621-33ea3d67288e.jsonl",
+  "resolvedSource": "hook",
+  "hookTranscriptPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-attr-dPtg5W/.agent/codex-home/sessions/2026/07/01/rollout-2026-07-01T11-18-24-019f1cf8-f2aa-72f3-a621-33ea3d67288e.jsonl",
+  "hookTmuxPane": "%48",
+  "staleModel": "gpt-5.3",
+  "actualModel": null,
+  "modelMatch": true,
+  "staleWouldMismatch": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash .tmux-driver-launch.sh\nOpenAI Codex v0.142.4\n--------\nworkdir: /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validat\ne-codex-attr-dPtg5W\nmodel: gpt-5.4\nprovider: openai\napproval: never\nsandbox: workspace-write [workdir, /tmp, $TMPDIR]\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f1cf8-f2aa-72f3-a621-33ea3d67288e\n--------\nuser\nReply with exactly TMUX_HOOK_OK and nothing else."
+}

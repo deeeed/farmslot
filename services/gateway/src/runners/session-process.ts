@@ -1,10 +1,33 @@
-import path from 'node:path';
+import { type Run } from '@farmslot/protocol';
 
 import { type loadSlotVars, resolveProjectRuntimeDir } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
-import { runnerPersistsSessionFiles, runnerProcessPatternSource } from './registry.js';
+import { parseHookJsonl, readRunnerObservabilityFiles } from './observability-files.js';
+import {
+  getRunnerDefinition,
+  runnerPersistsSessionFiles,
+  runnerProcessPatternSource,
+} from './registry.js';
+import {
+  chooseRunnerSessionPath,
+  dispatchStartedAtMs,
+  findSessionStartFromHooks,
+  loadSessionMtimesMs,
+  RUNNER_SESSION_CAPTURE_MAX_POLLS,
+  RUNNER_SESSION_CAPTURE_POLL_MS,
+  runnerSessionIdForPath,
+  statSessionPathMtimeMs,
+} from './session-path-resolution.js';
+
+export type RunnerSessionBindingSource = 'hook' | 'filesystem';
+
+export interface RunnerSessionBinding {
+  runnerSessionPath: string;
+  runnerSessionId: string;
+  source: RunnerSessionBindingSource;
+}
 
 export async function listRunnerSessionFiles(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -18,6 +41,7 @@ export async function listRunnerSessionFiles(
   const script = `
 python3 - <<'PY'
 import json
+import os
 from pathlib import Path
 from time import time
 from urllib.parse import quote
@@ -26,21 +50,48 @@ runner = ${JSON.stringify(runner)}
 runtime_dir = ${JSON.stringify(runtimeDir)}
 home = Path.home()
 paths = []
+
+def grok_repo_key(repo_path: str) -> str:
+    try:
+        return os.path.realpath(repo_path)
+    except Exception:
+        return os.path.abspath(repo_path)
+
+def grok_cwd_matches(summary_cwd, repo_path: str) -> bool:
+    return repo_path_matches(summary_cwd, repo_path)
+
+def repo_path_matches(session_path, repo_path: str) -> bool:
+    if not session_path:
+        return False
+    repo_key = grok_repo_key(repo_path)
+    try:
+        return os.path.realpath(session_path) == repo_key
+    except Exception:
+        return session_path == repo_path or session_path == repo_key
+
 if runner == 'claude':
     session_dir = home / '.claude' / 'projects' / repo.replace('/', '-')
     if session_dir.is_dir():
         paths = [str(p) for p in sorted(session_dir.glob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)]
 elif runner == 'grok':
-    sessions_dir = home / '.grok' / 'sessions' / quote(repo, safe='')
-    if sessions_dir.is_dir():
-        cutoff = time() - (7 * 24 * 60 * 60)
+    keys = {quote(repo, safe=''), quote(grok_repo_key(repo), safe='')}
+    cutoff = time() - (7 * 24 * 60 * 60)
+    seen = set()
+    for key in keys:
+        sessions_dir = home / '.grok' / 'sessions' / key
+        if not sessions_dir.is_dir():
+            continue
         for summary_path in sorted(sessions_dir.glob('*/summary.json'), key=lambda p: p.stat().st_mtime, reverse=True):
             try:
                 if summary_path.stat().st_mtime < cutoff:
                     continue
                 summary = json.loads(summary_path.read_text())
-                if summary.get('info', {}).get('cwd') == repo:
-                    paths.append(str(summary_path.parent))
+                if grok_cwd_matches(summary.get('info', {}).get('cwd'), repo):
+                    parent = str(summary_path.parent)
+                    if parent in seen:
+                        continue
+                    seen.add(parent)
+                    paths.append(parent)
             except Exception:
                 # Grok writes summary.json at runtime; skip partial/unreadable files during discovery.
                 continue
@@ -62,7 +113,7 @@ else:
                     continue
                 with path.open() as f:
                     first = json.loads(next(f))
-                if first.get('type') == 'session_meta' and first.get('payload', {}).get('cwd') == repo:
+                if first.get('type') == 'session_meta' and repo_path_matches(first.get('payload', {}).get('cwd'), repo):
                     paths.append(str(path))
                 seen += 1
             except Exception:
@@ -74,26 +125,108 @@ PY`;
   return JSON.parse(result.stdout || '[]') as string[];
 }
 
+async function tryHookSessionBinding(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  options: {
+    sinceMs?: number;
+    paneId?: string | null;
+    slotId?: string | null;
+  },
+): Promise<RunnerSessionBinding | null> {
+  if (getRunnerDefinition(runner).observabilityScope !== 'event-driven') return null;
+  const { hooksRaw } = await readRunnerObservabilityFiles(vars);
+  const hookBinding = findSessionStartFromHooks(parseHookJsonl(hooksRaw), options);
+  if (!hookBinding) return null;
+  const mtimeMs = await statSessionPathMtimeMs(vars, hookBinding.transcriptPath);
+  if (mtimeMs === null) return null;
+  return {
+    runnerSessionPath: hookBinding.transcriptPath,
+    runnerSessionId: hookBinding.sessionId ?? runnerSessionIdForPath(hookBinding.transcriptPath),
+    source: 'hook',
+  };
+}
+
+async function tryFilesystemSessionBinding(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  beforePaths: string[],
+  options: {
+    sinceMs?: number;
+    existingPath?: string | null;
+  },
+): Promise<RunnerSessionBinding | null> {
+  const afterPaths = await listRunnerSessionFiles(vars, runner);
+  const mtimeMsByPath = await loadSessionMtimesMs(vars, afterPaths);
+  const chosen = chooseRunnerSessionPath({
+    candidates: afterPaths,
+    mtimeMsByPath,
+    beforePaths,
+    sinceMs: options.sinceMs,
+    existingPath: options.existingPath,
+  });
+  if (!chosen) return null;
+  return {
+    runnerSessionPath: chosen,
+    runnerSessionId: runnerSessionIdForPath(chosen),
+    source: 'filesystem',
+  };
+}
+
+export async function resolveRunnerSessionBinding(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runner: string,
+  beforePaths: string[],
+  options: {
+    sinceMs?: number;
+    paneId?: string | null;
+    slotId?: string | null;
+    existingPath?: string | null;
+  } = {},
+): Promise<RunnerSessionBinding | null> {
+  if (!runnerPersistsSessionFiles(runner)) return null;
+  const hookBinding = await tryHookSessionBinding(vars, runner, options);
+  if (hookBinding) return hookBinding;
+  return tryFilesystemSessionBinding(vars, runner, beforePaths, options);
+}
+
+export async function resolveRunnerSessionForRun(
+  run: Pick<Run, 'startedAt' | 'steps' | 'metrics'>,
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+): Promise<RunnerSessionBinding | null> {
+  const runner = run.metrics.runner;
+  if (!runner) return null;
+  return resolveRunnerSessionBinding(vars, runner, [], {
+    sinceMs: dispatchStartedAtMs(run),
+    slotId: vars.slotId,
+    existingPath: run.metrics.runnerSessionPath,
+  });
+}
+
 export async function captureRunnerSessionMetadata(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   runner: string,
   beforePaths: string[],
+  options: {
+    sinceMs?: number;
+    paneId?: string | null;
+    slotId?: string | null;
+  } = {},
 ): Promise<{ runnerSessionPath: string | null; runnerSessionId: string | null }> {
   if (!runnerPersistsSessionFiles(runner)) {
     return { runnerSessionPath: null, runnerSessionId: null };
   }
-  for (let i = 0; i < 20; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const afterPaths = await listRunnerSessionFiles(vars, runner);
-    const before = new Set(beforePaths);
-    const fresh = afterPaths.filter((p) => !before.has(p));
-    // Session discovery returns newest-first for every persisted runner.
-    // If no new path appears, fall back to the newest known path, not the oldest.
-    const chosen = fresh[0] ?? afterPaths[0] ?? null;
-    if (chosen) {
+  for (let i = 0; i < RUNNER_SESSION_CAPTURE_MAX_POLLS; i++) {
+    await new Promise((resolve) => setTimeout(resolve, RUNNER_SESSION_CAPTURE_POLL_MS));
+    const binding = await resolveRunnerSessionBinding(vars, runner, beforePaths, {
+      sinceMs: options.sinceMs,
+      paneId: options.paneId,
+      slotId: options.slotId ?? vars.slotId,
+    });
+    if (binding) {
       return {
-        runnerSessionPath: chosen,
-        runnerSessionId: path.basename(chosen, '.jsonl'),
+        runnerSessionPath: binding.runnerSessionPath,
+        runnerSessionId: binding.runnerSessionId,
       };
     }
   }

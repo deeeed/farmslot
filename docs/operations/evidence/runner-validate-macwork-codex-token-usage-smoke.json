@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-01T09:18:53.694Z",
+  "host": "macwork",
+  "scenario": "token-usage-smoke",
+  "runner": "codex",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-usage-h1J6im",
+  "slotId": "runner-validate-macwork-codex",
+  "session": "runner-validate-codex-token-usage-smoke-31180",
+  "dispatchedModel": "gpt-5.4",
+  "resolvedPath": "/private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-codex-usage-h1J6im/.agent/codex-home/sessions/2026/07/01/rollout-2026-07-01T11-18-48-019f1cf9-504e-7961-a003-40fbf5b92948.jsonl",
+  "usage": {
+    "turns": 1,
+    "model": "gpt-5.4",
+    "input_tokens": 10544,
+    "output_tokens": 19,
+    "cache_creation": 0,
+    "cache_read": 7552,
+    "reasoning_output_tokens": 8,
+    "total_tokens": 10563,
+    "cost_usd": 0.053
+  },
+  "usageStdout": "Session:  rollout-2026-07-01T11-18-48-019f1cf9-504e-7961-a003-40fbf5b92948\nRunner:   codex\nLines:    12\n---\nturns=1\nmodel=gpt-5.4\ninput_tokens=10544\noutput_tokens=19\ncache_creation=0\ncache_read=7552\nreasoning_output_tokens=8\ntotal_tokens=10563\ncost_usd=0.0530\n",
+  "modelMatch": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash .tmux-driver-launch.sh\nOpenAI Codex v0.142.4\n--------\nworkdir: /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validat\ne-codex-usage-h1J6im\nmodel: gpt-5.4\nprovider: openai\napproval: never\nsandbox: workspace-write [workdir, /tmp, $TMPDIR]\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f1cf9-504e-7961-a003-40fbf5b92948\n--------\nuser\nReply with exactly TMUX_HOOK_OK and nothing else."
+}

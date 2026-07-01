@@ -4,6 +4,8 @@ import * as interactionSmoke from './interaction-smoke.mjs';
 import * as modeSwitch from './mode-switch.mjs';
 import * as paneSmoke from './pane-smoke.mjs';
 import * as promptAccepted from './prompt-accepted.mjs';
+import * as sessionAttributionSmoke from './session-attribution-smoke.mjs';
+import * as tokenUsageSmoke from './token-usage-smoke.mjs';
 import * as turnBoundary from './turn-boundary.mjs';
 
 export const SCENARIOS = {
@@ -14,6 +16,8 @@ export const SCENARIOS = {
   'turn-boundary': turnBoundary,
   'busy-composer': busyComposer,
   'mode-switch': modeSwitch,
+  'session-attribution-smoke': sessionAttributionSmoke,
+  'token-usage-smoke': tokenUsageSmoke,
 };
 
 export function listScenarios() {

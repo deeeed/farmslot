@@ -27,7 +27,7 @@ import {
   verifyReadyGatePackageHash,
   verifyReadyGateSelectedEvidenceFiles,
 } from '../run-completion/ready-gate-package.js';
-import { listRunnerSessionFiles } from '../runners/session-process.js';
+import { resolveRunnerSessionForRun } from '../runners/session-process.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { isNoCodeTerminalDisposition } from '../tasks/worker-signals.js';
 
@@ -114,20 +114,17 @@ export async function executeFinalizeStep(
   let session: Record<string, unknown> | undefined;
   try {
     const vars = await loadSlotVars(current.slotId);
-    let runnerSessionPath = current.metrics.runnerSessionPath;
     const runner = current.metrics.runner;
-    if (!runnerSessionPath && runner) {
-      const discovered = await listRunnerSessionFiles(vars, runner);
-      runnerSessionPath = discovered[0] ?? null;
-      if (runnerSessionPath) {
-        updateRun(runId, {
-          metrics: {
-            ...current.metrics,
-            runnerSessionPath,
-            runnerSessionId: path.basename(runnerSessionPath, '.jsonl'),
-          },
-        });
-      }
+    const resolved = runner && current ? await resolveRunnerSessionForRun(current, vars) : null;
+    let runnerSessionPath = resolved?.runnerSessionPath ?? current.metrics.runnerSessionPath;
+    if (resolved && runnerSessionPath) {
+      updateRun(runId, {
+        metrics: {
+          ...current.metrics,
+          runnerSessionPath,
+          runnerSessionId: resolved.runnerSessionId,
+        },
+      });
     }
     const usageEnv = runnerSessionPath
       ? `RUNNER_SESSION_PATH='${runnerSessionPath.replace(/'/g, `'\\''`)}' RUNNER_SESSION_RUNNER='${(runner ?? '').replace(/'/g, `'\\''`)}' `
@@ -177,7 +174,10 @@ export async function executeFinalizeStep(
   try {
     if (noCodeDisposition) {
       const noopEmit = () => {};
-      await slotRelease({ slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false }, noopEmit);
+      await slotRelease(
+        { slotId: current.slotId, keepWork: true, keepWarm: true, detachRuns: false },
+        noopEmit,
+      );
     } else {
       await markSlotHeld(current.slotId, 'ci-watch');
     }

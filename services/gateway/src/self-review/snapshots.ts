@@ -412,12 +412,13 @@ export async function bestEffortCaptureRunnerSessionMetadata(
   runner: string,
   beforePaths: string[],
   preScanError?: string,
+  options: { sinceMs?: number } = {},
 ): Promise<ReviewSessionMeta> {
   if (preScanError) {
     return { runnerSessionPath: null, runnerSessionId: null, error: preScanError };
   }
   try {
-    return await captureRunnerSessionMetadata(vars, runner, beforePaths);
+    return await captureRunnerSessionMetadata(vars, runner, beforePaths, options);
   } catch (err) {
     const message = (err as Error).message;
     console.warn(`[self-review] optional ${runner} session metadata capture failed: ${message}`);

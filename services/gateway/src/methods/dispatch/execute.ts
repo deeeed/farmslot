@@ -31,6 +31,7 @@ import {
 } from '../../core/index.js';
 import {
   firstWindowTarget,
+  resolveTmuxPaneId,
   resolveTmuxSession,
   shellQuote,
   tmuxSendTextCommand,
@@ -57,6 +58,7 @@ import {
   assertScriptedRunnerConfig,
   resolveScriptedCommandFromRawProjectJson,
 } from '../../runners/scripted-config.js';
+import { dispatchStartedAtMs } from '../../runners/session-path-resolution.js';
 import {
   captureRunnerSessionMetadata,
   isRunnerAliveUnderPane,
@@ -1035,7 +1037,12 @@ export async function dispatchExecute(
     runnerProcessStarted = true;
     step('launch', `${runner} launched in tmux target ${workerTarget}`);
     primaryTarget = await captureAgentPaneTarget(vars, session, workerTarget);
-    sessionMeta = await captureRunnerSessionMetadata(vars, runner, sessionFilesBefore);
+    const workerPaneId = await resolveTmuxPaneId(vars, primaryTarget.target ?? workerTarget);
+    sessionMeta = await captureRunnerSessionMetadata(vars, runner, sessionFilesBefore, {
+      sinceMs: currentRun ? (dispatchStartedAtMs(currentRun) ?? Date.now()) : Date.now(),
+      paneId: workerPaneId,
+      slotId: vars.slotId,
+    });
 
     // For Claude runner: wait for prompt readiness then send task.
     //

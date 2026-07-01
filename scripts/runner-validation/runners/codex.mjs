@@ -38,12 +38,13 @@ export function assertBinary() {
   }
 }
 
-export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT) {
+export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT, model = 'gpt-5.4') {
   assertBinary();
   const codexHome = path.join(repo, runtimeDir, 'codex-home');
   if (!fs.existsSync(codexHome)) {
     throw new Error(`codex-home missing after install: ${codexHome}`);
   }
+  const modelFlag = model ? ['--model', shSingleQuote(model)] : [];
   return [
     `CODEX_HOME=${shSingleQuote(codexHome)}`,
     'node',
@@ -53,6 +54,7 @@ export function buildLaunchCommand(repo, runtimeDir, prompt = DEFAULT_PROMPT) {
     'plugin_hooks',
     '--sandbox',
     'workspace-write',
+    ...modelFlag,
     shSingleQuote(prompt),
   ].join(' ');
 }

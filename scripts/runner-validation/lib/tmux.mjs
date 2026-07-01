@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
-import { sleepMs,TMUX_SKILL } from './common.mjs';
+import { sleepMs, TMUX_SKILL } from './common.mjs';
 
 export function tmux(args) {
   return execFileSync('tmux', args, { encoding: 'utf8' }).trim();
@@ -53,8 +53,9 @@ export function sendShellScript(paneId, repo, bodyLines) {
 
 export function ensureShellSession(sessionName, repo) {
   if (!hasSession(sessionName)) {
-    tmux(['new-session', '-d', '-s', sessionName, '-c', repo]);
+    tmux(['new-session', '-d', '-s', sessionName, '-c', repo, 'bash', '--noprofile', '--norc']);
   }
+  sleepMs(500);
   const paneId = tmux(['display-message', '-p', '-t', sessionName, '#{pane_id}']);
   return { sessionName, paneId };
 }

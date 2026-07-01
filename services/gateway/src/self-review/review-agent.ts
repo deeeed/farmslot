@@ -199,6 +199,7 @@ export async function runReviewAgent(
       runner,
       sessionFilesBefore.paths,
       sessionFilesBefore.error,
+      { sinceMs: handoffAckSinceMs },
     );
     reviewContext =
       (await upsertAgentContext(_runId, 'self-review', {
