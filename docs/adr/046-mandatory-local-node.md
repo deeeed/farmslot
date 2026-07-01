@@ -1,8 +1,8 @@
-# ADR-046: Mandatory Co-located Local Node — Unify Execution Under the Node Layer
+# ADR-046: Mandatory Co-located Local Node — Unify Monitoring Under the Node Layer
 
 **Status:** Proposed
 **Date:** 2026-07-01
-**Relates to:** [ADR-008](008-remote-communication.md) (extends), [ADR-009](009-slot-workspace.md) (**supersedes §A local-bypass**), [ADR-001](001-gateway-architecture.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-020](020-agent-to-node-rename.md), [ADR-035](035-node-support-bundles.md)
+**Relates to:** [ADR-008](008-remote-communication.md) (extends), [ADR-009](009-slot-workspace.md) (scope note — its §A local reads/exec still stand), [ADR-001](001-gateway-architecture.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-020](020-agent-to-node-rename.md), [ADR-035](035-node-support-bundles.md)
 
 ## Context
 
