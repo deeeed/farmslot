@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -64,6 +64,16 @@ test('loadCheckoutEnv is a no-op when no env files exist', () => {
     const env: NodeJS.ProcessEnv = {};
     loadCheckoutEnv(root, env);
     assert.deepEqual(env, {});
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a present-but-unreadable env file throws instead of being silently skipped', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-envfile-'));
+  mkdirSync(join(root, '.env.ports')); // a dir where a file is expected → read throws EISDIR, not ENOENT
+  try {
+    assert.throws(() => loadCheckoutEnv(root, {}), /cannot read/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
