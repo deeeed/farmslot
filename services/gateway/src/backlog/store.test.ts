@@ -971,3 +971,49 @@ test('dispatch.queue.removeOrphan removes orphaned backlog-linked queue items', 
   await backlog.removeOrphanBacklogQueueItem({ itemId: enqueued.queueItem.id });
   assert.equal(queue.listItems().length, 0);
 });
+
+test('dispatch.queue.removeOrphan removes cancelled orphaned backlog-linked queue items', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Cancelled orphan cleanup',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  const linked = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id);
+  assert.ok(linked);
+  linked.status = 'cancelled';
+  await queue.persistQueueNow();
+
+  await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
+  await backlog.loadBacklog();
+  assert.equal(backlog.listOrphanedBacklogQueueItems().length, 1);
+  await backlog.removeOrphanBacklogQueueItem({ itemId: enqueued.queueItem.id });
+  assert.equal(queue.getQueueSnapshot().length, 0);
+});
+
+test('dispatch.queue.removeOrphan refuses dispatching orphaned backlog-linked queue items', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Dispatching orphan guard',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  const linked = queue.getQueueSnapshot().find((item) => item.id === enqueued.queueItem.id);
+  assert.ok(linked);
+  linked.status = 'dispatching';
+  await queue.persistQueueNow();
+
+  await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
+  await backlog.loadBacklog();
+  assert.equal(backlog.listOrphanedBacklogQueueItems().length, 0);
+  await assert.rejects(
+    () => backlog.removeOrphanBacklogQueueItem({ itemId: enqueued.queueItem.id }),
+    /Cannot remove queue item as orphan/,
+  );
+});

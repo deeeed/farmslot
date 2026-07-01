@@ -140,7 +140,7 @@ export function initBacklogStore(broadcast: BroadcastFn): void {
 
 export function isOrphanedBacklogQueueItem(queueItem: QueueItem): boolean {
   return (
-    queueItem.status === 'queued' &&
+    queueItem.status !== 'dispatching' &&
     Boolean(queueItem.backlogItemId) &&
     !items.some((item) => item.id === queueItem.backlogItemId)
   );
@@ -640,7 +640,7 @@ export async function loadBacklog(): Promise<void> {
     const orphans = listOrphanedBacklogQueueItems();
     if (orphans.length > 0) {
       console.warn(
-        `[backlog] ${orphans.length} queued item(s) reference missing backlog records; remove explicitly from the queue or Doctor`,
+        `[backlog] ${orphans.length} queue item(s) reference missing backlog records; remove explicitly from the queue or Doctor`,
       );
     }
   } catch (err) {
