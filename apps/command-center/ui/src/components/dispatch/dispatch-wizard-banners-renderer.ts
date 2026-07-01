@@ -208,7 +208,7 @@ function renderPriorRunCard(ctx: PriorRunsBannerRenderContext, run: Run, classNa
           Compare against ${run.lane}${run.variant ? `/${run.variant}` : ''} run
         </span>
         <span class="prior-run-meta">
-          family ${run.familyId.slice(0, 8)} · run ${run.id.slice(0, 8)} ·
+          family ${(run.familyId ?? run.id).slice(0, 8)} · run ${run.id.slice(0, 8)} ·
           ${run.metrics?.runner ?? '?'}/${run.metrics?.model ?? '?'} · ${run.status} ·
           ${run.createdAt.slice(0, 16).replace('T', ' ')}
         </span>
