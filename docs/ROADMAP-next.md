@@ -170,6 +170,10 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 
 The remaining future lanes should not displace eval packages unless they become blockers. The list below also calls out items that are implemented history, so they are not accidentally scheduled again.
 
+#### Architecture — mandatory co-located local node ([ADR-046](adr/046-mandatory-local-node.md), Proposed)
+
+Supersedes [ADR-009 §A](adr/009-slot-workspace.md) local-bypass. Today local slots run through the gateway's `execLocal`/reimplementations and skip the node's capability layers (fs-watch, resource-watch, screen, metrics), so the gateway-host machine shows `NODE OFFLINE` in the fleet even though its slots work. Make a co-located local node mandatory: `farmslot up` supervises a loopback node so every machine (including the host) runs a node; local slots route through node RPC uniform with remote. Gateway keeps orchestration only. Sequence: (1) node lifecycle on `up` → (2) route local `exec` → (3) `fs`/watch → (4) `screen` → (5) dedup gateway reimplementations + render the local node online. Until (2) ships, the `NODE OFFLINE` badge on the local host is cosmetic.
+
 #### Recently implemented / do not reschedule as future roadmap
 
 These were previously future-looking backlog items, but the codebase now shows them implemented. The raw plan files have been deleted or promoted into canonical docs; reopen these lanes only for concrete defects or follow-up polish.
