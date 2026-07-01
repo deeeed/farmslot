@@ -133,7 +133,9 @@ export function registerUninstallCommand(program: Command): void {
       }
 
       const purge = Boolean(flags.purge);
-      const nonInteractive = purge || Boolean(flags.yes) || !process.stdin.isTTY;
+      const assumeYes = purge || Boolean(flags.yes);
+      const isTTY = Boolean(process.stdin.isTTY);
+      const interactive = isTTY && !assumeYes;
 
       let history: Resolved;
       let home: Resolved;
@@ -150,7 +152,7 @@ export function registerUninstallCommand(program: Command): void {
       }
 
       // Interactive: let the user decide per target (only where not pinned by a flag).
-      if (!nonInteractive) {
+      if (interactive) {
         const rl = createInterface({ input: process.stdin, output: process.stdout });
         try {
           if (fromFlags(flags.keepHistory, flags.deleteHistory, flags.backupHistory) === null) {
@@ -180,20 +182,23 @@ export function registerUninstallCommand(program: Command): void {
         process.exit(1);
       }
 
-      if (output.json) {
-        output.writeJson({ plan });
-        if (plan.dryRun) return;
-      } else {
-        printPlan(output, plan);
-      }
+      if (!output.json) printPlan(output, plan);
 
       if (plan.dryRun) {
-        if (!output.json) output.write(dim('dry run — nothing was removed\n'));
+        if (output.json) output.writeJson({ plan, dryRun: true });
+        else output.write(dim('dry run — nothing was removed\n'));
         return;
       }
 
-      // Final confirmation unless explicitly non-interactive.
-      if (!nonInteractive) {
+      // Consent gate: never destroy without explicit confirmation. A non-interactive
+      // run (no TTY, or piped stdin) must pass --yes/--purge; otherwise refuse.
+      if (!assumeYes) {
+        if (!isTTY) {
+          output.error(
+            'refusing to uninstall non-interactively without --yes (preview with --dry-run)',
+          );
+          process.exit(1);
+        }
         const rl = createInterface({ input: process.stdin, output: process.stdout });
         try {
           const ok = (await rl.question(`${red('Proceed with uninstall?')} [y/N] `))
@@ -208,11 +213,14 @@ export function registerUninstallCommand(program: Command): void {
         }
       }
 
+      const steps: string[] = [];
       executeUninstallPlan(plan, {
         step: (label) => {
+          steps.push(label);
           if (!output.json) output.write(`${green('[OK]')} ${label}\n`);
         },
       });
-      if (!output.json) output.write(`\n${green('farmslot uninstalled')}\n`);
+      if (output.json) output.writeJson({ plan, status: 'removed', steps });
+      else output.write(`\n${green('farmslot uninstalled')}\n`);
     });
 }
