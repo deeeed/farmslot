@@ -18,6 +18,7 @@ import {
   isInternalRunArtifactPath,
   isPublishEvidenceArtifact,
   isTerminalRunStatus as protocolIsTerminalRunStatus,
+  modeForFlow,
   parseGitHubRef,
 } from '@farmslot/protocol';
 import { flowColor as _flowColor, flowLabel as _flowLabel } from '@farmslot/theme';
@@ -256,8 +257,20 @@ export function runDisplayLabel(run: EvalRunDisplayInput): string {
 }
 
 export function runModeLabel(run: Partial<Pick<Run, 'flowType' | 'mode'>>): string | null {
-  if (run.flowType === 'dev' && run.mode) return run.mode;
-  return null;
+  return run.mode ?? null;
+}
+
+export function runModeDiffersFromDefault(run: Partial<Pick<Run, 'flowType' | 'mode'>>): boolean {
+  if (!run.flowType || !run.mode || run.mode === 'validation') return false;
+  return run.mode !== modeForFlow(run.flowType);
+}
+
+export function runTemplateFileName(run: Pick<Run, 'steps'>): string | null {
+  const outputs = run.steps.find((step) => step.name === 'write-task')?.outputs as
+    | { templateName?: string }
+    | undefined;
+  const name = outputs?.templateName?.trim();
+  return name || null;
 }
 
 export function runDisplayColor(run: EvalRunDisplayInput): string {
@@ -266,7 +279,7 @@ export function runDisplayColor(run: EvalRunDisplayInput): string {
 
 export function runDisplayTitle(run: EvalRunDisplayInput): string {
   if (isEvalCandidateRun(run)) return 'Eval Candidate · dev carrier · artifact-only';
-  if (run.flowType === 'dev' && run.mode) return `${run.flowType} · ${run.mode}`;
+  if (run.flowType && run.mode) return `${run.flowType} · ${run.mode}`;
   return run.flowType;
 }
 

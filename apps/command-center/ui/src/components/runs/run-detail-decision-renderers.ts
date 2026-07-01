@@ -141,7 +141,7 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
           : isCollision
             ? 'Task dir collision — prior runs exist'
             : isInteractiveHandoff
-              ? 'Worker stopped — finish manually'
+              ? 'Interactive handoff — not publication gate'
               : isRetrospective
                 ? 'Retrospective ready for review'
                 : recoveredTimeout
@@ -163,6 +163,13 @@ export function renderRunGateSection(run: Run, context: RunDecisionRenderContext
         <span class="gate-icon">!</span>
         <div style="flex:1">
           <div class="gate-title">${title}</div>
+          ${isInteractiveHandoff && run.mode
+            ? html`<div
+                style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; margin-top:4px"
+              >
+                Mode: ${run.mode}. Finish in the slot, then check SIGNAL.json to resume.
+              </div>`
+            : nothing}
         </div>
         ${isRetrospective
           ? html` <a class="gate-slot-link" href=${retrospectiveHref}>Open retrospective</a> `

@@ -8,7 +8,12 @@ import type {
   Run,
   RunGrade,
 } from '@farmslot/protocol';
-import { canActivateRunOnSlot, modelsMatch, normalizeRunTags } from '@farmslot/protocol';
+import {
+  canActivateRunOnSlot,
+  modeForFlow,
+  modelsMatch,
+  normalizeRunTags,
+} from '@farmslot/protocol';
 
 import { isPrLinkageMissing } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
@@ -33,8 +38,10 @@ import {
   routeForRun,
   runDisplayLabel,
   runDisplayTitle,
+  runModeDiffersFromDefault,
   runModeLabel,
   runStatusColor,
+  runTemplateFileName,
 } from './run-utils.js';
 
 export interface RunDetailViewContext {
@@ -465,6 +472,21 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         ? html`<div class="meta-item">
             <div class="meta-label">Mode</div>
             <div class="meta-value">${runModeLabel(r)}</div>
+          </div>`
+        : nothing}
+      ${runTemplateFileName(r)
+        ? html`<div class="meta-item">
+            <div class="meta-label">Template</div>
+            <div class="meta-value">${runTemplateFileName(r)}</div>
+          </div>`
+        : nothing}
+      ${runModeDiffersFromDefault(r) && r.parentRunId
+        ? html`<div class="meta-item" style="grid-column:1/-1">
+            <div class="meta-label">Mode note</div>
+            <div class="meta-value" style="color:${colors.statusWarn}">
+              Chained run inherited ${r.mode} from parent; ${r.flowType} normally defaults to
+              ${modeForFlow(r.flowType)}.
+            </div>
           </div>`
         : nothing}
       ${isEvalCandidateRun(r)

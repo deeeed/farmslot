@@ -4,6 +4,7 @@ import type { SlotStatus } from '@farmslot/protocol';
 
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned } from '../../utils/pinned-slots.js';
+import { runDisplayTitle } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
 import { EDITORS } from './slot-view-model.js';
@@ -38,6 +39,17 @@ export function renderSlotViewHeader(
     <div class="sv-header">
       <button class="sv-back-btn" @click=${view._handleBack}>&larr;</button>
       <span class="sv-slot-title">${hasSlotData ? slot!.slot : view.slotId || 'workspace'}</span>
+      ${view._linkedRun
+        ? html`
+            <a
+              class="sv-run-ctrl"
+              href="#run/${view._linkedRun.id}"
+              style="background:${colors.bgCard}22; color:${colors.textPrimary}; border:1px solid ${colors.bgCardHover}; padding:2px 8px; border-radius:4px; font-size:11px; font-family:${fonts.mono}; cursor:pointer; margin-left:4px; text-decoration:none"
+              title="Linked run mode and flow"
+              >${runDisplayTitle(view._linkedRun)} · ${view._linkedRun.status}</a
+            >
+          `
+        : nothing}
       ${view.slotId
         ? html`
             <button

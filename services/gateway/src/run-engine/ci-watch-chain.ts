@@ -1,4 +1,4 @@
-import type { FlowType, Run, RunCreateParams } from '@farmslot/protocol';
+import { type FlowType, modeForFlow, type Run, type RunCreateParams } from '@farmslot/protocol';
 
 import {
   buildFollowUpClassification,
@@ -64,7 +64,10 @@ export function buildCIWatchChainedRunParams(
       model: current.metrics.model ?? undefined,
       runner: current.metrics.runner ?? undefined,
       effort: current.effort,
-      mode: current.mode,
+      // Headless CI-watch follow-ups (pr-complete / merge-main) always use the
+      // flow baseline mode. Interactive belongs on the operator's initial worker
+      // (e.g. dev), not on chained fix loops inherited via current.mode.
+      mode: modeForFlow(flowType),
       // Chained CI-watch runs inherit parent's safety tier (ADR-023) and
       // the operator's machine/allowed-slot restriction so the chain
       // doesn't leak onto a machine the user filtered out.

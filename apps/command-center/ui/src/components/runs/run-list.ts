@@ -12,7 +12,7 @@ import type {
   RunListResult,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
-import { Methods, normalizeRunTags, summarizeRunEvidence } from '@farmslot/protocol';
+import { Methods, modeForFlow, normalizeRunTags, summarizeRunEvidence } from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';
@@ -60,6 +60,8 @@ import {
   runDisplayLabel,
   runDisplayTitle,
   type RunFamilyGroup,
+  runModeDiffersFromDefault,
+  runModeLabel,
   runStatusColor,
   summarizeEligibilityReasons,
 } from './run-utils.js';
@@ -558,6 +560,18 @@ export class RunList extends RunListState {
             title=${runDisplayTitle(run)}
             >${runDisplayLabel(run)}</span
           >
+          ${runModeLabel(run)
+            ? html`<span
+                class="badge status-badge"
+                style="--status-color:${runModeDiffersFromDefault(run)
+                  ? colors.statusWarn
+                  : colors.textMuted}"
+                title=${runModeDiffersFromDefault(run)
+                  ? `${run.flowType} normally defaults to ${modeForFlow(run.flowType)}`
+                  : `Run mode: ${run.mode}`}
+                >${run.mode}</span
+              >`
+            : nothing}
         </div>
         <div class="info">
           ${this.familyFilter === run.familyId
