@@ -124,3 +124,8 @@ presentation/
 packages/*/dist/
 services/*/dist/
 pool/*.bak.*
+
+# Installed-workspace artifacts (only appear if FARMSLOT_WORKSPACE points at a checkout)
+/repos/
+/runs/
+/state.json

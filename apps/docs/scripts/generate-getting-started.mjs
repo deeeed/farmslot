@@ -36,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
 \`\`\`
 
 Copy, paste, done — prerequisites are checked (never auto-installed), a
-workspace lands in \`~/dev/farmslot-workspace/\`, and the run ends with a green
+workspace lands in \`~/farmslot/\`, and the run ends with a green
 \`farmslot doctor\`. Early preview: \`main\` moves daily, run \`farmslot update\`
 often.
 
