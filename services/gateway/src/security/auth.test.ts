@@ -70,6 +70,32 @@ for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
   assert.notEqual(loopbackOk.rateLimited, true, `loopback ${ip} should not be rate-limited`);
 }
 
+// With proxy headers trusted, clientIp comes from X-Forwarded-For — a forged loopback
+// IP must NOT be exempt, so brute-force protection stays on for remote callers.
+const prevTrust = process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
+process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS = '1';
+try {
+  const proxyLimited = { auth: runtime.auth, limiter: new GatewayAuthRateLimiter(1, 60_000) };
+  authenticateGatewayClient({
+    runtime: proxyLimited,
+    connectParams: { clientKind: 'ui', token: 'bad' },
+    clientIp: '127.0.0.1',
+  });
+  const forged = authenticateGatewayClient({
+    runtime: proxyLimited,
+    connectParams: { clientKind: 'ui', token: 'abc' },
+    clientIp: '127.0.0.1',
+  });
+  assert.equal(
+    forged.rateLimited,
+    true,
+    'forged loopback under proxy trust must stay rate-limited',
+  );
+} finally {
+  if (prevTrust === undefined) delete process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS;
+  else process.env.FARMSLOT_GATEWAY_TRUST_PROXY_HEADERS = prevTrust;
+}
+
 const cookieRuntime = createGatewayAuthRuntime({ FARMSLOT_GATEWAY_TOKEN: 'cookie-token' });
 const cookieResponse = createFakeResponse();
 const cookieAuthorized = authorizeHttpRequest({

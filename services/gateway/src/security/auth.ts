@@ -145,12 +145,17 @@ export function authenticateGatewayClient(params: {
   clientIp: string;
 }): GatewayAuthResult {
   const { auth, limiter } = params.runtime;
-  // Rate limiting only matters for remote brute-force. A loopback client (the local
-  // browser or hosted Command Center connecting to ws://localhost) already implies
-  // same-machine trust — a local process can read the token file anyway. Rate-limiting
-  // it just locks out a *valid* token for the whole window after a few stale-token
-  // retries share the 127.0.0.1 bucket. Skip the limiter for loopback callers.
-  const rateLimitApplies = !isLoopbackClientIp(params.clientIp);
+  // A loopback client (the local browser or hosted Command Center connecting to
+  // ws://localhost) already implies same-machine trust — a local process can read the
+  // token file anyway. Rate-limiting it just locks out a *valid* token for the window
+  // after a few stale-token retries share the 127.0.0.1 bucket, so exempt it.
+  //
+  // Only exempt when we are NOT trusting proxy headers: without proxy trust, clientIp
+  // is the real socket peer (unspoofable), so a loopback IP is a genuine local client.
+  // With proxy trust on there is a reverse proxy in front, clientIp comes from
+  // X-Forwarded-For and a remote client could forge 127.0.0.1 — never exempt then, so
+  // brute-force protection stays on for remote callers.
+  const rateLimitApplies = shouldTrustProxyHeaders() || !isLoopbackClientIp(params.clientIp);
   if (rateLimitApplies) {
     const rateLimited = limiter.check(params.clientIp);
     if (rateLimited) return rateLimited;
