@@ -21,7 +21,13 @@ import { registerUninstallCommand } from './commands/uninstall.js';
 import { registerUpCommand } from './commands/up.js';
 import { registerUpdateCommand } from './commands/update.js';
 import { registerWorkspaceCommand } from './commands/workspace.js';
-import { bootstrapFarmslotHome } from './onboarding/workspace.js';
+import { loadCheckoutEnv } from './onboarding/env-file.js';
+import { bootstrapFarmslotHome, repoRoot } from './onboarding/workspace.js';
+
+// Load per-checkout .env.ports / .env (FARMSLOT_HOME, GW_URL, ports) before anything reads
+// them; the shell environment always wins. Then recover a custom home from persisted state.
+loadCheckoutEnv(repoRoot);
+bootstrapFarmslotHome();
 
 const program = new Command();
 
@@ -55,11 +61,6 @@ registerUpdateCommand(program);
 registerUninstallCommand(program);
 registerAuthCommands(program);
 registerAnalyticsCommand(program);
-
-// Recover a custom install home (FARMSLOT_HOME) from persisted workspace state before
-// any command resolves gateway profiles / pid / logs. No-op when the env var is set or
-// no workspace exists.
-bootstrapFarmslotHome();
 
 // parseAsync: async command actions (update) must reject through commander,
 // not become unhandled rejections.
