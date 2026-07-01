@@ -99,13 +99,14 @@ export function buildUninstallPlan(
   assertSafeRoot(ws.root);
   const homeDir = state?.home_dir ?? farmslotHome();
   assertSafeRoot(homeDir);
-  // A home dir that equals or contains the workspace would take kept run history with it
-  // when deleted — refuse rather than risk clobbering the workspace (e.g. a state.json
-  // with home_dir pointing at an ancestor like ~/dev).
+  // Home and the workspace must be disjoint trees. If either contains the other, removing
+  // one clobbers the other: a home above the workspace (e.g. ~/dev) takes kept run history
+  // with it, and a home *inside* the workspace is destroyed by the install-dir removal even
+  // with home=keep.
   const rootR = canonicalPath(ws.root);
   const homeR = canonicalPath(homeDir);
-  if (rootR === homeR || rootR.startsWith(homeR + sep)) {
-    throw new Error(`refusing to uninstall: home dir ${homeDir} contains the workspace ${ws.root}`);
+  if (rootR === homeR || rootR.startsWith(homeR + sep) || homeR.startsWith(rootR + sep)) {
+    throw new Error(`refusing to uninstall: home dir ${homeDir} overlaps the workspace ${ws.root}`);
   }
   // A backup written inside a directory that will be removed is destroyed with it.
   if (opts.history === 'backup' && opts.historyBackupPath) {
