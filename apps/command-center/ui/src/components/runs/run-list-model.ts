@@ -1,5 +1,5 @@
 import type { FlowType, Run, RunLane, RunStatus } from '@farmslot/protocol';
-import { TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
+import { resolveRunSlotId, TERMINAL_RUN_STATUSES } from '@farmslot/protocol';
 
 import type { GlobalFilters } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
@@ -60,7 +60,7 @@ export function filterRunList(input: FilterRunListInput): readonly Run[] {
   }
   if (input.globalFilters.machines.length > 0) {
     result = result.filter((run) =>
-      runMatchesMachineFilter(run.slotId, input.globalFilters.machines),
+      runMatchesMachineFilter(resolveRunSlotId(run), input.globalFilters.machines),
     );
   }
   if (input.tab === 'active') {

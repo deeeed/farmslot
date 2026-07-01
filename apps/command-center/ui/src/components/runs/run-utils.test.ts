@@ -26,6 +26,7 @@ import {
   pickComparisonPartner,
   pickFamilyComparePair,
   prLinkForRun,
+  resolveRunEngine,
   routeForRun,
   runChainedModeDrift,
   runDisplayLabel,
@@ -298,6 +299,24 @@ test('runModeLabel and runModeDiffersFromDefault surface mode for all flows', ()
     false,
   );
   assert.equal(
+    runChainedModeDrift(
+      makeRun({
+        flowType: 'dev',
+        mode: 'autonomous',
+        parentRunId: 'parent-1',
+        lane: 'comparison',
+      }),
+    ),
+    false,
+    'comparison siblings are intentionally autonomous — not mode drift',
+  );
+  assert.equal(
+    runChainedModeDrift(
+      makeRun({ flowType: 'dev', mode: 'autonomous', parentRunId: 'parent-1', lane: 'production' }),
+    ),
+    true,
+  );
+  assert.equal(
     runDisplayTitle(makeRun({ flowType: 'pr-complete', mode: 'autonomous' })),
     'pr-complete · autonomous',
   );
@@ -339,6 +358,32 @@ test('eval candidate runs display as eval without adding a flow type', () => {
   assert.equal(
     runDisplayLabel(makeRun({ flowType: 'dev', lane: 'production', ticketOrPr: 'PROJ-1' })),
     'DEV',
+  );
+});
+
+test('resolveRunEngine prefers metrics and falls back to find-slot outputs', () => {
+  assert.deepEqual(
+    resolveRunEngine(
+      makeRun({
+        metrics: { nudgeCount: 0, runner: 'grok', model: 'grok-composer-2.5-fast' },
+      }),
+    ),
+    { runner: 'grok', model: 'grok-composer-2.5-fast' },
+  );
+  assert.deepEqual(
+    resolveRunEngine(
+      makeRun({
+        metrics: { nudgeCount: 0, runner: '', model: '' },
+        steps: [
+          {
+            name: 'find-slot',
+            status: 'done',
+            outputs: { runner: 'grok', model: 'grok-composer-2.5-fast' },
+          },
+        ],
+      }),
+    ),
+    { runner: 'grok', model: 'grok-composer-2.5-fast' },
   );
 });
 

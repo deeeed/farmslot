@@ -30,7 +30,9 @@ import {
   runnerPaneHasQueuedInstruction,
   runnerPaneLooksIdle,
   runnerPaneShouldSubmitExistingInstruction,
+  runnerPaneShowsPreSendDuplicateInstruction,
   runnerPaneShowsPromptAccepted,
+  runnerPaneShowsSubmittedInstruction,
   runnerPaneShowsTaskAlreadyRunning,
   runnerPaneShowsWorkspaceTrustPrompt,
   runnerPersistsSessionFiles,
@@ -783,6 +785,36 @@ describe('grok runner', () => {
 
     assert.equal(runnerPaneHasPendingInstruction(buffered, message, 'grok'), true);
     assert.equal(runnerPaneShowsPromptAccepted(submitted, buffered, message, '', 'grok'), true);
+  });
+
+  it('does not treat Grok transcript history alone as a pre-send duplicate', () => {
+    const message = 'Follow the checklist in TASK.md and mark each step done.';
+    const transcriptOnly = `
+     #1 Follow the checklist in TASK.md and mark each step done.
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────── Grok Build ─╯
+`;
+    assert.equal(runnerPaneShowsSubmittedInstruction(transcriptOnly, message, 'grok'), true);
+    assert.equal(
+      runnerPaneShowsPreSendDuplicateInstruction(transcriptOnly, message, 'grok'),
+      false,
+    );
+  });
+
+  it('treats Grok progress with the instruction as a pre-send duplicate', () => {
+    const message = 'Reply exactly OK and do not edit files.';
+    const running = `
+     #1 Reply exactly OK and do not edit files.
+
+    ⠋ Starting session… 5.0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────── Grok Build ─╯
+`;
+    assert.equal(runnerPaneShowsPreSendDuplicateInstruction(running, message, 'grok'), true);
   });
 });
 

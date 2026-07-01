@@ -12,7 +12,7 @@ import type {
   RunStep,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { buildComparisonVariant, isTerminalRunStatus } from '@farmslot/protocol';
+import { buildComparisonVariant, isTerminalRunStatus, resolveRunSlotId } from '@farmslot/protocol';
 
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
 
@@ -180,7 +180,7 @@ export function buildRunDiagnosisPrompt(run: Run): string {
     `Why did run ${run.id} fail?`,
     `Ticket or PR: ${run.ticketOrPr}`,
     `Flow: ${run.flowType}`,
-    run.slotId ? `Slot: ${run.slotId}` : '',
+    resolveRunSlotId(run) ? `Slot: ${resolveRunSlotId(run)}` : '',
     run.error ? `Run error: ${run.error}` : '',
     failedSteps.length ? `Failed steps: ${failedSteps.join(', ')}` : '',
     'Call propose_run_recovery first, then use gateway evidence only if deeper detail is needed.',
@@ -192,12 +192,11 @@ export function buildRunDiagnosisPrompt(run: Run): string {
 
 /**
  * Build a `#dispatch?lane=comparison&...` href that prefills the wizard for
- * forking a comparison-lane sibling of this run. Variant defaults to
- * `<runner>-<safe(model)>` so the new sibling is distinguishable from the
- * existing one in the family list (the gateway also uses variant uniqueness
- * to allow the duplicate-run guard).
+ * forking a comparison-lane sibling of this run. Baseline runner/model are
+ * included when known so the operator starts from the same engine and can
+ * still switch before dispatch.
  */
-export function buildRerunAlongsideHref(run: Run): string {
+export function buildRerunAlongsideHref(run: Run, hash?: string): string {
   const params = new URLSearchParams();
   params.set('flow', run.flowType);
   params.set('ticket', run.ticketOrPr);
@@ -205,17 +204,21 @@ export function buildRerunAlongsideHref(run: Run): string {
   params.set('lane', 'comparison');
   params.set('familyId', run.familyId);
   params.set('parentRunId', run.id);
-  const runner = run.metrics.runner ?? '';
-  const model = run.metrics.model ?? '';
+  const runner = run.metrics?.runner;
+  const model = run.metrics?.model;
   if (runner) params.set('runner', runner);
   if (model) params.set('model', model);
-  // Variant tags the sibling so the duplicate-run guard sees it as distinct.
-  // Shared helper keeps this format aligned with dispatch-wizard's submit
-  // path — drift between the two would produce variants the guard rejects.
   const variant = buildComparisonVariant(runner, model);
   if (variant) params.set('variant', variant);
+  const sourceHash = hash ?? (typeof location !== 'undefined' ? location.hash : '');
+  const hashQuery = sourceHash.includes('?') ? sourceHash.slice(sourceHash.indexOf('?') + 1) : '';
+  const hashParams = new URLSearchParams(hashQuery);
+  const machines = hashParams.get('machines');
+  if (machines) params.set('machines', machines);
   return `#dispatch?${params.toString()}`;
 }
+
+export { canLaunchComparisonSibling } from './run-selector-model.js';
 
 export function runDetailDesiredRecipeRunId(input: {
   recipeRuns: readonly Pick<RecipeRunArtifactGroup, 'id'>[];

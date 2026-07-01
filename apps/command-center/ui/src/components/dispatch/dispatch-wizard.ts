@@ -31,7 +31,9 @@ import {
   deriveComparisonVariantState,
   exitedComparisonModeState,
   forkComparisonStateFromRun,
+  hydrateComparisonEngineFromParent,
   resolveComparisonVariant,
+  shouldHydrateComparisonParentEngine,
 } from './dispatch-wizard-comparison-state.js';
 import {
   appLabel,
@@ -49,7 +51,7 @@ import {
   syncSelectedAppForProject,
 } from './dispatch-wizard-draft.js';
 import {
-  lookupPriorRunsForDispatchWizard,
+  lookupRecentRunsForComparisonPicker,
   requestDispatchProfileFit,
   requestDispatchProjectMatch,
   requestDispatchWizardCandidates,
@@ -114,10 +116,16 @@ export class DispatchWizard extends DispatchWizardState {
     if ((changed.has('_flowType') || changed.has('_project')) && this._project && this._flowType) {
       void this._fetchTemplateOptions();
     }
+    if (changed.has('_comparePickerOpen') && this._comparePickerOpen) {
+      void this.updateComplete.then(() => {
+        this.shadowRoot?.querySelector<HTMLElement>('.compare-modal-backdrop')?.focus();
+      });
+    }
   }
 
   connectedCallback() {
     super.connectedCallback();
+    document.addEventListener('keydown', this._onComparePickerKeydown);
     this._parseHashParams();
     this._applyMockInitial();
     this._syncFleet(getState());
@@ -143,10 +151,10 @@ export class DispatchWizard extends DispatchWizardState {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    document.removeEventListener('keydown', this._onComparePickerKeydown);
     this._unsubConn?.();
     this._unsubState?.();
     if (this._matchTimer) clearTimeout(this._matchTimer);
-    if (this._priorRunsTimer) clearTimeout(this._priorRunsTimer);
   }
 
   private _syncFleet(s: AppState) {
@@ -192,6 +200,37 @@ export class DispatchWizard extends DispatchWizardState {
     if (this._project && (hydrationJustFinished || machineFilterChanged || targetBranchChanged)) {
       void this._fetchCandidates(this._project);
     }
+
+    const comparisonFilterKey = `${[...fp].sort().join(',')}|${machineSig}`;
+    if (this._comparePickerOpen && comparisonFilterKey !== this._comparisonPickerFilterKey) {
+      void this._loadComparisonPickerRuns();
+    }
+
+    this._tryHydrateComparisonParentEngine(s.runs ?? []);
+  }
+
+  private _tryHydrateComparisonParentEngine(runs: readonly Run[]): void {
+    if (
+      !shouldHydrateComparisonParentEngine({
+        hydrated: this._comparisonParentEngineHydrated,
+        comparisonFlow: this._comparisonFlow,
+        parentRunId: this._comparisonParentRunId,
+        hashPinnedEngine: this._comparisonHashPinnedEngine,
+      })
+    ) {
+      return;
+    }
+    const parent = runs.find((run) => run.id === this._comparisonParentRunId);
+    if (!parent) return;
+    const next = hydrateComparisonEngineFromParent(
+      parent,
+      { runner: this._runner, model: this._model },
+      COMPARISON_LANE_RUNNERS,
+    );
+    this._runner = next.runner;
+    this._model = next.model;
+    this._comparisonParentEngineHydrated = true;
+    this._recomputeVariantCollision();
   }
 
   private async _loadProjectConfigs(): Promise<void> {
@@ -290,12 +329,6 @@ export class DispatchWizard extends DispatchWizardState {
       this._syncSelectedAppForProject(this._project);
       void this._fetchCandidates(this._project);
     }
-    // Trigger the prior-runs banner against the seeded ticket without waiting for
-    // a keystroke — the dev harness seeds state.runs synchronously, so this just
-    // populates _priorRuns with the matching mock entries.
-    if (this._ticketId) {
-      this._schedulePriorRunsLookup(this._ticketId);
-    }
   }
 
   private _setTicket(ticketId: string): void {
@@ -304,7 +337,6 @@ export class DispatchWizard extends DispatchWizardState {
     this._error = '';
     this._activeRunConflict = null;
     this._scheduleMatchProject(this._ticketId);
-    this._schedulePriorRunsLookup(this._ticketId);
   }
 
   private _resolveTargetBranch(prs: ReadonlyArray<PRStatus>): string | undefined {
@@ -472,42 +504,55 @@ export class DispatchWizard extends DispatchWizardState {
     }
   }
 
-  // Debounced lookup of prior runs sharing the typed ticket. Skips when the wizard is
-  // already in URL-prefilled comparison-lane mode (the operator came in via "Re-run
-  // alongside →" and the parent run is already locked in). Cleared on empty input.
-  private _schedulePriorRunsLookup(ticket: string): void {
-    if (this._priorRunsTimer) clearTimeout(this._priorRunsTimer);
-    if (!ticket.trim() || this._comparisonLane) {
-      this._priorRuns = [];
-      return;
+  private _enterNormalFlow(): void {
+    if (this._comparisonFlow || this._comparisonLane) {
+      this._exitComparisonMode();
     }
-    // 350ms — slightly slower than _scheduleMatchProject's 0/400ms so the lookup
-    // fires after the project resolves and run.list response carries the canonical
-    // ticket form. Same-tab keystroke cadence makes 250-400ms feel snappy without
-    // hammering the gateway.
-    this._priorRunsTimer = setTimeout(() => this._doPriorRunsLookup(ticket), 350);
+    this._comparisonFlow = false;
+    this._comparePickerOpen = false;
   }
 
-  private async _doPriorRunsLookup(ticket: string): Promise<void> {
-    const gen = ++this._priorRunsGen;
-    const candidate = ticket.trim();
-    try {
-      // Dev harness seeds prior runs into shared state instead of a live gateway.
-      const runs = await lookupPriorRunsForDispatchWizard({
-        mockMode: this.mockMode,
-        stateRuns:
-          this.mockMode && this.mockPriorRuns ? this.mockPriorRuns : (getState().runs ?? []),
-        search: candidate,
-        normalizedTicket: this._normalizedTicket,
-      });
-      if (gen !== this._priorRunsGen) return; // superseded by newer keystroke
-      this._priorRuns = runs;
-    } catch (err) {
-      // Banner is advisory; failed lookup just hides it (dispatch still works).
-      console.warn('[dispatch-wizard] prior-runs lookup failed', err);
-      if (gen === this._priorRunsGen) this._priorRuns = [];
+  private _enterComparisonFlow(): void {
+    this._comparisonFlow = true;
+    this._error = '';
+    this._checkActiveRunConflict();
+    if (!this._comparisonParentRunId) {
+      void this._openComparisonPicker();
     }
   }
+
+  private async _loadComparisonPickerRuns(): Promise<void> {
+    const state = getState();
+    const projectFilters = state.globalFilters.projects;
+    const machineFilters = state.globalFilters.machines;
+    this._comparisonPickerFilterKey = `${[...projectFilters].sort().join(',')}|${[...machineFilters].sort().join(',')}`;
+    this._comparisonPickerLoading = true;
+    try {
+      this._comparisonPickerRuns = await lookupRecentRunsForComparisonPicker({
+        mockMode: this.mockMode,
+        stateRuns: this.mockMode && this.mockPriorRuns ? this.mockPriorRuns : (state.runs ?? []),
+        projectFilters,
+        machineFilters,
+      });
+    } catch (err) {
+      console.warn('[dispatch-wizard] comparison run picker failed', err);
+      this._comparisonPickerRuns = [];
+    } finally {
+      this._comparisonPickerLoading = false;
+    }
+  }
+
+  private async _openComparisonPicker(): Promise<void> {
+    this._comparePickerSearch = '';
+    this._comparePickerOpen = true;
+    await this._loadComparisonPickerRuns();
+  }
+
+  private _onComparePickerKeydown = (event: KeyboardEvent): void => {
+    if (!this._comparePickerOpen || event.key !== 'Escape') return;
+    event.preventDefault();
+    this._comparePickerOpen = false;
+  };
 
   private _exitComparisonMode(): void {
     const next = exitedComparisonModeState();
@@ -517,12 +562,16 @@ export class DispatchWizard extends DispatchWizardState {
     this._comparisonVariant = next.comparisonVariant;
     this._variantCollision = next.variantCollision;
     this._variantInput = next.variantInput;
+    this._comparisonFlow = false;
+    this._comparePickerOpen = false;
+    this._comparisonPickerRuns = [];
+    this._comparisonParentEngineHydrated = false;
+    this._comparisonHashPinnedEngine = false;
     this._checkActiveRunConflict();
-    // Re-trigger prior-runs lookup so the banner re-appears for the same ticket.
-    if (this._ticketId) this._schedulePriorRunsLookup(this._ticketId);
   }
 
-  private _forkFromPriorRun(run: Run): void {
+  private _applyComparisonBaseline(run: Run): void {
+    this._comparisonFlow = true;
     const next = forkComparisonStateFromRun(
       run,
       { runner: this._runner, model: this._model },
@@ -534,10 +583,19 @@ export class DispatchWizard extends DispatchWizardState {
     this._comparisonVariant = next.comparisonVariant;
     this._runner = next.runner;
     this._model = next.model;
-    // Banner shouldn't keep showing once we've forked — suppress until ticket changes.
-    this._priorRuns = [];
+    this._ticketId = run.ticketOrPr;
+    this._normalizedTicket = '';
+    this._flowType = run.flowType;
+    this._autoFlowType = false;
+    this._autoProject = '';
+    if (run.project) {
+      this._selectProject(run.project);
+    }
+    this._comparePickerOpen = false;
+    this._comparisonParentEngineHydrated = true;
     this._recomputeVariantCollision();
     this._checkActiveRunConflict();
+    void this._fetchTemplateOptions();
   }
 
   private _recomputeVariantCollision(): void {
@@ -578,6 +636,11 @@ export class DispatchWizard extends DispatchWizardState {
   }
 
   private _checkActiveRunConflict(): void {
+    // Comparison siblings intentionally run alongside the baseline (often blocked).
+    if (this._comparisonFlow) {
+      this._activeRunConflict = null;
+      return;
+    }
     this._activeRunConflict = findActiveRunConflict(getState().runs ?? [], {
       ticket: this._ticketId,
       normalizedTicket: this._normalizedTicket,
@@ -602,17 +665,24 @@ export class DispatchWizard extends DispatchWizardState {
       history.replaceState(null, '', prefill.startRefRedirectHash);
     }
     if (prefill.comparison) {
+      this._comparisonFlow = Boolean(prefill.comparison.parentRunId);
       this._comparisonLane = true;
       this._comparisonFamilyId = prefill.comparison.familyId;
       this._comparisonVariant = prefill.comparison.variant;
       this._comparisonParentRunId = prefill.comparison.parentRunId;
       const runner = prefill.comparison.runner;
       const model = prefill.comparison.model;
+      this._comparisonHashPinnedEngine = Boolean(runner && COMPARISON_LANE_RUNNERS.has(runner));
       if (runner && COMPARISON_LANE_RUNNERS.has(runner)) {
         this._runner = runner;
         this._model = model || DEFAULT_MODEL[runner];
       }
+      if (this._comparisonHashPinnedEngine) {
+        this._comparisonParentEngineHydrated = true;
+      }
       this._recomputeVariantCollision();
+      this._checkActiveRunConflict();
+      this._tryHydrateComparisonParentEngine(getState().runs ?? []);
     }
     if (prefill.project) {
       this._project = prefill.project;
@@ -622,9 +692,6 @@ export class DispatchWizard extends DispatchWizardState {
       }
       void this._fetchCandidates(prefill.project);
       this._syncSelectedAppForProject(prefill.project);
-    }
-    if (prefill.ticketId && !prefill.comparison) {
-      this._schedulePriorRunsLookup(prefill.ticketId);
     }
   }
 
@@ -665,8 +732,10 @@ export class DispatchWizard extends DispatchWizardState {
       bootstrapFailed: this._bootstrapFailed,
       loadingCandidates: this._loadingCandidates,
       candidateRefreshFailed: this._candidateRefreshFailed,
-      activeRunConflict: !!this._activeRunConflict,
+      activeRunConflict: !!this._activeRunConflict && !this._comparisonFlow,
       variantInputBlocked: this._variantInputBlocked(),
+      comparisonFlow: this._comparisonFlow,
+      comparisonParentRunId: this._comparisonParentRunId,
     });
   }
 
@@ -851,7 +920,9 @@ export class DispatchWizard extends DispatchWizardState {
         flowType: this._flowType,
         ticketOrPr: this._ticketId,
       }),
-      priorRuns: this._priorRuns,
+      comparisonFlow: this._comparisonFlow,
+      comparisonPickerRuns: this._comparisonPickerRuns,
+      comparisonPickerLoading: this._comparisonPickerLoading,
       comparePickerOpen: this._comparePickerOpen,
       comparePickerSearch: this._comparePickerSearch,
       variantCollision: this._variantCollision,
@@ -913,7 +984,12 @@ export class DispatchWizard extends DispatchWizardState {
       openEvals: () => {
         location.hash = 'evals';
       },
-      forkFromPriorRun: (run) => this._forkFromPriorRun(run),
+      enterComparisonFlow: () => this._enterComparisonFlow(),
+      enterNormalFlow: () => this._enterNormalFlow(),
+      openComparisonPicker: () => {
+        void this._openComparisonPicker();
+      },
+      onSelectBaselineRun: (run) => this._applyComparisonBaseline(run),
       setComparePickerOpen: (open) => {
         this._comparePickerOpen = open;
       },

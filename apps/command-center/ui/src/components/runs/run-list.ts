@@ -12,7 +12,7 @@ import type {
   RunListResult,
   RunRehydratePrNumberResult,
 } from '@farmslot/protocol';
-import { Methods, modeForFlow, normalizeRunTags, summarizeRunEvidence } from '@farmslot/protocol';
+import { Methods, normalizeRunTags, summarizeRunEvidence } from '@farmslot/protocol';
 
 import './run-pipeline-mini.js';
 import './run-tag-editor.js';
@@ -55,13 +55,12 @@ import {
   formatCreatedAt,
   groupRunsByFamily,
   pickFamilyComparePair,
+  resolveRunEngine,
   routeForRun,
-  runChainedModeDrift,
   runDisplayColor,
   runDisplayLabel,
   runDisplayTitle,
   type RunFamilyGroup,
-  runModeLabel,
   runStatusColor,
   summarizeEligibilityReasons,
 } from './run-utils.js';
@@ -560,18 +559,6 @@ export class RunList extends RunListState {
             title=${runDisplayTitle(run)}
             >${runDisplayLabel(run)}</span
           >
-          ${runModeLabel(run)
-            ? html`<span
-                class="badge status-badge"
-                style="--status-color:${runChainedModeDrift(run)
-                  ? colors.statusWarn
-                  : colors.textMuted}"
-                title=${runChainedModeDrift(run)
-                  ? `Chained ${run.flowType} run is ${run.mode}; flow baseline is ${modeForFlow(run.flowType)}`
-                  : `Run mode: ${run.mode}`}
-                >${run.mode}</span
-              >`
-            : nothing}
         </div>
         <div class="info">
           ${this.familyFilter === run.familyId
@@ -628,13 +615,16 @@ export class RunList extends RunListState {
                   >${disposition}</span
                 >`
               : nothing}
-            ${run.metrics.runner
-              ? html`<span
-                  class="badge status-badge"
-                  style="--status-color:${runnerColor(run.metrics.runner) ?? colors.textMuted}"
-                  >${run.metrics.runner}</span
-                >`
-              : nothing}
+            ${(() => {
+              const engine = resolveRunEngine(run);
+              return engine.runner
+                ? html`<span
+                    class="badge status-badge"
+                    style="--status-color:${runnerColor(engine.runner) ?? colors.textMuted}"
+                    >${engine.runner}</span
+                  >`
+                : nothing;
+            })()}
             ${run.safetyTier
               ? html`<span
                   class="badge status-badge"
@@ -701,7 +691,14 @@ export class RunList extends RunListState {
           ${run.summary ? html`<div class="summary">${run.summary}</div>` : nothing}
           ${run.lane === 'comparison'
             ? html`<div class="summary">
-                comparison run${run.variant ? ` · variant ${run.variant}` : ''}
+                comparison
+                run${(() => {
+                  const engine = resolveRunEngine(run);
+                  if (engine.runner && engine.model) {
+                    return html` · ${engine.runner}/${engine.model}`;
+                  }
+                  return run.variant ? html` · variant ${run.variant}` : nothing;
+                })()}
               </div>`
             : nothing}
           <div class="info-bottom">
@@ -721,9 +718,12 @@ export class RunList extends RunListState {
         <div class="meta">
           <span title=${run.createdAt}>${formatCreatedAt(run.createdAt)}</span>
           <span>${elapsed(run.createdAt, run.completedAt)}</span>
-          ${run.metrics.model
-            ? html`<span>${run.metrics.runner ?? ''}/${run.metrics.model}</span>`
-            : nothing}
+          ${(() => {
+            const engine = resolveRunEngine(run);
+            return engine.model
+              ? html`<span>${engine.runner ?? ''}/${engine.model}</span>`
+              : nothing;
+          })()}
           ${run.metrics.outcome
             ? html`<span
                 class="outcome-badge"
@@ -792,9 +792,9 @@ export class RunList extends RunListState {
           ? html`<a
               class="evidence-signal compare"
               href=${familyRunHash(run.familyId, run.id)}
-              title=${`${evidenceSummary.visualPairCount} before/after pair${evidenceSummary.visualPairCount === 1 ? '' : 's'} available`}
+              title=${`${evidenceSummary.visualPairCount} before/after pair${evidenceSummary.visualPairCount === 1 ? '' : 's'} — open family retrospective`}
               @click=${(e: Event) => e.stopPropagation()}
-              >Compare ${evidenceSummary.visualPairCount}</a
+              >Before/after · ${evidenceSummary.visualPairCount}</a
             >`
           : nothing}
       </span>

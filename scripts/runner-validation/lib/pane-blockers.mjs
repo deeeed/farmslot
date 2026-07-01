@@ -3,9 +3,11 @@ import path from 'node:path';
 
 import { TMUX_SKILL } from './common.mjs';
 
-/** Delegate to tmux-model-driver pane-state.sh — single source of truth for blocker patterns. */
+/** Delegate to tmux-model-driver pane-state.sh — same script as gateway pane-state-script.ts. */
 export function detectLaunchBlocker(pane, runnerId) {
-  const lines = String(pane).split('\n').filter((line) => line.trim());
+  const lines = String(pane)
+    .split('\n')
+    .filter((line) => line.trim());
   const env = {
     ...process.env,
     TMUX_PANE_STATE_CURRENT_COMMAND: '',
@@ -16,11 +18,10 @@ export function detectLaunchBlocker(pane, runnerId) {
     TMUX_PANE_STATE_TAIL_CAPTURE: pane,
     TMUX_PANE_STATE_LAST_LINE: lines.at(-1) || '',
   };
-  const out = execFileSync(
-    'bash',
-    [path.join(TMUX_SKILL, 'pane-state.sh'), '%0', runnerId || ''],
-    { env, encoding: 'utf8' },
-  );
+  const out = execFileSync('bash', [path.join(TMUX_SKILL, 'pane-state.sh'), '%0', runnerId || ''], {
+    env,
+    encoding: 'utf8',
+  });
   const data = JSON.parse(out);
   if (!data.launch_blocker) return null;
   return {

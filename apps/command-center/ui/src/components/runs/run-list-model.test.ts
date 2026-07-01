@@ -68,6 +68,30 @@ test('filterRunList applies machine filters via slot id prefix', () => {
   );
 });
 
+test('filterRunList matches machine filter via find-slot selectedSlot when slotId is null', () => {
+  const macwork = run('1', {
+    slotId: null,
+    status: 'preparing',
+    steps: [
+      {
+        name: 'find-slot',
+        status: 'done',
+        outputs: { selectedSlot: 'macwork-ff-4' },
+      },
+    ],
+  });
+  const mini = run('2', { slotId: 'mini-mm-1', status: 'done' });
+
+  assert.deepEqual(
+    filter({
+      runs: [macwork, mini],
+      globalFilters: { projects: [], machines: ['macwork'] },
+      tab: 'active',
+    }).map((item) => item.id),
+    ['1'],
+  );
+});
+
 test('filterRunList applies family, project, tab, status, flow, lane, and search filters', () => {
   const matching = run('1', {
     status: 'failed',

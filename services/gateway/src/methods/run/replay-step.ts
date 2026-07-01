@@ -8,6 +8,7 @@ import {
   isInteractiveDevRun,
   PipelineSteps as PS,
   PR_BOUND_FLOW_TYPES,
+  resolveRunSlotId,
   type RunReplayStepParams,
   type RunReplayStepResult,
   type RunStatus,
@@ -131,17 +132,33 @@ function recoverReplaySlotId(
   targetIdx: number,
   prepareIdx: number,
 ): string | null {
-  if (existing.slotId) return existing.slotId;
   if (targetIdx < 0 || prepareIdx < 0 || targetIdx < prepareIdx) return null;
-  const preferredRoles = ['self-review-fix', 'self-review', 'dev'];
-  for (const role of preferredRoles) {
-    const context = existing.agentContexts
-      ?.slice()
-      .reverse()
-      .find((candidate) => candidate.role === role && candidate.slotId);
-    if (context?.slotId) return context.slotId;
+  return resolveRunSlotId(existing);
+}
+
+function assertReplayAfterDispatchAllowed(
+  existing: NonNullable<ReturnType<typeof getRun>>,
+  flowSteps: readonly string[] | undefined,
+  targetIdx: number,
+  replayStepName: string,
+): void {
+  const workerLifecycleSteps = new Set<string>([PS.MONITOR, PS.SELF_REVIEW]);
+  if (!workerLifecycleSteps.has(replayStepName)) return;
+  if (!flowSteps || targetIdx < 0) return;
+  const dispatchIdx = flowSteps.indexOf(PS.DISPATCH);
+  if (dispatchIdx < 0 || targetIdx <= dispatchIdx) return;
+
+  const dispatchStep = existing.steps.find((candidate) => candidate.name === PS.DISPATCH);
+  if (!dispatchStep || dispatchStep.status === 'pending') {
+    throw new Error(
+      `Cannot replay ${replayStepName}: dispatch has not completed — replay from dispatch instead`,
+    );
   }
-  return existing.agentContexts?.find((candidate) => candidate.slotId)?.slotId ?? null;
+  if (dispatchStep.status === 'failed' && !isQueuedPromptDispatchFalseNegative(existing)) {
+    throw new Error(
+      `Cannot replay ${replayStepName}: dispatch failed — replay from dispatch instead`,
+    );
+  }
 }
 
 type SlotReclaimCheck =
@@ -152,9 +169,14 @@ type SlotReclaimCheck =
 export function replaySlotReclaimCheck(
   slot: Readonly<Record<string, unknown>>,
   runId: string,
+  options?: { ownerRunExists?: (ownerId: string) => boolean },
 ): SlotReclaimCheck {
   const owner = typeof slot.current_run_id === 'string' ? slot.current_run_id : '';
-  if (owner && owner !== runId) return { ok: false, reason: 'owned-by-other', owner };
+  if (owner && owner !== runId) {
+    const ownerStillActive = options?.ownerRunExists?.(owner) ?? true;
+    if (ownerStillActive) return { ok: false, reason: 'owned-by-other', owner };
+    return { ok: true };
+  }
 
   const lifecycle = typeof slot.lifecycle === 'string' ? slot.lifecycle : '';
   if (owner === runId) return { ok: true };
@@ -246,7 +268,9 @@ export async function runReplayStep(
   if (replayStepName === PS.MONITOR && isQueuedPromptDispatchFalseNegative(existing)) {
     repairQueuedPromptDispatchFalseNegative(params.runId);
   }
-  normalizeReplayPrerequisites(params.runId, existing, flowSteps, targetIdx, replayStepName);
+  const replaySnapshot = getRun(params.runId) ?? existing;
+  assertReplayAfterDispatchAllowed(replaySnapshot, flowSteps, targetIdx, replayStepName);
+  normalizeReplayPrerequisites(params.runId, replaySnapshot, flowSteps, targetIdx, replayStepName);
 
   // Invalidate any in-flight engine loop so it bails instead of overwriting our state.
   // Do this only after replay entry validation so rejected replays do not leave a
@@ -278,7 +302,7 @@ export async function runReplayStep(
     updateRun(params.runId, { taskFile: null });
     console.log(`[run] replay from ${replayStepName} — cleared taskFile for regeneration`);
   } else {
-    const replaySlotId = recoverReplaySlotId(existing, targetIdx, prepareIdx);
+    const replaySlotId = recoverReplaySlotId(replaySnapshot, targetIdx, prepareIdx);
     if (replaySlotId) {
       // Re-claim only when the slot is free or still owned by this run. A released run
       // can keep stale agentContext.slotId history after its slot is reassigned; blindly
@@ -287,7 +311,10 @@ export async function runReplayStep(
         const { updateSlotStatusIf } = await import('../../core/index.js');
         const claimed = await updateSlotStatusIf(
           replaySlotId,
-          (slot) => replaySlotReclaimCheck(slot, params.runId).ok,
+          (slot) =>
+            replaySlotReclaimCheck(slot, params.runId, {
+              ownerRunExists: (ownerId) => Boolean(getRun(ownerId)),
+            }).ok,
           {
             lifecycle: 'busy',
             phase: 'preparing',
@@ -302,7 +329,6 @@ export async function runReplayStep(
           },
         );
         if (!claimed) {
-          updateRun(params.runId, { slotId: null });
           throw new Error(
             `slot ${replaySlotId} is no longer safely reclaimable; replay from find-slot to select a fresh worker`,
           );
@@ -311,8 +337,7 @@ export async function runReplayStep(
         updateRun(params.runId, { slotId: replaySlotId });
         console.log(`[run] replay from ${replayStepName} — re-claimed slot ${replaySlotId}`);
       } catch (err) {
-        console.warn(`[run] slot re-claim failed (${(err as Error).message}), clearing slotId`);
-        updateRun(params.runId, { slotId: null });
+        console.warn(`[run] slot re-claim failed (${(err as Error).message})`);
         throw err;
       }
     }
@@ -331,8 +356,7 @@ export async function runReplayStep(
   // skipPrepare because the parent just finished on a keep-warm slot. Clearing that flag
   // on write-task replay forces a full PREPARE and tears down the hot workspace the chain
   // was meant to reuse — preserve it; only nudgeReuse is always stale after replay.
-  const isChainedFollowUp =
-    Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
+  const isChainedFollowUp = Boolean(existing.parentRunId) && isFollowUpFlow(existing.flowType);
   const willRerunPrepare = targetIdx >= 0 && prepareIdx >= 0 && targetIdx <= prepareIdx;
   const keepHotSlotSkipPrepare = isChainedFollowUp && Boolean(effectiveSlotId);
   if (existing.engineState?.flags?.nudgeReuse || existing.engineState?.flags?.skipPrepare) {
@@ -381,9 +405,7 @@ export async function runReplayStep(
         getOrchestratorTaskRoot(existing.project, pv?.projectJson ?? null),
       );
       if (taskRelDir !== null) {
-        const taskDirName = pv
-          ? resolveProjectTaskDirName(pv.projectJson)
-          : DEFAULT_TASK_DIR;
+        const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
         const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
         const preserveSelfReviewFix =
           existing.agentContexts?.some(
@@ -438,9 +460,7 @@ export async function runReplayStep(
         getOrchestratorTaskRoot(existing.project, pv?.projectJson ?? null),
       );
       if (taskRelDir !== null) {
-        const taskDirName = pv
-          ? resolveProjectTaskDirName(pv.projectJson)
-          : DEFAULT_TASK_DIR;
+        const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
         const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
         await execOnSlot(
           vars,

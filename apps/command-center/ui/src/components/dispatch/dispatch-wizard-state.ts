@@ -91,14 +91,15 @@ export abstract class DispatchWizardState extends LitElement {
   _candidatesEverLoaded = false;
   /** Comparison-lane fork context, parsed from #dispatch?lane=comparison&familyId=…&variant=…&parentRunId=… */
   @state() _comparisonLane = false;
+  /** Operator chose comparison-sibling dispatch (run picker before ticket entry). */
+  @state() _comparisonFlow = false;
   @state() _comparisonFamilyId = '';
   @state() _comparisonVariant = '';
   @state() _comparisonParentRunId = '';
-  /** Prior runs sharing the typed ticket — populated by debounced run.list lookup so the wizard can
-   *  offer an in-wizard comparison fork without forcing the operator to open run-detail first. */
-  @state() _priorRuns: Run[] = [];
   @state() _comparePickerOpen = false;
   @state() _comparePickerSearch = '';
+  @state() _comparisonPickerRuns: Run[] = [];
+  @state() _comparisonPickerLoading = false;
   /** Operator-supplied variant suffix used only when the default <runner>-<model> tag would
    *  collide with an existing sibling (same-runner+same-model template/recipe edit comparison). */
   @state() _variantInput = '';
@@ -107,9 +108,6 @@ export abstract class DispatchWizardState extends LitElement {
   _unsubState?: () => void;
   _unsubConn?: () => void;
   _matchTimer: ReturnType<typeof setTimeout> | null = null;
-  _priorRunsTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Monotonic generation for prior-runs lookup — prevents stale responses from clobbering newer state. */
-  _priorRunsGen = 0;
   /** Last machine filter applied to candidate fetch; used to detect filter flips while the project is unchanged. */
   _lastFetchMachines = '';
   /** Last targetBranch passed to dispatch.candidates; re-fetches when pr.list hydrates and flips this from undefined to a branch. */
@@ -123,4 +121,10 @@ export abstract class DispatchWizardState extends LitElement {
   _lastFetchScoringKey: string | undefined;
   /** Monotonic fetch generation. Only the latest fetch's response is applied; earlier in-flight responses are discarded. */
   _fetchGen = 0;
+  /** Tracks global filter signature so an open comparison picker refreshes when filters flip. */
+  _comparisonPickerFilterKey = '';
+  /** True once baseline runner/model were copied from parentRunId (picker or hydrate). */
+  _comparisonParentEngineHydrated = false;
+  /** Hash explicitly pinned runner/model — skip parent-engine hydrate. */
+  _comparisonHashPinnedEngine = false;
 }

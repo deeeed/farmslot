@@ -55,6 +55,13 @@ test('parseDispatchWizardHash reads comparison lane prefill', () => {
     runner: 'codex',
     model: 'gpt-5.4',
   });
+  assert.equal(result?.comparisonIntent, false);
+});
+
+test('parseDispatchWizardHash reads comparison intent without baseline prefill', () => {
+  const result = parseDispatchWizardHash('#dispatch?machines=macwork&intent=comparison', runners);
+  assert.equal(result?.comparisonIntent, true);
+  assert.equal(result?.comparison, undefined);
 });
 
 test('syncPublicationReviewsHash preserves unrelated query params', () => {

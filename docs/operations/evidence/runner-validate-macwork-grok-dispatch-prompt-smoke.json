@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-01T16:52:38.467Z",
+  "host": "macwork",
+  "scenario": "dispatch-prompt-smoke",
+  "runner": "grok",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-dispatch-F31G8F",
+  "session": "runner-validate-grok-dispatch-prompt-smoke-87928",
+  "launchMode": "grok-interactive",
+  "gatewayPath": "sendRunnerPostLaunchPrompt",
+  "promptDelivered": true,
+  "markerSeen": true,
+  "blockerSnapshotPath": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-dispatch-F31G8F/.artifacts/runner-blockers/dispatch-launch.txt",
+  "pass": true,
+  "error": null,
+  "paneTail": " main /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/… 21K / 512K │\n\n\n     ❯ Reply with exactly TMUX_HOOK_OK and nothing else.             6:52 PM\n\n\n     ◆ Thought for 0.2s\n\n     TMUX_HOOK_OK                                                    6:52 PM\n\n     Turn completed in 1.5s.\n\n\n\n\n\n\n  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰──────────────────────────────────────────── Grok Build · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+.:shortcuts"
+}

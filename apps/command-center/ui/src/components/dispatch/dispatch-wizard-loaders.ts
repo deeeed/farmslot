@@ -15,7 +15,10 @@ import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
 
-import { filterRunsByExactTicket } from './dispatch-wizard-helpers.js';
+import {
+  filterRunsByExactTicket,
+  filterRunsForComparisonPicker,
+} from './dispatch-wizard-helpers.js';
 
 export async function requestProjectConfigs(): Promise<ProjectConfig[]> {
   const res = await gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
@@ -136,4 +139,29 @@ export async function lookupPriorRunsForDispatchWizard(
   // run.list `search` is substring match against ticketOrPr OR summary — narrow
   // to exact ticketOrPr matches so the banner doesn't surface unrelated families.
   return filterRunsByExactTicket(res.runs, input.search, input.normalizedTicket);
+}
+
+export interface ComparisonPickerRunsRequest {
+  mockMode: boolean;
+  stateRuns: readonly Run[];
+  projectFilters: readonly string[];
+  machineFilters: readonly string[];
+}
+
+export async function lookupRecentRunsForComparisonPicker(
+  input: ComparisonPickerRunsRequest,
+): Promise<Run[]> {
+  const filters = {
+    projectFilters: input.projectFilters,
+    machineFilters: input.machineFilters,
+  };
+  if (input.mockMode) {
+    return filterRunsForComparisonPicker(input.stateRuns, filters);
+  }
+  const params: RunListParams = { limit: 50 };
+  if (input.projectFilters.length === 1) {
+    params.project = input.projectFilters[0];
+  }
+  const res = await gateway.request<RunListResult>(Methods.RUN_LIST, params);
+  return filterRunsForComparisonPicker(res.runs, filters);
 }

@@ -4,7 +4,11 @@
  * standing up a DOM environment for the wizard component.
  */
 import type { Run } from '@farmslot/protocol';
-import { buildComparisonVariant, nextFreeComparisonVariant } from '@farmslot/protocol';
+import {
+  buildComparisonVariant,
+  nextFreeComparisonVariant,
+  resolveRunSlotId,
+} from '@farmslot/protocol';
 
 /** Group prior runs by familyId; root runs without a familyId fall back to their own id
  *  so the banner still shows them under a stable bucket. Each group is sorted newest-first. */
@@ -36,6 +40,99 @@ export function filterRunsByExactTicket(
   return runs.filter(
     (r) => r.ticketOrPr === candidate || (!!normalizedTicket && r.ticketOrPr === normalizedTicket),
   );
+}
+
+/** Newest-first ordering for the comparison-flow run picker. */
+export function sortRunsNewestFirst(runs: ReadonlyArray<Run>): Run[] {
+  return [...runs].sort(
+    (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+  );
+}
+
+/** Restrict comparison picker rows to active global project/machine filters when set. */
+export function filterRunsForComparisonPicker(
+  runs: ReadonlyArray<Run>,
+  filters: {
+    projectFilters: readonly string[];
+    machineFilters: readonly string[];
+  },
+): Run[] {
+  let result = sortRunsNewestFirst(runs);
+  if (filters.projectFilters.length > 0) {
+    result = result.filter((run) => filters.projectFilters.includes(run.project));
+  }
+  if (filters.machineFilters.length > 0) {
+    result = result.filter((run) => {
+      const slotId = resolveRunSlotId(run);
+      if (!slotId) return false;
+      return filters.machineFilters.some(
+        (machine) => slotId === machine || slotId.startsWith(`${machine}-`),
+      );
+    });
+  }
+  return result;
+}
+
+export function familyKeyForRun(run: Pick<Run, 'familyId' | 'id'>): string {
+  return run.familyId || run.id;
+}
+
+/** Runs in the same family as `run`, oldest-first for lane timeline display. */
+export function familyRunsForComparePicker(run: Run, runs: ReadonlyArray<Run>): Run[] {
+  const key = familyKeyForRun(run);
+  return runs
+    .filter((candidate) => familyKeyForRun(candidate) === key)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+}
+
+export interface ComparePickerFamilyLaneSummary {
+  familyId: string;
+  totalRuns: number;
+  productionCount: number;
+  comparisonCount: number;
+  activeCount: number;
+  /** True when the family already has at least one comparison-lane sibling. */
+  hasComparisonLane: boolean;
+  headline: string;
+  forkHint: string;
+}
+
+export function summarizeComparePickerFamilyLane(
+  run: Run,
+  familyRuns: ReadonlyArray<Run>,
+): ComparePickerFamilyLaneSummary {
+  const familyId = familyKeyForRun(run);
+  const productionCount = familyRuns.filter((member) => member.lane !== 'comparison').length;
+  const comparisonCount = familyRuns.filter((member) => member.lane === 'comparison').length;
+  const activeCount = familyRuns.filter(
+    (member) => !['done', 'failed', 'cancelled'].includes(member.status),
+  ).length;
+  const hasComparisonLane = comparisonCount > 0;
+  const siblingLabel =
+    familyRuns.length === 1
+      ? 'production root only'
+      : `${familyRuns.length} runs · ${comparisonCount} comparison sibling${comparisonCount === 1 ? '' : 's'}`;
+  const headline = `Family ${familyId.slice(0, 8)} · ${siblingLabel}`;
+  const forkHint = hasComparisonLane
+    ? 'Your fork joins this comparison family on a new variant lane.'
+    : familyRuns.length === 1
+      ? 'Your fork adds the first comparison sibling to this family.'
+      : 'Your fork adds another comparison sibling alongside existing production work.';
+  return {
+    familyId,
+    totalRuns: familyRuns.length,
+    productionCount,
+    comparisonCount,
+    activeCount,
+    hasComparisonLane,
+    headline,
+    forkHint,
+  };
+}
+
+export function comparePickerFamilyChipLabel(run: Run): string {
+  if (run.lane === 'comparison') return run.variant?.trim() || 'comparison';
+  return 'production';
 }
 
 export interface VariantCollisionState {

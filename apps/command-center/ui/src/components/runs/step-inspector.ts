@@ -4,6 +4,7 @@ import { customElement } from 'lit/decorators.js';
 import {
   type FamilyObservabilityArtifact,
   Methods,
+  resolveRunSlotId,
   type RunCIWatchPokeResult,
   type RunStep,
 } from '@farmslot/protocol';
@@ -324,7 +325,7 @@ export class StepInspector extends StepInspectorState {
       `Why did step "${this.step.name}" fail in run ${this.run.id}?`,
       `Ticket or PR: ${this.run.ticketOrPr}`,
       `Flow: ${this.run.flowType}`,
-      this.run.slotId ? `Slot: ${this.run.slotId}` : '',
+      resolveRunSlotId(this.run) ? `Slot: ${resolveRunSlotId(this.run)}` : '',
       this.step.detail ? `Step detail: ${this.step.detail}` : '',
       'Call propose_run_recovery for this run and step first.',
       'Show the proposal finding, evidence, confidence, inference notes, and read-only next steps.',

@@ -3,19 +3,26 @@ import test from 'node:test';
 
 import { Events, type RunDecision } from '@farmslot/protocol';
 
+import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { replaySlotReclaimCheck, runReplayStep } from './replay-step.js';
 
 test('replaySlotReclaimCheck rejects slots owned by another active run', () => {
-  assert.deepEqual(replaySlotReclaimCheck({ current_run_id: 'run-b', lifecycle: 'busy' }, 'run-a'), {
-    ok: false,
-    reason: 'owned-by-other',
-    owner: 'run-b',
-  });
-  assert.deepEqual(replaySlotReclaimCheck({ current_run_id: 'run-a', lifecycle: 'busy' }, 'run-a'), {
-    ok: true,
-  });
+  assert.deepEqual(
+    replaySlotReclaimCheck({ current_run_id: 'run-b', lifecycle: 'busy' }, 'run-a'),
+    {
+      ok: false,
+      reason: 'owned-by-other',
+      owner: 'run-b',
+    },
+  );
+  assert.deepEqual(
+    replaySlotReclaimCheck({ current_run_id: 'run-a', lifecycle: 'busy' }, 'run-a'),
+    {
+      ok: true,
+    },
+  );
   assert.deepEqual(replaySlotReclaimCheck({ current_run_id: null, lifecycle: 'ready' }, 'run-a'), {
     ok: true,
   });
@@ -24,6 +31,15 @@ test('replaySlotReclaimCheck rejects slots owned by another active run', () => {
     reason: 'not-reclaimable',
     lifecycle: 'busy',
   });
+});
+
+test('replaySlotReclaimCheck allows reclaim when slot owner run record is missing', () => {
+  assert.deepEqual(
+    replaySlotReclaimCheck({ current_run_id: 'ghost-run', lifecycle: 'busy' }, 'run-a', {
+      ownerRunExists: () => false,
+    }),
+    { ok: true },
+  );
 });
 
 test('runReplayStep rejects read-only imported reference runs', async (t) => {
@@ -312,8 +328,7 @@ test('runReplayStep normalizes stale earlier steps when replaying from a later s
   assert.ok(replayed);
   assert.equal(replayed.steps.find((step) => step.name === 'monitor')?.status, 'done');
   assert.equal(
-    replayed.steps.find((step) => step.name === 'monitor')?.outputs
-      ?.replayPrerequisiteNormalized,
+    replayed.steps.find((step) => step.name === 'monitor')?.outputs?.replayPrerequisiteNormalized,
     true,
   );
   assert.equal(replayed.steps.find((step) => step.name === 'self-review')?.status, 'running');
@@ -677,4 +692,84 @@ test('runReplayStep keeps unresolved decisions for no-human-gate finalize retrie
     ['pending-decision'],
     'no-human-gate finalize replay should not clear unresolved decisions by pretending there is a gate boundary',
   );
+});
+
+test('runReplayStep rejects monitor replay when dispatch is still pending', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  updateRun(run.id, {
+    status: 'preparing',
+    slotId: 'macwork-ff-4',
+    taskFile: '/tmp/TASK.md',
+    steps: run.steps.map((step) => {
+      if (step.name === 'find-slot' || step.name === 'write-task' || step.name === 'prepare') {
+        return { ...step, status: 'done' as const };
+      }
+      return step;
+    }),
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.rejects(
+    () => runReplayStep({ runId: run.id, stepName: 'monitor', triggeredBy: 'operator' }, () => {}),
+    /dispatch has not completed/,
+  );
+  assert.equal(getRun(run.id)?.slotId, 'macwork-ff-4');
+});
+
+test('runReplayStep recovers slotId from find-slot outputs on dispatch replay', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    error: 'No slot assigned',
+    slotId: null,
+    taskFile: '/tmp/TASK.md',
+    steps: run.steps.map((step) => {
+      if (step.name === 'find-slot') {
+        return {
+          ...step,
+          status: 'done' as const,
+          outputs: { selectedSlot: 'macwork-ff-4', runner: 'grok', model: 'grok-build' },
+        };
+      }
+      if (step.name === 'write-task' || step.name === 'prepare') {
+        return { ...step, status: 'done' as const };
+      }
+      if (step.name === 'dispatch') {
+        return { ...step, status: 'failed' as const, detail: 'No slot assigned' };
+      }
+      return step;
+    }),
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await runReplayStep(
+    { runId: run.id, stepName: 'dispatch', skipPrepare: true, triggeredBy: 'operator' },
+    () => {},
+  );
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.equal(replayed.slotId, 'macwork-ff-4');
+  assert.notEqual(replayed.steps.find((step) => step.name === 'dispatch')?.status, 'failed');
+  cancelRunEngine(run.id);
 });

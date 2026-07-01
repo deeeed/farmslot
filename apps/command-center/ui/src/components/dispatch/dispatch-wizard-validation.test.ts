@@ -11,18 +11,59 @@ import {
 } from './dispatch-wizard-validation.js';
 
 test('canDispatch and validationHint explain missing draft fields', () => {
-  assert.equal(canDispatch({ flowType: 'fix-bug', ticketId: 'PROJ-1', project: 'mobile' }), true);
   assert.equal(
-    validationHint({ flowType: null, ticketId: '', project: '', matchingProject: false }),
+    canDispatch({
+      flowType: 'fix-bug',
+      ticketId: 'PROJ-1',
+      project: 'mobile',
+      comparisonFlow: false,
+      comparisonParentRunId: '',
+    }),
+    true,
+  );
+  assert.equal(
+    validationHint({
+      flowType: null,
+      ticketId: '',
+      project: '',
+      matchingProject: false,
+      comparisonFlow: false,
+      comparisonParentRunId: '',
+    }),
     'Select a flow type',
   );
   assert.equal(
-    validationHint({ flowType: 'fix-bug', ticketId: '', project: '', matchingProject: false }),
+    validationHint({
+      flowType: 'fix-bug',
+      ticketId: '',
+      project: '',
+      matchingProject: false,
+      comparisonFlow: false,
+      comparisonParentRunId: '',
+    }),
     'Enter a ticket or PR number',
   );
   assert.equal(
-    validationHint({ flowType: 'fix-bug', ticketId: 'PROJ-1', project: '', matchingProject: true }),
+    validationHint({
+      flowType: 'fix-bug',
+      ticketId: 'PROJ-1',
+      project: '',
+      matchingProject: true,
+      comparisonFlow: false,
+      comparisonParentRunId: '',
+    }),
     'Matching project...',
+  );
+  assert.equal(
+    validationHint({
+      flowType: 'fix-bug',
+      ticketId: 'PROJ-1',
+      project: 'mobile',
+      matchingProject: false,
+      comparisonFlow: true,
+      comparisonParentRunId: '',
+    }),
+    'Pick a baseline run for this comparison sibling',
   );
 });
 
@@ -73,6 +114,21 @@ test('isDispatchBlocked aggregates transient and validation blockers', () => {
       loadingCandidates: true,
       candidateRefreshFailed: false,
       activeRunConflict: false,
+      variantInputBlocked: false,
+      dispatchBlockedReason: null,
+    }),
+    true,
+  );
+  assert.equal(
+    isDispatchBlocked({
+      canDispatch: true,
+      dispatching: false,
+      connectionStale: false,
+      hydrating: false,
+      bootstrapFailed: false,
+      loadingCandidates: false,
+      candidateRefreshFailed: false,
+      activeRunConflict: true,
       variantInputBlocked: false,
       dispatchBlockedReason: null,
     }),

@@ -32,6 +32,8 @@ export interface DispatchWizardBlockingInput {
   candidateRefreshFailed: boolean;
   activeRunConflict: boolean;
   variantInputBlocked: boolean;
+  comparisonFlow: boolean;
+  comparisonParentRunId: string;
 }
 
 export interface DispatchWizardBlockingState {
@@ -52,8 +54,21 @@ export function deriveDispatchWizardBlockingState(
     fleetSlots: input.fleetSlots,
     project: input.project,
   });
-  const canDispatchValue = canDispatch(input);
-  const validationHintValue = validationHint(input);
+  const canDispatchValue = canDispatch({
+    flowType: input.flowType,
+    ticketId: input.ticketId,
+    project: input.project,
+    comparisonFlow: input.comparisonFlow,
+    comparisonParentRunId: input.comparisonParentRunId,
+  });
+  const validationHintValue = validationHint({
+    flowType: input.flowType,
+    ticketId: input.ticketId,
+    project: input.project,
+    matchingProject: input.matchingProject,
+    comparisonFlow: input.comparisonFlow,
+    comparisonParentRunId: input.comparisonParentRunId,
+  });
   const dispatchBlockedReasonValue = dispatchBlockedReason({
     machineFilterActive: input.machineFilters.length > 0,
     slotOverride: input.slotOverride,

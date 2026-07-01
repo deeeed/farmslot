@@ -7,7 +7,10 @@ export function canDispatch(input: {
   flowType: FlowType | null;
   ticketId: string;
   project: string;
+  comparisonFlow: boolean;
+  comparisonParentRunId: string;
 }): boolean {
+  if (input.comparisonFlow && !input.comparisonParentRunId.trim()) return false;
   return !!input.flowType && input.ticketId.trim().length > 0 && !!input.project;
 }
 
@@ -16,7 +19,12 @@ export function validationHint(input: {
   ticketId: string;
   project: string;
   matchingProject: boolean;
+  comparisonFlow: boolean;
+  comparisonParentRunId: string;
 }): string {
+  if (input.comparisonFlow && !input.comparisonParentRunId.trim()) {
+    return 'Pick a baseline run for this comparison sibling';
+  }
   if (!input.flowType) return 'Select a flow type';
   if (!input.ticketId.trim()) return 'Enter a ticket or PR number';
   if (!input.project) return input.matchingProject ? 'Matching project...' : 'Select a project';

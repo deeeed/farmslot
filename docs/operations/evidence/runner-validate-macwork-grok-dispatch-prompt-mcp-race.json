@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-01T17:04:39.567Z",
+  "host": "macwork",
+  "scenario": "dispatch-prompt-mcp-race",
+  "runner": "grok",
+  "gatewayPath": "sendRunnerPostLaunchPrompt + tmux force-send",
+  "pass": true,
+  "error": null,
+  "fixture": {
+    "path": "/Users/deeeed/dev/farmslot/scripts/runner-validation/fixtures/grok-dispatch-mcp-14-15.txt",
+    "source": "6d15411f dispatch-launch.txt (MCP 14/15, history #1, empty composer)",
+    "mcp": {
+      "ready": 14,
+      "total": 15,
+      "loading": true
+    },
+    "analysis": {
+      "launchBlocker": {
+        "kind": "mcp-init",
+        "summary": "Runner is still initializing MCP integrations before the composer accepts input.",
+        "autoAction": null,
+        "defer": true
+      },
+      "deferred": true,
+      "runnerPaneLooksIdle": false,
+      "oldTailOnlyIdle": true
+    },
+    "oldTailOnlyIdle": true
+  },
+  "fixtureForceFail": {
+    "promptAccepted": false,
+    "historyPresent": true
+  },
+  "live": {
+    "repo": "/Users/deeeed/dev/farmslot",
+    "session": "runner-validate-grok-dispatch-prompt-mcp-race-99551",
+    "captured": false,
+    "forceFailReproduced": false,
+    "skipReason": "MCP loading window not observed within timeout (machine too fast)"
+  },
+  "liveSkipped": true,
+  "gatewayFix": {
+    "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-mcp-fix-99551-Mc9Yxf",
+    "session": "runner-validate-grok-dispatch-prompt-mcp-race-fix-99551",
+    "result": {
+      "ok": true,
+      "blockerSnapshotPath": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-mcp-fix-99551-Mc9Yxf/.artifacts/runner-blockers/dispatch-launch.txt",
+      "exitCode": 0,
+      "stderr": null
+    },
+    "markerSeen": true,
+    "paneTail": " main /private/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/… 12K / 512K │\n\n\n     ❯ Reply with exactly TMUX_HOOK_OK and nothing else.             7:04 PM\n\n\n     ◆ Thought for 1.2s\n\n     TMUX_HOOK_OK                                                    7:04 PM\n\n     Turn completed in 2.1s.\n\n\n\n\n\n\n  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰──────────────────────────────────────────── Grok Build · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+.:shortcuts"
+  }
+}

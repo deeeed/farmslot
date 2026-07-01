@@ -10,8 +10,10 @@ import {
   deriveComparisonVariantState,
   exitedComparisonModeState,
   forkComparisonStateFromRun,
+  hydrateComparisonEngineFromParent,
   resolveComparisonDispatchBranch,
   resolveComparisonVariant,
+  shouldHydrateComparisonParentEngine,
 } from './dispatch-wizard-comparison-state.js';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
@@ -72,6 +74,47 @@ test('comparison helpers exit and fork same-family state', () => {
   );
 });
 
+test('hydrateComparisonEngineFromParent copies baseline runner/model once', () => {
+  assert.deepEqual(
+    hydrateComparisonEngineFromParent(
+      makeRun({ metrics: { nudgeCount: 0, runner: 'claude', model: 'opus' } }),
+      { runner: 'codex', model: 'gpt-5' },
+      new Set(['claude']),
+    ),
+    { runner: 'claude', model: 'opus' },
+  );
+});
+
+test('shouldHydrateComparisonParentEngine waits for parent lookup unless hash pinned engine', () => {
+  assert.equal(
+    shouldHydrateComparisonParentEngine({
+      hydrated: false,
+      comparisonFlow: true,
+      parentRunId: 'parent-1',
+      hashPinnedEngine: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldHydrateComparisonParentEngine({
+      hydrated: false,
+      comparisonFlow: true,
+      parentRunId: 'parent-1',
+      hashPinnedEngine: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldHydrateComparisonParentEngine({
+      hydrated: true,
+      comparisonFlow: true,
+      parentRunId: 'parent-1',
+      hashPinnedEngine: false,
+    }),
+    false,
+  );
+});
+
 test('comparison variant helpers suggest collision suffixes and preserve custom tags', () => {
   const runs = [
     makeRun({ variant: 'claude-opus' }),
@@ -99,6 +142,10 @@ test('comparison variant helpers suggest collision suffixes and preserve custom 
     true,
   );
   assert.equal(resolveComparisonVariant(' custom ', 'claude', 'opus'), 'custom');
+  assert.equal(
+    resolveComparisonVariant('claude-sonnet-v2', 'grok', 'grok-composer-2.5-fast'),
+    'grok-grok-composer-2-5-fast',
+  );
 });
 
 test('comparison dispatch branch is omitted so gateway can auto-derive per variant', () => {

@@ -13,6 +13,7 @@ import {
   modeForFlow,
   modelsMatch,
   normalizeRunTags,
+  resolveRunSlotId,
 } from '@farmslot/protocol';
 
 import { isPrLinkageMissing } from '../../state.js';
@@ -23,6 +24,7 @@ import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { ticketUrlForRun } from './family-observability-link-model.js';
 import { familyRunHash } from './family-observability-url-state.js';
 import {
+  canLaunchComparisonSibling,
   canReplayRunSteps,
   INTERACTIVE_DEV_ACTIONS,
   isActiveInteractiveDevRun,
@@ -37,6 +39,7 @@ import {
   isEvalCandidateRun,
   pickComparisonPartner,
   prLinkForRun,
+  resolveRunEngine,
   routeForRun,
   runChainedModeDrift,
   runDisplayLabel,
@@ -298,6 +301,11 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
   const familyHref = familyRunHash(r.familyId, r.id);
   const familyRunScopeHref = familyRunHash(r.familyId, r.id, { tokens: 'run' });
   const isTerminal = r.status === 'done' || r.status === 'failed' || r.status === 'cancelled';
+  const engine = resolveRunEngine(r);
+  const boundSlotId = resolveRunSlotId(r);
+  const variantDrift = Boolean(
+    r.variant && engine.runner && !r.variant.startsWith(`${engine.runner}-`),
+  );
 
   return html`
     <div
@@ -414,27 +422,27 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             </button>
           `
         : nothing}
-      ${r.status === 'done' || r.status === 'failed' || r.status === 'cancelled'
+      ${canLaunchComparisonSibling(r.status)
         ? html`
             <a
               class="gate-action-btn"
               style="border:1px solid ${colors.accent}; color:${colors.accent}; padding:4px 12px; font-size:11px; text-decoration:none; border-radius:3px"
-              title="Fork a new comparison run from this one (own slot + worker) so you can compare runners/models side by side. Opens the dispatch wizard prefilled; the original run is untouched."
+              title="Fork a comparison-lane sibling on a different runner/model (grok, codex, cursor, …). Opens dispatch with this run as baseline; pick runner and slot before dispatch."
               href=${ctx._buildRerunAlongsideHref(r)}
             >
-              Re-run alongside →
+              Launch comparison sibling →
             </a>
           `
         : nothing}
-      ${r.slotId && r.branch && canActivateRunOnSlot(r.status)
+      ${boundSlotId && r.branch && canActivateRunOnSlot(r.status)
         ? html`
             <slot-prepare-popover
-              slot-id=${r.slotId}
+              slot-id=${boundSlotId}
               slot-branch=${ctx._slotBranchForRun(r)}
               project=${r.project}
               run-id=${r.id}
               run-branch=${r.branch}
-              button-label="Load ${r.slotId} with this run →"
+              button-label="Load ${boundSlotId} with this run →"
               button-style="border:1px solid ${colors.textMuted}; color:${colors.textMuted}; padding:4px 12px; font-size:11px; border-radius:3px"
               .slotHealth=${ctx._slotHealthForRun(r)}
               ?disabled=${actionsBlocked}
@@ -549,8 +557,19 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         : nothing}
       ${r.variant
         ? html`<div class="meta-item">
-            <div class="meta-label">Variant</div>
-            <div class="meta-value">${r.variant}</div>
+            <div class="meta-label">Variant tag</div>
+            <div class="meta-value">
+              ${r.variant}${variantDrift
+                ? html`
+                    <span
+                      class="model-drift"
+                      title="Lane tag does not match dispatched engine ${engine.runner}/${engine.model}. Engine row is authoritative."
+                    >
+                      ⚠ engine mismatch</span
+                    >
+                  `
+                : nothing}
+            </div>
           </div>`
         : nothing}
       ${r.parentRunId
@@ -570,22 +589,22 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
       <div class="meta-item">
         <div class="meta-label">Slot</div>
         <div class="meta-value">
-          ${r.slotId
+          ${boundSlotId
             ? html`<a
-                  href=${`#slot/${r.slotId}?runId=${encodeURIComponent(r.id)}`}
+                  href=${`#slot/${boundSlotId}?runId=${encodeURIComponent(r.id)}`}
                   style="color:${colors.accent}; text-decoration:none"
-                  >${r.slotId}</a
+                  >${boundSlotId}</a
                 >
                 <button
-                  style="margin-left:8px; border:1px solid ${isSlotPinned(r.slotId)
+                  style="margin-left:8px; border:1px solid ${isSlotPinned(boundSlotId)
                     ? colors.accent
-                    : colors.bgCardHover}; color:${isSlotPinned(r.slotId)
+                    : colors.bgCardHover}; color:${isSlotPinned(boundSlotId)
                     ? colors.accent
                     : colors.textMuted}; background:transparent; border-radius:4px; font-size:10px; font-family:${fonts.mono}; cursor:pointer"
-                  @click=${() => ctx._togglePinnedSlot(r.slotId!)}
+                  @click=${() => ctx._togglePinnedSlot(boundSlotId)}
                   title="Toggle this run's slot in pinned slots"
                 >
-                  ${isSlotPinned(r.slotId) ? 'pinned' : 'pin'}
+                  ${isSlotPinned(boundSlotId) ? 'pinned' : 'pin'}
                 </button>`
             : 'pending'}
         </div>
@@ -596,11 +615,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
             <div class="meta-value">${r.branch}</div>
           </div>`
         : nothing}
-      ${r.metrics.model
+      ${engine.model
         ? html`<div class="meta-item">
             <div class="meta-label">Runner</div>
             <div class="meta-value">
-              ${r.metrics.runner ?? ''}/${r.metrics.model}${r.metrics.actualModel &&
+              ${engine.runner ?? ''}/${engine.model}${r.metrics.actualModel &&
+              r.metrics.model &&
               !modelsMatch(r.metrics.model, r.metrics.actualModel)
                 ? html` <span
                     class="model-drift"
@@ -764,7 +784,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         : ''}
     </div>
     ${ctx._renderRunEvidence(r)}
-    ${r.slotId
+    ${boundSlotId
       ? html`
           <button
             class="terminal-toggle ${ctx._showTerminal ? 'active' : ''}"
@@ -772,12 +792,12 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
               ctx.toggleTerminal();
             }}
           >
-            ${ctx._showTerminal ? '- Hide' : '+ Show'} Terminal (${r.slotId})
+            ${ctx._showTerminal ? '- Hide' : '+ Show'} Terminal (${boundSlotId})
           </button>
           ${ctx._showTerminal
             ? html`
                 <div class="terminal-section">
-                  <terminal-view .slotId=${r.slotId} .runId=${r.id}></terminal-view>
+                  <terminal-view .slotId=${boundSlotId} .runId=${r.id}></terminal-view>
                 </div>
               `
             : nothing}
