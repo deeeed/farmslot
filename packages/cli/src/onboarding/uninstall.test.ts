@@ -76,22 +76,19 @@ test('only a symlink resolving into the workspace is owned', () => {
 
 test('dispositions and backup paths pass through to the plan', () => {
   const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-'));
+  const homeDir = join(tmpdir(), `fs-home-${root.slice(-8)}`); // disjoint from the workspace
   try {
-    const plan = buildUninstallPlan(
-      workspaceAt(root),
-      baseState({ home_dir: join(root, '.home') }),
-      {
-        history: 'backup',
-        home: 'delete',
-        historyBackupPath: '/tmp/runs.tgz',
-        homeBackupPath: undefined,
-        dryRun: true,
-      },
-    );
+    const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
+      history: 'backup',
+      home: 'delete',
+      historyBackupPath: '/tmp/runs.tgz',
+      homeBackupPath: undefined,
+      dryRun: true,
+    });
     assert.equal(plan.history, 'backup');
     assert.equal(plan.historyBackupPath, '/tmp/runs.tgz');
     assert.equal(plan.home, 'delete');
-    assert.equal(plan.homeDir, join(root, '.home'));
+    assert.equal(plan.homeDir, homeDir);
     assert.equal(plan.dryRun, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -105,14 +102,23 @@ test('rejects a non-absolute or ancestor home dir', () => {
       () => buildUninstallPlan(workspaceAt(root), baseState({ home_dir: 'relative/home' }), KEEP),
       /unsafe path/,
     );
-    // A home dir that contains the workspace would take kept history with it.
+    // A home dir that contains the workspace (ancestor) — or sits inside it (mirror) —
+    // overlaps and is refused in either direction.
     assert.throws(
       () =>
         buildUninstallPlan(workspaceAt(root), baseState({ home_dir: resolve(root, '..') }), {
           ...KEEP,
           home: 'delete',
         }),
-      /contains the workspace/,
+      /overlaps the workspace/,
+    );
+    assert.throws(
+      () =>
+        buildUninstallPlan(workspaceAt(root), baseState({ home_dir: join(root, 'repos', 'x') }), {
+          ...KEEP,
+          home: 'keep',
+        }),
+      /overlaps the workspace/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -152,7 +158,7 @@ test('canonical containment catches a symlinked home ancestor', () => {
           ...KEEP,
           home: 'delete',
         }),
-      /contains the workspace/,
+      /overlaps the workspace/,
     );
   } finally {
     rmSync(link, { force: true });
