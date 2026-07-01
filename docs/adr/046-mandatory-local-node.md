@@ -46,6 +46,17 @@ That decision (an `isLocalSlot()` split) was pragmatic for early milestones, but
 
 Rule of thumb: **machine-local capability → node; cross-machine coordination → gateway.** There is no local special-case.
 
+### Local means local — ownership, not transport
+
+Routing local slots "through the node" does **not** mean network or SSH for same-machine work. A node always operates on **its own** machine's resources **directly**: the local node reads/writes files with Node `fs` and runs `child_process` on the same box, at native speed — it never SSHes to reach itself. SSH is only ever the gateway↔*remote* transport (and even that is the node WebSocket in the ADR-008 model, not SSH).
+
+So the two axes are orthogonal:
+
+- **Ownership** — who performs and owns a machine-local capability (fs, exec, watch, screen). Answer: that machine's node.
+- **Transport** — how the gateway reaches that node. Loopback WebSocket for the local node; network WebSocket for a remote node.
+
+The local node's gateway channel is a **loopback** WebSocket carrying RPC requests/results; the actual file and process operations happen locally. Making the local node mandatory changes _who owns_ local capabilities (node, not gateway) and gives the machine real fleet presence — it does **not** add SSH, a network hop, or remote file access for local slots.
+
 ## Consequences
 
 **Positive**
