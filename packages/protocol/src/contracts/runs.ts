@@ -1678,7 +1678,7 @@ export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
  * Worker report artifact filename(s) per flow type, ordered by preference.
  * The retrospective decision reads the first non-empty match.
  *
- * - `fix-bug` / `dev` workers write `report.md` (build, fixes, validation summary)
+ * - `fix-bug` / `dev` workers write `pr-description.md` (PR body + run summary)
  * - `pr-complete` worker writes `comments-report.md` (triage table, replies, fix commit)
  * - `review-pr` worker writes `review.md` (verdict + line comments)
  *
@@ -1686,11 +1686,11 @@ export const FLOW_STEPS: Record<FlowType, PipelineStep[]> = {
  * Falls back to `report.md` for any flow not listed.
  */
 export const FLOW_WORKER_REPORT_ARTIFACTS: Record<FlowType, string[]> = {
-  'fix-bug': ['report.md'],
+  'fix-bug': ['pr-description.md', 'report.md'],
   'review-pr': ['review.md', 'report.md'],
-  dev: ['report.md'],
+  dev: ['pr-description.md', 'report.md'],
   'pr-complete': ['comments-report.md', 'report.md'],
-  'merge-main': ['report.md'],
+  'merge-main': ['report.md', 'merge-report.md'],
 };
 
 /** Default branch fallback. Projects should set `default_branch` in project.json. */

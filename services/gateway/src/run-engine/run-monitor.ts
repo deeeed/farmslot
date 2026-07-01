@@ -413,7 +413,6 @@ export function shouldHoldForMissingTerminalSignal(
   return true;
 }
 
-/** @deprecated Use shouldHoldForMissingTerminalSignal with a resolved terminal contract. */
 export function shouldHoldForInteractivePrComplete(run: Pick<Run, 'flowType' | 'mode'>): boolean {
   return run.flowType === 'pr-complete' && run.mode === 'interactive';
 }

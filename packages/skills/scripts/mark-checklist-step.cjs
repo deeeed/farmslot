@@ -333,6 +333,10 @@ function buildSignalUpdate(signal, terminal, target, timing, events, now, taskPa
 
   if (terminal.command === 'no-change') {
     next.evidence = { reportPath: NO_CHANGE_REPORT };
+  } else if (terminal.command === 'complete') {
+    const contract = loadTerminalContract(_taskDir, taskPath);
+    const reportPath = contract?.commands?.complete?.report;
+    if (reportPath) next.evidence = { reportPath };
   }
 
   return next;

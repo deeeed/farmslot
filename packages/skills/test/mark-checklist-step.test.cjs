@@ -56,6 +56,8 @@ result = spawnSync(process.execPath, [helper, devTask, devSignal, 'complete', '-
   encoding: 'utf8',
 });
 assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(readFileSync(devSignal, 'utf8'));
+assert.equal(parsed.evidence?.reportPath, 'artifacts/pr-description.md');
 
 const noChangeDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-nochange-'));
 const noChangeTask = path.join(noChangeDir, 'TASK.md');
