@@ -1,6 +1,6 @@
 // onboarding/prereqs.ts — prerequisite + runner detection shared by doctor and install.sh.
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { accessSync, constants, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { repoRoot } from './workspace.js';
@@ -142,6 +142,35 @@ const RUNNER_LOGIN_HINTS: Record<string, string> = {
 // Probes run for all runners on every doctor pass — keep the hang ceiling low.
 const AUTH_PROBE_TIMEOUT_MS = 5_000;
 
+// PATH entries that belong to a version manager's shim layer. A shim for a runner
+// that is not installed under the *active* runtime errors ("No version is set",
+// exit 126/127) instead of answering, and shadows a real install further down PATH
+// (e.g. ~/.npm-global/bin). We re-resolve outside these to find the working binary.
+const SHIM_PATH_MARKERS = ['/.asdf/shims', '/.asdf/bin', '/.nvm/'];
+
+/** PATH with version-manager shim dirs removed (the "default" the user's shell uses). */
+function defaultRunnerPath(): string {
+  return (process.env.PATH ?? '')
+    .split(':')
+    .filter((dir) => dir && !SHIM_PATH_MARKERS.some((marker) => dir.includes(marker)))
+    .join(':');
+}
+
+/** Resolve an executable on the default (shim-free) PATH. */
+function resolveOutsideShims(name: string): string | null {
+  for (const dir of defaultRunnerPath().split(':')) {
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Not an executable here — keep scanning. (Expected: most PATH dirs lack it.)
+    }
+  }
+  return null;
+}
+
 /** Auth probe per runner. Exit 0 + the expected marker = authenticated. */
 function probeRunnerAuth(name: string): boolean {
   // Markers are mirrored by install.sh's bash probe — keep both in sync.
@@ -153,9 +182,18 @@ function probeRunnerAuth(name: string): boolean {
   };
   const probe = probes[name];
   if (!probe) return false;
-  const result = spawnSync(name, probe.args, {
+  // Resolve the real binary from the default (shim-free) PATH and run it under that
+  // PATH, so its node/runtime also resolves to the working install rather than a
+  // broken asdf/nvm shim that would error ("No version is set") and shadow it.
+  const runnerPath = defaultRunnerPath();
+  const bin = resolveOutsideShims(name) ?? name;
+  const result = spawnSync(bin, probe.args, {
     encoding: 'utf-8',
     timeout: AUTH_PROBE_TIMEOUT_MS,
+    env: { ...process.env, PATH: runnerPath },
+    // stdin from /dev/null: some runner CLIs (e.g. `claude auth status`) block reading
+    // a non-TTY stdin and would otherwise hang until the timeout, reading as inactive.
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.error || result.status !== 0) return false;
   return probe.marker.test(`${result.stdout}\n${result.stderr}`);

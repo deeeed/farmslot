@@ -111,15 +111,26 @@ tty_available() {
   [ -r /dev/tty ] && { : </dev/tty && : >/dev/tty; } 2>/dev/null
 }
 
+# ask_yes_no "prompt" [default] — default is "no" ([y/N], empty reply = no) unless
+# the 2nd arg is "yes" ([Y/n], empty reply = yes). FARMSLOT_AUTO_INSTALL=1 and a
+# missing tty both take the default (yes-default proceeds; no-default declines).
 ask_yes_no() {
-  local prompt="$1" reply
+  local prompt="$1" default="${2:-no}" reply
   if [ "${FARMSLOT_AUTO_INSTALL:-}" = "1" ]; then
     return 0
   fi
-  tty_available || return 1
-  printf '  %s [y/N] ' "$prompt" >/dev/tty
-  read -r reply </dev/tty || reply=""
-  case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
+  if ! tty_available; then
+    [ "$default" = "yes" ] && return 0 || return 1
+  fi
+  if [ "$default" = "yes" ]; then
+    printf '  %s [Y/n] ' "$prompt" >/dev/tty
+    read -r reply </dev/tty || reply=""
+    case "$reply" in [Nn]*) return 1 ;; *) return 0 ;; esac
+  else
+    printf '  %s [y/N] ' "$prompt" >/dev/tty
+    read -r reply </dev/tty || reply=""
+    case "$reply" in [Yy]*) return 0 ;; *) return 1 ;; esac
+  fi
 }
 
 # expand_tilde PATH — turn a leading ~ / ~/ into $HOME ('read -r' keeps it literal
@@ -201,7 +212,7 @@ step_configure() {
   HOME_DIR="$(expand_tilde "$HOME_DIR")"
   if [ -n "$prompted" ]; then
     printf '\n  workspace: %s\n  bin dir:   %s\n  home dir:  %s\n' "$WORKSPACE" "$BIN_DIR" "$HOME_DIR" >/dev/tty
-    ask_yes_no "Proceed with these locations?" \
+    ask_yes_no "Proceed with these locations?" yes \
       || fail "install cancelled" "re-run, or set FARMSLOT_WORKSPACE / FARMSLOT_BIN_DIR / FARMSLOT_HOME to choose non-interactively"
   fi
   export FARMSLOT_HOME="$HOME_DIR"
@@ -291,28 +302,57 @@ ensure_yarn() {
     || fail "yarn not found on PATH" "run: corepack enable (ships with node)"
 }
 
+# PATH with version-manager shim dirs stripped — the "default" resolution the user's
+# shell uses for runners. Runners (claude/codex/cursor/grok) are installed via
+# npm-global / Homebrew / ~/.local/bin, not asdf. An asdf/nvm shim for a runner not
+# installed under the *active* runtime errors ("No version is set") and shadows the
+# real binary; stripping the shims makes both the binary and its node resolve to the
+# working install (matches how the user's interactive shell runs it).
+runner_default_path() {
+  printf '%s' "$PATH" | tr ':' '\n' | grep -vE '/\.asdf/(shims|bin)|/\.nvm/' | paste -sd: -
+}
+
+# Run a runner probe (binary + args) under a given PATH. stdin is redirected from
+# /dev/null because some runner CLIs (e.g. `claude auth status`) block reading stdin
+# when it is not a TTY — the installer captures stdout, so without this the probe
+# hangs until the timeout and a signed-in runner reads as "not signed in". The timeout
+# is a backstop for a genuinely wedged CLI (stock macOS lacks coreutils timeout).
+_runner_probe() {
+  local run_path="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    PATH="$run_path" timeout 8 "$@" </dev/null 2>&1
+  else
+    PATH="$run_path" "$@" </dev/null 2>&1
+  fi
+}
+
 # check_runner <name> <install-hint> <login-hint> <auth-marker-regex> <auth-cmd...>
-# Three states: missing / inactive / authenticated. Per-runner markers mirror
-# packages/cli prereqs.ts probeRunnerAuth — keep both in sync.
+# Resolves the runner from the default (shim-free) PATH, runs its auth-status probe,
+# and reports authenticated / not signed in. Markers mirror packages/cli
+# prereqs.ts probeRunnerAuth — keep both in sync.
 check_runner() {
   local name="$1" install_hint="$2" login_hint="$3" marker="$4"
   shift 4
-  if ! command -v "$name" >/dev/null 2>&1; then
-    echo "  [--] ${name} not found — ${install_hint}"
-    return 0
-  fi
-  # Cap probe time (mirrors prereqs.ts 5s) so a wedged runner CLI cannot hang a
-  # piped install; stock macOS lacks coreutils timeout, hence the guard.
-  if command -v timeout >/dev/null 2>&1; then
-    set -- timeout 5 "$@"
-  fi
-  local probe_out
-  if probe_out="$("$@" 2>&1)" && echo "$probe_out" | grep -qiE "$marker"; then
+  local probe_cmd="$1"; shift   # remaining "$@" = probe args (e.g. auth status)
+  local dpath resolved
+  dpath="$(runner_default_path)"
+  # Prefer the real binary on the default path; only fall back to the full PATH (which
+  # may surface a shim) if it is not installed outside the shim layer.
+  resolved="$(PATH="$dpath" command -v "$probe_cmd" 2>/dev/null)" \
+    || resolved="$(command -v "$probe_cmd" 2>/dev/null)" \
+    || { echo "  [--] ${name} not found — ${install_hint}"; return 0; }
+
+  local probe_out rc=0
+  probe_out="$(_runner_probe "$dpath" "$resolved" "$@")" || rc=$?
+
+  if [ "$rc" = 0 ] && printf '%s' "$probe_out" | grep -qiE "$marker"; then
     green "  [OK] ${name} (authenticated)"
     runner_authenticated=1
   else
-    printf '\033[0;33m  [WARN] %s on PATH but not signed in — %s\033[0m\n' "$name" "$login_hint"
+    printf '\033[0;33m  [WARN] %s not signed in — %s\033[0m\n' "$name" "$login_hint"
+    [ -n "$probe_out" ] && printf '\033[0;33m         (rc=%s: %s)\033[0m\n' "$rc" "$(printf '%s' "$probe_out" | head -1)"
   fi
+  return 0
 }
 
 capture_helper_bin() {
@@ -381,7 +421,8 @@ step_runners() {
   check_runner claude "npm install -g @anthropic-ai/claude-code" "run: claude (sign in)" '"loggedin": *true' claude auth status
   check_runner codex "npm install -g @openai/codex" "run: codex login" 'logged in (as|using)' codex login status
   check_runner cursor-agent "see https://cursor.com/cli" "run: cursor-agent login" 'logged in (as|using)' cursor-agent status
-  [ "$runner_authenticated" = 1 ] || fail "no authenticated agent runner" "install and sign in to at least one of: claude, codex, cursor-agent"
+  check_runner grok "install Grok CLI, then run grok login" "run: grok login" 'logged in' grok models
+  [ "$runner_authenticated" = 1 ] || fail "no authenticated agent runner" "install and sign in to at least one of: claude, codex, cursor-agent, grok"
 }
 
 step_clone() {
@@ -588,11 +629,13 @@ step_pair() {
   elif [ "${FARMSLOT_PAIR:-}" = "1" ]; then
     start_now="yes"; pair_now="yes"
   elif tty_available; then
-    # Command Center (web dashboard) first — what most people use.
-    printf '  Start the Command Center (web dashboard) now? [Y/n] ' >/dev/tty
+    # Start the local gateway. The dashboard is the hosted Command Center at
+    # farmslot.io/cc — `farmslot up` opens a connect link that auto-registers this
+    # gateway; there is no local dashboard to run.
+    printf '  Start the local gateway now and open the dashboard (farmslot.io/cc)? [Y/n] ' >/dev/tty
     read -r reply </dev/tty || reply=""
     case "$reply" in [Nn]*) ;; *) start_now="yes" ;; esac
-    # Phone pairing is optional and OFF by default — only offered if the dashboard is starting.
+    # Phone pairing is optional and OFF by default — only offered if the gateway is starting.
     if [ -n "$start_now" ]; then
       printf '  Optional: also pair the mobile app to control agents from your phone? [y/N] ' >/dev/tty
       read -r reply </dev/tty || reply=""
@@ -606,7 +649,7 @@ step_pair() {
   if [ -n "$start_now" ]; then
     FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" up
   else
-    echo "  Nothing started — run 'farmslot up' when ready (it prints the Command Center URL)."
+    echo "  Nothing started — run 'farmslot up' when ready (it opens the farmslot.io/cc dashboard connected to your gateway)."
     return
   fi
 
