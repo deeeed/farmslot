@@ -36,6 +36,7 @@ export const Methods = {
   DISPATCH_QUEUE_ADD: 'dispatch.queue.add',
   DISPATCH_QUEUE_LIST: 'dispatch.queue.list',
   DISPATCH_QUEUE_REMOVE: 'dispatch.queue.remove',
+  DISPATCH_QUEUE_REMOVE_ORPHAN: 'dispatch.queue.removeOrphan',
   DISPATCH_QUEUE_UPDATE: 'dispatch.queue.update',
   DISPATCH_QUEUE_REORDER: 'dispatch.queue.reorder',
 
@@ -46,6 +47,7 @@ export const Methods = {
   BACKLOG_DELETE: 'backlog.delete',
   BACKLOG_MARK_READY: 'backlog.markReady',
   BACKLOG_ENQUEUE: 'backlog.enqueue',
+  BACKLOG_DEQUEUE: 'backlog.dequeue',
   BACKLOG_AUTO_DISPATCH_TICK: 'backlog.autoDispatchTick',
   BACKLOG_UPCOMING: 'backlog.upcoming',
 

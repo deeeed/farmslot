@@ -7,6 +7,7 @@ import {
   type BacklogAutoDispatchTickParams,
   type BacklogCreateParams,
   type BacklogDeleteParams,
+  type BacklogDequeueParams,
   type BacklogEnqueueParams,
   type BacklogListParams,
   type BacklogMarkReadyParams,
@@ -43,6 +44,7 @@ import {
   type DispatchMatchProjectParams,
   type DispatchPreviewParams,
   type DispatchQueueAddParams,
+  type DispatchQueueRemoveOrphanParams,
   type DispatchQueueRemoveParams,
   type DispatchQueueReorderParams,
   type DispatchQueueUpdateParams,
@@ -181,6 +183,7 @@ import {
   backlogAutoDispatchTick,
   backlogCreate,
   backlogDelete,
+  backlogDequeue,
   backlogEnqueue,
   backlogList,
   backlogMarkReady,
@@ -230,6 +233,7 @@ import {
   dispatchQueueAdd,
   dispatchQueueList,
   dispatchQueueRemove,
+  dispatchQueueRemoveOrphan,
   dispatchQueueReorder,
   dispatchQueueUpdate,
   refreshBranches,
@@ -486,6 +490,8 @@ export async function routeMethod(
       return dispatchQueueList();
     case Methods.DISPATCH_QUEUE_REMOVE:
       return dispatchQueueRemove(p as DispatchQueueRemoveParams);
+    case Methods.DISPATCH_QUEUE_REMOVE_ORPHAN:
+      return dispatchQueueRemoveOrphan(p as DispatchQueueRemoveOrphanParams);
     case Methods.DISPATCH_QUEUE_UPDATE:
       return dispatchQueueUpdate(p as DispatchQueueUpdateParams);
     case Methods.DISPATCH_QUEUE_REORDER:
@@ -504,6 +510,8 @@ export async function routeMethod(
       return backlogMarkReady(p as BacklogMarkReadyParams);
     case Methods.BACKLOG_ENQUEUE:
       return backlogEnqueue(p as BacklogEnqueueParams);
+    case Methods.BACKLOG_DEQUEUE:
+      return backlogDequeue(p as BacklogDequeueParams);
     case Methods.BACKLOG_AUTO_DISPATCH_TICK:
       return backlogAutoDispatchTick((p ?? {}) as BacklogAutoDispatchTickParams);
     case Methods.BACKLOG_UPCOMING:

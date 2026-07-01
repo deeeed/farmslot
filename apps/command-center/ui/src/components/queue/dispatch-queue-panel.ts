@@ -310,10 +310,26 @@ export class DispatchQueuePanel extends LitElement {
     this._workGraphs = state.workGraphs;
   }
 
+  private _isOrphan(item: QueueItem): boolean {
+    return (
+      Boolean(item.backlogItemId) &&
+      !this._backlogItems.some((candidate) => candidate.id === item.backlogItemId)
+    );
+  }
+
   private async _remove(item: QueueItem): Promise<void> {
     this._busyItem = item.id;
     this._error = '';
     try {
+      if (item.backlogItemId) {
+        const backlog = this._backlogItems.find((candidate) => candidate.id === item.backlogItemId);
+        if (backlog) {
+          await gateway.request(Methods.BACKLOG_DEQUEUE, { itemId: item.backlogItemId });
+          return;
+        }
+        await gateway.request(Methods.DISPATCH_QUEUE_REMOVE_ORPHAN, { itemId: item.id });
+        return;
+      }
       await gateway.request(Methods.DISPATCH_QUEUE_REMOVE, { itemId: item.id });
     } catch (error) {
       this._error = error instanceof Error ? error.message : String(error);
@@ -540,6 +556,11 @@ export class DispatchQueuePanel extends LitElement {
                         ${graphContext(item, this._backlogItems, this._workGraphs)
                           ? html`<span class="meta graph"
                               >${graphContext(item, this._backlogItems, this._workGraphs)}</span
+                            >`
+                          : nothing}
+                        ${this._isOrphan(item)
+                          ? html`<span class="meta warn"
+                              >orphaned backlog link — remove to discard stale queue row</span
                             >`
                           : nothing}
                         ${this._queueBlocker(item)

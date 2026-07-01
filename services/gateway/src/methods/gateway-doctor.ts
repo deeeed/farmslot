@@ -12,6 +12,7 @@ import {
 } from '@farmslot/protocol';
 import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
 
+import { listOrphanedBacklogQueueItems } from '../backlog/store.js';
 import { getAllNodes } from '../fleet/machine-registry.js';
 import { loadPoolConfigs, loadProjectConfigs } from '../fleet/state.js';
 
@@ -157,6 +158,20 @@ async function gatewaySection(): Promise<GatewayDoctorSection> {
     hint: localNodeUp
       ? undefined
       : 'Live branch/file/screen/resource watches are off until a node connects. `farmslot up` co-launches the local node; remote machines: bash scripts/deploy-node.sh <machine>.',
+  });
+  const orphanedQueueItems = listOrphanedBacklogQueueItems();
+  checks.push({
+    id: 'queue-orphans',
+    label: 'Dispatch queue integrity',
+    ok: orphanedQueueItems.length === 0,
+    detail:
+      orphanedQueueItems.length === 0
+        ? 'no orphaned backlog-linked queue items'
+        : `${orphanedQueueItems.length} queued item(s) reference missing backlog records`,
+    hint:
+      orphanedQueueItems.length > 0
+        ? 'Remove orphaned items from Upcoming Work on #runs or restore .backlog.json before re-enqueueing.'
+        : undefined,
   });
   return { id: 'gateway', label: 'Gateway', checks };
 }

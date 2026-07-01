@@ -179,6 +179,12 @@ export interface DispatchQueueRemoveParams {
 
 export type DispatchQueueRemoveResult = OkResult;
 
+export interface DispatchQueueRemoveOrphanParams {
+  itemId: string;
+}
+
+export type DispatchQueueRemoveOrphanResult = OkResult;
+
 export interface DispatchQueueUpdateParams {
   itemId: string;
   priority?: number;

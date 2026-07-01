@@ -17,6 +17,7 @@ export const BacklogMethods = {
   delete: Methods.BACKLOG_DELETE,
   markReady: Methods.BACKLOG_MARK_READY,
   enqueue: Methods.BACKLOG_ENQUEUE,
+  dequeue: Methods.BACKLOG_DEQUEUE,
   autoDispatchTick: Methods.BACKLOG_AUTO_DISPATCH_TICK,
   upcoming: Methods.BACKLOG_UPCOMING,
 } as const;
@@ -60,6 +61,13 @@ export interface BacklogEnqueueParams {
   auto?: boolean;
 }
 export interface BacklogEnqueueResult extends BacklogEnqueueResultData {}
+
+export interface BacklogDequeueParams {
+  itemId: string;
+}
+export interface BacklogDequeueResult {
+  item: BacklogItem;
+}
 
 export interface BacklogAutoDispatchTickParams {
   project?: string;

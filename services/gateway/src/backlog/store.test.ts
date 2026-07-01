@@ -458,7 +458,7 @@ test('direct queue remove refuses backlog-linked queue items', async () => {
 
   assert.throws(
     () => queue.removeItem(queueItem.id),
-    /Cannot remove backlog-linked queue item directly/,
+    /Cannot remove backlog-linked queue item directly; use backlog\.dequeue/,
   );
 });
 
@@ -793,4 +793,77 @@ test('backlog allows model-only hints until a runner is selected', async () => {
     () => backlog.updateBacklogItem({ itemId: created.item.id, runner: 'claude' }),
     /not compatible/,
   );
+});
+
+test('backlog.dequeue removes linked queue items and returns item to ready', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Dequeue round trip',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    allowedSlots: ['macwork-ff-1'],
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(enqueued.item.status, 'queued');
+  assert.equal(queue.listItems().length, 1);
+
+  const dequeued = await backlog.dequeueBacklogItem({ itemId: created.item.id });
+  assert.equal(dequeued.item.status, 'ready');
+  assert.equal(dequeued.item.queuedQueueItemId, undefined);
+  assert.equal(queue.listItems().length, 0);
+});
+
+test('loadBacklog keeps orphaned queue items until operator removes them', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Orphan cleanup',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
+  await backlog.loadBacklog();
+  assert.equal(backlog.listBacklogItems().items.length, 0);
+  assert.equal(queue.listItems().length, 1);
+  assert.equal(backlog.listOrphanedBacklogQueueItems().length, 1);
+  assert.equal(
+    queue.getQueueSnapshot().some((item) => item.id === enqueued.queueItem.id),
+    true,
+  );
+});
+
+test('dispatch.queue.removeOrphan rejects non-orphan backlog-linked queue items', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Non-orphan remove guard',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  await assert.rejects(
+    () => backlog.removeOrphanBacklogQueueItem({ itemId: enqueued.queueItem.id }),
+    /Cannot remove queue item as orphan/,
+  );
+});
+
+test('dispatch.queue.removeOrphan removes orphaned backlog-linked queue items', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Orphan direct remove',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  await rm(process.env.FARMSLOT_BACKLOG_FILE!, { force: true });
+  await backlog.loadBacklog();
+  await backlog.removeOrphanBacklogQueueItem({ itemId: enqueued.queueItem.id });
+  assert.equal(queue.listItems().length, 0);
 });

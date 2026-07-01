@@ -252,16 +252,28 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
   return item;
 }
 
+function removeItemAtIndex(idx: number, reason: string): void {
+  const [removed] = queue.splice(idx, 1);
+  if (!removed) return;
+  schedulePersist(reason);
+  console.log(`[dispatch-queue] removed item ${removed.id.slice(0, 8)} (${reason})`);
+  broadcastQueue();
+}
+
+/** Internal removal for backlog.dequeue and orphan reconciliation. */
+export function removeQueueItemInternal(itemId: string, reason = 'internal-remove'): void {
+  const idx = queue.findIndex((q) => q.id === itemId);
+  if (idx < 0) throw new Error(`Queue item not found: ${itemId}`);
+  removeItemAtIndex(idx, reason);
+}
+
 export function removeItem(itemId: string): void {
   const idx = queue.findIndex((q) => q.id === itemId);
   if (idx < 0) throw new Error(`Queue item not found: ${itemId}`);
   if (queue[idx]?.backlogItemId) {
-    throw new Error('Cannot remove backlog-linked queue item directly; use backlog controls');
+    throw new Error('Cannot remove backlog-linked queue item directly; use backlog.dequeue');
   }
-  queue.splice(idx, 1);
-  schedulePersist('remove');
-  console.log(`[dispatch-queue] removed item ${itemId.slice(0, 8)}`);
-  broadcastQueue();
+  removeItemAtIndex(idx, 'remove');
 }
 
 export async function cancelGraphQueuedItem(params: {

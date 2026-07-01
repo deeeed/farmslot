@@ -2,6 +2,8 @@ import type {
   DispatchQueueAddParams,
   DispatchQueueAddResult,
   DispatchQueueListResult,
+  DispatchQueueRemoveOrphanParams,
+  DispatchQueueRemoveOrphanResult,
   DispatchQueueRemoveParams,
   DispatchQueueRemoveResult,
   DispatchQueueReorderParams,
@@ -17,6 +19,7 @@ import {
   reorderItems,
   updateItem,
 } from '../../backlog/dispatch-queue.js';
+import { removeOrphanBacklogQueueItem } from '../../backlog/store.js';
 import { loadProjectVars } from '../../core/index.js';
 import { resolveWorkerTemplateSelection } from '../../tasks/worker-template-options.js';
 
@@ -77,6 +80,12 @@ export function dispatchQueueList(): DispatchQueueListResult {
 export function dispatchQueueRemove(params: DispatchQueueRemoveParams): DispatchQueueRemoveResult {
   removeItem(params.itemId);
   return { ok: true };
+}
+
+export async function dispatchQueueRemoveOrphan(
+  params: DispatchQueueRemoveOrphanParams,
+): Promise<DispatchQueueRemoveOrphanResult> {
+  return removeOrphanBacklogQueueItem(params);
 }
 
 export function dispatchQueueUpdate(params: DispatchQueueUpdateParams): DispatchQueueUpdateResult {

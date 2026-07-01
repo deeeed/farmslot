@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import type {
   BacklogAutoDispatchTickResult,
   BacklogCreateResult,
+  BacklogDequeueResult,
   BacklogEnqueueResult,
   BacklogItem,
   BacklogLaunchCandidate,
@@ -840,6 +841,12 @@ export class BacklogPanel extends LitElement {
     );
   }
 
+  private async _dequeue(item: BacklogItem) {
+    await this._runItemAction(item.id, 'dequeue', () =>
+      gateway.request<BacklogDequeueResult>(Methods.BACKLOG_DEQUEUE, { itemId: item.id }),
+    );
+  }
+
   private async _saveNotes(item: BacklogItem) {
     await this._runItemAction(item.id, 'notes', () =>
       gateway.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, {
@@ -1065,6 +1072,13 @@ export class BacklogPanel extends LitElement {
           @click=${() => this._enqueue(item)}
         >
           Enqueue
+        </button>
+        <button
+          class="secondary"
+          ?disabled=${item.status !== 'queued' || this._busy.endsWith(item.id)}
+          @click=${() => this._dequeue(item)}
+        >
+          Dequeue
         </button>
       </div>
     </div>`;
