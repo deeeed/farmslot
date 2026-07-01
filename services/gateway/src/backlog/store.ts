@@ -1375,6 +1375,8 @@ export async function dequeueBacklogItem(params: {
       delete item.launchPlanState.baselineQueueItemId;
     }
     delete item.queuedQueueItemId;
+    delete item.runId;
+    delete item.lastObservedRunStatus;
     item.status = 'ready';
     delete item.lastDispatchError;
     item.updatedAt = new Date().toISOString();

@@ -812,7 +812,82 @@ test('backlog.dequeue removes linked queue items and returns item to ready', asy
   const dequeued = await backlog.dequeueBacklogItem({ itemId: created.item.id });
   assert.equal(dequeued.item.status, 'ready');
   assert.equal(dequeued.item.queuedQueueItemId, undefined);
+  assert.equal(dequeued.item.runId, undefined);
   assert.equal(queue.listItems().length, 0);
+
+  const reEnqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(reEnqueued.item.status, 'queued');
+  assert.equal(queue.listItems().length, 1);
+});
+
+test('backlog.dequeue clears stale baseline run linkage on launch-plan re-enqueue', async () => {
+  const { backlog, queue, runStore } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Compare model variants',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+    launchPlan: {
+      id: 'lp_compare',
+      version: 1,
+      candidates: [
+        {
+          id: 'baseline',
+          role: 'baseline',
+          runner: 'claude',
+          model: 'opus',
+          slotPolicy: { kind: 'exact', slotId: 'macwork-ff-1' },
+        },
+        {
+          id: 'sonnet',
+          role: 'comparison',
+          runner: 'claude',
+          model: 'sonnet',
+          variant: 'claude-sonnet',
+          slotPolicy: { kind: 'pool', allowedSlots: ['macwork-ff-2'] },
+        },
+      ],
+    },
+  });
+
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  const baselineRun = runStore.createRun({
+    flowType: enqueued.queueItem.flowType,
+    project: enqueued.queueItem.project,
+    ticketOrPr: enqueued.queueItem.ticketOrPr,
+    backlogItemId: enqueued.queueItem.backlogItemId,
+    launchPlanId: enqueued.queueItem.launchPlanId,
+    launchCandidateId: enqueued.queueItem.launchCandidateId,
+    launchGroupId: enqueued.queueItem.launchGroupId,
+    launchSlotPolicy: enqueued.queueItem.launchSlotPolicy,
+    runner: enqueued.queueItem.runner,
+    model: enqueued.queueItem.model,
+    slotId: enqueued.queueItem.slotId,
+  });
+  await backlog.markBacklogRunStarted(enqueued.queueItem, baselineRun);
+  runStore.updateRun(baselineRun.id, { status: 'done' });
+  backlog.markBacklogRunObserved({ ...baselineRun, status: 'done' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const queuedItem = backlog
+    .listBacklogItems({ includeArchived: true })
+    .items.find((candidate) => candidate.id === created.item.id);
+  assert.equal(queuedItem?.status, 'queued');
+  assert.equal(queuedItem?.runId, baselineRun.id);
+  assert.ok(
+    queue.getQueueSnapshot().filter((item) => item.backlogItemId === created.item.id).length >= 2,
+  );
+
+  const dequeued = await backlog.dequeueBacklogItem({ itemId: created.item.id });
+  assert.equal(dequeued.item.status, 'ready');
+  assert.equal(dequeued.item.runId, undefined);
+  assert.equal(dequeued.item.queuedQueueItemId, undefined);
+  assert.equal(dequeued.item.launchPlanState?.baselineRunId, baselineRun.id);
+
+  const reEnqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(reEnqueued.item.status, 'queued');
+  assert.ok(reEnqueued.queueItem);
 });
 
 test('loadBacklog keeps orphaned queue items until operator removes them', async () => {
