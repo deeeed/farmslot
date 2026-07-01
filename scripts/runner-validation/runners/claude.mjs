@@ -33,9 +33,10 @@ export function assertBinary() {
 }
 
 /** One-shot print mode — reliable in tmux shell panes (interactive compose does not submit). */
-export function buildLaunchCommand(prompt = DEFAULT_PROMPT) {
+export function buildLaunchCommand(prompt = DEFAULT_PROMPT, model = 'opus') {
   assertBinary();
-  return `${shSingleQuote(CLAUDE_BIN)} --dangerously-skip-permissions -p ${shSingleQuote(prompt)}`;
+  const modelFlag = model ? ` --model ${shSingleQuote(model)}` : '';
+  return `${shSingleQuote(CLAUDE_BIN)} --dangerously-skip-permissions${modelFlag} -p ${shSingleQuote(prompt)}`;
 }
 
 export function launchMode() {

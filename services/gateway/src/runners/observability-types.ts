@@ -27,10 +27,12 @@ export interface HookRecord {
   tool_name?: string;
   tool_use_id?: string;
   session_id?: string;
+  transcript_path?: string;
   cwd?: string;
   runnerPromptDigest?: string;
   sentAt?: number;
   tmuxPane?: string;
+  slotId?: string;
 }
 
 export interface StatuslineRecord {

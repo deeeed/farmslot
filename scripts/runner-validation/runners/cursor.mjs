@@ -51,6 +51,12 @@ export function skipReason(scenario) {
   if (scenario === 'hook-smoke' || scenario === 'prompt-accepted' || scenario === 'turn-boundary') {
     return 'cursor is pane-only (observabilityScope); use pane-smoke';
   }
+  if (scenario === 'session-attribution-smoke') {
+    return 'cursor persistsSessionFiles=false; session attribution unavailable';
+  }
+  if (scenario === 'token-usage-smoke') {
+    return 'cursor interactive TUI has no durable token transcript; headless partial only';
+  }
   if (scenario === 'busy-composer') {
     return 'cursor busy-composer pane fixtures not curated yet';
   }

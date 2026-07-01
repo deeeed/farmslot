@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-01T09:17:35.064Z",
+  "host": "macwork",
+  "scenario": "token-usage-smoke",
+  "runner": "claude",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-usage-GZ2IKQ",
+  "slotId": "runner-validate-macwork-claude",
+  "session": "runner-validate-claude-token-usage-smoke-7228",
+  "dispatchedModel": "opus",
+  "resolvedPath": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-usage-GZ2IKQ/0e701e7e-9724-40c9-bcad-56668cd3813f.jsonl",
+  "usage": {
+    "turns": 1,
+    "model": "claude-opus-4-8",
+    "input_tokens": 10037,
+    "output_tokens": 14,
+    "cache_creation": 4143,
+    "cache_read": 13628,
+    "reasoning_output_tokens": 0,
+    "total_tokens": 27822,
+    "cost_usd": null
+  },
+  "usageStdout": "Session:  0e701e7e-9724-40c9-bcad-56668cd3813f\nRunner:   claude\nLines:    16\n---\nturns=1\nmodel=claude-opus-4-8\ninput_tokens=10037\noutput_tokens=14\ncache_creation=4143\ncache_read=13628\nreasoning_output_tokens=0\ntotal_tokens=27822\n",
+  "modelMatch": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash .tmux-driver-launch.sh\n\n\nTMUX_HOOK_OK\nbash-5.3$\nbash-5.3$\nbash-5.3$"
+}

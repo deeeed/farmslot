@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-01T09:17:07.767Z",
+  "host": "macwork",
+  "scenario": "session-attribution-smoke",
+  "runner": "claude",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-claude-attr-Ge6Ozy",
+  "slotId": "runner-validate-macwork-claude",
+  "session": "runner-validate-claude-session-attribution-smoke-99147",
+  "dispatchedModel": "opus",
+  "stalePath": "/Users/deeeed/.claude/projects/-var-folders-98-_mm6pm_d0nj7vj72jwq0hc_00000gn-T-runner-validate-claude-attr-Ge6Ozy/00000000-0000-4000-8000-runner-stale.jsonl",
+  "resolvedPath": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-attr-Ge6Ozy/719ac943-7aba-4304-b7ea-fa4395bc59e7.jsonl",
+  "resolvedSource": "hook",
+  "hookTranscriptPath": "/Users/deeeed/.claude/projects/-private-var-folders-98--mm6pm-d0nj7vj72jwq0hc-00000gn-T-runner-validate-claude-attr-Ge6Ozy/719ac943-7aba-4304-b7ea-fa4395bc59e7.jsonl",
+  "hookTmuxPane": "%45",
+  "staleModel": "claude-haiku-4-5",
+  "actualModel": "claude-opus-4-8",
+  "modelMatch": true,
+  "staleWouldMismatch": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash .tmux-driver-launch.sh\n\n\nTMUX_HOOK_OK\nbash-5.3$\nbash-5.3$\nbash-5.3$"
+}

@@ -10,7 +10,13 @@ OPTIONAL_EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/runner-e2e-optional-XXXXXX")
 FAIL=0
 HOOK_RAN=false
 HOOK_PASSED=false
+ATTRIBUTION_RAN=false
+ATTRIBUTION_PASSED=false
+TOKEN_USAGE_RAN=false
+TOKEN_USAGE_PASSED=false
 GROK_RAN=false
+GROK_ATTRIBUTION_PASSED=false
+GROK_TOKEN_PASSED=false
 
 pass() { echo "E2E PASS: $*"; }
 fail() { echo "E2E FAIL: $*"; FAIL=1; }
@@ -117,6 +123,16 @@ for runner in claude codex; do
     elif run_harness "$runner" hook-smoke false; then
       HOOK_PASSED=true
     fi
+    echo "-- harness: ${runner} session-attribution-smoke --"
+    ATTRIBUTION_RAN=true
+    if run_harness "$runner" session-attribution-smoke false; then
+      ATTRIBUTION_PASSED=true
+    fi
+    echo "-- harness: ${runner} token-usage-smoke --"
+    TOKEN_USAGE_RAN=true
+    if run_harness "$runner" token-usage-smoke false; then
+      TOKEN_USAGE_PASSED=true
+    fi
   else
     skip "${runner} hook-smoke (binary missing)"
   fi
@@ -133,6 +149,14 @@ if runner_available grok; then
   fi
   echo "-- harness: grok interaction-smoke --"
   run_harness grok interaction-smoke false false "$OPTIONAL_EVIDENCE_DIR" || true
+  echo "-- harness: grok session-attribution-smoke --"
+  if run_harness grok session-attribution-smoke false; then
+    GROK_ATTRIBUTION_PASSED=true
+  fi
+  echo "-- harness: grok token-usage-smoke --"
+  if run_harness grok token-usage-smoke false; then
+    GROK_TOKEN_PASSED=true
+  fi
 else
   skip "grok pane-smoke + interaction-smoke (binary missing)"
 fi
@@ -155,8 +179,24 @@ elif ! $HOOK_PASSED; then
   fail "hook-smoke did not pass for any available event-driven runner"
 fi
 
+if $ATTRIBUTION_RAN && ! $ATTRIBUTION_PASSED; then
+  fail "session-attribution-smoke did not pass for any available event-driven runner"
+fi
+
+if $TOKEN_USAGE_RAN && ! $TOKEN_USAGE_PASSED; then
+  fail "token-usage-smoke did not pass for any available event-driven runner"
+fi
+
 if runner_available grok && ! $GROK_RAN; then
   fail "grok binary present but grok smokes did not run"
+fi
+
+if runner_available grok && ! $GROK_ATTRIBUTION_PASSED; then
+  fail "grok session-attribution-smoke did not pass"
+fi
+
+if runner_available grok && ! $GROK_TOKEN_PASSED; then
+  fail "grok token-usage-smoke did not pass"
 fi
 
 if [ "$FAIL" -ne 0 ]; then
@@ -165,5 +205,5 @@ if [ "$FAIL" -ne 0 ]; then
 fi
 
 echo "tmux runner E2E complete on ${HOST}"
-echo "committed evidence: ${EVIDENCE_DIR}/runner-validate-${HOST}-{claude,codex}-hook-smoke.json"
+echo "committed evidence: ${EVIDENCE_DIR}/runner-validate-${HOST}-{claude,codex,grok}-{hook-smoke,session-attribution-smoke,token-usage-smoke}.json"
 echo "optional evidence (local only): ${OPTIONAL_EVIDENCE_DIR}/runner-validate-${HOST}-*.json"

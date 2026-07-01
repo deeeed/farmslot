@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-01T09:22:08.713Z",
+  "host": "macwork",
+  "scenario": "token-usage-smoke",
+  "runner": "grok",
+  "repo": "/var/folders/98/_mm6pm_d0nj7vj72jwq0hc_00000gn/T/runner-validate-grok-usage-CaBZWC",
+  "slotId": "runner-validate-macwork-grok",
+  "session": "runner-validate-grok-token-usage-smoke-78852",
+  "dispatchedModel": "grok-build",
+  "resolvedPath": "/Users/deeeed/.grok/sessions/%2Fprivate%2Fvar%2Ffolders%2F98%2F_mm6pm_d0nj7vj72jwq0hc_00000gn%2FT%2Frunner-validate-grok-usage-CaBZWC/019f1cfb-c771-7a92-be57-60b10148cd42",
+  "usage": {
+    "turns": 1,
+    "model": "grok-build-0.1",
+    "input_tokens": 21475,
+    "output_tokens": 132,
+    "cache_creation": 0,
+    "cache_read": 5632,
+    "reasoning_output_tokens": 124,
+    "total_tokens": 21607,
+    "cost_usd": null
+  },
+  "usageStdout": "Session:  019f1cfb-c771-7a92-be57-60b10148cd42\nRunner:   grok\nLines:    72\n---\nturns=1\nmodel=grok-build-0.1\ninput_tokens=21475\noutput_tokens=132\ncache_creation=0\ncache_read=5632\nreasoning_output_tokens=124\ntotal_tokens=21607\n",
+  "modelMatch": true,
+  "pass": true,
+  "error": null,
+  "paneTail": "bash-5.3$ bash .tmux-driver-launch.sh\n\n2026-07-01T09:21:31.840049Z ERROR worker quit with fatal: Transport channel clos\ned, when Client(reqwest::Error { kind: Request, url: \"http://localhost:8124/mcp/\n\", source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect\nerror\", 127.0.0.1:8124, Os { code: 61, kind: ConnectionRefused, message: \"Connec\ntion refused\" })) })\nTMUX_HOOK_OK\nbash-5.3$\nbash-5.3$"
+}

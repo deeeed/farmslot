@@ -31,6 +31,27 @@ home = Path.home()
 forced_path = os.environ.get('RUNNER_SESSION_PATH')
 forced_runner = os.environ.get('RUNNER_SESSION_RUNNER')
 
+
+def grok_repo_key(repo_path: str) -> str:
+    try:
+        return os.path.realpath(repo_path)
+    except Exception:
+        return os.path.abspath(repo_path)
+
+
+def grok_cwd_matches(summary_cwd, repo_path: str) -> bool:
+    return repo_path_matches(summary_cwd, repo_path)
+
+
+def repo_path_matches(session_path, repo_path: str) -> bool:
+    if not session_path:
+        return False
+    repo_key = grok_repo_key(repo_path)
+    try:
+        return os.path.realpath(session_path) == repo_key
+    except Exception:
+        return session_path == repo_path or session_path == repo_key
+
 CLAUDE_PRICING = {
     'claude-opus-4-6':   {'input': 15.0, 'output': 75.0, 'cache_write': 18.75, 'cache_read': 1.50},
     'claude-sonnet-4-6': {'input': 3.0,  'output': 15.0, 'cache_write': 3.75,  'cache_read': 0.30},
@@ -90,7 +111,7 @@ def latest_codex_session(repo_path: str):
         try:
             with path.open() as f:
                 first = json.loads(next(f))
-            if first.get('type') == 'session_meta' and first.get('payload', {}).get('cwd') == repo_path:
+            if first.get('type') == 'session_meta' and repo_path_matches(first.get('payload', {}).get('cwd'), repo_path):
                 candidates.append(path)
         except Exception:
             # Session discovery scans third-party runner state; unreadable or malformed
@@ -104,14 +125,14 @@ def latest_codex_session(repo_path: str):
 
 
 def latest_grok_session(repo_path: str):
-    sessions_dir = home / '.grok' / 'sessions' / quote(repo_path, safe='')
+    sessions_dir = home / '.grok' / 'sessions' / quote(grok_repo_key(repo_path), safe='')
     if not sessions_dir.is_dir():
         return None, None
     candidates = []
     for summary_path in sessions_dir.glob('*/summary.json'):
         try:
             summary = json.loads(summary_path.read_text())
-            if summary.get('info', {}).get('cwd') == repo_path:
+            if grok_cwd_matches(summary.get('info', {}).get('cwd'), repo_path):
                 candidates.append(summary_path.parent)
         except Exception:
             # Grok may leave partial summary files while the TUI is writing; skip those.
