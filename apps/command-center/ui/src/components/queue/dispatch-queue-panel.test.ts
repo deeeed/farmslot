@@ -2,8 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { BacklogItem, QueueItem } from '@farmslot/protocol';
+import { Methods } from '@farmslot/protocol';
 
-import { isOrphanedBacklogQueueItemForUi } from './dispatch-queue-panel-model.js';
+import {
+  isOrphanedBacklogQueueItemForUi,
+  queueRemoveRequestForUi,
+} from './dispatch-queue-panel-model.js';
 
 function queueItem(overrides: Partial<QueueItem> = {}): QueueItem {
   return {
@@ -50,4 +54,27 @@ test('queue panel orphan badge mirrors server dispatching guard', () => {
     ),
     false,
   );
+});
+
+test('queue panel remove routing chooses backlog dequeue, orphan remove, or direct remove', () => {
+  const backlogItems = [{ id: 'backlog-1' }] as Pick<BacklogItem, 'id'>[];
+
+  assert.deepEqual(
+    queueRemoveRequestForUi(
+      queueItem({ id: 'queue-linked', backlogItemId: 'backlog-1' }),
+      backlogItems,
+    ),
+    { method: Methods.BACKLOG_DEQUEUE, params: { itemId: 'backlog-1' } },
+  );
+  assert.deepEqual(
+    queueRemoveRequestForUi(
+      queueItem({ id: 'queue-orphan', backlogItemId: 'missing-backlog' }),
+      backlogItems,
+    ),
+    { method: Methods.DISPATCH_QUEUE_REMOVE_ORPHAN, params: { itemId: 'queue-orphan' } },
+  );
+  assert.deepEqual(queueRemoveRequestForUi(queueItem({ id: 'queue-direct' }), backlogItems), {
+    method: Methods.DISPATCH_QUEUE_REMOVE,
+    params: { itemId: 'queue-direct' },
+  });
 });

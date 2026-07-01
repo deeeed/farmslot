@@ -15,7 +15,10 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
-import { isOrphanedBacklogQueueItemForUi } from './dispatch-queue-panel-model.js';
+import {
+  isOrphanedBacklogQueueItemForUi,
+  queueRemoveRequestForUi,
+} from './dispatch-queue-panel-model.js';
 
 function labelFor(item: QueueItem): string {
   return (
@@ -320,16 +323,8 @@ export class DispatchQueuePanel extends LitElement {
     this._busyItem = item.id;
     this._error = '';
     try {
-      if (item.backlogItemId) {
-        const backlog = this._backlogItems.find((candidate) => candidate.id === item.backlogItemId);
-        if (backlog) {
-          await gateway.request(Methods.BACKLOG_DEQUEUE, { itemId: item.backlogItemId });
-          return;
-        }
-        await gateway.request(Methods.DISPATCH_QUEUE_REMOVE_ORPHAN, { itemId: item.id });
-        return;
-      }
-      await gateway.request(Methods.DISPATCH_QUEUE_REMOVE, { itemId: item.id });
+      const request = queueRemoveRequestForUi(item, this._backlogItems);
+      await gateway.request(request.method, request.params);
     } catch (error) {
       this._error = error instanceof Error ? error.message : String(error);
     } finally {

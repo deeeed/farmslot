@@ -34,6 +34,8 @@ import {
 } from '../shared/planning-badges.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 
+import { canDequeueBacklogItemForUi } from './backlog-panel-model.js';
+
 const STATUSES: Array<BacklogStatus | 'all'> = ['all', ...BACKLOG_STATUSES];
 const FLOWS: FlowType[] = ['fix-bug', 'dev', 'review-pr', 'pr-complete', 'merge-main'];
 const SOURCES: BacklogSourceKind[] = [...BACKLOG_SOURCE_KINDS];
@@ -1075,8 +1077,7 @@ export class BacklogPanel extends LitElement {
         </button>
         <button
           class="secondary"
-          ?disabled=${!['queued', 'dispatching'].includes(item.status) ||
-          this._busy.endsWith(item.id)}
+          ?disabled=${!canDequeueBacklogItemForUi(item) || this._busy.endsWith(item.id)}
           @click=${() => this._dequeue(item)}
         >
           Dequeue
