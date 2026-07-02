@@ -9,6 +9,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 - Multi-source recipe library resolution: `call` refs can resolve from ordered, named library sources (`--library name=path`, `RECIPE_LIBRARY_PATH`, or the personal library at `<farmslot home>/recipe-library`). First source wins; recipe-local flows always win. Nothing resolves silently for any consumer: cross-source shadowing and recipe-local overrides are recorded in `summary.json` `flowResolution` (`shadowed`, `overrides`) and in the `resolved-flows.json` artifact alongside the used definitions, in addition to logging.
 - `farmslot-recipe flows list` — list library flows with source, description, required params, and last-verified date across configured sources; exits non-zero when no source is configured.
 - `farmslot-recipe validate --library` — validate accepts library-resolved `call` refs with the same source resolution as run.
+- `farmslot-recipe flows promote` — promote an inline flow from a per-change recipe into a recipe library (default: the personal library, created on first promote). Enforces the catalog contract (description required, postcondition required for `ensure_*`), stamps `provenance.promotedFrom`/`promotedAt`, and stamps `lastVerified` only from a passing run's artifacts (`--run <dir>`).
 
 ## 0.3.2 - 2026-06-30
 

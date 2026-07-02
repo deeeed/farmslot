@@ -59,14 +59,21 @@ export function parseRecipeLibraryPath(value: string): RecipeLibrarySource[] {
 }
 
 /**
- * Default sources when nothing is configured: the personal library at
- * `<farmslot home>/recipe-library` (FARMSLOT_HOME env, default ~/.farmslot)
- * when that directory exists.
+ * The personal library location: `<farmslot home>/recipe-library`
+ * (FARMSLOT_HOME env, default ~/.farmslot). The directory may not exist yet.
+ */
+export function personalRecipeLibraryRoot(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(farmslotHome(env), 'recipe-library');
+}
+
+/**
+ * Default sources when nothing is configured: the personal library when it
+ * exists.
  */
 export async function defaultRecipeLibrarySources(
   env: RecipeLibraryEnv = process.env,
 ): Promise<RecipeLibrarySource[]> {
-  const personalRoot = path.join(farmslotHome(env), 'recipe-library');
+  const personalRoot = personalRecipeLibraryRoot(env);
   try {
     await readFile(path.join(personalRoot, LIBRARY_MANIFEST_FILE), 'utf-8');
   } catch {
