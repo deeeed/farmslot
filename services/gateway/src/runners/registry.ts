@@ -46,6 +46,7 @@ import type {
   RunnerActivity,
   RunnerObservability,
 } from './observability-types.js';
+import { readPaneStateFromCapture } from './pane-state-script.js';
 import { probeRunnerHandoffAck } from './prompt-delivery-evidence.js';
 
 /**
@@ -514,7 +515,15 @@ export function runnerLineLooksWaiting(line: string, runnerId?: string | null): 
 
 export function grokPaneShowsColdStartSession(pane: string, runnerId?: string | null): boolean {
   if (normalizeRunner(runnerId) !== 'grok') return false;
-  return /starting session/i.test(normalizeInstructionText(pane));
+  return readPaneStateFromCapture(pane, runnerId).launchBlocker === 'cold-start';
+}
+
+export function runnerPaneHasDeferredLaunchBlocker(
+  pane: string,
+  runnerId?: string | null,
+  blocker: RunnerLaunchBlocker | null = detectRunnerLaunchBlocker(pane, runnerId),
+): boolean {
+  return blocker?.defer === true;
 }
 
 export function runnerPaneLooksIdle(lines: string[], runnerId?: string | null): boolean {
@@ -522,11 +531,13 @@ export function runnerPaneLooksIdle(lines: string[], runnerId?: string | null): 
   // border lines after the actual placeholder. Inspect the last meaningful
   // content lines, not the last raw terminal rows, or post-launch prompt
   // delivery can miss a ready TUI and fail as "not stable".
+  const fullPane = lines.join('\n');
+  // Launch blockers (MCP init, session warmup, etc.) can live outside the composer tail.
+  if (runnerPaneHasDeferredLaunchBlocker(fullPane, runnerId)) return false;
   const tail = lines
     .map((line) => line.trim())
     .filter(Boolean)
     .slice(-8);
-  if (grokPaneShowsColdStartSession(tail.join('\n'), runnerId)) return false;
   return tail.some((line) => runnerLineLooksWaiting(line, runnerId));
 }
 
@@ -558,15 +569,59 @@ function runnerPaneShowsGrokProjectDirectoryPrompt(
 }
 
 export interface RunnerLaunchBlocker {
-  kind: 'workspace-trust' | 'project-directory' | 'auth-required';
+  kind: 'workspace-trust' | 'project-directory' | 'auth-required' | 'mcp-init' | 'cold-start';
   summary: string;
   autoAction: 'cursor-trust-workspace' | 'grok-select-current-project' | null;
+  /** Wait for the blocker to clear instead of failing prompt delivery. */
+  defer?: boolean;
 }
 
 export function detectRunnerLaunchBlocker(
   pane: string,
   runnerId?: string | null,
 ): RunnerLaunchBlocker | null {
+  const paneState = readPaneStateFromCapture(pane, runnerId);
+  const runner = normalizeRunner(runnerId);
+  switch (paneState.launchBlocker) {
+    case 'workspace-trust':
+      return {
+        kind: 'workspace-trust',
+        summary:
+          'Cursor is waiting for workspace trust confirmation before the chat input is available.',
+        autoAction: 'cursor-trust-workspace',
+      };
+    case 'project-directory':
+      return {
+        kind: 'project-directory',
+        summary:
+          'Grok is waiting for project-directory selection before the chat input is available.',
+        autoAction: 'grok-select-current-project',
+      };
+    case 'mcp-init':
+      return {
+        kind: 'mcp-init',
+        summary: 'Runner is still initializing MCP integrations before the composer accepts input.',
+        autoAction: null,
+        defer: true,
+      };
+    case 'cold-start':
+      return {
+        kind: 'cold-start',
+        summary: 'Runner session is still warming up before the composer accepts input.',
+        autoAction: null,
+        defer: true,
+      };
+    case 'auth-required':
+      return {
+        kind: 'auth-required',
+        summary: `${runner} requires login/authentication before Farmslot can deliver the task prompt.`,
+        autoAction: null,
+      };
+    default:
+      break;
+  }
+
+  // Fallback when pane-state.sh is unavailable in unit tests or minimal captures.
   if (runnerPaneShowsWorkspaceTrustPrompt(pane, runnerId)) {
     return {
       kind: 'workspace-trust',
@@ -583,13 +638,6 @@ export function detectRunnerLaunchBlocker(
       autoAction: 'grok-select-current-project',
     };
   }
-
-  // Normalize each physical line independently. normalizeInstructionText
-  // collapses ALL whitespace (newlines included), so normalizing the whole pane
-  // first and splitting afterward yields a single blob — that lets an "auth"
-  // word in one line combine with a "needed/required" word in an unrelated line
-  // (e.g. a prior worker's recap still on screen), and defeats the per-line MCP
-  // guard. Splitting first keeps the documented line-by-line semantics.
   const lines = pane
     .split('\n')
     .map((line) => normalizeInstructionText(line).toLowerCase())
@@ -597,7 +645,7 @@ export function detectRunnerLaunchBlocker(
   if (lines.some((line) => runnerLineShowsAuthBlocker(line))) {
     return {
       kind: 'auth-required',
-      summary: `${normalizeRunner(runnerId)} requires login/authentication before Farmslot can deliver the task prompt.`,
+      summary: `${runner} requires login/authentication before Farmslot can deliver the task prompt.`,
       autoAction: null,
     };
   }
@@ -710,6 +758,69 @@ function claudePaneShowsSubmittedInstruction(pane: string, message: string): boo
   return /(?:^|\s)❯(?:\s|$)/.test(after) || /\bctx:\d+%\b/i.test(after);
 }
 
+function grokComposerTail(pane: string): string {
+  const lines = pane.split('\n');
+  let start = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*#\d+\s/.test(lines[i] ?? '')) {
+      start = i + 1;
+    }
+  }
+  return lines.slice(start).join('\n');
+}
+
+function grokPaneShowsSubmittedInstruction(pane: string, message: string): boolean {
+  const needle = instructionNeedle(message);
+  if (!needle) return false;
+  if (runnerPaneHasDeferredLaunchBlocker(pane, 'grok')) return false;
+  const compactPane = normalizeInstructionText(pane);
+  if (
+    !new RegExp(`#\\d+\\s+${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(compactPane)
+  ) {
+    return false;
+  }
+  if (runnerPaneHasProgressAfterInstruction(pane, message)) return true;
+  return !runnerPaneHasPendingInstruction(grokComposerTail(pane), message, 'grok');
+}
+
+export function runnerPaneShowsSubmittedInstruction(
+  pane: string,
+  message: string,
+  runnerId?: string | null,
+): boolean {
+  switch (normalizeRunner(runnerId)) {
+    case 'claude':
+      return claudePaneShowsSubmittedInstruction(pane, message);
+    case 'grok':
+      return grokPaneShowsSubmittedInstruction(pane, message);
+    default:
+      return false;
+  }
+}
+
+/** Pre-send duplicate guard — stricter than post-send acceptance for Grok MCP races. */
+export function runnerPaneShowsPreSendDuplicateInstruction(
+  pane: string,
+  message: string,
+  runnerId?: string | null,
+): boolean {
+  const runner = normalizeRunner(runnerId);
+  if (runner === 'grok') {
+    if (
+      runnerPaneShowsCurrentInteractiveProgress(pane, runner) &&
+      runnerPaneContainsInstruction(pane, message)
+    ) {
+      return true;
+    }
+    if (runnerPaneHasDeferredLaunchBlocker(pane, runner)) return false;
+    return false;
+  }
+  return (
+    runnerPaneShowsCurrentInteractiveProgress(pane, runner) &&
+    runnerPaneContainsInstruction(pane, message)
+  );
+}
+
 function paneLineLooksShellPrompt(line: string): boolean {
   return /^[^\s@]+@[^\s]+\s+\S+\s+[%$#]\s*$/.test(line.trim());
 }
@@ -783,12 +894,7 @@ export function runnerPaneShowsPromptAccepted(
   // actual progress instead of leaving the run stuck at an idle prompt.
   if (runnerPaneHasQueuedInstruction(pane, message)) return true;
   if (runnerPaneHasBufferedInstruction(pane, message, runnerId)) return false;
-  if (
-    normalizeRunner(runnerId) === 'claude' &&
-    claudePaneShowsSubmittedInstruction(pane, message)
-  ) {
-    return true;
-  }
+  if (runnerPaneShowsSubmittedInstruction(pane, message, runnerId)) return true;
   if (runnerPaneHasProgressAfterInstruction(pane, message)) return true;
   if (marker && pane.includes(marker)) return !runnerPaneLooksIdle(pane.split('\n'), runnerId);
   return !runnerPaneLooksIdle(pane.split('\n'), runnerId);
@@ -843,6 +949,7 @@ export function runnerPaneHasBufferedInstruction(
   message: string,
   runnerId?: string | null,
 ): boolean {
+  if (runnerPaneShowsSubmittedInstruction(pane, message, runnerId)) return false;
   if (runnerPaneHasPendingInstruction(pane, message, runnerId)) return true;
   if (normalizeRunner(runnerId) === 'claude') return false;
   return (
@@ -1007,6 +1114,49 @@ async function runnerLooksIdleObsFirst(
   const paneIdle = runnerPaneLooksIdle(pane.split('\n'), runner);
   const reading = await readRunnerActivityFromObservability(vars, target, runner);
   return selectIdleFromObservabilityAndPane(reading, paneIdle).idle;
+}
+
+async function waitForRunnerPromptSendReady(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  logPrefix: string,
+  opts: { deadlineMs: number; pollIntervalMs: number },
+): Promise<string> {
+  const startedAt = Date.now();
+  let pane = '';
+  while (Date.now() < opts.deadlineMs) {
+    pane = (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
+      )
+    ).stdout;
+    const blocker = detectRunnerLaunchBlocker(pane, runner);
+    if (runnerPaneHasDeferredLaunchBlocker(pane, runner, blocker)) {
+      console.log(
+        `[${logPrefix}] waiting for ${blocker?.kind ?? 'launch-blocker'} before prompt send to ${target}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, opts.pollIntervalMs));
+      continue;
+    }
+    if (await runnerLooksIdleObsFirst(vars, target, runner, pane)) {
+      return pane;
+    }
+    await new Promise((resolve) => setTimeout(resolve, opts.pollIntervalMs));
+  }
+  const blocker = detectRunnerLaunchBlocker(pane, runner);
+  if (runnerPaneHasDeferredLaunchBlocker(pane, runner, blocker)) {
+    throw new Error(
+      `Runner launch (${runner}) still blocked by ${blocker?.kind ?? 'launch-blocker'} after ${Math.round((Date.now() - startedAt) / 1000)}s in tmux target ${target}. Prompt delivery aborted.\nLast pane content:\n${pane}`,
+    );
+  }
+  if (!(await runnerLooksIdleObsFirst(vars, target, runner, pane))) {
+    throw new Error(
+      `Runner launch (${runner}) did not reach a stable ready state within the prompt-send wait window in tmux target ${target}. Prompt delivery aborted.\nLast pane content:\n${pane}`,
+    );
+  }
+  return pane;
 }
 
 async function runnerShowsPromptDeliveryAccepted(
@@ -1478,16 +1628,16 @@ export async function sendRunnerPostLaunchPrompt(
       lastPane = '';
       continue;
     }
+    if (runnerPaneHasDeferredLaunchBlocker(pane, runner)) {
+      stableCount = 0;
+      lastPane = '';
+      continue;
+    }
     if (blocker) {
       throw new Error(
         `${blocker.summary} Snapshot: ${opts.blockerSnapshotPath ?? 'not configured'}. ` +
           `Prompt delivery aborted before the ${readyTimeoutMs / 1000}s readiness timeout.`,
       );
-    }
-    if (grokPaneShowsColdStartSession(pane, runner)) {
-      stableCount = 0;
-      lastPane = '';
-      continue;
     }
     if (runnerPaneShowsTaskAlreadyRunning(pane, message, marker, runner)) {
       console.log(
@@ -1638,12 +1788,38 @@ export async function sendRunnerPostLaunchPrompt(
   }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const preSendPane = (
+    const immediatePane = (
       await execOnSlot(
         vars,
         tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
       )
     ).stdout;
+    const immediateHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
+      launchAckSignalPath: opts.launchAckSignalPath,
+      preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+    });
+    if (immediateHandoff.accepted) {
+      console.log(
+        `[${logPrefix}] prompt handoff already accepted before attempt ${attempt}/${maxAttempts}: ${immediateHandoff.reason}`,
+      );
+      return;
+    }
+    if (runnerPaneShowsPreSendDuplicateInstruction(immediatePane, message, runner)) {
+      console.log(
+        `[${logPrefix}] prompt already visible with runner progress in ${target}; skipping duplicate send`,
+      );
+      return;
+    }
+    if (runnerPaneShowsTaskAlreadyRunning(immediatePane, message, marker, runner)) {
+      console.log(
+        `[${logPrefix}] task already executing in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
+      );
+      return;
+    }
+    const preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
+      deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
+      pollIntervalMs,
+    });
     const preSendHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
@@ -1651,6 +1827,12 @@ export async function sendRunnerPostLaunchPrompt(
     if (preSendHandoff.accepted) {
       console.log(
         `[${logPrefix}] prompt handoff already accepted before attempt ${attempt}/${maxAttempts}: ${preSendHandoff.reason}`,
+      );
+      return;
+    }
+    if (runnerPaneShowsPreSendDuplicateInstruction(preSendPane, message, runner)) {
+      console.log(
+        `[${logPrefix}] prompt already visible with runner progress in ${target}; skipping duplicate send`,
       );
       return;
     }

@@ -4,10 +4,14 @@ import test from 'node:test';
 import type { Run } from '@farmslot/protocol';
 
 import {
+  comparePickerFamilyChipLabel,
   detectVariantCollision,
+  familyRunsForComparePicker,
   filterRunsByExactTicket,
+  filterRunsForComparisonPicker,
   groupPriorRunsByFamily,
   isVariantInputBlocked,
+  summarizeComparePickerFamilyLane,
 } from './dispatch-wizard-helpers.js';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
@@ -140,4 +144,81 @@ test('isVariantInputBlocked blocks dispatch when input duplicates an existing si
 test('isVariantInputBlocked allows dispatch when input is unique within family', () => {
   const family = [makeRun({ variant: 'claude-sonnet' })];
   assert.equal(isVariantInputBlocked(family, 'claude-sonnet-v2', true), false);
+});
+
+test('familyRunsForComparePicker returns oldest-first siblings in the same family', () => {
+  const runs = [
+    makeRun({ id: 'b', familyId: 'fam-1', createdAt: '2026-05-03T00:00:00Z' }),
+    makeRun({
+      id: 'a',
+      familyId: 'fam-1',
+      createdAt: '2026-05-01T00:00:00Z',
+      lane: 'comparison',
+      variant: 'codex-gpt',
+    }),
+    makeRun({ id: 'c', familyId: 'fam-2', createdAt: '2026-05-02T00:00:00Z' }),
+  ];
+  assert.deepEqual(
+    familyRunsForComparePicker(runs[0], runs).map((run) => run.id),
+    ['a', 'b'],
+  );
+});
+
+test('summarizeComparePickerFamilyLane explains first comparison sibling vs existing lane', () => {
+  const production = makeRun({ id: 'root', lane: 'production', status: 'monitoring' });
+  const solo = summarizeComparePickerFamilyLane(production, [production]);
+  assert.match(solo.headline, /production root only/);
+  assert.match(solo.forkHint, /first comparison sibling/);
+
+  const sibling = makeRun({
+    id: 'cmp',
+    lane: 'comparison',
+    variant: 'claude-opus',
+    status: 'blocked',
+  });
+  const family = [production, sibling];
+  const withLane = summarizeComparePickerFamilyLane(production, family);
+  assert.equal(withLane.comparisonCount, 1);
+  assert.equal(withLane.hasComparisonLane, true);
+  assert.match(withLane.forkHint, /joins this comparison family/);
+});
+
+test('comparePickerFamilyChipLabel prefers variant tags on comparison lane', () => {
+  assert.equal(comparePickerFamilyChipLabel(makeRun({ lane: 'production' })), 'production');
+  assert.equal(
+    comparePickerFamilyChipLabel(makeRun({ lane: 'comparison', variant: 'claude-opus' })),
+    'claude-opus',
+  );
+});
+
+test('filterRunsForComparisonPicker respects global project and machine filters', () => {
+  const runs = [
+    makeRun({
+      id: 'a',
+      project: 'farmslot-farm',
+      slotId: 'macwork-ff-1',
+      createdAt: '2026-05-03T00:00:00Z',
+    }),
+    makeRun({ id: 'b', project: 'metamask-mobile-farm', slotId: 'macwork-mm-1' }),
+    makeRun({
+      id: 'c',
+      project: 'farmslot-farm',
+      slotId: 'other-ff-1',
+      createdAt: '2026-05-01T00:00:00Z',
+    }),
+  ];
+  assert.deepEqual(
+    filterRunsForComparisonPicker(runs, {
+      projectFilters: ['farmslot-farm'],
+      machineFilters: [],
+    }).map((run) => run.id),
+    ['a', 'c'],
+  );
+  assert.deepEqual(
+    filterRunsForComparisonPicker(runs, {
+      projectFilters: ['farmslot-farm'],
+      machineFilters: ['macwork'],
+    }).map((run) => run.id),
+    ['a'],
+  );
 });

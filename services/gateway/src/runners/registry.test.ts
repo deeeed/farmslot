@@ -30,7 +30,9 @@ import {
   runnerPaneHasQueuedInstruction,
   runnerPaneLooksIdle,
   runnerPaneShouldSubmitExistingInstruction,
+  runnerPaneShowsPreSendDuplicateInstruction,
   runnerPaneShowsPromptAccepted,
+  runnerPaneShowsSubmittedInstruction,
   runnerPaneShowsTaskAlreadyRunning,
   runnerPaneShowsWorkspaceTrustPrompt,
   runnerPersistsSessionFiles,
@@ -764,6 +766,57 @@ describe('grok runner', () => {
     assert.equal(runnerPaneLooksIdle(coldStart.split('\n'), 'grok'), false);
   });
 
+  it('ignores stale Grok startup lines before the live composer', () => {
+    const pane = `
+     #1 Reply exactly OK.
+
+    mcp (14/15)
+    ⠋ Starting session… 5.0s
+
+     #2 Summarize the previous task.
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'grok'), null);
+    assert.equal(grokPaneShowsColdStartSession(pane, 'grok'), false);
+    assert.equal(runnerPaneLooksIdle(pane.split('\n'), 'grok'), true);
+  });
+
+  it('still defers Grok prompt delivery while the live session is starting', () => {
+    const coldStart = `
+     #1 Reply exactly OK.
+
+    mcp (14/15)
+    ⠋ Starting session… 5.0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+
+    assert.equal(detectRunnerLaunchBlocker(coldStart, 'grok')?.kind, 'mcp-init');
+    assert.equal(runnerPaneLooksIdle(coldStart.split('\n'), 'grok'), false);
+  });
+
+  it('still detects Grok MCP status rendered above transcript history', () => {
+    const pane = `
+  feat/demo worktree ~/dev/farmslot-wt/farmslot-3 │ ⠼ MCP (14/15) │ 10K / 512K │ +1 │
+
+
+     #1 Follow the checklist in TASK.md.
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'grok')?.kind, 'mcp-init');
+    assert.equal(runnerPaneLooksIdle(pane.split('\n'), 'grok'), false);
+  });
+
   it('recognizes Grok buffered prompts and submitted progress', () => {
     const message = 'Reply exactly OK and do not edit files.';
     const buffered = `
@@ -783,6 +836,64 @@ describe('grok runner', () => {
 
     assert.equal(runnerPaneHasPendingInstruction(buffered, message, 'grok'), true);
     assert.equal(runnerPaneShowsPromptAccepted(submitted, buffered, message, '', 'grok'), true);
+  });
+
+  it('does not treat Grok transcript history alone as a pre-send duplicate', () => {
+    const message = 'Follow the checklist in TASK.md and mark each step done.';
+    const transcriptOnly = `
+     #1 Follow the checklist in TASK.md and mark each step done.
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────── Grok Build ─╯
+`;
+    assert.equal(runnerPaneShowsSubmittedInstruction(transcriptOnly, message, 'grok'), true);
+    assert.equal(
+      runnerPaneShowsPreSendDuplicateInstruction(transcriptOnly, message, 'grok'),
+      false,
+    );
+  });
+
+  it('treats Grok progress with the instruction as a pre-send duplicate', () => {
+    const message = 'Reply exactly OK and do not edit files.';
+    const running = `
+     #1 Reply exactly OK and do not edit files.
+
+    ⠋ Starting session… 5.0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────── Grok Build ─╯
+`;
+    assert.equal(runnerPaneShowsPreSendDuplicateInstruction(running, message, 'grok'), true);
+  });
+
+  it('does not treat Claude transcript history alone as a pre-send duplicate', () => {
+    const message = 'Follow the checklist in TASK.md and mark each step done.';
+    const transcriptOnly = `
+❯ Follow the checklist in TASK.md and mark each step done.
+
+✻ Worked for 2m 10s
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+`;
+    assert.equal(runnerPaneShowsSubmittedInstruction(transcriptOnly, message, 'claude'), true);
+    assert.equal(
+      runnerPaneShowsPreSendDuplicateInstruction(transcriptOnly, message, 'claude'),
+      false,
+    );
+  });
+
+  it('treats Claude progress with the instruction as a pre-send duplicate', () => {
+    const message = 'Follow the checklist in TASK.md and mark each step done.';
+    const running = `
+❯ Follow the checklist in TASK.md and mark each step done.
+
+✻ Working… (esc to interrupt)
+`;
+    assert.equal(runnerPaneShowsPreSendDuplicateInstruction(running, message, 'claude'), true);
   });
 });
 

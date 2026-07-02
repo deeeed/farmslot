@@ -117,6 +117,62 @@ export const dispatchWizardStyles = css`
     border-color: ${unsafeCSS(colors.accent)};
   }
 
+  /* ── Comparison flow entry ── */
+  .comparison-flow-panel {
+    display: flex;
+    flex-direction: column;
+    gap: ${unsafeCSS(spacing.sm)};
+  }
+
+  .comparison-flow-pills .pill {
+    min-width: 9rem;
+    text-align: center;
+  }
+
+  .comparison-flow-hint {
+    border-radius: 4px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .comparison-flow-hint-neutral {
+    border: 1px solid #2a2a44;
+    background: ${unsafeCSS(colors.bgCard)};
+  }
+
+  .comparison-flow-hint-accent {
+    border: 1px solid ${unsafeCSS(colors.accent)}66;
+    background: ${unsafeCSS(colors.accent)}10;
+  }
+
+  .comparison-flow-hint-title {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 10px;
+  }
+
+  .comparison-flow-hint-neutral .comparison-flow-hint-title {
+    color: ${unsafeCSS(colors.textSecondary)};
+  }
+
+  .comparison-flow-hint-accent .comparison-flow-hint-title {
+    color: ${unsafeCSS(colors.accent)};
+  }
+
+  .comparison-flow-hint-copy {
+    font-size: 11px;
+    color: ${unsafeCSS(colors.textSecondary)};
+    line-height: 1.45;
+  }
+
+  .comparison-flow-hint-copy strong {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-weight: 600;
+  }
+
   /* ── Prior-runs comparison banner ── */
   .prior-runs-banner {
     border: 1px solid ${unsafeCSS(colors.accent)}66;
@@ -158,7 +214,8 @@ export const dispatchWizardStyles = css`
     border-color: ${unsafeCSS(colors.accent)};
   }
 
-  .compare-picker-backdrop {
+  /* ── Comparison baseline picker modal ── */
+  .compare-modal-backdrop {
     position: fixed;
     inset: 0;
     z-index: 40;
@@ -169,8 +226,8 @@ export const dispatchWizardStyles = css`
     padding: 24px;
   }
 
-  .compare-picker-modal {
-    width: min(760px, calc(100vw - 48px));
+  .compare-modal {
+    width: min(820px, calc(100vw - 48px));
     max-height: min(720px, calc(100vh - 48px));
     border: 1px solid ${unsafeCSS(colors.accent)}66;
     border-radius: 8px;
@@ -180,16 +237,17 @@ export const dispatchWizardStyles = css`
     display: flex;
     flex-direction: column;
     gap: 12px;
+    overflow: hidden;
   }
 
-  .compare-picker-head {
+  .compare-modal-head {
     display: flex;
     justify-content: space-between;
     gap: 12px;
     align-items: flex-start;
   }
 
-  .compare-picker-title {
+  .compare-modal-title {
     color: ${unsafeCSS(colors.accent)};
     font-weight: 700;
     text-transform: uppercase;
@@ -197,13 +255,16 @@ export const dispatchWizardStyles = css`
     font-size: 11px;
   }
 
-  .compare-picker-subtitle {
+  .compare-modal-subtitle {
     color: ${unsafeCSS(colors.textMuted)};
     font-size: 11px;
     margin-top: 4px;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
   }
 
-  .compare-picker-close {
+  .compare-modal-close {
     border: 1px solid #2a2a44;
     border-radius: 4px;
     background: ${unsafeCSS(colors.bgCard)};
@@ -215,7 +276,9 @@ export const dispatchWizardStyles = css`
     cursor: pointer;
   }
 
-  .compare-picker-search {
+  .compare-modal-search {
+    width: 100%;
+    box-sizing: border-box;
     background: ${unsafeCSS(colors.bgInput)};
     border: 1px solid ${unsafeCSS(colors.accent)}66;
     border-radius: 4px;
@@ -226,7 +289,7 @@ export const dispatchWizardStyles = css`
     outline: none;
   }
 
-  .compare-picker-list {
+  .compare-modal-list {
     min-height: 120px;
     overflow: auto;
     display: flex;
@@ -234,12 +297,133 @@ export const dispatchWizardStyles = css`
     gap: 8px;
   }
 
-  .compare-picker-empty {
+  .compare-modal-empty {
     color: ${unsafeCSS(colors.textMuted)};
     border: 1px dashed #2a2a44;
     border-radius: 4px;
     padding: 16px;
     text-align: center;
+    font-size: 12px;
+  }
+
+  .compare-run-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    border: 1px solid #2a2a44;
+    border-radius: 4px;
+    background: ${unsafeCSS(colors.bgCard)};
+    color: ${unsafeCSS(colors.textPrimary)};
+    cursor: pointer;
+    text-align: left;
+    font-family: ${unsafeCSS(fonts.mono)};
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .compare-run-item:hover {
+    border-color: ${unsafeCSS(colors.accent)}66;
+    background: ${unsafeCSS(colors.bgInput)};
+  }
+
+  .compare-run-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+  }
+
+  .compare-run-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+
+  .compare-run-badge.muted {
+    border-color: #2a2a44;
+    color: ${unsafeCSS(colors.textMuted)};
+    background: ${unsafeCSS(colors.bgSurface)};
+    font-weight: 500;
+    text-transform: none;
+  }
+
+  .compare-run-badge.status {
+    background: transparent;
+    text-transform: none;
+    font-weight: 600;
+  }
+
+  .compare-run-title {
+    color: ${unsafeCSS(colors.textPrimary)};
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .compare-run-summary {
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 11px;
+  }
+
+  .compare-run-meta {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+  }
+
+  .compare-run-family {
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  .compare-run-family-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .compare-run-family-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--chip-color, #2a2a44);
+    background: color-mix(in srgb, var(--chip-color, #2a2a44) 12%, transparent);
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: 9px;
+    white-space: nowrap;
+  }
+
+  .compare-run-family-chip.current {
+    border-color: ${unsafeCSS(colors.accent)};
+    background: ${unsafeCSS(colors.accent)}18;
+    color: ${unsafeCSS(colors.accent)};
+    font-weight: 600;
+  }
+
+  .compare-run-family-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--chip-color, ${unsafeCSS(colors.textMuted)});
+    flex: 0 0 auto;
+  }
+
+  .compare-run-pipeline {
+    margin-top: 2px;
+  }
+
+  .compare-run-cta {
+    color: ${unsafeCSS(colors.accent)};
+    font-size: 11px;
+    font-weight: 600;
   }
 
   .prior-runs-family {
@@ -253,70 +437,6 @@ export const dispatchWizardStyles = css`
     color: ${unsafeCSS(colors.textMuted)};
     text-transform: uppercase;
     letter-spacing: 0.4px;
-  }
-
-  .prior-run-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    padding: 6px 8px;
-    background: ${unsafeCSS(colors.bgCard)};
-    border: 1px solid #2a2a44;
-    border-radius: 3px;
-    font-family: ${unsafeCSS(fonts.mono)};
-    cursor: pointer;
-    text-align: left;
-    color: ${unsafeCSS(colors.textSecondary)};
-    transition:
-      border-color 0.12s,
-      background 0.12s;
-  }
-
-  .prior-run-row:hover {
-    border-color: ${unsafeCSS(colors.accent)}66;
-    color: ${unsafeCSS(colors.textPrimary)};
-  }
-
-  .prior-run-cell {
-    white-space: nowrap;
-  }
-  .prior-run-cell.muted {
-    color: ${unsafeCSS(colors.textMuted)};
-  }
-  .prior-run-cell.summary {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: ${unsafeCSS(colors.textMuted)};
-  }
-
-  .prior-run-main {
-    min-width: 0;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .prior-run-title {
-    color: ${unsafeCSS(colors.textPrimary)};
-    font-weight: 600;
-  }
-
-  .prior-run-meta,
-  .prior-run-summary {
-    color: ${unsafeCSS(colors.textMuted)};
-    font-size: 10px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .prior-run-cta {
-    color: ${unsafeCSS(colors.accent)};
-    white-space: nowrap;
-    font-size: 11px;
   }
 
   /* ── Profile-fit prepare suggestion banner ── */

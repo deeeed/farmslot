@@ -10,6 +10,8 @@ export interface DispatchWizardPrefill {
   project?: string;
   slot?: string;
   startRefRedirectHash?: string;
+  /** Enter comparison-lane dispatch without a pre-selected baseline run. */
+  comparisonIntent?: boolean;
   comparison?: {
     familyId: string;
     variant: string;
@@ -62,6 +64,8 @@ export function parseDispatchWizardHash(
   const flow = params.get('flow');
   const startRefRedirectHash = buildStartRefRedirectHash(base, params);
   const familyId = params.get('familyId') ?? '';
+  const laneComparison = params.get('lane') === 'comparison';
+  const intentComparison = params.get('intent') === 'comparison';
   return {
     base,
     flowType: flow && VALID_FLOWS.includes(flow as FlowType) ? (flow as FlowType) : undefined,
@@ -69,8 +73,9 @@ export function parseDispatchWizardHash(
     project: params.get('project') ?? undefined,
     slot: params.get('slot') ?? undefined,
     startRefRedirectHash,
+    comparisonIntent: (laneComparison || intentComparison) && !familyId,
     comparison:
-      params.get('lane') === 'comparison' && familyId
+      laneComparison && familyId
         ? {
             familyId,
             variant: params.get('variant') ?? '',

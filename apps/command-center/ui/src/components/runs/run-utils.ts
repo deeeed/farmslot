@@ -266,8 +266,9 @@ export function runModeDiffersFromDefault(run: Partial<Pick<Run, 'flowType' | 'm
 }
 
 export function runChainedModeDrift(
-  run: Partial<Pick<Run, 'flowType' | 'mode' | 'parentRunId'>>,
+  run: Partial<Pick<Run, 'flowType' | 'mode' | 'parentRunId' | 'lane'>>,
 ): boolean {
+  if (run.lane === 'comparison') return false;
   return Boolean(run.parentRunId && runModeDiffersFromDefault(run));
 }
 
@@ -277,6 +278,23 @@ export function runTemplateFileName(run: Pick<Run, 'steps'>): string | null {
     | undefined;
   const name = outputs?.templateName?.trim();
   return name || null;
+}
+
+/** Resolved runner/model for display — metrics first, then find-slot step outputs. */
+export function resolveRunEngine(run: Pick<Run, 'metrics' | 'steps'>): {
+  runner: string | null;
+  model: string | null;
+} {
+  const metricsRunner = run.metrics?.runner?.trim();
+  const metricsModel = run.metrics?.model?.trim();
+  if (metricsRunner && metricsModel) {
+    return { runner: metricsRunner, model: metricsModel };
+  }
+  const findSlot = run.steps.find((step) => step.name === 'find-slot');
+  const outputs = findSlot?.outputs as { runner?: string; model?: string } | undefined;
+  const runner = metricsRunner || outputs?.runner?.trim() || null;
+  const model = metricsModel || outputs?.model?.trim() || null;
+  return { runner, model };
 }
 
 export function runDisplayColor(run: EvalRunDisplayInput): string {

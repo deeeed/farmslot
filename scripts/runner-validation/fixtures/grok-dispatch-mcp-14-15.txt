@@ -1,0 +1,23 @@
+  feat/28-claude-sonnet-v2 worktree ~/dev/farmslot-wt/farmslot-3 (worktree of ~dev/farmslot) │ ⠼ MCP (14/15) │ 10K / 512K │ +1 │
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #1 Follow the checklist in .sandbox/farmslot-farm/worker-task/feat/28-claude-sonnet-v2-0701-181808/TASK.md. After each step, run .sandbox/farmslot-farm/worker-task/feat/28-claude-sonnet-v2-070…
+
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                                                                                                                                                │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Grok Build · always-approve ─╯
+
+  Shift+Tab:mode  │  Ctrl+;:queue  │  Ctrl+.:shortcuts

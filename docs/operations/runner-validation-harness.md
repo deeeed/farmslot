@@ -23,6 +23,12 @@ node scripts/runner-validation/run.mjs --runner pane-only --scenario pane-smoke
 # Grok production-parity (interactive TUI + project-directory + compose submit)
 node scripts/runner-validation/run.mjs --runner grok --scenario interaction-smoke
 
+# Grok dispatch parity (gateway sendRunnerPostLaunchPrompt — same path as run dispatch)
+node scripts/runner-validation/run.mjs --runner grok --scenario dispatch-prompt-smoke --keep-session
+
+# Grok MCP race repro (fixture + live force-fail + gateway fix pass)
+node scripts/runner-validation/run.mjs --runner grok --scenario dispatch-prompt-mcp-race --timeout-ms 180000
+
 # Full matrix (skips apply per runner/scenario)
 node scripts/runner-validation/run.mjs --runner all --scenario all
 ```
@@ -44,17 +50,19 @@ Registry source of truth: `services/gateway/src/runners/registry.ts` (`observabi
 
 ## Scenarios
 
-| Scenario                    | Proves                                                 | Claude/Codex | Cursor            | Grok                   |
-| --------------------------- | ------------------------------------------------------ | ------------ | ----------------- | ---------------------- |
-| `hook-smoke`                | SessionStart + UserPromptSubmit + Stop + `tmuxPane`    | live tmux    | skip              | skip                   |
-| `pane-smoke`                | Launch + response marker in pane                       | skip         | `--print --trust` | `-p` single-turn       |
-| `interaction-smoke`         | Post-launch TUI flow (blockers + compose)              | skip         | skip              | **interactive** launch |
-| `prompt-accepted`           | Sentinel digest ↔ UserPromptSubmit                     | live         | skip              | skip                   |
-| `turn-boundary`             | Stop after UserPromptSubmit                            | live         | skip              | skip                   |
-| `busy-composer`             | Busy pane regex fixtures                               | fixtures     | skip              | skip                   |
-| `mode-switch`               | Bypass / permission mode                               | live         | skip              | skip                   |
-| `session-attribution-smoke` | Stale session rejected; hook path + model match        | live tmux    | skip              | live tmux              |
-| `token-usage-smoke`         | Live `session-usage.sh` on resolved path + model match | live tmux    | skip              | live tmux              |
+| Scenario                    | Proves                                                    | Claude/Codex | Cursor            | Grok                   |
+| --------------------------- | --------------------------------------------------------- | ------------ | ----------------- | ---------------------- |
+| `hook-smoke`                | SessionStart + UserPromptSubmit + Stop + `tmuxPane`       | live tmux    | skip              | skip                   |
+| `pane-smoke`                | Launch + response marker in pane                          | skip         | `--print --trust` | `-p` single-turn       |
+| `interaction-smoke`         | Post-launch TUI flow (blockers + compose)                 | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-smoke`     | Gateway `sendRunnerPostLaunchPrompt` (dispatch parity)    | skip         | skip              | **interactive** launch |
+| `dispatch-prompt-mcp-race`  | MCP init race: fixture repro + live force-fail + fix pass | skip         | skip              | **interactive** launch |
+| `prompt-accepted`           | Sentinel digest ↔ UserPromptSubmit                        | live         | skip              | skip                   |
+| `turn-boundary`             | Stop after UserPromptSubmit                               | live         | skip              | skip                   |
+| `busy-composer`             | Busy pane regex fixtures                                  | fixtures     | skip              | skip                   |
+| `mode-switch`               | Bypass / permission mode                                  | live         | skip              | skip                   |
+| `session-attribution-smoke` | Stale session rejected; hook path + model match           | live tmux    | skip              | live tmux              |
+| `token-usage-smoke`         | Live `session-usage.sh` on resolved path + model match    | live tmux    | skip              | live tmux              |
 
 Skipped scenarios record `skipReason` and count as pass so matrices stay honest.
 

@@ -24,6 +24,27 @@ export function exitedComparisonModeState(): ComparisonModeState {
   };
 }
 
+/** Copy baseline runner/model from a parent run when comparison hash prefill skips the picker. */
+export function hydrateComparisonEngineFromParent(
+  parent: Run,
+  current: { runner: string; model: string },
+  comparisonLaneRunners: ReadonlySet<string>,
+): { runner: string; model: string } {
+  const forked = forkComparisonStateFromRun(parent, current, comparisonLaneRunners);
+  return { runner: forked.runner, model: forked.model };
+}
+
+export function shouldHydrateComparisonParentEngine(input: {
+  hydrated: boolean;
+  comparisonFlow: boolean;
+  parentRunId: string;
+  hashPinnedEngine: boolean;
+}): boolean {
+  if (input.hydrated || !input.comparisonFlow || !input.parentRunId.trim()) return false;
+  if (input.hashPinnedEngine) return false;
+  return true;
+}
+
 export function forkComparisonStateFromRun(
   run: Run,
   current: { runner: string; model: string },
@@ -87,7 +108,16 @@ export function resolveComparisonVariant(
   model: string,
 ): string {
   const supplied = variantInput.trim();
-  return supplied || buildComparisonVariant(runner, model);
+  const derived = buildComparisonVariant(runner, model);
+  if (!supplied) return derived;
+  // Drop stale auto-tags from a prior engine (e.g. claude-sonnet-v2 after switching to grok).
+  // Preserve operator-chosen names like "custom" or "candidate" that are not runner-prefixed.
+  const runnerPrefixes = ['claude', 'codex', 'grok', 'cursor'] as const;
+  const staleEngineTag = runnerPrefixes.some(
+    (prefix) => prefix !== runner && supplied.toLowerCase().startsWith(`${prefix}-`),
+  );
+  if (staleEngineTag && derived) return derived;
+  return supplied;
 }
 
 export function buildComparisonRunParams(input: {

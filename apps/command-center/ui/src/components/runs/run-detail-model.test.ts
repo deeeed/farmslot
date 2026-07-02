@@ -201,7 +201,7 @@ test('buildRunDiagnosisPrompt includes failure context and omits blank optional 
   assert.doesNotMatch(minimal, /Failed steps:/);
 });
 
-test('buildRerunAlongsideHref creates comparison dispatch prefill with sanitized variant', () => {
+test('buildRerunAlongsideHref creates comparison dispatch prefill with baseline runner/model', () => {
   const href = buildRerunAlongsideHref(
     makeRun({
       id: 'run 1',
@@ -215,15 +215,16 @@ test('buildRerunAlongsideHref creates comparison dispatch prefill with sanitized
         model: 'gpt-5.4 mini',
       },
     }),
+    '#run/run-1?machines=macwork',
   );
 
   assert.equal(
     href,
-    '#dispatch?flow=review-pr&ticket=https%3A%2F%2Fgithub.com%2Forg%2Frepo%2Fpull%2F90&project=command-center&lane=comparison&familyId=family%2F1&parentRunId=run+1&runner=codex&model=gpt-5.4+mini&variant=codex-gpt-5-4-mini',
+    '#dispatch?flow=review-pr&ticket=https%3A%2F%2Fgithub.com%2Forg%2Frepo%2Fpull%2F90&project=command-center&lane=comparison&familyId=family%2F1&parentRunId=run+1&runner=codex&model=gpt-5.4+mini&variant=codex-gpt-5-4-mini&machines=macwork',
   );
 });
 
-test('buildRerunAlongsideHref omits runner/model/variant when unavailable', () => {
+test('buildRerunAlongsideHref omits runner/model when baseline engine is unknown', () => {
   const href = buildRerunAlongsideHref(
     makeRun({
       metrics: {

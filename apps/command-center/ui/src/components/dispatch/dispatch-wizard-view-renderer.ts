@@ -19,8 +19,8 @@ import '../shared/hydrating-placeholder.js';
 import type { EffortLevel } from '../../utils/runner-options.js';
 
 import {
+  renderComparisonFlowPanel,
   renderComparisonModeIndicator,
-  renderPriorRunsBanner,
   renderProfileFitBanner,
   renderReplayEntryPoint,
   renderVariantInput,
@@ -68,7 +68,9 @@ interface DispatchWizardViewContext {
   comparisonParentRunId: string;
   variantPreview: string;
   comparisonBranchHint: string | null;
-  priorRuns: readonly Run[];
+  comparisonFlow: boolean;
+  comparisonPickerRuns: readonly Run[];
+  comparisonPickerLoading: boolean;
   comparePickerOpen: boolean;
   comparePickerSearch: string;
   variantCollision: boolean;
@@ -104,7 +106,10 @@ interface DispatchWizardViewContext {
   applySuggestedPrepareProfile: (prepareProfile: string) => void;
   setDevInteractiveProfile: (profile: DevInteractiveProfile) => void;
   openEvals: () => void;
-  forkFromPriorRun: (run: Run) => void;
+  enterComparisonFlow: () => void;
+  enterNormalFlow: () => void;
+  openComparisonPicker: () => void;
+  onSelectBaselineRun: (run: Run) => void;
   setComparePickerOpen: (open: boolean) => void;
   setComparePickerSearch: (value: string) => void;
   exitComparisonMode: () => void;
@@ -133,6 +138,8 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
   if (ctx.hydrating && ctx.availableProjects.length === 0) {
     return html`<farm-hydrating message="Loading dispatch options…"></farm-hydrating>`;
   }
+  const comparisonBaselineSelected = Boolean(ctx.comparisonParentRunId);
+  const showDispatchForm = !ctx.comparisonFlow || comparisonBaselineSelected;
   return html`
     <div class="header">
       <span class="header-title">Dispatch</span>
@@ -143,102 +150,110 @@ export function renderDispatchWizardView(ctx: DispatchWizardViewContext) {
         ? 'rehydrating'
         : ''}"
     >
-      ${renderDispatchWizardPrimaryControls({
-        ticketId: ctx.ticketId,
-        matchingProject: ctx.matchingProject,
-        issueType: ctx.issueType,
-        autoFlowType: ctx.autoFlowType,
-        flowType: ctx.flowType,
-        autoProject: ctx.autoProject,
-        availableProjects: ctx.availableProjects,
-        project: ctx.project,
-        projectApps: ctx.projectApps,
-        selectedDispatchApp: ctx.selectedDispatchApp,
-        interstitialContent: html`
-          ${renderReplayEntryPoint({ flowType: ctx.flowType, openEvals: ctx.openEvals })}
-          ${renderPriorRunsBanner({
-            comparisonLane: ctx.comparisonLane,
-            priorRuns: ctx.priorRuns,
-            pickerOpen: ctx.comparePickerOpen,
-            pickerSearch: ctx.comparePickerSearch,
-            ticketId: ctx.ticketId,
-            forkFromPriorRun: ctx.forkFromPriorRun,
-            setPickerOpen: ctx.setComparePickerOpen,
-            setPickerSearch: ctx.setComparePickerSearch,
-          })}
-          ${renderComparisonModeIndicator({
-            comparisonLane: ctx.comparisonLane,
-            familyId: ctx.comparisonFamilyId,
-            parentRunId: ctx.comparisonParentRunId,
-            variantPreview: ctx.variantPreview,
-            branchHint: ctx.comparisonBranchHint,
-            exitComparisonMode: ctx.exitComparisonMode,
-          })}
-          ${renderProfileFitBanner({
-            profileFit: ctx.profileFitSuggestion,
-            prepareProfile: ctx.prepareProfile,
-            applySuggestedPrepareProfile: ctx.applySuggestedPrepareProfile,
-          })}
-        `,
-        taskTemplateSelector: renderTaskTemplateSelector(ctx),
-        runner: ctx.runner,
-        model: ctx.model,
-        effort: ctx.effort,
-        reviewTier: ctx.reviewTier,
-        skipPrepare: ctx.skipPrepare,
-        prepareProfiles: ctx.prepareProfiles,
-        prepareProfile: ctx.prepareProfile,
-        mode: ctx.mode,
-        devInteractiveProfile: ctx.devInteractiveProfile,
-        appLabel: ctx.appLabel,
-        setTicket: ctx.setTicket,
-        submitTicket: ctx.submitTicket,
-        selectFlowType: ctx.selectFlowType,
-        selectProject: ctx.selectProject,
-        setApp: ctx.setApp,
-        setRunner: ctx.setRunner,
-        setModel: ctx.setModel,
-        setEffort: ctx.setEffort,
-        setReviewTier: ctx.setReviewTier,
-        setSkipPrepare: ctx.setSkipPrepare,
-        setPrepareProfile: ctx.setPrepareProfile,
-        setDevInteractiveProfile: ctx.setDevInteractiveProfile,
+      ${renderComparisonFlowPanel({
+        comparisonFlow: ctx.comparisonFlow,
+        comparisonBaselineSelected,
+        pickerOpen: ctx.comparePickerOpen,
+        pickerSearch: ctx.comparePickerSearch,
+        pickerRuns: ctx.comparisonPickerRuns,
+        pickerLoading: ctx.comparisonPickerLoading,
+        enterComparisonFlow: ctx.enterComparisonFlow,
+        enterNormalFlow: ctx.enterNormalFlow,
+        openComparisonPicker: ctx.openComparisonPicker,
+        onSelectBaselineRun: ctx.onSelectBaselineRun,
+        setPickerOpen: ctx.setComparePickerOpen,
+        setPickerSearch: ctx.setComparePickerSearch,
       })}
-      ${renderVariantInput({
-        comparisonLane: ctx.comparisonLane,
-        variantCollision: ctx.variantCollision,
-        variantInput: ctx.variantInput,
-        setVariantInput: ctx.setVariantInput,
-      })}
-      ${renderPublicationReviewConfig({
-        enabled: ctx.publicationReviewsEnabled,
-        flowType: ctx.flowType,
-        runner: ctx.runner,
-        mode: ctx.mode,
-        loops: ctx.publicationReviewLoops,
-        plan: ctx.publicationReviewPlan,
-        runnerOptions: ctx.runnerOptions,
-        setRunner: ctx.setPublicationReviewRunner,
-        setDepth: ctx.setPublicationReviewDepth,
-        removeLoop: ctx.removePublicationReviewLoop,
-        addWorkerReviewLoop: ctx.addWorkerReviewLoop,
-        addExternalReviewLoop: ctx.addExternalReviewLoop,
-      })}
-      ${renderDispatchCandidateSelection({
-        project: ctx.project,
-        slotOverride: ctx.selectedSlotOverride,
-        loadingCandidates: ctx.loadingCandidates,
-        candidates: ctx.candidates,
-        dispatchableCandidates: ctx.dispatchableCandidates,
-        nudgeIntents: ctx.nudgeIntents,
-        nudgeIntentVersion: ctx.nudgeIntentVersion,
-        sameTaskSlot: ctx.sameTaskSlot,
-        candidateDispatchable: ctx.candidateDispatchable,
-        slotSummaryLabel: ctx.slotSummaryLabel,
-        selectSlot: ctx.selectSlot,
-        setNudgeIntent: ctx.setNudgeIntent,
-      })}
-      ${renderActionFooter(ctx)}
+      ${showDispatchForm
+        ? html`
+            ${renderDispatchWizardPrimaryControls({
+              ticketId: ctx.ticketId,
+              matchingProject: ctx.matchingProject,
+              issueType: ctx.issueType,
+              autoFlowType: ctx.autoFlowType,
+              flowType: ctx.flowType,
+              autoProject: ctx.autoProject,
+              availableProjects: ctx.availableProjects,
+              project: ctx.project,
+              projectApps: ctx.projectApps,
+              selectedDispatchApp: ctx.selectedDispatchApp,
+              interstitialContent: html`
+                ${renderReplayEntryPoint({ flowType: ctx.flowType, openEvals: ctx.openEvals })}
+                ${renderComparisonModeIndicator({
+                  comparisonLane: ctx.comparisonLane,
+                  familyId: ctx.comparisonFamilyId,
+                  parentRunId: ctx.comparisonParentRunId,
+                  variantPreview: ctx.variantPreview,
+                  branchHint: ctx.comparisonBranchHint,
+                  exitComparisonMode: ctx.exitComparisonMode,
+                })}
+                ${renderProfileFitBanner({
+                  profileFit: ctx.profileFitSuggestion,
+                  prepareProfile: ctx.prepareProfile,
+                  applySuggestedPrepareProfile: ctx.applySuggestedPrepareProfile,
+                })}
+              `,
+              taskTemplateSelector: renderTaskTemplateSelector(ctx),
+              runner: ctx.runner,
+              model: ctx.model,
+              effort: ctx.effort,
+              reviewTier: ctx.reviewTier,
+              skipPrepare: ctx.skipPrepare,
+              prepareProfiles: ctx.prepareProfiles,
+              prepareProfile: ctx.prepareProfile,
+              mode: ctx.mode,
+              devInteractiveProfile: ctx.devInteractiveProfile,
+              appLabel: ctx.appLabel,
+              setTicket: ctx.setTicket,
+              submitTicket: ctx.submitTicket,
+              selectFlowType: ctx.selectFlowType,
+              selectProject: ctx.selectProject,
+              setApp: ctx.setApp,
+              setRunner: ctx.setRunner,
+              setModel: ctx.setModel,
+              setEffort: ctx.setEffort,
+              setReviewTier: ctx.setReviewTier,
+              setSkipPrepare: ctx.setSkipPrepare,
+              setPrepareProfile: ctx.setPrepareProfile,
+              setDevInteractiveProfile: ctx.setDevInteractiveProfile,
+            })}
+            ${renderVariantInput({
+              comparisonLane: ctx.comparisonLane,
+              variantCollision: ctx.variantCollision,
+              variantInput: ctx.variantInput,
+              setVariantInput: ctx.setVariantInput,
+            })}
+            ${renderPublicationReviewConfig({
+              enabled: ctx.publicationReviewsEnabled,
+              flowType: ctx.flowType,
+              runner: ctx.runner,
+              mode: ctx.mode,
+              loops: ctx.publicationReviewLoops,
+              plan: ctx.publicationReviewPlan,
+              runnerOptions: ctx.runnerOptions,
+              setRunner: ctx.setPublicationReviewRunner,
+              setDepth: ctx.setPublicationReviewDepth,
+              removeLoop: ctx.removePublicationReviewLoop,
+              addWorkerReviewLoop: ctx.addWorkerReviewLoop,
+              addExternalReviewLoop: ctx.addExternalReviewLoop,
+            })}
+            ${renderDispatchCandidateSelection({
+              project: ctx.project,
+              slotOverride: ctx.selectedSlotOverride,
+              loadingCandidates: ctx.loadingCandidates,
+              candidates: ctx.candidates,
+              dispatchableCandidates: ctx.dispatchableCandidates,
+              nudgeIntents: ctx.nudgeIntents,
+              nudgeIntentVersion: ctx.nudgeIntentVersion,
+              sameTaskSlot: ctx.sameTaskSlot,
+              candidateDispatchable: ctx.candidateDispatchable,
+              slotSummaryLabel: ctx.slotSummaryLabel,
+              selectSlot: ctx.selectSlot,
+              setNudgeIntent: ctx.setNudgeIntent,
+            })}
+            ${renderActionFooter(ctx)}
+          `
+        : nothing}
       <dispatch-queue-panel
         .items=${ctx.queueItems}
         .panelTitle=${'Dispatch Queue'}
@@ -328,14 +343,8 @@ function renderActionFooter(ctx: DispatchWizardViewContext) {
 }
 
 function renderActionMessage(ctx: DispatchWizardViewContext) {
-  return ctx.activeRunConflict
-    ? html`<span class="error-msg"
-        >Active run for ${ctx.ticketId}: ${ctx.activeRunConflict.id.slice(0, 8)}
-        (${ctx.activeRunConflict.status}).
-        <a class="error-action" href="#run/${ctx.activeRunConflict.id}">Go to run</a>
-        <a class="error-action" @click=${() => ctx.cancelConflictingRun()}>Cancel it</a>
-      </span>`
-    : ctx.error
+  return ctx.comparisonFlow
+    ? ctx.error
       ? html`<span class="error-msg">${ctx.error}</span>`
       : ctx.candidateRefreshFailed
         ? html`<span class="error-msg"
@@ -344,5 +353,22 @@ function renderActionMessage(ctx: DispatchWizardViewContext) {
           >`
         : !ctx.canDispatch()
           ? html`<span class="validation-hint">${ctx.validationHint()}</span>`
-          : nothing;
+          : nothing
+    : ctx.activeRunConflict
+      ? html`<span class="error-msg"
+          >Active run for ${ctx.ticketId}: ${ctx.activeRunConflict.id.slice(0, 8)}
+          (${ctx.activeRunConflict.status}).
+          <a class="error-action" href="#run/${ctx.activeRunConflict.id}">Go to run</a>
+          <a class="error-action" @click=${() => ctx.cancelConflictingRun()}>Cancel it</a>
+        </span>`
+      : ctx.error
+        ? html`<span class="error-msg">${ctx.error}</span>`
+        : ctx.candidateRefreshFailed
+          ? html`<span class="error-msg"
+              >Slot candidates failed to refresh. Select the project again or wait for
+              reconnect.</span
+            >`
+          : !ctx.canDispatch()
+            ? html`<span class="validation-hint">${ctx.validationHint()}</span>`
+            : nothing;
 }

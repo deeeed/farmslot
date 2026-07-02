@@ -105,6 +105,25 @@ def effective_runner(state: str, runner_id: str) -> str:
         return state
     return ""
 
+def detect_mcp_init(tail: str, runner: str):
+    if runner != "grok":
+        return None, None
+    match = re.search(r"\bmcp\s*\(\s*(\d+)\s*/\s*(\d+)\s*\)", tail, flags=re.I)
+    if not match:
+        return None, None
+    ready = int(match.group(1))
+    total = int(match.group(2))
+    if total > 0 and ready < total:
+        return "mcp-init", None
+    return None, None
+
+def detect_cold_start(tail: str, runner: str):
+    if runner != "grok":
+        return None, None
+    if re.search(r"starting session", tail, flags=re.I):
+        return "cold-start", None
+    return None, None
+
 def detect_launch_blocker(tail: str, runner: str):
     lower = tail.lower()
     if runner == "cursor" and (
@@ -119,6 +138,12 @@ def detect_launch_blocker(tail: str, runner: str):
         and "enter:submit" in lower
     ):
         return "project-directory", "grok-select-current-project"
+    mcp_blocker, mcp_action = detect_mcp_init(tail, runner)
+    if mcp_blocker:
+        return mcp_blocker, mcp_action
+    cold_blocker, cold_action = detect_cold_start(tail, runner)
+    if cold_blocker:
+        return cold_blocker, cold_action
     if runner:
         for line in tail.split("\n"):
             line_lower = line.strip().lower()

@@ -8,6 +8,7 @@ import { slotPrepare } from '../methods/slot.js';
 import { assertRunnerLaunchPrerequisites } from '../runners/launch-command.js';
 import { runnerNeedsPostLaunchPrompt } from '../runners/registry.js';
 import { captureHostLoadSnapshot } from '../runs/analytics.js';
+import { ensureRunSlotBinding } from '../runs/slot-binding.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 
 import { executeEvalHarnessLifecycle } from './eval-harness-lifecycle.js';
@@ -46,7 +47,7 @@ export async function executePrepareStep(
     normalizeEvalReplayForTaskWrite,
     stepPartialIO,
   } = context;
-  const current = await normalizeEvalReplayForTaskWrite(runId, getRun(runId)!);
+  const current = await normalizeEvalReplayForTaskWrite(runId, ensureRunSlotBinding(runId));
   if (!current.slotId) throw new Error('No slot assigned');
   // pr-complete and merge-main flows leave the merge to the worker so it
   // can resolve conflicts in-session. Only review-pr auto-merges in prepare
@@ -254,7 +255,7 @@ export async function executeDispatchStep(
   context: DispatchStepContext,
 ): Promise<StepIO> {
   const { stepPartialIO } = context;
-  const current = getRun(runId)!;
+  const current = ensureRunSlotBinding(runId);
   if (!current.slotId) throw new Error('No slot assigned');
   if (!current.taskFile) throw new Error('No task file specified');
   const inputs: Record<string, unknown> = {
