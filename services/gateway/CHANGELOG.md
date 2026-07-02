@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Fall back to the last pushed tmux pane snapshot (up to five minutes old) when live `tmux.panes` times out so slot worker inventory stays usable.
 - Suppress false monitor nudges while workers are live or runs are blocked at publication human gate, including when prior nudge counts are saturated
 - Gate stuck violations on absent pane progress markers instead of treating any live process as active work
 - Stop treating Grok echoed task text after `❯` as a waiting-for-input composer prompt
