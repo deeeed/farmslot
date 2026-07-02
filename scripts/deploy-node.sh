@@ -185,12 +185,19 @@ REMOTE_HOME=$(run 'echo $HOME')
 REMOTE_DIR="$REMOTE_HOME/farmslot-node${INSTANCE_SUFFIX}"
 REMOTE_UID=$(run 'id -u')
 
-# Identity the deployed node reports to the gateway, and the IPC socket its
-# screen-control server binds. Both default (in services/node/src) to values
-# that don't vary by instance — MACHINE_NAME is the raw machine name, and
-# SCREEN_CONTROL_SOCKET is keyed only by uid — so two instances on the same
-# box would collide (same fleet identity, same socket file) without this.
-NODE_MACHINE_NAME="${MACHINE}${INSTANCE_SUFFIX}"
+# MACHINE_NAME must stay the bare physical machine name, NOT suffixed by
+# instance: the gateway's "local node" detection matches it against its own
+# os.hostname(), and pool slot ownership keys off that same real machine
+# name. Dev and prod nodes talk to separate gateways (different
+# GATEWAY_PORT), so identical machine names across instances don't collide —
+# each is still "local" to its own gateway. (A "-dev" suffix here previously
+# made the dev node register as a remote node to its gateway and left its
+# pool slots unmanaged — confirmed live.)
+NODE_MACHINE_NAME="${MACHINE}"
+
+# The IPC socket the node's screen-control server binds defaults (in
+# services/node/src) to a path keyed only by uid, so two instances on the
+# same box would collide on the same socket file without this.
 SCREEN_CONTROL_SOCKET_PATH="/tmp/farmslot-screen-control-${REMOTE_UID}${INSTANCE_SUFFIX}.sock"
 
 if [[ -z "$GATEWAY_IP" ]]; then
