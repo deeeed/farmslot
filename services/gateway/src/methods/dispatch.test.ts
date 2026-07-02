@@ -194,6 +194,21 @@ test('dispatch preview displays Cursor composer-2.5 instead of Claude default', 
   assert.equal(result.preview.model, DEFAULT_CURSOR_MODEL);
 });
 
+test('dispatch preview echoes the team overlay and omits it when unset', () => {
+  const slots = [makeSlot({ lifecycle: 'ready', phase: null, branch: 'main' })];
+  const withTeam = resolveDispatchPreviewFromFleet(
+    { project: 'farmslot-farm', flowType: 'fix-bug', ticketOrPr: 'PROJ-1', team: 'blue' },
+    slots,
+  );
+  assert.equal(withTeam.preview.team, 'blue');
+
+  const withoutTeam = resolveDispatchPreviewFromFleet(
+    { project: 'farmslot-farm', flowType: 'fix-bug', ticketOrPr: 'PROJ-1' },
+    slots,
+  );
+  assert.equal('team' in withoutTeam.preview, false);
+});
+
 test('flowTypeToKey ignores eval wrapper flow names', () => {
   assert.equal(flowTypeToKey('fix-bug'), 'fix');
   assert.equal(flowTypeToKey('dev'), 'dev');

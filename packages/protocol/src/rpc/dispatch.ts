@@ -215,6 +215,8 @@ export interface DispatchPreviewParams {
   lane?: import('../contracts/index.js').RunLane;
   variant?: string | null;
   app?: string;
+  /** Named team overlay the dispatch will carry — echoed back on the preview. */
+  team?: string;
   prepareProfile?: string;
   /** Restrict slot resolution to this set. Empty/omitted = all project slots. */
   allowedSlots?: string[];

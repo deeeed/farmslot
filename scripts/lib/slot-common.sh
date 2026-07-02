@@ -656,6 +656,8 @@ expand_slot_template() {
   text="${text//\{\{SNAPSHOT\}\}/${SNAPSHOT:-}}"
   text="${text//\{\{app\}\}/${APP:-}}"
   text="${text//\{\{APP\}\}/${APP:-}}"
+  text="${text//\{\{team\}\}/${TEAM:-}}"
+  text="${text//\{\{TEAM\}\}/${TEAM:-}}"
   text="${text//\{\{platform\}\}/${PLATFORM:-}}"
   text="${text//\{\{PLATFORM\}\}/${PLATFORM:-}}"
   text="${text//\{\{slot_id\}\}/${SLOT_ID:-}}"
@@ -779,6 +781,8 @@ render_fixture_template() {
     -e "s|{{SNAPSHOT}}|${SNAPSHOT:-}|g" \
     -e "s|{{app}}|${APP:-}|g" \
     -e "s|{{APP}}|${APP:-}|g" \
+    -e "s|{{team}}|${TEAM:-}|g" \
+    -e "s|{{TEAM}}|${TEAM:-}|g" \
     -e "s|{{platform}}|${PLATFORM}|g" \
     -e "s|{{PLATFORM}}|${PLATFORM}|g" \
     -e "s|{{slot_id}}|${SLOT_ID:-}|g" \

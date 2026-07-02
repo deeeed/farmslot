@@ -17,6 +17,7 @@ import {
   FLOW_STEPS,
   type FlowType,
   isTerminalRunStatus,
+  isValidTeamName,
   normalizeRunTags,
   primaryRoleForFlow,
   prNumberFromRunInput,
@@ -451,6 +452,16 @@ export function createRun(params: RunCreateParams): Run {
   if (params.safetyTier !== undefined && !isValidSafetyTier(params.safetyTier)) {
     throw new Error(`Invalid safetyTier: ${String(params.safetyTier)}`);
   }
+  // Same boundary posture as safetyTier: params arrive over WebSocket JSON, so
+  // reject malformed team names here instead of letting them reach fixture
+  // paths and sed replacement text in sync-fixtures.sh (which validates too).
+  // The contract matches worker-template variant names and the pool team field.
+  const team = params.team?.trim() || undefined;
+  if (team !== undefined && !isValidTeamName(team)) {
+    throw new Error(
+      `Invalid team: ${String(params.team)} — must be a lowercase slug (a-z, 0-9, '._-', no leading/trailing punctuation)`,
+    );
+  }
   const tierExplicit = params.safetyTier !== undefined;
   const resolvedTier = tierExplicit
     ? params.safetyTier
@@ -514,6 +525,7 @@ export function createRun(params: RunCreateParams): Run {
     project: params.project,
     ticketOrPr: params.ticketOrPr,
     app: params.app,
+    ...(team ? { team } : {}),
     ...(params.prepareProfile ? { prepareProfile: params.prepareProfile } : {}),
     effort: params.effort,
     scripted: params.scripted,
