@@ -705,6 +705,54 @@ test('watcher ignores monitor violations during orchestration (grade/prepare)', 
   assert.deepEqual(files, []);
 });
 
+test('watcher records self-review monitor violations as audit proposals', async (t) => {
+  withTempAuditDir(t);
+  const project = await makeProject(t, {
+    auto_recovery: {
+      enabled: true,
+      maxAttempts: 2,
+      allowedSteps: ['self-review'],
+      allowedCategories: ['timeout'],
+    },
+  });
+  const run = createRun({
+    flowType: 'fix-bug',
+    project,
+    ticketOrPr: `PROJ-${Date.now()}-self-review`,
+    slotId: 'self-review-slot',
+  });
+  updateRun(run.id, {
+    status: 'self-reviewing',
+    steps: run.steps.map((step) =>
+      step.name === PipelineSteps.SELF_REVIEW
+        ? { ...step, status: 'running' as const, startedAt: '2026-07-02T12:40:00.000Z' }
+        : step,
+    ),
+  });
+  __resetAutoRecoveryForTest();
+  initAutoRecovery(() => undefined);
+  t.after(async () => {
+    __resetAutoRecoveryForTest();
+    await cleanupRun(run.id);
+  });
+
+  routeEventToAutoRecovery(Events.MONITOR_VIOLATION, {
+    violation: {
+      slotId: 'self-review-slot',
+      type: 'idle',
+      message: 'Slot self-review-slot monitor phase but agent is idle — may need attention',
+      nudgeSent: null,
+      timestamp: '2026-07-02T12:40:05.000Z',
+    },
+  });
+  await __drainAutoRecoveryForTest();
+
+  const audit = await readAuditLines(new Date('2026-07-02T12:40:05.000Z'));
+  assert.equal(audit.length, 1);
+  assert.equal(audit[0].stepName, PipelineSteps.SELF_REVIEW);
+  assert.equal(audit[0].outcome, 'proposed');
+});
+
 test('watcher passes run flow and app context to fixture refresh before replay', async (t) => {
   withTempAuditDir(t);
   const project = await makeProject(t, {

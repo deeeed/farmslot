@@ -108,6 +108,20 @@ test('detectFleetMonitorViolations ignores orchestration busy+idle (grade/prepar
   }
 });
 
+test('detectFleetMonitorViolations ignores orchestration busy+no-tmux (stuck)', () => {
+  const notified = new Set<string>();
+  for (const phase of ['preparing', 'dispatching', 'review-gate', 'releasing', null] as const) {
+    const orchestration = fleet([
+      slot({ lifecycle: 'busy', agent: 'no-tmux', phase: phase ?? null }),
+    ]);
+    assert.deepEqual(
+      detectFleetMonitorViolations(orchestration, notified).map((v) => v.type),
+      [],
+      `expected no stuck violation during phase=${String(phase)}`,
+    );
+  }
+});
+
 test('detectFleetMonitorViolations dedupes stuck and idle independently', () => {
   const notified = new Set<string>();
   const noTmux = fleet([slot({ lifecycle: 'busy', agent: 'no-tmux', phase: 'working' })]);
