@@ -26,8 +26,10 @@ async function tmuxAvailable(): Promise<boolean> {
   }
 }
 
+/** Exact-match check, mirroring killTmuxSession's `=` prefix — a plain (unprefixed) `-t`
+ *  would itself prefix-match, which is exactly the ambiguity these tests are guarding against. */
 function hasTmuxSession(session: string): boolean {
-  return spawnSync('tmux', ['has-session', '-t', session]).status === 0;
+  return spawnSync('tmux', ['has-session', '-t', `=${session}`]).status === 0;
 }
 
 const KEEP = { history: 'keep', home: 'keep', dryRun: false } as const;
@@ -260,6 +262,12 @@ test('executeUninstallPlan kills each slot session before repos are removed, and
   // pool never references it, so it must survive. If teardown ever used kill-server instead
   // of a scoped kill-session, this would be the session that catches the regression.
   const otherSession = `farmslot_uninstall_other_${process.pid}`;
+  // A dead pool session name that is also a PREFIX of a live, unreferenced session. Without
+  // an exact-match `-t =<session>`, `tmux kill-session -t <session>` falls back to prefix
+  // matching when no exact session exists — so killing this dead entry would otherwise take
+  // out `collisionSession` too (e.g. a dev pool's `mm` killing a live `mm-1`/`mmprod-1`).
+  const deadSession = `farmslot_uninstall_dead_${process.pid}`;
+  const collisionSession = `${deadSession}_suffix`;
 
   mkdirSync(join(root, 'farmslot', 'pool'), { recursive: true });
   mkdirSync(join(root, 'repos'), { recursive: true });
@@ -274,14 +282,16 @@ test('executeUninstallPlan kills each slot session before repos are removed, and
       ssh_user: 'test',
       slots: [
         { id: 'slot-1', repo: join(root, 'repos', 'slot-1'), session: targetSession },
-        // A slot session that was never actually started — teardown must not fail on it.
-        { id: 'slot-2', repo: join(root, 'repos', 'slot-2'), session: 'no-such-session-ever' },
+        // A slot session that was never actually started — teardown must not fail on it,
+        // and (see collisionSession below) must not prefix-match a live unrelated session.
+        { id: 'slot-2', repo: join(root, 'repos', 'slot-2'), session: deadSession },
       ],
     }),
   );
 
   await execFileAsync('tmux', ['new-session', '-d', '-s', targetSession, '-c', root, 'bash']);
   await execFileAsync('tmux', ['new-session', '-d', '-s', otherSession, '-c', root, 'bash']);
+  await execFileAsync('tmux', ['new-session', '-d', '-s', collisionSession, '-c', root, 'bash']);
 
   try {
     const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
@@ -295,9 +305,14 @@ test('executeUninstallPlan kills each slot session before repos are removed, and
     assert.ok(steps.includes(`stopped tmux session ${targetSession}`));
     assert.ok(!hasTmuxSession(targetSession), 'this workspace’s slot session was killed');
     assert.ok(hasTmuxSession(otherSession), 'an unrelated session must survive (no kill-server)');
+    assert.ok(
+      hasTmuxSession(collisionSession),
+      'a live session sharing a dead pool session name as a prefix must survive (exact match, no prefix kill)',
+    );
     assert.ok(!existsSync(join(root, 'repos')), 'repos removed once its session stopped writing');
   } finally {
-    spawnSync('tmux', ['kill-session', '-t', otherSession]);
+    spawnSync('tmux', ['kill-session', '-t', `=${otherSession}`]);
+    spawnSync('tmux', ['kill-session', '-t', `=${collisionSession}`]);
     rmSync(root, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
   }

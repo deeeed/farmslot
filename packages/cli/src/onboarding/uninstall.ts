@@ -280,11 +280,14 @@ function disposeOf(
 }
 
 /** Best-effort: kill a slot's tmux session. Scoped to one session id — never kill-server,
- *  which would take down other installs' sessions on the shared default tmux server. Any
- *  failure (tmux missing, session already gone) is silently ignored; a killed session is
- *  reported so the operator can see what was torn down. */
+ *  which would take down other installs' sessions on the shared default tmux server. The `=`
+ *  prefix forces an exact-name match: without it, tmux falls back to prefix matching when no
+ *  exact session exists, so a dead session `mm` in this workspace's pool would kill an
+ *  unrelated live `mm-1`/`mmprod-1` on the same server — exactly the cross-install kill this
+ *  teardown exists to avoid. Any failure (tmux missing, session already gone) is silently
+ *  ignored; a killed session is reported so the operator can see what was torn down. */
 function killTmuxSession(session: string, hooks: UninstallHooks): void {
-  const result = spawnSync('tmux', ['kill-session', '-t', session], { encoding: 'utf-8' });
+  const result = spawnSync('tmux', ['kill-session', '-t', `=${session}`], { encoding: 'utf-8' });
   if (result.status === 0) hooks.step(`stopped tmux session ${session}`);
 }
 
