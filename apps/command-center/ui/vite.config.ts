@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { resolve } from 'path';
 import { defineConfig } from 'vite';
@@ -7,6 +7,14 @@ const uiPackage = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'u
   version?: string;
 };
 const appVersion = uiPackage.version ?? 'dev';
+const releaseNotesPath = resolve(__dirname, 'src/generated/release-notes.json');
+const releaseNotesPayload = existsSync(releaseNotesPath)
+  ? (JSON.parse(readFileSync(releaseNotesPath, 'utf8')) as {
+      version?: string;
+      date?: string | null;
+      items?: string[];
+    })
+  : { version: appVersion, date: null, items: [] as string[] };
 
 const gatewayPort = Number(process.env.GATEWAY_PORT) || 7777;
 const gatewayHost = process.env.GATEWAY_PROXY_HOST || process.env.GATEWAY_HOST || '127.0.0.1';
@@ -19,6 +27,7 @@ export default defineConfig({
   root: resolve(__dirname),
   define: {
     __FARMSLOT_APP_VERSION__: JSON.stringify(appVersion),
+    __FARMSLOT_RELEASE_NOTES__: JSON.stringify(releaseNotesPayload),
   },
   resolve: {
     alias: {

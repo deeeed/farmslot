@@ -48,6 +48,18 @@ Before strict mode can pass, each package must have:
    metadata, or an intentional metadata/checker update before strict mode is
    treated as release approval.
 
+## Release cut before publish
+
+Cut an `npm` release group and finalize changelogs before publishing:
+
+```bash
+yarn release:status
+yarn release:cut --group npm --assist
+yarn release:cut --group npm --from-proposal .release-cut/proposal.json --execute
+```
+
+See [release-process.md](release-process.md) for the full workflow and What's New surfaces.
+
 ## Publish command
 
 There is intentionally no root publish command yet. Add one only after strict

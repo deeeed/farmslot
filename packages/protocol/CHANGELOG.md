@@ -6,6 +6,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ### Added
 
+- Add `GatewayReleaseNotes` and optional `gateway.status.releaseNotes` for operator-facing gateway release notes.
 - `validateRecipeDocument` / `validateRecipeWithManifest` accept an optional `externalFlowIds` set so `call` refs resolvable from configured recipe library sources are not reported as unresolved.
 
 ## 0.7.0 - 2026-06-30

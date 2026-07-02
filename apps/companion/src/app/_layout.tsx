@@ -13,6 +13,7 @@ import { AppEnvironmentIndicator } from '../components/AppEnvironmentIndicator';
 import { AppUpdatesMonitor } from '../components/AppUpdatesMonitor';
 import { FallbackHeaderBack } from '../components/FallbackHeaderBack';
 import { GlobalFilterCoordinator } from '../components/GlobalFilterCoordinator';
+import { WhatsNewMonitor } from '../components/WhatsNewMonitor';
 import { RecipeBridgeProvider } from '../farmslot';
 import { initNotifications } from '../lib/notifications';
 import { isStoreScreenshotMode, seedStoreScreenshotMode } from '../lib/store-screenshot-mode';
@@ -46,7 +47,12 @@ export default function RootLayout() {
       <RecipeBridgeProvider bridgeName="@farmslot/companion">
         <StatusBar style="light" />
         <GlobalFilterCoordinator />
-        {!isStoreScreenshotMode ? <AppUpdatesMonitor /> : null}
+        {!isStoreScreenshotMode ? (
+          <>
+            <WhatsNewMonitor />
+            <AppUpdatesMonitor />
+          </>
+        ) : null}
         <Stack
           screenOptions={{
             headerStyle: { backgroundColor: colors.bgSurface },

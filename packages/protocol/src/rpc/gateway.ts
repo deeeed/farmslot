@@ -30,10 +30,18 @@ export interface GatewayUpdateStatus {
   error: string | null;
 }
 
+export interface GatewayReleaseNotes {
+  version: string;
+  date?: string | null;
+  items: string[];
+}
+
 export interface GatewayStatusResult {
   /** `@farmslot/gateway` package version. */
   version: string;
   update: GatewayUpdateStatus;
+  /** Operator-facing notes from the latest gateway release cut, when present. */
+  releaseNotes?: GatewayReleaseNotes;
 }
 
 export type GatewayDoctorSectionId =

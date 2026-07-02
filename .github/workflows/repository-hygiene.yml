@@ -35,3 +35,7 @@ jobs:
 
       - name: Workspace changelog guard
         run: node scripts/quality/check-workspace-changelogs.mjs
+
+      - name: Workspace changelog PR delta guard
+        if: github.event_name == 'pull_request'
+        run: node scripts/quality/check-workspace-changelogs.mjs --pr-diff
