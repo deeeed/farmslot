@@ -938,12 +938,32 @@ async function slotPrepareInner(
     );
     const softFailIntegration = shouldSoftFailPrepareIntegration(params.flowType);
     const linkedWorktree = await detectLinkedWorktree(vars);
-    if (mergeStrategy === 'rebase') {
-      step('merge', `Rebasing ${branch} onto origin/${defaultBranch}...`);
+    const resetToOriginBranch = async (detail: string) => {
       await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+        `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} 2>/dev/null && git reset --hard ${shellQuote(`origin/${branch}`)} 2>/dev/null`,
       );
+      step('merge', detail);
+    };
+    step('merge', `Fetching origin/${defaultBranch} before integrate-main...`);
+    const fetchDefaultR = await execOnSlot(
+      vars,
+      `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+    );
+    if (fetchDefaultR.exitCode !== 0) {
+      const fetchErr =
+        fetchDefaultR.stderr.slice(-200) || fetchDefaultR.stdout.slice(-200) || 'unknown error';
+      if (softFailIntegration) {
+        await resetToOriginBranch(
+          `Fetch origin/${defaultBranch} failed — reviewing branch at origin/${branch} instead (${fetchErr})`,
+        );
+      } else {
+        throw new Error(
+          `git fetch origin ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${fetchErr}`,
+        );
+      }
+    } else if (mergeStrategy === 'rebase') {
+      step('merge', `Rebasing ${branch} onto origin/${defaultBranch}...`);
       const rebaseR = await execOnSlot(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && git rebase ${shellQuote(`origin/${defaultBranch}`)} 2>&1`,
@@ -957,12 +977,7 @@ async function slotPrepareInner(
           `cd ${shellQuote(vars.remoteRepo)} && git rebase --abort 2>/dev/null`,
         );
         if (softFailIntegration) {
-          await execOnSlot(
-            vars,
-            `cd ${shellQuote(vars.remoteRepo)} && git reset --hard ${shellQuote(`origin/${branch}`)} 2>/dev/null`,
-          );
-          step(
-            'merge',
+          await resetToOriginBranch(
             `Rebase onto origin/${defaultBranch} conflicted — reviewing branch at origin/${branch} instead`,
           );
         } else {
@@ -973,10 +988,6 @@ async function slotPrepareInner(
       }
     } else {
       step('merge', `Merging origin/${defaultBranch}...`);
-      await execOnSlot(
-        vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
-      );
       const mergeR = await execOnSlot(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && git merge ${shellQuote(`origin/${defaultBranch}`)} --no-edit 2>&1`,
@@ -990,12 +1001,7 @@ async function slotPrepareInner(
           : `cd ${shellQuote(vars.remoteRepo)} && git merge --abort 2>/dev/null; git checkout ${defaultBranch} 2>/dev/null`;
         await execOnSlot(vars, abortCmd);
         if (softFailIntegration) {
-          await execOnSlot(
-            vars,
-            `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} 2>/dev/null && git reset --hard ${shellQuote(`origin/${branch}`)} 2>/dev/null`,
-          );
-          step(
-            'merge',
+          await resetToOriginBranch(
             `Merge origin/${defaultBranch} conflicted — reviewing branch at origin/${branch} instead`,
           );
         } else {
