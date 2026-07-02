@@ -64,11 +64,41 @@ export function resolveEngineDecision(decisionId: string, actionId: string): voi
 }
 
 export function collisionAutoResolveAction(run: Run): 'create-new' | null {
-  if (run.lane === 'comparison' && run.engineState?.flags?.skipPrepare === true) {
-    return 'create-new';
-  }
+  // Comparison-lane runs already file as siblings — collision means reuse the task
+  // dir basename with a timestamp suffix, not fork again into comparison.
+  if (run.lane === 'comparison') return 'create-new';
   if (run.mode === 'validation' || run.mode === 'autonomous') return 'create-new';
   return null;
+}
+
+/** Collision card actions; omit start-comparison when the run is already comparison-lane. */
+export function collisionDecisionActions(current: Pick<Run, 'lane'>): DecisionAction[] {
+  const actions: DecisionAction[] = [
+    {
+      id: 'create-new',
+      label: 'Create new (append timestamp)',
+      style: 'primary',
+      description:
+        'Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch — does not link to existing runs.',
+    },
+  ];
+  if (current.lane !== 'comparison') {
+    actions.push({
+      id: 'start-comparison',
+      label: 'Start comparison lane',
+      style: 'secondary',
+      description:
+        'Files this run as a comparison-lane sibling of the existing family (same ticket, same family ID, new variant tag). Use when you want to A/B compare runner/model/template changes against a prior run for the same bug.',
+    });
+  }
+  actions.push({
+    id: 'abort',
+    label: 'Abort run',
+    style: 'danger',
+    description:
+      'Cancels the current dispatch without touching existing task dirs. Use when the collision was unexpected and you need to investigate the prior runs before re-dispatching.',
+  });
+  return actions;
 }
 
 function autoResolveEngineDecision(
@@ -157,29 +187,7 @@ export async function handleCollisionDecision(
   // Bulk actions only — to retry on a specific prior run the operator clicks the
   // per-row deep link in the UI panel. A bulk "continue-existing" button would be
   // ambiguous when multiple prior runs collide; the panel makes the choice explicit.
-  const actions: DecisionAction[] = [
-    {
-      id: 'create-new',
-      label: 'Create new (append timestamp)',
-      style: 'primary',
-      description:
-        'Creates a fresh task dir with a timestamp suffix and dispatches as a new production-lane root run. Use when the prior dirs are stale/abandoned and you just want to retry from scratch — does not link to existing runs.',
-    },
-    {
-      id: 'start-comparison',
-      label: 'Start comparison lane',
-      style: 'secondary',
-      description:
-        'Files this run as a comparison-lane sibling of the existing family (same ticket, same family ID, new variant tag). Use when you want to A/B compare runner/model/template changes against a prior run for the same bug.',
-    },
-    {
-      id: 'abort',
-      label: 'Abort run',
-      style: 'danger',
-      description:
-        'Cancels the current dispatch without touching existing task dirs. Use when the collision was unexpected and you need to investigate the prior runs before re-dispatching.',
-    },
-  ];
+  const actions = collisionDecisionActions(current);
 
   const actionId = await createEngineDecision(
     runId,
@@ -201,14 +209,10 @@ export async function handleCollisionDecision(
     const variant = current.variant
       ? `${current.variant}-collision-${hhmmss}`
       : `collision-${hhmmss}`;
-    // Cancel current blocked run FIRST so assertDuplicateRunAllowed sees no
-    // production-lane conflict when the new comparison run is created.
-    updateRun(runId, {
-      status: 'cancelled',
-      completedAt: new Date().toISOString(),
-    });
     // Lazy import breaks the run-engine ↔ methods/run circular dep.
     const { runCreate } = await import('../methods/run.js');
+    // Omit branch so applyComparisonBranchPolicy derives one for the collision-suffixed
+    // variant. Carrying current.branch breaks when the variant gains a -collision- suffix.
     const successor = await runCreate(
       {
         project: current.project,
@@ -224,7 +228,6 @@ export async function handleCollisionDecision(
         effort: current.effort,
         safetyTier: current.safetyTier,
         app: current.app,
-        branch: current.branch ?? undefined,
         prNumber: hasValidPrNumber(current) ? current.prNumber : undefined,
         parentRunId: current.id,
         backlogItemId: current.backlogItemId,
@@ -238,7 +241,13 @@ export async function handleCollisionDecision(
       },
       broadcastFn,
     );
-    updateRun(runId, { redirectedToRunId: successor.run.id });
+    // Cancel only after successor creation succeeds — avoids leaving the current run
+    // cancelled/failed when runCreate throws (e.g. branch policy regression).
+    updateRun(runId, {
+      status: 'cancelled',
+      completedAt: new Date().toISOString(),
+      redirectedToRunId: successor.run.id,
+    });
     broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     throw new RedirectedError(
       successor.run.id,

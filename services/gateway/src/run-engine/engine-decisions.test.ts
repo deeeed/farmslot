@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { collisionAutoResolveAction } from './engine-decisions.js';
+import { collisionAutoResolveAction, collisionDecisionActions } from './engine-decisions.js';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
@@ -50,10 +50,30 @@ test('collisionAutoResolveAction auto-resolves comparison skipPrepare retries', 
   );
 });
 
+test('collisionAutoResolveAction auto-resolves interactive comparison-lane collisions', () => {
+  assert.equal(
+    collisionAutoResolveAction(makeRun({ lane: 'comparison', mode: 'interactive' })),
+    'create-new',
+  );
+});
+
+test('collisionDecisionActions omits start-comparison when run is already comparison-lane', () => {
+  const ids = collisionDecisionActions({ lane: 'comparison' }).map((a) => a.id);
+  assert.deepEqual(ids, ['create-new', 'abort']);
+});
+
+test('collisionDecisionActions offers start-comparison for production-lane collisions', () => {
+  const ids = collisionDecisionActions({ lane: 'production' }).map((a) => a.id);
+  assert.deepEqual(ids, ['create-new', 'start-comparison', 'abort']);
+});
+
 test('collisionAutoResolveAction auto-resolves autonomous runs', () => {
   assert.equal(collisionAutoResolveAction(makeRun({ mode: 'autonomous' })), 'create-new');
 });
 
 test('collisionAutoResolveAction leaves interactive production collisions unresolved', () => {
-  assert.equal(collisionAutoResolveAction(makeRun({ lane: 'production', mode: 'interactive' })), null);
+  assert.equal(
+    collisionAutoResolveAction(makeRun({ lane: 'production', mode: 'interactive' })),
+    null,
+  );
 });
