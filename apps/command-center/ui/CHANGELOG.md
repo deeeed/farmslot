@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Clarify intelligence incidents copy for skipped monitor advisories (no false "Step timed out" or "Sent keys" wording).
 - Add ready-gate-style tab navigation to the review gate (Review, Evidence, Quality, Recipe, Learnings) with `?tab=` URL sync.
 - Load release notes from generated JSON at build time so What's New works in Vite dev and production builds.
 - Show What's New modal on the auth gate screen as well as the connected shell.

@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { FleetStatus, SlotStatus } from '@farmslot/protocol';
 
 import { detectFleetMonitorViolations } from './fleet-monitor.js';
+import { isWorkerMonitorPhase } from './worker-monitor-phase.js';
 
 function slot(overrides: Partial<SlotStatus>): SlotStatus {
   return {
@@ -17,7 +18,7 @@ function slot(overrides: Partial<SlotStatus>): SlotStatus {
     enabled: true,
     dispatchable: false,
     lifecycle: 'busy',
-    phase: null,
+    phase: 'working',
     warm: false,
     taskId: null,
     taskFile: null,
@@ -58,10 +59,17 @@ function fleet(slots: SlotStatus[]): FleetStatus {
   };
 }
 
+test('isWorkerMonitorPhase is true only for busy/working slots', () => {
+  assert.equal(isWorkerMonitorPhase({ lifecycle: 'busy', phase: 'working' }), true);
+  assert.equal(isWorkerMonitorPhase({ lifecycle: 'busy', phase: 'preparing' }), false);
+  assert.equal(isWorkerMonitorPhase({ lifecycle: 'busy', phase: 'dispatching' }), false);
+  assert.equal(isWorkerMonitorPhase({ lifecycle: 'ready', phase: null }), false);
+});
+
 test('detectFleetMonitorViolations emits idle once until the slot recovers', () => {
   const notified = new Set<string>();
-  const busyIdle = fleet([slot({ lifecycle: 'busy', agent: 'idle' })]);
-  const readyIdle = fleet([slot({ lifecycle: 'ready', agent: 'idle' })]);
+  const busyIdle = fleet([slot({ lifecycle: 'busy', agent: 'idle', phase: 'working' })]);
+  const readyIdle = fleet([slot({ lifecycle: 'ready', agent: 'idle', phase: null })]);
 
   assert.deepEqual(
     detectFleetMonitorViolations(busyIdle, notified, () => '2026-04-25T00:00:01Z').map(
@@ -88,10 +96,36 @@ test('detectFleetMonitorViolations emits idle once until the slot recovers', () 
   );
 });
 
+test('detectFleetMonitorViolations ignores orchestration busy+idle (grade/prepare/dispatch)', () => {
+  const notified = new Set<string>();
+  for (const phase of ['preparing', 'dispatching', 'review-gate', 'releasing', null] as const) {
+    const orchestration = fleet([slot({ lifecycle: 'busy', agent: 'idle', phase: phase ?? null })]);
+    assert.deepEqual(
+      detectFleetMonitorViolations(orchestration, notified).map((v) => v.type),
+      [],
+      `expected no idle violation during phase=${String(phase)}`,
+    );
+  }
+});
+
+test('detectFleetMonitorViolations ignores orchestration busy+no-tmux (stuck)', () => {
+  const notified = new Set<string>();
+  for (const phase of ['preparing', 'dispatching', 'review-gate', 'releasing', null] as const) {
+    const orchestration = fleet([
+      slot({ lifecycle: 'busy', agent: 'no-tmux', phase: phase ?? null }),
+    ]);
+    assert.deepEqual(
+      detectFleetMonitorViolations(orchestration, notified).map((v) => v.type),
+      [],
+      `expected no stuck violation during phase=${String(phase)}`,
+    );
+  }
+});
+
 test('detectFleetMonitorViolations dedupes stuck and idle independently', () => {
   const notified = new Set<string>();
-  const noTmux = fleet([slot({ lifecycle: 'busy', agent: 'no-tmux' })]);
-  const idle = fleet([slot({ lifecycle: 'busy', agent: 'idle' })]);
+  const noTmux = fleet([slot({ lifecycle: 'busy', agent: 'no-tmux', phase: 'working' })]);
+  const idle = fleet([slot({ lifecycle: 'busy', agent: 'idle', phase: 'working' })]);
 
   assert.deepEqual(
     detectFleetMonitorViolations(noTmux, notified).map((v) => v.type),

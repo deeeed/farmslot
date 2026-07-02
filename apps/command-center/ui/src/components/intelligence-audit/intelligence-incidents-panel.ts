@@ -12,6 +12,8 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 
+import { actionToHuman, categoryToTrigger } from './intelligence-incident-copy.js';
+
 function shortId(id: string | undefined): string {
   return id ? id.slice(0, 8) : '-';
 }
@@ -74,44 +76,6 @@ function statusBadge(status: IncidentStatus): { label: string; color: string } {
       return { label: 'SKIPPED', color: colors.textMuted };
     case 'human':
       return { label: 'HUMAN OVERRODE', color: colors.accent };
-  }
-}
-
-function categoryToTrigger(record: IntelligenceAction): string {
-  const cat = record.verdict.category;
-  const pattern = record.verdict.patternId;
-  if (record.verdict.rationale) return record.verdict.rationale;
-  if (cat === 'flake') return 'Transient/flaky failure detected';
-  if (cat === 'infra') return 'Infrastructure failure detected';
-  if (cat === 'env-drift') return 'Environment drift detected';
-  if (cat === 'timeout') return 'Step timed out';
-  if (pattern) return `Pattern matched: ${pattern}`;
-  return 'Monitor signal triggered';
-}
-
-function actionToHuman(record: IntelligenceAction): string {
-  const action = record.appliedAction;
-  if (!action) {
-    if (record.outcome === 'skipped') {
-      return record.outcomeReason ? `No action taken — ${record.outcomeReason}` : 'No action taken';
-    }
-    return 'Decision recorded; no action proposed';
-  }
-  switch (action.type) {
-    case 'tmux.send':
-      return `Sent ${action.tmuxKeys ? `\`${action.tmuxKeys}\`` : 'keys'} to tmux pane${
-        action.stepName ? ` (step: ${action.stepName})` : ''
-      }`;
-    case 'run.replayStep':
-      return `Replayed step \`${action.stepName ?? '?'}\``;
-    case 'slot.reset':
-      return 'Reset slot to clean state';
-    case 'slot.cleanupProcesses':
-      return 'Cleaned up stale processes on slot';
-    case 'slot.fixtureRefresh':
-      return 'Refreshed fixtures on slot';
-    default:
-      return action.type;
   }
 }
 
