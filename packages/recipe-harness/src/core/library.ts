@@ -59,14 +59,21 @@ export function parseRecipeLibraryPath(value: string): RecipeLibrarySource[] {
 }
 
 /**
- * Default sources when nothing is configured: the personal library at
- * `<farmslot home>/recipe-library` (FARMSLOT_HOME env, default ~/.farmslot)
- * when that directory exists.
+ * The personal library location: `<farmslot home>/recipe-library`
+ * (FARMSLOT_HOME env, default ~/.farmslot). The directory may not exist yet.
+ */
+export function personalRecipeLibraryRoot(env: RecipeLibraryEnv = process.env): string {
+  return path.join(farmslotHome(env), 'recipe-library');
+}
+
+/**
+ * Default sources when nothing is configured: the personal library when it
+ * exists.
  */
 export async function defaultRecipeLibrarySources(
   env: RecipeLibraryEnv = process.env,
 ): Promise<RecipeLibrarySource[]> {
-  const personalRoot = path.join(farmslotHome(env), 'recipe-library');
+  const personalRoot = personalRecipeLibraryRoot(env);
   try {
     await readFile(path.join(personalRoot, LIBRARY_MANIFEST_FILE), 'utf-8');
   } catch {
@@ -255,7 +262,8 @@ async function readLibraryManifest(root: string): Promise<{ name?: string }> {
   return { ...(typeof manifest.name === 'string' && manifest.name ? { name: manifest.name } : {}) };
 }
 
-async function listFlowCatalogFiles(root: string): Promise<string[]> {
+/** Catalog file names (relative to `<root>/flows/`) of a library, sorted. */
+export async function listFlowCatalogFiles(root: string): Promise<string[]> {
   let entries: Dirent[];
   try {
     entries = await readdir(path.join(root, LIBRARY_FLOWS_DIR), { withFileTypes: true });

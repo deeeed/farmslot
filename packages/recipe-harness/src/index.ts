@@ -15,8 +15,11 @@ export {
   defaultRecipeLibrarySources,
   loadRecipeLibraries,
   parseRecipeLibraryPath,
+  personalRecipeLibraryRoot,
   resolveRecipeLibrarySources,
 } from './core/library.js';
+export type { PromoteFlowRequest, PromoteFlowResult } from './core/promote.js';
+export { promoteRecipeFlow } from './core/promote.js';
 export { createRecipeRunner, defineActionAdapter } from './core/runner.js';
 export type * from './core/types.js';
 export type { CaptureHelperVideoRecorderOptions } from './recording/capture-helper.js';

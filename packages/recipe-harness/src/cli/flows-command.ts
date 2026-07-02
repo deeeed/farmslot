@@ -1,15 +1,32 @@
+import path from 'node:path';
+
 import { type Command } from 'commander';
 
-import { isRecord } from '../core/json.js';
+import { isRecord, readJsonFile } from '../core/json.js';
 import {
   loadRecipeLibraries,
+  personalRecipeLibraryRoot,
   type RecipeLibraryResolution,
   resolveRecipeLibrarySources,
 } from '../core/library.js';
+import { promoteRecipeFlow } from '../core/promote.js';
+import type { RecipeLibrarySource } from '../core/types.js';
+
+import { resolveRecipeCliPath } from './support.js';
 
 interface FlowsListOptions {
   library: string[];
   json?: boolean;
+}
+
+interface FlowsPromoteOptions {
+  from: string;
+  flow: string;
+  to: string;
+  library: string[];
+  domain?: string;
+  run?: string;
+  force?: boolean;
 }
 
 export function registerFlowsCommand(program: Command): void {
@@ -46,6 +63,86 @@ export function registerFlowsCommand(program: Command): void {
       }
       printFlowsList(resolution);
     });
+
+  flows
+    .command('promote')
+    .description(
+      'Promote an inline flow from a per-change recipe into a recipe library (the durable keep behind throwaway proofs)',
+    )
+    .requiredOption('--from <recipe>', 'Per-change recipe declaring the flow inline')
+    .requiredOption('--flow <ref>', 'Flow ref to promote')
+    .option('--to <name>', 'Target library source name', 'personal')
+    .option(
+      '--library <entry>',
+      'Recipe library source as name=path or path (repeatable; order is precedence, first wins). Defaults to RECIPE_LIBRARY_PATH, then the personal library under the farmslot home.',
+      collectRepeatable,
+      [] as string[],
+    )
+    .option('--domain <stem>', 'Catalog file stem (defaults to the ref minus its last segment)')
+    .option(
+      '--run <artifactsDir>',
+      'Artifacts directory of a passing run that exercised the flow; stamps provenance.lastVerified',
+    )
+    .option('--force', 'Overwrite an existing declaration of the same ref')
+    .action(async (options: FlowsPromoteOptions) => {
+      const target = await resolvePromoteTarget(options.to, options.library);
+      const result = await promoteRecipeFlow({
+        recipePath: resolveRecipeCliPath(options.from),
+        flowRef: options.flow,
+        targetRoot: target.root,
+        targetName: target.name ?? options.to,
+        domain: options.domain,
+        runArtifactsDir: options.run ? resolveRecipeCliPath(options.run) : undefined,
+        force: options.force,
+        logger: console,
+      });
+      if (result.createdLibrary) {
+        console.log(`Created recipe library ${options.to} at ${target.root}`);
+      }
+      console.log(`Promoted ${result.ref} to ${result.catalogPath}`);
+      console.log(
+        result.lastVerified
+          ? `lastVerified stamped from run evidence: ${result.lastVerified}`
+          : 'No run evidence provided (--run); the flow carries no lastVerified stamp.',
+      );
+      if (options.to === 'personal') {
+        console.log('Share it with your team by opening a PR to the team recipe library.');
+      }
+    });
+}
+
+async function resolvePromoteTarget(
+  to: string,
+  cliEntries: string[],
+): Promise<RecipeLibrarySource> {
+  const sources = await resolveRecipeLibrarySources({ cliEntries });
+  const resolved = await Promise.all(
+    sources.map(async (source) => ({
+      ...source,
+      name: source.name ?? (await libraryManifestName(source.root)),
+    })),
+  );
+  const named = resolved.find((source) => source.name === to);
+  if (named) return named;
+  if (to === 'personal') return { name: 'personal', root: personalRecipeLibraryRoot() };
+  const available = resolved.map((source) => source.name ?? source.root).join(', ') || 'none';
+  throw new Error(
+    `No recipe library source named ${to} is configured (available: ${available}). Pass --library ${to}=path or set RECIPE_LIBRARY_PATH.`,
+  );
+}
+
+// Bare-path sources get their name from library.json, matching how run
+// resolution names them.
+async function libraryManifestName(root: string): Promise<string | undefined> {
+  try {
+    const manifest = await readJsonFile(path.join(root, 'library.json'));
+    if (isRecord(manifest) && typeof manifest.name === 'string' && manifest.name) {
+      return manifest.name;
+    }
+  } catch {
+    // not a readable library; leave the source unnamed
+  }
+  return undefined;
 }
 
 function flowsListDocument(resolution: RecipeLibraryResolution) {

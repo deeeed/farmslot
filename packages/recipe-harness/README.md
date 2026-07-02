@@ -171,6 +171,21 @@ farmslot-recipe run recipe.json --artifacts-dir artifacts \
   --library personal=~/.farmslot/recipe-library --library team=../team-recipes
 ```
 
+Per-change recipes stay throwaway; `flows promote` is the explicit keep step
+that moves a proven inline flow into a library as a durable contract:
+
+```bash
+farmslot-recipe flows promote --from recipe.json --flow demo.write-marker \
+  --run artifacts   # stamps provenance.lastVerified from the passing run
+```
+
+Promotion requires a `description`, requires a `postcondition` for `ensure_*`
+flows, and stamps provenance (origin recipe, promotion date, last-verified
+evidence). The default target is the personal library (created on first
+promote); promote into a team library by configuring it as a source and
+passing `--to <name>` — sharing personal flows with a team is just a PR to the
+team's library repo.
+
 ## Custom adapter
 
 ```ts
