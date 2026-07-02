@@ -645,6 +645,12 @@ export class FarmApp extends LitElement {
       'doctor',
     ];
     this.route = valid.includes(hash as Route) ? (hash as Route) : 'fleet';
+    // Deep links to Setup while a gateway is connected land on the fleet
+    // instead — the page's job is already done.
+    if (this.route === 'onboarding' && this.connection === 'connected') {
+      this.route = 'fleet';
+      history.replaceState(null, '', '#fleet');
+    }
     this.slotParam = '';
     this.configParam = '';
   }
@@ -683,6 +689,11 @@ export class FarmApp extends LitElement {
   private syncState(s: AppState) {
     this.summary = s.fleet?.summary ?? null;
     this.fleetSlots = s.fleet?.slots ?? [];
+    // The Setup page exists to establish a connection — once one is live,
+    // showing it again only confuses; move the operator to the fleet.
+    if (s.connection === 'connected' && this.connection !== 'connected') {
+      if (this.route === 'onboarding') this.navigate('fleet');
+    }
     this.connection = s.connection;
     this.hydrated = isFullyHydrated(s.hydrated);
     this.githubQuota = s.githubQuota;
@@ -1387,7 +1398,9 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
         >
           ${this._sidebarExpanded ? '\u00AB' : '\u00BB'}
         </button>
-        ${NAV_ITEMS.map(
+        ${NAV_ITEMS.filter(
+          (item) => item.route !== 'onboarding' || this.connection !== 'connected',
+        ).map(
           (item) => html`
             <a
               class="fa-nav-btn ${this.route === item.route ? 'active' : ''} ${item.maturity ===
