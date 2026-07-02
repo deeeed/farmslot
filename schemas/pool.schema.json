@@ -93,6 +93,12 @@
       "description": "Default domain overlay for dispatches from this machine. Slot-level domain and task-level domain override it; used for fixture compose (DOMAIN), {{domain}} substitution, and domain template variants.",
       "examples": ["blue"]
     },
+    "session_prefix": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$",
+      "description": "Prefix applied to every tmux session name registered on this machine (e.g. 'dev' -> session 'dev-mm-1'). Keeps dev/prod (or multi-install) sessions from colliding and lets you eyeball which install a session belongs to. Omit for today's unprefixed session names.",
+      "examples": ["dev", "prod"]
+    },
     "repo_url": {
       "type": "string",
       "description": "Git remote URL for cloning repos on this machine.",

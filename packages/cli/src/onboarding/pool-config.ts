@@ -4,6 +4,8 @@
 // project add use this dependency-free structural check instead.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
+import { isValidDomainName } from '@farmslot/protocol';
+
 export const POOL_SCHEMA_VERSION = 1;
 
 /** First port handed out for slot dev servers — high block clear of common dev defaults. */
@@ -42,6 +44,8 @@ export interface PoolConfig {
   android_home?: string;
   dispatch_cmd?: string;
   recycle_cmd?: string;
+  /** Per-install tmux session prefix (e.g. 'dev' -> 'dev-mm-1'), keeping dev/prod installs' sessions from colliding. Unset reproduces today's unprefixed session names. */
+  session_prefix?: string;
   repo_url?: string;
   notes?: string;
   tmux_workers?: unknown;
@@ -62,6 +66,14 @@ export function validatePoolConfig(pool: unknown): string[] {
   }
   if (p.schema_version !== undefined && typeof p.schema_version !== 'number') {
     errors.push(`'schema_version' must be a number`);
+  }
+  // Reuses the domain-name charset: it's already the contract for a safe slug
+  // that lands in shell-adjacent contexts (here, a tmux session name).
+  if (
+    p.session_prefix !== undefined &&
+    (typeof p.session_prefix !== 'string' || !isValidDomainName(p.session_prefix))
+  ) {
+    errors.push(`'session_prefix' must be a lowercase slug (see isValidDomainName)`);
   }
   if (!Array.isArray(p.slots)) {
     errors.push(`'slots' must be an array`);
@@ -178,6 +190,16 @@ export function defaultResources(
     return { browser: { cdp_port: allocatePort(pool, CDP_PORT_BLOCK_START) } };
   }
   return {};
+}
+
+/**
+ * Tmux session name for a slot being registered, honoring an optional
+ * pool-level session_prefix (dev/prod installs on one machine otherwise
+ * collide on identical session names). Unset prefix reproduces today's
+ * unprefixed name exactly.
+ */
+export function sessionName(pool: PoolConfig, short: string, n: number): string {
+  return pool.session_prefix ? `${pool.session_prefix}-${short}-${n}` : `${short}-${n}`;
 }
 
 /**

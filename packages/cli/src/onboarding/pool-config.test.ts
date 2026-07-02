@@ -13,6 +13,7 @@ import {
   poolFileName,
   PORT_BLOCK_START,
   registerSlot,
+  sessionName,
   validatePoolConfig,
 } from './pool-config.js';
 
@@ -108,6 +109,18 @@ test('registerSlot never clobbers an existing slot', () => {
   assert.equal(p.slots[0].repo, '/user-edited');
   assert.equal(registerSlot(p, { id: 'm-a-2', repo: '/b', session: 'a-2' }), true);
   assert.equal(p.slots.length, 2);
+});
+
+test('sessionName applies the pool session_prefix when set, and is unchanged when unset', () => {
+  const prefixed: PoolConfig = { ...pool(), session_prefix: 'dev' };
+  assert.equal(sessionName(prefixed, 'mm', 1), 'dev-mm-1');
+  assert.equal(sessionName(pool(), 'mm', 1), 'mm-1');
+});
+
+test('validatePoolConfig rejects an unsafe session_prefix', () => {
+  assert.deepEqual(validatePoolConfig({ ...pool(), session_prefix: 'dev' }), []);
+  const errors = validatePoolConfig({ ...pool(), session_prefix: 'dev:1' });
+  assert.ok(errors.some((e) => e.includes(`'session_prefix'`)));
 });
 
 test('poolFileName avoids colliding with an existing host pool file', () => {
