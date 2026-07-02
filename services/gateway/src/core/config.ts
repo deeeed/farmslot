@@ -22,7 +22,7 @@ const poolDir = path.join(farmslotRoot, 'pool');
 const projectsDir = path.join(farmslotRoot, 'projects');
 
 // Browser/CDP resources are consumed by Node's standards-compliant fetch in the
-// recipe harness and MetaMask recipe runner. The Fetch standard blocks these
+// recipe harness and downstream project recipe runners. The Fetch standard blocks these
 // ports before any network request is attempted; using one makes a live browser
 // look like "zero CDP targets" to downstream readiness checks.
 const FETCH_FORBIDDEN_PORTS = new Set([
