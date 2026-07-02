@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Rename the team overlay abstraction to "domain" (contracts, rpc, DOMAIN_NAME_RE/isValidDomainName) — clean break, no alias.
 - validateRecipeDocument / validateRecipeWithManifest accept an optional externalFlowIds set so call refs resolvable from configured recipe library sources are not reported as unresolved
 
 - Active-development baseline; add user-facing changes here before release or package publication.
