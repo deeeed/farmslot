@@ -351,6 +351,16 @@ export class FarmApp extends LitElement {
     this.whatsNewOpen = false;
   }
 
+  private renderWhatsNewModal() {
+    return html`
+      <whats-new-modal
+        .open=${this.whatsNewOpen}
+        .notes=${COMMAND_CENTER_RELEASE_NOTES}
+        @dismiss=${() => this.dismissWhatsNew()}
+      ></whats-new-modal>
+    `;
+  }
+
   private dismissUpdateBanner() {
     const sha = this.updateStatus?.remoteSha;
     if (sha) {
@@ -1407,7 +1417,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
 
   render() {
     if (this.connection === 'auth_required' && this.route !== 'onboarding') {
-      return this.renderAuthScreen();
+      return html`${this.renderAuthScreen()} ${this.renderWhatsNewModal()}`;
     }
     const activeRunCount = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
     if (this.route === 'dev' && this.devCaptureMode) {
@@ -1513,12 +1523,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           if (!this.chatOpen) this.chatUnread++;
         }}
       ></chat-panel>
-      ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()}
-      <whats-new-modal
-        .open=${this.whatsNewOpen}
-        .notes=${COMMAND_CENTER_RELEASE_NOTES}
-        @dismiss=${() => this.dismissWhatsNew()}
-      ></whats-new-modal>
+      ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()} ${this.renderWhatsNewModal()}
     `;
   }
 }

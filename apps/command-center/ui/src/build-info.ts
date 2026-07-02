@@ -1,5 +1,6 @@
+import releaseNotesJson from './generated/release-notes.json';
+
 declare const __FARMSLOT_APP_VERSION__: string;
-declare const __FARMSLOT_RELEASE_NOTES__: string;
 
 export interface ReleaseNotesPayload {
   version: string;
@@ -11,25 +12,17 @@ export interface ReleaseNotesPayload {
 export const COMMAND_CENTER_APP_VERSION =
   typeof __FARMSLOT_APP_VERSION__ !== 'undefined' ? __FARMSLOT_APP_VERSION__ : 'dev';
 
-function parseReleaseNotes(): ReleaseNotesPayload {
-  if (typeof __FARMSLOT_RELEASE_NOTES__ === 'undefined') {
-    return { version: COMMAND_CENTER_APP_VERSION, date: null, items: [] };
-  }
-  try {
-    const parsed = JSON.parse(__FARMSLOT_RELEASE_NOTES__) as ReleaseNotesPayload;
-    return {
-      version: parsed.version ?? COMMAND_CENTER_APP_VERSION,
-      date: parsed.date ?? null,
-      items: Array.isArray(parsed.items)
-        ? parsed.items.filter((item): item is string => typeof item === 'string' && item.length > 0)
-        : [],
-    };
-  } catch {
-    return { version: COMMAND_CENTER_APP_VERSION, date: null, items: [] };
-  }
-}
+const releaseNotesSource = releaseNotesJson as ReleaseNotesPayload;
 
-export const COMMAND_CENTER_RELEASE_NOTES = parseReleaseNotes();
+export const COMMAND_CENTER_RELEASE_NOTES: ReleaseNotesPayload = {
+  version: releaseNotesSource.version ?? COMMAND_CENTER_APP_VERSION,
+  date: releaseNotesSource.date ?? null,
+  items: Array.isArray(releaseNotesSource.items)
+    ? releaseNotesSource.items.filter(
+        (item): item is string => typeof item === 'string' && item.length > 0,
+      )
+    : [],
+};
 
 export function compareSemver(a: string, b: string): number {
   const parse = (value: string) =>
