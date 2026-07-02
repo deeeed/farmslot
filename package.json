@@ -36,6 +36,7 @@
     "lint:type-escapes": "yarn --cwd apps/command-center lint:type-escapes",
     "test:slot-view": "yarn --cwd apps/command-center test:slot-view",
     "test:ui": "yarn --cwd apps/command-center test:ui",
+    "docs:template-vars": "node scripts/docs/generate-template-variables.mjs",
     "docs:dev": "yarn workspace @farmslot/docs start",
     "docs:build": "yarn workspace @farmslot/docs build",
     "test:recipe-operational-gates": "yarn --cwd apps/command-center test:recipe-operational-gates",

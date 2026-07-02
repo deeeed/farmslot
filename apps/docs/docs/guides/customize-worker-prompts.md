@@ -133,19 +133,22 @@ The signal file should be used for terminal state and compact task metadata. Ong
 
 ## Template variables
 
-Templates use `{{VAR}}` placeholders expanded when the task is written. Common variables include:
+Templates use `{{VAR}}` placeholders expanded when the task is written. Three syntax families exist (worker TASK, project hooks, pool dispatch) — do not mix them.
 
-| Variable                       | Meaning                                                                |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| `{{TICKET_ID}}`                | Backlog item, issue, PR, or task identifier.                           |
-| `{{TICKET_TITLE}}`             | Human-readable title.                                                  |
-| `{{BRANCH}}` / `{{PR_BRANCH}}` | Branch the worker should use.                                          |
-| `{{PR_NUMBER}}`                | PR number for PR-bound flows.                                          |
-| `{{TASK_DIR}}`                 | Directory where the rendered task, signal, inputs, and artifacts live. |
-| `{{ARTIFACT_DIR}}`             | Project artifact directory when provided by the project config.        |
-| `{{RUNTIME_DIR}}`              | Project runtime directory for logs, fixtures, and temporary state.     |
+| Variable                       | Meaning                                                                 |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| `{{TICKET_ID}}`                | Backlog item, issue, PR, or task identifier.                            |
+| `{{TICKET_TITLE}}`             | Human-readable title.                                                   |
+| `{{BRANCH}}` / `{{PR_BRANCH}}` | Branch the worker should use.                                           |
+| `{{PR_NUMBER}}`                | PR number for PR-bound flows.                                           |
+| `{{TASK_DIR}}`                 | Directory where the rendered task, signal, inputs, and artifacts live.  |
+| `{{ARTIFACT_DIR}}`             | Project artifact directory from `paths.artifact_dir` (default `.task`). |
+| `{{RUNTIME_DIR}}`              | Project runtime directory for logs, fixtures, and temporary state.      |
+| `{{PR_INTEGRATION_NOTE}}`      | GitHub merge/integration summary for `review-pr` (informational).       |
 
-Projects can add more variables through their import/profile flow, but the template should stay readable as plain markdown after rendering.
+**Full catalog:** [Template variables](../reference/template-variables) and [Template variable catalog](../reference/template-variables-catalog.generated) — flow-scoped tables, hook vars, and `project.json` extension model.
+
+Projects can add more variables through `project.json` `vars`, but the template should stay readable as plain markdown after rendering.
 
 ## Flow override model
 
