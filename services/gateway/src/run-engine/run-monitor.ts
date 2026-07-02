@@ -15,6 +15,7 @@ import {
   type Run,
   type RunDecision,
   type RunMonitorState,
+  type RunStep,
   type WorkerSignal,
   type WorkerSignalProbeResult,
   type WorkerTerminalContractDocument,
@@ -420,8 +421,18 @@ export function shouldHoldForInteractivePrComplete(run: Pick<Run, 'flowType' | '
 
 type AgentLiveStatus = 'working' | 'idle' | 'no-tmux';
 
+/** Minimal run fields the monitor nudge helpers read — accepts partial test fixtures. */
+export type MonitorNudgeRunView = {
+  flowType: Run['flowType'];
+  status: Run['status'];
+  steps?: ReadonlyArray<Pick<RunStep, 'name' | 'status'>>;
+  decisions?: ReadonlyArray<Pick<RunDecision, 'type' | 'resolvedAt'>>;
+};
+
 /** True when the run is blocked on operator publication / human-gate approval. */
-export function runHasOpenHumanGate(run: Pick<Run, 'steps' | 'decisions' | 'status'>): boolean {
+export function runHasOpenHumanGate(
+  run: Pick<MonitorNudgeRunView, 'steps' | 'decisions' | 'status'>,
+): boolean {
   const humanGateStep = run.steps?.find((step) => step.name === PipelineSteps.HUMAN_GATE);
   if (humanGateStep?.status === 'running') return true;
   if (run.status !== 'blocked') return false;
@@ -433,7 +444,7 @@ export function runHasOpenHumanGate(run: Pick<Run, 'steps' | 'decisions' | 'stat
 }
 
 export function shouldSkipMonitorNudge(
-  run: Pick<Run, 'flowType' | 'steps' | 'decisions' | 'status'>,
+  run: MonitorNudgeRunView,
   violation: Pick<MonitorViolation, 'type'>,
   agentStatus: AgentLiveStatus,
 ): boolean {

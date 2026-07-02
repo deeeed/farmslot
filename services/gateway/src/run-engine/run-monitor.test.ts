@@ -4,12 +4,23 @@ import test from 'node:test';
 import {
   bindSignalToMonitorContext,
   isWorkerSignalFreshForRun,
+  type MonitorNudgeRunView,
   runHasOpenHumanGate,
   shouldHoldForInteractivePrComplete,
   shouldHoldForMissingTerminalSignal,
   shouldSkipMonitorNudge,
   signalMatchesMonitorContext,
 } from './run-monitor.js';
+
+function devRunView(overrides: Partial<MonitorNudgeRunView> = {}): MonitorNudgeRunView {
+  return {
+    flowType: 'dev',
+    status: 'monitoring',
+    steps: [],
+    decisions: [],
+    ...overrides,
+  };
+}
 
 test('isWorkerSignalFreshForRun rejects terminal signals from an earlier monitor attempt', () => {
   const run = {
@@ -157,62 +168,41 @@ test('runHasOpenHumanGate detects active publication gate and unresolved decisio
       status: 'blocked',
       steps: [{ name: 'human-gate', status: 'running' }],
       decisions: [],
-    } as any),
+    }),
     true,
   );
   assert.equal(
     runHasOpenHumanGate({
       status: 'blocked',
       steps: [{ name: 'monitor', status: 'done' }],
-      decisions: [{ type: 'engine_human_gate', resolvedAt: undefined }],
-    } as any),
+      decisions: [{ type: 'engine_human_gate' }],
+    }),
     true,
   );
   assert.equal(
     runHasOpenHumanGate({
-      status: 'running',
+      status: 'monitoring',
       steps: [{ name: 'monitor', status: 'running' }],
       decisions: [],
-    } as any),
+    }),
     false,
   );
 });
 
 test('shouldSkipMonitorNudge suppresses human-gate and live-worker violations', () => {
-  const blockedGate = {
-    flowType: 'dev',
+  const blockedGate = devRunView({
     status: 'blocked',
     steps: [{ name: 'human-gate', status: 'running' }],
     decisions: [{ type: 'engine_human_gate' }],
-  } as any;
+  });
 
   assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'stuck' }, 'idle'), true);
   assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'waiting' }, 'working'), true);
 
-  assert.equal(
-    shouldSkipMonitorNudge(
-      { flowType: 'dev', status: 'running', steps: [], decisions: [] } as any,
-      { type: 'stuck' },
-      'working',
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSkipMonitorNudge(
-      { flowType: 'dev', status: 'running', steps: [], decisions: [] } as any,
-      { type: 'waiting' },
-      'working',
-    ),
-    true,
-  );
-  assert.equal(
-    shouldSkipMonitorNudge(
-      { flowType: 'dev', status: 'running', steps: [], decisions: [] } as any,
-      { type: 'stuck' },
-      'idle',
-    ),
-    false,
-  );
+  const activeWorker = devRunView();
+  assert.equal(shouldSkipMonitorNudge(activeWorker, { type: 'stuck' }, 'working'), true);
+  assert.equal(shouldSkipMonitorNudge(activeWorker, { type: 'waiting' }, 'working'), true);
+  assert.equal(shouldSkipMonitorNudge(activeWorker, { type: 'stuck' }, 'idle'), false);
 });
 
 test('shouldHoldForInteractivePrComplete only gates interactive PR-complete handoff runs', () => {
