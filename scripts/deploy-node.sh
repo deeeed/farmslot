@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-node.sh — Deploy/update farmslot node to any fleet machine
-# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip]
+# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--instance dev|prod]
 #
 # Supports:
 #   macOS local  (runner-local) — launchd LaunchAgent
@@ -9,14 +9,61 @@
 #
 # Same command for install and update. Rsyncs code and restarts the service.
 #
+# Instances: a machine can run a prod node and a dev node side by side —
+# distinct install dir, service name, gateway URL, and IPC state. Default
+# instance is "prod" (identical to the original single-instance behavior).
+# Select the other with --instance dev or FARMSLOT_NODE_INSTANCE=dev.
+#
 # One-time prerequisites:
 #   macOS: node installed + Screen Recording permission for `node` binary
 #   Linux: node installed + loginctl enable-linger (for user services without login)
 
 set -euo pipefail
 
-MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip]}"
+INSTANCE="${FARMSLOT_NODE_INSTANCE:-prod}"
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --instance)
+      INSTANCE="${2:?--instance requires a value (dev|prod)}"
+      shift 2
+      ;;
+    --instance=*)
+      INSTANCE="${1#--instance=}"
+      shift
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${ARGS[@]}"
+
+MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--instance dev|prod]}"
 GATEWAY_IP="${2:-}"
+
+# --- Per-instance configuration (dev + prod coexist on the same machine) ---
+# Single source of truth for everything that must not collide between a prod
+# node and a dev node on the same box: install dir, service name, gateway
+# port, and IPC socket. Prod is byte-identical to the pre-instance defaults.
+case "$INSTANCE" in
+  prod)
+    INSTANCE_SUFFIX=""
+    LAUNCHD_LABEL_SUFFIX=""
+    DEFAULT_GATEWAY_PORT=7777
+    ;;
+  dev)
+    INSTANCE_SUFFIX="-dev"
+    LAUNCHD_LABEL_SUFFIX=".dev"
+    DEFAULT_GATEWAY_PORT=7801
+    ;;
+  *)
+    echo "[deploy] ERROR: --instance must be 'dev' or 'prod' (got '$INSTANCE')" >&2
+    exit 1
+    ;;
+esac
+GATEWAY_PORT="${GATEWAY_PORT:-$DEFAULT_GATEWAY_PORT}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -105,7 +152,16 @@ REMOTE_OS=$(run uname -s)
 
 # --- Resolve paths ---
 REMOTE_HOME=$(run 'echo $HOME')
-REMOTE_DIR="$REMOTE_HOME/farmslot-node"
+REMOTE_DIR="$REMOTE_HOME/farmslot-node${INSTANCE_SUFFIX}"
+REMOTE_UID=$(run 'id -u')
+
+# Identity the deployed node reports to the gateway, and the IPC socket its
+# screen-control server binds. Both default (in services/node/src) to values
+# that don't vary by instance — MACHINE_NAME is the raw machine name, and
+# SCREEN_CONTROL_SOCKET is keyed only by uid — so two instances on the same
+# box would collide (same fleet identity, same socket file) without this.
+NODE_MACHINE_NAME="${MACHINE}${INSTANCE_SUFFIX}"
+SCREEN_CONTROL_SOCKET_PATH="/tmp/farmslot-screen-control-${REMOTE_UID}${INSTANCE_SUFFIX}.sock"
 
 if [[ -z "$GATEWAY_IP" ]]; then
   if [[ "$IS_LOCAL" == true ]]; then
@@ -121,7 +177,7 @@ if [[ -z "$GATEWAY_IP" ]]; then
     fi
   fi
 fi
-echo "[deploy] target=$MACHINE os=$REMOTE_OS gateway=ws://$GATEWAY_IP:7777"
+echo "[deploy] target=$MACHINE instance=$INSTANCE os=$REMOTE_OS gateway=ws://$GATEWAY_IP:$GATEWAY_PORT dir=$REMOTE_DIR"
 
 NODE_DETECT='
 source ~/.zshrc 2>/dev/null || true
@@ -186,6 +242,28 @@ systemd_auth_env_lines() {
   elif [[ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]]; then
     printf 'Environment="FARMSLOT_GATEWAY_PASSWORD=%s"
 ' "$(printf '%s' "$FARMSLOT_GATEWAY_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  fi
+}
+
+# Non-prod-only env: keeps the dev instance's home dir and screen-control IPC
+# socket from colliding with prod's when both run on the same machine. Prod
+# stays unset here, so services/node falls back to its original defaults
+# unchanged (~/.farmslot, /tmp/farmslot-screen-control-<uid>.sock).
+launchd_instance_env_xml() {
+  if [[ -n "$INSTANCE_SUFFIX" ]]; then
+    printf '        <key>FARMSLOT_HOME</key>
+        <string>%s</string>
+        <key>SCREEN_CONTROL_SOCKET</key>
+        <string>%s</string>
+' "$(printf '%s' "$REMOTE_HOME/.farmslot${INSTANCE_SUFFIX}" | xml_escape)" "$(printf '%s' "$SCREEN_CONTROL_SOCKET_PATH" | xml_escape)"
+  fi
+}
+
+systemd_instance_env_lines() {
+  if [[ -n "$INSTANCE_SUFFIX" ]]; then
+    printf 'Environment="FARMSLOT_HOME=%s"
+Environment="SCREEN_CONTROL_SOCKET=%s"
+' "$REMOTE_HOME/.farmslot${INSTANCE_SUFFIX}" "$SCREEN_CONTROL_SOCKET_PATH"
   fi
 }
 
@@ -313,7 +391,7 @@ done <<< "$FARMSLOT_DEPS"
 # --- Install service (platform-specific) ---
 
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
-  PLIST_NAME="com.farmslot.node"
+  PLIST_NAME="com.farmslot.node${LAUNCHD_LABEL_SUFFIX}"
   PLIST_REL="Library/LaunchAgents/${PLIST_NAME}.plist"
 
   echo "[deploy] installing launchd service..."
@@ -336,12 +414,12 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
     <key>EnvironmentVariables</key>
     <dict>
         <key>GATEWAY_URL</key>
-        <string>ws://${GATEWAY_IP}:7777</string>
+        <string>ws://${GATEWAY_IP}:${GATEWAY_PORT}</string>
         <key>MACHINE_NAME</key>
-        <string>${MACHINE}</string>
+        <string>${NODE_MACHINE_NAME}</string>
         <key>CAPTURE_HELPER_PATH</key>
         <string>${CAPTURE_HELPER_REMOTE}</string>
-$(launchd_auth_env_xml)        <key>PATH</key>
+$(launchd_auth_env_xml)$(launchd_instance_env_xml)        <key>PATH</key>
         <string>${REMOTE_DIR}/node_modules/.bin:${NODE_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin</string>
     </dict>
     <key>WorkingDirectory</key>
@@ -366,7 +444,7 @@ PLIST
   run "launchctl unload ~/$PLIST_REL 2>/dev/null; launchctl load ~/$PLIST_REL"
   sleep 2
   echo "[deploy] verifying..."
-  run "launchctl list | grep farmslot || echo 'WARNING: service not running'"
+  run "launchctl list | grep $PLIST_NAME || echo 'WARNING: service not running'"
   echo ""
   echo "[deploy] done."
   echo "  Logs:   tail -f $REMOTE_DIR/node.log"
@@ -378,23 +456,24 @@ PLIST
   echo "    $CAPTURE_HELPER_REMOTE doctor --open-permissions"
 
 elif [[ "$REMOTE_OS" == "Linux" ]]; then
-  UNIT_NAME="farmslot-node"
+  UNIT_NAME="farmslot-node${INSTANCE_SUFFIX}"
   UNIT_DIR=".config/systemd/user"
 
   echo "[deploy] installing systemd user service..."
   run "mkdir -p ~/$UNIT_DIR && cat > ~/$UNIT_DIR/${UNIT_NAME}.service" << UNIT
 [Unit]
-Description=Farmslot Node (${MACHINE})
+Description=Farmslot Node (${MACHINE}, ${INSTANCE})
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=${REMOTE_DIR}
-Environment=GATEWAY_URL=ws://${GATEWAY_IP}:7777
-Environment=MACHINE_NAME=${MACHINE}
+Environment=GATEWAY_URL=ws://${GATEWAY_IP}:${GATEWAY_PORT}
+Environment=MACHINE_NAME=${NODE_MACHINE_NAME}
 Environment=PATH=${NODE_DIR}:/usr/local/bin:/usr/bin:/bin
 $(systemd_auth_env_lines)
+$(systemd_instance_env_lines)
 Environment=HOME=${REMOTE_HOME}
 ExecStart=${NODE_PATH} --require ${REMOTE_DIR}/node_modules/tsx/dist/preflight.cjs --import file://${REMOTE_DIR}/node_modules/tsx/dist/loader.mjs ${REMOTE_DIR}/src/index.ts
 Restart=always
@@ -422,4 +501,8 @@ else
   exit 1
 fi
 
-echo "  Update: bash scripts/deploy-node.sh $MACHINE"
+if [[ "$INSTANCE" == "prod" ]]; then
+  echo "  Update: bash scripts/deploy-node.sh $MACHINE"
+else
+  echo "  Update: bash scripts/deploy-node.sh $MACHINE --instance $INSTANCE"
+fi
