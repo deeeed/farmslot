@@ -566,6 +566,10 @@ step_cli() {
   # Positional-arg sh -c: $CLONE is passed as "$1", never embedded in the
   # command string, so any path (quotes, spaces) survives intact.
   run_step "yarn install (workspace)" sh -c 'cd "$1" && yarn install' _ "$CLONE"
+  # @farmslot/protocol ships from dist/ (gitignored) and is a runtime dependency
+  # of the CLI + recipe-harness — build it first so the CLI can resolve it after
+  # a fresh clone (otherwise: ERR_MODULE_NOT_FOUND @farmslot/protocol/dist/...).
+  run_step "build protocol" sh -c 'cd "$1" && yarn workspace @farmslot/protocol build' _ "$CLONE"
   run_step "build recipe-harness" sh -c 'cd "$1" && yarn workspace @farmslot/recipe-harness build' _ "$CLONE"
   if [ -n "${FARMSLOT_MINIMAL:-}" ]; then
     echo "  dashboard build skipped (FARMSLOT_MINIMAL) — build later: yarn --cwd ${CLONE}/apps/command-center/ui build"
