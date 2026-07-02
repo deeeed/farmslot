@@ -153,6 +153,8 @@ export function setRunFlags(
     warmRecovery?: true;
     nudgeReuse?: true;
     freshReuse?: true;
+    /** Opt-in integrate-main during review-pr prepare (merge commit, soft-fail). */
+    mergeMain?: true;
   },
 ): void {
   const run = getRun(runId);
@@ -162,9 +164,15 @@ export function setRunFlags(
     engineState: { ...(run.engineState ?? {}), flags: { ...currentFlags, ...flags } },
   });
 }
-function getRunFlags(
-  runId: string,
-): { skipPrepare?: true; warmRecovery?: true; nudgeReuse?: true; freshReuse?: true } | undefined {
+function getRunFlags(runId: string):
+  | {
+      skipPrepare?: true;
+      warmRecovery?: true;
+      nudgeReuse?: true;
+      freshReuse?: true;
+      mergeMain?: true;
+    }
+  | undefined {
   const flags = getRun(runId)?.engineState?.flags;
   if (!flags) return undefined;
   return {
@@ -172,6 +180,7 @@ function getRunFlags(
     ...(flags.warmRecovery ? { warmRecovery: true as const } : {}),
     ...(flags.nudgeReuse ? { nudgeReuse: true as const } : {}),
     ...(flags.freshReuse ? { freshReuse: true as const } : {}),
+    ...(flags.mergeMain ? { mergeMain: true as const } : {}),
   };
 }
 // Partial I/O stash — steps store their partial inputs/outputs before throwing,

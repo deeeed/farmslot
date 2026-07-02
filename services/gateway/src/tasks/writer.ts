@@ -748,6 +748,12 @@ export async function writeTaskFile(
     vars.PR_BODY = ticket.description || '';
     vars.REVIEW_TIER = run.reviewTier || 'standard';
     vars.RECIPE_STRATEGY = opts?.extraVars?.RECIPE_STRATEGY ?? '';
+    const integration = ticket.prIntegration;
+    vars.PR_MERGEABLE = integration?.mergeable ?? 'UNKNOWN';
+    vars.PR_MERGE_STATE = integration?.mergeStateStatus ?? 'UNKNOWN';
+    vars.PR_INTEGRATION_NOTE =
+      integration?.note ??
+      'GitHub merge state not fetched — review the PR diff; comment on merge readiness if relevant.';
   }
 
   // pr-complete pre-fetches GitHub comments so {{COMMENT_SUMMARY}} + {{HAS_RECIPE}}

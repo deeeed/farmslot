@@ -89,8 +89,9 @@ import {
   detectLinkedWorktree,
   isSlotIdleBranch,
   remoteBranchRefspec,
-  resolveMergeMainStrategy,
+  resolvePrepareMergeMainStrategy,
   resolveSlotTrackingBranchFromProject,
+  shouldSoftFailPrepareIntegration,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
 
@@ -928,48 +929,87 @@ async function slotPrepareInner(
     }
   }
 
-  // 2c. Merge main
+  // 2c. Merge main (opt-in only for review-pr; worker flows use explicit mergeMain)
   if (mergeMain && branch) {
-    const mergeStrategy = resolveMergeMainStrategy(
+    const mergeStrategy = resolvePrepareMergeMainStrategy(
       projectJson,
+      params.flowType,
       params.mergeMainStrategy as 'merge' | 'rebase' | undefined,
     );
+    const softFailIntegration = shouldSoftFailPrepareIntegration(params.flowType);
     const linkedWorktree = await detectLinkedWorktree(vars);
-    if (mergeStrategy === 'rebase') {
-      step('merge', `Rebasing ${branch} onto origin/${defaultBranch}...`);
+    const resetToOriginBranch = async (detail: string) => {
       await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+        `cd ${shellQuote(vars.remoteRepo)} && git checkout ${shellQuote(branch)} 2>/dev/null && git reset --hard ${shellQuote(`origin/${branch}`)} 2>/dev/null`,
       );
+      step('merge', detail);
+    };
+    step('merge', `Fetching origin/${defaultBranch} before integrate-main...`);
+    const fetchDefaultR = await execOnSlot(
+      vars,
+      `cd ${shellQuote(vars.remoteRepo)} && git fetch origin ${shellQuote(remoteBranchRefspec(defaultBranch))}`,
+    );
+    if (fetchDefaultR.exitCode !== 0) {
+      const fetchErr =
+        fetchDefaultR.stderr.slice(-200) || fetchDefaultR.stdout.slice(-200) || 'unknown error';
+      if (softFailIntegration) {
+        await resetToOriginBranch(
+          `Fetch origin/${defaultBranch} failed — reviewing branch at origin/${branch} instead (${fetchErr})`,
+        );
+      } else {
+        throw new Error(
+          `git fetch origin ${defaultBranch} failed on ${vars.slotId} (${vars.remoteRepo}): ${fetchErr}`,
+        );
+      }
+    } else if (mergeStrategy === 'rebase') {
+      step('merge', `Rebasing ${branch} onto origin/${defaultBranch}...`);
       const rebaseR = await execOnSlot(
         vars,
         `cd ${shellQuote(vars.remoteRepo)} && git rebase ${shellQuote(`origin/${defaultBranch}`)} 2>&1`,
       );
-      if (
+      const rebaseConflict =
         rebaseR.exitCode !== 0 ||
-        /CONFLICT|could not apply|patch failed/i.test(rebaseR.stdout + rebaseR.stderr)
-      ) {
+        /CONFLICT|could not apply|patch failed/i.test(rebaseR.stdout + rebaseR.stderr);
+      if (rebaseConflict) {
         await execOnSlot(
           vars,
           `cd ${shellQuote(vars.remoteRepo)} && git rebase --abort 2>/dev/null`,
         );
-        throw new Error(`Rebase conflict — PR author must rebase/merge ${defaultBranch}`);
+        if (softFailIntegration) {
+          await resetToOriginBranch(
+            `Rebase onto origin/${defaultBranch} conflicted — reviewing branch at origin/${branch} instead`,
+          );
+        } else {
+          throw new Error(`Rebase conflict — PR author must rebase/merge ${defaultBranch}`);
+        }
+      } else {
+        step('merge', `Rebased ${branch} onto origin/${defaultBranch}`);
       }
-      step('merge', `Rebased ${branch} onto origin/${defaultBranch}`);
     } else {
-      step('merge', `Merging ${defaultBranch}...`);
+      step('merge', `Merging origin/${defaultBranch}...`);
       const mergeR = await execOnSlot(
         vars,
-        `cd ${shellQuote(vars.remoteRepo)} && git merge ${defaultBranch} --no-edit 2>&1`,
+        `cd ${shellQuote(vars.remoteRepo)} && git merge ${shellQuote(`origin/${defaultBranch}`)} --no-edit 2>&1`,
       );
-      if (/CONFLICT|merge failed|Automatic merge failed/i.exec(mergeR.stdout)) {
+      const mergeConflict = /CONFLICT|merge failed|Automatic merge failed/i.test(
+        mergeR.stdout + mergeR.stderr,
+      );
+      if (mergeConflict) {
         const abortCmd = linkedWorktree
           ? `cd ${shellQuote(vars.remoteRepo)} && git merge --abort 2>/dev/null`
           : `cd ${shellQuote(vars.remoteRepo)} && git merge --abort 2>/dev/null; git checkout ${defaultBranch} 2>/dev/null`;
         await execOnSlot(vars, abortCmd);
-        throw new Error(`Merge conflict — PR author must rebase/merge ${defaultBranch}`);
+        if (softFailIntegration) {
+          await resetToOriginBranch(
+            `Merge origin/${defaultBranch} conflicted — reviewing branch at origin/${branch} instead`,
+          );
+        } else {
+          throw new Error(`Merge conflict — PR author must rebase/merge ${defaultBranch}`);
+        }
+      } else {
+        step('merge', `Merged origin/${defaultBranch} into ${branch}`);
       }
-      step('merge', `Merged ${defaultBranch} into ${branch}`);
     }
   }
 

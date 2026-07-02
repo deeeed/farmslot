@@ -206,26 +206,6 @@ function snapshotSlot(slotId: string): SlotActionSnapshot | undefined {
   };
 }
 
-// Slot's last flow type. Hits on the slot.prepare confirm path. The two
-// fast paths (currentFlowType, then currentRunId → run lookup) cover every
-// live slot; the run-list scan only fires when both are absent (e.g. a
-// freshly-recycled slot with no current binding). Single-pass max-by
-// createdAt keeps that fallback O(n) instead of O(n log n).
-function readLastFlowTypeForSlot(slotId: string): string | null {
-  const slot = getSlot(slotId);
-  if (slot?.currentFlowType) return slot.currentFlowType;
-  if (slot?.currentRunId) {
-    const run = getRun(slot.currentRunId);
-    if (run?.flowType) return run.flowType;
-  }
-  let latest: Run | undefined;
-  for (const run of getAllRuns()) {
-    if (run.slotId !== slotId) continue;
-    if (!latest || latest.createdAt < run.createdAt) latest = run;
-  }
-  return latest?.flowType ?? null;
-}
-
 function logChatActionRegister(action: StoredChatAction): void {
   console.log(
     `[chat-actions] register actionId=${action.actionId} sessionId=${action.sessionId} type=${action.type}`,
@@ -619,15 +599,6 @@ async function assertCurrentPreconditions(action: StoredChatAction): Promise<Act
       );
     }
     assertSlotActionSnapshot(action, slot);
-    const lastFlowType = readLastFlowTypeForSlot(slotId);
-    if (lastFlowType === 'review-pr') {
-      const err = new ChatActionRejectError(
-        'precondition-fail',
-        `Action precondition failed: slot ${slotId} last flow was review-pr; explicit mergeMain required`,
-      );
-      (err as Error & { code?: string }).code = 'RequiresExplicitMergeMain';
-      throw err;
-    }
     return {};
   }
 
@@ -764,8 +735,7 @@ async function executeStoredAction(
 
   if (action.type === 'slot.prepare') {
     // {slotId}-only payload — server resolves default branch internally and never
-    // accepts mergeMain from Co-Pilot (review-pr slots are rejected upstream in
-    // assertCurrentPreconditions with RequiresExplicitMergeMain).
+    // accepts mergeMain from Co-Pilot (operator uses CLI/run flags for opt-in integrate-main).
     await slotPrepare({ slotId: String(action.params.slotId) }, emit);
     return { slotId: String(action.params.slotId) };
   }

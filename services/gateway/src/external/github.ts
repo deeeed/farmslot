@@ -76,6 +76,8 @@ export async function fetchGitHubPR(
   baseSha: string;
   headSha: string;
   number: number;
+  mergeable?: string | null;
+  mergeStateStatus?: string | null;
 }> {
   const match = prRef.match(/^(?:([^#]+)#)?(\d+)$/);
   if (!match) {
@@ -91,6 +93,24 @@ export async function fetchGitHubPR(
 
   const result = await ghRequest(['api', `repos/${repo}/pulls/${number}`], opts);
   const pr = JSON.parse(result.stdout) as GitHubPR;
+  let mergeable: string | null = null;
+  let mergeStateStatus: string | null = null;
+  try {
+    const viewResult = await ghRequest(
+      ['pr', 'view', number, '--repo', repo, '--json', 'mergeable,mergeStateStatus'],
+      opts,
+    );
+    const view = JSON.parse(viewResult.stdout) as {
+      mergeable?: string | null;
+      mergeStateStatus?: string | null;
+    };
+    mergeable = view.mergeable ?? null;
+    mergeStateStatus = view.mergeStateStatus ?? null;
+  } catch (err) {
+    console.warn(
+      `[github] merge state fetch for ${repo}#${number} failed (non-fatal): ${(err as Error).message}`,
+    );
+  }
   return {
     branch: pr.head.ref,
     title: pr.title,
@@ -103,6 +123,8 @@ export async function fetchGitHubPR(
     baseSha: pr.base.sha,
     headSha: pr.head.sha,
     number: pr.number,
+    mergeable,
+    mergeStateStatus,
   };
 }
 

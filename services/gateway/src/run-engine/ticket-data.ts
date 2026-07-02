@@ -1,4 +1,10 @@
-import type { FlowType, LinkedTicket, Run, RunTicketData } from '@farmslot/protocol';
+import type {
+  FlowType,
+  LinkedTicket,
+  PrIntegrationStatus,
+  Run,
+  RunTicketData,
+} from '@farmslot/protocol';
 
 import type { RawProjectJson } from '../core/config.js';
 import { fetchGitHubIssue, fetchGitHubPR } from '../external/github.js';
@@ -20,6 +26,28 @@ export function detectFlowTypeMismatch(flowType: FlowType, issueType: string): s
     // review-pr and pr-complete don't have a ticket type constraint
   }
   return null;
+}
+
+function buildPrIntegrationNote(
+  mergeable?: string | null,
+  mergeStateStatus?: string | null,
+): PrIntegrationStatus {
+  const parts: string[] = [];
+  if (mergeable) parts.push(`mergeable=${mergeable}`);
+  if (mergeStateStatus) parts.push(`mergeStateStatus=${mergeStateStatus}`);
+  let note = parts.length > 0 ? parts.join(', ') : 'GitHub merge state unknown';
+  if (mergeable === 'CONFLICTING') {
+    note += ' — author must resolve merge conflicts before merge';
+  } else if (mergeStateStatus === 'BEHIND') {
+    note += ' — branch is behind base; author may need to update before merge';
+  } else if (mergeStateStatus === 'BLOCKED') {
+    note += ' — merge blocked (often CI or branch protection); review code independently';
+  }
+  return {
+    ...(mergeable ? { mergeable } : {}),
+    ...(mergeStateStatus ? { mergeStateStatus } : {}),
+    note,
+  };
 }
 
 export async function fetchPRData(runId: string): Promise<void> {
@@ -49,6 +77,7 @@ export async function fetchPRData(runId: string): Promise<void> {
     stepsToReproduce: [],
     screenshots: [],
     labels: [],
+    prIntegration: buildPrIntegrationNote(prData.mergeable, prData.mergeStateStatus),
   };
 
   // Extract ALL Jira keys referenced in the PR body (deduped, first-occurrence order).
