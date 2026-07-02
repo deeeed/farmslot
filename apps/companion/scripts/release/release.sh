@@ -12,6 +12,7 @@ SKIP_BUILD=0
 SKIP_UPDATE=0
 SUBMIT=0
 LOCAL_BUILD=0
+CUT_RELEASE=0
 COMMAND_COUNT=0
 
 usage() {
@@ -26,6 +27,7 @@ Options:
   --message <text>       EAS Update message
   --skip-build           Do not run EAS Build
   --skip-update          Do not run EAS Update
+  --cut-release          Regenerate companion release proposal from farmslot root
   --submit               Submit latest matching build after build/update plan
   --local                Use local build for development profiles only
   --execute              Actually run the mutating commands
@@ -51,6 +53,8 @@ while [[ "$#" -gt 0 ]]; do
       SKIP_BUILD=1; shift ;;
     --skip-update)
       SKIP_UPDATE=1; shift ;;
+    --cut-release)
+      CUT_RELEASE=1; shift ;;
     --submit)
       SUBMIT=1; shift ;;
     --local)
@@ -102,6 +106,14 @@ run_cmd() {
     "$@"
   fi
 }
+
+REPO_ROOT="$(cd "${APP_DIR}/../.." && pwd)"
+
+if [[ "${CUT_RELEASE}" -eq 1 ]]; then
+  run_cmd node "${REPO_ROOT}/scripts/release/curate-changelog.mjs" --group companion --out .release-cut/proposal.json
+  echo "[release] Review ${REPO_ROOT}/.release-cut/proposal.json, then run:"
+  echo "[release]   yarn release:cut --group companion --from-proposal .release-cut/proposal.json --execute"
+fi
 
 cd "${APP_DIR}"
 echo "[release] Variant: ${VARIANT}"

@@ -120,6 +120,9 @@ apps/docs/build/
 # Private promotion/presentation material lives outside this publicable repo.
 presentation/
 
+# Local release-cut proposals (reviewed before --execute)
+.release-cut/
+
 # Package build output
 packages/*/dist/
 services/*/dist/

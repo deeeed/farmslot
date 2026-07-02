@@ -1,6 +1,4 @@
-import releaseNotesJson from './generated/release-notes.json';
-
-declare const __FARMSLOT_APP_VERSION__: string;
+import releaseNotesJson from '../generated/release-notes.json';
 
 export interface ReleaseNotesPayload {
   version: string;
@@ -8,19 +6,13 @@ export interface ReleaseNotesPayload {
   items: string[];
 }
 
-/** Semver from `@farmslot/command-center-ui` package.json (injected at build time). */
-export const COMMAND_CENTER_APP_VERSION =
-  typeof __FARMSLOT_APP_VERSION__ !== 'undefined' ? __FARMSLOT_APP_VERSION__ : 'dev';
+const parsedNotes = releaseNotesJson as ReleaseNotesPayload;
 
-const releaseNotesSource = releaseNotesJson as ReleaseNotesPayload;
-
-export const COMMAND_CENTER_RELEASE_NOTES: ReleaseNotesPayload = {
-  version: releaseNotesSource.version ?? COMMAND_CENTER_APP_VERSION,
-  date: releaseNotesSource.date ?? null,
-  items: Array.isArray(releaseNotesSource.items)
-    ? releaseNotesSource.items.filter(
-        (item): item is string => typeof item === 'string' && item.length > 0,
-      )
+export const COMPANION_RELEASE_NOTES: ReleaseNotesPayload = {
+  version: parsedNotes.version ?? '0.0.0',
+  date: parsedNotes.date ?? null,
+  items: Array.isArray(parsedNotes.items)
+    ? parsedNotes.items.filter((item) => typeof item === 'string' && item.length > 0)
     : [],
 };
 

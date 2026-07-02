@@ -6,11 +6,12 @@
 // We run a real `git fetch` so the answer is current, but cache it: the UI polls
 // this on every (re)connect and a fetch is a network round-trip.
 import { execFile as execFileCb } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type {
+  GatewayReleaseNotes,
   GatewayStatusParams,
   GatewayStatusResult,
   GatewayUpdateStatus,
@@ -29,10 +30,26 @@ const GIT_TIMEOUT_MS = 8_000;
 const FETCH_TIMEOUT_MS = 20_000;
 
 const GATEWAY_VERSION = readGatewayVersion();
+const GATEWAY_RELEASE_NOTES = readGatewayReleaseNotes();
 
 let cached: GatewayUpdateStatus | null = null;
 let cachedAtMs = 0;
 let inFlight: Promise<GatewayUpdateStatus> | null = null;
+
+function readGatewayReleaseNotes(): GatewayReleaseNotes | undefined {
+  try {
+    const notesPath = path.join(farmslotRoot, 'services', 'gateway', 'release-notes.json');
+    if (!existsSync(notesPath)) return undefined;
+    const payload = JSON.parse(readFileSync(notesPath, 'utf-8')) as GatewayReleaseNotes;
+    const items = Array.isArray(payload.items)
+      ? payload.items.filter((item): item is string => typeof item === 'string' && item.length > 0)
+      : [];
+    if (!payload?.version || items.length === 0) return undefined;
+    return { version: payload.version, date: payload.date ?? null, items };
+  } catch {
+    return undefined;
+  }
+}
 
 function readGatewayVersion(): string {
   // Runs at import time. The version is contextual metadata, not the update
@@ -190,5 +207,9 @@ async function computeUpdateStatus(force: boolean): Promise<GatewayUpdateStatus>
 
 export async function gatewayStatus(params?: GatewayStatusParams): Promise<GatewayStatusResult> {
   const update = await computeUpdateStatus(params?.refresh === true);
-  return { version: GATEWAY_VERSION, update };
+  return {
+    version: GATEWAY_VERSION,
+    update,
+    releaseNotes: GATEWAY_RELEASE_NOTES,
+  };
 }

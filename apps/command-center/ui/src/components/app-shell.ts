@@ -26,6 +26,7 @@ import './shared/summary-bar.js';
 import './shared/global-filter-bar.js';
 import './shared/hydrating-placeholder.js';
 import './shared/update-banner.js';
+import './shared/whats-new-modal.js';
 import './fleet-map/fleet-canvas.js';
 import './terminal/split-view.js';
 import './dispatch/dispatch-wizard.js';
@@ -49,7 +50,11 @@ import './chat/chat-panel.js';
 import './config/config-panel.js';
 import './doctor/gateway-doctor.js';
 
-import { COMMAND_CENTER_APP_VERSION } from '../build-info.js';
+import {
+  COMMAND_CENTER_APP_VERSION,
+  COMMAND_CENTER_RELEASE_NOTES,
+  isVersionNewer,
+} from '../build-info.js';
 import type { ConnectionState } from '../gateway-client.js';
 import { gateway } from '../gateway-client.js';
 import {
@@ -151,6 +156,7 @@ const NAV_ITEMS: NavItem[] = [
 const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
 // Remembers which remote SHA the operator dismissed, so a newer update re-shows.
 const UPDATE_DISMISS_KEY = 'farmslot:update-banner-dismissed-sha';
+const WHATS_NEW_SEEN_VERSION_KEY = 'farmslot:whats-new-seen-version';
 // Re-poll gateway freshness hourly; the gateway itself caches the git fetch.
 const UPDATE_POLL_MS = 60 * 60_000;
 const ALPHA_COPY = 'Alpha surface — early, under-tested, and subject to change.';
@@ -181,6 +187,7 @@ export class FarmApp extends LitElement {
   @state() private versionDetailsStatus: GatewayStatusResult | null = null;
   @state() private versionDetailsNodes: NodesListResult | null = null;
   @state() private versionDetailsCopied = false;
+  @state() private whatsNewOpen = false;
   @state() private updateDismissedSha: string | null = localStorage.getItem(UPDATE_DISMISS_KEY);
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
@@ -264,6 +271,7 @@ export class FarmApp extends LitElement {
     }, UPDATE_POLL_MS);
     this.syncState(getState());
     this.unsub = subscribe((s) => this.syncState(s));
+    this.maybeOpenWhatsNew();
   }
 
   disconnectedCallback() {
@@ -328,6 +336,29 @@ export class FarmApp extends LitElement {
       .status=${s}
       @dismiss=${() => this.dismissUpdateBanner()}
     ></update-banner>`;
+  }
+
+  private maybeOpenWhatsNew(force = false) {
+    const notes = COMMAND_CENTER_RELEASE_NOTES;
+    if (!notes.items.length) return;
+    const seenVersion = localStorage.getItem(WHATS_NEW_SEEN_VERSION_KEY);
+    if (!force && !isVersionNewer(notes.version, seenVersion)) return;
+    this.whatsNewOpen = true;
+  }
+
+  private dismissWhatsNew() {
+    localStorage.setItem(WHATS_NEW_SEEN_VERSION_KEY, COMMAND_CENTER_RELEASE_NOTES.version);
+    this.whatsNewOpen = false;
+  }
+
+  private renderWhatsNewModal() {
+    return html`
+      <whats-new-modal
+        .open=${this.whatsNewOpen}
+        .notes=${COMMAND_CENTER_RELEASE_NOTES}
+        @dismiss=${() => this.dismissWhatsNew()}
+      ></whats-new-modal>
+    `;
   }
 
   private dismissUpdateBanner() {
@@ -441,6 +472,16 @@ export class FarmApp extends LitElement {
               ${this.versionDetailsCopied ? 'Copied' : 'Copy diagnostics JSON'}
             </button>
             <a href="#doctor" @click=${() => (this.versionDetailsOpen = false)}>Open Doctor</a>
+            ${COMMAND_CENTER_RELEASE_NOTES.items.length
+              ? html`<button
+                  @click=${() => {
+                    this.versionDetailsOpen = false;
+                    this.maybeOpenWhatsNew(true);
+                  }}
+                >
+                  What's new
+                </button>`
+              : nothing}
           </div>
           ${this.versionDetailsError
             ? html`<div class="fa-version-error">${this.versionDetailsError}</div>`
@@ -1376,7 +1417,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
 
   render() {
     if (this.connection === 'auth_required' && this.route !== 'onboarding') {
-      return this.renderAuthScreen();
+      return html`${this.renderAuthScreen()} ${this.renderWhatsNewModal()}`;
     }
     const activeRunCount = activeSidebarRuns(this.runs, Number.MAX_SAFE_INTEGER).length;
     if (this.route === 'dev' && this.devCaptureMode) {
@@ -1482,7 +1523,7 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           if (!this.chatOpen) this.chatUnread++;
         }}
       ></chat-panel>
-      ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()}
+      ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()} ${this.renderWhatsNewModal()}
     `;
   }
 }
