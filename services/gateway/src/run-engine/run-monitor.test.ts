@@ -184,7 +184,7 @@ test('shouldSkipMonitorNudge suppresses human-gate and live-worker violations', 
     status: 'blocked',
     steps: [{ name: 'human-gate', status: 'running' }],
     decisions: [{ type: 'engine_human_gate' }],
-  } as const;
+  } as any;
 
   assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'stuck' }, 'idle'), true);
   assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'waiting' }, 'working'), true);
