@@ -5,14 +5,6 @@ export const DEFAULT_SIDEBAR_WIDTH = 260;
 export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 420;
 
-// Stopgap until real feature-flagging exists: alpha nav items (see NAV_ITEMS
-// `maturity: 'alpha'`) are hidden and route-blocked unless this is 'true'.
-export const ALPHA_FEATURES_STORAGE_KEY = 'farmslot:alpha-features';
-
-export function isAlphaFeaturesEnabled(storedValue: string | null): boolean {
-  return storedValue === 'true';
-}
-
 const SIDEBAR_ACTIVE_STATUSES = new Set<RunStatus>([
   'created',
   'grading',

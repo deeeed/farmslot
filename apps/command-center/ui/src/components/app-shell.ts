@@ -71,6 +71,7 @@ import {
   isFullyHydrated,
   subscribe,
 } from '../state.js';
+import { ALPHA_FEATURES_CHANGED, getAlphaFeaturesEnabled } from '../utils/alpha-features.js';
 import {
   listPinnedSlots as listPinnedSlotPreferences,
   PINNED_SLOTS_CHANGED,
@@ -81,10 +82,8 @@ import {
 import type { ChatPanel } from './chat/chat-panel.js';
 import {
   activeSidebarRuns,
-  ALPHA_FEATURES_STORAGE_KEY,
   clampSidebarWidth,
   DEFAULT_SIDEBAR_WIDTH,
-  isAlphaFeaturesEnabled,
   isSidebarActiveRun,
   parseStoredSidebarWidth,
   SIDEBAR_WIDTH_PREF_KEY,
@@ -197,9 +196,7 @@ export class FarmApp extends LitElement {
   @state() private versionDetailsCopied = false;
   @state() private whatsNewOpen = false;
   @state() private updateDismissedSha: string | null = localStorage.getItem(UPDATE_DISMISS_KEY);
-  @state() private alphaEnabled = isAlphaFeaturesEnabled(
-    localStorage.getItem(ALPHA_FEATURES_STORAGE_KEY),
-  );
+  @state() private alphaEnabled = getAlphaFeaturesEnabled();
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
   @state() private runs: Run[] = [];
@@ -259,6 +256,7 @@ export class FarmApp extends LitElement {
     window.addEventListener('pointerup', this.onSidebarResizeEnd);
     window.addEventListener('copilot-prompt-request', this.onCopilotPromptRequest as EventListener);
     window.addEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
+    window.addEventListener(ALPHA_FEATURES_CHANGED, this.onAlphaFeaturesChanged as EventListener);
     this.pinnedSlots = listPinnedSlotPreferences();
     void this.refreshTmuxWorkers();
     this.tmuxWorkerRefreshTimer = setInterval(() => {
@@ -296,6 +294,10 @@ export class FarmApp extends LitElement {
       this.onCopilotPromptRequest as EventListener,
     );
     window.removeEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
+    window.removeEventListener(
+      ALPHA_FEATURES_CHANGED,
+      this.onAlphaFeaturesChanged as EventListener,
+    );
     if (this.tmuxWorkerRefreshTimer) clearInterval(this.tmuxWorkerRefreshTimer);
     if (this.updatePollTimer) clearInterval(this.updatePollTimer);
     this.unsubTmuxWorkerUpdated?.();
@@ -306,6 +308,13 @@ export class FarmApp extends LitElement {
   private onPinnedSlotsChanged = () => {
     this.pinnedSlots = listPinnedSlotPreferences();
     void this.refreshTmuxWorkers();
+  };
+
+  private onAlphaFeaturesChanged = (event: CustomEvent<{ enabled: boolean }>) => {
+    this.alphaEnabled = event.detail.enabled;
+    // Re-run the route guard: if the operator just hid alpha while sitting
+    // on an alpha route, bounce them to fleet immediately, not on next nav.
+    this.parseHash();
   };
 
   private async refreshTmuxWorkers(): Promise<void> {

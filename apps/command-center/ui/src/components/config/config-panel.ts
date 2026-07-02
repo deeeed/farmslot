@@ -22,6 +22,7 @@ import '../flow-graph/flow-graph.js';
 
 import { gateway } from '../../gateway-client.js';
 import { getState, type GlobalFilters, subscribe } from '../../state.js';
+import { getAlphaFeaturesEnabled, setAlphaFeaturesEnabled } from '../../utils/alpha-features.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 
 import {
@@ -76,6 +77,7 @@ export class ConfigPanel extends LitElement {
   @state() private _projectLearnings = new Map<string, ProjectLearningsDocument>();
   @state() private _projectLearningsLoading = false;
   @state() private _projectLearningsError = '';
+  @state() private _alphaFeaturesEnabled = getAlphaFeaturesEnabled();
 
   // Light DOM so Monaco CSS works
   protected override createRenderRoot() {
@@ -408,6 +410,18 @@ export class ConfigPanel extends LitElement {
           >
             <span class="cp-item-icon">~</span>
             <span class="cp-item-label">LLM</span>
+          </button>
+        </div>
+        <div class="cp-sidebar-section">
+          <button
+            class="cp-sidebar-item ${this._selection?.kind === 'settings' ? 'active' : ''}"
+            @click=${() => {
+              this._selection = { kind: 'settings' };
+              this._updateHash();
+            }}
+          >
+            <span class="cp-item-icon">s</span>
+            <span class="cp-item-label">Settings</span>
           </button>
         </div>
       </div>
@@ -898,10 +912,44 @@ export class ConfigPanel extends LitElement {
     </div>`;
   }
 
+  private renderSettingsContent() {
+    return html`
+      <div class="cp-section">
+        <div class="cp-section-title">Alpha Features</div>
+        <div class="cp-auto-card">
+          <div class="cp-auto-card-head">
+            <div>
+              <div class="cp-auto-title">Show alpha features</div>
+              <div class="cp-auto-subtitle">
+                Gateway Intelligence and Evals are alpha — early, under-tested, and subject to
+                change. They're hidden from the nav and their routes redirect to Fleet by default;
+                flip this on to reveal and use them.
+              </div>
+            </div>
+            <label class="cp-switch-row">
+              <input
+                type="checkbox"
+                .checked=${this._alphaFeaturesEnabled}
+                @change=${(e: Event) => {
+                  const enabled = (e.target as HTMLInputElement).checked;
+                  this._alphaFeaturesEnabled = enabled;
+                  setAlphaFeaturesEnabled(enabled);
+                }}
+              />
+              Enabled
+            </label>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   private renderContent() {
     if (!this._selection) return html`<div class="cp-empty">Select a pool or project</div>`;
 
     if (this._selection.kind === 'llm') return html`<llm-config></llm-config>`;
+
+    if (this._selection.kind === 'settings') return this.renderSettingsContent();
 
     if (this._selection.kind === 'flows') return this.renderFlowsContent();
 

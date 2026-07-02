@@ -22,6 +22,7 @@ test('parseConfigPanelRoute preserves pool/project/llm and bare pool routes', ()
     selection: { kind: 'pool', machine: 'runner-a' },
   });
   assert.deepEqual(parseConfigPanelRoute('llm'), { selection: { kind: 'llm' } });
+  assert.deepEqual(parseConfigPanelRoute('settings'), { selection: { kind: 'settings' } });
   assert.deepEqual(parseConfigPanelRoute('runner-a'), {
     selection: { kind: 'pool', machine: 'runner-a' },
   });
@@ -62,4 +63,5 @@ test('formatConfigPanelRoute mirrors component hash subpaths', () => {
     'project/mobile',
   );
   assert.equal(formatConfigPanelRoute({ kind: 'llm' }, flowsState), 'llm');
+  assert.equal(formatConfigPanelRoute({ kind: 'settings' }, flowsState), 'settings');
 });

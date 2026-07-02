@@ -6,7 +6,6 @@ import type { Run, RunStep } from '@farmslot/protocol';
 import {
   activeSidebarRuns,
   clampSidebarWidth,
-  isAlphaFeaturesEnabled,
   parseStoredSidebarWidth,
   sidebarPreviewSteps,
   sidebarRunRoute,
@@ -84,13 +83,6 @@ test('sidebar summary prefers run summary then active step detail', () => {
     'CDP pass',
   );
   assert.equal(sidebarRunSummary(run('c', 'monitoring', { branch: 'fix/demo' })), 'fix/demo');
-});
-
-test('alpha features flag only enables on the exact opt-in value', () => {
-  assert.equal(isAlphaFeaturesEnabled(null), false);
-  assert.equal(isAlphaFeaturesEnabled('false'), false);
-  assert.equal(isAlphaFeaturesEnabled('1'), false);
-  assert.equal(isAlphaFeaturesEnabled('true'), true);
 });
 
 test('sidebar preview steps centers around the running step', () => {
