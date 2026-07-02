@@ -7,6 +7,10 @@ import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
 import { slotRelease } from './release.js';
 
+// These tests resolve the committed demo pool's slots (demo-work-1), which the
+// loaders hide unless explicitly opted in.
+process.env.FARMSLOT_DEMO_POOL = '1';
+
 async function cleanupRun(runId: string): Promise<void> {
   if (!getRun(runId)) return;
   updateRun(runId, { status: 'done', completedAt: new Date().toISOString() });
