@@ -801,6 +801,22 @@ describe('grok runner', () => {
     assert.equal(runnerPaneLooksIdle(coldStart.split('\n'), 'grok'), false);
   });
 
+  it('still detects Grok MCP status rendered above transcript history', () => {
+    const pane = `
+  feat/demo worktree ~/dev/farmslot-wt/farmslot-3 │ ⠼ MCP (14/15) │ 10K / 512K │ +1 │
+
+
+     #1 Follow the checklist in TASK.md.
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'grok')?.kind, 'mcp-init');
+    assert.equal(runnerPaneLooksIdle(pane.split('\n'), 'grok'), false);
+  });
+
   it('recognizes Grok buffered prompts and submitted progress', () => {
     const message = 'Reply exactly OK and do not edit files.';
     const buffered = `

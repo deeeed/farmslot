@@ -20,15 +20,22 @@ function detectGrokMcpInit(pane: string): string | null {
   return total > 0 && ready < total ? 'mcp-init' : null;
 }
 
-function grokLiveStatusTail(pane: string): string {
+function grokLiveStatusText(pane: string): string {
   const lines = pane.split('\n');
-  let start = 0;
+  let firstTranscript = -1;
+  let afterLastTranscript = 0;
   for (let i = 0; i < lines.length; i += 1) {
     if (/^\s*#\d+\s/.test(lines[i] ?? '')) {
-      start = i + 1;
+      if (firstTranscript === -1) firstTranscript = i;
+      afterLastTranscript = i + 1;
     }
   }
-  return lines.slice(start).join('\n');
+  if (firstTranscript === -1) return pane;
+
+  const liveHeader = lines
+    .slice(0, firstTranscript)
+    .filter((line) => /\bmcp\s*\(/i.test(line) || /starting session/i.test(line));
+  return [...liveHeader, ...lines.slice(afterLastTranscript)].join('\n');
 }
 
 function detectAuthRequired(pane: string): boolean {
@@ -70,7 +77,7 @@ function detectLaunchBlocker(
     return { kind: 'project-directory', autoAction: 'grok-select-current-project' };
   }
   if (runner === 'grok') {
-    const liveStatus = grokLiveStatusTail(pane);
+    const liveStatus = grokLiveStatusText(pane);
     const mcpInit = detectGrokMcpInit(liveStatus);
     if (mcpInit) return { kind: mcpInit, autoAction: null };
     if (/starting session/i.test(liveStatus)) return { kind: 'cold-start', autoAction: null };
