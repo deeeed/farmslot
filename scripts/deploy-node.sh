@@ -90,7 +90,7 @@ resolve_farmslot_deps() {
   resolver="$(mktemp "${TMPDIR:-/tmp}/deploy-node-resolve-XXXXXX.mjs")"
   trap 'rm -f "$resolver"' RETURN
   cat > "$resolver" <<'RESOLVER'
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 
 const [, , repoRoot] = process.argv;
@@ -125,8 +125,20 @@ while (queue.length > 0) {
   }
 }
 
+// A package "ships from dist/" if it declares a build script AND its main/exports
+// point into dist/ (e.g. protocol). Source-only packages (e.g. capabilities, whose
+// main/exports point straight at src/*.ts) never need a build. dist/ is gitignored,
+// so on a fresh checkout — or after protocol changes without a rebuild — it can be
+// missing even though the workspace resolves fine locally via tsx path aliasing.
 for (const name of seen) {
-  process.stdout.write(`${name}\t${dirByName.get(name)}\n`);
+  const dir = dirByName.get(name);
+  const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
+  const hasBuildScript = Boolean(pkg.scripts?.build);
+  const mainIsDist = typeof pkg.main === 'string' && pkg.main.startsWith('dist/');
+  const exportsIsDist = pkg.exports ? JSON.stringify(pkg.exports).includes('"dist/') : false;
+  const distMissing = !existsSync(path.join(packagesDir, dir, 'dist'));
+  const needsBuild = hasBuildScript && (mainIsDist || exportsIsDist) && distMissing;
+  process.stdout.write(`${name}\t${dir}\t${needsBuild ? '1' : '0'}\n`);
 }
 RESOLVER
   node "$resolver" "$REPO_ROOT"
@@ -134,6 +146,24 @@ RESOLVER
 
 FARMSLOT_DEPS="$(resolve_farmslot_deps)"
 echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 | tr '\n' ' ')"
+
+# --- Build any @farmslot/* dep that ships from dist/ but hasn't been built ---
+# Without this, a package with no dist/ (fresh checkout, or edited-but-unbuilt
+# protocol) "deploys" successfully — the rsync step below just has nothing to
+# copy — and the node crashes at runtime with the exact ERR_MODULE_NOT_FOUND
+# this script exists to prevent. Fail loudly here instead of shipping it.
+while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
+  [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
+  echo "[deploy] building $pkg_name (dist/ missing)..."
+  if ! (cd "$REPO_ROOT" && yarn workspace "$pkg_name" build); then
+    echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a distless package" >&2
+    exit 1
+  fi
+  if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
+    echo "[deploy] ERROR: $pkg_name build reported success but dist/ is still missing — refusing to deploy" >&2
+    exit 1
+  fi
+done <<< "$FARMSLOT_DEPS"
 
 # --- Detect local vs remote ---
 LOCAL_HOSTNAME=$(hostname -s)
@@ -375,7 +405,7 @@ fi
 
 # --- rsync @farmslot/* workspace packages AFTER yarn install (yarn wipes unmanaged node_modules) ---
 echo "[deploy] syncing workspace packages..."
-while IFS=$'\t' read -r pkg_name pkg_dir; do
+while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   [[ -z "$pkg_name" ]] && continue
   PKG_SRC="$PACKAGES_DIR/$pkg_dir"
   PKG_DEST="$REMOTE_DIR/node_modules/$pkg_name"
