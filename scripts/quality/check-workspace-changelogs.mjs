@@ -56,23 +56,33 @@ function gitLines(args) {
     .filter(Boolean);
 }
 
-function resolveMergeBase() {
+function readGithubEvent() {
   const eventPath = process.env.GITHUB_EVENT_PATH;
-  if (eventPath && existsSync(eventPath)) {
-    try {
-      const event = JSON.parse(readFileSync(eventPath, 'utf8'));
-      const baseSha = event.pull_request?.base?.sha;
-      if (baseSha) return baseSha;
-    } catch {
-      // fall through
-    }
+  if (!eventPath || !existsSync(eventPath)) return null;
+  try {
+    return JSON.parse(readFileSync(eventPath, 'utf8'));
+  } catch {
+    return null;
   }
+}
+
+function resolveMergeBase() {
+  const event = readGithubEvent();
+  const baseSha = event?.pull_request?.base?.sha;
+  if (baseSha) return baseSha;
   const originMain = gitLines(['rev-parse', '--verify', 'origin/main'])[0];
   if (originMain) {
     const mergeBase = gitLines(['merge-base', 'HEAD', originMain])[0];
     if (mergeBase) return mergeBase;
   }
   return gitLines(['rev-parse', 'HEAD~1'])[0] ?? 'HEAD~1';
+}
+
+function resolveHeadSha() {
+  const event = readGithubEvent();
+  const headSha = event?.pull_request?.head?.sha;
+  if (headSha) return headSha;
+  return 'HEAD';
 }
 
 function checkStructure() {
@@ -107,8 +117,11 @@ function readChangelogAtRef(ref, changelogPath) {
   return result.stdout;
 }
 
-function newUnreleasedBullets(mergeBase, changelogPath) {
-  const headContent = readFileSync(path.join(repoRoot, changelogPath), 'utf8');
+function newUnreleasedBullets(mergeBase, headSha, changelogPath) {
+  const headContent =
+    headSha === 'HEAD'
+      ? readFileSync(path.join(repoRoot, changelogPath), 'utf8')
+      : readChangelogAtRef(headSha, changelogPath);
   const baseContent = readChangelogAtRef(mergeBase, changelogPath);
   const headBullets = unreleasedMeaningfulBullets(headContent);
   const baseBullets = new Set(unreleasedMeaningfulBullets(baseContent));
@@ -117,7 +130,8 @@ function newUnreleasedBullets(mergeBase, changelogPath) {
 
 function checkPrDiff() {
   const mergeBase = resolveMergeBase();
-  const changedFiles = gitLines(['diff', '--name-only', `${mergeBase}...HEAD`]);
+  const headSha = resolveHeadSha();
+  const changedFiles = gitLines(['diff', '--name-only', `${mergeBase}...${headSha}`]);
   if (changedFiles.length === 0) return;
 
   const releaseOnly = changedFiles.every(
@@ -131,7 +145,7 @@ function checkPrDiff() {
       file.startsWith('.agents/skills/fs-release-cut/') ||
       file === 'docs/operations/release-process.md',
   );
-  const commitSubjects = gitLines(['log', '--pretty=%s', `${mergeBase}..HEAD`]);
+  const commitSubjects = gitLines(['log', '--pretty=%s', `${mergeBase}..${headSha}`]);
   if (releaseOnly || commitSubjects.every((subject) => /^chore\(release\):/i.test(subject))) return;
 
   const touchedWorkspaces = new Map();
@@ -160,7 +174,7 @@ function checkPrDiff() {
       );
       continue;
     }
-    const bullets = newUnreleasedBullets(mergeBase, changelogPath);
+    const bullets = newUnreleasedBullets(mergeBase, headSha, changelogPath);
     if (bullets.length === 0) {
       fail(
         `${changelogPath} must add at least one non-placeholder bullet under ## Unreleased for this PR.`,
