@@ -815,7 +815,10 @@ export function runnerPaneShowsPreSendDuplicateInstruction(
     if (runnerPaneHasDeferredLaunchBlocker(pane, runner)) return false;
     return false;
   }
-  return runnerPaneShowsSubmittedInstruction(pane, message, runnerId);
+  return (
+    runnerPaneShowsCurrentInteractiveProgress(pane, runner) &&
+    runnerPaneContainsInstruction(pane, message)
+  );
 }
 
 function paneLineLooksShellPrompt(line: string): boolean {

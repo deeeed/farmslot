@@ -816,6 +816,34 @@ describe('grok runner', () => {
 `;
     assert.equal(runnerPaneShowsPreSendDuplicateInstruction(running, message, 'grok'), true);
   });
+
+  it('does not treat Claude transcript history alone as a pre-send duplicate', () => {
+    const message = 'Follow the checklist in TASK.md and mark each step done.';
+    const transcriptOnly = `
+❯ Follow the checklist in TASK.md and mark each step done.
+
+✻ Worked for 2m 10s
+
+────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────
+`;
+    assert.equal(runnerPaneShowsSubmittedInstruction(transcriptOnly, message, 'claude'), true);
+    assert.equal(
+      runnerPaneShowsPreSendDuplicateInstruction(transcriptOnly, message, 'claude'),
+      false,
+    );
+  });
+
+  it('treats Claude progress with the instruction as a pre-send duplicate', () => {
+    const message = 'Follow the checklist in TASK.md and mark each step done.';
+    const running = `
+❯ Follow the checklist in TASK.md and mark each step done.
+
+✻ Working… (esc to interrupt)
+`;
+    assert.equal(runnerPaneShowsPreSendDuplicateInstruction(running, message, 'claude'), true);
+  });
 });
 
 describe('custom runner fallback behavior', () => {
