@@ -1,18 +1,8 @@
-import { execFileSync } from 'node:child_process';
-import path from 'node:path';
-
-import { farmslotRoot } from '../core/config.js';
-
 function normalizeRunnerId(runnerId?: string | null): string {
   return String(runnerId ?? '')
     .trim()
     .toLowerCase();
 }
-
-const PANE_STATE_SCRIPT = path.join(
-  farmslotRoot,
-  '.agents/skills/tmux-model-driver/scripts/pane-state.sh',
-);
 
 export interface PaneStateScriptResult {
   state: string;
@@ -22,53 +12,72 @@ export interface PaneStateScriptResult {
   autoAction: string | null;
 }
 
-const UNAVAILABLE_PANE_STATE: PaneStateScriptResult = {
-  state: 'unknown',
-  phase: 'idle',
-  confidence: 'low',
-  launchBlocker: null,
-  autoAction: null,
-};
+function detectGrokMcpInit(pane: string): string | null {
+  const match = pane.match(/\bmcp\s*\(\s*(\d+)\s*\/\s*(\d+)\s*\)/i);
+  if (!match) return null;
+  const ready = Number(match[1]);
+  const total = Number(match[2]);
+  return total > 0 && ready < total ? 'mcp-init' : null;
+}
 
-/** Invoke tmux-model-driver pane-state.sh against captured pane text (single source of truth). */
+function detectAuthRequired(pane: string): boolean {
+  for (const line of pane.split('\n')) {
+    const normalized = line.trim().toLowerCase();
+    if (!normalized || /\bmcp\b/.test(normalized)) continue;
+    if (
+      /\b(login|log in|authenticate|authentication|auth)\b/.test(normalized) &&
+      /\b(expired|required|failed|please|needed|unauthorized|not authenticated|not logged in)\b/.test(
+        normalized,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function detectLaunchBlocker(
+  pane: string,
+  runnerId?: string | null,
+): { kind: string | null; autoAction: string | null } {
+  const runner = normalizeRunnerId(runnerId);
+  const lower = pane.toLowerCase();
+  if (
+    runner === 'cursor' &&
+    lower.includes('[a] trust this workspace') &&
+    lower.includes('[q] quit') &&
+    lower.includes('use arrow keys to navigate')
+  ) {
+    return { kind: 'workspace-trust', autoAction: 'cursor-trust-workspace' };
+  }
+  if (
+    runner === 'grok' &&
+    lower.includes('run grok build in a project directory') &&
+    lower.includes('(current)') &&
+    lower.includes('enter:submit')
+  ) {
+    return { kind: 'project-directory', autoAction: 'grok-select-current-project' };
+  }
+  if (runner === 'grok') {
+    const mcpInit = detectGrokMcpInit(pane);
+    if (mcpInit) return { kind: mcpInit, autoAction: null };
+    if (/starting session/i.test(pane)) return { kind: 'cold-start', autoAction: null };
+  }
+  if (runner && detectAuthRequired(pane)) return { kind: 'auth-required', autoAction: null };
+  return { kind: null, autoAction: null };
+}
+
+/** Classify captured pane text in-process so gateway polling never blocks on child processes. */
 export function readPaneStateFromCapture(
   pane: string,
   runnerId?: string | null,
 ): PaneStateScriptResult {
-  const lines = pane.split('\n').filter((line) => line.trim());
-  const env = {
-    ...process.env,
-    TMUX_PANE_STATE_CURRENT_COMMAND: '',
-    TMUX_PANE_STATE_CURRENT_PATH: '',
-    TMUX_PANE_STATE_SESSION_NAME: 'capture',
-    TMUX_PANE_STATE_PANE_TITLE: '',
-    TMUX_PANE_STATE_PANE_PID: '',
-    TMUX_PANE_STATE_TAIL_CAPTURE: pane,
-    TMUX_PANE_STATE_LAST_LINE: lines.at(-1) ?? '',
+  const blocker = detectLaunchBlocker(pane, runnerId);
+  return {
+    state: 'unknown',
+    phase: blocker.kind ? 'launch-blocker' : 'idle',
+    confidence: 'low',
+    launchBlocker: blocker.kind,
+    autoAction: blocker.autoAction,
   };
-  try {
-    const out = execFileSync('bash', [PANE_STATE_SCRIPT, '%0', normalizeRunnerId(runnerId)], {
-      env,
-      encoding: 'utf8',
-    });
-    const data = JSON.parse(out) as {
-      state?: string;
-      phase?: string;
-      confidence?: string | number;
-      launch_blocker?: string | null;
-      auto_action?: string | null;
-    };
-    return {
-      state: data.state ?? 'unknown',
-      phase: data.phase ?? 'idle',
-      confidence: String(data.confidence ?? 'low'),
-      launchBlocker: data.launch_blocker ?? null,
-      autoAction: data.auto_action ?? null,
-    };
-  } catch (error) {
-    console.warn(
-      `[pane-state] pane-state.sh unavailable, falling back to regex heuristics: ${(error as Error).message}`,
-    );
-    return UNAVAILABLE_PANE_STATE;
-  }
 }

@@ -525,20 +525,38 @@ export class DispatchWizard extends DispatchWizardState {
     const state = getState();
     const projectFilters = state.globalFilters.projects;
     const machineFilters = state.globalFilters.machines;
-    this._comparisonPickerFilterKey = `${[...projectFilters].sort().join(',')}|${[...machineFilters].sort().join(',')}`;
+    const filterKey = `${[...projectFilters].sort().join(',')}|${[...machineFilters].sort().join(',')}`;
+    this._comparisonPickerFilterKey = filterKey;
+    const fetchGen = ++this._comparisonPickerFetchGen;
     this._comparisonPickerLoading = true;
     try {
-      this._comparisonPickerRuns = await lookupRecentRunsForComparisonPicker({
+      const runs = await lookupRecentRunsForComparisonPicker({
         mockMode: this.mockMode,
         stateRuns: this.mockMode && this.mockPriorRuns ? this.mockPriorRuns : (state.runs ?? []),
         projectFilters,
         machineFilters,
       });
+      if (
+        fetchGen === this._comparisonPickerFetchGen &&
+        this._comparisonPickerFilterKey === filterKey
+      ) {
+        this._comparisonPickerRuns = runs;
+      }
     } catch (err) {
       console.warn('[dispatch-wizard] comparison run picker failed', err);
-      this._comparisonPickerRuns = [];
+      if (
+        fetchGen === this._comparisonPickerFetchGen &&
+        this._comparisonPickerFilterKey === filterKey
+      ) {
+        this._comparisonPickerRuns = [];
+      }
     } finally {
-      this._comparisonPickerLoading = false;
+      if (
+        fetchGen === this._comparisonPickerFetchGen &&
+        this._comparisonPickerFilterKey === filterKey
+      ) {
+        this._comparisonPickerLoading = false;
+      }
     }
   }
 

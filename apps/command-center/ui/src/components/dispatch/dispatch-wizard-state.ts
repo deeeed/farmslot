@@ -123,6 +123,8 @@ export abstract class DispatchWizardState extends LitElement {
   _fetchGen = 0;
   /** Tracks global filter signature so an open comparison picker refreshes when filters flip. */
   _comparisonPickerFilterKey = '';
+  /** Monotonic picker lookup generation; stale async responses are ignored. */
+  _comparisonPickerFetchGen = 0;
   /** True once baseline runner/model were copied from parentRunId (picker or hydrate). */
   _comparisonParentEngineHydrated = false;
   /** Hash explicitly pinned runner/model — skip parent-engine hydrate. */
