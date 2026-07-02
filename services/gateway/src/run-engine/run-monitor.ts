@@ -694,7 +694,7 @@ export async function monitorRun(
 
       // 1. Check if worker is done — live tmux pgrep (not .farm-status.json which is stale for gateway-dispatched runs)
       const liveContext = currentMonitorContext();
-      const agentStatus = await checkAgentLive(
+      let agentStatus = await checkAgentLive(
         slotId,
         run.metrics.runner,
         runId,
@@ -742,6 +742,7 @@ export async function monitorRun(
           return { pollCount, exitReason, violations: allViolations, snapshots };
         }
         console.log(`[run-monitor] run ${runId.slice(0, 8)} — transient idle recovered to working`);
+        agentStatus = recoveredStatus;
       }
 
       // 2. Capture pane + detect violations
