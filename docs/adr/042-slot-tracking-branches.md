@@ -82,9 +82,10 @@ Add optional project-level default and per-prepare override:
 | `merge` (default) | `git merge origin/${defaultBranch} --no-edit`                             | abort merge; fail prepare (current `review-pr` behavior) |
 | `rebase`          | `git fetch origin ${defaultBranch} && git rebase origin/${defaultBranch}` | abort rebase; fail prepare                               |
 
-Flow policy unchanged from [`dispatch-lifecycle-steps.ts`](../../services/gateway/src/run-engine/dispatch-lifecycle-steps.ts):
+Flow policy from [`dispatch-lifecycle-steps.ts`](../../services/gateway/src/run-engine/dispatch-lifecycle-steps.ts):
 
-- `review-pr` — auto `mergeMain: true` in prepare (strategy from project config).
+- `review-pr` — **does not** auto-enable `mergeMain` (see 2026-07-02 addendum). Optional
+  `mergeMain: true` uses merge-only integration with soft-fail on conflict.
 - `pr-complete`, `merge-main` — worker owns integration; prepare does not auto-merge.
 - Other flows — `mergeMain` only when explicitly requested.
 
@@ -173,3 +174,39 @@ for `pr-complete` still mandated `git merge origin/main` on every run (see MetaM
 
 - Gateway auto-merge during prepare for `pr-complete` / `merge-main` (worker still owns integration).
 - Enforcing linear history on protected branches.
+
+---
+
+## Addendum: review-pr branch-as-is prepare (2026-07-02)
+
+**Status:** Accepted  
+**Relates to:** §4 `merge_main_strategy`, [ADR-024](024-run-lanes-and-run-family-model.md)
+
+### Context
+
+`review-pr` auto-enabled `mergeMain` in prepare and used project `merge_main_strategy`
+(often `rebase` on core farms). That blocked reviews when local rebase conflicted even
+though GitHub reported the PR mergeable. Review and worker integration are different jobs:
+reviewers read the PR as pushed; authors (or `pr-complete` / `merge-main` workers) resolve
+integration.
+
+### Decision
+
+1. **`review-pr` prepare does not auto-merge or auto-rebase.** Default: checkout
+   `origin/<branch>` only. Prepare never hard-fails because the author has not integrated
+   latest `main`.
+2. **Integration is informational in TASK.md** — `fetchPRData` records GitHub
+   `mergeable` / `mergeStateStatus` on `RunTicketData.prIntegration` for the reviewer to
+   comment on merge readiness.
+3. **Optional integrate-main** — operator may pass `mergeMain: true` on `slot.prepare` (or
+   a future run flag). For `review-pr`, integration always uses **merge commits** (never
+   rebase). On conflict: abort, reset to `origin/<branch>`, warn in prepare output, continue
+   review on branch-as-is.
+4. **Worker flows unchanged** — `pr-complete` / `merge-main` still own integration;
+   `merge_main_strategy: rebase` remains valid there via worker templates, not review prepare.
+
+### Consequences
+
+- Reviews no longer blocked by author rebase debt.
+- Slot worktrees may review slightly stale vs `main`; TASK.md carries explicit merge signals.
+- Local merge-for-review (opt-in) is disposable slot state — does not rewrite PR history.

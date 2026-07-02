@@ -772,6 +772,14 @@ export interface LinkedTicket {
   source: 'jira' | 'github';
 }
 
+/** GitHub merge/integration signals for review-pr TASK context (informational). */
+export interface PrIntegrationStatus {
+  mergeable?: string;
+  mergeStateStatus?: string;
+  /** Operator/worker-facing summary — not a prepare gate. */
+  note?: string;
+}
+
 export interface RunTicketData {
   source: 'jira' | 'github' | 'both' | 'manual';
   issueType?: string; // Jira issue type: Bug, Task, Story, etc.
@@ -792,6 +800,8 @@ export interface RunTicketData {
    * extra round-trips.
    */
   linkedTickets?: LinkedTicket[];
+  /** GitHub merge state for review-pr — surfaced in TASK.md, never blocks prepare. */
+  prIntegration?: PrIntegrationStatus;
 }
 
 export interface RunGrade {
@@ -1318,6 +1328,8 @@ export interface RunEngineState {
     warmRecovery?: boolean;
     nudgeReuse?: boolean;
     freshReuse?: boolean;
+    /** Opt-in integrate-main during review-pr prepare (merge commit, soft-fail on conflict). */
+    mergeMain?: boolean;
   };
   /** Monotonic replay generation counter; startRun bails if the run has been superseded. */
   generation?: number;

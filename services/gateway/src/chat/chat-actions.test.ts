@@ -814,34 +814,6 @@ await test('precondition-invalid confirmations are rejected', async () => {
   }
 });
 
-await test('slot.prepare rejects on review-pr flow without explicit mergeMain (RequiresExplicitMergeMain)', async () => {
-  setFakeSlot({
-    slot: 'mini-mm-1',
-    lifecycle: 'ready',
-    currentRunId: null,
-    currentFlowType: 'review-pr',
-  });
-  const [issued] = issueChatSuggestedActions(
-    'manual:test',
-    [{ type: 'slot.prepare', label: 'Prepare slot', params: { slotId: 'mini-mm-1' } }],
-    1_000,
-  );
-  try {
-    await confirm('manual:test', issued.actionId!, 1_001);
-    throw new Error('expected rejection');
-  } catch (err) {
-    const message = errorMessage(err);
-    assert(message.includes('explicit mergeMain required'), `unexpected message: ${message}`);
-    const reason = (err as { reason?: string }).reason;
-    assert(reason === 'precondition-fail', `expected reason=precondition-fail, got ${reason}`);
-    const code = (err as { code?: string }).code;
-    assert(
-      code === 'RequiresExplicitMergeMain',
-      `expected code=RequiresExplicitMergeMain, got ${code}`,
-    );
-  }
-});
-
 await test('slot.release rejects on slot lifecycle drift (snapshot-mismatch)', async () => {
   setFakeSlot({
     slot: 'mini-mm-1',

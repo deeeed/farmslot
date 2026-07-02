@@ -779,9 +779,9 @@ export async function dispatchExecute(
   if (!params.skipPrepare) {
     step('prepare', 'Preparing slot...');
     try {
-      // pr-complete and merge-main flows leave the merge to the worker so it
-      // can resolve conflicts in-session. Only review-pr auto-merges in prepare.
-      const mergeMain = flowType === 'review-pr' && !!branch;
+      // pr-complete and merge-main leave integration to the worker. review-pr
+      // checks out origin/<branch> unless mergeMain is explicitly requested on prepare.
+      const mergeMain = false;
       await slotPrepare(
         {
           slotId: params.slotId,

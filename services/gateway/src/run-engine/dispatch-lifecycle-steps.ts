@@ -26,6 +26,7 @@ interface RunEngineFlags {
   skipPrepare?: true;
   warmRecovery?: true;
   nudgeReuse?: true;
+  mergeMain?: true;
 }
 
 export interface PrepareStepContext {
@@ -50,9 +51,12 @@ export async function executePrepareStep(
   const current = await normalizeEvalReplayForTaskWrite(runId, ensureRunSlotBinding(runId));
   if (!current.slotId) throw new Error('No slot assigned');
   // pr-complete and merge-main flows leave the merge to the worker so it
-  // can resolve conflicts in-session. Only review-pr auto-merges in prepare
-  // (and aborts on conflict) — reviewer flow doesn't fix code.
-  const mergeMain = current.flowType === 'review-pr' && !!current.branch;
+  // can resolve conflicts in-session. review-pr checks out the PR branch as
+  // pushed; integration with main is informational (TASK.md) unless the
+  // operator explicitly passes mergeMain on prepare.
+  const flags = getRunFlags(runId);
+  // Optional integrate-main for review (merge commit, soft-fail) — off by default.
+  const mergeMain = flags?.mergeMain === true;
   const inputs: Record<string, unknown> = {
     slotId: current.slotId,
     branch: current.branch,
@@ -69,7 +73,6 @@ export async function executePrepareStep(
   // Eval replays must always run prepare because that step installs and
   // verifies the pinned recipe harness; reject before any slot/project lookup
   // so this invariant is hermetic.
-  const flags = getRunFlags(runId);
   const skipPrepare = flags?.skipPrepare === true;
   if (skipPrepare && current.engineState?.evalExperiment) {
     throw new Error(

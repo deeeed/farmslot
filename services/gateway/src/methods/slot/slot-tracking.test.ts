@@ -7,13 +7,17 @@ import {
   isLinkedGitWorktreeMarker,
   isSlotIdleBranch,
   resolveMergeMainStrategy,
+  resolvePrepareMergeMainStrategy,
   resolveSlotTrackingBranch,
   resolveSlotTrackingBranchFromProject,
+  shouldSoftFailPrepareIntegration,
   slotIdleResetStepDetail,
   worktreeBaseResetRef,
 } from './slot-tracking.js';
 
-function testSlotVars(overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | 'session'>): SlotVars {
+function testSlotVars(
+  overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | 'session'>,
+): SlotVars {
   return {
     machine: 'macwork',
     platform: 'macos',
@@ -75,11 +79,7 @@ test('resolveSlotTrackingBranchFromProject expands project.json templates via ga
 });
 
 test('resolveSlotTrackingBranch falls back to wt/session when template omitted', () => {
-  const branch = resolveSlotTrackingBranch(
-    {},
-    { session: 'ff-3', slotId: 'macwork-ff-3' },
-    true,
-  );
+  const branch = resolveSlotTrackingBranch({}, { session: 'ff-3', slotId: 'macwork-ff-3' }, true);
   assert.equal(branch, 'wt/ff-3');
 });
 
@@ -103,6 +103,19 @@ test('resolveMergeMainStrategy honors override then project config', () => {
   assert.equal(resolveMergeMainStrategy({}, 'rebase'), 'rebase');
   assert.equal(resolveMergeMainStrategy({ merge_main_strategy: 'rebase' }), 'rebase');
   assert.equal(resolveMergeMainStrategy({}), 'merge');
+});
+
+test('review-pr prepare integration policy', () => {
+  assert.equal(
+    resolvePrepareMergeMainStrategy({ merge_main_strategy: 'rebase' }, 'review-pr'),
+    'merge',
+  );
+  assert.equal(
+    resolvePrepareMergeMainStrategy({ merge_main_strategy: 'rebase' }, 'fix-bug'),
+    'rebase',
+  );
+  assert.equal(shouldSoftFailPrepareIntegration('review-pr'), true);
+  assert.equal(shouldSoftFailPrepareIntegration('fix-bug'), false);
 });
 
 test('slotIdleResetStepDetail describes linked worktree idle state', () => {

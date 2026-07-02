@@ -49,6 +49,21 @@ export function resolveMergeMainStrategy(
   return configured === 'rebase' ? 'rebase' : 'merge';
 }
 
+/** review-pr never rebases in prepare — optional integrate-main uses merge commits only. */
+export function resolvePrepareMergeMainStrategy(
+  projectJson: RawProjectJson,
+  flowType: string | undefined,
+  override?: MergeMainStrategy,
+): MergeMainStrategy {
+  if (flowType === 'review-pr') return 'merge';
+  return resolveMergeMainStrategy(projectJson, override);
+}
+
+/** review-pr prepare treats integration conflicts as warnings, not hard failures. */
+export function shouldSoftFailPrepareIntegration(flowType: string | undefined): boolean {
+  return flowType === 'review-pr';
+}
+
 function projectTrackingConfig(
   projectJson: RawProjectJson,
   defaultBranch: string,
