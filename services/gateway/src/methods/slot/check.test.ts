@@ -51,11 +51,14 @@ test('runHealthCheck ignores stdout from failed health commands', async (t) => {
 
 test('isOptionalFixtureAbsence tolerates optional entries and unresolved placeholders', () => {
   assert.equal(
-    isOptionalFixtureAbsence({ src: 'teams/blue/notes.md', optional: true }, 'teams/blue/notes.md'),
+    isOptionalFixtureAbsence(
+      { src: 'domains/blue/notes.md', optional: true },
+      'domains/blue/notes.md',
+    ),
     true,
   );
   assert.equal(
-    isOptionalFixtureAbsence({ src: 'teams/{{team}}/notes.md' }, 'teams/{{team}}/notes.md'),
+    isOptionalFixtureAbsence({ src: 'domains/{{domain}}/notes.md' }, 'domains/{{domain}}/notes.md'),
     true,
   );
   assert.equal(

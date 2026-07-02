@@ -13,8 +13,6 @@ import type {
 
 import { farmslotRoot, loadFleetStatus } from '../fleet/state.js';
 
-import { isWorkerMonitorPhase } from './worker-monitor-phase.js';
-
 const MONITOR_STATE_FILE = path.join(farmslotRoot, '.monitor_state.json');
 
 export type MonitorEventHandler = {
@@ -246,8 +244,7 @@ export function detectFleetMonitorViolations(
 ): MonitorViolation[] {
   const violations: MonitorViolation[] = [];
   for (const slot of fleet.slots) {
-    const workerMonitor = isWorkerMonitorPhase(slot);
-    const stuckActive = workerMonitor && slot.agent === 'no-tmux';
+    const stuckActive = slot.lifecycle === 'busy' && slot.agent === 'no-tmux';
     if (stuckActive) {
       maybeRecordViolation(
         notified,
@@ -261,14 +258,14 @@ export function detectFleetMonitorViolations(
       notified.delete(violationKey(slot.slot, 'stuck'));
     }
 
-    const idleActive = workerMonitor && slot.agent === 'idle';
+    const idleActive = slot.lifecycle === 'busy' && slot.agent === 'idle';
     if (idleActive) {
       maybeRecordViolation(
         notified,
         violations,
         slot,
         'idle',
-        `Slot ${slot.slot} monitor phase but agent is idle — may need attention`,
+        `Slot ${slot.slot} is "working" but agent is idle — may need attention`,
         now(),
       );
     } else {

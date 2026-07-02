@@ -817,7 +817,7 @@ export function resolveDispatchPreviewFromFleet(
             runner: resolvePreviewRunner(slotInfo),
             model: resolvePreviewModel(slotInfo),
             taskId: params.ticketOrPr,
-            ...(params.team ? { team: params.team } : {}),
+            ...(params.domain ? { domain: params.domain } : {}),
           },
         };
       }
@@ -858,7 +858,7 @@ export function resolveDispatchPreviewFromFleet(
       runner: resolvePreviewRunner(slotInfo),
       model: resolvePreviewModel(slotInfo),
       taskId: params.ticketOrPr,
-      ...(params.team ? { team: params.team } : {}),
+      ...(params.domain ? { domain: params.domain } : {}),
     },
   };
 }

@@ -40,7 +40,7 @@ export type TaskTemplateSelectionSource =
   | 'implicit-interactive-fix-bug'
   | 'implicit-interactive-dev'
   | 'implicit-interactive-pr-complete'
-  | 'implicit-team';
+  | 'implicit-domain';
 export type EvalPackageRole = 'reference' | 'candidate' | 'control' | 'challenger';
 export type ResultPackageStatus = 'draft' | 'final';
 export type EvalEvidenceState = 'present' | 'missing' | 'not_applicable' | 'failed';

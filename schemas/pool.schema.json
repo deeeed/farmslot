@@ -88,9 +88,9 @@
       "description": "Shell command to recycle app state (e.g., clear app data). Overrides project hooks.recycle when set.",
       "examples": ["bash scripts/reset-app.sh --device {adb_serial}"]
     },
-    "team": {
+    "domain": {
       "type": "string",
-      "description": "Default team overlay for dispatches from this machine. Slot-level team and task-level team override it; used for fixture compose (TEAM), {{team}} substitution, and team template variants.",
+      "description": "Default domain overlay for dispatches from this machine. Slot-level domain and task-level domain override it; used for fixture compose (DOMAIN), {{domain}} substitution, and domain template variants.",
       "examples": ["blue"]
     },
     "repo_url": {
@@ -245,9 +245,9 @@
           "description": "Default git branch for this slot. Used by prepare-slot.sh.",
           "examples": ["main"]
         },
-        "team": {
+        "domain": {
           "type": "string",
-          "description": "Default team overlay for this slot. Overrides machine-level 'team'; task-level team overrides both.",
+          "description": "Default domain overlay for this slot. Overrides machine-level 'domain'; task-level domain overrides both.",
           "examples": ["blue"]
         },
         "app": {

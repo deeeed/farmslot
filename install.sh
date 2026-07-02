@@ -25,7 +25,6 @@
 # Interactive installs (a real terminal) are prompted to confirm/customize the three
 # locations above; values pinned via env, and non-interactive (CI/piped) installs, stay silent.
 #   FARMSLOT_MINIMAL    set to skip the dashboard build + pair-your-phone step
-#   FARMSLOT_SKIP_COMPLETIONS  set to 1 to skip auto-installing shell completions
 #   FARMSLOT_PAIR       set to 1 to pair non-interactively (no prompt)
 #   FARMSLOT_NO_STAR_PROMPT  set to 1 to skip the GitHub star prompt
 #   FARMSLOT_AUTO_INSTALL  set to 1 to install missing common tools with Homebrew
@@ -567,10 +566,6 @@ step_cli() {
   # Positional-arg sh -c: $CLONE is passed as "$1", never embedded in the
   # command string, so any path (quotes, spaces) survives intact.
   run_step "yarn install (workspace)" sh -c 'cd "$1" && yarn install' _ "$CLONE"
-  # @farmslot/protocol ships from dist/ (gitignored) and is a runtime dependency
-  # of the CLI + recipe-harness — build it first so the CLI can resolve it after
-  # a fresh clone (otherwise: ERR_MODULE_NOT_FOUND @farmslot/protocol/dist/...).
-  run_step "build protocol" sh -c 'cd "$1" && yarn workspace @farmslot/protocol build' _ "$CLONE"
   run_step "build recipe-harness" sh -c 'cd "$1" && yarn workspace @farmslot/recipe-harness build' _ "$CLONE"
   if [ -n "${FARMSLOT_MINIMAL:-}" ]; then
     echo "  dashboard build skipped (FARMSLOT_MINIMAL) — build later: yarn --cwd ${CLONE}/apps/command-center/ui build"
@@ -588,22 +583,6 @@ step_cli() {
     *":${BIN_DIR}:"*) ;;
     *) offer_path_update "$BIN_DIR" ;;
   esac
-}
-
-# step_completions — install shell completions for the detected shell (the CLI
-# reads $SHELL itself; no shell arg is passed). Best-effort: a failure here must
-# never fail the overall install, so it warns with the manual fallback instead
-# of using run_step (which treats a non-zero exit as fatal).
-step_completions() {
-  case "${FARMSLOT_SKIP_COMPLETIONS:-}" in 1|true) return ;; esac
-  bold "── Shell completions ──"
-  local out
-  if out="$("$FARMSLOT_BIN" completion install 2>&1)"; then
-    green "  [OK] $(printf '%s' "$out" | head -1)"
-  else
-    yellow "  [WARN] could not install shell completion automatically"
-    echo "  fix: run manually — farmslot completion install"
-  fi
 }
 
 step_workspace() {
@@ -716,7 +695,6 @@ main() {
   step_capture_helper
   step_runners
   step_cli
-  step_completions
   step_workspace
   step_doctor
   step_star

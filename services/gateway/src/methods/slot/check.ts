@@ -212,7 +212,7 @@ async function checkRepo(vars: SlotVars): Promise<CheckStep> {
 /**
  * A missing fixture src is not a problem when the entry is marked optional or
  * its path still carries unresolved placeholders (e.g. a dispatch-scoped
- * `{{team}}` the slot cannot expand) — those entries only materialize for
+ * `{{domain}}` the slot cannot expand) — those entries only materialize for
  * deployments that provide them.
  */
 export function isOptionalFixtureAbsence(

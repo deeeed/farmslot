@@ -227,12 +227,6 @@ function classifyMonitorViolation(violation: MonitorViolation): {
   };
 }
 
-function isMonitorWorkerNudgeRun(run: Run): boolean {
-  if (run.status !== 'monitoring' && run.status !== 'self-reviewing') return false;
-  const stepName = currentStepName(run);
-  return stepName === PipelineSteps.MONITOR || stepName === PipelineSteps.SELF_REVIEW;
-}
-
 async function writeMonitorViolationRecommendation(violation: MonitorViolation): Promise<void> {
   if (
     violation.type !== 'stuck' &&
@@ -243,7 +237,6 @@ async function writeMonitorViolationRecommendation(violation: MonitorViolation):
     return;
   const run = findActiveRunForViolation(violation);
   if (!run) return;
-  if (!isMonitorWorkerNudgeRun(run)) return;
   const key = monitorViolationKey(run, violation);
   if (!rememberBounded(monitorViolationWritten, key)) return;
 
@@ -418,7 +411,7 @@ async function maybeDispatchFixtureRefresh(run: Run, action: IntelligenceAction)
       requestId: `auto-recovery-${action.id}`,
       flowType: run.flowType,
       app: run.app,
-      team: run.team,
+      domain: run.domain,
     },
     emitFn,
   );

@@ -504,7 +504,7 @@ export async function writeTaskFile(
     run.flowType,
     run.mode,
     run.taskTemplate,
-    run.team ?? slotVars.team,
+    run.domain ?? slotVars.domain,
   );
   const templateName = templateSelection.fileName;
   const templatePath = templateSelection.templatePath;

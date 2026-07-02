@@ -194,19 +194,19 @@ test('dispatch preview displays Cursor composer-2.5 instead of Claude default', 
   assert.equal(result.preview.model, DEFAULT_CURSOR_MODEL);
 });
 
-test('dispatch preview echoes the team overlay and omits it when unset', () => {
+test('dispatch preview echoes the domain overlay and omits it when unset', () => {
   const slots = [makeSlot({ lifecycle: 'ready', phase: null, branch: 'main' })];
-  const withTeam = resolveDispatchPreviewFromFleet(
-    { project: 'farmslot-farm', flowType: 'fix-bug', ticketOrPr: 'PROJ-1', team: 'blue' },
+  const withDomain = resolveDispatchPreviewFromFleet(
+    { project: 'farmslot-farm', flowType: 'fix-bug', ticketOrPr: 'PROJ-1', domain: 'blue' },
     slots,
   );
-  assert.equal(withTeam.preview.team, 'blue');
+  assert.equal(withDomain.preview.domain, 'blue');
 
-  const withoutTeam = resolveDispatchPreviewFromFleet(
+  const withoutDomain = resolveDispatchPreviewFromFleet(
     { project: 'farmslot-farm', flowType: 'fix-bug', ticketOrPr: 'PROJ-1' },
     slots,
   );
-  assert.equal('team' in withoutTeam.preview, false);
+  assert.equal('domain' in withoutDomain.preview, false);
 });
 
 test('flowTypeToKey ignores eval wrapper flow names', () => {

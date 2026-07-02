@@ -11,27 +11,27 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SLOT_ID=""
 
-# Shell-side mirror of TEAM_NAME_RE / isValidTeamName in @farmslot/protocol
-# (packages/protocol/src/contracts/runs.ts) — the single contract for team
+# Shell-side mirror of DOMAIN_NAME_RE / isValidDomainName in @farmslot/protocol
+# (packages/protocol/src/contracts/runs.ts) — the single contract for domain
 # names. The value lands in sed replacement text and in fixture paths, so
 # anything outside this allowlist (path separators, sed metacharacters,
 # quotes, spaces) must be rejected here, not sanitized downstream.
-TEAM_NAME_RE='^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$'
+DOMAIN_NAME_RE='^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --slot)      SLOT_ID="$2"; shift 2 ;;
     --flow-type) export FLOW_TYPE="$2"; shift 2 ;;
     --app)       export APP="$2"; shift 2 ;;
-    --team)
+    --domain)
       # bash [[ =~ ]] anchors ^/$ to the WHOLE string — grep (even -x) is
       # line-based, so a newline-embedded value like $'blue\nEVIL' would pass
       # on its first line and smuggle the rest into sed/paths.
-      if ! [[ "$2" =~ $TEAM_NAME_RE ]]; then
-        echo "FAIL: invalid --team '$2' — must be a lowercase slug (a-z, 0-9, '._-', no leading/trailing punctuation)" >&2
+      if ! [[ "$2" =~ $DOMAIN_NAME_RE ]]; then
+        echo "FAIL: invalid --domain '$2' — must be a lowercase slug (a-z, 0-9, '._-', no leading/trailing punctuation)" >&2
         exit 1
       fi
-      export TEAM="$2"; shift 2 ;;
+      export DOMAIN="$2"; shift 2 ;;
     *)           echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -333,8 +333,8 @@ else:
         -e "s|{{ARTIFACT_DIR}}|${ARTIFACT_DIR:-.task}|g" \
         -e "s|{{recipe_dir}}|${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}|g" \
         -e "s|{{RECIPE_DIR}}|${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}|g" \
-        -e "s|{{team}}|${TEAM:-}|g" \
-        -e "s|{{TEAM}}|${TEAM:-}|g" \
+        -e "s|{{domain}}|${DOMAIN:-}|g" \
+        -e "s|{{DOMAIN}}|${DOMAIN:-}|g" \
         {} +
     find "$STAGED_DIR" -name '*.bak' -delete
 
@@ -362,7 +362,7 @@ if [ -z "${SLOT_ID}" ]; then
   echo "  --slot <id>          Slot to sync fixtures for"
   echo "  --flow-type <type>   Flow type for compose variants (e.g. fix-bug, new-feature, review-pr, personal, default)"
   echo "  --app <path>         Project-specific app selector for template substitution"
-  echo "  --team <name>        Team overlay name for compose variants + {{team}} substitution"
+  echo "  --domain <name>      Domain overlay name for compose variants + {{domain}} substitution"
   exit 1
 fi
 

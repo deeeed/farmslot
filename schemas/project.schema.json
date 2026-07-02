@@ -1177,7 +1177,7 @@
         },
         "optional": {
           "type": "boolean",
-          "description": "Skip silently when the resolved src does not exist — for overlay fixtures (e.g. team files) that only some deployments provide.",
+          "description": "Skip silently when the resolved src does not exist — for overlay fixtures (e.g. domain files) that only some deployments provide.",
           "default": false
         },
         "vars": {

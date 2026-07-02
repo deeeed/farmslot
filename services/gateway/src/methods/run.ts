@@ -242,7 +242,7 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
       params.flowType,
       params.mode,
       params.taskTemplate,
-      params.team,
+      params.domain,
     ).catch((err) => {
       if (
         !params.taskTemplate &&

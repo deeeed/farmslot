@@ -57,6 +57,8 @@ Project-specific validation belongs in the project override. The Farmslot defaul
 
 A project can override any of these by adding a file with the same name. It can also provide variants such as `fix-bug-fast.md` or `review-pr-full.md`; the selected variant is rendered for that run without mutating the source template.
 
+A `<flow>-<domain>.md` variant (for example `fix-bug-perps.md`) is preferred automatically when a run carries a matching domain and the file exists — see [Domains](../reference/domains.md).
+
 ## Observable prompt shape
 
 The prompt format is intentionally simple markdown:
