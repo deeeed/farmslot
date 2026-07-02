@@ -81,8 +81,10 @@ import {
 import type { ChatPanel } from './chat/chat-panel.js';
 import {
   activeSidebarRuns,
+  ALPHA_FEATURES_STORAGE_KEY,
   clampSidebarWidth,
   DEFAULT_SIDEBAR_WIDTH,
+  isAlphaFeaturesEnabled,
   isSidebarActiveRun,
   parseStoredSidebarWidth,
   SIDEBAR_WIDTH_PREF_KEY,
@@ -147,11 +149,17 @@ const NAV_ITEMS: NavItem[] = [
   { route: 'runs', icon: '@', label: 'Runs' },
   { route: 'intelligence', icon: 'i', label: 'Intelligence', maturity: 'alpha' },
   { route: 'analytics', icon: '^', label: 'Analytics', maturity: 'alpha' },
-  { route: 'evals', icon: '$', label: 'Evals' },
+  { route: 'evals', icon: '$', label: 'Evals', maturity: 'alpha' },
   { route: 'finetune', icon: '%', label: 'Finetune', maturity: 'alpha' },
   { route: 'config', icon: '~', label: 'Config' },
   { route: 'doctor', icon: '+', label: 'Doctor' },
 ];
+
+// Alpha routes are hidden from the nav and blocked from direct hash
+// navigation unless the operator has opted in (see ALPHA_FEATURES_STORAGE_KEY).
+const ALPHA_ROUTES = new Set<Route>(
+  NAV_ITEMS.filter((item) => item.maturity === 'alpha').map((item) => item.route),
+);
 
 const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
 // Remembers which remote SHA the operator dismissed, so a newer update re-shows.
@@ -189,6 +197,9 @@ export class FarmApp extends LitElement {
   @state() private versionDetailsCopied = false;
   @state() private whatsNewOpen = false;
   @state() private updateDismissedSha: string | null = localStorage.getItem(UPDATE_DISMISS_KEY);
+  @state() private alphaEnabled = isAlphaFeaturesEnabled(
+    localStorage.getItem(ALPHA_FEATURES_STORAGE_KEY),
+  );
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
   @state() private runs: Run[] = [];
@@ -619,6 +630,13 @@ export class FarmApp extends LitElement {
     const raw = location.hash.replace('#', '') || this.defaultRouteForEmptyHash();
     const hash = raw.split('?')[0];
     this.devCaptureMode = this.isDevCaptureHash(raw);
+    // Deep links to a hidden alpha route (including its 'violations' alias)
+    // bounce to fleet instead — hiding the nav entry alone isn't enough.
+    if (!this.alphaEnabled && (hash === 'violations' || ALPHA_ROUTES.has(hash as Route))) {
+      this.route = 'fleet';
+      history.replaceState(null, '', '#fleet');
+      return;
+    }
     if (hash === 'dev' || hash.startsWith('dev/')) {
       this.route = 'dev';
       void this.loadDevHarness();
@@ -1440,7 +1458,9 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           ${this._sidebarExpanded ? '\u00AB' : '\u00BB'}
         </button>
         ${NAV_ITEMS.filter(
-          (item) => item.route !== 'onboarding' || this.connection !== 'connected',
+          (item) =>
+            (item.route !== 'onboarding' || this.connection !== 'connected') &&
+            (item.maturity !== 'alpha' || this.alphaEnabled),
         ).map(
           (item) => html`
             <a
