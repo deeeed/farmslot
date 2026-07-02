@@ -10,6 +10,7 @@ import {
   terminalTargetLabel,
   terminalTargetParams,
   terminalTargetStateFromIdentity,
+  terminalTeardownTarget,
 } from './terminal-view-model.js';
 
 test('parseWorkerRef preserves optional tmux coordinates and rejects malformed refs', () => {
@@ -178,6 +179,31 @@ test('terminalRoleExitDecision preserves role fast-fail postmortem thresholds', 
     }).shouldEnterPostmortem,
     false,
   );
+});
+
+test('terminalTeardownTarget prefers active subscribe identity when present', () => {
+  const prior = {
+    slotId: 'slot-a',
+    runId: '',
+    role: 'dev' as const,
+    contextId: '',
+    workerRefJson: '',
+  };
+  const active = {
+    slotId: 'slot-a',
+    runId: 'run-live',
+    role: 'dev' as const,
+    contextId: '',
+    workerRefJson: '',
+  };
+  assert.deepEqual(terminalTeardownTarget(active, false, prior, true), {
+    target: active,
+    postmortem: false,
+  });
+  assert.deepEqual(terminalTeardownTarget(null, false, prior, true), {
+    target: prior,
+    postmortem: true,
+  });
 });
 
 test('terminalPriorTargetIdentity reconstructs the pre-update subscribe target', () => {

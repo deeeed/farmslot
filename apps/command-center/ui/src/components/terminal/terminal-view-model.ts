@@ -137,6 +137,19 @@ export function terminalPriorTargetIdentity(
   };
 }
 
+/** Pick the unsubscribe target during debounced target churn. */
+export function terminalTeardownTarget(
+  activeIdentity: TerminalTargetIdentity | null,
+  activePostmortem: boolean,
+  priorTarget: TerminalTargetIdentity,
+  priorPostmortem: boolean,
+): { target: TerminalTargetIdentity; postmortem: boolean } {
+  return {
+    target: activeIdentity ?? priorTarget,
+    postmortem: activeIdentity ? activePostmortem : priorPostmortem,
+  };
+}
+
 export function terminalTargetStateFromIdentity(
   identity: TerminalTargetIdentity,
   opts: { postmortem?: boolean; worker?: TmuxWorkerRef | null } = {},

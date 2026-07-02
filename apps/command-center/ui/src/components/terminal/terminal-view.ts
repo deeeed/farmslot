@@ -23,6 +23,7 @@ import {
   terminalTargetChanged,
   terminalTargetParams,
   terminalTargetStateFromIdentity,
+  terminalTeardownTarget,
 } from './terminal-view-model.js';
 import {
   renderTerminalChrome,
@@ -96,14 +97,25 @@ export class TerminalView extends TerminalViewState {
       workerRefJson: this.workerRefJson,
     });
     if (!targetChanged || !this._terminal) return;
+    const priorTarget = terminalPriorTargetIdentity(changed, {
+      slotId: this.slotId,
+      runId: this.runId,
+      role: this.role,
+      contextId: this.contextId,
+      workerRefJson: this.workerRefJson,
+    });
+    const priorPostmortem = this._postmortem;
     clearTimeout(this._targetChangeTimer);
     this._targetChangeTimer = setTimeout(() => {
       this._targetChangeTimer = undefined;
-      this._applyTargetChange();
+      this._applyTargetChange(priorTarget, priorPostmortem);
     }, TARGET_CHANGE_DEBOUNCE_MS);
   }
 
-  private _applyTargetChange() {
+  private _applyTargetChange(
+    priorTarget: ReturnType<typeof terminalPriorTargetIdentity>,
+    priorPostmortem: boolean,
+  ) {
     if (!this._terminal) return;
     this._log(
       'updated → target changed',
@@ -113,11 +125,13 @@ export class TerminalView extends TerminalViewState {
     this._lastSubscribeError = '';
     this._subscribeOkAt = 0;
     this._attachPhase = 'idle';
-    this._teardownStreams(
-      true,
-      this._activeSubscribeIdentity ?? undefined,
+    const { target: teardownTarget, postmortem: teardownPostmortem } = terminalTeardownTarget(
+      this._activeSubscribeIdentity,
       this._activeSubscribePostmortem,
+      priorTarget,
+      priorPostmortem,
     );
+    this._teardownStreams(true, teardownTarget, teardownPostmortem);
     this._terminal.clear();
     this._taskMarkdown = '';
     this._mode = 'none';
