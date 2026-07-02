@@ -79,6 +79,8 @@ export interface RawPoolJson {
   grok_path?: string;
   dispatch_cmd?: string;
   recycle_cmd?: string;
+  /** Default team overlay for dispatches from this machine; slot- and task-level team override it. */
+  team?: string;
   slots: RawPoolSlot[];
 }
 
@@ -92,6 +94,8 @@ export interface RawPoolSlot {
   session: string;
   branch?: string;
   app?: string;
+  /** Default team overlay for this slot; task-level team overrides it. */
+  team?: string;
   lifecycle?: string;
   agent?: string;
   task?: string | null;
@@ -121,6 +125,8 @@ export interface SlotVars {
   sshTarget: string;
   remoteRepo: string;
   projectName: string;
+  /** Pool-level team default (slot.team ?? pool.team); task-level team overrides. */
+  team?: string;
   // Resource-derived (flattened from slot.resources)
   resourceVars: Record<string, string>;
 }
@@ -446,6 +452,7 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
     sshTarget,
     remoteRepo,
     projectName,
+    team: slot.team ?? pool.team,
     resourceVars,
   };
 }
