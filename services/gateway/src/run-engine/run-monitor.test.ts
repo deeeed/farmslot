@@ -4,8 +4,10 @@ import test from 'node:test';
 import {
   bindSignalToMonitorContext,
   isWorkerSignalFreshForRun,
+  runHasOpenHumanGate,
   shouldHoldForInteractivePrComplete,
   shouldHoldForMissingTerminalSignal,
+  shouldSkipMonitorNudge,
   signalMatchesMonitorContext,
 } from './run-monitor.js';
 
@@ -146,6 +148,70 @@ test('shouldHoldForMissingTerminalSignal respects contract and interactive pr-co
   assert.equal(
     shouldHoldForMissingTerminalSignal(null, { flowType: 'dev', mode: 'autonomous' } as any),
     true,
+  );
+});
+
+test('runHasOpenHumanGate detects active publication gate and unresolved decisions', () => {
+  assert.equal(
+    runHasOpenHumanGate({
+      status: 'blocked',
+      steps: [{ name: 'human-gate', status: 'running' }],
+      decisions: [],
+    } as any),
+    true,
+  );
+  assert.equal(
+    runHasOpenHumanGate({
+      status: 'blocked',
+      steps: [{ name: 'monitor', status: 'done' }],
+      decisions: [{ type: 'engine_human_gate', resolvedAt: undefined }],
+    } as any),
+    true,
+  );
+  assert.equal(
+    runHasOpenHumanGate({
+      status: 'running',
+      steps: [{ name: 'monitor', status: 'running' }],
+      decisions: [],
+    } as any),
+    false,
+  );
+});
+
+test('shouldSkipMonitorNudge suppresses human-gate and live-worker violations', () => {
+  const blockedGate = {
+    flowType: 'dev',
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [{ type: 'engine_human_gate' }],
+  } as const;
+
+  assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'stuck' }, 'idle'), true);
+  assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'waiting' }, 'working'), true);
+
+  assert.equal(
+    shouldSkipMonitorNudge(
+      { flowType: 'dev', status: 'running', steps: [], decisions: [] } as any,
+      { type: 'stuck' },
+      'working',
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSkipMonitorNudge(
+      { flowType: 'dev', status: 'running', steps: [], decisions: [] } as any,
+      { type: 'waiting' },
+      'working',
+    ),
+    true,
+  );
+  assert.equal(
+    shouldSkipMonitorNudge(
+      { flowType: 'dev', status: 'running', steps: [], decisions: [] } as any,
+      { type: 'stuck' },
+      'idle',
+    ),
+    false,
   );
 });
 

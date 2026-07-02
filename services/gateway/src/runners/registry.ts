@@ -505,10 +505,15 @@ export function runnerLineLooksWaiting(line: string, runnerId?: string | null): 
     );
   }
   if (runner === 'grok') {
-    return (
-      /continue|resume|waiting|press enter|send a message|type a message/i.test(value) ||
-      /(^|[│┃\s])❯(?:\s|[│┃]|$)/.test(value)
-    );
+    if (/continue|resume|waiting|press enter|send a message|type a message/i.test(value)) {
+      return true;
+    }
+    // Empty composer only. Grok echoes submitted task text after ❯ while still working;
+    // treating that as "waiting for input" causes false monitor violations.
+    const composerCore = value.replace(/[│┃]/g, '').trim();
+    if (composerCore === '❯' || /^❯\s*$/.test(composerCore)) return true;
+    if (/^❯\s+\S/.test(composerCore)) return false;
+    return /(^|\s)❯\s*$/.test(composerCore);
   }
   return false;
 }
@@ -824,7 +829,7 @@ function paneLineLooksShellPrompt(line: string): boolean {
   return /^[^\s@]+@[^\s]+\s+\S+\s+[%$#]\s*$/.test(line.trim());
 }
 
-function runnerPaneShowsCurrentInteractiveProgress(
+export function runnerPaneShowsCurrentInteractiveProgress(
   pane: string,
   runnerId?: string | null,
 ): boolean {

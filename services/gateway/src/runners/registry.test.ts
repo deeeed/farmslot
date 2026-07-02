@@ -754,6 +754,16 @@ describe('grok runner', () => {
     assert.equal(runnerLineLooksWaiting('→ Plan, search, build anything', 'grok'), false);
   });
 
+  it('does not treat echoed Grok task text after ❯ as waiting for input', () => {
+    assert.equal(
+      runnerLineLooksWaiting(
+        '❯ Follow the checklist in .sandbox/farmslot-farm/worker-task',
+        'grok',
+      ),
+      false,
+    );
+  });
+
   it('treats Grok Starting session as not idle for post-launch prompt delivery', () => {
     const coldStart = `
     ⠋ Starting session… 5.0s
