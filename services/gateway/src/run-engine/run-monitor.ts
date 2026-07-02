@@ -797,6 +797,10 @@ export async function monitorRun(
               };
             }
             continue;
+          } else if (shouldSkipMonitorNudge(latestRun, v, agentStatus)) {
+            console.log(
+              `[run-monitor] run ${runId.slice(0, 8)} — skipping ${v.type} nudge (human gate or live worker)`,
+            );
           } else if (latestRun.metrics.nudgeCount >= config.maxNudges) {
             // Max nudges exceeded — create decision
             console.log(
@@ -814,10 +818,6 @@ export async function monitorRun(
             }
             // "continue" — reset nudge count and resume
             updateRun(runId, { metrics: { ...latestRun.metrics, nudgeCount: 0 } });
-          } else if (shouldSkipMonitorNudge(latestRun, v, agentStatus)) {
-            console.log(
-              `[run-monitor] run ${runId.slice(0, 8)} — skipping ${v.type} nudge (human gate or live worker)`,
-            );
           } else if (
             runnerSupportsTmuxNudgesForLaunch(
               latestRun.metrics.runner,

@@ -198,6 +198,8 @@ test('shouldSkipMonitorNudge suppresses human-gate and live-worker violations', 
 
   assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'stuck' }, 'idle'), true);
   assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'waiting' }, 'working'), true);
+  // Human-gate skip must win over max-nudge escalation even when nudgeCount is already saturated.
+  assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'waiting' }, 'idle'), true);
 
   const activeWorker = devRunView();
   assert.equal(shouldSkipMonitorNudge(activeWorker, { type: 'stuck' }, 'working'), false);
