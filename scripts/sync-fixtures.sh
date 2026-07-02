@@ -11,11 +11,11 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SLOT_ID=""
 
-# Same contract as worker-template variant names (and the pool team default):
-# lowercase slug, no leading/trailing punctuation. The value lands in sed
-# replacement text and in fixture paths, so anything outside this allowlist
-# (path separators, sed metacharacters, quotes, spaces) must be rejected here,
-# not sanitized downstream.
+# Shell-side mirror of TEAM_NAME_RE / isValidTeamName in @farmslot/protocol
+# (packages/protocol/src/contracts/runs.ts) — the single contract for team
+# names. The value lands in sed replacement text and in fixture paths, so
+# anything outside this allowlist (path separators, sed metacharacters,
+# quotes, spaces) must be rejected here, not sanitized downstream.
 TEAM_NAME_RE='^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$'
 
 while [[ $# -gt 0 ]]; do

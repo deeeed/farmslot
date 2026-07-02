@@ -1186,6 +1186,20 @@ export function normalizeRunTags(values: readonly string[] | undefined | null): 
   return [...tags].sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * The single contract for team overlay names. A team name lands in fixture
+ * paths, sed replacement text (sync-fixtures.sh, which enforces the same rule
+ * shell-side), and worker-template variant file names — so it is a lowercase
+ * slug with no separators, no sed metacharacters, and no leading/trailing
+ * punctuation. Validate at the entry point with isValidTeamName; reject,
+ * never sanitize.
+ */
+export const TEAM_NAME_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
+
+export function isValidTeamName(value: string): boolean {
+  return TEAM_NAME_RE.test(value);
+}
+
 export interface Run {
   id: string;
   familyId: string;

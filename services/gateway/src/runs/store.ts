@@ -17,6 +17,7 @@ import {
   FLOW_STEPS,
   type FlowType,
   isTerminalRunStatus,
+  isValidTeamName,
   normalizeRunTags,
   primaryRoleForFlow,
   prNumberFromRunInput,
@@ -50,11 +51,6 @@ import { isLeakedGatewayTestFixture, isLeakedGatewayTestRun } from './test-run-l
 // runs to `sandboxed` and stall on approval prompts after an upgrade.
 export const SAFETY_TIER_EPOCH_ISO = '2026-04-20T00:00:00Z';
 const SAFETY_TIER_EPOCH = Date.parse(SAFETY_TIER_EPOCH_ISO);
-
-// Team names reach sed replacement text and fixture paths (sync-fixtures.sh)
-// and worker-template variant file names, so they share the variant naming
-// contract: lowercase slug, no leading/trailing punctuation, no separators.
-const TEAM_NAME_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
 
 /**
  * Returns the backfilled safety tier for a legacy run, or null if no
@@ -461,7 +457,7 @@ export function createRun(params: RunCreateParams): Run {
   // paths and sed replacement text in sync-fixtures.sh (which validates too).
   // The contract matches worker-template variant names and the pool team field.
   const team = params.team?.trim() || undefined;
-  if (team !== undefined && !TEAM_NAME_RE.test(team)) {
+  if (team !== undefined && !isValidTeamName(team)) {
     throw new Error(
       `Invalid team: ${String(params.team)} — must be a lowercase slug (a-z, 0-9, '._-', no leading/trailing punctuation)`,
     );
