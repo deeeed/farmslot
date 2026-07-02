@@ -102,6 +102,31 @@ test('createRun persists the team overlay and omits it when unset', async (t) =>
   assert.equal('team' in withoutTeam, false);
 });
 
+test('createRun rejects team names outside the slug contract and drops blank ones', async (t) => {
+  for (const hostile of ['../evil', 'a b', 'a|b', 'a"b', 'Blue', 'a/../b']) {
+    assert.throws(
+      () =>
+        createRun({
+          flowType: 'fix-bug',
+          project: 'example-mobile-farm',
+          ticketOrPr: `PROJ-${Date.now()}-bad-team`,
+          team: hostile,
+        }),
+      /Invalid team/,
+      `expected rejection for team ${JSON.stringify(hostile)}`,
+    );
+  }
+
+  const blank = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-blank-team`,
+    team: '   ',
+  });
+  t.after(() => cleanupRun(blank.id));
+  assert.equal('team' in blank, false);
+});
+
 test('createRun preserves explicit lineage for follow-up runs', async (t) => {
   const root = createRun({
     flowType: 'dev',

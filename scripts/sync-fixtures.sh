@@ -11,12 +11,24 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 SLOT_ID=""
 
+# Same contract as worker-template variant names (and the pool team default):
+# lowercase slug, no leading/trailing punctuation. The value lands in sed
+# replacement text and in fixture paths, so anything outside this allowlist
+# (path separators, sed metacharacters, quotes, spaces) must be rejected here,
+# not sanitized downstream.
+TEAM_NAME_RE='^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$'
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --slot)      SLOT_ID="$2"; shift 2 ;;
     --flow-type) export FLOW_TYPE="$2"; shift 2 ;;
     --app)       export APP="$2"; shift 2 ;;
-    --team)      export TEAM="$2"; shift 2 ;;
+    --team)
+      if ! printf '%s' "$2" | grep -Eq "$TEAM_NAME_RE"; then
+        echo "FAIL: invalid --team '$2' — must be a lowercase slug (a-z, 0-9, '._-', no leading/trailing punctuation)" >&2
+        exit 1
+      fi
+      export TEAM="$2"; shift 2 ;;
     *)           echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
