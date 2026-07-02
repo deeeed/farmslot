@@ -21,7 +21,7 @@ GATEWAY_IP="${2:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NODE_SRC="$REPO_ROOT/services/node"
-PROTOCOL_SRC="$REPO_ROOT/packages/protocol"
+PACKAGES_DIR="$REPO_ROOT/packages"
 AUTH_ENV_FILE="$REPO_ROOT/.env.local-auth"
 
 if [[ -f "$AUTH_ENV_FILE" ]]; then
@@ -30,6 +30,63 @@ if [[ -f "$AUTH_ENV_FILE" ]]; then
   source "$AUTH_ENV_FILE"
   set +a
 fi
+
+# --- Resolve @farmslot/* workspace packages the node depends on (transitive) ---
+# services/node's declared deps today are @farmslot/protocol + @farmslot/capabilities,
+# but a hardcoded bundling list bit us before: a new @farmslot workspace package
+# (capabilities) went unbundled and the deployed node crashed with
+# ERR_MODULE_NOT_FOUND on startup. Walk the workspace graph from services/node's
+# package.json instead, so any future @farmslot/* dependency — direct or
+# transitive — is picked up automatically.
+resolve_farmslot_deps() {
+  local resolver
+  resolver="$(mktemp "${TMPDIR:-/tmp}/deploy-node-resolve-XXXXXX.mjs")"
+  trap 'rm -f "$resolver"' RETURN
+  cat > "$resolver" <<'RESOLVER'
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
+
+const [, , repoRoot] = process.argv;
+const packagesDir = path.join(repoRoot, 'packages');
+const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
+
+const dirByName = new Map();
+for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  try {
+    const pkg = readJson(path.join(packagesDir, entry.name, 'package.json'));
+    dirByName.set(pkg.name, entry.name);
+  } catch {
+    // not a package directory
+  }
+}
+
+const nodePkg = readJson(path.join(repoRoot, 'services/node/package.json'));
+const queue = Object.keys(nodePkg.dependencies ?? {}).filter((name) =>
+  name.startsWith('@farmslot/'),
+);
+const seen = new Set();
+while (queue.length > 0) {
+  const name = queue.shift();
+  if (seen.has(name)) continue;
+  const dir = dirByName.get(name);
+  if (!dir) throw new Error(`deploy-node: unresolved workspace package ${name}`);
+  seen.add(name);
+  const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
+  for (const dep of Object.keys(pkg.dependencies ?? {})) {
+    if (dep.startsWith('@farmslot/') && !seen.has(dep)) queue.push(dep);
+  }
+}
+
+for (const name of seen) {
+  process.stdout.write(`${name}\t${dirByName.get(name)}\n`);
+}
+RESOLVER
+  node "$resolver" "$REPO_ROOT"
+}
+
+FARMSLOT_DEPS="$(resolve_farmslot_deps)"
+echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 | tr '\n' ' ')"
 
 # --- Detect local vs remote ---
 LOCAL_HOSTNAME=$(hostname -s)
@@ -238,12 +295,20 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
   fi
 fi
 
-# --- rsync protocol AFTER yarn install (yarn wipes unmanaged node_modules) ---
-echo "[deploy] syncing protocol..."
-run "mkdir -p $REMOTE_DIR/node_modules/@farmslot/protocol"
-rsync -a --delete "$PROTOCOL_SRC/src/" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/src/"
-rsync -a --delete "$PROTOCOL_SRC/dist/" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/dist/"
-rsync -a "$PROTOCOL_SRC/package.json" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/package.json"
+# --- rsync @farmslot/* workspace packages AFTER yarn install (yarn wipes unmanaged node_modules) ---
+echo "[deploy] syncing workspace packages..."
+while IFS=$'\t' read -r pkg_name pkg_dir; do
+  [[ -z "$pkg_name" ]] && continue
+  PKG_SRC="$PACKAGES_DIR/$pkg_dir"
+  PKG_DEST="$REMOTE_DIR/node_modules/$pkg_name"
+  run "mkdir -p $PKG_DEST"
+  # Source-based packages (e.g. @farmslot/capabilities) ship no dist/; built
+  # packages (e.g. @farmslot/protocol) ship both — sync whichever exist.
+  [[ -d "$PKG_SRC/src" ]] && rsync -a --delete "$PKG_SRC/src/" "${RSYNC_PREFIX}$PKG_DEST/src/"
+  [[ -d "$PKG_SRC/dist" ]] && rsync -a --delete "$PKG_SRC/dist/" "${RSYNC_PREFIX}$PKG_DEST/dist/"
+  rsync -a "$PKG_SRC/package.json" "${RSYNC_PREFIX}$PKG_DEST/package.json"
+  echo "  → $pkg_name"
+done <<< "$FARMSLOT_DEPS"
 
 # --- Install service (platform-specific) ---
 
