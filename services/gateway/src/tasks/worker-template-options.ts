@@ -164,16 +164,16 @@ export async function resolveWorkerTemplateSelection(
 }
 
 /**
- * Team-variant file for a flow (e.g. fix-bug-blue.md for team 'blue'), or null
- * when the team name does not fit the variant naming contract — team defaults
- * never turn an invalid selection into an error, they just don't apply.
+ * Domain-variant file for a flow (e.g. fix-bug-blue.md for domain 'blue'), or
+ * null when the domain name does not fit the variant naming contract — domain
+ * defaults never turn an invalid selection into an error, they just don't apply.
  */
-export function teamTemplateFileNameForFlow(
+export function domainTemplateFileNameForFlow(
   flowType: FlowType | string,
-  team: string,
+  domain: string,
 ): string | null {
   const defaultBase = defaultTemplateFileNameForFlow(flowType).replace(/\.md$/, '');
-  const fileName = `${defaultBase}-${team}.md`;
+  const fileName = `${defaultBase}-${domain}.md`;
   return parseWorkerTemplateFileName(flowType, fileName) ? fileName : null;
 }
 
@@ -182,7 +182,7 @@ export async function resolveWorkerTemplateSelectionForRun(
   flowType: FlowType,
   mode?: 'interactive' | 'autonomous' | 'validation',
   selection?: TaskTemplateSelection | null,
-  team?: string,
+  domain?: string,
 ): Promise<ResolvedWorkerTemplateSelection> {
   if (selection) return resolveWorkerTemplateSelection(projectVars, flowType, selection);
   const interactiveFileName =
@@ -202,16 +202,16 @@ export async function resolveWorkerTemplateSelectionForRun(
       );
     }
   }
-  // Team-variant default: explicit selection and interactive templates win;
-  // otherwise a run carrying a team prefers <flow>-<team>.md when it exists.
-  const teamFileName = team ? teamTemplateFileNameForFlow(flowType, team) : null;
-  if (teamFileName && (await workerTemplateExists(projectVars, teamFileName))) {
+  // Domain-variant default: explicit selection and interactive templates win;
+  // otherwise a run carrying a domain prefers <flow>-<domain>.md when it exists.
+  const domainFileName = domain ? domainTemplateFileNameForFlow(flowType, domain) : null;
+  if (domainFileName && (await workerTemplateExists(projectVars, domainFileName))) {
     return resolveWorkerTemplateSelection(
       projectVars,
       flowType,
-      { fileName: teamFileName },
-      'implicit-team',
-      `team '${team}' selected ${teamFileName} because it exists`,
+      { fileName: domainFileName },
+      'implicit-domain',
+      `domain '${domain}' selected ${domainFileName} because it exists`,
     );
   }
   const fallbackReason = interactiveFileName

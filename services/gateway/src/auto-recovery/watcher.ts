@@ -411,7 +411,7 @@ async function maybeDispatchFixtureRefresh(run: Run, action: IntelligenceAction)
       requestId: `auto-recovery-${action.id}`,
       flowType: run.flowType,
       app: run.app,
-      team: run.team,
+      domain: run.domain,
     },
     emitFn,
   );

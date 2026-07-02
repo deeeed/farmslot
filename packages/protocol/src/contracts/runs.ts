@@ -1197,17 +1197,17 @@ export function normalizeRunTags(values: readonly string[] | undefined | null): 
 }
 
 /**
- * The single contract for team overlay names. A team name lands in fixture
- * paths, sed replacement text (sync-fixtures.sh, which enforces the same rule
- * shell-side), and worker-template variant file names — so it is a lowercase
- * slug with no separators, no sed metacharacters, and no leading/trailing
- * punctuation. Validate at the entry point with isValidTeamName; reject,
- * never sanitize.
+ * The single contract for domain overlay names. A domain name lands in
+ * fixture paths, sed replacement text (sync-fixtures.sh, which enforces the
+ * same rule shell-side), and worker-template variant file names — so it is a
+ * lowercase slug with no separators, no sed metacharacters, and no
+ * leading/trailing punctuation. Validate at the entry point with
+ * isValidDomainName; reject, never sanitize.
  */
-export const TEAM_NAME_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
+export const DOMAIN_NAME_RE = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/;
 
-export function isValidTeamName(value: string): boolean {
-  return TEAM_NAME_RE.test(value);
+export function isValidDomainName(value: string): boolean {
+  return DOMAIN_NAME_RE.test(value);
 }
 
 export interface Run {
@@ -1232,11 +1232,11 @@ export interface Run {
   ticketOrPr: string;
   app?: string;
   /**
-   * Named team overlay carried by this run. Free-form and project-defined —
-   * threaded into prepare/fixture sync as the `TEAM` compose variable and the
-   * `{{team}}` template placeholder.
+   * Named domain overlay carried by this run. Free-form and project-defined —
+   * threaded into prepare/fixture sync as the `DOMAIN` compose variable and
+   * the `{{domain}}` template placeholder.
    */
-  team?: string;
+  domain?: string;
   /** Named prepare profile requested for this run (ADR-037). */
   prepareProfile?: string;
   effort?: string;

@@ -176,7 +176,7 @@ export async function executePrepareStep(
         forceNewBranch,
         flowType: current.flowType,
         app: current.app,
-        team: current.team,
+        domain: current.domain,
         prepareProfile: current.prepareProfile,
         vars: prepareVars,
         runId,

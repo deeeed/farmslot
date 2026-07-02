@@ -539,7 +539,7 @@ async function slotPrepareInner(
     await runFixtureSync(vars, {
       slotId: params.slotId,
       flowType: params.flowType,
-      team: params.team ?? vars.team,
+      domain: params.domain ?? vars.domain,
       selectedApp,
       logPath: syncLogPath,
       signal,
