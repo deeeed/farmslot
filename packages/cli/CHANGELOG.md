@@ -11,4 +11,5 @@ All notable changes to `@farmslot/cli` are tracked here.
 - feat: `--json` output for doctor, project add, update, and workspace init (child output routed to stderr)
 - fix: `farmslot completion zsh` output works whether autoloaded on `$fpath` or sourced — guards the invocation with `funcstack` (was erroring `_arguments:comparguments: can only be called from completion function` when sourced)
 - feat: `farmslot completion install` detects the caller's shell from `$SHELL` (zsh/bash/fish) and installs bash/fish completions too, not just zsh; `install.sh` now auto-installs completions for the detected shell after the CLI is built — non-fatal on failure, `FARMSLOT_SKIP_COMPLETIONS=1` to skip
+- fix: `farmslot uninstall --purge` no longer crashes with `ENOTEMPTY` — tears down each slot's tmux session (and drops its watchman watch, if any) before removing repos, and `rmSync` now retries on `ENOTEMPTY`/`EBUSY` as a safety net for any straggler write
 - Active-development baseline; add user-facing changes here before release or package publication.
