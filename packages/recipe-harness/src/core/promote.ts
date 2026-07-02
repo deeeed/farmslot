@@ -77,7 +77,20 @@ export async function promoteRecipeFlow(request: PromoteFlowRequest): Promise<Pr
   // library must never declare the same ref twice, or every later resolution
   // of it fails. With --force the flow is overwritten in the file that
   // already declares it, never written to a second one.
-  const existingCatalogPath = await findFlowDeclaration(targetRoot, request.flowRef);
+  const declaringCatalogs = await findFlowDeclarations(targetRoot, request.flowRef);
+  if (declaringCatalogs.length > 1) {
+    // Pre-existing corruption: promote cannot pick which declaration is the
+    // stale one, and overwriting only one of them would leave the library
+    // unloadable. Fail loudly with every offending file, --force or not.
+    throw new Error(
+      `Recipe library ${targetRoot} already declares ${request.flowRef} in ${declaringCatalogs.length} catalogs (${declaringCatalogs
+        .map((file) => path.basename(file))
+        .join(
+          ', ',
+        )}); the library cannot load until exactly one declaration remains. Remove the stale duplicate(s), then re-run promote.`,
+    );
+  }
+  const existingCatalogPath = declaringCatalogs[0];
   if (existingCatalogPath && !request.force) {
     throw new Error(
       `Flow ${request.flowRef} already exists in ${existingCatalogPath}. Edit the catalog directly or pass --force to overwrite it in place.`,
@@ -183,6 +196,9 @@ async function readVerifiedRunDate(
  * Accepted evidence: the run resolved the ref from a library
  * (summary.flowResolution.used), or the run's copied recipe declares exactly
  * this flow inline and its trace shows a successful call to it.
+ * Honor-system limit: the developer owns both the artifacts and the catalog,
+ * so hand-forged artifacts can still pass — detecting that would need signed
+ * run evidence, which is out of scope.
  */
 async function assertRunExercisedFlow(
   artifactsDir: string,
@@ -298,15 +314,16 @@ async function ensureLibrarySkeleton(targetRoot: string, name: string): Promise<
   return false;
 }
 
-async function findFlowDeclaration(targetRoot: string, ref: string): Promise<string | undefined> {
+async function findFlowDeclarations(targetRoot: string, ref: string): Promise<string[]> {
+  const declarations: string[] = [];
   for (const file of await listFlowCatalogFiles(targetRoot)) {
     const catalogPath = path.join(targetRoot, LIBRARY_FLOWS_DIR, file);
     const catalog = await readJsonFile(catalogPath);
     if (isRecord(catalog) && isRecord(catalog.flows) && catalog.flows[ref] != null) {
-      return catalogPath;
+      declarations.push(catalogPath);
     }
   }
-  return undefined;
+  return declarations;
 }
 
 async function readCatalog(catalogPath: string): Promise<Record<string, unknown>> {

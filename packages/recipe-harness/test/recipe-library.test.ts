@@ -376,6 +376,26 @@ test('recipe-local flows win over library flows and the override is logged', asy
     assert.deepEqual(summary.flowResolution?.overrides, [
       { ref: 'lib.write-text', source: 'personal' },
     ]);
+
+    // Even with every library flow overridden, the resolution activity is
+    // still evidence: resolved-flows.json records the overrides.
+    const resolvedFlows = (await readJsonFile(
+      path.join(tempRoot, 'artifacts', 'resolved-flows.json'),
+    )) as {
+      kind: string;
+      flows: Record<string, unknown>;
+      overrides: Array<{ ref: string; source: string }>;
+    };
+    assert.equal(resolvedFlows.kind, 'recipe-resolved-flows');
+    assert.deepEqual(resolvedFlows.flows, {});
+    assert.deepEqual(resolvedFlows.overrides, [{ ref: 'lib.write-text', source: 'personal' }]);
+    const artifactManifest = (await readJsonFile(result.artifactManifestPath)) as {
+      artifacts: Array<{ path: string }>;
+    };
+    assert.ok(
+      artifactManifest.artifacts.some((entry) => entry.path === 'resolved-flows.json'),
+      'resolved-flows.json must be registered even when every library flow is overridden',
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

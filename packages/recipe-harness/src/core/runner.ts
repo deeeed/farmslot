@@ -419,7 +419,14 @@ class DefaultRecipeRunner implements RecipeRunner {
         label: 'Execution trace',
         category: 'system',
       });
-      if (libraryResolution && usedLibraryFlows.size > 0) {
+      // Any resolution activity — a library flow used, a recipe-local override,
+      // or cross-source shadowing — gets the artifact, so an all-overridden run
+      // still leaves reviewable evidence of what the library would have provided.
+      const shadowedFlows = libraryResolution ? collectShadowedFlows(libraryResolution) : [];
+      if (
+        libraryResolution &&
+        (usedLibraryFlows.size > 0 || flowOverrides.length > 0 || shadowedFlows.length > 0)
+      ) {
         await writeFile(
           path.join(artifactsDir, 'resolved-flows.json'),
           `${JSON.stringify(
@@ -428,7 +435,7 @@ class DefaultRecipeRunner implements RecipeRunner {
               kind: 'recipe-resolved-flows',
               sources: libraryResolution.sources,
               overrides: flowOverrides,
-              shadowed: collectShadowedFlows(libraryResolution),
+              shadowed: shadowedFlows,
               flows: Object.fromEntries(
                 [...usedLibraryFlows.values()].map((flow) => [
                   flow.ref,
@@ -443,7 +450,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         artifactWriter.register({
           path: 'resolved-flows.json',
           type: 'json',
-          label: 'Library flows used by this run',
+          label: 'Library flow resolution for this run',
           category: 'system',
         });
       }
