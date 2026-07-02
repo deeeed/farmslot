@@ -101,16 +101,21 @@ export function installZshCompletion(): string {
   writeFileSync(completionPath, ZSH_COMPLETION, 'utf8');
 
   const zshrc = path.join(os.homedir(), '.zshrc');
+  const fpathLine = `fpath=(${shellQuoteForZsh(installDir)} $fpath)`;
   const block = [
     '',
     '# Farmslot CLI completions',
-    `fpath=(${shellQuoteForZsh(installDir)} $fpath)`,
+    fpathLine,
     'autoload -Uz compinit',
     'compinit',
     '',
   ].join('\n');
   const current = existsSync(zshrc) ? readFileSync(zshrc, 'utf8') : '';
-  if (!current.includes(installDir)) {
+  // Compare against the quoted line actually written, not the raw installDir — an
+  // apostrophe in the path (e.g. /Users/O'Connor) makes shellQuoteForZsh's escaped
+  // form never contain installDir as a contiguous substring, which would otherwise
+  // re-append the block on every run.
+  if (!current.includes(fpathLine)) {
     writeFileSync(zshrc, `${current.replace(/\n?$/u, '\n')}${block}`, 'utf8');
   }
 
@@ -137,7 +142,10 @@ export function installBashCompletion(): string {
   const sourceLine = `[ -f ${shellQuoteForZsh(completionPath)} ] && . ${shellQuoteForZsh(completionPath)}`;
   const block = ['', '# Farmslot CLI completions', sourceLine, ''].join('\n');
   const current = existsSync(bashrc) ? readFileSync(bashrc, 'utf8') : '';
-  if (!current.includes(completionPath)) {
+  // Compare against the quoted line actually written, not the raw completionPath —
+  // see the matching comment in installZshCompletion for why the raw path can't be
+  // used as the idempotency check.
+  if (!current.includes(sourceLine)) {
     writeFileSync(bashrc, `${current.replace(/\n?$/u, '\n')}${block}`, 'utf8');
   }
 

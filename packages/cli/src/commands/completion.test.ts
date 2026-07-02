@@ -31,8 +31,8 @@ test('detectShell falls back to zsh when $SHELL is unset or unrecognized', () =>
 // The installers write into $HOME (rc files) and honor per-shell XDG-style env
 // overrides for the completion dir itself — point both at a disposable temp
 // tree so a test run never touches the real developer environment.
-function withTempHome(run: (home: string) => void): void {
-  const home = mkdtempSync(path.join(tmpdir(), 'fs-completion-home-'));
+function withTempHome(run: (home: string) => void, prefix = 'fs-completion-home-'): void {
+  const home = mkdtempSync(path.join(tmpdir(), prefix));
   const previousHome = process.env.HOME;
   process.env.HOME = home;
   try {
@@ -70,6 +70,36 @@ test('installBashCompletion writes the completion + one source line, idempotentl
     const occurrences = bashrc.split('# Farmslot CLI completions').length - 1;
     assert.equal(occurrences, 1, 're-running must not duplicate the source line');
   });
+});
+
+test('installZshCompletion stays idempotent when $HOME contains an apostrophe', () => {
+  withTempHome((home) => {
+    installZshCompletion();
+    installZshCompletion();
+
+    const zshrc = readFileSync(path.join(home, '.zshrc'), 'utf8');
+    const occurrences = zshrc.split('fpath=(').length - 1;
+    assert.equal(
+      occurrences,
+      1,
+      're-running with an apostrophe in $HOME must not duplicate the block',
+    );
+  }, "fs-completion-o'connor-");
+});
+
+test('installBashCompletion stays idempotent when $HOME contains an apostrophe', () => {
+  withTempHome((home) => {
+    installBashCompletion();
+    installBashCompletion();
+
+    const bashrc = readFileSync(path.join(home, '.bashrc'), 'utf8');
+    const occurrences = bashrc.split('# Farmslot CLI completions').length - 1;
+    assert.equal(
+      occurrences,
+      1,
+      're-running with an apostrophe in $HOME must not duplicate the block',
+    );
+  }, "fs-completion-o'connor-");
 });
 
 test('installFishCompletion writes the completion file with no rc edit needed', () => {
