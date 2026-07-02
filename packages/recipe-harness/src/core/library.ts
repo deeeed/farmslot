@@ -62,7 +62,7 @@ export function parseRecipeLibraryPath(value: string): RecipeLibrarySource[] {
  * The personal library location: `<farmslot home>/recipe-library`
  * (FARMSLOT_HOME env, default ~/.farmslot). The directory may not exist yet.
  */
-export function personalRecipeLibraryRoot(env: NodeJS.ProcessEnv = process.env): string {
+export function personalRecipeLibraryRoot(env: RecipeLibraryEnv = process.env): string {
   return path.join(farmslotHome(env), 'recipe-library');
 }
 
