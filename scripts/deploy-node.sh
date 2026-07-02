@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy-node.sh — Deploy/update farmslot node to any fleet machine
-# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip]
+# Usage: bash scripts/deploy-node.sh <machine> [gateway-ip] [--instance dev|prod]
 #
 # Supports:
 #   macOS local  (runner-local) — launchd LaunchAgent
@@ -9,19 +9,66 @@
 #
 # Same command for install and update. Rsyncs code and restarts the service.
 #
+# Instances: a machine can run a prod node and a dev node side by side —
+# distinct install dir, service name, gateway URL, and IPC state. Default
+# instance is "prod" (identical to the original single-instance behavior).
+# Select the other with --instance dev or FARMSLOT_NODE_INSTANCE=dev.
+#
 # One-time prerequisites:
 #   macOS: node installed + Screen Recording permission for `node` binary
 #   Linux: node installed + loginctl enable-linger (for user services without login)
 
 set -euo pipefail
 
-MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip]}"
+INSTANCE="${FARMSLOT_NODE_INSTANCE:-prod}"
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --instance)
+      INSTANCE="${2:?--instance requires a value (dev|prod)}"
+      shift 2
+      ;;
+    --instance=*)
+      INSTANCE="${1#--instance=}"
+      shift
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${ARGS[@]}"
+
+MACHINE="${1:?Usage: deploy-node.sh <machine> [gateway-ip] [--instance dev|prod]}"
 GATEWAY_IP="${2:-}"
+
+# --- Per-instance configuration (dev + prod coexist on the same machine) ---
+# Single source of truth for everything that must not collide between a prod
+# node and a dev node on the same box: install dir, service name, gateway
+# port, and IPC socket. Prod is byte-identical to the pre-instance defaults.
+case "$INSTANCE" in
+  prod)
+    INSTANCE_SUFFIX=""
+    LAUNCHD_LABEL_SUFFIX=""
+    DEFAULT_GATEWAY_PORT=7777
+    ;;
+  dev)
+    INSTANCE_SUFFIX="-dev"
+    LAUNCHD_LABEL_SUFFIX=".dev"
+    DEFAULT_GATEWAY_PORT=7801
+    ;;
+  *)
+    echo "[deploy] ERROR: --instance must be 'dev' or 'prod' (got '$INSTANCE')" >&2
+    exit 1
+    ;;
+esac
+GATEWAY_PORT="${GATEWAY_PORT:-$DEFAULT_GATEWAY_PORT}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NODE_SRC="$REPO_ROOT/services/node"
-PROTOCOL_SRC="$REPO_ROOT/packages/protocol"
+PACKAGES_DIR="$REPO_ROOT/packages"
 AUTH_ENV_FILE="$REPO_ROOT/.env.local-auth"
 
 if [[ -f "$AUTH_ENV_FILE" ]]; then
@@ -30,6 +77,93 @@ if [[ -f "$AUTH_ENV_FILE" ]]; then
   source "$AUTH_ENV_FILE"
   set +a
 fi
+
+# --- Resolve @farmslot/* workspace packages the node depends on (transitive) ---
+# services/node's declared deps today are @farmslot/protocol + @farmslot/capabilities,
+# but a hardcoded bundling list bit us before: a new @farmslot workspace package
+# (capabilities) went unbundled and the deployed node crashed with
+# ERR_MODULE_NOT_FOUND on startup. Walk the workspace graph from services/node's
+# package.json instead, so any future @farmslot/* dependency — direct or
+# transitive — is picked up automatically.
+resolve_farmslot_deps() {
+  local resolver
+  resolver="$(mktemp "${TMPDIR:-/tmp}/deploy-node-resolve-XXXXXX.mjs")"
+  trap 'rm -f "$resolver"' RETURN
+  cat > "$resolver" <<'RESOLVER'
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
+
+const [, , repoRoot] = process.argv;
+const packagesDir = path.join(repoRoot, 'packages');
+const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
+
+const dirByName = new Map();
+for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  try {
+    const pkg = readJson(path.join(packagesDir, entry.name, 'package.json'));
+    dirByName.set(pkg.name, entry.name);
+  } catch {
+    // not a package directory
+  }
+}
+
+const nodePkg = readJson(path.join(repoRoot, 'services/node/package.json'));
+const queue = Object.keys(nodePkg.dependencies ?? {}).filter((name) =>
+  name.startsWith('@farmslot/'),
+);
+const seen = new Set();
+while (queue.length > 0) {
+  const name = queue.shift();
+  if (seen.has(name)) continue;
+  const dir = dirByName.get(name);
+  if (!dir) throw new Error(`deploy-node: unresolved workspace package ${name}`);
+  seen.add(name);
+  const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
+  for (const dep of Object.keys(pkg.dependencies ?? {})) {
+    if (dep.startsWith('@farmslot/') && !seen.has(dep)) queue.push(dep);
+  }
+}
+
+// A package "ships from dist/" if it declares a build script AND its main/exports
+// point into dist/ (e.g. protocol). Source-only packages (e.g. capabilities, whose
+// main/exports point straight at src/*.ts) never need a build. dist/ is gitignored,
+// so on a fresh checkout — or after protocol changes without a rebuild — it can be
+// missing even though the workspace resolves fine locally via tsx path aliasing.
+for (const name of seen) {
+  const dir = dirByName.get(name);
+  const pkg = readJson(path.join(packagesDir, dir, 'package.json'));
+  const hasBuildScript = Boolean(pkg.scripts?.build);
+  const mainIsDist = typeof pkg.main === 'string' && pkg.main.startsWith('dist/');
+  const exportsIsDist = pkg.exports ? JSON.stringify(pkg.exports).includes('"dist/') : false;
+  const distMissing = !existsSync(path.join(packagesDir, dir, 'dist'));
+  const needsBuild = hasBuildScript && (mainIsDist || exportsIsDist) && distMissing;
+  process.stdout.write(`${name}\t${dir}\t${needsBuild ? '1' : '0'}\n`);
+}
+RESOLVER
+  node "$resolver" "$REPO_ROOT"
+}
+
+FARMSLOT_DEPS="$(resolve_farmslot_deps)"
+echo "[deploy] workspace packages to bundle: $(echo "$FARMSLOT_DEPS" | cut -f1 | tr '\n' ' ')"
+
+# --- Build any @farmslot/* dep that ships from dist/ but hasn't been built ---
+# Without this, a package with no dist/ (fresh checkout, or edited-but-unbuilt
+# protocol) "deploys" successfully — the rsync step below just has nothing to
+# copy — and the node crashes at runtime with the exact ERR_MODULE_NOT_FOUND
+# this script exists to prevent. Fail loudly here instead of shipping it.
+while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
+  [[ -z "$pkg_name" || "$needs_build" != "1" ]] && continue
+  echo "[deploy] building $pkg_name (dist/ missing)..."
+  if ! (cd "$REPO_ROOT" && yarn workspace "$pkg_name" build); then
+    echo "[deploy] ERROR: failed to build $pkg_name — refusing to deploy a distless package" >&2
+    exit 1
+  fi
+  if [[ ! -d "$PACKAGES_DIR/$pkg_dir/dist" ]]; then
+    echo "[deploy] ERROR: $pkg_name build reported success but dist/ is still missing — refusing to deploy" >&2
+    exit 1
+  fi
+done <<< "$FARMSLOT_DEPS"
 
 # --- Detect local vs remote ---
 LOCAL_HOSTNAME=$(hostname -s)
@@ -48,7 +182,16 @@ REMOTE_OS=$(run uname -s)
 
 # --- Resolve paths ---
 REMOTE_HOME=$(run 'echo $HOME')
-REMOTE_DIR="$REMOTE_HOME/farmslot-node"
+REMOTE_DIR="$REMOTE_HOME/farmslot-node${INSTANCE_SUFFIX}"
+REMOTE_UID=$(run 'id -u')
+
+# Identity the deployed node reports to the gateway, and the IPC socket its
+# screen-control server binds. Both default (in services/node/src) to values
+# that don't vary by instance — MACHINE_NAME is the raw machine name, and
+# SCREEN_CONTROL_SOCKET is keyed only by uid — so two instances on the same
+# box would collide (same fleet identity, same socket file) without this.
+NODE_MACHINE_NAME="${MACHINE}${INSTANCE_SUFFIX}"
+SCREEN_CONTROL_SOCKET_PATH="/tmp/farmslot-screen-control-${REMOTE_UID}${INSTANCE_SUFFIX}.sock"
 
 if [[ -z "$GATEWAY_IP" ]]; then
   if [[ "$IS_LOCAL" == true ]]; then
@@ -64,7 +207,7 @@ if [[ -z "$GATEWAY_IP" ]]; then
     fi
   fi
 fi
-echo "[deploy] target=$MACHINE os=$REMOTE_OS gateway=ws://$GATEWAY_IP:7777"
+echo "[deploy] target=$MACHINE instance=$INSTANCE os=$REMOTE_OS gateway=ws://$GATEWAY_IP:$GATEWAY_PORT dir=$REMOTE_DIR"
 
 NODE_DETECT='
 source ~/.zshrc 2>/dev/null || true
@@ -129,6 +272,28 @@ systemd_auth_env_lines() {
   elif [[ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]]; then
     printf 'Environment="FARMSLOT_GATEWAY_PASSWORD=%s"
 ' "$(printf '%s' "$FARMSLOT_GATEWAY_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  fi
+}
+
+# Non-prod-only env: keeps the dev instance's home dir and screen-control IPC
+# socket from colliding with prod's when both run on the same machine. Prod
+# stays unset here, so services/node falls back to its original defaults
+# unchanged (~/.farmslot, /tmp/farmslot-screen-control-<uid>.sock).
+launchd_instance_env_xml() {
+  if [[ -n "$INSTANCE_SUFFIX" ]]; then
+    printf '        <key>FARMSLOT_HOME</key>
+        <string>%s</string>
+        <key>SCREEN_CONTROL_SOCKET</key>
+        <string>%s</string>
+' "$(printf '%s' "$REMOTE_HOME/.farmslot${INSTANCE_SUFFIX}" | xml_escape)" "$(printf '%s' "$SCREEN_CONTROL_SOCKET_PATH" | xml_escape)"
+  fi
+}
+
+systemd_instance_env_lines() {
+  if [[ -n "$INSTANCE_SUFFIX" ]]; then
+    printf 'Environment="FARMSLOT_HOME=%s"
+Environment="SCREEN_CONTROL_SOCKET=%s"
+' "$REMOTE_HOME/.farmslot${INSTANCE_SUFFIX}" "$SCREEN_CONTROL_SOCKET_PATH"
   fi
 }
 
@@ -238,17 +403,25 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
   fi
 fi
 
-# --- rsync protocol AFTER yarn install (yarn wipes unmanaged node_modules) ---
-echo "[deploy] syncing protocol..."
-run "mkdir -p $REMOTE_DIR/node_modules/@farmslot/protocol"
-rsync -a --delete "$PROTOCOL_SRC/src/" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/src/"
-rsync -a --delete "$PROTOCOL_SRC/dist/" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/dist/"
-rsync -a "$PROTOCOL_SRC/package.json" "${RSYNC_PREFIX}$REMOTE_DIR/node_modules/@farmslot/protocol/package.json"
+# --- rsync @farmslot/* workspace packages AFTER yarn install (yarn wipes unmanaged node_modules) ---
+echo "[deploy] syncing workspace packages..."
+while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
+  [[ -z "$pkg_name" ]] && continue
+  PKG_SRC="$PACKAGES_DIR/$pkg_dir"
+  PKG_DEST="$REMOTE_DIR/node_modules/$pkg_name"
+  run "mkdir -p $PKG_DEST"
+  # Source-based packages (e.g. @farmslot/capabilities) ship no dist/; built
+  # packages (e.g. @farmslot/protocol) ship both — sync whichever exist.
+  [[ -d "$PKG_SRC/src" ]] && rsync -a --delete "$PKG_SRC/src/" "${RSYNC_PREFIX}$PKG_DEST/src/"
+  [[ -d "$PKG_SRC/dist" ]] && rsync -a --delete "$PKG_SRC/dist/" "${RSYNC_PREFIX}$PKG_DEST/dist/"
+  rsync -a "$PKG_SRC/package.json" "${RSYNC_PREFIX}$PKG_DEST/package.json"
+  echo "  → $pkg_name"
+done <<< "$FARMSLOT_DEPS"
 
 # --- Install service (platform-specific) ---
 
 if [[ "$REMOTE_OS" == "Darwin" ]]; then
-  PLIST_NAME="com.farmslot.node"
+  PLIST_NAME="com.farmslot.node${LAUNCHD_LABEL_SUFFIX}"
   PLIST_REL="Library/LaunchAgents/${PLIST_NAME}.plist"
 
   echo "[deploy] installing launchd service..."
@@ -271,12 +444,12 @@ if [[ "$REMOTE_OS" == "Darwin" ]]; then
     <key>EnvironmentVariables</key>
     <dict>
         <key>GATEWAY_URL</key>
-        <string>ws://${GATEWAY_IP}:7777</string>
+        <string>ws://${GATEWAY_IP}:${GATEWAY_PORT}</string>
         <key>MACHINE_NAME</key>
-        <string>${MACHINE}</string>
+        <string>${NODE_MACHINE_NAME}</string>
         <key>CAPTURE_HELPER_PATH</key>
         <string>${CAPTURE_HELPER_REMOTE}</string>
-$(launchd_auth_env_xml)        <key>PATH</key>
+$(launchd_auth_env_xml)$(launchd_instance_env_xml)        <key>PATH</key>
         <string>${REMOTE_DIR}/node_modules/.bin:${NODE_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin</string>
     </dict>
     <key>WorkingDirectory</key>
@@ -301,7 +474,7 @@ PLIST
   run "launchctl unload ~/$PLIST_REL 2>/dev/null; launchctl load ~/$PLIST_REL"
   sleep 2
   echo "[deploy] verifying..."
-  run "launchctl list | grep farmslot || echo 'WARNING: service not running'"
+  run "launchctl list | grep $PLIST_NAME || echo 'WARNING: service not running'"
   echo ""
   echo "[deploy] done."
   echo "  Logs:   tail -f $REMOTE_DIR/node.log"
@@ -313,23 +486,24 @@ PLIST
   echo "    $CAPTURE_HELPER_REMOTE doctor --open-permissions"
 
 elif [[ "$REMOTE_OS" == "Linux" ]]; then
-  UNIT_NAME="farmslot-node"
+  UNIT_NAME="farmslot-node${INSTANCE_SUFFIX}"
   UNIT_DIR=".config/systemd/user"
 
   echo "[deploy] installing systemd user service..."
   run "mkdir -p ~/$UNIT_DIR && cat > ~/$UNIT_DIR/${UNIT_NAME}.service" << UNIT
 [Unit]
-Description=Farmslot Node (${MACHINE})
+Description=Farmslot Node (${MACHINE}, ${INSTANCE})
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=${REMOTE_DIR}
-Environment=GATEWAY_URL=ws://${GATEWAY_IP}:7777
-Environment=MACHINE_NAME=${MACHINE}
+Environment=GATEWAY_URL=ws://${GATEWAY_IP}:${GATEWAY_PORT}
+Environment=MACHINE_NAME=${NODE_MACHINE_NAME}
 Environment=PATH=${NODE_DIR}:/usr/local/bin:/usr/bin:/bin
 $(systemd_auth_env_lines)
+$(systemd_instance_env_lines)
 Environment=HOME=${REMOTE_HOME}
 ExecStart=${NODE_PATH} --require ${REMOTE_DIR}/node_modules/tsx/dist/preflight.cjs --import file://${REMOTE_DIR}/node_modules/tsx/dist/loader.mjs ${REMOTE_DIR}/src/index.ts
 Restart=always
@@ -357,4 +531,8 @@ else
   exit 1
 fi
 
-echo "  Update: bash scripts/deploy-node.sh $MACHINE"
+if [[ "$INSTANCE" == "prod" ]]; then
+  echo "  Update: bash scripts/deploy-node.sh $MACHINE"
+else
+  echo "  Update: bash scripts/deploy-node.sh $MACHINE --instance $INSTANCE"
+fi
