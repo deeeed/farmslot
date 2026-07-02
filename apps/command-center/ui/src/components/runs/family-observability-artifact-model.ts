@@ -9,11 +9,8 @@ import { formatBytes } from '../../utils/format.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { runArtifactFetchUrl, runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
-export function familyArtifactUrl(
-  gatewayBase: string,
-  artifact: FamilyObservabilityArtifact,
-): string {
-  return runArtifactUrl(gatewayBase, artifact.runId, artifact);
+export function familyArtifactUrl(artifact: FamilyObservabilityArtifact): string {
+  return runArtifactUrl(artifact.runId, artifact);
 }
 
 export function familyArtifactFetchUrl(artifact: FamilyObservabilityArtifact): string {
@@ -60,12 +57,11 @@ export function familyArtifactProvenance(
 }
 
 export function familyLightboxItem(
-  gatewayBase: string,
   artifact: FamilyObservabilityArtifact,
   run: Pick<FamilyObservabilityRunSummary, 'branch'> | null,
 ): LightboxItem {
   return {
-    url: familyArtifactUrl(gatewayBase, artifact),
+    url: familyArtifactUrl(artifact),
     path: artifact.path,
     purpose: artifact.purpose,
     caption: familyArtifactCaption(artifact),

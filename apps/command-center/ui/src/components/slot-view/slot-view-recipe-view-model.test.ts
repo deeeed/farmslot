@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import type { RecipeRunArtifactGroup } from '@farmslot/protocol';
 
+import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
+
 import {
   selectedSlotViewRecipeArtifact,
   selectedSlotViewRecipeArtifactLabel,
@@ -229,7 +231,9 @@ test('slot view recipe view model builds fallback warnings and artifact URLs', (
       selectedRun: promoted,
       artifactMirrorEpoch: 2,
     }),
-    'http://localhost:5176/api/run-artifact?runId=run-1&path=artifacts%2Fafter.png&recipeRunId=valid-1&v=abcdef123456&vsize=42&m=2',
+    gatewayResourceUrl(
+      '/api/run-artifact?runId=run-1&path=artifacts%2Fafter.png&recipeRunId=valid-1&v=abcdef123456&vsize=42&m=2',
+    ),
   );
 });
 

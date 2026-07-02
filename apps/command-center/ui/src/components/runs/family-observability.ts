@@ -19,7 +19,7 @@ import './grade-semantic-picker.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
-import { gatewayHttpFetch, gatewayHttpOrigin } from '../../utils/gateway-origin.js';
+import { gatewayHttpFetch } from '../../utils/gateway-origin.js';
 import { putCapped } from '../../utils/markdown.js';
 import type { LightboxPair } from '../shared/media-lightbox-types.js';
 import type { RecipeOutputPanel } from '../workspace/recipe-output-panel.js';
@@ -103,7 +103,6 @@ import {
 import type { SemanticPickerDetail } from './grade-semantic-picker.js';
 import { isSemanticChoice } from './grade-semantic-picker.js';
 
-const GATEWAY_BASE = gatewayHttpOrigin();
 const MD_CACHE_LIMIT = 50;
 const COPY_COMPARE_PROMPT = 'compare-prompt';
 
@@ -434,14 +433,14 @@ export class FamilyObservability extends FamilyObservabilityState {
   }
 
   private get _lightboxItems() {
-    return familyLightboxItemsForArtifacts(GATEWAY_BASE, this._visibleArtifacts, this.snapshot);
+    return familyLightboxItemsForArtifacts(this._visibleArtifacts, this.snapshot);
   }
 
   private get _pairs(): LightboxPair[] {
     if (this._lightboxPairOverride) return this._lightboxPairOverride;
     if (this._pairsCache && this._pairsCache.source === this.snapshot)
       return this._pairsCache.pairs;
-    const pairs = familyLightboxPairsForSnapshot(GATEWAY_BASE, this.snapshot);
+    const pairs = familyLightboxPairsForSnapshot(this.snapshot);
     this._pairsCache = { source: this.snapshot, pairs };
     return pairs;
   }
@@ -491,11 +490,7 @@ export class FamilyObservability extends FamilyObservabilityState {
     a: FamilyObservabilityArtifact,
     b: FamilyObservabilityArtifact,
   ): void {
-    const [beforeItem, afterItem] = familyLightboxItemsForArtifacts(
-      GATEWAY_BASE,
-      [a, b],
-      this.snapshot,
-    );
+    const [beforeItem, afterItem] = familyLightboxItemsForArtifacts([a, b], this.snapshot);
     const kind: 'image' | 'video' =
       isRunEvidenceVideoArtifact(a) || isRunEvidenceVideoArtifact(b) ? 'video' : 'image';
     this._lightboxOverride = null;
@@ -683,7 +678,7 @@ export class FamilyObservability extends FamilyObservabilityState {
       onSortCompare: (sortKey) => this._onSortCompare(sortKey),
       onOpenEvidenceCell: (artifacts, index) => this._openEvidenceCell(artifacts, index),
       onCompareEvidencePair: (a, b) => this._compareEvidencePair(a, b),
-      evidenceThumbUrl: (artifact) => familyArtifactUrl(GATEWAY_BASE, artifact),
+      evidenceThumbUrl: (artifact) => familyArtifactUrl(artifact),
       onOpenSlot: (slotId, event) => {
         event.stopPropagation();
         location.hash = `slot/${slotId}`;
@@ -846,7 +841,6 @@ export class FamilyObservability extends FamilyObservabilityState {
   private _familyDiffLinkRenderers() {
     return createFamilyDiffLinkRenderers({
       snapshot: this.snapshot,
-      gatewayBase: GATEWAY_BASE,
       onOpenDiff: (label, artifact, opener) => {
         this._diffModalOpener = opener;
         this._openDiffModal(label, artifact);
@@ -923,8 +917,7 @@ export class FamilyObservability extends FamilyObservabilityState {
           history.replaceState(null, '', newHash);
         }
       },
-      artifactUrl: (artifact: FamilyObservabilityArtifact) =>
-        familyArtifactUrl(GATEWAY_BASE, artifact),
+      artifactUrl: (artifact: FamilyObservabilityArtifact) => familyArtifactUrl(artifact),
       artifactCaption: (artifact: FamilyObservabilityArtifact) => familyArtifactCaption(artifact),
       isBrokenArtifact: (artifact: FamilyObservabilityArtifact) => this._isBrokenArtifact(artifact),
       markArtifactBroken: (artifact: FamilyObservabilityArtifact) =>
@@ -944,7 +937,6 @@ export class FamilyObservability extends FamilyObservabilityState {
       run,
       runs: this.snapshot?.runs ?? [],
       prs: this._prs,
-      gatewayBase: GATEWAY_BASE,
       fullRun: this._fullRuns.get(run.runId) ?? null,
       fullRunLoading: this._fullRunLoading.has(run.runId),
       fullRunError: this._fullRunError.get(run.runId),

@@ -26,7 +26,6 @@ import './recipe-output-panel.js';
 
 import { gateway } from '../../gateway-client.js';
 import { colors, fonts } from '../../styles/theme-tokens.js';
-import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
@@ -57,8 +56,6 @@ import {
   renderWorkspaceEvidencePreview,
 } from './workspace-evidence-preview.js';
 
-const GATEWAY_BASE = gatewayHttpOrigin();
-
 @customElement('review-workspace')
 export class ReviewWorkspace extends ReviewWorkspaceState {
   private get _payload(): ReviewGatePayload {
@@ -79,7 +76,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   /** Lightbox items derived from media artifacts */
   private _lightboxItems(mediaArtifacts: ArtifactRef[]): LightboxItem[] {
     return mediaArtifacts.map((a) => ({
-      url: runArtifactUrl(GATEWAY_BASE, this.runId, a),
+      url: runArtifactUrl(this.runId, a),
       path: a.path,
       purpose: a.purpose,
     }));
@@ -96,7 +93,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     this._diffModalUrl =
       this._payload.artifactUrls?.[diffPath] ??
       this._payload.artifactUrls?.[workspaceArtifactBasename(diffPath)] ??
-      runArtifactUrl(GATEWAY_BASE, this.runId, { path: diffPath });
+      runArtifactUrl(this.runId, { path: diffPath });
     this._diffModalOpen = true;
   }
 
@@ -550,7 +547,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
                 compact: true,
                 items: mediaArtifacts.map((artifact, index) => ({
                   artifact,
-                  url: runArtifactUrl(GATEWAY_BASE, this.runId, artifact),
+                  url: runArtifactUrl(this.runId, artifact),
                   open: () => {
                     this._lightboxIndex = index;
                     this._lightboxOpen = true;

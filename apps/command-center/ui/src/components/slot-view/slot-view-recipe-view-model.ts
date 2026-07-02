@@ -1,7 +1,7 @@
 import type { ArtifactRef, RecipeRunArtifactGroup } from '@farmslot/protocol';
 
 import { colors } from '../../styles/theme-tokens.js';
-import { gatewayApiUrl } from '../../utils/gateway-origin.js';
+import { gatewayResourceUrl } from '../../utils/gateway-origin.js';
 import { desiredRecipeRunId, recipeRunIdExists } from '../shared/recipe-run-selection-model.js';
 
 import { recipeNodeExists, selectedRecipeRunRequestId } from './slot-view-recipe-helpers.js';
@@ -182,7 +182,7 @@ export function slotViewRecipeArtifactUrl(input: {
   else if (typeof entry?.sizeBytes === 'number') params.set('v', `s${entry.sizeBytes}`);
   if (typeof entry?.sizeBytes === 'number') params.set('vsize', String(entry.sizeBytes));
   if (input.artifactMirrorEpoch > 0) params.set('m', String(input.artifactMirrorEpoch));
-  return gatewayApiUrl(`${input.origin}/api/run-artifact?${params.toString()}`);
+  return gatewayResourceUrl(`/api/run-artifact?${params.toString()}`);
 }
 
 export function selectedSlotViewRecipeArtifact(

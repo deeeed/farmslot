@@ -2,6 +2,7 @@ import type {
   BacklogAutoDispatchTickParams,
   BacklogCreateParams,
   BacklogDeleteParams,
+  BacklogDequeueParams,
   BacklogEnqueueParams,
   BacklogListParams,
   BacklogMarkReadyParams,
@@ -13,6 +14,7 @@ import {
   autoDispatchBacklogReady,
   createBacklogItem,
   deleteBacklogItem,
+  dequeueBacklogItem,
   enqueueBacklogItem,
   listBacklogItems,
   markBacklogItemReady,
@@ -26,6 +28,7 @@ export const backlogUpdate = (params: BacklogUpdateParams) => updateBacklogItem(
 export const backlogDelete = (params: BacklogDeleteParams) => deleteBacklogItem(params.itemId);
 export const backlogMarkReady = (params: BacklogMarkReadyParams) => markBacklogItemReady(params);
 export const backlogEnqueue = (params: BacklogEnqueueParams) => enqueueBacklogItem(params);
+export const backlogDequeue = (params: BacklogDequeueParams) => dequeueBacklogItem(params);
 export const backlogAutoDispatchTick = (params: BacklogAutoDispatchTickParams = {}) =>
   autoDispatchBacklogReady(params);
 export const backlogUpcoming = (params: BacklogUpcomingParams = {}) => upcomingBacklogItems(params);

@@ -27,7 +27,6 @@ type LedgerDiff =
 
 interface DiffLinkRenderersInput {
   snapshot: FamilyObservabilitySnapshot | null;
-  gatewayBase: string;
   onOpenDiff: (
     label: string,
     artifact: FamilyObservabilityArtifact,
@@ -96,7 +95,7 @@ export function createFamilyDiffLinkRenderers(options: DiffLinkRenderersInput) {
       if (!artifact) return nothing;
       return html`<a
         class="detail-link"
-        href=${familyArtifactUrl(options.gatewayBase, artifact)}
+        href=${familyArtifactUrl(artifact)}
         target="_blank"
         rel="noopener noreferrer"
         >${label}</a

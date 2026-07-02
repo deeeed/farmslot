@@ -13,6 +13,7 @@ import {
   gatewayHttpFetch,
   gatewayHttpOrigin,
   gatewayProxiedFetchUrl,
+  gatewayResourceUrl,
 } from './gateway-origin.js';
 
 test('gatewayHttpOrigin falls back to the current host on local pages', () => {
@@ -73,6 +74,21 @@ test('gatewayApiUrl does not append gateway credentials to off-gateway absolute 
       gatewayApiUrl('https://example.com/artifact.png'),
       'https://example.com/artifact.png',
     );
+  });
+});
+
+test('gatewayResourceUrl matches gatewayProxiedFetchUrl for browser media URLs', () => {
+  withMockLocalStorage(() => {
+    localStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, 'dev-token');
+    const location = {
+      href: 'http://localhost:5175/#family/demo',
+      origin: 'http://localhost:5175',
+      pathname: '/',
+    };
+    const path = '/api/run-artifact?runId=1&path=a.png';
+    withMockWindow(location, () => {
+      assert.equal(gatewayResourceUrl(path), gatewayProxiedFetchUrl(path, location));
+    });
   });
 });
 
@@ -156,6 +172,26 @@ test('gatewayHttpFetch uses authenticated proxied URL without double token injec
     }
   }
 });
+
+function withMockWindow(
+  location: { href: string; origin: string; pathname: string },
+  fn: () => void,
+): void {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { location },
+  });
+  try {
+    fn();
+  } finally {
+    if (previous) {
+      Object.defineProperty(globalThis, 'window', previous);
+    } else {
+      delete (globalThis as { window?: Window }).window;
+    }
+  }
+}
 
 function withMockLocalStorage(fn: () => void): void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');

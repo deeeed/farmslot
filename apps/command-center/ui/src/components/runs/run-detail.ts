@@ -29,7 +29,6 @@ import '../shared/slot-prepare-popover.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
-import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 import { togglePinnedSlot } from '../../utils/pinned-slots.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
@@ -79,8 +78,6 @@ import {
 } from './run-detail-url-state.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
 import { collectRunEvidenceArtifacts, sortRunsForFamilyView } from './run-utils.js';
-
-const GATEWAY_BASE = gatewayHttpOrigin();
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
@@ -625,7 +622,7 @@ export class RunDetail extends RunDetailState {
   }
 
   private _artifactUrl = (artifact: FamilyObservabilityArtifact): string => {
-    return runArtifactUrl(GATEWAY_BASE, artifact.runId, artifact);
+    return runArtifactUrl(artifact.runId, artifact);
   };
 
   private _updateEvidenceArtifactHash(item: LightboxItem | null): void {

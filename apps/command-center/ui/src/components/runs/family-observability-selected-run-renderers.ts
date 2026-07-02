@@ -25,7 +25,6 @@ interface FamilySelectedRunDetailRenderOptions {
   run: FamilyObservabilityRunSummary;
   runs: readonly FamilyObservabilityRunSummary[];
   prs: readonly PRStatus[];
-  gatewayBase: string;
   fullRun: Run | null;
   fullRunLoading: boolean;
   fullRunError: string | undefined;
@@ -66,7 +65,6 @@ export function renderFamilySelectedRunDetail(options: FamilySelectedRunDetailRe
 function renderFamilyRunPipelineDetail(options: FamilySelectedRunDetailRenderOptions) {
   const summaryStepFallback = renderFamilySummarySteps({
     run: options.run,
-    gatewayBase: options.gatewayBase,
     onOpenStepArtifact: options.onOpenStepArtifact,
   });
   if (!options.fullRun) {

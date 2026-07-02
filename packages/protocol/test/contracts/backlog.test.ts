@@ -14,6 +14,7 @@ import {
 test('backlog protocol exports method constants and statuses', () => {
   assert.equal(Methods.BACKLOG_CREATE, 'backlog.create');
   assert.equal(BacklogMethods.enqueue, 'backlog.enqueue');
+  assert.equal(BacklogMethods.dequeue, 'backlog.dequeue');
   assert.equal(Events.BACKLOG_UPDATED, 'backlog.updated');
   assert.deepEqual(BACKLOG_STATUSES, [
     'candidate',

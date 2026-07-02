@@ -49,7 +49,13 @@ import {
 import { normalizeRunner, runnerSupportsModel } from '../runners/registry.js';
 import { getAllRuns } from '../runs/store.js';
 
-import { addItem, getQueueSnapshot, persistQueueNow, tryDispatchNext } from './dispatch-queue.js';
+import {
+  addItem,
+  getQueueSnapshot,
+  persistQueueNow,
+  removeQueueItemInternal,
+  tryDispatchNext,
+} from './dispatch-queue.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -130,6 +136,31 @@ const BACKLOG_SPEC_ROOT =
 
 export function initBacklogStore(broadcast: BroadcastFn): void {
   _broadcast = broadcast;
+}
+
+export function isOrphanedBacklogQueueItem(queueItem: QueueItem): boolean {
+  return (
+    queueItem.status !== 'dispatching' &&
+    Boolean(queueItem.backlogItemId) &&
+    !items.some((item) => item.id === queueItem.backlogItemId)
+  );
+}
+
+export function listOrphanedBacklogQueueItems(): QueueItem[] {
+  return getQueueSnapshot().filter((queueItem) => isOrphanedBacklogQueueItem(queueItem));
+}
+
+export async function removeOrphanBacklogQueueItem(params: { itemId: string }): Promise<OkResult> {
+  const queueItem = getQueueSnapshot().find((candidate) => candidate.id === params.itemId);
+  if (!queueItem) throw new Error(`Queue item not found: ${params.itemId}`);
+  if (!isOrphanedBacklogQueueItem(queueItem)) {
+    throw new Error(
+      'Cannot remove queue item as orphan: backlog record exists or item is not backlog-linked',
+    );
+  }
+  removeQueueItemInternal(queueItem.id, 'orphan-remove');
+  await persistQueueNow();
+  return { ok: true };
 }
 
 async function persist(): Promise<void> {
@@ -606,9 +637,23 @@ export async function loadBacklog(): Promise<void> {
     }
     console.log(`[backlog] loaded ${items.length} items from disk`);
     if (await reconcileBacklogLinks()) schedulePersist('load-reconcile');
+    const orphans = listOrphanedBacklogQueueItems();
+    if (orphans.length > 0) {
+      console.warn(
+        `[backlog] ${orphans.length} queue item(s) reference missing backlog records; remove explicitly from the queue or Doctor`,
+      );
+    }
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return;
+    if (code === 'ENOENT') {
+      const orphans = listOrphanedBacklogQueueItems();
+      if (orphans.length > 0) {
+        console.warn(
+          `[backlog] backlog file missing with ${orphans.length} orphaned queue item(s); remove explicitly from the queue or Doctor`,
+        );
+      }
+      return;
+    }
     throw new Error(`[backlog] failed to load backlog: ${(err as Error).message}`);
   }
 }
@@ -1235,14 +1280,21 @@ export async function enqueueBacklogItem(
       if (item.status !== 'ready' || item.queuedQueueItemId || item.runId) {
         throw new Error('Backlog item changed while enqueue validation was running');
       }
+      for (const stale of getQueueSnapshot().filter(
+        (queueItem) => queueItem.backlogItemId === item.id && queueItem.status === 'cancelled',
+      )) {
+        removeQueueItemInternal(stale.id, 'backlog-enqueue-purge-cancelled');
+      }
       const baselineCandidate = item.launchPlan ? launchCandidateByRole(item, 'baseline') : null;
       if (item.launchPlan) ensureLaunchPlanState(item);
-      const existingQueueItem = getQueueSnapshot().find((queueItem) =>
-        baselineCandidate
-          ? queueItem.backlogItemId === item.id &&
-            queueItem.launchPlanId === item.launchPlan?.id &&
-            queueItem.launchCandidateId === baselineCandidate.id
-          : queueItem.backlogItemId === item.id,
+      const existingQueueItem = getQueueSnapshot().find(
+        (queueItem) =>
+          (baselineCandidate
+            ? queueItem.backlogItemId === item.id &&
+              queueItem.launchPlanId === item.launchPlan?.id &&
+              queueItem.launchCandidateId === baselineCandidate.id
+            : queueItem.backlogItemId === item.id) &&
+          (queueItem.status === 'queued' || queueItem.status === 'dispatching'),
       );
       if (existingQueueItem) {
         item.status = 'queued';
@@ -1293,6 +1345,54 @@ export async function enqueueBacklogItem(
       broadcastBacklog();
       throw err;
     }
+  });
+}
+
+export async function dequeueBacklogItem(params: {
+  itemId: string;
+}): Promise<{ item: BacklogItem }> {
+  return withBacklogMutation(async () => {
+    const item = getItem(params.itemId);
+    if (item.workGraphId || item.workNodeId) {
+      throw new Error(
+        'Backlog item is linked to a work graph; use work graph controls to cancel queued work',
+      );
+    }
+    if (item.status !== 'queued' && item.status !== 'dispatching') {
+      throw new Error(`Cannot dequeue backlog item in status ${item.status}`);
+    }
+    const linkedRun = item.runId ? getAllRuns().find((run) => run.id === item.runId) : undefined;
+    if (linkedRun && !isTerminalRunStatus(linkedRun.status)) {
+      throw new Error(`Cannot dequeue backlog item with active run ${linkedRun.id}`);
+    }
+    const linkedQueueItems = getQueueSnapshot().filter(
+      (queueItem) => queueItem.backlogItemId === item.id,
+    );
+    if (linkedQueueItems.some((queueItem) => queueItem.status === 'dispatching')) {
+      throw new Error('Cannot dequeue backlog item while dispatch is in progress');
+    }
+    for (const queueItem of linkedQueueItems.filter(
+      (candidate) => candidate.status === 'queued' || candidate.status === 'cancelled',
+    )) {
+      removeQueueItemInternal(queueItem.id, 'backlog-dequeue');
+    }
+    if (item.launchPlan && item.launchPlanState) {
+      for (const projection of item.launchPlanState.candidates) {
+        if (projection.status === 'queued') projection.status = 'planned';
+        delete projection.queueItemId;
+      }
+      delete item.launchPlanState.baselineQueueItemId;
+    }
+    delete item.queuedQueueItemId;
+    delete item.runId;
+    delete item.lastObservedRunStatus;
+    item.status = 'ready';
+    delete item.lastDispatchError;
+    item.updatedAt = new Date().toISOString();
+    await persistQueueNow();
+    schedulePersist('dequeue');
+    broadcastBacklog();
+    return { item };
   });
 }
 

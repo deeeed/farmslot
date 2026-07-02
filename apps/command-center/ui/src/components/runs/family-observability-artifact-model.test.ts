@@ -35,11 +35,8 @@ test('family artifact URL helpers preserve run artifact paths', () => {
   const item = artifact({ path: 'artifacts/screenshots/after.png' });
 
   assert.equal(familyArtifactKey(item), 'run-1234567890:artifacts/screenshots/after.png');
-  assert.match(familyArtifactUrl('http://localhost:7777', item), /run-1234567890/);
-  assert.match(
-    familyArtifactUrl('http://localhost:7777', item),
-    /artifacts%2Fscreenshots%2Fafter\.png/,
-  );
+  assert.match(familyArtifactUrl(item), /run-1234567890/);
+  assert.match(familyArtifactUrl(item), /artifacts%2Fscreenshots%2Fafter\.png/);
   assert.match(familyArtifactFetchUrl(item), /run-1234567890/);
   assert.match(familyArtifactFetchUrl(item), /artifacts%2Fscreenshots%2Fafter\.png/);
 });
@@ -79,7 +76,7 @@ test('family artifact kind and provenance match lightbox semantics', () => {
 });
 
 test('familyLightboxItem derives URL, caption, and provenance together', () => {
-  const item = familyLightboxItem('http://localhost:7777', artifact(), {
+  const item = familyLightboxItem(artifact(), {
     branch: 'fix/demo',
   } as Pick<FamilyObservabilityRunSummary, 'branch'>);
 

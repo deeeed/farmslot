@@ -252,16 +252,28 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
   return item;
 }
 
+function removeItemAtIndex(idx: number, reason: string): void {
+  const [removed] = queue.splice(idx, 1);
+  if (!removed) return;
+  schedulePersist(reason);
+  console.log(`[dispatch-queue] removed item ${removed.id.slice(0, 8)} (${reason})`);
+  broadcastQueue();
+}
+
+/** Internal removal for backlog.dequeue and orphan reconciliation. */
+export function removeQueueItemInternal(itemId: string, reason = 'internal-remove'): void {
+  const idx = queue.findIndex((q) => q.id === itemId);
+  if (idx < 0) throw new Error(`Queue item not found: ${itemId}`);
+  removeItemAtIndex(idx, reason);
+}
+
 export function removeItem(itemId: string): void {
   const idx = queue.findIndex((q) => q.id === itemId);
   if (idx < 0) throw new Error(`Queue item not found: ${itemId}`);
   if (queue[idx]?.backlogItemId) {
-    throw new Error('Cannot remove backlog-linked queue item directly; use backlog controls');
+    throw new Error('Cannot remove backlog-linked queue item directly; use backlog.dequeue');
   }
-  queue.splice(idx, 1);
-  schedulePersist('remove');
-  console.log(`[dispatch-queue] removed item ${itemId.slice(0, 8)}`);
-  broadcastQueue();
+  removeItemAtIndex(idx, 'remove');
 }
 
 export async function cancelGraphQueuedItem(params: {
@@ -421,6 +433,11 @@ function isNonRetryableEvalQueueError(err: unknown): boolean {
   );
 }
 
+function liveQueuedItem(itemId: string): QueueItem | null {
+  const item = queue.find((candidate) => candidate.id === itemId);
+  return item?.status === 'queued' ? item : null;
+}
+
 async function tryDispatchNextOnce(): Promise<void> {
   if (!_broadcast || !_createAndStartRun) return;
 
@@ -429,7 +446,9 @@ async function tryDispatchNextOnce(): Promise<void> {
 
   const fleet = await loadFleetStatus();
 
-  for (const item of pending) {
+  for (const pendingItem of pending) {
+    const item = liveQueuedItem(pendingItem.id);
+    if (!item) continue;
     if (item.queueKind === 'eval-cell' && item.evalCell) {
       const usage = evalSuiteCapUsage(item.evalCell.capGroupId, queue);
       if (usage.active + usage.dispatching >= usage.cap) {

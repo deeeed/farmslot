@@ -15,6 +15,11 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
+import {
+  isOrphanedBacklogQueueItemForUi,
+  queueRemoveRequestForUi,
+} from './dispatch-queue-panel-model.js';
+
 function labelFor(item: QueueItem): string {
   return (
     item.label?.trim() ||
@@ -310,11 +315,16 @@ export class DispatchQueuePanel extends LitElement {
     this._workGraphs = state.workGraphs;
   }
 
+  private _isOrphan(item: QueueItem): boolean {
+    return isOrphanedBacklogQueueItemForUi(item, this._backlogItems);
+  }
+
   private async _remove(item: QueueItem): Promise<void> {
     this._busyItem = item.id;
     this._error = '';
     try {
-      await gateway.request(Methods.DISPATCH_QUEUE_REMOVE, { itemId: item.id });
+      const request = queueRemoveRequestForUi(item, this._backlogItems);
+      await gateway.request(request.method, request.params);
     } catch (error) {
       this._error = error instanceof Error ? error.message : String(error);
     } finally {
@@ -540,6 +550,11 @@ export class DispatchQueuePanel extends LitElement {
                         ${graphContext(item, this._backlogItems, this._workGraphs)
                           ? html`<span class="meta graph"
                               >${graphContext(item, this._backlogItems, this._workGraphs)}</span
+                            >`
+                          : nothing}
+                        ${this._isOrphan(item)
+                          ? html`<span class="meta warn"
+                              >orphaned backlog link — remove to discard stale queue row</span
                             >`
                           : nothing}
                         ${this._queueBlocker(item)

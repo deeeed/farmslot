@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { QueueItem, SlotStatus } from '@farmslot/protocol';
 
 import { evalSuiteCapUsage, setEvalSuiteCap } from '../evals/suite-cap-store.js';
+import { setCachedFleetForTests } from '../fleet/state.js';
 import { findAffinitySlot } from '../methods/dispatch.js';
 import { createRun, deleteRun, getRun, updateRun } from '../runs/store.js';
 
@@ -12,10 +13,12 @@ import {
   buildQueuePreviewParams,
   canDispatchQueuedItemToSlot,
   getQueueSnapshot,
+  initDispatchQueue,
   listItems,
   removeItem,
   reorderItems,
   selectQueueDispatchSlot,
+  tryDispatchNext,
   updateItem,
 } from './dispatch-queue.js';
 
@@ -750,4 +753,75 @@ test('addItem preserves selected worker template version for queue parity', () =
   } finally {
     removeItem(item.id);
   }
+});
+
+test('tryDispatchNext skips queue items removed while fleet status is loading', async () => {
+  const item = addItem({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: 'PROJ-dispatch-race',
+    allowedSlots: ['race-slot'],
+  });
+  let createdRuns = 0;
+  initDispatchQueue(
+    () => {},
+    async () => {
+      createdRuns += 1;
+    },
+  );
+  setCachedFleetForTests({
+    checkedAt: '2026-07-02T00:00:00.000Z',
+    slots: [
+      {
+        slot: 'race-slot',
+        machine: 'demo',
+        platform: 'cli',
+        project: 'farmslot-farm',
+        health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+        branch: 'main',
+        agent: 'idle',
+        enabled: true,
+        dispatchable: true,
+        lifecycle: 'ready',
+        phase: null,
+        warm: false,
+        taskId: null,
+        taskFile: null,
+        currentRunId: null,
+        currentFlowType: null,
+        currentTicketOrPr: null,
+        currentMode: null,
+        currentFamilyId: null,
+        currentLane: null,
+        currentVariant: null,
+        dispatchedAt: null,
+        completedAt: null,
+        runner: null,
+        model: null,
+        deviceName: null,
+        taskPhase: null,
+        taskStepProgress: null,
+      },
+    ],
+    summary: {
+      total: 1,
+      ready: 1,
+      busy: 0,
+      held: 0,
+      manual: 0,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+  });
+
+  const dispatch = tryDispatchNext();
+  removeItem(item.id);
+  await dispatch;
+
+  assert.equal(createdRuns, 0);
+  assert.equal(
+    getQueueSnapshot().some((candidate) => candidate.id === item.id),
+    false,
+  );
 });

@@ -20,7 +20,6 @@ import '../shared/step-artifacts.js';
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
-import { gatewayHttpOrigin } from '../../utils/gateway-origin.js';
 import { runArtifactUrl } from '../workspace/workspace-artifacts.js';
 
 import { runCompareStyles } from './run-compare-styles.js';
@@ -35,7 +34,6 @@ import {
   stepStatusColor,
 } from './run-utils.js';
 
-const GATEWAY_BASE = gatewayHttpOrigin();
 const RAW_PREVIEW_LIMIT = 1800;
 const ARTIFACT_PREVIEW_LIMIT = 8;
 
@@ -220,7 +218,7 @@ export class RunCompare extends LitElement {
   }
 
   private artifactUrl(artifact: FamilyObservabilityArtifact): string {
-    return runArtifactUrl(GATEWAY_BASE, artifact.runId, artifact);
+    return runArtifactUrl(artifact.runId, artifact);
   }
 
   private stepSummary(
