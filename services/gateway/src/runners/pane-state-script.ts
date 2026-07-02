@@ -20,6 +20,17 @@ function detectGrokMcpInit(pane: string): string | null {
   return total > 0 && ready < total ? 'mcp-init' : null;
 }
 
+function grokLiveStatusTail(pane: string): string {
+  const lines = pane.split('\n');
+  let start = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*#\d+\s/.test(lines[i] ?? '')) {
+      start = i + 1;
+    }
+  }
+  return lines.slice(start).join('\n');
+}
+
 function detectAuthRequired(pane: string): boolean {
   for (const line of pane.split('\n')) {
     const normalized = line.trim().toLowerCase();
@@ -59,9 +70,10 @@ function detectLaunchBlocker(
     return { kind: 'project-directory', autoAction: 'grok-select-current-project' };
   }
   if (runner === 'grok') {
-    const mcpInit = detectGrokMcpInit(pane);
+    const liveStatus = grokLiveStatusTail(pane);
+    const mcpInit = detectGrokMcpInit(liveStatus);
     if (mcpInit) return { kind: mcpInit, autoAction: null };
-    if (/starting session/i.test(pane)) return { kind: 'cold-start', autoAction: null };
+    if (/starting session/i.test(liveStatus)) return { kind: 'cold-start', autoAction: null };
   }
   if (runner && detectAuthRequired(pane)) return { kind: 'auth-required', autoAction: null };
   return { kind: null, autoAction: null };

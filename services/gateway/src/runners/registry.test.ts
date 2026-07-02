@@ -766,6 +766,41 @@ describe('grok runner', () => {
     assert.equal(runnerPaneLooksIdle(coldStart.split('\n'), 'grok'), false);
   });
 
+  it('ignores stale Grok startup lines before the live composer', () => {
+    const pane = `
+     #1 Reply exactly OK.
+
+    mcp (14/15)
+    ⠋ Starting session… 5.0s
+
+     #2 Summarize the previous task.
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'grok'), null);
+    assert.equal(grokPaneShowsColdStartSession(pane, 'grok'), false);
+    assert.equal(runnerPaneLooksIdle(pane.split('\n'), 'grok'), true);
+  });
+
+  it('still defers Grok prompt delivery while the live session is starting', () => {
+    const coldStart = `
+     #1 Reply exactly OK.
+
+    mcp (14/15)
+    ⠋ Starting session… 5.0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+
+    assert.equal(detectRunnerLaunchBlocker(coldStart, 'grok')?.kind, 'mcp-init');
+    assert.equal(runnerPaneLooksIdle(coldStart.split('\n'), 'grok'), false);
+  });
+
   it('recognizes Grok buffered prompts and submitted progress', () => {
     const message = 'Reply exactly OK and do not edit files.';
     const buffered = `
