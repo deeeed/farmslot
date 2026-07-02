@@ -26,7 +26,11 @@ export {
   type RecipeValidationSeverity,
   type RecipeValidationStatus,
 } from './common.js';
-export { validateRecipeDocument, validateRecipeWithManifest } from './document.js';
+export {
+  type RecipeDocumentValidationOptions,
+  validateRecipeDocument,
+  validateRecipeWithManifest,
+} from './document.js';
 export {
   getRecipeActionManifestActionNames,
   validateRecipeActionManifestDocument,

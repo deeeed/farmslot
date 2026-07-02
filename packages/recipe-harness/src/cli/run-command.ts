@@ -6,6 +6,7 @@ import {
 } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../adapters/core.js';
+import { resolveRecipeLibrarySources } from '../core/library.js';
 import { createRecipeRunner } from '../core/runner.js';
 import type { RecipeVideoRecordingOptions } from '../core/types.js';
 
@@ -20,6 +21,7 @@ interface RunCommandOptions {
   artifactsDir: string;
   actionManifest: string;
   projectRoot?: string;
+  library: string[];
   json?: boolean;
   recordVideo?: boolean | string;
   recordMaxFps?: string;
@@ -38,6 +40,12 @@ export function registerRunCommand(program: Command): void {
     .requiredOption('--artifacts-dir <dir>', 'Directory where artifacts are written')
     .requiredOption('--action-manifest <manifest>', 'Runner action manifest JSON')
     .option('--project-root <dir>', 'Project root used by command/artifact adapters')
+    .option(
+      '--library <entry>',
+      'Recipe library source as name=path or path (repeatable; order is precedence, first wins). Defaults to RECIPE_LIBRARY_PATH, then the personal library under the farmslot home.',
+      collectRepeatable,
+      [] as string[],
+    )
     .option('--record-video [mode]', 'Record one whole-recipe MP4 when visual motion proof helps')
     .option('--record-max-fps <fps>', 'Maximum video frame rate')
     .option('--record-max-size <px>', 'Maximum recorded video dimension')
@@ -55,6 +63,7 @@ export function registerRunCommand(program: Command): void {
         }),
         logger: console,
       });
+      const librarySources = await resolveRecipeLibrarySources({ cliEntries: options.library });
       const result = await runner.run({
         recipePath: resolveRecipeCliPath(recipePath),
         artifactsDir: resolveRecipeCliPath(options.artifactsDir),
@@ -62,6 +71,7 @@ export function registerRunCommand(program: Command): void {
           ? resolveRecipeCliPath(options.projectRoot)
           : resolveRecipeCliPath('.'),
         recordVideo: parseRecordVideoOptions(options),
+        ...(librarySources.length > 0 ? { librarySources } : {}),
       });
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -71,6 +81,10 @@ export function registerRunCommand(program: Command): void {
       }
       if (result.status !== 'pass') process.exit(1);
     });
+}
+
+function collectRepeatable(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function parseRecordVideoOptions(options: RunCommandOptions): false | RecipeVideoRecordingOptions {

@@ -10,6 +10,13 @@ export {
   normalizeUiTransportResult,
   STANDARD_UI_ACTIONS,
 } from './adapters/ui.js';
+export type { RecipeLibraryResolution, ResolvedLibraryFlow } from './core/library.js';
+export {
+  defaultRecipeLibrarySources,
+  loadRecipeLibraries,
+  parseRecipeLibraryPath,
+  resolveRecipeLibrarySources,
+} from './core/library.js';
 export { createRecipeRunner, defineActionAdapter } from './core/runner.js';
 export type * from './core/types.js';
 export type { CaptureHelperVideoRecorderOptions } from './recording/capture-helper.js';

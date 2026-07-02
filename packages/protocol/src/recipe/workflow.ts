@@ -944,9 +944,11 @@ export function validateFlowCalls(
   ctx: MutableValidationContext,
   recipe: Record<string, unknown>,
   workflow: WorkflowGraph,
+  options?: { externalFlowIds?: ReadonlySet<string> },
 ): void {
   const inlineFlows = isRecord(recipe.flows) ? new Set(Object.keys(recipe.flows)) : new Set();
   const hasExternalCatalogs = Array.isArray(recipe.uses) && recipe.uses.length > 0;
+  const externalFlowIds = options?.externalFlowIds;
   const entries = [
     ...Object.entries(workflow.nodes).map(
       ([nodeId, node]) => [nodeId, node, `validate.workflow.nodes.${nodeId}`] as const,
@@ -968,7 +970,7 @@ export function validateFlowCalls(
       );
       continue;
     }
-    if (!hasExternalCatalogs && !inlineFlows.has(node.ref)) {
+    if (!hasExternalCatalogs && !inlineFlows.has(node.ref) && !externalFlowIds?.has(node.ref)) {
       addFinding(
         ctx,
         'error',

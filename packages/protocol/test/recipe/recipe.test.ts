@@ -673,6 +673,39 @@ test('rejects unresolved call refs and lifecycle transitions', () => {
   );
 });
 
+test('accepts call refs resolvable from declared external flow ids', () => {
+  const recipe = {
+    schema_version: 1,
+    title: 'Library-resolved call',
+    description: 'Call refs may resolve from configured recipe library sources.',
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': {
+            action: 'call',
+            intent: 'Run a flow resolved from a recipe library source',
+            ref: 'library.flow',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+
+  const withoutExternal = validateRecipeDocument(recipe);
+  assert.equal(withoutExternal.status, 'invalid');
+  assert.ok(
+    withoutExternal.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+  );
+
+  const withExternal = validateRecipeDocument(recipe, {
+    externalFlowIds: new Set(['library.flow']),
+  });
+  assert.equal(withExternal.status, 'valid');
+});
+
 test('validates inline flow actions, transitions, and cycles', () => {
   const recipe = {
     schema_version: 1,

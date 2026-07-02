@@ -23,12 +23,22 @@ import {
   validateWorkflowPreconditions,
 } from './workflow.js';
 
+export interface RecipeDocumentValidationOptions {
+  /**
+   * Flow ids resolvable outside the recipe document (e.g. from configured
+   * recipe library sources). `call.ref` values found here are not reported as
+   * unresolved even when the recipe has no `uses` catalogs or inline flows.
+   */
+  externalFlowIds?: ReadonlySet<string>;
+}
+
 export function validateRecipeWithManifest(
   recipe: unknown,
   manifest: unknown,
+  options?: RecipeDocumentValidationOptions,
 ): RecipeValidationResult {
   const ctx = createContext();
-  const recipeResult = validateRecipeDocument(recipe);
+  const recipeResult = validateRecipeDocument(recipe, options);
   const manifestResult = validateRecipeActionManifestDocument(manifest);
   ctx.findings.push(...recipeResult.findings, ...manifestResult.findings);
 
@@ -64,7 +74,10 @@ export function validateRecipeWithManifest(
   return finishResult(ctx);
 }
 
-export function validateRecipeDocument(recipe: unknown): RecipeValidationResult {
+export function validateRecipeDocument(
+  recipe: unknown,
+  options?: RecipeDocumentValidationOptions,
+): RecipeValidationResult {
   const ctx = createContext();
   if (!isRecord(recipe)) {
     addFinding(
@@ -106,7 +119,7 @@ export function validateRecipeDocument(recipe: unknown): RecipeValidationResult 
   if (workflow && rawWorkflow) {
     validateWorkflowPreconditions(ctx, rawWorkflow);
     validateWorkflowGraph(ctx, workflow, rawWorkflow);
-    validateFlowCalls(ctx, recipe, workflow);
+    validateFlowCalls(ctx, recipe, workflow, options);
   }
   validateInlineFlows(ctx, recipe);
 

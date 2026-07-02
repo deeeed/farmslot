@@ -10,7 +10,8 @@ import {
   validateRecipeWithManifest,
 } from '@farmslot/protocol';
 
-import type { RecordingTarget } from '../core/types.js';
+import { loadRecipeLibraries } from '../core/library.js';
+import type { RecipeLibrarySource, RecordingTarget } from '../core/types.js';
 
 interface RecipeValidationInputOptions {
   recipePath: string;
@@ -18,6 +19,8 @@ interface RecipeValidationInputOptions {
   artifactManifestPath?: string;
   artifactDir?: string;
   baseDir?: string;
+  /** Library sources whose flow refs count as resolvable, mirroring run resolution. */
+  librarySources?: RecipeLibrarySource[];
 }
 
 interface RecipeCliRecordingTargetOptions {
@@ -107,15 +110,20 @@ export async function validateRecipeCliInput({
   artifactManifestPath,
   artifactDir,
   baseDir = recipeCliBaseDir(),
+  librarySources,
 }: RecipeValidationInputOptions): Promise<RecipeValidationResult> {
   const recipe = await readRecipeCliJsonFile(recipePath, baseDir);
   const results: RecipeValidationResult[] = [];
 
+  const validationOptions =
+    librarySources && librarySources.length > 0
+      ? { externalFlowIds: new Set((await loadRecipeLibraries(librarySources)).flows.keys()) }
+      : undefined;
   if (actionManifestPath) {
     const actionManifest = await readRecipeCliJsonFile(actionManifestPath, baseDir);
-    results.push(validateRecipeWithManifest(recipe, actionManifest));
+    results.push(validateRecipeWithManifest(recipe, actionManifest, validationOptions));
   } else {
-    results.push(validateRecipeDocument(recipe));
+    results.push(validateRecipeDocument(recipe, validationOptions));
   }
 
   const artifactPaths = artifactDir

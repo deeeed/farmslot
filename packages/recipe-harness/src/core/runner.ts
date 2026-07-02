@@ -1,4 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -24,6 +24,12 @@ import {
 } from './graph.js';
 import { buildHudNode } from './hud.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
+import {
+  createEffectiveFlowCatalog,
+  loadRecipeLibraries,
+  type RecipeLibraryResolution,
+  type ResolvedLibraryFlow,
+} from './library.js';
 import { evaluateNodeGate } from './predicates.js';
 import {
   cleanupAbortedRunVideoRecording,
@@ -35,6 +41,7 @@ import type {
   ActiveVideoRecording,
   CreateRecipeRunnerOptions,
   PreconditionChecker,
+  RecipeFlowResolutionSummary,
   RecipeHudOptions,
   RecipeLogger,
   RecipeRecordingOptions,
@@ -150,12 +157,27 @@ class DefaultRecipeRunner implements RecipeRunner {
 
     const sourceRecipePath = request.recipePath ? path.resolve(request.recipePath) : undefined;
     const recipe = request.recipeDocument ?? (await readJsonFile(sourceRecipePath!));
-    assertRecipeMatchesManifest(recipe, this.#actionManifest);
+    const libraryResolution: RecipeLibraryResolution | undefined =
+      request.librarySources && request.librarySources.length > 0
+        ? await loadRecipeLibraries(request.librarySources, this.#logger)
+        : undefined;
+    assertRecipeMatchesManifest(
+      recipe,
+      this.#actionManifest,
+      libraryResolution ? { externalFlowIds: new Set(libraryResolution.flows.keys()) } : undefined,
+    );
     const graph = extractWorkflowGraph(recipe);
-    const flowCatalog = await collectFlows(recipe, {
+    const recipeLocalFlows = await collectFlows(recipe, {
       projectRoot,
       recipeDir: sourceRecipePath ? path.dirname(sourceRecipePath) : projectRoot,
     });
+    const usedLibraryFlows = new Map<string, ResolvedLibraryFlow>();
+    const { catalog: flowCatalog, overrides: flowOverrides } = createEffectiveFlowCatalog(
+      recipeLocalFlows,
+      libraryResolution,
+      usedLibraryFlows,
+      this.#logger,
+    );
 
     const artifactWriter = new JsonArtifactWriter(artifactsDir);
     const traceWriter = new JsonTraceWriter(artifactsDir, this.#runnerProvenance);
@@ -397,6 +419,34 @@ class DefaultRecipeRunner implements RecipeRunner {
         label: 'Execution trace',
         category: 'system',
       });
+      if (libraryResolution && usedLibraryFlows.size > 0) {
+        await writeFile(
+          path.join(artifactsDir, 'resolved-flows.json'),
+          `${JSON.stringify(
+            {
+              schema_version: 1,
+              kind: 'recipe-resolved-flows',
+              sources: libraryResolution.sources,
+              overrides: flowOverrides,
+              shadowed: collectShadowedFlows(libraryResolution),
+              flows: Object.fromEntries(
+                [...usedLibraryFlows.values()].map((flow) => [
+                  flow.ref,
+                  { source: flow.source, file: flow.file, definition: flow.raw },
+                ]),
+              ),
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        artifactWriter.register({
+          path: 'resolved-flows.json',
+          type: 'json',
+          label: 'Library flows used by this run',
+          category: 'system',
+        });
+      }
       if (status === 'pass') {
         const runHudStartedAt = new Date();
         try {
@@ -469,6 +519,15 @@ class DefaultRecipeRunner implements RecipeRunner {
         action_registry_version: this.#actionManifest.action_registry_version,
       },
       ...(this.#runnerProvenance ? { runner: this.#runnerProvenance } : {}),
+      ...(libraryResolution
+        ? {
+            flowResolution: buildFlowResolutionSummary(
+              libraryResolution,
+              usedLibraryFlows,
+              flowOverrides,
+            ),
+          }
+        : {}),
     };
     const summaryPath = await summaryWriter.write(summary);
     const artifactManifestPath = await artifactWriter.write(status, this.#runnerProvenance);
@@ -834,6 +893,38 @@ class DefaultRecipeRunner implements RecipeRunner {
     if (isRecord(recipe) && typeof recipe.title === 'string') return recipe.title;
     return 'Recipe run';
   }
+}
+
+function buildFlowResolutionSummary(
+  resolution: RecipeLibraryResolution,
+  usedLibraryFlows: ReadonlyMap<string, ResolvedLibraryFlow>,
+  overrides: RecipeFlowResolutionSummary['overrides'],
+): RecipeFlowResolutionSummary {
+  return {
+    sources: resolution.sources,
+    used: [...usedLibraryFlows.values()].map((flow) => ({
+      ref: flow.ref,
+      source: flow.source,
+      file: flow.file,
+      ...(flow.shadows.length > 0 ? { shadows: flow.shadows } : {}),
+      ...(flow.lastVerified ? { lastVerified: flow.lastVerified } : {}),
+    })),
+    overrides,
+    shadowed: collectShadowedFlows(resolution),
+  };
+}
+
+function collectShadowedFlows(
+  resolution: RecipeLibraryResolution,
+): RecipeFlowResolutionSummary['shadowed'] {
+  return [...resolution.flows.values()]
+    .filter((flow) => flow.shadows.length > 0)
+    .map((flow) => ({
+      ref: flow.ref,
+      source: flow.source,
+      file: flow.file,
+      shadows: flow.shadows,
+    }));
 }
 
 function normalizeVideoRecordingOptions(
