@@ -43,7 +43,7 @@ The gateway reads TASK.md via `task.progress`, calls `generateTaskSchema()` to e
 
 ### C. Template format conventions
 
-The gateway parser relies on these conventions (documented in `docs/reference/template-conventions.md`):
+The gateway parser relies on these conventions (documented in `docs/reference/template-variables.md`, § TASK format):
 
 - `###` headings define phases (any heading level works)
 - `- [ ]` / `- [x]` checkboxes define steps

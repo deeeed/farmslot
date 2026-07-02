@@ -133,19 +133,7 @@ The signal file should be used for terminal state and compact task metadata. Ong
 
 ## Template variables
 
-Templates use `{{VAR}}` placeholders expanded when the task is written. Common variables include:
-
-| Variable                       | Meaning                                                                |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| `{{TICKET_ID}}`                | Backlog item, issue, PR, or task identifier.                           |
-| `{{TICKET_TITLE}}`             | Human-readable title.                                                  |
-| `{{BRANCH}}` / `{{PR_BRANCH}}` | Branch the worker should use.                                          |
-| `{{PR_NUMBER}}`                | PR number for PR-bound flows.                                          |
-| `{{TASK_DIR}}`                 | Directory where the rendered task, signal, inputs, and artifacts live. |
-| `{{ARTIFACT_DIR}}`             | Project artifact directory when provided by the project config.        |
-| `{{RUNTIME_DIR}}`              | Project runtime directory for logs, fixtures, and temporary state.     |
-
-Projects can add more variables through their import/profile flow, but the template should stay readable as plain markdown after rendering.
+Templates use `{{VAR}}` placeholders expanded at dispatch. Full catalog (worker, hook, dispatch syntax + TASK format rules): [Template variables](../reference/template-variables). Add farm-specific keys in `project.json` `vars`.
 
 ## Flow override model
 

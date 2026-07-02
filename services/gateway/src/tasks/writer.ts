@@ -17,12 +17,7 @@ import {
   WORKER_TERMINAL_CONTRACT_INPUT,
 } from '@farmslot/protocol';
 
-import {
-  getProjectField,
-  loadProjectVars,
-  loadSlotVars,
-  resolveProjectTaskDirName,
-} from '../core/config.js';
+import { loadProjectVars, loadSlotVars, resolveProjectTaskDirName } from '../core/config.js';
 import { expandTemplate } from '../core/hooks.js';
 import { execLocal, farmslotRoot, getOrchestratorTaskRoot } from '../core/index.js';
 import {
@@ -649,6 +644,7 @@ export async function writeTaskFile(
 
   const vars: Record<string, string> = {
     SLOT: run.slotId!,
+    SLOT_ID: run.slotId!,
     TICKET: ticketRef,
     TICKET_ID: ticketRef,
     TICKET_URL: ticketUrl,
@@ -664,10 +660,9 @@ export async function writeTaskFile(
     IOS_SIMULATOR: slotVars.resourceVars.simulator ?? '',
     WATCHER_PORT: slotVars.resourceVars.port ?? '',
     CDP_PORT: slotVars.resourceVars.cdp_port ?? '',
-    RUNTIME_DIR: getProjectField(projectVars.projectJson, 'paths.runtime_dir') || '.agent',
-    RECIPE_DIR:
-      getProjectField(projectVars.projectJson, 'paths.recipe_dir') ||
-      `${getProjectField(projectVars.projectJson, 'paths.runtime_dir') || '.agent'}/recipes`,
+    RUNTIME_DIR: projectVars.runtimeDir || '.agent',
+    RECIPE_DIR: projectVars.recipeDir || `${projectVars.runtimeDir || '.agent'}/recipes`,
+    ARTIFACT_DIR: projectVars.artifactDir || '.task',
     DESCRIPTION: description || '_No description_',
     ACCEPTANCE_CRITERIA: ticket.acceptanceCriteria.join('\n') || '_Not specified_',
     AFFECTED_AREA: ticket.affectedArea || '_Not specified_',
@@ -965,7 +960,7 @@ async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: stri
 
 /**
  * Parse a rendered TASK.md template into a TaskSchema.
- * See docs/template-conventions.md for the full format spec.
+ * See docs/reference/template-variables.md (§ TASK format) for the full format spec.
  *
  * - Checkboxes (`- [ ]` / `- [x]`) are steps — the only required element
  * - Any heading (`##`, `###`, `####`) groups subsequent checkboxes into a phase
