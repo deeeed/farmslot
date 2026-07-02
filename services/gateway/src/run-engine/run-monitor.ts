@@ -453,13 +453,12 @@ export function shouldSkipMonitorNudge(
   const flowHasHumanGate = FLOW_STEPS[run.flowType]?.includes(PipelineSteps.HUMAN_GATE) ?? false;
   if (
     flowHasHumanGate &&
-    (violation.type === 'waiting' || violation.type === 'stuck' || violation.type === 'idle') &&
+    (violation.type === 'waiting' || violation.type === 'idle') &&
     agentStatus === 'working'
   ) {
     return true;
   }
 
-  if (violation.type === 'stuck' && agentStatus === 'working') return true;
   return false;
 }
 
@@ -752,7 +751,6 @@ export async function monitorRun(
         slotId,
         state,
         config,
-        agentStatus,
         violationContext?.role,
         violationContext?.id,
       );
@@ -921,7 +919,6 @@ async function detectViolations(
   slotId: string,
   state: MonitorState,
   config: MonitorConfig,
-  agentStatus: AgentLiveStatus,
   role?: AgentRole,
   contextId?: string,
 ): Promise<MonitorViolation[]> {
@@ -942,15 +939,11 @@ async function detectViolations(
     }
 
     // Stuck: no content-area change for stuckTimeoutMs. Pane-only runners can sit on a
-    // static composer while tools run for a long time — require process liveness or an
-    // absence of visible progress markers before escalating.
+    // static composer while tools run for a long time — skip escalation only when visible
+    // progress markers are present, not merely because the worker process is still alive.
     const sincePaneChange = now - state.lastPaneChangeAt;
     const paneShowsProgress = runnerPaneShowsCurrentInteractiveProgress(paneContent, runner);
-    if (
-      sincePaneChange > config.stuckTimeoutMs &&
-      agentStatus !== 'working' &&
-      !paneShowsProgress
-    ) {
+    if (sincePaneChange > config.stuckTimeoutMs && !paneShowsProgress) {
       violations.push({
         slotId,
         role,

@@ -200,7 +200,7 @@ test('shouldSkipMonitorNudge suppresses human-gate and live-worker violations', 
   assert.equal(shouldSkipMonitorNudge(blockedGate, { type: 'waiting' }, 'working'), true);
 
   const activeWorker = devRunView();
-  assert.equal(shouldSkipMonitorNudge(activeWorker, { type: 'stuck' }, 'working'), true);
+  assert.equal(shouldSkipMonitorNudge(activeWorker, { type: 'stuck' }, 'working'), false);
   assert.equal(shouldSkipMonitorNudge(activeWorker, { type: 'waiting' }, 'working'), true);
   assert.equal(shouldSkipMonitorNudge(activeWorker, { type: 'stuck' }, 'idle'), false);
 });
