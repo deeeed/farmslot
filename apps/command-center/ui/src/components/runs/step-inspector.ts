@@ -321,11 +321,12 @@ export class StepInspector extends StepInspectorState {
 
   private _onDiagnoseFailure() {
     if (!this.step || !this.run) return;
+    const slotId = resolveRunSlotId(this.run);
     const prompt = [
       `Why did step "${this.step.name}" fail in run ${this.run.id}?`,
       `Ticket or PR: ${this.run.ticketOrPr}`,
       `Flow: ${this.run.flowType}`,
-      resolveRunSlotId(this.run) ? `Slot: ${resolveRunSlotId(this.run)}` : '',
+      slotId ? `Slot: ${slotId}` : '',
       this.step.detail ? `Step detail: ${this.step.detail}` : '',
       'Call propose_run_recovery for this run and step first.',
       'Show the proposal finding, evidence, confidence, inference notes, and read-only next steps.',

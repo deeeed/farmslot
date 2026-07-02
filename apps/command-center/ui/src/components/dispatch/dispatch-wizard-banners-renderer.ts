@@ -1,11 +1,17 @@
 import { html, nothing } from 'lit';
 
-import type { FlowType, ProfileFitSuggestion, Run } from '@farmslot/protocol';
+import {
+  type FlowType,
+  type ProfileFitSuggestion,
+  resolveRunSlotId,
+  type Run,
+} from '@farmslot/protocol';
 
 import '../runs/run-pipeline-mini.js';
 
 import {
   formatCreatedAt,
+  resolveRunEngine,
   runDisplayColor,
   runDisplayLabel,
   runStatusColor,
@@ -13,6 +19,7 @@ import {
 
 import {
   comparePickerFamilyChipLabel,
+  compareRunSearchText,
   familyRunsForComparePicker,
   summarizeComparePickerFamilyLane,
 } from './dispatch-wizard-helpers.js';
@@ -141,27 +148,6 @@ export function renderCompareRunPickerModal(ctx: CompareRunPickerModalContext) {
   `;
 }
 
-function compareRunSearchText(run: Run): string {
-  return [
-    run.id,
-    run.familyId,
-    run.parentRunId,
-    run.ticketOrPr,
-    run.project,
-    run.flowType,
-    run.status,
-    run.lane,
-    run.variant,
-    run.slotId,
-    run.metrics?.runner,
-    run.metrics?.model,
-    run.summary,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-}
-
 const MAX_FAMILY_CHIPS = 5;
 
 function renderCompareRunPickerRow(ctx: CompareRunPickerModalContext, run: Run) {
@@ -169,6 +155,8 @@ function renderCompareRunPickerRow(ctx: CompareRunPickerModalContext, run: Run) 
   const lane = summarizeComparePickerFamilyLane(run, familyRuns);
   const flowColor = runDisplayColor(run);
   const statusColor = runStatusColor(run.status);
+  const slotId = resolveRunSlotId(run);
+  const engine = resolveRunEngine(run);
   const visibleFamilyRuns = familyRuns.slice(0, MAX_FAMILY_CHIPS);
   const hiddenFamilyCount = Math.max(0, familyRuns.length - visibleFamilyRuns.length);
   return html`
@@ -201,7 +189,7 @@ function renderCompareRunPickerRow(ctx: CompareRunPickerModalContext, run: Run) 
         >
         <span class="compare-run-badge muted">${run.lane}</span>
         ${run.variant ? html`<span class="compare-run-badge muted">${run.variant}</span>` : nothing}
-        <span class="compare-run-badge muted">${run.slotId ?? 'no slot'}</span>
+        <span class="compare-run-badge muted">${slotId ?? 'no slot'}</span>
         ${lane.activeCount > 0
           ? html`<span class="compare-run-badge status" style="border-color:#3b82f6; color:#3b82f6"
               >${lane.activeCount} active</span
@@ -213,27 +201,28 @@ function renderCompareRunPickerRow(ctx: CompareRunPickerModalContext, run: Run) 
         ? html`<div class="compare-run-summary">${run.summary}</div>`
         : nothing}
       <div class="compare-run-meta">
-        run ${run.id.slice(0, 8)} · ${run.project} · ${run.metrics?.runner ?? '?'} /
-        ${run.metrics?.model ?? '?'} · ${formatCreatedAt(run.createdAt)}
+        run ${run.id.slice(0, 8)} · ${run.project} · ${engine.runner ?? '?'} /
+        ${engine.model ?? '?'} · ${formatCreatedAt(run.createdAt)}
       </div>
       <div class="compare-run-family">${lane.headline}. ${lane.forkHint}</div>
       ${familyRuns.length > 1
         ? html`
             <div class="compare-run-family-chips">
-              ${visibleFamilyRuns.map(
-                (member) => html`
+              ${visibleFamilyRuns.map((member) => {
+                const memberSlotId = resolveRunSlotId(member);
+                return html`
                   <span
                     class="compare-run-family-chip ${member.id === run.id ? 'current' : ''}"
                     style="--chip-color:${runStatusColor(member.status)}"
                     title="${comparePickerFamilyChipLabel(
                       member,
-                    )} · ${member.status} · slot ${member.slotId ?? 'unknown'}"
+                    )} · ${member.status} · slot ${memberSlotId ?? 'unknown'}"
                   >
                     <span class="compare-run-family-dot"></span>
                     ${comparePickerFamilyChipLabel(member)}
                   </span>
-                `,
-              )}
+                `;
+              })}
               ${hiddenFamilyCount > 0
                 ? html`<span class="compare-run-badge muted">+${hiddenFamilyCount} more</span>`
                 : nothing}

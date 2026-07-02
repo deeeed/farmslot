@@ -3,12 +3,14 @@
  * the variant-collision and prior-runs grouping logic stays unit-testable without
  * standing up a DOM environment for the wizard component.
  */
-import type { Run } from '@farmslot/protocol';
 import {
   buildComparisonVariant,
   nextFreeComparisonVariant,
   resolveRunSlotId,
+  type Run,
 } from '@farmslot/protocol';
+
+import { resolveRunEngine } from '../runs/run-utils.js';
 
 /** Group prior runs by familyId; root runs without a familyId fall back to their own id
  *  so the banner still shows them under a stable bucket. Each group is sorted newest-first. */
@@ -71,6 +73,29 @@ export function filterRunsForComparisonPicker(
     });
   }
   return result;
+}
+
+export function compareRunSearchText(run: Run): string {
+  const slotId = resolveRunSlotId(run);
+  const engine = resolveRunEngine(run);
+  return [
+    run.id,
+    run.familyId,
+    run.parentRunId,
+    run.ticketOrPr,
+    run.project,
+    run.flowType,
+    run.status,
+    run.lane,
+    run.variant,
+    slotId,
+    engine.runner,
+    engine.model,
+    run.summary,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
 }
 
 export function familyKeyForRun(run: Pick<Run, 'familyId' | 'id'>): string {

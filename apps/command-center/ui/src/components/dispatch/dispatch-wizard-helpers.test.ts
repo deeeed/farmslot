@@ -5,6 +5,7 @@ import type { Run } from '@farmslot/protocol';
 
 import {
   comparePickerFamilyChipLabel,
+  compareRunSearchText,
   detectVariantCollision,
   familyRunsForComparePicker,
   filterRunsByExactTicket,
@@ -221,4 +222,27 @@ test('filterRunsForComparisonPicker respects global project and machine filters'
     }).map((run) => run.id),
     ['a'],
   );
+});
+
+test('compareRunSearchText includes resolved slot and find-slot engine fallback', () => {
+  const text = compareRunSearchText(
+    makeRun({
+      slotId: null,
+      metrics: { nudgeCount: 0, runner: '', model: '' },
+      steps: [
+        {
+          name: 'find-slot',
+          status: 'done',
+          outputs: {
+            selectedSlot: 'macwork-ff-4',
+            runner: 'grok',
+            model: 'grok-composer-2.5-fast',
+          },
+        },
+      ],
+    }),
+  );
+  assert.match(text, /macwork-ff-4/);
+  assert.match(text, /grok/);
+  assert.match(text, /grok-composer-2\.5-fast/);
 });
