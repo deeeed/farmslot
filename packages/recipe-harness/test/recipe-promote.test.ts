@@ -7,7 +7,9 @@ import { test } from 'node:test';
 import { type RecipeActionManifestDocument } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
+import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
+import { loadRecipeLibraries } from '../src/core/library.js';
 import { promoteRecipeFlow } from '../src/core/promote.js';
 import { createRecipeRunner } from '../src/core/runner.js';
 import type { SummaryDocument } from '../src/core/types.js';
@@ -141,30 +143,92 @@ test('promotes an inline flow into a new personal library with provenance', asyn
   }
 });
 
-test('stamps lastVerified only from a passing run summary', async () => {
+test('stamps lastVerified only from a passing run that exercised the flow', async () => {
   const tempRoot = await createTempRoot();
   try {
     const recipePath = path.join(tempRoot, 'recipe.json');
     await writePerChangeRecipe(recipePath, { 'demo.write-marker': markerFlow() });
     const targetRoot = path.join(tempRoot, 'library');
 
-    const passDir = path.join(tempRoot, 'pass-artifacts');
-    await writeJsonFile(path.join(passDir, 'summary.json'), {
-      status: 'pass',
-      endedAt: '2026-07-01T10:00:00.000Z',
+    // Real run of the per-change recipe: its artifacts are the evidence.
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
     });
+    const runArtifactsDir = path.join(tempRoot, 'run-artifacts');
+    const runResult = await runner.run({
+      recipePath,
+      artifactsDir: runArtifactsDir,
+      projectRoot: tempRoot,
+    });
+    assert.equal(runResult.status, 'pass');
+
     const promoted = await promoteRecipeFlow({
       recipePath,
       flowRef: 'demo.write-marker',
       targetRoot,
       targetName: 'personal',
-      runArtifactsDir: passDir,
+      runArtifactsDir,
     });
-    assert.equal(promoted.lastVerified, '2026-07-01');
+    const today = new Date().toISOString().slice(0, 10);
+    assert.equal(promoted.lastVerified, today);
     const catalog = (await readJsonFile(promoted.catalogPath)) as {
       flows: Record<string, { provenance?: { lastVerified?: { date?: string } } }>;
     };
-    assert.equal(catalog.flows['demo.write-marker']?.provenance?.lastVerified?.date, '2026-07-01');
+    assert.equal(catalog.flows['demo.write-marker']?.provenance?.lastVerified?.date, today);
+
+    // A hand-written passing summary is not evidence: the run must have
+    // exercised the flow.
+    const spoofedDir = path.join(tempRoot, 'spoofed-artifacts');
+    await writeJsonFile(path.join(spoofedDir, 'summary.json'), {
+      status: 'pass',
+      endedAt: '2026-07-01T10:00:00.000Z',
+    });
+    await assert.rejects(
+      promoteRecipeFlow({
+        recipePath,
+        flowRef: 'demo.write-marker',
+        targetRoot,
+        targetName: 'personal',
+        runArtifactsDir: spoofedDir,
+        force: true,
+      }),
+      /no readable recipe\.json/,
+    );
+
+    // Artifacts of a run that never called the flow are rejected even when the
+    // recipe files match.
+    const uncalledRecipePath = path.join(tempRoot, 'uncalled.json');
+    await writeJsonFile(uncalledRecipePath, {
+      schema_version: 1,
+      title: 'Uncalled flow recipe',
+      description: 'Declares the flow inline but never calls it.',
+      flows: { 'demo.write-marker': markerFlow() },
+      validate: {
+        workflow: {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+      },
+    });
+    const uncalledArtifactsDir = path.join(tempRoot, 'uncalled-artifacts');
+    const uncalledResult = await runner.run({
+      recipePath: uncalledRecipePath,
+      artifactsDir: uncalledArtifactsDir,
+      projectRoot: tempRoot,
+    });
+    assert.equal(uncalledResult.status, 'pass');
+    await assert.rejects(
+      promoteRecipeFlow({
+        recipePath: uncalledRecipePath,
+        flowRef: 'demo.write-marker',
+        targetRoot,
+        targetName: 'personal',
+        runArtifactsDir: uncalledArtifactsDir,
+        force: true,
+      }),
+      /never calls the flow/,
+    );
 
     const failDir = path.join(tempRoot, 'fail-artifacts');
     await writeJsonFile(path.join(failDir, 'summary.json'), { status: 'fail' });
@@ -179,6 +243,131 @@ test('stamps lastVerified only from a passing run summary', async () => {
       }),
       /only passing runs can stamp lastVerified/,
     );
+
+    const noEndedAtDir = path.join(tempRoot, 'no-endedat-artifacts');
+    await writeJsonFile(path.join(noEndedAtDir, 'summary.json'), { status: 'pass' });
+    await assert.rejects(
+      promoteRecipeFlow({
+        recipePath,
+        flowRef: 'demo.write-marker',
+        targetRoot,
+        targetName: 'personal',
+        runArtifactsDir: noEndedAtDir,
+        force: true,
+      }),
+      /no parseable endedAt/,
+    );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('re-verifies a library-resolved flow from the run resolution report', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    await writePerChangeRecipe(recipePath, { 'demo.write-marker': markerFlow() });
+    const targetRoot = path.join(tempRoot, 'library');
+    await promoteRecipeFlow({
+      recipePath,
+      flowRef: 'demo.write-marker',
+      targetRoot,
+      targetName: 'personal',
+    });
+
+    // Composed run resolving the flow from the library.
+    const composedPath = path.join(tempRoot, 'composed.json');
+    await writeJsonFile(composedPath, {
+      schema_version: 1,
+      title: 'Composed re-verify recipe',
+      description: 'Calls the promoted flow from the library.',
+      validate: {
+        workflow: {
+          entry: 'call-flow',
+          nodes: {
+            'call-flow': {
+              action: 'call',
+              intent: 'Re-verify the promoted flow from the library',
+              ref: 'demo.write-marker',
+              params: { text: 'reverify-ok' },
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    });
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+    const composedArtifactsDir = path.join(tempRoot, 'composed-artifacts');
+    const composedResult = await runner.run({
+      recipePath: composedPath,
+      artifactsDir: composedArtifactsDir,
+      projectRoot: tempRoot,
+      librarySources: [{ name: 'personal', root: targetRoot }],
+    });
+    assert.equal(composedResult.status, 'pass');
+
+    // The composed recipe has no inline flow; flowResolution.used is the evidence.
+    const restamped = await promoteRecipeFlow({
+      recipePath,
+      flowRef: 'demo.write-marker',
+      targetRoot,
+      targetName: 'personal',
+      runArtifactsDir: composedArtifactsDir,
+      force: true,
+    });
+    assert.equal(restamped.lastVerified, new Date().toISOString().slice(0, 10));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('never declares the same ref in two catalogs of one library', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    await writePerChangeRecipe(recipePath, { 'demo.write-marker': markerFlow() });
+    const targetRoot = path.join(tempRoot, 'library');
+
+    const first = await promoteRecipeFlow({
+      recipePath,
+      flowRef: 'demo.write-marker',
+      targetRoot,
+      targetName: 'personal',
+      domain: 'custom',
+    });
+    assert.equal(path.basename(first.catalogPath), 'custom.flows.json');
+
+    // Same ref, default stem: rejected without --force, naming the file that
+    // already declares it.
+    await assert.rejects(
+      promoteRecipeFlow({
+        recipePath,
+        flowRef: 'demo.write-marker',
+        targetRoot,
+        targetName: 'personal',
+      }),
+      /custom\.flows\.json.*--force/s,
+    );
+
+    // With --force the flow is overwritten where it lives, not duplicated.
+    const forced = await promoteRecipeFlow({
+      recipePath,
+      flowRef: 'demo.write-marker',
+      targetRoot,
+      targetName: 'personal',
+      force: true,
+    });
+    assert.equal(path.basename(forced.catalogPath), 'custom.flows.json');
+    const defaultStemPath = path.join(targetRoot, 'flows', 'demo.flows.json');
+    await assert.rejects(readFile(defaultStemPath), /ENOENT/);
+
+    // The library still loads — exactly one declaration exists.
+    const resolution = await loadRecipeLibraries([{ name: 'personal', root: targetRoot }]);
+    assert.equal(resolution.flows.get('demo.write-marker')?.source, 'personal');
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -288,6 +477,53 @@ test('a promoted flow is immediately composable from the library by a new recipe
     assert.equal(await readFile(path.join(tempRoot, 'marker.txt'), 'utf-8'), 'promoted-ok');
     const summary = (await readJsonFile(result.summaryPath)) as SummaryDocument;
     assert.equal(summary.flowResolution?.used[0]?.ref, 'demo.write-marker');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('flows promote --to resolves a bare-path source by its manifest name', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    await writePerChangeRecipe(recipePath, { 'demo.write-marker': markerFlow() });
+    // Existing team library whose name lives only in its library.json manifest.
+    const teamRoot = path.join(tempRoot, 'team-library');
+    await promoteRecipeFlow({
+      recipePath,
+      flowRef: 'demo.write-marker',
+      targetRoot: teamRoot,
+      targetName: 'team-perps',
+    });
+
+    const secondRecipePath = path.join(tempRoot, 'second.json');
+    await writePerChangeRecipe(secondRecipePath, { 'demo.second-marker': markerFlow() });
+    const originalLog = console.log;
+    const lines: string[] = [];
+    console.log = (...values: unknown[]) => {
+      lines.push(values.map((value) => String(value)).join(' '));
+    };
+    try {
+      await runRecipeHarnessCli([
+        'flows',
+        'promote',
+        '--from',
+        secondRecipePath,
+        '--flow',
+        'demo.second-marker',
+        '--to',
+        'team-perps',
+        '--library',
+        teamRoot,
+      ]);
+    } finally {
+      console.log = originalLog;
+    }
+    assert.ok(lines.some((line) => line.startsWith('Promoted demo.second-marker')));
+    const catalog = (await readJsonFile(path.join(teamRoot, 'flows', 'demo.flows.json'))) as {
+      flows: Record<string, unknown>;
+    };
+    assert.ok(catalog.flows['demo.second-marker']);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

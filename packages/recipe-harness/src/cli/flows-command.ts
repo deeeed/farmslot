@@ -1,6 +1,8 @@
+import path from 'node:path';
+
 import { type Command } from 'commander';
 
-import { isRecord } from '../core/json.js';
+import { isRecord, readJsonFile } from '../core/json.js';
 import {
   loadRecipeLibraries,
   personalRecipeLibraryRoot,
@@ -114,13 +116,33 @@ async function resolvePromoteTarget(
   cliEntries: string[],
 ): Promise<RecipeLibrarySource> {
   const sources = await resolveRecipeLibrarySources({ cliEntries });
-  const named = sources.find((source) => source.name === to);
+  const resolved = await Promise.all(
+    sources.map(async (source) => ({
+      ...source,
+      name: source.name ?? (await libraryManifestName(source.root)),
+    })),
+  );
+  const named = resolved.find((source) => source.name === to);
   if (named) return named;
   if (to === 'personal') return { name: 'personal', root: personalRecipeLibraryRoot() };
-  const available = sources.map((source) => source.name ?? source.root).join(', ') || 'none';
+  const available = resolved.map((source) => source.name ?? source.root).join(', ') || 'none';
   throw new Error(
     `No recipe library source named ${to} is configured (available: ${available}). Pass --library ${to}=path or set RECIPE_LIBRARY_PATH.`,
   );
+}
+
+// Bare-path sources get their name from library.json, matching how run
+// resolution names them.
+async function libraryManifestName(root: string): Promise<string | undefined> {
+  try {
+    const manifest = await readJsonFile(path.join(root, 'library.json'));
+    if (isRecord(manifest) && typeof manifest.name === 'string' && manifest.name) {
+      return manifest.name;
+    }
+  } catch {
+    // not a readable library; leave the source unnamed
+  }
+  return undefined;
 }
 
 function flowsListDocument(resolution: RecipeLibraryResolution) {
