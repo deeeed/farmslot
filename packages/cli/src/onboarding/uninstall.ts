@@ -19,6 +19,7 @@ import { isAbsolute, join, resolve, sep } from 'node:path';
 
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
+import { readPool } from './pool-config.js';
 import { type Workspace, type WorkspaceState } from './workspace.js';
 
 export type Disposition = 'keep' | 'backup' | 'delete';
@@ -45,6 +46,10 @@ export interface UninstallPlan {
   homeBackupPath?: string;
   /** The PATH symlink to remove — only when it is a symlink resolving into this workspace. */
   symlink: string | null;
+  /** Absolute path to the pool config (state.pool_file resolved against the farmslot clone) —
+   *  read to tear down this workspace's slot tmux sessions before installDirs are removed.
+   *  Null when there is no state (nothing to key the teardown off). */
+  poolFile: string | null;
   dryRun: boolean;
 }
 
@@ -152,6 +157,7 @@ export function buildUninstallPlan(
     historyBackupPath: opts.historyBackupPath,
     homeBackupPath: opts.homeBackupPath,
     symlink: resolveOwnedSymlink(state?.bin_dir, ws.root),
+    poolFile: state?.pool_file ? join(ws.farmslotDir, state.pool_file) : null,
     dryRun: opts.dryRun,
   };
 }
@@ -171,8 +177,13 @@ function archiveDir(dir: string, destPath: string): void {
   }
 }
 
+/** rmSync retries specifically on ENOTEMPTY/EBUSY with this maxRetries/retryDelay — the safety
+ *  net for any straggler write that lands between teardownSlots() and this removal. Exported
+ *  so tests can assert the retry config without racing a real filesystem to trigger it. */
+export const REMOVE_PATH_RETRY_OPTIONS = { maxRetries: 5, retryDelay: 200 } as const;
+
 function removePath(p: string): void {
-  rmSync(p, { recursive: true, force: true });
+  rmSync(p, { recursive: true, force: true, ...REMOVE_PATH_RETRY_OPTIONS });
 }
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -268,6 +279,52 @@ function disposeOf(
   }
 }
 
+/** Best-effort: kill a slot's tmux session. Scoped to one session id — never kill-server,
+ *  which would take down other installs' sessions on the shared default tmux server. The `=`
+ *  prefix forces an exact-name match: without it, tmux falls back to prefix matching when no
+ *  exact session exists, so a dead session `mm` in this workspace's pool would kill an
+ *  unrelated live `mm-1`/`mmprod-1` on the same server — exactly the cross-install kill this
+ *  teardown exists to avoid. Any failure (tmux missing, session already gone) is silently
+ *  ignored; a killed session is reported so the operator can see what was torn down. */
+function killTmuxSession(session: string, hooks: UninstallHooks): void {
+  const result = spawnSync('tmux', ['kill-session', '-t', `=${session}`], { encoding: 'utf-8' });
+  if (result.status === 0) hooks.step(`stopped tmux session ${session}`);
+}
+
+/** Best-effort: drop a watchman watch on a slot repo so its file-event daemon stops touching
+ *  the tree before removal. Skips silently when watchman isn't installed. */
+function watchmanForget(repo: string, hooks: UninstallHooks): void {
+  const result = spawnSync('watchman', ['watch-del', repo], { encoding: 'utf-8' });
+  if (result.error) return; // watchman not installed — nothing to do
+  if (result.status === 0) hooks.step(`stopped watchman watch on ${repo}`);
+}
+
+/** Tear down this workspace's slot processes before installDirs (repos + the farmslot clone)
+ *  are removed. Uninstall stops the gateway/node (step 0) but never touched per-slot tmux
+ *  sessions — metro/watchman/dev-server running inside one keeps writing into repos/<slot>
+ *  while removePath deletes it, racing into ENOTEMPTY. Reads the pool this workspace recorded
+ *  at install time and kills exactly its slot sessions; every step is best-effort and never
+ *  fatal — a stuck or already-gone session must not block the rest of uninstall. */
+function teardownSlots(poolFile: string | null, hooks: UninstallHooks): void {
+  if (!poolFile || !existsSync(poolFile)) return;
+  let slots: { session: string; repo: string }[];
+  try {
+    slots = readPool(poolFile).slots;
+  } catch {
+    return; // unreadable/invalid pool — nothing to key the teardown off
+  }
+  for (const slot of slots) {
+    try {
+      killTmuxSession(slot.session, hooks);
+      watchmanForget(slot.repo, hooks);
+    } catch (err) {
+      hooks.step(
+        `slot ${slot.session} teardown warning: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
 export async function executeUninstallPlan(
   plan: UninstallPlan,
   hooks: UninstallHooks,
@@ -279,6 +336,9 @@ export async function executeUninstallPlan(
   //    before homeDir is touched, regardless of the home keep/backup/delete decision.
   await stopService(join(plan.homeDir, 'node.pid'), 'local node', plan.workspaceRoot, hooks);
   await stopService(join(plan.homeDir, 'gateway.pid'), 'gateway', plan.workspaceRoot, hooks);
+
+  // 0.5. Stop per-slot tmux sessions before repos are removed — see teardownSlots doc comment.
+  teardownSlots(plan.poolFile, hooks);
 
   // 1. History + home first — if a backup fails it throws before anything is destroyed.
   disposeOf(plan.runsDir, plan.history, plan.historyBackupPath, hooks);

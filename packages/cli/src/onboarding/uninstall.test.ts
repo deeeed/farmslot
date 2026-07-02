@@ -1,11 +1,36 @@
 import assert from 'node:assert/strict';
+import { execFile, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
-import { buildUninstallPlan, executeUninstallPlan } from './uninstall.js';
+import {
+  buildUninstallPlan,
+  executeUninstallPlan,
+  REMOVE_PATH_RETRY_OPTIONS,
+} from './uninstall.js';
 import { workspaceAt, type WorkspaceState } from './workspace.js';
+
+const execFileAsync = promisify(execFile);
+
+/** Real tmux is required for the teardown tests below — mirrors the skip pattern used by
+ *  services/node/src/commands/tmux.test.ts for machines/CI without tmux installed. */
+async function tmuxAvailable(): Promise<boolean> {
+  try {
+    await execFileAsync('tmux', ['-V'], { timeout: 2000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Exact-match check, mirroring killTmuxSession's `=` prefix — a plain (unprefixed) `-t`
+ *  would itself prefix-match, which is exactly the ambiguity these tests are guarding against. */
+function hasTmuxSession(session: string): boolean {
+  return spawnSync('tmux', ['has-session', '-t', `=${session}`]).status === 0;
+}
 
 const KEEP = { history: 'keep', home: 'keep', dryRun: false } as const;
 
@@ -222,4 +247,83 @@ test('rejects a backup path that already exists (no overwrite)', () => {
     rmSync(dest, { force: true });
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('executeUninstallPlan kills each slot session before repos are removed, and never kill-server', async (t) => {
+  if (!(await tmuxAvailable())) {
+    t.skip('tmux is not installed');
+    return;
+  }
+
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-tmux-'));
+  const homeDir = join(tmpdir(), `fs-home-tmux-${root.slice(-8)}`);
+  const targetSession = `farmslot_uninstall_target_${process.pid}`;
+  // Simulates ANOTHER install's session on the same shared tmux server — this workspace's
+  // pool never references it, so it must survive. If teardown ever used kill-server instead
+  // of a scoped kill-session, this would be the session that catches the regression.
+  const otherSession = `farmslot_uninstall_other_${process.pid}`;
+  // A dead pool session name that is also a PREFIX of a live, unreferenced session. Without
+  // an exact-match `-t =<session>`, `tmux kill-session -t <session>` falls back to prefix
+  // matching when no exact session exists — so killing this dead entry would otherwise take
+  // out `collisionSession` too (e.g. a dev pool's `mm` killing a live `mm-1`/`mmprod-1`).
+  const deadSession = `farmslot_uninstall_dead_${process.pid}`;
+  const collisionSession = `${deadSession}_suffix`;
+
+  mkdirSync(join(root, 'farmslot', 'pool'), { recursive: true });
+  mkdirSync(join(root, 'repos'), { recursive: true });
+  mkdirSync(homeDir, { recursive: true });
+  writeFileSync(join(root, 'state.json'), '{}');
+  writeFileSync(
+    join(root, 'farmslot', 'pool', 'test.json'),
+    JSON.stringify({
+      schema_version: 1,
+      machine: 'test',
+      host: 'localhost',
+      ssh_user: 'test',
+      slots: [
+        { id: 'slot-1', repo: join(root, 'repos', 'slot-1'), session: targetSession },
+        // A slot session that was never actually started — teardown must not fail on it,
+        // and (see collisionSession below) must not prefix-match a live unrelated session.
+        { id: 'slot-2', repo: join(root, 'repos', 'slot-2'), session: deadSession },
+      ],
+    }),
+  );
+
+  await execFileAsync('tmux', ['new-session', '-d', '-s', targetSession, '-c', root, 'bash']);
+  await execFileAsync('tmux', ['new-session', '-d', '-s', otherSession, '-c', root, 'bash']);
+  await execFileAsync('tmux', ['new-session', '-d', '-s', collisionSession, '-c', root, 'bash']);
+
+  try {
+    const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
+      history: 'keep',
+      home: 'delete',
+      dryRun: false,
+    });
+    const steps: string[] = [];
+    await executeUninstallPlan(plan, { step: (label) => steps.push(label) });
+
+    assert.ok(steps.includes(`stopped tmux session ${targetSession}`));
+    assert.ok(!hasTmuxSession(targetSession), 'this workspace’s slot session was killed');
+    assert.ok(hasTmuxSession(otherSession), 'an unrelated session must survive (no kill-server)');
+    assert.ok(
+      hasTmuxSession(collisionSession),
+      'a live session sharing a dead pool session name as a prefix must survive (exact match, no prefix kill)',
+    );
+    assert.ok(!existsSync(join(root, 'repos')), 'repos removed once its session stopped writing');
+  } finally {
+    spawnSync('tmux', ['kill-session', '-t', `=${otherSession}`]);
+    spawnSync('tmux', ['kill-session', '-t', `=${collisionSession}`]);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test('removePath retries on ENOTEMPTY/EBUSY instead of failing on the first straggler write', () => {
+  // node:fs's rmSync doesn't expose a way to observe or mock its internal retry loop (its
+  // exports are non-configurable, so it can't be spied on), and racing a real filesystem
+  // write against it is inherently timing-dependent — flaky under load. Asserting the retry
+  // config removePath passes is the deterministic proxy: maxRetries > 0 is what makes rmSync
+  // retry ENOTEMPTY/EBUSY at all (see the Node fs docs), which is the actual fix.
+  assert.ok(REMOVE_PATH_RETRY_OPTIONS.maxRetries > 0);
+  assert.ok(REMOVE_PATH_RETRY_OPTIONS.retryDelay > 0);
 });

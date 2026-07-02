@@ -10,4 +10,5 @@ All notable changes to `@farmslot/cli` are tracked here.
 - feat: `farmslot doctor`, `farmslot project add <pack>`, `farmslot update`, and `farmslot workspace init` — one-command onboarding from install.sh to validated farm slots (#27)
 - feat: runner auth detection (missing / inactive / authenticated) gating install, workspace init, and doctor
 - feat: `--json` output for doctor, project add, update, and workspace init (child output routed to stderr)
+- fix: `farmslot uninstall --purge` no longer crashes with `ENOTEMPTY` — tears down each slot's tmux session (exact-match `kill-session`, drops its watchman watch if any) before removing repos, and `rmSync` now retries on `ENOTEMPTY`/`EBUSY` as a safety net for any straggler write
 - Active-development baseline; add user-facing changes here before release or package publication.
