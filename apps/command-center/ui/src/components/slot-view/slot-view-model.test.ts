@@ -8,6 +8,7 @@ import {
   isDirectoryReadErrorMessage,
   isSlotViewPinnedLinkedRun,
   shouldHideTerminalSlotRecipePanel,
+  slotBoundRunIdForSlot,
   slotSwitcherEntries,
   slotSwitcherSignature,
   slotViewLoadedRunDrawerKey,
@@ -329,6 +330,17 @@ test('slotViewTerminalRunId prefers URL pin over linked-run hydration', () => {
   assert.equal(slotViewTerminalRunId('slot-a', linkedRun, 'url-run', null), 'url-run');
   assert.equal(slotViewTerminalRunId('slot-a', linkedRun, null, null), 'linked-run');
   assert.equal(slotViewTerminalRunId('slot-b', linkedRun, null, null), '');
+});
+
+test('slotBoundRunIdForSlot falls back to fleet snapshot when slot row is missing', () => {
+  assert.equal(
+    slotBoundRunIdForSlot('mm-5', null, [{ slot: 'mm-5', currentRunId: 'bound-run' }]),
+    'bound-run',
+  );
+  assert.equal(
+    slotBoundRunIdForSlot('mm-5', 'slot-run', [{ slot: 'mm-5', currentRunId: 'bound-run' }]),
+    'slot-run',
+  );
 });
 
 test('slotViewTerminalRunId prefers fleet-bound run over stale URL pin', () => {

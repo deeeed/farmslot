@@ -244,6 +244,15 @@ export function slotViewNoRecipeReplayMessage(
   return `This ${flow} run has no recipe replay package. Slot-side recipe replay requires artifacts/recipe.json (typical for interactive dev or review-gate runs). PR-complete and other flows may only have diff/session artifacts.`;
 }
 
+/** Fleet/slot binding for terminal run selection (matches linked-run refresh). */
+export function slotBoundRunIdForSlot(
+  slotId: string,
+  slotCurrentRunId: string | null | undefined,
+  fleetSlots: ReadonlyArray<{ slot: string; currentRunId?: string | null }> | undefined,
+): string | null {
+  return slotCurrentRunId ?? fleetSlots?.find((slot) => slot.slot === slotId)?.currentRunId ?? null;
+}
+
 /** Run id for <terminal-view> — same authority rules as selectSlotViewLinkedRun. */
 export function slotViewTerminalRunId(
   slotId: string,

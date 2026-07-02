@@ -2,12 +2,13 @@ import { html, nothing } from 'lit';
 
 import { agentRoleShortLabel } from '@farmslot/protocol';
 
+import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { buildRerunAlongsideHref, canReplayRunSteps } from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
-import { realPath, slotViewTerminalRunId } from './slot-view-model.js';
+import { realPath, slotBoundRunIdForSlot, slotViewTerminalRunId } from './slot-view-model.js';
 import { slotViewEffectiveTerminalHeight } from './slot-view-resize-effects.js';
 import { requestedRunFromHash } from './slot-view-url-state.js';
 
@@ -739,7 +740,11 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                   view.slotId,
                                   view._linkedRun,
                                   requestedRunFromHash(),
-                                  view._slot?.currentRunId ?? null,
+                                  slotBoundRunIdForSlot(
+                                    view.slotId,
+                                    view._slot?.currentRunId,
+                                    getState().fleet?.slots,
+                                  ),
                                 )}
                                 .role=${view._selectedAgentContext()?.role === 'primary'
                                   ? ''
