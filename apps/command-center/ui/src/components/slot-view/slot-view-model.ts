@@ -241,3 +241,14 @@ export function slotViewNoRecipeReplayMessage(
   const flow = run?.flowType ?? 'unknown';
   return `This ${flow} run has no recipe replay package. Slot-side recipe replay requires artifacts/recipe.json (typical for interactive dev or review-gate runs). PR-complete and other flows may only have diff/session artifacts.`;
 }
+
+/** Run id for <terminal-view>: prefer URL pin so subscribe does not churn on linked-run hydration. */
+export function slotViewTerminalRunId(
+  slotId: string,
+  linkedRun: Run | null,
+  urlRunId: string | null,
+): string {
+  if (urlRunId) return urlRunId;
+  if (linkedRun?.slotId === slotId) return linkedRun.id ?? '';
+  return '';
+}

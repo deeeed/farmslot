@@ -879,7 +879,7 @@ export class SlotView extends SlotViewRecipePresenter {
                 : '',
           })
         : nothing}
-      ${renderSlotPrepareBanner(this)} ${renderSlotViewBody(this, { hasSlotData, hasResources })}
+      ${renderSlotPrepareBanner(this)} ${renderSlotViewBody(this, { hasResources })}
       <slot-history-modal
         slot-id=${this.slotId}
         .project=${this._slot?.project ?? ''}

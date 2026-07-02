@@ -70,6 +70,7 @@ export abstract class TerminalViewState extends LitElement {
   protected _instanceId = ++terminalInstanceSeq;
   protected _dataCount = 0;
   protected _resizeTimer?: ReturnType<typeof setTimeout>;
+  protected _targetChangeTimer?: ReturnType<typeof setTimeout>;
   protected _tmuxPollTimer?: ReturnType<typeof setInterval>;
   protected _tmuxListInFlight = false;
   protected _tmuxListBackoffUntil = 0;

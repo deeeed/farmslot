@@ -39,6 +39,8 @@ import { createTerminalRuntime } from './terminal-view-xterm.js';
 const ROLE_PANE_FAST_FAIL_MS = 3000;
 const TMUX_LIST_POLL_MS = 15000;
 const TMUX_LIST_ERROR_BACKOFF_MS = 30000;
+// Coalesce Lit prop batches (slotId/runId/role) into one subscribe/unsubscribe cycle.
+const TARGET_CHANGE_DEBOUNCE_MS = 50;
 
 @customElement('terminal-view')
 export class TerminalView extends TerminalViewState {
@@ -102,6 +104,18 @@ export class TerminalView extends TerminalViewState {
       workerRefJson: this.workerRefJson,
     });
     const priorPostmortem = this._postmortem;
+    clearTimeout(this._targetChangeTimer);
+    this._targetChangeTimer = setTimeout(() => {
+      this._targetChangeTimer = undefined;
+      this._applyTargetChange(priorTarget, priorPostmortem);
+    }, TARGET_CHANGE_DEBOUNCE_MS);
+  }
+
+  private _applyTargetChange(
+    priorTarget: ReturnType<typeof terminalPriorTargetIdentity>,
+    priorPostmortem: boolean,
+  ) {
+    if (!this._terminal) return;
     this._log(
       'updated → target changed',
       `target=${this._targetLabel()} run=${this.runId || '-'} role=${this.role || '-'} context=${this.contextId || '-'}`,
@@ -631,6 +645,8 @@ export class TerminalView extends TerminalViewState {
 
   // Full cleanup — element is being removed from DOM
   private _dispose() {
+    clearTimeout(this._targetChangeTimer);
+    this._targetChangeTimer = undefined;
     this._teardownStreams();
     this._unsubConn?.();
     this._unsubConn = undefined;

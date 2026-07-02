@@ -378,6 +378,10 @@ function freshNodeTmuxPaneSnapshot(nodeId: string, now: number): NodeTmuxPane[] 
   return snapshot.panes;
 }
 
+function staleNodeTmuxPaneSnapshot(nodeId: string): NodeTmuxPane[] | null {
+  return nodeTmuxPaneSnapshots.get(nodeId)?.panes ?? null;
+}
+
 function normalizeNodeTmuxPanesResult(payload: unknown): NodeTmuxPane[] {
   if (
     !payload ||
@@ -552,17 +556,25 @@ export async function tmuxWorkerList(
     requestPanes: async (nodeId) => {
       const cached = freshNodeTmuxPaneSnapshot(nodeId, observedAt);
       if (cached) return cached;
+      const stale = staleNodeTmuxPaneSnapshot(nodeId);
       const node = getNode(nodeId);
       if (!node) throw new Error(`node ${nodeId} is not connected`);
-      const payload = await sendNodeRequest(
-        node,
-        'tmux.panes',
-        {},
-        {
-          timeout: TMUX_PANES_TIMEOUT_MS,
-        },
-      );
-      return normalizeNodeTmuxPanesResult(payload);
+      try {
+        const payload = await sendNodeRequest(
+          node,
+          'tmux.panes',
+          {},
+          {
+            timeout: TMUX_PANES_TIMEOUT_MS,
+          },
+        );
+        return normalizeNodeTmuxPanesResult(payload);
+      } catch (error) {
+        // Live tmux.panes can block for the full timeout under load. Prefer a
+        // degraded stale push snapshot over an empty inventory row.
+        if (stale) return stale;
+        throw error;
+      }
     },
   });
 }

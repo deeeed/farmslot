@@ -13,6 +13,7 @@ import {
   slotViewLoadedRunDrawerKey,
   slotViewReadyGateDecision,
   slotViewReviewDrawerKey,
+  slotViewTerminalRunId,
 } from './slot-view-model.js';
 
 function makeSlot(slot: string, overrides: Partial<SlotStatus> = {}): SlotStatus {
@@ -321,4 +322,11 @@ test('isSlotViewPinnedLinkedRun matches only when URL runId equals linked run', 
 test('slotViewLoadedRunDrawerKey namespaces dismiss state for loaded runs', () => {
   assert.equal(slotViewLoadedRunDrawerKey('run-a'), 'loaded:run-a');
   assert.equal(slotViewLoadedRunDrawerKey(null), '');
+});
+
+test('slotViewTerminalRunId prefers URL pin over linked-run hydration', () => {
+  const linkedRun = { id: 'linked-run', slotId: 'slot-a' } as Run;
+  assert.equal(slotViewTerminalRunId('slot-a', linkedRun, 'url-run'), 'url-run');
+  assert.equal(slotViewTerminalRunId('slot-a', linkedRun, null), 'linked-run');
+  assert.equal(slotViewTerminalRunId('slot-b', linkedRun, null), '');
 });
