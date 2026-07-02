@@ -15,6 +15,7 @@ import {
   type Run,
   type RunDecision,
   type RunMonitorState,
+  type RunStep,
   type WorkerSignal,
   type WorkerSignalProbeResult,
   type WorkerTerminalContractDocument,
@@ -32,6 +33,7 @@ import { execOnSlot } from '../core/exec.js';
 import { shellQuote, tmuxShellSnippet } from '../core/tmux.js';
 import {
   runnerLineLooksWaiting,
+  runnerPaneShowsCurrentInteractiveProgress,
   runnerSupportsTmuxNudgesForLaunch,
   runnerTmuxNudgeUnsupportedDescription,
   sendRunnerInstructionSafely,
@@ -417,6 +419,49 @@ export function shouldHoldForInteractivePrComplete(run: Pick<Run, 'flowType' | '
   return run.flowType === 'pr-complete' && run.mode === 'interactive';
 }
 
+type AgentLiveStatus = 'working' | 'idle' | 'no-tmux';
+
+/** Minimal run fields the monitor nudge helpers read — accepts partial test fixtures. */
+export type MonitorNudgeRunView = {
+  flowType: Run['flowType'];
+  status: Run['status'];
+  steps?: ReadonlyArray<Pick<RunStep, 'name' | 'status'>>;
+  decisions?: ReadonlyArray<Pick<RunDecision, 'type' | 'resolvedAt'>>;
+};
+
+/** True when the run is blocked on operator publication / human-gate approval. */
+export function runHasOpenHumanGate(
+  run: Pick<MonitorNudgeRunView, 'steps' | 'decisions' | 'status'>,
+): boolean {
+  const humanGateStep = run.steps?.find((step) => step.name === PipelineSteps.HUMAN_GATE);
+  if (humanGateStep?.status === 'running') return true;
+  if (run.status !== 'blocked') return false;
+  return (
+    run.decisions?.some(
+      (decision) => decision.type === 'engine_human_gate' && !decision.resolvedAt,
+    ) ?? false
+  );
+}
+
+export function shouldSkipMonitorNudge(
+  run: MonitorNudgeRunView,
+  violation: Pick<MonitorViolation, 'type'>,
+  agentStatus: AgentLiveStatus,
+): boolean {
+  if (runHasOpenHumanGate(run)) return true;
+
+  const flowHasHumanGate = FLOW_STEPS[run.flowType]?.includes(PipelineSteps.HUMAN_GATE) ?? false;
+  if (
+    flowHasHumanGate &&
+    (violation.type === 'waiting' || violation.type === 'idle') &&
+    agentStatus === 'working'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function monitorRun(
   runId: string,
   slotId: string,
@@ -648,7 +693,7 @@ export async function monitorRun(
 
       // 1. Check if worker is done — live tmux pgrep (not .farm-status.json which is stale for gateway-dispatched runs)
       const liveContext = currentMonitorContext();
-      const agentStatus = await checkAgentLive(
+      let agentStatus = await checkAgentLive(
         slotId,
         run.metrics.runner,
         runId,
@@ -696,6 +741,7 @@ export async function monitorRun(
           return { pollCount, exitReason, violations: allViolations, snapshots };
         }
         console.log(`[run-monitor] run ${runId.slice(0, 8)} — transient idle recovered to working`);
+        agentStatus = recoveredStatus;
       }
 
       // 2. Capture pane + detect violations
@@ -751,6 +797,10 @@ export async function monitorRun(
               };
             }
             continue;
+          } else if (shouldSkipMonitorNudge(latestRun, v, agentStatus)) {
+            console.log(
+              `[run-monitor] run ${runId.slice(0, 8)} — skipping ${v.type} nudge (human gate or live worker)`,
+            );
           } else if (latestRun.metrics.nudgeCount >= config.maxNudges) {
             // Max nudges exceeded — create decision
             console.log(
@@ -768,16 +818,6 @@ export async function monitorRun(
             }
             // "continue" — reset nudge count and resume
             updateRun(runId, { metrics: { ...latestRun.metrics, nudgeCount: 0 } });
-          } else if (
-            v.type === 'waiting' &&
-            FLOW_STEPS[latestRun.flowType]?.includes(PipelineSteps.HUMAN_GATE)
-          ) {
-            // Worker is waiting on a flow with human gates — skip the nudge.
-            // The worker may be correctly paused at a gate. Let maxNudges
-            // escalation handle truly stuck cases.
-            console.log(
-              `[run-monitor] run ${runId.slice(0, 8)} — worker waiting, flow has human gates — skipping nudge`,
-            );
           } else if (
             runnerSupportsTmuxNudgesForLaunch(
               latestRun.metrics.runner,
@@ -898,9 +938,12 @@ async function detectViolations(
       state.lastPaneChangeAt = now;
     }
 
-    // Stuck: no content-area change for stuckTimeoutMs
+    // Stuck: no content-area change for stuckTimeoutMs. Pane-only runners can sit on a
+    // static composer while tools run for a long time — skip escalation only when visible
+    // progress markers are present, not merely because the worker process is still alive.
     const sincePaneChange = now - state.lastPaneChangeAt;
-    if (sincePaneChange > config.stuckTimeoutMs) {
+    const paneShowsProgress = runnerPaneShowsCurrentInteractiveProgress(paneContent, runner);
+    if (sincePaneChange > config.stuckTimeoutMs && !paneShowsProgress) {
       violations.push({
         slotId,
         role,

@@ -4,6 +4,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Suppress false monitor nudges while workers are live or runs are blocked at publication human gate, including when prior nudge counts are saturated
+- Gate stuck violations on absent pane progress markers instead of treating any live process as active work
+- Stop treating Grok echoed task text after `❯` as a waiting-for-input composer prompt
 - Return a gateway-owned Doctor section catalog and support catalog-only or section-scoped reports for progressive clients
 - Harden gateway authentication rate-limit IP resolution by ignoring spoofable proxy headers unless explicitly trusted
 - Harden local slot file reads, writes, and HTTP file serving against symlink escapes outside the configured repo
