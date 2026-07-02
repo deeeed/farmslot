@@ -172,7 +172,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       recipeDir: sourceRecipePath ? path.dirname(sourceRecipePath) : projectRoot,
     });
     const usedLibraryFlows = new Map<string, ResolvedLibraryFlow>();
-    const flowCatalog = createEffectiveFlowCatalog(
+    const { catalog: flowCatalog, overrides: flowOverrides } = createEffectiveFlowCatalog(
       recipeLocalFlows,
       libraryResolution,
       usedLibraryFlows,
@@ -427,6 +427,8 @@ class DefaultRecipeRunner implements RecipeRunner {
               schema_version: 1,
               kind: 'recipe-resolved-flows',
               sources: libraryResolution.sources,
+              overrides: flowOverrides,
+              shadowed: collectShadowedFlows(libraryResolution),
               flows: Object.fromEntries(
                 [...usedLibraryFlows.values()].map((flow) => [
                   flow.ref,
@@ -518,7 +520,13 @@ class DefaultRecipeRunner implements RecipeRunner {
       },
       ...(this.#runnerProvenance ? { runner: this.#runnerProvenance } : {}),
       ...(libraryResolution
-        ? { flowResolution: buildFlowResolutionSummary(libraryResolution, usedLibraryFlows) }
+        ? {
+            flowResolution: buildFlowResolutionSummary(
+              libraryResolution,
+              usedLibraryFlows,
+              flowOverrides,
+            ),
+          }
         : {}),
     };
     const summaryPath = await summaryWriter.write(summary);
@@ -890,6 +898,7 @@ class DefaultRecipeRunner implements RecipeRunner {
 function buildFlowResolutionSummary(
   resolution: RecipeLibraryResolution,
   usedLibraryFlows: ReadonlyMap<string, ResolvedLibraryFlow>,
+  overrides: RecipeFlowResolutionSummary['overrides'],
 ): RecipeFlowResolutionSummary {
   return {
     sources: resolution.sources,
@@ -900,7 +909,22 @@ function buildFlowResolutionSummary(
       ...(flow.shadows.length > 0 ? { shadows: flow.shadows } : {}),
       ...(flow.lastVerified ? { lastVerified: flow.lastVerified } : {}),
     })),
+    overrides,
+    shadowed: collectShadowedFlows(resolution),
   };
+}
+
+function collectShadowedFlows(
+  resolution: RecipeLibraryResolution,
+): RecipeFlowResolutionSummary['shadowed'] {
+  return [...resolution.flows.values()]
+    .filter((flow) => flow.shadows.length > 0)
+    .map((flow) => ({
+      ref: flow.ref,
+      source: flow.source,
+      file: flow.file,
+      shadows: flow.shadows,
+    }));
 }
 
 function normalizeVideoRecordingOptions(

@@ -38,9 +38,29 @@ export interface RecipeFlowResolutionEntry {
   lastVerified?: string;
 }
 
+export interface RecipeFlowOverrideEntry {
+  ref: string;
+  /** Library source whose declaration the recipe-local flow overrode. */
+  source: string;
+}
+
+export interface RecipeFlowShadowEntry {
+  ref: string;
+  /** Winning source. */
+  source: string;
+  /** Catalog file path relative to the winning source's root. */
+  file: string;
+  /** Source names shadowed at lower precedence. */
+  shadows: string[];
+}
+
 export interface RecipeFlowResolutionSummary {
   sources: LoadedRecipeLibrarySource[];
   used: RecipeFlowResolutionEntry[];
+  /** Recipe-local declarations that overrode a library-provided ref. */
+  overrides: RecipeFlowOverrideEntry[];
+  /** Every cross-source shadowing in the resolution, used or not. */
+  shadowed: RecipeFlowShadowEntry[];
 }
 
 export interface RecipeRunResult {

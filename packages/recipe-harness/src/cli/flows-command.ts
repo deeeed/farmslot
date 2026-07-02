@@ -51,6 +51,7 @@ export function registerFlowsCommand(program: Command): void {
           console.log(JSON.stringify({ sources: [], flows: [] }, null, 2));
         }
         console.error(message);
+        process.exitCode = 1;
         return;
       }
       const resolution = await loadRecipeLibraries(sources, options.json ? undefined : console);
