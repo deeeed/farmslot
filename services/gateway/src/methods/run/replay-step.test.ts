@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { Events, type RunDecision } from '@farmslot/protocol';
 
+import { statusFile } from '../../core/state.js';
 import { cancelRunEngine } from '../../run-engine/orchestrator.js';
 import { createRun, deleteRun, getRun, updateRun } from '../../runs/store.js';
 
@@ -756,6 +758,16 @@ test('runReplayStep rejects monitor replay when dispatch is still pending', asyn
 });
 
 test('runReplayStep recovers slotId from find-slot outputs on dispatch replay', async (t) => {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      { slots: [{ slot: 'macwork-ff-4', lifecycle: 'ready', current_run_id: null }] },
+      null,
+      2,
+    ) + '\n',
+  );
+
   const run = createRun({
     flowType: 'dev',
     project: 'farmslot-farm',
@@ -785,6 +797,8 @@ test('runReplayStep recovers slotId from find-slot outputs on dispatch replay', 
   });
 
   t.after(async () => {
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
     if (getRun(run.id)) {
       updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
       await deleteRun(run.id);
