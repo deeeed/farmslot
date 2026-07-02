@@ -12,6 +12,7 @@ import {
   parseWorkerTemplateFileName,
   resolveWorkerTemplateSelection,
   resolveWorkerTemplateSelectionForRun,
+  teamTemplateFileNameForFlow,
 } from './worker-template-options.js';
 
 async function withProjectVars(fn: (vars: ProjectVars) => Promise<void>): Promise<void> {
@@ -159,6 +160,90 @@ test('resolveWorkerTemplateSelectionForRun keeps explicit invalid selections lou
       /does not match/,
     );
   });
+});
+
+test('resolveWorkerTemplateSelectionForRun prefers the team variant when it exists', async () => {
+  await withProjectVars(async (vars) => {
+    await writeFile(
+      path.join(vars.projectTemplatesDir, 'worker', 'fix-bug-blue.md'),
+      '# Blue\n',
+      'utf-8',
+    );
+    const selected = await resolveWorkerTemplateSelectionForRun(
+      vars,
+      'fix-bug',
+      undefined,
+      null,
+      'blue',
+    );
+    assert.equal(selected.fileName, 'fix-bug-blue.md');
+    assert.equal(selected.variant, 'blue');
+    assert.equal(selected.selectionSource, 'implicit-team');
+    assert.match(selected.selectionReason, /team 'blue'/);
+  });
+});
+
+test('resolveWorkerTemplateSelectionForRun lets explicit and interactive selections beat the team variant', async () => {
+  await withProjectVars(async (vars) => {
+    await writeFile(
+      path.join(vars.projectTemplatesDir, 'worker', 'dev-blue.md'),
+      '# Dev Blue\n',
+      'utf-8',
+    );
+    const explicit = await resolveWorkerTemplateSelectionForRun(
+      vars,
+      'fix-bug',
+      undefined,
+      { fileName: 'fix-bug-v2.md' },
+      'blue',
+    );
+    assert.equal(explicit.fileName, 'fix-bug-v2.md');
+    assert.equal(explicit.selectionSource, 'explicit');
+
+    const interactive = await resolveWorkerTemplateSelectionForRun(
+      vars,
+      'dev',
+      'interactive',
+      null,
+      'blue',
+    );
+    assert.equal(interactive.fileName, 'dev-interactive.md');
+    assert.equal(interactive.selectionSource, 'implicit-interactive-dev');
+  });
+});
+
+test('resolveWorkerTemplateSelectionForRun ignores teams without a variant file or a valid name', async () => {
+  await withProjectVars(async (vars) => {
+    const noFile = await resolveWorkerTemplateSelectionForRun(
+      vars,
+      'fix-bug',
+      undefined,
+      null,
+      'green',
+    );
+    assert.equal(noFile.fileName, 'fix-bug.md');
+    assert.equal(noFile.selectionSource, 'default');
+
+    const badName = await resolveWorkerTemplateSelectionForRun(
+      vars,
+      'fix-bug',
+      undefined,
+      null,
+      'Blue Team!',
+    );
+    assert.equal(badName.fileName, 'fix-bug.md');
+    assert.equal(badName.selectionSource, 'default');
+  });
+});
+
+test('teamTemplateFileNameForFlow builds valid variant names and rejects invalid teams', () => {
+  assert.equal(teamTemplateFileNameForFlow('fix-bug', 'blue'), 'fix-bug-blue.md');
+  assert.equal(
+    teamTemplateFileNameForFlow('review-pr', 'mobile-platform'),
+    'review-pr-mobile-platform.md',
+  );
+  assert.equal(teamTemplateFileNameForFlow('fix-bug', 'Blue Team!'), null);
+  assert.equal(teamTemplateFileNameForFlow('fix-bug', ''), null);
 });
 
 test('normalizeTaskTemplateSelection rejects paths and flow mismatches', () => {
