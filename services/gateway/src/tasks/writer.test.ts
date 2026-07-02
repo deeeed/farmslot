@@ -7,6 +7,10 @@ import type { Run } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
+// These tests exercise runs on the committed demo pool's slots (demo-ff-1),
+// which the loaders hide unless explicitly opted in.
+process.env.FARMSLOT_DEMO_POOL = '1';
+
 import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import {
@@ -399,7 +403,6 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   assert.equal(typeof provenance.contentHash, 'string');
   await access(path.join(path.dirname(taskA), CHECKLIST_MARKER_INPUT));
 });
-
 
 test('checklistMarkerHelperPath keeps remote helper shell-expandable', () => {
   assert.equal(

@@ -27,6 +27,9 @@ fi
 
 export GATEWAY_PORT="${GATEWAY_PORT:-7777}"
 export VITE_PORT="${VITE_PORT:-5174}"
+# Dev sessions keep the committed demo pool visible (the documented fastest
+# path); installed gateways hide it unless the operator opts in.
+export FARMSLOT_DEMO_POOL="${FARMSLOT_DEMO_POOL:-1}"
 
 echo "[dev] Gateway: http://localhost:$GATEWAY_PORT"
 echo "[dev] UI:      http://localhost:$VITE_PORT"

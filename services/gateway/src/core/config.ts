@@ -21,6 +21,18 @@ import { farmslotRoot } from '../projects/repo-root.js';
 const poolDir = path.join(farmslotRoot, 'pool');
 const projectsDir = path.join(farmslotRoot, 'projects');
 
+/**
+ * Pool files every loader skips: non-JSON, the committed template, and the
+ * repo's own demo pool (the self-integration example) unless FARMSLOT_DEMO_POOL=1
+ * opts it in — a fresh install must not surface demo slots nobody asked for.
+ */
+export function isIgnoredPoolFile(file: string): boolean {
+  if (!file.endsWith('.json')) return true;
+  if (file === 'example.json') return true;
+  if (file === 'farmslot-demo.json') return process.env.FARMSLOT_DEMO_POOL !== '1';
+  return false;
+}
+
 // Browser/CDP resources are consumed by Node's standards-compliant fetch in the
 // recipe harness and MetaMask recipe runner. The Fetch standard blocks these
 // ports before any network request is attempted; using one makes a live browser
@@ -316,7 +328,7 @@ export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
   }
 
   for (const file of files) {
-    if (!file.endsWith('.json') || file === 'example.json') continue;
+    if (isIgnoredPoolFile(file)) continue;
     try {
       const content = await readFile(path.join(poolDir, file), 'utf-8');
       const pool: RawPoolJson = JSON.parse(content);

@@ -20,6 +20,7 @@ import {
   expandPlatformField,
   farmslotRoot,
   getProjectField,
+  isIgnoredPoolFile,
   isLocal,
   loadProjectVars,
   loadSlotVars,
@@ -379,7 +380,7 @@ async function loadAllPools(): Promise<RawPoolJson[]> {
   try {
     const files = await readdir(poolDir);
     for (const file of files.sort()) {
-      if (!file.endsWith('.json') || file === 'example.json') continue;
+      if (isIgnoredPoolFile(file)) continue;
       try {
         const content = await readFile(path.join(poolDir, file), 'utf-8');
         pools.push(JSON.parse(content));

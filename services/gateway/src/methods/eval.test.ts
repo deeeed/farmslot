@@ -24,6 +24,10 @@ import { writeTaskFile } from '../tasks/writer.js';
 import { harnessLifecycleForAxes } from './eval/candidate-setup.js';
 import { candidateVariant, evalExperimentCreate, evalTrialStart } from './eval.js';
 
+// These tests resolve the committed demo pool's slots (demo-ff-1), which the
+// loaders hide unless explicitly opted in.
+process.env.FARMSLOT_DEMO_POOL = '1';
+
 async function writeEvalTestFile(root: string, relPath: string, content: string): Promise<void> {
   const filePath = path.join(root, relPath);
   await mkdir(path.dirname(filePath), { recursive: true });

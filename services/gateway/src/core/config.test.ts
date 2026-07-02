@@ -7,6 +7,7 @@ import {
   farmslotRoot,
   getOrchestratorTaskRoot,
   isHttpFetchForbiddenPort,
+  isIgnoredPoolFile,
   isMockModeProject,
   loadProjectVars,
   resolveProjectRuntimeDir,
@@ -46,7 +47,10 @@ test('getOrchestratorTaskRoot uses projects path for normal projects', () => {
 
 test('resolveProjectTaskDirName prefers task_dir then paths.artifact_dir then default', () => {
   assert.equal(
-    resolveProjectTaskDirName({ task_dir: 'custom/tasks', paths: { artifact_dir: 'temp/tasks' } } as any),
+    resolveProjectTaskDirName({
+      task_dir: 'custom/tasks',
+      paths: { artifact_dir: 'temp/tasks' },
+    } as any),
     'custom/tasks',
   );
   assert.equal(
@@ -238,7 +242,10 @@ test('validatePrepareConfig rejects structural errors', () => {
 test('validatePrepareConfig rejects bad phases', () => {
   assert.throws(
     () =>
-      validatePrepareConfig(prepareJson({ profiles: { full: { phases: [] } } }), PREPARE_CONFIG_PATH),
+      validatePrepareConfig(
+        prepareJson({ profiles: { full: { phases: [] } } }),
+        PREPARE_CONFIG_PATH,
+      ),
     /phases must be a non-empty array/,
   );
   assert.throws(
@@ -356,4 +363,20 @@ test('resolveProjectRuntimeDir reads paths.runtime_dir from project.json', async
   assert.equal(await resolveProjectRuntimeDir(project), 'temp/recipe/runtime');
   assert.equal(await resolveProjectRuntimeDir(null), '.agent');
   assert.equal(await resolveProjectRuntimeDir('missing-project-xyz'), '.agent');
+});
+
+test('isIgnoredPoolFile hides the demo pool unless FARMSLOT_DEMO_POOL=1', () => {
+  const prev = process.env.FARMSLOT_DEMO_POOL;
+  try {
+    delete process.env.FARMSLOT_DEMO_POOL;
+    assert.equal(isIgnoredPoolFile('example.json'), true);
+    assert.equal(isIgnoredPoolFile('notes.md'), true);
+    assert.equal(isIgnoredPoolFile('farmslot-demo.json'), true);
+    assert.equal(isIgnoredPoolFile('macbook.json'), false);
+    process.env.FARMSLOT_DEMO_POOL = '1';
+    assert.equal(isIgnoredPoolFile('farmslot-demo.json'), false);
+  } finally {
+    if (prev === undefined) delete process.env.FARMSLOT_DEMO_POOL;
+    else process.env.FARMSLOT_DEMO_POOL = prev;
+  }
 });

@@ -50,7 +50,7 @@ Companion is a **surface** (prepare profile + validation step), not a separate p
 
 ## Local demo (fastest path)
 
-The committed demo pool is [`pool/farmslot-demo.json`](https://github.com/deeeed/farmslot/blob/main/pool/farmslot-demo.json):
+The committed demo pool is [`pool/farmslot-demo.json`](https://github.com/deeeed/farmslot/blob/main/pool/farmslot-demo.json). Installed gateways hide it by default (fresh installs only see their own machine's slots; set `FARMSLOT_DEMO_POOL=1` to load it) — `scripts/dev.sh` keeps it visible:
 
 ```bash
 bash scripts/dev.sh

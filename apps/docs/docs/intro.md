@@ -41,7 +41,7 @@ Farmslot intentionally keeps project-specific behavior outside core. A project i
 Current reference examples:
 
 - **AudioLab** — [github.com/deeeed/audiolab](https://github.com/deeeed/audiolab) is a public Expo/React Native monorepo using Recipe Protocol v1 for app navigation, screenshots, and AudioLab-specific native audio probes. It shows how a real app can keep its existing bridge while emitting standard Farmslot recipe artifacts.
-- **Farmslot self-integration** — this repository defines itself as `farmslot-farm` through `projects/farmslot-farm/project.json`, with a local demo slot in `pool/farmslot-demo.json`. See [Farmslot monorepo example](./guides/farmslot-monorepo-example.md) for how pool slots, worktrees, prepare profiles, and optional companion proof fit together in practice.
+- **Farmslot self-integration** — this repository defines itself as `farmslot-farm` through `projects/farmslot-farm/project.json`, with a local demo slot in `pool/farmslot-demo.json` (hidden unless `FARMSLOT_DEMO_POOL=1`). See [Farmslot monorepo example](./guides/farmslot-monorepo-example.md) for how pool slots, worktrees, prepare profiles, and optional companion proof fit together in practice.
 
 ## What to read next
 
