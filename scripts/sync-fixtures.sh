@@ -150,6 +150,10 @@ if [ -n "${SLOT_ID}" ]; then
     TPL_SRC=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['templates'][$i].get('src',''))")
     TPL_DST=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['fixtures']['templates'][$i]['dst'])")
     TPL_DST=$(expand_slot_template "$TPL_DST")
+    # src paths may carry {{placeholders}} (e.g. an overlay dir selected per
+    # dispatch); expand them the same way as dst so overlay sources resolve.
+    [ -n "$TPL_SRC" ] && TPL_SRC=$(expand_slot_template "$TPL_SRC")
+    TPL_OPTIONAL=$(echo "$PROJECT_JSON" | python3 -c "import json,sys; print('1' if json.load(sys.stdin)['fixtures']['templates'][$i].get('optional') else '')")
 
     # Check for compose config
     COMPOSE_VAR=$(echo "$PROJECT_JSON" | python3 -c "
@@ -183,6 +187,7 @@ if isinstance(v, dict):
 else:
     print(v)
 " 2>/dev/null || true)
+      [ -n "$VARIANT_FILE" ] && VARIANT_FILE=$(expand_slot_template "$VARIANT_FILE")
 
       COMPOSED=$(mktemp)
       if [ -n "$VARIANT_FILE" ] && [ -f "${PROJECT_FIXTURES_DIR}/${VARIANT_FILE}" ]; then
@@ -208,20 +213,29 @@ else:
 " 2>/dev/null || echo 0)
       if [ "$INCLUDE_COUNT" -gt 0 ]; then
       for inc_i in $(seq 0 $((INCLUDE_COUNT - 1))); do
-        INC_FILE=$(echo "$PROJECT_JSON" | python3 -c "
+        # Include entries are either a plain string path (required) or an
+        # object {file, optional} — optional includes skip quietly when the
+        # expanded path is absent (overlay content only some setups provide).
+        INC_ENTRY=$(echo "$PROJECT_JSON" | python3 -c "
 import json,sys
 f=json.load(sys.stdin)['fixtures']['templates'][$i]
 compose=f.get('compose',{})
 variants=compose.get('variants',{})
 v=variants.get('${FLOW_TYPE_VAL}', '')
-if isinstance(v, dict):
-    print(v['includes'][$inc_i])
+entry=(v['includes'][$inc_i] if isinstance(v, dict) else compose['includes'][$inc_i])
+if isinstance(entry, dict):
+    print((entry.get('file','') or '') + '\t' + ('1' if entry.get('optional') else ''))
 else:
-    print(compose['includes'][$inc_i])
+    print(str(entry) + '\t')
 ")
-        if [ -f "${PROJECT_FIXTURES_DIR}/${INC_FILE}" ]; then
+        INC_FILE="${INC_ENTRY%%$'\t'*}"
+        INC_OPTIONAL="${INC_ENTRY#*$'\t'}"
+        [ -n "$INC_FILE" ] && INC_FILE=$(expand_slot_template "$INC_FILE")
+        if [ -n "$INC_FILE" ] && [ -f "${PROJECT_FIXTURES_DIR}/${INC_FILE}" ]; then
           printf '\n' >> "$COMPOSED"
           cat "${PROJECT_FIXTURES_DIR}/${INC_FILE}" >> "$COMPOSED"
+        elif [ -n "$INC_OPTIONAL" ]; then
+          echo "  [SKIP] optional include ${INC_FILE:-<empty>} not present"
         else
           echo "  [WARN] include ${INC_FILE} not found"
         fi
@@ -246,6 +260,8 @@ else:
         rm -f "$RENDERED"
         mark_forced_patch_if_tracked "$TPL_DST"
         echo "  [OK] ${TPL_DST}"
+      elif [ -n "$TPL_OPTIONAL" ]; then
+        echo "  [SKIP] ${TPL_DST} — optional src ${TPL_SRC} not present"
       else
         echo "  [SKIP] ${TPL_SRC} not found"
       fi

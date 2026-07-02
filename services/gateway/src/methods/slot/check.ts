@@ -209,6 +209,20 @@ async function checkRepo(vars: SlotVars): Promise<CheckStep> {
   }
 }
 
+/**
+ * A missing fixture src is not a problem when the entry is marked optional or
+ * its path still carries unresolved placeholders (e.g. a dispatch-scoped
+ * `{{team}}` the slot cannot expand) — those entries only materialize for
+ * deployments that provide them.
+ */
+export function isOptionalFixtureAbsence(
+  tpl: { src?: string; optional?: boolean },
+  expandedSrc: string,
+): boolean {
+  if (tpl.optional) return true;
+  return /\{\{[A-Za-z_][A-Za-z0-9_]*\}\}/.test(expandedSrc);
+}
+
 async function checkFixtures(
   vars: SlotVars,
   projectVars: ProjectVars | undefined,
@@ -227,12 +241,21 @@ async function checkFixtures(
   for (const tpl of templates) {
     const dst = expandTemplate(tpl.dst, vars, projectVars);
     if (!tpl.src) continue;
-    const localPath = path.join(projectVars.projectFixturesDir, tpl.src);
+    const src = expandTemplate(tpl.src, vars, projectVars);
+    const localPath = path.join(projectVars.projectFixturesDir, src);
     if (!existsSync(localPath)) {
+      if (isOptionalFixtureAbsence(tpl, src)) {
+        steps.push({
+          name: `fixture:${dst}`,
+          status: 'skip',
+          detail: `Optional fixture ${src} not present locally`,
+        });
+        continue;
+      }
       steps.push({
         name: `fixture:${dst}`,
         status: 'warn',
-        detail: `Template ${tpl.src} not found locally`,
+        detail: `Template ${src} not found locally`,
       });
       mismatches++;
       continue;

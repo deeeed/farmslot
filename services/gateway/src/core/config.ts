@@ -202,7 +202,13 @@ export interface RawProjectJson {
     }>;
   };
   fixtures?: {
-    templates?: Array<{ src?: string; dst: string; compose?: Record<string, unknown> }>;
+    templates?: Array<{
+      src?: string;
+      dst: string;
+      /** Skip silently when the resolved src is absent — for overlay fixtures (e.g. team files) only some deployments provide. */
+      optional?: boolean;
+      compose?: Record<string, unknown>;
+    }>;
     directories?: Array<{ src: string; dst: string; exclude?: string[]; sentinel?: string }>;
   };
   platforms?: Record<string, Record<string, string>>;

@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import type { SlotVars } from '../../core/config.js';
 
-import { runHealthCheck } from './check.js';
+import { isOptionalFixtureAbsence, runHealthCheck } from './check.js';
 
 function makeSlotVars(remoteRepo: string): SlotVars {
   return {
@@ -47,4 +47,19 @@ test('runHealthCheck ignores stdout from failed health commands', async (t) => {
   );
 
   assert.equal(result, '');
+});
+
+test('isOptionalFixtureAbsence tolerates optional entries and unresolved placeholders', () => {
+  assert.equal(
+    isOptionalFixtureAbsence({ src: 'teams/blue/notes.md', optional: true }, 'teams/blue/notes.md'),
+    true,
+  );
+  assert.equal(
+    isOptionalFixtureAbsence({ src: 'teams/{{team}}/notes.md' }, 'teams/{{team}}/notes.md'),
+    true,
+  );
+  assert.equal(
+    isOptionalFixtureAbsence({ src: 'sentry.debug.properties' }, 'sentry.debug.properties'),
+    false,
+  );
 });

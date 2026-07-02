@@ -1167,13 +1167,18 @@
       "properties": {
         "src": {
           "type": "string",
-          "description": "Source filename in the project fixtures/ directory.",
+          "description": "Source path in the project fixtures/ directory. May contain {{var}} placeholders (e.g. an overlay directory selected per dispatch) resolved at sync time.",
           "examples": [".js.env.template"]
         },
         "dst": {
           "type": "string",
           "description": "Destination path relative to the worker repo root.",
           "examples": [".js.env"]
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "Skip silently when the resolved src does not exist — for overlay fixtures (e.g. team files) that only some deployments provide.",
+          "default": false
         },
         "vars": {
           "type": "array",
@@ -1205,9 +1210,29 @@
                   },
                   "includes": {
                     "type": "array",
-                    "description": "List of files to concatenate.",
+                    "description": "List of files to concatenate. Entries are a path string (required — warns when missing) or {file, optional} where optional entries skip quietly when the resolved path is absent. Paths may contain {{var}} placeholders resolved at sync time.",
                     "items": {
-                      "type": "string"
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object",
+                          "required": ["file"],
+                          "properties": {
+                            "file": {
+                              "type": "string",
+                              "description": "Include path relative to the project fixtures/ directory; {{var}} placeholders resolved at sync time."
+                            },
+                            "optional": {
+                              "type": "boolean",
+                              "description": "Skip quietly when the resolved path is absent.",
+                              "default": false
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      ]
                     }
                   }
                 },
