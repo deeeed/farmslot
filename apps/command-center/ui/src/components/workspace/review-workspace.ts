@@ -25,13 +25,17 @@ import '../shared/diff-viewer-modal.js';
 import './recipe-output-panel.js';
 
 import { gateway } from '../../gateway-client.js';
-import { colors, fonts } from '../../styles/theme-tokens.js';
+import { colors } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { currentRecoveryEpoch, isRecoveryEpochCurrent } from '../../utils/reconnect.js';
 import { renderRecipeQualityCockpit } from '../recipe/recipe-quality-cockpit.js';
 import { createReviewWorkspaceRecipeHostEntry } from '../recipe/recipe-quality-hosts.js';
 import type { LightboxItem } from '../shared/media-lightbox-types.js';
 
+import {
+  renderWorkspaceLearningsTab,
+  renderWorkspaceQualityTab,
+} from './ready-workspace-tab-renderers.js';
 import type { RecipeOutputPanel } from './recipe-output-panel.js';
 import { reviewEvidenceArtifacts } from './review-evidence.js';
 import { reviewWorkspaceLanguageForPath } from './review-workspace-code-model.js';
@@ -47,6 +51,7 @@ import {
   renderReviewCommentItem,
   renderReviewFileTab,
   renderReviewLoadingBanner,
+  renderReviewTabBar,
   renderReviewTopBar,
 } from './review-workspace-shell-renderers.js';
 import { ReviewWorkspaceState } from './review-workspace-state.js';
@@ -55,9 +60,15 @@ import {
   dedupeWorkspaceEvidenceArtifacts,
   renderWorkspaceEvidencePreview,
 } from './workspace-evidence-preview.js';
+import type { ReviewWorkspaceTab } from './workspace-url-state.js';
 
 @customElement('review-workspace')
 export class ReviewWorkspace extends ReviewWorkspaceState {
+  private readonly _onHashChange = () => {
+    this._readTabFromHash();
+    this._normalizeActiveTab();
+  };
+
   private get _payload(): ReviewGatePayload {
     return this.decision.payload as ReviewGatePayload;
   }
@@ -116,6 +127,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   override connectedCallback() {
     super.connectedCallback();
+    window.addEventListener('hashchange', this._onHashChange);
     // Re-check branch when slot changes (e.g. after external checkout)
     this._unsubSlot = gateway.subscribe(Events.SLOT_CHANGED, () => {
       if (this._branchMismatch) this._loadBranchDiff();
@@ -151,6 +163,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
 
   override disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener('hashchange', this._onHashChange);
     this._unsubSlot?.();
     this._unsubConn?.();
     this._unsubDecision?.();
@@ -173,7 +186,8 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       this._includedComments = new Set(this._comments.map((_, i) => i));
       this._selectedRecommendation = this._payload.recommendation ?? 'COMMENT';
       this._initialized = true;
-      this._readPanelFromHash();
+      this._readTabFromHash();
+      this._normalizeActiveTab();
       void this._beginRecovery();
     }
   }
@@ -194,6 +208,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       } else {
         this._includedComments = new Set(this._comments.map((_, i) => i));
       }
+      this._normalizeActiveTab();
     }
     // Re-check if slotId changes
     if (changed.has('slotId') && this._initialized) {
@@ -455,7 +470,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
   }
 
   private async _handleRecipeRerun() {
-    this._showRecipe = true;
+    this._setActiveTab('recipe');
     await this.updateComplete;
     this.querySelector<RecipeOutputPanel>('recipe-output-panel')?.rerun();
   }
@@ -537,81 +552,11 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
               </div>
             `
           : nothing}
-        <div class="rw-md-section" style="flex: ${this._splitPct} 1 0%">
-          ${unsafeHTML(renderMarkdown(payload.reviewMd))}
-          ${mediaArtifacts.length > 0
-            ? renderWorkspaceEvidencePreview({
-                title: 'Review evidence',
-                subtitle:
-                  'Local screenshot/video artifacts attached to this review gate — the same proof the reviewer should inspect before posting.',
-                compact: true,
-                items: mediaArtifacts.map((artifact, index) => ({
-                  artifact,
-                  url: runArtifactUrl(this.runId, artifact),
-                  open: () => {
-                    this._lightboxIndex = index;
-                    this._lightboxOpen = true;
-                  },
-                })),
-              })
-            : nothing}
+        ${this._renderTabBar(mediaArtifacts.length, payload)}
+        <div class="rw-tab-pane-host" style="flex: ${this._splitPct} 1 0%">
+          ${this._renderTabContent(payload, recipeHost, mediaArtifacts)}
+          ${this._renderRecipeOutputPanel(recipeHost)}
         </div>
-        ${renderRecipeQualityCockpit({
-          recipeJson: recipeHost.recipeJson,
-          recipeView: this._recipeView,
-          onRecipeViewChange: (view) => {
-            this._recipeView = view;
-          },
-          recipeQualityArtifact: recipeHost.recipeQualityArtifact,
-          qualityReport: recipeHost.qualityReport,
-          qualityOverrides: this._evidenceOverrides,
-          onQualityOverridesChange: (overrides) => {
-            this._evidenceOverrides = overrides;
-          },
-          showQuality: this._showQuality,
-          showLearnings: this._showLearnings && Boolean(payload.workerLearnings),
-          showRecipe: this._showRecipe || this._recipeRunning,
-          learningsContent: payload.workerLearnings
-            ? html`
-                <div
-                  style="font-size:${fonts.sizeSm};line-height:1.6;color:${colors.textSecondary}"
-                >
-                  ${unsafeHTML(renderMarkdown(payload.workerLearnings))}
-                </div>
-              `
-            : undefined,
-          actionContent:
-            recipeHost.capabilities.canCancel && this._recipeRunning
-              ? html`<button
-                  class="rw-recipe-toggle"
-                  style="color:${colors.statusFail}"
-                  @click=${this._handleRecipeCancel}
-                >
-                  Cancel
-                </button>`
-              : recipeHost.capabilities.canRerun
-                ? html`<button
-                    class="rw-recipe-toggle"
-                    style="color:${colors.statusOk}"
-                    ?disabled=${!this.slotId}
-                    @click=${this._handleRecipeRerun}
-                  >
-                    Rerun Recipe
-                  </button>`
-                : undefined,
-          outputContent: recipeHost.outputTarget
-            ? html`
-                <recipe-output-panel
-                  runId=${recipeHost.outputTarget.runId}
-                  slotId=${recipeHost.outputTarget.slotId}
-                  style="${!this._showRecipe && !this._recipeRunning ? 'display:none' : ''}"
-                  @running-change=${(e: CustomEvent<boolean>) => {
-                    this._recipeRunning = e.detail;
-                  }}
-                ></recipe-output-panel>
-              `
-            : undefined,
-        })}
         <div class="rw-resize" @mousedown=${this._splitResizer.start}></div>
         <div class="rw-bottom" style="flex: ${100 - this._splitPct} 1 0%">
           ${this._comments.length > 0
@@ -691,6 +636,126 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
     });
   }
 
+  private _normalizeActiveTab() {
+    const payload = this._payload;
+    if (!payload) return;
+    const evidenceCount = this._mediaArtifacts.length;
+    const qualityAvailable = payload.qualityReport != null;
+    let tab: ReviewWorkspaceTab = this._activeTab;
+    if (tab === 'evidence' && evidenceCount === 0) tab = 'review';
+    if (tab === 'quality' && !qualityAvailable) tab = 'review';
+    if (tab === 'recipe' && !payload.recipeJson) tab = 'review';
+    if (tab === 'learnings' && !payload.workerLearnings) tab = 'review';
+    if (tab !== this._activeTab) {
+      this._activeTab = tab;
+      this._syncTabToHash();
+    }
+  }
+
+  private _renderRecipeOutputPanel(
+    recipeHost: ReturnType<typeof createReviewWorkspaceRecipeHostEntry>,
+  ) {
+    if (!recipeHost.outputTarget) return nothing;
+    const visible = this._activeTab === 'recipe' || this._recipeRunning;
+    return html`
+      <div class="rw-recipe-output-host" style="${visible ? '' : 'display:none'}">
+        <recipe-output-panel
+          runId=${recipeHost.outputTarget.runId}
+          slotId=${recipeHost.outputTarget.slotId}
+          @running-change=${(e: CustomEvent<boolean>) => {
+            this._recipeRunning = e.detail;
+            if (e.detail) this._setActiveTab('recipe');
+          }}
+        ></recipe-output-panel>
+      </div>
+    `;
+  }
+
+  private _renderTabBar(evidenceCount: number, payload: ReviewGatePayload) {
+    return renderReviewTabBar({
+      activeTab: this._activeTab,
+      evidenceCount,
+      qualityCount: payload.qualityReport?.acVerdicts.length ?? null,
+      hasRecipe: Boolean(payload.recipeJson),
+      hasLearnings: Boolean(payload.workerLearnings),
+      setActiveTab: (tab) => this._setActiveTab(tab),
+    });
+  }
+
+  private _renderTabContent(
+    payload: ReviewGatePayload,
+    recipeHost: ReturnType<typeof createReviewWorkspaceRecipeHostEntry>,
+    mediaArtifacts: ArtifactRef[],
+  ) {
+    switch (this._activeTab) {
+      case 'evidence':
+        return mediaArtifacts.length > 0
+          ? html`<div class="rw-md-section rw-evidence-tab">
+              ${renderWorkspaceEvidencePreview({
+                title: 'Review evidence',
+                subtitle:
+                  'Screenshot and video artifacts attached to this review gate — inspect before posting.',
+                items: mediaArtifacts.map((artifact, index) => ({
+                  artifact,
+                  url: runArtifactUrl(this.runId, artifact),
+                  open: () => {
+                    this._lightboxIndex = index;
+                    this._lightboxOpen = true;
+                  },
+                })),
+              })}
+            </div>`
+          : html`<div class="rw-tab-empty">No evidence</div>`;
+      case 'quality':
+        return html`<div class="rw-md-section">${renderWorkspaceQualityTab(payload)}</div>`;
+      case 'learnings':
+        return html`<div class="rw-md-section">${renderWorkspaceLearningsTab(payload)}</div>`;
+      case 'recipe':
+        return html`<div class="rw-md-section">
+          ${renderRecipeQualityCockpit({
+            recipeJson: recipeHost.recipeJson,
+            recipeView: this._recipeView,
+            onRecipeViewChange: (view) => {
+              this._recipeView = view;
+            },
+            recipeQualityArtifact: recipeHost.recipeQualityArtifact,
+            qualityReport: recipeHost.qualityReport,
+            qualityOverrides: this._evidenceOverrides,
+            onQualityOverridesChange: (overrides) => {
+              this._evidenceOverrides = overrides;
+            },
+            showQuality: false,
+            showLearnings: false,
+            showRecipe: true,
+            actionContent:
+              recipeHost.capabilities.canCancel && this._recipeRunning
+                ? html`<button
+                    class="rw-recipe-toggle"
+                    style="color:${colors.statusFail}"
+                    @click=${this._handleRecipeCancel}
+                  >
+                    Cancel
+                  </button>`
+                : recipeHost.capabilities.canRerun
+                  ? html`<button
+                      class="rw-recipe-toggle"
+                      style="color:${colors.statusOk}"
+                      ?disabled=${!this.slotId}
+                      @click=${() => void this._handleRecipeRerun()}
+                    >
+                      Rerun Recipe
+                    </button>`
+                  : undefined,
+          })}
+        </div>`;
+      case 'review':
+      default:
+        return html`<div class="rw-md-section">
+          ${unsafeHTML(renderMarkdown(payload.reviewMd))}
+        </div>`;
+    }
+  }
+
   private _renderTopBar() {
     return renderReviewTopBar({
       comments: this._comments,
@@ -699,24 +764,7 @@ export class ReviewWorkspace extends ReviewWorkspaceState {
       setRecommendation: (recommendation) => {
         this._selectedRecommendation = recommendation;
       },
-      qualityCount: this._payload?.qualityReport?.acVerdicts.length ?? null,
-      showQuality: this._showQuality,
-      toggleQuality: () => {
-        this._showQuality = !this._showQuality;
-        this._syncPanelToHash();
-      },
-      hasRecipe: Boolean(this._payload?.recipeJson),
-      showRecipe: this._showRecipe,
-      toggleRecipe: () => {
-        this._showRecipe = !this._showRecipe;
-        this._syncPanelToHash();
-      },
       hasLearnings: Boolean(this._payload?.workerLearnings),
-      showLearnings: this._showLearnings,
-      toggleLearnings: () => {
-        this._showLearnings = !this._showLearnings;
-        this._syncPanelToHash();
-      },
       posting: this._posting,
       recovering: this._isRecovering,
       refreshing: this._refreshing,

@@ -174,6 +174,55 @@ export function renderReviewWorkspaceStyles(recoveryPhase: RecoveryPhase) {
       border-color: ${colors.accent};
       color: ${colors.textPrimary};
     }
+    review-workspace .rw-tab-bar {
+      display: flex;
+      gap: 1px;
+      background: ${colors.bgCard};
+      border-bottom: 1px solid #2a2a44;
+      padding: 2px ${spacing.sm};
+      flex-shrink: 0;
+    }
+    review-workspace .rw-tab {
+      padding: 4px 12px;
+      border: none;
+      background: transparent;
+      color: ${colors.textMuted};
+      font-family: ${fonts.mono};
+      font-size: 11px;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    review-workspace .rw-tab:hover {
+      background: ${colors.bgSurface};
+      color: ${colors.textSecondary};
+    }
+    review-workspace .rw-tab.active {
+      background: ${colors.accent}18;
+      color: ${colors.textPrimary};
+    }
+    review-workspace .rw-tab-pane-host {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    review-workspace .rw-tab-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      color: ${colors.textMuted};
+      font-size: 12px;
+      min-height: 100px;
+    }
+    review-workspace .rw-evidence-tab {
+      overflow-y: auto;
+    }
+    review-workspace .rw-recipe-output-host {
+      flex-shrink: 0;
+      padding: 0 ${spacing.xl} ${spacing.md};
+    }
     review-workspace .rw-resize {
       height: 4px;
       background: #2a2a44;

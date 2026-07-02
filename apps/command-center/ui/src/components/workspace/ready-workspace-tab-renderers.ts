@@ -187,9 +187,17 @@ export function renderReadyEvidenceSelectionToolbar(input: {
 }
 
 export function renderReadyQualityTab(payload: ReadyGatePayload) {
-  const quality = payload.recipeQualityArtifact;
-  const report = payload.qualityReport;
-  const acs = payload.acceptanceCriteria ?? [];
+  return renderWorkspaceQualityTab(payload);
+}
+
+export function renderWorkspaceQualityTab(input: {
+  recipeQualityArtifact?: ReadyGatePayload['recipeQualityArtifact'];
+  qualityReport?: ReadyGatePayload['qualityReport'];
+  acceptanceCriteria?: string[];
+}) {
+  const quality = input.recipeQualityArtifact;
+  const report = input.qualityReport;
+  const acs = input.acceptanceCriteria ?? [];
   if (!quality && !report && acs.length === 0)
     return html`<div class="rdy-tab-empty">No quality report</div>`;
   return html`
@@ -248,10 +256,14 @@ export function renderReadyQualityTab(payload: ReadyGatePayload) {
 }
 
 export function renderReadyLearningsTab(payload: ReadyGatePayload) {
-  if (!payload.workerLearnings) return html`<div class="rdy-tab-empty">No learnings</div>`;
+  return renderWorkspaceLearningsTab(payload);
+}
+
+export function renderWorkspaceLearningsTab(input: { workerLearnings?: string }) {
+  if (!input.workerLearnings) return html`<div class="rdy-tab-empty">No learnings</div>`;
   return html`
     <div class="rdy-learnings-tab rdy-md-section">
-      ${unsafeHTML(renderReadyWorkspaceMarkdown(payload.workerLearnings))}
+      ${unsafeHTML(renderReadyWorkspaceMarkdown(input.workerLearnings))}
     </div>
   `;
 }
