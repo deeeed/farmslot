@@ -163,11 +163,26 @@ export async function resolveWorkerTemplateSelection(
   };
 }
 
+/**
+ * Team-variant file for a flow (e.g. fix-bug-blue.md for team 'blue'), or null
+ * when the team name does not fit the variant naming contract — team defaults
+ * never turn an invalid selection into an error, they just don't apply.
+ */
+export function teamTemplateFileNameForFlow(
+  flowType: FlowType | string,
+  team: string,
+): string | null {
+  const defaultBase = defaultTemplateFileNameForFlow(flowType).replace(/\.md$/, '');
+  const fileName = `${defaultBase}-${team}.md`;
+  return parseWorkerTemplateFileName(flowType, fileName) ? fileName : null;
+}
+
 export async function resolveWorkerTemplateSelectionForRun(
   projectVars: ProjectVars,
   flowType: FlowType,
   mode?: 'interactive' | 'autonomous' | 'validation',
   selection?: TaskTemplateSelection | null,
+  team?: string,
 ): Promise<ResolvedWorkerTemplateSelection> {
   if (selection) return resolveWorkerTemplateSelection(projectVars, flowType, selection);
   const interactiveFileName =
@@ -186,6 +201,18 @@ export async function resolveWorkerTemplateSelectionForRun(
         `${flowType} interactive mode selected ${interactiveFileName} because it exists`,
       );
     }
+  }
+  // Team-variant default: explicit selection and interactive templates win;
+  // otherwise a run carrying a team prefers <flow>-<team>.md when it exists.
+  const teamFileName = team ? teamTemplateFileNameForFlow(flowType, team) : null;
+  if (teamFileName && (await workerTemplateExists(projectVars, teamFileName))) {
+    return resolveWorkerTemplateSelection(
+      projectVars,
+      flowType,
+      { fileName: teamFileName },
+      'implicit-team',
+      `team '${team}' selected ${teamFileName} because it exists`,
+    );
   }
   const fallbackReason = interactiveFileName
     ? `${interactiveFileName} absent, using default ${flowType} template`

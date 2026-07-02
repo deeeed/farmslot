@@ -152,7 +152,7 @@ export async function slotFixtureRefresh(
       phase: 'fixture-refresh',
       flowType: params.flowType,
       selectedApp: params.app,
-      team: params.team,
+      team: params.team ?? vars.team,
     });
     out(`[fixture-refresh] Fixture refresh complete for ${params.slotId}`);
     complete(0);
