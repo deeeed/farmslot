@@ -7,12 +7,12 @@ import test from 'node:test';
 import type { ProjectVars } from '../core/config.js';
 
 import {
+  domainTemplateFileNameForFlow,
   listWorkerTemplateOptions,
   normalizeTaskTemplateSelection,
   parseWorkerTemplateFileName,
   resolveWorkerTemplateSelection,
   resolveWorkerTemplateSelectionForRun,
-  teamTemplateFileNameForFlow,
 } from './worker-template-options.js';
 
 async function withProjectVars(fn: (vars: ProjectVars) => Promise<void>): Promise<void> {
@@ -162,7 +162,7 @@ test('resolveWorkerTemplateSelectionForRun keeps explicit invalid selections lou
   });
 });
 
-test('resolveWorkerTemplateSelectionForRun prefers the team variant when it exists', async () => {
+test('resolveWorkerTemplateSelectionForRun prefers the domain variant when it exists', async () => {
   await withProjectVars(async (vars) => {
     await writeFile(
       path.join(vars.projectTemplatesDir, 'worker', 'fix-bug-blue.md'),
@@ -178,12 +178,12 @@ test('resolveWorkerTemplateSelectionForRun prefers the team variant when it exis
     );
     assert.equal(selected.fileName, 'fix-bug-blue.md');
     assert.equal(selected.variant, 'blue');
-    assert.equal(selected.selectionSource, 'implicit-team');
-    assert.match(selected.selectionReason, /team 'blue'/);
+    assert.equal(selected.selectionSource, 'implicit-domain');
+    assert.match(selected.selectionReason, /domain 'blue'/);
   });
 });
 
-test('resolveWorkerTemplateSelectionForRun lets explicit and interactive selections beat the team variant', async () => {
+test('resolveWorkerTemplateSelectionForRun lets explicit and interactive selections beat the domain variant', async () => {
   await withProjectVars(async (vars) => {
     await writeFile(
       path.join(vars.projectTemplatesDir, 'worker', 'dev-blue.md'),
@@ -212,7 +212,7 @@ test('resolveWorkerTemplateSelectionForRun lets explicit and interactive selecti
   });
 });
 
-test('resolveWorkerTemplateSelectionForRun ignores teams without a variant file or a valid name', async () => {
+test('resolveWorkerTemplateSelectionForRun ignores domains without a variant file or a valid name', async () => {
   await withProjectVars(async (vars) => {
     const noFile = await resolveWorkerTemplateSelectionForRun(
       vars,
@@ -229,21 +229,21 @@ test('resolveWorkerTemplateSelectionForRun ignores teams without a variant file 
       'fix-bug',
       undefined,
       null,
-      'Blue Team!',
+      'Blue Domain!',
     );
     assert.equal(badName.fileName, 'fix-bug.md');
     assert.equal(badName.selectionSource, 'default');
   });
 });
 
-test('teamTemplateFileNameForFlow builds valid variant names and rejects invalid teams', () => {
-  assert.equal(teamTemplateFileNameForFlow('fix-bug', 'blue'), 'fix-bug-blue.md');
+test('domainTemplateFileNameForFlow builds valid variant names and rejects invalid domains', () => {
+  assert.equal(domainTemplateFileNameForFlow('fix-bug', 'blue'), 'fix-bug-blue.md');
   assert.equal(
-    teamTemplateFileNameForFlow('review-pr', 'mobile-platform'),
+    domainTemplateFileNameForFlow('review-pr', 'mobile-platform'),
     'review-pr-mobile-platform.md',
   );
-  assert.equal(teamTemplateFileNameForFlow('fix-bug', 'Blue Team!'), null);
-  assert.equal(teamTemplateFileNameForFlow('fix-bug', ''), null);
+  assert.equal(domainTemplateFileNameForFlow('fix-bug', 'Blue Domain!'), null);
+  assert.equal(domainTemplateFileNameForFlow('fix-bug', ''), null);
 });
 
 test('normalizeTaskTemplateSelection rejects paths and flow mismatches', () => {

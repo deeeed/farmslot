@@ -4,8 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- Suppress fleet idle/stuck monitor violations during orchestration phases (`preparing`, `dispatching`, etc.) so grade/prepare no longer emit worker-idle noise.
-- Skip auto-nudge intelligence audit rows unless the run is in monitor or self-review worker phases.
+- Return a gateway-owned Doctor section catalog and support catalog-only or section-scoped reports for progressive clients
 - Harden gateway authentication rate-limit IP resolution by ignoring spoofable proxy headers unless explicitly trusted
 - Harden local slot file reads, writes, and HTTP file serving against symlink escapes outside the configured repo
 

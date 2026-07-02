@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { Events, PipelineSteps, type RunReplayStepResult } from '@farmslot/protocol';
 
-import { createRun, getRun, updateRun } from '../runs/store.js';
+import { getRun, updateRun } from '../runs/store.js';
 
 import {
   __drainAutoRecoveryForTest,
@@ -654,103 +654,6 @@ test('watcher records stale worker monitor violations as human-reviewable intell
   assert.equal(latest.verdict.category, 'timeout');
   assert.equal(latest.verdict.patternId, 'worker-idle');
   assert.equal(latest.appliedAction.type, 'tmux.send');
-});
-
-test('watcher ignores monitor violations during orchestration (grade/prepare)', async (t) => {
-  withTempAuditDir(t);
-  const project = await makeProject(t, {
-    auto_recovery: {
-      enabled: true,
-      maxAttempts: 2,
-      allowedSteps: ['monitor', 'grade'],
-      allowedCategories: ['timeout'],
-    },
-  });
-  const run = createRun({
-    flowType: 'fix-bug',
-    project,
-    ticketOrPr: `PROJ-${Date.now()}-grade`,
-    slotId: 'macwork-core-1',
-  });
-  updateRun(run.id, {
-    status: 'grading',
-    steps: run.steps.map((step) =>
-      step.name === PipelineSteps.GRADE
-        ? { ...step, status: 'running' as const, startedAt: '2026-07-02T12:34:27.291Z' }
-        : step,
-    ),
-  });
-  __resetAutoRecoveryForTest();
-  initAutoRecovery(() => undefined);
-  t.after(async () => {
-    __resetAutoRecoveryForTest();
-    await cleanupRun(run.id);
-  });
-
-  routeEventToAutoRecovery(Events.MONITOR_VIOLATION, {
-    violation: {
-      slotId: 'macwork-core-1',
-      type: 'idle',
-      message: 'Slot macwork-core-1 monitor phase but agent is idle — may need attention',
-      nudgeSent: null,
-      timestamp: '2026-07-02T12:34:34.002Z',
-    },
-  });
-  await __drainAutoRecoveryForTest();
-
-  const auditDir = process.env.FARMSLOT_INTELLIGENCE_AUDIT_DIR;
-  assert.ok(auditDir);
-  const { readdir } = await import('node:fs/promises');
-  const files = await readdir(auditDir);
-  assert.deepEqual(files, []);
-});
-
-test('watcher records self-review monitor violations as audit proposals', async (t) => {
-  withTempAuditDir(t);
-  const project = await makeProject(t, {
-    auto_recovery: {
-      enabled: true,
-      maxAttempts: 2,
-      allowedSteps: ['self-review'],
-      allowedCategories: ['timeout'],
-    },
-  });
-  const run = createRun({
-    flowType: 'fix-bug',
-    project,
-    ticketOrPr: `PROJ-${Date.now()}-self-review`,
-    slotId: 'self-review-slot',
-  });
-  updateRun(run.id, {
-    status: 'self-reviewing',
-    steps: run.steps.map((step) =>
-      step.name === PipelineSteps.SELF_REVIEW
-        ? { ...step, status: 'running' as const, startedAt: '2026-07-02T12:40:00.000Z' }
-        : step,
-    ),
-  });
-  __resetAutoRecoveryForTest();
-  initAutoRecovery(() => undefined);
-  t.after(async () => {
-    __resetAutoRecoveryForTest();
-    await cleanupRun(run.id);
-  });
-
-  routeEventToAutoRecovery(Events.MONITOR_VIOLATION, {
-    violation: {
-      slotId: 'self-review-slot',
-      type: 'idle',
-      message: 'Slot self-review-slot monitor phase but agent is idle — may need attention',
-      nudgeSent: null,
-      timestamp: '2026-07-02T12:40:05.000Z',
-    },
-  });
-  await __drainAutoRecoveryForTest();
-
-  const audit = await readAuditLines(new Date('2026-07-02T12:40:05.000Z'));
-  assert.equal(audit.length, 1);
-  assert.equal(audit[0].stepName, PipelineSteps.SELF_REVIEW);
-  assert.equal(audit[0].outcome, 'proposed');
 });
 
 test('watcher passes run flow and app context to fixture refresh before replay', async (t) => {

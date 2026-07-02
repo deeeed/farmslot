@@ -83,48 +83,48 @@ test('createRun records lifecycle startedAt for run detail telemetry', async (t)
   assert.equal(run.startedAt, run.createdAt);
 });
 
-test('createRun persists the team overlay and omits it when unset', async (t) => {
-  const withTeam = createRun({
+test('createRun persists the domain overlay and omits it when unset', async (t) => {
+  const withDomain = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
-    ticketOrPr: `PROJ-${Date.now()}-team`,
-    team: 'blue',
+    ticketOrPr: `PROJ-${Date.now()}-domain`,
+    domain: 'blue',
   });
-  t.after(() => cleanupRun(withTeam.id));
-  const withoutTeam = createRun({
+  t.after(() => cleanupRun(withDomain.id));
+  const withoutDomain = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
-    ticketOrPr: `PROJ-${Date.now()}-no-team`,
+    ticketOrPr: `PROJ-${Date.now()}-no-domain`,
   });
-  t.after(() => cleanupRun(withoutTeam.id));
+  t.after(() => cleanupRun(withoutDomain.id));
 
-  assert.equal(withTeam.team, 'blue');
-  assert.equal('team' in withoutTeam, false);
+  assert.equal(withDomain.domain, 'blue');
+  assert.equal('domain' in withoutDomain, false);
 });
 
-test('createRun rejects team names outside the slug contract and drops blank ones', async (t) => {
+test('createRun rejects domain names outside the slug contract and drops blank ones', async (t) => {
   for (const hostile of ['../evil', 'a b', 'a|b', 'a"b', 'Blue', 'a/../b', 'blue\nEVIL']) {
     assert.throws(
       () =>
         createRun({
           flowType: 'fix-bug',
           project: 'example-mobile-farm',
-          ticketOrPr: `PROJ-${Date.now()}-bad-team`,
-          team: hostile,
+          ticketOrPr: `PROJ-${Date.now()}-bad-domain`,
+          domain: hostile,
         }),
-      /Invalid team/,
-      `expected rejection for team ${JSON.stringify(hostile)}`,
+      /Invalid domain/,
+      `expected rejection for domain ${JSON.stringify(hostile)}`,
     );
   }
 
   const blank = createRun({
     flowType: 'fix-bug',
     project: 'example-mobile-farm',
-    ticketOrPr: `PROJ-${Date.now()}-blank-team`,
-    team: '   ',
+    ticketOrPr: `PROJ-${Date.now()}-blank-domain`,
+    domain: '   ',
   });
   t.after(() => cleanupRun(blank.id));
-  assert.equal('team' in blank, false);
+  assert.equal('domain' in blank, false);
 });
 
 test('createRun preserves explicit lineage for follow-up runs', async (t) => {

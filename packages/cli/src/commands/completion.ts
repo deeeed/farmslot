@@ -14,17 +14,6 @@ function isCompletionShell(value: string): value is CompletionShell {
   return value === 'zsh' || value === 'bash' || value === 'fish';
 }
 
-// Resolves the caller's shell from $SHELL (basename match); falls back to zsh
-// when unset or unrecognized (matches the CLI's long-standing default).
-export function detectShell(env: NodeJS.ProcessEnv = process.env): CompletionShell {
-  const shellEnv = env.SHELL;
-  if (shellEnv) {
-    const base = path.basename(shellEnv);
-    if (isCompletionShell(base)) return base;
-  }
-  return 'zsh';
-}
-
 function completionForShell(shell: CompletionShell): string {
   switch (shell) {
     case 'zsh':
@@ -87,7 +76,7 @@ function insecureZshAncestor(installDir: string): string | undefined {
   }
 }
 
-export function installZshCompletion(): string {
+function installZshCompletion(): string {
   const installDir = zshInstallDir();
   mkdirSync(installDir, { recursive: true });
   secureHomeCompletionPath(installDir);
@@ -101,84 +90,29 @@ export function installZshCompletion(): string {
   writeFileSync(completionPath, ZSH_COMPLETION, 'utf8');
 
   const zshrc = path.join(os.homedir(), '.zshrc');
-  const fpathLine = `fpath=(${shellQuoteForZsh(installDir)} $fpath)`;
   const block = [
     '',
     '# Farmslot CLI completions',
-    fpathLine,
+    `fpath=(${shellQuoteForZsh(installDir)} $fpath)`,
     'autoload -Uz compinit',
     'compinit',
     '',
   ].join('\n');
   const current = existsSync(zshrc) ? readFileSync(zshrc, 'utf8') : '';
-  // Compare against the quoted line actually written, not the raw installDir — an
-  // apostrophe in the path (e.g. /Users/O'Connor) makes shellQuoteForZsh's escaped
-  // form never contain installDir as a contiguous substring, which would otherwise
-  // re-append the block on every run.
-  if (!current.includes(fpathLine)) {
+  if (!current.includes(installDir)) {
     writeFileSync(zshrc, `${current.replace(/\n?$/u, '\n')}${block}`, 'utf8');
   }
 
   return completionPath;
 }
 
-function bashInstallDir(): string {
-  const explicit = process.env.FARMSLOT_BASH_COMPLETION_DIR;
-  if (explicit) return explicit;
-
-  const xdgDataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  return path.join(xdgDataHome, 'bash-completion', 'completions');
-}
-
-export function installBashCompletion(): string {
-  const installDir = bashInstallDir();
-  mkdirSync(installDir, { recursive: true });
-  const completionPath = path.join(installDir, 'farmslot');
-  writeFileSync(completionPath, BASH_COMPLETION, 'utf8');
-
-  // bash-completion's dynamic loader auto-sources this file for machines that have
-  // it installed; add a direct source line too so completions work without it.
-  const bashrc = path.join(os.homedir(), '.bashrc');
-  const sourceLine = `[ -f ${shellQuoteForZsh(completionPath)} ] && . ${shellQuoteForZsh(completionPath)}`;
-  const block = ['', '# Farmslot CLI completions', sourceLine, ''].join('\n');
-  const current = existsSync(bashrc) ? readFileSync(bashrc, 'utf8') : '';
-  // Compare against the quoted line actually written, not the raw completionPath —
-  // see the matching comment in installZshCompletion for why the raw path can't be
-  // used as the idempotency check.
-  if (!current.includes(sourceLine)) {
-    writeFileSync(bashrc, `${current.replace(/\n?$/u, '\n')}${block}`, 'utf8');
-  }
-
-  return completionPath;
-}
-
-function fishInstallDir(): string {
-  const explicit = process.env.FARMSLOT_FISH_COMPLETION_DIR;
-  if (explicit) return explicit;
-
-  const xdgConfigHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  return path.join(xdgConfigHome, 'fish', 'completions');
-}
-
-export function installFishCompletion(): string {
-  // Fish autoloads any script under completions/ — no rc edit needed, and
-  // re-running just overwrites the file, so this is inherently idempotent.
-  const installDir = fishInstallDir();
-  mkdirSync(installDir, { recursive: true });
-  const completionPath = path.join(installDir, 'farmslot.fish');
-  writeFileSync(completionPath, FISH_COMPLETION, 'utf8');
-  return completionPath;
-}
-
 function installCompletion(shell: CompletionShell): string {
-  switch (shell) {
-    case 'zsh':
-      return installZshCompletion();
-    case 'bash':
-      return installBashCompletion();
-    case 'fish':
-      return installFishCompletion();
+  if (shell !== 'zsh') {
+    throw new Error(
+      `Install is currently supported for zsh only. Run 'farmslot completion ${shell}' to print ${shell} completions.`,
+    );
   }
+  return installZshCompletion();
 }
 
 export function registerCompletionCommand(program: Command): void {
@@ -186,15 +120,12 @@ export function registerCompletionCommand(program: Command): void {
     .command('completion')
     .description('Generate or install shell completions')
     .argument('[shellOrAction]', 'Shell type (zsh, bash, fish) or action (install)', 'zsh')
-    .argument('[shell]', 'Shell type for install: zsh, bash, fish — defaults to the detected shell')
+    .argument('[shell]', 'Shell type for install: zsh, bash, fish', 'zsh')
     .option('--install', 'Install completions instead of printing them')
-    .action((shellOrAction: string, shellArg: string | undefined, opts: { install?: boolean }) => {
+    .action((shellOrAction: string, shellArg: string, opts: { install?: boolean }) => {
       const install = opts.install || shellOrAction === 'install';
-      // `install` with no explicit shell arg detects it from $SHELL; the print path
-      // keeps its long-standing zsh default (set via the argument default above).
-      const explicitShell = shellOrAction === 'install' ? shellArg : shellOrAction;
-      const shell = install ? (explicitShell ?? detectShell()) : explicitShell;
-      if (!shell || !isCompletionShell(shell)) {
+      const shell = shellOrAction === 'install' ? shellArg : shellOrAction;
+      if (!isCompletionShell(shell)) {
         process.stderr.write(`Unknown shell: ${shell}. Supported: zsh, bash, fish\n`);
         process.exit(1);
       }
@@ -211,15 +142,6 @@ export function registerCompletionCommand(program: Command): void {
                 '  autoload -Uz compinit && compinit',
               ].join('\n') + '\n',
             );
-          } else if (shell === 'bash') {
-            process.stdout.write(
-              [
-                'Restart your shell, or run this in the current shell:',
-                `  source ${shellQuoteForZsh(installedPath)}`,
-              ].join('\n') + '\n',
-            );
-          } else if (shell === 'fish') {
-            process.stdout.write('Restart your shell (or run: exec fish) to load it.\n');
           }
         } catch (err) {
           process.stderr.write(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -355,11 +277,7 @@ _farmslot_node() {
   _describe 'subcommand' commands
 }
 
-if [ "$funcstack[1]" = "_farmslot" ]; then
-  _farmslot "$@"
-else
-  compdef _farmslot farmslot
-fi
+_farmslot "$@"
 `;
 
 const BASH_COMPLETION = `_farmslot_completions() {

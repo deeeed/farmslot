@@ -35,21 +35,21 @@ test('run create builds params from a GitHub/Jira ticket source', () => {
   );
 });
 
-test('run create omits the team key entirely unless --team is given', () => {
-  const withoutTeam = buildRunCreateParams({
+test('run create omits the domain key entirely unless --domain is given', () => {
+  const withoutDomain = buildRunCreateParams({
     project: 'audiolab-farm',
     flowType: 'dev',
     ticket: 'DEMO-414',
   });
-  assert.equal('team' in withoutTeam, false);
+  assert.equal('domain' in withoutDomain, false);
 
-  const withTeam = buildRunCreateParams({
+  const withDomain = buildRunCreateParams({
     project: 'audiolab-farm',
     flowType: 'dev',
     ticket: 'DEMO-414',
-    team: 'blue',
+    domain: 'blue',
   });
-  assert.equal(withTeam.team, 'blue');
+  assert.equal(withDomain.domain, 'blue');
 });
 
 test('run create builds params from an existing task file source', () => {

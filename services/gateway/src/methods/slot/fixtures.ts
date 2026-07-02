@@ -34,12 +34,12 @@ export function buildFixtureSyncCommand(
   slotId: string,
   flowType?: string,
   selectedApp?: string,
-  team?: string,
+  domain?: string,
 ): string {
   const syncArgs = ['--slot', slotId];
   if (flowType) syncArgs.push('--flow-type', flowType);
   if (selectedApp) syncArgs.push('--app', selectedApp);
-  if (team) syncArgs.push('--team', team);
+  if (domain) syncArgs.push('--domain', domain);
   return `bash ${shellQuote(`${farmslotRoot}/scripts/sync-fixtures.sh`)} ${syncArgs.map(shellQuote).join(' ')}`;
 }
 
@@ -91,10 +91,15 @@ export async function runFixtureSync(
     phase: string;
     flowType?: string;
     selectedApp?: string;
-    team?: string;
+    domain?: string;
   },
 ): Promise<void> {
-  const syncCmd = buildFixtureSyncCommand(opts.slotId, opts.flowType, opts.selectedApp, opts.team);
+  const syncCmd = buildFixtureSyncCommand(
+    opts.slotId,
+    opts.flowType,
+    opts.selectedApp,
+    opts.domain,
+  );
   const timeout = resolveFixtureSyncTimeoutMs(vars);
   const slotIsLocal = isLocal(vars.host, vars.machine);
   const syncResult = slotIsLocal
@@ -152,7 +157,7 @@ export async function slotFixtureRefresh(
       phase: 'fixture-refresh',
       flowType: params.flowType,
       selectedApp: params.app,
-      team: params.team ?? vars.team,
+      domain: params.domain ?? vars.domain,
     });
     out(`[fixture-refresh] Fixture refresh complete for ${params.slotId}`);
     complete(0);

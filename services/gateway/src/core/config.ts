@@ -79,8 +79,8 @@ export interface RawPoolJson {
   grok_path?: string;
   dispatch_cmd?: string;
   recycle_cmd?: string;
-  /** Default team overlay for dispatches from this machine; slot- and task-level team override it. */
-  team?: string;
+  /** Default domain overlay for dispatches from this machine; slot- and task-level domain override it. */
+  domain?: string;
   slots: RawPoolSlot[];
 }
 
@@ -94,8 +94,8 @@ export interface RawPoolSlot {
   session: string;
   branch?: string;
   app?: string;
-  /** Default team overlay for this slot; task-level team overrides it. */
-  team?: string;
+  /** Default domain overlay for this slot; task-level domain overrides it. */
+  domain?: string;
   lifecycle?: string;
   agent?: string;
   task?: string | null;
@@ -125,8 +125,8 @@ export interface SlotVars {
   sshTarget: string;
   remoteRepo: string;
   projectName: string;
-  /** Pool-level team default (slot.team ?? pool.team); task-level team overrides. */
-  team?: string;
+  /** Pool-level domain default (slot.domain ?? pool.domain); task-level domain overrides. */
+  domain?: string;
   // Resource-derived (flattened from slot.resources)
   resourceVars: Record<string, string>;
 }
@@ -211,7 +211,7 @@ export interface RawProjectJson {
     templates?: Array<{
       src?: string;
       dst: string;
-      /** Skip silently when the resolved src is absent — for overlay fixtures (e.g. team files) only some deployments provide. */
+      /** Skip silently when the resolved src is absent — for overlay fixtures (e.g. domain files) only some deployments provide. */
       optional?: boolean;
       compose?: Record<string, unknown>;
     }>;
@@ -452,7 +452,7 @@ export async function loadSlotVars(slotId: string): Promise<SlotVars> {
     sshTarget,
     remoteRepo,
     projectName,
-    team: slot.team ?? pool.team,
+    domain: slot.domain ?? pool.domain,
     resourceVars,
   };
 }

@@ -78,6 +78,7 @@ const sidebars = {
         'reference/template-variables.generated',
         'reference/worker-template-quality',
         'reference/worker-signal-protocol',
+        'reference/domains',
         'reference/prepare-lifecycle',
         'reference/recipe-protocol-v1',
         'reference/recipe-runner-protocol',
