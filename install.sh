@@ -25,6 +25,7 @@
 # Interactive installs (a real terminal) are prompted to confirm/customize the three
 # locations above; values pinned via env, and non-interactive (CI/piped) installs, stay silent.
 #   FARMSLOT_MINIMAL    set to skip the dashboard build + pair-your-phone step
+#   FARMSLOT_SKIP_COMPLETIONS  set to 1 to skip auto-installing shell completions
 #   FARMSLOT_PAIR       set to 1 to pair non-interactively (no prompt)
 #   FARMSLOT_NO_STAR_PROMPT  set to 1 to skip the GitHub star prompt
 #   FARMSLOT_AUTO_INSTALL  set to 1 to install missing common tools with Homebrew
@@ -589,6 +590,22 @@ step_cli() {
   esac
 }
 
+# step_completions — install shell completions for the detected shell (the CLI
+# reads $SHELL itself; no shell arg is passed). Best-effort: a failure here must
+# never fail the overall install, so it warns with the manual fallback instead
+# of using run_step (which treats a non-zero exit as fatal).
+step_completions() {
+  case "${FARMSLOT_SKIP_COMPLETIONS:-}" in 1|true) return ;; esac
+  bold "── Shell completions ──"
+  local out
+  if out="$("$FARMSLOT_BIN" completion install 2>&1)"; then
+    green "  [OK] $(printf '%s' "$out" | head -1)"
+  else
+    yellow "  [WARN] could not install shell completion automatically"
+    echo "  fix: run manually — farmslot completion install"
+  fi
+}
+
 step_workspace() {
   bold "── Workspace ──"
   FARMSLOT_WORKSPACE="$WORKSPACE" "$FARMSLOT_BIN" workspace init --source-mode "$SOURCE_MODE" --source "$SOURCE" --bin-dir "$BIN_DIR" --home-dir "$HOME_DIR"
@@ -699,6 +716,7 @@ main() {
   step_capture_helper
   step_runners
   step_cli
+  step_completions
   step_workspace
   step_doctor
   step_star
