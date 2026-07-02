@@ -79,24 +79,37 @@ test('ready workspace writer preserves unrelated params and clears stale modal p
   assert.equal(readyWorkspaceHashWithState({ tab: 'diff' }, ''), null);
 });
 
-test('review workspace panel state preserves unrelated params', () => {
+test('review workspace tab state preserves unrelated params', () => {
+  assert.deepEqual(parseReviewWorkspaceHashState('#slot/demo?tab=evidence&projects=cc'), {
+    tab: 'evidence',
+  });
+
+  assert.deepEqual(parseReviewWorkspaceHashState('#slot/demo?tab=bad&projects=cc'), {});
+
+  assert.equal(
+    reviewWorkspaceHashWithState({ tab: 'learnings' }, '#slot/demo?projects=cc&tab=quality'),
+    '#slot/demo?projects=cc&tab=learnings',
+  );
+
+  assert.equal(
+    reviewWorkspaceHashWithState({ tab: 'review' }, '#slot/demo?projects=cc&tab=quality'),
+    '#slot/demo?projects=cc',
+  );
+});
+
+test('review workspace maps legacy panel param to first tab', () => {
   assert.deepEqual(
     parseReviewWorkspaceHashState('#slot/demo?panel=evidence,quality,bad&projects=cc'),
     {
-      panels: ['quality'],
+      tab: 'quality',
     },
   );
 
   assert.equal(
     reviewWorkspaceHashWithState(
-      { panels: ['recipe', 'learnings'] },
-      '#slot/demo?projects=cc&panel=quality',
+      { tab: 'recipe' },
+      '#slot/demo?projects=cc&panel=quality,learnings',
     ),
-    '#slot/demo?projects=cc&panel=recipe%2Clearnings',
-  );
-
-  assert.equal(
-    reviewWorkspaceHashWithState({ panels: [] }, '#slot/demo?projects=cc&panel=quality'),
-    '#slot/demo?projects=cc',
+    '#slot/demo?projects=cc&tab=recipe',
   );
 });

@@ -9,7 +9,9 @@ export type ReadyWorkspaceTab =
   | 'recipe'
   | 'learnings';
 export type ReadyWorkspaceModal = 'diff' | 'review' | 'lightbox';
+/** Legacy multi-panel toggles — mapped to `ReviewWorkspaceTab` on read. */
 export type ReviewWorkspacePanel = 'quality' | 'recipe' | 'learnings';
+export type ReviewWorkspaceTab = 'review' | 'evidence' | 'quality' | 'recipe' | 'learnings';
 
 export interface ReadyWorkspaceHashState {
   tab?: ReadyWorkspaceTab;
@@ -32,7 +34,11 @@ export interface ReadyWorkspaceHashWriteState {
 }
 
 export interface ReviewWorkspaceHashState {
-  panels: ReviewWorkspacePanel[];
+  tab?: ReviewWorkspaceTab;
+}
+
+export interface ReviewWorkspaceHashWriteState {
+  tab: ReviewWorkspaceTab;
 }
 
 const READY_TABS = new Set<ReadyWorkspaceTab>([
@@ -45,7 +51,20 @@ const READY_TABS = new Set<ReadyWorkspaceTab>([
   'learnings',
 ]);
 const READY_MODALS = new Set<ReadyWorkspaceModal>(['diff', 'review', 'lightbox']);
+const REVIEW_TABS = new Set<ReviewWorkspaceTab>([
+  'review',
+  'evidence',
+  'quality',
+  'recipe',
+  'learnings',
+]);
 const REVIEW_PANELS = new Set<ReviewWorkspacePanel>(['quality', 'recipe', 'learnings']);
+
+const LEGACY_PANEL_TO_TAB: Record<ReviewWorkspacePanel, ReviewWorkspaceTab> = {
+  quality: 'quality',
+  recipe: 'recipe',
+  learnings: 'learnings',
+};
 
 function readyWorkspaceTab(value: string | null): ReadyWorkspaceTab | undefined {
   if (!value) return undefined;
@@ -57,6 +76,11 @@ function readyWorkspaceModal(value: string | null): ReadyWorkspaceModal | undefi
   return READY_MODALS.has(value as ReadyWorkspaceModal)
     ? (value as ReadyWorkspaceModal)
     : undefined;
+}
+
+function reviewWorkspaceTab(value: string | null): ReviewWorkspaceTab | undefined {
+  if (!value) return undefined;
+  return REVIEW_TABS.has(value as ReviewWorkspaceTab) ? (value as ReviewWorkspaceTab) : undefined;
 }
 
 function nonEmptyParam(params: URLSearchParams, name: string): string | undefined {
@@ -137,30 +161,43 @@ export function writeReadyWorkspaceHashState(state: ReadyWorkspaceHashWriteState
   history.replaceState(null, '', nextHash);
 }
 
-export function parseReviewWorkspaceHashState(
-  hash: string = location.hash,
-): ReviewWorkspaceHashState {
-  const { params } = parseHashRoute(hash);
+function legacyReviewTabFromPanels(params: URLSearchParams): ReviewWorkspaceTab | undefined {
   const panels = (params.get('panel') ?? '')
     .split(',')
     .filter((panel): panel is ReviewWorkspacePanel =>
       REVIEW_PANELS.has(panel as ReviewWorkspacePanel),
     );
-  return { panels };
+  for (const panel of panels) {
+    return LEGACY_PANEL_TO_TAB[panel];
+  }
+  return undefined;
+}
+
+export function parseReviewWorkspaceHashState(
+  hash: string = location.hash,
+): ReviewWorkspaceHashState {
+  const { params } = parseHashRoute(hash);
+  const tab = reviewWorkspaceTab(params.get('tab')) ?? legacyReviewTabFromPanels(params);
+  return tab ? { tab } : {};
 }
 
 export function reviewWorkspaceHashWithState(
-  state: ReviewWorkspaceHashState,
+  state: ReviewWorkspaceHashWriteState,
   hash: string = location.hash,
 ): string {
   const { route, params } = parseHashRoute(hash);
-  if (state.panels.length > 0) params.set('panel', state.panels.join(','));
-  else params.delete('panel');
+  if (state.tab === 'review') {
+    params.delete('tab');
+  } else {
+    params.set('tab', state.tab);
+  }
+  params.delete('panel');
   return buildHash(route, params);
 }
 
-export function writeReviewWorkspaceHashState(state: ReviewWorkspaceHashState): void {
+export function writeReviewWorkspaceHashState(state: ReviewWorkspaceHashWriteState): void {
   if (typeof location === 'undefined') return;
   const nextHash = reviewWorkspaceHashWithState(state);
+  if (location.hash === nextHash) return;
   history.replaceState(null, '', nextHash);
 }

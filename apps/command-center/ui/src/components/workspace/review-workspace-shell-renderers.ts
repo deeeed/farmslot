@@ -5,6 +5,7 @@ import type { GitBranchDiffFile, ReviewLineComment } from '@farmslot/protocol';
 import { colors } from '../../styles/theme-tokens.js';
 
 import { workspaceArtifactBasename } from './workspace-artifacts.js';
+import type { ReviewWorkspaceTab } from './workspace-url-state.js';
 
 const SEV_COLORS: Record<string, string> = {
   must_fix: '#ef4444',
@@ -67,20 +68,75 @@ export function renderReviewBranchBanner(input: {
   `;
 }
 
+export function renderReviewTabBar(input: {
+  activeTab: ReviewWorkspaceTab;
+  evidenceCount: number;
+  qualityCount: number | null;
+  hasRecipe: boolean;
+  hasLearnings: boolean;
+  setActiveTab: (tab: ReviewWorkspaceTab) => void;
+}) {
+  const hasEvidence = input.evidenceCount > 0;
+  const hasQuality = input.qualityCount !== null;
+
+  return html`
+    <div class="rw-tab-bar">
+      <button
+        class="rw-tab ${input.activeTab === 'review' ? 'active' : ''}"
+        @click=${() => input.setActiveTab('review')}
+      >
+        Review
+      </button>
+      ${hasEvidence
+        ? html`
+            <button
+              class="rw-tab ${input.activeTab === 'evidence' ? 'active' : ''}"
+              @click=${() => input.setActiveTab('evidence')}
+            >
+              Evidence (${input.evidenceCount})
+            </button>
+          `
+        : nothing}
+      ${hasQuality
+        ? html`
+            <button
+              class="rw-tab ${input.activeTab === 'quality' ? 'active' : ''}"
+              @click=${() => input.setActiveTab('quality')}
+            >
+              Quality (${input.qualityCount})
+            </button>
+          `
+        : nothing}
+      ${input.hasRecipe
+        ? html`
+            <button
+              class="rw-tab ${input.activeTab === 'recipe' ? 'active' : ''}"
+              @click=${() => input.setActiveTab('recipe')}
+            >
+              Recipe
+            </button>
+          `
+        : nothing}
+      ${input.hasLearnings
+        ? html`
+            <button
+              class="rw-tab ${input.activeTab === 'learnings' ? 'active' : ''}"
+              @click=${() => input.setActiveTab('learnings')}
+            >
+              Learnings
+            </button>
+          `
+        : nothing}
+    </div>
+  `;
+}
+
 export function renderReviewTopBar(input: {
   comments: ReviewLineComment[];
   includedComments: number;
   selectedRecommendation: string;
   setRecommendation: (recommendation: 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE') => void;
-  qualityCount: number | null;
-  showQuality: boolean;
-  toggleQuality: () => void;
-  hasRecipe: boolean;
-  showRecipe: boolean;
-  toggleRecipe: () => void;
   hasLearnings: boolean;
-  showLearnings: boolean;
-  toggleLearnings: () => void;
   posting: boolean;
   recovering: boolean;
   refreshing: boolean;
@@ -120,36 +176,6 @@ export function renderReviewTopBar(input: {
           `,
         )}
       </span>
-      ${input.qualityCount !== null
-        ? html`
-            <button
-              class="rw-panel-toggle ${input.showQuality ? 'active' : ''}"
-              @click=${input.toggleQuality}
-            >
-              Quality (${input.qualityCount})
-            </button>
-          `
-        : nothing}
-      ${input.hasRecipe
-        ? html`
-            <button
-              class="rw-panel-toggle ${input.showRecipe ? 'active' : ''}"
-              @click=${input.toggleRecipe}
-            >
-              Recipe
-            </button>
-          `
-        : nothing}
-      ${input.hasLearnings
-        ? html`
-            <button
-              class="rw-panel-toggle ${input.showLearnings ? 'active' : ''}"
-              @click=${input.toggleLearnings}
-            >
-              Learnings
-            </button>
-          `
-        : nothing}
       <span class="rw-spacer"></span>
       <button
         class="rw-panel-toggle"

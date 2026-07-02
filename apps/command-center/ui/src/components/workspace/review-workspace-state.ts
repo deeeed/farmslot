@@ -9,7 +9,7 @@ import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import { VerticalSplitResizer } from './vertical-split-resizer.js';
 import {
   parseReviewWorkspaceHashState,
-  type ReviewWorkspacePanel,
+  type ReviewWorkspaceTab,
   writeReviewWorkspaceHashState,
 } from './workspace-url-state.js';
 
@@ -59,26 +59,22 @@ export abstract class ReviewWorkspaceState extends LitElement {
   @state() _branchMismatch = false;
   @state() _checkingOut = false;
 
-  // Panel state
-  @state() _showRecipe = false;
-  @state() _showQuality = false;
-  @state() _showLearnings = false;
+  @state() _activeTab: ReviewWorkspaceTab = 'review';
 
-  _syncPanelToHash() {
-    // Track all open panels, not just one
-    const panels: ReviewWorkspacePanel[] = [];
-    if (this._showQuality) panels.push('quality');
-    if (this._showRecipe) panels.push('recipe');
-    if (this._showLearnings) panels.push('learnings');
-    writeReviewWorkspaceHashState({ panels });
+  _syncTabToHash() {
+    writeReviewWorkspaceHashState({ tab: this._activeTab });
   }
 
-  _readPanelFromHash() {
-    const { panels } = parseReviewWorkspaceHashState();
-    if (panels.includes('quality')) this._showQuality = true;
-    if (panels.includes('recipe')) this._showRecipe = true;
-    if (panels.includes('learnings')) this._showLearnings = true;
+  _readTabFromHash() {
+    const { tab } = parseReviewWorkspaceHashState();
+    if (tab) this._activeTab = tab;
   }
+
+  _setActiveTab(tab: ReviewWorkspaceTab) {
+    this._activeTab = tab;
+    this._syncTabToHash();
+  }
+
   @state() _recipeView: 'graph' | 'json' = 'graph';
   @state() _recipeRunning = false;
   @state() _evidenceOverrides = new Map<string, string>();
