@@ -528,3 +528,43 @@ test('flows promote --to resolves a bare-path source by its manifest name', asyn
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test('refuses to promote into a library already corrupted by a duplicate ref', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    await writePerChangeRecipe(recipePath, { 'demo.write-marker': markerFlow() });
+    const targetRoot = path.join(tempRoot, 'library');
+    await promoteRecipeFlow({
+      recipePath,
+      flowRef: 'demo.write-marker',
+      targetRoot,
+      targetName: 'personal',
+    });
+    // Pre-existing corruption (from before promote scanned the whole library):
+    // the same ref declared in a second catalog file.
+    await writeJsonFile(path.join(targetRoot, 'flows', 'custom.flows.json'), {
+      schema_version: 1,
+      kind: 'recipe-flow-catalog',
+      flows: { 'demo.write-marker': markerFlow() },
+    });
+
+    // Overwriting only one declaration would leave the library unloadable, so
+    // promote fails loudly naming every offending catalog — with or without
+    // --force.
+    for (const force of [false, true]) {
+      await assert.rejects(
+        promoteRecipeFlow({
+          recipePath,
+          flowRef: 'demo.write-marker',
+          targetRoot,
+          targetName: 'personal',
+          force,
+        }),
+        /2 catalogs \(custom\.flows\.json, demo\.flows\.json\).*Remove the stale duplicate/s,
+      );
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
