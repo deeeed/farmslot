@@ -16,7 +16,6 @@
   ],
   "scripts": {
     "farmslot": "yarn --cwd apps/command-center farmslot",
-    "farmdev": "yarn --cwd apps/command-center farmdev",
     "format": "yarn --cwd apps/command-center format",
     "format:check": "yarn --cwd apps/command-center format:check",
     "lint": "node scripts/quality/check-eslint-ratchet.mjs --strict-stale",
