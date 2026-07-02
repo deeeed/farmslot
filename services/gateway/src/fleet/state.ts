@@ -23,6 +23,7 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  isIgnoredPoolFile,
   normalizeRawProjectAutoRecovery,
   normalizeRawProjectBacklog,
   normalizeRawProjectPrepare,
@@ -641,7 +642,7 @@ export async function loadPoolConfigs(): Promise<PoolConfig[]> {
   try {
     const files = await readdir(poolDir);
     for (const file of files) {
-      if (!file.endsWith('.json') || file === 'example.json') continue;
+      if (isIgnoredPoolFile(file)) continue;
       try {
         const content = await readFile(path.join(poolDir, file), 'utf-8');
         const raw = JSON.parse(content);

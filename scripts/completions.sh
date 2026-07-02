@@ -63,7 +63,9 @@ _farm_slot_ids() {
   python3 -c "
 import json, glob, os
 for f in sorted(glob.glob(os.path.join('$FARMSLOT_DIR', 'pool', '*.json'))):
-    if os.path.basename(f) == 'example.json': continue
+    name = os.path.basename(f)
+    if name == 'example.json': continue
+    if name == 'farmslot-demo.json' and os.environ.get('FARMSLOT_DEMO_POOL') != '1': continue
     try:
         data = json.load(open(f))
         for s in data.get('slots', []):

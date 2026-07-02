@@ -25,6 +25,7 @@ export {
   getOrchestratorTaskRoot,
   getProjectField,
   getProjectFieldRaw,
+  isIgnoredPoolFile,
   isMockModeProject,
   loadProjectVars,
   loadSlotVars,

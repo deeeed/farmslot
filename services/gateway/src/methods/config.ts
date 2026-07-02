@@ -32,6 +32,7 @@ import type {
 
 import {
   invalidateProjectVarsCache,
+  isIgnoredPoolFile,
   loadProjectVars,
   poolDir,
   projectsDir,
@@ -199,7 +200,7 @@ export async function configProject(params: ConfigProjectParams): Promise<Config
 export async function configPoolRaw(params: ConfigPoolParams): Promise<ConfigPoolRawResult> {
   const files = await readdir(poolDir);
   for (const file of files) {
-    if (!file.endsWith('.json') || file === 'example.json') continue;
+    if (isIgnoredPoolFile(file)) continue;
     const filePath = path.join(poolDir, file);
     try {
       const content = await readFile(filePath, 'utf-8');
@@ -364,7 +365,7 @@ export async function configPoolUpdate(
   const files = await readdir(poolDir);
   let poolFilePath: string | null = null;
   for (const file of files) {
-    if (!file.endsWith('.json') || file === 'example.json') continue;
+    if (isIgnoredPoolFile(file)) continue;
     try {
       const existing = JSON.parse(await readFile(path.join(poolDir, file), 'utf-8'));
       if (existing.machine === machine) {
