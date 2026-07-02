@@ -3,10 +3,7 @@ import test from 'node:test';
 
 import type { RunCreateParams } from '@farmslot/protocol';
 
-import {
-  applyComparisonBranchPolicy,
-  branchIncludesVariant,
-} from './comparison-branch-policy.js';
+import { applyComparisonBranchPolicy, branchIncludesVariant } from './comparison-branch-policy.js';
 
 function comparisonParams(overrides: Partial<RunCreateParams> = {}): RunCreateParams {
   return {
@@ -47,4 +44,26 @@ test('applyComparisonBranchPolicy allows variant-distinguishable branch', () => 
   const params = comparisonParams({ branch: 'dev/28-grok', variant: 'grok' });
   applyComparisonBranchPolicy(params);
   assert.equal(params.branch, 'dev/28-grok');
+});
+
+test('applyComparisonBranchPolicy derives branch for collision-suffixed comparison variant', () => {
+  const params = comparisonParams({
+    variant: 'grok-grok-build-collision-114730',
+    branch: undefined,
+  });
+  applyComparisonBranchPolicy(params);
+  assert.match(params.branch ?? '', /grok-grok-build-collision-114730/);
+});
+
+test('applyComparisonBranchPolicy rejects stale branch after collision variant suffix', () => {
+  assert.throws(
+    () =>
+      applyComparisonBranchPolicy(
+        comparisonParams({
+          variant: 'grok-grok-build-collision-114730',
+          branch: 'feat/28-grok-grok-build',
+        }),
+      ),
+    /does not distinguish variant/,
+  );
 });
