@@ -2,6 +2,8 @@ import type { Run, SlotStatus } from '@farmslot/protocol';
 
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 
+import { selectSlotViewLinkedRun } from './slot-view-linked-run-model.js';
+
 export interface CheckResult {
   name: string;
   status: 'pass' | 'fail';
@@ -242,13 +244,22 @@ export function slotViewNoRecipeReplayMessage(
   return `This ${flow} run has no recipe replay package. Slot-side recipe replay requires artifacts/recipe.json (typical for interactive dev or review-gate runs). PR-complete and other flows may only have diff/session artifacts.`;
 }
 
-/** Run id for <terminal-view>: prefer URL pin so subscribe does not churn on linked-run hydration. */
+/** Run id for <terminal-view> — same authority rules as selectSlotViewLinkedRun. */
 export function slotViewTerminalRunId(
   slotId: string,
   linkedRun: Run | null,
   urlRunId: string | null,
+  slotBoundRunId: string | null,
 ): string {
+  const selected = selectSlotViewLinkedRun({
+    requestedRunId: urlRunId,
+    slotBoundRunId,
+    cachedRun: linkedRun,
+    rpcRun: linkedRun,
+  });
+  if (selected && selected.slotId === slotId) return selected.id;
+  // Hydration in flight: honor URL pin only when it does not conflict with fleet binding.
+  if (urlRunId && slotBoundRunId && urlRunId !== slotBoundRunId) return slotBoundRunId;
   if (urlRunId) return urlRunId;
-  if (linkedRun?.slotId === slotId) return linkedRun.id ?? '';
   return '';
 }

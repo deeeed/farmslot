@@ -326,7 +326,13 @@ test('slotViewLoadedRunDrawerKey namespaces dismiss state for loaded runs', () =
 
 test('slotViewTerminalRunId prefers URL pin over linked-run hydration', () => {
   const linkedRun = { id: 'linked-run', slotId: 'slot-a' } as Run;
-  assert.equal(slotViewTerminalRunId('slot-a', linkedRun, 'url-run'), 'url-run');
-  assert.equal(slotViewTerminalRunId('slot-a', linkedRun, null), 'linked-run');
-  assert.equal(slotViewTerminalRunId('slot-b', linkedRun, null), '');
+  assert.equal(slotViewTerminalRunId('slot-a', linkedRun, 'url-run', null), 'url-run');
+  assert.equal(slotViewTerminalRunId('slot-a', linkedRun, null, null), 'linked-run');
+  assert.equal(slotViewTerminalRunId('slot-b', linkedRun, null, null), '');
+});
+
+test('slotViewTerminalRunId prefers fleet-bound run over stale URL pin', () => {
+  const bound = { id: 'bound-run', slotId: 'mm-5' } as Run;
+  assert.equal(slotViewTerminalRunId('mm-5', bound, 'stale-run', 'bound-run'), 'bound-run');
+  assert.equal(slotViewTerminalRunId('mm-5', null, 'stale-run', 'bound-run'), 'bound-run');
 });

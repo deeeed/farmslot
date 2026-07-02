@@ -739,6 +739,7 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                   view.slotId,
                                   view._linkedRun,
                                   requestedRunFromHash(),
+                                  view._slot?.currentRunId ?? null,
                                 )}
                                 .role=${view._selectedAgentContext()?.role === 'primary'
                                   ? ''

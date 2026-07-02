@@ -96,25 +96,14 @@ export class TerminalView extends TerminalViewState {
       workerRefJson: this.workerRefJson,
     });
     if (!targetChanged || !this._terminal) return;
-    const priorTarget = terminalPriorTargetIdentity(changed, {
-      slotId: this.slotId,
-      runId: this.runId,
-      role: this.role,
-      contextId: this.contextId,
-      workerRefJson: this.workerRefJson,
-    });
-    const priorPostmortem = this._postmortem;
     clearTimeout(this._targetChangeTimer);
     this._targetChangeTimer = setTimeout(() => {
       this._targetChangeTimer = undefined;
-      this._applyTargetChange(priorTarget, priorPostmortem);
+      this._applyTargetChange();
     }, TARGET_CHANGE_DEBOUNCE_MS);
   }
 
-  private _applyTargetChange(
-    priorTarget: ReturnType<typeof terminalPriorTargetIdentity>,
-    priorPostmortem: boolean,
-  ) {
+  private _applyTargetChange() {
     if (!this._terminal) return;
     this._log(
       'updated → target changed',
@@ -124,7 +113,11 @@ export class TerminalView extends TerminalViewState {
     this._lastSubscribeError = '';
     this._subscribeOkAt = 0;
     this._attachPhase = 'idle';
-    this._teardownStreams(true, priorTarget, priorPostmortem);
+    this._teardownStreams(
+      true,
+      this._activeSubscribeIdentity ?? undefined,
+      this._activeSubscribePostmortem,
+    );
     this._terminal.clear();
     this._taskMarkdown = '';
     this._mode = 'none';
@@ -192,7 +185,7 @@ export class TerminalView extends TerminalViewState {
     this._unsubMode = gateway.subscribe<TerminalModePayload>(Events.TERMINAL_MODE, (p) => {
       if (subscribeSeq !== this._subscribeSeq) return;
       if (!this._matchesTarget(p)) return;
-      if (p.mode === this._mode) return;
+      if (p.mode === this._mode && this._ptyInputBound) return;
       this._log('mode-event', `mode=${p.mode}`);
       this._mode = p.mode as TerminalMode;
       if (this._mode === 'pty') {
@@ -220,6 +213,14 @@ export class TerminalView extends TerminalViewState {
       );
       this._log('subscribed OK');
       if (subscribeSeq !== this._subscribeSeq) return;
+      this._activeSubscribeIdentity = {
+        slotId: this.slotId,
+        runId: this.runId,
+        role: this.role,
+        contextId: this.contextId,
+        workerRefJson: this.workerRefJson,
+      };
+      this._activeSubscribePostmortem = this._postmortem;
       this._lastSubscribeError = '';
       this._subscribeOkAt = Date.now();
       this._reconnecting = false;
@@ -641,6 +642,8 @@ export class TerminalView extends TerminalViewState {
     this._unsubMode = undefined;
     this._unsubExit = undefined;
     this._unsubTaskProgress = undefined;
+    this._activeSubscribeIdentity = null;
+    this._activeSubscribePostmortem = false;
   }
 
   // Full cleanup — element is being removed from DOM
@@ -657,6 +660,8 @@ export class TerminalView extends TerminalViewState {
     this._terminal?.dispose();
     this._terminal = undefined;
     this._fitAddon = undefined;
+    this._mode = 'none';
+    this._ptyReady = false;
   }
 
   private _handleSend() {
