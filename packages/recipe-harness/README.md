@@ -140,6 +140,37 @@ yarn workspace @farmslot/recipe-harness build
 yarn workspace @farmslot/recipe-harness farmslot-recipe --help
 ```
 
+## Recipe libraries
+
+A recipe library is a directory (or repo) of reusable flow catalogs a `call`
+node can resolve without the recipe declaring a `uses` path:
+
+```text
+<library-root>/
+  library.json          { "kind": "recipe-library", "schema_version": 1, "name": "personal" }
+  flows/*.flows.json    standard recipe-flow-catalog documents
+```
+
+Sources are named and ordered; the first source that declares a flow ref wins.
+Configure them per run with repeatable `--library name=path` flags or the
+`RECIPE_LIBRARY_PATH` environment variable (colon-separated, same entry
+format). When neither is set, the harness uses the personal library at
+`<farmslot home>/recipe-library` (`FARMSLOT_HOME`, default `~/.farmslot`) if it
+exists. Recipe-local declarations (inline `flows` and explicit `uses`
+catalogs) always win over library sources.
+
+Resolution is never silent: shadowed declarations are logged, `summary.json`
+gains a `flowResolution` block naming each used library flow's source, and the
+artifact package includes `resolved-flows.json` with the exact definitions the
+run executed, so evidence stays reviewable without access to the libraries.
+
+```bash
+farmslot-recipe flows list --library personal=~/.farmslot/recipe-library
+farmslot-recipe run recipe.json --artifacts-dir artifacts \
+  --action-manifest action-manifest.json \
+  --library personal=~/.farmslot/recipe-library --library team=../team-recipes
+```
+
 ## Custom adapter
 
 ```ts

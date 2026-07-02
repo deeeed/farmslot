@@ -11,6 +11,36 @@ export interface RecipeRunRequest {
   projectRoot?: string;
   env?: Record<string, string | undefined>;
   recordVideo?: boolean | RecipeVideoRecordingMode | RecipeVideoRecordingOptions;
+  /** Ordered recipe library sources; the first source declaring a flow ref wins. */
+  librarySources?: RecipeLibrarySource[];
+}
+
+export interface RecipeLibrarySource {
+  /** Source name used in resolution output. Defaults to library.json name, then the directory basename. */
+  name?: string;
+  /** Library root directory containing library.json and flows/. */
+  root: string;
+}
+
+export interface LoadedRecipeLibrarySource {
+  name: string;
+  root: string;
+  flowCount: number;
+}
+
+export interface RecipeFlowResolutionEntry {
+  ref: string;
+  source: string;
+  /** Catalog file path relative to the library root. */
+  file: string;
+  /** Source names that also declare this ref at lower precedence. */
+  shadows?: string[];
+  lastVerified?: string;
+}
+
+export interface RecipeFlowResolutionSummary {
+  sources: LoadedRecipeLibrarySource[];
+  used: RecipeFlowResolutionEntry[];
 }
 
 export interface RecipeRunResult {
@@ -225,6 +255,8 @@ export interface SummaryDocument {
     action_registry_version: number;
   };
   runner?: RecipeRunnerProvenance;
+  /** Present when recipe library sources were configured for the run. */
+  flowResolution?: RecipeFlowResolutionSummary;
 }
 
 export interface SummaryWriter {

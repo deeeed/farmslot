@@ -75,14 +75,26 @@ function resolveUsePath(
 }
 
 function addCatalogFlows(flows: Map<string, InlineFlow>, catalog: unknown, source: string): void {
+  for (const entry of readCatalogFlows(catalog, source)) {
+    if (flows.has(entry.ref)) throw new Error(`Flow ${entry.ref} is declared more than once.`);
+    flows.set(entry.ref, entry.flow);
+  }
+}
+
+export interface CatalogFlowEntry {
+  ref: string;
+  flow: InlineFlow;
+  raw: Record<string, unknown>;
+}
+
+export function readCatalogFlows(catalog: unknown, source: string): CatalogFlowEntry[] {
   if (!isRecord(catalog) || !isRecord(catalog.flows)) {
     throw new Error(`Flow catalog ${source} must contain a flows object.`);
   }
-  for (const [ref, flow] of Object.entries(catalog.flows)) {
-    const normalized = normalizeFlow(ref, flow, source);
-    if (flows.has(ref)) throw new Error(`Flow ${ref} is declared more than once.`);
-    flows.set(ref, normalized);
-  }
+  return Object.entries(catalog.flows).map(([ref, flow]) => {
+    if (!isRecord(flow)) throw new Error(`Flow ${ref} in ${source} must be an object.`);
+    return { ref, flow: normalizeFlow(ref, flow, source), raw: flow };
+  });
 }
 
 function normalizeFlow(ref: string, flow: unknown, source: string): InlineFlow {

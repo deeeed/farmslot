@@ -1,5 +1,6 @@
 import {
   type RecipeActionManifestDocument,
+  type RecipeDocumentValidationOptions,
   validateRecipeActionManifestDocument,
   validateRecipeWithManifest,
 } from '@farmslot/protocol';
@@ -20,8 +21,9 @@ export function assertManifestIsValid(
 export function assertRecipeMatchesManifest(
   recipe: unknown,
   manifest: RecipeActionManifestDocument,
+  options?: RecipeDocumentValidationOptions,
 ): void {
-  const result = validateRecipeWithManifest(recipe, manifest);
+  const result = validateRecipeWithManifest(recipe, manifest, options);
   if (result.status === 'invalid') {
     throw new Error(
       `Recipe is invalid for the action manifest: ${result.findings

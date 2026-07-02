@@ -4,6 +4,11 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+### Added
+
+- Multi-source recipe library resolution: `call` refs can resolve from ordered, named library sources (`--library name=path`, `RECIPE_LIBRARY_PATH`, or the personal library at `<farmslot home>/recipe-library`). First source wins; recipe-local flows always win; shadowing is logged, reported in `summary.json` `flowResolution`, and the used definitions are snapshotted into a `resolved-flows.json` artifact.
+- `farmslot-recipe flows list` — list library flows with source, description, required params, and last-verified date across configured sources.
+
 ## 0.3.2 - 2026-06-30
 
 - Document `orchestrateRuntimeUp` `build` decision as terminal — hosts must call again after native build finishes.
