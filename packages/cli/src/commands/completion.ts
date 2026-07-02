@@ -277,7 +277,11 @@ _farmslot_node() {
   _describe 'subcommand' commands
 }
 
-_farmslot "$@"
+if [ "$funcstack[1]" = "_farmslot" ]; then
+  _farmslot "$@"
+else
+  compdef _farmslot farmslot
+fi
 `;
 
 const BASH_COMPLETION = `_farmslot_completions() {
