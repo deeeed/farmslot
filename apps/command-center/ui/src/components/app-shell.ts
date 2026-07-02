@@ -71,6 +71,7 @@ import {
   isFullyHydrated,
   subscribe,
 } from '../state.js';
+import { ALPHA_FEATURES_CHANGED, getAlphaFeaturesEnabled } from '../utils/alpha-features.js';
 import {
   listPinnedSlots as listPinnedSlotPreferences,
   PINNED_SLOTS_CHANGED,
@@ -147,11 +148,17 @@ const NAV_ITEMS: NavItem[] = [
   { route: 'runs', icon: '@', label: 'Runs' },
   { route: 'intelligence', icon: 'i', label: 'Intelligence', maturity: 'alpha' },
   { route: 'analytics', icon: '^', label: 'Analytics', maturity: 'alpha' },
-  { route: 'evals', icon: '$', label: 'Evals' },
+  { route: 'evals', icon: '$', label: 'Evals', maturity: 'alpha' },
   { route: 'finetune', icon: '%', label: 'Finetune', maturity: 'alpha' },
   { route: 'config', icon: '~', label: 'Config' },
   { route: 'doctor', icon: '+', label: 'Doctor' },
 ];
+
+// Alpha routes are hidden from the nav and blocked from direct hash
+// navigation unless the operator has opted in (see ALPHA_FEATURES_STORAGE_KEY).
+const ALPHA_ROUTES = new Set<Route>(
+  NAV_ITEMS.filter((item) => item.maturity === 'alpha').map((item) => item.route),
+);
 
 const SIDEBAR_PREF_KEY = 'farmslot:sidebar-expanded';
 // Remembers which remote SHA the operator dismissed, so a newer update re-shows.
@@ -189,6 +196,7 @@ export class FarmApp extends LitElement {
   @state() private versionDetailsCopied = false;
   @state() private whatsNewOpen = false;
   @state() private updateDismissedSha: string | null = localStorage.getItem(UPDATE_DISMISS_KEY);
+  @state() private alphaEnabled = getAlphaFeaturesEnabled();
   @state() private decisionCount = 0;
   @state() private violationCount = 0;
   @state() private runs: Run[] = [];
@@ -248,6 +256,7 @@ export class FarmApp extends LitElement {
     window.addEventListener('pointerup', this.onSidebarResizeEnd);
     window.addEventListener('copilot-prompt-request', this.onCopilotPromptRequest as EventListener);
     window.addEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
+    window.addEventListener(ALPHA_FEATURES_CHANGED, this.onAlphaFeaturesChanged as EventListener);
     this.pinnedSlots = listPinnedSlotPreferences();
     void this.refreshTmuxWorkers();
     this.tmuxWorkerRefreshTimer = setInterval(() => {
@@ -285,6 +294,10 @@ export class FarmApp extends LitElement {
       this.onCopilotPromptRequest as EventListener,
     );
     window.removeEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
+    window.removeEventListener(
+      ALPHA_FEATURES_CHANGED,
+      this.onAlphaFeaturesChanged as EventListener,
+    );
     if (this.tmuxWorkerRefreshTimer) clearInterval(this.tmuxWorkerRefreshTimer);
     if (this.updatePollTimer) clearInterval(this.updatePollTimer);
     this.unsubTmuxWorkerUpdated?.();
@@ -295,6 +308,13 @@ export class FarmApp extends LitElement {
   private onPinnedSlotsChanged = () => {
     this.pinnedSlots = listPinnedSlotPreferences();
     void this.refreshTmuxWorkers();
+  };
+
+  private onAlphaFeaturesChanged = (event: CustomEvent<{ enabled: boolean }>) => {
+    this.alphaEnabled = event.detail.enabled;
+    // Re-run the route guard: if the operator just hid alpha while sitting
+    // on an alpha route, bounce them to fleet immediately, not on next nav.
+    this.parseHash();
   };
 
   private async refreshTmuxWorkers(): Promise<void> {
@@ -619,6 +639,13 @@ export class FarmApp extends LitElement {
     const raw = location.hash.replace('#', '') || this.defaultRouteForEmptyHash();
     const hash = raw.split('?')[0];
     this.devCaptureMode = this.isDevCaptureHash(raw);
+    // Deep links to a hidden alpha route (including its 'violations' alias)
+    // bounce to fleet instead — hiding the nav entry alone isn't enough.
+    if (!this.alphaEnabled && (hash === 'violations' || ALPHA_ROUTES.has(hash as Route))) {
+      this.route = 'fleet';
+      history.replaceState(null, '', '#fleet');
+      return;
+    }
     if (hash === 'dev' || hash.startsWith('dev/')) {
       this.route = 'dev';
       void this.loadDevHarness();
@@ -1440,7 +1467,9 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           ${this._sidebarExpanded ? '\u00AB' : '\u00BB'}
         </button>
         ${NAV_ITEMS.filter(
-          (item) => item.route !== 'onboarding' || this.connection !== 'connected',
+          (item) =>
+            (item.route !== 'onboarding' || this.connection !== 'connected') &&
+            (item.maturity !== 'alpha' || this.alphaEnabled),
         ).map(
           (item) => html`
             <a
