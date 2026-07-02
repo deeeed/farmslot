@@ -145,36 +145,48 @@ export async function loadRecipeLibraries(
   return { sources: loadedSources, flows };
 }
 
+export interface EffectiveFlowCatalog {
+  catalog: ReadonlyMap<string, InlineFlow>;
+  /** Recipe-local declarations that overrode a library-provided ref. */
+  overrides: Array<{ ref: string; source: string }>;
+}
+
 /**
  * Merge recipe-local flows over library flows. Recipe-local declarations
  * (inline `flows` and explicit `uses` catalogs) always win — the recipe author
- * spelled them out — and any library refs they override are logged. Library
- * flow lookups are recorded into `usedLibraryFlows` so runs can report exactly
- * which library flows produced the proof.
+ * spelled them out — and any library refs they override are returned (and
+ * logged) so runs can report them even for programmatic consumers without a
+ * logger. Library flow lookups are recorded into `usedLibraryFlows` so runs
+ * can report exactly which library flows produced the proof.
  */
 export function createEffectiveFlowCatalog(
   recipeFlows: ReadonlyMap<string, InlineFlow>,
   resolution: RecipeLibraryResolution | undefined,
   usedLibraryFlows: Map<string, ResolvedLibraryFlow>,
   logger?: RecipeLogger,
-): ReadonlyMap<string, InlineFlow> {
-  if (!resolution || resolution.flows.size === 0) return recipeFlows;
+): EffectiveFlowCatalog {
+  if (!resolution || resolution.flows.size === 0) {
+    return { catalog: recipeFlows, overrides: [] };
+  }
   const fromLibrary = new Map<string, ResolvedLibraryFlow>();
   const merged = new TrackingFlowCatalog(fromLibrary, usedLibraryFlows);
+  const overrides: Array<{ ref: string; source: string }> = [];
   for (const [ref, resolved] of resolution.flows) {
     merged.set(ref, resolved.flow);
     fromLibrary.set(ref, resolved);
   }
   for (const [ref, flow] of recipeFlows) {
-    if (fromLibrary.has(ref)) {
+    const overridden = fromLibrary.get(ref);
+    if (overridden) {
       fromLibrary.delete(ref);
+      overrides.push({ ref, source: overridden.source });
       logger?.warn(
-        `Flow ${ref} is declared by the recipe and overrides the ${resolution.flows.get(ref)?.source} library declaration.`,
+        `Flow ${ref} is declared by the recipe and overrides the ${overridden.source} library declaration.`,
       );
     }
     merged.set(ref, flow);
   }
-  return merged;
+  return { catalog: merged, overrides };
 }
 
 class TrackingFlowCatalog extends Map<string, InlineFlow> {
@@ -246,7 +258,11 @@ async function listFlowCatalogFiles(root: string): Promise<string[]> {
     throw error;
   }
   return entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(LIBRARY_FLOW_CATALOG_SUFFIX))
+    .filter(
+      (entry) =>
+        (entry.isFile() || entry.isSymbolicLink()) &&
+        entry.name.endsWith(LIBRARY_FLOW_CATALOG_SUFFIX),
+    )
     .map((entry) => entry.name)
     .sort();
 }

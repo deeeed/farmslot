@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -8,6 +8,7 @@ import { type RecipeActionManifestDocument } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
+import { validateRecipeCliInput } from '../src/cli/support.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
 import {
   defaultRecipeLibrarySources,
@@ -225,6 +226,10 @@ test('runs a recipe composed from a library flow and reports the resolution in e
     await createLibrary(libraryRoot, {
       flows: { 'lib.write-text': writeTextFlow('from-library.txt', 'library-ok') },
     });
+    const teamRoot = path.join(tempRoot, 'team');
+    await createLibrary(teamRoot, {
+      flows: { 'lib.write-text': writeTextFlow('from-team.txt', 'team') },
+    });
     const recipe = {
       schema_version: 1,
       title: 'Library call recipe',
@@ -262,7 +267,10 @@ test('runs a recipe composed from a library flow and reports the resolution in e
       recipePath,
       artifactsDir,
       projectRoot: tempRoot,
-      librarySources: [{ name: 'personal', root: libraryRoot }],
+      librarySources: [
+        { name: 'personal', root: libraryRoot },
+        { name: 'team', root: teamRoot },
+      ],
     });
     assert.equal(result.status, 'pass');
     assert.equal(await readFile(path.join(tempRoot, 'from-library.txt'), 'utf-8'), 'library-ok');
@@ -270,19 +278,36 @@ test('runs a recipe composed from a library flow and reports the resolution in e
     const summary = (await readJsonFile(result.summaryPath)) as SummaryDocument;
     assert.deepEqual(
       summary.flowResolution?.sources.map((source) => [source.name, source.flowCount]),
-      [['personal', 1]],
+      [
+        ['personal', 1],
+        ['team', 1],
+      ],
     );
     assert.deepEqual(
       summary.flowResolution?.used.map((entry) => [entry.ref, entry.source, entry.file]),
       [['lib.write-text', 'personal', path.join('flows', 'main.flows.json')]],
     );
+    assert.deepEqual(summary.flowResolution?.overrides, []);
+    assert.deepEqual(summary.flowResolution?.shadowed, [
+      {
+        ref: 'lib.write-text',
+        source: 'personal',
+        file: path.join('flows', 'main.flows.json'),
+        shadows: ['team'],
+      },
+    ]);
 
     const resolvedFlows = (await readJsonFile(path.join(artifactsDir, 'resolved-flows.json'))) as {
       kind: string;
       flows: Record<string, { source: string }>;
+      shadowed: Array<{ ref: string; shadows: string[] }>;
     };
     assert.equal(resolvedFlows.kind, 'recipe-resolved-flows');
     assert.equal(resolvedFlows.flows['lib.write-text']?.source, 'personal');
+    assert.deepEqual(
+      resolvedFlows.shadowed.map((entry) => [entry.ref, entry.shadows]),
+      [['lib.write-text', ['team']]],
+    );
 
     const artifactManifest = (await readJsonFile(result.artifactManifestPath)) as {
       artifacts: Array<{ path: string }>;
@@ -348,7 +373,99 @@ test('recipe-local flows win over library flows and the override is logged', asy
     );
     const summary = (await readJsonFile(result.summaryPath)) as SummaryDocument;
     assert.deepEqual(summary.flowResolution?.used, []);
+    assert.deepEqual(summary.flowResolution?.overrides, [
+      { ref: 'lib.write-text', source: 'personal' },
+    ]);
   } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('validate accepts library-resolved call refs only when sources are configured', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libraryRoot = path.join(tempRoot, 'personal');
+    await createLibrary(libraryRoot, {
+      flows: { 'lib.write-text': writeTextFlow('from-library.txt', 'library-ok') },
+    });
+    const recipePath = path.join(tempRoot, 'recipe.json');
+    await writeJsonFile(recipePath, {
+      schema_version: 1,
+      title: 'Library call recipe',
+      description: 'Calls a flow resolved from a configured recipe library.',
+      validate: {
+        workflow: {
+          entry: 'call-flow',
+          nodes: {
+            'call-flow': {
+              action: 'call',
+              intent: 'Run the library flow without declaring it in the recipe',
+              ref: 'lib.write-text',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    });
+    const without = await validateRecipeCliInput({ recipePath });
+    assert.equal(without.status, 'invalid');
+    assert.ok(without.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
+
+    const withLibrary = await validateRecipeCliInput({
+      recipePath,
+      librarySources: [{ name: 'personal', root: libraryRoot }],
+    });
+    assert.equal(withLibrary.status, 'valid');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('loads flow catalogs referenced through symlinks', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const sharedCatalog = path.join(tempRoot, 'shared-catalog.flows.json');
+    await writeJsonFile(sharedCatalog, {
+      schema_version: 1,
+      kind: 'recipe-flow-catalog',
+      flows: { 'lib.linked': writeTextFlow('linked.txt', 'linked') },
+    });
+    const libraryRoot = path.join(tempRoot, 'personal');
+    await createLibrary(libraryRoot, { flows: {} });
+    await rm(path.join(libraryRoot, 'flows', 'main.flows.json'));
+    await symlink(sharedCatalog, path.join(libraryRoot, 'flows', 'linked.flows.json'));
+
+    const resolution = await loadRecipeLibraries([{ name: 'personal', root: libraryRoot }]);
+    assert.equal(resolution.flows.get('lib.linked')?.source, 'personal');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('flows list without any configured source fails loudly', async () => {
+  const previousExitCode = process.exitCode;
+  const previousLibraryPath = process.env.RECIPE_LIBRARY_PATH;
+  const previousHome = process.env.FARMSLOT_HOME;
+  const tempRoot = await createTempRoot();
+  const originalError = console.error;
+  try {
+    delete process.env.RECIPE_LIBRARY_PATH;
+    process.env.FARMSLOT_HOME = path.join(tempRoot, 'empty-home');
+    const errors: string[] = [];
+    console.error = (...values: unknown[]) => {
+      errors.push(values.map((value) => String(value)).join(' '));
+    };
+    await runRecipeHarnessCli(['flows', 'list']);
+    assert.equal(process.exitCode, 1);
+    assert.ok(errors.some((line) => line.includes('No recipe library sources configured')));
+  } finally {
+    console.error = originalError;
+    process.exitCode = previousExitCode;
+    if (previousLibraryPath === undefined) delete process.env.RECIPE_LIBRARY_PATH;
+    else process.env.RECIPE_LIBRARY_PATH = previousLibraryPath;
+    if (previousHome === undefined) delete process.env.FARMSLOT_HOME;
+    else process.env.FARMSLOT_HOME = previousHome;
     await rm(tempRoot, { recursive: true, force: true });
   }
 });

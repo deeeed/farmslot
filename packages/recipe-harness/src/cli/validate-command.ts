@@ -1,11 +1,14 @@
 import { type Command } from 'commander';
 
+import { resolveRecipeLibrarySources } from '../core/library.js';
+
 import { validateRecipeCliInput } from './support.js';
 
 interface ValidateCommandOptions {
   actionManifest?: string;
   artifactManifest?: string;
   artifactDir?: string;
+  library: string[];
   json?: boolean;
 }
 
@@ -17,13 +20,21 @@ export function registerValidateCommand(program: Command): void {
     .option('--action-manifest <manifest>', 'Runner action manifest JSON')
     .option('--artifact-manifest <manifest>', 'Artifact manifest JSON')
     .option('--artifact-dir <dir>', 'Artifact package directory')
+    .option(
+      '--library <entry>',
+      'Recipe library source as name=path or path (repeatable; order is precedence, first wins). Defaults to RECIPE_LIBRARY_PATH, then the personal library under the farmslot home — same resolution as run.',
+      collectRepeatable,
+      [] as string[],
+    )
     .option('--json', 'Print validation result as JSON')
     .action(async (recipePath: string, options: ValidateCommandOptions) => {
+      const librarySources = await resolveRecipeLibrarySources({ cliEntries: options.library });
       const result = await validateRecipeCliInput({
         recipePath,
         actionManifestPath: options.actionManifest,
         artifactManifestPath: options.artifactManifest,
         artifactDir: options.artifactDir,
+        ...(librarySources.length > 0 ? { librarySources } : {}),
       });
       if (options.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -37,4 +48,8 @@ export function registerValidateCommand(program: Command): void {
       }
       if (result.status === 'invalid') process.exit(1);
     });
+}
+
+function collectRepeatable(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
