@@ -68,6 +68,8 @@ export interface SlotPrepareParams {
   forceNewBranch?: boolean;
   flowType?: string;
   app?: string;
+  /** Named team overlay — forwarded to fixture sync as the `TEAM` compose variable. */
+  team?: string;
   /**
    * Named prepare profile from the project's prepare.profiles (ADR-037).
    * Unset → prepare.default → implicit full. Unknown names fail the prepare.

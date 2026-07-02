@@ -16,6 +16,7 @@ while [[ $# -gt 0 ]]; do
     --slot)      SLOT_ID="$2"; shift 2 ;;
     --flow-type) export FLOW_TYPE="$2"; shift 2 ;;
     --app)       export APP="$2"; shift 2 ;;
+    --team)      export TEAM="$2"; shift 2 ;;
     *)           echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -301,6 +302,8 @@ else:
         -e "s|{{ARTIFACT_DIR}}|${ARTIFACT_DIR:-.task}|g" \
         -e "s|{{recipe_dir}}|${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}|g" \
         -e "s|{{RECIPE_DIR}}|${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}|g" \
+        -e "s|{{team}}|${TEAM:-}|g" \
+        -e "s|{{TEAM}}|${TEAM:-}|g" \
         {} +
     find "$STAGED_DIR" -name '*.bak' -delete
 
@@ -328,6 +331,7 @@ if [ -z "${SLOT_ID}" ]; then
   echo "  --slot <id>          Slot to sync fixtures for"
   echo "  --flow-type <type>   Flow type for compose variants (e.g. fix-bug, new-feature, review-pr, personal, default)"
   echo "  --app <path>         Project-specific app selector for template substitution"
+  echo "  --team <name>        Team overlay name for compose variants + {{team}} substitution"
   exit 1
 fi
 

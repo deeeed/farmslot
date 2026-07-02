@@ -83,6 +83,25 @@ test('createRun records lifecycle startedAt for run detail telemetry', async (t)
   assert.equal(run.startedAt, run.createdAt);
 });
 
+test('createRun persists the team overlay and omits it when unset', async (t) => {
+  const withTeam = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-team`,
+    team: 'blue',
+  });
+  t.after(() => cleanupRun(withTeam.id));
+  const withoutTeam = createRun({
+    flowType: 'fix-bug',
+    project: 'example-mobile-farm',
+    ticketOrPr: `PROJ-${Date.now()}-no-team`,
+  });
+  t.after(() => cleanupRun(withoutTeam.id));
+
+  assert.equal(withTeam.team, 'blue');
+  assert.equal('team' in withoutTeam, false);
+});
+
 test('createRun preserves explicit lineage for follow-up runs', async (t) => {
   const root = createRun({
     flowType: 'dev',

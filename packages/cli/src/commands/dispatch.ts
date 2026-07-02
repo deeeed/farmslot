@@ -16,6 +16,7 @@ export function registerDispatchCommand(program: Command): void {
     .requiredOption('--flow-type <type>', 'Flow type (fix-bug, review-pr, dev, pr-complete)')
     .requiredOption('--ticket <id>', 'Ticket or PR identifier')
     .option('--slot <id>', 'Specific slot ID')
+    .option('--team <name>', 'Team overlay carried by the dispatch')
     .action(async (opts: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       try {
@@ -27,6 +28,7 @@ export function registerDispatchCommand(program: Command): void {
               flowType: opts.flowType,
               ticketOrPr: opts.ticket,
               slotId: opts.slot,
+              team: opts.team,
             }),
           !output.json,
         );
@@ -43,6 +45,7 @@ export function registerDispatchCommand(program: Command): void {
               `  Branch:    ${p.branch || dim('(none)')}`,
               `  Runner:    ${p.runner}:${p.model}`,
               `  Task:      ${p.taskId}`,
+              ...(p.team ? [`  Team:      ${p.team}`] : []),
               '',
             ].join('\n'),
           );

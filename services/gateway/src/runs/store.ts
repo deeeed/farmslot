@@ -514,6 +514,7 @@ export function createRun(params: RunCreateParams): Run {
     project: params.project,
     ticketOrPr: params.ticketOrPr,
     app: params.app,
+    ...(params.team ? { team: params.team } : {}),
     ...(params.prepareProfile ? { prepareProfile: params.prepareProfile } : {}),
     effort: params.effort,
     scripted: params.scripted,

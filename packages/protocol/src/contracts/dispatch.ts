@@ -101,5 +101,7 @@ export interface DispatchPreview {
   runner: string;
   model: string;
   taskId: string;
+  /** Named team overlay the dispatch will carry (echoed so the operator sees it before launch). */
+  team?: string;
   profileFit?: ProfileFitSuggestion;
 }

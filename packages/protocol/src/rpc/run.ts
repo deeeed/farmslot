@@ -100,6 +100,13 @@ export interface RunCreateParams {
   scripted?: import('../contracts/index.js').ScriptedRunnerConfig;
   effort?: string;
   app?: string;
+  /**
+   * Named team overlay for this run. Free-form and project-defined — the
+   * framework only threads it through prepare/fixture sync as the `TEAM`
+   * compose variable and the `{{team}}` template placeholder. Unset = no
+   * team overlay (existing single-team behavior).
+   */
+  team?: string;
   mode?: 'interactive' | 'autonomous' | 'validation';
   /** Skip slot prepare entirely — operator owns slot state (ADR-037 §5). */
   skipPrepare?: boolean;
@@ -272,6 +279,8 @@ export interface SlotFixtureRefreshParams {
   requestId?: string;
   flowType?: FlowType;
   app?: string;
+  /** Named team overlay — forwarded to fixture sync as the `TEAM` compose variable. */
+  team?: string;
 }
 export interface SlotFixtureRefreshResult {
   ok: true;

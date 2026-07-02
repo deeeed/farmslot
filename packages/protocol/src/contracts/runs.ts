@@ -1207,6 +1207,12 @@ export interface Run {
   project: string;
   ticketOrPr: string;
   app?: string;
+  /**
+   * Named team overlay carried by this run. Free-form and project-defined —
+   * threaded into prepare/fixture sync as the `TEAM` compose variable and the
+   * `{{team}}` template placeholder.
+   */
+  team?: string;
   /** Named prepare profile requested for this run (ADR-037). */
   prepareProfile?: string;
   effort?: string;

@@ -103,6 +103,7 @@ export interface RunCreateCliOptions {
   runner?: string;
   model?: string;
   app?: string;
+  team?: string;
   familyId?: string;
   parentRunId?: string;
   familyRootTicketOrPr?: string;
@@ -170,6 +171,7 @@ export function buildRunCreateParams(opts: RunCreateCliOptions): Record<string, 
     model: opts.model || undefined,
     ...(scripted ? { scripted } : {}),
     app: opts.app || undefined,
+    team: opts.team || undefined,
     familyId: opts.familyId || undefined,
     parentRunId: opts.parentRunId || undefined,
     familyRootTicketOrPr: opts.familyRootTicketOrPr || undefined,
@@ -235,6 +237,7 @@ export function registerRunCommand(program: Command): void {
     )
     .option('--scripted-timeout-ms <ms>', 'Scripted command timeout override in ms')
     .option('--app <path>', 'Project-specific app selector, e.g. apps/sherpa-voice')
+    .option('--team <name>', 'Team overlay for fixture compose + {{team}} template substitution')
     .option('--family-id <id>', 'Run family id for comparison/follow-up lineage')
     .option('--parent-run-id <id>', 'Parent run id for explicit lineage')
     .option('--family-root-ticket-or-pr <ref>', 'Family root ticket/PR label')
