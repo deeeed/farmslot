@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0",
-  "date": null,
-  "items": []
+  "version": "0.1.1",
+  "date": "2026-07-02",
+  "items": ["gateway.status now includes optional releaseNotes from the latest gateway release cut"]
 }
