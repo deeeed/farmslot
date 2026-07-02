@@ -684,6 +684,11 @@ export class DispatchWizard extends DispatchWizardState {
       this._checkActiveRunConflict();
       this._tryHydrateComparisonParentEngine(getState().runs ?? []);
     }
+    if (prefill.comparisonIntent) {
+      this._comparisonFlow = true;
+      this._checkActiveRunConflict();
+      void this._openComparisonPicker();
+    }
     if (prefill.project) {
       this._project = prefill.project;
       const machinesActive = getState().globalFilters.machines;

@@ -1788,6 +1788,34 @@ export async function sendRunnerPostLaunchPrompt(
   }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const immediatePane = (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
+      )
+    ).stdout;
+    const immediateHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
+      launchAckSignalPath: opts.launchAckSignalPath,
+      preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+    });
+    if (immediateHandoff.accepted) {
+      console.log(
+        `[${logPrefix}] prompt handoff already accepted before attempt ${attempt}/${maxAttempts}: ${immediateHandoff.reason}`,
+      );
+      return;
+    }
+    if (runnerPaneShowsPreSendDuplicateInstruction(immediatePane, message, runner)) {
+      console.log(
+        `[${logPrefix}] prompt already visible with runner progress in ${target}; skipping duplicate send`,
+      );
+      return;
+    }
+    if (runnerPaneShowsTaskAlreadyRunning(immediatePane, message, marker, runner)) {
+      console.log(
+        `[${logPrefix}] task already executing in ${target}; skipping duplicate send (attempt ${attempt}/${maxAttempts})`,
+      );
+      return;
+    }
     const preSendPane = await waitForRunnerPromptSendReady(vars, target, runner, logPrefix, {
       deadlineMs: Date.now() + Math.min(60_000, readyTimeoutMs),
       pollIntervalMs,
