@@ -812,7 +812,6 @@ export function runnerPaneShowsPreSendDuplicateInstruction(
     ) {
       return true;
     }
-    if (runnerPaneHasDeferredLaunchBlocker(pane, runner)) return false;
     return false;
   }
   return (

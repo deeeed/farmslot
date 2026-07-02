@@ -176,11 +176,12 @@ export function runEvidenceSummary(
 
 export function buildRunDiagnosisPrompt(run: Run): string {
   const failedSteps = run.steps.filter((step) => step.status === 'failed').map((step) => step.name);
+  const slotId = resolveRunSlotId(run);
   return [
     `Why did run ${run.id} fail?`,
     `Ticket or PR: ${run.ticketOrPr}`,
     `Flow: ${run.flowType}`,
-    resolveRunSlotId(run) ? `Slot: ${resolveRunSlotId(run)}` : '',
+    slotId ? `Slot: ${slotId}` : '',
     run.error ? `Run error: ${run.error}` : '',
     failedSteps.length ? `Failed steps: ${failedSteps.join(', ')}` : '',
     'Call propose_run_recovery first, then use gateway evidence only if deeper detail is needed.',
