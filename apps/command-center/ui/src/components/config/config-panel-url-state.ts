@@ -6,7 +6,8 @@ export type ConfigPanelSelection =
   | { kind: 'pool'; machine: string }
   | { kind: 'project'; name: string }
   | { kind: 'flows' }
-  | { kind: 'llm' };
+  | { kind: 'llm' }
+  | { kind: 'settings' };
 
 export interface ConfigPanelFlowsState {
   flowType: FlowType;
@@ -40,6 +41,7 @@ export function parseConfigPanelRoute(path: string): ConfigPanelRouteState | nul
   if (path.startsWith('project/')) return { selection: { kind: 'project', name: path.slice(8) } };
   if (path.startsWith('pool/')) return { selection: { kind: 'pool', machine: path.slice(5) } };
   if (path === 'llm') return { selection: { kind: 'llm' } };
+  if (path === 'settings') return { selection: { kind: 'settings' } };
   return { selection: { kind: 'pool', machine: path } }; // backward compat: bare machine name
 }
 
@@ -53,5 +55,6 @@ export function formatConfigPanelRoute(
   }
   if (selection.kind === 'pool') return `pool/${selection.machine}`;
   if (selection.kind === 'project') return `project/${selection.name}`;
+  if (selection.kind === 'settings') return 'settings';
   return 'llm';
 }

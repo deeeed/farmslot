@@ -345,6 +345,8 @@ test('slotBoundRunIdForSlot falls back to fleet snapshot when slot row is missin
 
 test('slotViewTerminalRunId prefers fleet-bound run over stale URL pin', () => {
   const bound = { id: 'bound-run', slotId: 'mm-5' } as Run;
+  const stale = { id: 'stale-run', slotId: 'mm-5' } as Run;
   assert.equal(slotViewTerminalRunId('mm-5', bound, 'stale-run', 'bound-run'), 'bound-run');
+  assert.equal(slotViewTerminalRunId('mm-5', stale, 'stale-run', 'bound-run'), 'bound-run');
   assert.equal(slotViewTerminalRunId('mm-5', null, 'stale-run', 'bound-run'), 'bound-run');
 });

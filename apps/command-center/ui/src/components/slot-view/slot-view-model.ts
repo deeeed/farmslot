@@ -260,6 +260,8 @@ export function slotViewTerminalRunId(
   urlRunId: string | null,
   slotBoundRunId: string | null,
 ): string {
+  // Fleet binding wins before cached/URL hydration can return a stale linked run.
+  if (urlRunId && slotBoundRunId && urlRunId !== slotBoundRunId) return slotBoundRunId;
   const selected = selectSlotViewLinkedRun({
     requestedRunId: urlRunId,
     slotBoundRunId,
@@ -267,8 +269,6 @@ export function slotViewTerminalRunId(
     rpcRun: linkedRun,
   });
   if (selected && selected.slotId === slotId) return selected.id;
-  // Hydration in flight: honor URL pin only when it does not conflict with fleet binding.
-  if (urlRunId && slotBoundRunId && urlRunId !== slotBoundRunId) return slotBoundRunId;
   if (urlRunId) return urlRunId;
   return '';
 }
