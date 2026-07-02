@@ -14,6 +14,12 @@ const LIBRARY_FLOWS_DIR = 'flows';
 const LIBRARY_FLOW_CATALOG_SUFFIX = '.flows.json';
 const LAST_VERIFIED_WARN_AFTER_DAYS = 30;
 
+/**
+ * Structural stand-in for `NodeJS.ProcessEnv` so the public API typechecks for
+ * consumers without `@types/node`.
+ */
+export type RecipeLibraryEnv = Record<string, string | undefined>;
+
 export interface ResolvedLibraryFlow {
   ref: string;
   flow: InlineFlow;
@@ -65,7 +71,7 @@ export function personalRecipeLibraryRoot(env: NodeJS.ProcessEnv = process.env):
  * exists.
  */
 export async function defaultRecipeLibrarySources(
-  env: NodeJS.ProcessEnv = process.env,
+  env: RecipeLibraryEnv = process.env,
 ): Promise<RecipeLibrarySource[]> {
   const personalRoot = personalRecipeLibraryRoot(env);
   try {
@@ -83,7 +89,7 @@ export async function defaultRecipeLibrarySources(
  */
 export async function resolveRecipeLibrarySources(options?: {
   cliEntries?: string[];
-  env?: NodeJS.ProcessEnv;
+  env?: RecipeLibraryEnv;
 }): Promise<RecipeLibrarySource[]> {
   const env = options?.env ?? process.env;
   const explicit = [
