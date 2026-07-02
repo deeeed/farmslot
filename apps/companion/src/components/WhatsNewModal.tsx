@@ -25,8 +25,8 @@ export function WhatsNewModal({ visible, notes, onDismiss }: WhatsNewModalProps)
             {dateSuffix}
           </Text>
           <ScrollView style={styles.listScroll} contentContainerStyle={styles.listContent}>
-            {notes.items.map((item) => (
-              <View key={item} style={styles.itemRow}>
+            {notes.items.map((item, index) => (
+              <View key={`${index}-${item}`} style={styles.itemRow}>
                 <Text style={styles.bullet}>•</Text>
                 <Text style={styles.itemText}>{item}</Text>
               </View>

@@ -20,7 +20,9 @@ function parseReleaseNotes(): ReleaseNotesPayload {
     return {
       version: parsed.version ?? COMMAND_CENTER_APP_VERSION,
       date: parsed.date ?? null,
-      items: Array.isArray(parsed.items) ? parsed.items.filter(Boolean) : [],
+      items: Array.isArray(parsed.items)
+        ? parsed.items.filter((item): item is string => typeof item === 'string' && item.length > 0)
+        : [],
     };
   } catch {
     return { version: COMMAND_CENTER_APP_VERSION, date: null, items: [] };

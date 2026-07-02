@@ -66,6 +66,8 @@ Open a PR. Release-only commits skip the PR changelog delta guard.
 | Companion      | `apps/companion/src/generated/release-notes.json`                             | Same pattern via AsyncStorage                                           |
 | Gateway RPC    | `services/gateway/release-notes.json`                                         | `gateway.status.releaseNotes`                                           |
 
+Gateway `releaseNotes` load at gateway process start — restart `farmdev` / `farmslot up` after a gateway release cut.
+
 This is separate from the git **update banner** (`commitsBehind` → `farmslot update`).
 
 ## Companion EAS release

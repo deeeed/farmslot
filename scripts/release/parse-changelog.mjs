@@ -25,6 +25,11 @@ export function meaningfulBullets(sectionText) {
   return parseBullets(sectionText).filter((bullet) => !isPlaceholderBullet(`- ${bullet}`));
 }
 
+export function unreleasedMeaningfulBullets(changelogContent) {
+  const unreleased = extractSection(changelogContent, (line) => /^##\s+Unreleased\b/i.test(line));
+  return unreleased ? meaningfulBullets(unreleased.body) : [];
+}
+
 export function extractSection(changelog, headingMatches) {
   const lines = changelog.split(/\r?\n/);
   const headingIndex = lines.findIndex((line) => headingMatches(line.trim()));

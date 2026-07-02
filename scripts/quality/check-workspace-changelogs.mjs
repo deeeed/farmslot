@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { workspaceForFile } from '../release/lib/workspace-utils.mjs';
-import { isPlaceholderBullet } from '../release/parse-changelog.mjs';
+import { unreleasedMeaningfulBullets } from '../release/parse-changelog.mjs';
 
 const repoRoot = process.cwd();
 const failures = [];
@@ -98,13 +98,21 @@ function checkStructure() {
   }
 }
 
-function addedMeaningfulBullets(changelogDiff) {
-  return changelogDiff
-    .split('\n')
-    .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
-    .map((line) => line.slice(1).trim())
-    .filter((line) => line.startsWith('-'))
-    .filter((line) => !isPlaceholderBullet(line));
+function readChangelogAtRef(ref, changelogPath) {
+  const result = spawnSync('git', ['show', `${ref}:${changelogPath}`], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) return '';
+  return result.stdout;
+}
+
+function newUnreleasedBullets(mergeBase, changelogPath) {
+  const headContent = readFileSync(path.join(repoRoot, changelogPath), 'utf8');
+  const baseContent = readChangelogAtRef(mergeBase, changelogPath);
+  const headBullets = unreleasedMeaningfulBullets(headContent);
+  const baseBullets = new Set(unreleasedMeaningfulBullets(baseContent));
+  return headBullets.filter((bullet) => !baseBullets.has(bullet));
 }
 
 function checkPrDiff() {
@@ -118,6 +126,7 @@ function checkPrDiff() {
       file.endsWith('/release-notes.json') ||
       file.endsWith('/CHANGELOG.md') ||
       file.endsWith('/package.json') ||
+      file === 'packages/protocol/src/version.ts' ||
       file.startsWith('scripts/release/') ||
       file.startsWith('.agents/skills/fs-release-cut/') ||
       file === 'docs/operations/release-process.md',
@@ -151,11 +160,7 @@ function checkPrDiff() {
       );
       continue;
     }
-    const diff = spawnSync('git', ['diff', `${mergeBase}...HEAD`, '--', changelogPath], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-    }).stdout;
-    const bullets = addedMeaningfulBullets(diff);
+    const bullets = newUnreleasedBullets(mergeBase, changelogPath);
     if (bullets.length === 0) {
       fail(
         `${changelogPath} must add at least one non-placeholder bullet under ## Unreleased for this PR.`,

@@ -41,10 +41,11 @@ function readGatewayReleaseNotes(): GatewayReleaseNotes | undefined {
     const notesPath = path.join(farmslotRoot, 'services', 'gateway', 'release-notes.json');
     if (!existsSync(notesPath)) return undefined;
     const payload = JSON.parse(readFileSync(notesPath, 'utf-8')) as GatewayReleaseNotes;
-    if (!payload?.version || !Array.isArray(payload.items) || payload.items.length === 0) {
-      return undefined;
-    }
-    return payload;
+    const items = Array.isArray(payload.items)
+      ? payload.items.filter((item): item is string => typeof item === 'string' && item.length > 0)
+      : [];
+    if (!payload?.version || items.length === 0) return undefined;
+    return { version: payload.version, date: payload.date ?? null, items };
   } catch {
     return undefined;
   }
