@@ -209,45 +209,52 @@ export async function handleCollisionDecision(
     const variant = current.variant
       ? `${current.variant}-collision-${hhmmss}`
       : `collision-${hhmmss}`;
+    const priorStatus = getRun(runId)?.status ?? current.status;
+    // Cancel first so assertDuplicateRunAllowed does not see an active production run.
+    updateRun(runId, {
+      status: 'cancelled',
+      completedAt: new Date().toISOString(),
+    });
     // Lazy import breaks the run-engine ↔ methods/run circular dep.
     const { runCreate } = await import('../methods/run.js');
     // Omit branch so applyComparisonBranchPolicy derives one for the collision-suffixed
     // variant. Carrying current.branch breaks when the variant gains a -collision- suffix.
-    const successor = await runCreate(
-      {
-        project: current.project,
-        flowType: current.flowType,
-        ticketOrPr: current.ticketOrPr,
-        ticketData: current.ticketData,
-        mode: current.mode,
-        familyId,
-        lane: 'comparison',
-        variant,
-        runner: current.metrics?.runner ?? undefined,
-        model: current.metrics?.model ?? undefined,
-        effort: current.effort,
-        safetyTier: current.safetyTier,
-        app: current.app,
-        prNumber: hasValidPrNumber(current) ? current.prNumber : undefined,
-        parentRunId: current.id,
-        backlogItemId: current.backlogItemId,
-        // Carry the operator's slot filter into the fork — without this the
-        // comparison sibling would land on any project slot, escaping the
-        // machine/slot scope that filtered the original dispatch.
-        allowedSlots:
-          current.allowedSlots && current.allowedSlots.length > 0
-            ? [...current.allowedSlots]
-            : undefined,
-      },
-      broadcastFn,
-    );
-    // Cancel only after successor creation succeeds — avoids leaving the current run
-    // cancelled/failed when runCreate throws (e.g. branch policy regression).
-    updateRun(runId, {
-      status: 'cancelled',
-      completedAt: new Date().toISOString(),
-      redirectedToRunId: successor.run.id,
-    });
+    let successor;
+    try {
+      successor = await runCreate(
+        {
+          project: current.project,
+          flowType: current.flowType,
+          ticketOrPr: current.ticketOrPr,
+          ticketData: current.ticketData,
+          mode: current.mode,
+          familyId,
+          lane: 'comparison',
+          variant,
+          runner: current.metrics?.runner ?? undefined,
+          model: current.metrics?.model ?? undefined,
+          effort: current.effort,
+          safetyTier: current.safetyTier,
+          app: current.app,
+          prNumber: hasValidPrNumber(current) ? current.prNumber : undefined,
+          parentRunId: current.id,
+          backlogItemId: current.backlogItemId,
+          // Carry the operator's slot filter into the fork — without this the
+          // comparison sibling would land on any project slot, escaping the
+          // machine/slot scope that filtered the original dispatch.
+          allowedSlots:
+            current.allowedSlots && current.allowedSlots.length > 0
+              ? [...current.allowedSlots]
+              : undefined,
+        },
+        broadcastFn,
+      );
+    } catch (err) {
+      updateRun(runId, { status: priorStatus, completedAt: undefined });
+      broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
+      throw err;
+    }
+    updateRun(runId, { redirectedToRunId: successor.run.id });
     broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
     throw new RedirectedError(
       successor.run.id,
@@ -289,8 +296,16 @@ export async function createEngineDecision(
     const replayableHumanGateDecision =
       reason === 'human_gate' && isReplayableResolvedHumanGateDecision(existing, actions);
     const replayAllowed = options?.canReplay ? options.canReplay(existing) : true;
-    if (replayAllowed && (reason !== 'human_gate' || replayableHumanGateDecision))
-      return existing.resolvedAction!;
+    const resolvedAction = existing.resolvedAction;
+    const actionStillOffered =
+      !!resolvedAction && actions.some((action) => action.id === resolvedAction);
+    if (
+      replayAllowed &&
+      actionStillOffered &&
+      (reason !== 'human_gate' || replayableHumanGateDecision)
+    ) {
+      return resolvedAction!;
+    }
   }
 
   const decision: RunDecision = {

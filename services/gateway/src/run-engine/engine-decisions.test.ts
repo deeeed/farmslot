@@ -67,6 +67,13 @@ test('collisionDecisionActions offers start-comparison for production-lane colli
   assert.deepEqual(ids, ['create-new', 'start-comparison', 'abort']);
 });
 
+test('collisionDecisionActions start-comparison is not replayable on comparison-lane reruns', () => {
+  const comparisonActions = collisionDecisionActions({ lane: 'comparison' });
+  const resolved = 'start-comparison';
+  const stillOffered = comparisonActions.some((action) => action.id === resolved);
+  assert.equal(stillOffered, false);
+});
+
 test('collisionAutoResolveAction auto-resolves autonomous runs', () => {
   assert.equal(collisionAutoResolveAction(makeRun({ mode: 'autonomous' })), 'create-new');
 });
