@@ -19,14 +19,14 @@ const diff = spawnSync(
     'diff',
     '--quiet',
     '--',
-    'docs/reference/template-variables.generated.md',
-    'apps/docs/docs/reference/template-variables-catalog.generated.md',
+    'docs/reference/template-variables.md',
+    'apps/docs/docs/reference/template-variables.generated.md',
   ],
   { cwd: repoRoot },
 );
 if (diff.status !== 0) {
   console.error('TEMPLATE_VARIABLES_DOCS_STALE');
-  console.error('Run yarn docs:template-vars and commit the generated catalog.');
+  console.error('Run yarn docs:template-vars and commit the generated file(s).');
   process.exit(1);
 }
 

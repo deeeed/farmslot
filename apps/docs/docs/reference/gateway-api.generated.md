@@ -55,6 +55,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `backlog.autoDispatchTick`           | backlog      | bounded-write | —      | —      | Backlog AutoDispatchTick gateway method.           |
 | `backlog.create`                     | backlog      | bounded-write | —      | —      | Backlog Create gateway method.                     |
 | `backlog.delete`                     | backlog      | high-impact   | —      | —      | Backlog Delete gateway method.                     |
+| `backlog.dequeue`                    | backlog      | bounded-write | —      | —      | Backlog Dequeue gateway method.                    |
 | `backlog.enqueue`                    | backlog      | bounded-write | —      | —      | Backlog Enqueue gateway method.                    |
 | `backlog.list`                       | backlog      | read-only     | —      | —      | Backlog List gateway method.                       |
 | `backlog.markReady`                  | backlog      | bounded-write | —      | —      | Backlog MarkReady gateway method.                  |
@@ -99,6 +100,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `dispatch.queue.add`                 | dispatch     | bounded-write | —      | —      | Dispatch Queue Add gateway method.                 |
 | `dispatch.queue.list`                | dispatch     | read-only     | —      | —      | Dispatch Queue List gateway method.                |
 | `dispatch.queue.remove`              | dispatch     | bounded-write | —      | —      | Dispatch Queue Remove gateway method.              |
+| `dispatch.queue.removeOrphan`        | dispatch     | bounded-write | —      | —      | Dispatch Queue RemoveOrphan gateway method.        |
 | `dispatch.queue.reorder`             | dispatch     | bounded-write | —      | —      | Dispatch Queue Reorder gateway method.             |
 | `dispatch.queue.update`              | dispatch     | bounded-write | —      | —      | Dispatch Queue Update gateway method.              |
 | `eval.experiment.create`             | eval         | bounded-write | —      | —      | Eval Experiment Create gateway method.             |
@@ -204,6 +206,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `run.interactiveDev.resolve`         | run          | high-impact   | —      | —      | Run InteractiveDev Resolve gateway method.         |
 | `run.list`                           | run          | read-only     | —      | —      | Run List gateway method.                           |
 | `run.pause`                          | run          | lifecycle     | —      | —      | Run Pause gateway method.                          |
+| `run.probeWorkerSignal`              | run          | bounded-write | —      | —      | Run ProbeWorkerSignal gateway method.              |
 | `run.proposeImprovement`             | run          | bounded-write | —      | —      | Run ProposeImprovement gateway method.             |
 | `run.recipeRunsForRun`               | run          | bounded-write | —      | —      | Run RecipeRunsForRun gateway method.               |
 | `run.recipeRunsForSlot`              | run          | bounded-write | —      | —      | Run RecipeRunsForSlot gateway method.              |

@@ -5,7 +5,7 @@
   "scripts": {
     "generate:api": "tsx scripts/generate-gateway-api-docs.ts && yarn --cwd ../command-center prettier --write ../docs/docs/reference/gateway-api.generated.md",
     "generate:onboarding": "node scripts/generate-getting-started.mjs && yarn --cwd ../command-center prettier --write ../docs/docs/guides/getting-started.generated.md",
-    "generate:template-vars": "node ../../scripts/docs/generate-template-variables.mjs && yarn --cwd ../command-center prettier --write ../docs/docs/reference/template-variables-catalog.generated.md ../../docs/reference/template-variables.generated.md",
+    "generate:template-vars": "node ../../scripts/docs/generate-template-variables.mjs && yarn --cwd ../command-center prettier --write ../docs/docs/reference/template-variables.generated.md ../../docs/reference/template-variables.md",
     "start": "yarn generate:api && yarn generate:onboarding && yarn generate:template-vars && node scripts/start-docs-dev.mjs",
     "build": "yarn generate:api && yarn generate:onboarding && yarn generate:template-vars && docusaurus build",
     "serve": "docusaurus serve --host 0.0.0.0",

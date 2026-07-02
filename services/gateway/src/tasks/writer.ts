@@ -960,7 +960,7 @@ async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: stri
 
 /**
  * Parse a rendered TASK.md template into a TaskSchema.
- * See docs/reference/template-conventions.md for the full format spec.
+ * See docs/reference/template-variables.md (§ TASK format) for the full format spec.
  *
  * - Checkboxes (`- [ ]` / `- [x]`) are steps — the only required element
  * - Any heading (`##`, `###`, `####`) groups subsequent checkboxes into a phase
