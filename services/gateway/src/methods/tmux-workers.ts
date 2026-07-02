@@ -27,6 +27,8 @@ const TMUX_PANES_TIMEOUT_MS = 5_000;
 const SIGNAL_FRESH_MS = 120_000;
 const PANE_RECENT_CHANGE_MS = 30_000;
 const NODE_TMUX_PUSH_SNAPSHOT_FRESH_MS = 30_000;
+// Degraded fallback when live tmux.panes times out — cap age so inventory cannot lie forever.
+const NODE_TMUX_STALE_FALLBACK_MAX_MS = 5 * 60_000;
 const FILTERED_WORKER_ERROR = 'worker target is excluded by tmux worker filter config';
 const nodeTmuxPaneSnapshots = new Map<string, { observedAt: number; panes: NodeTmuxPane[] }>();
 
@@ -378,6 +380,13 @@ function freshNodeTmuxPaneSnapshot(nodeId: string, now: number): NodeTmuxPane[] 
   return snapshot.panes;
 }
 
+function staleNodeTmuxPaneSnapshot(nodeId: string, now: number): NodeTmuxPane[] | null {
+  const snapshot = nodeTmuxPaneSnapshots.get(nodeId);
+  if (!snapshot) return null;
+  if (now - snapshot.observedAt > NODE_TMUX_STALE_FALLBACK_MAX_MS) return null;
+  return snapshot.panes;
+}
+
 function normalizeNodeTmuxPanesResult(payload: unknown): NodeTmuxPane[] {
   if (
     !payload ||
@@ -552,17 +561,25 @@ export async function tmuxWorkerList(
     requestPanes: async (nodeId) => {
       const cached = freshNodeTmuxPaneSnapshot(nodeId, observedAt);
       if (cached) return cached;
+      const stale = staleNodeTmuxPaneSnapshot(nodeId, observedAt);
       const node = getNode(nodeId);
       if (!node) throw new Error(`node ${nodeId} is not connected`);
-      const payload = await sendNodeRequest(
-        node,
-        'tmux.panes',
-        {},
-        {
-          timeout: TMUX_PANES_TIMEOUT_MS,
-        },
-      );
-      return normalizeNodeTmuxPanesResult(payload);
+      try {
+        const payload = await sendNodeRequest(
+          node,
+          'tmux.panes',
+          {},
+          {
+            timeout: TMUX_PANES_TIMEOUT_MS,
+          },
+        );
+        return normalizeNodeTmuxPanesResult(payload);
+      } catch (error) {
+        // Live tmux.panes can block for the full timeout under load. Prefer a
+        // degraded stale push snapshot over an empty inventory row.
+        if (stale) return stale;
+        throw error;
+      }
     },
   });
 }

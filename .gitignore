@@ -8,6 +8,7 @@ pool/*.json
 !pool/farmslot-demo.json
 
 # Generated runtime artifacts and overlays; never commit transient Farmslot state.
+.artifact-cache/
 temp/
 .agent/
 # Codex runner provisioning (config.toml + hooks.json) written into the repo

@@ -236,6 +236,8 @@ export class FarmApp extends LitElement {
   private sidebarResizeStartX = 0;
   private sidebarResizeStartWidth = DEFAULT_SIDEBAR_WIDTH;
   private tmuxWorkerRefreshTimer?: ReturnType<typeof setInterval>;
+  private tmuxWorkersPushAt = 0;
+  private tmuxWorkerListBackoffUntil = 0;
   private unsubTmuxWorkerUpdated?: () => void;
   private unsubConnForUpdate?: () => void;
   private updatePollTimer?: ReturnType<typeof setInterval>;
@@ -258,13 +260,15 @@ export class FarmApp extends LitElement {
     window.addEventListener(PINNED_SLOTS_CHANGED, this.onPinnedSlotsChanged as EventListener);
     window.addEventListener(ALPHA_FEATURES_CHANGED, this.onAlphaFeaturesChanged as EventListener);
     this.pinnedSlots = listPinnedSlotPreferences();
-    void this.refreshTmuxWorkers();
+    void this.refreshTmuxWorkers({ force: true });
     this.tmuxWorkerRefreshTimer = setInterval(() => {
       void this.refreshTmuxWorkers();
     }, 10_000);
     this.unsubTmuxWorkerUpdated = gateway.subscribe<TmuxWorkerInventoryUpdatedPayload>(
       Events.TMUX_WORKER_INVENTORY_UPDATED,
       (payload) => {
+        this.tmuxWorkersPushAt = Date.now();
+        this.tmuxWorkerListBackoffUntil = 0;
         this.tmuxWorkers =
           payload.result.workers ?? payload.result.nodes.flatMap((node) => node.workers);
       },
@@ -307,7 +311,7 @@ export class FarmApp extends LitElement {
 
   private onPinnedSlotsChanged = () => {
     this.pinnedSlots = listPinnedSlotPreferences();
-    void this.refreshTmuxWorkers();
+    void this.refreshTmuxWorkers({ force: true });
   };
 
   private onAlphaFeaturesChanged = (event: CustomEvent<{ enabled: boolean }>) => {
@@ -317,20 +321,27 @@ export class FarmApp extends LitElement {
     this.parseHash();
   };
 
-  private async refreshTmuxWorkers(): Promise<void> {
+  private async refreshTmuxWorkers(opts: { force?: boolean } = {}): Promise<void> {
     if (this.pinnedSlots.length === 0) {
       this.tmuxWorkers = [];
       return;
+    }
+    if (!opts.force) {
+      if (Date.now() < this.tmuxWorkerListBackoffUntil) return;
+      // Node pushes inventory on change; skip the expensive list RPC while fresh.
+      if (this.tmuxWorkersPushAt > 0 && Date.now() - this.tmuxWorkersPushAt < 25_000) return;
     }
     try {
       const result = await gateway.request<TmuxWorkerListResult>(Methods.TMUX_WORKER_LIST, {
         includeDisconnected: true,
       });
       this.tmuxWorkers = result.workers ?? result.nodes.flatMap((node) => node.workers);
+      this.tmuxWorkerListBackoffUntil = 0;
     } catch (err) {
       // Worker telemetry is optional/recoverable. Keep pins visible, but downgrade activity to unknown.
       console.warn('[app-shell] pinned slot worker telemetry unavailable', err);
       this.tmuxWorkers = [];
+      this.tmuxWorkerListBackoffUntil = Date.now() + 30_000;
     }
   }
 

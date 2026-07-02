@@ -10,6 +10,7 @@ import {
   parseWorkerRef,
   terminalHasTarget,
   terminalMatchesTarget,
+  type TerminalTargetIdentity,
   terminalTargetLabel,
   terminalTargetParams,
   type TerminalTargetPayload,
@@ -70,6 +71,7 @@ export abstract class TerminalViewState extends LitElement {
   protected _instanceId = ++terminalInstanceSeq;
   protected _dataCount = 0;
   protected _resizeTimer?: ReturnType<typeof setTimeout>;
+  protected _targetChangeTimer?: ReturnType<typeof setTimeout>;
   protected _tmuxPollTimer?: ReturnType<typeof setInterval>;
   protected _tmuxListInFlight = false;
   protected _tmuxListBackoffUntil = 0;
@@ -78,6 +80,8 @@ export abstract class TerminalViewState extends LitElement {
   protected _ptySizeCommitSeq = 0;
   protected _ptySizeCommitPromise?: Promise<void>;
   protected _ptyInputBound = false;
+  protected _activeSubscribeIdentity: TerminalTargetIdentity | null = null;
+  protected _activeSubscribePostmortem = false;
 
   protected _workerRef(): TmuxWorkerRef | null {
     return parseWorkerRef(this.workerRefJson);

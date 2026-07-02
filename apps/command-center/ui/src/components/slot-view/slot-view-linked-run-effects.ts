@@ -12,6 +12,7 @@ import {
   type SlotViewLinkedRunSource,
   slotViewLinkedRunTransition,
 } from './slot-view-linked-run-model.js';
+import { slotBoundRunIdForSlot } from './slot-view-model.js';
 import { requestedRunFromHash } from './slot-view-url-state.js';
 
 export function applySlotViewLinkedRun(
@@ -96,10 +97,11 @@ export async function refreshSlotViewLinkedRun(
   prevRunStatus: string | null,
 ): Promise<string | null> {
   const requestedRunId = requestedSlotViewRunFromUrl();
-  const slotBoundRunId =
-    view._slot?.currentRunId ??
-    getState().fleet?.slots.find((slot) => slot.slot === view.slotId)?.currentRunId ??
-    null;
+  const slotBoundRunId = slotBoundRunIdForSlot(
+    view.slotId,
+    view._slot?.currentRunId,
+    getState().fleet?.slots,
+  );
   let cachedRun = getRunForSlot(view.slotId, requestedRunId);
   let nextPrevRunStatus = applySlotViewLinkedRun(view, cachedRun, prevRunStatus, 'cache');
   void view._refreshRecipeRuns(cachedRun);

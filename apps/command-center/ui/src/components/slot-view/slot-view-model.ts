@@ -2,6 +2,8 @@ import type { Run, SlotStatus } from '@farmslot/protocol';
 
 import { decisionPayloadKind } from '../shared/decision-payload-model.js';
 
+import { selectSlotViewLinkedRun } from './slot-view-linked-run-model.js';
+
 export interface CheckResult {
   name: string;
   status: 'pass' | 'fail';
@@ -240,4 +242,33 @@ export function slotViewNoRecipeReplayMessage(
 ): string {
   const flow = run?.flowType ?? 'unknown';
   return `This ${flow} run has no recipe replay package. Slot-side recipe replay requires artifacts/recipe.json (typical for interactive dev or review-gate runs). PR-complete and other flows may only have diff/session artifacts.`;
+}
+
+/** Fleet/slot binding for terminal run selection (matches linked-run refresh). */
+export function slotBoundRunIdForSlot(
+  slotId: string,
+  slotCurrentRunId: string | null | undefined,
+  fleetSlots: ReadonlyArray<{ slot: string; currentRunId?: string | null }> | undefined,
+): string | null {
+  return slotCurrentRunId ?? fleetSlots?.find((slot) => slot.slot === slotId)?.currentRunId ?? null;
+}
+
+/** Run id for <terminal-view> — same authority rules as selectSlotViewLinkedRun. */
+export function slotViewTerminalRunId(
+  slotId: string,
+  linkedRun: Run | null,
+  urlRunId: string | null,
+  slotBoundRunId: string | null,
+): string {
+  // Fleet binding wins before cached/URL hydration can return a stale linked run.
+  if (urlRunId && slotBoundRunId && urlRunId !== slotBoundRunId) return slotBoundRunId;
+  const selected = selectSlotViewLinkedRun({
+    requestedRunId: urlRunId,
+    slotBoundRunId,
+    cachedRun: linkedRun,
+    rpcRun: linkedRun,
+  });
+  if (selected && selected.slotId === slotId) return selected.id;
+  if (urlRunId) return urlRunId;
+  return '';
 }

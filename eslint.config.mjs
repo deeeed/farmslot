@@ -27,6 +27,7 @@ export default [
     ignores: [
       '**/.git/**',
       '.agent/**',
+      '.artifact-cache/**',
       '**/.yarn/**',
       '**/node_modules/**',
       '**/dist/**',

@@ -2,16 +2,17 @@ import { html, nothing } from 'lit';
 
 import { agentRoleShortLabel } from '@farmslot/protocol';
 
+import { getState } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 import { buildRerunAlongsideHref, canReplayRunSteps } from '../runs/run-detail-model.js';
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
-import { realPath } from './slot-view-model.js';
+import { realPath, slotBoundRunIdForSlot, slotViewTerminalRunId } from './slot-view-model.js';
 import { slotViewEffectiveTerminalHeight } from './slot-view-resize-effects.js';
+import { requestedRunFromHash } from './slot-view-url-state.js';
 
 export interface SlotViewBodyRenderContext {
-  hasSlotData: boolean;
   hasResources: boolean;
 }
 
@@ -250,10 +251,7 @@ export function renderSlotViewExplorerPanel(view: SlotView) {
   `;
 }
 
-export function renderSlotViewBody(
-  view: SlotView,
-  { hasSlotData, hasResources }: SlotViewBodyRenderContext,
-) {
+export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBodyRenderContext) {
   return html`
     <!-- Body: activity bar + sidebar + editor -->
     <div class="sv-body">
@@ -646,7 +644,7 @@ export function renderSlotViewBody(
           : nothing}
 
         <!-- Bottom panel (Terminal / Problems / Comments) -->
-        ${hasSlotData
+        ${view.slotId
           ? html`
               ${view._terminalOpen
                 ? html`
@@ -738,9 +736,16 @@ export function renderSlotViewBody(
                               ${view._renderAgentContexts()}
                               <terminal-view
                                 .slotId=${view.slotId}
-                                .runId=${view._linkedRun?.slotId === view.slotId
-                                  ? (view._linkedRun?.id ?? '')
-                                  : ''}
+                                .runId=${slotViewTerminalRunId(
+                                  view.slotId,
+                                  view._linkedRun,
+                                  requestedRunFromHash(),
+                                  slotBoundRunIdForSlot(
+                                    view.slotId,
+                                    view._slot?.currentRunId,
+                                    getState().fleet?.slots,
+                                  ),
+                                )}
                                 .role=${view._selectedAgentContext()?.role === 'primary'
                                   ? ''
                                   : (view._selectedAgentContext()?.role ?? '')}
