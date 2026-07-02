@@ -22,6 +22,7 @@ test('isValidTeamName rejects separators, sed metacharacters, and edge punctuati
     'Blue',
     '.hidden',
     'trailing-',
+    'blue\nEVIL',
     '',
     '   ',
     'a'.repeat(65),

@@ -103,7 +103,7 @@ test('createRun persists the team overlay and omits it when unset', async (t) =>
 });
 
 test('createRun rejects team names outside the slug contract and drops blank ones', async (t) => {
-  for (const hostile of ['../evil', 'a b', 'a|b', 'a"b', 'Blue', 'a/../b']) {
+  for (const hostile of ['../evil', 'a b', 'a|b', 'a"b', 'Blue', 'a/../b', 'blue\nEVIL']) {
     assert.throws(
       () =>
         createRun({

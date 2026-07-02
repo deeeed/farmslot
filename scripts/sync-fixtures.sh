@@ -24,7 +24,10 @@ while [[ $# -gt 0 ]]; do
     --flow-type) export FLOW_TYPE="$2"; shift 2 ;;
     --app)       export APP="$2"; shift 2 ;;
     --team)
-      if ! printf '%s' "$2" | grep -Eq "$TEAM_NAME_RE"; then
+      # bash [[ =~ ]] anchors ^/$ to the WHOLE string — grep (even -x) is
+      # line-based, so a newline-embedded value like $'blue\nEVIL' would pass
+      # on its first line and smuggle the rest into sed/paths.
+      if ! [[ "$2" =~ $TEAM_NAME_RE ]]; then
         echo "FAIL: invalid --team '$2' — must be a lowercase slug (a-z, 0-9, '._-', no leading/trailing punctuation)" >&2
         exit 1
       fi

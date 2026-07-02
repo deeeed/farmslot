@@ -46,8 +46,11 @@ cmp -s "$TMP/projects/team-test-farm/fixtures/plain.md" "$TMP/repo/PLAIN.md" \
   || fail "expected empty team substitution, got: $(cat "$TMP/repo/WITH_TEAM.md")"
 
 # 3. Hostile names are rejected before anything runs: non-zero exit, an
-#    'invalid --team' error, and no fixture written.
-for hostile in '../evil' 'a b' 'a|b' 'a"b' 'Blue' 'a/../b' 'a&b' '.hidden'; do
+#    'invalid --team' error, and no fixture written. The newline case guards
+#    the whole-string anchoring: line-based matching (grep) would accept the
+#    'blue' first line and smuggle the rest through.
+NEWLINE_TEAM="$(printf 'blue\nEVIL')"
+for hostile in '../evil' 'a b' 'a|b' 'a"b' 'Blue' 'a/../b' 'a&b' '.hidden' "$NEWLINE_TEAM"; do
   rm -f "$TMP/repo/WITH_TEAM.md" "$TMP/repo/PLAIN.md"
   set +e
   out=$(sync --slot tt-1 --team "$hostile" 2>&1)

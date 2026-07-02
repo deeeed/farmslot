@@ -28,7 +28,7 @@ export function registerDispatchCommand(program: Command): void {
               flowType: opts.flowType,
               ticketOrPr: opts.ticket,
               slotId: opts.slot,
-              team: opts.team,
+              ...(opts.team ? { team: opts.team } : {}),
             }),
           !output.json,
         );

@@ -35,6 +35,23 @@ test('run create builds params from a GitHub/Jira ticket source', () => {
   );
 });
 
+test('run create omits the team key entirely unless --team is given', () => {
+  const withoutTeam = buildRunCreateParams({
+    project: 'audiolab-farm',
+    flowType: 'dev',
+    ticket: 'DEMO-414',
+  });
+  assert.equal('team' in withoutTeam, false);
+
+  const withTeam = buildRunCreateParams({
+    project: 'audiolab-farm',
+    flowType: 'dev',
+    ticket: 'DEMO-414',
+    team: 'blue',
+  });
+  assert.equal(withTeam.team, 'blue');
+});
+
 test('run create builds params from an existing task file source', () => {
   assert.deepEqual(
     buildRunCreateParams({
