@@ -1,8 +1,10 @@
 import { mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { readCatalogFlows } from './flows.js';
 import { isRecord, readJsonFile, writeJsonFile } from './json.js';
+import { listFlowCatalogFiles } from './library.js';
 import type { RecipeLogger } from './types.js';
 
 const LIBRARY_MANIFEST_FILE = 'library.json';
@@ -65,20 +67,35 @@ export async function promoteRecipeFlow(request: PromoteFlowRequest): Promise<Pr
 
   assertPromotableFlow(request.flowRef, flow, request.logger);
   const lastVerified = request.runArtifactsDir
-    ? await readVerifiedRunDate(request.runArtifactsDir)
+    ? await readVerifiedRunDate(request.runArtifactsDir, request.flowRef, flow)
     : undefined;
 
   const targetRoot = path.resolve(request.targetRoot);
   const createdLibrary = await ensureLibrarySkeleton(targetRoot, request.targetName);
 
-  const stem = request.domain ?? domainStem(request.flowRef);
-  const catalogPath = path.join(targetRoot, LIBRARY_FLOWS_DIR, `${stem}.flows.json`);
-  const catalog = await readCatalog(catalogPath);
-  if (isRecord(catalog.flows) && catalog.flows[request.flowRef] != null && !request.force) {
+  // The whole library is checked, not just the target catalog file: one
+  // library must never declare the same ref twice, or every later resolution
+  // of it fails. With --force the flow is overwritten in the file that
+  // already declares it, never written to a second one.
+  const existingCatalogPath = await findFlowDeclaration(targetRoot, request.flowRef);
+  if (existingCatalogPath && !request.force) {
     throw new Error(
-      `Flow ${request.flowRef} already exists in ${catalogPath}. Edit the catalog directly or pass --force to overwrite.`,
+      `Flow ${request.flowRef} already exists in ${existingCatalogPath}. Edit the catalog directly or pass --force to overwrite it in place.`,
     );
   }
+  const stem = request.domain ?? domainStem(request.flowRef);
+  const catalogPath =
+    existingCatalogPath ?? path.join(targetRoot, LIBRARY_FLOWS_DIR, `${stem}.flows.json`);
+  if (
+    existingCatalogPath &&
+    request.domain &&
+    path.basename(existingCatalogPath) !== `${request.domain}.flows.json`
+  ) {
+    request.logger?.warn(
+      `Flow ${request.flowRef} already lives in ${path.basename(existingCatalogPath)}; --domain ${request.domain} is ignored to avoid declaring the ref twice.`,
+    );
+  }
+  const catalog = await readCatalog(catalogPath);
 
   const promoted: Record<string, unknown> = {
     ...flow,
@@ -136,8 +153,13 @@ function assertPromotableFlow(
   }
 }
 
-async function readVerifiedRunDate(artifactsDir: string): Promise<string> {
-  const summaryPath = path.join(path.resolve(artifactsDir), 'summary.json');
+async function readVerifiedRunDate(
+  artifactsDir: string,
+  flowRef: string,
+  flow: Record<string, unknown>,
+): Promise<string> {
+  const resolvedDir = path.resolve(artifactsDir);
+  const summaryPath = path.join(resolvedDir, 'summary.json');
   const summary = await readJsonFile(summaryPath);
   if (!isRecord(summary)) throw new Error(`${summaryPath} is not a run summary.`);
   if (summary.status !== 'pass') {
@@ -146,7 +168,113 @@ async function readVerifiedRunDate(artifactsDir: string): Promise<string> {
     );
   }
   const endedAt = typeof summary.endedAt === 'string' ? Date.parse(summary.endedAt) : Number.NaN;
-  return isoDate(Number.isNaN(endedAt) ? new Date() : new Date(endedAt));
+  if (Number.isNaN(endedAt)) {
+    throw new Error(
+      `Run summary ${summaryPath} has no parseable endedAt; refusing to stamp lastVerified from incomplete evidence.`,
+    );
+  }
+  await assertRunExercisedFlow(resolvedDir, summary, flowRef, flow);
+  return isoDate(new Date(endedAt));
+}
+
+/**
+ * lastVerified is a claim reviewers rely on, so it must be backed by evidence
+ * the run actually executed this flow — a bare passing summary is not enough.
+ * Accepted evidence: the run resolved the ref from a library
+ * (summary.flowResolution.used), or the run's copied recipe declares exactly
+ * this flow inline and its trace shows a successful call to it.
+ */
+async function assertRunExercisedFlow(
+  artifactsDir: string,
+  summary: Record<string, unknown>,
+  flowRef: string,
+  flow: Record<string, unknown>,
+): Promise<void> {
+  const flowResolution = summary.flowResolution;
+  if (isRecord(flowResolution) && Array.isArray(flowResolution.used)) {
+    if (flowResolution.used.some((entry) => isRecord(entry) && entry.ref === flowRef)) return;
+  }
+
+  let runRecipe: unknown;
+  try {
+    runRecipe = await readJsonFile(path.join(artifactsDir, 'recipe.json'));
+  } catch {
+    throw evidenceError(flowRef, artifactsDir, 'the run artifacts have no readable recipe.json');
+  }
+  const runFlow =
+    isRecord(runRecipe) && isRecord(runRecipe.flows) ? runRecipe.flows[flowRef] : undefined;
+  if (!isRecord(runFlow)) {
+    throw evidenceError(
+      flowRef,
+      artifactsDir,
+      'the run neither resolved the flow from a library nor declared it inline in its recipe',
+    );
+  }
+  if (!isDeepStrictEqual(runFlow, flow)) {
+    throw evidenceError(
+      flowRef,
+      artifactsDir,
+      'the run recipe declares a different definition of the flow than the one being promoted',
+    );
+  }
+  const callNodeIds = collectCallNodeIds(runRecipe, flowRef);
+  if (callNodeIds.size === 0) {
+    throw evidenceError(flowRef, artifactsDir, 'the run recipe never calls the flow');
+  }
+  const traceEntries = await readTraceEntries(artifactsDir);
+  const executed = traceEntries.some(
+    (entry) =>
+      isRecord(entry) &&
+      entry.ok === true &&
+      typeof entry.nodeId === 'string' &&
+      callNodeIds.has(entry.nodeId),
+  );
+  if (!executed) {
+    throw evidenceError(flowRef, artifactsDir, 'the run trace has no successful call to the flow');
+  }
+}
+
+function evidenceError(flowRef: string, artifactsDir: string, reason: string): Error {
+  return new Error(
+    `Cannot stamp lastVerified for ${flowRef} from ${artifactsDir}: ${reason}. Pass artifacts of a run that exercised this flow, or promote without --run.`,
+  );
+}
+
+async function readTraceEntries(artifactsDir: string): Promise<unknown[]> {
+  let trace: unknown;
+  try {
+    trace = await readJsonFile(path.join(artifactsDir, 'trace.json'));
+  } catch {
+    return [];
+  }
+  if (Array.isArray(trace)) return trace;
+  if (isRecord(trace) && Array.isArray(trace.entries)) return trace.entries;
+  return [];
+}
+
+/** Node ids of every `call` to the ref, anywhere a recipe can declare nodes. */
+function collectCallNodeIds(
+  recipe: unknown,
+  flowRef: string,
+  out = new Set<string>(),
+): Set<string> {
+  if (!isRecord(recipe)) return out;
+  if (
+    isRecord(recipe.startState) &&
+    recipe.startState.action === 'call' &&
+    recipe.startState.ref === flowRef
+  ) {
+    out.add('startState');
+  }
+  for (const [key, child] of Object.entries(recipe)) {
+    if (key === 'nodes' && isRecord(child)) {
+      for (const [nodeId, node] of Object.entries(child)) {
+        if (isRecord(node) && node.action === 'call' && node.ref === flowRef) out.add(nodeId);
+      }
+    }
+    collectCallNodeIds(child, flowRef, out);
+  }
+  return out;
 }
 
 async function ensureLibrarySkeleton(targetRoot: string, name: string): Promise<boolean> {
@@ -168,6 +296,17 @@ async function ensureLibrarySkeleton(targetRoot: string, name: string): Promise<
   }
   await mkdir(path.join(targetRoot, LIBRARY_FLOWS_DIR), { recursive: true });
   return false;
+}
+
+async function findFlowDeclaration(targetRoot: string, ref: string): Promise<string | undefined> {
+  for (const file of await listFlowCatalogFiles(targetRoot)) {
+    const catalogPath = path.join(targetRoot, LIBRARY_FLOWS_DIR, file);
+    const catalog = await readJsonFile(catalogPath);
+    if (isRecord(catalog) && isRecord(catalog.flows) && catalog.flows[ref] != null) {
+      return catalogPath;
+    }
+  }
+  return undefined;
 }
 
 async function readCatalog(catalogPath: string): Promise<Record<string, unknown>> {

@@ -262,7 +262,8 @@ async function readLibraryManifest(root: string): Promise<{ name?: string }> {
   return { ...(typeof manifest.name === 'string' && manifest.name ? { name: manifest.name } : {}) };
 }
 
-async function listFlowCatalogFiles(root: string): Promise<string[]> {
+/** Catalog file names (relative to `<root>/flows/`) of a library, sorted. */
+export async function listFlowCatalogFiles(root: string): Promise<string[]> {
   let entries: Dirent[];
   try {
     entries = await readdir(path.join(root, LIBRARY_FLOWS_DIR), { withFileTypes: true });
