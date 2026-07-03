@@ -1,4 +1,4 @@
-import React, { forwardRef, useMemo } from 'react';
+import React, { forwardRef, useMemo, useRef } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -90,12 +90,18 @@ export function TerminalKeysModeControls({
 }
 
 export function TerminalHistoryPanel({ rawText }: { rawText: string }) {
+  const scrollRef = useRef<ScrollView>(null);
   const body = useMemo(
     () => terminalHistoryTextFromText(rawText, TERMINAL_HISTORY_VIEWER_LINES),
     [rawText],
   );
   return (
-    <ScrollView style={styles.panel} contentContainerStyle={styles.panelContent}>
+    <ScrollView
+      ref={scrollRef}
+      style={styles.panel}
+      contentContainerStyle={styles.panelContent}
+      onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
+    >
       <ScrollView horizontal showsHorizontalScrollIndicator>
         <Text selectable style={styles.historyText}>
           {body.trim() ? body : 'No terminal history yet.'}
