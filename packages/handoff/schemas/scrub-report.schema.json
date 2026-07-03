@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.dev/spec/learning-package/1/scrub-report.schema.json",
+  "title": "Scrub Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "status",
+    "scannedAt",
+    "floorVersion",
+    "blocked",
+    "redactions",
+    "omitted",
+    "visualPassAttestations"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "blocked"],
+      "description": "pass = safe to write. blocked = MUST NOT write to any shared destination."
+    },
+    "scannedAt": { "type": "string", "format": "date-time" },
+    "floorVersion": {
+      "type": "integer",
+      "description": "Version of the crypto-secret floor deny-set applied. Increment when the floor grows."
+    },
+    "blocked": {
+      "type": "array",
+      "description": "Non-empty ONLY when status=blocked. Records detections WITHOUT reproducing the secret.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "kind"],
+        "properties": {
+          "file": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "examples": ["srp", "private-key", "github-token", "jwt", "cookie"]
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "sha256:<12> of the match - never the raw secret value."
+          }
+        }
+      }
+    },
+    "redactions": {
+      "type": "array",
+      "description": "Non-blocking secrets that were replaced in-file with [REDACTED:<kind>:sha256:<12>].",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "kind", "count"],
+        "properties": {
+          "file": { "type": "string" },
+          "kind": { "type": "string" },
+          "count": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "omitted": {
+      "type": "array",
+      "description": "Files excluded from the package and why.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "reason"],
+        "properties": {
+          "path": { "type": "string" },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "disallowed-type",
+              "unscannable",
+              "media-not-selected",
+              "media-no-attestation",
+              "media-visual-block",
+              "oversize"
+            ]
+          }
+        }
+      }
+    },
+    "visualPassAttestations": {
+      "type": "array",
+      "description": "Machine-readable record of every agent visual pass performed on media artifacts (spec section 3.6). A media artifact with no entry here MUST be treated as unscannable.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "passedAt", "attestedBy", "finding"],
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "Package-relative path to the media file."
+          },
+          "passedAt": { "type": "string", "format": "date-time" },
+          "attestedBy": {
+            "type": "string",
+            "description": "Agent model id that performed the visual inspection."
+          },
+          "finding": {
+            "type": "string",
+            "enum": ["clear", "redacted"],
+            "description": "clear = no on-screen secrets found, file included. redacted = secrets present, file excluded or replaced."
+          }
+        }
+      }
+    },
+    "extensions": { "type": "object", "additionalProperties": true }
+  },
+  "if": {
+    "properties": { "status": { "const": "blocked" } },
+    "required": ["status"]
+  },
+  "then": { "properties": { "blocked": { "minItems": 1 } } },
+  "else": { "properties": { "blocked": { "maxItems": 0 } } }
+}

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.dev/spec/learning-package/1/source.schema.json",
+  "title": "Normalized Task Source",
+  "description": "Content about the work, never content about people. PII floor per spec section 3.2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sourceKind"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "sourceKind": {
+      "type": "string",
+      "enum": ["text", "file", "github-pr", "github-issue", "jira"]
+    },
+    "title": { "type": "string" },
+    "description": {
+      "type": "string",
+      "description": "Task body / PR description. PII-scrubbed."
+    },
+    "acceptanceCriteria": {
+      "type": "string",
+      "description": "Extracted acceptance criteria. Empty string when absent."
+    },
+    "labels": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Issue/PR labels. Not people-identifying."
+    },
+    "ticket": {
+      "type": "string",
+      "description": "Work identifier, e.g. PROJ-1."
+    },
+    "status": {
+      "type": "string",
+      "description": "Ticket/issue status at extraction time."
+    },
+    "priority": { "type": "string" },
+    "sourceRef": {
+      "type": "string",
+      "description": "Non-secret pointer to the origin: URL for GitHub/Jira, omitted for plain-text."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Farm-opt-in fields (e.g. storyPoints, affectedArea, reproductionSteps). MUST NOT contain reporter/assignee/commenter identity per spec section 3.2.",
+      "additionalProperties": true
+    }
+  }
+}
