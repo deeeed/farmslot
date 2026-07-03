@@ -112,7 +112,8 @@ export function InteractiveOperatorPacketsPanel({
     if (requiresConfirmation && !(await confirmAction(action.label, packet.title))) return;
     try {
       if (request.kind === 'copy') {
-        await Share.share({ message: request.text });
+        const shareResult = await Share.share({ message: request.text });
+        if (shareResult.action === Share.dismissedAction) return;
       } else if (request.kind === 'open-artifact') {
         await Linking.openURL(
           interactivePacketArtifactOpenUrl(

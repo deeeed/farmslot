@@ -126,6 +126,7 @@ function parseAnchors(
     return undefined;
   }
   const anchors: InteractiveOperatorPacketAnchor[] = [];
+  const seenIds = new Set<string>();
   value.forEach((anchor, index) => {
     if (!isRecord(anchor)) {
       errors.push(`anchors[${index}] must be an object`);
@@ -134,6 +135,9 @@ function parseAnchors(
     const id = stringValue(anchor.id);
     const label = stringValue(anchor.label);
     if (!id) errors.push(`anchors[${index}].id must be a non-empty string`);
+    if (id && seenIds.has(id)) {
+      errors.push(`anchors[${index}].id must be unique`);
+    }
     if (!label) {
       errors.push(`anchors[${index}].label must be a non-empty string`);
     }
@@ -159,6 +163,7 @@ function parseAnchors(
       }
     }
     if (id && label && (anchor.line == null || line != null) && (anchor.range == null || range)) {
+      seenIds.add(id);
       const parsed: InteractiveOperatorPacketAnchor = { id, label };
       if (artifactPath) parsed.artifactPath = artifactPath;
       if (selector) parsed.selector = selector;
@@ -180,6 +185,7 @@ function parseActions(
     return undefined;
   }
   const actions: InteractiveOperatorPacketAction[] = [];
+  const seenIds = new Set<string>();
   value.forEach((action, index) => {
     if (!isRecord(action)) {
       errors.push(`actions[${index}] must be an object`);
@@ -188,6 +194,9 @@ function parseActions(
     const id = stringValue(action.id);
     const label = stringValue(action.label);
     if (!id) errors.push(`actions[${index}].id must be a non-empty string`);
+    if (id && seenIds.has(id)) {
+      errors.push(`actions[${index}].id must be unique`);
+    }
     if (!label) {
       errors.push(`actions[${index}].label must be a non-empty string`);
     }
@@ -207,6 +216,7 @@ function parseActions(
       errors.push(`actions[${index}].payload must be an object when present`);
     }
     if (id && label && kind && safety && (action.payload == null || payload)) {
+      seenIds.add(id);
       const parsed: InteractiveOperatorPacketAction = { id, label, kind, safety };
       if (payload) parsed.payload = payload;
       actions.push(parsed);

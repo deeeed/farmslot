@@ -54,6 +54,41 @@ test('interactive operator packet validator reports clear invalid fields', () =>
   assert.match(result.errors.join('\n'), /actions\[0\]\.kind/);
 });
 
+test('interactive operator packet validator rejects duplicate anchor and action ids', () => {
+  const result = validateInteractiveOperatorPacket({
+    schema: INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1,
+    id: 'duplicates',
+    title: 'Duplicate ids',
+    intent: 'review',
+    body: { format: 'markdown', text: 'Check duplicate ids.' },
+    anchors: [
+      { id: 'diff', label: 'Diff A' },
+      { id: 'diff', label: 'Diff B' },
+    ],
+    actions: [
+      {
+        id: 'send',
+        label: 'Send A',
+        kind: 'copy',
+        safety: 'read-only',
+        payload: { text: 'A' },
+      },
+      {
+        id: 'send',
+        label: 'Send B',
+        kind: 'copy',
+        safety: 'read-only',
+        payload: { text: 'B' },
+      },
+    ],
+    createdAt: '2026-07-03T00:00:00.000Z',
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.errors.join('\n'), /anchors\[1\]\.id must be unique/);
+  assert.match(result.errors.join('\n'), /actions\[1\]\.id must be unique/);
+});
+
 test('interactive packet artifacts are selected by path or explicit metadata', () => {
   assert.equal(
     isInteractiveOperatorPacketArtifact({
