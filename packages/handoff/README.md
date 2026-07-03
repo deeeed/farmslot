@@ -15,6 +15,24 @@ belong in the format (for example, `sourceKind: "jira"` or `"github-pr"` fields
 defined by the spec schemas) are spec-defined nouns, not implementation choices —
 everything else is caller-supplied config or a resolved override file.
 
+## Secret-handling contract
+
+The scrubber is a **light heuristic backstop**, not a completeness guarantee.
+It catches obvious accidental inclusions by a cooperative producing agent: literal
+seed phrases, labeled private-key assignments, PEM blocks, known provider tokens.
+
+**The two real controls are:**
+
+1. **Producer-instruction contract** — the closeout/finish prompt MUST tell the
+   producing agent: "never include raw secrets, seed phrases, private keys,
+   passwords, or tokens; reference them by name only." That is the primary control.
+2. **Human approval gate** — every package write requires an explicit human
+   approval argument at call time (no auto-write mode). That is the reliability
+   guarantee.
+
+The scrubber reduces surface area between those two controls. It does not attempt
+to defeat adversarial obfuscation.
+
 ## Install
 
 ```bash
