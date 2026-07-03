@@ -345,14 +345,25 @@ export function renderAppShellStyles(
         border-color: ${colors.statusFail}88;
       }
       farm-app .fa-active-run.active {
-        background: ${colors.accent}18;
-        border-color: ${colors.accent}66;
+        background: #111827;
+        border-color: ${colors.accent};
+        box-shadow:
+          0 0 0 1px ${colors.accent}55,
+          0 0 16px ${colors.accent}55,
+          0 12px 22px rgba(0, 0, 0, 0.35);
       }
       farm-app .fa-active-run.needs-attention {
         border-color: ${colors.statusWarn}aa;
         box-shadow:
           0 0 0 1px ${colors.statusWarn}22,
           0 0 18px ${colors.statusWarn}18;
+      }
+      farm-app .fa-active-run.active.needs-attention {
+        border-color: ${colors.accent};
+        box-shadow:
+          0 0 0 1px ${colors.accent}55,
+          0 0 16px ${colors.accent}55,
+          0 12px 22px rgba(0, 0, 0, 0.35);
       }
       farm-app .fa-active-run-top,
       farm-app .fa-active-run-meta {

@@ -22,6 +22,7 @@ import type {
   ConfigTemplateOptionsResult,
   FlowType,
   ProjectConfig,
+  Run,
   SlotStatus,
   WorkerTemplateOption,
   WorkGraphActivateResult,
@@ -31,6 +32,7 @@ import type {
 import { BACKLOG_SOURCE_KINDS, BACKLOG_STATUSES, Methods } from '@farmslot/protocol';
 
 import '../shared/dispatch-config-editor.js';
+import '../shared/linked-run-summary.js';
 import '../shared/slot-choice-list.js';
 import '../shared/slot-selector-modal.js';
 
@@ -47,6 +49,7 @@ import type {
   DispatchConfigEditorControls,
 } from '../shared/dispatch-config-editor.js';
 import { summarizeBacklogDispatchConfig } from '../shared/dispatch-config-summary.js';
+import { linkedRunForBacklogItem } from '../shared/linked-run-model.js';
 import {
   planningBadgeStyles,
   renderPlanningBadge,
@@ -150,8 +153,10 @@ function splitSlots(value: string): string[] {
 export class BacklogPanel extends LitElement {
   @property({ attribute: false }) items: BacklogItem[] | null = null;
   @property({ attribute: false }) slots: SlotStatus[] | null = null;
+  @property({ attribute: false }) demoRuns: Run[] | null = null;
   @state() private _items: BacklogItem[] = [];
   @state() private _slots: SlotStatus[] = [];
+  @state() private _runs: Run[] = [];
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _project = 'all';
@@ -797,12 +802,15 @@ export class BacklogPanel extends LitElement {
   }
 
   protected updated(changed: Map<string, unknown>) {
-    if (changed.has('items') || changed.has('slots')) this._sync(getState());
+    if (changed.has('items') || changed.has('slots') || changed.has('demoRuns')) {
+      this._sync(getState());
+    }
   }
 
   private _sync(s: AppState) {
     this._items = this.items ?? s.backlogItems;
     this._slots = this.slots ?? s.fleet?.slots ?? [];
+    this._runs = this.demoRuns ?? s.runs;
     this._workGraphs = s.workGraphs;
     this._globalFilters = s.globalFilters;
     const nextDraftProject = syncedBacklogDraftProject({
@@ -2245,6 +2253,10 @@ export class BacklogPanel extends LitElement {
           : nothing}
       </div>
       ${item.lastDispatchError ? html`<div class="error">${item.lastDispatchError}</div>` : nothing}
+      <linked-run-summary
+        .run=${linkedRunForBacklogItem(this._runs, item)}
+        label="Current run"
+      ></linked-run-summary>
       ${this._renderSpecAttachment(item)} ${this._renderLaunchPlanSummary(item)}
       ${this._renderDispatchConfigSummary(item, false, true)}
       ${mode === 'edit' ? this._renderLaunchPlanEditor(item.id, item) : nothing}

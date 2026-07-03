@@ -4,6 +4,7 @@
 // Usage:
 //   node scripts/cdp.mjs eval <hash|-|<route#hash>> <expr>  Evaluate JS in a page tab (- = first tab).
 //   node scripts/cdp.mjs eval <hash> --file <path>    Evaluate the file contents in page context.
+//   node scripts/cdp.mjs goto <hash|url> [--new]      Navigate a reused Command Center tab.
 //   node scripts/cdp.mjs login <hash>                 Fill the auth form from env token/password.
 //   node scripts/cdp.mjs screenshot <hash> <path>      Capture a PNG screenshot of a page tab.
 //   node scripts/cdp.mjs tabs                         List CDP tabs.
@@ -11,6 +12,7 @@
 //
 // Env:
 //   FARMSLOT_CDP_PORT   CDP port (default 9323).
+//   FARMSLOT_UI_URL     Command Center URL used by `goto` for hash targets (default http://localhost:5175).
 //   FARMSLOT_GATEWAY    Gateway WS url (default ws://localhost:7777).
 //   FARMSLOT_GATEWAY_TOKEN/PASSWORD are read from process env or nearest .env.local-auth/.env.
 //
@@ -23,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const CDP_PORT = process.env.FARMSLOT_CDP_PORT ?? '9323';
+const UI_URL = process.env.FARMSLOT_UI_URL ?? 'http://localhost:5175';
 const GATEWAY_URL = process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777';
 const GATEWAY_CREDENTIAL = resolveGatewayCredential();
 const [, , cmd, ...rest] = process.argv;
@@ -38,6 +41,13 @@ async function listTabs() {
   return res.json();
 }
 
+function commandCenterUrl(target) {
+  if (!target) die('missing target');
+  if (/^https?:\/\//.test(target)) return target;
+  const base = UI_URL.endsWith('/') ? UI_URL.slice(0, -1) : UI_URL;
+  return `${base}/${target.startsWith('#') ? target : `#${target}`}`;
+}
+
 async function findTab(hash) {
   const tabs = await listTabs();
   const pages = tabs.filter((t) => t.type === 'page');
@@ -47,6 +57,48 @@ async function findTab(hash) {
   // retargeting to another tab lets validation scripts "pass" against an
   // unrelated page or mutate the wrong one. Caller handles null → die.
   return pages.find((t) => t.url?.includes(needle)) ?? null;
+}
+
+async function createTab(url) {
+  const res = await fetch(`http://localhost:${CDP_PORT}/json/new?${encodeURIComponent(url)}`, {
+    method: 'PUT',
+  });
+  if (!res.ok) die(`failed to create CDP tab on :${CDP_PORT} (status ${res.status})`, 2);
+  return res.json();
+}
+
+async function findReusableTab(url) {
+  const target = new URL(url);
+  const pages = (await listTabs()).filter((t) => t.type === 'page');
+  const sameOrigin = pages.filter((tab) => {
+    try {
+      return new URL(tab.url).origin === target.origin;
+    } catch {
+      return false;
+    }
+  });
+  const localPages = pages.filter((tab) => {
+    try {
+      const current = new URL(tab.url);
+      return ['localhost', '127.0.0.1', '::1'].includes(current.hostname);
+    } catch {
+      return false;
+    }
+  });
+  return (
+    sameOrigin.find((tab) => {
+      try {
+        const current = new URL(tab.url);
+        return current.pathname === target.pathname && current.hash === target.hash;
+      } catch {
+        return false;
+      }
+    }) ??
+    sameOrigin[0] ??
+    localPages[0] ??
+    pages[0] ??
+    null
+  );
 }
 
 function connect(wsUrl) {
@@ -78,6 +130,36 @@ function connect(wsUrl) {
       }),
     );
   });
+}
+
+async function navigateTab(target, forceNew = false) {
+  const url = commandCenterUrl(target);
+  let reused = false;
+  let tab = forceNew ? null : await findReusableTab(url);
+  if (tab) {
+    reused = true;
+  } else {
+    tab = await createTab(url);
+  }
+  const { call, close } = await connect(tab.webSocketDebuggerUrl);
+  await call('Page.enable');
+  await call('Page.navigate', { url });
+  await call('Runtime.enable');
+  await call('Runtime.evaluate', {
+    expression: `
+      new Promise((resolve) => {
+        if (document.readyState === 'complete') {
+          resolve(true);
+          return;
+        }
+        window.addEventListener('load', () => resolve(true), { once: true });
+      })
+    `,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  close();
+  return { id: tab.id, url, reused };
 }
 
 async function evalInTab(hash, expr) {
@@ -304,6 +386,11 @@ function nonEmpty(value) {
 try {
   if (cmd === 'tabs') {
     console.log(JSON.stringify(await listTabs(), null, 2));
+  } else if (cmd === 'goto') {
+    const [target, flag] = rest;
+    if (!target) die('usage: cdp.mjs goto <hash|url> [--new]');
+    const result = await navigateTab(target, flag === '--new');
+    console.log(JSON.stringify(result, null, 2));
   } else if (cmd === 'eval') {
     const [hash, flag, ...tail] = rest;
     if (!hash) die('usage: cdp.mjs eval <hash|-|<route#hash>> <expr | --file path>');
@@ -329,7 +416,7 @@ try {
     const result = await gatewayRpc(method, paramsJson);
     console.log(JSON.stringify(result, null, 2));
   } else {
-    die('usage: cdp.mjs <tabs | eval | login | screenshot | gateway> ...');
+    die('usage: cdp.mjs <tabs | goto | eval | login | screenshot | gateway> ...');
   }
 } catch (err) {
   die(`cdp.mjs: ${err.message}`, 2);

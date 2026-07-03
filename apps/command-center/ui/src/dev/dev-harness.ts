@@ -59,6 +59,7 @@ import '../components/shared/diff-viewer-modal.js';
 import '../components/workspace/review-workspace.js';
 import '../components/workspace/ready-workspace.js';
 import '../components/shared/global-filter-bar.js';
+import '../components/shared/linked-run-summary.js';
 import '../components/shared/runner-model-effort-picker.js';
 import '../components/shared/slot-choice-list.js';
 import '../components/shared/slot-selector-modal.js';
@@ -157,6 +158,7 @@ type DevRoute =
   | 'run-tag-editor'
   | 'pipeline'
   | 'pipeline-mini'
+  | 'linked-run-summary'
   | 'flow-graph'
   | 'work-graph'
   | 'review-workspace'
@@ -233,6 +235,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'slot-load-run', label: 'Slot Load Run', group: 'components' },
   { route: 'stream-feed', label: 'Stream Feed', group: 'components' },
   { route: 'run-tag-editor', label: 'Run Tag Editor', group: 'components' },
+  { route: 'linked-run-summary', label: 'Linked Run Summary', group: 'components' },
   { route: 'pipeline', label: 'Pipeline', group: 'components' },
   { route: 'pipeline-mini', label: 'Pipeline Mini', group: 'components' },
   { route: 'global-filter', label: 'Global Filter', group: 'components' },
@@ -421,6 +424,8 @@ export class DevHarness extends LitElement {
         return this.renderPipeline();
       case 'pipeline-mini':
         return this.renderPipelineMini();
+      case 'linked-run-summary':
+        return this.renderLinkedRunSummary();
       case 'flow-graph':
         return this.renderFlowGraph();
       case 'work-graph':
@@ -475,9 +480,29 @@ export class DevHarness extends LitElement {
   }
 
   private renderWorkGraph() {
+    const graph = mockWorkGraphs[0];
+    const node = graph.nodes.find(
+      (candidate) => candidate.backlogItemId === 'bl_demo_gateway_projection',
+    );
+    let demoRuns = mockPipelineRuns();
+    if (node?.backlogItemId) {
+      const linkedRun: Run = {
+        ...mockPipelineRuns()[0],
+        id: node.latestRunId ?? 'run_demo_gateway_tests',
+        familyId: node.currentFamilyId ?? 'fam_demo_gateway_projection',
+        project: 'gateway',
+        ticketOrPr: node.backlogItemId,
+        backlogItemId: node.backlogItemId,
+        workGraphId: graph.graph.id,
+        workNodeId: node.id,
+        updatedAt: new Date().toISOString(),
+      };
+      demoRuns = [...demoRuns, linkedRun];
+    }
     return html`<work-graph-panel
       .demoGraphs=${mockWorkGraphs}
       .demoBacklogItems=${mockWorkGraphBacklogItems}
+      .demoRuns=${demoRuns}
     ></work-graph-panel>`;
   }
 
@@ -1855,6 +1880,27 @@ All checks passed.`;
     `;
   }
 
+  private renderLinkedRunSummary() {
+    const runs = mockPipelineRuns().slice(0, 3);
+    return html`
+      <div style="padding: 20px; display: grid; gap: 16px; max-width: 760px;">
+        <h3 style="color: ${colors.textPrimary}; margin: 0">Linked Run Summary</h3>
+        ${runs.map(
+          (run, index) => html`
+            <div style="display: grid; gap: 8px;">
+              <div class="section-label">${index === 0 ? 'Expanded' : 'Compact'}</div>
+              <linked-run-summary
+                .run=${run}
+                label=${index === 0 ? 'Current run' : 'Backlog run'}
+                ?compact=${index > 0}
+              ></linked-run-summary>
+            </div>
+          `,
+        )}
+      </div>
+    `;
+  }
+
   private renderFlowGraph() {
     return html`
       <p class="section-label">Flow graph — decision tree visualization (5 flows x 2 modes)</p>
@@ -2944,7 +2990,7 @@ All checks passed.`;
     const items: BacklogItem[] = [
       {
         id: 'backlog-1',
-        project: 'example-mobile-farm',
+        project: 'metamask-mobile-farm',
         title: 'Fix flaky perps close confirmation',
         sourceKind: 'jira',
         sourceRef: 'PROJ-3101',
@@ -3012,7 +3058,7 @@ All checks passed.`;
       },
       {
         id: 'backlog-2',
-        project: 'example-browser',
+        project: 'metamask-extension-farm',
         title: 'Explore quick dev command for rough intake',
         sourceKind: 'manual',
         sourceRef: 'MANUAL-000002',
@@ -3024,6 +3070,16 @@ All checks passed.`;
         updatedAt: new Date(now - 2 * 60 * 60_000).toISOString(),
       },
     ];
+    const linkedRun: Run = {
+      ...mockPipelineRuns()[0],
+      id: 'run-backlog-1-current',
+      familyId: 'run-backlog-1-current',
+      project: items[0].project,
+      ticketOrPr: items[0].sourceRef,
+      backlogItemId: items[0].id,
+      updatedAt: new Date(now - 2 * 60_000).toISOString(),
+    };
+    const demoRuns = [...mockPipelineRuns(), linkedRun];
     this._captureSharedState();
     updateFleet({
       summary: {
@@ -3041,11 +3097,57 @@ All checks passed.`;
       checkedAt: new Date().toISOString(),
     });
     updateBacklogItems(items);
-    return html`<backlog-panel .items=${items} .slots=${mockFleetSlots()}></backlog-panel>`;
+    return html`<backlog-panel
+      .items=${items}
+      .slots=${mockFleetSlots()}
+      .demoRuns=${demoRuns}
+    ></backlog-panel>`;
   }
 
   private renderRoadmap() {
     const now = new Date().toISOString();
+    const backlogItems: BacklogItem[] = [
+      {
+        id: 'roadmap-backlog-extension',
+        project: 'metamask-extension-farm',
+        title: 'Extension client follow-up',
+        sourceKind: 'manual',
+        sourceRef: 'ri_dev_refined',
+        flowType: 'dev',
+        status: 'running',
+        notes: 'Promoted from the dev harness roadmap item.',
+        priority: 40,
+        roadmapItemId: 'ri_dev_refined',
+        specPath: '.roadmap/promotion-drafts/ri_dev_refined/01-extension.md',
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'roadmap-backlog-mobile',
+        project: 'metamask-mobile-farm',
+        title: 'Mobile client follow-up',
+        sourceKind: 'manual',
+        sourceRef: 'ri_dev_refined',
+        flowType: 'dev',
+        status: 'ready',
+        notes: 'Promoted from the dev harness roadmap item.',
+        priority: 40,
+        roadmapItemId: 'ri_dev_refined',
+        specPath: '.roadmap/promotion-drafts/ri_dev_refined/02-mobile.md',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    const linkedRun: Run = {
+      ...mockPipelineRuns()[0],
+      id: 'run-roadmap-extension-current',
+      familyId: 'run-roadmap-extension-current',
+      project: backlogItems[0].project,
+      ticketOrPr: backlogItems[0].sourceRef,
+      backlogItemId: backlogItems[0].id,
+      updatedAt: now,
+    };
+    const demoRuns = [...mockPipelineRuns(), linkedRun];
     const item: RoadmapItem = {
       id: 'ri_dev_refined',
       kind: 'roadmap-item',
@@ -3055,6 +3157,12 @@ All checks passed.`;
       stage: 'refined',
       tags: ['roadmap', 'dev-harness'],
       source: { kind: 'manual' },
+      promotion: backlogItems.map((backlogItem) => ({
+        backlogItemId: backlogItem.id,
+        specPath: backlogItem.specPath,
+        project: backlogItem.project,
+        createdAt: now,
+      })),
       body: [
         '## Problem',
         '',
@@ -3127,7 +3235,12 @@ All checks passed.`;
       slots: mockFleetSlots(),
       checkedAt: now,
     });
-    return html`<roadmap-panel .items=${[item]} .slots=${mockFleetSlots()}></roadmap-panel>`;
+    updateBacklogItems(backlogItems);
+    return html`<roadmap-panel
+      .items=${[item]}
+      .slots=${mockFleetSlots()}
+      .demoRuns=${demoRuns}
+    ></roadmap-panel>`;
   }
 
   private renderDispatchQueue() {

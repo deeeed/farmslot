@@ -15,6 +15,7 @@ import type {
   RoadmapRefinementSessionGetResult,
   RoadmapRefineResult,
   RoadmapSaveResult,
+  Run,
   SafetyTier,
   SlotStatus,
   WorkGraphProjection,
@@ -27,6 +28,7 @@ import {
 } from '@farmslot/protocol';
 
 import './roadmap-graph-composer.js';
+import '../shared/linked-run-summary.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
@@ -34,6 +36,7 @@ import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { renderMarkdown } from '../../utils/markdown.js';
 import { DEFAULT_MODEL, MODELS_BY_RUNNER, RUNNER_OPTIONS } from '../../utils/runner-options.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { linkedRunForBacklogItem } from '../shared/linked-run-model.js';
 import {
   planningBadgeStyles,
   renderPlanningBadge,
@@ -115,9 +118,11 @@ function isRoadmapRoute(route: string): boolean {
 export class RoadmapPanel extends LitElement {
   @property({ attribute: false }) items: RoadmapItem[] | null = null;
   @property({ attribute: false }) slots: SlotStatus[] | null = null;
+  @property({ attribute: false }) demoRuns: Run[] | null = null;
   @state() private _allItems: RoadmapItem[] = [];
   @state() private _slots: SlotStatus[] = [];
   @state() private _backlogItems: BacklogItem[] = [];
+  @state() private _runs: Run[] = [];
   @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _selectedId = '';
@@ -639,7 +644,9 @@ export class RoadmapPanel extends LitElement {
   }
 
   protected updated(changed: Map<string, unknown>) {
-    if (changed.has('items') || changed.has('slots')) this._syncState(getState());
+    if (changed.has('items') || changed.has('slots') || changed.has('demoRuns')) {
+      this._syncState(getState());
+    }
   }
 
   private _applyUrlStateFromHash() {
@@ -692,6 +699,7 @@ export class RoadmapPanel extends LitElement {
     const previousProjects = this._globalFilters.projects.join('\0');
     this._slots = this.slots ?? state.fleet?.slots ?? [];
     this._backlogItems = state.backlogItems;
+    this._runs = this.demoRuns ?? state.runs;
     this._workGraphs = state.workGraphs;
     this._globalFilters = state.globalFilters;
     if (this.items) {
@@ -2099,6 +2107,42 @@ export class RoadmapPanel extends LitElement {
       : nothing;
   }
 
+  private _runsForRoadmapItem(item: RoadmapItem): Run[] {
+    const seen = new Set<string>();
+    const runs: Run[] = [];
+    for (const entry of item.promotion ?? []) {
+      const backlogItem = this._backlogItems.find(
+        (candidate) => candidate.id === entry.backlogItemId,
+      );
+      if (!backlogItem) continue;
+      const run = linkedRunForBacklogItem(this._runs, backlogItem);
+      if (!run || seen.has(run.id)) continue;
+      seen.add(run.id);
+      runs.push(run);
+    }
+    return runs;
+  }
+
+  private _renderLinkedRuns(item: RoadmapItem) {
+    const runs = this._runsForRoadmapItem(item);
+    if (!runs.length) return nothing;
+    return html`<div class="path-panel">
+      <div class="editor-head">
+        <div>
+          <h3>Linked runs</h3>
+          <p class="muted">Promoted backlog items with active or recent execution.</p>
+        </div>
+      </div>
+      <div class="attachment-grid">
+        ${runs.map(
+          (run) =>
+            html`<linked-run-summary .run=${run} label="Backlog run" compact>
+            </linked-run-summary>`,
+        )}
+      </div>
+    </div>`;
+  }
+
   private _renderViewEditor(item: RoadmapItem) {
     return html`<div class="editor">
         <div class="editor-head">
@@ -2155,7 +2199,8 @@ export class RoadmapPanel extends LitElement {
               )
             : nothing}
         </div>
-        ${this._renderRefinementPromptPath(item)} ${this._renderDraftAttachmentSummary(item)}
+        ${this._renderLinkedRuns(item)} ${this._renderRefinementPromptPath(item)}
+        ${this._renderDraftAttachmentSummary(item)}
         <pre class="body-view">${item.body || 'No roadmap body.'}</pre>
       </div>
       ${this._promotionOpen ? this._renderPromotionEditor(item) : nothing}
