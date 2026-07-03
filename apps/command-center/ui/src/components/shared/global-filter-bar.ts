@@ -6,6 +6,8 @@ import type { SlotStatus } from '@farmslot/protocol';
 import { type AppState, getState, subscribe, updateGlobalFilters } from '../../state.js';
 import { colors, fonts, spacing } from '../../styles/theme-tokens.js';
 
+import { planningChoiceStyles, renderToggleChips } from './planning-controls.js';
+
 @customElement('global-filter-bar')
 export class GlobalFilterBar extends LitElement {
   @property({ attribute: false }) slots: SlotStatus[] = [];
@@ -15,78 +17,51 @@ export class GlobalFilterBar extends LitElement {
 
   private _unsub?: () => void;
 
-  static styles = css`
-    :host {
-      display: block;
-    }
-    .filter-bar {
-      display: flex;
-      align-items: center;
-      gap: ${unsafeCSS(spacing.md)};
-      padding: 6px ${unsafeCSS(spacing.xl)};
-      font-family: ${unsafeCSS(fonts.mono)};
-      font-size: 11px;
-      color: ${unsafeCSS(colors.textSecondary)};
-      background: ${unsafeCSS(colors.bgSurface)};
-      border-bottom: 1px solid ${unsafeCSS(colors.bgCard)};
-      flex-shrink: 0;
-      flex-wrap: wrap;
-      min-height: 32px;
-      box-sizing: border-box;
-    }
-    .label {
-      color: ${unsafeCSS(colors.textMuted)};
-      white-space: nowrap;
-    }
-    .chips {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      flex-wrap: wrap;
-    }
-    .chip {
-      padding: 2px 8px;
-      border-radius: 10px;
-      border: 1px solid ${unsafeCSS(colors.bgCard)};
-      background: transparent;
-      color: ${unsafeCSS(colors.textMuted)};
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 10px;
-      line-height: 1.4;
-      transition:
-        border-color 0.1s,
-        background 0.1s,
-        color 0.1s;
-    }
-    .chip:hover {
-      border-color: ${unsafeCSS(colors.accent)}66;
-      color: ${unsafeCSS(colors.textSecondary)};
-    }
-    .chip.active {
-      background: ${unsafeCSS(colors.accent)}22;
-      color: ${unsafeCSS(colors.accent)};
-      border-color: ${unsafeCSS(colors.accent)};
-    }
-    .sep {
-      color: ${unsafeCSS(colors.textMuted)};
-      margin: 0 2px;
-    }
-    .clear-btn {
-      margin-left: auto;
-      background: transparent;
-      border: none;
-      color: ${unsafeCSS(colors.textMuted)};
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 10px;
-      padding: 2px 4px;
-      text-decoration: underline;
-    }
-    .clear-btn:hover {
-      color: ${unsafeCSS(colors.textSecondary)};
-    }
-  `;
+  static styles = [
+    planningChoiceStyles,
+    css`
+      :host {
+        display: block;
+      }
+      .filter-bar {
+        display: flex;
+        align-items: center;
+        gap: ${unsafeCSS(spacing.md)};
+        padding: 6px ${unsafeCSS(spacing.xl)};
+        font-family: ${unsafeCSS(fonts.mono)};
+        font-size: 11px;
+        color: ${unsafeCSS(colors.textSecondary)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        border-bottom: 1px solid ${unsafeCSS(colors.bgCard)};
+        flex-shrink: 0;
+        flex-wrap: wrap;
+        min-height: 32px;
+        box-sizing: border-box;
+      }
+      .label {
+        color: ${unsafeCSS(colors.textMuted)};
+        white-space: nowrap;
+      }
+      .sep {
+        color: ${unsafeCSS(colors.textMuted)};
+        margin: 0 2px;
+      }
+      .clear-btn {
+        margin-left: auto;
+        background: transparent;
+        border: none;
+        color: ${unsafeCSS(colors.textMuted)};
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 10px;
+        padding: 2px 4px;
+        text-decoration: underline;
+      }
+      .clear-btn:hover {
+        color: ${unsafeCSS(colors.textSecondary)};
+      }
+    `,
+  ];
 
   connectedCallback() {
     super.connectedCallback();
@@ -160,32 +135,20 @@ export class GlobalFilterBar extends LitElement {
     return html`
       <div class="filter-bar">
         <span class="label">Projects:</span>
-        <div class="chips">
-          ${projects.map(
-            (p) => html`
-              <button
-                class="chip ${this.selectedProjects.includes(p) ? 'active' : ''}"
-                @click=${() => this._toggleProject(p)}
-              >
-                ${p}
-              </button>
-            `,
-          )}
-        </div>
+        ${renderToggleChips({
+          options: projects,
+          selected: this.selectedProjects,
+          onToggle: (project) => this._toggleProject(project),
+          testId: 'global-filter-projects',
+        })}
         <span class="sep">|</span>
         <span class="label">Machines:</span>
-        <div class="chips">
-          ${machines.map(
-            (m) => html`
-              <button
-                class="chip ${this.selectedMachines.includes(m) ? 'active' : ''}"
-                @click=${() => this._toggleMachine(m)}
-              >
-                ${m}
-              </button>
-            `,
-          )}
-        </div>
+        ${renderToggleChips({
+          options: machines,
+          selected: this.selectedMachines,
+          onToggle: (machine) => this._toggleMachine(machine),
+          testId: 'global-filter-machines',
+        })}
         ${this.hasFilters
           ? html` <button class="clear-btn" @click=${this._clearAll}>Clear</button> `
           : nothing}

@@ -1,6 +1,6 @@
 // backlog-store.ts — durable backlog intake layer with handoff into dispatch queue
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,20 +21,28 @@ import {
   type BacklogListResult,
   type BacklogMarkReadyParams,
   type BacklogSourceKind,
+  type BacklogSpecGetParams,
+  type BacklogSpecGetResult,
   type BacklogStatus,
   type BacklogUpcomingParams,
   type BacklogUpcomingResult,
   type BacklogUpdateParams,
   type BacklogUpdateResult,
+  type DevInteractiveProfile,
   Events,
+  isReviewValidationDepth,
   isTerminalRunStatus,
   normalizeRunTags,
   type OkResult,
   parseGitHubRef,
   PR_BOUND_FLOW_TYPES,
   type QueueItem,
+  type ReviewDepthPolicy,
+  type ReviewLoopRequest,
+  type ReviewRunnerId,
   type Run,
   type RunStatus,
+  type TaskTemplateSelection,
 } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
@@ -48,6 +56,10 @@ import {
 } from '../methods/dispatch/ticket-ref.js';
 import { normalizeRunner, runnerSupportsModel } from '../runners/registry.js';
 import { getAllRuns } from '../runs/store.js';
+import {
+  normalizeTaskTemplateSelection,
+  resolveWorkerTemplateSelection,
+} from '../tasks/worker-template-options.js';
 
 import {
   addItem,
@@ -94,8 +106,19 @@ const BACKLOG_UPDATE_KEYS = new Set([
   'model',
   'scripted',
   'effort',
+  'taskTemplate',
+  'app',
+  'prepareProfile',
+  'mode',
+  'devInteractiveProfile',
+  'reviewDepth',
+  'pendingReviewPlan',
   'launchPlan',
 ]);
+
+const DISPATCH_MODES = new Set(['interactive', 'autonomous']);
+const DEV_INTERACTIVE_PROFILES = new Set(['lightweight', 'reviewed']);
+const REVIEW_RUNNERS = new Set<ReviewRunnerId>(['claude', 'codex', 'cursor', 'grok', 'opencode']);
 
 let _broadcast: BroadcastFn | null = null;
 const items: BacklogItem[] = [];
@@ -228,9 +251,104 @@ function normalizeRunnerHint(value: unknown): string | undefined {
   return runner ? normalizeRunner(runner) : undefined;
 }
 
+function normalizeDispatchMode(value: unknown): BacklogItem['mode'] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || !DISPATCH_MODES.has(value)) {
+    throw new Error('mode must be interactive or autonomous');
+  }
+  return value as BacklogItem['mode'];
+}
+
+function normalizeDevInteractiveProfile(value: unknown): DevInteractiveProfile | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string' || !DEV_INTERACTIVE_PROFILES.has(value)) {
+    throw new Error('devInteractiveProfile must be lightweight or reviewed');
+  }
+  return value as DevInteractiveProfile;
+}
+
+function normalizeBacklogTaskTemplate(
+  flowType: BacklogItem['flowType'],
+  value: unknown,
+): TaskTemplateSelection | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new Error('taskTemplate must be an object');
+  return normalizeTaskTemplateSelection(flowType, {
+    fileName: normalizeExecutionHint(value.fileName, 'taskTemplate.fileName') ?? '',
+    variant:
+      value.variant === null || value.variant === undefined
+        ? null
+        : normalizeExecutionHint(value.variant, 'taskTemplate.variant'),
+  });
+}
+
+function normalizeReviewDepth(value: unknown): ReviewDepthPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isRecord(value)) throw new Error('reviewDepth must be an object');
+  const minimumIndependentReviews = Number(value.minimumIndependentReviews);
+  const extraLoopsRequested = Number(value.extraLoopsRequested);
+  if (!Number.isInteger(minimumIndependentReviews) || minimumIndependentReviews < 0) {
+    throw new Error('reviewDepth.minimumIndependentReviews must be a non-negative integer');
+  }
+  if (!Number.isInteger(extraLoopsRequested) || extraLoopsRequested < 0) {
+    throw new Error('reviewDepth.extraLoopsRequested must be a non-negative integer');
+  }
+  if (typeof value.requireCrossRunner !== 'boolean') {
+    throw new Error('reviewDepth.requireCrossRunner must be a boolean');
+  }
+  if (
+    value.requestedBy !== 'dispatch' &&
+    value.requestedBy !== 'human-gate' &&
+    value.requestedBy !== 'agent-gate'
+  ) {
+    throw new Error('reviewDepth.requestedBy is invalid');
+  }
+  return {
+    minimumIndependentReviews,
+    requireCrossRunner: value.requireCrossRunner,
+    extraLoopsRequested,
+    requestedBy: value.requestedBy,
+  };
+}
+
+function normalizePendingReviewPlan(value: unknown): ReviewLoopRequest[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new Error('pendingReviewPlan must be an array');
+  const plan = value.slice(0, 5).map((entry, index): ReviewLoopRequest => {
+    if (!isRecord(entry)) throw new Error(`pendingReviewPlan[${index}] must be an object`);
+    const runner = normalizeExecutionHint(entry.runner, `pendingReviewPlan[${index}].runner`);
+    if (runner !== 'same' && !REVIEW_RUNNERS.has(runner as ReviewRunnerId)) {
+      throw new Error(`pendingReviewPlan[${index}].runner is invalid`);
+    }
+    const order = Number(entry.order ?? index + 1);
+    if (!Number.isInteger(order) || order < 1) {
+      throw new Error(`pendingReviewPlan[${index}].order must be a positive integer`);
+    }
+    const validationDepth =
+      entry.validationDepth === undefined || entry.validationDepth === null
+        ? undefined
+        : entry.validationDepth;
+    if (validationDepth !== undefined && !isReviewValidationDepth(validationDepth)) {
+      throw new Error(`pendingReviewPlan[${index}].validationDepth is invalid`);
+    }
+    return {
+      order,
+      runner: runner as ReviewLoopRequest['runner'],
+      ...(typeof entry.model === 'string' && entry.model.trim()
+        ? { model: entry.model.trim() }
+        : {}),
+      ...(validationDepth ? { validationDepth } : {}),
+    };
+  });
+  return plan.length > 0 ? plan : undefined;
+}
+
 function assertExecutionHintsCompatible(item: BacklogItem): void {
   if (item.runner && item.model && !runnerSupportsModel(item.runner, item.model)) {
     throw new Error(`model ${item.model} is not compatible with runner ${item.runner}`);
+  }
+  if (item.taskTemplate) {
+    normalizeBacklogTaskTemplate(item.flowType, item.taskTemplate);
   }
   for (const candidate of item.launchPlan?.candidates ?? []) {
     const runner = candidate.runner ?? item.runner;
@@ -329,6 +447,14 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
     : undefined;
   const model = normalizeOptionalString(raw.model);
   const effort = normalizeOptionalString(raw.effort);
+  const parsedFlowType = flowType as BacklogItem['flowType'];
+  const taskTemplate = normalizeBacklogTaskTemplate(parsedFlowType, raw.taskTemplate);
+  const app = normalizeOptionalString(raw.app);
+  const prepareProfile = normalizeOptionalString(raw.prepareProfile);
+  const mode = normalizeDispatchMode(raw.mode);
+  const devInteractiveProfile = normalizeDevInteractiveProfile(raw.devInteractiveProfile);
+  const reviewDepth = normalizeReviewDepth(raw.reviewDepth);
+  const pendingReviewPlan = normalizePendingReviewPlan(raw.pendingReviewPlan);
   const launchPlan = normalizeLaunchPlan(raw.launchPlan);
   const launchPlanState = isRecord(raw.launchPlanState)
     ? {
@@ -378,7 +504,7 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
     sourceKind: sourceKind as BacklogSourceKind,
     sourceRef,
     ...(typeof raw.sourceUrl === 'string' && raw.sourceUrl ? { sourceUrl: raw.sourceUrl } : {}),
-    flowType: flowType as BacklogItem['flowType'],
+    flowType: parsedFlowType,
     status: status as BacklogStatus,
     ...(typeof raw.notes === 'string' ? { notes: raw.notes } : {}),
     ...(tags.length > 0 ? { tags } : {}),
@@ -394,6 +520,13 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
     ...(runner ? { runner } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
+    ...(taskTemplate ? { taskTemplate } : {}),
+    ...(app ? { app } : {}),
+    ...(prepareProfile ? { prepareProfile } : {}),
+    ...(mode ? { mode } : {}),
+    ...(devInteractiveProfile ? { devInteractiveProfile } : {}),
+    ...(reviewDepth ? { reviewDepth } : {}),
+    ...(pendingReviewPlan ? { pendingReviewPlan } : {}),
     ...(launchPlan ? { launchPlan } : {}),
     ...(launchPlanState?.launchGroupId ? { launchPlanState } : {}),
     createdAt,
@@ -812,6 +945,13 @@ export async function createBacklogItem(
     const runner = normalizeRunnerHint(params.runner);
     const model = normalizeExecutionHint(params.model, 'model');
     const effort = normalizeExecutionHint(params.effort, 'effort');
+    const taskTemplate = normalizeBacklogTaskTemplate(params.flowType, params.taskTemplate);
+    const app = normalizeOptionalString(params.app);
+    const prepareProfile = normalizeOptionalString(params.prepareProfile);
+    const mode = normalizeDispatchMode(params.mode);
+    const devInteractiveProfile = normalizeDevInteractiveProfile(params.devInteractiveProfile);
+    const reviewDepth = normalizeReviewDepth(params.reviewDepth);
+    const pendingReviewPlan = normalizePendingReviewPlan(params.pendingReviewPlan);
     const launchPlan = normalizeLaunchPlan(params.launchPlan);
     const now = new Date().toISOString();
     const item: BacklogItem = {
@@ -834,6 +974,13 @@ export async function createBacklogItem(
       ...(model ? { model } : {}),
       ...(params.scripted ? { scripted: params.scripted } : {}),
       ...(effort ? { effort } : {}),
+      ...(taskTemplate ? { taskTemplate } : {}),
+      ...(app ? { app } : {}),
+      ...(prepareProfile ? { prepareProfile } : {}),
+      ...(mode ? { mode } : {}),
+      ...(devInteractiveProfile ? { devInteractiveProfile } : {}),
+      ...(reviewDepth ? { reviewDepth } : {}),
+      ...(pendingReviewPlan ? { pendingReviewPlan } : {}),
       ...(launchPlan ? { launchPlan } : {}),
       createdAt: now,
       updatedAt: now,
@@ -1032,6 +1179,56 @@ export async function updateBacklogItem(params: BacklogUpdateParams): Promise<Ba
         if (effort) item.effort = effort;
         else delete item.effort;
       }
+      if (params.taskTemplate !== undefined) {
+        const taskTemplate =
+          params.taskTemplate === null
+            ? undefined
+            : normalizeBacklogTaskTemplate(item.flowType, params.taskTemplate);
+        if (taskTemplate) item.taskTemplate = taskTemplate;
+        else delete item.taskTemplate;
+      } else if (item.taskTemplate) {
+        item.taskTemplate = normalizeBacklogTaskTemplate(item.flowType, item.taskTemplate);
+      }
+      if (params.app !== undefined) {
+        const app = params.app === null ? undefined : normalizeOptionalString(params.app);
+        if (app) item.app = app;
+        else delete item.app;
+      }
+      if (params.prepareProfile !== undefined) {
+        const prepareProfile =
+          params.prepareProfile === null
+            ? undefined
+            : normalizeOptionalString(params.prepareProfile);
+        if (prepareProfile) item.prepareProfile = prepareProfile;
+        else delete item.prepareProfile;
+      }
+      if (params.mode !== undefined) {
+        const mode = params.mode === null ? undefined : normalizeDispatchMode(params.mode);
+        if (mode) item.mode = mode;
+        else delete item.mode;
+      }
+      if (params.devInteractiveProfile !== undefined) {
+        const devInteractiveProfile =
+          params.devInteractiveProfile === null
+            ? undefined
+            : normalizeDevInteractiveProfile(params.devInteractiveProfile);
+        if (devInteractiveProfile) item.devInteractiveProfile = devInteractiveProfile;
+        else delete item.devInteractiveProfile;
+      }
+      if (params.reviewDepth !== undefined) {
+        const reviewDepth =
+          params.reviewDepth === null ? undefined : normalizeReviewDepth(params.reviewDepth);
+        if (reviewDepth) item.reviewDepth = reviewDepth;
+        else delete item.reviewDepth;
+      }
+      if (params.pendingReviewPlan !== undefined) {
+        const pendingReviewPlan =
+          params.pendingReviewPlan === null
+            ? undefined
+            : normalizePendingReviewPlan(params.pendingReviewPlan);
+        if (pendingReviewPlan) item.pendingReviewPlan = pendingReviewPlan;
+        else delete item.pendingReviewPlan;
+      }
       if (params.launchPlan !== undefined) {
         if (params.launchPlan === null) {
           delete item.launchPlan;
@@ -1096,6 +1293,19 @@ export async function markBacklogItemReady(
     broadcastBacklog();
     return { item };
   });
+}
+
+export async function getBacklogSpec(params: BacklogSpecGetParams): Promise<BacklogSpecGetResult> {
+  const item = getItem(params.itemId);
+  if (!item.specPath) throw new Error(`Backlog item has no attached spec: ${params.itemId}`);
+  const absolute = resolveSpecPath(item.specPath);
+  const content = await readFile(absolute, 'utf-8');
+  return {
+    itemId: item.id,
+    path: item.specPath,
+    content,
+    hash: createHash('sha256').update(content).digest('hex'),
+  };
 }
 
 export async function markBacklogItemNeedsAttention(params: {
@@ -1183,6 +1393,22 @@ async function buildManualTicketData(
   };
 }
 
+async function resolveBacklogTaskTemplate(
+  item: BacklogItem,
+): Promise<TaskTemplateSelection | undefined> {
+  if (!item.taskTemplate) return undefined;
+  const projectVars = await loadProjectVars(item.project);
+  const selectedTemplate = await resolveWorkerTemplateSelection(
+    projectVars,
+    item.flowType,
+    item.taskTemplate,
+  );
+  return {
+    fileName: selectedTemplate.fileName,
+    variant: selectedTemplate.variant,
+  };
+}
+
 function queueFieldsForSlotPolicy(policy: BacklogLaunchSlotPolicy): {
   slotId?: string;
   allowedSlots?: string[];
@@ -1200,6 +1426,7 @@ async function buildBacklogQueueParams(
 ): Promise<InternalDispatchQueueAddParams> {
   const slotFields = candidate ? queueFieldsForSlotPolicy(candidate.slotPolicy) : {};
   const isComparison = candidate?.role === 'comparison';
+  const taskTemplate = candidate ? undefined : await resolveBacklogTaskTemplate(item);
   return {
     backlogItemId: item.id,
     workGraphId: options.workGraphId,
@@ -1229,6 +1456,13 @@ async function buildBacklogQueueParams(
     model: candidate?.model ?? item.model,
     scripted: item.scripted,
     effort: candidate?.effort ?? item.effort,
+    taskTemplate,
+    app: item.app,
+    prepareProfile: item.prepareProfile,
+    mode: item.mode,
+    devInteractiveProfile: item.devInteractiveProfile,
+    reviewDepth: item.reviewDepth,
+    pendingReviewPlan: item.pendingReviewPlan,
     // Backlog handoff persists queue+backlog links before dispatch can consume the queue item.
     autoDispatch: false,
   };

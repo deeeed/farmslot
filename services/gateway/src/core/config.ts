@@ -28,6 +28,7 @@ const projectsDir = path.join(farmslotRoot, 'projects');
  */
 export function isIgnoredPoolFile(file: string): boolean {
   if (!file.endsWith('.json')) return true;
+  if (/^agent-contexts-\d+\.json$/.test(file)) return true;
   if (file === 'example.json') return true;
   if (file === 'farmslot-demo.json') return process.env.FARMSLOT_DEMO_POOL !== '1';
   return false;
@@ -261,6 +262,7 @@ export interface RawProjectJson {
     runner?: string;
     model?: string;
     runner_command?: string;
+    farmslot_command?: string;
   };
   prepare?: {
     default?: string;
@@ -318,6 +320,7 @@ export interface ProjectVars {
   projectFixturesDir: string;
   projectTemplatesDir: string;
   projectJson: RawProjectJson;
+  roadmap?: ProjectConfig['roadmap'];
   runtimeDir: string;
   artifactDir: string;
   recipeDir?: string;
@@ -501,6 +504,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
   const runtimeDir = projectJson.paths?.runtime_dir || '.agent';
   const artifactDir = projectJson.paths?.artifact_dir || '.task';
   const recipeDir = projectJson.paths?.recipe_dir || `${runtimeDir}/recipes`;
+  const roadmap = normalizeRawProjectRoadmap(projectJson.roadmap);
 
   const value: ProjectVars = {
     projectName,
@@ -508,6 +512,7 @@ export async function loadProjectVars(projectName: string): Promise<ProjectVars>
     projectFixturesDir,
     projectTemplatesDir,
     projectJson,
+    ...(roadmap ? { roadmap } : {}),
     runtimeDir,
     artifactDir,
     recipeDir,
@@ -662,6 +667,9 @@ export function validateRoadmapConfig(projectJson: RawProjectJson, projectConfig
   }
   if (cfg.runner_command !== undefined && typeof cfg.runner_command !== 'string') {
     throw new Error(`${projectConfig}: roadmap.runner_command must be a string`);
+  }
+  if (cfg.farmslot_command !== undefined && typeof cfg.farmslot_command !== 'string') {
+    throw new Error(`${projectConfig}: roadmap.farmslot_command must be a string`);
   }
 }
 
@@ -843,7 +851,18 @@ export function normalizeRawProjectRoadmap(
     typeof raw.runner_command === 'string' && raw.runner_command.trim()
       ? raw.runner_command.trim()
       : undefined;
-  if (!refinementPrompt && !refinementPromptPath && !runner && !model && !runnerCommand)
+  const farmslotCommand =
+    typeof raw.farmslot_command === 'string' && raw.farmslot_command.trim()
+      ? raw.farmslot_command.trim()
+      : undefined;
+  if (
+    !refinementPrompt &&
+    !refinementPromptPath &&
+    !runner &&
+    !model &&
+    !runnerCommand &&
+    !farmslotCommand
+  )
     return undefined;
   return {
     ...(refinementPrompt ? { refinementPrompt } : {}),
@@ -851,6 +870,7 @@ export function normalizeRawProjectRoadmap(
     ...(runner ? { runner } : {}),
     ...(model ? { model } : {}),
     ...(runnerCommand ? { runnerCommand } : {}),
+    ...(farmslotCommand ? { farmslotCommand } : {}),
   };
 }
 

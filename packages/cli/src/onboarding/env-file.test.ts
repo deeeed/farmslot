@@ -44,6 +44,32 @@ test('loadCheckoutEnv fills from .env.ports but never overrides the shell', () =
   }
 });
 
+test('loadCheckoutEnv derives GW_URL from GATEWAY_PORT when not explicitly configured', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-envfile-'));
+  writeFileSync(join(root, '.env.ports'), 'GATEWAY_PORT=7801\nFARMSLOT_HOME=~/.farmslot-dev\n');
+  try {
+    const env: NodeJS.ProcessEnv = {};
+    loadCheckoutEnv(root, env);
+    assert.equal(env.GATEWAY_PORT, '7801');
+    assert.equal(env.GW_URL, 'ws://localhost:7801');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('loadCheckoutEnv keeps explicit GW_URL over derived GATEWAY_PORT target', () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-envfile-'));
+  writeFileSync(join(root, '.env.ports'), 'GATEWAY_PORT=7801\n');
+  writeFileSync(join(root, '.env'), 'GW_URL=ws://localhost:9999\n');
+  try {
+    const env: NodeJS.ProcessEnv = {};
+    loadCheckoutEnv(root, env);
+    assert.equal(env.GW_URL, 'ws://localhost:9999');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('.env.ports takes precedence over .env (loaded first, non-override)', () => {
   const root = mkdtempSync(join(tmpdir(), 'fs-envfile-'));
   writeFileSync(join(root, '.env.ports'), 'FOO=from-ports\n');

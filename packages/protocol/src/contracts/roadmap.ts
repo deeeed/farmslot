@@ -22,6 +22,7 @@ export interface RoadmapSource {
 export interface RoadmapPromotionEntry {
   backlogItemId?: string;
   specPath?: string;
+  project?: string;
   createdAt: string;
 }
 
@@ -29,6 +30,7 @@ export interface RoadmapItem {
   id: string;
   kind: 'roadmap-item';
   project: string;
+  targetProjects?: string[];
   title: string;
   stage: RoadmapItemStage;
   tags?: string[];
@@ -39,6 +41,8 @@ export interface RoadmapItem {
   updatedAt: string;
   /** Repo-relative markdown file path under .roadmap. */
   filePath: string;
+  /** Latest repo-relative refinement prompt path generated for this item, when present. */
+  refinementPromptPath?: string;
   /** SHA-256 of the current markdown file, used for edit conflict checks. */
   fileHash: string;
 }
@@ -46,6 +50,7 @@ export interface RoadmapItem {
 export interface RoadmapItemSaveInput {
   id?: string;
   project?: string;
+  targetProjects?: string[];
   title: string;
   stage?: RoadmapItemStage;
   tags?: string[];

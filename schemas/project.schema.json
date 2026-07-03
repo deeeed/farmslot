@@ -101,6 +101,10 @@
           "type": "string",
           "description": "Optional command template launched for roadmap refinement. Supports {{runner}}, {{model}}, {{prompt_path}}, and {{item_file}}; if no prompt placeholder is present the prompt path is appended. When omitted, the selected runner is launched in tmux with the rendered prompt as context."
         },
+        "farmslot_command": {
+          "type": "string",
+          "description": "Optional Farmslot CLI executable prefix used when constructing discoverable roadmap commands. Defaults to farmslot; dev checkouts may set this to yarn workspace @farmslot/cli farmslot or another wrapper."
+        },
         "runner": {
           "type": "string",
           "description": "Default runner id for roadmap refinement sessions, e.g. claude or codex."

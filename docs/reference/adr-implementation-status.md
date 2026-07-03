@@ -1,7 +1,7 @@
 # ADR Implementation Status
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-07-03 (ADR-048 initial implementation)
+**Last updated:** 2026-07-03 (ADR-048 initial implementation + ADR-040/041 roadmap-to-work-graph partial implementation refresh)
 **Stale by:** 2026-09-08
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
@@ -31,8 +31,8 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [037](../adr/037-prepare-profiles.md)                      | Prepare profiles                  | Accepted   | Shipped        | Automatic profile selection deferred by ADR                          |
 | [038](../adr/038-gate-held-worker-session.md)              | Gate-held worker session          | Accepted   | Partial        | Companion gate-held affordances; optional pane-died softening        |
 | [039](../adr/039-run-portable-bundles.md)                  | Portable run bundles              | Accepted   | Shipped        | v1.1 selectors, CC export UI, `--seed-eval` helper                   |
-| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration          | Proposed   | Not started    | Proposed DAG scheduler over dispatchable backlog items               |
-| [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement  | Proposed   | Not started    | Proposed markdown roadmap/refinement/promotion layer                 |
+| [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration          | Proposed   | Partial        | Scheduler/graph UI exists; dispatch config parity + E2E polish open  |
+| [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement  | Proposed   | Partial        | Multi-project `targetProjects` + project-aware promotion fan-out     |
 | [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches            | Accepted   | Partial        | `release.ts` idle reset; configurable tracking branch + rebase merge |
 | [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel      | Accepted   | In progress    | Experimental read-only transcript mirror on active sessions          |
 | [048](../adr/048-interactive-operator-packets.md)          | Interactive operator packets      | Accepted   | Partial        | Eval/replay packet response persistence remains open                 |
@@ -204,31 +204,38 @@ yarn farmslot recipe validate ../../docs/examples/recipes/farmslot/command-cente
 
 ## ADR-040 — Work-Graph Orchestration (Proposed)
 
-**Implementation: Not started**
+**Implementation: Partial (foundation exists; product closure open)**
 
-ADR-040 is design intent only. It should not be implemented until a ROADMAP-next milestone accepts the v1 graph scheduler scope, after ADR-041 promotion plus the flat backlog path are proven.
+ADR-040 remains Proposed as an ADR, but its v1 implementation is now partially present.
+The shipped slice is useful for dogfooding roadmap promotion into graph-linked backlog
+items, but it is not yet a complete execution product.
 
-| ADR requirement                                    | Status      | Evidence / gap                                |
-| -------------------------------------------------- | ----------- | --------------------------------------------- |
-| WorkGraph / WorkNode / WorkEdge protocol contracts | Not started | Proposed in ADR-040                           |
-| Gateway graph store + action ledger                | Not started | Proposed sibling store to backlog             |
-| Scheduler events and graph enqueue authority       | Not started | Proposed glue over backlog/queue/run/ci-watch |
-| Command Center graph surface                       | Not started | Proposed read-only v1 surface                 |
+| ADR requirement                                    | Status  | Evidence / gap                                                                                                                        |
+| -------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| WorkGraph / WorkNode / WorkEdge protocol contracts | Shipped | Protocol contracts and graph state are present                                                                                        |
+| Gateway graph store + action ledger                | Partial | Graph store/projection exists; restart and ledger edge cases need more E2E coverage                                                   |
+| Scheduler events and graph enqueue authority       | Partial | Graph-linked backlog items route through `workGraph.schedulerTick`; result UX and queue linkage still need polish                     |
+| Command Center graph surface                       | Partial | Graph/node URL state, selected-node styling, and slot filtering exist; config/review flows remain incomplete                          |
+| Dispatch configuration parity                      | Partial | Shared runner/model/effort control exists; mode, task template, prepare profile, and publication review reuse are still being unified |
+| Roadmap promotion into graph-linked backlog specs  | Partial | Promotion can draft graph/backlog outputs; review/accept UI and attachment visibility are still rough                                 |
 
 ---
 
 ## ADR-041 — Operator Roadmap Idea Refinement Layer (Proposed)
 
-**Implementation: Not started**
+**Implementation: Partial (capture/refine/promotion scaffolding exists)**
 
-ADR-041 is design intent only. It should not be implemented until a roadmap milestone accepts the markdown-backed roadmap/refinement/promotion scope; it is the prerequisite planning layer before ADR-040 graph execution.
+ADR-041 remains Proposed as an ADR, but markdown-backed roadmap capture/refinement and
+promotion scaffolding now exist. The current implementation is intentionally not marked
+shipped because the human review loop and promotion-to-backlog UX still need closure.
 
-| ADR requirement                                      | Status      | Evidence / gap                                    |
-| ---------------------------------------------------- | ----------- | ------------------------------------------------- |
-| `{farmslotRoot}/.roadmap` markdown index             | Not started | Proposed in ADR-041                               |
-| Tmux refinement helper outside dispatch/run families | Not started | Proposed tmux runner helper, no `run.create`      |
-| Roadmap promotion to backlog markdown specs with ACs | Not started | Proposed bridge to PR #95 backlog intake          |
-| Roadmap/backlog/run tag convergence                  | Not started | Proposed compatibility path for existing run tags |
+| ADR requirement                                      | Status  | Evidence / gap                                                                                     |
+| ---------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `{farmslotRoot}/.roadmap` markdown index             | Partial | Markdown item and draft attachment paths exist; runtime state must remain uncommitted              |
+| Tmux refinement helper outside dispatch/run families | Partial | Runner launch/attach exists; session reuse, prompt clarity, and terminal handoff need polish       |
+| Roadmap promotion to backlog markdown specs with ACs | Partial | Multi-project drafts and promotion requests exist; accept/revise/review UX is still incomplete     |
+| Roadmap/backlog/run tag convergence                  | Partial | Shared tags/links are in progress; full propagation through backlog, graph, and runs is not proven |
+| Draft attachment review                              | Partial | Draft spec files can be generated; Command Center needs clearer attachment review/edit affordances |
 
 ---
 

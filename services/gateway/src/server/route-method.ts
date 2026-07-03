@@ -11,6 +11,7 @@ import {
   type BacklogEnqueueParams,
   type BacklogListParams,
   type BacklogMarkReadyParams,
+  type BacklogSpecGetParams,
   type BacklogUpcomingParams,
   type BacklogUpdateParams,
   type ChatAbortParams,
@@ -114,6 +115,11 @@ import {
   type RoadmapGetParams,
   type RoadmapListParams,
   type RoadmapPromoteParams,
+  type RoadmapPromotionDraftGetParams,
+  type RoadmapPromotionDraftListParams,
+  type RoadmapPromotionDraftSaveParams,
+  type RoadmapPromptGetParams,
+  type RoadmapRefinementSessionGetParams,
   type RoadmapRefineParams,
   type RoadmapSaveParams,
   type SearchQueryParams,
@@ -190,6 +196,7 @@ import {
   backlogEnqueue,
   backlogList,
   backlogMarkReady,
+  backlogSpecGet,
   backlogUpcoming,
   backlogUpdate,
 } from '../methods/backlog.js';
@@ -309,7 +316,12 @@ import {
   roadmapGet,
   roadmapList,
   roadmapPromote,
+  roadmapPromotionDraftGet,
+  roadmapPromotionDraftList,
+  roadmapPromotionDraftSave,
+  roadmapPromptGet,
   roadmapRefine,
+  roadmapRefinementSessionGet,
   roadmapSave,
 } from '../methods/roadmap.js';
 import { searchQuery } from '../methods/search.js';
@@ -524,6 +536,8 @@ export async function routeMethod(
       return backlogAutoDispatchTick((p ?? {}) as BacklogAutoDispatchTickParams);
     case Methods.BACKLOG_UPCOMING:
       return backlogUpcoming((p ?? {}) as BacklogUpcomingParams);
+    case Methods.BACKLOG_SPEC_GET:
+      return backlogSpecGet(p as BacklogSpecGetParams);
 
     // Work Graph
     case Methods.WORK_GRAPH_CREATE:
@@ -562,6 +576,16 @@ export async function routeMethod(
       return roadmapDelete(p as RoadmapDeleteParams);
     case Methods.ROADMAP_REFINE:
       return roadmapRefine(p as RoadmapRefineParams);
+    case Methods.ROADMAP_REFINEMENT_SESSION_GET:
+      return roadmapRefinementSessionGet(p as RoadmapRefinementSessionGetParams);
+    case Methods.ROADMAP_PROMPT_GET:
+      return roadmapPromptGet(p as RoadmapPromptGetParams);
+    case Methods.ROADMAP_PROMOTION_DRAFT_LIST:
+      return roadmapPromotionDraftList(p as RoadmapPromotionDraftListParams);
+    case Methods.ROADMAP_PROMOTION_DRAFT_GET:
+      return roadmapPromotionDraftGet(p as RoadmapPromotionDraftGetParams);
+    case Methods.ROADMAP_PROMOTION_DRAFT_SAVE:
+      return roadmapPromotionDraftSave(p as RoadmapPromotionDraftSaveParams);
     case Methods.ROADMAP_PROMOTE:
       return roadmapPromote(p as RoadmapPromoteParams);
 

@@ -54,6 +54,13 @@ export class SlotSelectorModal extends LitElement {
   @property() heading = 'Select slots';
   @state() private _query = '';
 
+  private _onKeydown = (event: KeyboardEvent) => {
+    if (!this.open || event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    this._setOpen(false);
+  };
+
   static styles = css`
     :host {
       color: ${unsafeCSS(colors.textPrimary)};
@@ -219,6 +226,16 @@ export class SlotSelectorModal extends LitElement {
     }
   `;
 
+  connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener('keydown', this._onKeydown);
+  }
+
+  disconnectedCallback() {
+    document.removeEventListener('keydown', this._onKeydown);
+    super.disconnectedCallback();
+  }
+
   private get _visibleSlots(): SlotStatus[] {
     const query = this._query.trim().toLowerCase();
     return this.slots
@@ -361,7 +378,7 @@ export class SlotSelectorModal extends LitElement {
             <span class="muted">${this.selected.length} selected</span>
             <div class="chips">
               <button class="secondary" @click=${this._clear}>Clear</button>
-              <button @click=${() => this._setOpen(false)}>Done</button>
+              <button @click=${() => this._setOpen(false)}>Done (Esc)</button>
             </div>
           </footer>
         </section>

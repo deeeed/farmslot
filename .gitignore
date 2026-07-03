@@ -25,6 +25,10 @@ copilot/notified-decisions.json
 .monitor_state.json
 .dispatch-queue.json
 .farm-cache/
+.roadmap/
+.backlog.json
+.backlog/
+.work-graphs/
 
 # Run archives (per-run folders with artifacts, tasks, run records)
 projects/*/runs/

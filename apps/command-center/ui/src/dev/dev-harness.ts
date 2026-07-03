@@ -15,6 +15,7 @@ import type {
   PRStatus,
   QueueItem,
   ResultPackageManifest,
+  RoadmapItem,
   Run,
   SlotHealth,
   SlotStatus,
@@ -58,6 +59,8 @@ import '../components/shared/diff-viewer-modal.js';
 import '../components/workspace/review-workspace.js';
 import '../components/workspace/ready-workspace.js';
 import '../components/shared/global-filter-bar.js';
+import '../components/shared/runner-model-effort-picker.js';
+import '../components/shared/slot-choice-list.js';
 import '../components/shared/slot-selector-modal.js';
 import '../components/runs/family-observability.js';
 import '../components/intelligence-audit/intelligence-audit-panel.js';
@@ -67,6 +70,7 @@ import '../components/evals/eval-cockpit.js';
 import '../components/queue/dispatch-queue-panel.js';
 import '../components/dispatch/dispatch-wizard.js';
 import '../components/backlog/backlog-panel.js';
+import '../components/roadmap/roadmap-panel.js';
 import '../components/work-graph/work-graph-panel.js';
 import '../components/resources/resource-panel.js';
 import '../components/device-grid/device-grid.js';
@@ -79,6 +83,8 @@ import '../components/slot-actions/slot-actions-modal.js';
 import '../components/shared/update-banner.js';
 
 import { buildCaseCatalog, catalogItemFromManual } from '../components/evals/eval-suite-helpers.js';
+import type { RunnerModelEffortChangeDetail } from '../components/shared/runner-model-effort-picker.js';
+import type { SlotChoiceChangeDetail } from '../components/shared/slot-choice-list.js';
 import type { StreamFeed } from '../components/stream-feed/stream-feed.js';
 import {
   type AppStateSliceSnapshot,
@@ -91,6 +97,7 @@ import {
   updateRuns,
 } from '../state.js';
 import { colors, fonts, spacing } from '../styles/theme-tokens.js';
+import type { EffortLevel } from '../utils/runner-options.js';
 
 import {
   mockDecisions,
@@ -143,6 +150,7 @@ type DevRoute =
   | 'dispatch-wizard'
   | 'dispatch-queue'
   | 'backlog'
+  | 'roadmap'
   | 'stream-feed'
   | 'runs'
   | 'run-detail'
@@ -154,6 +162,8 @@ type DevRoute =
   | 'review-workspace'
   | 'ready-workspace'
   | 'global-filter'
+  | 'runner-model-effort'
+  | 'slot-choice-list'
   | 'slot-selector'
   | 'step-inspector'
   | 'step-artifacts'
@@ -191,6 +201,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'dispatch-wizard', label: 'Dispatch Wizard', group: 'screens' },
   { route: 'dispatch-queue', label: 'Dispatch Queue', group: 'screens' },
   { route: 'backlog', label: 'Backlog', group: 'screens' },
+  { route: 'roadmap', label: 'Roadmap', group: 'screens' },
   { route: 'work-graph', label: 'Work Graph Epic Demo', group: 'screens' },
   { route: 'runs', label: 'Runs', group: 'screens' },
   { route: 'run-detail', label: 'Run Detail', group: 'screens' },
@@ -225,6 +236,8 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'pipeline', label: 'Pipeline', group: 'components' },
   { route: 'pipeline-mini', label: 'Pipeline Mini', group: 'components' },
   { route: 'global-filter', label: 'Global Filter', group: 'components' },
+  { route: 'runner-model-effort', label: 'Runner Model Effort', group: 'components' },
+  { route: 'slot-choice-list', label: 'Slot Choice List', group: 'components' },
   { route: 'slot-selector', label: 'Slot Selector', group: 'components' },
   { route: 'step-inspector', label: 'Step Inspector', group: 'components' },
   { route: 'step-artifacts', label: 'Step Artifacts', group: 'components' },
@@ -252,6 +265,10 @@ export class DevHarness extends LitElement {
   @state() private _feedRunning = false;
   @state() private _diffViewerModalOpen = true;
   @state() private _slotSelectorSelection = ['runner-local-mobile-2'];
+  @state() private _slotChoiceSelection = ['runner-local-mobile-2'];
+  @state() private _pickerRunner = 'codex';
+  @state() private _pickerModel = 'gpt-5.5';
+  @state() private _pickerEffort: EffortLevel = 'medium';
   private _stateSnapshot: AppStateSliceSnapshot | null = null;
   private _metroInterval: ReturnType<typeof setInterval> | null = null;
   private _mockSource1: MockH264Source | null = null;
@@ -390,6 +407,8 @@ export class DevHarness extends LitElement {
         return this.renderDispatchQueue();
       case 'backlog':
         return this.renderBacklog();
+      case 'roadmap':
+        return this.renderRoadmap();
       case 'stream-feed':
         return this.renderStreamFeed();
       case 'runs':
@@ -412,6 +431,10 @@ export class DevHarness extends LitElement {
         return this.renderReadyWorkspace();
       case 'global-filter':
         return this.renderGlobalFilter();
+      case 'runner-model-effort':
+        return this.renderRunnerModelEffortPicker();
+      case 'slot-choice-list':
+        return this.renderSlotChoiceList();
       case 'slot-selector':
         return this.renderSlotSelector();
       case 'step-inspector':
@@ -3021,6 +3044,92 @@ All checks passed.`;
     return html`<backlog-panel .items=${items} .slots=${mockFleetSlots()}></backlog-panel>`;
   }
 
+  private renderRoadmap() {
+    const now = new Date().toISOString();
+    const item: RoadmapItem = {
+      id: 'ri_dev_refined',
+      kind: 'roadmap-item',
+      project: 'farmslot-farm',
+      targetProjects: ['metamask-extension-farm', 'metamask-mobile-farm'],
+      title: 'Dev harness refined roadmap item',
+      stage: 'refined',
+      tags: ['roadmap', 'dev-harness'],
+      source: { kind: 'manual' },
+      body: [
+        '## Problem',
+        '',
+        'A rough idea was refined into separate client backlog drafts.',
+        '',
+        '## Proposed Solution',
+        '',
+        'Create one follow-up backlog item per target client.',
+        '',
+        '## Non-goals',
+        '',
+        '- Do not dispatch automatically.',
+        '',
+        '## Risks',
+        '',
+        '- Client contracts may drift if drafts are unclear.',
+        '',
+        '## Dispatch Notes',
+        '',
+        'Review each draft before promotion.',
+        '',
+        '## Acceptance Criteria',
+        '',
+        '- Drafts can be reviewed and edited before promotion.',
+        '',
+        '## Backlog Drafts',
+        '',
+        '### Backlog Draft: Extension client follow-up',
+        '',
+        'Project: `metamask-extension-farm`',
+        '',
+        '#### Implementation Notes',
+        '',
+        '- Consume the updated controller analytics contract.',
+        '',
+        '## Acceptance Criteria',
+        '',
+        '- Extension emits the updated analytics fields.',
+        '',
+        '### Backlog Draft: Mobile client follow-up',
+        '',
+        'Project: `metamask-mobile-farm`',
+        '',
+        '#### Implementation Notes',
+        '',
+        '- Consume the updated controller analytics contract.',
+        '',
+        '## Acceptance Criteria',
+        '',
+        '- Mobile emits the updated analytics fields.',
+      ].join('\n'),
+      createdAt: now,
+      updatedAt: now,
+      filePath: '.roadmap/inbox/items/dev-harness-refined-roadmap-item.md',
+      fileHash: 'dev-roadmap-hash',
+    };
+    this._captureSharedState();
+    updateFleet({
+      summary: {
+        total: 2,
+        ready: 2,
+        busy: 0,
+        held: 0,
+        manual: 0,
+        disabled: 0,
+        blocked: 0,
+        warmCount: 2,
+      },
+      machines: [],
+      slots: mockFleetSlots(),
+      checkedAt: now,
+    });
+    return html`<roadmap-panel .items=${[item]} .slots=${mockFleetSlots()}></roadmap-panel>`;
+  }
+
   private renderDispatchQueue() {
     const nowIso = (offsetMin: number) => new Date(Date.now() - offsetMin * 60_000).toISOString();
     const items: QueueItem[] = [
@@ -3243,6 +3352,63 @@ All checks passed.`;
     `;
   }
 
+  private renderRunnerModelEffortPicker() {
+    const onChange = (event: CustomEvent<RunnerModelEffortChangeDetail>) => {
+      this._pickerRunner = event.detail.runner;
+      this._pickerModel = event.detail.model;
+      this._pickerEffort = event.detail.effort;
+    };
+    return html`
+      <div style="padding: 20px; background: ${colors.bgBase}; min-height: 70vh;">
+        <h3 style="color: ${colors.textPrimary}; margin-bottom: 16px">
+          Runner / Model / Effort Picker
+        </h3>
+        <div style="display: grid; gap: 20px; max-width: 920px; color: ${colors.textPrimary};">
+          <section
+            style="border: 1px solid ${colors.bgCard}; border-radius: 8px; padding: 16px; background: ${colors.bgSurface};"
+          >
+            <div style="color:${colors.textMuted}; font-size: 12px; margin-bottom: 12px;">
+              Dispatch mode
+            </div>
+            <runner-model-effort-picker
+              .runner=${this._pickerRunner}
+              .model=${this._pickerModel}
+              .effort=${this._pickerEffort}
+              @runner-model-effort-change=${onChange}
+            ></runner-model-effort-picker>
+          </section>
+          <section
+            style="border: 1px solid ${colors.bgCard}; border-radius: 8px; padding: 16px; background: ${colors.bgSurface};"
+          >
+            <div style="color:${colors.textMuted}; font-size: 12px; margin-bottom: 12px;">
+              Backlog/WorkGraph mode with default option
+            </div>
+            <runner-model-effort-picker
+              .runner=${this._pickerRunner}
+              .model=${this._pickerModel}
+              .effort=${this._pickerEffort}
+              .allowDefault=${true}
+              @runner-model-effort-change=${onChange}
+            ></runner-model-effort-picker>
+          </section>
+          <pre
+            style="margin: 0; color: ${colors.textSecondary}; background: ${colors.bgCard}; padding: 12px; border-radius: 8px;"
+          >
+${JSON.stringify(
+              {
+                runner: this._pickerRunner,
+                model: this._pickerModel,
+                effort: this._pickerEffort,
+              },
+              null,
+              2,
+            )}</pre
+          >
+        </div>
+      </div>
+    `;
+  }
+
   private renderSlotSelector() {
     const slots = mockFleetSlots();
     return html`
@@ -3267,6 +3433,33 @@ All checks passed.`;
             this._slotSelectorSelection = event.detail.selected;
           }}
         ></slot-selector-modal>
+      </div>
+    `;
+  }
+
+  private renderSlotChoiceList() {
+    const slots = mockFleetSlots().filter((slot) => slot.project === 'example-mobile');
+    return html`
+      <div style="padding: 20px; background: ${colors.bgBase}; min-height: 70vh;">
+        <h3 style="color: ${colors.textPrimary}; margin-bottom: 16px">Slot Choice List</h3>
+        <p style="color: ${colors.textMuted}; max-width: 720px;">
+          Compact dispatch-style slot rows for backlog and WorkGraph allowed-slot selection.
+        </p>
+        <div style="margin: 16px 0; color: ${colors.textPrimary};">
+          Allowed slots: ${this._slotChoiceSelection.join(', ') || 'any eligible'}
+        </div>
+        <div
+          style="max-width: 920px; border: 1px solid ${colors.bgCard}; border-radius: 8px; padding: 16px; background: ${colors.bgSurface};"
+        >
+          <slot-choice-list
+            project="example-mobile"
+            .slots=${slots}
+            .selectedSlots=${this._slotChoiceSelection}
+            @slot-choice-change=${(event: CustomEvent<SlotChoiceChangeDetail>) => {
+              this._slotChoiceSelection = event.detail.allowedSlots ?? [];
+            }}
+          ></slot-choice-list>
+        </div>
       </div>
     `;
   }

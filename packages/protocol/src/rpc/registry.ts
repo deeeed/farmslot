@@ -50,6 +50,7 @@ export const Methods = {
   BACKLOG_DEQUEUE: 'backlog.dequeue',
   BACKLOG_AUTO_DISPATCH_TICK: 'backlog.autoDispatchTick',
   BACKLOG_UPCOMING: 'backlog.upcoming',
+  BACKLOG_SPEC_GET: 'backlog.spec.get',
 
   // Work Graph
   WORK_GRAPH_CREATE: 'workGraph.create',
@@ -71,6 +72,11 @@ export const Methods = {
   ROADMAP_SAVE: 'roadmap.save',
   ROADMAP_DELETE: 'roadmap.delete',
   ROADMAP_REFINE: 'roadmap.refine',
+  ROADMAP_REFINEMENT_SESSION_GET: 'roadmap.refinementSession.get',
+  ROADMAP_PROMPT_GET: 'roadmap.prompt.get',
+  ROADMAP_PROMOTION_DRAFT_LIST: 'roadmap.promotionDraft.list',
+  ROADMAP_PROMOTION_DRAFT_GET: 'roadmap.promotionDraft.get',
+  ROADMAP_PROMOTION_DRAFT_SAVE: 'roadmap.promotionDraft.save',
   ROADMAP_PROMOTE: 'roadmap.promote',
 
   // Terminal

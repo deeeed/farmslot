@@ -2,15 +2,12 @@ import { html, nothing } from 'lit';
 
 import type { DevInteractiveProfile, FlowType } from '@farmslot/protocol';
 
+import '../shared/runner-model-effort-picker.js';
 import '../shared/slot-prepare-options.js';
 
-import { colors, fonts } from '../../styles/theme-tokens.js';
-import {
-  EFFORT_BY_RUNNER,
-  type EffortLevel,
-  MODELS_BY_RUNNER,
-  RUNNER_OPTIONS,
-} from '../../utils/runner-options.js';
+import { colors } from '../../styles/theme-tokens.js';
+import { type EffortLevel } from '../../utils/runner-options.js';
+import type { RunnerModelEffortChangeDetail } from '../shared/runner-model-effort-picker.js';
 import type { SlotPrepareOptionsChangeDetail } from '../shared/slot-prepare-options.js';
 
 import type { PrepareProfileOption } from './dispatch-wizard-draft.js';
@@ -193,81 +190,16 @@ function renderAppSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
 
 function renderRunnerModelConfig(ctx: DispatchWizardPrimaryControlsRenderContext) {
   return html`
-    <div class="config-row">
-      <div class="config-group">
-        <div class="section-label">Runner</div>
-        <div class="pill-row">
-          ${RUNNER_OPTIONS.map(
-            (runner) => html`
-              <button
-                class="pill ${ctx.runner === runner ? 'selected' : ''}"
-                @click=${() => ctx.setRunner(runner)}
-              >
-                ${runner}
-              </button>
-            `,
-          )}
-        </div>
-      </div>
-      <div class="config-group">
-        <div class="section-label">Model</div>
-        <div class="pill-row">
-          ${(MODELS_BY_RUNNER[ctx.runner] ?? []).map(
-            (model) => html`
-              <button
-                class="pill ${ctx.model === model ? 'selected' : ''}"
-                @click=${() => ctx.setModel(model)}
-              >
-                ${model}
-              </button>
-            `,
-          )}
-        </div>
-        ${ctx.runner === 'cursor'
-          ? html`
-              <div style="font-size:${fonts.sizeXs}; color:${colors.textMuted}; margin-top:4px;">
-                Pilot UI exposes the default only; gateway/admin dispatch may pass any Cursor
-                account model.
-              </div>
-            `
-          : ctx.runner === 'claude' && ctx.model === 'fable'
-            ? html`
-                <div style="font-size:${fonts.sizeXs}; color:${colors.statusWarn}; margin-top:4px;">
-                  Fable is a heavyweight Claude model; select it only for very complex tasks.
-                </div>
-              `
-            : nothing}
-      </div>
-      ${renderEffortSelector(ctx)}
-    </div>
-  `;
-}
-
-function renderEffortSelector(ctx: DispatchWizardPrimaryControlsRenderContext) {
-  const options = EFFORT_BY_RUNNER[ctx.runner] ?? [];
-  if (options.length === 0) return nothing;
-  return html`
-    <div class="config-group">
-      <div class="section-label">Effort</div>
-      <div class="pill-row">
-        <button
-          class="pill ${ctx.effort === '' ? 'selected' : ''}"
-          @click=${() => ctx.setEffort('')}
-        >
-          default
-        </button>
-        ${options.map(
-          (effort) => html`
-            <button
-              class="pill ${ctx.effort === effort ? 'selected' : ''}"
-              @click=${() => ctx.setEffort(effort)}
-            >
-              ${effort}
-            </button>
-          `,
-        )}
-      </div>
-    </div>
+    <runner-model-effort-picker
+      .runner=${ctx.runner}
+      .model=${ctx.model}
+      .effort=${ctx.effort}
+      @runner-model-effort-change=${(event: CustomEvent<RunnerModelEffortChangeDetail>) => {
+        ctx.setRunner(event.detail.runner);
+        ctx.setModel(event.detail.model);
+        ctx.setEffort(event.detail.effort);
+      }}
+    ></runner-model-effort-picker>
   `;
 }
 

@@ -32,6 +32,7 @@ import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 import { isSlotPinned, listPinnedSlots, togglePinnedSlot } from '../../utils/pinned-slots.js';
+import { hashParams } from '../../utils/url-state.js';
 import { isRunListActiveRun } from '../runs/run-list-model.js';
 
 import {
@@ -43,6 +44,7 @@ import {
   type LayoutMode,
   parseWatchItems,
   parseWorkerRefs,
+  parseWorkerRouteParam,
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
   STORAGE_KEY,
@@ -358,6 +360,7 @@ export class TerminalSplitView extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this._loadSaved();
+    this._applyRouteWorker();
     this._fetchSlots();
     this._fetchTmuxWorkers();
     const initial = getState();
@@ -421,6 +424,16 @@ export class TerminalSplitView extends LitElement {
       this._selectedWorkers = [];
       this._workerWatchItems = [];
     }
+  }
+
+  private _applyRouteWorker() {
+    const routeWorker = parseWorkerRouteParam(hashParams().get('worker'));
+    if (!routeWorker) return;
+    this._selectedSlots = [];
+    this._selectedWorkers = [routeWorker];
+    this._workerPaneFilter = 'all';
+    this._layout = '1x1';
+    this._save();
   }
 
   private _save() {

@@ -6,6 +6,7 @@ import type {
   BacklogEnqueueParams,
   BacklogListParams,
   BacklogMarkReadyParams,
+  BacklogSpecGetParams,
   BacklogUpcomingParams,
   BacklogUpdateParams,
 } from '@farmslot/protocol';
@@ -16,6 +17,7 @@ import {
   deleteBacklogItem,
   dequeueBacklogItem,
   enqueueBacklogItem,
+  getBacklogSpec,
   listBacklogItems,
   markBacklogItemReady,
   upcomingBacklogItems,
@@ -32,3 +34,4 @@ export const backlogDequeue = (params: BacklogDequeueParams) => dequeueBacklogIt
 export const backlogAutoDispatchTick = (params: BacklogAutoDispatchTickParams = {}) =>
   autoDispatchBacklogReady(params);
 export const backlogUpcoming = (params: BacklogUpcomingParams = {}) => upcomingBacklogItems(params);
+export const backlogSpecGet = (params: BacklogSpecGetParams) => getBacklogSpec(params);

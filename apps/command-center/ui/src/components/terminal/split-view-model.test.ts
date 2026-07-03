@@ -10,6 +10,7 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  encodeWorkerRouteParam,
   filterSlotsByGlobalFilters,
   isActiveRunTerminalSlot,
   isFarmslotWatchEntry,
@@ -18,6 +19,7 @@ import {
   meaningfulPaneTitle,
   parseWatchItems,
   parseWorkerRefs,
+  parseWorkerRouteParam,
   selectActiveRunSlotIds,
   selectPinnedSlotIds,
   slotHasActiveRunTerminal,
@@ -80,6 +82,8 @@ const ref = { nodeId: 'node-a', session: 'work', target: '%3', window: '2', pane
 test('split view model parses persisted worker refs and watch items defensively', () => {
   assert.deepEqual(parseWorkerRefs(null), []);
   assert.deepEqual(parseWorkerRefs(JSON.stringify([{ ...ref }, { nodeId: 'bad' }])), [ref]);
+  assert.deepEqual(parseWorkerRouteParam(encodeWorkerRouteParam(ref)), ref);
+  assert.equal(parseWorkerRouteParam('{bad-json'), null);
 
   const item = { id: 'watch-1', nodeId: 'node-a', target: '%3', ref, title: 'api', cwd: '/repo' };
   assert.deepEqual(parseWatchItems(JSON.stringify([item, { id: 'bad' }])), [item]);

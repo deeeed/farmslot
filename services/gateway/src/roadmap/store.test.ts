@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { test } from 'node:test';
 
@@ -76,6 +76,7 @@ test('roadmap store saves rough inbox markdown and supports get/list filters', a
   const created = await saveRoadmapItem({
     item: {
       title: 'Brainstorm Raw Idea',
+      targetProjects: ['metamask-mobile-farm', 'metamask-extension-farm'],
       tags: [' Roadmap ', '#Command Center', 'roadmap'],
       body: 'Raw note from the operator.',
     },
@@ -83,6 +84,10 @@ test('roadmap store saves rough inbox markdown and supports get/list filters', a
 
   assert.equal(created.item.stage, 'rough');
   assert.equal(created.item.project, 'unassigned');
+  assert.deepEqual(created.item.targetProjects, [
+    'metamask-extension-farm',
+    'metamask-mobile-farm',
+  ]);
   assert.deepEqual(created.item.tags, ['command-center', 'roadmap']);
   assert.match(
     created.item.filePath,
@@ -101,6 +106,7 @@ test('roadmap store saves rough inbox markdown and supports get/list filters', a
 
   assert.equal((await listRoadmapItems({ tags: ['command center'] })).items.length, 1);
   assert.equal((await listRoadmapItems({ search: 'operator' })).items.length, 1);
+  assert.equal((await listRoadmapItems({ project: 'metamask-mobile-farm' })).items.length, 1);
   assert.equal((await listRoadmapItems({ stage: 'refined' })).items.length, 0);
 });
 
@@ -109,6 +115,7 @@ test('roadmap store rejects stale edits and accepts matching hash updates', asyn
   const created = await saveRoadmapItem({
     item: {
       project: 'farmslot-farm',
+      targetProjects: ['metamask-mobile-farm', 'metamask-extension-farm'],
       title: 'Refine terminal brainstorming',
       stage: 'rough',
       tags: ['runner'],
@@ -338,10 +345,12 @@ test('roadmap store excludes archived items unless requested and parses simple h
 });
 
 test('roadmap store prepares a tmux refinement prompt without a session database', async () => {
-  const { saveRoadmapItem, startRoadmapRefinement } = await store();
+  const { getRoadmapPrompt, getRoadmapRefinementSession, saveRoadmapItem, startRoadmapRefinement } =
+    await store();
   const created = await saveRoadmapItem({
     item: {
       project: 'farmslot-farm',
+      targetProjects: ['metamask-mobile-farm', 'metamask-extension-farm'],
       title: 'Interactive refinement',
       stage: 'rough',
       tags: ['brainstorm'],
@@ -360,7 +369,12 @@ test('roadmap store prepares a tmux refinement prompt without a session database
 
   assert.equal(refined.item.stage, 'refining');
   assert.equal(refined.launched, false);
+  assert.equal(refined.item.refinementPromptPath, refined.promptPath);
   assert.equal(refined.tmuxSession, `roadmap-${created.item.id.replace('_', '-')}`);
+  const session = await getRoadmapRefinementSession({ itemId: created.item.id });
+  assert.equal(session.tmuxSession, refined.tmuxSession);
+  assert.equal(session.exists, false);
+  assert.equal(session.tmuxTarget, refined.tmuxSession);
   assert.equal(refined.runner, 'codex');
   assert.equal(refined.model, 'gpt-5');
   assert.equal(
@@ -370,16 +384,162 @@ test('roadmap store prepares a tmux refinement prompt without a session database
   assert.match(refined.promptPath, /^\.sandbox\/roadmap-store-test-\d+\/refinement-prompts\//);
 
   const prompt = await readFile(path.join(farmslotRoot, refined.promptPath), 'utf-8');
-  assert.match(prompt, /Refine the roadmap markdown file in-place/);
+  assert.match(prompt, /interactive planning\/refinement session inside the Farmslot/);
+  assert.match(prompt, /Only edit the roadmap markdown file after the operator confirms/);
+  assert.match(prompt, /Treat `farmslot roadmap --help` as the discoverable command surface/);
+  assert.match(prompt, /promotion request command shown below is local\/file-backed/);
+  assert.match(prompt, /For GitHub PR URLs, prefer `gh pr view <number>/);
   assert.match(prompt, /## Output contract/);
   assert.match(prompt, /## Acceptance Criteria/);
   assert.match(prompt, /Raw thought to refine/);
   assert.match(prompt, /Refinement runner: codex/);
   assert.match(prompt, /Refinement model: gpt-5/);
+  assert.match(prompt, /Target projects: metamask-extension-farm, metamask-mobile-farm/);
+
+  const promptResult = await getRoadmapPrompt({ path: refined.promptPath });
+  assert.equal(promptResult.path, refined.promptPath);
+  assert.equal(promptResult.absolutePath, path.join(farmslotRoot, refined.promptPath));
+  assert.equal(promptResult.content, prompt);
+  await assert.rejects(
+    () => getRoadmapPrompt({ path: '.roadmap/inbox/items/not-a-prompt.md' }),
+    /refinement prompt markdown file/,
+  );
 
   const listed = await (await store()).listRoadmapItems();
   assert.equal(listed.items.length, 1);
+  assert.equal(listed.items[0]?.refinementPromptPath, refined.promptPath);
   assert.equal(listed.items[0]?.id, created.item.id);
+});
+
+test('roadmap store lists, reads, and saves promotion draft attachments', async () => {
+  const { getRoadmapPromotionDraft, listRoadmapPromotionDrafts, saveRoadmapPromotionDraft } =
+    await store();
+  const draftDir = path.join(roadmapRoot, 'promotion-drafts', 'ri_test');
+  const draftPath = path.join(draftDir, '01-mobile.md');
+  await mkdir(draftDir, { recursive: true });
+  await writeFile(
+    draftPath,
+    [
+      '---',
+      'kind: "backlog-spec"',
+      'roadmapItemId: "ri_test"',
+      'project: "metamask-mobile-farm"',
+      '---',
+      '',
+      '# Mobile follow-up',
+      '',
+      '## Acceptance Criteria',
+      '',
+      '- Mobile is updated.',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  const listed = await listRoadmapPromotionDrafts({ itemId: 'ri_test' });
+  assert.equal(listed.drafts.length, 1);
+  assert.equal(listed.drafts[0]?.path, path.relative(farmslotRoot, draftPath));
+  assert.equal(listed.drafts[0]?.filename, '01-mobile.md');
+
+  const loaded = await getRoadmapPromotionDraft({ path: listed.drafts[0]!.path });
+  assert.equal(loaded.content, await readFile(draftPath, 'utf8'));
+  assert.equal(loaded.contentHash, listed.drafts[0]?.contentHash);
+  const saved = await saveRoadmapPromotionDraft({
+    path: loaded.path,
+    content: loaded.content.replace('Mobile is updated.', 'Mobile draft is saved.'),
+    expectedHash: loaded.contentHash,
+  });
+  assert.match(saved.content, /Mobile draft is saved\./);
+  assert.equal(await readFile(draftPath, 'utf8'), saved.content);
+  await assert.rejects(
+    () =>
+      saveRoadmapPromotionDraft({
+        path: loaded.path,
+        content: loaded.content,
+        expectedHash: loaded.contentHash,
+      }),
+    /changed on disk/,
+  );
+  await assert.rejects(
+    () => getRoadmapPromotionDraft({ path: '.roadmap/inbox/items/not-a-draft.md' }),
+    /promotion draft markdown file/,
+  );
+});
+
+test('roadmap refinement runner command clears ambient tmux context', async () => {
+  const { __roadmapStoreTest, saveRoadmapItem } = await store();
+  const created = await saveRoadmapItem({
+    item: {
+      project: 'farmslot-farm',
+      title: 'Isolated refinement',
+      stage: 'rough',
+      body: 'Refine this without inheriting tmux.',
+    },
+  });
+
+  const command = __roadmapStoreTest.buildRefinementShellCommand(
+    created.item,
+    '.roadmap/refinement-prompts/example.md',
+    '{{runner}} --model {{model}} refine {{prompt_path}} --item {{item_file}}',
+    'codex',
+    'gpt-5',
+  );
+
+  assert.match(command, /cd .* && unset TMUX TMUX_PANE && export FARMSLOT_ROADMAP_REFINEMENT=1/);
+  assert.match(command, /export FARMSLOT_RUNNER_SCOPE=roadmap-refinement/);
+  assert.match(command, /'codex' --model 'gpt-5' refine/);
+  assert.match(command, /--item .*isolated-refinement/);
+
+  const dangerousCommand = __roadmapStoreTest.buildRefinementShellCommand(
+    created.item,
+    '.roadmap/refinement-prompts/example.md',
+    undefined,
+    'codex',
+    'gpt-5',
+    'dangerous',
+  );
+  assert.match(dangerousCommand, /--dangerously-bypass-approvals-and-sandbox/);
+  assert.doesNotMatch(dangerousCommand, /--ask-for-approval on-request/);
+});
+
+test('roadmap promotion request command uses configurable farmslot prefix', async () => {
+  const { __roadmapStoreTest, saveRoadmapItem } = await store();
+  const created = await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: ['metamask-mobile-farm', 'metamask-extension-farm'],
+      title: 'Promotion command selection',
+      stage: 'rough',
+      body: 'Check command generation.',
+    },
+  });
+  const oldCommand = process.env.FARMSLOT_COMMAND;
+  try {
+    process.env.FARMSLOT_COMMAND = 'farmslot';
+    const defaultCommand = __roadmapStoreTest.defaultPromotionRequestCommand(created.item);
+    assert.match(defaultCommand, /^farmslot roadmap request-promotion /);
+    assert.match(
+      defaultCommand,
+      /--target-projects 'metamask-extension-farm,metamask-mobile-farm'/,
+    );
+    assert.match(
+      defaultCommand,
+      /--roadmap-route '#roadmap\?projects=metamask-extension-farm%2Cmetamask-mobile-farm&item=ri_[a-f0-9]{12}'$/,
+    );
+
+    process.env.FARMSLOT_COMMAND = 'yarn workspace @farmslot/cli farmslot';
+    const envCommand = __roadmapStoreTest.defaultPromotionRequestCommand(created.item);
+    assert.match(envCommand, /^yarn workspace @farmslot\/cli farmslot roadmap request-promotion /);
+
+    const configCommand = __roadmapStoreTest.defaultPromotionRequestCommand(
+      created.item,
+      'yarn dlx @farmslot/cli farmslot',
+    );
+    assert.match(configCommand, /^yarn dlx @farmslot\/cli farmslot roadmap request-promotion /);
+  } finally {
+    if (oldCommand === undefined) delete process.env.FARMSLOT_COMMAND;
+    else process.env.FARMSLOT_COMMAND = oldCommand;
+  }
 });
 
 test('roadmap store promotes a refined item into ready backlog markdown specs', async () => {
@@ -435,6 +595,94 @@ test('roadmap store promotes a refined item into ready backlog markdown specs', 
   assert.match(markdown, /roadmapItemId/);
   assert.match(markdown, /Created backlog specs include provenance/);
   assert.equal(backlog.listBacklogItems({ tags: ['roadmap'] }).items.length, 1);
+});
+
+test('roadmap store promotes target project specs into separate project backlogs', async () => {
+  const { promoteRoadmapItem, saveRoadmapItem } = await store();
+  const backlog = await import('../backlog/store.js');
+  const roadmap = await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: ['metamask-mobile-farm', 'metamask-extension-farm'],
+      title: 'Perps analytics client follow-up',
+      stage: 'refined',
+      tags: ['perps', 'analytics'],
+      body: refinedBody('Core changed the shared perps controller analytics API.'),
+    },
+  });
+
+  const promoted = await promoteRoadmapItem({
+    itemId: roadmap.item.id,
+    expectedHash: roadmap.item.fileHash,
+    specs: [
+      {
+        project: 'metamask-mobile-farm',
+        title: 'Update mobile perps analytics',
+        body: [
+          '## Context',
+          '',
+          'Apply the controller analytics update in mobile.',
+          '',
+          '## Acceptance Criteria',
+          '',
+          '- Mobile uses the controller analytics exports.',
+        ].join('\n'),
+      },
+      {
+        project: 'metamask-extension-farm',
+        title: 'Update extension perps analytics',
+        body: [
+          '## Context',
+          '',
+          'Apply the controller analytics update in extension.',
+          '',
+          '## Acceptance Criteria',
+          '',
+          '- Extension uses the controller analytics exports.',
+        ].join('\n'),
+      },
+    ],
+  });
+
+  assert.equal(promoted.roadmapItem.stage, 'promoted');
+  assert.deepEqual(promoted.backlogItems.map((item) => item.project).sort(), [
+    'metamask-extension-farm',
+    'metamask-mobile-farm',
+  ]);
+  assert.match(promoted.specPaths[0] ?? '', /metamask-mobile-farm/);
+  assert.match(promoted.specPaths[1] ?? '', /metamask-extension-farm/);
+  assert.equal(promoted.roadmapItem.promotion?.[0]?.project, 'metamask-mobile-farm');
+  assert.equal(promoted.roadmapItem.promotion?.[1]?.project, 'metamask-extension-farm');
+  assert.equal(backlog.listBacklogItems({ project: 'metamask-mobile-farm' }).items.length, 1);
+  assert.equal(backlog.listBacklogItems({ project: 'metamask-extension-farm' }).items.length, 1);
+});
+
+test('roadmap promotion requires spec projects when multiple target projects exist', async () => {
+  const { promoteRoadmapItem, saveRoadmapItem } = await store();
+  const roadmap = await saveRoadmapItem({
+    item: {
+      project: 'global',
+      targetProjects: ['metamask-mobile-farm', 'metamask-extension-farm'],
+      title: 'Ambiguous fan-out',
+      stage: 'refined',
+      body: refinedBody('Promotion needs a target project per spec.'),
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      promoteRoadmapItem({
+        itemId: roadmap.item.id,
+        expectedHash: roadmap.item.fileHash,
+        specs: [
+          {
+            title: 'Missing project',
+            body: '## Context\n\nAmbiguous.\n\n## Acceptance Criteria\n\n- Project is required.',
+          },
+        ],
+      }),
+    /Backlog spec project is required/,
+  );
 });
 
 test('roadmap promotion validates every spec before writing backlog side effects', async () => {

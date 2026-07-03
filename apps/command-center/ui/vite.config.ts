@@ -28,6 +28,7 @@ export default defineConfig({
   },
   server: {
     port: vitePort,
+    strictPort: true,
     // Background agents edit UI source in bursts (5–20 files in seconds). Without
     // coalescing, Vite fires a full page reload per save — 76 `@customElement`
     // re-registrations + Monaco re-init stack up and trigger Chrome's

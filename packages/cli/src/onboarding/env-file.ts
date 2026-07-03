@@ -58,4 +58,7 @@ export function loadCheckoutEnv(checkoutRoot: string, env: NodeJS.ProcessEnv = p
       if (env[key] === undefined) env[key] = value;
     }
   }
+  if (env.GW_URL === undefined && env.GATEWAY_PORT && /^\d+$/.test(env.GATEWAY_PORT)) {
+    env.GW_URL = `ws://localhost:${env.GATEWAY_PORT}`;
+  }
 }

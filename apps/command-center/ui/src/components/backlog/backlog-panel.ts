@@ -1,9 +1,11 @@
 import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
   BacklogAutoDispatchTickResult,
   BacklogCreateResult,
+  BacklogDeleteResult,
   BacklogDequeueResult,
   BacklogEnqueueResult,
   BacklogItem,
@@ -12,29 +14,51 @@ import type {
   BacklogLaunchSlotPolicy,
   BacklogMarkReadyResult,
   BacklogSourceKind,
+  BacklogSpecGetResult,
   BacklogStatus,
+  BacklogUpdateInput,
   BacklogUpdateResult,
+  ConfigProjectsResult,
+  ConfigTemplateOptionsResult,
   FlowType,
+  ProjectConfig,
   SlotStatus,
+  WorkerTemplateOption,
+  WorkGraphActivateResult,
+  WorkGraphProjection,
+  WorkGraphSchedulerTickResult,
 } from '@farmslot/protocol';
 import { BACKLOG_SOURCE_KINDS, BACKLOG_STATUSES, Methods } from '@farmslot/protocol';
 
+import '../shared/dispatch-config-editor.js';
+import '../shared/slot-choice-list.js';
 import '../shared/slot-selector-modal.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
+import { renderMarkdown } from '../../utils/markdown.js';
 import { DEFAULT_MODEL, MODELS_BY_RUNNER, RUNNER_OPTIONS } from '../../utils/runner-options.js';
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
+import { templateOptionsRequestKey } from '../dispatch/dispatch-wizard-template-options.js';
+import type {
+  DispatchConfigChangeDetail,
+  DispatchConfigEditorControls,
+} from '../shared/dispatch-config-editor.js';
+import { summarizeBacklogDispatchConfig } from '../shared/dispatch-config-summary.js';
 import {
   planningBadgeStyles,
   renderPlanningBadge,
   renderTagChips,
   tagsFromInput,
 } from '../shared/planning-badges.js';
+import { planningChoiceStyles, renderChoiceButtons } from '../shared/planning-controls.js';
+import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
+import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
-import { canDequeueBacklogItemForUi } from './backlog-panel-model.js';
+import { canDequeueBacklogItemForUi, syncedBacklogDraftProject } from './backlog-panel-model.js';
 
 const STATUSES: Array<BacklogStatus | 'all'> = ['all', ...BACKLOG_STATUSES];
 const FLOWS: FlowType[] = ['fix-bug', 'dev', 'review-pr', 'pr-complete', 'merge-main'];
@@ -42,10 +66,26 @@ const SOURCES: BacklogSourceKind[] = [...BACKLOG_SOURCE_KINDS];
 const BACKLOG_PROJECT_PARAM = 'backlogProject';
 const BACKLOG_STATUS_PARAM = 'backlogStatus';
 const BACKLOG_SLOT_SELECTOR_PARAM = 'slotSelector';
-const CUSTOM_PROJECT = '__custom__';
+const BACKLOG_ITEM_PARAM = 'item';
+const BACKLOG_MODE_PARAM = 'mode';
+const BACKLOG_CREATE_PARAM = 'create';
+const BACKLOG_DISPATCH_CONFIG_PARAM = 'dispatchConfig';
+const BACKLOG_SPEC_PARAM = 'spec';
 const NEW_PLAN_KEY = '__new__';
+const AUTO_DISPATCH_TOOLTIP =
+  'Auto-dispatch enqueues ready backlog items only when the item has auto-dispatch enabled, the project allows it, and explicit allowed slots are set.';
+const BACKLOG_DISPATCH_CONFIG_CONTROLS: DispatchConfigEditorControls = {
+  template: true,
+  runnerModelEffort: true,
+  prepareProfile: true,
+  interactiveProfile: true,
+  publicationReviews: true,
+  explicitModeFallback: true,
+};
 
 type DraftSlotPolicyKind = BacklogLaunchSlotPolicy['kind'];
+type BacklogDetailMode = 'view' | 'edit';
+type BacklogSpecViewerMode = 'markdown' | 'raw';
 
 interface DraftLaunchCandidate {
   id: string;
@@ -112,6 +152,7 @@ export class BacklogPanel extends LitElement {
   @property({ attribute: false }) slots: SlotStatus[] | null = null;
   @state() private _items: BacklogItem[] = [];
   @state() private _slots: SlotStatus[] = [];
+  @state() private _workGraphs: WorkGraphProjection[] = [];
   @state() private _globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private _project = 'all';
   @state() private _status: BacklogStatus | 'all' = 'all';
@@ -128,7 +169,22 @@ export class BacklogPanel extends LitElement {
   @state() private _draftPriority = '10';
   @state() private _draftAllowedSlots: string[] = [];
   @state() private _draftAutoDispatch = false;
+  @state() private _createPanelOpen = false;
+  @state() private _selectedItemId = '';
+  @state() private _selectedItemMode: BacklogDetailMode = 'view';
   @state() private _slotSelectorOpen = false;
+  @state() private _dispatchConfigOpen = false;
+  @state() private _specViewerOpen = false;
+  @state() private _specViewerMode: BacklogSpecViewerMode = 'markdown';
+  @state() private _specLoadingItemId = '';
+  @state() private _specContents: Record<string, BacklogSpecGetResult> = {};
+  @state() private _specErrors: Record<string, string> = {};
+  @state() private _dispatchConfigBusy = '';
+  @state() private _dispatchConfigError = '';
+  @state() private _configProjectConfigs: ProjectConfig[] = [];
+  @state() private _configTemplateOptions: Record<string, WorkerTemplateOption[]> = {};
+  @state() private _configTemplateOptionsError: Record<string, string> = {};
+  @state() private _configTemplateOptionsLoading: Record<string, boolean> = {};
   @state() private _launchSlotSelector: LaunchSlotSelectorState | null = null;
   @state() private _notesDrafts: Record<string, string> = {};
   @state() private _launchDrafts: Record<string, DraftLaunchPlan> = {
@@ -137,9 +193,34 @@ export class BacklogPanel extends LitElement {
 
   private _unsub?: () => void;
   private _onHashChange = () => this._applyUrlStateFromHash();
+  private _onKeydown = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return;
+    if (this._specViewerOpen) {
+      event.preventDefault();
+      this._setSpecViewerOpen(false);
+      return;
+    }
+    if (this._dispatchConfigOpen) {
+      event.preventDefault();
+      this._setDispatchConfigOpen(false);
+      return;
+    }
+    if (this._slotSelectorOpen || this._launchSlotSelector) return;
+    if (this._selectedItemMode === 'edit') {
+      event.preventDefault();
+      this._selectedItemMode = 'view';
+      this._writeUrlState();
+      return;
+    }
+    if (this._createPanelOpen) {
+      event.preventDefault();
+      this._setCreatePanelOpen(false);
+    }
+  };
 
   static styles = [
     planningBadgeStyles,
+    planningChoiceStyles,
     css`
       :host {
         display: block;
@@ -185,12 +266,34 @@ export class BacklogPanel extends LitElement {
         color: ${unsafeCSS(colors.textMuted)};
         font-size: ${unsafeCSS(fonts.sizeXs)};
       }
-      .filters,
-      .grid {
+      .workspace {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+        gap: ${unsafeCSS(spacing.md)};
+        align-items: start;
+      }
+      .sidebar {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgCard)};
+        padding: ${unsafeCSS(spacing.md)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+        position: sticky;
+        top: ${unsafeCSS(spacing.md)};
+      }
+      .sidebar-section,
+      .sidebar-actions {
+        display: grid;
         gap: ${unsafeCSS(spacing.sm)};
-        align-items: end;
+      }
+      .scope-note {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.sm)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        padding: ${unsafeCSS(spacing.sm)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.sm)};
       }
       label {
         display: grid;
@@ -207,11 +310,6 @@ export class BacklogPanel extends LitElement {
       .slot-picker-field {
         display: grid;
         gap: 4px;
-      }
-      .project-picker {
-        display: grid;
-        grid-template-columns: minmax(150px, 0.8fr) minmax(160px, 1fr);
-        gap: 6px;
       }
       .slot-picker-summary {
         border: 1px solid ${unsafeCSS(colors.textMuted)}33;
@@ -250,6 +348,16 @@ export class BacklogPanel extends LitElement {
         border-color: ${unsafeCSS(colors.textMuted)}33;
         background: ${unsafeCSS(colors.bgSurface)};
       }
+      button.primary-action {
+        border-color: ${unsafeCSS(colors.accent)};
+        background: ${unsafeCSS(colors.accent)};
+        color: ${unsafeCSS(colors.bgBase)};
+        font-weight: 800;
+        box-shadow: 0 0 0 1px ${unsafeCSS(colors.accent)}33;
+      }
+      button.primary-action:hover:not(:disabled) {
+        filter: brightness(1.08);
+      }
       button:disabled {
         opacity: 0.45;
         cursor: not-allowed;
@@ -266,6 +374,232 @@ export class BacklogPanel extends LitElement {
         display: grid;
         gap: ${unsafeCSS(spacing.sm)};
         margin-top: ${unsafeCSS(spacing.sm)};
+      }
+      .dispatch-config-summary {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.sm)};
+        margin-top: ${unsafeCSS(spacing.sm)};
+        padding: ${unsafeCSS(spacing.sm)};
+      }
+      .dispatch-config-head {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.sm)};
+        justify-content: space-between;
+      }
+      .dispatch-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .dispatch-chip {
+        align-items: center;
+        background: transparent;
+        border: 1px solid ${unsafeCSS(colors.textMuted)}44;
+        border-radius: ${unsafeCSS(radii.sm)};
+        color: ${unsafeCSS(colors.textSecondary)};
+        display: inline-flex;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        gap: 5px;
+        line-height: 1.25;
+        min-height: 20px;
+        padding: 2px 7px;
+        white-space: nowrap;
+      }
+      .dispatch-chip::before {
+        background: currentColor;
+        border-radius: 50%;
+        content: '';
+        flex: 0 0 6px;
+        height: 6px;
+        width: 6px;
+      }
+      .dispatch-chip.positive {
+        background: ${unsafeCSS(colors.statusOk)}11;
+        border-color: ${unsafeCSS(colors.statusOk)}66;
+        color: ${unsafeCSS(colors.statusOk)};
+      }
+      .dispatch-chip.warn {
+        background: ${unsafeCSS(colors.statusWarn)}11;
+        border-color: ${unsafeCSS(colors.statusWarn)}66;
+        color: ${unsafeCSS(colors.statusWarn)};
+      }
+      .dispatch-chip.accent {
+        background: ${unsafeCSS(colors.accent)}11;
+        border-color: ${unsafeCSS(colors.accent)}66;
+        color: ${unsafeCSS(colors.accent)};
+      }
+      .dispatch-meta-grid {
+        display: grid;
+        gap: 6px;
+        grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+      }
+      .dispatch-meta-cell {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.sm)};
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+        padding: 7px 8px;
+      }
+      .dispatch-meta-label {
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: 10px;
+        text-transform: uppercase;
+      }
+      .dispatch-meta-value {
+        color: ${unsafeCSS(colors.textSecondary)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+      }
+      .dispatch-review-pipeline {
+        align-items: center;
+        display: flex;
+        gap: 4px;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .dispatch-review-segment {
+        background: ${unsafeCSS(colors.statusUnknown)};
+        border-radius: 2px;
+        flex: 1 1 18px;
+        height: 4px;
+        max-width: 32px;
+        min-width: 10px;
+        opacity: 0.55;
+      }
+      .dispatch-review-label {
+        color: ${unsafeCSS(colors.textMuted)};
+        font-size: 10px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .spec-attachment {
+        border: 1px solid ${unsafeCSS(colors.accent)}44;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.accent)}0d;
+        color: inherit;
+        cursor: pointer;
+        display: flex;
+        gap: ${unsafeCSS(spacing.sm)};
+        justify-content: space-between;
+        align-items: center;
+        padding: ${unsafeCSS(spacing.sm)};
+        text-align: left;
+        width: 100%;
+      }
+      .spec-attachment:hover {
+        border-color: ${unsafeCSS(colors.accent)};
+        background: ${unsafeCSS(colors.accent)}11;
+      }
+      .spec-path {
+        color: ${unsafeCSS(colors.accent)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        margin-top: 4px;
+        overflow-wrap: anywhere;
+      }
+      .spec-attachment-main {
+        min-width: 0;
+      }
+      .spec-raw {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.sm)};
+        background: ${unsafeCSS(colors.bgBase)};
+        color: ${unsafeCSS(colors.textPrimary)};
+        font: inherit;
+        line-height: 1.5;
+        margin: 0;
+        overflow: auto;
+        padding: ${unsafeCSS(spacing.md)};
+        white-space: pre-wrap;
+      }
+      .spec-raw {
+        max-height: min(68vh, 720px);
+      }
+      .spec-markdown {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.sm)};
+        background: ${unsafeCSS(colors.bgBase)};
+        color: ${unsafeCSS(colors.textPrimary)};
+        line-height: 1.55;
+        max-height: min(68vh, 720px);
+        overflow: auto;
+        padding: ${unsafeCSS(spacing.lg)};
+      }
+      .spec-markdown h1,
+      .spec-markdown h2,
+      .spec-markdown h3 {
+        margin: 0 0 ${unsafeCSS(spacing.sm)};
+      }
+      .spec-markdown p,
+      .spec-markdown ul,
+      .spec-markdown ol,
+      .spec-markdown pre {
+        margin-top: 0;
+      }
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: grid;
+        place-items: center;
+        padding: ${unsafeCSS(spacing.lg)};
+        background: rgb(0 0 0 / 0.58);
+      }
+      .dispatch-config-modal {
+        width: min(920px, calc(100vw - 32px));
+        max-height: min(760px, calc(100vh - 32px));
+        overflow: auto;
+        border: 1px solid ${unsafeCSS(colors.accent)}55;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgCard)};
+        box-shadow: 0 20px 60px rgb(0 0 0 / 0.35);
+        color: ${unsafeCSS(colors.textPrimary)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+        padding: ${unsafeCSS(spacing.lg)};
+      }
+      .dispatch-config-modal header,
+      .config-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.md)};
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+      .dispatch-config-modal h3,
+      .dispatch-config-modal p {
+        margin: 0;
+      }
+      .config-field,
+      .config-check,
+      .slot-picker {
+        display: grid;
+        gap: 5px;
+        color: ${unsafeCSS(colors.textSecondary)};
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+      }
+      .config-field {
+        flex: 1 1 110px;
+      }
+      .config-check {
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        flex: 2 1 260px;
+      }
+      .config-check span {
+        display: grid;
+        gap: 3px;
+      }
+      .config-check small {
+        color: ${unsafeCSS(colors.textMuted)};
+        line-height: 1.4;
       }
       .launch-row {
         border: 1px solid ${unsafeCSS(colors.textMuted)}22;
@@ -286,6 +620,11 @@ export class BacklogPanel extends LitElement {
         padding: ${unsafeCSS(spacing.md)};
         display: grid;
         gap: ${unsafeCSS(spacing.sm)};
+        cursor: pointer;
+      }
+      .row.selected {
+        border-color: ${unsafeCSS(colors.accent)}99;
+        background: ${unsafeCSS(colors.accent)}11;
       }
       .row-head {
         display: flex;
@@ -300,10 +639,38 @@ export class BacklogPanel extends LitElement {
       .error {
         color: ${unsafeCSS(colors.statusFail)};
       }
+      .badge-link {
+        border: 1px solid ${unsafeCSS(colors.accent)}66;
+        border-radius: 999px;
+        color: ${unsafeCSS(colors.textPrimary)};
+        display: inline-flex;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        line-height: 1;
+        padding: 4px 8px;
+        text-decoration: none;
+        width: fit-content;
+      }
+      .badge-link:hover {
+        background: ${unsafeCSS(colors.accent)}22;
+      }
       .actions {
         display: flex;
         flex-wrap: wrap;
+        align-items: center;
         gap: 6px;
+      }
+      .action-state {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}33;
+        border-radius: ${unsafeCSS(radii.sm)};
+        color: ${unsafeCSS(colors.textSecondary)};
+        display: inline-flex;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        line-height: 1;
+        padding: 8px 10px;
+      }
+      .action-state.ready {
+        border-color: ${unsafeCSS(colors.statusOk)}66;
+        color: ${unsafeCSS(colors.statusOk)};
       }
       .message {
         color: ${unsafeCSS(colors.statusOk)};
@@ -311,6 +678,104 @@ export class BacklogPanel extends LitElement {
       .empty {
         color: ${unsafeCSS(colors.textMuted)};
         padding: ${unsafeCSS(spacing.md)};
+      }
+      .content {
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+      }
+      .backlog-browser {
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+        grid-template-columns: minmax(320px, 0.95fr) minmax(360px, 1.05fr);
+        align-items: start;
+      }
+      .detail-panel {
+        border: 1px solid ${unsafeCSS(colors.accent)}55;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgCard)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+        max-height: calc(100vh - 120px);
+        overflow: auto;
+        padding: ${unsafeCSS(spacing.md)};
+        position: sticky;
+        top: ${unsafeCSS(spacing.md)};
+      }
+      .detail-panel.empty-detail {
+        border-color: ${unsafeCSS(colors.textMuted)}22;
+        color: ${unsafeCSS(colors.textMuted)};
+      }
+      .detail-panel header,
+      .detail-toolbar {
+        display: flex;
+        justify-content: space-between;
+        gap: ${unsafeCSS(spacing.md)};
+        align-items: flex-start;
+      }
+      .notes-view {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.sm)};
+        background: ${unsafeCSS(colors.bgSurface)};
+        color: ${unsafeCSS(colors.textPrimary)};
+        font: inherit;
+        line-height: 1.4;
+        margin: 0;
+        min-height: 70px;
+        padding: ${unsafeCSS(spacing.md)};
+        white-space: pre-wrap;
+      }
+      .create-panel {
+        border: 1px solid ${unsafeCSS(colors.accent)}55;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgCard)};
+        display: grid;
+        gap: ${unsafeCSS(spacing.md)};
+        padding: ${unsafeCSS(spacing.md)};
+      }
+      .create-panel header {
+        display: flex;
+        justify-content: space-between;
+        gap: ${unsafeCSS(spacing.md)};
+        align-items: flex-start;
+      }
+      .create-panel form {
+        padding: 0;
+      }
+      .create-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: ${unsafeCSS(spacing.md)};
+        align-items: start;
+      }
+      .wide {
+        grid-column: 1 / -1;
+      }
+      .span-2 {
+        grid-column: span 2;
+      }
+      .notes-field textarea {
+        min-height: 180px;
+      }
+      @media (max-width: 860px) {
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+        .backlog-browser {
+          grid-template-columns: 1fr;
+        }
+        .detail-panel {
+          max-height: none;
+          position: static;
+        }
+        .sidebar {
+          position: static;
+        }
+        .create-grid {
+          grid-template-columns: 1fr;
+        }
+        .span-2 {
+          grid-column: 1 / -1;
+        }
       }
     `,
   ];
@@ -320,12 +785,14 @@ export class BacklogPanel extends LitElement {
     this._sync(getState());
     this._applyUrlStateFromHash();
     window.addEventListener('hashchange', this._onHashChange);
+    window.addEventListener('keydown', this._onKeydown);
     this._unsub = subscribe((s) => this._sync(s));
   }
 
   disconnectedCallback() {
     this._unsub?.();
     window.removeEventListener('hashchange', this._onHashChange);
+    window.removeEventListener('keydown', this._onKeydown);
     super.disconnectedCallback();
   }
 
@@ -336,11 +803,31 @@ export class BacklogPanel extends LitElement {
   private _sync(s: AppState) {
     this._items = this.items ?? s.backlogItems;
     this._slots = this.slots ?? s.fleet?.slots ?? [];
+    this._workGraphs = s.workGraphs;
     this._globalFilters = s.globalFilters;
-    if (!this._draftProject) {
-      this._draftProject =
-        [...new Set(this._slots.map((slot) => slot.project).filter(Boolean))][0] ?? '';
+    const nextDraftProject = syncedBacklogDraftProject({
+      currentProject: this._draftProject,
+      availableProjects: this._projects,
+      globalProjects: s.globalFilters.projects,
+    });
+    if (nextDraftProject && nextDraftProject !== this._draftProject) {
+      this._setDraftProject(nextDraftProject);
     }
+    if (this._selectedItemId && !this._filtered.some((item) => item.id === this._selectedItemId)) {
+      this._selectedItemId = '';
+      this._selectedItemMode = 'view';
+      this._dispatchConfigOpen = false;
+      this._specViewerOpen = false;
+      this._writeUrlState();
+    }
+    const selected = this._selectedItem;
+    if (this._dispatchConfigOpen && selected) {
+      void this._ensureDispatchConfigData(selected).catch((error) => {
+        this._dispatchConfigError = error instanceof Error ? error.message : String(error);
+      });
+    }
+    if (selected?.specPath) void this._loadSpec(selected);
+    if (this._specViewerOpen && selected) void this._loadSpec(selected);
   }
 
   private _applyUrlStateFromHash() {
@@ -353,7 +840,15 @@ export class BacklogPanel extends LitElement {
     this._status = STATUSES.includes(status as BacklogStatus | 'all')
       ? (status as BacklogStatus | 'all')
       : 'all';
+    this._selectedItemId = params.get(BACKLOG_ITEM_PARAM)?.trim() ?? '';
+    this._selectedItemMode =
+      this._selectedItemId && params.get(BACKLOG_MODE_PARAM) === 'edit' ? 'edit' : 'view';
+    this._createPanelOpen = params.get(BACKLOG_CREATE_PARAM) === '1';
     this._slotSelectorOpen = params.get(BACKLOG_SLOT_SELECTOR_PARAM) === '1';
+    this._dispatchConfigOpen =
+      Boolean(this._selectedItemId) && params.get(BACKLOG_DISPATCH_CONFIG_PARAM) === '1';
+    this._specViewerOpen = Boolean(this._selectedItemId) && params.get(BACKLOG_SPEC_PARAM) === '1';
+    if (this._slotSelectorOpen) this._createPanelOpen = true;
   }
 
   private _writeUrlState() {
@@ -364,14 +859,39 @@ export class BacklogPanel extends LitElement {
     else params.set(BACKLOG_PROJECT_PARAM, this._project);
     if (this._status === 'all') params.delete(BACKLOG_STATUS_PARAM);
     else params.set(BACKLOG_STATUS_PARAM, this._status);
+    if (this._selectedItemId) params.set(BACKLOG_ITEM_PARAM, this._selectedItemId);
+    else params.delete(BACKLOG_ITEM_PARAM);
+    if (this._selectedItemId && this._selectedItemMode === 'edit') {
+      params.set(BACKLOG_MODE_PARAM, 'edit');
+    } else {
+      params.delete(BACKLOG_MODE_PARAM);
+    }
+    if (this._createPanelOpen) params.set(BACKLOG_CREATE_PARAM, '1');
+    else params.delete(BACKLOG_CREATE_PARAM);
     if (this._slotSelectorOpen) params.set(BACKLOG_SLOT_SELECTOR_PARAM, '1');
     else params.delete(BACKLOG_SLOT_SELECTOR_PARAM);
+    if (this._dispatchConfigOpen && this._selectedItemId) {
+      params.set(BACKLOG_DISPATCH_CONFIG_PARAM, '1');
+    } else {
+      params.delete(BACKLOG_DISPATCH_CONFIG_PARAM);
+    }
+    if (this._specViewerOpen && this._selectedItemId) params.set(BACKLOG_SPEC_PARAM, '1');
+    else params.delete(BACKLOG_SPEC_PARAM);
     const next = buildHash(route, params);
     if (location.hash !== next) history.replaceState(null, '', next);
   }
 
   private _setProjectFilter(project: string) {
     this._project = project;
+    this._writeUrlState();
+  }
+
+  private _setCreatePanelOpen(open: boolean) {
+    this._createPanelOpen = open;
+    if (!open) {
+      this._launchSlotSelector = null;
+      if (this._slotSelectorOpen) this._setSlotSelectorOpen(false);
+    }
     this._writeUrlState();
   }
 
@@ -385,30 +905,25 @@ export class BacklogPanel extends LitElement {
 
   private _renderProjectPicker() {
     const options = this._projects;
-    const selectValue = options.includes(this._draftProject) ? this._draftProject : CUSTOM_PROJECT;
+    const customProjectActive =
+      Boolean(this._draftProject) && !options.includes(this._draftProject);
     return html`<label>
       Project
-      <div class="project-picker">
-        <select
-          data-testid="backlog-new-project-select"
-          .value=${selectValue}
-          @change=${(e: Event) => {
-            const next = (e.target as HTMLSelectElement).value;
-            this._setDraftProject(next === CUSTOM_PROJECT ? '' : next);
-          }}
-        >
-          ${options.map((project) => html`<option value=${project}>${project}</option>`)}
-          <option value=${CUSTOM_PROJECT}>Custom project…</option>
-        </select>
-        ${selectValue === CUSTOM_PROJECT
-          ? html`<input
-              data-testid="backlog-new-project"
-              placeholder="custom project name"
-              .value=${this._draftProject}
-              @input=${(e: Event) => this._setDraftProject((e.target as HTMLInputElement).value)}
-            />`
-          : nothing}
-      </div>
+      ${renderChoiceButtons({
+        options: [...options, ''],
+        value: customProjectActive ? '' : this._draftProject,
+        onSelect: (project) => this._setDraftProject(project),
+        labels: { '': 'Custom' },
+        testId: 'backlog-new-project-options',
+      })}
+      ${customProjectActive || !this._draftProject
+        ? html`<input
+            data-testid="backlog-new-project"
+            placeholder="custom project name"
+            .value=${this._draftProject}
+            @input=${(e: Event) => this._setDraftProject((e.target as HTMLInputElement).value)}
+          />`
+        : nothing}
     </label>`;
   }
 
@@ -420,6 +935,45 @@ export class BacklogPanel extends LitElement {
   private _setSlotSelectorOpen(open: boolean) {
     this._slotSelectorOpen = open;
     this._writeUrlState();
+  }
+
+  private _setDispatchConfigOpen(open: boolean) {
+    this._dispatchConfigOpen = open;
+    this._dispatchConfigError = '';
+    this._writeUrlState();
+    const item = this._selectedItem;
+    if (open && item) {
+      void this._ensureDispatchConfigData(item).catch((error) => {
+        this._dispatchConfigError = error instanceof Error ? error.message : String(error);
+      });
+    }
+  }
+
+  private _setSpecViewerOpen(open: boolean) {
+    this._specViewerOpen = open;
+    this._writeUrlState();
+    const item = this._selectedItem;
+    if (open && item) void this._loadSpec(item);
+  }
+
+  private async _loadSpec(item: BacklogItem) {
+    if (!item.specPath || this._specContents[item.id] || this._specLoadingItemId === item.id)
+      return;
+    this._specLoadingItemId = item.id;
+    this._specErrors = { ...this._specErrors, [item.id]: '' };
+    try {
+      const result = await gateway.request<BacklogSpecGetResult>(Methods.BACKLOG_SPEC_GET, {
+        itemId: item.id,
+      });
+      this._specContents = { ...this._specContents, [item.id]: result };
+    } catch (error) {
+      this._specErrors = {
+        ...this._specErrors,
+        [item.id]: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      this._specLoadingItemId = '';
+    }
   }
 
   private get _projects(): string[] {
@@ -443,10 +997,105 @@ export class BacklogPanel extends LitElement {
     });
   }
 
+  private get _selectedItem(): BacklogItem | null {
+    return this._items.find((item) => item.id === this._selectedItemId) ?? null;
+  }
+
+  private _selectItem(item: BacklogItem, mode: BacklogDetailMode = 'view') {
+    if (this._selectedItemId !== item.id) {
+      this._dispatchConfigOpen = false;
+      this._specViewerOpen = false;
+    }
+    this._selectedItemId = item.id;
+    this._selectedItemMode = mode;
+    this._writeUrlState();
+  }
+
+  private _setSelectedItemMode(mode: BacklogDetailMode) {
+    this._selectedItemMode = mode;
+    this._writeUrlState();
+  }
+
   private _slotOptions(project: string): SlotStatus[] {
     return this._slots
       .filter((slot) => slot.project === project)
       .sort((a, b) => a.slot.localeCompare(b.slot));
+  }
+
+  private _dispatchSlotOptions(item: BacklogItem): SlotStatus[] {
+    return filterSlotsByGlobalFilters(this._slots, this._globalFilters)
+      .filter((slot) => slot.project === item.project)
+      .sort((a, b) => a.machine.localeCompare(b.machine) || a.slot.localeCompare(b.slot));
+  }
+
+  private _templateOptionsForItem(item: BacklogItem): WorkerTemplateOption[] {
+    return (
+      this._configTemplateOptions[templateOptionsRequestKey(item.project, item.flowType)] ?? []
+    );
+  }
+
+  private _templateOptionsStateForItem(item: BacklogItem): { loading: boolean; error: string } {
+    const key = templateOptionsRequestKey(item.project, item.flowType);
+    return {
+      loading: this._configTemplateOptionsLoading[key] ?? false,
+      error: this._configTemplateOptionsError[key] ?? '',
+    };
+  }
+
+  private async _ensureDispatchConfigData(item: BacklogItem): Promise<void> {
+    if (this._configProjectConfigs.length === 0) {
+      const result = await gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
+      this._configProjectConfigs = result.projects;
+    }
+
+    const key = templateOptionsRequestKey(item.project, item.flowType);
+    if (this._configTemplateOptions[key] || this._configTemplateOptionsLoading[key]) return;
+    this._configTemplateOptionsLoading = { ...this._configTemplateOptionsLoading, [key]: true };
+    this._configTemplateOptionsError = { ...this._configTemplateOptionsError, [key]: '' };
+    try {
+      const result = await gateway.request<ConfigTemplateOptionsResult>(
+        Methods.CONFIG_TEMPLATE_OPTIONS,
+        {
+          project: item.project,
+          flowType: item.flowType,
+        },
+      );
+      this._configTemplateOptions = { ...this._configTemplateOptions, [key]: result.options };
+    } catch (error) {
+      this._configTemplateOptionsError = {
+        ...this._configTemplateOptionsError,
+        [key]: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      this._configTemplateOptionsLoading = { ...this._configTemplateOptionsLoading, [key]: false };
+    }
+  }
+
+  private async _updateDispatchConfig(item: BacklogItem, patch: BacklogUpdateInput): Promise<void> {
+    this._dispatchConfigBusy = item.id;
+    this._dispatchConfigError = '';
+    try {
+      await gateway.request<BacklogUpdateResult>(Methods.BACKLOG_UPDATE, {
+        itemId: item.id,
+        ...patch,
+      });
+    } catch (error) {
+      this._dispatchConfigError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this._dispatchConfigBusy = '';
+    }
+  }
+
+  private _updateDispatchConfigFromEditor(
+    item: BacklogItem,
+    detail: DispatchConfigChangeDetail,
+  ): Promise<void> {
+    const {
+      taskTemplateFileName: _taskTemplateFileName,
+      skipPrepare: _skipPrepare,
+      ...backlogPatch
+    } = detail;
+    return this._updateDispatchConfig(item, backlogPatch);
   }
 
   private _allowedSlotsFromDraft(): string[] | undefined {
@@ -751,7 +1400,7 @@ export class BacklogPanel extends LitElement {
         ?disabled=${!this._launchSelectorProject(key)}
         @click=${() => (this._launchSlotSelector = { key, index })}
       >
-        Choose visually
+        Choose
       </button>
       ${candidate.role === 'comparison'
         ? html`<button
@@ -794,6 +1443,270 @@ export class BacklogPanel extends LitElement {
     </div>`;
   }
 
+  private _renderDispatchConfigSummary(item: BacklogItem, compact = false, force = false) {
+    const summary = summarizeBacklogDispatchConfig(item);
+    if (!summary.visible && !force) return nothing;
+    const chips = compact
+      ? summary.chips.filter((chip) => chip.label !== 'default effort').slice(0, 4)
+      : summary.chips;
+    const meta = compact ? summary.meta.filter((entry) => entry.label === 'Slots') : summary.meta;
+    return html`<div class="dispatch-config-summary" data-testid="backlog-dispatch-config-summary">
+      <div class="dispatch-config-head">
+        <div class="field-label">Dispatch config</div>
+        ${compact
+          ? nothing
+          : html`<button
+              class="secondary"
+              type="button"
+              ?disabled=${this._dispatchConfigBusy === item.id}
+              @click=${() => this._setDispatchConfigOpen(true)}
+            >
+              Edit dispatch config
+            </button>`}
+      </div>
+      <div class="dispatch-chip-row">
+        ${chips.map(
+          (chip) =>
+            html`<span
+              class="dispatch-chip ${chip.tone === 'default' ? '' : chip.tone}"
+              title=${chip.title ?? chip.label}
+              >${chip.label}</span
+            >`,
+        )}
+      </div>
+      ${meta.length
+        ? html`<div class="dispatch-meta-grid">
+            ${meta.map(
+              (entry) =>
+                html`<div class="dispatch-meta-cell">
+                  <div class="dispatch-meta-label">${entry.label}</div>
+                  <div class="dispatch-meta-value">${entry.value}</div>
+                </div>`,
+            )}
+          </div>`
+        : nothing}
+      ${!compact && summary.reviewSteps.length
+        ? html`<div class="dispatch-meta-cell">
+            <div class="dispatch-meta-label">Review pipeline</div>
+            <div class="dispatch-review-pipeline">
+              ${summary.reviewSteps.map(
+                (step) =>
+                  html`<span
+                    class="dispatch-review-segment"
+                    title=${`${step.label}: ${step.runner}${step.detail ? ` / ${step.detail}` : ''}`}
+                  ></span>`,
+              )}
+              <span class="dispatch-review-label">
+                ${summary.reviewSteps
+                  .map((step) => `${step.runner}${step.detail ? ` / ${step.detail}` : ''}`)
+                  .join(' -> ')}
+              </span>
+            </div>
+          </div>`
+        : nothing}
+    </div>`;
+  }
+
+  private _renderDispatchConfigModal(item: BacklogItem) {
+    if (!this._dispatchConfigOpen) return nothing;
+    const disabled = this._dispatchConfigBusy === item.id;
+    const templateState = this._templateOptionsStateForItem(item);
+    return html`
+      <div
+        class="modal-backdrop"
+        @click=${(event: MouseEvent) => {
+          if (event.target === event.currentTarget) this._setDispatchConfigOpen(false);
+        }}
+      >
+        <section
+          class="dispatch-config-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Edit backlog dispatch config"
+        >
+          <header>
+            <div>
+              <h3>Dispatch config</h3>
+              <p class="muted">
+                Edits save to this backlog item and are used from Work Graphs too.
+              </p>
+            </div>
+            <button
+              class="secondary"
+              type="button"
+              @click=${() => this._setDispatchConfigOpen(false)}
+            >
+              Close
+            </button>
+          </header>
+          ${this._dispatchConfigError
+            ? html`<div class="error">${this._dispatchConfigError}</div>`
+            : nothing}
+          <dispatch-config-editor
+            .project=${item.project}
+            .flowType=${item.flowType}
+            .runner=${item.runner ?? ''}
+            .model=${item.model ?? ''}
+            .effort=${item.effort ?? ''}
+            .mode=${item.mode ?? ''}
+            .devInteractiveProfile=${item.devInteractiveProfile ?? ''}
+            .taskTemplate=${item.taskTemplate ?? null}
+            .templateOptions=${this._templateOptionsForItem(item)}
+            .prepareProfile=${item.prepareProfile ?? ''}
+            .prepareProfiles=${projectPrepareProfiles(this._configProjectConfigs, item.project)}
+            .pendingReviewPlan=${item.pendingReviewPlan ?? []}
+            .controls=${BACKLOG_DISPATCH_CONFIG_CONTROLS}
+            .disabled=${disabled}
+            @dispatch-config-change=${(event: CustomEvent<DispatchConfigChangeDetail>) =>
+              this._updateDispatchConfigFromEditor(item, event.detail)}
+          ></dispatch-config-editor>
+          ${templateState.loading
+            ? html`<div class="muted">Loading task templates...</div>`
+            : nothing}
+          ${templateState.error ? html`<div class="error">${templateState.error}</div>` : nothing}
+          <div class="config-grid">
+            <label class="config-field">
+              <span>Priority</span>
+              <input
+                type="number"
+                min="1"
+                .value=${String(item.priority)}
+                ?disabled=${disabled}
+                @change=${(event: Event) =>
+                  this._updateDispatchConfig(item, {
+                    priority: Number((event.target as HTMLInputElement).value),
+                  })}
+              />
+            </label>
+            <label class="config-check">
+              <input
+                type="checkbox"
+                .checked=${item.autoDispatch !== false}
+                ?disabled=${disabled}
+                @change=${(event: Event) =>
+                  this._updateDispatchConfig(item, {
+                    autoDispatch: (event.target as HTMLInputElement).checked,
+                  })}
+              />
+              <span>
+                Dispatch when ready
+                <small>
+                  Graph-linked items use this when dependencies are satisfied. Standalone backlog
+                  items still enter the dispatch queue from the Dispatch button.
+                </small>
+              </span>
+            </label>
+          </div>
+          <div class="slot-picker">
+            <div>
+              <div class="field-label">Allowed slots</div>
+              <div class="muted">Filtered by the global project and machine selectors.</div>
+            </div>
+            <slot-choice-list
+              .project=${item.project}
+              .slots=${this._dispatchSlotOptions(item)}
+              .selectedSlots=${item.allowedSlots ?? []}
+              .disabled=${disabled}
+              @slot-choice-change=${(event: CustomEvent<SlotChoiceChangeDetail>) =>
+                this._updateDispatchConfig(item, { allowedSlots: event.detail.allowedSlots })}
+            ></slot-choice-list>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  private _renderSpecAttachment(item: BacklogItem) {
+    if (!item.specPath) return nothing;
+    const spec = this._specContents[item.id];
+    const error = this._specErrors[item.id];
+    const loading = this._specLoadingItemId === item.id;
+    return html`
+      <button class="spec-attachment" type="button" @click=${() => this._setSpecViewerOpen(true)}>
+        <div class="spec-attachment-main">
+          <div class="field-label">Task spec</div>
+          <div class="spec-path">${item.specPath}</div>
+          ${error ? html`<div class="error">${error}</div>` : nothing}
+        </div>
+        <div class="badges">
+          ${renderPlanningBadge('View', 'positive')}
+          ${renderPlanningBadge(
+            spec ? `hash ${spec.hash.slice(0, 8)}` : loading ? 'loading' : 'attached',
+          )}
+        </div>
+      </button>
+    `;
+  }
+
+  private _renderSpecViewerModal(item: BacklogItem) {
+    if (!this._specViewerOpen || !item.specPath) return nothing;
+    const spec = this._specContents[item.id];
+    const error = this._specErrors[item.id];
+    const loading = this._specLoadingItemId === item.id;
+    return html`
+      <div
+        class="modal-backdrop"
+        @click=${(event: MouseEvent) => {
+          if (event.target === event.currentTarget) this._setSpecViewerOpen(false);
+        }}
+      >
+        <section
+          class="dispatch-config-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="View backlog task spec"
+        >
+          <header>
+            <div>
+              <h3>Task spec</h3>
+              <p class="muted">${item.title}</p>
+              <p class="spec-path">${item.specPath}</p>
+            </div>
+            <button class="secondary" type="button" @click=${() => this._setSpecViewerOpen(false)}>
+              Close
+            </button>
+          </header>
+          ${renderChoiceButtons({
+            options: ['markdown', 'raw'] satisfies BacklogSpecViewerMode[],
+            value: this._specViewerMode,
+            onSelect: (mode) => {
+              this._specViewerMode = mode;
+            },
+            labels: { markdown: 'Markdown', raw: 'Raw' },
+            testId: 'backlog-spec-view-mode',
+          })}
+          ${loading ? html`<div class="muted">Loading spec...</div>` : nothing}
+          ${error ? html`<div class="error">${error}</div>` : nothing}
+          ${spec
+            ? this._specViewerMode === 'markdown'
+              ? html`<div class="spec-markdown">
+                  ${unsafeHTML(renderMarkdown(this._specMarkdownBody(spec.content)))}
+                </div>`
+              : html`<pre class="spec-raw">${spec.content}</pre>`
+            : nothing}
+        </section>
+      </div>
+    `;
+  }
+
+  private _specMarkdownBody(content: string): string {
+    return content.replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
+  }
+
+  private _draftTitleForSubmit(): string {
+    const explicitTitle = this._draftTitle.trim();
+    if (explicitTitle) return explicitTitle;
+    const sourceRef = this._draftSourceRef.trim();
+    if (sourceRef) return sourceRef;
+    return (
+      this._draftNotes
+        .split('\n')
+        .map((line) => line.trim())
+        .find(Boolean)
+        ?.slice(0, 120) ?? ''
+    );
+  }
+
   private async _createItem(event: Event) {
     event.preventDefault();
     this._error = '';
@@ -802,11 +1715,16 @@ export class BacklogPanel extends LitElement {
       this._error = 'Select a project before creating a backlog item.';
       return;
     }
+    const title = this._draftTitleForSubmit();
+    if (!title) {
+      this._error = 'Add a Jira/GitHub ref, a title, or notes before creating a backlog item.';
+      return;
+    }
     this._busy = 'create';
     try {
       await gateway.request<BacklogCreateResult>(Methods.BACKLOG_CREATE, {
         project: this._draftProject,
-        title: this._draftTitle,
+        title,
         sourceKind: this._draftSourceKind,
         sourceRef: this._draftSourceRef || undefined,
         flowType: this._draftFlow,
@@ -824,6 +1742,7 @@ export class BacklogPanel extends LitElement {
       this._draftAllowedSlots = [];
       this._setLaunchDraft(NEW_PLAN_KEY, defaultLaunchPlanDraft());
       this._message = 'Backlog item created';
+      this._setCreatePanelOpen(false);
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -838,6 +1757,34 @@ export class BacklogPanel extends LitElement {
   }
 
   private async _enqueue(item: BacklogItem) {
+    if (item.workGraphId) {
+      await this._runItemAction(item.id, 'dispatch via graph', async () => {
+        const linkedGraph = this._workGraphs.find(
+          (candidate) => candidate.graph.id === item.workGraphId,
+        );
+        if (linkedGraph?.graph.status === 'paused') {
+          return 'Graph is paused. Resume it in WorkGraph before dispatching this item.';
+        }
+        if (linkedGraph?.graph.status === 'planning') {
+          const result = await gateway.request<WorkGraphActivateResult>(
+            Methods.WORK_GRAPH_ACTIVATE,
+            { graphId: item.workGraphId },
+          );
+          return this._graphSchedulerMessage(
+            item,
+            { ok: true, graphs: [result.graph] },
+            'Graph activated. ',
+          );
+        }
+        return this._graphSchedulerMessage(
+          item,
+          await gateway.request<WorkGraphSchedulerTickResult>(Methods.WORK_GRAPH_SCHEDULER_TICK, {
+            graphId: item.workGraphId,
+          }),
+        );
+      });
+      return;
+    }
     await this._runItemAction(item.id, 'enqueue', () =>
       gateway.request<BacklogEnqueueResult>(Methods.BACKLOG_ENQUEUE, { itemId: item.id }),
     );
@@ -847,6 +1794,23 @@ export class BacklogPanel extends LitElement {
     await this._runItemAction(item.id, 'dequeue', () =>
       gateway.request<BacklogDequeueResult>(Methods.BACKLOG_DEQUEUE, { itemId: item.id }),
     );
+  }
+
+  private async _deleteItem(item: BacklogItem) {
+    const ok = window.confirm(`Delete backlog item "${item.title}"?`);
+    if (!ok) return;
+    await this._runItemAction(item.id, 'delete', () =>
+      gateway.request<BacklogDeleteResult>(Methods.BACKLOG_DELETE, { itemId: item.id }),
+    );
+    if (this._selectedItemId === item.id) {
+      this._selectedItemId = '';
+      this._selectedItemMode = 'view';
+      this._writeUrlState();
+    }
+    const { [item.id]: _notes, ...remainingNotes } = this._notesDrafts;
+    const { [item.id]: _launchPlan, ...remainingLaunchPlans } = this._launchDrafts;
+    this._notesDrafts = remainingNotes;
+    this._launchDrafts = remainingLaunchPlans;
   }
 
   private async _saveNotes(item: BacklogItem) {
@@ -867,6 +1831,18 @@ export class BacklogPanel extends LitElement {
         launchPlan: this._launchPlanFromDraft(item.id, item) ?? null,
       }),
     );
+  }
+
+  private _notesDirty(item: BacklogItem): boolean {
+    return (
+      this._notesDrafts[item.id] !== undefined && this._notesDrafts[item.id] !== (item.notes ?? '')
+    );
+  }
+
+  private _launchPlanDirty(item: BacklogItem): boolean {
+    if (!this._launchDrafts[item.id]) return false;
+    const draftPlan = this._launchPlanFromDraft(item.id, item) ?? null;
+    return JSON.stringify(draftPlan) !== JSON.stringify(item.launchPlan ?? null);
   }
 
   private async _autoDispatch() {
@@ -891,8 +1867,8 @@ export class BacklogPanel extends LitElement {
     this._error = '';
     this._message = '';
     try {
-      await action();
-      this._message = `${label} complete`;
+      const result = await action();
+      this._message = typeof result === 'string' && result.trim() ? result : `${label} complete`;
     } catch (err) {
       this._error = (err as Error).message;
     } finally {
@@ -900,71 +1876,161 @@ export class BacklogPanel extends LitElement {
     }
   }
 
+  private _graphSchedulerMessage(
+    item: BacklogItem,
+    result: WorkGraphSchedulerTickResult,
+    prefix = '',
+  ): string {
+    const graph =
+      result.graphs.find((candidate) => candidate.graph.id === item.workGraphId) ??
+      this._workGraphs.find((candidate) => candidate.graph.id === item.workGraphId);
+    if (!graph) {
+      return 'Graph scheduler did not run this item. Open the linked WorkGraph and activate it if it is still planning or paused.';
+    }
+    if (result.graphs.every((candidate) => candidate.graph.id !== item.workGraphId)) {
+      if (graph.graph.status === 'planning') {
+        return 'Graph is still planning. Activate it in WorkGraph, then dispatch this item.';
+      }
+      if (graph.graph.status === 'paused') {
+        return 'Graph is paused. Resume it in WorkGraph before dispatching this item.';
+      }
+    }
+    const node = graph.nodes.find((candidate) => candidate.id === item.workNodeId);
+    if (!node) return 'Graph scheduler ran, but the linked node was not found in the WorkGraph.';
+    if (node.status === 'planned') {
+      return `${prefix}Graph is still planning. Activate it in WorkGraph, then dispatch this item.`;
+    }
+    if (node.status === 'queued') {
+      return `${prefix}Queued for launch. The dispatch queue will start it on an eligible slot.`;
+    }
+    if (node.status === 'running')
+      return `${prefix}Dispatch active: the graph node is already running.`;
+    if (node.status === 'waiting') {
+      const reason = node.waitingOn[0]?.detail;
+      return reason
+        ? `${prefix}Not queued yet: waiting on ${reason}.`
+        : `${prefix}Not queued yet: the graph node is still waiting on upstream work.`;
+    }
+    if (node.status === 'needs-attention') {
+      const reason = node.waitingOn[0]?.detail;
+      return reason
+        ? `${prefix}Graph needs attention: ${reason}.`
+        : `${prefix}Graph needs attention before this item can be queued.`;
+    }
+    if (node.status === 'ready') {
+      return `${prefix}Ready, but not queued. Review auto start, slots, and dispatch config.`;
+    }
+    return `${prefix}Checked: ${node.status}. Open the WorkGraph for details.`;
+  }
+
+  private _workGraphHash(item: BacklogItem): string {
+    const { params: current } = parseHashRoute();
+    const params = new URLSearchParams();
+    for (const key of ['projects', 'machines']) {
+      const value = current.get(key);
+      if (value) params.set(key, value);
+    }
+    if (item.workGraphId) params.set('graph', item.workGraphId);
+    if (item.workNodeId) params.set('node', item.workNodeId);
+    return buildHash('work-graphs', params);
+  }
+
+  private _dispatchHash(item?: BacklogItem): string {
+    const { params: current } = parseHashRoute();
+    const params = new URLSearchParams();
+    for (const key of ['projects', 'machines']) {
+      const value = current.get(key);
+      if (value) params.set(key, value);
+    }
+    if (item?.project && !params.get('projects')) params.set('projects', item.project);
+    return buildHash('dispatch', params);
+  }
+
   private _renderCreateForm() {
     const slotOptions = this._slotOptions(this._draftProject);
     const selectedSlots = this._allowedSlotsFromDraft() ?? [];
+    const canCreate = Boolean(this._draftProject && this._draftTitleForSubmit());
     return html`<form @submit=${this._createItem}>
-      <h2>Add backlog item</h2>
-      <div class="grid">
-        ${this._renderProjectPicker()}
-        <label
-          >Title
+      <div class="create-grid">
+        <div class="wide">${this._renderProjectPicker()}</div>
+        <label class="span-2">
+          Source
+          ${renderChoiceButtons({
+            options: SOURCES,
+            value: this._draftSourceKind,
+            onSelect: (source) => {
+              this._draftSourceKind = source;
+            },
+          })}
+        </label>
+        <label class="span-2">
+          Flow
+          ${renderChoiceButtons({
+            options: FLOWS,
+            value: this._draftFlow,
+            onSelect: (flow) => {
+              this._draftFlow = flow;
+            },
+          })}
+        </label>
+        <label class="wide">
+          Jira / GitHub ref
           <input
-            required
+            placeholder="TAT-3463, owner/repo#1, or a URL"
+            .value=${this._draftSourceRef}
+            @input=${(e: Event) => (this._draftSourceRef = (e.target as HTMLInputElement).value)}
+          />
+          <span class="meta">Used as the title when title is blank.</span>
+        </label>
+        <label class="wide">
+          Title
+          <input
+            placeholder="Optional when ref or notes describe the task"
             .value=${this._draftTitle}
             @input=${(e: Event) => (this._draftTitle = (e.target as HTMLInputElement).value)}
           />
         </label>
-        <label
-          >Source
-          <select
-            .value=${this._draftSourceKind}
-            @change=${(e: Event) =>
-              (this._draftSourceKind = (e.target as HTMLSelectElement).value as BacklogSourceKind)}
-          >
-            ${SOURCES.map((source) => html`<option value=${source}>${source}</option>`)}
-          </select>
+        <label class="wide notes-field">
+          Task context markdown
+          <textarea
+            placeholder="Add the actual wrapping context, implementation details, acceptance criteria, links, caveats, and dispatch instructions."
+            .value=${this._draftNotes}
+            @input=${(e: Event) => (this._draftNotes = (e.target as HTMLTextAreaElement).value)}
+          ></textarea>
+          <span class="meta">Used as the title fallback when both title and ref are blank.</span>
         </label>
-        <label
-          >Ref
-          <input
-            placeholder="PROJ-123, owner/repo#1, or blank for manual"
-            .value=${this._draftSourceRef}
-            @input=${(e: Event) => (this._draftSourceRef = (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label
-          >Flow
-          <select
-            .value=${this._draftFlow}
-            @change=${(e: Event) =>
-              (this._draftFlow = (e.target as HTMLSelectElement).value as FlowType)}
-          >
-            ${FLOWS.map((flow) => html`<option value=${flow}>${flow}</option>`)}
-          </select>
-        </label>
-        <label
-          >Tags
+        <label class="span-2">
+          Tags
           <input
             placeholder="roadmap, command-center"
             .value=${this._draftTags}
             @input=${(e: Event) => (this._draftTags = (e.target as HTMLInputElement).value)}
           />
         </label>
-        <label
-          >Priority
+        <label>
+          Priority
           <input
             type="number"
             .value=${this._draftPriority}
             @input=${(e: Event) => (this._draftPriority = (e.target as HTMLInputElement).value)}
           />
         </label>
-        <div class="slot-picker-field">
+        <label title=${AUTO_DISPATCH_TOOLTIP}>
+          Auto-dispatch
+          <input
+            type="checkbox"
+            title=${AUTO_DISPATCH_TOOLTIP}
+            .checked=${this._draftAutoDispatch}
+            @change=${(e: Event) =>
+              (this._draftAutoDispatch = (e.target as HTMLInputElement).checked)}
+          />
+        </label>
+        <div class="slot-picker-field wide">
           <span class="field-label">Allowed slots</span>
           <div class="slot-picker-summary">
             <div class="badges">${this._renderAllowedSlotChips(selectedSlots)}</div>
             <button class="secondary" type="button" @click=${() => this._setSlotSelectorOpen(true)}>
-              Choose visually
+              Choose
             </button>
           </div>
           <span class="meta">
@@ -972,26 +2038,10 @@ export class BacklogPanel extends LitElement {
             selected project.
           </span>
         </div>
-        <label>
-          Auto-dispatch
-          <input
-            type="checkbox"
-            .checked=${this._draftAutoDispatch}
-            @change=${(e: Event) =>
-              (this._draftAutoDispatch = (e.target as HTMLInputElement).checked)}
-          />
-        </label>
       </div>
-      <label style="margin-top: 10px;"
-        >Notes
-        <textarea
-          .value=${this._draftNotes}
-          @input=${(e: Event) => (this._draftNotes = (e.target as HTMLTextAreaElement).value)}
-        ></textarea>
-      </label>
       ${this._renderLaunchPlanEditor(NEW_PLAN_KEY)}
       <div class="actions" style="margin-top: 10px;">
-        <button ?disabled=${this._busy === 'create' || !this._draftProject}>Create</button>
+        <button ?disabled=${this._busy === 'create' || !canCreate}>Create</button>
       </div>
       <slot-selector-modal
         .open=${this._slotSelectorOpen}
@@ -1006,9 +2056,36 @@ export class BacklogPanel extends LitElement {
     </form>`;
   }
 
+  private _renderCreatePanel() {
+    if (!this._createPanelOpen) return nothing;
+    return html`<section class="create-panel" aria-label="Add backlog item">
+      <header>
+        <div>
+          <h2>Add backlog item</h2>
+          <p class="muted">Direct backlog dispatch item.</p>
+        </div>
+        <button class="secondary" type="button" @click=${() => this._setCreatePanelOpen(false)}>
+          Close
+        </button>
+      </header>
+      ${this._renderCreateForm()}
+    </section>`;
+  }
+
   private _renderRow(item: BacklogItem) {
-    const notesValue = this._notesDrafts[item.id] ?? item.notes ?? '';
-    return html`<div class="row">
+    const selected = this._selectedItemId === item.id;
+    return html`<div
+      class="row ${selected ? 'selected' : ''}"
+      role="button"
+      tabindex="0"
+      @click=${() => this._selectItem(item)}
+      @keydown=${(event: KeyboardEvent) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          this._selectItem(item);
+        }
+      }}
+    >
       <div class="row-head">
         <div>
           <div class="title">${item.title}</div>
@@ -1030,60 +2107,221 @@ export class BacklogPanel extends LitElement {
           ${item.roadmapItemId
             ? renderPlanningBadge(`roadmap ${item.roadmapItemId}`, 'positive')
             : nothing}
+          ${item.workGraphId
+            ? html`<a
+                class="badge-link"
+                href=${this._workGraphHash(item)}
+                @click=${(event: Event) => event.stopPropagation()}
+                >graph ${item.workGraphId}</a
+              >`
+            : nothing}
           ${item.specPath ? renderPlanningBadge(`spec ${item.specPath}`) : nothing}
           ${item.autoDispatch ? renderPlanningBadge('auto', 'positive') : nothing}
         </div>
       </div>
       ${item.lastDispatchError ? html`<div class="error">${item.lastDispatchError}</div>` : nothing}
-      ${this._renderLaunchPlanSummary(item)} ${this._renderLaunchPlanEditor(item.id, item)}
-      <label
-        >Agent notes
-        <textarea
-          .value=${notesValue}
-          @input=${(e: Event) => {
-            this._notesDrafts = {
-              ...this._notesDrafts,
-              [item.id]: (e.target as HTMLTextAreaElement).value,
-            };
-          }}
-        ></textarea>
-      </label>
+      ${this._renderLaunchPlanSummary(item)} ${this._renderDispatchConfigSummary(item, true)}
       <div class="actions">
         <button
-          class="secondary"
-          ?disabled=${this._busy.endsWith(item.id)}
-          @click=${() => this._saveNotes(item)}
+          type="button"
+          @click=${(event: Event) => {
+            event.stopPropagation();
+            this._selectItem(item, 'edit');
+          }}
         >
-          Save notes
-        </button>
-        <button
-          class="secondary"
-          ?disabled=${this._busy.endsWith(item.id)}
-          @click=${() => this._saveLaunchPlan(item)}
-        >
-          Save launch plan
-        </button>
-        <button
-          ?disabled=${item.status !== 'candidate' || this._busy.endsWith(item.id)}
-          @click=${() => this._markReady(item)}
-        >
-          Mark ready
-        </button>
-        <button
-          ?disabled=${item.status !== 'ready' || this._busy.endsWith(item.id)}
-          @click=${() => this._enqueue(item)}
-        >
-          Enqueue
-        </button>
-        <button
-          class="secondary"
-          ?disabled=${!canDequeueBacklogItemForUi(item) || this._busy.endsWith(item.id)}
-          @click=${() => this._dequeue(item)}
-        >
-          Dequeue
+          Edit
         </button>
       </div>
     </div>`;
+  }
+
+  private _renderItemActionButtons(item: BacklogItem, mode: BacklogDetailMode) {
+    return html`<div class="actions">
+      ${mode === 'edit'
+        ? html`<button
+              class="secondary"
+              ?disabled=${this._busy.endsWith(item.id) || !this._notesDirty(item)}
+              @click=${() => this._saveNotes(item)}
+            >
+              Save notes
+            </button>
+            <button
+              class="secondary"
+              ?disabled=${this._busy.endsWith(item.id) || !this._launchPlanDirty(item)}
+              @click=${() => this._saveLaunchPlan(item)}
+            >
+              Save launch plan
+            </button>
+            <button
+              class="danger"
+              ?disabled=${this._busy.endsWith(item.id)}
+              @click=${() => this._deleteItem(item)}
+            >
+              Delete
+            </button>`
+        : nothing}
+      ${item.status === 'candidate'
+        ? html`<button
+            ?disabled=${this._busy.endsWith(item.id)}
+            @click=${() => this._markReady(item)}
+          >
+            Mark ready
+          </button>`
+        : html`<span class=${`action-state ${item.status === 'ready' ? 'ready' : ''}`}
+            >${item.status === 'ready' ? 'Ready' : item.status}</span
+          >`}
+      <button
+        class="primary-action"
+        ?disabled=${item.status !== 'ready' || this._busy.endsWith(item.id)}
+        @click=${() => this._enqueue(item)}
+        title=${item.workGraphId
+          ? 'Dispatch this linked backlog item through its WorkGraph so dependency state and graph run metadata stay intact.'
+          : 'Enqueue this ready backlog item directly.'}
+      >
+        ${item.workGraphId ? 'Dispatch' : 'Enqueue'}
+      </button>
+      <button
+        class="secondary"
+        ?disabled=${!canDequeueBacklogItemForUi(item) || this._busy.endsWith(item.id)}
+        @click=${() => this._dequeue(item)}
+      >
+        Dequeue
+      </button>
+      ${canDequeueBacklogItemForUi(item)
+        ? html`<a class="badge-link" href=${this._dispatchHash(item)}>Open dispatch queue</a>`
+        : nothing}
+    </div>`;
+  }
+
+  private _renderSelectedItemPanel() {
+    const item = this._selectedItem;
+    if (!item) {
+      return html`<section class="detail-panel empty-detail" aria-label="Selected backlog item">
+        <header>
+          <div>
+            <h2>No item selected</h2>
+            <p class="muted">
+              Select a backlog item to review its spec, dispatch config, notes, and actions.
+            </p>
+          </div>
+        </header>
+      </section>`;
+    }
+    const notesValue = this._notesDrafts[item.id] ?? item.notes ?? '';
+    const mode = this._selectedItemMode;
+    return html`<section class="detail-panel" aria-label="Selected backlog item">
+      <header>
+        <div>
+          <h2>${item.title}</h2>
+          <p class="muted">
+            ${item.project} · ${item.flowType} · ${item.sourceKind}:${item.sourceRef}
+          </p>
+        </div>
+        <div class="actions">
+          <button
+            class="secondary"
+            type="button"
+            @click=${() => this._setSelectedItemMode(mode === 'edit' ? 'view' : 'edit')}
+          >
+            ${mode === 'edit' ? 'Done' : 'Edit'}
+          </button>
+        </div>
+      </header>
+      <div class="badges">
+        ${renderPlanningBadge(
+          item.status,
+          item.status === 'ready'
+            ? 'positive'
+            : item.status === 'failed' || item.status === 'needs-attention'
+              ? 'danger'
+              : 'default',
+        )}
+        ${renderPlanningBadge(`p${item.priority}`)} ${renderPlanningBadge(slotsText(item))}
+        ${renderTagChips(item.tags)}
+        ${item.workGraphId
+          ? html`<a class="badge-link" href=${this._workGraphHash(item)}
+              >graph ${item.workGraphId}</a
+            >`
+          : nothing}
+      </div>
+      ${item.lastDispatchError ? html`<div class="error">${item.lastDispatchError}</div>` : nothing}
+      ${this._renderSpecAttachment(item)} ${this._renderLaunchPlanSummary(item)}
+      ${this._renderDispatchConfigSummary(item, false, true)}
+      ${mode === 'edit' ? this._renderLaunchPlanEditor(item.id, item) : nothing}
+      ${mode === 'edit'
+        ? html`<label
+            >Agent notes
+            <textarea
+              .value=${notesValue}
+              @input=${(e: Event) => {
+                this._notesDrafts = {
+                  ...this._notesDrafts,
+                  [item.id]: (e.target as HTMLTextAreaElement).value,
+                };
+              }}
+            ></textarea>
+          </label>`
+        : html`<div>
+            <div class="field-label">Agent notes</div>
+            <pre class="notes-view">${notesValue || 'No notes.'}</pre>
+          </div>`}
+      ${this._renderItemActionButtons(item, mode)} ${this._renderDispatchConfigModal(item)}
+      ${this._renderSpecViewerModal(item)}
+    </section>`;
+  }
+
+  private _renderSidebar() {
+    const globalProjectScope =
+      this._globalFilters.projects.length === 0
+        ? 'All global projects'
+        : this._globalFilters.projects.join(', ');
+    const globalMachineScope =
+      this._globalFilters.machines.length === 0
+        ? 'All nodes'
+        : this._globalFilters.machines.join(', ');
+    return html`<aside class="sidebar">
+      <div class="sidebar-actions">
+        <button type="button" @click=${() => this._setCreatePanelOpen(!this._createPanelOpen)}>
+          ${this._createPanelOpen ? 'Hide backlog form' : 'New backlog item'}
+        </button>
+        <button
+          class="secondary"
+          type="button"
+          title=${AUTO_DISPATCH_TOOLTIP}
+          ?disabled=${this._busy === 'auto'}
+          @click=${this._autoDispatch}
+        >
+          Auto-dispatch ready
+        </button>
+      </div>
+      <div class="sidebar-section">
+        <h2>Filters</h2>
+        <label>
+          Project
+          ${renderChoiceButtons({
+            options: ['all', ...this._projects],
+            value: this._project,
+            onSelect: (project) => this._setProjectFilter(project),
+            labels: { all: 'All visible' },
+          })}
+        </label>
+        <label>
+          Status
+          ${renderChoiceButtons({
+            options: STATUSES,
+            value: this._status,
+            onSelect: (status) => this._setStatusFilter(status),
+          })}
+        </label>
+      </div>
+      <div class="scope-note">
+        <div class="field-label">Global scope</div>
+        <div class="badges">
+          ${renderPlanningBadge(globalProjectScope)} ${renderPlanningBadge(globalMachineScope)}
+        </div>
+        <div class="meta">${this._filtered.length} / ${this._items.length} backlog items</div>
+      </div>
+    </aside>`;
   }
 
   render() {
@@ -1093,42 +2331,24 @@ export class BacklogPanel extends LitElement {
           <h1>Backlog</h1>
           <p class="muted">Durable Jira/GitHub/manual work intake before the dispatch queue.</p>
         </div>
-        <button ?disabled=${this._busy === 'auto'} @click=${this._autoDispatch}>
-          Auto-dispatch ready
-        </button>
       </div>
       ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
       ${this._message ? html`<div class="message">${this._message}</div>` : nothing}
-      <div class="filters">
-        <label
-          >Project
-          <select
-            .value=${this._project}
-            @change=${(e: Event) => this._setProjectFilter((e.target as HTMLSelectElement).value)}
-          >
-            <option value="all">All projects</option>
-            ${this._projects.map((project) => html`<option value=${project}>${project}</option>`)}
-          </select>
-        </label>
-        <label
-          >Status
-          <select
-            .value=${this._status}
-            @change=${(e: Event) =>
-              this._setStatusFilter((e.target as HTMLSelectElement).value as BacklogStatus | 'all')}
-          >
-            ${STATUSES.map((status) => html`<option value=${status}>${status}</option>`)}
-          </select>
-        </label>
-        <div class="muted">${this._filtered.length} / ${this._items.length} items</div>
-      </div>
-      ${this._renderCreateForm()}
-      <div class="card">
-        <h2>Items</h2>
-        <div class="rows">
-          ${this._filtered.length === 0
-            ? html`<div class="empty">No backlog items match this view.</div>`
-            : this._filtered.map((item) => this._renderRow(item))}
+      <div class="workspace">
+        ${this._renderSidebar()}
+        <div class="content">
+          ${this._renderCreatePanel()}
+          <div class="backlog-browser">
+            <div class="card">
+              <h2>Items</h2>
+              <div class="rows">
+                ${this._filtered.length === 0
+                  ? html`<div class="empty">No backlog items match this view.</div>`
+                  : this._filtered.map((item) => this._renderRow(item))}
+              </div>
+            </div>
+            ${this._renderSelectedItemPanel()}
+          </div>
         </div>
       </div>
       ${this._renderLaunchSlotSelectorModal()}
