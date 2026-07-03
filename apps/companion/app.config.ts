@@ -68,9 +68,9 @@ const envSchema = Joi.object({
   EXPO_PUBLIC_SHERPA_ASR_MODEL_ID: Joi.string().allow('').default(''),
 }).unknown();
 
-// Keep one canonical Expo slug for the linked EAS project. Install identity and
-// deep-link disambiguation come from bundle/package IDs and schemes, not slug.
-const APP_SLUG = 'farmslot';
+// EAS project slugs are immutable for a linked projectId — must stay farmslot-companion.
+// Install identity and deep-link disambiguation come from bundle/package IDs and schemes.
+const APP_SLUG = 'farmslot-companion';
 const APP_VERSION = packageJson.version;
 
 function loadEnv(): AppConfigEnv {
