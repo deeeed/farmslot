@@ -55,3 +55,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [043](043-scripted-runner-execution-policy.md)         | Scripted Runner and Per-Step Executor Policy                            | Proposed |
 | [044](044-backlog-launch-plans.md)                     | Backlog Launch Plans and Comparison Candidate Sets                      | Accepted |
 | [045](045-worker-terminal-contract.md)                 | Worker Terminal Contract — project.json required outputs                | Accepted |
+| [047](047-worker-session-history-panel.md)             | Experimental Worker Session History Panel (transcript mirror)           | Proposed |
