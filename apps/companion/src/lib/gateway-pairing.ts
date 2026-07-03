@@ -193,7 +193,9 @@ function sendUnauthenticatedPairingExchange(
     };
 
     ws.onclose = () => {
-      if (!settled) settleWithError(pairingWebSocketConnectionError(url));
+      if (!settled) {
+        settleWithError(new Error('Pairing WebSocket closed before exchange completed'));
+      }
     };
 
     ws.onmessage = (event: MessageEvent) => {

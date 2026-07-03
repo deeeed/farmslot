@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
+import type { GatewayListenInfo } from '@farmslot/protocol';
 import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
@@ -484,6 +485,20 @@ function updatesSection(ws: Workspace | null): DoctorSection {
   };
 }
 
+function companionLanPairingCheck(listen: GatewayListenInfo): DoctorCheck {
+  return {
+    name: 'companion LAN pairing',
+    ok: listen.remotePairingAllowed,
+    warn: !listen.remotePairingAllowed,
+    detail: listen.remotePairingAllowed
+      ? `gateway listening on ${listen.host}:${listen.port}`
+      : `gateway listening on ${listen.host}:${listen.port} — phones on the LAN cannot connect`,
+    hint: listen.remotePairingAllowed
+      ? undefined
+      : 'Restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev when .env.local-auth is present) or run farmslot up',
+  };
+}
+
 /**
  * Gateway profile health (ADR-036). A down remote gateway or a not-yet-logged-in
  * profile is advice (WARN), not a broken local install; only an unreadable
@@ -516,19 +531,7 @@ async function gatewaySection(): Promise<DoctorSection> {
       },
     ];
     const listen = await probeLocalGatewayListen();
-    if (listen) {
-      checks.push({
-        name: 'companion LAN pairing',
-        ok: listen.remotePairingAllowed,
-        warn: !listen.remotePairingAllowed,
-        detail: listen.remotePairingAllowed
-          ? `gateway listening on ${listen.host}:${listen.port}`
-          : `gateway listening on ${listen.host}:${listen.port} — phones on the LAN cannot connect`,
-        hint: listen.remotePairingAllowed
-          ? undefined
-          : 'Restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev when .env.local-auth is present) or run farmslot up',
-      });
-    }
+    if (listen) checks.push(companionLanPairingCheck(listen));
     return { title: 'Gateways', checks };
   }
   const checks: DoctorCheck[] = await Promise.all(
@@ -565,19 +568,7 @@ async function gatewaySection(): Promise<DoctorSection> {
     }),
   );
   const listen = await probeLocalGatewayListen();
-  if (listen) {
-    checks.push({
-      name: 'companion LAN pairing',
-      ok: listen.remotePairingAllowed,
-      warn: !listen.remotePairingAllowed,
-      detail: listen.remotePairingAllowed
-        ? `gateway listening on ${listen.host}:${listen.port}`
-        : `gateway listening on ${listen.host}:${listen.port} — phones on the LAN cannot connect`,
-      hint: listen.remotePairingAllowed
-        ? undefined
-        : 'Restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev when .env.local-auth is present) or run farmslot up',
-    });
-  }
+  if (listen) checks.push(companionLanPairingCheck(listen));
   return { title: 'Gateways', checks };
 }
 

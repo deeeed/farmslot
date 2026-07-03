@@ -12,4 +12,8 @@ test('pairingWebSocketConnectionError explains LAN bind requirement for non-loop
 test('pairingWebSocketConnectionError keeps a short message for loopback URLs', () => {
   const error = pairingWebSocketConnectionError('ws://127.0.0.1:7801/ws');
   assert.equal(error.message, 'Pairing WebSocket connection failed');
+  assert.equal(
+    pairingWebSocketConnectionError('ws://[::1]:7801/ws').message,
+    'Pairing WebSocket connection failed',
+  );
 });

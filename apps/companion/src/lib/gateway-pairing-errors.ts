@@ -8,7 +8,12 @@ function pairingUrlHost(url: string): string | null {
 
 function isLoopbackPairingHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
-  return normalized === 'localhost' || normalized.startsWith('127.');
+  return (
+    normalized === 'localhost' ||
+    normalized === '::1' ||
+    normalized === '[::1]' ||
+    normalized.startsWith('127.')
+  );
 }
 
 /** Actionable pairing transport error when the phone cannot open a gateway WebSocket. */

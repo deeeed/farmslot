@@ -232,6 +232,7 @@ export class FarmApp extends LitElement {
   @state() private pairingProfileCount = 0;
   @state() private pairingError = '';
   @state() private pairingListenWarning = '';
+  @state() private pairingListenLoading = false;
   @state() private onboardingConnectInput = '';
   @state() private onboardingError = '';
   private unsub?: () => void;
@@ -806,11 +807,14 @@ export class FarmApp extends LitElement {
   }
 
   private async refreshPairingListenWarning() {
+    this.pairingListenLoading = true;
     try {
       const status = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {}, 5_000);
       this.pairingListenWarning = pairingListenWarning(status.listen);
-    } catch {
-      this.pairingListenWarning = '';
+    } catch (err) {
+      this.pairingListenWarning = `Could not read gateway listen address (${err instanceof Error ? err.message : 'unknown error'}). Retry before generating a LAN pairing QR.`;
+    } finally {
+      this.pairingListenLoading = false;
     }
   }
 
@@ -876,10 +880,11 @@ export class FarmApp extends LitElement {
       this.pairingError = `${invalidTarget.profileName} URL must start with ws:// or wss://`;
       return;
     }
-    if (
-      this.pairingListenWarning &&
-      targets.some((target) => pairingTargetNeedsRemoteListen(target))
-    ) {
+    await this.refreshPairingListenWarning();
+    const needsLocalGatewayReachable = targets.some((target) =>
+      pairingTargetNeedsRemoteListen(target),
+    );
+    if (needsLocalGatewayReachable && this.pairingListenWarning) {
       this.pairingError = this.pairingListenWarning;
       return;
     }
@@ -1446,8 +1451,16 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
             }}
           />
 
-          <button class="pairing-submit" type="submit" ?disabled=${this.pairingBusy}>
-            ${this.pairingBusy ? 'Generating…' : 'Generate QR'}
+          <button
+            class="pairing-submit"
+            type="submit"
+            ?disabled=${this.pairingBusy || this.pairingListenLoading}
+          >
+            ${this.pairingListenLoading
+              ? 'Checking gateway bind…'
+              : this.pairingBusy
+                ? 'Generating…'
+                : 'Generate QR'}
           </button>
 
           ${this.pairingQrDataUrl
@@ -1605,8 +1618,13 @@ function pairingTargetNeedsRemoteListen(target: {
 }): boolean {
   if (target.kind === 'lan' || target.kind === 'tailnet') return true;
   try {
-    const host = new URL(target.gatewayUrl).hostname.toLowerCase();
-    return host !== 'localhost' && !host.startsWith('127.');
+    const url = new URL(target.gatewayUrl);
+    if (url.protocol === 'wss:') return false;
+    const host = url.hostname.toLowerCase();
+    if (host === 'localhost' || host === '::1' || host === '[::1]' || host.startsWith('127.')) {
+      return false;
+    }
+    return url.protocol === 'ws:';
   } catch {
     return false;
   }

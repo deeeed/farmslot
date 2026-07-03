@@ -140,7 +140,7 @@ async function gatewaySection(): Promise<GatewayDoctorSection> {
         : remotePairingBlockedHint(listen.host, listen.port),
       hint: listen.remotePairingAllowed
         ? undefined
-        : 'Set GATEWAY_HOST=0.0.0.0 and restart the gateway, or run farmslot up.',
+        : 'Restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev when .env.local-auth is present) or run farmslot up.',
     });
   }
   checks.push({
