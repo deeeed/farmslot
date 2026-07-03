@@ -152,6 +152,9 @@ import {
   type TmuxSynchronizePanesParams,
   type TmuxWorkerListParams,
   type TmuxZoomPaneParams,
+  type WorkerSessionHistoryGetParams,
+  type WorkerSessionHistorySubscribeParams,
+  type WorkerSessionHistoryUnsubscribeParams,
   type WorkGraphActivateParams,
   type WorkGraphAddEdgeParams,
   type WorkGraphAddNodeParams,
@@ -368,6 +371,11 @@ import {
   workGraphSchedulerTick,
   workGraphUpdateNode,
 } from '../methods/work-graph.js';
+import {
+  workerSessionHistoryGet,
+  workerSessionHistorySubscribe,
+  workerSessionHistorySubscriptionKey,
+} from '../methods/worker-session-history.js';
 import { metroSubscribe, metroUnsubscribe } from '../methods/workspace.js';
 import { getAllThumbnails, subscribeThumbnails } from '../observability/thumbnail-cache.js';
 import { farmslotRoot } from '../projects/repo-root.js';
@@ -679,6 +687,27 @@ export async function routeMethod(
       return { resized: true };
     case Methods.TERMINAL_WORKER_SNAPSHOT:
       return terminalWorkerSnapshot(p as TerminalWorkerSnapshotParams);
+    case Methods.WORKER_SESSION_HISTORY_GET:
+      return workerSessionHistoryGet(p as WorkerSessionHistoryGetParams);
+    case Methods.WORKER_SESSION_HISTORY_SUBSCRIBE: {
+      const sub = p as WorkerSessionHistorySubscribeParams;
+      const key = workerSessionHistorySubscriptionKey(sub);
+      state.workerSessionHistoryHandlers.get(key)?.();
+      state.workerSessionHistoryHandlers.delete(key);
+      const { result, unsubscribe } = await workerSessionHistorySubscribe(sub, emit);
+      if (isActiveClient(state)) {
+        state.workerSessionHistoryHandlers.set(key, unsubscribe);
+      } else {
+        unsubscribe();
+      }
+      return result;
+    }
+    case Methods.WORKER_SESSION_HISTORY_UNSUBSCRIBE: {
+      const key = workerSessionHistorySubscriptionKey(p as WorkerSessionHistoryUnsubscribeParams);
+      state.workerSessionHistoryHandlers.get(key)?.();
+      state.workerSessionHistoryHandlers.delete(key);
+      return { unsubscribed: true };
+    }
 
     // PR
     case Methods.PR_STATUS:

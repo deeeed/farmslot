@@ -21,7 +21,7 @@ import type {
   WorkGraphProjection,
 } from '../contracts/index.js';
 import type { CIWatchFixProgress, CIWatchFixTrigger, CIWatchPhase } from '../recipes/step-io.js';
-import type { TaskProgressResult } from '../rpc/index.js';
+import type { TaskProgressResult, WorkerSessionHistoryDeltaPayload } from '../rpc/index.js';
 import type { TmuxWorkerRef } from '../rpc/tmux.js';
 
 import type { WorkerSignal } from './signal.js';
@@ -49,6 +49,7 @@ export const Events = {
   TERMINAL_DATA: 'terminal.data',
   TERMINAL_MODE: 'terminal.mode',
   TERMINAL_EXITED: 'terminal.exited',
+  WORKER_SESSION_HISTORY_DELTA: 'worker.session.history.delta',
 
   // PR updates
   PR_UPDATED: 'pr.updated',
@@ -171,6 +172,8 @@ export interface TerminalExitedPayload {
   contextId?: string;
   exitCode: number;
 }
+
+export interface WorkerSessionHistoryDeltaEventPayload extends WorkerSessionHistoryDeltaPayload {}
 
 export interface PRUpdatedPayload {
   pr: PRStatus;

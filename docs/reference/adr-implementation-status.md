@@ -34,7 +34,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [040](../adr/040-work-graph-orchestration.md)              | Work-graph orchestration          | Proposed   | Not started    | Proposed DAG scheduler over dispatchable backlog items               |
 | [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement  | Proposed   | Not started    | Proposed markdown roadmap/refinement/promotion layer                 |
 | [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches            | Accepted   | Partial        | `release.ts` idle reset; configurable tracking branch + rebase merge |
-| [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel      | Proposed   | Not started    | Experimental read-only transcript mirror on active sessions          |
+| [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel      | Accepted   | In progress    | Experimental read-only transcript mirror on active sessions          |
 
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
 

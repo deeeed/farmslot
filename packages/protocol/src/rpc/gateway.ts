@@ -42,6 +42,9 @@ export interface GatewayStatusResult {
   update: GatewayUpdateStatus;
   /** Operator-facing notes from the latest gateway release cut, when present. */
   releaseNotes?: GatewayReleaseNotes;
+  capabilities?: {
+    experimentalWorkerHistory?: boolean;
+  };
 }
 
 export type GatewayDoctorSectionId =

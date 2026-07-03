@@ -10,6 +10,7 @@ import type {
 } from '@farmslot/protocol';
 
 import type { WorkerTerminalPtyHandler } from '../methods/terminal-worker.js';
+import type { WorkerSessionHistoryUnsubscribe } from '../methods/worker-session-history.js';
 import type { PtyDataHandler } from '../runtime/pty-stream.js';
 import type { ScreenFrameHandler } from '../runtime/screen-session.js';
 
@@ -21,6 +22,7 @@ export interface TerminalSubscriptionState {
     string,
     { slotId: string; runId?: string; role?: TerminalSubscribeParams['role']; contextId?: string }
   >;
+  workerSessionHistoryHandlers: Map<string, WorkerSessionHistoryUnsubscribe>;
   // Per-slot subscribe sequence: a fresh subscribe call increments this before
   // awaiting any I/O. After the await, the late completer compares its captured
   // sequence to the current value; mismatch = a newer subscribe ran in the gap,

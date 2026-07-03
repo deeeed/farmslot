@@ -87,6 +87,11 @@ export const Methods = {
   TERMINAL_WORKER_RESIZE: 'terminal.worker.resize',
   TERMINAL_WORKER_SNAPSHOT: 'terminal.worker.snapshot',
 
+  // Worker session history (read-only transcript projection)
+  WORKER_SESSION_HISTORY_GET: 'worker.session.history.get',
+  WORKER_SESSION_HISTORY_SUBSCRIBE: 'worker.session.history.subscribe',
+  WORKER_SESSION_HISTORY_UNSUBSCRIBE: 'worker.session.history.unsubscribe',
+
   // PR
   PR_STATUS: 'pr.status',
   PR_LIST: 'pr.list',

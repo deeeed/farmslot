@@ -10,6 +10,7 @@ function subscriptionState(keys: string[]): TerminalSubscriptionState {
     workerTerminalHandlers: new Map(),
     ptyHandlers: new Map(),
     terminalIdentities: new Map(),
+    workerSessionHistoryHandlers: new Map(),
     terminalSubscribeSeq: new Map(),
   };
 }

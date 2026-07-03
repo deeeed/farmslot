@@ -1,13 +1,13 @@
 # ADR-047: Experimental Worker Session History Panel
 
-**Status:** Proposed (experimental)  
+**Status:** Accepted (experimental)
 **Date:** 2026-07-02
 
 ## Context
 
 Farmslot workers run in tmux via subscription-backed runner CLIs (Claude, Codex, Cursor, Grok). That preserves engineer-controlled execution, tool/MCP wiring, and **subscription economics** — the runner is the agent, not a farmslot-owned API call.
 
-The downside is **history UX**: tmux scrollback is noisy (ANSI, spinners, tool dumps, statusline overlays), hard to search, and poor on mobile. Operators who do not live in tmux struggle to answer basic questions: *what did the worker already try? what was the last user nudge? which tools ran?*
+The downside is **history UX**: tmux scrollback is noisy (ANSI, spinners, tool dumps, statusline overlays), hard to search, and poor on mobile. Operators who do not live in tmux struggle to answer basic questions: _what did the worker already try? what was the last user nudge? which tools ran?_
 
 Farmslot already captures durable session pointers on runs (`runnerSessionId`, `runnerSessionPath` in `run.metrics`; hook-driven `transcript_path` for Claude/Codex per [ADR-032](032-runner-observability-via-hooks.md)). Token usage extraction already parses runner-owned JSONL ([runner token usage reference](../reference/runner-token-usage.md)). Nothing yet **renders** that material as a readable conversation timeline in Command Center.
 
@@ -15,7 +15,7 @@ This is **not** the same problem as [ADR-016](016-d9-copilot.md) Co-Pilot (fleet
 
 A 2026-07 feasibility spike concluded the approach is viable for Claude/Codex/Grok via transcript tailing; Cursor TUI remains degraded (pane-only) until a structured session source exists. Spike artifacts live outside this repo (operator-private notes); this ADR records the decision to try implementation.
 
-**Experimental posture:** We may ship this behind an explicit experimental flag and remove it if adoption or fidelity is poor. The decision here is *worth trying*, not *committed product surface forever*.
+**Experimental posture:** We may ship this behind an explicit experimental flag and remove it if adoption or fidelity is poor. The decision here is _worth trying_, not _committed product surface forever_.
 
 ## Decision
 
@@ -44,11 +44,11 @@ The worker process started at dispatch remains the single source of truth. The p
 
 Add an **experimental** panel on active worker sessions — sibling to the existing terminal, not merged into Co-Pilot:
 
-| Surface | Scope |
-| ------- | ----- |
-| Slot view (active worker) | **Terminal** \| **History** tab (experimental) |
-| Run detail (terminal runs) | Link or embedded history when `runnerSessionPath` is known |
-| Mobile companion | Optional later — same gateway projection, not a separate parser |
+| Surface                    | Scope                                                           |
+| -------------------------- | --------------------------------------------------------------- |
+| Slot view (active worker)  | **Terminal** \| **History** tab (experimental)                  |
+| Run detail (terminal runs) | Link or embedded history when `runnerSessionPath` is known      |
+| Mobile companion           | Optional later — same gateway projection, not a separate parser |
 
 Label copy should say **experimental** and explain degraded modes honestly (e.g. Cursor pane-only: "terminal-accurate history unavailable — use Terminal tab").
 
@@ -81,13 +81,13 @@ WorkerSessionHistorySnapshot {
 
 **Runner matrix (v1 expectations):**
 
-| Runner | History source | v1 quality |
-| ------ | -------------- | ---------- |
-| Claude | `~/.claude/projects/.../*.jsonl` + hooks | Full |
-| Codex | per-slot `codex-home/sessions/**/rollout-*.jsonl` | Full |
-| Grok | `~/.grok/sessions/.../chat_history.jsonl` | Full (with noise filters) |
-| Cursor TUI | none persisted | Degraded / unavailable |
-| Headless `--print` | stdout/json artifact if captured | Artifact-only, not live chat |
+| Runner             | History source                                    | v1 quality                   |
+| ------------------ | ------------------------------------------------- | ---------------------------- |
+| Claude             | `~/.claude/projects/.../*.jsonl` + hooks          | Full                         |
+| Codex              | per-slot `codex-home/sessions/**/rollout-*.jsonl` | Full                         |
+| Grok               | `~/.grok/sessions/.../chat_history.jsonl`         | Full (with noise filters)    |
+| Cursor TUI         | none persisted                                    | Degraded / unavailable       |
+| Headless `--print` | stdout/json artifact if captured                  | Artifact-only, not live chat |
 
 ### Secondary goal — input (deferred, optional)
 

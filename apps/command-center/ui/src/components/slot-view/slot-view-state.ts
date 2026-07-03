@@ -115,7 +115,8 @@ export abstract class SlotViewState extends LitElement {
   // re-issue 4 SSH FS_LIST round trips (one per candidate prefix) every time.
   _autoPinProbedFor: string | null = null;
   @state() _pinnedEntries: FileEntry[] = [];
-  @state() _bottomTab: 'terminal' | 'problems' | 'comments' = 'terminal';
+  @state() _bottomTab: 'terminal' | 'history' | 'problems' | 'comments' = 'terminal';
+  @state() _workerHistoryEnabled = false;
   @state() _resources: SlotResource[] = [];
   @state() _slotActions: SlotActionSummary[] = [];
   @state() _runningSlotActionIds: string[] = [];
