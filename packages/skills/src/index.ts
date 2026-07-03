@@ -6,6 +6,7 @@ export const FARMSLOT_SKILL_NAMES = [
   'recipe-doctor',
   'recipe-harness',
   'project-adopt',
+  'packet',
 ] as const;
 
 export type FarmslotSkillName = (typeof FARMSLOT_SKILL_NAMES)[number];

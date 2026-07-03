@@ -1,7 +1,7 @@
 # Architecture Decision Records
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-06-30
+**Last updated:** 2026-07-03
 **Stale by:** 2026-09-08
 
 ADRs for Farmslot. Some are Command Center-specific, while newer records may apply to the whole Farmslot product.
@@ -56,3 +56,4 @@ Reference: [Product Roadmap](../ROADMAP.md) | [ADR implementation status](../ref
 | [044](044-backlog-launch-plans.md)                     | Backlog Launch Plans and Comparison Candidate Sets                      | Accepted |
 | [045](045-worker-terminal-contract.md)                 | Worker Terminal Contract — project.json required outputs                | Accepted |
 | [047](047-worker-session-history-panel.md)             | Experimental Worker Session History Panel (transcript mirror)           | Accepted |
+| [048](048-interactive-operator-packets.md)             | Interactive Operator Packets for Agent Review Surfaces                  | Accepted |

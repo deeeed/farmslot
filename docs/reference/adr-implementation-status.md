@@ -1,7 +1,7 @@
 # ADR Implementation Status
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-06-28 (ADR-042 refresh parity shipped in PR #147)
+**Last updated:** 2026-07-03 (ADR-048 initial implementation)
 **Stale by:** 2026-09-08
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
@@ -35,6 +35,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [041](../adr/041-roadmap-idea-refinement-layer.md)         | Operator roadmap idea refinement  | Proposed   | Not started    | Proposed markdown roadmap/refinement/promotion layer                 |
 | [042](../adr/042-slot-tracking-branches.md)                | Slot tracking branches            | Accepted   | Partial        | `release.ts` idle reset; configurable tracking branch + rebase merge |
 | [047](../adr/047-worker-session-history-panel.md)          | Worker session history panel      | Accepted   | In progress    | Experimental read-only transcript mirror on active sessions          |
+| [048](../adr/048-interactive-operator-packets.md)          | Interactive operator packets      | Accepted   | Partial        | Eval/replay packet response persistence remains open                 |
 
 Older ADRs **001–025** are foundation/shipped for their core scope. This file does not re-audit every legacy ADR; use `IMPLEMENTED-HISTORY.md` for historical detail.
 

@@ -10,6 +10,7 @@ import type {
   FamilyObservabilitySnapshot,
   FleetStatus,
   GatewayUpdateStatus,
+  InteractiveOperatorPacket,
   ProjectConfig,
   PRStatus,
   QueueItem,
@@ -19,6 +20,7 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 import type { ReadyGatePayload, ReviewGatePayload, RunDecision } from '@farmslot/protocol';
+import { INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1 } from '@farmslot/protocol';
 
 // Import components we're showcasing
 import '../components/fleet-map/slot-card.js';
@@ -60,6 +62,7 @@ import '../components/shared/slot-selector-modal.js';
 import '../components/runs/family-observability.js';
 import '../components/intelligence-audit/intelligence-audit-panel.js';
 import '../components/intelligence-audit/intelligence-incidents-panel.js';
+import '../components/interactive/interactive-operator-packets.js';
 import '../components/evals/eval-cockpit.js';
 import '../components/queue/dispatch-queue-panel.js';
 import '../components/dispatch/dispatch-wizard.js';
@@ -156,6 +159,7 @@ type DevRoute =
   | 'step-artifacts'
   | 'resource-panel'
   | 'device-grid'
+  | 'interactive-packets'
   | 'chat'
   | 'machine-health'
   | 'config'
@@ -226,6 +230,7 @@ const DEV_ROUTES: Array<{ route: DevRoute; label: string; group: DevHarnessGroup
   { route: 'step-artifacts', label: 'Step Artifacts', group: 'components' },
   { route: 'resource-panel', label: 'Resource Panel', group: 'components' },
   { route: 'update-banner', label: 'Update Banner', group: 'components' },
+  { route: 'interactive-packets', label: 'Interactive Packets', group: 'components' },
 
   { route: 'recipe-provenance-matrix', label: 'Recipe Provenance Matrix', group: 'experiments' },
   { route: 'flow-graph', label: 'Flow Graph', group: 'experiments' },
@@ -417,6 +422,8 @@ export class DevHarness extends LitElement {
         return this.renderResourcePanel();
       case 'device-grid':
         return this.renderDeviceGrid();
+      case 'interactive-packets':
+        return this.renderInteractivePackets();
       case 'chat':
         return html`<chat-dev-harness></chat-dev-harness>`;
       case 'machine-health':
@@ -449,6 +456,77 @@ export class DevHarness extends LitElement {
       .demoGraphs=${mockWorkGraphs}
       .demoBacklogItems=${mockWorkGraphBacklogItems}
     ></work-graph-panel>`;
+  }
+
+  private renderInteractivePackets() {
+    const packetPath = 'artifacts/interactive/review-plan.packet.json';
+    const bodyPath = 'artifacts/interactive/review-plan.md';
+    const packet: InteractiveOperatorPacket = {
+      schema: INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1,
+      id: 'dev-review-plan',
+      runId: 'dev-run-1',
+      title: 'Review the packet protocol slice',
+      intent: 'review',
+      summary: 'Confirm the first Command Center and Companion renderer behavior.',
+      body: { format: 'markdown', path: bodyPath },
+      anchors: [
+        {
+          id: 'adr',
+          label: 'ADR-048',
+          artifactPath: 'docs/adr/048-interactive-operator-packets.md',
+          line: 1,
+        },
+      ],
+      actions: [
+        {
+          id: 'copy-summary',
+          label: 'Copy summary',
+          kind: 'copy',
+          safety: 'read-only',
+          payload: { text: 'Interactive packet renderer reviewed.' },
+        },
+        {
+          id: 'open-adr',
+          label: 'Open ADR',
+          kind: 'open-artifact',
+          safety: 'read-only',
+          payload: { artifactPath: 'docs/adr/048-interactive-operator-packets.md' },
+        },
+      ],
+      createdAt: '2026-07-03T00:00:00.000Z',
+    };
+    const body = [
+      '## Scope',
+      '',
+      '- Render packet body markdown.',
+      '- Show artifact anchors.',
+      '- Expose only allowlisted actions.',
+      '',
+      'Mutating actions still require operator confirmation.',
+    ].join('\n');
+    const loader = async (path: string): Promise<string> => {
+      if (path === packetPath) return JSON.stringify(packet);
+      if (path === bodyPath) return body;
+      return `# ${path}\n\nMock artifact opened from the interactive packet harness.`;
+    };
+
+    return html`
+      <div style="max-width: 900px">
+        <interactive-operator-packets
+          runId="dev-run-1"
+          slotId="dev-slot-1"
+          .artifacts=${[
+            {
+              path: packetPath,
+              purpose: 'interactive-packet',
+              type: 'interactive-packet',
+              mimeType: 'application/vnd.farmslot.operator-packet+json',
+            },
+          ]}
+          .artifactTextLoader=${loader}
+        ></interactive-operator-packets>
+      </div>
+    `;
   }
 
   private renderUpdateBanner() {
@@ -1769,12 +1847,71 @@ All checks passed.`;
     const runs = [...mockPipelineRuns(), ...mockRuns()];
     this._updateMockRuns(runs);
     const run = runs.find((r) => r.id === 'pipe-mid-monitor') ?? runs[0];
+    const packetPath = 'artifacts/interactive/dev-run-detail.packet.json';
+    const bodyPath = 'artifacts/interactive/dev-run-detail.md';
+    const packet: InteractiveOperatorPacket = {
+      schema: INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1,
+      id: 'dev-run-detail-review',
+      runId: run.id,
+      title: 'Run detail packet',
+      intent: 'review',
+      summary: 'Rendered through run detail with a packet artifact.',
+      body: { format: 'markdown', path: bodyPath },
+      anchors: [{ id: 'packet-body', label: 'Packet body', artifactPath: bodyPath, line: 1 }],
+      actions: [
+        {
+          id: 'copy',
+          label: 'Copy summary',
+          kind: 'copy',
+          safety: 'read-only',
+          payload: { text: 'Run detail packet copied.' },
+        },
+      ],
+      createdAt: '2026-07-03T00:00:00.000Z',
+    };
+    const runWithPacket: Run = {
+      ...run,
+      steps: [
+        ...(run.steps ?? []),
+        {
+          name: 'interactive-packets',
+          status: 'done',
+          outputs: {
+            artifacts: [
+              {
+                path: packetPath,
+                purpose: 'interactive-packet',
+                type: 'interactive-packet',
+                mimeType: 'application/vnd.farmslot.operator-packet+json',
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const artifactTextLoader = async (path: string): Promise<string> => {
+      if (path === packetPath) return JSON.stringify(packet);
+      if (path === bodyPath) {
+        return [
+          '## Run detail packet body',
+          '',
+          '- Rendered from a run step artifact.',
+          '- Uses the same packet panel as production run detail.',
+        ].join('\n');
+      }
+      throw new Error(`Missing mock artifact: ${path}`);
+    };
     return html`
       <p class="section-label">Run detail (local-first publish gate cockpit)</p>
       <div
         style="height: calc(100vh - 200px); border: 1px solid ${colors.bgCard}; border-radius: 8px; overflow: hidden"
       >
-        <run-detail .runId=${run.id} .mockRun=${run} mock-data></run-detail>
+        <run-detail
+          .runId=${runWithPacket.id}
+          .mockRun=${runWithPacket}
+          .mockArtifactTextLoader=${artifactTextLoader}
+          mock-data
+        ></run-detail>
       </div>
     `;
   }

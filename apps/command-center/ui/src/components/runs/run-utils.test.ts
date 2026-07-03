@@ -13,6 +13,7 @@ import { colors } from '../../styles/theme-tokens.js';
 import {
   canCompareRuns,
   collectRunEvidenceArtifacts,
+  collectRunInteractivePacketArtifacts,
   eligibilityColor,
   eligibilityLabel,
   familyCompletionColor,
@@ -89,6 +90,53 @@ test('routeForRun always opens run detail, including terminal family runs', () =
   assert.equal(routeForRun(makeRun({ id: 'active-run', status: 'monitoring' })), 'run/active-run');
   assert.equal(routeForRun(makeRun({ id: 'done-run', status: 'done' })), 'run/done-run');
   assert.equal(routeForRun(makeRun({ id: 'failed-run', status: 'failed' })), 'run/failed-run');
+});
+
+test('collectRunInteractivePacketArtifacts merges same-path metadata before filtering', () => {
+  const artifacts = collectRunInteractivePacketArtifacts(
+    makeRun({
+      decisions: [
+        {
+          id: 'gate-1',
+          type: 'engine_human_gate',
+          title: 'Ready',
+          description: 'Ready',
+          createdAt: '2026-04-15T00:00:00.000Z',
+          actions: [],
+          payload: {
+            kind: 'no-change',
+            disposition: 'fixed',
+            artifactManifest: [{ path: 'artifacts/operator.json', purpose: 'other' }],
+          },
+        },
+      ],
+      steps: [
+        {
+          name: 'complete',
+          status: 'done',
+          outputs: {
+            artifacts: [
+              {
+                path: 'artifacts/operator.json',
+                purpose: 'other',
+                type: 'interactive-packet',
+                mimeType: 'application/vnd.farmslot.operator-packet+json',
+              },
+            ],
+          },
+        },
+      ],
+    }),
+  );
+
+  assert.deepEqual(artifacts, [
+    {
+      path: 'artifacts/operator.json',
+      purpose: 'other',
+      type: 'interactive-packet',
+      mimeType: 'application/vnd.farmslot.operator-packet+json',
+    },
+  ]);
 });
 
 function makeLedgerEntry(

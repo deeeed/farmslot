@@ -42,6 +42,7 @@ Supported layouts:
 | `recipe-doctor`  | Check local readiness for recipe authoring or execution.                                        |
 | `recipe-harness` | Help install or run the local recipe runtime when the project has one.                          |
 | `project-adopt`  | Recommend the smallest useful Farmslot integration level for the project.                       |
+| `packet`         | Communicate plans, blockers, decisions, and evidence reviews as compact operator packets.       |
 
 ## Adoption Ladder
 

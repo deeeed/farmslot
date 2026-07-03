@@ -16,6 +16,9 @@ export abstract class RunDetailState extends LitElement {
   @property() runId = '';
   @property({ type: Boolean, attribute: 'mock-data' }) mockData = false;
   @property({ attribute: false }) mockRun: Run | null = null;
+  @property({ attribute: false }) mockArtifactTextLoader:
+    | ((path: string) => Promise<string>)
+    | null = null;
   @state() run: Run | null = null;
   @state() prStatus: PRStatus | null = null;
   @state() siblings: Run[] = [];

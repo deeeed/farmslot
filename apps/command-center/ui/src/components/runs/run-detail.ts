@@ -1,3 +1,4 @@
+import { html } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
 import type {
@@ -26,6 +27,7 @@ import '../workspace/ready-workspace.js';
 import '../terminal/terminal-view.js';
 import '../shared/hydrating-placeholder.js';
 import '../shared/slot-prepare-popover.js';
+import '../interactive/interactive-operator-packets.js';
 
 import { gateway } from '../../gateway-client.js';
 import { type AppState, getState, isHydrating, subscribe } from '../../state.js';
@@ -77,7 +79,11 @@ import {
   selectedStepNameFromRunDetailHash,
 } from './run-detail-url-state.js';
 import { publicationReviewStepForName } from './run-pipeline-model.js';
-import { collectRunEvidenceArtifacts, sortRunsForFamilyView } from './run-utils.js';
+import {
+  collectRunEvidenceArtifacts,
+  collectRunInteractivePacketArtifacts,
+  sortRunsForFamilyView,
+} from './run-utils.js';
 
 @customElement('run-detail')
 export class RunDetail extends RunDetailState {
@@ -662,6 +668,19 @@ export class RunDetail extends RunDetailState {
     });
   }
 
+  private _renderInteractivePackets(run: Run) {
+    const artifacts = collectRunInteractivePacketArtifacts(run);
+    if (artifacts.length === 0) return null;
+    return html`
+      <interactive-operator-packets
+        .runId=${run.id}
+        .slotId=${run.slotId}
+        .artifacts=${artifacts}
+        .artifactTextLoader=${this.mockData ? this.mockArtifactTextLoader : null}
+      ></interactive-operator-packets>
+    `;
+  }
+
   render() {
     return renderRunDetailView({
       run: this.run,
@@ -713,6 +732,7 @@ export class RunDetail extends RunDetailState {
           now: this._now,
         }),
       _renderRunEvidence: (run) => this._renderRunEvidence(run),
+      _renderInteractivePackets: (run) => this._renderInteractivePackets(run),
       _onReplayStep: (stepName, skipPrepare, prepareProfile) =>
         this._onReplayStep(stepName, skipPrepare, prepareProfile),
       renderGateSection: (run) => this.renderGateSection(run),

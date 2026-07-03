@@ -71,6 +71,7 @@ import { useConnectionStore } from '../../store/connection';
 import { useRunStore } from '../../store/runs';
 import { formatDuration } from '../workspace-shared/format';
 
+import { InteractiveOperatorPacketsPanel } from './components/InteractiveOperatorPacketsPanel';
 import {
   ArtifactsSection,
   decisionPresentationForRun,
@@ -996,6 +997,13 @@ export default function RunDetailScreen() {
               artifactFilterParamForWorkspaceNav('compare'),
             );
           }}
+        />
+
+        <InteractiveOperatorPacketsPanel
+          run={run}
+          client={client}
+          gatewayUrl={gatewayUrl}
+          artifactAuthHeaders={artifactAuthHeaders}
         />
 
         {/* Decisions */}

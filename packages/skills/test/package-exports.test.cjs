@@ -18,6 +18,7 @@ for (const skillName of [
   'recipe-doctor',
   'recipe-harness',
   'project-adopt',
+  'packet',
 ]) {
   assert.ok(fs.existsSync(path.join(packageRoot, 'skills', skillName, 'SKILL.md')));
 }
