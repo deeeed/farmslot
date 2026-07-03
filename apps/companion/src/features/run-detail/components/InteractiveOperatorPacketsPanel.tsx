@@ -12,7 +12,6 @@ import {
   type ArtifactHttpHeaders,
   type ArtifactManifestEntry,
   artifactUrl,
-  artifactUrlForEntry,
 } from '../../../lib/artifact-url';
 import type { GatewayClient } from '../../../lib/gateway-client';
 import { gatewayFetch } from '../../../lib/gateway-http-auth';
@@ -20,6 +19,7 @@ import {
   collectRunInteractivePacketArtifacts,
   interactivePacketActionRequest,
   interactivePacketArtifactKey,
+  interactivePacketArtifactOpenUrl,
 } from '../../../lib/interactive-operator-packets';
 import { colors, fonts, radii, spacing } from '../../../lib/theme';
 
@@ -114,7 +114,14 @@ export function InteractiveOperatorPacketsPanel({
       if (request.kind === 'copy') {
         await Share.share({ message: request.text });
       } else if (request.kind === 'open-artifact') {
-        await Linking.openURL(artifactUrl(gatewayUrl, run.id, request.artifactPath));
+        await Linking.openURL(
+          interactivePacketArtifactOpenUrl(
+            gatewayUrl,
+            run.id,
+            request.artifactPath,
+            artifactAuthHeaders,
+          ),
+        );
       } else if (request.kind === 'terminal.send') {
         if (!client) throw new Error('Gateway is not connected.');
         if (!run.slotId) throw new Error('Run is not attached to a slot.');
@@ -174,10 +181,12 @@ export function InteractiveOperatorPacketsPanel({
                       style={panelStyles.chip}
                       onPress={() =>
                         void Linking.openURL(
-                          artifactUrlForEntry(gatewayUrl, run.id, {
-                            path: artifactPath,
-                            purpose: 'artifact',
-                          }),
+                          interactivePacketArtifactOpenUrl(
+                            gatewayUrl,
+                            run.id,
+                            artifactPath,
+                            artifactAuthHeaders,
+                          ),
                         )
                       }
                     >

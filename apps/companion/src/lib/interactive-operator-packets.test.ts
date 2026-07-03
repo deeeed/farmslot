@@ -7,6 +7,7 @@ import {
   collectRunInteractivePacketArtifacts,
   interactivePacketActionRequest,
   interactivePacketArtifactKey,
+  interactivePacketArtifactOpenUrl,
 } from './interactive-operator-packets';
 
 test('interactive packet action request accepts complete terminal actions', () => {
@@ -82,4 +83,13 @@ test('interactive packet artifact key is stable for equivalent run updates', () 
 
   assert.equal(first, second);
   assert.notEqual(first, changed);
+});
+
+test('interactive packet artifact open URL carries gateway auth for headerless links', () => {
+  assert.equal(
+    interactivePacketArtifactOpenUrl('wss://gateway.example/ws', 'run-1', 'artifacts/report.md', {
+      Authorization: 'Bearer dev token',
+    }),
+    'https://gateway.example/api/run-artifact?runId=run-1&path=artifacts%2Freport.md&token=dev%20token',
+  );
 });
