@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   appendTerminalTailText,
   stripTerminalControls,
+  terminalHistoryTextFromText,
   terminalTailLinesFromText,
   trimTrailingTerminalBlankLines,
 } from './terminal-tail';
@@ -22,6 +23,12 @@ test('terminalTailLinesFromText treats carriage-return redraws as tail lines', (
 });
 test('appendTerminalTailText caps retained terminal context', () => {
   assert.equal(appendTerminalTailText('abcdef', 'ghij', 5), 'fghij');
+});
+test('terminalHistoryTextFromText returns sanitized scrollable text', () => {
+  assert.equal(
+    terminalHistoryTextFromText('one\x1b[31m red\x1b[0m\ntwo\rthree', 10),
+    'one red\ntwo\nthree',
+  );
 });
 test('stripTerminalControls removes ANSI and control bytes while preserving text', () => {
   assert.equal(stripTerminalControls('\x1b[31merr\x1b[0m\tok\x07'), 'err\tok');

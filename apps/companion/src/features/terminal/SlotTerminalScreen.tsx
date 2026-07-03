@@ -50,12 +50,6 @@ import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
-import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
-import {
-  type TerminalSize,
-  XtermTerminalView,
-  type XtermTerminalViewHandle,
-} from '../../components/XtermTerminalView';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -140,6 +134,15 @@ import {
   TerminalWorkspaceCockpit,
   TmuxControlPanel,
 } from './components/slot-terminal-panels';
+import {
+  SlotTerminalCompactViewControls,
+  SlotTerminalFullscreenViewControls,
+} from './components/slot-terminal-view-controls';
+import {
+  type TerminalSize,
+  TerminalViewSurface,
+  type XtermTerminalViewHandle,
+} from './components/terminal-history-viewer';
 import { slotTerminalStyles as styles } from './styles/slot-terminal.styles';
 
 const LINE_COUNT_OPTIONS = [25, 50, 100, 200] as const;
@@ -298,6 +301,7 @@ export default function TerminalScreen() {
   const [showTerminalOptions, setShowTerminalOptions] = useState(
     routeParamString(detailsParam) === '1',
   );
+  const [terminalViewMode, setTerminalViewMode] = useState<'tmux' | 'history'>('tmux');
   const [terminalFullscreen, setTerminalFullscreen] = useState(
     routeParamString(fullscreenParam) === '1',
   );
@@ -1638,23 +1642,14 @@ export default function TerminalScreen() {
                 {streamLabel} · {lines.length} lines
               </Text>
             </View>
-            <Pressable
-              style={[styles.fullscreenPill, showTerminalControls && styles.tailToggleActive]}
-              onPress={() => setShowTerminalControls((current) => !current)}
-            >
-              <Text
-                style={[
-                  styles.fullscreenPillText,
-                  showTerminalControls && styles.tailToggleTextActive,
-                ]}
-              >
-                Tmux
-              </Text>
-            </Pressable>
-            <TerminalOrientationButton controls={orientationControls} />
-            <Pressable style={styles.fullscreenPill} onPress={toggleTerminalFullscreen}>
-              <Text style={styles.fullscreenPillText}>Exit</Text>
-            </Pressable>
+            <SlotTerminalFullscreenViewControls
+              controls={orientationControls}
+              keysActive={showTerminalControls}
+              mode={terminalViewMode}
+              onModeChange={setTerminalViewMode}
+              onExit={toggleTerminalFullscreen}
+              onToggleKeys={() => setShowTerminalControls((current) => !current)}
+            />
           </View>
           <TerminalFullscreenWorkspaceRail
             top={insets.top + 46}
@@ -1709,19 +1704,13 @@ export default function TerminalScreen() {
                 Tail {lineCount}
               </Text>
             </Pressable>
-            <Pressable
-              style={[styles.tailToggle, showTerminalControls && styles.tailToggleActive]}
-              onPress={() => setShowTerminalControls((current) => !current)}
-            >
-              <Text
-                style={[styles.tailToggleText, showTerminalControls && styles.tailToggleTextActive]}
-              >
-                Tmux
-              </Text>
-            </Pressable>
-            <Pressable style={styles.tailToggle} onPress={toggleTerminalFullscreen}>
-              <Ionicons name="expand-outline" size={16} color={colors.textSecondary} />
-            </Pressable>
+            <SlotTerminalCompactViewControls
+              keysActive={showTerminalControls}
+              mode={terminalViewMode}
+              onExpand={toggleTerminalFullscreen}
+              onModeChange={setTerminalViewMode}
+              onToggleKeys={() => setShowTerminalControls((current) => !current)}
+            />
             <View
               style={[
                 styles.liveBadge,
@@ -1736,12 +1725,21 @@ export default function TerminalScreen() {
           </View>
 
           <TerminalSteeringContextCard
-            slotId={slotId} run={targetRun} fallbackRunId={runId}
-            streamLabel={streamLabel} liveBadgeColor={liveBadgeColor}
-            targetWarning={targetWarning} terminalInputDisabled={Boolean(terminalInputDisabledReason)}
-            voiceRecorderBusy={voiceRecorderBusy} onOpenTmux={() => setShowTerminalControls(true)}
-            onOpenContext={() => setShowTerminalOptions(true)} onOpenVoice={handleFloatingVoicePress}
-            onOpenKeyboard={() => { setAllowTerminalTouchKeyboard(true); setShowTerminalControls(true); }}
+            slotId={slotId}
+            run={targetRun}
+            fallbackRunId={runId}
+            streamLabel={streamLabel}
+            liveBadgeColor={liveBadgeColor}
+            targetWarning={targetWarning}
+            terminalInputDisabled={Boolean(terminalInputDisabledReason)}
+            voiceRecorderBusy={voiceRecorderBusy}
+            onOpenTmux={() => setShowTerminalControls(true)}
+            onOpenContext={() => setShowTerminalOptions(true)}
+            onOpenVoice={handleFloatingVoicePress}
+            onOpenKeyboard={() => {
+              setAllowTerminalTouchKeyboard(true);
+              setShowTerminalControls(true);
+            }}
           />
 
           {showTerminalOptions && (
@@ -1895,12 +1893,14 @@ export default function TerminalScreen() {
       )}
 
       <View style={styles.terminalArea}>
-        <XtermTerminalView
+        <TerminalViewSurface
           ref={terminalViewRef}
           allowTouchKeyboard={allowTerminalTouchKeyboard}
           initialText={lines.join('\r\n')}
+          mode={terminalViewMode}
           onInput={handleTerminalInput}
           onResize={handleTerminalResize}
+          rawHistoryText={terminalTailTextRef.current}
           readOnlyReason={terminalInputDisabledReason}
         />
       </View>

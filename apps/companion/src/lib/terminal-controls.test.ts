@@ -10,6 +10,7 @@ test('terminal control keys include mobile TUI navigation sequences', () => {
   assert.equal(dataByLabel.get('↓'), '\x1b[B');
   assert.equal(dataByLabel.get('←'), '\x1b[D');
   assert.equal(dataByLabel.get('→'), '\x1b[C');
+  assert.equal(dataByLabel.get('Enter'), '\r');
   assert.equal(dataByLabel.get('Tab'), '\x09');
   assert.equal(dataByLabel.get('⇧Tab'), '\x1b[Z');
   assert.equal(dataByLabel.get('^D'), '\x04');
