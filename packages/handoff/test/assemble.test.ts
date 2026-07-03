@@ -41,13 +41,13 @@ function scenario(overrides: { learnings?: string; report?: string } = {}): Scen
   const input: LearningPackageInput = {
     surface: 'fleet',
     runRecord: {
-      packageId: '20260703T154211Z-fleet-dev-tat-1234-a1b2c3d4',
+      packageId: '20260703T154211Z-fleet-dev-proj-123-a1b2c3d4',
       project: 'demo-farm',
       domain: '',
       engineer: 'eng-1',
       run: { startedAt: '2026-07-03T15:42:11Z', flow: 'dev', outcome: 'success' },
-      task: { title: 'Do the thing', sourceKind: 'jira', ticket: 'TAT-1234' },
-      source: { title: 'Do the thing', description: 'thing', ticket: 'TAT-1234' },
+      task: { title: 'Do the thing', sourceKind: 'jira', ticket: 'PROJ-123' },
+      source: { title: 'Do the thing', description: 'thing', ticket: 'PROJ-123' },
       extensions: { runProfile: 'autonomous' },
     },
     templateProvenance: [
@@ -90,15 +90,15 @@ test('assemble folds harness json and cleared media into artifacts/index and val
   const shot = path.join(workspace, 'shot.png');
   writeFileSync(shot, 'pretend-png-bytes');
 
-  input.artifacts.harnessOutputDirs = [{ name: 'mm-harness', dir: harnessDir }];
+  input.artifacts.harnessOutputDirs = [{ name: 'example-runner', dir: harnessDir }];
   input.media = [
     {
       absolutePath: shot,
-      packagePath: 'harness/mm-harness/shot.png',
+      packagePath: 'harness/example-runner/shot.png',
       kind: 'screenshot',
       evidenceManifestSelected: true,
       visualPass: {
-        file: 'harness/mm-harness/shot.png',
+        file: 'harness/example-runner/shot.png',
         passedAt: '2026-07-03T15:45:00Z',
         attestedBy: 'agent-model',
         finding: 'clear',
@@ -114,9 +114,9 @@ test('assemble folds harness json and cleared media into artifacts/index and val
     readFileSync(path.join(result.packageDir, 'artifacts/index.json'), 'utf8'),
   ) as { artifacts: { path: string; kind: string }[] };
   const paths = index.artifacts.map((a) => a.path);
-  assert.ok(paths.includes('harness/mm-harness/summary.json'));
-  assert.ok(paths.includes('harness/mm-harness/trace.json'));
-  assert.ok(paths.includes('harness/mm-harness/shot.png'));
+  assert.ok(paths.includes('harness/example-runner/summary.json'));
+  assert.ok(paths.includes('harness/example-runner/trace.json'));
+  assert.ok(paths.includes('harness/example-runner/shot.png'));
 
   const validation = validateLearningPackage(result.packageDir);
   assert.deepEqual(validation.errors, []);

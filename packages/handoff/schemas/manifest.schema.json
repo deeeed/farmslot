@@ -65,8 +65,8 @@
           "description": "The evidence producer. Any producer stamps its own runner; no default is a package constant.",
           "additionalProperties": false,
           "properties": {
-            "name": { "type": "string", "examples": ["mm-harness"] },
-            "package": { "type": "string", "examples": ["@deeeed/metamask-harness"] },
+            "name": { "type": "string", "examples": ["example-runner"] },
+            "package": { "type": "string", "examples": ["@scope/example-harness"] },
             "version": { "type": "string", "examples": ["0.2.0"] }
           }
         },
@@ -92,7 +92,7 @@
         },
         "ticket": {
           "type": "string",
-          "description": "Work identifier, e.g. TAT-1234. Not PII."
+          "description": "Work identifier, e.g. PROJ-1. Not PII."
         },
         "sourceRef": {
           "type": "string",

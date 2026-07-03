@@ -28,7 +28,7 @@
     },
     "ticket": {
       "type": "string",
-      "description": "Work identifier, e.g. TAT-1234."
+      "description": "Work identifier, e.g. PROJ-1."
     },
     "status": {
       "type": "string",

@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "sourceKind": "jira",
-  "title": "Fix the balance display rounding",
-  "description": "The account balance shows too many decimals. Round to two.",
-  "acceptanceCriteria": "Balance shows two decimals across all screens.",
-  "labels": ["bug", "display"],
-  "ticket": "TAT-1234",
+  "title": "Fix the widget alignment on the detail screen",
+  "description": "The detail view shows misaligned widgets on narrow viewports. Align to grid.",
+  "acceptanceCriteria": "Widget aligns correctly on all tested viewport widths.",
+  "labels": ["bug", "ui"],
+  "ticket": "PROJ-123",
   "status": "In Progress",
   "priority": "P2",
-  "sourceRef": "https://example.atlassian.net/browse/TAT-1234",
+  "sourceRef": "https://example.atlassian.net/browse/PROJ-123",
   "extensions": {
     "commitDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   }
