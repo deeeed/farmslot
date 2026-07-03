@@ -81,6 +81,10 @@ function planCut(proposal) {
   for (const [dir, entry] of Object.entries(proposal.workspaces)) {
     const pkg = packages.get(dir);
     if (!pkg) throw new Error(`Unknown workspace: ${dir}`);
+    if (!entry.include?.length) {
+      console.log(`[skip] ${dir} — no bullets to release`);
+      continue;
+    }
     const nextVersion = bumpSemver(pkg.version, proposal.bump);
     versionByDir.set(dir, nextVersion);
 

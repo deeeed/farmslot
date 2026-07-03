@@ -1,5 +1,11 @@
 {
-  "version": "0.1.1",
-  "date": "2026-07-02",
-  "items": ["What's New modal surfaces operator release notes when Command Center version changes"]
+  "version": "0.2.0",
+  "date": "2026-07-03",
+  "items": [
+    "Faster slot-view terminal attach on deep links.",
+    "Alpha features hidden by default in production; toggle in Config > Settings.",
+    "Review gate tabs with URL sync (Review, Evidence, Quality, Recipe, Learnings).",
+    "What's New modal on auth gate and connected shell.",
+    "Team overlay renamed to \"domain\" across the UI."
+  ]
 }

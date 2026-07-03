@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/command-center",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "concurrently \"GATEWAY_HOST=${GATEWAY_HOST:-127.0.0.1} yarn workspace @farmslot/gateway dev\" \"yarn --cwd ui dev\"",
