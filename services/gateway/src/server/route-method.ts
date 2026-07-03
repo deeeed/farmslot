@@ -692,18 +692,25 @@ export async function routeMethod(
     case Methods.WORKER_SESSION_HISTORY_SUBSCRIBE: {
       const sub = p as WorkerSessionHistorySubscribeParams;
       const key = workerSessionHistorySubscriptionKey(sub);
+      const mySeq = (state.workerSessionHistorySubscribeSeq.get(key) ?? 0) + 1;
+      state.workerSessionHistorySubscribeSeq.set(key, mySeq);
       state.workerSessionHistoryHandlers.get(key)?.();
       state.workerSessionHistoryHandlers.delete(key);
       const { result, unsubscribe } = await workerSessionHistorySubscribe(sub, emit);
-      if (isActiveClient(state)) {
+      if (state.workerSessionHistorySubscribeSeq.get(key) === mySeq && isActiveClient(state)) {
         state.workerSessionHistoryHandlers.set(key, unsubscribe);
       } else {
         unsubscribe();
+        return { ...result, subscribed: false };
       }
       return result;
     }
     case Methods.WORKER_SESSION_HISTORY_UNSUBSCRIBE: {
       const key = workerSessionHistorySubscriptionKey(p as WorkerSessionHistoryUnsubscribeParams);
+      state.workerSessionHistorySubscribeSeq.set(
+        key,
+        (state.workerSessionHistorySubscribeSeq.get(key) ?? 0) + 1,
+      );
       state.workerSessionHistoryHandlers.get(key)?.();
       state.workerSessionHistoryHandlers.delete(key);
       return { unsubscribed: true };

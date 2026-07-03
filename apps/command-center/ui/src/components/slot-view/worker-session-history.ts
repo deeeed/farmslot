@@ -122,15 +122,24 @@ export class WorkerSessionHistoryElement extends LitElement {
     if (!this.snapshot) return;
     if (this.slotId && payload.slotId !== this.slotId) return;
     if (this.runId && (payload.runId ?? '') !== this.runId) return;
-    if ((payload.runId ?? '') !== (this.snapshot.runId ?? '')) return;
-    if ((payload.role ?? '') !== (this.snapshot.role ?? '')) return;
-    if ((payload.contextId ?? '') !== (this.snapshot.contextId ?? '')) return;
+    const retargetedSlotRun =
+      payload.reset === true &&
+      !this.runId &&
+      (payload.runId ?? '') !== (this.snapshot.runId ?? '');
+    if (!retargetedSlotRun) {
+      if ((payload.runId ?? '') !== (this.snapshot.runId ?? '')) return;
+      if ((payload.role ?? '') !== (this.snapshot.role ?? '')) return;
+      if ((payload.contextId ?? '') !== (this.snapshot.contextId ?? '')) return;
+    }
 
     const messages = payload.reset
       ? payload.messages
       : [...this.snapshot.messages, ...payload.messages].slice(-300);
     this.snapshot = {
       ...this.snapshot,
+      runId: payload.runId,
+      role: payload.role,
+      contextId: payload.contextId,
       runner: payload.runner,
       model: payload.model ?? this.snapshot.model,
       runnerSessionPath: payload.runnerSessionPath ?? this.snapshot.runnerSessionPath,

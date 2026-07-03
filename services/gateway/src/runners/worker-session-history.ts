@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import type { WorkerSessionHistoryMessage, WorkerSessionHistoryTool } from '@farmslot/protocol';
@@ -49,12 +50,12 @@ function cleanText(value: string): string {
   return text;
 }
 
-function stableRecordId(runner: string, record: JsonRecord, index: number, suffix = ''): string {
+function stableRecordId(runner: string, record: JsonRecord, suffix = ''): string {
   const raw =
     firstString(record.uuid, record.id, record.item_id, record.request_id, record.timestamp) ||
-    String(index);
+    createHash('sha1').update(JSON.stringify(record)).digest('hex').slice(0, 16);
   const suffixPart = suffix ? `:${suffix}` : '';
-  return `${runner}:${raw}:${index}${suffixPart}`;
+  return `${runner}:${raw}${suffixPart}`;
 }
 
 function parseJsonl(rawLines: readonly string[]): {
@@ -124,7 +125,7 @@ function compactMessages(messages: WorkerSessionHistoryMessage[]): WorkerSession
 
 function projectClaude(records: readonly JsonRecord[]): WorkerSessionHistoryMessage[] {
   const messages: WorkerSessionHistoryMessage[] = [];
-  records.forEach((record, index) => {
+  records.forEach((record) => {
     if (record.isMeta === true) return;
     const type = stringValue(record.type);
     if (type !== 'user' && type !== 'assistant') return;
@@ -134,7 +135,7 @@ function projectClaude(records: readonly JsonRecord[]): WorkerSessionHistoryMess
     const text = textFromContent(content, ['text', 'content']);
     const tools = role === 'assistant' ? toolsFromContent(content) : [];
     messages.push({
-      id: stableRecordId('claude', record, index),
+      id: stableRecordId('claude', record),
       role,
       text,
       tools: tools.length > 0 ? tools : undefined,
@@ -150,7 +151,7 @@ function codexPayload(record: JsonRecord): JsonRecord {
 
 function projectCodex(records: readonly JsonRecord[]): WorkerSessionHistoryMessage[] {
   const messages: WorkerSessionHistoryMessage[] = [];
-  records.forEach((record, index) => {
+  records.forEach((record) => {
     const payload = codexPayload(record);
     const type = stringValue(payload.type || record.type);
     if (type === 'message') {
@@ -158,7 +159,7 @@ function projectCodex(records: readonly JsonRecord[]): WorkerSessionHistoryMessa
       if (role !== 'user' && role !== 'assistant') return;
       const text = textFromContent(payload.content, ['text', 'content']);
       messages.push({
-        id: stableRecordId('codex', record, index),
+        id: stableRecordId('codex', record),
         role,
         text,
         at: firstString(payload.timestamp, record.timestamp) || undefined,
@@ -169,7 +170,7 @@ function projectCodex(records: readonly JsonRecord[]): WorkerSessionHistoryMessa
       const tool = toolFromBlock(payload);
       if (!tool) return;
       messages.push({
-        id: stableRecordId('codex', record, index, 'tool'),
+        id: stableRecordId('codex', record, 'tool'),
         role: 'assistant',
         text: '',
         tools: [tool],
@@ -182,7 +183,7 @@ function projectCodex(records: readonly JsonRecord[]): WorkerSessionHistoryMessa
 
 function projectGrok(records: readonly JsonRecord[]): WorkerSessionHistoryMessage[] {
   const messages: WorkerSessionHistoryMessage[] = [];
-  records.forEach((record, index) => {
+  records.forEach((record) => {
     const role = stringValue(record.role || record.type);
     if (role !== 'user' && role !== 'assistant') return;
     const text = textFromContent(record.content ?? record.message ?? record.text, [
@@ -191,7 +192,7 @@ function projectGrok(records: readonly JsonRecord[]): WorkerSessionHistoryMessag
     ]);
     const tools = role === 'assistant' ? toolsFromContent(record.content) : [];
     messages.push({
-      id: stableRecordId('grok', record, index),
+      id: stableRecordId('grok', record),
       role,
       text,
       tools: tools.length > 0 ? tools : undefined,

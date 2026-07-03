@@ -40,10 +40,9 @@ export interface WorkerSessionHistoryTargetParams {
 
 export interface WorkerSessionHistoryGetParams extends WorkerSessionHistoryTargetParams {
   limit?: number;
-  cursor?: WorkerSessionHistoryCursor;
 }
 
-export interface WorkerSessionHistorySubscribeParams extends WorkerSessionHistoryGetParams {}
+export type WorkerSessionHistorySubscribeParams = WorkerSessionHistoryGetParams;
 
 export interface WorkerSessionHistoryUnsubscribeParams extends WorkerSessionHistoryTargetParams {}
 

@@ -23,6 +23,7 @@ export interface TerminalSubscriptionState {
     { slotId: string; runId?: string; role?: TerminalSubscribeParams['role']; contextId?: string }
   >;
   workerSessionHistoryHandlers: Map<string, WorkerSessionHistoryUnsubscribe>;
+  workerSessionHistorySubscribeSeq: Map<string, number>;
   // Per-slot subscribe sequence: a fresh subscribe call increments this before
   // awaiting any I/O. After the await, the late completer compares its captured
   // sequence to the current value; mismatch = a newer subscribe ran in the gap,

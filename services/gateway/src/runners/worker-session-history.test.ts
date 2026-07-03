@@ -121,3 +121,35 @@ test('projects Grok chat history and reports missing providers honestly', () => 
     ],
   );
 });
+
+test('keeps transcript message ids stable across overlapping read windows', () => {
+  const provider = getRunnerSessionHistoryProvider('claude');
+  assert.ok(provider);
+
+  const first = provider.project([
+    JSON.stringify({
+      type: 'user',
+      message: { content: 'old' },
+      timestamp: '2026-07-03T09:59:00Z',
+    }),
+    JSON.stringify({
+      type: 'user',
+      message: { content: 'current' },
+      timestamp: '2026-07-03T10:00:00Z',
+    }),
+  ]);
+  const second = provider.project([
+    JSON.stringify({
+      type: 'user',
+      message: { content: 'current' },
+      timestamp: '2026-07-03T10:00:00Z',
+    }),
+    JSON.stringify({
+      type: 'assistant',
+      message: { content: 'next' },
+      timestamp: '2026-07-03T10:01:00Z',
+    }),
+  ]);
+
+  assert.equal(first.messages[1]?.id, second.messages[0]?.id);
+});

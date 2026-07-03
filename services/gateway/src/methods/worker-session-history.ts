@@ -110,11 +110,6 @@ max_lines = ${READ_MAX_LINES}
 if not path.exists():
     print(json.dumps({"path": str(path), "exists": False, "size": 0, "mtimeMs": 0, "lines": [], "truncated": False}))
     raise SystemExit(0)
-if path.is_dir():
-    path = path / "chat_history.jsonl"
-if not path.exists():
-    print(json.dumps({"path": str(path), "exists": False, "size": 0, "mtimeMs": 0, "lines": [], "truncated": False}))
-    raise SystemExit(0)
 stat = path.stat()
 items = deque(maxlen=max_lines)
 count = 0
@@ -151,6 +146,17 @@ export async function workerSessionHistoryGet(
   if (!run) {
     return {
       snapshot: unavailableSnapshot(params, 'No active or linked run is available for this slot.'),
+    };
+  }
+  if (params.runId && params.slotId && run.slotId && run.slotId !== params.slotId) {
+    return {
+      snapshot: unavailableSnapshot(
+        params,
+        `Run ${run.id} belongs to slot ${run.slotId}, not ${params.slotId}.`,
+        {
+          runId: run.id,
+        },
+      ),
     };
   }
 
@@ -309,56 +315,85 @@ export async function workerSessionHistorySubscribe(
   unsubscribe: WorkerSessionHistoryUnsubscribe;
 }> {
   const initial = await workerSessionHistoryGet(params);
+  if (!workerSessionHistoryEnabled()) {
+    return {
+      result: { ...initial, subscribed: false },
+      unsubscribe: () => undefined,
+    };
+  }
+
   let lastCursor = initial.snapshot.cursor;
   let knownMessageIds = new Set(initial.snapshot.messages.map((message) => message.id));
+  let lastStateKey = historyStateKey(initial.snapshot);
   let closed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const timer = setInterval(() => {
-    workerSessionHistoryGet(params)
-      .then(({ snapshot }) => {
-        if (closed) return;
-        const nextCursor = snapshot.cursor;
-        const reset =
-          !lastCursor ||
-          !nextCursor ||
-          lastCursor.path !== nextCursor.path ||
-          nextCursor.offset < lastCursor.offset;
-        const messages = reset
-          ? snapshot.messages
-          : snapshot.messages.filter((message) => !knownMessageIds.has(message.id));
-        if (messages.length > 0 || reset || snapshot.source !== 'transcript') {
-          emit(Events.WORKER_SESSION_HISTORY_DELTA, {
-            ...deltaFromSnapshot(snapshot, reset),
-            messages,
-          });
-        }
-        lastCursor = nextCursor;
-        if (reset) knownMessageIds = new Set(snapshot.messages.map((message) => message.id));
-        else for (const message of messages) knownMessageIds.add(message.id);
-      })
-      .catch((err) => {
-        console.warn(`[worker-history] subscription poll failed: ${(err as Error).message}`);
-        emit(Events.WORKER_SESSION_HISTORY_DELTA, {
-          slotId: params.slotId ?? null,
-          runId: params.runId ?? null,
-          role: params.role,
-          contextId: params.contextId,
-          runner: null,
-          source: 'unavailable',
-          messages: [],
-          reset: true,
-          degradedReason: (err as Error).message,
-          generatedAt: new Date().toISOString(),
-        } satisfies WorkerSessionHistoryDeltaPayload);
+  function schedule() {
+    if (closed) return;
+    timer = setTimeout(poll, SUBSCRIBE_POLL_MS);
+    timer.unref();
+  }
+
+  const emitSnapshotDelta = (snapshot: WorkerSessionHistorySnapshot) => {
+    const nextCursor = snapshot.cursor;
+    const nextStateKey = historyStateKey(snapshot);
+    const stateChanged = nextStateKey !== lastStateKey;
+    const reset =
+      stateChanged ||
+      !lastCursor ||
+      !nextCursor ||
+      lastCursor.path !== nextCursor.path ||
+      nextCursor.offset < lastCursor.offset;
+    const messages = reset
+      ? snapshot.messages
+      : snapshot.messages.filter((message) => !knownMessageIds.has(message.id));
+    if (messages.length > 0 || stateChanged) {
+      emit(Events.WORKER_SESSION_HISTORY_DELTA, {
+        ...deltaFromSnapshot(snapshot, reset),
+        messages,
       });
-  }, SUBSCRIBE_POLL_MS);
-  timer.unref();
+    }
+    lastCursor = nextCursor;
+    lastStateKey = nextStateKey;
+    if (reset) knownMessageIds = new Set(snapshot.messages.map((message) => message.id));
+    else for (const message of messages) knownMessageIds.add(message.id);
+  };
+
+  async function poll() {
+    try {
+      const { snapshot } = await workerSessionHistoryGet(params);
+      if (!closed) emitSnapshotDelta(snapshot);
+    } catch (err) {
+      console.warn(`[worker-history] subscription poll failed: ${(err as Error).message}`);
+      const snapshot = unavailableSnapshot(params, (err as Error).message);
+      if (!closed) emitSnapshotDelta(snapshot);
+    } finally {
+      schedule();
+    }
+  }
+
+  schedule();
 
   return {
     result: { ...initial, subscribed: workerSessionHistoryEnabled() },
     unsubscribe: () => {
       closed = true;
-      clearInterval(timer);
+      if (timer) clearTimeout(timer);
     },
   };
+}
+
+function historyStateKey(snapshot: WorkerSessionHistorySnapshot): string {
+  return [
+    snapshot.slotId ?? '',
+    snapshot.runId ?? '',
+    snapshot.role ?? '',
+    snapshot.contextId ?? '',
+    snapshot.runner ?? '',
+    snapshot.model ?? '',
+    snapshot.runnerSessionPath ?? '',
+    snapshot.source,
+    snapshot.degradedReason ?? '',
+    snapshot.cursor?.path ?? '',
+  ].join(':');
 }
