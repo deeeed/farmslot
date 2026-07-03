@@ -332,3 +332,131 @@ test('projectAdd --no-setup --project registers selected slots without setup/pre
   state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
   assert.equal(state.packs['team-pack'].hash, completedHash);
 });
+
+test('projectAdd: sessionPrefix in pool propagates to registered slot sessions', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-add-prefix-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const ws: Workspace = workspaceAt(join(root, 'ws'));
+  mkdirSync(ws.root, { recursive: true });
+  mkdirSync(join(ws.farmslotDir, 'pool'), { recursive: true });
+  mkdirSync(ws.reposDir, { recursive: true });
+
+  const poolPath = join(ws.farmslotDir, 'pool', 'm.json');
+  writeFileSync(
+    poolPath,
+    JSON.stringify(
+      { machine: 'm', host: 'localhost', ssh_user: 'me', sessionPrefix: 'dev', slots: [] },
+      null,
+      2,
+    ),
+  );
+  writeFileSync(ws.statePath, JSON.stringify(stateWith({}), null, 2));
+
+  const scriptsDir = join(ws.farmslotDir, 'scripts');
+  mkdirSync(scriptsDir, { recursive: true });
+  writeFileSync(join(scriptsDir, 'sync-fixtures.sh'), '#!/usr/bin/env bash\n');
+  chmodSync(join(scriptsDir, 'sync-fixtures.sh'), 0o755);
+
+  const repo = join(root, 'repo');
+  mkdirSync(repo, { recursive: true });
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), 'fixture\n');
+  spawnSync('git', ['add', '.'], { cwd: repo });
+  spawnSync(
+    'git',
+    ['-c', 'user.email=a@example.com', '-c', 'user.name=A', 'commit', '-qm', 'init'],
+    { cwd: repo },
+  );
+
+  const pack = join(root, 'pack');
+  const projectDir = join(pack, 'projects', 'app-farm');
+  mkdirSync(join(projectDir, 'setup'), { recursive: true });
+  writeFileSync(
+    join(projectDir, 'project.json'),
+    JSON.stringify({ name: 'app-farm', repo_url: repo, default_branch: 'master' }, null, 2),
+  );
+  writeFileSync(join(projectDir, 'setup', 'cli.sh'), '#!/usr/bin/env bash\n');
+  writeFileSync(
+    join(pack, 'pack.json'),
+    JSON.stringify(
+      {
+        name: 'p',
+        projects: [{ dir: 'projects/app-farm', platform: 'cli', slots: 2, short: 'app' }],
+      },
+      null,
+      2,
+    ),
+  );
+
+  projectAdd(pack, ws, { step: () => {}, info: () => {} }, { noSetup: true });
+
+  const pool = JSON.parse(readFileSync(poolPath, 'utf-8')) as {
+    slots: { id: string; session: string }[];
+  };
+  const slot1 = pool.slots.find((s) => s.id === 'm-app-1');
+  const slot2 = pool.slots.find((s) => s.id === 'm-app-2');
+  assert.equal(slot1?.session, 'dev-app-1', 'slot 1 session should include prefix');
+  assert.equal(slot2?.session, 'dev-app-2', 'slot 2 session should include prefix');
+});
+
+test('projectAdd: omitted sessionPrefix leaves sessions unchanged', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-add-noprefix-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const ws: Workspace = workspaceAt(join(root, 'ws'));
+  mkdirSync(ws.root, { recursive: true });
+  mkdirSync(join(ws.farmslotDir, 'pool'), { recursive: true });
+  mkdirSync(ws.reposDir, { recursive: true });
+
+  const poolPath = join(ws.farmslotDir, 'pool', 'm.json');
+  writeFileSync(
+    poolPath,
+    JSON.stringify({ machine: 'm', host: 'localhost', ssh_user: 'me', slots: [] }, null, 2),
+  );
+  writeFileSync(ws.statePath, JSON.stringify(stateWith({}), null, 2));
+
+  const scriptsDir = join(ws.farmslotDir, 'scripts');
+  mkdirSync(scriptsDir, { recursive: true });
+  writeFileSync(join(scriptsDir, 'sync-fixtures.sh'), '#!/usr/bin/env bash\n');
+  chmodSync(join(scriptsDir, 'sync-fixtures.sh'), 0o755);
+
+  const repo = join(root, 'repo');
+  mkdirSync(repo, { recursive: true });
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), 'fixture\n');
+  spawnSync('git', ['add', '.'], { cwd: repo });
+  spawnSync(
+    'git',
+    ['-c', 'user.email=a@example.com', '-c', 'user.name=A', 'commit', '-qm', 'init'],
+    { cwd: repo },
+  );
+
+  const pack = join(root, 'pack');
+  const projectDir = join(pack, 'projects', 'app-farm');
+  mkdirSync(join(projectDir, 'setup'), { recursive: true });
+  writeFileSync(
+    join(projectDir, 'project.json'),
+    JSON.stringify({ name: 'app-farm', repo_url: repo, default_branch: 'master' }, null, 2),
+  );
+  writeFileSync(join(projectDir, 'setup', 'cli.sh'), '#!/usr/bin/env bash\n');
+  writeFileSync(
+    join(pack, 'pack.json'),
+    JSON.stringify(
+      {
+        name: 'p',
+        projects: [{ dir: 'projects/app-farm', platform: 'cli', slots: 1, short: 'app' }],
+      },
+      null,
+      2,
+    ),
+  );
+
+  projectAdd(pack, ws, { step: () => {}, info: () => {} }, { noSetup: true });
+
+  const pool = JSON.parse(readFileSync(poolPath, 'utf-8')) as {
+    slots: { id: string; session: string }[];
+  };
+  const slot1 = pool.slots.find((s) => s.id === 'm-app-1');
+  assert.equal(slot1?.session, 'app-1', 'session without prefix should be short-n');
+});

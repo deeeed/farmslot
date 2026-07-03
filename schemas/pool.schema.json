@@ -102,6 +102,12 @@
       "type": "string",
       "description": "Free-form notes about this machine's setup or quirks."
     },
+    "sessionPrefix": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Optional prefix applied to every tmux session name registered on this machine. Set distinctly per install (e.g. \"dev\", \"prod\") so sessions from different installs are visually distinct and do not collide. Unset = no prefix (identical to prior behaviour).",
+      "examples": ["dev", "prod", "team-a"]
+    },
     "tmux_workers": {
       "$ref": "#/$defs/tmuxWorkers",
       "description": "Optional inventory/control policy for general tmux worker panes on this machine. Omit to expose every tmux pane."

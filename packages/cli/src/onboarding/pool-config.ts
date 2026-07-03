@@ -25,6 +25,12 @@ export interface PoolSlot {
   resources?: Record<string, Record<string, unknown>>;
 }
 
+/**
+ * Safe charset for tmux session prefixes: lowercase letters, digits, hyphens.
+ * Must start with a letter. Keeps session names shell-safe and human-readable.
+ */
+export const SESSION_PREFIX_RE = /^[a-z][a-z0-9-]*$/;
+
 export interface PoolConfig {
   $schema?: string;
   schema_version?: number;
@@ -44,6 +50,13 @@ export interface PoolConfig {
   recycle_cmd?: string;
   repo_url?: string;
   notes?: string;
+  /**
+   * Optional prefix applied to every tmux session name registered on this machine.
+   * Set distinctly per install (e.g. "dev", "prod") so sessions from different
+   * installs are visually distinct and do not collide. Unset = behaviour identical
+   * to before this field existed.
+   */
+  sessionPrefix?: string;
   tmux_workers?: unknown;
   slots: PoolSlot[];
 }
@@ -62,6 +75,13 @@ export function validatePoolConfig(pool: unknown): string[] {
   }
   if (p.schema_version !== undefined && typeof p.schema_version !== 'number') {
     errors.push(`'schema_version' must be a number`);
+  }
+  if (p.sessionPrefix !== undefined) {
+    if (typeof p.sessionPrefix !== 'string' || !SESSION_PREFIX_RE.test(p.sessionPrefix)) {
+      errors.push(
+        `'sessionPrefix' must start with a letter and contain only lowercase letters, digits, and hyphens`,
+      );
+    }
   }
   if (!Array.isArray(p.slots)) {
     errors.push(`'slots' must be an array`);

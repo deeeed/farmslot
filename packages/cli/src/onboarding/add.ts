@@ -605,7 +605,9 @@ export function projectAdd(
 
       for (let n = 1; n <= registered.slots; n++) {
         const slotId = `${pool.machine}-${registered.short}-${n}`;
-        const session = `${registered.short}-${n}`;
+        const session = pool.sessionPrefix
+          ? `${pool.sessionPrefix}-${registered.short}-${n}`
+          : `${registered.short}-${n}`;
 
         // Conflicts were already rejected by the pre-pass above; here `existing`
         // is this project's own slot (re-add/repair) or absent.

@@ -13,6 +13,7 @@ import {
   poolFileName,
   PORT_BLOCK_START,
   registerSlot,
+  SESSION_PREFIX_RE,
   validatePoolConfig,
 } from './pool-config.js';
 
@@ -108,6 +109,35 @@ test('registerSlot never clobbers an existing slot', () => {
   assert.equal(p.slots[0].repo, '/user-edited');
   assert.equal(registerSlot(p, { id: 'm-a-2', repo: '/b', session: 'a-2' }), true);
   assert.equal(p.slots.length, 2);
+});
+
+test('validatePoolConfig accepts valid sessionPrefix values', () => {
+  assert.deepEqual(validatePoolConfig({ ...pool(), sessionPrefix: 'dev' }), []);
+  assert.deepEqual(validatePoolConfig({ ...pool(), sessionPrefix: 'prod' }), []);
+  assert.deepEqual(validatePoolConfig({ ...pool(), sessionPrefix: 'team-a' }), []);
+  assert.deepEqual(validatePoolConfig({ ...pool(), sessionPrefix: 'a1' }), []);
+});
+
+test('validatePoolConfig rejects invalid sessionPrefix values', () => {
+  const cases = ['', '1dev', 'DEV', 'dev prod', 'dev/prod', 'dev.prod', '-dev'];
+  for (const prefix of cases) {
+    const errors = validatePoolConfig({ ...pool(), sessionPrefix: prefix });
+    assert.ok(
+      errors.some((e) => e.includes('sessionPrefix')),
+      `expected error for prefix '${prefix}', got: ${JSON.stringify(errors)}`,
+    );
+  }
+});
+
+test('SESSION_PREFIX_RE matches valid and rejects invalid prefixes', () => {
+  assert.ok(SESSION_PREFIX_RE.test('dev'));
+  assert.ok(SESSION_PREFIX_RE.test('prod'));
+  assert.ok(SESSION_PREFIX_RE.test('team-a'));
+  assert.ok(!SESSION_PREFIX_RE.test(''));
+  assert.ok(!SESSION_PREFIX_RE.test('1dev'));
+  assert.ok(!SESSION_PREFIX_RE.test('DEV'));
+  assert.ok(!SESSION_PREFIX_RE.test('dev prod'));
+  assert.ok(!SESSION_PREFIX_RE.test('-dev'));
 });
 
 test('poolFileName avoids colliding with an existing host pool file', () => {
