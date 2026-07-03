@@ -67,6 +67,29 @@ test('linkedRunForBacklogItem prefers active linked run over newer terminal run'
   assert.equal(selected?.id, 'active-run');
 });
 
+test('linkedRunForBacklogItem chooses newest linked active run', () => {
+  const item = backlog();
+  const selected = linkedRunForBacklogItem(
+    [
+      run({
+        id: 'older-active',
+        backlogItemId: item.id,
+        status: 'human-gating',
+        updatedAt: '2026-07-03T01:00:00.000Z',
+      }),
+      run({
+        id: 'newer-active',
+        backlogItemId: item.id,
+        status: 'monitoring',
+        updatedAt: '2026-07-03T02:00:00.000Z',
+      }),
+    ],
+    item,
+  );
+
+  assert.equal(selected?.id, 'newer-active');
+});
+
 test('linkedRunForBacklogItem falls back to newest linked terminal run', () => {
   const item = backlog();
   const selected = linkedRunForBacklogItem(

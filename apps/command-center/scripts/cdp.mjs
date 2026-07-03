@@ -57,6 +57,14 @@ function commandCenterUrl(target) {
   return `${base}/${target.startsWith('#') ? target : `#${target}`}`;
 }
 
+function matchesNavigatedRoute(actualUrl, expectedUrl) {
+  const actual = new URL(actualUrl);
+  const expected = new URL(expectedUrl);
+  if (actual.origin !== expected.origin || actual.pathname !== expected.pathname) return false;
+  if (expected.hash.includes('?')) return actual.hash === expected.hash;
+  return actual.hash === expected.hash || actual.hash.startsWith(`${expected.hash}?`);
+}
+
 async function findTab(hash) {
   const tabs = await listTabs();
   const pages = tabs.filter((t) => t.type === 'page');
@@ -128,6 +136,36 @@ function connect(wsUrl) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForNavigatedRoute(call, url) {
+  let lastSeen = '(no page context)';
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      const result = await call('Runtime.evaluate', {
+        expression: '({ href: window.location.href, readyState: document.readyState })',
+        returnByValue: true,
+      });
+      const value = result.result?.value;
+      if (value?.href) lastSeen = value.href;
+      if (
+        value?.href &&
+        value.readyState === 'complete' &&
+        matchesNavigatedRoute(value.href, url)
+      ) {
+        return value.href;
+      }
+    } catch (error) {
+      // Expected while Chrome swaps execution contexts during navigation.
+      lastSeen = error instanceof Error ? error.message : String(error);
+    }
+    await sleep(100);
+  }
+  die(`CDP navigation reached ${lastSeen} instead of ${url}`, 2);
+}
+
 async function navigateTab(target, forceNew = false) {
   const url = commandCenterUrl(target);
   let reused = false;
@@ -139,21 +177,9 @@ async function navigateTab(target, forceNew = false) {
   }
   const { call, close } = await connect(tab.webSocketDebuggerUrl);
   await call('Page.enable');
-  await call('Page.navigate', { url });
   await call('Runtime.enable');
-  await call('Runtime.evaluate', {
-    expression: `
-      new Promise((resolve) => {
-        if (document.readyState === 'complete') {
-          resolve(true);
-          return;
-        }
-        window.addEventListener('load', () => resolve(true), { once: true });
-      })
-    `,
-    awaitPromise: true,
-    returnByValue: true,
-  });
+  await call('Page.navigate', { url });
+  await waitForNavigatedRoute(call, url);
   close();
   return { id: tab.id, url, reused };
 }

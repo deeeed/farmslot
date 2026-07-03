@@ -2255,7 +2255,7 @@ export class BacklogPanel extends LitElement {
       ${item.lastDispatchError ? html`<div class="error">${item.lastDispatchError}</div>` : nothing}
       <linked-run-summary
         .run=${linkedRunForBacklogItem(this._runs, item)}
-        label="Current run"
+        label="Linked run"
       ></linked-run-summary>
       ${this._renderSpecAttachment(item)} ${this._renderLaunchPlanSummary(item)}
       ${this._renderDispatchConfigSummary(item, false, true)}

@@ -5,8 +5,6 @@ export function linkedRunForBacklogItem(runs: Run[], item: BacklogItem): Run | u
   const matches = runs.filter(
     (run) => run.backlogItemId === item.id || (item.runId && run.id === item.runId),
   );
-  return (
-    matches.find((run) => !isTerminalRunStatus(run.status)) ??
-    matches.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
-  );
+  const newestFirst = [...matches].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return newestFirst.find((run) => !isTerminalRunStatus(run.status)) ?? newestFirst[0];
 }
