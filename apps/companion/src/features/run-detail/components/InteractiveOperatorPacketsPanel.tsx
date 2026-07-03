@@ -62,6 +62,7 @@ export function InteractiveOperatorPacketsPanel({
     if (!packetArtifacts.length) {
       setPackets([]);
       setFeedback(null);
+      setLoading(false);
       return;
     }
     const readArtifactText = async (path: string): Promise<string> => {
