@@ -141,7 +141,26 @@ fi
 
 if [[ "${SUBMIT}" -eq 1 ]]; then
   for target_platform in "${platforms[@]}"; do
-    run_cmd env APP_VARIANT="${VARIANT}" NODE_ENV="${VARIANT}" yarn dlx eas-cli@"${EAS_CLI_VERSION}" submit --platform "${target_platform}" --profile "${VARIANT}"
+    submit_args=(
+      env APP_VARIANT="${VARIANT}" NODE_ENV="${VARIANT}"
+      yarn dlx eas-cli@"${EAS_CLI_VERSION}" submit
+      --platform "${target_platform}"
+      --profile "${VARIANT}"
+      --latest
+      --non-interactive
+    )
+    if [[ "${target_platform}" == "android" ]]; then
+      if [[ "${VARIANT}" == "production" ]]; then
+        echo "[release] Android Play submit targets internal testing (share via Console opt-in link)."
+        echo "[release] Promote to production in Play Console after the first store release is configured."
+      fi
+      if [[ "${EXECUTE}" -eq 1 ]]; then
+        bash "${SCRIPT_DIR}/ensure-play-service-account.sh"
+      else
+        echo "[release] Android submit uses .eas/google-play-service-account.json (symlinked at execute time)."
+      fi
+    fi
+    run_cmd "${submit_args[@]}"
   done
 fi
 

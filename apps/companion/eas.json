@@ -65,7 +65,8 @@
     "preview": {
       "ios": {},
       "android": {
-        "track": "internal"
+        "track": "internal",
+        "serviceAccountKeyPath": ".eas/google-play-service-account.json"
       }
     },
     "production": {
@@ -73,7 +74,8 @@
         "ascAppId": "6774911412"
       },
       "android": {
-        "track": "production"
+        "track": "internal",
+        "serviceAccountKeyPath": ".eas/google-play-service-account.json"
       }
     }
   }
