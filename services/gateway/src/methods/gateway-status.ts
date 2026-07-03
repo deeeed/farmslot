@@ -18,6 +18,7 @@ import type {
 } from '@farmslot/protocol';
 
 import { farmslotRoot } from '../core/index.js';
+import { getGatewayListenSnapshot } from '../core/listen-address.js';
 
 const execFile = promisify(execFileCb);
 
@@ -207,10 +208,20 @@ async function computeUpdateStatus(force: boolean): Promise<GatewayUpdateStatus>
 
 export async function gatewayStatus(params?: GatewayStatusParams): Promise<GatewayStatusResult> {
   const update = await computeUpdateStatus(params?.refresh === true);
+  const listen = getGatewayListenSnapshot();
   return {
     version: GATEWAY_VERSION,
     update,
     releaseNotes: GATEWAY_RELEASE_NOTES,
+    ...(listen
+      ? {
+          listen: {
+            host: listen.host,
+            port: listen.port,
+            remotePairingAllowed: listen.remotePairingAllowed,
+          },
+        }
+      : {}),
     capabilities: {
       experimentalWorkerHistory: process.env.FARMSLOT_EXPERIMENTAL_WORKER_HISTORY === '1',
     },

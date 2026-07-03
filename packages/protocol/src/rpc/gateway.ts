@@ -36,12 +36,23 @@ export interface GatewayReleaseNotes {
   items: string[];
 }
 
+/** How the gateway process is bound — relevant for LAN/Tailscale Companion pairing. */
+export interface GatewayListenInfo {
+  /** Normalized bind host (`0.0.0.0` when all interfaces). */
+  host: string;
+  port: number;
+  /** False when bound to loopback only — QR LAN URLs will not reach phones on the network. */
+  remotePairingAllowed: boolean;
+}
+
 export interface GatewayStatusResult {
   /** `@farmslot/gateway` package version. */
   version: string;
   update: GatewayUpdateStatus;
   /** Operator-facing notes from the latest gateway release cut, when present. */
   releaseNotes?: GatewayReleaseNotes;
+  /** Current gateway listen/bind address for remote pairing diagnostics. */
+  listen?: GatewayListenInfo;
   capabilities?: {
     experimentalWorkerHistory?: boolean;
   };

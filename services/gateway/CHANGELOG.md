@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Expose gateway listen/bind metadata on `/health` and `gateway.status`, and warn in doctor when loopback-only bind blocks Companion LAN pairing.
 - Add roadmap promotion draft persistence, backlog spec file access, and graph-linked dispatch activation support.
 - Add experimental worker session history RPCs backed by runner transcript projection and feature capability reporting.
 - Active-development baseline; add user-facing changes here before release or package publication.

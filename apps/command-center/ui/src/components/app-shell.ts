@@ -6,6 +6,7 @@ import type {
   ChatClientContext,
   ChatSendIntent,
   FleetSummary,
+  GatewayListenInfo,
   GatewayStatusResult,
   GatewayUpdateStatus,
   GitHubRateLimitPayload,
@@ -230,6 +231,8 @@ export class FarmApp extends LitElement {
   @state() private pairingExpiresAt = '';
   @state() private pairingProfileCount = 0;
   @state() private pairingError = '';
+  @state() private pairingListenWarning = '';
+  @state() private pairingListenLoading = false;
   @state() private onboardingConnectInput = '';
   @state() private onboardingError = '';
   private unsub?: () => void;
@@ -795,10 +798,24 @@ export class FarmApp extends LitElement {
   private openPairingPanel() {
     this.pairingOpen = true;
     this.pairingError = '';
+    this.pairingListenWarning = '';
     this.pairingCandidateStatus = '';
     this.pairingQrDataUrl = '';
     this.pairingExpiresAt = '';
     void this.refreshPairingCandidates();
+    void this.refreshPairingListenWarning();
+  }
+
+  private async refreshPairingListenWarning() {
+    this.pairingListenLoading = true;
+    try {
+      const status = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {}, 5_000);
+      this.pairingListenWarning = pairingListenWarning(status.listen);
+    } catch (err) {
+      this.pairingListenWarning = `Could not read gateway listen address (${err instanceof Error ? err.message : 'unknown error'}). Retry before generating a LAN pairing QR.`;
+    } finally {
+      this.pairingListenLoading = false;
+    }
   }
 
   private closePairingPanel() {
@@ -861,6 +878,14 @@ export class FarmApp extends LitElement {
     );
     if (invalidTarget) {
       this.pairingError = `${invalidTarget.profileName} URL must start with ws:// or wss://`;
+      return;
+    }
+    await this.refreshPairingListenWarning();
+    const needsLocalGatewayReachable = targets.some((target) =>
+      pairingTargetNeedsRemoteListen(target),
+    );
+    if (needsLocalGatewayReachable && this.pairingListenWarning) {
+      this.pairingError = this.pairingListenWarning;
       return;
     }
 
@@ -1347,6 +1372,9 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           </div>
 
           ${this.pairingError ? html`<div class="pairing-error">${this.pairingError}</div>` : ''}
+          ${this.pairingListenWarning
+            ? html`<div class="pairing-warning">${this.pairingListenWarning}</div>`
+            : ''}
           ${this.pairingCandidateStatus
             ? html`<div class="pairing-copy">${this.pairingCandidateStatus}</div>`
             : ''}
@@ -1423,8 +1451,16 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
             }}
           />
 
-          <button class="pairing-submit" type="submit" ?disabled=${this.pairingBusy}>
-            ${this.pairingBusy ? 'Generating…' : 'Generate QR'}
+          <button
+            class="pairing-submit"
+            type="submit"
+            ?disabled=${this.pairingBusy || this.pairingListenLoading}
+          >
+            ${this.pairingListenLoading
+              ? 'Checking gateway bind…'
+              : this.pairingBusy
+                ? 'Generating…'
+                : 'Generate QR'}
           </button>
 
           ${this.pairingQrDataUrl
@@ -1565,6 +1601,32 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       ></chat-panel>
       ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()} ${this.renderWhatsNewModal()}
     `;
+  }
+}
+
+function pairingListenWarning(listen: GatewayListenInfo | undefined): string {
+  if (!listen || listen.remotePairingAllowed) return '';
+  return (
+    `Gateway is listening on ${listen.host}:${listen.port} only. ` +
+    'Phones on your LAN cannot reach the LAN/Tailscale URLs in this QR until you restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev does this when .env.local-auth is present) or run farmslot up.'
+  );
+}
+
+function pairingTargetNeedsRemoteListen(target: {
+  gatewayUrl: string;
+  kind?: PairingCandidate['kind'];
+}): boolean {
+  if (target.kind === 'lan' || target.kind === 'tailnet') return true;
+  try {
+    const url = new URL(target.gatewayUrl);
+    if (url.protocol === 'wss:') return false;
+    const host = url.hostname.toLowerCase();
+    if (host === 'localhost' || host === '::1' || host === '[::1]' || host.startsWith('127.')) {
+      return false;
+    }
+    return url.protocol === 'ws:';
+  } catch {
+    return false;
   }
 }
 

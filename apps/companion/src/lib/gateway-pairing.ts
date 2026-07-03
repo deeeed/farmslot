@@ -6,6 +6,7 @@ import {
   type ResponseFrame,
 } from '@farmslot/protocol';
 
+import { pairingWebSocketConnectionError } from './gateway-pairing-errors';
 import { profileFromPairingExchange } from './gateway-pairing-normalization';
 import { sortPairingExchangeUrls } from './gateway-pairing-urls';
 import { inferGatewayProfileKindFromUrl } from './gateway-profile-kind';
@@ -188,12 +189,13 @@ function sendUnauthenticatedPairingExchange(
     };
 
     ws.onerror = () => {
-      settleWithError(new Error('Pairing WebSocket connection failed'));
+      settleWithError(pairingWebSocketConnectionError(url));
     };
 
     ws.onclose = () => {
-      if (!settled)
+      if (!settled) {
         settleWithError(new Error('Pairing WebSocket closed before exchange completed'));
+      }
     };
 
     ws.onmessage = (event: MessageEvent) => {

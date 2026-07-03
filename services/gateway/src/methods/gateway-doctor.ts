@@ -13,6 +13,7 @@ import {
 import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
 
 import { listOrphanedBacklogQueueItems } from '../backlog/store.js';
+import { getGatewayListenSnapshot, remotePairingBlockedHint } from '../core/listen-address.js';
 import { getAllNodes } from '../fleet/machine-registry.js';
 import { loadPoolConfigs, loadProjectConfigs } from '../fleet/state.js';
 
@@ -127,6 +128,21 @@ async function gatewaySection(): Promise<GatewayDoctorSection> {
     ok: true,
     detail: `version ${status.version}`,
   });
+  const listen = status.listen ?? getGatewayListenSnapshot();
+  if (listen) {
+    checks.push({
+      id: 'gateway-listen',
+      label: 'Companion LAN pairing',
+      ok: listen.remotePairingAllowed,
+      warn: !listen.remotePairingAllowed,
+      detail: listen.remotePairingAllowed
+        ? `listening on ${listen.host}:${listen.port} (remote devices can connect)`
+        : remotePairingBlockedHint(listen.host, listen.port),
+      hint: listen.remotePairingAllowed
+        ? undefined
+        : 'Restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev when .env.local-auth is present) or run farmslot up.',
+    });
+  }
   checks.push({
     id: 'gateway-update',
     label: 'Farmslot checkout',
