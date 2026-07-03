@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
@@ -40,6 +40,20 @@ test.after(() =>
 
 async function store() {
   return storePromise;
+}
+
+async function createProjectFixture(t: TestContext, project: string): Promise<void> {
+  const projectDir = path.join(farmslotRoot, 'projects', project);
+  await mkdir(projectDir, { recursive: true });
+  t.after(() => rm(projectDir, { recursive: true, force: true }));
+  await writeFile(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      name: project,
+      repo_url: `git@example.com:${project}.git`,
+      default_branch: 'main',
+    }),
+  );
 }
 
 function refinedBody(extra = 'Updated body.'): string {
@@ -597,13 +611,19 @@ test('roadmap store promotes a refined item into ready backlog markdown specs', 
   assert.equal(backlog.listBacklogItems({ tags: ['roadmap'] }).items.length, 1);
 });
 
-test('roadmap store promotes target project specs into separate project backlogs', async () => {
+test('roadmap store promotes target project specs into separate project backlogs', async (t) => {
   const { promoteRoadmapItem, saveRoadmapItem } = await store();
   const backlog = await import('../backlog/store.js');
+  const mobileProject = `roadmap-mobile-${process.pid}`;
+  const extensionProject = `roadmap-extension-${process.pid}`;
+  await Promise.all([
+    createProjectFixture(t, mobileProject),
+    createProjectFixture(t, extensionProject),
+  ]);
   const roadmap = await saveRoadmapItem({
     item: {
       project: 'global',
-      targetProjects: ['metamask-mobile-farm', 'metamask-extension-farm'],
+      targetProjects: [mobileProject, extensionProject],
       title: 'Perps analytics client follow-up',
       stage: 'refined',
       tags: ['perps', 'analytics'],
@@ -616,7 +636,7 @@ test('roadmap store promotes target project specs into separate project backlogs
     expectedHash: roadmap.item.fileHash,
     specs: [
       {
-        project: 'metamask-mobile-farm',
+        project: mobileProject,
         title: 'Update mobile perps analytics',
         body: [
           '## Context',
@@ -629,7 +649,7 @@ test('roadmap store promotes target project specs into separate project backlogs
         ].join('\n'),
       },
       {
-        project: 'metamask-extension-farm',
+        project: extensionProject,
         title: 'Update extension perps analytics',
         body: [
           '## Context',
@@ -646,15 +666,15 @@ test('roadmap store promotes target project specs into separate project backlogs
 
   assert.equal(promoted.roadmapItem.stage, 'promoted');
   assert.deepEqual(promoted.backlogItems.map((item) => item.project).sort(), [
-    'metamask-extension-farm',
-    'metamask-mobile-farm',
+    extensionProject,
+    mobileProject,
   ]);
-  assert.match(promoted.specPaths[0] ?? '', /metamask-mobile-farm/);
-  assert.match(promoted.specPaths[1] ?? '', /metamask-extension-farm/);
-  assert.equal(promoted.roadmapItem.promotion?.[0]?.project, 'metamask-mobile-farm');
-  assert.equal(promoted.roadmapItem.promotion?.[1]?.project, 'metamask-extension-farm');
-  assert.equal(backlog.listBacklogItems({ project: 'metamask-mobile-farm' }).items.length, 1);
-  assert.equal(backlog.listBacklogItems({ project: 'metamask-extension-farm' }).items.length, 1);
+  assert.match(promoted.specPaths[0] ?? '', new RegExp(mobileProject));
+  assert.match(promoted.specPaths[1] ?? '', new RegExp(extensionProject));
+  assert.equal(promoted.roadmapItem.promotion?.[0]?.project, mobileProject);
+  assert.equal(promoted.roadmapItem.promotion?.[1]?.project, extensionProject);
+  assert.equal(backlog.listBacklogItems({ project: mobileProject }).items.length, 1);
+  assert.equal(backlog.listBacklogItems({ project: extensionProject }).items.length, 1);
 });
 
 test('roadmap promotion requires spec projects when multiple target projects exist', async () => {

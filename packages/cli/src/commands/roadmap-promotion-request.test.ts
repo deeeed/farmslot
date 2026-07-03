@@ -100,3 +100,40 @@ test('createRoadmapPromotionRequest writes a file-backed decision', async (t) =>
   );
   assert.equal(raw.created_at, '2026-07-03T13:00:00.000Z');
 });
+
+test('createRoadmapPromotionRequest rejects path traversal item ids before draft cleanup', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'farmslot-roadmap-promotion-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const itemFile = '.roadmap/inbox/items/test.md';
+  await mkdir(path.join(root, '.roadmap/inbox/items'), { recursive: true });
+  await writeFile(
+    path.join(root, itemFile),
+    [
+      '---',
+      'title: "Unsafe roadmap item"',
+      '---',
+      '',
+      '## Backlog Drafts',
+      '',
+      '### Backlog Draft: Unsafe',
+      '',
+      'Project: `farmslot-farm`',
+      '',
+      '## Acceptance Criteria',
+      '',
+      '- Draft exists.',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  await assert.rejects(
+    () =>
+      createRoadmapPromotionRequest(root, {
+        itemId: '../../..',
+        itemFile,
+        title: 'Unsafe roadmap item',
+      }),
+    /--item-id must be a safe path segment/,
+  );
+});

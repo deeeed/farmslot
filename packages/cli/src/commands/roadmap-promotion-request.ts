@@ -147,6 +147,7 @@ async function materializePromotionDraftSpecs(
     title: string;
   },
 ): Promise<string[]> {
+  assertSafePathSegment('--item-id', input.itemId);
   const itemPath = path.resolve(root, input.itemFile);
   const rootPath = path.resolve(root);
   if (!itemPath.startsWith(`${rootPath}${path.sep}`)) {
@@ -163,7 +164,11 @@ async function materializePromotionDraftSpecs(
     title: typeof frontmatter.title === 'string' ? frontmatter.title : input.title,
     ...(tags.length ? { tags } : {}),
   };
-  const draftDir = path.join(root, '.roadmap', 'promotion-drafts', input.itemId);
+  const draftRoot = path.resolve(root, '.roadmap', 'promotion-drafts');
+  const draftDir = path.resolve(draftRoot, input.itemId);
+  if (!draftDir.startsWith(`${draftRoot}${path.sep}`)) {
+    throw new Error('--item-id must resolve inside .roadmap/promotion-drafts');
+  }
   await rm(draftDir, { recursive: true, force: true });
   await mkdir(draftDir, { recursive: true });
   const paths: string[] = [];
@@ -175,6 +180,19 @@ async function materializePromotionDraftSpecs(
     paths.push(path.relative(root, absolutePath));
   }
   return paths;
+}
+
+function assertSafePathSegment(label: string, value: string): void {
+  if (
+    !value ||
+    value === '.' ||
+    value === '..' ||
+    path.isAbsolute(value) ||
+    value.includes('/') ||
+    value.includes('\\')
+  ) {
+    throw new Error(`${label} must be a safe path segment`);
+  }
 }
 
 function parseMarkdownFrontmatter(raw: string): {
