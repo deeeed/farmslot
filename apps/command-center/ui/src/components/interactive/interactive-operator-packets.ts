@@ -141,7 +141,10 @@ export class InteractiveOperatorPackets extends LitElement {
   private _packetLoadSequence = 0;
 
   protected override updated(changed: Map<string, unknown>): void {
-    if (changed.has('runId') || changed.has('artifacts')) this._syncPacketArtifacts();
+    if (changed.has('artifactTextLoader')) this._packetLoadKey = '';
+    if (changed.has('runId') || changed.has('artifacts') || changed.has('artifactTextLoader')) {
+      this._syncPacketArtifacts();
+    }
   }
 
   private _artifactUrl(path: string): string {
@@ -166,6 +169,7 @@ export class InteractiveOperatorPackets extends LitElement {
     if (nextKey === this._packetLoadKey) return;
     this._packetLoadKey = nextKey;
     this._packetLoadSequence += 1;
+    this._feedback = '';
     if (!this.runId || packetArtifacts.length === 0) {
       this._packets = [];
       this._loading = false;

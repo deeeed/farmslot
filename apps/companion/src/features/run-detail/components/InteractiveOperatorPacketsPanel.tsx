@@ -74,6 +74,7 @@ export function InteractiveOperatorPacketsPanel({
       return response.text();
     };
     setLoading(true);
+    setFeedback(null);
     Promise.all(
       packetArtifacts.map(async (artifact): Promise<LoadedInteractivePacket> => {
         try {

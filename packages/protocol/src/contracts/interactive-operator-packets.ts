@@ -88,13 +88,13 @@ function payloadString(payload: Record<string, unknown> | undefined, key: string
   return stringValue(value);
 }
 
-function hasOnlyKnownValues<T extends string>(value: unknown, known: readonly T[]): value is T {
+function isKnownString<T extends string>(value: unknown, known: readonly T[]): value is T {
   if (typeof value !== 'string') return false;
   return known.some((candidate) => candidate === value);
 }
 
 function knownStringValue<T extends string>(value: unknown, known: readonly T[]): T | null {
-  return hasOnlyKnownValues(value, known) ? value : null;
+  return isKnownString(value, known) ? value : null;
 }
 
 function parseBody(value: unknown, errors: string[]): InteractiveOperatorPacketBody | null {
@@ -276,7 +276,7 @@ export function validateInteractiveOperatorPacket(
   const runId = stringValue(value.runId) ?? undefined;
   const title = stringValue(value.title);
   const summary = stringValue(value.summary) ?? undefined;
-  const intent = hasOnlyKnownValues(value.intent, INTERACTIVE_OPERATOR_PACKET_INTENTS)
+  const intent = isKnownString(value.intent, INTERACTIVE_OPERATOR_PACKET_INTENTS)
     ? value.intent
     : null;
   const createdAt = stringValue(value.createdAt);
