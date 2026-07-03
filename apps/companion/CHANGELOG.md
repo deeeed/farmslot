@@ -4,6 +4,9 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Wire local Google Play service account symlink for non-interactive EAS Android submit.
+- Route production Android submit to Play internal testing until the first production store release exists.
+
 - Normalize duplicate imports so the repository-wide import hygiene rule can cover Companion.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
