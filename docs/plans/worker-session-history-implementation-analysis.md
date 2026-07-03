@@ -1,7 +1,7 @@
 # Worker Session History Implementation Analysis
 
-**Status:** approved v1 implementation plan  
-**Supports:** [ADR-047](../adr/047-worker-session-history-panel.md), [ROADMAP-next](../ROADMAP-next.md)  
+**Status:** approved v1 implementation plan
+**Supports:** [ADR-047](../adr/047-worker-session-history-panel.md), [ROADMAP-next](../ROADMAP-next.md)
 **Date:** 2026-07-03
 
 ## Summary
