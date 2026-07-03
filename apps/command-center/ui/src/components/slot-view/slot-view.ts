@@ -1,7 +1,14 @@
 import { html, nothing } from 'lit';
 import { customElement } from 'lit/decorators.js';
 
-import type { AgentContextSummary, Run, SlotActionSummary, SlotStatus } from '@farmslot/protocol';
+import type {
+  AgentContextSummary,
+  GatewayStatusResult,
+  Run,
+  SlotActionSummary,
+  SlotStatus,
+} from '@farmslot/protocol';
+import { Methods } from '@farmslot/protocol';
 
 import '../workspace/file-tree.js';
 import '../progress-tracker/progress-tracker.js';
@@ -22,6 +29,7 @@ import '../slot-actions/slot-actions-panel.js';
 import '../shared/prepare-progress-panel.js';
 import './slot-history-modal.js';
 import './slot-load-run-modal.js';
+import './worker-session-history.js';
 import '../runs/run-pipeline.js';
 import '../runs/step-inspector.js';
 import '../workspace/review-workspace.js';
@@ -250,6 +258,7 @@ export class SlotView extends SlotViewRecipePresenter {
   connectedCallback() {
     super.connectedCallback();
     connectSlotView(this);
+    void this._refreshWorkerHistoryCapability();
   }
 
   disconnectedCallback() {
@@ -263,6 +272,19 @@ export class SlotView extends SlotViewRecipePresenter {
 
   updated(changed: Map<string, unknown>) {
     handleSlotViewUpdated(this, changed);
+  }
+
+  async _refreshWorkerHistoryCapability() {
+    try {
+      const status = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {}, 5_000);
+      this._workerHistoryEnabled = Boolean(status.capabilities?.experimentalWorkerHistory);
+      if (!this._workerHistoryEnabled && this._bottomTab === 'history') {
+        this._bottomTab = 'terminal';
+      }
+    } catch (err) {
+      console.warn(`[slot-view] worker history capability check failed: ${(err as Error).message}`);
+      this._workerHistoryEnabled = false;
+    }
   }
 
   /** Set after initial file-from-URL restore is complete (prevents clearing ?file= before it's read) */

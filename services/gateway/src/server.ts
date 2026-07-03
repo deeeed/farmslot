@@ -111,6 +111,8 @@ export function createWebSocketServer(
       workerTerminalHandlers: new Map(),
       ptyHandlers: new Map(),
       terminalIdentities: new Map(),
+      workerSessionHistoryHandlers: new Map(),
+      workerSessionHistorySubscribeSeq: new Map(),
       terminalSubscribeSeq: new Map(),
       screenHandlers: new Map(),
       thumbnailSubscribed: false,
@@ -312,6 +314,19 @@ export function createWebSocketServer(
       for (const [key, handler] of state.workerTerminalHandlers) {
         unsubscribeWorkerTerminalPty(key, handler);
       }
+      for (const key of new Set([
+        ...state.workerSessionHistorySubscribeSeq.keys(),
+        ...state.workerSessionHistoryHandlers.keys(),
+      ])) {
+        state.workerSessionHistorySubscribeSeq.set(
+          key,
+          (state.workerSessionHistorySubscribeSeq.get(key) ?? 0) + 1,
+        );
+      }
+      for (const unsubscribe of state.workerSessionHistoryHandlers.values()) {
+        unsubscribe();
+      }
+      state.workerSessionHistoryHandlers.clear();
       // Cleanup metro watchers for this client
       metroUnsubscribeAll(state.id);
       // Cleanup screen subscriptions for this client

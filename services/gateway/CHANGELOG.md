@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- Add experimental worker session history RPCs backed by runner transcript projection and feature capability reporting.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.2.0 - 2026-07-03

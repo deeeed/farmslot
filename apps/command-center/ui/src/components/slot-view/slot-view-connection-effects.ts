@@ -75,6 +75,9 @@ export function connectSlotView(view: SlotView): void {
       view._liveInitPending = false;
       void view._beginLiveRecovery();
     }
+    if (conn === 'connected') {
+      void view._refreshWorkerHistoryCapability();
+    }
   });
 
   updateLinkedRun();

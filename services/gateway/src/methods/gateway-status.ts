@@ -211,5 +211,8 @@ export async function gatewayStatus(params?: GatewayStatusParams): Promise<Gatew
     version: GATEWAY_VERSION,
     update,
     releaseNotes: GATEWAY_RELEASE_NOTES,
+    capabilities: {
+      experimentalWorkerHistory: process.env.FARMSLOT_EXPERIMENTAL_WORKER_HISTORY === '1',
+    },
   };
 }

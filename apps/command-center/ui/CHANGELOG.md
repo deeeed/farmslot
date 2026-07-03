@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Add an experimental Slot View worker History tab that renders runner-owned transcript turns with run, model, and session metadata.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.2.0 - 2026-07-03

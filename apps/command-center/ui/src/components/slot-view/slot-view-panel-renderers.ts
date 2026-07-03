@@ -252,6 +252,17 @@ export function renderSlotViewExplorerPanel(view: SlotView) {
 }
 
 export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBodyRenderContext) {
+  const selectedAgentContext = view._selectedAgentContext();
+  const selectedRole =
+    selectedAgentContext?.role === 'primary' ? '' : (selectedAgentContext?.role ?? '');
+  const selectedContextId =
+    selectedAgentContext?.id === 'primary' ? '' : (selectedAgentContext?.id ?? '');
+  const terminalRunId = slotViewTerminalRunId(
+    view.slotId,
+    view._linkedRun,
+    requestedRunFromHash(),
+    slotBoundRunIdForSlot(view.slotId, view._slot?.currentRunId, getState().fleet?.slots),
+  );
   return html`
     <!-- Body: activity bar + sidebar + editor -->
     <div class="sv-body">
@@ -675,6 +686,20 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                   >
                     Terminal
                   </button>
+                  ${view._workerHistoryEnabled
+                    ? html`
+                        <button
+                          class="sv-bottom-tab ${view._bottomTab === 'history' ? 'active' : ''}"
+                          @click=${() => {
+                            view._bottomTab = 'history';
+                            view._terminalOpen = true;
+                            view._saveLayout();
+                          }}
+                        >
+                          History
+                        </button>
+                      `
+                    : nothing}
                   <button
                     class="sv-bottom-tab ${view._bottomTab === 'problems' ? 'active' : ''}"
                     @click=${() => {
@@ -736,26 +761,13 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                               ${view._renderAgentContexts()}
                               <terminal-view
                                 .slotId=${view.slotId}
-                                .runId=${slotViewTerminalRunId(
-                                  view.slotId,
-                                  view._linkedRun,
-                                  requestedRunFromHash(),
-                                  slotBoundRunIdForSlot(
-                                    view.slotId,
-                                    view._slot?.currentRunId,
-                                    getState().fleet?.slots,
-                                  ),
-                                )}
-                                .role=${view._selectedAgentContext()?.role === 'primary'
-                                  ? ''
-                                  : (view._selectedAgentContext()?.role ?? '')}
-                                .contextId=${view._selectedAgentContext()?.id === 'primary'
-                                  ? ''
-                                  : (view._selectedAgentContext()?.id ?? '')}
+                                .runId=${terminalRunId}
+                                .role=${selectedRole}
+                                .contextId=${selectedContextId}
                                 @terminal-subscribe-failed=${(
                                   e: CustomEvent<{ contextId?: string; role?: string }>,
                                 ) => {
-                                  const selected = view._selectedAgentContext();
+                                  const selected = selectedAgentContext;
                                   const key =
                                     e.detail?.contextId ||
                                     (selected
@@ -770,29 +782,39 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                                 }}
                               ></terminal-view>
                             `
-                          : view._bottomTab === 'comments'
+                          : view._bottomTab === 'history'
                             ? html`
-                                <pr-comments-panel
-                                  .threads=${view._prThreads}
-                                  .pr=${view._prNumber ?? 0}
-                                  .repo=${view._prRepo ?? ''}
-                                  .currentUser=${view._prCurrentUser}
-                                  .loading=${view._prCommentsLoading}
-                                  @comment-navigate=${(e: CustomEvent) =>
-                                    view._handleCommentNavigate(e.detail)}
-                                  @thread-resolved=${() => view._loadPRComments()}
-                                ></pr-comments-panel>
+                                ${view._renderAgentContexts()}
+                                <worker-session-history
+                                  .slotId=${view.slotId}
+                                  .runId=${terminalRunId}
+                                  .role=${selectedRole}
+                                  .contextId=${selectedContextId}
+                                ></worker-session-history>
                               `
-                            : html`
-                                <problems-panel
-                                  .diagnostics=${view._diagnostics}
-                                  .loading=${view._diagnosticsLoading}
-                                  .truncated=${view._diagnosticsTruncated}
-                                  @diagnostic-navigate=${(e: CustomEvent) =>
-                                    view._handleDiagnosticNavigate(e.detail)}
-                                  @diagnostics-refresh=${() => view._runDiagnostics()}
-                                ></problems-panel>
-                              `}
+                            : view._bottomTab === 'comments'
+                              ? html`
+                                  <pr-comments-panel
+                                    .threads=${view._prThreads}
+                                    .pr=${view._prNumber ?? 0}
+                                    .repo=${view._prRepo ?? ''}
+                                    .currentUser=${view._prCurrentUser}
+                                    .loading=${view._prCommentsLoading}
+                                    @comment-navigate=${(e: CustomEvent) =>
+                                      view._handleCommentNavigate(e.detail)}
+                                    @thread-resolved=${() => view._loadPRComments()}
+                                  ></pr-comments-panel>
+                                `
+                              : html`
+                                  <problems-panel
+                                    .diagnostics=${view._diagnostics}
+                                    .loading=${view._diagnosticsLoading}
+                                    .truncated=${view._diagnosticsTruncated}
+                                    @diagnostic-navigate=${(e: CustomEvent) =>
+                                      view._handleDiagnosticNavigate(e.detail)}
+                                    @diagnostics-refresh=${() => view._runDiagnostics()}
+                                  ></problems-panel>
+                                `}
                       </div>
                     `
                   : nothing}
