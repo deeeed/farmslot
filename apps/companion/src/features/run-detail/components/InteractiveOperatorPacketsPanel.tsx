@@ -156,7 +156,11 @@ export function InteractiveOperatorPacketsPanel({
           actionId: request.actionId,
         });
       }
-      setFeedback(`Completed "${action.label}".`);
+      setFeedback(
+        request.kind === 'copy'
+          ? `Share sheet completed for "${action.label}".`
+          : `Completed "${action.label}".`,
+      );
     } catch (error) {
       setFeedback(`Action failed: ${error instanceof Error ? error.message : String(error)}`);
     }

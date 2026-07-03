@@ -429,12 +429,15 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
 }
 
 export function collectRunInteractivePacketArtifacts(run: Run): ArtifactRef[] {
-  const seen = new Set<string>();
   const artifacts: ArtifactRef[] = [];
 
   const add = (artifact: ArtifactRef) => {
-    if (seen.has(artifact.path)) return;
-    seen.add(artifact.path);
+    const existingIndex = artifacts.findIndex((candidate) => candidate.path === artifact.path);
+    if (existingIndex >= 0) {
+      const existing = artifacts[existingIndex];
+      if (existing) artifacts[existingIndex] = mergeArtifactMetadata(existing, artifact);
+      return;
+    }
     artifacts.push(artifact);
   };
 
@@ -459,6 +462,24 @@ export function collectRunInteractivePacketArtifacts(run: Run): ArtifactRef[] {
   }
 
   return interactiveOperatorPacketArtifacts(artifacts);
+}
+
+function mergeArtifactMetadata(existing: ArtifactRef, incoming: ArtifactRef): ArtifactRef {
+  const artifact: ArtifactRef = { ...existing };
+  artifact.purpose = mergeArtifactString(existing.purpose, incoming.purpose);
+  if (incoming.sizeBytes != null) artifact.sizeBytes = incoming.sizeBytes;
+  if (incoming.sha256) artifact.sha256 = incoming.sha256;
+  if (incoming.maxFps != null) artifact.maxFps = incoming.maxFps;
+  if (incoming.type) artifact.type = incoming.type;
+  if (incoming.label) artifact.label = incoming.label;
+  if (incoming.mimeType) artifact.mimeType = incoming.mimeType;
+  return artifact;
+}
+
+function mergeArtifactString(existing: string, incoming: string): string {
+  if (!incoming) return existing;
+  if (!existing || incoming === 'interactive-packet') return incoming;
+  return existing;
 }
 
 function latestPublishPackageEvidence(run: Run): ArtifactRef[] {
