@@ -59,11 +59,12 @@ function unavailableSnapshot(
   input?: Partial<WorkerSessionHistorySnapshot>,
 ): WorkerSessionHistorySnapshot {
   return {
-    slotId: params.slotId,
+    slotId: input?.slotId ?? params.slotId ?? null,
     runId: params.runId ?? null,
     role: params.role,
     contextId: params.contextId,
     runner: input?.runner ?? null,
+    model: input?.model ?? null,
     runnerSessionId: input?.runnerSessionId ?? null,
     runnerSessionPath: input?.runnerSessionPath ?? null,
     source: input?.source ?? 'unavailable',
@@ -75,6 +76,7 @@ function unavailableSnapshot(
 
 async function resolveTargetRun(params: WorkerSessionHistoryGetParams): Promise<Run | null> {
   if (params.runId) return getRun(params.runId) ?? null;
+  if (!params.slotId) return null;
   const { runs: active } = listRuns({ active: true });
   const slot = (await loadFleetStatus()).slots.find(
     (candidate) => candidate.slot === params.slotId,
@@ -157,16 +159,27 @@ export async function workerSessionHistoryGet(
     contextId: params.contextId,
   });
   const runner = ctx?.runner ?? run.metrics.runner;
+  const model = ctx?.model ?? run.metrics.model ?? null;
   const role = selectedRole(params, run);
   const contextId = params.contextId ?? ctx?.id;
+  const slotId = params.slotId ?? run.slotId ?? undefined;
   const runnerSessionId = ctx?.runnerSessionId ?? run.metrics.runnerSessionId ?? null;
   let runnerSessionPath = ctx?.runnerSessionPath ?? run.metrics.runnerSessionPath ?? null;
 
-  const base = { ...params, runId: run.id, role, contextId };
-  if (!runner) {
+  const base = { ...params, slotId, runId: run.id, role, contextId };
+  if (!slotId) {
     return {
-      snapshot: unavailableSnapshot(base, 'Run has no runner metadata.', { runId: run.id }),
+      snapshot: unavailableSnapshot(base, 'Run is not associated with a slot.', {
+        runId: run.id,
+        runner,
+        model,
+        runnerSessionId,
+        runnerSessionPath,
+      }),
     };
+  }
+  if (!runner) {
+    return { snapshot: unavailableSnapshot(base, 'Run has no runner metadata.', { model }) };
   }
 
   const provider = getRunnerSessionHistoryProvider(runner);
@@ -174,6 +187,7 @@ export async function workerSessionHistoryGet(
     return {
       snapshot: unavailableSnapshot(base, `${runner} transcript projection is not implemented.`, {
         runner,
+        model,
         runnerSessionId,
         runnerSessionPath,
       }),
@@ -184,6 +198,7 @@ export async function workerSessionHistoryGet(
     return {
       snapshot: unavailableSnapshot(base, `${runner} does not persist runner transcript files.`, {
         runner,
+        model,
         runnerSessionId,
         runnerSessionPath,
         source: 'pane-degraded',
@@ -192,7 +207,7 @@ export async function workerSessionHistoryGet(
   }
 
   if (!runnerSessionPath) {
-    const vars = await loadSlotVars(params.slotId);
+    const vars = await loadSlotVars(slotId);
     const binding = await resolveRunnerSessionForRun(run, vars);
     runnerSessionPath = binding?.runnerSessionPath ?? null;
   }
@@ -201,13 +216,14 @@ export async function workerSessionHistoryGet(
     return {
       snapshot: unavailableSnapshot(base, 'No runner transcript path is attached to this run.', {
         runner,
+        model,
         runnerSessionId,
       }),
     };
   }
 
   const read = await readSessionFile({
-    slotId: params.slotId,
+    slotId,
     runner,
     sessionPath: runnerSessionPath,
   });
@@ -215,6 +231,7 @@ export async function workerSessionHistoryGet(
     return {
       snapshot: unavailableSnapshot(base, 'Runner transcript file is not available on disk.', {
         runner,
+        model,
         runnerSessionId,
         runnerSessionPath: read.path,
       }),
@@ -237,11 +254,12 @@ export async function workerSessionHistoryGet(
 
   return {
     snapshot: {
-      slotId: params.slotId,
+      slotId,
       runId: run.id,
       role,
       contextId,
       runner,
+      model,
       runnerSessionId,
       runnerSessionPath: read.path,
       source: 'transcript',
@@ -264,6 +282,7 @@ function deltaFromSnapshot(
     role: snapshot.role,
     contextId: snapshot.contextId,
     runner: snapshot.runner,
+    model: snapshot.model,
     runnerSessionPath: snapshot.runnerSessionPath ?? undefined,
     source: snapshot.source,
     messages: snapshot.messages,
@@ -277,7 +296,9 @@ function deltaFromSnapshot(
 export function workerSessionHistorySubscriptionKey(
   params: WorkerSessionHistoryUnsubscribeParams,
 ): string {
-  return [params.slotId, params.runId ?? '', params.role ?? '', params.contextId ?? ''].join(':');
+  return [params.slotId ?? '', params.runId ?? '', params.role ?? '', params.contextId ?? ''].join(
+    ':',
+  );
 }
 
 export async function workerSessionHistorySubscribe(
@@ -318,7 +339,7 @@ export async function workerSessionHistorySubscribe(
       .catch((err) => {
         console.warn(`[worker-history] subscription poll failed: ${(err as Error).message}`);
         emit(Events.WORKER_SESSION_HISTORY_DELTA, {
-          slotId: params.slotId,
+          slotId: params.slotId ?? null,
           runId: params.runId ?? null,
           role: params.role,
           contextId: params.contextId,

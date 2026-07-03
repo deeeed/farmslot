@@ -57,7 +57,7 @@ export class WorkerSessionHistoryElement extends LitElement {
 
   private targetParams() {
     return {
-      slotId: this.slotId,
+      ...(this.slotId ? { slotId: this.slotId } : {}),
       ...(this.runId ? { runId: this.runId } : {}),
       ...(this.role ? { role: this.role } : {}),
       ...(this.contextId ? { contextId: this.contextId } : {}),
@@ -66,14 +66,19 @@ export class WorkerSessionHistoryElement extends LitElement {
 
   private makeKey(): string {
     const params = this.targetParams();
-    return [params.slotId, params.runId ?? '', params.role ?? '', params.contextId ?? ''].join(':');
+    return [
+      params.slotId ?? '',
+      params.runId ?? '',
+      params.role ?? '',
+      params.contextId ?? '',
+    ].join(':');
   }
 
   private async teardownSubscription(): Promise<void> {
     this.unsubscribeEvent?.();
     this.unsubscribeEvent = undefined;
     const target = this.subscriptionTarget;
-    if (!this.subscriptionKey || !target?.slotId) return;
+    if (!this.subscriptionKey || (!target?.slotId && !target?.runId)) return;
     try {
       await gateway.request(Methods.WORKER_SESSION_HISTORY_UNSUBSCRIBE, target, 5_000);
     } catch (err) {
@@ -84,7 +89,7 @@ export class WorkerSessionHistoryElement extends LitElement {
   }
 
   private async resubscribe(): Promise<void> {
-    if (!this.isConnected || !this.slotId) return;
+    if (!this.isConnected || (!this.slotId && !this.runId)) return;
     const nextKey = this.makeKey();
     if (nextKey === this.subscriptionKey) return;
     await this.teardownSubscription();
@@ -115,7 +120,8 @@ export class WorkerSessionHistoryElement extends LitElement {
 
   private applyDelta(payload: WorkerSessionHistoryDeltaPayload): void {
     if (!this.snapshot) return;
-    if (payload.slotId !== this.slotId) return;
+    if (this.slotId && payload.slotId !== this.slotId) return;
+    if (this.runId && (payload.runId ?? '') !== this.runId) return;
     if ((payload.runId ?? '') !== (this.snapshot.runId ?? '')) return;
     if ((payload.role ?? '') !== (this.snapshot.role ?? '')) return;
     if ((payload.contextId ?? '') !== (this.snapshot.contextId ?? '')) return;
@@ -126,6 +132,7 @@ export class WorkerSessionHistoryElement extends LitElement {
     this.snapshot = {
       ...this.snapshot,
       runner: payload.runner,
+      model: payload.model ?? this.snapshot.model,
       runnerSessionPath: payload.runnerSessionPath ?? this.snapshot.runnerSessionPath,
       source: payload.source,
       messages,
@@ -133,6 +140,25 @@ export class WorkerSessionHistoryElement extends LitElement {
       degradedReason: payload.degradedReason,
       generatedAt: payload.generatedAt,
     };
+  }
+
+  private short(value: string | null | undefined, length = 8): string {
+    if (!value) return '';
+    return value.length > length ? value.slice(0, length) : value;
+  }
+
+  private targetSummary(): string[] {
+    const snapshot = this.snapshot;
+    if (!snapshot) return [];
+    const items: string[] = [];
+    if (snapshot.runId) items.push(`Run ${this.short(snapshot.runId)}`);
+    if (snapshot.role || snapshot.contextId) {
+      items.push(snapshot.role ?? snapshot.contextId ?? 'context');
+    }
+    const engine = [snapshot.runner, snapshot.model].filter(Boolean).join(' / ');
+    if (engine) items.push(engine);
+    if (snapshot.runnerSessionId) items.push(`Session ${this.short(snapshot.runnerSessionId)}`);
+    return items;
   }
 
   private toChatMessage(message: WorkerSessionHistoryMessage): ChatMessage {
@@ -183,7 +209,7 @@ export class WorkerSessionHistoryElement extends LitElement {
 
   override render() {
     const source = this.snapshot?.source ?? 'unavailable';
-    const runner = this.snapshot?.runner ?? 'runner';
+    const target = this.targetSummary();
     return html`
       <style>
         worker-session-history {
@@ -198,6 +224,7 @@ export class WorkerSessionHistoryElement extends LitElement {
         .wsh-header {
           display: flex;
           align-items: center;
+          flex-wrap: wrap;
           gap: ${spacing.sm};
           padding: ${spacing.sm} ${spacing.md};
           border-bottom: 1px solid ${colors.bgCardHover};
@@ -215,6 +242,12 @@ export class WorkerSessionHistoryElement extends LitElement {
         }
         .wsh-spacer {
           flex: 1;
+        }
+        .wsh-meta {
+          color: ${colors.textSecondary};
+        }
+        .wsh-source {
+          color: ${colors.textMuted};
         }
         .wsh-body {
           overflow: auto;
@@ -237,8 +270,10 @@ export class WorkerSessionHistoryElement extends LitElement {
       </style>
       <div class="wsh-header">
         <span class="wsh-badge">Experimental</span>
-        <span>${runner}</span>
-        <span>${source}</span>
+        ${target.length > 0
+          ? target.map((item) => html`<span class="wsh-meta">${item}</span>`)
+          : html`<span class="wsh-meta">Worker session history</span>`}
+        <span class="wsh-source">${source}</span>
         ${this.snapshot?.truncated ? html`<span>truncated</span>` : nothing}
         <span class="wsh-spacer"></span>
         ${this.snapshot?.generatedAt

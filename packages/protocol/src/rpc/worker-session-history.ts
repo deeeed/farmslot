@@ -31,7 +31,8 @@ export interface WorkerSessionHistoryCursor {
 }
 
 export interface WorkerSessionHistoryTargetParams {
-  slotId: string;
+  /** Optional when runId is supplied; slot-scoped views use this to follow the loaded slot run. */
+  slotId?: string;
   runId?: string;
   role?: AgentRole;
   contextId?: string;
@@ -47,11 +48,12 @@ export interface WorkerSessionHistorySubscribeParams extends WorkerSessionHistor
 export interface WorkerSessionHistoryUnsubscribeParams extends WorkerSessionHistoryTargetParams {}
 
 export interface WorkerSessionHistorySnapshot {
-  slotId: string;
+  slotId?: string | null;
   runId?: string | null;
   role?: AgentRole;
   contextId?: string;
   runner: string | null;
+  model?: string | null;
   runnerSessionId?: string | null;
   runnerSessionPath?: string | null;
   source: WorkerSessionHistorySource;
@@ -75,11 +77,12 @@ export interface WorkerSessionHistoryUnsubscribeResult {
 }
 
 export interface WorkerSessionHistoryDeltaPayload {
-  slotId: string;
+  slotId?: string | null;
   runId?: string | null;
   role?: AgentRole;
   contextId?: string;
   runner: string | null;
+  model?: string | null;
   runnerSessionPath?: string | null;
   source: WorkerSessionHistorySource;
   messages: WorkerSessionHistoryMessage[];
