@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- fix: `farmslot doctor` warns when the local gateway bind is loopback-only and blocks Companion LAN pairing.
 - feat: add `farmslot roadmap request-promotion` for file-backed roadmap promotion review requests
 - feat: rename the team overlay to "domain" (`--domain`, pool `domain`) and add `farmslot domain ls` to list discovered domains
 - feat: gateway profiles (ADR-036) — `farmslot gateway add/remove/list/use`, global `--gateway <name>`, machine-level `~/.farmslot/gateways.json`

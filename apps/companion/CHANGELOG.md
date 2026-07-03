@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- fix: pairing WebSocket failures on LAN gateway URLs explain when the gateway must listen on all interfaces.
 - Add quick idea capture in the companion copilot flow.
 - Render interactive operator packets on run detail with artifact anchors and auth-aware artifact links.
 - Wire local Google Play service account symlink for non-interactive EAS Android submit.

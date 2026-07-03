@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- fix: default `yarn farmdev` to `GATEWAY_HOST=0.0.0.0` when gateway token auth is configured.
 - Add local debug launcher support for the configured Command Center dev port.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
