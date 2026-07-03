@@ -1,5 +1,9 @@
 {
-  "version": "0.1.0",
-  "date": null,
-  "items": []
+  "version": "0.2.0",
+  "date": "2026-07-03",
+  "items": [
+    "What's New modal on launch when a newer companion version has release notes.",
+    "Recipe proof HUD stays visible above native modals on iOS.",
+    "Settings shows app version, variant, and native build number."
+  ]
 }
