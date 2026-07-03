@@ -8,11 +8,42 @@ FARMSLOT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT_ENV_FILE="$FARMSLOT_ROOT/.env.ports"
 AUTH_ENV_FILE="$FARMSLOT_ROOT/.env.local-auth"
 
+load_simple_env_file() {
+  local file="$1"
+  local raw line key value
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    line="${raw#"${raw%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    if [ -z "$line" ] || [[ "$line" == \#* ]]; then
+      continue
+    fi
+    if [[ "$line" == export[[:space:]]* ]]; then
+      line="${line#export}"
+      line="${line#"${line%%[![:space:]]*}"}"
+    fi
+    if [[ "$line" != *=* ]]; then
+      continue
+    fi
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      continue
+    fi
+    if [ "${#value}" -ge 2 ] && { [ "${value:0:1}" = '"' ] || [ "${value:0:1}" = "'" ]; } && [ "${value: -1}" = "${value:0:1}" ]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "$key=$value"
+  done < "$file"
+}
+
 # Load port overrides. Caller-set GATEWAY_PORT/VITE_PORT (sandbox prepare) win over file values.
 _gateway_override="${GATEWAY_PORT:-}"
 _vite_override="${VITE_PORT:-}"
 if [ -f "$PORT_ENV_FILE" ]; then
-  set -a; source "$PORT_ENV_FILE"; set +a
+  load_simple_env_file "$PORT_ENV_FILE"
   echo "[dev] Loaded ports from $PORT_ENV_FILE"
 fi
 if [ -n "$_gateway_override" ]; then export GATEWAY_PORT="$_gateway_override"; fi
