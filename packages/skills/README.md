@@ -35,13 +35,14 @@ Supported layouts:
 
 ## Skills
 
-| Skill            | Purpose                                                                                         |
-| ---------------- | ----------------------------------------------------------------------------------------------- |
-| `recipe-cook`    | Turn acceptance criteria, PR intent, or investigation findings into a validation recipe.        |
-| `recipe-quality` | Critique recipe and evidence quality; flag fake proof, hidden state injection, and weak claims. |
-| `recipe-doctor`  | Check local readiness for recipe authoring or execution.                                        |
-| `recipe-harness` | Help install or run the local recipe runtime when the project has one.                          |
-| `project-adopt`  | Recommend the smallest useful Farmslot integration level for the project.                       |
+| Skill                          | Purpose                                                                                         |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `recipe-cook`                  | Turn acceptance criteria, PR intent, or investigation findings into a validation recipe.        |
+| `recipe-quality`               | Critique recipe and evidence quality; flag fake proof, hidden state injection, and weak claims. |
+| `recipe-doctor`                | Check local readiness for recipe authoring or execution.                                        |
+| `recipe-harness`               | Help install or run the local recipe runtime when the project has one.                          |
+| `project-adopt`                | Recommend the smallest useful Farmslot integration level for the project.                       |
+| `interactive-operator-packets` | Communicate plans, blockers, decisions, and evidence reviews as compact operator packets.       |
 
 ## Adoption Ladder
 

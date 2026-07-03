@@ -130,6 +130,11 @@
       "import": "./dist/contracts/family.js",
       "default": "./dist/contracts/family.js"
     },
+    "./contracts/interactive-operator-packets": {
+      "types": "./dist/contracts/interactive-operator-packets.d.ts",
+      "import": "./dist/contracts/interactive-operator-packets.js",
+      "default": "./dist/contracts/interactive-operator-packets.js"
+    },
     "./contracts/recipes": {
       "types": "./dist/contracts/recipes.d.ts",
       "import": "./dist/contracts/recipes.js",

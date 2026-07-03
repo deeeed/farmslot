@@ -79,6 +79,7 @@ export interface RunDetailViewContext {
   _shouldShowCiStatus: (run: Run) => boolean;
   _renderCiStatus: (run: Run) => unknown;
   _renderRunEvidence: (run: Run) => unknown;
+  _renderInteractivePackets: (run: Run) => unknown;
   _onReplayStep: (
     stepName: string,
     skipPrepare?: boolean,
@@ -783,7 +784,7 @@ export function renderRunDetailView(ctx: RunDetailViewContext) {
         ? ctx._renderCiStatus(r)
         : ''}
     </div>
-    ${ctx._renderRunEvidence(r)}
+    ${ctx._renderInteractivePackets(r)} ${ctx._renderRunEvidence(r)}
     ${boundSlotId
       ? html`
           <button

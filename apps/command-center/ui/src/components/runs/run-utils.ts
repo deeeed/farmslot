@@ -15,6 +15,7 @@ import type {
 import {
   buildFamilySummary,
   githubPullUrl,
+  interactiveOperatorPacketArtifacts,
   isInternalRunArtifactPath,
   isPublishEvidenceArtifact,
   isTerminalRunStatus as protocolIsTerminalRunStatus,
@@ -273,10 +274,8 @@ export function runChainedModeDrift(
 }
 
 export function runTemplateFileName(run: Pick<Run, 'steps'>): string | null {
-  const outputs = run.steps.find((step) => step.name === 'write-task')?.outputs as
-    | { templateName?: string }
-    | undefined;
-  const name = outputs?.templateName?.trim();
+  const outputs = run.steps.find((step) => step.name === 'write-task')?.outputs;
+  const name = recordString(outputs, 'templateName')?.trim();
   return name || null;
 }
 
@@ -291,9 +290,8 @@ export function resolveRunEngine(run: Pick<Run, 'metrics' | 'steps'>): {
     return { runner: metricsRunner, model: metricsModel };
   }
   const findSlot = run.steps.find((step) => step.name === 'find-slot');
-  const outputs = findSlot?.outputs as { runner?: string; model?: string } | undefined;
-  const runner = metricsRunner || outputs?.runner?.trim() || null;
-  const model = metricsModel || outputs?.model?.trim() || null;
+  const runner = metricsRunner || recordString(findSlot?.outputs, 'runner')?.trim() || null;
+  const model = metricsModel || recordString(findSlot?.outputs, 'model')?.trim() || null;
   return { runner, model };
 }
 
@@ -406,15 +404,8 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
     if (!Array.isArray(rawArtifacts)) continue;
 
     for (const raw of rawArtifacts) {
-      if (!raw || typeof raw !== 'object') continue;
-      const row = raw as {
-        path?: unknown;
-        purpose?: unknown;
-        sizeBytes?: unknown;
-        sha256?: unknown;
-        maxFps?: unknown;
-      };
-      if (typeof row.path !== 'string' || !row.path.trim()) continue;
+      const row = artifactRefFromUnknown(raw);
+      if (!row) continue;
       const purpose =
         typeof row.purpose === 'string' && row.purpose.trim()
           ? row.purpose
@@ -428,8 +419,7 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
         purpose,
         sizeBytes: typeof row.sizeBytes === 'number' ? row.sizeBytes : undefined,
         sha256: typeof row.sha256 === 'string' ? row.sha256 : undefined,
-        maxFps:
-          typeof row.maxFps === 'number' && Number.isFinite(row.maxFps) ? row.maxFps : undefined,
+        maxFps: row.maxFps,
         source: 'step-output',
       });
     }
@@ -438,16 +428,47 @@ export function collectRunEvidenceArtifacts(run: Run): FamilyObservabilityArtifa
   return artifacts;
 }
 
+export function collectRunInteractivePacketArtifacts(run: Run): ArtifactRef[] {
+  const seen = new Set<string>();
+  const artifacts: ArtifactRef[] = [];
+
+  const add = (artifact: ArtifactRef) => {
+    if (seen.has(artifact.path)) return;
+    seen.add(artifact.path);
+    artifacts.push(artifact);
+  };
+
+  for (const decision of run.decisions ?? []) {
+    const payload = decision.payload;
+    if (payload && 'artifactManifest' in payload) {
+      for (const artifact of payload.artifactManifest ?? []) add(artifact);
+    }
+    if (payload?.kind === 'ready') {
+      for (const artifact of payload.prPackage?.evidenceManifest ?? []) add(artifact);
+    }
+  }
+
+  for (const step of run.steps ?? []) {
+    const rawArtifacts = step.outputs?.artifacts;
+    if (!Array.isArray(rawArtifacts)) continue;
+
+    for (const raw of rawArtifacts) {
+      const artifact = artifactRefFromUnknown(raw);
+      if (artifact) add(artifact);
+    }
+  }
+
+  return interactiveOperatorPacketArtifacts(artifacts);
+}
+
 function latestPublishPackageEvidence(run: Run): ArtifactRef[] {
   const decisions = [...(run.decisions ?? [])].reverse();
   for (const decision of decisions) {
-    const payload = decision.payload as {
-      prPackage?: { evidenceManifest?: ArtifactRef[] };
-      artifactManifest?: ArtifactRef[];
-    } | null;
-    const evidence = payload?.prPackage?.evidenceManifest;
+    const payload = decision.payload;
+    const evidence = payload?.kind === 'ready' ? payload.prPackage?.evidenceManifest : undefined;
     if (Array.isArray(evidence) && evidence.length > 0) return evidence;
-    const artifactManifest = payload?.artifactManifest;
+    const artifactManifest =
+      payload && 'artifactManifest' in payload ? payload.artifactManifest : undefined;
     if (Array.isArray(artifactManifest) && artifactManifest.length > 0) {
       return artifactManifest.filter(isPublishEvidenceArtifact);
     }
@@ -484,6 +505,37 @@ function purposeForArtifactPath(path: string): string {
   if (name.includes('manifest')) return 'manifest';
   if (name.includes('log')) return 'log';
   return 'other';
+}
+
+function recordString(value: unknown, key: string): string | null {
+  if (!isRecord(value)) return null;
+  const property = value[key];
+  return typeof property === 'string' ? property : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function artifactRefFromUnknown(value: unknown): ArtifactRef | null {
+  if (!isRecord(value)) return null;
+  const path = recordString(value, 'path')?.trim();
+  if (!path) return null;
+  const purpose = recordString(value, 'purpose')?.trim() || purposeForArtifactPath(path);
+  const artifact: ArtifactRef = { path, purpose };
+  const sizeBytes = value.sizeBytes;
+  if (typeof sizeBytes === 'number' && Number.isFinite(sizeBytes)) artifact.sizeBytes = sizeBytes;
+  const sha256 = recordString(value, 'sha256');
+  if (sha256) artifact.sha256 = sha256;
+  const type = recordString(value, 'type');
+  if (type) artifact.type = type;
+  const label = recordString(value, 'label');
+  if (label) artifact.label = label;
+  const mimeType = recordString(value, 'mimeType');
+  if (mimeType) artifact.mimeType = mimeType;
+  const maxFps = value.maxFps;
+  if (typeof maxFps === 'number' && Number.isFinite(maxFps)) artifact.maxFps = maxFps;
+  return artifact;
 }
 
 export function isTerminalRunStatus(status: RunStatus): boolean {
