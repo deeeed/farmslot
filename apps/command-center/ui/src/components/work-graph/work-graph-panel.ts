@@ -20,6 +20,7 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import '../shared/dispatch-config-editor.js';
+import '../shared/linked-run-summary.js';
 import '../shared/slot-choice-row.js';
 import '../shared/slot-choice-list.js';
 
@@ -62,6 +63,7 @@ const WORK_GRAPH_DISPATCH_CONFIG_CONTROLS: DispatchConfigEditorControls = {
 export class WorkGraphPanel extends LitElement {
   @property({ attribute: false }) demoGraphs: WorkGraphProjection[] | null = null;
   @property({ attribute: false }) demoBacklogItems: BacklogItem[] | null = null;
+  @property({ attribute: false }) demoRuns: Run[] | null = null;
 
   @state() private graphs: WorkGraphProjection[] = [];
   @state() private backlogItems: BacklogItem[] = [];
@@ -169,6 +171,10 @@ export class WorkGraphPanel extends LitElement {
 
   private activeBacklogItems(): BacklogItem[] {
     return this.demoBacklogItems ?? this.backlogItems;
+  }
+
+  private activeRuns(): Run[] {
+    return this.demoRuns ?? this.runs;
   }
 
   private backlogById(): Map<string, BacklogItem> {
@@ -939,6 +945,7 @@ export class WorkGraphPanel extends LitElement {
         ${this.schedulerError
           ? html`<div class="config-error">${this.schedulerError}</div>`
           : nothing}
+        <linked-run-summary .run=${view?.run} label="Node run" compact></linked-run-summary>
         <div class="detail-grid">
           ${this.renderDetailCell('Execution', view?.executionStatus)}
           ${this.renderDetailCell('Type', this.nodeKindLabel(node))}
@@ -1027,7 +1034,7 @@ export class WorkGraphPanel extends LitElement {
       graph,
       backlogItems: this.activeBacklogItems(),
       queueItems: this.queueItems,
-      runs: this.runs,
+      runs: this.activeRuns(),
       slots: this.slots,
     });
     const stats = this.graphStats(overlay);

@@ -1067,7 +1067,9 @@ export class FarmApp extends LitElement {
   private renderPinnedSlotShortcut(pin: PinnedSlotPreference) {
     const slot = this.fleetSlots.find((candidate) => candidate.slot === pin.slotId);
     const run = this.pinnedSlotRun(pin.slotId, slot?.currentRunId, slot?.lifecycle === 'busy');
-    const selected = this.route === 'slot' && pin.slotId === this.slotParam;
+    const selected =
+      (this.route === 'slot' && pin.slotId === this.slotParam) ||
+      (this.route === 'run' && !!run && run.id === this.runParam);
     const worker = this.tmuxWorkerForSlot(slot);
     const displayLabel = pin.label?.trim() || pin.slotId;
     const needsAttention = this.pinnedSlotNeedsAttention(worker);
