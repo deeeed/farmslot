@@ -136,6 +136,7 @@ function parseAnchors(
     }
     const id = stringValue(anchor.id);
     const label = stringValue(anchor.label);
+    const errorCountBeforeAnchor = errors.length;
     if (!id) errors.push(`anchors[${index}].id must be a non-empty string`);
     if (id && seenIds.has(id)) {
       errors.push(`anchors[${index}].id must be unique`);
@@ -166,6 +167,7 @@ function parseAnchors(
       }
     }
     if (id && label && (anchor.line == null || line != null) && (anchor.range == null || range)) {
+      if (errors.length !== errorCountBeforeAnchor) return;
       const parsed: InteractiveOperatorPacketAnchor = { id, label };
       if (artifactPath) parsed.artifactPath = artifactPath;
       if (selector) parsed.selector = selector;
