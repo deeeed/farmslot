@@ -1,12 +1,12 @@
 ---
-name: interactive-operator-packets
+name: packet
 description: Communicate complex agent output as compact, reviewable Farmslot operator packets with artifact anchors and safe action requests
 compatibility: Claude, Codex, Cursor, and Markdown skill runners with access to the working directory
 metadata:
   package: '@farmslot/skills'
   adr: ADR-048
   outputs: artifacts/interactive/*.packet.json and optional sibling markdown when supported
-allowed-tools: Read Bash(rg:*) Bash(node:*) Bash(git:*)
+allowed-tools: Read Write Bash(rg:*) Bash(node:*) Bash(git:*)
 ---
 
 # Interactive Operator Packets

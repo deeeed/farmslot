@@ -1,5 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Alert, Linking, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import {
+  Alert,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import {
   type InteractiveOperatorPacket,
@@ -114,6 +124,10 @@ export function InteractiveOperatorPacketsPanel({
       if (request.kind === 'copy') {
         const shareResult = await Share.share({ message: request.text });
         if (shareResult.action === Share.dismissedAction) return;
+        if (Platform.OS === 'android') {
+          setFeedback(`Share sheet opened for "${action.label}".`);
+          return;
+        }
       } else if (request.kind === 'open-artifact') {
         await Linking.openURL(
           interactivePacketArtifactOpenUrl(

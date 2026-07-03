@@ -69,7 +69,7 @@ The protocol requires a paired agent skill. The schema alone is insufficient bec
 - how to print terminal fallback links;
 - how to route operator replies back through the runner rather than starting a parallel model session.
 
-Farmslot should package this guidance in `@farmslot/skills` as `interactive-operator-packets`. In a Farmslot run, project worker templates can mention the skill when they want packet-style communication. Outside Farmslot, the same skill can still teach agents to produce a markdown + JSON packet artifact without claiming Command Center support exists.
+Farmslot should package this guidance in `@farmslot/skills` as `packet` so operators can type `$packet` instead of a long protocol name. In a Farmslot run, project worker templates can mention the skill when they want packet-style communication. Outside Farmslot, the same skill can still teach agents to produce a markdown + JSON packet artifact without claiming Command Center support exists.
 
 ### Surface behavior
 
@@ -129,7 +129,7 @@ Full Lavish-style integration remains a later roadmap idea, not part of v1. That
 
 ## Implementation phases
 
-1. **Skill seed:** ship the `interactive-operator-packets` skill in `@farmslot/skills` so agents can discuss and draft packet-shaped output.
+1. **Skill seed:** ship the `packet` skill in `@farmslot/skills` so agents can discuss and draft packet-shaped output.
 2. **Protocol types:** add packet contracts to `@farmslot/protocol` and index packet artifacts from run artifact manifests.
 3. **Command Center renderer:** render packet cards on run detail with artifact anchors and confirmed `open-artifact`, `copy`, `terminal.send`, and `decision.resolve` actions.
 4. **Companion renderer:** add compact packet rendering and the same confirmed action model.

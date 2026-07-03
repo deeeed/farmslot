@@ -4,7 +4,7 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
-- Add `interactive-operator-packets`, a skill for packet-shaped agent/operator communication aligned with ADR-048.
+- Add `packet`, a skill for packet-shaped operator communication aligned with ADR-048.
 
 ## 0.1.2 - 2026-07-03
 

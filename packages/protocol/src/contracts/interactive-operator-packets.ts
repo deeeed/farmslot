@@ -78,7 +78,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function stringValue(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value : null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function payloadString(payload: Record<string, unknown> | undefined, key: string): string | null {
@@ -138,6 +140,7 @@ function parseAnchors(
     if (id && seenIds.has(id)) {
       errors.push(`anchors[${index}].id must be unique`);
     }
+    if (id) seenIds.add(id);
     if (!label) {
       errors.push(`anchors[${index}].label must be a non-empty string`);
     }
@@ -163,7 +166,6 @@ function parseAnchors(
       }
     }
     if (id && label && (anchor.line == null || line != null) && (anchor.range == null || range)) {
-      seenIds.add(id);
       const parsed: InteractiveOperatorPacketAnchor = { id, label };
       if (artifactPath) parsed.artifactPath = artifactPath;
       if (selector) parsed.selector = selector;
@@ -173,6 +175,32 @@ function parseAnchors(
     }
   });
   return anchors;
+}
+
+function validateActionPayload(
+  kind: InteractiveOperatorPacketActionKind,
+  payload: Record<string, unknown> | undefined,
+  index: number,
+  errors: string[],
+): void {
+  if (kind === 'copy' || kind === 'terminal.send') {
+    if (!payloadString(payload, 'text')) {
+      errors.push(`actions[${index}].payload.text must be a non-empty string`);
+    }
+    return;
+  }
+  if (kind === 'open-artifact') {
+    if (!payloadString(payload, 'artifactPath')) {
+      errors.push(`actions[${index}].payload.artifactPath must be a non-empty string`);
+    }
+    return;
+  }
+  if (!payloadString(payload, 'decisionId')) {
+    errors.push(`actions[${index}].payload.decisionId must be a non-empty string`);
+  }
+  if (!payloadString(payload, 'actionId')) {
+    errors.push(`actions[${index}].payload.actionId must be a non-empty string`);
+  }
 }
 
 function parseActions(
@@ -193,10 +221,12 @@ function parseActions(
     }
     const id = stringValue(action.id);
     const label = stringValue(action.label);
+    const errorCountBeforeAction = errors.length;
     if (!id) errors.push(`actions[${index}].id must be a non-empty string`);
     if (id && seenIds.has(id)) {
       errors.push(`actions[${index}].id must be unique`);
     }
+    if (id) seenIds.add(id);
     if (!label) {
       errors.push(`actions[${index}].label must be a non-empty string`);
     }
@@ -215,8 +245,15 @@ function parseActions(
     if (action.payload != null && !isRecord(action.payload)) {
       errors.push(`actions[${index}].payload must be an object when present`);
     }
-    if (id && label && kind && safety && (action.payload == null || payload)) {
-      seenIds.add(id);
+    if (kind) validateActionPayload(kind, payload, index, errors);
+    if (
+      id &&
+      label &&
+      kind &&
+      safety &&
+      (action.payload == null || payload) &&
+      errors.length === errorCountBeforeAction
+    ) {
       const parsed: InteractiveOperatorPacketAction = { id, label, kind, safety };
       if (payload) parsed.payload = payload;
       actions.push(parsed);
