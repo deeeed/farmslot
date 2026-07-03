@@ -12,6 +12,13 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -56,10 +63,12 @@ export function MediaViewer({
   const viewerItems = items?.length ? items : uri ? [{ uri, authHeaders }] : [];
   const clampedInitialIndex = Math.max(0, Math.min(initialIndex, viewerItems.length - 1));
   const [currentIndex, setCurrentIndex] = useState(clampedInitialIndex);
+  const [zoomedUri, setZoomedUri] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible || viewerItems.length === 0) return;
     setCurrentIndex(clampedInitialIndex);
+    setZoomedUri(null);
     requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ x: clampedInitialIndex * width, animated: false });
     });
@@ -70,6 +79,7 @@ export function MediaViewer({
   const goToIndex = (nextIndex: number) => {
     const next = Math.max(0, Math.min(nextIndex, viewerItems.length - 1));
     setCurrentIndex(next);
+    setZoomedUri(null);
     scrollRef.current?.scrollTo({ x: next * width, animated: true });
   };
 
@@ -78,59 +88,65 @@ export function MediaViewer({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <SafeAreaView style={styles.backdrop}>
-        <ScrollView
-          ref={scrollRef}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          onMomentumScrollEnd={(event) => {
-            setCurrentIndex(Math.round(event.nativeEvent.contentOffset.x / width));
-          }}
-        >
-          {viewerItems.map((item) => (
-            <View key={item.uri} style={[styles.slide, { width }]}>
-              <MediaSlide
-                item={{ ...item, authHeaders: item.authHeaders ?? authHeaders }}
-                width={width}
-                height={mediaHeight}
-              />
-            </View>
-          ))}
-        </ScrollView>
-        <View style={[styles.captionBar, { top: topInset + 12 }]} pointerEvents="box-none">
-          <Text style={styles.captionText} numberOfLines={1}>
-            {current?.title ?? 'Evidence'}
-          </Text>
-          <Text style={styles.indexText}>
-            {currentIndex + 1}/{viewerItems.length}
-          </Text>
-        </View>
-        {viewerItems.length > 1 && (
-          <View style={[styles.navBar, { bottom: bottomInset + 28 }]} pointerEvents="box-none">
-            <Pressable
-              style={[styles.navButton, currentIndex === 0 && styles.navButtonDisabled]}
-              disabled={currentIndex === 0}
-              onPress={() => goToIndex(currentIndex - 1)}
-            >
-              <Text style={styles.navText}>Prev</Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.navButton,
-                currentIndex === viewerItems.length - 1 && styles.navButtonDisabled,
-              ]}
-              disabled={currentIndex === viewerItems.length - 1}
-              onPress={() => goToIndex(currentIndex + 1)}
-            >
-              <Text style={styles.navText}>Next</Text>
-            </Pressable>
+      <GestureHandlerRootView style={styles.modalRoot}>
+        <SafeAreaView style={styles.backdrop}>
+          <ScrollView
+            ref={scrollRef}
+            horizontal
+            pagingEnabled
+            scrollEnabled={!zoomedUri}
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(event) => {
+              setCurrentIndex(Math.round(event.nativeEvent.contentOffset.x / width));
+              setZoomedUri(null);
+            }}
+          >
+            {viewerItems.map((item) => (
+              <View key={item.uri} style={[styles.slide, { width }]}>
+                <MediaSlide
+                  item={{ ...item, authHeaders: item.authHeaders ?? authHeaders }}
+                  width={width}
+                  height={mediaHeight}
+                  panEnabled={zoomedUri === item.uri}
+                  onZoomChange={(zoomed) => setZoomedUri(zoomed ? item.uri : null)}
+                />
+              </View>
+            ))}
+          </ScrollView>
+          <View style={[styles.captionBar, { top: topInset + 12 }]} pointerEvents="box-none">
+            <Text style={styles.captionText} numberOfLines={1}>
+              {current?.title ?? 'Evidence'}
+            </Text>
+            <Text style={styles.indexText}>
+              {currentIndex + 1}/{viewerItems.length}
+            </Text>
           </View>
-        )}
-        <Pressable style={[styles.closeButton, { top: topInset + 12 }]} onPress={onClose}>
-          <Text style={styles.closeText}>Close</Text>
-        </Pressable>
-      </SafeAreaView>
+          {viewerItems.length > 1 && (
+            <View style={[styles.navBar, { bottom: bottomInset + 28 }]} pointerEvents="box-none">
+              <Pressable
+                style={[styles.navButton, currentIndex === 0 && styles.navButtonDisabled]}
+                disabled={currentIndex === 0}
+                onPress={() => goToIndex(currentIndex - 1)}
+              >
+                <Text style={styles.navText}>Prev</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.navButton,
+                  currentIndex === viewerItems.length - 1 && styles.navButtonDisabled,
+                ]}
+                disabled={currentIndex === viewerItems.length - 1}
+                onPress={() => goToIndex(currentIndex + 1)}
+              >
+                <Text style={styles.navText}>Next</Text>
+              </Pressable>
+            </View>
+          )}
+          <Pressable style={[styles.closeButton, { top: topInset + 12 }]} onPress={onClose}>
+            <Text style={styles.closeText}>Close</Text>
+          </Pressable>
+        </SafeAreaView>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -139,10 +155,14 @@ function MediaSlide({
   item,
   width,
   height,
+  panEnabled,
+  onZoomChange,
 }: {
   item: MediaViewerItem;
   width: number;
   height: number;
+  panEnabled?: boolean;
+  onZoomChange?: (zoomed: boolean) => void;
 }) {
   const mediaType = item.mediaType ?? classifyArtifact(item.title ?? item.uri);
   if (mediaType === 'video') {
@@ -156,11 +176,128 @@ function MediaSlide({
     );
   }
   return (
-    <Image
-      source={artifactSource(item.uri, item.authHeaders)}
-      style={[styles.media, { width, height }]}
-      resizeMode="contain"
+    <ZoomableImage
+      uri={item.uri}
+      width={width}
+      height={height}
+      authHeaders={item.authHeaders}
+      panEnabled={Boolean(panEnabled)}
+      onZoomChange={onZoomChange}
     />
+  );
+}
+
+function ZoomableImage({
+  uri,
+  width,
+  height,
+  authHeaders,
+  panEnabled,
+  onZoomChange,
+}: {
+  uri: string;
+  width: number;
+  height: number;
+  authHeaders?: ArtifactHttpHeaders;
+  panEnabled: boolean;
+  onZoomChange?: (zoomed: boolean) => void;
+}) {
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const savedTranslateX = useSharedValue(0);
+  const savedTranslateY = useSharedValue(0);
+
+  useEffect(() => {
+    scale.value = 1;
+    savedScale.value = 1;
+    translateX.value = 0;
+    translateY.value = 0;
+    savedTranslateX.value = 0;
+    savedTranslateY.value = 0;
+    onZoomChange?.(false);
+  }, [height, uri, width]);
+
+  const clampTranslation = (value: number, scaledSize: number) => {
+    'worklet';
+    const limit = Math.max(0, (scaledSize - scaledSize / scale.value) / 2);
+    return Math.max(-limit, Math.min(limit, value));
+  };
+
+  const pinch = Gesture.Pinch()
+    .onBegin(() => {
+      savedScale.value = scale.value;
+    })
+    .onUpdate((event) => {
+      scale.value = Math.max(1, Math.min(savedScale.value * event.scale, 4));
+      translateX.value = clampTranslation(translateX.value, width);
+      translateY.value = clampTranslation(translateY.value, height);
+    })
+    .onEnd(() => {
+      if (scale.value <= 1.02) {
+        scale.value = withTiming(1);
+        translateX.value = withTiming(0);
+        translateY.value = withTiming(0);
+        savedScale.value = 1;
+        savedTranslateX.value = 0;
+        savedTranslateY.value = 0;
+        if (onZoomChange) runOnJS(onZoomChange)(false);
+        return;
+      }
+      savedScale.value = scale.value;
+      if (onZoomChange) runOnJS(onZoomChange)(true);
+    });
+
+  const pan = Gesture.Pan()
+    .enabled(panEnabled)
+    .minDistance(2)
+    .onBegin(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    })
+    .onUpdate((event) => {
+      if (scale.value <= 1.02) return;
+      translateX.value = clampTranslation(savedTranslateX.value + event.translationX, width);
+      translateY.value = clampTranslation(savedTranslateY.value + event.translationY, height);
+    })
+    .onEnd(() => {
+      savedTranslateX.value = translateX.value;
+      savedTranslateY.value = translateY.value;
+    });
+
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      const nextScale = scale.value > 1.02 ? 1 : 2;
+      scale.value = withTiming(nextScale);
+      savedScale.value = nextScale;
+      translateX.value = withTiming(0);
+      translateY.value = withTiming(0);
+      savedTranslateX.value = 0;
+      savedTranslateY.value = 0;
+      if (onZoomChange) runOnJS(onZoomChange)(nextScale > 1);
+    });
+
+  const gesture = Gesture.Simultaneous(doubleTap, pinch, pan);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+  }));
+
+  return (
+    <GestureDetector gesture={gesture}>
+      <Animated.View style={[styles.media, { width, height }, animatedStyle]}>
+        <Image
+          source={artifactSource(uri, authHeaders)}
+          style={[styles.media, { width, height }]}
+          resizeMode="contain"
+        />
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
@@ -190,6 +327,9 @@ function FullscreenVideo({
 }
 
 const styles = StyleSheet.create({
+  modalRoot: {
+    flex: 1,
+  },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.95)',

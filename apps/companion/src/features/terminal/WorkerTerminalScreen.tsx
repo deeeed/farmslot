@@ -37,11 +37,6 @@ import {
 
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
-import {
-  type TerminalSize,
-  XtermTerminalView,
-  type XtermTerminalViewHandle,
-} from '../../components/XtermTerminalView';
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
 import { useTerminalOrientationControls } from '../../lib/terminal-orientation';
 import {
@@ -70,6 +65,13 @@ import {
 import { useConnectionStore } from '../../store/connection';
 import { TMUX_PREFIX_BYTES, useTerminalPrefsStore } from '../../store/terminal-prefs';
 
+import {
+  TerminalModeToggle,
+  type TerminalSize,
+  type TerminalViewMode,
+  TerminalViewSurface,
+  type XtermTerminalViewHandle,
+} from './components/terminal-history-viewer';
 import { WindowPickerModal, WorkerTmuxShortcutPanel } from './components/worker-terminal-panels';
 import { workerTerminalStyles as styles } from './styles/worker-terminal.styles';
 
@@ -131,6 +133,7 @@ export default function WorkerTerminalScreen() {
   const [voicePanelWidth, setVoicePanelWidth] = useState(0);
   const [terminalFullscreen, setTerminalFullscreen] = useState(false);
   const [showTmuxShortcuts, setShowTmuxShortcuts] = useState(false);
+  const [terminalViewMode, setTerminalViewMode] = useState<TerminalViewMode>('tmux');
   const [windowPickerOpen, setWindowPickerOpen] = useState(false);
   const [windowPickerPanes, setWindowPickerPanes] = useState<TmuxWorkerSummary[]>([]);
   const [windowPickerError, setWindowPickerError] = useState<string | null>(null);
@@ -624,9 +627,10 @@ export default function WorkerTerminalScreen() {
                   showTmuxShortcuts && styles.tmuxToggleTextActive,
                 ]}
               >
-                Tmux
+                Keys
               </Text>
             </Pressable>
+            <TerminalModeToggle mode={terminalViewMode} onChange={setTerminalViewMode} />
             <TerminalOrientationButton controls={orientationControls} />
             <Pressable style={styles.fullscreenPill} onPress={() => setTerminalFullscreen(false)}>
               <Text style={styles.fullscreenPillText}>Exit</Text>
@@ -653,9 +657,10 @@ export default function WorkerTerminalScreen() {
               <Text
                 style={[styles.headerPillText, showTmuxShortcuts && styles.tmuxToggleTextActive]}
               >
-                Tmux
+                Keys
               </Text>
             </Pressable>
+            <TerminalModeToggle mode={terminalViewMode} onChange={setTerminalViewMode} />
             <Pressable style={styles.headerButton} onPress={() => void loadSnapshot()}>
               <Ionicons name="refresh" size={18} color={colors.accent} />
             </Pressable>
@@ -666,12 +671,14 @@ export default function WorkerTerminalScreen() {
         )}
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <View style={styles.terminalArea}>
-          <XtermTerminalView
+          <TerminalViewSurface
             ref={terminalRef}
             allowTouchKeyboard={allowTerminalTouchKeyboard}
             initialText={lines.join('\r\n')}
+            mode={terminalViewMode}
             onInput={sendInput}
             onResize={resize}
+            rawHistoryText={terminalTailTextRef.current}
             readOnlyReason={
               !worker ? 'Missing worker target' : status !== 'connected' ? 'Not connected' : null
             }

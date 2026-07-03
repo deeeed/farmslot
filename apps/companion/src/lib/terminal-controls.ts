@@ -9,6 +9,7 @@ export const TERMINAL_CONTROL_KEYS: readonly TerminalControlKey[] = [
   { label: '↓', data: '\x1b[B', danger: false },
   { label: '←', data: '\x1b[D', danger: false },
   { label: '→', data: '\x1b[C', danger: false },
+  { label: 'Enter', data: '\r', danger: false },
   { label: 'Tab', data: '\x09', danger: false },
   { label: '⇧Tab', data: '\x1b[Z', danger: false },
   { label: 'Esc', data: '\x1b', danger: false },

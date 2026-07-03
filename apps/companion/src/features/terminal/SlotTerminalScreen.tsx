@@ -52,11 +52,6 @@ import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/T
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
 import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
 import {
-  type TerminalSize,
-  XtermTerminalView,
-  type XtermTerminalViewHandle,
-} from '../../components/XtermTerminalView';
-import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
   artifactUrlForEntry,
@@ -140,6 +135,12 @@ import {
   TerminalWorkspaceCockpit,
   TmuxControlPanel,
 } from './components/slot-terminal-panels';
+import {
+  TerminalModeToggle,
+  type TerminalSize,
+  TerminalViewSurface,
+  type XtermTerminalViewHandle,
+} from './components/terminal-history-viewer';
 import { slotTerminalStyles as styles } from './styles/slot-terminal.styles';
 
 const LINE_COUNT_OPTIONS = [25, 50, 100, 200] as const;
@@ -298,6 +299,7 @@ export default function TerminalScreen() {
   const [showTerminalOptions, setShowTerminalOptions] = useState(
     routeParamString(detailsParam) === '1',
   );
+  const [terminalViewMode, setTerminalViewMode] = useState<'tmux' | 'history'>('tmux');
   const [terminalFullscreen, setTerminalFullscreen] = useState(
     routeParamString(fullscreenParam) === '1',
   );
@@ -1648,9 +1650,10 @@ export default function TerminalScreen() {
                   showTerminalControls && styles.tailToggleTextActive,
                 ]}
               >
-                Tmux
+                Keys
               </Text>
             </Pressable>
+            <TerminalModeToggle mode={terminalViewMode} onChange={setTerminalViewMode} />
             <TerminalOrientationButton controls={orientationControls} />
             <Pressable style={styles.fullscreenPill} onPress={toggleTerminalFullscreen}>
               <Text style={styles.fullscreenPillText}>Exit</Text>
@@ -1716,9 +1719,10 @@ export default function TerminalScreen() {
               <Text
                 style={[styles.tailToggleText, showTerminalControls && styles.tailToggleTextActive]}
               >
-                Tmux
+                Keys
               </Text>
             </Pressable>
+            <TerminalModeToggle mode={terminalViewMode} onChange={setTerminalViewMode} />
             <Pressable style={styles.tailToggle} onPress={toggleTerminalFullscreen}>
               <Ionicons name="expand-outline" size={16} color={colors.textSecondary} />
             </Pressable>
@@ -1736,12 +1740,21 @@ export default function TerminalScreen() {
           </View>
 
           <TerminalSteeringContextCard
-            slotId={slotId} run={targetRun} fallbackRunId={runId}
-            streamLabel={streamLabel} liveBadgeColor={liveBadgeColor}
-            targetWarning={targetWarning} terminalInputDisabled={Boolean(terminalInputDisabledReason)}
-            voiceRecorderBusy={voiceRecorderBusy} onOpenTmux={() => setShowTerminalControls(true)}
-            onOpenContext={() => setShowTerminalOptions(true)} onOpenVoice={handleFloatingVoicePress}
-            onOpenKeyboard={() => { setAllowTerminalTouchKeyboard(true); setShowTerminalControls(true); }}
+            slotId={slotId}
+            run={targetRun}
+            fallbackRunId={runId}
+            streamLabel={streamLabel}
+            liveBadgeColor={liveBadgeColor}
+            targetWarning={targetWarning}
+            terminalInputDisabled={Boolean(terminalInputDisabledReason)}
+            voiceRecorderBusy={voiceRecorderBusy}
+            onOpenTmux={() => setShowTerminalControls(true)}
+            onOpenContext={() => setShowTerminalOptions(true)}
+            onOpenVoice={handleFloatingVoicePress}
+            onOpenKeyboard={() => {
+              setAllowTerminalTouchKeyboard(true);
+              setShowTerminalControls(true);
+            }}
           />
 
           {showTerminalOptions && (
@@ -1895,12 +1908,14 @@ export default function TerminalScreen() {
       )}
 
       <View style={styles.terminalArea}>
-        <XtermTerminalView
+        <TerminalViewSurface
           ref={terminalViewRef}
           allowTouchKeyboard={allowTerminalTouchKeyboard}
           initialText={lines.join('\r\n')}
+          mode={terminalViewMode}
           onInput={handleTerminalInput}
           onResize={handleTerminalResize}
+          rawHistoryText={terminalTailTextRef.current}
           readOnlyReason={terminalInputDisabledReason}
         />
       </View>

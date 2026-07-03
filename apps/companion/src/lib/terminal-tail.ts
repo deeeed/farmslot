@@ -22,6 +22,10 @@ export function terminalTailLinesFromText(rawText: string, maxLines: number): st
   return normalized.slice(-maxLines);
 }
 
+export function terminalHistoryTextFromText(rawText: string, maxLines: number): string {
+  return terminalTailLinesFromText(rawText, maxLines).join('\n');
+}
+
 export function stripTerminalControls(rawText: string): string {
   return rawText
     .replace(OSC_SEQUENCE_PATTERN, '')
