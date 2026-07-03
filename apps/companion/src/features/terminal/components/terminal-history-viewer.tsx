@@ -1,5 +1,7 @@
 import React, { forwardRef, useMemo, useRef } from 'react';
 import {
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   type StyleProp,
@@ -91,16 +93,26 @@ export function TerminalKeysModeControls({
 
 export function TerminalHistoryPanel({ rawText }: { rawText: string }) {
   const scrollRef = useRef<ScrollView>(null);
+  const pinnedToBottomRef = useRef(true);
   const body = useMemo(
     () => terminalHistoryTextFromText(rawText, TERMINAL_HISTORY_VIEWER_LINES),
     [rawText],
   );
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    pinnedToBottomRef.current =
+      contentOffset.y + layoutMeasurement.height >= contentSize.height - 24;
+  };
   return (
     <ScrollView
       ref={scrollRef}
       style={styles.panel}
       contentContainerStyle={styles.panelContent}
-      onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
+      onContentSizeChange={() => {
+        if (pinnedToBottomRef.current) scrollRef.current?.scrollToEnd({ animated: false });
+      }}
+      onScroll={handleScroll}
+      scrollEventThrottle={100}
     >
       <ScrollView horizontal showsHorizontalScrollIndicator>
         <Text selectable style={styles.historyText}>
