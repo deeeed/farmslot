@@ -1,0 +1,9 @@
+{
+  "runner": "example-runner",
+  "status": "passed",
+  "logs": [
+    "INFO starting up",
+    "DEBUG using key AKIAIOSFODNN7EXAMPLE for upload",
+    "DEBUG bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF123456ghiJKL"
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.dev/spec/learning-package/1/index-row.schema.json",
+  "title": "Learnings Repo Index Row",
+  "description": "One row per package per index file. Appended; never overwritten.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageId",
+    "packagePath",
+    "surface",
+    "project",
+    "domain",
+    "engineer",
+    "flow",
+    "outcome",
+    "startedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "packageId": {
+      "type": "string",
+      "description": "Matches manifest.json:packageId."
+    },
+    "packagePath": {
+      "type": "string",
+      "description": "Repo-relative path to the package directory, e.g. packages/2026/07/03/fleet/.../run-slug."
+    },
+    "surface": { "type": "string" },
+    "project": { "type": "string" },
+    "domain": { "type": "string" },
+    "engineer": { "type": "string" },
+    "flow": { "type": "string" },
+    "ticket": { "type": "string" },
+    "outcome": {
+      "type": "string",
+      "enum": ["success", "failed", "aborted", "partial"]
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "packageSchemaVersion": {
+      "type": "integer",
+      "description": "The schemaVersion of the package this row indexes. Mining passes MUST record which schemaVersions they consumed."
+    },
+    "hasPr": { "type": "boolean" },
+    "hasHarnessEvidence": { "type": "boolean" }
+  }
+}

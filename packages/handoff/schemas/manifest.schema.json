@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.dev/spec/learning-package/1/manifest.schema.json",
+  "title": "Learning Package Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageId",
+    "surface",
+    "project",
+    "domain",
+    "engineer",
+    "run",
+    "task",
+    "files",
+    "scrubbing"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Spec version stamped at write time; never rewritten."
+    },
+    "packageId": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-z][a-z0-9]*-[a-z0-9]+-(?:[a-z][a-z0-9-]*-)?[a-f0-9]{8}$",
+      "description": "Equals the run-slug (spec section 1). Pattern enforces the section 1 grammar. Stable, sortable, non-secret."
+    },
+    "surface": {
+      "type": "string",
+      "examples": ["fleet", "skill"],
+      "description": "Producer surface. Open vocabulary; consumers preserve unknown values."
+    },
+    "project": {
+      "type": "string",
+      "description": "Project/repo key, e.g. my-project-farm."
+    },
+    "repo": {
+      "type": "string",
+      "description": "Optional VCS repo slug the work targeted."
+    },
+    "domain": {
+      "type": "string",
+      "description": "Domain/team tier key. Empty string if none."
+    },
+    "engineer": {
+      "type": "string",
+      "description": "Stable engineer key chosen by the producer. SHOULD be a pseudonymous handle-free identifier (see spec section 3.2 PII floor). Keys the by-engineer index."
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAt", "flow", "outcome"],
+      "properties": {
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": "string", "format": "date-time" },
+        "flow": { "type": "string", "description": "e.g. dev, fix-bug, review." },
+        "outcome": {
+          "type": "string",
+          "enum": ["success", "failed", "aborted", "partial"]
+        },
+        "runner": {
+          "type": "object",
+          "description": "The evidence producer. Any producer stamps its own runner; no default is a package constant.",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "examples": ["mm-harness"] },
+            "package": { "type": "string", "examples": ["@deeeed/metamask-harness"] },
+            "version": { "type": "string", "examples": ["0.2.0"] }
+          }
+        },
+        "model": {
+          "type": "string",
+          "description": "Agent model id that executed the run."
+        },
+        "harnessSchemaVersion": {
+          "type": ["integer", "string"],
+          "description": "schemaVersion from the runner --json envelope when present. Absent for skill-only runs."
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "sourceKind"],
+      "properties": {
+        "title": { "type": "string" },
+        "sourceKind": {
+          "type": "string",
+          "enum": ["text", "file", "github-pr", "github-issue", "jira"]
+        },
+        "ticket": {
+          "type": "string",
+          "description": "Work identifier, e.g. TAT-1234. Not PII."
+        },
+        "sourceRef": {
+          "type": "string",
+          "description": "Non-secret pointer (URL or path key) to the origin."
+        }
+      }
+    },
+    "files": {
+      "type": "object",
+      "description": "Package-file to integrity record. Enables consumers to verify package integrity without farmslot. Keys are package-relative paths.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["sha256"],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Hash of the stored (post-scrub) file."
+          },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "role": { "type": "string", "enum": ["required", "optional"] }
+        }
+      }
+    },
+    "scrubbing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "scrubReport"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pass", "blocked"],
+          "description": "MUST be 'pass' for any written package. 'blocked' packages are never written to a shared destination."
+        },
+        "scrubReport": { "type": "string", "const": "scrub-report.json" },
+        "floorVersion": {
+          "type": "integer",
+          "description": "Version of the crypto-secret floor deny-set applied."
+        }
+      }
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Open object. Farm/personal/tool-specific fields ONLY here. Never add keys to the closed core without a schemaVersion bump.",
+      "additionalProperties": true
+    }
+  }
+}

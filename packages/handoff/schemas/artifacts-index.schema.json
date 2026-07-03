@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.dev/spec/learning-package/1/artifacts-index.schema.json",
+  "title": "Post-Scrub Artifact Index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "artifacts"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "kind"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Package-relative path to the artifact file."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Hash of the stored (post-scrub) file. Divergence from originSha256 is expected when redaction occurred and is NOT corruption."
+          },
+          "originSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Hash of the pre-scrub harness/evidence original. Present when origin is known."
+          },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "trace",
+              "artifact-manifest",
+              "recipe",
+              "quality",
+              "screenshot",
+              "video",
+              "diff",
+              "other"
+            ],
+            "description": "Artifact type. Drives scrub policy: 'screenshot'/'video' require visualPassRequired."
+          },
+          "origin": {
+            "type": "string",
+            "description": "Source surface: 'harness' | 'skill' | 'pr-publish' | 'enrichment'."
+          },
+          "evidenceManifestSelected": {
+            "type": "boolean",
+            "description": "True iff the run's evidence manifest explicitly selected this artifact (spec section 3.5). MUST be true for any media artifact."
+          },
+          "visualPassCleared": {
+            "type": "boolean",
+            "description": "For media (screenshot/video): true iff an agent visual pass confirmed no on-screen secrets (spec section 3.6). Enforced for media kinds by the if/then constraint below."
+          }
+        },
+        "if": {
+          "properties": { "kind": { "enum": ["screenshot", "video"] } },
+          "required": ["kind"]
+        },
+        "then": {
+          "required": ["evidenceManifestSelected", "visualPassCleared"],
+          "properties": {
+            "evidenceManifestSelected": { "const": true },
+            "visualPassCleared": { "const": true }
+          }
+        }
+      }
+    }
+  }
+}

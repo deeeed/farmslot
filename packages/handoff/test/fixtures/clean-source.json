@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "sourceKind": "jira",
+  "title": "Fix the balance display rounding",
+  "description": "The account balance shows too many decimals. Round to two.",
+  "acceptanceCriteria": "Balance shows two decimals across all screens.",
+  "labels": ["bug", "display"],
+  "ticket": "TAT-1234",
+  "status": "In Progress",
+  "priority": "P2",
+  "sourceRef": "https://example.atlassian.net/browse/TAT-1234",
+  "extensions": {
+    "commitDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

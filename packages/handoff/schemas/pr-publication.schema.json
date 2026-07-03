@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.dev/spec/learning-package/1/pr-publication.schema.json",
+  "title": "PR Publication Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "prRef": {
+      "type": "string",
+      "description": "PR URL or org/repo#number. Absent until the PR is created."
+    },
+    "publishedAt": { "type": "string", "format": "date-time" },
+    "uploaded": {
+      "type": "array",
+      "description": "Artifacts uploaded to remote storage during publication.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "url"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Package-relative source path."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Public or team-accessible URL where the artifact was uploaded."
+          },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        }
+      }
+    },
+    "consent": {
+      "type": "object",
+      "description": "Caller-supplied consent record. Never resolved from files.",
+      "additionalProperties": false,
+      "required": ["githubWrite", "publicUpload", "grantedAt"],
+      "properties": {
+        "githubWrite": {
+          "type": "boolean",
+          "description": "True iff the caller explicitly granted GitHub write for this call."
+        },
+        "publicUpload": {
+          "type": "boolean",
+          "description": "True iff the caller explicitly granted public artifact upload for this call."
+        },
+        "grantedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "extensions": { "type": "object", "additionalProperties": true }
+  }
+}

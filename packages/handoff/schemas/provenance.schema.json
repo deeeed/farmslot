@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.dev/spec/learning-package/1/provenance.schema.json",
+  "title": "Template and Config Resolution Provenance",
+  "description": "Audit of every personal>domain/farm>default resolution during assembly. Non-silent shadowing per spec section 3.7.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "resolutions"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "resolutions": {
+      "type": "array",
+      "description": "One entry per resolved behavior. Order is assembly sequence.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "resolvedPath", "tier"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "examples": [
+              "task-template",
+              "pr-template",
+              "task-io.config",
+              "pr-publish.config",
+              "learning.config"
+            ],
+            "description": "What was resolved. Producers MAY add new kind values; consumers treat unknown kinds as opaque."
+          },
+          "resolvedPath": {
+            "type": "string",
+            "description": "The file path that won. Absolute paths are replaced with workspace-relative tokens ($WORKSPACE, $FARMSLOT_HOME) before storage."
+          },
+          "tier": {
+            "type": "string",
+            "enum": ["personal", "domain", "farm", "default"],
+            "description": "Which tier the winner came from."
+          },
+          "shadows": {
+            "type": "array",
+            "description": "Lower-precedence files that exist but were overridden. Non-empty iff shadowing occurred.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "tier"],
+              "properties": {
+                "path": { "type": "string" },
+                "tier": {
+                  "type": "string",
+                  "enum": ["personal", "domain", "farm", "default"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
