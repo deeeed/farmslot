@@ -1,6 +1,13 @@
 import type { ScriptedRunnerConfig } from './agents.js';
 import type { QueueItem } from './dispatch.js';
-import type { FlowType, RunStatus } from './runs.js';
+import type { TaskTemplateSelection } from './evals.js';
+import type {
+  DevInteractiveProfile,
+  FlowType,
+  ReviewDepthPolicy,
+  ReviewLoopRequest,
+  RunStatus,
+} from './runs.js';
 
 export const BACKLOG_STATUSES = [
   'candidate',
@@ -192,6 +199,13 @@ export interface BacklogItem {
   model?: string;
   scripted?: ScriptedRunnerConfig;
   effort?: string;
+  taskTemplate?: TaskTemplateSelection;
+  app?: string;
+  prepareProfile?: string;
+  mode?: 'interactive' | 'autonomous';
+  devInteractiveProfile?: DevInteractiveProfile;
+  reviewDepth?: ReviewDepthPolicy;
+  pendingReviewPlan?: ReviewLoopRequest[];
   launchPlan?: BacklogLaunchPlan;
   launchPlanState?: BacklogLaunchPlanState;
   createdAt: string;
@@ -226,6 +240,13 @@ export interface BacklogCreateInput {
   model?: string;
   scripted?: ScriptedRunnerConfig;
   effort?: string;
+  taskTemplate?: TaskTemplateSelection;
+  app?: string;
+  prepareProfile?: string;
+  mode?: 'interactive' | 'autonomous';
+  devInteractiveProfile?: DevInteractiveProfile;
+  reviewDepth?: ReviewDepthPolicy;
+  pendingReviewPlan?: ReviewLoopRequest[];
   launchPlan?: BacklogLaunchPlan;
   status?: Extract<BacklogStatus, 'candidate' | 'ready'>;
 }
@@ -247,6 +268,13 @@ export interface BacklogUpdateInput {
   model?: string | null;
   scripted?: ScriptedRunnerConfig | null;
   effort?: string | null;
+  taskTemplate?: TaskTemplateSelection | null;
+  app?: string | null;
+  prepareProfile?: string | null;
+  mode?: 'interactive' | 'autonomous' | null;
+  devInteractiveProfile?: DevInteractiveProfile | null;
+  reviewDepth?: ReviewDepthPolicy | null;
+  pendingReviewPlan?: ReviewLoopRequest[] | null;
   launchPlan?: BacklogLaunchPlan | null;
 }
 

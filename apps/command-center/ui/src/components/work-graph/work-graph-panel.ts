@@ -3,26 +3,60 @@ import { customElement, property, state } from 'lit/decorators.js';
 
 import type {
   BacklogItem,
+  BacklogUpdateInput,
+  ConfigProjectsResult,
+  ConfigTemplateOptionsResult,
+  ProjectConfig,
   QueueItem,
   Run,
   SlotStatus,
   WorkEdge,
+  WorkerTemplateOption,
+  WorkGraphActivateResult,
   WorkGraphProjection,
+  WorkGraphSchedulerTickResult,
   WorkNode,
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
+import '../shared/dispatch-config-editor.js';
+import '../shared/slot-choice-row.js';
+import '../shared/slot-choice-list.js';
+
 import { gateway } from '../../gateway-client.js';
-import { type AppState, getState, subscribe } from '../../state.js';
+import { type AppState, getState, type GlobalFilters, subscribe } from '../../state.js';
 import { colors } from '../../styles/theme-tokens.js';
+import { buildHash, parseHashRoute } from '../../utils/url-state.js';
+import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
+import { templateOptionsRequestKey } from '../dispatch/dispatch-wizard-template-options.js';
+import type {
+  DispatchConfigChangeDetail,
+  DispatchConfigEditorControls,
+} from '../shared/dispatch-config-editor.js';
+import { summarizeBacklogDispatchConfig } from '../shared/dispatch-config-summary.js';
+import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
+import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
 import {
   buildWorkGraphExecutionOverlay,
+  type SlotExecutionView,
   type WorkGraphExecutionOverlay,
   type WorkGraphNodeExecutionView,
 } from './work-graph-execution-overlay.js';
 import { computeWorkGraphLayout, type WorkGraphLayoutNode } from './work-graph-layout.js';
 import { workGraphPanelStyles } from './work-graph-panel-styles.js';
+
+const WORK_GRAPH_PROJECT_PARAM = 'workGraphProject';
+const WORK_GRAPH_GRAPH_PARAM = 'graph';
+const WORK_GRAPH_NODE_PARAM = 'node';
+const WORK_GRAPH_DISPATCH_CONFIG_CONTROLS: DispatchConfigEditorControls = {
+  template: true,
+  runnerModelEffort: true,
+  prepareProfile: true,
+  interactiveProfile: true,
+  publicationReviews: true,
+  explicitModeFallback: true,
+};
 
 @customElement('work-graph-panel')
 export class WorkGraphPanel extends LitElement {
@@ -34,23 +68,44 @@ export class WorkGraphPanel extends LitElement {
   @state() private queueItems: QueueItem[] = [];
   @state() private runs: Run[] = [];
   @state() private slots: SlotStatus[] = [];
+  @state() private globalFilters: GlobalFilters = { projects: [], machines: [] };
   @state() private configBusyItemId = '';
   @state() private configError = '';
+  @state() private configModalItemId = '';
+  @state() private configProjectConfigs: ProjectConfig[] = [];
+  @state() private configTemplateOptions: Record<string, WorkerTemplateOption[]> = {};
+  @state() private configTemplateOptionsError: Record<string, string> = {};
+  @state() private configTemplateOptionsLoading: Record<string, boolean> = {};
   @state() private selectedProject = '';
   @state() private selectedNodeKey = '';
+  @state() private schedulerBusyKey = '';
+  @state() private schedulerMessage = '';
+  @state() private schedulerError = '';
   private unsub?: () => void;
+  private readonly onHashChange = () => this.applyUrlStateFromHash();
+  private readonly onKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && this.configModalItemId) {
+      event.preventDefault();
+      this.configModalItemId = '';
+    }
+  };
 
   static styles = workGraphPanelStyles;
 
   connectedCallback() {
     super.connectedCallback();
+    this.applyUrlStateFromHash();
     this.sync(getState());
     this.unsub = subscribe((state) => this.sync(state));
+    window.addEventListener('hashchange', this.onHashChange);
+    window.addEventListener('keydown', this.onKeydown);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.unsub?.();
+    window.removeEventListener('hashchange', this.onHashChange);
+    window.removeEventListener('keydown', this.onKeydown);
   }
 
   private sync(state: AppState) {
@@ -59,13 +114,53 @@ export class WorkGraphPanel extends LitElement {
     this.queueItems = state.queueItems;
     this.runs = state.runs;
     this.slots = state.fleet?.slots ?? [];
+    this.globalFilters = state.globalFilters;
     const graphs = this.activeGraphs();
     const projects = new Set(graphs.map((graph) => graph.graph.project));
     if (this.selectedProject && !projects.has(this.selectedProject)) this.selectedProject = '';
     const nodeKeys = new Set(
       graphs.flatMap((graph) => graph.nodes.map((node) => this.nodeKey(graph, node.id))),
     );
+    if (!this.selectedNodeKey) this.hydrateSelectedNodeFromUrl(nodeKeys);
     if (this.selectedNodeKey && !nodeKeys.has(this.selectedNodeKey)) this.selectedNodeKey = '';
+  }
+
+  private hydrateSelectedNodeFromUrl(nodeKeys: Set<string>): void {
+    if (typeof location === 'undefined') return;
+    const { route, params } = parseHashRoute();
+    if (route !== 'work-graphs') return;
+    const graphId = params.get(WORK_GRAPH_GRAPH_PARAM)?.trim() ?? '';
+    const nodeId = params.get(WORK_GRAPH_NODE_PARAM)?.trim() ?? '';
+    const key = graphId && nodeId ? `${graphId}:${nodeId}` : '';
+    if (key && nodeKeys.has(key)) this.selectedNodeKey = key;
+  }
+
+  private applyUrlStateFromHash() {
+    if (typeof location === 'undefined') return;
+    const { route, params } = parseHashRoute();
+    if (route !== 'work-graphs') return;
+    this.selectedProject = params.get(WORK_GRAPH_PROJECT_PARAM)?.trim() ?? '';
+    const graphId = params.get(WORK_GRAPH_GRAPH_PARAM)?.trim() ?? '';
+    const nodeId = params.get(WORK_GRAPH_NODE_PARAM)?.trim() ?? '';
+    this.selectedNodeKey = graphId && nodeId ? `${graphId}:${nodeId}` : '';
+  }
+
+  private writeUrlState() {
+    if (typeof location === 'undefined') return;
+    const { route, params } = parseHashRoute();
+    if (route !== 'work-graphs') return;
+    if (this.selectedProject) params.set(WORK_GRAPH_PROJECT_PARAM, this.selectedProject);
+    else params.delete(WORK_GRAPH_PROJECT_PARAM);
+    const [graphId, nodeId] = this.selectedNodeKey.split(':');
+    if (graphId && nodeId) {
+      params.set(WORK_GRAPH_GRAPH_PARAM, graphId);
+      params.set(WORK_GRAPH_NODE_PARAM, nodeId);
+    } else {
+      params.delete(WORK_GRAPH_GRAPH_PARAM);
+      params.delete(WORK_GRAPH_NODE_PARAM);
+    }
+    const next = buildHash(route, params);
+    if (location.hash !== next) history.replaceState(null, '', next);
   }
 
   private activeGraphs(): WorkGraphProjection[] {
@@ -186,16 +281,31 @@ export class WorkGraphPanel extends LitElement {
   private selectNode(graph: WorkGraphProjection, nodeId: string) {
     const key = this.nodeKey(graph, nodeId);
     this.selectedNodeKey = this.selectedNodeKey === key ? '' : key;
+    this.writeUrlState();
   }
 
   private isSelectedNode(graph: WorkGraphProjection, nodeId: string): boolean {
     return this.selectedNodeKey === this.nodeKey(graph, nodeId);
   }
 
-  private selectedNode(graph: WorkGraphProjection): WorkNode | null {
-    return (
-      graph.nodes.find((node) => this.isSelectedNode(graph, node.id)) ?? graph.nodes[0] ?? null
+  private selectedNodeIdForGraph(graph: WorkGraphProjection): string {
+    return this.selectedNodeKey.startsWith(`${graph.graph.id}:`)
+      ? this.selectedNodeKey.slice(graph.graph.id.length + 1)
+      : '';
+  }
+
+  private isNodeInSelectedNeighborhood(graph: WorkGraphProjection, nodeId: string): boolean {
+    const selectedNodeId = this.selectedNodeIdForGraph(graph);
+    if (!selectedNodeId || selectedNodeId === nodeId) return true;
+    return graph.edges.some(
+      (edge) =>
+        (edge.fromNodeId === selectedNodeId && edge.toNodeId === nodeId) ||
+        (edge.toNodeId === selectedNodeId && edge.fromNodeId === nodeId),
     );
+  }
+
+  private selectedNode(graph: WorkGraphProjection): WorkNode | null {
+    return graph.nodes.find((node) => this.isSelectedNode(graph, node.id)) ?? null;
   }
 
   private renderLegend() {
@@ -225,6 +335,7 @@ export class WorkGraphPanel extends LitElement {
     const status = view?.executionStatus ?? node.status;
     const color = this.colorForStatus(status);
     const isSelected = this.isSelectedNode(graph, node.id);
+    const isDimmed = !this.isNodeInSelectedNeighborhood(graph, node.id);
     const item =
       view?.backlogItem ?? (node.backlogItemId ? backlogById.get(node.backlogItemId) : undefined);
     const title = view?.title ?? this.graphTitleForNode(backlogById, node);
@@ -238,11 +349,12 @@ export class WorkGraphPanel extends LitElement {
     const project = this.projectForNode(backlogById, node);
     return svg`
       <g
-        class=${`diagram-node ${node.kind === 'reference' ? 'reference-node' : ''} ${isSelected ? 'selected' : ''}`}
+        class=${`diagram-node ${node.kind === 'reference' ? 'reference-node' : ''} ${isSelected ? 'selected' : ''} ${isDimmed ? 'dimmed' : ''}`}
         transform=${`translate(${x}, ${y})`}
         role="button"
         tabindex="0"
         aria-label=${`${title}, ${status}`}
+        data-testid=${`work-graph-diagram-node-${node.id.replace(/[^a-zA-Z0-9_-]+/g, '-')}`}
         @click=${() => this.selectNode(graph, node.id)}
         @keydown=${(event: KeyboardEvent) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -251,7 +363,17 @@ export class WorkGraphPanel extends LitElement {
           }
         }}
       >
-        <rect width=${w} height=${h} rx="12" stroke=${color}></rect>
+        ${
+          isSelected
+            ? svg`<rect class="selection-halo" x="-7" y="-7" width=${w + 14} height=${h + 14} rx="18"></rect>`
+            : nothing
+        }
+        <rect class="node-shell" width=${w} height=${h} rx="12" stroke=${color}></rect>
+        ${
+          isSelected
+            ? svg`<text class="selected-label" x=${w - 10} y="-13" text-anchor="end">selected</text>`
+            : nothing
+        }
         <foreignObject x="12" y="12" width=${w - 24} height=${h - 24}>
           <div class="diagram-node-content" xmlns="http://www.w3.org/1999/xhtml">
             <div class="diagram-node-title">${title}</div>
@@ -282,9 +404,7 @@ export class WorkGraphPanel extends LitElement {
   ) {
     const layout = computeWorkGraphLayout(graph);
     const markerId = this.markerId(graph);
-    const selectedNode = this.selectedNodeKey.startsWith(`${graph.graph.id}:`)
-      ? this.selectedNodeKey.slice(graph.graph.id.length + 1)
-      : '';
+    const selectedNode = this.selectedNodeIdForGraph(graph);
     return html`
       <div class="diagram-card">
         <div class="diagram-toolbar">
@@ -406,33 +526,12 @@ export class WorkGraphPanel extends LitElement {
   }
 
   private slotOptionsForItem(item: BacklogItem): SlotStatus[] {
-    return this.slots
+    return filterSlotsByGlobalFilters(this.slots, this.globalFilters)
       .filter((slot) => slot.project === item.project)
       .sort((a, b) => a.machine.localeCompare(b.machine) || a.slot.localeCompare(b.slot));
   }
 
-  private runnerOptionsForItem(item: BacklogItem): string[] {
-    return [
-      ...new Set(
-        this.slotOptionsForItem(item)
-          .map((slot) => slot.runner)
-          .concat(item.runner ?? [])
-          .filter((runner): runner is string => Boolean(runner)),
-      ),
-    ].sort();
-  }
-
-  private async updateBacklogConfig(
-    item: BacklogItem,
-    patch: {
-      priority?: number;
-      allowedSlots?: string[] | null;
-      autoDispatch?: boolean;
-      runner?: string | null;
-      model?: string | null;
-      effort?: string | null;
-    },
-  ): Promise<void> {
+  private async updateBacklogConfig(item: BacklogItem, patch: BacklogUpdateInput): Promise<void> {
     this.configBusyItemId = item.id;
     this.configError = '';
     try {
@@ -444,139 +543,344 @@ export class WorkGraphPanel extends LitElement {
     }
   }
 
-  private async toggleAllowedSlot(
+  private updateBacklogFromDispatchConfig(
     item: BacklogItem,
-    slotId: string,
-    checked: boolean,
+    detail: DispatchConfigChangeDetail,
   ): Promise<void> {
-    const current = item.allowedSlots ?? [];
-    const next = checked
-      ? [...new Set([...current, slotId])]
-      : current.filter((candidate) => candidate !== slotId);
-    await this.updateBacklogConfig(item, { allowedSlots: next.length ? next : null });
+    const {
+      taskTemplateFileName: _taskTemplateFileName,
+      skipPrepare: _skipPrepare,
+      ...backlogPatch
+    } = detail;
+    return this.updateBacklogConfig(item, backlogPatch);
+  }
+
+  private backlogHash(item: BacklogItem): string {
+    const { params: current } = parseHashRoute();
+    const params = new URLSearchParams();
+    for (const key of ['projects', 'machines']) {
+      const value = current.get(key);
+      if (value) params.set(key, value);
+    }
+    params.set('item', item.id);
+    return buildHash('backlog', params);
+  }
+
+  private dispatchHash(item?: BacklogItem): string {
+    const { params: current } = parseHashRoute();
+    const params = new URLSearchParams();
+    for (const key of ['projects', 'machines']) {
+      const value = current.get(key);
+      if (value) params.set(key, value);
+    }
+    if (item?.project && !params.get('projects')) params.set('projects', item.project);
+    return buildHash('dispatch', params);
+  }
+
+  private async scheduleGraphNode(graph: WorkGraphProjection, node: WorkNode): Promise<void> {
+    const busyKey = this.nodeKey(graph, node.id);
+    this.schedulerBusyKey = busyKey;
+    this.schedulerMessage = '';
+    this.schedulerError = '';
+    try {
+      if (graph.graph.status === 'paused') {
+        this.schedulerMessage = 'Graph is paused. Resume it before dispatching this node.';
+        return;
+      }
+      if (graph.graph.status === 'planning') {
+        const result = await gateway.request<WorkGraphActivateResult>(Methods.WORK_GRAPH_ACTIVATE, {
+          graphId: graph.graph.id,
+        });
+        this.schedulerMessage = this.schedulerTickMessage(
+          graph,
+          node,
+          { ok: true, graphs: [result.graph] },
+          'Graph activated. ',
+        );
+        return;
+      }
+      const result = await gateway.request<WorkGraphSchedulerTickResult>(
+        Methods.WORK_GRAPH_SCHEDULER_TICK,
+        { graphId: graph.graph.id },
+      );
+      this.schedulerMessage = this.schedulerTickMessage(graph, node, result);
+    } catch (error) {
+      this.schedulerError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.schedulerBusyKey = '';
+    }
+  }
+
+  private schedulerTickMessage(
+    graph: WorkGraphProjection,
+    node: WorkNode,
+    result: WorkGraphSchedulerTickResult,
+    prefix = '',
+  ): string {
+    const nextGraph =
+      result.graphs.find((candidate) => candidate.graph.id === graph.graph.id) ?? graph;
+    const nextNode = nextGraph?.nodes.find((candidate) => candidate.id === node.id);
+    if (result.graphs.every((candidate) => candidate.graph.id !== graph.graph.id)) {
+      if (nextGraph.graph.status === 'planning') {
+        return 'Graph is still planning. Activate it before dispatching this node.';
+      }
+      if (nextGraph.graph.status === 'paused') {
+        return 'Graph is paused. Resume it before dispatching this node.';
+      }
+      return 'Scheduler did not run this graph. Activate it if it is planning or paused.';
+    }
+    if (!nextNode) return 'Scheduler ran, but the selected node was not found afterward.';
+    if (nextNode.status === 'planned') {
+      return `${prefix}Graph is still planning. Activate it before dispatching this node.`;
+    }
+    if (nextNode.status === 'queued') {
+      return `${prefix}Queued for launch. The dispatch queue will start it on an eligible slot.`;
+    }
+    if (nextNode.status === 'running')
+      return `${prefix}Dispatch active: this node has an active run.`;
+    if (nextNode.status === 'waiting') {
+      const reason = nextNode.waitingOn[0]?.detail;
+      return reason
+        ? `${prefix}Not queued yet: waiting on ${reason}.`
+        : `${prefix}Not queued yet: this node is still waiting on upstream work.`;
+    }
+    if (nextNode.status === 'needs-attention') {
+      const reason = nextNode.waitingOn[0]?.detail;
+      return reason
+        ? `${prefix}Needs attention: ${reason}.`
+        : `${prefix}Needs attention before it can be queued.`;
+    }
+    if (nextNode.status === 'ready') {
+      return `${prefix}Ready, but not queued. Review auto start, slots, and dispatch config.`;
+    }
+    return `${prefix}Checked: ${nextNode.status}.`;
+  }
+
+  private async ensureDispatchConfigData(item: BacklogItem): Promise<void> {
+    if (this.configProjectConfigs.length === 0) {
+      const result = await gateway.request<ConfigProjectsResult>(Methods.CONFIG_PROJECTS, {});
+      this.configProjectConfigs = result.projects;
+    }
+
+    const key = templateOptionsRequestKey(item.project, item.flowType);
+    if (this.configTemplateOptions[key] || this.configTemplateOptionsLoading[key]) return;
+    this.configTemplateOptionsLoading = { ...this.configTemplateOptionsLoading, [key]: true };
+    this.configTemplateOptionsError = { ...this.configTemplateOptionsError, [key]: '' };
+    try {
+      const result = await gateway.request<ConfigTemplateOptionsResult>(
+        Methods.CONFIG_TEMPLATE_OPTIONS,
+        {
+          project: item.project,
+          flowType: item.flowType,
+        },
+      );
+      this.configTemplateOptions = { ...this.configTemplateOptions, [key]: result.options };
+    } catch (error) {
+      this.configTemplateOptionsError = {
+        ...this.configTemplateOptionsError,
+        [key]: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      this.configTemplateOptionsLoading = { ...this.configTemplateOptionsLoading, [key]: false };
+    }
+  }
+
+  private openDispatchConfigModal(item: BacklogItem) {
+    this.configModalItemId = item.id;
+    void this.ensureDispatchConfigData(item).catch((error) => {
+      this.configError = error instanceof Error ? error.message : String(error);
+    });
+  }
+
+  private templateOptionsForItem(item: BacklogItem): WorkerTemplateOption[] {
+    return this.configTemplateOptions[templateOptionsRequestKey(item.project, item.flowType)] ?? [];
+  }
+
+  private templateOptionsStateForItem(item: BacklogItem): { loading: boolean; error: string } {
+    const key = templateOptionsRequestKey(item.project, item.flowType);
+    return {
+      loading: this.configTemplateOptionsLoading[key] ?? false,
+      error: this.configTemplateOptionsError[key] ?? '',
+    };
+  }
+
+  private dispatchConfigSummary(item: BacklogItem): string {
+    const summary = summarizeBacklogDispatchConfig(item);
+    return `${summary.execution} · ${summary.slots}`;
   }
 
   private renderDispatchConfig(view: WorkGraphNodeExecutionView) {
     const item = view.backlogItem;
     if (!item) return nothing;
     const disabled = !view.editableConfig || this.configBusyItemId === item.id;
-    const slotOptions = this.slotOptionsForItem(item);
-    const selectedSlots = new Set(item.allowedSlots ?? []);
-    const runners = this.runnerOptionsForItem(item);
     return html`
       <div class="config-editor">
         <div class="config-head">
           <div>
             <div class="detail-title">Dispatch config</div>
-            <div class="detail-muted">
-              Edits the linked backlog item; queued/running nodes are read-only.
-            </div>
+            <div class="detail-muted">${this.dispatchConfigSummary(item)}</div>
           </div>
           ${!view.editableConfig ? html`<span class="badge queued">locked</span>` : nothing}
         </div>
         ${this.configError ? html`<div class="config-error">${this.configError}</div>` : nothing}
-        <label class="config-field">
-          <span>Priority</span>
-          <input
-            type="number"
-            min="1"
-            .value=${String(item.priority)}
-            ?disabled=${disabled}
-            @change=${(event: Event) =>
-              this.updateBacklogConfig(item, {
-                priority: Number((event.target as HTMLInputElement).value),
-              })}
-          />
-        </label>
-        <label class="config-check">
-          <input
-            type="checkbox"
-            .checked=${item.autoDispatch !== false}
-            ?disabled=${disabled}
-            @change=${(event: Event) =>
-              this.updateBacklogConfig(item, {
-                autoDispatch: (event.target as HTMLInputElement).checked,
-              })}
-          />
-          Graph scheduler may enqueue this node
-        </label>
-        <div class="config-grid">
-          <label class="config-field">
-            <span>Runner</span>
-            <select
-              .value=${item.runner ?? ''}
-              ?disabled=${disabled}
-              @change=${(event: Event) =>
-                this.updateBacklogConfig(item, {
-                  runner: (event.target as HTMLSelectElement).value || null,
-                })}
-            >
-              <option value="">default</option>
-              ${runners.map((runner) => html`<option value=${runner}>${runner}</option>`)}
-            </select>
-          </label>
-          <label class="config-field">
-            <span>Model</span>
-            <input
-              .value=${item.model ?? ''}
-              placeholder="default"
-              ?disabled=${disabled}
-              @change=${(event: Event) =>
-                this.updateBacklogConfig(item, {
-                  model: (event.target as HTMLInputElement).value.trim() || null,
-                })}
-            />
-          </label>
-          <label class="config-field">
-            <span>Effort</span>
-            <input
-              .value=${item.effort ?? ''}
-              placeholder="default"
-              ?disabled=${disabled}
-              @change=${(event: Event) =>
-                this.updateBacklogConfig(item, {
-                  effort: (event.target as HTMLInputElement).value.trim() || null,
-                })}
-            />
-          </label>
-        </div>
-        <div class="slot-picker">
-          <div class="detail-label">Allowed slots</div>
-          <button
-            ?disabled=${disabled}
-            @click=${() => this.updateBacklogConfig(item, { allowedSlots: null })}
-          >
-            Any eligible ${item.project} slot
-          </button>
-          <div class="slot-options">
-            ${slotOptions.length
-              ? slotOptions.map(
-                  (slot) =>
-                    html`<label class="slot-option">
-                      <input
-                        type="checkbox"
-                        .checked=${selectedSlots.has(slot.slot)}
-                        ?disabled=${disabled}
-                        @change=${(event: Event) =>
-                          this.toggleAllowedSlot(
-                            item,
-                            slot.slot,
-                            (event.target as HTMLInputElement).checked,
-                          )}
-                      />
-                      <span>${slot.slot}</span>
-                      <small
-                        >${slot.lifecycle}${slot.runner
-                          ? ` · ${slot.runner}/${slot.model ?? 'default'}`
-                          : ''}</small
-                      >
-                    </label>`,
-                )
-              : html`<div class="detail-muted">No visible slots for ${item.project}.</div>`}
-          </div>
-        </div>
+        <button
+          class="config-edit-button"
+          type="button"
+          ?disabled=${disabled}
+          @click=${() => this.openDispatchConfigModal(item)}
+        >
+          Edit dispatch config
+        </button>
+        ${this.configModalItemId === item.id
+          ? this.renderDispatchConfigModal(item, disabled)
+          : nothing}
       </div>
     `;
+  }
+
+  private renderDispatchConfigModal(item: BacklogItem, disabled: boolean) {
+    const slotOptions = this.slotOptionsForItem(item);
+    const templateState = this.templateOptionsStateForItem(item);
+    return html`
+      <div
+        class="modal-backdrop"
+        @click=${(event: MouseEvent) => {
+          if (event.target === event.currentTarget) this.configModalItemId = '';
+        }}
+      >
+        <section
+          class="dispatch-config-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Edit dispatch config"
+        >
+          <header>
+            <div>
+              <h3>Dispatch config</h3>
+              <p class="detail-muted">Changes save immediately to the linked backlog item.</p>
+            </div>
+            <button class="secondary" type="button" @click=${() => (this.configModalItemId = '')}>
+              Close
+            </button>
+          </header>
+          ${this.configError ? html`<div class="config-error">${this.configError}</div>` : nothing}
+          <dispatch-config-editor
+            .project=${item.project}
+            .flowType=${item.flowType}
+            .runner=${item.runner ?? ''}
+            .model=${item.model ?? ''}
+            .effort=${item.effort ?? ''}
+            .mode=${item.mode ?? ''}
+            .devInteractiveProfile=${item.devInteractiveProfile ?? ''}
+            .taskTemplate=${item.taskTemplate ?? null}
+            .templateOptions=${this.templateOptionsForItem(item)}
+            .prepareProfile=${item.prepareProfile ?? ''}
+            .prepareProfiles=${projectPrepareProfiles(this.configProjectConfigs, item.project)}
+            .pendingReviewPlan=${item.pendingReviewPlan ?? []}
+            .controls=${WORK_GRAPH_DISPATCH_CONFIG_CONTROLS}
+            .disabled=${disabled}
+            @dispatch-config-change=${(event: CustomEvent<DispatchConfigChangeDetail>) =>
+              this.updateBacklogFromDispatchConfig(item, event.detail)}
+          ></dispatch-config-editor>
+          ${templateState.loading
+            ? html`<div class="detail-muted">Loading task templates...</div>`
+            : nothing}
+          ${templateState.error
+            ? html`<div class="config-error">${templateState.error}</div>`
+            : nothing}
+          <div class="config-grid">
+            <label class="config-field">
+              <span>Priority</span>
+              <input
+                type="number"
+                min="1"
+                .value=${String(item.priority)}
+                ?disabled=${disabled}
+                @change=${(event: Event) =>
+                  this.updateBacklogConfig(item, {
+                    priority: Number((event.target as HTMLInputElement).value),
+                  })}
+              />
+            </label>
+            <label class="config-check">
+              <input
+                type="checkbox"
+                .checked=${item.autoDispatch !== false}
+                ?disabled=${disabled}
+                @change=${(event: Event) =>
+                  this.updateBacklogConfig(item, {
+                    autoDispatch: (event.target as HTMLInputElement).checked,
+                  })}
+              />
+              <span>
+                Auto-enqueue when ready
+                <small>
+                  When dependencies are satisfied, the graph scheduler may add this backlog item to
+                  the dispatch queue. Turn off to require manual scheduling.
+                </small>
+              </span>
+            </label>
+          </div>
+          <div class="slot-picker">
+            <div>
+              <div class="detail-label">Allowed slots</div>
+              <div class="detail-muted">Filtered by the global project and machine selectors.</div>
+            </div>
+            <slot-choice-list
+              .project=${item.project}
+              .slots=${slotOptions}
+              .selectedSlots=${item.allowedSlots ?? []}
+              .disabled=${disabled}
+              @slot-choice-change=${(event: CustomEvent<SlotChoiceChangeDetail>) =>
+                this.updateBacklogConfig(item, { allowedSlots: event.detail.allowedSlots })}
+            ></slot-choice-list>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  private slotStatusById(): Map<string, SlotStatus> {
+    return new Map(this.slots.map((slot) => [slot.slot, slot]));
+  }
+
+  private renderGraphSlotRows(visibleSlots: readonly SlotExecutionView[]) {
+    const byId = this.slotStatusById();
+    const readyCount = visibleSlots.filter((slot) => slot.ready).length;
+    return html`<details class="candidate-slots-panel">
+      <summary>
+        Candidate slots
+        <span>${readyCount}/${visibleSlots.length} ready</span>
+      </summary>
+      <div class="candidate-slots">
+        ${visibleSlots.map((slot, index) => {
+          const status = byId.get(slot.slotId);
+          const runner = status?.runner
+            ? `${status.runner}/${status.model ?? 'default'}`
+            : 'default runner';
+          const branch = status?.branch || slot.reason;
+          const task = [
+            status?.machine,
+            runner,
+            slot.reason,
+            slot.queueItemIds.length ? `queue ${slot.queueItemIds.join(', ')}` : '',
+            slot.runIds.length ? `run ${slot.runIds.join(', ')}` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ');
+          return html`<slot-choice-row
+            .rank=${slot.ready ? `#${index + 1}` : '--'}
+            .slotId=${slot.slotId}
+            .branch=${branch}
+            .task=${task}
+            .lifecycle=${slot.lifecycle}
+            .score=${slot.ready ? 'ready' : 'wait'}
+            ?selected=${slot.ready}
+            ?warning=${!slot.ready}
+          ></slot-choice-row>`;
+        })}
+      </div>
+    </details>`;
   }
 
   private renderNodeDetail(
@@ -585,7 +889,14 @@ export class WorkGraphPanel extends LitElement {
     node: WorkNode | null,
     overlay: WorkGraphExecutionOverlay,
   ) {
-    if (!node) return html`<div class="detail-card">No nodes in this graph.</div>`;
+    if (!node) {
+      return html`<div class="detail-card empty-detail">
+        <div class="detail-title">No node selected</div>
+        <div class="detail-muted">
+          Select a graph node to inspect dependencies, slots, and dispatch config.
+        </div>
+      </div>`;
+    }
     const view = overlay.byNodeId.get(node.id);
     const item =
       view?.backlogItem ?? (node.backlogItemId ? backlogById.get(node.backlogItemId) : undefined);
@@ -601,6 +912,33 @@ export class WorkGraphPanel extends LitElement {
             ${node.id} · ${this.projectForNode(backlogById, node)} · ${node.status}
           </div>
         </div>
+        ${item
+          ? html`<div class="dispatch-actions">
+              <button
+                class="primary-action"
+                type="button"
+                ?disabled=${this.schedulerBusyKey === this.nodeKey(graph, node.id)}
+                title="Dispatches this graph node when dependencies are satisfied. Internally this runs the WorkGraph scheduler so graph metadata stays intact."
+                @click=${() => this.scheduleGraphNode(graph, node)}
+              >
+                ${this.schedulerBusyKey === this.nodeKey(graph, node.id)
+                  ? 'Dispatching...'
+                  : 'Dispatch'}
+              </button>
+              <a class="secondary-link" href=${this.backlogHash(item)}>Open backlog item</a>
+              <a class="secondary-link" href=${this.dispatchHash(item)}>Open dispatch queue</a>
+              <div class="detail-muted">
+                Graph-linked backlog items dispatch through the graph so dependencies and run
+                metadata stay intact.
+              </div>
+            </div>`
+          : nothing}
+        ${this.schedulerMessage
+          ? html`<div class="config-message">${this.schedulerMessage}</div>`
+          : nothing}
+        ${this.schedulerError
+          ? html`<div class="config-error">${this.schedulerError}</div>`
+          : nothing}
         <div class="detail-grid">
           ${this.renderDetailCell('Execution', view?.executionStatus)}
           ${this.renderDetailCell('Type', this.nodeKindLabel(node))}
@@ -609,6 +947,8 @@ export class WorkGraphPanel extends LitElement {
           ${this.renderDetailCell('Reference', node.reference?.ref)}
           ${this.renderDetailCell('Project', this.projectForNode(backlogById, node))}
           ${this.renderDetailCell('Flow', item?.flowType)}
+          ${this.renderDetailCell('Mode', item?.mode)}
+          ${this.renderDetailCell('Prepare', item?.prepareProfile)}
           ${this.renderDetailCell('Priority', item?.priority)}
           ${this.renderDetailCell('Slots', item?.allowedSlots?.join(', ') || 'Any eligible')}
           ${this.renderDetailCell(
@@ -633,14 +973,7 @@ export class WorkGraphPanel extends LitElement {
             </ul>`
           : nothing}
         ${view?.visibleCandidateSlots.length
-          ? html`<div class="candidate-slots">
-              ${view.visibleCandidateSlots.map(
-                (slot) =>
-                  html`<span class=${`badge ${slot.ready ? 'ready' : 'waiting'}`}
-                    >${slot.slotId}: ${slot.reason}</span
-                  >`,
-              )}
-            </div>`
+          ? this.renderGraphSlotRows(view.visibleCandidateSlots)
           : nothing}
         ${view ? this.renderDispatchConfig(view) : nothing}
         ${item?.notes ? html`<div class="detail-muted">${item.notes}</div>` : nothing}
@@ -747,6 +1080,7 @@ export class WorkGraphPanel extends LitElement {
           .value=${this.selectedProject}
           @change=${(event: Event) => {
             this.selectedProject = (event.target as HTMLSelectElement).value;
+            this.writeUrlState();
           }}
         >
           <option value="">All projects</option>

@@ -4,6 +4,7 @@ export * from './integrations/github-ref.js';
 export * from './pairing/index.js';
 export * from './recipe/index.js';
 export * from './recipes/step-io.js';
+export * from './roadmap/promotion-drafts.js';
 export * from './rpc/index.js';
 export * from './runs/evidence-summary.js';
 export * from './runs/family-iteration-ledger.js';

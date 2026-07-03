@@ -1,8 +1,10 @@
+import type { SafetyTier } from '../contracts/agents.js';
 import type { BacklogItem } from '../contracts/backlog.js';
 import type { OkResult } from '../contracts/common.js';
 import type { RoadmapItem, RoadmapItemSaveInput, RoadmapItemStage } from '../contracts/roadmap.js';
 
 import { Methods } from './registry.js';
+import type { TmuxWorkerRef } from './tmux.js';
 
 export const RoadmapMethods = {
   list: Methods.ROADMAP_LIST,
@@ -10,8 +12,16 @@ export const RoadmapMethods = {
   save: Methods.ROADMAP_SAVE,
   delete: Methods.ROADMAP_DELETE,
   refine: Methods.ROADMAP_REFINE,
+  refinementSessionGet: Methods.ROADMAP_REFINEMENT_SESSION_GET,
+  promptGet: Methods.ROADMAP_PROMPT_GET,
+  promotionDraftList: Methods.ROADMAP_PROMOTION_DRAFT_LIST,
+  promotionDraftGet: Methods.ROADMAP_PROMOTION_DRAFT_GET,
+  promotionDraftSave: Methods.ROADMAP_PROMOTION_DRAFT_SAVE,
   promote: Methods.ROADMAP_PROMOTE,
 } as const;
+
+export const DEFAULT_ROADMAP_REFINEMENT_RUNNER = 'codex';
+export const DEFAULT_ROADMAP_REFINEMENT_MODEL = 'gpt-5.5';
 
 export interface RoadmapListParams {
   project?: string;
@@ -57,6 +67,8 @@ export interface RoadmapRefineParams {
   model?: string;
   /** Optional shell command template to run for refinement. Supports {{runner}}, {{model}}, {{prompt_path}}, and {{item_file}}. */
   runnerCommand?: string;
+  /** Optional runner safety tier for the refinement launch. Defaults to sandboxed runner behavior. */
+  safetyTier?: SafetyTier;
   /** Default false for API safety; true creates or attaches the tmux session. */
   launch?: boolean;
   /** Default true: move rough/refined items into refining when preparing the prompt. */
@@ -68,14 +80,73 @@ export interface RoadmapRefineResult {
   promptPath: string;
   tmuxSession: string;
   tmuxTarget: string;
+  tmuxWorker?: TmuxWorkerRef;
   launched: boolean;
+  /** True when launch attached to an already-running refinement session. */
+  attachedExisting?: boolean;
   attachCommand: string;
   runner?: string;
   model?: string;
   runnerCommand?: string;
+  safetyTier?: SafetyTier;
 }
 
+export interface RoadmapRefinementSessionGetParams {
+  itemId: string;
+}
+
+export interface RoadmapRefinementSessionGetResult {
+  itemId: string;
+  tmuxSession: string;
+  tmuxTarget: string;
+  exists: boolean;
+  tmuxWorker?: TmuxWorkerRef;
+  attachCommand: string;
+}
+
+export interface RoadmapPromptGetParams {
+  path: string;
+}
+
+export interface RoadmapPromptGetResult {
+  path: string;
+  absolutePath: string;
+  content: string;
+}
+
+export interface RoadmapPromotionDraftListParams {
+  itemId: string;
+}
+
+export interface RoadmapPromotionDraftSummary {
+  path: string;
+  filename: string;
+  absolutePath: string;
+  contentHash: string;
+}
+
+export interface RoadmapPromotionDraftListResult {
+  drafts: RoadmapPromotionDraftSummary[];
+}
+
+export interface RoadmapPromotionDraftGetParams {
+  path: string;
+}
+
+export interface RoadmapPromotionDraftGetResult extends RoadmapPromotionDraftSummary {
+  content: string;
+}
+
+export interface RoadmapPromotionDraftSaveParams {
+  path: string;
+  content: string;
+  expectedHash?: string;
+}
+
+export type RoadmapPromotionDraftSaveResult = RoadmapPromotionDraftGetResult;
+
 export interface RoadmapPromoteSpecInput {
+  project?: string;
   title: string;
   body: string;
   flowType?: BacklogItem['flowType'];

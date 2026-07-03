@@ -2,6 +2,7 @@
 
 **Status:** Proposed
 **Date:** 2026-06-28
+**Updated:** 2026-07-03 (multi-project refinement/promotion draft attachment amendment)
 **Relates to:** [ADR-005](005-state-persistence.md), [ADR-011](011-structured-task-tracking.md), [ADR-013](013-gateway-mediated-orchestration.md), [ADR-024](024-run-lanes-and-run-family-model.md), [ADR-027](027-unified-gateway-state.md), [ADR-039](039-run-portable-bundles.md), [ADR-040](040-work-graph-orchestration.md), PR #95 backlog intake
 
 ## Context
@@ -19,6 +20,7 @@ The desired product direction is embedded project management:
 roadmap item (rough idea)
   -> interactive refinement
   -> roadmap item (refined spec)
+  -> request promotion -> draft backlog spec attachment(s)
   -> promote -> backlog markdown spec(s)
              -> dispatch -> runs/bundles
 ```
@@ -54,6 +56,7 @@ Core rules:
 3. **Backlog is execution intake.** A backlog item remains one dispatchable objective and should already read like a deployable Jira ticket. Large roadmap items fan out into multiple backlog items instead of becoming one overloaded backlog item.
 4. **RunFamily is execution lineage.** Refinement activity does not become a run family and does not enter dispatch queues.
 5. **Tags are shared.** Roadmap, backlog, and runs use one operator-facing tag vocabulary, reusing the existing `Run.tags` / `normalizeRunTags` protocol contract. No tag catalog is required for v1.
+6. **Target projects are explicit.** A roadmap item has one owning/coordinating `project`, but may refine and promote against multiple `targetProjects`. Promotion fan-out must create each backlog item in its target project, not blindly in the owner project.
 
 ## Entities
 
@@ -64,7 +67,8 @@ A markdown-backed planning item that spans rough idea through refined spec. The 
 Required fields:
 
 - `id`: stable `ri_<short>` identifier.
-- `project`: Farmslot `project.json` `name` value, or `global` / `unassigned`.
+- `project`: owning/coordinating Farmslot `project.json` `name` value, or `global` / `unassigned`. This controls where the roadmap markdown lives and which project refinement defaults apply.
+- `targetProjects`: optional list of concrete Farmslot project names that the idea should refine/promote into. This is the implementation fan-out set; it must not include `global` or `unassigned`.
 - `title`.
 - `stage`: `rough | refining | refined | promoted | parked | archived`.
 - `tags`: optional shared normalized tags.
@@ -97,9 +101,11 @@ Direct PR #95 backlog intake remains supported for Jira/GitHub/manual items that
 Promotion from roadmap to backlog requires:
 
 - `stage=refined`.
-- Each generated backlog markdown spec has a title and an `## Acceptance Criteria` section.
+- Each generated backlog markdown spec has a target project, title, and an `## Acceptance Criteria` section.
 - Dispatch notes or enough context to generate a worker task.
 - Operator confirmation of one objective vs decomposition into multiple backlog specs.
+
+For single-project items, the target project may default to `RoadmapItem.project` when it is concrete. For cross-client or cross-repo ideas, the operator must select `targetProjects` before refinement or promotion so the prompt can ask for project-specific backlog specs.
 
 ### Shared tags
 
@@ -116,6 +122,8 @@ In a multi-gateway/worktree setup, the operator must choose one canonical roadma
   projects/<project>/
     items/YYYY-MM-DD-short-slug.md
   inbox/items/YYYY-MM-DD-unassigned-short-slug.md
+  promotion-drafts/<roadmap-item-id>/
+    NN-<project>-<short-slug>.md
 ```
 
 A roadmap item keeps the same file as it matures. The stage lives in frontmatter; the markdown body evolves from rough note to refined spec.
@@ -125,6 +133,7 @@ A roadmap item keeps the same file as it matures. The stage lives in frontmatter
 id: ri_abc123
 kind: roadmap-item
 project: farmslot-farm
+targetProjects: ['metamask-mobile-farm', 'metamask-extension-farm']
 stage: refined
 tags: [roadmap, command-center]
 promotion: []
@@ -136,6 +145,8 @@ promotion: []
 
 ...
 ```
+
+Before promotion, a human promotion request may materialize draft backlog spec attachments under `promotion-drafts/<roadmap-item-id>/`. These are review artifacts: each file is a complete `kind: backlog-spec` markdown draft with target project, inherited tags, title, body, acceptance criteria, and provenance back to the parent roadmap item. They are not backlog items yet and do not enter dispatch queues.
 
 After promotion, the roadmap item can record lightweight links to created backlog specs. Do not use snapshot hashes in v1; the backlog spec copies the implementation-ready text it needs.
 
@@ -151,9 +162,13 @@ A user or agent creates a `RoadmapItem(stage=rough)` from quick-add text, pasted
 
 Captured items may be unassigned. They live under `inbox/items/` until assigned to a project.
 
+Captured items may also declare multiple target projects. The owner project answers "where is this idea coordinated?", while target projects answer "which repos/clients should receive dispatchable backlog items?" For example, a MetaMask core/controller follow-up may be owned by `global` or `metamask-core-farm` while targeting both `metamask-mobile-farm` and `metamask-extension-farm`.
+
 ### Refine
 
 The user can launch or attach a tmux runner from a roadmap item with a project-specific refinement prompt. The prompt is a per-project markdown template (`projects/<project>/templates/prompts/roadmap-refinement.md`, with explicit `project.json` path override when needed), rendered as the agent context before the tmux session opens. The runner helps turn the markdown into a refined item. V1 does not require a separate refinement-session database.
+
+If `targetProjects` contains more than one project, the rendered refinement prompt must include the target project list and ask the runner to produce project-specific dispatch boundaries. The refined markdown should make it clear which backlog spec belongs to which target project. The UI should support selecting several target projects before launching refinement, not require duplicating the rough idea manually.
 
 The gate to mark refined is explicit: the item must have a problem statement, proposed solution, non-goals, acceptance criteria, risks, and dispatch notes.
 
@@ -165,24 +180,29 @@ The user attaches tags and filters roadmap items by project, stage, tag, and tex
 
 Promotion is the only write path from roadmap to backlog markdown specs.
 
-Promotion to backlog is blocked until the roadmap item has a concrete project matching a `project.json` `name`; `global` and `unassigned` inbox items must be assigned first.
+Promotion to backlog is blocked until every backlog spec has a concrete target project matching a `project.json` `name`. A single-project item may default the target to `RoadmapItem.project` when that value is concrete. A `global` or `unassigned` roadmap owner may still promote when explicit concrete `targetProjects` are present.
 
 A refined roadmap item can promote to backlog as:
 
 1. One backlog markdown spec for a single deployable objective when no new manual ADR decision is needed.
-2. Multiple backlog markdown specs when the roadmap item spans several deployable objectives.
+2. Multiple backlog markdown specs when the roadmap item spans several deployable objectives or several target projects.
 
 If refinement shows that an ADR is needed, the user/developer handles that manually before creating backlog specs. The roadmap system can mention the need in markdown, but v1 does not create or update ADR files programmatically.
 
 The decomposition boundary is execution clarity: each generated backlog spec should be independently dispatchable, reviewable, and trackable, while preserving lightweight provenance back to the parent roadmap item. Generated backlog specs default to not auto-dispatching.
 
+Promotion review happens over draft backlog spec attachments, not over an implicit section hidden inside the roadmap item. The refinement runner may write a `## Backlog Drafts` section in the roadmap markdown as an intermediate authoring format, but `farmslot roadmap request-promotion` materializes those drafts into `.roadmap/promotion-drafts/<roadmap-item-id>/*.md` before asking the human to approve promotion. The Command Center promotion panel reviews those attachment files and only creates real backlog items/spec files after the operator presses Promote.
+
 Promotion writes lightweight provenance:
 
 - Roadmap item promotion notes record created backlog spec paths/IDs.
-- Backlog markdown records the originating roadmap item and inherited tags. Acceptance criteria live in the backlog markdown under `## Acceptance Criteria`, just like Jira/GitHub text is parsed today.
+- Backlog markdown records the originating roadmap item, target project, and inherited tags. Acceptance criteria live in the backlog markdown under `## Acceptance Criteria`, just like Jira/GitHub text is parsed today.
+- Promotion decision payloads may include draft spec attachment paths so clients can open the exact artifacts under review.
 - Any ADR reference is ordinary markdown text/tags added by the developer, not a typed field or generated artifact.
 
 Promotion should be explicit about whether it creates a new artifact or updates an existing draft. Avoid automatic duplicate backlog specs by showing existing promotion entries before creating more.
+
+Promotion request specs should carry an optional `project`. When omitted, the gateway may use the single concrete target project. When several target projects exist, omitting `project` is invalid because it risks creating all backlog items in the owner/coordinator project.
 
 ### Track
 
@@ -229,6 +249,13 @@ Run bundles may include roadmap/backlog provenance IDs and tags for context, but
 
 Add a `#roadmap` / backlog-adjacent Command Center surface with a list, markdown editor, tag filters, and promote actions. Backlog UI should show markdown specs, acceptance criteria, roadmap provenance, and tags. Run views can reuse the existing run tag chips.
 
+The roadmap capture/edit surface must distinguish:
+
+- **Owner project:** one project or `global`/`unassigned`, used for file placement and refinement defaults.
+- **Target projects:** zero or more concrete projects selected with the same chip-style selector as the global project filter.
+
+The refinement action should show the target project set before launching. The promotion editor should display one project selector per backlog spec and should be able to initialize one draft spec per selected target project.
+
 ## Non-goals
 
 - No live sync with Jira, GitHub Projects, or `~/dev/roadmap`.
@@ -263,3 +290,6 @@ Costs and risks:
 3. Add minimal roadmap list/get/save/promote gateway API over `.roadmap` markdown.
 4. Add Command Center roadmap list/editor/promote UI.
 5. Add tmux refinement launch as a helper that renders the project prompt template and starts the selected runner/model with that prompt context, not a new session database.
+6. Add `targetProjects` to roadmap protocol/storage/UI and include it in refinement prompts.
+7. Make roadmap promotion specs project-aware so one refined roadmap item can create ready backlog items across multiple target projects.
+8. Materialize promotion draft attachments under `.roadmap/promotion-drafts/<roadmap-item-id>/` before human promotion review.

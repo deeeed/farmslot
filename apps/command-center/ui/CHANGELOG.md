@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Improve roadmap, backlog, and work-graph planning UX with shared dispatch configuration controls and spec review modals.
 - Render interactive operator packets on run detail with artifact anchors and confirmed actions.
 - Add an experimental Slot View worker History tab that renders runner-owned transcript turns with run, model, and session metadata.
 - Active-development baseline; add user-facing changes here before release or package publication.

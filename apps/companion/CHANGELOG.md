@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Add quick idea capture in the companion copilot flow.
 - Render interactive operator packets on run detail with artifact anchors and auth-aware artifact links.
 - Wire local Google Play service account symlink for non-interactive EAS Android submit.
 - Route production Android submit to Play internal testing until the first production store release exists.

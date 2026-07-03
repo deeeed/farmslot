@@ -232,6 +232,7 @@ export class DecisionInbox extends LitElement {
 
   private async _resolve(decision: PendingDecision, actionId: string) {
     const decisionId = decision.id;
+    if (this._handleRoadmapPromotionAction(decision, actionId)) return;
     if (decision.type === 'improvement' && actionId === 'apply') {
       await this._applyImprovement(decision);
       return;
@@ -243,6 +244,39 @@ export class DecisionInbox extends LitElement {
     } catch {
       this._resolving = new Set([...this._resolving].filter((id) => id !== decisionId));
     }
+  }
+
+  private _handleRoadmapPromotionAction(decision: PendingDecision, actionId: string): boolean {
+    const context = decision.context as { kind?: string; route?: string } | undefined;
+    const payload = decision.payload as
+      | { kind?: string; route?: string; promotionRoute?: string }
+      | undefined;
+    if (context?.kind !== 'roadmap-promotion' && payload?.kind !== 'roadmap-promotion') {
+      return false;
+    }
+    const route = payload?.route ?? context?.route;
+    if (!route) return false;
+    if (actionId === 'review-promotion') {
+      location.hash = payload?.promotionRoute ?? withHashParam(route, 'promote', '1');
+      return true;
+    }
+    if (actionId === 'open-roadmap') {
+      location.hash = route;
+      return true;
+    }
+    if (actionId === 'revise-runner') {
+      location.hash = withHashParam(route, 'runnerPicker', '1');
+      return true;
+    }
+    return false;
+  }
+
+  private _handleDecisionKeydown(event: KeyboardEvent, decision: PendingDecision) {
+    if (!/^[1-9]$/.test(event.key)) return;
+    const action = decision.actions[Number(event.key) - 1];
+    if (!action) return;
+    event.preventDefault();
+    void this._resolve(decision, action.id);
   }
 
   private async _applyImprovement(decision: PendingDecision) {
@@ -531,6 +565,10 @@ export class DecisionInbox extends LitElement {
 
   private _workspaceCta(d: PendingDecision): { href: string; label: string } | null {
     const kind = (d.payload as { kind?: string } | undefined)?.kind;
+    const context = d.context as { kind?: string; route?: string } | undefined;
+    if (context?.kind === 'roadmap-promotion' && context.route) {
+      return { href: context.route, label: 'Open roadmap item' };
+    }
     if ((kind === 'review' || kind === 'ready') && d.runMeta?.runId) {
       return {
         href: `#run/${d.runMeta.runId}`,
@@ -649,7 +687,11 @@ export class DecisionInbox extends LitElement {
               const workspaceCta = this._workspaceCta(d);
 
               return html`
-                <div class="decision ${isNew ? 'new' : ''}">
+                <div
+                  class="decision ${isNew ? 'new' : ''}"
+                  tabindex="0"
+                  @keydown=${(event: KeyboardEvent) => this._handleDecisionKeydown(event, d)}
+                >
                   <div class="decision-top">
                     <div
                       class="type-icon"
@@ -671,36 +713,47 @@ export class DecisionInbox extends LitElement {
                   ${this._renderChecks(d)}
                   ${d.type === 'retrospective' ? this._renderRetrospectiveCard(d) : nothing}
                   ${d.type === 'improvement' ? this._renderImprovementCard(d) : nothing}
-                  ${workspaceCta
-                    ? html`
-                        <div class="decision-actions">
+                  <div class="decision-actions">
+                    ${workspaceCta
+                      ? html`
                           <a class="decision-open-link" href=${workspaceCta.href}
                             >${workspaceCta.label} →</a
                           >
+                        `
+                      : nothing}
+                    ${d.actions.map(
+                      (action, index) => html`
+                        <div class="decision-action">
+                          <button
+                            class="decision-btn"
+                            style=${actionStyle(action.style)}
+                            title=${action.description ?? ''}
+                            ?disabled=${isResolving}
+                            @click=${() => this._resolve(d, action.id)}
+                          >
+                            <span class="decision-shortcut">${index + 1}</span>
+                            ${action.label}
+                          </button>
+                          ${action.description
+                            ? html`<div class="decision-action-desc">${action.description}</div>`
+                            : nothing}
                         </div>
-                      `
-                    : html`
-                        <div class="decision-actions">
-                          ${d.actions.map(
-                            (action) => html`
-                              <button
-                                class="decision-btn"
-                                style=${actionStyle(action.style)}
-                                ?disabled=${isResolving}
-                                @click=${() => this._resolve(d, action.id)}
-                              >
-                                ${action.label}
-                              </button>
-                            `,
-                          )}
-                        </div>
-                      `}
+                      `,
+                    )}
+                  </div>
                 </div>
               `;
             })}
       </div>
     `;
   }
+}
+
+function withHashParam(hash: string, key: string, value: string): string {
+  const [route, query = ''] = hash.split('?');
+  const params = new URLSearchParams(query);
+  params.set(key, value);
+  return `${route}?${params.toString()}`;
 }
 
 declare global {

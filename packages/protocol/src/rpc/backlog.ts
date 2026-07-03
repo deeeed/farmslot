@@ -20,6 +20,7 @@ export const BacklogMethods = {
   dequeue: Methods.BACKLOG_DEQUEUE,
   autoDispatchTick: Methods.BACKLOG_AUTO_DISPATCH_TICK,
   upcoming: Methods.BACKLOG_UPCOMING,
+  specGet: Methods.BACKLOG_SPEC_GET,
 } as const;
 
 export interface BacklogCreateParams extends BacklogCreateInput {}
@@ -84,4 +85,14 @@ export interface BacklogUpcomingParams {
 export interface BacklogUpcomingResult {
   ready: BacklogItem[];
   blocked: BacklogBlockedItem[];
+}
+
+export interface BacklogSpecGetParams {
+  itemId: string;
+}
+export interface BacklogSpecGetResult {
+  itemId: string;
+  path: string;
+  content: string;
+  hash: string;
 }

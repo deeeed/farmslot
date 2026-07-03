@@ -218,6 +218,15 @@ export const decisionInboxStyles = css`
     display: flex;
     gap: ${unsafeCSS(spacing.sm)};
     margin-top: ${unsafeCSS(spacing.lg)};
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .decision-action {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 220px;
   }
 
   .retro-card {
@@ -293,6 +302,28 @@ export const decisionInboxStyles = css`
     border: 1px solid;
     cursor: pointer;
     transition: opacity 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .decision-shortcut {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    background: #ffffff14;
+    color: ${unsafeCSS(colors.textMuted)};
+    font-family: ${unsafeCSS(fonts.mono)};
+    font-size: 10px;
+  }
+
+  .decision-action-desc {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: 10px;
+    line-height: 1.3;
   }
 
   .decision-btn:hover {

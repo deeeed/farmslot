@@ -4,7 +4,10 @@ import { colors, fonts, radii, shadows, spacing } from '../../styles/theme-token
 
 export const workGraphPanelStyles = css`
   :host {
-    display: block;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 96px);
     padding: ${unsafeCSS(spacing.xxl)};
     color: ${unsafeCSS(colors.textPrimary)};
     font-family: ${unsafeCSS(fonts.mono)};
@@ -56,7 +59,10 @@ export const workGraphPanelStyles = css`
   }
 
   .graph {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     margin-bottom: ${unsafeCSS(spacing.xl)};
+    min-height: min(980px, calc(100vh - 150px));
     overflow: hidden;
   }
 
@@ -146,6 +152,7 @@ export const workGraphPanelStyles = css`
     display: grid;
     grid-template-columns: minmax(520px, 1.7fr) minmax(360px, 0.45fr);
     gap: ${unsafeCSS(spacing.lg)};
+    min-height: 0;
     padding: ${unsafeCSS(spacing.lg)};
   }
 
@@ -185,6 +192,12 @@ export const workGraphPanelStyles = css`
     overflow: hidden;
   }
 
+  .diagram-card {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+  }
+
   .diagram-toolbar,
   .side-head {
     display: flex;
@@ -219,7 +232,7 @@ export const workGraphPanelStyles = css`
   }
 
   .diagram-scroll {
-    min-height: 340px;
+    min-height: 0;
     overflow: auto;
     background:
       radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.13) 1px, transparent 0) 0 0 / 22px
@@ -265,7 +278,7 @@ export const workGraphPanelStyles = css`
     outline: none;
   }
 
-  .diagram-node rect {
+  .diagram-node .node-shell {
     fill: #0b1120;
     stroke-width: 1.5;
     filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.28));
@@ -275,20 +288,53 @@ export const workGraphPanelStyles = css`
       transform 120ms ease;
   }
 
-  .diagram-node.reference-node rect {
+  .diagram-node.reference-node .node-shell {
     fill: #171123;
     stroke-dasharray: 5 4;
+  }
+
+  .diagram-node.dimmed {
+    opacity: 0.42;
+  }
+
+  .diagram-node .selection-halo {
+    fill: none;
+    stroke: ${unsafeCSS(colors.accent)};
+    stroke-width: 2.5;
+    stroke-dasharray: 8 4;
+    filter: drop-shadow(0 0 14px ${unsafeCSS(colors.accent)}aa);
+    pointer-events: none;
+  }
+
+  .selected-label {
+    fill: ${unsafeCSS(colors.accent)};
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    paint-order: stroke;
+    stroke: #050816;
+    stroke-width: 4px;
+    stroke-linejoin: round;
+    text-transform: uppercase;
+    pointer-events: none;
   }
 
   .diagram-node.reference-node .diagram-node-meta {
     color: ${unsafeCSS(colors.accent)};
   }
 
-  .diagram-node:hover rect,
-  .diagram-node:focus-visible rect,
-  .diagram-node.selected rect {
+  .diagram-node:hover .node-shell,
+  .diagram-node:focus-visible .node-shell {
     fill: #111827;
     stroke-width: 2.5;
+  }
+
+  .diagram-node.selected .node-shell {
+    fill: #111827;
+    stroke: ${unsafeCSS(colors.accent)};
+    stroke-width: 4;
+    filter: drop-shadow(0 0 16px ${unsafeCSS(colors.accent)}88)
+      drop-shadow(0 12px 22px rgba(0, 0, 0, 0.45));
   }
 
   .diagram-node-content {
@@ -331,16 +377,19 @@ export const workGraphPanelStyles = css`
   }
 
   .side-panel {
-    align-self: start;
+    align-self: stretch;
     display: grid;
-    gap: ${unsafeCSS(spacing.md)};
-    padding-bottom: ${unsafeCSS(spacing.md)};
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
   }
 
   .side-content {
     display: grid;
+    align-content: start;
     gap: ${unsafeCSS(spacing.md)};
-    padding: 0 ${unsafeCSS(spacing.md)};
+    min-height: 0;
+    overflow: auto;
+    padding: ${unsafeCSS(spacing.md)};
   }
 
   .node-card,
@@ -447,13 +496,58 @@ export const workGraphPanelStyles = css`
     line-height: 1.5;
   }
 
-  .candidate-slots,
   .config-head,
   .config-grid,
   .slot-options {
     display: flex;
     flex-wrap: wrap;
     gap: ${unsafeCSS(spacing.sm)};
+  }
+
+  .candidate-slots {
+    display: grid;
+    gap: 2px;
+  }
+
+  .candidate-slots-panel {
+    border: 1px solid ${unsafeCSS(colors.bgCard)};
+    border-radius: ${unsafeCSS(radii.md)};
+    background: ${unsafeCSS(colors.bgInput)};
+  }
+
+  .candidate-slots-panel summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: ${unsafeCSS(spacing.sm)};
+    cursor: pointer;
+    padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+    color: ${unsafeCSS(colors.textSecondary)};
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+    list-style: none;
+  }
+
+  .candidate-slots-panel summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .candidate-slots-panel summary::before {
+    content: 'Show';
+    color: ${unsafeCSS(colors.accent)};
+    font-weight: 700;
+  }
+
+  .candidate-slots-panel[open] summary::before {
+    content: 'Hide';
+  }
+
+  .candidate-slots-panel summary span {
+    color: ${unsafeCSS(colors.textMuted)};
+  }
+
+  .candidate-slots-panel .candidate-slots {
+    border-top: 1px solid ${unsafeCSS(colors.bgCard)};
+    padding: ${unsafeCSS(spacing.sm)};
   }
 
   .config-editor {
@@ -470,9 +564,64 @@ export const workGraphPanelStyles = css`
     justify-content: space-between;
   }
 
+  .config-edit-button,
+  .primary-action,
+  .secondary-link,
+  .dispatch-config-modal button.secondary {
+    justify-self: start;
+    border: 1px solid ${unsafeCSS(colors.bgCardHover)};
+    border-radius: ${unsafeCSS(radii.sm)};
+    background: transparent;
+    color: ${unsafeCSS(colors.textSecondary)};
+    padding: 6px 10px;
+    font: inherit;
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+    cursor: pointer;
+  }
+
+  .config-edit-button:hover,
+  .secondary-link:hover,
+  .dispatch-config-modal button.secondary:hover {
+    border-color: ${unsafeCSS(colors.accent)}66;
+    color: ${unsafeCSS(colors.textPrimary)};
+  }
+
+  .primary-action {
+    border-color: ${unsafeCSS(colors.accent)};
+    background: ${unsafeCSS(colors.accent)};
+    color: ${unsafeCSS(colors.bgBase)};
+    font-weight: 800;
+    box-shadow: 0 0 0 1px ${unsafeCSS(colors.accent)}33;
+  }
+
+  .primary-action:hover {
+    filter: brightness(1.08);
+  }
+
+  .secondary-link {
+    text-decoration: none;
+  }
+
+  .dispatch-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: ${unsafeCSS(spacing.sm)};
+  }
+
   .config-error {
     color: ${unsafeCSS(colors.statusFail)};
     font-size: ${unsafeCSS(fonts.sizeXs)};
+  }
+
+  .config-message {
+    border: 1px solid ${unsafeCSS(colors.statusOk)}55;
+    border-radius: ${unsafeCSS(radii.md)};
+    padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+    color: ${unsafeCSS(colors.statusOk)};
+    background: ${unsafeCSS(colors.statusOk)}12;
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+    line-height: 1.45;
   }
 
   .config-field,
@@ -486,6 +635,17 @@ export const workGraphPanelStyles = css`
   .config-check {
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
+  }
+
+  .config-check span {
+    display: grid;
+    gap: 3px;
+  }
+
+  .config-check small {
+    color: ${unsafeCSS(colors.textMuted)};
+    font-size: ${unsafeCSS(fonts.sizeXs)};
+    line-height: 1.4;
   }
 
   .config-field input,
@@ -518,6 +678,50 @@ export const workGraphPanelStyles = css`
     font: inherit;
     font-size: ${unsafeCSS(fonts.sizeXs)};
     cursor: pointer;
+  }
+
+  .config-edit-button:disabled,
+  .primary-action:disabled,
+  .slot-picker button:disabled,
+  .dispatch-config-modal button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    padding: ${unsafeCSS(spacing.lg)};
+    background: rgb(0 0 0 / 0.58);
+  }
+
+  .dispatch-config-modal {
+    width: min(920px, calc(100vw - 32px));
+    max-height: min(760px, calc(100vh - 32px));
+    overflow: auto;
+    border: 1px solid ${unsafeCSS(colors.accent)}55;
+    border-radius: ${unsafeCSS(radii.md)};
+    background: ${unsafeCSS(colors.bgCard)};
+    box-shadow: 0 20px 60px rgb(0 0 0 / 0.35);
+    color: ${unsafeCSS(colors.textPrimary)};
+    display: grid;
+    gap: ${unsafeCSS(spacing.md)};
+    padding: ${unsafeCSS(spacing.lg)};
+  }
+
+  .dispatch-config-modal header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: ${unsafeCSS(spacing.md)};
+  }
+
+  .dispatch-config-modal h3,
+  .dispatch-config-modal p {
+    margin: 0;
   }
 
   .slot-option {

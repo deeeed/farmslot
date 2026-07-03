@@ -195,8 +195,10 @@ async function scanDirForDecisions(dir: string, results: PendingDecision[]): Pro
               id: a.id,
               label: a.label,
               style: a.style || 'primary',
+              ...(typeof a.description === 'string' ? { description: a.description } : {}),
             })),
             createdAt: raw.created_at || new Date().toISOString(),
+            ...(raw.payload ? { payload: raw.payload } : {}),
           });
         } catch {
           /* invalid json */

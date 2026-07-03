@@ -31,6 +31,7 @@ import {
   type ChatSuggestedAction,
   Events,
   Methods,
+  type RoadmapSaveResult,
 } from '@farmslot/protocol';
 
 import { ensureMicrophonePermission } from '../../lib/audio-permissions';
@@ -71,6 +72,7 @@ const QUICK_PROMPTS = [
   'Which PRs need review or completion?',
   'Find the safest next action for the current fleet.',
 ];
+type ComposerMode = 'copilot' | 'idea';
 
 export default function CopilotScreen() {
   const { draft: routeDraftParam } = useLocalSearchParams<{ draft?: string | string[] }>();
@@ -84,6 +86,8 @@ export default function CopilotScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [savingIdea, setSavingIdea] = useState(false);
+  const [composerMode, setComposerMode] = useState<ComposerMode>('copilot');
   const [streamingText, setStreamingText] = useState('');
   const [streamingStatus, setStreamingStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -359,7 +363,41 @@ export default function CopilotScreen() {
     }
   }, [client, sending, status]);
 
-  const disabled = status !== 'connected' || !client || sending;
+  const saveIdea = useCallback(async () => {
+    const body = input.trim();
+    if (!client || status !== 'connected' || !body || savingIdea) return;
+    setSavingIdea(true);
+    setError(null);
+    try {
+      const result = await client.request<RoadmapSaveResult>(Methods.ROADMAP_SAVE, {
+        item: {
+          project: 'unassigned',
+          title: ideaTitleFromBody(body),
+          stage: 'rough',
+          tags: ['companion-capture'],
+          source: { kind: 'external', ref: 'companion' },
+          body,
+        },
+      });
+      setInput('');
+      const systemMessage: ChatMessage = {
+        id: `mobile-idea-${result.item.id}-${Date.now()}`,
+        role: 'system',
+        content: `Saved rough idea: ${result.item.title}`,
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((current) => [...current, systemMessage]);
+      scrollToBottom();
+    } catch (err) {
+      setError(`Failed to save roadmap idea: ${(err as Error).message}`);
+    } finally {
+      setSavingIdea(false);
+    }
+  }, [client, input, savingIdea, scrollToBottom, status]);
+
+  const chatDisabled = status !== 'connected' || !client || sending;
+  const ideaDisabled = status !== 'connected' || !client || savingIdea;
+  const composerDisabled = composerMode === 'idea' ? ideaDisabled : chatDisabled;
 
   const startVoiceRecording = useCallback(async () => {
     if (voiceControlDisabled) return;
@@ -458,7 +496,7 @@ export default function CopilotScreen() {
             <Text style={styles.eyebrow}>Gateway Co-Pilot</Text>
             <Text style={styles.title}>Command the fleet</Text>
           </View>
-          <Pressable style={styles.clearButton} onPress={clearChat} disabled={disabled}>
+          <Pressable style={styles.clearButton} onPress={clearChat} disabled={chatDisabled}>
             <Text style={styles.clearButtonText}>New</Text>
           </Pressable>
         </View>
@@ -505,22 +543,66 @@ export default function CopilotScreen() {
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <View style={[styles.composer, { paddingBottom: insets.bottom + spacing.sm }]}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.quickPromptRail}
-        >
-          {QUICK_PROMPTS.map((prompt) => (
-            <Pressable
-              key={prompt}
-              style={[styles.quickPrompt, disabled && styles.disabled]}
-              disabled={disabled}
-              onPress={() => void sendPrompt(prompt)}
+        <View style={styles.modeToggle}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: composerMode === 'copilot' }}
+            style={[styles.modeButton, composerMode === 'copilot' && styles.modeButtonActive]}
+            onPress={() => setComposerMode('copilot')}
+          >
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={16}
+              color={composerMode === 'copilot' ? '#fff' : colors.textSecondary}
+            />
+            <Text
+              style={[
+                styles.modeButtonText,
+                composerMode === 'copilot' && styles.modeButtonTextActive,
+              ]}
             >
-              <Text style={styles.quickPromptText}>{prompt}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+              Co-Pilot
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: composerMode === 'idea' }}
+            style={[styles.modeButton, composerMode === 'idea' && styles.modeButtonActive]}
+            onPress={() => setComposerMode('idea')}
+          >
+            <Ionicons
+              name="bulb-outline"
+              size={16}
+              color={composerMode === 'idea' ? '#fff' : colors.textSecondary}
+            />
+            <Text
+              style={[
+                styles.modeButtonText,
+                composerMode === 'idea' && styles.modeButtonTextActive,
+              ]}
+            >
+              Idea
+            </Text>
+          </Pressable>
+        </View>
+        {composerMode === 'copilot' ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.quickPromptRail}
+          >
+            {QUICK_PROMPTS.map((prompt) => (
+              <Pressable
+                key={prompt}
+                style={[styles.quickPrompt, chatDisabled && styles.disabled]}
+                disabled={chatDisabled}
+                onPress={() => void sendPrompt(prompt)}
+              >
+                <Text style={styles.quickPromptText}>{prompt}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : null}
         <View
           style={styles.voiceComposerShell}
           onLayout={(event) => setVoicePanelWidth(event.nativeEvent.layout.width)}
@@ -568,11 +650,15 @@ export default function CopilotScreen() {
                 value={input}
                 onChangeText={setInput}
                 placeholder={
-                  status === 'connected' ? 'Ask gateway intelligence…' : 'Connect first…'
+                  status === 'connected'
+                    ? composerMode === 'idea'
+                      ? 'Capture rough idea…'
+                      : 'Ask gateway intelligence…'
+                    : 'Connect first…'
                 }
                 placeholderTextColor={colors.textMuted}
                 multiline
-                editable={!disabled && !voiceBusy}
+                editable={!composerDisabled && !voiceBusy}
                 style={styles.input}
               />
               {input.trim() ? (
@@ -587,14 +673,24 @@ export default function CopilotScreen() {
                 </Pressable>
               ) : null}
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  composerMode === 'idea' ? 'Save rough roadmap idea' : 'Send Co-Pilot command'
+                }
                 style={[
                   styles.sendButton,
-                  (!input.trim() || disabled || voiceBusy) && styles.disabled,
+                  (!input.trim() || composerDisabled || voiceBusy) && styles.disabled,
                 ]}
-                disabled={!input.trim() || disabled || voiceBusy}
-                onPress={() => void sendPrompt(input)}
+                disabled={!input.trim() || composerDisabled || voiceBusy}
+                onPress={() => (composerMode === 'idea' ? void saveIdea() : void sendPrompt(input))}
               >
-                <Ionicons name="send" size={18} color="#fff" />
+                <Ionicons
+                  name={
+                    savingIdea ? 'ellipsis-horizontal' : composerMode === 'idea' ? 'add' : 'send'
+                  }
+                  size={18}
+                  color="#fff"
+                />
               </Pressable>
             </View>
           )}
@@ -681,6 +777,15 @@ function compactActionParams(params: Record<string, unknown>): string {
 
 function routeParamString(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
+}
+
+function ideaTitleFromBody(body: string): string {
+  const firstLine = body
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstLine) return `Companion idea ${new Date().toISOString().slice(0, 10)}`;
+  return firstLine.length > 90 ? `${firstLine.slice(0, 87)}...` : firstLine;
 }
 
 function formatVoiceElapsed(ms: number): string {
@@ -824,6 +929,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
   },
+  modeToggle: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.bgInput,
+    borderColor: colors.bgCardHover,
+    borderRadius: 999,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    padding: 3,
+  },
+  modeButton: {
+    alignItems: 'center',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  modeButtonActive: { backgroundColor: colors.accent },
+  modeButtonText: {
+    color: colors.textSecondary,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+  },
+  modeButtonTextActive: { color: '#fff' },
   quickPromptRail: { flexGrow: 0 },
   quickPrompt: {
     backgroundColor: colors.bgCard,

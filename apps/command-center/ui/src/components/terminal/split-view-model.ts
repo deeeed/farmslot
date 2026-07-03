@@ -48,14 +48,32 @@ export function parseWorkerRefs(raw: string | null): TmuxWorkerRef[] {
   if (!raw) return [];
   const parsed: unknown = JSON.parse(raw);
   if (!Array.isArray(parsed)) return [];
-  return parsed.filter(
-    (item): item is TmuxWorkerRef =>
-      typeof item === 'object' &&
-      item !== null &&
-      typeof (item as TmuxWorkerRef).nodeId === 'string' &&
-      typeof (item as TmuxWorkerRef).session === 'string' &&
-      typeof (item as TmuxWorkerRef).target === 'string',
+  return parsed.filter(isTmuxWorkerRef);
+}
+
+export function isTmuxWorkerRef(value: unknown): value is TmuxWorkerRef {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as TmuxWorkerRef).nodeId === 'string' &&
+    typeof (value as TmuxWorkerRef).session === 'string' &&
+    typeof (value as TmuxWorkerRef).target === 'string'
   );
+}
+
+export function encodeWorkerRouteParam(ref: TmuxWorkerRef): string {
+  return JSON.stringify(ref);
+}
+
+export function parseWorkerRouteParam(raw: string | null): TmuxWorkerRef | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isTmuxWorkerRef(parsed) ? parsed : null;
+  } catch {
+    // Route state is optional and user-editable; malformed worker params are ignored.
+    return null;
+  }
 }
 
 export function parseWatchItems(raw: string | null): TmuxWorkerWatchItem[] {

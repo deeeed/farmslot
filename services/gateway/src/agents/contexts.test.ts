@@ -25,7 +25,7 @@ import {
   upsertAgentContext,
 } from './contexts.js';
 
-const testPoolFile = path.join(poolDir, `agent-contexts-${process.pid}.json`);
+const testPoolFile = path.join(poolDir, `agent-contexts-fixture-${process.pid}.json`);
 
 before(() => {
   mkdirSync(poolDir, { recursive: true });

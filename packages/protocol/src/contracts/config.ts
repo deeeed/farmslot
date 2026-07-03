@@ -82,6 +82,8 @@ export interface ProjectRoadmapConfig {
   model?: string;
   /** Optional command template launched for refinement. Supports {{runner}}, {{model}}, {{prompt_path}}, and {{item_file}}. */
   runnerCommand?: string;
+  /** Optional executable prefix for Farmslot CLI commands, e.g. `farmslot`, `yarn workspace @farmslot/cli farmslot`, or `yarn dlx ... farmslot`. */
+  farmslotCommand?: string;
 }
 
 // ─── Prepare profiles (ADR-037) ───

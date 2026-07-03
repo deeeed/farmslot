@@ -816,115 +816,6 @@ export const dispatchWizardStyles = css`
     gap: 2px;
   }
 
-  .candidate-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
-    background: ${unsafeCSS(colors.bgCard)};
-    border: 1px solid #2a2a44;
-    border-radius: 3px;
-    font-family: ${unsafeCSS(fonts.mono)};
-    font-size: 11px;
-    color: ${unsafeCSS(colors.textSecondary)};
-    cursor: pointer;
-    transition:
-      border-color 0.12s,
-      background 0.12s;
-    text-align: left;
-  }
-
-  .candidate-row:hover {
-    border-color: ${unsafeCSS(colors.accent)}66;
-    color: ${unsafeCSS(colors.textPrimary)};
-  }
-
-  .candidate-row:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-  }
-
-  .candidate-row:disabled:hover {
-    border-color: #2a2a44;
-    color: ${unsafeCSS(colors.textSecondary)};
-  }
-
-  .candidate-row.selected {
-    border-color: ${unsafeCSS(colors.accent)};
-    background: ${unsafeCSS(colors.accent)}10;
-  }
-
-  .cand-rank {
-    width: 20px;
-    color: ${unsafeCSS(colors.textMuted)};
-    font-size: 10px;
-  }
-
-  .candidate-row.selected .cand-rank {
-    color: ${unsafeCSS(colors.accent)};
-    font-weight: 600;
-  }
-
-  .cand-id {
-    width: 112px;
-    color: ${unsafeCSS(colors.textPrimary)};
-    flex-shrink: 0;
-  }
-
-  .cand-summary {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    align-items: flex-start;
-  }
-
-  .cand-branch {
-    font-size: 12px;
-    line-height: 1.35;
-    color: ${unsafeCSS(colors.textPrimary)};
-    width: 100%;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  .cand-branch.stale {
-    color: ${unsafeCSS(colors.statusWarn)};
-  }
-
-  .cand-task {
-    font-size: 10px;
-    color: ${unsafeCSS(colors.textMuted)};
-    line-height: 1.3;
-    width: 100%;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  .cand-meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-    align-self: flex-start;
-    padding-top: 1px;
-  }
-
-  .cand-lifecycle {
-    color: ${unsafeCSS(colors.textMuted)};
-    font-size: 10px;
-    width: 56px;
-  }
-  .cand-score {
-    color: ${unsafeCSS(colors.textMuted)};
-    font-size: 10px;
-    width: 20px;
-    text-align: right;
-  }
-
   .cand-reuse {
     font-size: 9px;
     padding: 1px 5px;
@@ -943,15 +834,6 @@ export const dispatchWizardStyles = css`
     border: 1px solid ${unsafeCSS(colors.statusOk)}55;
     color: ${unsafeCSS(colors.statusOk)};
     white-space: nowrap;
-  }
-
-  .candidate-row.nudge-eligible {
-    border-color: ${unsafeCSS(colors.statusWarn)}55;
-    background: ${unsafeCSS(colors.statusWarn)}0a;
-  }
-  .candidate-row.nudge-eligible.selected {
-    border-color: ${unsafeCSS(colors.statusWarn)};
-    background: ${unsafeCSS(colors.statusWarn)}1a;
   }
 
   .cand-nudge-badge {

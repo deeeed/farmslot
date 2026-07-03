@@ -2,6 +2,8 @@ import { html, nothing } from 'lit';
 
 import { DEFAULT_BRANCH, type DispatchCandidatesResult, type SlotStatus } from '@farmslot/protocol';
 
+import '../shared/slot-choice-row.js';
+
 import { colors } from '../../styles/theme-tokens.js';
 
 type DispatchCandidate = DispatchCandidatesResult['candidates'][number];
@@ -129,11 +131,17 @@ function renderCandidateRow(
     : '';
 
   return html`
-    <button
-      class="candidate-row ${isSelected ? 'selected' : ''} ${candidate.nudgeEligible
-        ? 'nudge-eligible'
-        : ''}"
+    <slot-choice-row
+      .rank=${isSelected ? '#1' : dispatchable ? `#${index + 1}` : '--'}
+      .slotId=${candidate.slotId}
+      .branch=${candidate.branch || DEFAULT_BRANCH}
+      .task=${taskLabel}
+      .lifecycle=${candidate.lifecycle}
+      .score=${String(candidate.score)}
+      ?selected=${isSelected}
       ?disabled=${!dispatchable}
+      ?stale=${!candidate.onMain}
+      ?warning=${candidate.nudgeEligible}
       title=${dispatchable
         ? `Select ${candidate.slotId}${titleSuffix}`
         : `${candidate.slotId} is ${candidate.lifecycle}; use Queue or choose a free slot`}
@@ -141,30 +149,20 @@ function renderCandidateRow(
         if (dispatchable) ctx.selectSlot(candidate.slotId);
       }}
     >
-      <span class="cand-rank">${isSelected ? '#1' : dispatchable ? `#${index + 1}` : '--'}</span>
-      <span class="cand-id">${candidate.slotId}</span>
       ${candidate.nudgeEligible
-        ? html`<span class="cand-nudge-badge">REUSE WORKER</span>`
+        ? html`<span slot="badges" class="cand-nudge-badge">REUSE WORKER</span>`
         : nothing}
       ${candidate.familyAffinity && !candidate.nudgeEligible
-        ? html`<span class="cand-affinity">same family</span>`
+        ? html`<span slot="badges" class="cand-affinity">same family</span>`
         : nothing}
       ${hadTask && !candidate.nudgeEligible
-        ? html`<span class="cand-reuse">same task</span>`
+        ? html`<span slot="badges" class="cand-reuse">same task</span>`
         : nothing}
-      <span class="cand-summary">
-        <span class="cand-branch ${candidate.onMain ? '' : 'stale'}"
-          >${candidate.branch || DEFAULT_BRANCH}</span
-        >
-        ${taskLabel ? html`<span class="cand-task">${taskLabel}</span>` : nothing}
-        ${meta ? renderNudgeChips(meta) : nothing}
-      </span>
-      <span class="cand-meta">
-        ${candidate.nudgeEligible
-          ? renderNudgeActions(ctx, candidate, canNudge, intent)
-          : renderFreeSlotMeta(candidate)}
-      </span>
-    </button>
+      ${meta ? html`<span slot="summary-extra">${renderNudgeChips(meta)}</span>` : nothing}
+      ${candidate.nudgeEligible
+        ? html`<span slot="meta">${renderNudgeActions(ctx, candidate, canNudge, intent)}</span>`
+        : nothing}
+    </slot-choice-row>
   `;
 }
 
@@ -196,12 +194,5 @@ function renderNudgeActions(
         Fresh
       </button>
     </span>
-  `;
-}
-
-function renderFreeSlotMeta(candidate: DispatchCandidate) {
-  return html`
-    <span class="cand-lifecycle">${candidate.lifecycle}</span>
-    <span class="cand-score">${candidate.score}</span>
   `;
 }

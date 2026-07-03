@@ -16,14 +16,22 @@ set -euo pipefail
 
 PORT="${FARMSLOT_CDP_PORT:-9323}"
 PROFILE="${FARMSLOT_CDP_PROFILE:-$HOME/.chrome-farmslot}"
-URL="${FARMSLOT_UI_URL:-http://localhost:5174/}"
 CHROME="${FARMSLOT_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 HEADLESS="${FARMSLOT_CDP_HEADLESS:-0}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FARMSLOT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+DEFAULT_UI_PORT="5174"
+if [[ -f "$FARMSLOT_ROOT/.env.ports" ]]; then
+  configured_vite_port="$(awk -F= '/^VITE_PORT=/ { print $2; exit }' "$FARMSLOT_ROOT/.env.ports" | tr -d '[:space:]')"
+  if [[ "$configured_vite_port" =~ ^[0-9]+$ ]]; then
+    DEFAULT_UI_PORT="$configured_vite_port"
+  fi
+fi
+URL="${FARMSLOT_UI_URL:-http://localhost:${DEFAULT_UI_PORT}/}"
 
 if curl -sf "http://localhost:${PORT}/json/version" >/dev/null 2>&1; then
   echo "[debug-chrome] CDP already listening on :${PORT} — reusing existing session"
   echo "[debug-chrome] endpoints:  http://localhost:${PORT}/json"
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   if [[ -n "$URL" ]]; then
     url_js="$(node -e 'console.log(JSON.stringify(process.argv[1]))' "$URL")"
     FARMSLOT_CDP_PORT="$PORT" node "$SCRIPT_DIR/cdp.mjs" eval "-" \

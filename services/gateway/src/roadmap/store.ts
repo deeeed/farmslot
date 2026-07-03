@@ -1,11 +1,16 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
 import {
+  DEFAULT_ROADMAP_REFINEMENT_MODEL,
+  DEFAULT_ROADMAP_REFINEMENT_RUNNER,
   normalizeRunTags,
+  type PoolConfig,
   ROADMAP_ITEM_STAGES,
   ROADMAP_SOURCE_KINDS,
   type RoadmapDeleteParams,
@@ -20,12 +25,24 @@ import {
   type RoadmapPromoteParams,
   type RoadmapPromoteResult,
   type RoadmapPromoteSpecInput,
+  type RoadmapPromotionDraftGetParams,
+  type RoadmapPromotionDraftGetResult,
+  type RoadmapPromotionDraftListParams,
+  type RoadmapPromotionDraftListResult,
+  type RoadmapPromotionDraftSaveParams,
+  type RoadmapPromotionDraftSaveResult,
   type RoadmapPromotionEntry,
+  type RoadmapPromptGetParams,
+  type RoadmapPromptGetResult,
+  type RoadmapRefinementSessionGetParams,
+  type RoadmapRefinementSessionGetResult,
   type RoadmapRefineParams,
   type RoadmapRefineResult,
   type RoadmapSaveParams,
   type RoadmapSaveResult,
   type RoadmapSource,
+  type SafetyTier,
+  type TmuxWorkerRef,
 } from '@farmslot/protocol';
 
 import {
@@ -35,8 +52,10 @@ import {
   markBacklogItemReady,
   updateBacklogItem,
 } from '../backlog/store.js';
+import { isLocal } from '../core/exec.js';
 import { loadPromptTemplate } from '../core/prompt-templates.js';
-import { farmslotRoot, loadProjectConfig } from '../fleet/state.js';
+import { farmslotRoot, loadPoolConfigs, loadProjectConfig } from '../fleet/state.js';
+import { runnerFlagsForTier } from '../runners/registry.js';
 
 const VALID_STAGES = new Set<RoadmapItemStage>(ROADMAP_ITEM_STAGES);
 const VALID_SOURCE_KINDS = new Set<string>(ROADMAP_SOURCE_KINDS);
@@ -46,6 +65,7 @@ const BACKLOG_SPEC_ROOT =
 const REFINEMENT_PROMPT_ROOT =
   process.env.FARMSLOT_ROADMAP_REFINEMENT_PROMPT_DIR ??
   path.join(ROADMAP_ROOT, 'refinement-prompts');
+const PROMOTION_DRAFT_ROOT = path.join(ROADMAP_ROOT, 'promotion-drafts');
 const execFileAsync = promisify(execFile);
 const DEFAULT_PROMPT_PROJECT = 'farmslot-farm';
 const ROADMAP_REFINEMENT_PROMPT_TEMPLATE = 'roadmap-refinement.md';
@@ -55,6 +75,7 @@ type RoadmapMeta = {
   id: string;
   kind: 'roadmap-item';
   project: string;
+  targetProjects?: string[];
   title: string;
   stage: RoadmapItemStage;
   tags?: string[];
@@ -128,6 +149,24 @@ function normalizeProject(value: string | undefined): string {
   return project;
 }
 
+function normalizeTargetProjects(value: string[] | undefined): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value
+        .map((project) => project.trim())
+        .filter(Boolean)
+        .map((project) => {
+          if (project === 'global' || project === 'unassigned') {
+            throw new Error(`Roadmap target project must be concrete: ${project}`);
+          }
+          assertSafePathSegment('roadmap target project', project);
+          return project;
+        }),
+    ),
+  ].sort();
+}
+
 function normalizeStage(value: string | undefined): RoadmapItemStage {
   const stage = value ?? 'rough';
   if (!VALID_STAGES.has(stage as RoadmapItemStage))
@@ -156,6 +195,7 @@ function normalizePromotion(
     .map((entry) => ({
       ...(entry.backlogItemId?.trim() ? { backlogItemId: entry.backlogItemId.trim() } : {}),
       ...(entry.specPath?.trim() ? { specPath: entry.specPath.trim() } : {}),
+      ...(entry.project?.trim() ? { project: normalizeProject(entry.project) } : {}),
       createdAt: entry.createdAt.trim(),
     }));
   return entries.length > 0 ? entries : undefined;
@@ -247,6 +287,37 @@ async function allocateRefinementPromptPath(item: RoadmapItem): Promise<string> 
   );
 }
 
+async function latestRefinementPromptPath(item: Pick<RoadmapItem, 'id'>): Promise<string | null> {
+  const idSlug = slugify(item.id);
+  const files = (await collectMarkdownFiles(REFINEMENT_PROMPT_ROOT))
+    .filter((file) => path.basename(file).includes(`-${idSlug}-`))
+    .sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
+  return files[0] ? repoRelative(files[0]) : null;
+}
+
+function resolveRefinementPromptPath(promptPath: string): string {
+  const absolutePath = path.resolve(farmslotRoot, promptPath);
+  const root = path.resolve(REFINEMENT_PROMPT_ROOT);
+  if (!absolutePath.startsWith(`${root}${path.sep}`) || !absolutePath.endsWith('.md')) {
+    throw new Error('Roadmap prompt path must point to a refinement prompt markdown file');
+  }
+  return absolutePath;
+}
+
+function promotionDraftDir(itemId: string): string {
+  assertSafePathSegment('roadmap item id', itemId);
+  return path.join(PROMOTION_DRAFT_ROOT, itemId);
+}
+
+function resolvePromotionDraftPath(draftPath: string): string {
+  const absolutePath = path.resolve(farmslotRoot, draftPath);
+  const root = path.resolve(PROMOTION_DRAFT_ROOT);
+  if (!absolutePath.startsWith(`${root}${path.sep}`) || !absolutePath.endsWith('.md')) {
+    throw new Error('Roadmap promotion draft path must point to a promotion draft markdown file');
+  }
+  return absolutePath;
+}
+
 function parseFrontmatter(raw: string, filePath: string): { meta: RoadmapMeta; body: string } {
   if (!raw.startsWith('---\n')) throw new Error(`Roadmap item missing frontmatter: ${filePath}`);
   const end = raw.indexOf('\n---', 4);
@@ -283,6 +354,9 @@ function parseFrontmatter(raw: string, filePath: string): { meta: RoadmapMeta; b
   const promotion = Array.isArray(parsed.promotion)
     ? normalizePromotion(parsed.promotion as RoadmapPromotionEntry[])
     : undefined;
+  const targetProjects = normalizeTargetProjects(
+    Array.isArray(parsed.targetProjects) ? parsed.targetProjects.map(String) : undefined,
+  );
   return {
     meta: {
       id: parsed.id,
@@ -291,6 +365,7 @@ function parseFrontmatter(raw: string, filePath: string): { meta: RoadmapMeta; b
       title: parsed.title,
       stage,
       ...(tags.length > 0 ? { tags } : {}),
+      ...(targetProjects.length > 0 ? { targetProjects } : {}),
       source,
       ...(promotion ? { promotion } : {}),
       createdAt: parsed.createdAt,
@@ -305,6 +380,7 @@ function renderMarkdown(meta: RoadmapMeta, body: string): string {
     ['id', meta.id],
     ['kind', meta.kind],
     ['project', meta.project],
+    ['targetProjects', meta.targetProjects ?? []],
     ['title', meta.title],
     ['stage', meta.stage],
     ['tags', meta.tags ?? []],
@@ -335,7 +411,12 @@ function hydrateItem(
 async function readItemFile(absolutePath: string): Promise<RoadmapItem> {
   const raw = await readFile(absolutePath, 'utf-8');
   const { meta, body } = parseFrontmatter(raw, repoRelative(absolutePath));
-  return hydrateItem(meta, body, absolutePath, raw);
+  const item = hydrateItem(meta, body, absolutePath, raw);
+  const refinementPromptPath = await latestRefinementPromptPath(item);
+  return {
+    ...item,
+    ...(refinementPromptPath ? { refinementPromptPath } : {}),
+  };
 }
 
 async function collectMarkdownFiles(dir: string): Promise<string[]> {
@@ -401,7 +482,13 @@ export async function listRoadmapItems(params: RoadmapListParams = {}): Promise<
   const tagFilter = normalizeRunTags(params.tags);
   const all = await loadAllItems();
   const items = all.filter((item) => {
-    if (params.project && item.project !== params.project) return false;
+    if (
+      params.project &&
+      item.project !== params.project &&
+      !(item.targetProjects ?? []).includes(params.project)
+    ) {
+      return false;
+    }
     if (params.stage && item.stage !== params.stage) return false;
     if (!params.includeArchived && item.stage === 'archived') return false;
     if (!itemMatchesSearch(item, params.search)) return false;
@@ -421,6 +508,77 @@ export async function getRoadmapItem(params: RoadmapGetParams): Promise<RoadmapG
   return { item };
 }
 
+export async function getRoadmapPrompt(
+  params: RoadmapPromptGetParams,
+): Promise<RoadmapPromptGetResult> {
+  if (!params.path?.trim()) throw new Error('roadmap.prompt.get requires path');
+  const absolutePath = resolveRefinementPromptPath(params.path.trim());
+  const content = await readFile(absolutePath, 'utf-8');
+  return {
+    path: repoRelative(absolutePath),
+    absolutePath,
+    content,
+  };
+}
+
+export async function listRoadmapPromotionDrafts(
+  params: RoadmapPromotionDraftListParams,
+): Promise<RoadmapPromotionDraftListResult> {
+  if (!params.itemId?.trim()) throw new Error('roadmap.promotionDraft.list requires itemId');
+  const dir = promotionDraftDir(params.itemId.trim());
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { drafts: [] };
+    throw err;
+  }
+  const drafts = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(async (entry) => {
+        const absolutePath = path.join(dir, entry.name);
+        const content = await readFile(absolutePath, 'utf-8');
+        return {
+          path: repoRelative(absolutePath),
+          filename: entry.name,
+          absolutePath,
+          contentHash: sha256(content),
+        };
+      }),
+  );
+  return { drafts };
+}
+
+export async function getRoadmapPromotionDraft(
+  params: RoadmapPromotionDraftGetParams,
+): Promise<RoadmapPromotionDraftGetResult> {
+  if (!params.path?.trim()) throw new Error('roadmap.promotionDraft.get requires path');
+  const absolutePath = resolvePromotionDraftPath(params.path.trim());
+  const content = await readFile(absolutePath, 'utf-8');
+  return {
+    path: repoRelative(absolutePath),
+    filename: path.basename(absolutePath),
+    absolutePath,
+    contentHash: sha256(content),
+    content,
+  };
+}
+
+export async function saveRoadmapPromotionDraft(
+  params: RoadmapPromotionDraftSaveParams,
+): Promise<RoadmapPromotionDraftSaveResult> {
+  if (!params.path?.trim()) throw new Error('roadmap.promotionDraft.save requires path');
+  const absolutePath = resolvePromotionDraftPath(params.path.trim());
+  const current = await readFile(absolutePath, 'utf-8');
+  if (params.expectedHash && params.expectedHash !== sha256(current)) {
+    throw new Error('Roadmap promotion draft changed on disk; reload before saving');
+  }
+  await writeFile(absolutePath, params.content, 'utf-8');
+  return getRoadmapPromotionDraft({ path: repoRelative(absolutePath) });
+}
+
 function normalizeSaveInput(
   input: RoadmapItemSaveInput,
   existing?: RoadmapItem,
@@ -428,6 +586,7 @@ function normalizeSaveInput(
   if (!input.title?.trim()) throw new Error('Roadmap item title is required');
   const now = new Date().toISOString();
   const project = normalizeProject(input.project ?? existing?.project);
+  const targetProjects = normalizeTargetProjects(input.targetProjects ?? existing?.targetProjects);
   const tags = normalizeRunTags(input.tags ?? existing?.tags);
   const promotion = normalizePromotion(input.promotion ?? existing?.promotion);
   const source = normalizeSource(input.source ?? existing?.source);
@@ -436,6 +595,7 @@ function normalizeSaveInput(
       id: input.id?.trim() || existing?.id || newRoadmapId(),
       kind: 'roadmap-item',
       project,
+      ...(targetProjects.length > 0 ? { targetProjects } : {}),
       title: input.title.trim(),
       stage: normalizeStage(input.stage ?? existing?.stage ?? 'rough'),
       ...(tags.length > 0 ? { tags } : {}),
@@ -476,12 +636,17 @@ async function writeRoadmapFile(absolutePath: string, content: string): Promise<
   await rename(tmp, absolutePath);
 }
 
-function renderBacklogSpecMarkdown(item: RoadmapItem, spec: RoadmapPromoteSpecInput): string {
+function renderBacklogSpecMarkdown(
+  item: RoadmapItem,
+  spec: RoadmapPromoteSpecInput,
+  project: string,
+): string {
   const tags = normalizeRunTags([...(item.tags ?? []), ...(spec.tags ?? [])]);
   const frontmatter = [
     ['kind', 'backlog-spec'],
     ['roadmapItemId', item.id],
     ['roadmapTitle', item.title],
+    ['project', project],
     ['tags', tags],
   ]
     .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
@@ -489,6 +654,41 @@ function renderBacklogSpecMarkdown(item: RoadmapItem, spec: RoadmapPromoteSpecIn
   const body = spec.body.trim();
   const titledBody = /^#\s+/m.test(body) ? body : `# ${spec.title.trim()}\n\n${body}`;
   return `---\n${frontmatter}\n---\n\n${titledBody.trimEnd()}\n`;
+}
+
+function isConcreteProject(project: string): boolean {
+  return project !== 'global' && project !== 'unassigned';
+}
+
+function defaultPromotionTargetProject(item: RoadmapItem): string | null {
+  const targets = item.targetProjects ?? [];
+  if (targets.length === 1) return targets[0]!;
+  if (targets.length === 0 && isConcreteProject(item.project)) return item.project;
+  return null;
+}
+
+function resolvePromotionSpecProject(item: RoadmapItem, spec: RoadmapPromoteSpecInput): string {
+  const explicit = spec.project?.trim();
+  const targets = item.targetProjects ?? [];
+  if (explicit) {
+    const [project] = normalizeTargetProjects([explicit]);
+    if (!project) throw new Error('Backlog spec project is required');
+    if (targets.length > 0 && !targets.includes(project)) {
+      throw new Error(`Backlog spec project ${project} is not in roadmap targetProjects`);
+    }
+    if (targets.length === 0 && project !== item.project) {
+      throw new Error(
+        `Backlog spec project ${project} does not match roadmap project ${item.project}`,
+      );
+    }
+    return project;
+  }
+
+  const fallback = defaultPromotionTargetProject(item);
+  if (fallback) return fallback;
+  throw new Error(
+    'Backlog spec project is required when roadmap has multiple or no concrete targets',
+  );
 }
 
 async function writeBacklogSpecFile(
@@ -507,6 +707,7 @@ async function projectRefinementConfig(item: RoadmapItem): Promise<{
   runner?: string;
   model?: string;
   runnerCommand?: string;
+  farmslotCommand?: string;
 }> {
   if (item.project === 'global' || item.project === 'unassigned') return {};
   const project = await loadProjectConfig(item.project);
@@ -526,39 +727,187 @@ async function projectRefinementConfig(item: RoadmapItem): Promise<{
       ? { model: roadmap?.model ?? defaultRefinement?.model }
       : {}),
     ...(roadmap?.runnerCommand ? { runnerCommand: roadmap.runnerCommand } : {}),
+    ...(roadmap?.farmslotCommand ? { farmslotCommand: roadmap.farmslotCommand } : {}),
   };
 }
 
-function refinementPromptVars(
+function roadmapRoute(item: RoadmapItem): string {
+  const params = new URLSearchParams();
+  if (item.targetProjects?.length) params.set('projects', item.targetProjects.join(','));
+  params.set('item', item.id);
+  return `#roadmap?${params.toString()}`;
+}
+
+function defaultFarmslotCommand(farmslotCommand?: string): string {
+  const command =
+    farmslotCommand?.trim() ||
+    process.env.FARMSLOT_COMMAND?.trim() ||
+    checkoutFarmslotCommand() ||
+    'farmslot';
+  return command;
+}
+
+function checkoutFarmslotCommand(): string | null {
+  for (const name of ['.env.ports', '.env']) {
+    const envPath = path.join(farmslotRoot, name);
+    if (!existsSync(envPath)) continue;
+    let text: string;
+    try {
+      text = readFileSync(envPath, 'utf-8');
+    } catch {
+      continue;
+    }
+    const command = parseSimpleEnvValue(text, 'FARMSLOT_COMMAND');
+    if (command) return command;
+  }
+  return null;
+}
+
+function parseSimpleEnvValue(text: string, key: string): string | null {
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match =
+      line.match(/^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$/) ??
+      line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match || match[1] !== key) continue;
+    let value = match[2]?.trim() ?? '';
+    if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.at(-1) === value[0]) {
+      value = value.slice(1, -1);
+    }
+    return value || null;
+  }
+  return null;
+}
+
+function defaultPromotionRequestCommand(item: RoadmapItem, farmslotCommand?: string): string {
+  return [
+    defaultFarmslotCommand(farmslotCommand),
+    'roadmap',
+    'request-promotion',
+    '--item-id',
+    shellQuote(item.id),
+    '--item-file',
+    shellQuote(item.filePath),
+    '--title',
+    shellQuote(item.title),
+    '--target-projects',
+    shellQuote((item.targetProjects ?? []).join(',')),
+    '--roadmap-route',
+    shellQuote(roadmapRoute(item)),
+  ].join(' ');
+}
+
+function contextProjects(item: RoadmapItem): string[] {
+  const projects = item.targetProjects?.length
+    ? item.targetProjects
+    : isConcreteProject(item.project)
+      ? [item.project]
+      : [];
+  return [...new Set(projects)].sort();
+}
+
+function renderSlotContext(project: string, pools: PoolConfig[]): string {
+  const slots = pools.flatMap((pool) =>
+    pool.slots
+      .filter((slot) => slot.project === project)
+      .map((slot) => ({
+        machine: pool.machine,
+        platform: slot.resources?.['ios-sim']
+          ? 'ios'
+          : slot.resources?.['android-emu'] || slot.resources?.['android-device']
+            ? 'android'
+            : (pool.platform ?? 'unknown'),
+        slot,
+      })),
+  );
+  if (slots.length === 0) return '- Slots: none configured in pool/*.json';
+  return [
+    '- Slots:',
+    ...slots.map(({ machine, platform, slot }) =>
+      [
+        `  - ${slot.id}`,
+        `machine=${machine}`,
+        `repo=${slot.repo}`,
+        `tmux=${slot.session}`,
+        `platform=${platform}`,
+        `mode=${slot.mode}`,
+        slot.enabled === false ? 'disabled' : 'enabled',
+      ].join(' · '),
+    ),
+  ].join('\n');
+}
+
+async function roadmapFrameworkContext(item: RoadmapItem): Promise<string> {
+  const projects = contextProjects(item);
+  const pools = await loadPoolConfigs();
+  const projectBlocks =
+    projects.length > 0
+      ? projects.map((project) =>
+          [
+            `### ${project}`,
+            `- Farmslot project config: projects/${project}/project.json`,
+            '- Project templates/hooks live under `projects/<project>/`; client source code lives in the slot repo path below.',
+            renderSlotContext(project, pools),
+          ].join('\n'),
+        )
+      : [
+          'No concrete target projects are set yet. Use targetProjects before drafting backlog specs.',
+        ];
+  return [
+    `Farmslot repo root: ${farmslotRoot}`,
+    `Roadmap item file: ${item.filePath}`,
+    '',
+    'Farmslot model:',
+    '- This runner is working in the Farmslot framework repo.',
+    '- `projects/<project>/project.json` configures hooks, templates, defaults, and project metadata.',
+    '- `pool/*.json` maps dispatch slots to real source checkouts, tmux sessions, machines, and resources.',
+    '- Backlog specs should target projects and slots, but this refinement run must not dispatch or prepare slots.',
+    '',
+    ...projectBlocks,
+  ].join('\n');
+}
+
+async function refinementPromptVars(
   item: RoadmapItem,
   runner?: string,
   model?: string,
-): Record<string, string> {
+  farmslotCommand?: string,
+): Promise<Record<string, string>> {
   const tags = (item.tags ?? []).join(', ') || '(none)';
+  const targetProjects = (item.targetProjects ?? []).join(', ') || '(none)';
   const currentMarkdown = item.body.trim() || '(empty)';
+  const context = await roadmapFrameworkContext(item);
+  const promotionCommand = defaultPromotionRequestCommand(item, farmslotCommand);
   return {
     ROADMAP_ITEM_ID: item.id,
     ITEM_ID: item.id,
     TITLE: item.title,
     PROJECT: item.project,
+    TARGET_PROJECTS: targetProjects,
     STAGE: item.stage,
     FILE_PATH: item.filePath,
     ITEM_FILE: item.filePath,
     TAGS: tags,
     RUNNER: runner || '(project default)',
     MODEL: model || '(project default)',
+    FARMSLOT_CONTEXT: context,
+    PROMOTION_REQUEST_COMMAND: promotionCommand,
     CURRENT_MARKDOWN: currentMarkdown,
     BODY: currentMarkdown,
     roadmap_item_id: item.id,
     item_id: item.id,
     title: item.title,
     project: item.project,
+    target_projects: targetProjects,
     stage: item.stage,
     file_path: item.filePath,
     item_file: item.filePath,
     tags,
     runner: runner || '(project default)',
     model: model || '(project default)',
+    farmslot_context: context,
+    promotion_request_command: promotionCommand,
     current_markdown: currentMarkdown,
     body: currentMarkdown,
   };
@@ -585,11 +934,15 @@ async function loadExplicitRefinementPromptTemplate(
 
 async function resolveRoadmapRefinementPrompt(
   item: RoadmapItem,
-  config: { refinementPrompt?: string; refinementPromptPath?: string },
+  config: {
+    refinementPrompt?: string;
+    refinementPromptPath?: string;
+    farmslotCommand?: string;
+  },
   runner?: string,
   model?: string,
 ): Promise<string> {
-  const vars = refinementPromptVars(item, runner, model);
+  const vars = await refinementPromptVars(item, runner, model, config.farmslotCommand);
   if (config.refinementPromptPath) {
     return loadExplicitRefinementPromptTemplate(item.project, config.refinementPromptPath, vars);
   }
@@ -611,23 +964,50 @@ async function resolveRoadmapRefinementPrompt(
     if (fallback?.trim()) return `${fallback.trimEnd()}\n`;
   }
 
-  return renderBuiltInRefinementPrompt(item, runner, model);
+  return renderBuiltInRefinementPrompt(
+    item,
+    runner,
+    model,
+    vars.FARMSLOT_CONTEXT,
+    vars.PROMOTION_REQUEST_COMMAND,
+  );
 }
 
-function renderBuiltInRefinementPrompt(item: RoadmapItem, runner?: string, model?: string): string {
+function renderBuiltInRefinementPrompt(
+  item: RoadmapItem,
+  runner?: string,
+  model?: string,
+  farmslotContext?: string,
+  promotionRequestCommand?: string,
+): string {
   return [
     '# Roadmap refinement task',
     '',
     `Roadmap item: ${item.id}`,
     `Project: ${item.project}`,
+    `Target projects: ${(item.targetProjects ?? []).join(', ') || '(none)'}`,
     `Stage: ${item.stage}`,
     `File: ${item.filePath}`,
     `Tags: ${(item.tags ?? []).join(', ') || '(none)'}`,
     `Refinement runner: ${runner || '(project default)'}`,
     `Refinement model: ${model || '(project default)'}`,
     '',
-    'Refine the roadmap markdown file in-place. Do not create ADRs automatically.',
+    '## Farmslot framework context',
+    '',
+    farmslotContext || '(unavailable)',
+    '',
+    'This is an interactive planning/refinement session inside the Farmslot framework, not an implementation run.',
+    'Before changing the roadmap markdown file, show the operator a concise proposed refinement and ask what to do next.',
+    'Only edit the roadmap markdown file after the operator confirms. Never overwrite the rough idea silently.',
+    'Do not create ADRs automatically.',
     'If an ADR seems necessary, add an ordinary markdown note for the developer to handle manually.',
+    'Treat `farmslot roadmap --help` as the discoverable command surface.',
+    '',
+    'Before drafting final backlog content from GitHub PR or issue URLs, verify those references with authenticated local tooling when available.',
+    'For GitHub PR URLs, prefer `gh pr view <number> --repo <owner>/<repo> --json title,body,state,mergedAt,headRefName,baseRefName,files,commits`.',
+    'If `gh` hits a network/auth/sandbox approval boundary, ask the operator before falling back to unverified assumptions.',
+    'Do not say a PR cannot be verified until authenticated `gh` has been tried or the operator declines that lookup.',
+    'Summarize which references were verified and which remain unverified before asking to apply the roadmap edit.',
     '',
     'The refined item should include:',
     '',
@@ -638,7 +1018,25 @@ function renderBuiltInRefinementPrompt(item: RoadmapItem, runner?: string, model
     '- `## Dispatch Notes`',
     '- `## Acceptance Criteria`',
     '',
+    'When the file satisfies this contract, update the roadmap item frontmatter to `stage: "refined"` and refresh `updatedAt`.',
+    'Leave it as `stage: "refining"` only if important information is still missing.',
+    '',
     'Keep backlog boundaries clear: one refined roadmap item may promote into multiple backlog specs.',
+    'When target projects are listed, write project-specific dispatch boundaries and backlog specs.',
+    'Each backlog draft must include a promotion-valid `## Acceptance Criteria` section.',
+    'Use one `### Backlog Draft: <title>` heading per draft and do not repeat the same title as a separate `Title:` line.',
+    'Use draft-local `#### Implementation Notes` and `#### References` headings so the roadmap remains readable.',
+    '',
+    'When the roadmap item is refined and the backlog drafts are ready, ask the operator whether to request promotion review.',
+    'If they confirm, request human promotion with:',
+    '',
+    '```sh',
+    promotionRequestCommand || '(promotion request command unavailable)',
+    '```',
+    '',
+    'Run that command at most once. It creates a Farmslot/Command Center human decision only; it does not create backlog items.',
+    'Do not promote, create, or dispatch backlog items yourself.',
+    'For final verification, reread the roadmap markdown and the promotion decision file if one was created; do not rely on `git diff` alone because roadmap inbox files may be untracked or ignored.',
     '',
     'Current roadmap markdown:',
     '',
@@ -653,7 +1051,7 @@ function refinementSessionName(item: RoadmapItem): string {
 
 async function tmuxSessionExists(session: string): Promise<boolean> {
   try {
-    await execFileAsync('tmux', ['has-session', '-t', session]);
+    await execFileAsync('tmux', ['has-session', '-t', `=${session}`]);
     return true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException & { code?: number }).code === 1) return false;
@@ -665,22 +1063,52 @@ function defaultRefinementRunnerCommand(
   runner: string | undefined,
   model: string | undefined,
   promptPath: string,
+  safetyTier?: SafetyTier,
 ): string | null {
-  const runnerCommand = runner?.trim();
-  if (!runnerCommand) return null;
+  const runnerId = runner?.trim();
+  if (!runnerId) return null;
   const modelFlag = model?.trim() ? ` --model ${shellQuote(model.trim())}` : '';
-  return `${shellQuote(runnerCommand)}${modelFlag} "$(cat ${shellQuote(promptPath)})"`;
+  const promptArg = `"$(cat ${shellQuote(promptPath)})"`;
+  const safetyFlags = runnerFlagsForTier(runnerId, safetyTier).map(shellQuote).join(' ');
+  if (runnerId === 'codex') {
+    const codexSafety = safetyFlags || '--sandbox workspace-write --ask-for-approval on-request';
+    return [
+      shellQuote('codex'),
+      `--cd ${shellQuote(farmslotRoot)}`,
+      codexSafety,
+      modelFlag.trim(),
+      promptArg,
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+  if (runnerId === 'cursor') {
+    const flags = safetyFlags ? ` ${safetyFlags}` : '';
+    return `${shellQuote('cursor-agent')} --workspace ${shellQuote(farmslotRoot)}${flags}${modelFlag} ${promptArg}`;
+  }
+  const flags = safetyFlags ? ` ${safetyFlags}` : '';
+  return `${shellQuote(runnerId)}${flags}${modelFlag} ${promptArg}`;
 }
 
 function expandRefinementRunnerCommand(
   command: string,
-  context: { runner?: string; model?: string; promptPath: string; itemFile: string },
+  context: {
+    runner?: string;
+    model?: string;
+    promptPath: string;
+    itemFile: string;
+    safetyTier?: SafetyTier;
+  },
 ): string {
   const replacements: Record<string, string> = {
     runner: shellQuote(context.runner ?? ''),
     model: shellQuote(context.model ?? ''),
     prompt_path: shellQuote(context.promptPath),
     item_file: shellQuote(context.itemFile),
+    safety_tier: shellQuote(context.safetyTier ?? ''),
+    safety_flags: runnerFlagsForTier(context.runner ?? '', context.safetyTier)
+      .map(shellQuote)
+      .join(' '),
   };
   let expanded = command;
   for (const [key, value] of Object.entries(replacements)) {
@@ -691,35 +1119,74 @@ function expandRefinementRunnerCommand(
   return expanded;
 }
 
+function roadmapRefinementRunnerPrelude(): string {
+  return [
+    'unset TMUX TMUX_PANE',
+    'export FARMSLOT_ROADMAP_REFINEMENT=1',
+    'export FARMSLOT_RUNNER_SCOPE=roadmap-refinement',
+  ].join(' && ');
+}
+
+function buildRefinementShellCommand(
+  item: RoadmapItem,
+  promptPath: string,
+  runnerCommand?: string,
+  runner?: string,
+  model?: string,
+  safetyTier?: SafetyTier,
+): string {
+  const absolutePromptPath = path.resolve(farmslotRoot, promptPath);
+  const absoluteItemFile = path.resolve(farmslotRoot, item.filePath);
+  const commandTemplate =
+    runnerCommand?.trim() || process.env.FARMSLOT_ROADMAP_REFINER_COMMAND?.trim();
+  const defaultCommand = defaultRefinementRunnerCommand(
+    runner,
+    model,
+    absolutePromptPath,
+    safetyTier,
+  );
+  const prelude = roadmapRefinementRunnerPrelude();
+  if (commandTemplate) {
+    return `cd ${shellQuote(farmslotRoot)} && ${prelude} && ${expandRefinementRunnerCommand(
+      commandTemplate,
+      {
+        ...(runner ? { runner } : {}),
+        ...(model ? { model } : {}),
+        ...(safetyTier ? { safetyTier } : {}),
+        promptPath: absolutePromptPath,
+        itemFile: absoluteItemFile,
+      },
+    )}`;
+  }
+  if (defaultCommand)
+    return `cd ${shellQuote(farmslotRoot)} && ${prelude} && exec ${defaultCommand}`;
+  return [
+    `cd ${shellQuote(farmslotRoot)}`,
+    prelude,
+    `printf '%s\n' ${shellQuote(`Roadmap refinement prompt: ${absolutePromptPath}`)}`,
+    `printf '%s\n' ${shellQuote(`Edit roadmap item: ${path.resolve(farmslotRoot, item.filePath)}`)}`,
+    'exec ${SHELL:-zsh} -l',
+  ].join(' && ');
+}
+
 async function launchRefinementTmux(
   item: RoadmapItem,
   promptPath: string,
   runnerCommand?: string,
   runner?: string,
   model?: string,
+  safetyTier?: SafetyTier,
 ): Promise<boolean> {
   const session = refinementSessionName(item);
   if (await tmuxSessionExists(session)) return false;
-  const absolutePromptPath = path.resolve(farmslotRoot, promptPath);
-  const absoluteItemFile = path.resolve(farmslotRoot, item.filePath);
-  const commandTemplate =
-    runnerCommand?.trim() || process.env.FARMSLOT_ROADMAP_REFINER_COMMAND?.trim();
-  const defaultCommand = defaultRefinementRunnerCommand(runner, model, absolutePromptPath);
-  const shellCommand = commandTemplate
-    ? `cd ${shellQuote(farmslotRoot)} && ${expandRefinementRunnerCommand(commandTemplate, {
-        ...(runner ? { runner } : {}),
-        ...(model ? { model } : {}),
-        promptPath: absolutePromptPath,
-        itemFile: absoluteItemFile,
-      })}`
-    : defaultCommand
-      ? `cd ${shellQuote(farmslotRoot)} && exec ${defaultCommand}`
-      : [
-          `cd ${shellQuote(farmslotRoot)}`,
-          `printf '%s\n' ${shellQuote(`Roadmap refinement prompt: ${absolutePromptPath}`)}`,
-          `printf '%s\n' ${shellQuote(`Edit roadmap item: ${path.resolve(farmslotRoot, item.filePath)}`)}`,
-          'exec ${SHELL:-zsh} -l',
-        ].join(' && ');
+  const shellCommand = buildRefinementShellCommand(
+    item,
+    promptPath,
+    runnerCommand,
+    runner,
+    model,
+    safetyTier,
+  );
   await execFileAsync('tmux', [
     'new-session',
     '-d',
@@ -730,6 +1197,53 @@ async function launchRefinementTmux(
     shellCommand,
   ]);
   return true;
+}
+
+async function localTmuxWorkerNodeId(): Promise<string> {
+  const pools = await loadPoolConfigs();
+  const localPool = pools.find((pool) => isLocal(pool.host, pool.machine));
+  return localPool?.machine ?? os.hostname().replace(/\.local$/, '');
+}
+
+async function resolveTmuxSessionWorker(session: string): Promise<TmuxWorkerRef> {
+  const { stdout } = await execFileAsync('tmux', [
+    'list-panes',
+    '-t',
+    `=${session}`,
+    '-F',
+    '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_id}',
+  ]);
+  const [line] = stdout.split('\n').filter(Boolean);
+  if (!line) throw new Error(`tmux session ${session} has no panes`);
+  const [sessionName, window, windowName, pane, paneId] = line.split('\t');
+  const target = paneId || `${sessionName}:${window}.${pane}`;
+  return {
+    nodeId: await localTmuxWorkerNodeId(),
+    session: sessionName,
+    window,
+    ...(windowName ? { windowName } : {}),
+    pane,
+    ...(paneId ? { paneId } : {}),
+    target,
+  };
+}
+
+export async function getRoadmapRefinementSession(
+  params: RoadmapRefinementSessionGetParams,
+): Promise<RoadmapRefinementSessionGetResult> {
+  if (!params.itemId?.trim()) throw new Error('roadmap.refinementSession.get requires itemId');
+  const item = (await getRoadmapItem({ itemId: params.itemId.trim() })).item;
+  const session = refinementSessionName(item);
+  const exists = await tmuxSessionExists(session);
+  const tmuxWorker = exists ? await resolveTmuxSessionWorker(session) : undefined;
+  return {
+    itemId: item.id,
+    tmuxSession: session,
+    tmuxTarget: tmuxWorker?.target ?? session,
+    exists,
+    ...(tmuxWorker ? { tmuxWorker } : {}),
+    attachCommand: `tmux attach -t ${shellQuote(`=${session}`)}`,
+  };
 }
 
 async function saveRoadmapItemUnlocked(params: RoadmapSaveParams): Promise<RoadmapSaveResult> {
@@ -805,6 +1319,7 @@ export async function startRoadmapRefinement(
             item: {
               id: current.id,
               project: current.project,
+              ...(current.targetProjects ? { targetProjects: current.targetProjects } : {}),
               title: current.title,
               stage: 'refining',
               ...(current.tags ? { tags: current.tags } : {}),
@@ -815,28 +1330,48 @@ export async function startRoadmapRefinement(
           })
         ).item;
   const projectConfig = await projectRefinementConfig(item);
-  const runner = params.runner?.trim() || projectConfig.runner;
-  const model = params.model?.trim() || projectConfig.model;
+  const runner =
+    params.runner?.trim() ||
+    projectConfig.runner ||
+    process.env.FARMSLOT_ROADMAP_REFINER_RUNNER?.trim() ||
+    DEFAULT_ROADMAP_REFINEMENT_RUNNER;
+  const model =
+    params.model?.trim() ||
+    projectConfig.model ||
+    process.env.FARMSLOT_ROADMAP_REFINER_MODEL?.trim() ||
+    DEFAULT_ROADMAP_REFINEMENT_MODEL;
   const runnerCommand = params.runnerCommand?.trim() || projectConfig.runnerCommand;
+  const safetyTier = params.safetyTier;
+  const session = refinementSessionName(item);
+  const existingSession = params.launch === true && (await tmuxSessionExists(session));
   const prompt = await resolveRoadmapRefinementPrompt(item, projectConfig, runner, model);
   const absolutePromptPath = await allocateRefinementPromptPath(item);
   await writeRoadmapFile(absolutePromptPath, prompt);
   const promptPath = repoRelative(absolutePromptPath);
-  const session = refinementSessionName(item);
   const launched =
-    params.launch === true
-      ? await launchRefinementTmux(item, promptPath, runnerCommand, runner, model)
+    params.launch === true && !existingSession
+      ? await launchRefinementTmux(item, promptPath, runnerCommand, runner, model, safetyTier)
       : false;
+  const tmuxWorker =
+    params.launch === true && (launched || existingSession)
+      ? await resolveTmuxSessionWorker(session)
+      : undefined;
   return {
-    item,
+    item: {
+      ...item,
+      refinementPromptPath: promptPath,
+    },
     promptPath,
     tmuxSession: session,
-    tmuxTarget: session,
+    tmuxTarget: tmuxWorker?.target ?? session,
+    ...(tmuxWorker ? { tmuxWorker } : {}),
     launched,
-    attachCommand: `tmux attach -t ${shellQuote(session)}`,
+    ...(existingSession ? { attachedExisting: true } : {}),
+    attachCommand: `tmux attach -t ${shellQuote(`=${session}`)}`,
     ...(runner ? { runner } : {}),
     ...(model ? { model } : {}),
     ...(runnerCommand ? { runnerCommand } : {}),
+    ...(safetyTier ? { safetyTier } : {}),
   };
 }
 
@@ -849,9 +1384,6 @@ async function promoteRoadmapItemUnlocked(
   }
   const current = (await getRoadmapItem({ itemId: params.itemId.trim() })).item;
   if (current.stage !== 'refined') throw new Error('Only refined roadmap items can be promoted');
-  if (current.project === 'global' || current.project === 'unassigned') {
-    throw new Error('Roadmap item must be assigned to a concrete project before promotion');
-  }
   if (params.expectedHash && params.expectedHash !== current.fileHash) {
     throw new Error('Roadmap item changed on disk; reload before promoting');
   }
@@ -859,14 +1391,15 @@ async function promoteRoadmapItemUnlocked(
   const preparedSpecs = params.specs.map((spec) => {
     if (!spec.title?.trim()) throw new Error('Backlog spec title is required');
     if (!spec.body?.trim()) throw new Error(`Backlog spec body is required: ${spec.title}`);
-    const markdown = renderBacklogSpecMarkdown(current, spec);
+    const project = resolvePromotionSpecProject(current, spec);
+    const markdown = renderBacklogSpecMarkdown(current, spec, project);
     if (extractBacklogAcceptanceCriteria(markdown).length === 0) {
       throw new Error(
         `Backlog spec requires a non-empty ## Acceptance Criteria section: ${spec.title}`,
       );
     }
     const tags = normalizeRunTags([...(current.tags ?? []), ...(spec.tags ?? [])]);
-    return { spec, markdown, tags };
+    return { spec, project, markdown, tags };
   });
 
   const backlogItems: RoadmapPromoteResult['backlogItems'] = [];
@@ -875,11 +1408,11 @@ async function promoteRoadmapItemUnlocked(
   let updated: RoadmapSaveResult;
   try {
     for (const prepared of preparedSpecs) {
-      const { spec, markdown, tags } = prepared;
-      const specPath = await writeBacklogSpecFile(current.project, spec.title, markdown);
+      const { spec, project, markdown, tags } = prepared;
+      const specPath = await writeBacklogSpecFile(project, spec.title, markdown);
       specPaths.push(specPath);
       const created = await createBacklogItem({
-        project: current.project,
+        project,
         title: spec.title,
         sourceKind: 'manual',
         flowType: spec.flowType ?? 'dev',
@@ -896,6 +1429,7 @@ async function promoteRoadmapItemUnlocked(
       promotion.push({
         backlogItemId: created.item.id,
         specPath,
+        project,
         createdAt: created.item.createdAt,
       });
     }
@@ -905,6 +1439,7 @@ async function promoteRoadmapItemUnlocked(
       item: {
         id: current.id,
         project: current.project,
+        ...(current.targetProjects ? { targetProjects: current.targetProjects } : {}),
         title: current.title,
         stage: 'promoted',
         ...(current.tags ? { tags: current.tags } : {}),
@@ -937,3 +1472,8 @@ export async function promoteRoadmapItem(
 ): Promise<RoadmapPromoteResult> {
   return withRoadmapMutation(() => promoteRoadmapItemUnlocked(params));
 }
+
+export const __roadmapStoreTest = {
+  buildRefinementShellCommand,
+  defaultPromotionRequestCommand,
+};

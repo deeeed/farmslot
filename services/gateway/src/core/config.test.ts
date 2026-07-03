@@ -184,6 +184,41 @@ test('loadProjectVars validates publication_review snake_case config', async (t)
   );
 });
 
+test('loadProjectVars validates roadmap farmslot_command config', async (t) => {
+  const project = `roadmap-config-${process.pid}`;
+  const projectDir = path.join(farmslotRoot, 'projects', project);
+  await mkdir(projectDir, { recursive: true });
+  t.after(async () => {
+    await rm(projectDir, { recursive: true, force: true });
+  });
+  await writeFile(
+    path.join(projectDir, 'project.json'),
+    JSON.stringify({
+      name: project,
+      roadmap: {
+        farmslot_command: 'yarn workspace @farmslot/cli farmslot',
+      },
+    }),
+  );
+  const vars = await loadProjectVars(project);
+  assert.equal(vars.roadmap?.farmslotCommand, 'yarn workspace @farmslot/cli farmslot');
+
+  const invalidProject = `${project}-invalid`;
+  const invalidDir = path.join(farmslotRoot, 'projects', invalidProject);
+  await mkdir(invalidDir, { recursive: true });
+  t.after(async () => {
+    await rm(invalidDir, { recursive: true, force: true });
+  });
+  await writeFile(
+    path.join(invalidDir, 'project.json'),
+    JSON.stringify({ name: invalidProject, roadmap: { farmslot_command: 42 } }),
+  );
+  await assert.rejects(
+    () => loadProjectVars(invalidProject),
+    /roadmap\.farmslot_command must be a string/,
+  );
+});
+
 const PREPARE_CONFIG_PATH = 'projects/test/project.json';
 
 function prepareJson(prepare: unknown) {
@@ -371,6 +406,7 @@ test('isIgnoredPoolFile hides the demo pool unless FARMSLOT_DEMO_POOL=1', () => 
     delete process.env.FARMSLOT_DEMO_POOL;
     assert.equal(isIgnoredPoolFile('example.json'), true);
     assert.equal(isIgnoredPoolFile('notes.md'), true);
+    assert.equal(isIgnoredPoolFile('agent-contexts-12345.json'), true);
     assert.equal(isIgnoredPoolFile('farmslot-demo.json'), true);
     assert.equal(isIgnoredPoolFile('macbook.json'), false);
     process.env.FARMSLOT_DEMO_POOL = '1';
