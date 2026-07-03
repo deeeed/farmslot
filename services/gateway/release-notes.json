@@ -1,5 +1,10 @@
 {
-  "version": "0.1.1",
-  "date": "2026-07-02",
-  "items": ["gateway.status now includes optional releaseNotes from the latest gateway release cut"]
+  "version": "0.2.0",
+  "date": "2026-07-03",
+  "items": [
+    "Slot worker inventory stays usable when live tmux pane polls time out.",
+    "Fewer false monitor nudges while workers are live or runs wait at publication gate.",
+    "Progressive Doctor: gateway-owned section catalog and scoped reports.",
+    "Security hardening for auth rate limits and local slot file serving."
+  ]
 }

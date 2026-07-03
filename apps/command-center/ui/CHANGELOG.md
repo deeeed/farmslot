@@ -4,6 +4,10 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.2.0 - 2026-07-03
+
 - Speed up slot-view terminal attach on deep links by mounting the terminal when `slotId` is known, debouncing target churn, and preferring fleet-bound runs over stale URL pins during hydration.
 - Skip redundant `tmux.worker.list` polls while node inventory pushes are fresh and back off on list RPC errors.
 - Hide alpha nav items (Intelligence, Evals, and other `maturity: 'alpha'` routes) from the menu and block direct hash navigation to them by default in production (shown by default on a dev launch); toggle via the new Config > Settings "Show alpha features" switch.
@@ -11,7 +15,6 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 - Load release notes from generated JSON at build time so What's New works in Vite dev and production builds.
 - Show What's New modal on the auth gate screen as well as the connected shell.
 - Rename the team overlay concept to "domain" across the UI (labels, params, dispatch selection) to match the engine's domain abstraction.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.1.1 - 2026-07-02
 
