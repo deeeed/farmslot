@@ -50,7 +50,6 @@ import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { RunWorkspaceNav } from '../../components/RunWorkspaceNav';
 import { TaskProgressFallbackPanel, TaskProgressPanel } from '../../components/TaskProgressPanel';
 import { TerminalControlKeyBar } from '../../components/TerminalControlKeyBar';
-import { TerminalOrientationButton } from '../../components/TerminalOrientationButton';
 import {
   type ArtifactManifestEntry,
   artifactsForRecipeRun,
@@ -136,7 +135,10 @@ import {
   TmuxControlPanel,
 } from './components/slot-terminal-panels';
 import {
-  TerminalModeToggle,
+  SlotTerminalCompactViewControls,
+  SlotTerminalFullscreenViewControls,
+} from './components/slot-terminal-view-controls';
+import {
   type TerminalSize,
   TerminalViewSurface,
   type XtermTerminalViewHandle,
@@ -1640,24 +1642,14 @@ export default function TerminalScreen() {
                 {streamLabel} · {lines.length} lines
               </Text>
             </View>
-            <Pressable
-              style={[styles.fullscreenPill, showTerminalControls && styles.tailToggleActive]}
-              onPress={() => setShowTerminalControls((current) => !current)}
-            >
-              <Text
-                style={[
-                  styles.fullscreenPillText,
-                  showTerminalControls && styles.tailToggleTextActive,
-                ]}
-              >
-                Keys
-              </Text>
-            </Pressable>
-            <TerminalModeToggle mode={terminalViewMode} onChange={setTerminalViewMode} />
-            <TerminalOrientationButton controls={orientationControls} />
-            <Pressable style={styles.fullscreenPill} onPress={toggleTerminalFullscreen}>
-              <Text style={styles.fullscreenPillText}>Exit</Text>
-            </Pressable>
+            <SlotTerminalFullscreenViewControls
+              controls={orientationControls}
+              keysActive={showTerminalControls}
+              mode={terminalViewMode}
+              onModeChange={setTerminalViewMode}
+              onExit={toggleTerminalFullscreen}
+              onToggleKeys={() => setShowTerminalControls((current) => !current)}
+            />
           </View>
           <TerminalFullscreenWorkspaceRail
             top={insets.top + 46}
@@ -1712,20 +1704,13 @@ export default function TerminalScreen() {
                 Tail {lineCount}
               </Text>
             </Pressable>
-            <Pressable
-              style={[styles.tailToggle, showTerminalControls && styles.tailToggleActive]}
-              onPress={() => setShowTerminalControls((current) => !current)}
-            >
-              <Text
-                style={[styles.tailToggleText, showTerminalControls && styles.tailToggleTextActive]}
-              >
-                Keys
-              </Text>
-            </Pressable>
-            <TerminalModeToggle mode={terminalViewMode} onChange={setTerminalViewMode} />
-            <Pressable style={styles.tailToggle} onPress={toggleTerminalFullscreen}>
-              <Ionicons name="expand-outline" size={16} color={colors.textSecondary} />
-            </Pressable>
+            <SlotTerminalCompactViewControls
+              keysActive={showTerminalControls}
+              mode={terminalViewMode}
+              onExpand={toggleTerminalFullscreen}
+              onModeChange={setTerminalViewMode}
+              onToggleKeys={() => setShowTerminalControls((current) => !current)}
+            />
             <View
               style={[
                 styles.liveBadge,

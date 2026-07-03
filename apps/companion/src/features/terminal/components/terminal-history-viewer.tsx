@@ -1,5 +1,14 @@
 import React, { forwardRef } from 'react';
-import { ScrollView, type StyleProp, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import {
+  Pressable,
+  ScrollView,
+  type StyleProp,
+  StyleSheet,
+  Text,
+  type TextStyle,
+  View,
+  type ViewStyle,
+} from 'react-native';
 
 import {
   type TerminalSize,
@@ -38,6 +47,35 @@ export function TerminalModeToggle({
         History
       </Text>
     </View>
+  );
+}
+
+export function TerminalKeysModeControls({
+  active,
+  buttonActiveStyle,
+  buttonStyle,
+  mode,
+  onModeChange,
+  onToggleKeys,
+  textActiveStyle,
+  textStyle,
+}: {
+  active: boolean;
+  buttonActiveStyle?: StyleProp<ViewStyle>;
+  buttonStyle: StyleProp<ViewStyle>;
+  mode: TerminalViewMode;
+  onModeChange: (mode: TerminalViewMode) => void;
+  onToggleKeys: () => void;
+  textActiveStyle?: StyleProp<TextStyle>;
+  textStyle: StyleProp<TextStyle>;
+}) {
+  return (
+    <>
+      <Pressable style={[buttonStyle, active && buttonActiveStyle]} onPress={onToggleKeys}>
+        <Text style={[textStyle, active && textActiveStyle]}>Keys</Text>
+      </Pressable>
+      <TerminalModeToggle mode={mode} onChange={onModeChange} />
+    </>
   );
 }
 
