@@ -150,6 +150,10 @@ if [[ "${SUBMIT}" -eq 1 ]]; then
       --non-interactive
     )
     if [[ "${target_platform}" == "android" ]]; then
+      if [[ "${VARIANT}" == "production" ]]; then
+        echo "[release] Android Play submit targets internal testing (share via Console opt-in link)."
+        echo "[release] Promote to production in Play Console after the first store release is configured."
+      fi
       if [[ "${EXECUTE}" -eq 1 ]]; then
         bash "${SCRIPT_DIR}/ensure-play-service-account.sh"
       else
