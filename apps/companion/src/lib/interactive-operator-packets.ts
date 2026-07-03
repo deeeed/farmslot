@@ -1,46 +1,29 @@
 import {
-  type InteractiveOperatorPacketAction,
+  type InteractiveOperatorPacketActionRequest,
+  interactiveOperatorPacketActionRequest,
   interactiveOperatorPacketArtifacts,
   type Run,
 } from '@farmslot/protocol';
 
 import { type ArtifactManifestEntry, extractRunArtifactManifest } from './artifact-url';
 
-export type PacketActionRequest =
-  | { kind: 'copy'; text: string }
-  | { kind: 'open-artifact'; artifactPath: string }
-  | { kind: 'terminal.send'; text: string }
-  | { kind: 'decision.resolve'; decisionId: string; actionId: string };
-
-function payloadString(payload: Record<string, unknown> | undefined, key: string): string | null {
-  const value = payload?.[key];
-  return typeof value === 'string' && value.trim() ? value : null;
-}
-
-export function interactivePacketActionRequest(
-  action: InteractiveOperatorPacketAction,
-): PacketActionRequest | null {
-  switch (action.kind) {
-    case 'copy': {
-      const text = payloadString(action.payload, 'text');
-      return text ? { kind: 'copy', text } : null;
-    }
-    case 'open-artifact': {
-      const artifactPath = payloadString(action.payload, 'artifactPath');
-      return artifactPath ? { kind: 'open-artifact', artifactPath } : null;
-    }
-    case 'terminal.send': {
-      const text = payloadString(action.payload, 'text');
-      return text ? { kind: 'terminal.send', text } : null;
-    }
-    case 'decision.resolve': {
-      const decisionId = payloadString(action.payload, 'decisionId');
-      const actionId = payloadString(action.payload, 'actionId');
-      return decisionId && actionId ? { kind: 'decision.resolve', decisionId, actionId } : null;
-    }
-  }
-}
+export type PacketActionRequest = InteractiveOperatorPacketActionRequest;
+export const interactivePacketActionRequest = interactiveOperatorPacketActionRequest;
 
 export function collectRunInteractivePacketArtifacts(run: Run): ArtifactManifestEntry[] {
   return interactiveOperatorPacketArtifacts(extractRunArtifactManifest(run));
+}
+
+export function interactivePacketArtifactKey(artifacts: readonly ArtifactManifestEntry[]): string {
+  return artifacts.map(interactivePacketArtifactKeyPart).join('\n');
+}
+
+function interactivePacketArtifactKeyPart(artifact: ArtifactManifestEntry): string {
+  return [
+    artifact.path,
+    artifact.purpose,
+    artifact.type ?? '',
+    artifact.mimeType ?? '',
+    artifact.sizeBytes == null ? '' : String(artifact.sizeBytes),
+  ].join('\u001f');
 }

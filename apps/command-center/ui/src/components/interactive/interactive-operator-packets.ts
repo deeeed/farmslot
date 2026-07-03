@@ -13,6 +13,7 @@ import { renderReadyWorkspaceMarkdown } from '../workspace/ready-workspace-markd
 import {
   collectInteractivePacketArtifacts,
   interactivePacketActionRequest,
+  interactivePacketArtifactKey,
 } from './interactive-operator-packets-model.js';
 
 interface LoadedInteractivePacket {
@@ -136,9 +137,11 @@ export class InteractiveOperatorPackets extends LitElement {
   @state() private _packets: LoadedInteractivePacket[] = [];
   @state() private _feedback = '';
   @state() private _loading = false;
+  private _packetLoadKey = '';
+  private _packetLoadSequence = 0;
 
   protected override updated(changed: Map<string, unknown>): void {
-    if (changed.has('runId') || changed.has('artifacts')) void this._loadPackets();
+    if (changed.has('runId') || changed.has('artifacts')) this._syncPacketArtifacts();
   }
 
   private _artifactUrl(path: string): string {
@@ -155,12 +158,27 @@ export class InteractiveOperatorPackets extends LitElement {
     return res.text();
   }
 
-  private async _loadPackets(): Promise<void> {
+  private _syncPacketArtifacts(): void {
     const packetArtifacts = collectInteractivePacketArtifacts(this.artifacts);
+    const nextKey = this.runId
+      ? `${this.runId}\n${interactivePacketArtifactKey(packetArtifacts)}`
+      : '';
+    if (nextKey === this._packetLoadKey) return;
+    this._packetLoadKey = nextKey;
+    this._packetLoadSequence += 1;
     if (!this.runId || packetArtifacts.length === 0) {
       this._packets = [];
+      this._loading = false;
       return;
     }
+    void this._loadPackets(packetArtifacts, nextKey, this._packetLoadSequence);
+  }
+
+  private async _loadPackets(
+    packetArtifacts: ArtifactRef[],
+    loadKey: string,
+    loadSequence: number,
+  ): Promise<void> {
     this._loading = true;
     const loaded = await Promise.all(
       packetArtifacts.map(async (artifact): Promise<LoadedInteractivePacket> => {
@@ -181,6 +199,7 @@ export class InteractiveOperatorPackets extends LitElement {
         }
       }),
     );
+    if (loadSequence !== this._packetLoadSequence || loadKey !== this._packetLoadKey) return;
     this._packets = loaded;
     this._loading = false;
   }
@@ -200,8 +219,9 @@ export class InteractiveOperatorPackets extends LitElement {
     ta.value = text;
     document.body.appendChild(ta);
     ta.select();
-    document.execCommand('copy');
+    const copied = document.execCommand('copy');
     ta.remove();
+    if (!copied) throw new Error('Clipboard copy was not accepted by the browser.');
   }
 
   private async _runAction(packet: InteractiveOperatorPacket, actionId: string): Promise<void> {
@@ -274,13 +294,27 @@ export class InteractiveOperatorPackets extends LitElement {
         ${packet.anchors?.length
           ? html`
               <div class="packet-anchors">
-                ${packet.anchors.map(
-                  (anchor) => html`
-                    <span class="packet-chip" title=${anchor.artifactPath ?? anchor.id}
-                      >${anchor.label}${anchor.line ? `:${anchor.line}` : ''}</span
-                    >
-                  `,
-                )}
+                ${packet.anchors.map((anchor) => {
+                  const artifactPath = anchor.artifactPath;
+                  return html`
+                    ${artifactPath
+                      ? html`
+                          <button
+                            class="packet-chip packet-action"
+                            title=${artifactPath}
+                            @click=${() =>
+                              window.open(this._artifactUrl(artifactPath), '_blank', 'noopener')}
+                          >
+                            ${anchor.label}${anchor.line ? `:${anchor.line}` : ''}
+                          </button>
+                        `
+                      : html`
+                          <span class="packet-chip" title=${anchor.id}
+                            >${anchor.label}${anchor.line ? `:${anchor.line}` : ''}</span
+                          >
+                        `}
+                  `;
+                })}
               </div>
             `
           : nothing}

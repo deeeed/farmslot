@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 
 import {
@@ -19,6 +19,7 @@ import { gatewayFetch } from '../../../lib/gateway-http-auth';
 import {
   collectRunInteractivePacketArtifacts,
   interactivePacketActionRequest,
+  interactivePacketArtifactKey,
 } from '../../../lib/interactive-operator-packets';
 import { colors, fonts, radii, spacing } from '../../../lib/theme';
 
@@ -40,7 +41,8 @@ export function InteractiveOperatorPacketsPanel({
   gatewayUrl: string;
   artifactAuthHeaders: ArtifactHttpHeaders;
 }) {
-  const packetArtifacts = useMemo(() => collectRunInteractivePacketArtifacts(run), [run]);
+  const packetArtifacts = collectRunInteractivePacketArtifacts(run);
+  const packetArtifactKey = interactivePacketArtifactKey(packetArtifacts);
   const [packets, setPackets] = useState<LoadedInteractivePacket[]>([]);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -91,7 +93,7 @@ export function InteractiveOperatorPacketsPanel({
     return () => {
       disposed = true;
     };
-  }, [artifactAuthHeaders, gatewayUrl, packetArtifacts, run.id]);
+  }, [artifactAuthHeaders, gatewayUrl, packetArtifactKey, run.id]);
 
   if (!packetArtifacts.length && !loading) return null;
 
@@ -163,27 +165,34 @@ export function InteractiveOperatorPacketsPanel({
             </ScrollView>
             {packet.anchors?.length ? (
               <View style={panelStyles.chipRow}>
-                {packet.anchors.map((anchor) => (
-                  <Pressable
-                    key={anchor.id}
-                    style={panelStyles.chip}
-                    onPress={() => {
-                      if (anchor.artifactPath) {
+                {packet.anchors.map((anchor) => {
+                  const label = `${anchor.label}${anchor.line ? `:${anchor.line}` : ''}`;
+                  const artifactPath = anchor.artifactPath;
+                  return artifactPath ? (
+                    <Pressable
+                      key={anchor.id}
+                      style={panelStyles.chip}
+                      onPress={() =>
                         void Linking.openURL(
                           artifactUrlForEntry(gatewayUrl, run.id, {
-                            path: anchor.artifactPath,
+                            path: artifactPath,
                             purpose: 'artifact',
                           }),
-                        );
+                        )
                       }
-                    }}
-                  >
-                    <Text style={panelStyles.chipText} numberOfLines={1}>
-                      {anchor.label}
-                      {anchor.line ? `:${anchor.line}` : ''}
-                    </Text>
-                  </Pressable>
-                ))}
+                    >
+                      <Text style={panelStyles.chipText} numberOfLines={1}>
+                        {label}
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <View key={anchor.id} style={panelStyles.chip}>
+                      <Text style={panelStyles.chipText} numberOfLines={1}>
+                        {label}
+                      </Text>
+                    </View>
+                  );
+                })}
               </View>
             ) : null}
             {packet.actions?.length ? (

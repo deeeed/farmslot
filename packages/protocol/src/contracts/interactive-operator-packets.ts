@@ -48,6 +48,12 @@ export interface InteractiveOperatorPacketAction {
   payload?: Record<string, unknown>;
 }
 
+export type InteractiveOperatorPacketActionRequest =
+  | { kind: 'copy'; text: string }
+  | { kind: 'open-artifact'; artifactPath: string }
+  | { kind: 'terminal.send'; text: string }
+  | { kind: 'decision.resolve'; decisionId: string; actionId: string };
+
 export interface InteractiveOperatorPacket {
   schema: typeof INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1;
   id: string;
@@ -75,9 +81,18 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
+function payloadString(payload: Record<string, unknown> | undefined, key: string): string | null {
+  const value = payload?.[key];
+  return stringValue(value);
+}
+
 function hasOnlyKnownValues<T extends string>(value: unknown, known: readonly T[]): value is T {
   if (typeof value !== 'string') return false;
   return known.some((candidate) => candidate === value);
+}
+
+function knownStringValue<T extends string>(value: unknown, known: readonly T[]): T | null {
+  return hasOnlyKnownValues(value, known) ? value : null;
 }
 
 function parseBody(value: unknown, errors: string[]): InteractiveOperatorPacketBody | null {
@@ -176,10 +191,8 @@ function parseActions(
     if (!label) {
       errors.push(`actions[${index}].label must be a non-empty string`);
     }
-    const kind = hasOnlyKnownValues(action.kind, INTERACTIVE_OPERATOR_PACKET_ACTION_KINDS)
-      ? action.kind
-      : null;
-    if (!hasOnlyKnownValues(action.kind, INTERACTIVE_OPERATOR_PACKET_ACTION_KINDS)) {
+    const kind = knownStringValue(action.kind, INTERACTIVE_OPERATOR_PACKET_ACTION_KINDS);
+    if (!kind) {
       errors.push(`actions[${index}].kind is unsupported`);
     }
     const safety =
@@ -247,6 +260,30 @@ export function validateInteractiveOperatorPacket(
 
 export function isInteractiveOperatorPacket(value: unknown): value is InteractiveOperatorPacket {
   return validateInteractiveOperatorPacket(value).ok;
+}
+
+export function interactiveOperatorPacketActionRequest(
+  action: InteractiveOperatorPacketAction,
+): InteractiveOperatorPacketActionRequest | null {
+  switch (action.kind) {
+    case 'copy': {
+      const text = payloadString(action.payload, 'text');
+      return text ? { kind: 'copy', text } : null;
+    }
+    case 'open-artifact': {
+      const artifactPath = payloadString(action.payload, 'artifactPath');
+      return artifactPath ? { kind: 'open-artifact', artifactPath } : null;
+    }
+    case 'terminal.send': {
+      const text = payloadString(action.payload, 'text');
+      return text ? { kind: 'terminal.send', text } : null;
+    }
+    case 'decision.resolve': {
+      const decisionId = payloadString(action.payload, 'decisionId');
+      const actionId = payloadString(action.payload, 'actionId');
+      return decisionId && actionId ? { kind: 'decision.resolve', decisionId, actionId } : null;
+    }
+  }
 }
 
 export function isInteractiveOperatorPacketArtifact(

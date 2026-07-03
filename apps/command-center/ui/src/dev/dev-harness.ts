@@ -1847,12 +1847,71 @@ All checks passed.`;
     const runs = [...mockPipelineRuns(), ...mockRuns()];
     this._updateMockRuns(runs);
     const run = runs.find((r) => r.id === 'pipe-mid-monitor') ?? runs[0];
+    const packetPath = 'artifacts/interactive/dev-run-detail.packet.json';
+    const bodyPath = 'artifacts/interactive/dev-run-detail.md';
+    const packet: InteractiveOperatorPacket = {
+      schema: INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1,
+      id: 'dev-run-detail-review',
+      runId: run.id,
+      title: 'Run detail packet',
+      intent: 'review',
+      summary: 'Rendered through run detail with a packet artifact.',
+      body: { format: 'markdown', path: bodyPath },
+      anchors: [{ id: 'packet-body', label: 'Packet body', artifactPath: bodyPath, line: 1 }],
+      actions: [
+        {
+          id: 'copy',
+          label: 'Copy summary',
+          kind: 'copy',
+          safety: 'read-only',
+          payload: { text: 'Run detail packet copied.' },
+        },
+      ],
+      createdAt: '2026-07-03T00:00:00.000Z',
+    };
+    const runWithPacket: Run = {
+      ...run,
+      steps: [
+        ...(run.steps ?? []),
+        {
+          name: 'interactive-packets',
+          status: 'done',
+          outputs: {
+            artifacts: [
+              {
+                path: packetPath,
+                purpose: 'interactive-packet',
+                type: 'interactive-packet',
+                mimeType: 'application/vnd.farmslot.operator-packet+json',
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const artifactTextLoader = async (path: string): Promise<string> => {
+      if (path === packetPath) return JSON.stringify(packet);
+      if (path === bodyPath) {
+        return [
+          '## Run detail packet body',
+          '',
+          '- Rendered from a run step artifact.',
+          '- Uses the same packet panel as production run detail.',
+        ].join('\n');
+      }
+      throw new Error(`Missing mock artifact: ${path}`);
+    };
     return html`
       <p class="section-label">Run detail (local-first publish gate cockpit)</p>
       <div
         style="height: calc(100vh - 200px); border: 1px solid ${colors.bgCard}; border-radius: 8px; overflow: hidden"
       >
-        <run-detail .runId=${run.id} .mockRun=${run} mock-data></run-detail>
+        <run-detail
+          .runId=${runWithPacket.id}
+          .mockRun=${runWithPacket}
+          .mockArtifactTextLoader=${artifactTextLoader}
+          mock-data
+        ></run-detail>
       </div>
     `;
   }

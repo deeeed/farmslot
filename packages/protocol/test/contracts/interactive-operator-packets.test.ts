@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   INTERACTIVE_OPERATOR_PACKET_SCHEMA_V1,
+  interactiveOperatorPacketActionRequest,
   interactiveOperatorPacketArtifacts,
   isInteractiveOperatorPacket,
   isInteractiveOperatorPacketArtifact,
@@ -74,5 +75,38 @@ test('interactive packet artifacts are selected by path or explicit metadata', (
       { path: 'artifacts/review.packet.json', purpose: 'json' },
     ]).map((artifact) => artifact.path),
     ['artifacts/review.packet.json'],
+  );
+});
+
+test('interactive packet action requests require complete payloads', () => {
+  assert.deepEqual(
+    interactiveOperatorPacketActionRequest({
+      id: 'send',
+      label: 'Send',
+      kind: 'terminal.send',
+      safety: 'operator-confirmed',
+      payload: { text: 'Proceed.' },
+    }),
+    { kind: 'terminal.send', text: 'Proceed.' },
+  );
+  assert.deepEqual(
+    interactiveOperatorPacketActionRequest({
+      id: 'resolve',
+      label: 'Resolve',
+      kind: 'decision.resolve',
+      safety: 'operator-confirmed',
+      payload: { decisionId: 'd1', actionId: 'approve' },
+    }),
+    { kind: 'decision.resolve', decisionId: 'd1', actionId: 'approve' },
+  );
+  assert.equal(
+    interactiveOperatorPacketActionRequest({
+      id: 'bad',
+      label: 'Bad',
+      kind: 'open-artifact',
+      safety: 'read-only',
+      payload: {},
+    }),
+    null,
   );
 });

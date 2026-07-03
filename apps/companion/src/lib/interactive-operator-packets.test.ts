@@ -6,6 +6,7 @@ import type { Run } from '@farmslot/protocol';
 import {
   collectRunInteractivePacketArtifacts,
   interactivePacketActionRequest,
+  interactivePacketArtifactKey,
 } from './interactive-operator-packets';
 
 test('interactive packet action request accepts complete terminal actions', () => {
@@ -65,4 +66,20 @@ test('interactive packet artifacts are collected from run outputs', () => {
     collectRunInteractivePacketArtifacts(run).map((artifact) => artifact.path),
     ['artifacts/review.packet.json'],
   );
+});
+
+test('interactive packet artifact key is stable for equivalent run updates', () => {
+  const first = interactivePacketArtifactKey([
+    { path: 'artifacts/review.packet.json', purpose: 'json', type: 'interactive-packet' },
+  ]);
+  const second = interactivePacketArtifactKey([
+    { path: 'artifacts/review.packet.json', purpose: 'json', type: 'interactive-packet' },
+  ]);
+  const changed = interactivePacketArtifactKey([
+    { path: 'artifacts/review.packet.json', purpose: 'json', type: 'interactive-packet' },
+    { path: 'artifacts/decision.packet.json', purpose: 'json', type: 'interactive-packet' },
+  ]);
+
+  assert.equal(first, second);
+  assert.notEqual(first, changed);
 });

@@ -676,6 +676,7 @@ export class RunDetail extends RunDetailState {
         .runId=${run.id}
         .slotId=${run.slotId}
         .artifacts=${artifacts}
+        .artifactTextLoader=${this.mockData ? this.mockArtifactTextLoader : null}
       ></interactive-operator-packets>
     `;
   }
