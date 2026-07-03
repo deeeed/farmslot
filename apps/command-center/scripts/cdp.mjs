@@ -12,7 +12,7 @@
 //
 // Env:
 //   FARMSLOT_CDP_PORT   CDP port (default 9323).
-//   FARMSLOT_UI_URL     Command Center URL used by `goto` for hash targets (default http://localhost:5175).
+//   FARMSLOT_UI_URL     Command Center URL used by `goto` for hash targets (default from .env.ports VITE_PORT, else 5174).
 //   FARMSLOT_GATEWAY    Gateway WS url (default ws://localhost:7777).
 //   FARMSLOT_GATEWAY_TOKEN/PASSWORD are read from process env or nearest .env.local-auth/.env.
 //
@@ -25,10 +25,19 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const CDP_PORT = process.env.FARMSLOT_CDP_PORT ?? '9323';
-const UI_URL = process.env.FARMSLOT_UI_URL ?? 'http://localhost:5175';
+const UI_URL = process.env.FARMSLOT_UI_URL ?? defaultUiUrl();
 const GATEWAY_URL = process.env.FARMSLOT_GATEWAY ?? 'ws://localhost:7777';
 const GATEWAY_CREDENTIAL = resolveGatewayCredential();
 const [, , cmd, ...rest] = process.argv;
+
+function defaultUiUrl() {
+  const scriptDir = dirname(fileURLToPath(import.meta.url));
+  const portFile = resolve(scriptDir, '../../../.env.ports');
+  const port = existsSync(portFile)
+    ? (readFileSync(portFile, 'utf8').match(/^VITE_PORT=(\d+)\s*$/m)?.[1] ?? '5174')
+    : '5174';
+  return `http://localhost:${port}`;
+}
 
 function die(msg, code = 1) {
   console.error(msg);
@@ -70,33 +79,20 @@ async function createTab(url) {
 async function findReusableTab(url) {
   const target = new URL(url);
   const pages = (await listTabs()).filter((t) => t.type === 'page');
-  const sameOrigin = pages.filter((tab) => {
+  const parseUrl = (value) => {
     try {
-      return new URL(tab.url).origin === target.origin;
+      return new URL(value);
     } catch {
-      return false;
+      return null;
     }
-  });
-  const localPages = pages.filter((tab) => {
-    try {
-      const current = new URL(tab.url);
-      return ['localhost', '127.0.0.1', '::1'].includes(current.hostname);
-    } catch {
-      return false;
-    }
-  });
+  };
+  const sameOrigin = pages.filter((tab) => parseUrl(tab.url)?.origin === target.origin);
   return (
     sameOrigin.find((tab) => {
-      try {
-        const current = new URL(tab.url);
-        return current.pathname === target.pathname && current.hash === target.hash;
-      } catch {
-        return false;
-      }
+      const current = parseUrl(tab.url);
+      return current?.pathname === target.pathname && current.hash === target.hash;
     }) ??
     sameOrigin[0] ??
-    localPages[0] ??
-    pages[0] ??
     null
   );
 }
