@@ -85,6 +85,13 @@ test('Expo config keeps audio-studio foreground-only for store builds', () => {
   );
 });
 
+test('Expo config uses the linked EAS project slug', () => {
+  const config = createExpoConfig({
+    config: { name: 'FarmDev', slug: 'ignored' },
+  } as ConfigContext);
+  assert.equal(config.slug, 'farmslot-companion');
+});
+
 test('Expo config uses script-provided bundle id and scheme for local native launches', () => {
   const previousBundleId = process.env.BUNDLE_ID;
   const previousScheme = process.env.SCHEME;
