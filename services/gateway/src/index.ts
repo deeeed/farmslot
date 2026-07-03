@@ -35,6 +35,7 @@ import { checkDailyAutosave, ensureCopilotDirs } from './chat/chat-memory.js';
 import { getAllSessions, initChatStore } from './chat/chat-store.js';
 import { initCopilotObserver, routeEventToObserver } from './chat/copilot-observer.js';
 import { initCIMonitor } from './ci-monitor/service.js';
+import { getGatewayListenSnapshot, setGatewayListenAddress } from './core/listen-address.js';
 import { loadEvalSuiteCaps } from './evals/suite-cap-store.js';
 import { getMachineHealth, startLocalCollection } from './fleet/node-health.js';
 import {
@@ -199,6 +200,7 @@ async function main(): Promise<void> {
     process.env.GATEWAY_HOST?.trim() ||
     (gatewayAuthRuntime.auth.mode === 'none' ? '127.0.0.1' : undefined);
   assertGatewayBindAllowed({ auth: gatewayAuthRuntime.auth, host, port: PORT });
+  setGatewayListenAddress(host, PORT);
   console.log(`[auth] gateway mode=${gatewayAuthRuntime.auth.mode}`);
 
   // Co-pilot observer — wraps broadcastEvent so the observer sees every event
@@ -373,8 +375,15 @@ async function main(): Promise<void> {
       return;
     }
     if (req.url === '/health') {
+      const listen = getGatewayListenSnapshot();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          uptime: process.uptime(),
+          ...(listen ? { listen } : {}),
+        }),
+      );
       return;
     }
     // Serve raw files: /api/file?slotId=X&path=Y

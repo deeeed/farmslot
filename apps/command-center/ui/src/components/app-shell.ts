@@ -6,6 +6,7 @@ import type {
   ChatClientContext,
   ChatSendIntent,
   FleetSummary,
+  GatewayListenInfo,
   GatewayStatusResult,
   GatewayUpdateStatus,
   GitHubRateLimitPayload,
@@ -230,6 +231,7 @@ export class FarmApp extends LitElement {
   @state() private pairingExpiresAt = '';
   @state() private pairingProfileCount = 0;
   @state() private pairingError = '';
+  @state() private pairingListenWarning = '';
   @state() private onboardingConnectInput = '';
   @state() private onboardingError = '';
   private unsub?: () => void;
@@ -795,10 +797,21 @@ export class FarmApp extends LitElement {
   private openPairingPanel() {
     this.pairingOpen = true;
     this.pairingError = '';
+    this.pairingListenWarning = '';
     this.pairingCandidateStatus = '';
     this.pairingQrDataUrl = '';
     this.pairingExpiresAt = '';
     void this.refreshPairingCandidates();
+    void this.refreshPairingListenWarning();
+  }
+
+  private async refreshPairingListenWarning() {
+    try {
+      const status = await gateway.request<GatewayStatusResult>(Methods.GATEWAY_STATUS, {}, 5_000);
+      this.pairingListenWarning = pairingListenWarning(status.listen);
+    } catch {
+      this.pairingListenWarning = '';
+    }
   }
 
   private closePairingPanel() {
@@ -861,6 +874,13 @@ export class FarmApp extends LitElement {
     );
     if (invalidTarget) {
       this.pairingError = `${invalidTarget.profileName} URL must start with ws:// or wss://`;
+      return;
+    }
+    if (
+      this.pairingListenWarning &&
+      targets.some((target) => pairingTargetNeedsRemoteListen(target))
+    ) {
+      this.pairingError = this.pairingListenWarning;
       return;
     }
 
@@ -1347,6 +1367,9 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
           </div>
 
           ${this.pairingError ? html`<div class="pairing-error">${this.pairingError}</div>` : ''}
+          ${this.pairingListenWarning
+            ? html`<div class="pairing-warning">${this.pairingListenWarning}</div>`
+            : ''}
           ${this.pairingCandidateStatus
             ? html`<div class="pairing-copy">${this.pairingCandidateStatus}</div>`
             : ''}
@@ -1565,6 +1588,27 @@ curl -fsSL https://raw.githubusercontent.com/deeeed/farmslot/main/install.sh | b
       ></chat-panel>
       ${this.renderPairingPanel()} ${this.renderVersionDetailsModal()} ${this.renderWhatsNewModal()}
     `;
+  }
+}
+
+function pairingListenWarning(listen: GatewayListenInfo | undefined): string {
+  if (!listen || listen.remotePairingAllowed) return '';
+  return (
+    `Gateway is listening on ${listen.host}:${listen.port} only. ` +
+    'Phones on your LAN cannot reach the LAN/Tailscale URLs in this QR until you restart with GATEWAY_HOST=0.0.0.0 (yarn farmdev does this when .env.local-auth is present) or run farmslot up.'
+  );
+}
+
+function pairingTargetNeedsRemoteListen(target: {
+  gatewayUrl: string;
+  kind?: PairingCandidate['kind'];
+}): boolean {
+  if (target.kind === 'lan' || target.kind === 'tailnet') return true;
+  try {
+    const host = new URL(target.gatewayUrl).hostname.toLowerCase();
+    return host !== 'localhost' && !host.startsWith('127.');
+  } catch {
+    return false;
   }
 }
 

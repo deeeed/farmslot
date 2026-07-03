@@ -27,12 +27,22 @@ fi
 
 export GATEWAY_PORT="${GATEWAY_PORT:-7777}"
 export VITE_PORT="${VITE_PORT:-5174}"
+if [ -z "${GATEWAY_HOST:-}" ]; then
+  if [ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ] || [ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]; then
+    export GATEWAY_HOST=0.0.0.0
+  else
+    export GATEWAY_HOST=127.0.0.1
+  fi
+fi
 # Dev sessions keep the committed demo pool visible (the documented fastest
 # path); installed gateways hide it unless the operator opts in.
 export FARMSLOT_DEMO_POOL="${FARMSLOT_DEMO_POOL:-1}"
 
-echo "[dev] Gateway: http://localhost:$GATEWAY_PORT"
+echo "[dev] Gateway: http://localhost:$GATEWAY_PORT (bind: $GATEWAY_HOST)"
 echo "[dev] UI:      http://localhost:$VITE_PORT"
+if [ "$GATEWAY_HOST" = "127.0.0.1" ] || [ "$GATEWAY_HOST" = "localhost" ]; then
+  echo "[dev] WARN: gateway is loopback-only — Companion LAN QR pairing will fail until GATEWAY_HOST=0.0.0.0"
+fi
 if [ -n "${FARMSLOT_GATEWAY_TOKEN:-}" ]; then
   echo "[dev] Gateway auth: token"
 elif [ -n "${FARMSLOT_GATEWAY_PASSWORD:-}" ]; then

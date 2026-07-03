@@ -840,6 +840,16 @@ export function renderAppShellStyles(
         padding: 10px;
         margin-bottom: 12px;
       }
+      farm-app .pairing-warning {
+        background: ${colors.statusWarn}18;
+        border: 1px solid ${colors.statusWarn}55;
+        border-radius: 8px;
+        color: ${colors.statusWarn};
+        font-size: ${fonts.sizeSm};
+        line-height: 1.45;
+        padding: 10px;
+        margin-bottom: 12px;
+      }
       farm-app .pairing-status-grid {
         display: grid;
         gap: 8px;
