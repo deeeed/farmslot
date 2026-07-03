@@ -6,8 +6,6 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
-## 0.8.0 - 2026-07-03
-
 ## 0.7.2 - 2026-07-03
 
 - Rename the team overlay abstraction to "domain" (contracts, rpc, DOMAIN_NAME_RE/isValidDomainName) — clean break, no alias
