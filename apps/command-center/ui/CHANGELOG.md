@@ -4,12 +4,15 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- fix: Companion pairing panel warns and blocks LAN QR generation when the gateway is loopback-only.
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.2.1 - 2026-07-03
+
+- Warn and block Companion LAN QR generation when the gateway is loopback-only.
 - Surface linked run summaries in roadmap, backlog, and work-graph detail views, and highlight pinned slots when their linked run is selected.
 - Improve roadmap, backlog, and work-graph planning UX with shared dispatch configuration controls and spec review modals.
 - Render interactive operator packets on run detail with artifact anchors and confirmed actions.
 - Add an experimental Slot View worker History tab that renders runner-owned transcript turns with run, model, and session metadata.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.2.0 - 2026-07-03
 

@@ -1,10 +1,9 @@
 {
-  "version": "0.2.0",
+  "version": "0.2.1",
   "date": "2026-07-03",
   "items": [
-    "Slot worker inventory stays usable when live tmux pane polls time out.",
-    "Fewer false monitor nudges while workers are live or runs wait at publication gate.",
-    "Progressive Doctor: gateway-owned section catalog and scoped reports.",
-    "Security hardening for auth rate limits and local slot file serving."
+    "Gateway health and status now expose listen/bind metadata and doctor warns when LAN pairing is blocked.",
+    "Roadmap promotion drafts, backlog spec access, and graph-linked dispatch activation are now persisted through the gateway.",
+    "Experimental worker session history RPCs expose read-only runner transcript snapshots."
   ]
 }
