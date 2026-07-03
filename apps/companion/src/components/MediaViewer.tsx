@@ -1,5 +1,5 @@
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Image,
   Modal,
@@ -101,9 +101,10 @@ export function MediaViewer({
               setZoomedUri(null);
             }}
           >
-            {viewerItems.map((item) => (
+            {viewerItems.map((item, index) => (
               <View key={item.uri} style={[styles.slide, { width }]}>
                 <MediaSlide
+                  isActive={currentIndex === index}
                   item={{ ...item, authHeaders: item.authHeaders ?? authHeaders }}
                   width={width}
                   height={mediaHeight}
@@ -152,12 +153,14 @@ export function MediaViewer({
 }
 
 function MediaSlide({
+  isActive,
   item,
   width,
   height,
   panEnabled,
   onZoomChange,
 }: {
+  isActive: boolean;
   item: MediaViewerItem;
   width: number;
   height: number;
@@ -181,6 +184,7 @@ function MediaSlide({
       width={width}
       height={height}
       authHeaders={item.authHeaders}
+      isActive={isActive}
       panEnabled={Boolean(panEnabled)}
       onZoomChange={onZoomChange}
     />
@@ -192,6 +196,7 @@ function ZoomableImage({
   width,
   height,
   authHeaders,
+  isActive,
   panEnabled,
   onZoomChange,
 }: {
@@ -199,6 +204,7 @@ function ZoomableImage({
   width: number;
   height: number;
   authHeaders?: ArtifactHttpHeaders;
+  isActive: boolean;
   panEnabled: boolean;
   onZoomChange?: (zoomed: boolean) => void;
 }) {
@@ -208,6 +214,15 @@ function ZoomableImage({
   const translateY = useSharedValue(0);
   const savedTranslateX = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
+  const onZoomChangeRef = useRef(onZoomChange);
+
+  useEffect(() => {
+    onZoomChangeRef.current = onZoomChange;
+  }, [onZoomChange]);
+
+  const notifyZoomChange = useCallback((zoomed: boolean) => {
+    onZoomChangeRef.current?.(zoomed);
+  }, []);
 
   useEffect(() => {
     scale.value = 1;
@@ -216,12 +231,12 @@ function ZoomableImage({
     translateY.value = 0;
     savedTranslateX.value = 0;
     savedTranslateY.value = 0;
-    onZoomChange?.(false);
-  }, [height, uri, width]);
+    notifyZoomChange(false);
+  }, [height, isActive, notifyZoomChange, uri, width]);
 
   const clampTranslation = (value: number, scaledSize: number) => {
     'worklet';
-    const limit = Math.max(0, (scaledSize - scaledSize / scale.value) / 2);
+    const limit = Math.max(0, (scaledSize * (scale.value - 1)) / 2);
     return Math.max(-limit, Math.min(limit, value));
   };
 
@@ -242,11 +257,11 @@ function ZoomableImage({
         savedScale.value = 1;
         savedTranslateX.value = 0;
         savedTranslateY.value = 0;
-        if (onZoomChange) runOnJS(onZoomChange)(false);
+        runOnJS(notifyZoomChange)(false);
         return;
       }
       savedScale.value = scale.value;
-      if (onZoomChange) runOnJS(onZoomChange)(true);
+      runOnJS(notifyZoomChange)(true);
     });
 
   const pan = Gesture.Pan()
@@ -276,7 +291,7 @@ function ZoomableImage({
       translateY.value = withTiming(0);
       savedTranslateX.value = 0;
       savedTranslateY.value = 0;
-      if (onZoomChange) runOnJS(onZoomChange)(nextScale > 1);
+      runOnJS(notifyZoomChange)(nextScale > 1);
     });
 
   const gesture = Gesture.Simultaneous(doubleTap, pinch, pan);

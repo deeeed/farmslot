@@ -1,4 +1,4 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useMemo } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -34,18 +34,28 @@ export function TerminalModeToggle({
 }) {
   return (
     <View style={[styles.toggle, style]}>
-      <Text
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ selected: mode === 'tmux' }}
         style={[styles.toggleOption, mode === 'tmux' && styles.toggleOptionActive]}
         onPress={() => onChange('tmux')}
       >
-        Tmux
-      </Text>
-      <Text
+        <Text style={[styles.toggleOptionText, mode === 'tmux' && styles.toggleOptionTextActive]}>
+          Tmux
+        </Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ selected: mode === 'history' }}
         style={[styles.toggleOption, mode === 'history' && styles.toggleOptionActive]}
         onPress={() => onChange('history')}
       >
-        History
-      </Text>
+        <Text
+          style={[styles.toggleOptionText, mode === 'history' && styles.toggleOptionTextActive]}
+        >
+          History
+        </Text>
+      </Pressable>
     </View>
   );
 }
@@ -80,7 +90,10 @@ export function TerminalKeysModeControls({
 }
 
 export function TerminalHistoryPanel({ rawText }: { rawText: string }) {
-  const body = terminalHistoryTextFromText(rawText, TERMINAL_HISTORY_VIEWER_LINES);
+  const body = useMemo(
+    () => terminalHistoryTextFromText(rawText, TERMINAL_HISTORY_VIEWER_LINES),
+    [rawText],
+  );
   return (
     <ScrollView style={styles.panel} contentContainerStyle={styles.panelContent}>
       <ScrollView horizontal showsHorizontalScrollIndicator>
@@ -130,14 +143,18 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   toggleOption: {
-    color: colors.textMuted,
-    fontSize: fonts.sizeXs,
-    fontWeight: '900',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
   },
+  toggleOptionText: {
+    color: colors.textMuted,
+    fontSize: fonts.sizeXs,
+    fontWeight: '900',
+  },
   toggleOptionActive: {
     backgroundColor: colors.accent + '22',
+  },
+  toggleOptionTextActive: {
     color: colors.accent,
   },
   panel: {

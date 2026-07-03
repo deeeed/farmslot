@@ -235,6 +235,9 @@ export default function WorkerTerminalScreen() {
       chunk,
       TERMINAL_TAIL_MAX_CHARS,
     );
+    setLines(
+      terminalTailLinesFromText(terminalTailTextRef.current, TERMINAL_WORKER_SNAPSHOT_LINES),
+    );
   }, []);
 
   const loadSnapshot = useCallback(async () => {
