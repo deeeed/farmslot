@@ -9,9 +9,11 @@ output validates against them is conformant, with or without a farmslot
 dependency. This package provides the matching TypeScript types, the reference
 validator, the fail-closed scrubber, and the fleet-layout assembler.
 
-Nothing here is tool-chain-specific. There are no Jira, GitHub, or wallet nouns in
-the package or its defaults — every such specific is caller-supplied config or a
-resolved override file.
+The package is tool-chain-agnostic: no Jira, GitHub, or wallet vocabulary appears
+in the harness defaults or assembler logic. Tool-chain specifics that legitimately
+belong in the format (for example, `sourceKind: "jira"` or `"github-pr"` fields
+defined by the spec schemas) are spec-defined nouns, not implementation choices —
+everything else is caller-supplied config or a resolved override file.
 
 ## Install
 

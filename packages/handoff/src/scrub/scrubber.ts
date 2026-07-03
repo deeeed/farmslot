@@ -49,9 +49,15 @@ export interface RetainedTextFile {
 export interface ScrubOutcome {
   status: ScrubStatus;
   report: ScrubReport;
-  /** Scrubbed text files to write into the package (present regardless of status). */
+  /**
+   * Scrubbed text files cleared by the gate. Empty when status is `'blocked'` so
+   * the public API never hands back raw content from a blocked package.
+   */
   retainedText: RetainedTextFile[];
-  /** Package-relative paths of media artifacts that cleared the gate. */
+  /**
+   * Package-relative paths of media artifacts cleared by the gate. Empty when
+   * status is `'blocked'`.
+   */
   retainedMedia: string[];
 }
 
@@ -165,5 +171,11 @@ export function scrubFiles(files: ScrubInputFile[], tokens: RedactionTokens = {}
     visualPassAttestations,
   };
 
-  return { status, report, retainedText, retainedMedia };
+  return {
+    status,
+    report,
+    // Never return raw content when blocked — the report (kinds + fingerprints) is enough.
+    retainedText: status === 'blocked' ? [] : retainedText,
+    retainedMedia: status === 'blocked' ? [] : retainedMedia,
+  };
 }
