@@ -3,4 +3,4 @@
 // fleet can be upgraded deliberately; optional method/event fields remain
 // backward-compatible unless a caller requires a new node capability.
 // Format: semver-ish, increment when methods/events/frame format changes.
-export const PROTOCOL_VERSION = '0.7.1';
+export const PROTOCOL_VERSION = '0.7.2';
