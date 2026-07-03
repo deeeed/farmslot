@@ -4,11 +4,14 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.7.3 - 2026-07-03
+
 - Add `GatewayListenInfo` on `gateway.status` for Companion LAN pairing diagnostics.
 - Add roadmap promotion draft contracts, backlog spec file reads, and graph dispatch configuration fields.
 - Add interactive operator packet contracts, artifact discovery, and action request helpers.
 - Add worker session history RPC and event contracts for read-only transcript snapshots and deltas.
-- Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.2 - 2026-07-03
 
