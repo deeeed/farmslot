@@ -257,6 +257,7 @@ test('loadLiveRecipeContextForRun treats valid empty typed artifact manifests as
   const artifactsDir = path.join(taskDir, 'artifacts');
   await mkdir(artifactsDir, { recursive: true });
   await writeFile(path.join(taskDir, 'TASK.md'), '# task\n', 'utf-8');
+  await writeFile(path.join(artifactsDir, 'recipe.json'), '{"schema_version":1}\n', 'utf-8');
   await writeFile(path.join(artifactsDir, 'summary.json'), '{"status":"pass"}\n', 'utf-8');
   await writeFile(path.join(artifactsDir, 'trace.json'), '[]\n', 'utf-8');
   await writeFile(
