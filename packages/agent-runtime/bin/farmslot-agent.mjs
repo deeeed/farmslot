@@ -107,9 +107,8 @@ function validateRecipeQualityCompact(input) {
   if (unknown.length > 0) {
     throw new Error(`recipe-quality input compact contains unknown key(s): ${unknown.join(', ')}`);
   }
-  const expected = { pass: 'PASS', warn: 'WARN', fail: 'FAIL' }[input.verdict];
-  if (compact.verdict != null && expected && compact.verdict !== expected) {
-    throw new Error(`recipe-quality input compact.verdict must match verdict ${input.verdict}`);
+  if (compact.verdict != null) {
+    throw new Error('recipe-quality input compact.verdict is output-only; use top-level verdict');
   }
 }
 
@@ -295,7 +294,7 @@ function parseRecipeQualityBuildArgs(args) {
     else if (arg === '--source-signal') pushFlagValue(parsed.flags, 'sourceSignals', next(arg));
     else if (arg.startsWith('--source-signal='))
       pushFlagValue(parsed.flags, 'sourceSignals', arg.slice('--source-signal='.length));
-    else usage(2);
+    else throw new Error(`unknown option ${arg}`);
   }
   return parsed;
 }
@@ -410,7 +409,7 @@ function parseContractResolveArgs(args) {
     else if (arg === '--project-config') parsed.projectConfig = args[++i] || null;
     else if (arg.startsWith('--project-config='))
       parsed.projectConfig = arg.slice('--project-config='.length);
-    else usage(2);
+    else throw new Error(`unknown option ${arg}`);
   }
   if (!parsed.flow) usage(2);
   return parsed;

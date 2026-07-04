@@ -160,7 +160,7 @@ async function main() {
         fallbackUsed: false,
         fallbackSource: 'fallback:recipe-json',
       }),
-    /fallbackUsed cannot be false/,
+    /fallbackSource requires a fallback producer/,
   );
 
   assert.throws(
@@ -171,6 +171,37 @@ async function main() {
         fallbackSource: 'bogus',
       }),
     /fallbackSource must be one of/,
+  );
+
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
+        reasons: ['Fallback producer must set fallback used.'],
+        producer: 'fallback:report',
+        fallbackUsed: false,
+      }),
+    /fallbackUsed cannot be false for fallback producers/,
+  );
+
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
+        reasons: ['Dimension errors are field-specific.'],
+        dimensions: { graph: { status: 'bogus', reason: 'x', evidence: [] } },
+      }),
+    /dimensions\.graph\.status must be one of/,
+  );
+
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
+        reasons: ['Finding errors are field-specific.'],
+        structuralFindings: [{ code: 'x' }],
+      }),
+    /structuralFindings\.0\.message must be a string/,
   );
 
   assert.throws(
@@ -245,7 +276,7 @@ async function main() {
     { encoding: 'utf8' },
   );
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /compact\.verdict must match verdict pass/);
+  assert.match(result.stderr, /compact\.verdict is output-only/);
 
   const compactReasonConflictInputPath = path.join(dir, 'compact-reason-conflict-input.json');
   writeFileSync(
@@ -253,7 +284,7 @@ async function main() {
     JSON.stringify({
       verdict: 'pass',
       reasons: ['top-level'],
-      compact: { verdict: 'PASS', reasons: ['compact'], better_version_guidance: [] },
+      compact: { reasons: ['compact'], better_version_guidance: [] },
     }),
   );
   result = spawnSync(
@@ -289,6 +320,12 @@ async function main() {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /producer must be one of/);
+
+  result = spawnSync(process.execPath, [cli, 'recipe-quality', 'build', '--bogus'], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unknown option --bogus/);
 
   process.stdout.write('agent-runtime recipe-quality builder tests: ok\n');
 }

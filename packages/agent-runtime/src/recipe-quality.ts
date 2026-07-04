@@ -2,6 +2,7 @@ import {
   isRecipeQualityArtifact,
   RECIPE_QUALITY_ARTIFACT_SOURCES,
   RECIPE_QUALITY_ARTIFACT_VERSION,
+  RECIPE_QUALITY_DIMENSION_STATUSES,
   RECIPE_QUALITY_FALLBACK_SOURCES,
   RECIPE_QUALITY_PROOF_MODES,
   RECIPE_QUALITY_VERDICTS,
@@ -108,6 +109,46 @@ function validateTrainingFields(value: RecipeQualityArtifact['training_fields'] 
   }
 }
 
+function validateDimensions(value: RecipeQualityArtifact['dimensions'] | undefined): void {
+  assertOptionalPlainRecord('dimensions', value);
+  if (!value) return;
+  for (const [name, dimension] of Object.entries(value)) {
+    if (!isPlainRecord(dimension)) {
+      throw new TypeError(`dimensions.${name} must be a JSON object.`);
+    }
+    if (!RECIPE_QUALITY_DIMENSION_STATUSES.includes(dimension.status)) {
+      throw new TypeError(
+        `dimensions.${name}.status must be one of: ${RECIPE_QUALITY_DIMENSION_STATUSES.join(', ')}.`,
+      );
+    }
+    if (typeof dimension.reason !== 'string') {
+      throw new TypeError(`dimensions.${name}.reason must be a string.`);
+    }
+    assertStringArray(`dimensions.${name}.evidence`, dimension.evidence);
+  }
+}
+
+function validateFindings(
+  name: string,
+  value: RecipeQualityArtifact['structural_findings'] | undefined,
+): void {
+  assertOptionalArray(name, value);
+  if (!value) return;
+  for (const [index, finding] of value.entries()) {
+    if (!isPlainRecord(finding)) {
+      throw new TypeError(`${name}.${index} must be a JSON object.`);
+    }
+    if (typeof finding.code !== 'string')
+      throw new TypeError(`${name}.${index}.code must be a string.`);
+    if (typeof finding.message !== 'string')
+      throw new TypeError(`${name}.${index}.message must be a string.`);
+    if (finding.dimension != null && typeof finding.dimension !== 'string') {
+      throw new TypeError(`${name}.${index}.dimension must be a string when provided.`);
+    }
+    if (finding.evidence != null) assertStringArray(`${name}.${index}.evidence`, finding.evidence);
+  }
+}
+
 function validateExtraKeys(extra: Record<string, unknown> | undefined): void {
   assertOptionalPlainRecord('extra', extra);
   if (!extra) return;
@@ -133,9 +174,9 @@ export function buildRecipeQualityArtifact(
   assertStringArray('betterVersionGuidance', input.betterVersionGuidance ?? []);
   assertStringArray('suggestedRecipeDelta', input.suggestedRecipeDelta ?? []);
   assertStringArray('sourceSignals', input.sourceSignals ?? ['recipe-quality.json']);
-  assertOptionalPlainRecord('dimensions', input.dimensions);
-  assertOptionalArray('structuralFindings', input.structuralFindings);
-  assertOptionalArray('contextualFindings', input.contextualFindings);
+  validateDimensions(input.dimensions);
+  validateFindings('structuralFindings', input.structuralFindings);
+  validateFindings('contextualFindings', input.contextualFindings);
   assertOptionalBoolean('fallbackUsed', input.fallbackUsed);
   assertOptionalBoolean('legacyTask', input.legacyTask);
   assertOptionalBoolean('artifactRequired', input.artifactRequired);
@@ -151,6 +192,9 @@ export function buildRecipeQualityArtifact(
     );
   }
   const fallbackUsed = input.fallbackUsed ?? defaultFallbackUsed(producer, fallbackSource);
+  if (fallbackSource != null && !producer.startsWith('fallback:')) {
+    throw new TypeError('fallbackSource requires a fallback producer.');
+  }
   if (fallbackSource != null && fallbackUsed === false) {
     throw new TypeError('fallbackUsed cannot be false when fallbackSource is set.');
   }
@@ -177,7 +221,7 @@ export function buildRecipeQualityArtifact(
     meta: {
       producer,
       fallback_used: fallbackUsed,
-      fallback_source: fallbackSource,
+      ...(fallbackSource ? { fallback_source: fallbackSource } : {}),
       legacy_task: input.legacyTask ?? false,
       artifact_required: input.artifactRequired ?? true,
       source_signals: input.sourceSignals ?? ['recipe-quality.json'],
