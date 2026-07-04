@@ -5,6 +5,9 @@ All notable changes to `@farmslot/gateway` are tracked here.
 ## Unreleased
 
 - Consume the protocol-owned `RecipeQualityArtifact` validator and render worker task helper paths from `@farmslot/agent-runtime`.
+- fix: local slots now show `[connect] Local slot on <machine>` instead of the misleading `[ssh]` messages during prepare — the SSH probe and labels are skipped when `isLocal` returns true.
+- fix: deps phase now streams install output to the CLI in real time; previously the tail-poll ran but output was silently dropped because no `onOutput` callback was wired.
+- feat: deps phase emits a `[deps] Still running… (Xm since last output)` heartbeat step every 30 s of silence so long yarn installs remain visible.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.2.1 - 2026-07-03

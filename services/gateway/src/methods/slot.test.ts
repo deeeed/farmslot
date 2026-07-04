@@ -14,10 +14,13 @@ import {
   buildPreparePlaceholderCommand,
   buildPrepareWindowName,
   buildPrepareWrappedCommand,
+  ensureSlotReachable,
+  formatPrepareSilence,
   getPrepareDepsTimeoutMs,
   getPreparePreflightTimeoutMs,
   getPrepareSentinelPollTimeoutMs,
   prepareSessionTarget,
+  prepareSilenceNotice,
   refreshStaleBranchDetail,
   refreshSyncUsesIdleReset,
   shouldEmitPreparePollWarning,
@@ -27,7 +30,9 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-function makeSlotVars(overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | 'session'>): SlotVars {
+function makeSlotVars(
+  overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | 'session'>,
+): SlotVars {
   return {
     machine: 'macwork',
     platform: 'macos',
@@ -93,6 +98,82 @@ test('buildPrepareWindowName accepts phase-scoped run labels', () => {
   assert.equal(buildPrepareWindowName('7d1fc152-preflight'), 'prepare-7d1fc152-preflight');
 });
 
+test('formatPrepareSilence omits minutes under 60s and includes them above', () => {
+  assert.equal(formatPrepareSilence(30_000), '30s');
+  assert.equal(formatPrepareSilence(45_000), '45s');
+  assert.equal(formatPrepareSilence(60_000), '1m0s');
+  assert.equal(formatPrepareSilence(65_000), '1m5s');
+  assert.equal(formatPrepareSilence(150_000), '2m30s');
+});
+
+test('prepareSilenceNotice stays quiet until the threshold then reports elapsed silence', () => {
+  assert.equal(prepareSilenceNotice(0), null);
+  assert.equal(prepareSilenceNotice(29_999), null);
+  assert.equal(prepareSilenceNotice(30_000), 'Still running… (30s since last output)');
+  assert.equal(prepareSilenceNotice(150_000), 'Still running… (2m30s since last output)');
+});
+
+test('ensureSlotReachable reports a local slot without opening SSH', async () => {
+  const steps: Array<[string, string]> = [];
+  let probed = 0;
+  await ensureSlotReachable(
+    makeSlotVars({ slotId: 'core-1', session: 'core-1', host: 'localhost', machine: 'macwork' }),
+    (name, detail) => steps.push([name, detail]),
+    async () => {
+      probed += 1;
+      return { exitCode: 0 };
+    },
+  );
+
+  assert.deepEqual(steps, [['connect', 'Local slot on macwork']]);
+  assert.equal(probed, 0);
+});
+
+test('ensureSlotReachable probes and reports a reachable remote slot', async () => {
+  const steps: Array<[string, string]> = [];
+  const probeCalls: string[] = [];
+  await ensureSlotReachable(
+    makeSlotVars({
+      slotId: 'core-2',
+      session: 'core-2',
+      host: '10.0.0.5',
+      machine: 'gohan',
+      sshTarget: 'deeeed@gohan',
+    }),
+    (name, detail) => steps.push([name, detail]),
+    async (_vars, cmd) => {
+      probeCalls.push(cmd);
+      return { exitCode: 0 };
+    },
+  );
+
+  assert.deepEqual(steps, [
+    ['ssh', 'Checking deeeed@gohan...'],
+    ['ssh', 'Connected to deeeed@gohan'],
+  ]);
+  assert.deepEqual(probeCalls, ['echo ok']);
+});
+
+test('ensureSlotReachable throws with the ssh target when a remote slot is unreachable', async () => {
+  const steps: Array<[string, string]> = [];
+  await assert.rejects(
+    ensureSlotReachable(
+      makeSlotVars({
+        slotId: 'core-3',
+        session: 'core-3',
+        host: '10.0.0.6',
+        machine: 'gohan',
+        sshTarget: 'deeeed@gohan',
+      }),
+      (name, detail) => steps.push([name, detail]),
+      async () => ({ exitCode: 255 }),
+    ),
+    /Cannot reach deeeed@gohan\. Next: .*rerun prepare/,
+  );
+
+  assert.deepEqual(steps, [['ssh', 'Checking deeeed@gohan...']]);
+});
+
 test('buildPreparePlaceholderCommand avoids GNU-only sleep infinity', () => {
   const command = buildPreparePlaceholderCommand();
 
@@ -150,7 +231,7 @@ test('buildPrepareWrappedCommand writes sentinel and preserves output flush on s
 
 test('buildPrepareWrappedCommand disarms traps before writing the final child status', () => {
   const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep');
-  const finalTrapIdx = command.indexOf('trap - HUP INT TERM\n' + "echo \"$__farmslot_status\"");
+  const finalTrapIdx = command.indexOf('trap - HUP INT TERM\n' + 'echo "$__farmslot_status"');
   const signalTrapIdx = command.indexOf('__farmslot_signal_exit()');
 
   assert(finalTrapIdx > signalTrapIdx);
@@ -202,8 +283,7 @@ test('buildDevServerPortCleanup skips local gateway port', () => {
 
 test('buildDevServerPortCleanup still cleans remote gateway-numbered ports', () => {
   assert.deepEqual(buildDevServerPortCleanup('7777', false, 7777), {
-    command:
-      'lsof -nP -iTCP:7777 -sTCP:LISTEN -t 2>/dev/null | xargs kill 2>/dev/null; true',
+    command: 'lsof -nP -iTCP:7777 -sTCP:LISTEN -t 2>/dev/null | xargs kill 2>/dev/null; true',
     skippedReason: null,
   });
 });

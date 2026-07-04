@@ -16,12 +16,10 @@ export function createPrepareStream(
   // Track this prepare's steps so a reloaded UI can re-attach (ADR-037).
   activePrepareSessions.set(slotId, { requestId, startedAt: startTime, steps: [] });
   const out = (stream: 'stdout' | 'stderr', data: string) => {
-    emit('script.output', {
-      requestId,
-      stream,
-      data: data.endsWith('\n') ? data : `${data}\n`,
-      timestamp: Date.now(),
-    });
+    // Stream raw bytes: prepare output arrives as arbitrary tail chunks that may
+    // split mid-line, so forcing a trailing newline would fragment lines. Step
+    // messages supply their own newline. Mirrors the recipe output stream.
+    emit('script.output', { requestId, stream, data, timestamp: Date.now() });
     emit('slot.prepare.output', { requestId, slotId, stream, data });
   };
   return {
@@ -30,7 +28,7 @@ export function createPrepareStream(
     step(name, detail) {
       activePrepareSessions.get(slotId)?.steps.push({ name, detail });
       emit('slot.prepare.step', { requestId, slotId, name, detail });
-      out('stdout', `[${name}] ${detail}`);
+      out('stdout', `[${name}] ${detail}\n`);
     },
     output: out,
     complete(exitCode, error) {
@@ -41,7 +39,12 @@ export function createPrepareStream(
         duration: Date.now() - startTime,
         ...(error ? { error } : {}),
       });
-      emit('slot.prepare.done', { requestId, slotId, prepared: exitCode === 0, ...(error ? { error } : {}) });
+      emit('slot.prepare.done', {
+        requestId,
+        slotId,
+        prepared: exitCode === 0,
+        ...(error ? { error } : {}),
+      });
     },
   };
 }

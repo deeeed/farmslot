@@ -130,6 +130,52 @@ export function prepareSessionTarget(sessionName: string): string {
   return `${sessionName}:`;
 }
 
+/**
+ * Formats a silence duration as a compact `Xm Ys` / `Ys` string for the deps
+ * heartbeat message. Sub-minute silences omit the minute component.
+ */
+export function formatPrepareSilence(silenceMs: number): string {
+  const min = Math.floor(silenceMs / 60_000);
+  const sec = Math.floor((silenceMs % 60_000) / 1_000);
+  return min > 0 ? `${min}m${sec}s` : `${sec}s`;
+}
+
+/**
+ * Returns the deps heartbeat message once a command has been silent for at least
+ * thresholdMs, or null while output is still recent. Keeps the emit-or-skip
+ * decision testable without a live interval.
+ */
+export function prepareSilenceNotice(silenceMs: number, thresholdMs = 30_000): string | null {
+  if (silenceMs < thresholdMs) return null;
+  return `Still running… (${formatPrepareSilence(silenceMs)} since last output)`;
+}
+
+/**
+ * Emits the connection step for a slot. Local slots report a single connect step
+ * and never open SSH; remote slots report the SSH check, probe reachability, and
+ * throw when the slot cannot be reached. probe is injectable for tests and
+ * defaults to the real SSH exec.
+ */
+export async function ensureSlotReachable(
+  vars: SlotVars,
+  step: (name: string, detail: string) => void,
+  probe: (vars: SlotVars, cmd: string) => Promise<{ exitCode: number }> = execOnSlot,
+): Promise<void> {
+  if (isLocal(vars.host, vars.machine)) {
+    step('connect', `Local slot on ${vars.machine}`);
+    return;
+  }
+  step('ssh', `Checking ${vars.sshTarget}...`);
+  const r = await probe(vars, 'echo ok');
+  if (r.exitCode !== 0) {
+    throw new Error(
+      `Cannot reach ${vars.sshTarget}. Next: confirm the slot host is online and SSH is configured ` +
+        `(ssh ${vars.sshTarget} echo ok), or point the slot at a local/reachable host and rerun prepare.`,
+    );
+  }
+  step('ssh', `Connected to ${vars.sshTarget}`);
+}
+
 function prepareEnsureSessionSnippet(sessionName: string, cwd: string): string {
   return (
     `has-session -t ${shellQuote(sessionName)} 2>/dev/null || ` +
