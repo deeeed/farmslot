@@ -24,6 +24,35 @@ yarn e2e:scripted-runner
 
 This creates a temporary local pool slot, dispatches success and failure scenarios through `dispatch.execute`, verifies the checkout-local launch command, waits for worker `SIGNAL.json`, and cleans up after itself. Use this before claiming scripted-runner dispatch integration works end-to-end.
 
+## Recipe Protocol self-validation
+
+For ADR-034 Recipe Protocol changes, pair the scripted-runner dispatch E2E with
+the local Recipe Protocol self-validation harness:
+
+```sh
+yarn e2e:scripted-runner
+yarn e2e:recipe-protocol --json
+```
+
+`e2e:recipe-protocol` executes a real `@farmslot/recipe-harness` run against the
+repo-local self-validation suite, writes a fresh v1 artifact package under
+`temp/recipe-protocol-self-validation/`, and validates the emitted
+`summary.json`, `trace.json`, `recipe.json`, and `artifact-manifest.json` with
+`@farmslot/protocol`. This is intentionally more than offline fixture linting:
+the validator runs inside the recipe as a command node, then the produced package
+is validated after the run.
+
+For first-party MetaMask harness conformance, validate the live-run artifact
+package with the same protocol CLI:
+
+```sh
+cd apps/command-center
+yarn farmslot recipe artifacts validate <mm-harness-artifacts-dir> \
+  --recipe <mm-harness-artifacts-dir>/recipe.json --json
+```
+
+Schema divergence is blocking unless it is captured as an explicit follow-up.
+
 ## Scenario mode
 
 Scenario mode is dev/e2e only and requires an explicit env flag:
