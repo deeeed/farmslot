@@ -75,7 +75,7 @@ Do **not** write both `report.md` and `pr-description.md` on dev/fix-bug — `pr
 
 - `artifacts/recipe-coverage.md`
 - `artifacts/evidence-manifest.json`
-- `artifacts/recipe-quality.json` (when your project expects it)
+- `artifacts/recipe-quality.json` (when your project expects it; generate it with `farmslot-agent recipe-quality build`, do not hand-author the full schema)
 
 ## Copy into new templates
 

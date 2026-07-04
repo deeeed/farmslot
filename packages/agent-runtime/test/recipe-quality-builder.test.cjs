@@ -163,6 +163,26 @@ async function main() {
     /fallbackUsed cannot be false/,
   );
 
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
+        reasons: ['Fallback source must be known.'],
+        fallbackSource: 'bogus',
+      }),
+    /fallbackSource must be one of/,
+  );
+
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
+        reasons: ['Booleans must be booleans.'],
+        legacyTask: 'false',
+      }),
+    /legacyTask must be a boolean/,
+  );
+
   result = spawnSync(
     process.execPath,
     [cli, 'recipe-quality', 'build', '--verdict', 'nope', '--reason', 'Invalid verdict.'],
@@ -226,6 +246,23 @@ async function main() {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /compact\.verdict must match verdict pass/);
+
+  const compactReasonConflictInputPath = path.join(dir, 'compact-reason-conflict-input.json');
+  writeFileSync(
+    compactReasonConflictInputPath,
+    JSON.stringify({
+      verdict: 'pass',
+      reasons: ['top-level'],
+      compact: { verdict: 'PASS', reasons: ['compact'], better_version_guidance: [] },
+    }),
+  );
+  result = spawnSync(
+    process.execPath,
+    [cli, 'recipe-quality', 'build', '--input', compactReasonConflictInputPath],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /reasons conflicts with compact\.reasons/);
 
   const metaTypoInputPath = path.join(dir, 'meta-typo-input.json');
   writeFileSync(

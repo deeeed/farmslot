@@ -123,20 +123,20 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 The protocol is **not** a future proposal. Validators, harness runtime, CLI, and self-validation **fixtures** exist. Remaining work is **rollout and dependency**, not greenfield protocol design.
 
-| ADR / PRD requirement                                                                     | Status      | Evidence / gap                                                                                      |
-| ----------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------- |
-| Canonical spec `recipe-protocol-v1.md`                                                    | Shipped     | `docs/reference/recipe-protocol-v1.md`                                                              |
-| `validateRecipeDocument` / `validateRecipeWithManifest` / `validateRecipeArtifactPackage` | Shipped     | `@farmslot/protocol`                                                                                |
-| Graph envelope + composition (`call`, `startState`, `proofTargets`, `phase`, `record`)    | Shipped     | Protocol tests + `@farmslot/recipe-harness`                                                         |
-| Recipe-quality runtime contract owner                                                     | Shipped     | `RecipeQualityArtifact` validator in `@farmslot/protocol`; task checks in `@farmslot/agent-runtime` |
-| `farmslot recipe validate`                                                                | Shipped     | `packages/cli/src/commands/recipe.ts`                                                               |
-| Farmslot self-validation recipe **fixtures**                                              | Shipped     | `docs/examples/recipes/farmslot/*.recipe.json`                                                      |
-| Typed `artifact-manifest.json` on all project runs                                        | Partial     | Harness writes manifests; legacy runners still emit summary/trace only                              |
-| UI manifest-first rendering (no filename inference fallback)                              | Partial     | Gateway reads manifests when present; `inferArtifactPurpose` fallback remains                       |
-| Mobile/Audiolab `hooks.recipe_run` alignment                                              | Partial     | Still often worker-template invoked validators                                                      |
-| `recipe-quality.json` producer tooling                                                    | Not started | Agents still need a builder/generator instead of hand-authoring the full artifact                   |
-| Live self-validation suite on real slots                                                  | Not started | Fixtures validate offline; live execution is operator harness work                                  |
-| Onboarding doc consolidation                                                              | Partial     | Spec exists; `projects/README.md` not fully unified                                                 |
+| ADR / PRD requirement                                                                     | Status      | Evidence / gap                                                                                             |
+| ----------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| Canonical spec `recipe-protocol-v1.md`                                                    | Shipped     | `docs/reference/recipe-protocol-v1.md`                                                                     |
+| `validateRecipeDocument` / `validateRecipeWithManifest` / `validateRecipeArtifactPackage` | Shipped     | `@farmslot/protocol`                                                                                       |
+| Graph envelope + composition (`call`, `startState`, `proofTargets`, `phase`, `record`)    | Shipped     | Protocol tests + `@farmslot/recipe-harness`                                                                |
+| Recipe-quality runtime contract owner                                                     | Shipped     | `RecipeQualityArtifact` validator in `@farmslot/protocol`; task checks in `@farmslot/agent-runtime`        |
+| `farmslot recipe validate`                                                                | Shipped     | `packages/cli/src/commands/recipe.ts`                                                                      |
+| Farmslot self-validation recipe **fixtures**                                              | Shipped     | `docs/examples/recipes/farmslot/*.recipe.json`                                                             |
+| Typed `artifact-manifest.json` on all project runs                                        | Partial     | Harness writes manifests; legacy runners still emit summary/trace only                                     |
+| UI manifest-first rendering (no filename inference fallback)                              | Partial     | Gateway reads manifests when present; `inferArtifactPurpose` fallback remains                              |
+| Mobile/Audiolab `hooks.recipe_run` alignment                                              | Partial     | Still often worker-template invoked validators                                                             |
+| `recipe-quality.json` producer tooling                                                    | Shipped     | `@farmslot/agent-runtime` exposes `buildRecipeQualityArtifact()` and `farmslot-agent recipe-quality build` |
+| Live self-validation suite on real slots                                                  | Not started | Fixtures validate offline; live execution is operator harness work                                         |
+| Onboarding doc consolidation                                                              | Partial     | Spec exists; `projects/README.md` not fully unified                                                        |
 
 **Validate locally:**
 

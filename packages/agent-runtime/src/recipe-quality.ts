@@ -2,6 +2,7 @@ import {
   isRecipeQualityArtifact,
   RECIPE_QUALITY_ARTIFACT_SOURCES,
   RECIPE_QUALITY_ARTIFACT_VERSION,
+  RECIPE_QUALITY_FALLBACK_SOURCES,
   RECIPE_QUALITY_PROOF_MODES,
   RECIPE_QUALITY_VERDICTS,
   type RecipeQualityArtifact,
@@ -85,6 +86,12 @@ function assertOptionalPlainRecord(name: string, value: unknown): void {
   }
 }
 
+function assertOptionalBoolean(name: string, value: unknown): void {
+  if (value != null && typeof value !== 'boolean') {
+    throw new TypeError(`${name} must be a boolean when provided.`);
+  }
+}
+
 function assertOptionalArray(name: string, value: unknown): void {
   if (value != null && !Array.isArray(value)) {
     throw new TypeError(`${name} must be an array when provided.`);
@@ -129,12 +136,20 @@ export function buildRecipeQualityArtifact(
   assertOptionalPlainRecord('dimensions', input.dimensions);
   assertOptionalArray('structuralFindings', input.structuralFindings);
   assertOptionalArray('contextualFindings', input.contextualFindings);
+  assertOptionalBoolean('fallbackUsed', input.fallbackUsed);
+  assertOptionalBoolean('legacyTask', input.legacyTask);
+  assertOptionalBoolean('artifactRequired', input.artifactRequired);
   validateTrainingFields(input.trainingFields);
   validateExtraKeys(input.extra);
 
   const producer = input.producer ?? 'worker';
   assertRecipeQualityProducer(producer);
   const fallbackSource = input.fallbackSource;
+  if (fallbackSource != null && !RECIPE_QUALITY_FALLBACK_SOURCES.includes(fallbackSource)) {
+    throw new TypeError(
+      `fallbackSource must be one of: ${RECIPE_QUALITY_FALLBACK_SOURCES.join(', ')}.`,
+    );
+  }
   const fallbackUsed = input.fallbackUsed ?? defaultFallbackUsed(producer, fallbackSource);
   if (fallbackSource != null && fallbackUsed === false) {
     throw new TypeError('fallbackUsed cannot be false when fallbackSource is set.');

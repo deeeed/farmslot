@@ -44,11 +44,11 @@ When the same run is later imported into Farmslot or promoted to a farm worker f
 
 When `artifacts/recipe.json` exists, also write:
 
-| Artifact                           | When                                  |
-| ---------------------------------- | ------------------------------------- |
-| `artifacts/recipe-coverage.md`     | Recipe maps to acceptance criteria    |
-| `artifacts/evidence-manifest.json` | Visual evidence for PR embed          |
-| `artifacts/recipe-quality.json`    | Project/template expects quality gate |
+| Artifact                           | When                                                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| `artifacts/recipe-coverage.md`     | Recipe maps to acceptance criteria                                                         |
+| `artifacts/evidence-manifest.json` | Visual evidence for PR embed                                                               |
+| `artifacts/recipe-quality.json`    | Project/template expects quality gate; generate with `farmslot-agent recipe-quality build` |
 
 `./mark complete` and `check-task-artifact-contract.mjs` enforce these when the recipe file is present.
 

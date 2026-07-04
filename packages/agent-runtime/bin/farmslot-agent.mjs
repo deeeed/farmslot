@@ -132,6 +132,92 @@ function validateRecipeQualityInputKeys(input) {
   }
 }
 
+function valuesEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function rejectConflict(leftLabel, left, rightLabel, right) {
+  if (left !== undefined && right !== undefined && !valuesEqual(left, right)) {
+    throw new Error(`recipe-quality input ${leftLabel} conflicts with ${rightLabel}`);
+  }
+}
+
+function validateRecipeQualityInputConflicts(input) {
+  rejectConflict(
+    'betterVersionGuidance',
+    input.betterVersionGuidance,
+    'better_version_guidance',
+    input.better_version_guidance,
+  );
+  rejectConflict(
+    'structuralFindings',
+    input.structuralFindings,
+    'structural_findings',
+    input.structural_findings,
+  );
+  rejectConflict(
+    'contextualFindings',
+    input.contextualFindings,
+    'contextual_findings',
+    input.contextual_findings,
+  );
+  rejectConflict(
+    'suggestedRecipeDelta',
+    input.suggestedRecipeDelta,
+    'suggested_recipe_delta',
+    input.suggested_recipe_delta,
+  );
+  rejectConflict('trainingFields', input.trainingFields, 'training_fields', input.training_fields);
+  rejectConflict('fallbackUsed', input.fallbackUsed, 'fallback_used', input.fallback_used);
+  rejectConflict('fallbackSource', input.fallbackSource, 'fallback_source', input.fallback_source);
+  rejectConflict('legacyTask', input.legacyTask, 'legacy_task', input.legacy_task);
+  rejectConflict(
+    'artifactRequired',
+    input.artifactRequired,
+    'artifact_required',
+    input.artifact_required,
+  );
+  rejectConflict('sourceSignals', input.sourceSignals, 'source_signals', input.source_signals);
+  rejectConflict('reasons', input.reasons, 'compact.reasons', input.compact?.reasons);
+  rejectConflict(
+    'betterVersionGuidance',
+    input.betterVersionGuidance ?? input.better_version_guidance,
+    'compact.better_version_guidance',
+    input.compact?.better_version_guidance,
+  );
+  rejectConflict('producer', input.producer, 'meta.producer', input.meta?.producer);
+  rejectConflict(
+    'fallbackUsed',
+    input.fallbackUsed ?? input.fallback_used,
+    'meta.fallback_used',
+    input.meta?.fallback_used,
+  );
+  rejectConflict(
+    'fallbackSource',
+    input.fallbackSource ?? input.fallback_source,
+    'meta.fallback_source',
+    input.meta?.fallback_source,
+  );
+  rejectConflict(
+    'legacyTask',
+    input.legacyTask ?? input.legacy_task,
+    'meta.legacy_task',
+    input.meta?.legacy_task,
+  );
+  rejectConflict(
+    'artifactRequired',
+    input.artifactRequired ?? input.artifact_required,
+    'meta.artifact_required',
+    input.meta?.artifact_required,
+  );
+  rejectConflict(
+    'sourceSignals',
+    input.sourceSignals ?? input.source_signals,
+    'meta.source_signals',
+    input.meta?.source_signals,
+  );
+}
+
 function optionalObject(name, value) {
   if (value == null) return {};
   if (typeof value === 'object' && !Array.isArray(value)) return value;
@@ -221,6 +307,7 @@ function normalizeRecipeQualityInput(input) {
   validateRecipeQualityInputKeys(input);
   validateRecipeQualityCompact(input);
   validateRecipeQualityMeta(input);
+  validateRecipeQualityInputConflicts(input);
   return {
     verdict: input.verdict,
     reasons: input.reasons ?? input.compact?.reasons,
