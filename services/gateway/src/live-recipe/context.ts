@@ -398,18 +398,21 @@ function normalizeTypedArtifactManifestPath(value: string): string | null {
   return `artifacts/${normalized}`;
 }
 
-function parseTypedArtifactManifestRefs(raw: string | null, manifestPath: string): ArtifactRef[] {
-  if (!raw) return [];
+function parseTypedArtifactManifestRefs(
+  raw: string | null,
+  manifestPath: string,
+): ArtifactRef[] | null {
+  if (!raw) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
     logJsonParseFailure(manifestPath, error);
-    return [];
+    return null;
   }
   if (!isRecord(parsed)) {
     console.warn(`[live-recipe-context] invalid artifact-manifest.json at ${manifestPath}`);
-    return [];
+    return null;
   }
   const validation = validateArtifactManifestDocument(parsed);
   if (validation.status !== 'valid') {
@@ -421,30 +424,30 @@ function parseTypedArtifactManifestRefs(raw: string | null, manifestPath: string
     console.warn(
       `[live-recipe-context] invalid artifact-manifest.json at ${manifestPath}${findings ? `: ${findings}` : ''}`,
     );
-    return [];
+    return null;
   }
   const manifest = parsed as { artifacts: unknown[] };
   const refs: ArtifactRef[] = [];
   for (const [index, entry] of manifest.artifacts.entries()) {
     if (!isRecord(entry)) {
       console.warn(
-        `[live-recipe-context] ignored invalid artifact-manifest entry ${index} at ${manifestPath}`,
+        `[live-recipe-context] rejecting artifact-manifest.json at ${manifestPath}: entry ${index} is invalid; falling back to scan`,
       );
-      return [];
+      return null;
     }
     const entryType = typeof entry.type === 'string' ? entry.type.trim() : '';
     if (typeof entry.path !== 'string' || !entryType) {
       console.warn(
-        `[live-recipe-context] ignored incomplete artifact-manifest entry ${index} at ${manifestPath}`,
+        `[live-recipe-context] rejecting artifact-manifest.json at ${manifestPath}: entry ${index} is incomplete; falling back to scan`,
       );
-      return [];
+      return null;
     }
     const artifactPath = normalizeTypedArtifactManifestPath(entry.path);
     if (!artifactPath) {
       console.warn(
-        `[live-recipe-context] invalid artifact-manifest path ${entry.path} at ${manifestPath}`,
+        `[live-recipe-context] rejecting artifact-manifest.json at ${manifestPath}: entry ${index} path ${entry.path} is invalid; falling back to scan`,
       );
-      return [];
+      return null;
     }
     const relativeArtifactPath = artifactPath.replace(/^artifacts\//, '');
     refs.push({
@@ -464,17 +467,17 @@ function parseTypedArtifactManifestRefs(raw: string | null, manifestPath: string
 
 function mergeTypedArtifactManifestRefs(
   scannedRefs: ArtifactRef[],
-  typedRefs: ArtifactRef[],
+  typedRefs: ArtifactRef[] | null,
 ): ArtifactRef[] {
-  if (typedRefs.length === 0) return scannedRefs;
-  const merged = new Map<string, ArtifactRef>();
+  if (typedRefs === null) return scannedRefs;
+  const scannedByPath = new Map<string, ArtifactRef>();
   const emitted = new Set<string>();
-  for (const ref of scannedRefs) merged.set(ref.path, ref);
+  for (const ref of scannedRefs) scannedByPath.set(ref.path, ref);
   const refs: ArtifactRef[] = [];
   for (const typedRef of typedRefs) {
     if (emitted.has(typedRef.path)) continue;
     emitted.add(typedRef.path);
-    const scanned = merged.get(typedRef.path);
+    const scanned = scannedByPath.get(typedRef.path);
     // Keep manifest-declared refs even before the scanner can see the bytes:
     // live/remote runs may publish the typed index first and materialize large
     // artifacts moments later. The existing artifact preview path handles 404s
@@ -651,7 +654,7 @@ async function loadContextFromArtifactRoot({
     recipeRunId,
     artifactRoot,
     artifactManifest: artifactRefs.length > 0 ? artifactRefs : null,
-    usedTypedArtifactManifest: typedArtifactRefs.length > 0,
+    usedTypedArtifactManifest: typedArtifactRefs !== null,
     recipeJson,
     recipeQualityArtifact,
     qualityReport: null,
