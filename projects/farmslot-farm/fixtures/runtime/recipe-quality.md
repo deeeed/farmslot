@@ -36,7 +36,8 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
     --task-dir {{TASK_DIR}}
   ```
   (`validate-recipe.sh` auto-promotes screenshots + `after.mp4` when `--task-dir` is set; or run `{{recipe_sync_evidence_cmd}} --task-dir {{TASK_DIR}} --require-video` manually.)
-- Gateway replay uses the same hook via `hooks.recipe_run` in `projects/farmslot-farm/project.json`.
+- Gateway replay uses the same hook via `hooks.recipe_run` in `projects/farmslot-farm/project.json`. The hook routes `cli`/web runs to Command Center and `ios`/`android` runs to Companion, but both routes must emit the same Recipe v1 package under `--artifacts-dir`: `recipe.json`, `summary.json`, `trace.json`, and `artifact-manifest.json`.
+- If you need to inspect the package directly, run `cd {{REPO}} && yarn --cwd apps/command-center farmslot recipe artifacts validate {{TASK_DIR}}/artifacts/recipe-run --recipe {{TASK_DIR}}/artifacts/recipe-run/recipe.json`.
 
 ## Proof rules
 

@@ -1,7 +1,7 @@
 # ADR Implementation Status
 
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-07-03 (ADR-048 initial implementation + ADR-040/041 roadmap-to-work-graph partial implementation refresh)
+**Last updated:** 2026-07-04 (ADR-034 Recipe Protocol v1 adoption refresh)
 **Stale by:** 2026-09-08
 **Authority:** Derived visibility doc. When this file disagrees with an ADR body, the ADR wins for intent; git history and `IMPLEMENTED-HISTORY.md` win for what actually shipped.
 
@@ -133,10 +133,10 @@ The protocol is **not** a future proposal. Validators, harness runtime, CLI, and
 | Farmslot self-validation recipe **fixtures**                                              | Shipped     | `docs/examples/recipes/farmslot/*.recipe.json`                                                                                                                          |
 | Typed `artifact-manifest.json` on all project runs                                        | Partial     | Harness-backed producers write manifests; Gateway now rejects invalid `hooks.recipe_run` / live-rerun artifact packages; remaining project-hook alignment tracked below |
 | UI manifest-first rendering (inference quarantined to fallback)                           | Shipped     | Valid typed manifests are the rendering source of truth; invalid/missing manifests use the explicit legacy scan fallback                                                |
-| Mobile/Audiolab `hooks.recipe_run` alignment                                              | Partial     | Still often worker-template invoked validators                                                                                                                          |
+| Mobile/Audiolab `hooks.recipe_run` alignment                                              | Partial     | `farmslot-farm` now has a conformance-checked CLI/web + Companion mobile hook route; external Mobile/Audiolab harness conformance remains a follow-up                   |
 | `recipe-quality.json` producer tooling                                                    | Shipped     | `@farmslot/agent-runtime` exposes `buildRecipeQualityArtifact()` and `farmslot-agent recipe-quality build`                                                              |
 | Live self-validation suite on real slots                                                  | Not started | Fixtures validate offline; live execution is operator harness work                                                                                                      |
-| Onboarding doc consolidation                                                              | Partial     | Spec exists; `projects/README.md` not fully unified                                                                                                                     |
+| Onboarding doc consolidation                                                              | Partial     | Spec exists; `projects/README.md` now states hook/artifact boundaries, but package-specific onboarding still needs consolidation                                        |
 
 **Validate locally:**
 

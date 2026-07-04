@@ -56,11 +56,7 @@ require_value() {
 # Treat the next token as a value only when it is not another flag.
 optional_flag_value() {
   local value="${1:-}"
-  if [[ -n "${value}" && "${value}" != --* ]]; then
-    printf '%s' "${value}"
-    return 0
-  fi
-  return 1
+  [[ -n "${value}" && "${value}" != --* ]]
 }
 
 while [[ "$#" -gt 0 ]]; do
