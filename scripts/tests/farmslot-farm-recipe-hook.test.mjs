@@ -134,6 +134,34 @@ test('farmslot-farm mobile recipe route targets Companion expo recipe with the s
   });
 });
 
+test('farmslot-farm mobile recipe route tolerates omitted optional device resources', async () => {
+  await withTempDir(async (root) => {
+    const recipePath = path.join(root, 'recipe.json');
+    const artifactsDir = path.join(root, 'recipe-run');
+    const output = await dryRun([
+      '--recipe',
+      recipePath,
+      '--artifacts-dir',
+      artifactsDir,
+      '--runtime-dir',
+      path.join(root, 'runtime'),
+      '--platform',
+      'ios',
+      '--metro-port',
+      '8081',
+      '--simulator',
+      '--adb-serial',
+    ]);
+
+    assert.match(output, /^bash /);
+    assert.match(output, /apps\/companion\/scripts\/agentic\/validate-recipe\.sh/);
+    assert.match(output, /--artifacts-dir /);
+    assert.match(output, new RegExp(escapeRegExp(artifactsDir)));
+    assert.doesNotMatch(output, /--simulator/);
+    assert.doesNotMatch(output, /--adb-serial/);
+  });
+});
+
 test('first-party farmslot-farm routes resolve to harness-backed Recipe v1 producers', async () => {
   const commandCenterRunner = await readFile(
     path.join(repoRoot, 'apps/command-center/scripts/agentic/run-recipe.mjs'),

@@ -17,6 +17,7 @@ const STEPS = [
   ['worker template lint', ['node', 'scripts/quality/check-worker-template-contract.mjs']],
   ['template variable docs', ['node', 'scripts/quality/check-template-variables-docs.mjs']],
   ['shell script tests', ['bash', 'scripts/tests/run-shell-tests.sh']],
+  ['project hook conformance tests', ['yarn', 'test:project-hooks']],
   ['recipe harness tests', ['yarn', 'test:recipe-harness']],
   ['ui tests', ['yarn', 'test:ui']],
   ['recipe operational gates', ['yarn', 'test:recipe-operational-gates']],
