@@ -100,9 +100,17 @@ export type PreparePhase = (typeof PREPARE_PHASES)[number];
  * Framework-owned precondition checks a profile may require before its cheap
  * path is valid. Each name binds to existing project hooks/sentinels:
  * deps_current → lockfile-hash sentinel, dev_server_up → dev_server_check
- * hook, health_ok → health_check + ready_indicator pipeline.
+ * hook, health_ok → health_check + ready_indicator pipeline,
+ * artifact_available → artifact_check hook (a fast, seconds-scale probe that
+ * reports whether the profile's prebuilt artifact could be resolved; failure
+ * walks the profile's fallback).
  */
-export const PREPARE_REQUIREMENTS = ['deps_current', 'dev_server_up', 'health_ok'] as const;
+export const PREPARE_REQUIREMENTS = [
+  'deps_current',
+  'dev_server_up',
+  'health_ok',
+  'artifact_available',
+] as const;
 export type PrepareRequirement = (typeof PREPARE_REQUIREMENTS)[number];
 
 export interface PrepareProfileConfig {

@@ -61,12 +61,12 @@ about the same phase names.
 
 Project-specific work should usually live inside the nearest existing phase:
 
-| Project need | Put it here |
-| --- | --- |
-| Generate worker files, runtime context, seed data, or harness files. | `fixtures` or fixture mappings. |
-| Install packages, pods, gems, toolchains, or generated dependency artifacts. | `deps` via the dependency install hook. |
-| Boot simulators, start dev servers, build/install apps, open browsers, warm bundles, seed local services. | `preflight` or a profile-specific `preflight` override. |
-| Prove readiness, unlock app state, check routes, verify ports, assert login/session health. | `health` through `health_check`, parsing, and ready indicators. |
+| Project need                                                                                              | Put it here                                                     |
+| --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Generate worker files, runtime context, seed data, or harness files.                                      | `fixtures` or fixture mappings.                                 |
+| Install packages, pods, gems, toolchains, or generated dependency artifacts.                              | `deps` via the dependency install hook.                         |
+| Boot simulators, start dev servers, build/install apps, open browsers, warm bundles, seed local services. | `preflight` or a profile-specific `preflight` override.         |
+| Prove readiness, unlock app state, check routes, verify ports, assert login/session health.               | `health` through `health_check`, parsing, and ready indicators. |
 
 A new first-class phase is only necessary when Farmslot itself must observe,
 skip, retry, time out, cache, or display that work independently across
@@ -76,13 +76,13 @@ It is not something an individual project can declare ad hoc.
 
 ## Phase contract
 
-| Phase | Purpose | Typical project hook or behavior |
-| --- | --- | --- |
-| `git` | Put the worker repo on the requested branch, create/reset branches, and apply run-level git flags. | Gateway git operations plus branch policy. |
-| `fixtures` | Sync Farmslot-managed project fixtures, worker prompt files, runtime context, or harness files. | Framework fixture sync from the project config. |
-| `deps` | Install dependencies and record the lockfile hash that proves the installed tree is current. | `post_merge_install` or equivalent dependency install hook. |
-| `preflight` | Do project-specific runtime setup that should happen after code/deps are ready and before health. | `preflight` hook, optionally overridden by the selected profile. |
-| `health` | Prove the prepared slot is ready for dispatch. | `health_check`, optional `health.parse_health`, `health.ready_indicator`. |
+| Phase       | Purpose                                                                                            | Typical project hook or behavior                                          |
+| ----------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `git`       | Put the worker repo on the requested branch, create/reset branches, and apply run-level git flags. | Gateway git operations plus branch policy.                                |
+| `fixtures`  | Sync Farmslot-managed project fixtures, worker prompt files, runtime context, or harness files.    | Framework fixture sync from the project config.                           |
+| `deps`      | Install dependencies and record the lockfile hash that proves the installed tree is current.       | `post_merge_install` or equivalent dependency install hook.               |
+| `preflight` | Do project-specific runtime setup that should happen after code/deps are ready and before health.  | `preflight` hook, optionally overridden by the selected profile.          |
+| `health`    | Prove the prepared slot is ready for dispatch.                                                     | `health_check`, optional `health.parse_health`, `health.ready_indicator`. |
 
 Skipping a phase means Farmslot does not perform that work for this prepare
 request. It does not mean the slot cannot already satisfy that condition. Cheap
@@ -133,11 +133,12 @@ stored in run metadata and sent to prepare hooks.
 can run. If any check fails, Farmslot selects the profile named by `fallback` and
 checks that profile. Fallback chains must terminate and cannot contain cycles.
 
-| Requirement | Meaning |
-| --- | --- |
-| `deps_current` | The current lockfile hash matches the sentinel written by `deps`. |
-| `dev_server_up` | The project `dev_server_check` hook exits successfully. |
-| `health_ok` | The project `health_check` pipeline returns the configured ready value. |
+| Requirement          | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deps_current`       | The current lockfile hash matches the sentinel written by `deps`.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `dev_server_up`      | The project `dev_server_check` hook exits successfully.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `health_ok`          | The project `health_check` pipeline returns the configured ready value.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `artifact_available` | The project `artifact_check` hook exits 0 — a fast, seconds-scale probe reporting whether the profile's prebuilt artifact could be resolved (never a download or install). The run's work ref is threaded as `{{prepare_ref}}` (empty when there is no work branch) and the default branch as `{{prepare_default_ref}}`, so the probe can order resolution (work ref, then default) and check the ref the run will run, not the slot's pre-checkout HEAD. `{{slot_id}}` is available for slot-scoped probe state. |
 
 This makes warm reuse explicit. A profile such as `attach` says: "reuse the
 current runtime only if health is already good; otherwise fall back to a full
@@ -238,22 +239,22 @@ state without checks.
 The phase names are intentionally generic. Their concrete meaning depends on
 the project:
 
-| Project type | `fixtures` | `deps` | `preflight` | `health` |
-| --- | --- | --- | --- | --- |
-| Web app | Write env files, browser profile config, seeded local data. | `npm install`, `pnpm install`, `bundle install`, codegen. | Start or reuse Vite/Next/Rails/etc., open a browser profile, seed local services. | HTTP health route, browser route check, CDP page readiness. |
-| Backend/API | Write test config, local secrets, fixture DB dumps. | Install packages, build generated clients, run migrations needed by local dev. | Start API, worker, queue, database container, or compose stack. | HTTP `/health`, port check, smoke query, queue readiness. |
-| CLI/library | Write task files, test fixtures, local config. | Install packages, build generated artifacts, compile native extensions. | Optional build step, cache warmup, local daemon start, or no-op. | Run a cheap command, import check, version check, smoke test. |
-| Browser extension | Write extension profile, browser profile, fixture wallet state. | Install packages and build dependencies. | Build/load extension, launch browser, attach CDP target. | Extension page/background readiness, route/state check. |
-| Mobile app | Write runtime context, wallet/device fixtures, harness files. | Install JS/native deps, pods, Gradle caches. | Boot simulator/emulator, start Metro, build/install/launch app. | App route/bridge readiness, device/app health check. |
+| Project type      | `fixtures`                                                      | `deps`                                                                         | `preflight`                                                                       | `health`                                                      |
+| ----------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Web app           | Write env files, browser profile config, seeded local data.     | `npm install`, `pnpm install`, `bundle install`, codegen.                      | Start or reuse Vite/Next/Rails/etc., open a browser profile, seed local services. | HTTP health route, browser route check, CDP page readiness.   |
+| Backend/API       | Write test config, local secrets, fixture DB dumps.             | Install packages, build generated clients, run migrations needed by local dev. | Start API, worker, queue, database container, or compose stack.                   | HTTP `/health`, port check, smoke query, queue readiness.     |
+| CLI/library       | Write task files, test fixtures, local config.                  | Install packages, build generated artifacts, compile native extensions.        | Optional build step, cache warmup, local daemon start, or no-op.                  | Run a cheap command, import check, version check, smoke test. |
+| Browser extension | Write extension profile, browser profile, fixture wallet state. | Install packages and build dependencies.                                       | Build/load extension, launch browser, attach CDP target.                          | Extension page/background readiness, route/state check.       |
+| Mobile app        | Write runtime context, wallet/device fixtures, harness files.   | Install JS/native deps, pods, Gradle caches.                                   | Boot simulator/emulator, start Metro, build/install/launch app.                   | App route/bridge readiness, device/app health check.          |
 
 Common profile shapes also translate across project types:
 
-| Profile shape | Phases | Meaning |
-| --- | --- | --- |
-| `full` | `git`, `fixtures`, `deps`, `preflight`, `health` | Unknown or cold state; rebuild the slot into a known ready state. |
-| `runtime-reuse` | `git`, `fixtures`, `preflight`, `health` | Dependencies are current; update code/config and repair or relaunch runtime. |
-| `attach` | `health` | Runtime is already up; verify it before dispatch. |
-| `static` | `git`, `fixtures`, `deps` | No live runtime is needed; useful for code-only analysis, libraries, or static review. |
+| Profile shape   | Phases                                           | Meaning                                                                                |
+| --------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `full`          | `git`, `fixtures`, `deps`, `preflight`, `health` | Unknown or cold state; rebuild the slot into a known ready state.                      |
+| `runtime-reuse` | `git`, `fixtures`, `preflight`, `health`         | Dependencies are current; update code/config and repair or relaunch runtime.           |
+| `attach`        | `health`                                         | Runtime is already up; verify it before dispatch.                                      |
+| `static`        | `git`, `fixtures`, `deps`                        | No live runtime is needed; useful for code-only analysis, libraries, or static review. |
 
 For a project with no live runtime, `preflight` and `health` can be omitted from
 the relevant profile. For a project with several services, `preflight` can start

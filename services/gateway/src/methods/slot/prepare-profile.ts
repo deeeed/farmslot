@@ -1,10 +1,6 @@
 // methods/slot/prepare-profile.ts — prepare profile resolution + precondition checks (ADR-037)
 
-import {
-  PREPARE_PHASES,
-  type PreparePhase,
-  type PrepareRequirement,
-} from '@farmslot/protocol';
+import { PREPARE_PHASES, type PreparePhase, type PrepareRequirement } from '@farmslot/protocol';
 
 import {
   execOnSlot,
@@ -71,9 +67,7 @@ export function resolvePrepareProfile(
   const profiles = projectJson.prepare?.profiles;
   if (!profiles) {
     if (requested && requested !== IMPLICIT_FULL) {
-      throw new Error(
-        `Project defines no prepare profiles; cannot select profile '${requested}'`,
-      );
+      throw new Error(`Project defines no prepare profiles; cannot select profile '${requested}'`);
     }
     return implicitFullProfile();
   }
@@ -98,6 +92,21 @@ export interface RequirementCheckContext {
   projectJson: RawProjectJson;
   projectVars?: ProjectVars;
   runtimeDir: string;
+  /**
+   * The run's intended work ref (params.branch), resolved before the git phase
+   * runs — empty when the run targets no work branch. Exposed to the
+   * artifact_check hook as {{prepare_ref}} so an artifact probe checks the ref
+   * the run will actually run, not the slot's pre-checkout HEAD (selection
+   * precedes the git phase).
+   */
+  prepareRef?: string;
+  /**
+   * The project default branch. Exposed to the artifact_check hook as
+   * {{prepare_default_ref}} so a probe can implement ordered resolution — try
+   * the work ref first, then fall back to the default ref — without hardcoding
+   * the default branch name in the project script.
+   */
+  prepareDefaultRef?: string;
 }
 
 // Deps inputs hashed for the deps_current sentinel. Keep in sync with
@@ -123,11 +132,11 @@ const DEPS_FINGERPRINT_NODE = [
   "const fs=require('fs'),crypto=require('crypto'),path=require('path');",
   `const inputs=${JSON.stringify(DEPS_FINGERPRINT_INPUTS)};`,
   "const h=crypto.createHash('sha256');",
-  "for (const rel of inputs) {",
-  "  const abs=path.join(process.cwd(),rel);",
-  "  if (!fs.existsSync(abs)) continue;",
+  'for (const rel of inputs) {',
+  '  const abs=path.join(process.cwd(),rel);',
+  '  if (!fs.existsSync(abs)) continue;',
   "  h.update(rel); h.update('\\0'); h.update(fs.readFileSync(abs)); h.update('\\0');",
-  "}",
+  '}',
   "process.stdout.write(h.digest('hex'));",
 ].join('');
 
@@ -181,11 +190,27 @@ export function buildDepsSentinelWriteCommand(repo: string, runtimeDir: string):
   ].join(' && ');
 }
 
+/**
+ * Last meaningful line a failing probe printed, preferring stdout and falling
+ * back to stderr, so requirement failure details carry the probe's own reason
+ * regardless of which stream it reported on.
+ */
+export function probeFailureReason(stdout: string, stderr: string): string | undefined {
+  const lastLine = (text: string) =>
+    text
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .pop()
+      ?.trim();
+  return lastLine(stdout) ?? lastLine(stderr);
+}
+
 export async function checkPrepareRequirement(
   requirement: PrepareRequirement,
   ctx: RequirementCheckContext,
 ): Promise<RequirementCheckResult> {
-  const { vars, projectJson, projectVars, runtimeDir } = ctx;
+  const { vars, projectJson, projectVars, runtimeDir, prepareRef, prepareDefaultRef } = ctx;
   switch (requirement) {
     case 'deps_current': {
       const sentinel = depsSentinelPath(runtimeDir);
@@ -203,7 +228,11 @@ export async function checkPrepareRequirement(
         return { requirement, ok: false, detail: 'no deps inputs found to fingerprint' };
       }
       return current === recorded
-        ? { requirement, ok: true, detail: `deps fingerprint ${current.slice(0, 12)} matches sentinel` }
+        ? {
+            requirement,
+            ok: true,
+            detail: `deps fingerprint ${current.slice(0, 12)} matches sentinel`,
+          }
         : { requirement, ok: false, detail: 'deps fingerprint differs from deps sentinel' };
     }
     case 'dev_server_up': {
@@ -215,6 +244,40 @@ export async function checkPrepareRequirement(
       return r.exitCode === 0
         ? { requirement, ok: true, detail: 'dev_server_check passed' }
         : { requirement, ok: false, detail: `dev_server_check exited ${r.exitCode}` };
+    }
+    case 'artifact_available': {
+      // Selection-time gate for artifact-based profiles (e.g. install a prebuilt
+      // dev client instead of building natively). The artifact_check hook must be
+      // a fast probe (seconds) that only resolves whether an artifact exists for
+      // the run's target ref — never a download or device install. Exit 0 =
+      // available; any non-zero exit walks the profile's fallback. A hook that
+      // prints a one-line reason surfaces it to the operator via detail.
+      //
+      // {{prepare_ref}} (work ref) and {{prepare_default_ref}} (default branch)
+      // are threaded so the probe checks the ref the run will run, not the slot's
+      // pre-checkout HEAD — selection runs before the git phase, so the local
+      // checkout is unreliable. Both are exposed so a project can order its own
+      // resolution (e.g. work ref first, default ref fallback); {{slot_id}} is
+      // already available for slot-scoped probe state.
+      const hook = expandHook('artifact_check', projectJson, vars, projectVars, {
+        prepare_ref: prepareRef ?? '',
+        prepare_default_ref: prepareDefaultRef ?? '',
+      });
+      if (!hook) {
+        return { requirement, ok: false, detail: 'project has no artifact_check hook' };
+      }
+      const r = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${hook}`);
+      if (r.exitCode === 0) {
+        return { requirement, ok: true, detail: 'artifact_check passed' };
+      }
+      const reason = probeFailureReason(r.stdout, r.stderr);
+      return {
+        requirement,
+        ok: false,
+        detail: reason
+          ? `artifact_check exited ${r.exitCode}: ${reason}`
+          : `artifact_check exited ${r.exitCode}`,
+      };
     }
     case 'health_ok': {
       const healthHook = expandHook('health_check', projectJson, vars, projectVars);
