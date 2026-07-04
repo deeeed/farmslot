@@ -195,12 +195,21 @@ function buildRuntimeRecipe(reportRel: string, logRel: string) {
 
 async function runSelfValidation(args: ParsedArgs): Promise<void> {
   const runId = new Date().toISOString().replace(/[:.]/gu, '-');
-  const runRoot = path.resolve(
-    args.artifactsDir ?? path.join(repoRoot, 'temp/recipe-protocol-self-validation', runId),
-  );
+  const defaultRunRoot = path.join(repoRoot, 'temp/recipe-protocol-self-validation', runId);
+  const runRoot = path.resolve(args.artifactsDir ?? defaultRunRoot);
   const sourceRoot = path.join(runRoot, 'source');
   const artifactsDir = path.join(runRoot, 'artifacts');
-  await rm(runRoot, { recursive: true, force: true });
+  if (args.artifactsDir) {
+    const existingEntries = await readdir(runRoot).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (existingEntries && existingEntries.length > 0) {
+      throw new Error(`--artifacts-dir must be empty or absent: ${runRoot}`);
+    }
+  } else {
+    await rm(runRoot, { recursive: true, force: true });
+  }
   await mkdir(sourceRoot, { recursive: true });
 
   const reportRel = path.relative(

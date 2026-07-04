@@ -249,7 +249,7 @@ test('loadLiveRecipeContextForRun quarantines invalid typed artifact manifests b
   assert.ok(!artifactManifest.some((artifact) => artifact.path === 'artifacts'));
 });
 
-test('loadLiveRecipeContextForRun treats valid empty typed artifact manifests as source of truth', async (t) => {
+test('loadLiveRecipeContextForRun falls back to scanned files for valid empty typed artifact manifests', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-empty-typed-artifacts-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -269,8 +269,13 @@ test('loadLiveRecipeContextForRun treats valid empty typed artifact manifests as
   const context = await loadLiveRecipeContextForRun(makeRun(path.join(taskDir, 'TASK.md')));
 
   assert.equal(context?.source, 'recipe-run-artifacts');
-  assert.equal(context?.usedTypedArtifactManifest, true);
-  assert.equal(context?.artifactManifest, null);
+  assert.equal(context?.usedTypedArtifactManifest, false);
+  assert.deepEqual(context?.artifactManifest?.map((artifact) => artifact.path).sort(), [
+    'artifacts/artifact-manifest.json',
+    'artifacts/recipe.json',
+    'artifacts/summary.json',
+    'artifacts/trace.json',
+  ]);
 });
 
 test('attachLiveRecipeContext preserves explicit stale context when no live artifacts can be materialized', async () => {

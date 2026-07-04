@@ -176,6 +176,7 @@ interface RecipeRunArtifactPackageOutputInput {
   summary?: unknown;
   manifest?: unknown;
   recipe?: unknown;
+  recipeArtifactPresent?: boolean;
   readErrors?: Record<string, string>;
 }
 
@@ -275,7 +276,7 @@ export function validateRecipeRunArtifactPackageOutput(
   );
 
   const recipe = validateRecipeArtifactPackage({
-    recipe: input.recipe,
+    recipe: input.recipeArtifactPresent ? input.recipe : undefined,
     manifest: input.manifest,
     artifactPaths: input.artifactListError ? undefined : input.artifactPaths,
   });
@@ -354,7 +355,6 @@ async function listSlotRecipeArtifactFiles(
 }
 
 const DEFAULT_RECIPE_JSON_MAX_BUFFER_BYTES = 1024 * 1024;
-const TRACE_JSON_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 async function readSlotJsonIfPresent(
   slotVars: SlotVars,
@@ -386,19 +386,15 @@ async function readSlotJsonIfPresent(
 async function validateRecipeRunArtifactsOnSlot(
   slotVars: SlotVars,
   artifactRoot: string,
-  recipePath?: string,
+  _recipePath?: string,
 ): Promise<RecipeProjectHookValidationResult> {
   const artifactList = await listSlotRecipeArtifactFiles(slotVars, artifactRoot);
-  const [summary, trace, manifest, recipe] = await Promise.all([
+  const recipeArtifactPresent = artifactList.paths.includes('recipe.json');
+  const [summary, manifest, recipe] = await Promise.all([
     readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'summary.json')),
-    readSlotJsonIfPresent(
-      slotVars,
-      joinRemoteArtifactPath(artifactRoot, 'trace.json'),
-      TRACE_JSON_MAX_BUFFER_BYTES,
-    ),
     readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'artifact-manifest.json')),
-    recipePath
-      ? readSlotJsonIfPresent(slotVars, recipePath)
+    recipeArtifactPresent
+      ? readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'recipe.json'))
       : Promise.resolve({ value: undefined } as { value?: unknown; error?: string }),
   ]);
   return validateRecipeRunArtifactPackageOutput({
@@ -407,9 +403,9 @@ async function validateRecipeRunArtifactsOnSlot(
     summary: summary.value,
     manifest: manifest.value,
     recipe: recipe.value,
+    recipeArtifactPresent,
     readErrors: {
       ...(summary.error ? { 'summary.json': summary.error } : {}),
-      ...(trace.error ? { 'trace.json': trace.error } : {}),
       ...(manifest.error ? { 'artifact-manifest.json': manifest.error } : {}),
       ...(recipe.error ? { 'recipe.json': recipe.error } : {}),
     },
@@ -1178,6 +1174,14 @@ async function executeRecipeRerunJob(args: {
     publishLiveRecipeContext();
     if (abortController.signal.aborted) {
       throw new Error('Recipe rerun cancelled by operator');
+    }
+
+    if (result.exitCode !== 0) {
+      complete({ exitCode: result.exitCode, artifactRoot: slotRecipeRunArtifactsDir });
+      console.warn(
+        `[recipe] rerun ${requestId} exited with code ${result.exitCode} (${Date.now() - startTime}ms)`,
+      );
+      return;
     }
 
     const artifactValidation = await validateRecipeRunArtifactsOnSlot(

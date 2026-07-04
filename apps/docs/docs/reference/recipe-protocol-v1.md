@@ -421,6 +421,10 @@ Every v1 run writes `artifact-manifest.json`:
 
 The v1 package contract has a strict required core and an open extension space. Required fields stay strict, unknown artifact `type` values produce warnings rather than hard failures, and extra additive metadata may be included on the manifest or artifact entries when consumers can ignore it safely. Runners must not replace required core fields with extension-only metadata.
 
+Consumer behavior is manifest-first for non-empty valid typed manifests: manifest entries are the source of truth for displayable artifacts, labels, types, proof-target links, and node associations. Filename inference is a legacy compatibility fallback when `artifact-manifest.json` is missing, invalid, or valid-but-empty while files are already present on disk. Consumers must surface malformed manifests rather than silently trusting them.
+
+Package validation requires the core files (`summary.json`, `trace.json`, and `artifact-manifest.json`). `recipe.json` is recommended when practical, but remains optional for runners that execute a resolved recipe from outside the artifact directory. Manifest entries should include displayable/debuggable artifacts and are encouraged to index the core files as `summary`, `trace`, and `recipe`, but the package-level required-file check is separate from the per-entry artifact list so runners can add optional metadata without changing the required core.
+
 Task closeout quality is represented by `RecipeQualityArtifact` when a run emits `artifacts/recipe-quality.json`. The shared validator is exported from `@farmslot/protocol`; task-local enforcement belongs to the agent runtime rather than `@farmslot/skills`. Workers should not hand-author the full object when `@farmslot/agent-runtime` is available: use `farmslot-agent recipe-quality build` or `buildRecipeQualityArtifact()` so verdict/reasons/findings/delta/proof metadata are expanded into a valid protocol artifact.
 
 ## 14. Runner contract

@@ -230,15 +230,29 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   const valid = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe,
+    recipeArtifactPresent: true,
     summary,
     manifest,
   });
   assert.equal(valid.status, 'pass', JSON.stringify(valid.checks));
   assert.equal(valid.recipe?.status, 'valid');
 
+  const validWithoutCopiedRecipe = validateRecipeRunArtifactPackageOutput({
+    artifactPaths: ['artifact-manifest.json', 'summary.json', 'trace.json'],
+    recipe,
+    recipeArtifactPresent: false,
+    summary,
+    manifest: {
+      ...manifest,
+      artifacts: manifest.artifacts.filter((artifact) => artifact.path !== 'recipe.json'),
+    },
+  });
+  assert.equal(validWithoutCopiedRecipe.status, 'pass', JSON.stringify(validWithoutCopiedRecipe));
+
   const listFailure = validateRecipeRunArtifactPackageOutput({
     artifactPaths: [],
     recipe,
+    recipeArtifactPresent: true,
     summary,
     manifest,
     artifactListError: 'find maxBuffer exceeded',
@@ -258,6 +272,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   const statusMismatch = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe,
+    recipeArtifactPresent: true,
     summary: { ...summary, status: 'fail' },
     manifest,
   });
@@ -271,6 +286,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   const missingManifest = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['recipe.json', 'summary.json', 'trace.json'],
     recipe,
+    recipeArtifactPresent: true,
     summary,
     manifest: undefined,
     readErrors: { 'artifact-manifest.json': 'file missing' },
@@ -294,6 +310,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   const malformedManifest = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe,
+    recipeArtifactPresent: true,
     summary,
     manifest: undefined,
     readErrors: { 'artifact-manifest.json': 'Unexpected token' },
@@ -308,6 +325,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   const badRecipe = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe: undefined,
+    recipeArtifactPresent: true,
     summary,
     manifest,
     readErrors: { 'recipe.json': 'Unexpected token' },
@@ -318,6 +336,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   const missingRecipe = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'summary.json', 'trace.json'],
     recipe: undefined,
+    recipeArtifactPresent: true,
     summary,
     manifest,
     readErrors: { 'recipe.json': 'file missing' },
@@ -331,6 +350,7 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   const staleManifest = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe,
+    recipeArtifactPresent: true,
     summary,
     manifest: { ...manifest, artifacts: [{ path: 'missing.png', type: 'screenshot' }] },
   });

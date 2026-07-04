@@ -17,12 +17,22 @@ function escapeRegExp(value) {
 }
 
 async function dryRun(args) {
+  const env = {
+    ...process.env,
+    FARMSLOT_SLOT_REPO: repoRoot,
+  };
+  for (const name of [
+    'IOS_SIMULATOR',
+    'SIMULATOR',
+    'ADB_SERIAL',
+    'ANDROID_SERIAL',
+    'ANDROID_DEVICE',
+  ]) {
+    delete env[name];
+  }
   const result = await execFileAsync('bash', [wrapperPath, ...args, '--dry-run'], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
-      FARMSLOT_SLOT_REPO: repoRoot,
-    },
+    env,
     maxBuffer: 1024 * 1024,
   });
   return result.stdout.trim();

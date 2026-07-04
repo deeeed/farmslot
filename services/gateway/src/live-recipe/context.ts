@@ -470,6 +470,7 @@ function mergeTypedArtifactManifestRefs(
   typedRefs: ArtifactRef[] | null,
 ): ArtifactRef[] {
   if (typedRefs === null) return scannedRefs;
+  if (typedRefs.length === 0) return scannedRefs;
   const scannedByPath = new Map<string, ArtifactRef>();
   const emitted = new Set<string>();
   for (const ref of scannedRefs) scannedByPath.set(ref.path, ref);
@@ -645,6 +646,7 @@ async function loadContextFromArtifactRoot({
     path.join(artifactRoot, 'artifact-manifest.json'),
   );
   const artifactRefs = mergeTypedArtifactManifestRefs(artifactScan.refs, typedArtifactRefs);
+  const usedTypedArtifactManifest = typedArtifactRefs !== null && typedArtifactRefs.length > 0;
   const effectiveIsStale =
     isStale ||
     (allowUnavailableAsStale && artifactScan.unavailable && artifactScan.refs.length === 0);
@@ -654,7 +656,7 @@ async function loadContextFromArtifactRoot({
     recipeRunId,
     artifactRoot,
     artifactManifest: artifactRefs.length > 0 ? artifactRefs : null,
-    usedTypedArtifactManifest: typedArtifactRefs !== null,
+    usedTypedArtifactManifest,
     recipeJson,
     recipeQualityArtifact,
     qualityReport: null,
