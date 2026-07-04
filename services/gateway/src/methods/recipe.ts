@@ -179,8 +179,23 @@ interface RecipeRunArtifactPackageOutputInput {
   readErrors?: Record<string, string>;
 }
 
+const RECIPE_ARTIFACT_MISSING_SENTINEL = '__FARMSLOT_MISSING__';
+const RECIPE_ARTIFACT_MISSING_ERROR = 'file missing';
+
 function readTerminalStatus(document: unknown): string | undefined {
   return isRecord(document) && typeof document.status === 'string' ? document.status : undefined;
+}
+
+function isSuppressedRecipeProtocolFinding(
+  finding: RecipeValidationResult['findings'][number],
+  missingArtifactPaths: ReadonlySet<string>,
+): boolean {
+  return (
+    (finding.code === 'artifact_package.missing_required_file' &&
+      missingArtifactPaths.has(finding.path)) ||
+    (finding.code === 'artifact_package.missing_manifest' &&
+      missingArtifactPaths.has('artifact-manifest.json'))
+  );
 }
 
 function formatRecipeValidationFindings(
@@ -204,7 +219,7 @@ export function validateRecipeRunArtifactPackageOutput(
   const readErrors = input.readErrors ?? {};
   const missingArtifactPaths = new Set(
     Object.entries(readErrors)
-      .filter(([, error]) => error === 'file missing')
+      .filter(([, error]) => error === RECIPE_ARTIFACT_MISSING_ERROR)
       .map(([filePath]) => filePath),
   );
 
@@ -226,7 +241,7 @@ export function validateRecipeRunArtifactPackageOutput(
       `recipe_run.artifact.${requiredPath}`,
       passed ? 'pass' : 'fail',
       error
-        ? error === 'file missing'
+        ? error === RECIPE_ARTIFACT_MISSING_ERROR
           ? `${requiredPath} is missing.`
           : `${requiredPath} could not be read as JSON: ${error}`
         : artifactPathSet.has(requiredPath)
@@ -241,7 +256,7 @@ export function validateRecipeRunArtifactPackageOutput(
       checks,
       'recipe_run.artifact.recipe.json',
       'fail',
-      recipeReadError === 'file missing'
+      recipeReadError === RECIPE_ARTIFACT_MISSING_ERROR
         ? 'recipe.json is missing.'
         : `recipe.json could not be read as JSON: ${recipeReadError}`,
     );
@@ -261,17 +276,18 @@ export function validateRecipeRunArtifactPackageOutput(
     manifest: input.manifest,
     artifactPaths: input.artifactListError ? undefined : input.artifactPaths,
   });
+  const hasUnsuppressedRecipeErrors = recipe.findings.some(
+    (finding) =>
+      finding.severity === 'error' &&
+      !isSuppressedRecipeProtocolFinding(finding, missingArtifactPaths),
+  );
   addHookValidationCheck(
     checks,
     'recipe_run.artifact_manifest.validation',
-    recipe.status === 'valid' ? 'pass' : 'fail',
+    recipe.status === 'valid' || !hasUnsuppressedRecipeErrors ? 'pass' : 'fail',
     `artifact-manifest.json must satisfy Recipe Protocol v1 and reference existing artifacts.${formatRecipeValidationFindings(
       recipe,
-      (finding) =>
-        (finding.code === 'artifact_package.missing_required_file' &&
-          missingArtifactPaths.has(finding.path)) ||
-        (finding.code === 'artifact_package.missing_manifest' &&
-          missingArtifactPaths.has('artifact-manifest.json')),
+      (finding) => isSuppressedRecipeProtocolFinding(finding, missingArtifactPaths),
     )}`,
   );
 
@@ -308,7 +324,7 @@ async function listSlotRecipeArtifactFiles(
   slotVars: SlotVars,
   artifactRoot: string,
 ): Promise<{ paths: string[]; error?: string }> {
-  const script = `root=${shellExpressionForRemotePath(artifactRoot)}; if [ ! -d "$root" ]; then exit 0; fi; cd "$root" && find . -type f -print`;
+  const script = `root=${shellExpressionForRemotePath(artifactRoot)}; if [ ! -d "$root" ]; then exit 0; fi; cd "$root" && find . -type f -print0`;
   let result: Awaited<ReturnType<typeof execOnSlot>>;
   try {
     result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 256 * 1024 });
@@ -323,7 +339,7 @@ async function listSlotRecipeArtifactFiles(
   }
   return {
     paths: result.stdout
-      .split('\n')
+      .split('\0')
       .map((line) => line.trim().replace(/^\.\//u, ''))
       .filter(Boolean)
       .sort(),
@@ -338,7 +354,7 @@ async function readSlotJsonIfPresent(
   filePath: string,
   maxBuffer = DEFAULT_RECIPE_JSON_MAX_BUFFER_BYTES,
 ): Promise<{ value?: unknown; error?: string }> {
-  const script = `file=${shellExpressionForRemotePath(filePath)}; if [ ! -f "$file" ]; then echo __FARMSLOT_MISSING__; exit 0; fi; cat "$file"`;
+  const script = `file=${shellExpressionForRemotePath(filePath)}; if [ ! -f "$file" ]; then echo ${RECIPE_ARTIFACT_MISSING_SENTINEL}; exit 0; fi; cat "$file"`;
   let text: string;
   try {
     const result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer });
@@ -350,7 +366,9 @@ async function readSlotJsonIfPresent(
     // A too-large or unreadable artifact is validation evidence, not a gateway crash.
     return { error: error instanceof Error ? error.message : String(error) };
   }
-  if (text.trim() === '__FARMSLOT_MISSING__') return { error: 'file missing' };
+  if (text.trim() === RECIPE_ARTIFACT_MISSING_SENTINEL) {
+    return { error: RECIPE_ARTIFACT_MISSING_ERROR };
+  }
   try {
     return { value: JSON.parse(text) };
   } catch (error) {

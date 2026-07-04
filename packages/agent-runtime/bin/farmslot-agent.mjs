@@ -46,6 +46,10 @@ function parseBooleanFlag(name, value) {
   throw new Error(`${name} must be true or false`);
 }
 
+function isNodeModuleNotFoundError(error) {
+  return Boolean(error && typeof error === 'object' && error.code === 'ERR_MODULE_NOT_FOUND');
+}
+
 function pushFlagValue(target, key, value) {
   const current = target[key];
   if (current == null) target[key] = [value];
@@ -282,6 +286,14 @@ function parseRecipeQualityBuildArgs(args) {
       };
     else if (arg === '--claim-is-visual')
       parsed.flags.trainingFields = { ...parsed.flags.trainingFields, claim_is_visual: true };
+    else if (arg.startsWith('--claim-is-visual='))
+      parsed.flags.trainingFields = {
+        ...parsed.flags.trainingFields,
+        claim_is_visual: parseBooleanFlag(
+          '--claim-is-visual',
+          arg.slice('--claim-is-visual='.length),
+        ),
+      };
     else if (arg === '--producer') parsed.flags.producer = next(arg);
     else if (arg.startsWith('--producer=')) parsed.flags.producer = arg.slice('--producer='.length);
     else if (arg === '--artifact-required')
@@ -292,6 +304,11 @@ function parseRecipeQualityBuildArgs(args) {
         arg.slice('--artifact-required='.length),
       );
     else if (arg === '--legacy-task') parsed.flags.legacyTask = true;
+    else if (arg.startsWith('--legacy-task='))
+      parsed.flags.legacyTask = parseBooleanFlag(
+        '--legacy-task',
+        arg.slice('--legacy-task='.length),
+      );
     else if (arg === '--source-signal') pushFlagValue(parsed.flags, 'sourceSignals', next(arg));
     else if (arg.startsWith('--source-signal='))
       pushFlagValue(parsed.flags, 'sourceSignals', arg.slice('--source-signal='.length));
@@ -342,8 +359,9 @@ async function buildRecipeQuality(args) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const missingDistEntry =
-      message.includes(`Cannot find module '${distEntry}'`) ||
-      message.includes(`Cannot find module ${pathToFileURL(distEntry).href}`);
+      isNodeModuleNotFoundError(error) &&
+      (message.includes(`Cannot find module '${distEntry}'`) ||
+        message.includes(`Cannot find module ${pathToFileURL(distEntry).href}`));
     if (missingDistEntry) {
       throw new Error(
         `farmslot-agent recipe-quality build requires the compiled package at ${distEntry}. Run yarn workspace @farmslot/agent-runtime build in source checkouts. Original error: ${message}`,

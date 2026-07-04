@@ -285,6 +285,11 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
       ?.message ?? '',
     /artifact_package\.missing_manifest/,
   );
+  assert.equal(
+    missingManifest.checks.find((check) => check.id === 'recipe_run.artifact_manifest.validation')
+      ?.status,
+    'pass',
+  );
 
   const badRecipe = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],

@@ -83,6 +83,8 @@ async function main() {
       'All claims are covered.',
       '--proof-mode',
       'trace',
+      '--legacy-task=false',
+      '--claim-is-visual=false',
     ],
     { encoding: 'utf8' },
   );
@@ -90,6 +92,8 @@ async function main() {
   const stdoutArtifact = JSON.parse(result.stdout);
   assert.equal(stdoutArtifact.compact.reasons[0], 'All claims are covered.');
   assert.equal(stdoutArtifact.training_fields.proof_mode, 'trace');
+  assert.equal(stdoutArtifact.meta.legacy_task, false);
+  assert.equal(stdoutArtifact.training_fields.claim_is_visual, false);
   assert.equal(isRecipeQualityArtifact(stdoutArtifact), true);
 
   const mergeInputPath = path.join(dir, 'merge-input.json');
@@ -334,6 +338,12 @@ async function main() {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--artifact-required must be true or false/);
+
+  result = spawnSync(process.execPath, [cli, 'recipe-quality', 'build', '--legacy-task=bogus'], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--legacy-task must be true or false/);
 
   process.stdout.write('agent-runtime recipe-quality builder tests: ok\n');
 }
