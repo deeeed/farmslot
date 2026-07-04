@@ -5,7 +5,7 @@ import { existsSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
 import type { GatewayListenInfo } from '@farmslot/protocol';
-import { captureHelperPath } from '@farmslot/protocol/node/capture-helper-path';
+import { captureHelperPathInfo } from '@farmslot/protocol/node/capture-helper-path';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { probeGatewayAuth } from '../gateway-auth.js';
@@ -377,7 +377,7 @@ function captureHelperSection(): DoctorSection {
       ],
     };
   }
-  const bin = captureHelperPath();
+  const { path: bin, source } = captureHelperPathInfo();
   if (bin === 'capture-helper' && !commandPath('capture-helper')) {
     return {
       title: 'Capture',
@@ -392,11 +392,14 @@ function captureHelperSection(): DoctorSection {
       ],
     };
   }
+  // Env overrides are the surprising resolution case; surface them so
+  // "why is it using that binary?" self-answers. PATH/npm resolution prints plainly.
+  const via = source.startsWith('env:') ? ` (via ${source.slice('env:'.length)})` : '';
   const result = spawnSync(bin, ['doctor', '--json'], { encoding: 'utf-8', timeout: 10_000 });
   if (result.status === 0) {
     return {
       title: 'Capture',
-      checks: [{ name: 'capture-helper', ok: true, detail: `${bin} doctor passed` }],
+      checks: [{ name: 'capture-helper', ok: true, detail: `${bin} doctor passed${via}` }],
     };
   }
   return {
