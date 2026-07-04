@@ -81,10 +81,13 @@ be valid.
    - `health_ok` — existing `health_check` + `ready_indicator` pipeline passes,
    - `artifact_available` — project `artifact_check` hook exits 0 (a fast,
      seconds-scale probe that only reports whether the profile's prebuilt
-     artifact could be resolved — never a download or install). The run's
-     target ref (work branch, else default branch) is threaded to the hook as
-     `{{prepare_ref}}` so the probe checks the ref the run will run, not the
-     slot's pre-checkout HEAD (selection precedes the git phase).
+     artifact could be resolved — never a download or install). The run's work
+     ref is threaded as `{{prepare_ref}}` (empty when the run has no work
+     branch) and the project default branch as `{{prepare_default_ref}}`, so a
+     probe can order its own resolution (work ref first, default ref fallback)
+     and check the ref the run will run, not the slot's pre-checkout HEAD
+     (selection precedes the git phase). `{{slot_id}}` is available for
+     slot-scoped probe state.
      Checks are framework-owned names bound to project hooks, mirroring how
      `health` already works. The vocabulary can grow; projects never define new
      check semantics inline.

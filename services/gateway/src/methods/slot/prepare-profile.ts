@@ -93,12 +93,20 @@ export interface RequirementCheckContext {
   projectVars?: ProjectVars;
   runtimeDir: string;
   /**
-   * The run's intended target ref (work branch, else project default branch),
-   * resolved before the git phase runs. Exposed to the artifact_check hook as
-   * {{prepare_ref}} so an artifact probe checks the ref the run will actually
-   * run — not the slot's pre-checkout HEAD, which selection precedes.
+   * The run's intended work ref (params.branch), resolved before the git phase
+   * runs — empty when the run targets no work branch. Exposed to the
+   * artifact_check hook as {{prepare_ref}} so an artifact probe checks the ref
+   * the run will actually run, not the slot's pre-checkout HEAD (selection
+   * precedes the git phase).
    */
   prepareRef?: string;
+  /**
+   * The project default branch. Exposed to the artifact_check hook as
+   * {{prepare_default_ref}} so a probe can implement ordered resolution — try
+   * the work ref first, then fall back to the default ref — without hardcoding
+   * the default branch name in the project script.
+   */
+  prepareDefaultRef?: string;
 }
 
 // Deps inputs hashed for the deps_current sentinel. Keep in sync with
@@ -186,7 +194,7 @@ export async function checkPrepareRequirement(
   requirement: PrepareRequirement,
   ctx: RequirementCheckContext,
 ): Promise<RequirementCheckResult> {
-  const { vars, projectJson, projectVars, runtimeDir, prepareRef } = ctx;
+  const { vars, projectJson, projectVars, runtimeDir, prepareRef, prepareDefaultRef } = ctx;
   switch (requirement) {
     case 'deps_current': {
       const sentinel = depsSentinelPath(runtimeDir);
@@ -229,16 +237,16 @@ export async function checkPrepareRequirement(
       // available; any non-zero exit walks the profile's fallback. A hook that
       // prints a one-line reason surfaces it to the operator via detail.
       //
-      // {{prepare_ref}} is threaded so the probe checks the ref the run will run
-      // (work branch, else default branch), not the slot's pre-checkout HEAD —
-      // selection runs before the git phase, so the local checkout is unreliable.
-      const hook = expandHook(
-        'artifact_check',
-        projectJson,
-        vars,
-        projectVars,
-        prepareRef ? { prepare_ref: prepareRef } : undefined,
-      );
+      // {{prepare_ref}} (work ref) and {{prepare_default_ref}} (default branch)
+      // are threaded so the probe checks the ref the run will run, not the slot's
+      // pre-checkout HEAD — selection runs before the git phase, so the local
+      // checkout is unreliable. Both are exposed so a project can order its own
+      // resolution (e.g. work ref first, default ref fallback); {{slot_id}} is
+      // already available for slot-scoped probe state.
+      const hook = expandHook('artifact_check', projectJson, vars, projectVars, {
+        prepare_ref: prepareRef ?? '',
+        prepare_default_ref: prepareDefaultRef ?? '',
+      });
       if (!hook) {
         return { requirement, ok: false, detail: 'project has no artifact_check hook' };
       }

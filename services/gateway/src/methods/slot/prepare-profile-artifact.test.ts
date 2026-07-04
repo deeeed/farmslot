@@ -85,31 +85,46 @@ test('artifact_available fails with a bare detail when the probe prints nothing'
   assert.equal(result.detail, 'artifact_check exited 2');
 });
 
-test('artifact_available threads the run target ref into the hook as {{prepare_ref}}', async () => {
+test('artifact_available threads both work ref and default ref into the hook', async () => {
   execCommands.length = 0;
   nextResult = { stdout: '', stderr: '', exitCode: 0 };
   const refCtx = {
     vars: makeSlotVars('/repo'),
-    projectJson: { hooks: { artifact_check: 'bash artifact-check.sh --branch {{prepare_ref}}' } },
+    projectJson: {
+      hooks: {
+        artifact_check:
+          'bash artifact-check.sh --branch {{prepare_ref}} --default-branch {{prepare_default_ref}}',
+      },
+    },
     runtimeDir: '.agent',
     prepareRef: 'feat/my-work',
+    prepareDefaultRef: 'main',
   };
   const result = await checkPrepareRequirement('artifact_available', refCtx);
   assert.equal(result.ok, true);
-  // The probe receives the run's target ref, not a hardcoded branch.
-  assert.match(execCommands[0], /bash artifact-check\.sh --branch feat\/my-work/);
+  // The probe receives both refs so it can order resolution itself.
+  assert.match(
+    execCommands[0],
+    /bash artifact-check\.sh --branch feat\/my-work --default-branch main/,
+  );
 });
 
-test('artifact_available leaves {{prepare_ref}} unsubstituted only when no ref is provided', async () => {
-  // Guards the wiring: without ctx.prepareRef the placeholder is not silently
-  // blanked to a wrong value — prepare.ts always supplies branch || defaultBranch.
+test('artifact_available substitutes an empty work ref (no hardcoded branch leaks through)', async () => {
+  // A run with no work branch expands {{prepare_ref}} to empty (not a literal
+  // placeholder and not a stale default); the default ref still threads through.
   execCommands.length = 0;
   nextResult = { stdout: '', stderr: '', exitCode: 0 };
-  const noRefCtx = {
+  const noWorkRefCtx = {
     vars: makeSlotVars('/repo'),
-    projectJson: { hooks: { artifact_check: 'bash artifact-check.sh --branch {{prepare_ref}}' } },
+    projectJson: {
+      hooks: {
+        artifact_check:
+          'bash artifact-check.sh --branch "{{prepare_ref}}" --default-branch {{prepare_default_ref}}',
+      },
+    },
     runtimeDir: '.agent',
+    prepareDefaultRef: 'main',
   };
-  await checkPrepareRequirement('artifact_available', noRefCtx);
-  assert.match(execCommands[0], /--branch \{\{prepare_ref\}\}/);
+  await checkPrepareRequirement('artifact_available', noWorkRefCtx);
+  assert.match(execCommands[0], /--branch "" --default-branch main/);
 });
