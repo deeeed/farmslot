@@ -413,8 +413,8 @@ async function slotPrepareInner(
       .replaceAll('~/farmslot-node/scripts/', `${hookSupportDir}/scripts/`);
   };
 
-  // Selected prepare profile (ADR-037). Assigned right after the SSH check;
-  // undefined only for steps that run before selection, none of which are
+  // Selected prepare profile (ADR-037). Assigned right after the connection
+  // check; undefined only for steps that run before selection, none of which are
   // phase-gated or hook-expanding.
   let prepareProfile: ResolvedPrepareProfile | undefined;
   const profileName = (): string => prepareProfile?.name ?? 'full';
