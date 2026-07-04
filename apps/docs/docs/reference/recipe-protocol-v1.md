@@ -421,7 +421,7 @@ Every v1 run writes `artifact-manifest.json`:
 
 The v1 package contract has a strict required core and an open extension space. Required fields stay strict, unknown artifact `type` values produce warnings rather than hard failures, and extra additive metadata may be included on the manifest or artifact entries when consumers can ignore it safely. Runners must not replace required core fields with extension-only metadata.
 
-Task closeout quality is represented by `RecipeQualityArtifact` when a run emits `artifacts/recipe-quality.json`. The shared validator is exported from `@farmslot/protocol`; task-local enforcement belongs to the agent runtime rather than `@farmslot/skills`.
+Task closeout quality is represented by `RecipeQualityArtifact` when a run emits `artifacts/recipe-quality.json`. The shared validator is exported from `@farmslot/protocol`; task-local enforcement belongs to the agent runtime rather than `@farmslot/skills`. Workers should not hand-author the full object when `@farmslot/agent-runtime` is available: use `farmslot-agent recipe-quality build` or `buildRecipeQualityArtifact()` so verdict/reasons/findings/delta/proof metadata are expanded into a valid protocol artifact.
 
 ## 14. Runner contract
 
