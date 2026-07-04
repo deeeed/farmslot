@@ -1,11 +1,14 @@
 // onboarding/doctor.ts — health checks for an installed farmslot workspace.
 // Standalone `farmslot doctor`; install.sh / project add / update all end with it.
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { existsSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 
 import type { GatewayListenInfo } from '@farmslot/protocol';
-import { captureHelperPathInfo } from '@farmslot/protocol/node/capture-helper-path';
+import {
+  captureHelperPathInfo,
+  type CaptureHelperSource,
+} from '@farmslot/protocol/node/capture-helper-path';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 
 import { probeGatewayAuth } from '../gateway-auth.js';
@@ -392,27 +395,38 @@ function captureHelperSection(): DoctorSection {
       ],
     };
   }
-  // Env overrides are the surprising resolution case; surface them so
-  // "why is it using that binary?" self-answers. PATH/npm resolution prints plainly.
-  const via = source.startsWith('env:') ? ` (via ${source.slice('env:'.length)})` : '';
   const result = spawnSync(bin, ['doctor', '--json'], { encoding: 'utf-8', timeout: 10_000 });
+  return { title: 'Capture', checks: [captureHelperResultCheck(bin, source, result)] };
+}
+
+/**
+ * Format the capture-helper check from a `<bin> doctor --json` run. Env-override
+ * provenance is surfaced on both success and failure — an env override is the
+ * surprising resolution case, and a *failing* override is exactly when
+ * "why is it using that binary?" needs to self-answer. PATH/npm resolution prints
+ * plainly.
+ */
+export function captureHelperResultCheck(
+  bin: string,
+  source: CaptureHelperSource,
+  result: Pick<SpawnSyncReturns<string>, 'status' | 'stdout' | 'stderr' | 'error'>,
+): DoctorCheck {
+  const via = source.startsWith('env:') ? ` (via ${source.slice('env:'.length)})` : '';
   if (result.status === 0) {
-    return {
-      title: 'Capture',
-      checks: [{ name: 'capture-helper', ok: true, detail: `${bin} doctor passed${via}` }],
-    };
+    return { name: 'capture-helper', ok: true, detail: `${bin} doctor passed${via}` };
   }
+  const failure = (
+    result.stderr ||
+    result.stdout ||
+    result.error?.message ||
+    'doctor failed'
+  ).trim();
   return {
-    title: 'Capture',
-    checks: [
-      {
-        name: 'capture-helper',
-        ok: true,
-        warn: true,
-        detail: (result.stderr || result.stdout || result.error?.message || 'doctor failed').trim(),
-        hint: 'run: capture-helper doctor --json; grant Screen Recording permission if requested',
-      },
-    ],
+    name: 'capture-helper',
+    ok: true,
+    warn: true,
+    detail: `${bin} doctor failed${via}: ${failure}`,
+    hint: 'run: capture-helper doctor --json; grant Screen Recording permission if requested',
   };
 }
 
