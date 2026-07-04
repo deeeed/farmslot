@@ -130,6 +130,16 @@ export function prepareSessionTarget(sessionName: string): string {
   return `${sessionName}:`;
 }
 
+/**
+ * Formats a silence duration as a compact `Xm Ys` / `Ys` string for the deps
+ * heartbeat message. Sub-minute silences omit the minute component.
+ */
+export function formatPrepareSilence(silenceMs: number): string {
+  const min = Math.floor(silenceMs / 60_000);
+  const sec = Math.floor((silenceMs % 60_000) / 1_000);
+  return min > 0 ? `${min}m${sec}s` : `${sec}s`;
+}
+
 function prepareEnsureSessionSnippet(sessionName: string, cwd: string): string {
   return (
     `has-session -t ${shellQuote(sessionName)} 2>/dev/null || ` +

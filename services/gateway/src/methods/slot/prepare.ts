@@ -57,6 +57,7 @@ import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
   clearStalePrepareProcess,
+  formatPrepareSilence,
   PREPARE_DEPS_TIMEOUT_MS,
   PREPARE_PREFLIGHT_TIMEOUT_MS,
   runPrepareCommand,
@@ -1041,10 +1042,7 @@ async function slotPrepareInner(
     const depsHeartbeat = setInterval(() => {
       const silenceMs = Date.now() - depsLastOutputAt;
       if (silenceMs >= 30_000) {
-        const min = Math.floor(silenceMs / 60_000);
-        const sec = Math.floor((silenceMs % 60_000) / 1_000);
-        const elapsed = min > 0 ? `${min}m${sec}s` : `${sec}s`;
-        step('deps', `Still running… (${elapsed} since last output)`);
+        step('deps', `Still running… (${formatPrepareSilence(silenceMs)} since last output)`);
       }
     }, 30_000);
     let installR;

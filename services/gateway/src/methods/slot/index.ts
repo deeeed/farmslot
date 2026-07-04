@@ -9,6 +9,7 @@ export {
   buildPrepareWindowName,
   buildPrepareWrappedCommand,
   clearStalePrepareProcess,
+  formatPrepareSilence,
   getPrepareDepsTimeoutMs,
   getPreparePreflightTimeoutMs,
   getPrepareSentinelPollTimeoutMs,

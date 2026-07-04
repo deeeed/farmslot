@@ -14,6 +14,7 @@ import {
   buildPreparePlaceholderCommand,
   buildPrepareWindowName,
   buildPrepareWrappedCommand,
+  formatPrepareSilence,
   getPrepareDepsTimeoutMs,
   getPreparePreflightTimeoutMs,
   getPrepareSentinelPollTimeoutMs,
@@ -27,7 +28,9 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-function makeSlotVars(overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | 'session'>): SlotVars {
+function makeSlotVars(
+  overrides: Partial<SlotVars> & Pick<SlotVars, 'slotId' | 'session'>,
+): SlotVars {
   return {
     machine: 'macwork',
     platform: 'macos',
@@ -93,6 +96,14 @@ test('buildPrepareWindowName accepts phase-scoped run labels', () => {
   assert.equal(buildPrepareWindowName('7d1fc152-preflight'), 'prepare-7d1fc152-preflight');
 });
 
+test('formatPrepareSilence omits minutes under 60s and includes them above', () => {
+  assert.equal(formatPrepareSilence(30_000), '30s');
+  assert.equal(formatPrepareSilence(45_000), '45s');
+  assert.equal(formatPrepareSilence(60_000), '1m0s');
+  assert.equal(formatPrepareSilence(65_000), '1m5s');
+  assert.equal(formatPrepareSilence(150_000), '2m30s');
+});
+
 test('buildPreparePlaceholderCommand avoids GNU-only sleep infinity', () => {
   const command = buildPreparePlaceholderCommand();
 
@@ -150,7 +161,7 @@ test('buildPrepareWrappedCommand writes sentinel and preserves output flush on s
 
 test('buildPrepareWrappedCommand disarms traps before writing the final child status', () => {
   const command = buildPrepareWrappedCommand('echo ok', '/tmp/prep.exit', '/tmp/prep');
-  const finalTrapIdx = command.indexOf('trap - HUP INT TERM\n' + "echo \"$__farmslot_status\"");
+  const finalTrapIdx = command.indexOf('trap - HUP INT TERM\n' + 'echo "$__farmslot_status"');
   const signalTrapIdx = command.indexOf('__farmslot_signal_exit()');
 
   assert(finalTrapIdx > signalTrapIdx);
@@ -202,8 +213,7 @@ test('buildDevServerPortCleanup skips local gateway port', () => {
 
 test('buildDevServerPortCleanup still cleans remote gateway-numbered ports', () => {
   assert.deepEqual(buildDevServerPortCleanup('7777', false, 7777), {
-    command:
-      'lsof -nP -iTCP:7777 -sTCP:LISTEN -t 2>/dev/null | xargs kill 2>/dev/null; true',
+    command: 'lsof -nP -iTCP:7777 -sTCP:LISTEN -t 2>/dev/null | xargs kill 2>/dev/null; true',
     skippedReason: null,
   });
 });
