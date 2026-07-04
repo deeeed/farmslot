@@ -386,7 +386,6 @@ async function readSlotJsonIfPresent(
 async function validateRecipeRunArtifactsOnSlot(
   slotVars: SlotVars,
   artifactRoot: string,
-  _recipePath?: string,
 ): Promise<RecipeProjectHookValidationResult> {
   const artifactList = await listSlotRecipeArtifactFiles(slotVars, artifactRoot);
   const recipeArtifactPresent = artifactList.paths.includes('recipe.json');
@@ -1006,7 +1005,7 @@ export async function recipeProjectHookRun(
     if (!artifactsDir) throw new Error('hooks.recipe_run execution requires artifactsDir.');
     validation = mergeHookValidationResults(
       validation,
-      await validateRecipeRunArtifactsOnSlot(slotVars, artifactsDir, params.recipePath),
+      await validateRecipeRunArtifactsOnSlot(slotVars, artifactsDir),
     );
   }
   if (validation.status !== 'pass') {
@@ -1187,7 +1186,6 @@ async function executeRecipeRerunJob(args: {
     const artifactValidation = await validateRecipeRunArtifactsOnSlot(
       slotVars,
       slotRecipeRunArtifactsDir,
-      slotRecipePath,
     );
     if (artifactValidation.status !== 'pass') {
       const invalidArtifacts = formatFailedHookValidation(artifactValidation);
