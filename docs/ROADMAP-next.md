@@ -263,6 +263,7 @@ These were previously future-looking backlog items, but the codebase now shows t
 
 #### Opportunistic / no current dedicated PRD
 
+- `farmslot update` UX: detect-and-confirm flow (show version delta + what's-new before applying, Y/n on TTY with a non-interactive flag for scripted callers, fast no-op when already current instead of unconditional yarn install/rebuild/pack re-sync);
 - Co-Pilot consumption of bugfix-gate package evidence, eval-package artifacts, and auto-recovery audit evidence;
 - Auto-recovery policy tuning only when audit evidence shows a category, project-default, or operator-UX gap;
 - recipe proof/quality maintenance only when eval-package or normal PR work exposes a concrete regression outside the Generic Recipe Protocol v1 scope;
