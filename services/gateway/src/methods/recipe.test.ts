@@ -236,6 +236,19 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   assert.equal(valid.status, 'pass', JSON.stringify(valid.checks));
   assert.equal(valid.recipe?.status, 'valid');
 
+  const listFailure = validateRecipeRunArtifactPackageOutput({
+    artifactPaths: [],
+    recipe,
+    summary,
+    manifest,
+    artifactListError: 'find maxBuffer exceeded',
+  });
+  assert.equal(listFailure.status, 'fail');
+  assert.equal(
+    listFailure.checks.find((check) => check.id === 'recipe_run.artifact_list')?.message,
+    'Could not list recipe artifact package files: find maxBuffer exceeded',
+  );
+
   const statusMismatch = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe,
@@ -272,6 +285,19 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   assert.equal(badRecipe.status, 'fail');
   assert.ok(badRecipe.checks.some((check) => check.id === 'recipe_run.artifact.recipe.json'));
 
+  const missingRecipe = validateRecipeRunArtifactPackageOutput({
+    artifactPaths: ['artifact-manifest.json', 'summary.json', 'trace.json'],
+    recipe: undefined,
+    summary,
+    manifest,
+    readErrors: { 'recipe.json': 'file missing' },
+  });
+  assert.equal(missingRecipe.status, 'fail');
+  assert.equal(
+    missingRecipe.checks.find((check) => check.id === 'recipe_run.artifact.recipe.json')?.message,
+    'recipe.json is missing.',
+  );
+
   const staleManifest = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe,
@@ -283,6 +309,11 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     staleManifest.recipe?.findings.some(
       (finding) => finding.code === 'artifact_manifest.missing_file',
     ),
+  );
+  assert.match(
+    staleManifest.checks.find((check) => check.id === 'recipe_run.artifact_manifest.validation')
+      ?.message ?? '',
+    /artifact_manifest\.missing_file@artifacts\[0\]\.path/,
   );
 });
 
