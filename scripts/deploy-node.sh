@@ -425,6 +425,17 @@ while IFS=$'\t' read -r pkg_name pkg_dir needs_build; do
   echo "  → $pkg_name"
 done <<< "$FARMSLOT_DEPS"
 
+# Task files rendered for remote slots call helper scripts under
+# ~/farmslot-node/packages/agent-runtime/scripts/*. Keep that package tree in
+# the remote agent dir even though the node service itself does not import it.
+echo "[deploy] syncing agent-runtime task helpers..."
+run "mkdir -p $REMOTE_DIR/packages/agent-runtime"
+rsync -a --delete \
+  --exclude node_modules \
+  --exclude dist \
+  "$PACKAGES_DIR/agent-runtime/" \
+  "${RSYNC_PREFIX}$REMOTE_DIR/packages/agent-runtime/"
+
 # --- Install service (platform-specific) ---
 
 if [[ "$REMOTE_OS" == "Darwin" ]]; then

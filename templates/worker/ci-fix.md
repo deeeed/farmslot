@@ -82,6 +82,6 @@ STATUS: pending
 
 - [ ] **9. Write CI-FIX-SIGNAL.json:**
   ```bash
-  node {{farmslot_dir}}/packages/skills/scripts/mark-checklist-step.cjs {{TASK_DIR}}/CI-FIX.md {{TASK_DIR}}/CI-FIX-SIGNAL.json complete --outcome success --mark-last
+  node {{farmslot_dir}}/packages/agent-runtime/scripts/mark-checklist-step.cjs {{TASK_DIR}}/CI-FIX.md {{TASK_DIR}}/CI-FIX-SIGNAL.json complete --outcome success --mark-last
   ```
   **Do NOT `/exit`. Stay alive — CI-watch may nudge you again if new issues appear.**

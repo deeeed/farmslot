@@ -25,6 +25,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       cli: ${{ steps.filter.outputs.cli }}
       expo_recipe: ${{ steps.filter.outputs.expo_recipe }}
+      agent_runtime: ${{ steps.filter.outputs.agent_runtime }}
       protocol: ${{ steps.filter.outputs.protocol }}
       recipe_harness: ${{ steps.filter.outputs.recipe_harness }}
       skills: ${{ steps.filter.outputs.skills }}
@@ -95,6 +96,12 @@ jobs:
               - 'packages/expo-recipe/**'
               - 'packages/protocol/**'
               - 'packages/recipe-harness/**'
+            agent_runtime:
+              - '.github/workflows/farmslot-quality.yml'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'packages/agent-runtime/**'
+              - 'packages/protocol/**'
             protocol:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
@@ -110,6 +117,7 @@ jobs:
               - '.github/workflows/farmslot-quality.yml'
               - 'package.json'
               - 'yarn.lock'
+              - 'packages/agent-runtime/**'
               - 'packages/skills/**'
             theme:
               - '.github/workflows/farmslot-quality.yml'
@@ -381,6 +389,29 @@ jobs:
         run: yarn install --immutable
       - name: Protocol quality
         run: yarn workspace @farmslot/protocol quality
+
+  agent-runtime:
+    name: Agent runtime package quality
+    needs: changes
+    if: needs.changes.outputs.agent_runtime == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: yarn install --immutable
+      - name: Agent runtime quality
+        run: yarn workspace @farmslot/agent-runtime quality
 
   recipe-harness:
     name: Recipe harness package quality

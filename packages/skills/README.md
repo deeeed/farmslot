@@ -56,13 +56,13 @@ Supported layouts:
 
 - `src/`: TypeScript CLI and install-library entry points.
 - `skills/`: Packaged skill directories copied into consumer repos.
-- `scripts/`: CommonJS recipe-cook runner utilities exposed through package bin scripts.
+- `scripts/`: Compatibility shims for legacy runtime paths. Runtime logic lives in `@farmslot/agent-runtime`.
 - `templates/`: Scenario fixtures and task templates used by the recipe-cook workflow.
 - `test/`: Node TAP-style smoke and behavior tests for installers and runner scripts.
 
 ## Maintenance rules
 
-- `scripts/mark-checklist-step.cjs` mirrors consensys-skills `recipe-harness/scripts/mark-checklist-step.cjs`. Edit the recipe-harness copy first; sync the mirror before shipping Farmslot gateway or npm changes.
+- `scripts/mark-checklist-step.cjs`, `scripts/worker-terminal-contract.cjs`, and `scripts/check-task-artifact-contract.mjs` are compatibility shims that delegate to `@farmslot/agent-runtime`.
 - Keep package payloads self-contained; consumers should not need the Farmslot monorepo.
 - Update `CHANGELOG.md` before packaging or publishing.
 - Run the package readiness guard when files move, bins change, or exports are added.

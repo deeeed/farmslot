@@ -1,12 +1,11 @@
 {
-  "name": "@farmslot/skills",
-  "version": "0.1.2",
+  "name": "@farmslot/agent-runtime",
+  "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "farmslot-checklist": "./bin/farmslot-checklist.mjs",
-    "farmslot-skills": "./bin/farmslot-skills.mjs"
+    "farmslot-agent": "./bin/farmslot-agent.mjs"
   },
   "exports": {
     ".": {
@@ -14,26 +13,24 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./skills/*": "./skills/*/SKILL.md",
-    "./schemas/*": "./schemas/*",
     "./scripts/mark-checklist-step.cjs": "./scripts/mark-checklist-step.cjs",
     "./scripts/worker-terminal-contract.cjs": "./scripts/worker-terminal-contract.cjs",
     "./scripts/check-task-artifact-contract.mjs": "./scripts/check-task-artifact-contract.mjs"
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
-    "test": "node test/mark-checklist-step.test.cjs && node test/prepare-cooking-run.test.cjs && node test/run-cooking-lane.test.cjs && node test/validator-loop.test.cjs && node test/package-exports.test.cjs",
+    "test": "node test/mark-checklist-step.test.cjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" && tsc --noEmit --project tsconfig.json && yarn build && yarn test",
-    "build": "rm -rf dist && tsc --project tsconfig.build.json",
-    "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/skills && yarn workspace @farmslot/skills build",
-    "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/skills"
+    "build": "yarn workspace @farmslot/protocol build && rm -rf dist && tsc --project tsconfig.build.json",
+    "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/agent-runtime && yarn workspace @farmslot/agent-runtime build",
+    "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/agent-runtime"
   },
   "dependencies": {
-    "@farmslot/agent-runtime": "workspace:*"
+    "@farmslot/protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -44,17 +41,17 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/deeeed/farmslot.git",
-    "directory": "packages/skills"
+    "directory": "packages/agent-runtime"
   },
   "bugs": {
     "url": "https://github.com/deeeed/farmslot/issues"
   },
   "license": "MIT",
-  "homepage": "https://farmslot.io/docs/guides/recipe-skills-adoption",
+  "homepage": "https://farmslot.io/docs/reference/agent-runtime",
   "keywords": [
     "farmslot",
-    "skills",
-    "recipe",
+    "agent-runtime",
+    "task-lifecycle",
     "validation",
     "agentic-engineering"
   ],
@@ -67,11 +64,8 @@
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",
     "dist/**/*.js.map",
-    "schemas/**/*.json",
     "scripts/**/*.cjs",
-    "scripts/**/*.mjs",
-    "skills/**/*.md",
-    "templates/**/*.json"
+    "scripts/**/*.mjs"
   ],
   "publishConfig": {
     "access": "public"

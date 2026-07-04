@@ -4,9 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import { isRecipeQualityArtifact, type Run } from '@farmslot/protocol';
 
-import { isRecipeQualityArtifact, loadRecipeQualityEvaluation } from './recipe-quality.js';
+import { loadRecipeQualityEvaluation } from './recipe-quality.js';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {

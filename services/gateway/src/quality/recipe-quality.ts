@@ -2,35 +2,19 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type {
-  FlowType,
-  RecipeQualityArtifact,
-  RecipeQualityArtifactSource,
-  RecipeQualityCompactProjection,
-  RecipeQualitySignal,
-  RecipeQualityVerdict,
-  Run,
+import {
+  isRecipeQualityArtifact,
+  RECIPE_QUALITY_ARTIFACT_VERSION,
+  type RecipeQualityArtifact,
+  type RecipeQualityArtifactSource,
+  type RecipeQualityCompactProjection,
+  type RecipeQualitySignal,
+  type RecipeQualityVerdict,
+  type Run,
 } from '@farmslot/protocol';
 
 const RECIPE_QUALITY_FILENAME = 'recipe-quality.json';
 const RECIPE_QUALITY_MARKER = `artifacts/${RECIPE_QUALITY_FILENAME}`;
-const RECIPE_QUALITY_VERSION = 1;
-const VALID_VERDICTS = new Set<RecipeQualityVerdict>(['pass', 'warn', 'fail']);
-const VALID_FLOW_TYPES = new Set<FlowType>([
-  'fix-bug',
-  'review-pr',
-  'dev',
-  'pr-complete',
-  'merge-main',
-]);
-const VALID_PROOF_MODES = new Set<RecipeQualityArtifact['training_fields']['proof_mode']>([
-  'logs',
-  'state',
-  'trace',
-  'screenshot',
-  'mixed',
-  'unknown',
-]);
 
 export interface RecipeQualityEvaluation {
   artifact: RecipeQualityArtifact;
@@ -111,114 +95,6 @@ async function readTextIfExists(filePath: string): Promise<string | null> {
   }
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
-}
-
-const VALID_RECIPE_QUALITY_SOURCES = new Set<RecipeQualityArtifactSource>([
-  'worker',
-  'gateway',
-  'fallback:recipe-coverage',
-  'fallback:recipe-json',
-  'fallback:report',
-  'fallback:missing',
-]);
-
-function isRecipeQualityFinding(
-  value: unknown,
-): value is RecipeQualityArtifact['structural_findings'][number] {
-  if (!value || typeof value !== 'object') return false;
-  const finding = value as Record<string, unknown>;
-  if (typeof finding.code !== 'string' || typeof finding.message !== 'string') return false;
-  if (finding.dimension != null && typeof finding.dimension !== 'string') return false;
-  if (finding.evidence != null && !isStringArray(finding.evidence)) return false;
-  return true;
-}
-
-function isRecipeQualityDimensions(value: unknown): value is RecipeQualityArtifact['dimensions'] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Object.values(value).every((dimension) => {
-    if (!dimension || typeof dimension !== 'object') return false;
-    const result = dimension as Record<string, unknown>;
-    return (
-      ['pass', 'warn', 'fail', 'not_applicable'].includes(String(result.status)) &&
-      typeof result.reason === 'string' &&
-      isStringArray(result.evidence)
-    );
-  });
-}
-
-function isRecipeQualityTrainingFields(
-  value: unknown,
-): value is RecipeQualityArtifact['training_fields'] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const fields = value as Record<string, unknown>;
-  if (fields.farm != null && typeof fields.farm !== 'string') return false;
-  if (fields.project != null && typeof fields.project !== 'string') return false;
-  if (fields.flow_type != null && !VALID_FLOW_TYPES.has(fields.flow_type as FlowType)) return false;
-  if (fields.task_type != null && typeof fields.task_type !== 'string') return false;
-  if (fields.claim_is_visual != null && typeof fields.claim_is_visual !== 'boolean') return false;
-  if (
-    fields.proof_mode != null &&
-    !VALID_PROOF_MODES.has(
-      fields.proof_mode as RecipeQualityArtifact['training_fields']['proof_mode'],
-    )
-  )
-    return false;
-  if (fields.anti_patterns != null && !isStringArray(fields.anti_patterns)) return false;
-  if (fields.good_patterns != null && !isStringArray(fields.good_patterns)) return false;
-  return true;
-}
-
-function isRecipeQualityMeta(value: unknown): value is RecipeQualityArtifact['meta'] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const meta = value as Record<string, unknown>;
-  if (!VALID_RECIPE_QUALITY_SOURCES.has(String(meta.producer) as RecipeQualityArtifactSource))
-    return false;
-  if (typeof meta.fallback_used !== 'boolean') return false;
-  if (typeof meta.legacy_task !== 'boolean') return false;
-  if (typeof meta.artifact_required !== 'boolean') return false;
-  if (!isStringArray(meta.source_signals)) return false;
-  if (
-    meta.fallback_source != null &&
-    ![
-      'fallback:recipe-coverage',
-      'fallback:recipe-json',
-      'fallback:report',
-      'fallback:missing',
-    ].includes(String(meta.fallback_source))
-  )
-    return false;
-  return true;
-}
-
-export function isRecipeQualityArtifact(value: unknown): value is RecipeQualityArtifact {
-  if (!value || typeof value !== 'object') return false;
-  const artifact = value as Record<string, unknown>;
-  if (artifact.version !== RECIPE_QUALITY_VERSION) return false;
-  if (!VALID_VERDICTS.has(String(artifact.verdict) as RecipeQualityVerdict)) return false;
-  if (!artifact.compact || typeof artifact.compact !== 'object') return false;
-  const compact = artifact.compact as Record<string, unknown>;
-  if (!['PASS', 'WARN', 'FAIL'].includes(String(compact.verdict))) return false;
-  if (!isStringArray(compact.reasons) || !isStringArray(compact.better_version_guidance))
-    return false;
-  if (!isRecipeQualityDimensions(artifact.dimensions)) return false;
-  if (
-    !Array.isArray(artifact.structural_findings) ||
-    !artifact.structural_findings.every(isRecipeQualityFinding)
-  )
-    return false;
-  if (
-    !Array.isArray(artifact.contextual_findings) ||
-    !artifact.contextual_findings.every(isRecipeQualityFinding)
-  )
-    return false;
-  if (!isStringArray(artifact.suggested_recipe_delta)) return false;
-  if (!isRecipeQualityTrainingFields(artifact.training_fields)) return false;
-  if (!isRecipeQualityMeta(artifact.meta)) return false;
-  return true;
-}
-
 function buildSignal(runId: string, artifact: RecipeQualityArtifact): RecipeQualitySignal {
   const fallbackSource = artifact.meta.fallback_source;
   const source: RecipeQualitySignal['source'] =
@@ -274,7 +150,7 @@ function buildArtifact(params: {
   } = params;
 
   return {
-    version: RECIPE_QUALITY_VERSION,
+    version: RECIPE_QUALITY_ARTIFACT_VERSION,
     verdict,
     compact: {
       verdict: verdictToCompact(verdict),

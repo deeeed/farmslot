@@ -35,7 +35,7 @@ The finish contract is **not Farmslot-specific**. It is a small, portable conven
 | `./mark`                    | Updates checklist timing and writes `SIGNAL.json` — **never hand-write the signal** |
 | `SIGNAL.json`               | Terminal status (`complete`, `blocked`, …) + optional `evidence.reportPath`         |
 
-**Shared implementation:** [`mark-checklist-step.cjs`](https://github.com/deeeed/farmslot/blob/main/packages/skills/scripts/mark-checklist-step.cjs) ships in `@farmslot/skills`. consensys-skills `recipe-harness/scripts/mark-checklist-step.cjs` is a **thin shim** that resolves and execs that canonical script (sibling `farmslot` checkout, `FARMSLOT_ROOT`, or installed `@farmslot/skills`). Standalone skills bootstrap it when creating a task dir — for example `recipe-dev/scripts/init-checklist.sh` writes `CHECKLIST.md`, `artifacts/`, and a `./mark` wrapper that calls the harness shim.
+**Shared implementation:** `mark-checklist-step.cjs` ships in `@farmslot/agent-runtime`. Legacy `@farmslot/skills` script paths are compatibility shims. Standalone skills bootstrap a task dir with `CHECKLIST.md`, `artifacts/`, and a `./mark` wrapper that calls the installed runtime.
 
 ```bash
 # Standalone (skills-only) — no gateway, no slot

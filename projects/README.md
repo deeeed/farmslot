@@ -47,6 +47,13 @@ JSON
 
 ## Recipe Support
 
+Adopt only the layer you need:
+
+1. Skills only: install `@farmslot/skills` for recipe authoring/review guidance.
+2. Project harness: install a project-specific runner or adapter such as `mm-harness` to execute recipes locally.
+3. Agent runtime: add `@farmslot/agent-runtime` when tasks need `./mark`, `SIGNAL.json`, checklist timing, or closeout artifact checks without full Farmslot.
+4. Full Farmslot: add `project.json` hooks, pools, slots, Command Center, and gateway orchestration.
+
 Recipe support is the preferred validation loop for projects that need
 reviewable proof artifacts. Farmslot v1 standardizes a shared `validate.workflow`
 graph envelope plus a typed artifact package, while each project keeps its own
@@ -98,14 +105,14 @@ yarn farmslot recipe validate path/to/recipe.json --artifact-dir path/to/artifac
 
 Reference implementations:
 
-| Project farm              | Recipe surface                                                                                                    |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `farmslot-farm` (first-party) | Command Center + Companion monorepo — `projects/farmslot-farm/project.json`, `pool/farmslot-demo.json`          |
-| Browser app farm         | CDP or Playwright runner with a `validate-recipe` wrapper                                                       |
-| Native app farm          | Maestro/XCTest/Detox runner with mobile action docs                                                             |
-| Backend/service farm     | Shell, pytest, or API-test runner with JSON artifact output                                                     |
+| Project farm                  | Recipe surface                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `farmslot-farm` (first-party) | Command Center + Companion monorepo — `projects/farmslot-farm/project.json`, `pool/farmslot-demo.json` |
+| Browser app farm              | CDP or Playwright runner with a `validate-recipe` wrapper                                              |
+| Native app farm               | Maestro/XCTest/Detox runner with mobile action docs                                                    |
+| Backend/service farm          | Shell, pytest, or API-test runner with JSON artifact output                                            |
 
-See [Recipe Runner Protocol](../docs/RECIPE-RUNNER-PROTOCOL.md),
+See [Recipe Runner Protocol](../docs/reference/recipe-runner-protocol.md),
 [new project recipe support](../docs/reference/new-project-recipe-support.md), and
 [recipe examples](../docs/examples/recipes/) for the graph envelope, artifact
 package, and onboarding examples.

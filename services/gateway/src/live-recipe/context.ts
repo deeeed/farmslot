@@ -8,6 +8,7 @@ import {
   type ArtifactRef,
   DEFAULT_TASK_DIR,
   hasLiveRecipeEvidence,
+  isRecipeQualityArtifact,
   type LiveRecipeContext,
   type RecipeQualityArtifact,
   type RecipeRunArtifactGroup,
@@ -31,7 +32,7 @@ import {
 import { MAX_ARTIFACT_TREE_DEPTH, slotReadFile } from '../core/slot-io.js';
 import { getNode } from '../fleet/machine-registry.js';
 import { getSlotLocality, sendNodeRequest } from '../fleet/node-rpc.js';
-import { isRecipeQualityArtifact, loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
+import { loadRecipeQualityEvaluation } from '../quality/recipe-quality.js';
 
 import {
   artifactScanFilters,
