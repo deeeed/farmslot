@@ -164,6 +164,7 @@ test('loadLiveRecipeContextForRun prefers typed artifact manifest metadata over 
           nodeId: 'ac1-proof',
           mimeType: 'image/png',
         },
+        { path: 'screenshots/proof.png', type: 'screenshot', label: 'Duplicate proof' },
         // Early runners sometimes wrote paths with an `artifacts/` prefix; keep
         // accepting that form while normalizing to one artifact-root prefix.
         { path: 'artifacts/summary.json', type: 'summary', label: 'Run summary' },
@@ -187,6 +188,11 @@ test('loadLiveRecipeContextForRun prefers typed artifact manifest metadata over 
   assert.equal(proof?.label, 'Human readable proof');
   assert.equal(proof?.nodeId, 'ac1-proof');
   assert.equal(proof?.mimeType, 'image/png');
+  assert.equal(
+    artifactManifest.filter((artifact) => artifact.path === 'artifacts/screenshots/proof.png')
+      .length,
+    1,
+  );
   assert.ok(
     artifactManifest.some(
       (artifact) => artifact.path === 'artifacts/summary.json' && artifact.purpose === 'summary',
@@ -228,7 +234,7 @@ test('loadLiveRecipeContextForRun quarantines invalid typed artifact manifests b
       runStatus: 'pass',
       artifacts: [
         { path: 'screenshots/proof.png', type: 'screenshot' },
-        { path: '../outside.png', type: 'screenshot' },
+        { path: 'artifacts', type: 'json' },
       ],
     }),
     'utf-8',
@@ -240,7 +246,7 @@ test('loadLiveRecipeContextForRun quarantines invalid typed artifact manifests b
   assert.equal(context?.source, 'recipe-run-artifacts');
   assert.equal(context?.usedTypedArtifactManifest, false);
   assert.ok(artifactManifest.some((artifact) => artifact.path === 'artifacts/summary.json'));
-  assert.ok(!artifactManifest.some((artifact) => artifact.path.includes('outside')));
+  assert.ok(!artifactManifest.some((artifact) => artifact.path === 'artifacts'));
 });
 
 test('attachLiveRecipeContext preserves explicit stale context when no live artifacts can be materialized', async () => {

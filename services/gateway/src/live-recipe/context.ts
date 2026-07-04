@@ -425,26 +425,26 @@ function parseTypedArtifactManifestRefs(raw: string | null, manifestPath: string
   }
   const manifest = parsed as { artifacts: unknown[] };
   const refs: ArtifactRef[] = [];
-  manifest.artifacts.forEach((entry, index) => {
+  for (const [index, entry] of manifest.artifacts.entries()) {
     if (!isRecord(entry)) {
       console.warn(
         `[live-recipe-context] ignored invalid artifact-manifest entry ${index} at ${manifestPath}`,
       );
-      return;
+      return [];
     }
     const entryType = typeof entry.type === 'string' ? entry.type.trim() : '';
     if (typeof entry.path !== 'string' || !entryType) {
       console.warn(
         `[live-recipe-context] ignored incomplete artifact-manifest entry ${index} at ${manifestPath}`,
       );
-      return;
+      return [];
     }
     const artifactPath = normalizeTypedArtifactManifestPath(entry.path);
     if (!artifactPath) {
       console.warn(
-        `[live-recipe-context] ignored unsafe artifact-manifest path ${entry.path} at ${manifestPath}`,
+        `[live-recipe-context] invalid artifact-manifest path ${entry.path} at ${manifestPath}`,
       );
-      return;
+      return [];
     }
     const relativeArtifactPath = artifactPath.replace(/^artifacts\//, '');
     refs.push({
@@ -458,7 +458,7 @@ function parseTypedArtifactManifestRefs(raw: string | null, manifestPath: string
         ? { maxFps: entry.maxFps }
         : {}),
     });
-  });
+  }
   return refs;
 }
 
@@ -468,8 +468,12 @@ function mergeTypedArtifactManifestRefs(
 ): ArtifactRef[] {
   if (typedRefs.length === 0) return scannedRefs;
   const merged = new Map<string, ArtifactRef>();
+  const emitted = new Set<string>();
   for (const ref of scannedRefs) merged.set(ref.path, ref);
-  return typedRefs.map((typedRef) => {
+  const refs: ArtifactRef[] = [];
+  for (const typedRef of typedRefs) {
+    if (emitted.has(typedRef.path)) continue;
+    emitted.add(typedRef.path);
     const scanned = merged.get(typedRef.path);
     // Keep manifest-declared refs even before the scanner can see the bytes:
     // live/remote runs may publish the typed index first and materialize large
@@ -478,13 +482,14 @@ function mergeTypedArtifactManifestRefs(
     // bytes do exist, the scanner remains the source of truth for hash/size;
     // if artifact-manifest.json later grows hash/size fields, do not let
     // manifest-declared values override scanner-verified filesystem facts.
-    return {
+    refs.push({
       ...scanned,
       ...typedRef,
       ...(scanned?.sha256 ? { sha256: scanned.sha256 } : {}),
       ...(typeof scanned?.sizeBytes === 'number' ? { sizeBytes: scanned.sizeBytes } : {}),
-    };
-  });
+    });
+  }
+  return refs;
 }
 
 async function scanLocalArtifactRoot(
