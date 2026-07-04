@@ -14,6 +14,7 @@ import {
   type RecipeRunArtifactGroup,
   type RecipeRunArtifactGroupStatus,
   type Run,
+  validateArtifactManifestDocument,
 } from '@farmslot/protocol';
 
 import {
@@ -397,44 +398,56 @@ function normalizeTypedArtifactManifestPath(value: string): string | null {
   return `artifacts/${normalized}`;
 }
 
-function parseTypedArtifactManifestRefs(raw: string | null, manifestPath: string): ArtifactRef[] {
-  if (!raw) return [];
+function parseTypedArtifactManifestRefs(
+  raw: string | null,
+  manifestPath: string,
+): ArtifactRef[] | null {
+  if (!raw) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
     logJsonParseFailure(manifestPath, error);
-    return [];
+    return null;
   }
   if (!isRecord(parsed)) {
     console.warn(`[live-recipe-context] invalid artifact-manifest.json at ${manifestPath}`);
-    return [];
+    return null;
   }
-  if (parsed.version !== 1 || !Array.isArray(parsed.artifacts)) {
-    console.warn(`[live-recipe-context] unsupported artifact-manifest.json at ${manifestPath}`);
-    return [];
+  const validation = validateArtifactManifestDocument(parsed);
+  if (validation.status !== 'valid') {
+    const findings = validation.findings
+      .filter((finding) => finding.severity === 'error')
+      .slice(0, 5)
+      .map((finding) => `${finding.code}@${finding.path}`)
+      .join('; ');
+    console.warn(
+      `[live-recipe-context] invalid artifact-manifest.json at ${manifestPath}${findings ? `: ${findings}` : ''}`,
+    );
+    return null;
   }
+  const manifest = parsed as { artifacts: unknown[] };
   const refs: ArtifactRef[] = [];
-  parsed.artifacts.forEach((entry, index) => {
+  for (const [index, entry] of manifest.artifacts.entries()) {
     if (!isRecord(entry)) {
       console.warn(
-        `[live-recipe-context] ignored invalid artifact-manifest entry ${index} at ${manifestPath}`,
+        `[live-recipe-context] rejecting artifact-manifest.json at ${manifestPath}: entry ${index} is invalid; falling back to scan`,
       );
-      return;
+      return null;
     }
     const entryType = typeof entry.type === 'string' ? entry.type.trim() : '';
     if (typeof entry.path !== 'string' || !entryType) {
       console.warn(
-        `[live-recipe-context] ignored incomplete artifact-manifest entry ${index} at ${manifestPath}`,
+        `[live-recipe-context] rejecting artifact-manifest.json at ${manifestPath}: entry ${index} is incomplete; falling back to scan`,
       );
-      return;
+      return null;
     }
     const artifactPath = normalizeTypedArtifactManifestPath(entry.path);
     if (!artifactPath) {
       console.warn(
-        `[live-recipe-context] ignored unsafe artifact-manifest path ${entry.path} at ${manifestPath}`,
+        `[live-recipe-context] rejecting artifact-manifest.json at ${manifestPath}: entry ${index} path ${entry.path} is invalid; falling back to scan`,
       );
-      return;
+      return null;
     }
     const relativeArtifactPath = artifactPath.replace(/^artifacts\//, '');
     refs.push({
@@ -448,19 +461,24 @@ function parseTypedArtifactManifestRefs(raw: string | null, manifestPath: string
         ? { maxFps: entry.maxFps }
         : {}),
     });
-  });
+  }
   return refs;
 }
 
 function mergeTypedArtifactManifestRefs(
   scannedRefs: ArtifactRef[],
-  typedRefs: ArtifactRef[],
+  typedRefs: ArtifactRef[] | null,
 ): ArtifactRef[] {
+  if (typedRefs === null) return scannedRefs;
   if (typedRefs.length === 0) return scannedRefs;
-  const merged = new Map<string, ArtifactRef>();
-  for (const ref of scannedRefs) merged.set(ref.path, ref);
+  const scannedByPath = new Map<string, ArtifactRef>();
+  const emitted = new Set<string>();
+  for (const ref of scannedRefs) scannedByPath.set(ref.path, ref);
+  const refs: ArtifactRef[] = [];
   for (const typedRef of typedRefs) {
-    const scanned = merged.get(typedRef.path);
+    if (emitted.has(typedRef.path)) continue;
+    emitted.add(typedRef.path);
+    const scanned = scannedByPath.get(typedRef.path);
     // Keep manifest-declared refs even before the scanner can see the bytes:
     // live/remote runs may publish the typed index first and materialize large
     // artifacts moments later. The existing artifact preview path handles 404s
@@ -468,14 +486,14 @@ function mergeTypedArtifactManifestRefs(
     // bytes do exist, the scanner remains the source of truth for hash/size;
     // if artifact-manifest.json later grows hash/size fields, do not let
     // manifest-declared values override scanner-verified filesystem facts.
-    merged.set(typedRef.path, {
+    refs.push({
       ...scanned,
       ...typedRef,
       ...(scanned?.sha256 ? { sha256: scanned.sha256 } : {}),
       ...(typeof scanned?.sizeBytes === 'number' ? { sizeBytes: scanned.sizeBytes } : {}),
     });
   }
-  return [...merged.values()];
+  return refs;
 }
 
 async function scanLocalArtifactRoot(
@@ -628,6 +646,7 @@ async function loadContextFromArtifactRoot({
     path.join(artifactRoot, 'artifact-manifest.json'),
   );
   const artifactRefs = mergeTypedArtifactManifestRefs(artifactScan.refs, typedArtifactRefs);
+  const usedTypedArtifactManifest = typedArtifactRefs !== null && typedArtifactRefs.length > 0;
   const effectiveIsStale =
     isStale ||
     (allowUnavailableAsStale && artifactScan.unavailable && artifactScan.refs.length === 0);
@@ -637,7 +656,7 @@ async function loadContextFromArtifactRoot({
     recipeRunId,
     artifactRoot,
     artifactManifest: artifactRefs.length > 0 ? artifactRefs : null,
-    usedTypedArtifactManifest: typedArtifactRefs.length > 0,
+    usedTypedArtifactManifest,
     recipeJson,
     recipeQualityArtifact,
     qualityReport: null,

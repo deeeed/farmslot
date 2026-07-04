@@ -20,8 +20,10 @@ import {
   type RecipeProjectHookValidationCheck,
   type RecipeProjectHookValidationResult,
   type RecipeRerunParams,
+  type RecipeValidationResult,
   type ScriptActionResult,
   validateRecipeActionManifestDocument,
+  validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 
 import {
@@ -168,6 +170,247 @@ function validateRecipeDoctorJson(document: unknown): RecipeProjectHookValidatio
   };
 }
 
+interface RecipeRunArtifactPackageOutputInput {
+  artifactPaths: string[];
+  artifactListError?: string;
+  summary?: unknown;
+  manifest?: unknown;
+  recipe?: unknown;
+  recipeArtifactPresent?: boolean;
+  readErrors?: Record<string, string>;
+}
+
+const RECIPE_ARTIFACT_MISSING_SENTINEL = '__FARMSLOT_MISSING__';
+const RECIPE_ARTIFACT_MISSING_ERROR = 'file missing';
+const RECIPE_ARTIFACT_LIST_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+
+function readTerminalStatus(document: unknown): string | undefined {
+  return isRecord(document) && typeof document.status === 'string' ? document.status : undefined;
+}
+
+function isSuppressedRecipeProtocolFinding(
+  finding: RecipeValidationResult['findings'][number],
+  artifactReadErrorPaths: ReadonlySet<string>,
+  missingArtifactPaths: ReadonlySet<string>,
+): boolean {
+  return (
+    (finding.code === 'artifact_package.missing_required_file' &&
+      missingArtifactPaths.has(finding.path)) ||
+    (finding.code === 'artifact_package.missing_manifest' &&
+      artifactReadErrorPaths.has('artifact-manifest.json'))
+  );
+}
+
+function formatRecipeValidationFindings(
+  result: RecipeValidationResult,
+  suppressFinding?: (finding: RecipeValidationResult['findings'][number]) => boolean,
+): string {
+  const errorFindings = result.findings.filter(
+    (finding) => finding.severity === 'error' && !suppressFinding?.(finding),
+  );
+  const findings = errorFindings.slice(0, 5);
+  if (findings.length === 0) return '';
+  const suffix = errorFindings.length > findings.length ? '; …' : '';
+  return ` Findings: ${findings.map((finding) => `${finding.code}@${finding.path}`).join('; ')}${suffix}`;
+}
+
+export function validateRecipeRunArtifactPackageOutput(
+  input: RecipeRunArtifactPackageOutputInput,
+): RecipeProjectHookValidationResult {
+  const checks: RecipeProjectHookValidationCheck[] = [];
+  const artifactPathSet = new Set(input.artifactPaths);
+  const readErrors = input.readErrors ?? {};
+  const artifactReadErrorPaths = new Set(Object.keys(readErrors));
+  const missingArtifactPaths = new Set(
+    Object.entries(readErrors)
+      .filter(([, error]) => error === RECIPE_ARTIFACT_MISSING_ERROR)
+      .map(([filePath]) => filePath),
+  );
+
+  if (input.artifactListError) {
+    addHookValidationCheck(
+      checks,
+      'recipe_run.artifact_list',
+      'fail',
+      `Could not list recipe artifact package files: ${input.artifactListError}`,
+    );
+  }
+
+  for (const requiredPath of ['summary.json', 'trace.json', 'artifact-manifest.json'] as const) {
+    const error = readErrors[requiredPath];
+    const passed =
+      !error && (artifactPathSet.has(requiredPath) || input.artifactListError !== undefined);
+    addHookValidationCheck(
+      checks,
+      `recipe_run.artifact.${requiredPath}`,
+      passed ? 'pass' : 'fail',
+      error
+        ? error === RECIPE_ARTIFACT_MISSING_ERROR
+          ? `${requiredPath} is missing.`
+          : `${requiredPath} could not be read as JSON: ${error}`
+        : artifactPathSet.has(requiredPath)
+          ? `${requiredPath} exists.`
+          : `Recipe run artifact package must include ${requiredPath}.`,
+    );
+  }
+
+  const recipeReadError = readErrors['recipe.json'];
+  if (recipeReadError) {
+    addHookValidationCheck(
+      checks,
+      'recipe_run.artifact.recipe.json',
+      'fail',
+      recipeReadError === RECIPE_ARTIFACT_MISSING_ERROR
+        ? 'recipe.json is missing.'
+        : `recipe.json could not be read as JSON: ${recipeReadError}`,
+    );
+  }
+
+  const summaryStatus = readTerminalStatus(input.summary);
+  const manifestStatus = isRecord(input.manifest) ? input.manifest.runStatus : undefined;
+  addHookValidationCheck(
+    checks,
+    'recipe_run.manifest.status_matches_summary',
+    typeof summaryStatus === 'string' && manifestStatus === summaryStatus ? 'pass' : 'fail',
+    `artifact-manifest.json runStatus must match summary.json status (summary=${summaryStatus ?? 'missing'}, manifest=${typeof manifestStatus === 'string' ? manifestStatus : 'missing'}).`,
+  );
+
+  const recipe = validateRecipeArtifactPackage({
+    recipe: input.recipeArtifactPresent ? input.recipe : undefined,
+    manifest: input.manifest,
+    artifactPaths: input.artifactListError ? undefined : input.artifactPaths,
+  });
+  const hasUnsuppressedRecipeErrors = recipe.findings.some(
+    (finding) =>
+      finding.severity === 'error' &&
+      !isSuppressedRecipeProtocolFinding(finding, artifactReadErrorPaths, missingArtifactPaths),
+  );
+  addHookValidationCheck(
+    checks,
+    'recipe_run.artifact_manifest.validation',
+    recipe.status === 'valid' || !hasUnsuppressedRecipeErrors ? 'pass' : 'fail',
+    `artifact-manifest.json must satisfy Recipe Protocol v1 and reference existing artifacts.${formatRecipeValidationFindings(
+      recipe,
+      (finding) =>
+        isSuppressedRecipeProtocolFinding(finding, artifactReadErrorPaths, missingArtifactPaths),
+    )}`,
+  );
+
+  return {
+    status: checks.some((check) => check.status === 'fail') ? 'fail' : 'pass',
+    checks,
+    recipe,
+  };
+}
+
+function mergeHookValidationResults(
+  left: RecipeProjectHookValidationResult,
+  right: RecipeProjectHookValidationResult,
+): RecipeProjectHookValidationResult {
+  return {
+    status: left.status === 'pass' && right.status === 'pass' ? 'pass' : 'fail',
+    checks: [...left.checks, ...right.checks],
+    recipe: right.recipe ?? left.recipe,
+  };
+}
+
+function formatFailedHookValidation(validation: RecipeProjectHookValidationResult): string {
+  return validation.checks
+    .filter((check) => check.status === 'fail')
+    .map((check) => `${check.id}: ${check.message}`)
+    .join('; ');
+}
+
+function joinRemoteArtifactPath(root: string, relativePath: string): string {
+  return normalizeRemotePath(`${normalizeRemotePath(root).replace(/\/+$/u, '')}/${relativePath}`);
+}
+
+async function listSlotRecipeArtifactFiles(
+  slotVars: SlotVars,
+  artifactRoot: string,
+): Promise<{ paths: string[]; error?: string }> {
+  const script = `root=${shellExpressionForRemotePath(artifactRoot)}; if [ ! -d "$root" ]; then exit 0; fi; cd "$root" && find . -type f -print0`;
+  let result: Awaited<ReturnType<typeof execOnSlot>>;
+  try {
+    result = await execOnSlot(slotVars, script, {
+      timeout: 10_000,
+      maxBuffer: RECIPE_ARTIFACT_LIST_MAX_BUFFER_BYTES,
+    });
+  } catch (error) {
+    return { paths: [], error: error instanceof Error ? error.message : String(error) };
+  }
+  if (result.exitCode !== 0) {
+    return {
+      paths: [],
+      error: result.stderr.trim() || `artifact listing exited ${result.exitCode}`,
+    };
+  }
+  return {
+    paths: result.stdout
+      .split('\0')
+      .map((line) => line.replace(/^\.\//u, ''))
+      .filter(Boolean)
+      .sort(),
+  };
+}
+
+const DEFAULT_RECIPE_JSON_MAX_BUFFER_BYTES = 1024 * 1024;
+
+async function readSlotJsonIfPresent(
+  slotVars: SlotVars,
+  filePath: string,
+  maxBuffer = DEFAULT_RECIPE_JSON_MAX_BUFFER_BYTES,
+): Promise<{ value?: unknown; error?: string }> {
+  const script = `file=${shellExpressionForRemotePath(filePath)}; if [ ! -f "$file" ]; then echo ${RECIPE_ARTIFACT_MISSING_SENTINEL}; exit 0; fi; cat "$file"`;
+  let text: string;
+  try {
+    const result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer });
+    if (result.exitCode !== 0) {
+      return { error: (result.stderr || result.stdout || `exit ${result.exitCode}`).trim() };
+    }
+    text = result.stdout;
+  } catch (error) {
+    // A too-large or unreadable artifact is validation evidence, not a gateway crash.
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+  if (text.trim() === RECIPE_ARTIFACT_MISSING_SENTINEL) {
+    return { error: RECIPE_ARTIFACT_MISSING_ERROR };
+  }
+  try {
+    return { value: JSON.parse(text) };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function validateRecipeRunArtifactsOnSlot(
+  slotVars: SlotVars,
+  artifactRoot: string,
+): Promise<RecipeProjectHookValidationResult> {
+  const artifactList = await listSlotRecipeArtifactFiles(slotVars, artifactRoot);
+  const recipeArtifactPresent = artifactList.paths.includes('recipe.json');
+  const [summary, manifest, recipe] = await Promise.all([
+    readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'summary.json')),
+    readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'artifact-manifest.json')),
+    recipeArtifactPresent
+      ? readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'recipe.json'))
+      : Promise.resolve({ value: undefined } as { value?: unknown; error?: string }),
+  ]);
+  return validateRecipeRunArtifactPackageOutput({
+    artifactPaths: artifactList.paths,
+    artifactListError: artifactList.error,
+    summary: summary.value,
+    manifest: manifest.value,
+    recipe: recipe.value,
+    recipeArtifactPresent,
+    readErrors: {
+      ...(summary.error ? { 'summary.json': summary.error } : {}),
+      ...(manifest.error ? { 'artifact-manifest.json': manifest.error } : {}),
+      ...(recipe.error ? { 'recipe.json': recipe.error } : {}),
+    },
+  });
+}
+
 export function validateRecipeProjectHookOutput(
   hook: RecipeProjectHookName,
   stdout: string,
@@ -179,8 +422,7 @@ export function validateRecipeProjectHookOutput(
         {
           id: 'recipe_run.process_exit',
           status: 'pass',
-          message:
-            'hooks.recipe_run process exited successfully. Validate summary, trace, and artifacts separately with recipe artifacts validate.',
+          message: 'hooks.recipe_run process exited successfully.',
         },
       ],
     };
@@ -415,28 +657,16 @@ export async function assertSlotHealthForRecipeRerun(
 
   const readyIndicator = getProjectField(projectJson, 'health.ready_indicator');
   const parseCmd = getProjectField(projectJson, 'health.parse_health') ?? '';
-  let healthValue = await waitForRecipeReplayHealth(
-    slotVars,
-    healthHook,
-    parseCmd,
-    readyIndicator,
-  );
+  let healthValue = await waitForRecipeReplayHealth(slotVars, healthHook, parseCmd, readyIndicator);
 
   if (recipeReplayHealthReady(healthValue, readyIndicator)) return;
 
   const unlockHook = expandHook('unlock', projectJson, slotVars, projectVars);
   if (unlockHook?.trim()) {
-    await execOnSlot(
-      slotVars,
-      `cd ${shellQuote(slotVars.remoteRepo)} && ${unlockHook} 2>&1`,
-      { timeout: 60_000 },
-    );
-    healthValue = await waitForRecipeReplayHealth(
-      slotVars,
-      healthHook,
-      parseCmd,
-      readyIndicator,
-    );
+    await execOnSlot(slotVars, `cd ${shellQuote(slotVars.remoteRepo)} && ${unlockHook} 2>&1`, {
+      timeout: 60_000,
+    });
+    healthValue = await waitForRecipeReplayHealth(slotVars, healthHook, parseCmd, readyIndicator);
   }
 
   if (!recipeReplayHealthReady(healthValue, readyIndicator)) {
@@ -460,8 +690,7 @@ function resolveWorkerTaskDir(
   const orchRoot = getOrchestratorTaskRoot(run.project, projectJson);
   const relPath = resolveTaskRelDir(run.taskFile, orchRoot);
   if (relPath === null) return null;
-  const taskDirName =
-    resolveProjectTaskDirName(projectJson);
+  const taskDirName = resolveProjectTaskDirName(projectJson);
   return path.join(slotVars.remoteRepo, taskDirName, relPath);
 }
 
@@ -769,13 +998,19 @@ export async function recipeProjectHookRun(
       `hooks.${params.hook} failed with exit code ${result.exitCode}: ${result.stderr || result.stdout}`,
     );
   }
-  const validation = validateRecipeProjectHookOutput(params.hook, result.stdout);
+  let validation = validateRecipeProjectHookOutput(params.hook, result.stdout);
+  if (params.hook === 'recipe_run') {
+    const artifactsDir = params.artifactsDir;
+    // buildRecipeProjectHookCommand enforces this before execution; keep a local guard for TS and tests.
+    if (!artifactsDir) throw new Error('hooks.recipe_run execution requires artifactsDir.');
+    validation = mergeHookValidationResults(
+      validation,
+      await validateRecipeRunArtifactsOnSlot(slotVars, artifactsDir),
+    );
+  }
   if (validation.status !== 'pass') {
     throw new Error(
-      `hooks.${params.hook} produced invalid Recipe v1 output: ${validation.checks
-        .filter((check) => check.status === 'fail')
-        .map((check) => `${check.id}: ${check.message}`)
-        .join('; ')}`,
+      `hooks.${params.hook} produced invalid Recipe v1 output: ${formatFailedHookValidation(validation)}`,
     );
   }
   return {
@@ -823,11 +1058,7 @@ async function executeRecipeRerunJob(args: {
   const startTime = Date.now();
   let slotRecipeRunArtifactsDir = '';
 
-  const complete = (detail: {
-    exitCode: number;
-    error?: string;
-    artifactRoot?: string;
-  }): void => {
+  const complete = (detail: { exitCode: number; error?: string; artifactRoot?: string }): void => {
     emit(Events.SCRIPT_COMPLETE, {
       requestId,
       exitCode: detail.exitCode,
@@ -884,11 +1115,7 @@ async function executeRecipeRerunJob(args: {
         `[recipe] warmth warnings for ${slotId}: ${warmth.warnings.map((w) => w.message).join('; ')}`,
       );
       for (const w of warmth.warnings) {
-        emitRecipeRerunStream(
-          emit,
-          requestId,
-          `⚠ warmth [${w.check}]: ${w.message}\n`,
-        );
+        emitRecipeRerunStream(emit, requestId, `⚠ warmth [${w.check}]: ${w.message}\n`);
       }
     }
 
@@ -944,6 +1171,30 @@ async function executeRecipeRerunJob(args: {
       },
     });
     publishLiveRecipeContext();
+    if (abortController.signal.aborted) {
+      throw new Error('Recipe rerun cancelled by operator');
+    }
+
+    if (result.exitCode !== 0) {
+      complete({ exitCode: result.exitCode, artifactRoot: slotRecipeRunArtifactsDir });
+      console.warn(
+        `[recipe] rerun ${requestId} exited with code ${result.exitCode} (${Date.now() - startTime}ms)`,
+      );
+      return;
+    }
+
+    const artifactValidation = await validateRecipeRunArtifactsOnSlot(
+      slotVars,
+      slotRecipeRunArtifactsDir,
+    );
+    if (artifactValidation.status !== 'pass') {
+      const invalidArtifacts = formatFailedHookValidation(artifactValidation);
+      throw new Error(
+        result.exitCode === 0
+          ? `Recipe runner produced invalid Recipe v1 artifacts: ${invalidArtifacts}`
+          : `Recipe runner exited with code ${result.exitCode} and produced invalid Recipe v1 artifacts: ${invalidArtifacts}`,
+      );
+    }
 
     const gatedRecordVideo = recipeRunOptionsForProject(projectJson, {
       playbackSlowMs,

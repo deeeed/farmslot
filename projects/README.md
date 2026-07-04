@@ -57,7 +57,10 @@ Adopt only the layer you need:
 Recipe support is the preferred validation loop for projects that need
 reviewable proof artifacts. Farmslot v1 standardizes a shared `validate.workflow`
 graph envelope plus a typed artifact package, while each project keeps its own
-runner and action adapters.
+runner and action adapters. First-party hooks should be thin routers: choose the
+project-native runner, pass through `{{recipe_path}}`/`{{artifacts_dir}}`, and let
+that harness emit the v1 package rather than teaching Farmslot core project
+semantics.
 
 A minimal new v1 recipe-enabled project should provide:
 
@@ -107,7 +110,7 @@ Reference implementations:
 
 | Project farm                  | Recipe surface                                                                                         |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `farmslot-farm` (first-party) | Command Center + Companion monorepo — `projects/farmslot-farm/project.json`, `pool/farmslot-demo.json` |
+| `farmslot-farm` (first-party) | `projects/farmslot-farm/setup/validate-recipe.sh` routes CLI/web to Command Center `@farmslot/recipe-harness` and iOS/Android to Companion `@farmslot/expo-recipe`; both receive the same `{{artifacts_dir}}` v1 package root |
 | Browser app farm              | CDP or Playwright runner with a `validate-recipe` wrapper                                              |
 | Native app farm               | Maestro/XCTest/Detox runner with mobile action docs                                                    |
 | Backend/service farm          | Shell, pytest, or API-test runner with JSON artifact output                                            |

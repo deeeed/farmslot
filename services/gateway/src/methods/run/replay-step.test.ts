@@ -158,12 +158,21 @@ test('runReplayStep does not open a recovery attempt before replay validation pa
 });
 
 test('runReplayStep allows prepare replay for backlog-dispatched MANUAL-* runs', async (t) => {
+  const priorStatus = await readFile(statusFile, 'utf8').catch(() => null);
   const run = createRun({
     flowType: 'dev',
     project: 'farmslot-farm',
     ticketOrPr: 'MANUAL-000001',
     backlogItemId: 'backlog-item-1',
   });
+  await writeFile(
+    statusFile,
+    JSON.stringify(
+      { slots: [{ slot: 'macwork-ff-1', lifecycle: 'busy', current_run_id: run.id }] },
+      null,
+      2,
+    ) + '\n',
+  );
   updateRun(run.id, {
     status: 'failed',
     slotId: 'macwork-ff-1',
@@ -178,6 +187,8 @@ test('runReplayStep allows prepare replay for backlog-dispatched MANUAL-* runs',
   });
 
   t.after(async () => {
+    if (priorStatus == null) await rm(statusFile, { force: true });
+    else await writeFile(statusFile, priorStatus);
     if (getRun(run.id)) {
       updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
       await deleteRun(run.id);

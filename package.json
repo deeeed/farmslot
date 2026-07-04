@@ -40,6 +40,7 @@
     "docs:dev": "yarn workspace @farmslot/docs start",
     "docs:build": "yarn workspace @farmslot/docs build",
     "test:recipe-operational-gates": "yarn --cwd apps/command-center test:recipe-operational-gates",
+    "test:project-hooks": "node --test scripts/tests/*.test.mjs",
     "docs:deploy": "yarn workspace @farmslot/docs deploy",
     "packages:publish:check": "node scripts/quality/check-farmslot-package-readiness.mjs --pack",
     "packages:publish:check:strict": "node scripts/quality/check-farmslot-package-readiness.mjs --pack --publish",
@@ -59,7 +60,8 @@
     "check:node-support": "tsx scripts/check-node-support-bundles.ts",
     "test:onboarding": "bash scripts/quality/test-onboarding.sh",
     "cc:build:pages": "node scripts/build-hosted-command-center.mjs",
-    "e2e:scripted-runner": "tsx scripts/e2e-scripted-runner-dispatch.mts"
+    "e2e:scripted-runner": "tsx scripts/e2e-scripted-runner-dispatch.mts",
+    "e2e:recipe-protocol": "tsx scripts/e2e-recipe-protocol-self-validation.mts"
   },
   "license": "MIT",
   "resolutions": {

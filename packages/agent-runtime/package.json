@@ -18,13 +18,13 @@
     "./scripts/check-task-artifact-contract.mjs": "./scripts/check-task-artifact-contract.mjs"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit --project tsconfig.json",
-    "test": "node test/mark-checklist-step.test.cjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs",
+    "typecheck": "yarn workspace @farmslot/protocol build && tsc --noEmit --project tsconfig.json",
+    "test": "node test/mark-checklist-step.test.cjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
-    "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" && tsc --noEmit --project tsconfig.json && yarn build && yarn test",
+    "quality": "prettier --check --ignore-path ../../.prettierignore . && eslint \"src/**/*.ts\" && yarn typecheck && yarn build && yarn test",
     "build": "yarn workspace @farmslot/protocol build && rm -rf dist && tsc --project tsconfig.build.json",
     "prepack": "cd ../.. && node scripts/quality/check-farmslot-package-readiness.mjs --require-changelog --packages @farmslot/agent-runtime && yarn workspace @farmslot/agent-runtime build",
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/agent-runtime"

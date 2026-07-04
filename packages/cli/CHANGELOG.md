@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat: add Recipe Protocol artifact-package validation helpers for `farmslot recipe artifacts validate`.
 - feat: `farmslot doctor` shows where the resolved `capture-helper` binary came from — env overrides (`CAPTURE_HELPER_PATH` / `SITEED_CAPTURE_HELPER_BIN`) are surfaced as `(via <VAR>)` on both the passing and failing capture check, so "why is it using that binary?" self-answers.
 - fix: `slot prepare` output no longer prints each line twice — CLI handler now filters to `script.output` events, ignoring the duplicate `slot.prepare.output` events emitted by the prepare stream.
 - fix: `farmslot doctor` warns when the local gateway bind is loopback-only and blocks Companion LAN pairing.

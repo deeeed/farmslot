@@ -14,7 +14,7 @@ This document identifies what should land next. Shipped history belongs in [IMPL
 
 Farmslot now has a first shipped replay/eval loop for evaluating agent output: worker screenshots/videos, evidence manifests, media lightboxes, artifact galleries, family observability, durable diffs, review-signal counters, retrospective learnings, Co-Pilot/log/recovery evidence surfaces, dispatch comparison lanes, a bugfix local-first publication gate, a local `#evals` Reference/Candidate cockpit, shared dispatch queue/eval slot caps, selectable worker template versions, backlog intake, roadmap-to-backlog promotion, WorkGraph orchestration/visualization, release maturity diagnostics, installed capture-helper integration, and local-first dev publication gating.
 
-The immediate product problem is no longer landing the eval foundation; PRs #74-#78 shipped that foundation. The problem is **turning shipped eval packages into a reliable regression program**. When we adjust prompts, worker templates, recipe-runner behavior, model/runner configuration, flexible interactive-dev workflow, or the recipe protocol itself, Farmslot should be able to recreate previous PR outcomes as artifact-only Candidate packages and compare them against known-good Reference packages with diffs, visual evidence, validation evidence, review signals, time/cost, and explicit package comparison pairs. Recipe Protocol v1 core (ADR-034) is **shipped** in validators, harness, CLI, and self-validation fixtures — see [reference/adr-implementation-status.md](reference/adr-implementation-status.md). Remaining work is **adoption and replay dependency**: typed manifests on all project runs, manifest-first UI, live self-validation execution, and project hook alignment. [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md) remains the product checklist for that rollout.
+The immediate product problem is no longer landing the eval foundation; PRs #74-#78 shipped that foundation. The problem is **turning shipped eval packages into a reliable regression program**. When we adjust prompts, worker templates, recipe-runner behavior, model/runner configuration, flexible interactive-dev workflow, or the recipe protocol itself, Farmslot should be able to recreate previous PR outcomes as artifact-only Candidate packages and compare them against known-good Reference packages with diffs, visual evidence, validation evidence, review signals, time/cost, and explicit package comparison pairs. Recipe Protocol v1 (ADR-034) is **shipped** across validators, harnesses, CLI, first-party project hooks, manifest-first rendering, and local/live conformance validation — see [reference/adr-implementation-status.md](reference/adr-implementation-status.md). Remaining work is adoption by external project packs and replay/corpus use of the stable evidence contract, not protocol rollout.
 
 This continues to extend the existing run-family/lane/run model from ADR-024 and add evals over result packages, rather than create a second top-level replay taxonomy or a separate line concept. The shipped near-term eval lane is incremental: single-case experiment/package foundation, dataset/suite/scorer boundary, local suite-builder fan-out, shared dispatch-queue slot caps, and worker-template version selection are complete; remaining gateway-owned suite history, scoring/reporting, and corpus/history surfaces wait until replay closure is reliable.
 
@@ -24,7 +24,7 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 
 1. **ADR-042 slot tracking branches — shipped (PR #146 + refresh parity).** Accepted [ADR-042](adr/042-slot-tracking-branches.md): idle linked worktrees use a **tracking branch** (e.g. `wt/ff-2`) at `origin/defaultBranch`. `prepare.ts`, `release.ts`, and `refresh.ts` share `resetSlotRepoToIdle`; project `slot_tracking_branch` is configured in `projects/farmslot-farm/project.json`. **Unblocks:** [farmslot-cross-surface-evidence-e2e-goal.md](plans/farmslot-cross-surface-evidence-e2e-goal.md) Phase 1 Run A (#28 on `macwork-ff-2`) once Phase 0 + #122 gate clear.
 2. **Run a short operator UI/UX stabilization pass.** Exercise the recently changed Command Center surfaces (`#evals`, `#backlog`, dispatch, run detail/family observability, slot view, ready/review workspaces, and dev publication gate) plus the newly shipped Mobile Companion operator surfaces (active runs, artifacts/diff/recipe workspaces, PRs, terminal, and Workers). Fix concrete regressions and polish issues found during real operator use. This is stabilization of shipped roadmap work, not a new product lane; small run-history curation affordances such as operator tags for demo/review collections belong here. Companion structural refactor (screen controllers, feature folders, shared workspace kit) is captured in [plans/companion-ui-architecture-refactor.md](plans/companion-ui-architecture-refactor.md). PR #180 shipped the feature-maturity `ALPHA` labels for Roadmap, Backlog, Analytics, Finetune, Intelligence, and Graphs, plus version-footer diagnostics and a progressive section-scoped Doctor experience. Remaining stabilization should focus on regressions found during real operator use. **Release engineering (in progress):** manual release-cut scripting (`yarn release:status`, `yarn release:cut`), PR changelog delta guard, `fs-release-cut` skill, operator What's New modals for Command Center and Companion, and [release-process.md](operations/release-process.md) — see `feat/release-process-changelogs`.
-3. **Complete Recipe Protocol v1 adoption (ADR-034 core is shipped).** Validators (`validateRecipeDocument`, `validateRecipeWithManifest`, `validateRecipeArtifactPackage`), `@farmslot/recipe-harness`, `farmslot recipe validate`, and `docs/examples/recipes/farmslot/` fixtures already exist. Close the remaining PRD gaps from [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md): typed `artifact-manifest.json` on all project runs, manifest-first UI (reduce filename inference), Mobile/Audiolab `hooks.recipe_run` alignment, live self-validation execution, and onboarding doc consolidation — in parallel with replay closure, not as a greenfield protocol build.
+3. **Use shipped Recipe Protocol v1 as the evidence substrate.** ADR-034 rollout is closed for first-party Farmslot paths: validators, harnesses, typed manifests, manifest-first rendering, project hooks, and local/live conformance validation are in place. Replay closure and external project packs should now consume this contract instead of reworking it.
 4. **Close remaining package provenance and real-run capture gaps.** Worker-template version selection is shipped, but durable replay still needs actual eval baseline SHA, candidate head/diff identity, complete real-run manifests, richer task-profile metadata, typed recipe artifact semantics, and clearer missing-data semantics before evals can be treated as a regression program. **Worktree/sandbox seeding (ADR-039) is shipped:** CLI `farmslot runs export|import|bundle ls` plus gateway `run.bundle.*` RPC write `farmrun` bundles so parallel agents can import main reference runs/packages into sandbox gateways without fragmenting canonical `.runs/` history. Remaining: v1.1 selectors (`--tag`, `--eval-experiment`), Command Center export buttons, `--seed-eval` helper.
 5. **Use eval packages to validate prompt/template/harness changes.** The first practical target is evaluating whether recipe/video/base-flow/template/protocol changes recreate prior PR quality better or worse.
 6. **Promote replay from queued cockpit execution to durable operator workflow.** The shared dispatch queue, eval slot caps, and template selection are shipped; add gateway-owned suite history, corpus/history views, and reporting only after replay closure is trustworthy.
@@ -102,28 +102,24 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 - adding a new replay/reference `FlowType`,
 - adding corpus/history dashboards or external eval exports.
 
-### 2. Active Follow-Up — Recipe Protocol v1 Adoption (core shipped)
+### 2. Shipped Foundation — Recipe Protocol v1 Adoption
 
-**Status:** ADR-034 **Accepted**; protocol **core shipped**; product rollout **partial**. See [reference/adr-implementation-status.md](reference/adr-implementation-status.md#adr-034--recipe-protocol-v1-accepted).
+**Status:** ADR-034 **Accepted**; first-party rollout **shipped**. See [reference/adr-implementation-status.md](reference/adr-implementation-status.md#adr-034--recipe-protocol-v1-accepted).
 
 **Planning artifacts:** [reference/recipe-protocol-v1.md](reference/recipe-protocol-v1.md), [ADR-034](adr/034-recipe-protocol-v1.md), and [plans/generic-recipe-protocol.md](plans/generic-recipe-protocol.md).
 
-**Shipped core:**
+**Shipped:**
 
 - canonical spec and ADR-034 decision;
 - `@farmslot/protocol` validators and `@farmslot/recipe-harness` graph runtime (composition, `startState`, typed manifest writers);
 - `farmslot recipe validate` and Farmslot self-validation **fixtures** under `docs/examples/recipes/farmslot/`;
-- example v1 recipes and action manifests for browser/mobile/backend paths.
+- example v1 recipes and action manifests for browser/mobile/backend paths;
+- typed `artifact-manifest.json` emission on first-party harness-backed runs, with Gateway package validation for `hooks.recipe_run` and live reruns;
+- manifest-first artifact rendering with filename inference limited to invalid/missing-manifest fallback;
+- conformance-checked `farmslot-farm` CLI/web + Companion mobile recipe hook routes;
+- `yarn e2e:recipe-protocol` local harness execution and live `@deeeed/metamask-harness` core-slot package validation.
 
-**Remaining PRD outcomes (not greenfield — adoption/rollout):**
-
-- all project runners emit typed `artifact-manifest.json` on every run (legacy summary/trace-only packages remain valid but non-v1);
-- Command Center and Companion consume manifests first; filename inference stays fallback only;
-- Mobile/Audiolab align on explicit `hooks.recipe_run` where worker-template invocation is still the path;
-- execute the self-validation fixture suite against live Command Center/Gateway/Companion surfaces, not only offline validation;
-- consolidate `docs/reference/recipe-runner-protocol.md`, `projects/README.md`, and new-project onboarding examples.
-
-**Placement rationale:** replay closure and eval packages depend on trustworthy recipe evidence. The contract exists; the gap is consistent emission and operator-visible proof on real runs.
+**Remaining work:** external project-pack adoption, richer domain flow catalogs, and replay/corpus use of the stable v1 evidence contract. These are downstream consumers, not ADR-034 rollout blockers.
 
 ### 3. Active Follow-Up — `@farmslot/skills` recipe-first adoption kit
 
@@ -242,7 +238,7 @@ These were previously future-looking backlog items, but the codebase now shows t
 - **Worker phase decomposition and sub-agent cost roll-up** — captured as a strategic lane, but should wait until eval packages provide a reliable way to compare harness changes. Run a new `$deep-interview`/`$plan --consensus` before implementation.
 
 - **Run metrics surfacing follow-ups — recipe-quality producer tooling and per-model cost** — PR #177 shipped the root duration helper and single recipe-quality signal; PR #260 shipped the contract-alignment/runtime slice by moving `RecipeQualityArtifact` validation into `@farmslot/protocol`, extracting `@farmslot/agent-runtime`, and reducing `@farmslot/skills` runtime scripts to compatibility shims. Remaining work is producer tooling and per-model breakdown.
-  - **Recipe-quality producer tooling.** `recipe-quality.json` still needs a generator/builder so agents provide verdict + reasons and receive a conformant structure instead of hand-authoring the full schema.
+  - **Recipe-quality producer tooling.** `@farmslot/agent-runtime` now provides `buildRecipeQualityArtifact()` and `farmslot-agent recipe-quality build`; remaining metrics work in this lane is per-model/sub-agent capture.
   - **Per-model / sub-agent capture.** Extend the single session-cost extractor (`extractAndPersistSessionCost`) to populate `metrics.models[] = [{ phase: 'worker'|'self-review'|'subagent', runner, model, inputTokens, outputTokens, turns, parentPhase? }]` parsed from the runner transcript (per-turn `model`; nested sub-agent sessions). The **Matrix** view renders this per-phase/per-model/per-step breakdown (per-step durations already exist in `gate-summary.ts`). Composes with the captured "Worker phase decomposition and sub-agent cost roll-up" item above.
   - **Verification:** leaderboard + per-run badge + matrix continue to agree for a run; `metrics.models[]` shows worker vs self-review vs sub-agent split; a non-conformant `recipe-quality.json` fails `check-task-artifact-contract.mjs` locally. CDP-validate the family Leaderboard + Matrix.
 

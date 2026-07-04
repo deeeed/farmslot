@@ -88,13 +88,26 @@ Protocol-owned quality contracts, including `RecipeQualityArtifact`, live in `@f
 
 `@farmslot/skills` remains the instruction and installer package. It may ship compatibility shims for one migration window, but it is not the long-term owner for reusable runtime scripts.
 
+## Implementation status (2026-07-04)
+
+ADR-034 is implemented for the Farmslot monorepo and first-party project paths:
+
+- `@farmslot/protocol` owns recipe, action-manifest, artifact-package, and `RecipeQualityArtifact` validators.
+- `@farmslot/recipe-harness`, `@farmslot/expo-recipe`, and the Command Center runner emit typed `artifact-manifest.json` packages with `summary.json`, `trace.json`, and resolved `recipe.json`.
+- `@farmslot/agent-runtime` owns task-local recipe-quality producer tooling and runtime artifact checks; `@farmslot/skills` remains instructions/installers.
+- Gateway hard-gates `hooks.recipe_run` and live rerun artifacts with `validateRecipeArtifactPackage`, and Command Center/Gateway rendering prefers valid typed manifests with legacy scanning quarantined to invalid/missing-manifest fallback.
+- `projects/farmslot-farm/setup/validate-recipe.sh` routes CLI/web and Companion mobile runs through harness-backed producers using the same `--artifacts-dir` contract, with repo-local conformance tests.
+- `yarn e2e:recipe-protocol` executes the self-validation suite through a real harness run and validates the emitted v1 package; a live `@deeeed/metamask-harness` core-slot artifact package validates against the Farmslot protocol CLI.
+
+External project adoption, richer domain flow catalogs, and replay/corpus use are continuing product work, but they are consumers of Recipe Protocol v1 rather than open ADR-034 implementation requirements.
+
 ## Consequences
 
 - `/recipe-cook` and `/recipe-quality` become authoring/review helpers over the protocol, not the protocol source of truth.
 - Task-local closeout helpers can be reused by skills-only projects through `@farmslot/agent-runtime` without installing Gateway or Command Center.
 - Example App and other project runners can migrate task-specific validation into reusable domain start-state flows and concise AC proof flows.
 - Command Center, eval packages, and replay tooling can reason about proof windows and setup trace consistently.
-- Implementation should update the canonical spec, schema/types, validator, harness behavior, and examples before adding large project-specific flow catalogs.
+- Future protocol changes should update the canonical spec, schema/types, validator, harness behavior, and examples before adding large project-specific flow catalogs.
 
 ## Non-goals
 

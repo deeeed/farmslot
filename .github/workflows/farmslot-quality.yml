@@ -179,6 +179,9 @@ jobs:
       - name: Large-file warning
         run: yarn quality:large-files
 
+      - name: Project hook conformance tests
+        run: yarn test:project-hooks
+
       - name: LOC history drift advisory
         run: yarn quality:loc:advisory
 

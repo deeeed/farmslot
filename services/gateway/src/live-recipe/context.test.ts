@@ -138,7 +138,7 @@ test('loadLiveRecipeContextForRun includes current artifact screenshots referenc
   );
 });
 
-test('loadLiveRecipeContextForRun merges typed artifact manifest metadata with scanned fallback artifacts', async (t) => {
+test('loadLiveRecipeContextForRun prefers typed artifact manifest metadata over scanned fallback artifacts', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'farmslot-typed-artifacts-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -164,13 +164,11 @@ test('loadLiveRecipeContextForRun merges typed artifact manifest metadata with s
           nodeId: 'ac1-proof',
           mimeType: 'image/png',
         },
+        { path: 'screenshots/proof.png', type: 'screenshot', label: 'Duplicate proof' },
         // Early runners sometimes wrote paths with an `artifacts/` prefix; keep
         // accepting that form while normalizing to one artifact-root prefix.
         { path: 'artifacts/summary.json', type: 'summary', label: 'Run summary' },
         { path: './trace.json', type: 'trace', label: 'Step trace' },
-        { path: 'artifacts', type: 'json', label: 'Ignored artifacts root' },
-        { path: 'empty-type.png', type: ' ', label: 'Ignored empty type' },
-        { path: '../outside.png', type: 'screenshot', label: 'Ignored unsafe path' },
       ],
     }),
     'utf-8',
@@ -190,6 +188,11 @@ test('loadLiveRecipeContextForRun merges typed artifact manifest metadata with s
   assert.equal(proof?.label, 'Human readable proof');
   assert.equal(proof?.nodeId, 'ac1-proof');
   assert.equal(proof?.mimeType, 'image/png');
+  assert.equal(
+    artifactManifest.filter((artifact) => artifact.path === 'artifacts/screenshots/proof.png')
+      .length,
+    1,
+  );
   assert.ok(
     artifactManifest.some(
       (artifact) => artifact.path === 'artifacts/summary.json' && artifact.purpose === 'summary',
@@ -200,22 +203,79 @@ test('loadLiveRecipeContextForRun merges typed artifact manifest metadata with s
       (artifact) => artifact.path === 'artifacts/trace.json' && artifact.purpose === 'trace',
     ),
   );
-  assert.ok(
-    artifactManifest.some(
-      (artifact) =>
-        artifact.path === 'artifacts/console-errors.json' && artifact.purpose === 'other',
-    ),
+  assert.deepEqual(
+    artifactManifest.map((artifact) => artifact.path).sort(),
+    ['artifacts/screenshots/proof.png', 'artifacts/summary.json', 'artifacts/trace.json'],
+    'typed artifact manifests are the rendering source of truth when valid',
   );
   assert.ok(
-    artifactManifest.some(
-      (artifact) =>
-        artifact.path === 'artifacts/artifact-manifest.json' &&
-        artifact.purpose === 'artifact-manifest',
-    ),
+    !artifactManifest.some((artifact) => artifact.path === 'artifacts/console-errors.json'),
   );
-  assert.ok(!artifactManifest.some((artifact) => artifact.path.includes('outside')));
-  assert.ok(!artifactManifest.some((artifact) => artifact.path.includes('empty-type')));
-  assert.ok(!artifactManifest.some((artifact) => artifact.path === 'artifacts/artifacts'));
+  assert.ok(
+    !artifactManifest.some((artifact) => artifact.path === 'artifacts/artifact-manifest.json'),
+  );
+});
+
+test('loadLiveRecipeContextForRun quarantines invalid typed artifact manifests behind legacy scanning', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-invalid-typed-artifacts-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const taskDir = path.join(root, 'tasks', 'typed-artifacts');
+  const artifactsDir = path.join(taskDir, 'artifacts');
+  const screenshotsDir = path.join(artifactsDir, 'screenshots');
+  await mkdir(screenshotsDir, { recursive: true });
+  await writeFile(path.join(taskDir, 'TASK.md'), '# task\n', 'utf-8');
+  await writeFile(path.join(artifactsDir, 'summary.json'), '{"status":"pass"}\n', 'utf-8');
+  await writeFile(path.join(screenshotsDir, 'proof.png'), 'png', 'utf-8');
+  await writeFile(
+    path.join(artifactsDir, 'artifact-manifest.json'),
+    JSON.stringify({
+      version: 1,
+      runStatus: 'pass',
+      artifacts: [
+        { path: 'screenshots/proof.png', type: 'screenshot' },
+        { path: 'artifacts', type: 'json' },
+      ],
+    }),
+    'utf-8',
+  );
+
+  const context = await loadLiveRecipeContextForRun(makeRun(path.join(taskDir, 'TASK.md')));
+  const artifactManifest = context?.artifactManifest ?? [];
+
+  assert.equal(context?.source, 'recipe-run-artifacts');
+  assert.equal(context?.usedTypedArtifactManifest, false);
+  assert.ok(artifactManifest.some((artifact) => artifact.path === 'artifacts/summary.json'));
+  assert.ok(!artifactManifest.some((artifact) => artifact.path === 'artifacts'));
+});
+
+test('loadLiveRecipeContextForRun falls back to scanned files for valid empty typed artifact manifests', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'farmslot-empty-typed-artifacts-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const taskDir = path.join(root, 'tasks', 'empty-typed-artifacts');
+  const artifactsDir = path.join(taskDir, 'artifacts');
+  await mkdir(artifactsDir, { recursive: true });
+  await writeFile(path.join(taskDir, 'TASK.md'), '# task\n', 'utf-8');
+  await writeFile(path.join(artifactsDir, 'recipe.json'), '{"schema_version":1}\n', 'utf-8');
+  await writeFile(path.join(artifactsDir, 'summary.json'), '{"status":"pass"}\n', 'utf-8');
+  await writeFile(path.join(artifactsDir, 'trace.json'), '[]\n', 'utf-8');
+  await writeFile(
+    path.join(artifactsDir, 'artifact-manifest.json'),
+    JSON.stringify({ version: 1, runStatus: 'pass', artifacts: [] }),
+    'utf-8',
+  );
+
+  const context = await loadLiveRecipeContextForRun(makeRun(path.join(taskDir, 'TASK.md')));
+
+  assert.equal(context?.source, 'recipe-run-artifacts');
+  assert.equal(context?.usedTypedArtifactManifest, false);
+  assert.deepEqual(context?.artifactManifest?.map((artifact) => artifact.path).sort(), [
+    'artifacts/artifact-manifest.json',
+    'artifacts/recipe.json',
+    'artifacts/summary.json',
+    'artifacts/trace.json',
+  ]);
 });
 
 test('attachLiveRecipeContext preserves explicit stale context when no live artifacts can be materialized', async () => {
