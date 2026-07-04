@@ -5,3 +5,5 @@ export const AGENT_RUNTIME_SCRIPT_EXPORTS = {
   workerTerminalContract: '@farmslot/agent-runtime/scripts/worker-terminal-contract.cjs',
   checkTaskArtifactContract: '@farmslot/agent-runtime/scripts/check-task-artifact-contract.mjs',
 } as const;
+
+export * from './recipe-quality.js';

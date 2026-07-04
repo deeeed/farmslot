@@ -43,3 +43,5 @@ Return:
 - weak or missing claims
 - evidence gaps
 - concrete recipe delta
+
+When the task requires `artifacts/recipe-quality.json`, do not hand-author the full schema. Provide the compact fields to `farmslot-agent recipe-quality build` (or `buildRecipeQualityArtifact()` from `@farmslot/agent-runtime`) so the artifact passes the `@farmslot/protocol` validator.

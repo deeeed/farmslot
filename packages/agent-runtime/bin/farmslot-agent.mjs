@@ -16,6 +16,7 @@ function usage(exitCode = 0) {
     '  mark <task-md> <signal-json> <args...>',
     '  artifact-check <task-dir> [args...]',
     '  install-mark <task-dir> [--task TASK.md] [--signal SIGNAL.json]',
+    '  recipe-quality build [--input input.json] [--output artifacts/recipe-quality.json]',
     '  contract resolve --flow <flow> [--project-config path] [--mode mode]',
   ].join('\n');
   (exitCode === 0 ? console.log : console.error)(text);
@@ -25,6 +26,138 @@ function usage(exitCode = 0) {
 function runNode(script, args) {
   const result = spawnSync(process.execPath, [script, ...args], { stdio: 'inherit' });
   process.exit(result.status ?? 1);
+}
+
+function readJsonFile(filePath) {
+  return JSON.parse(readFileSync(path.resolve(filePath), 'utf8'));
+}
+
+function readJsonInput(inputPath) {
+  if (!inputPath || inputPath === '-') {
+    return JSON.parse(readFileSync(0, 'utf8'));
+  }
+  return readJsonFile(inputPath);
+}
+
+function parseBooleanFlag(name, value) {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  throw new Error(`${name} must be true or false`);
+}
+
+function pushFlagValue(target, key, value) {
+  const current = target[key];
+  if (current == null) target[key] = [value];
+  else current.push(value);
+}
+
+function parseRecipeQualityBuildArgs(args) {
+  const parsed = { input: null, output: null, flags: {} };
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    const next = () => {
+      const value = args[++i];
+      if (!value) usage(2);
+      return value;
+    };
+    if (arg === '--input') parsed.input = next();
+    else if (arg.startsWith('--input=')) parsed.input = arg.slice('--input='.length);
+    else if (arg === '--output') parsed.output = next();
+    else if (arg.startsWith('--output=')) parsed.output = arg.slice('--output='.length);
+    else if (arg === '--verdict') parsed.flags.verdict = next();
+    else if (arg.startsWith('--verdict=')) parsed.flags.verdict = arg.slice('--verdict='.length);
+    else if (arg === '--reason') pushFlagValue(parsed.flags, 'reasons', next());
+    else if (arg.startsWith('--reason='))
+      pushFlagValue(parsed.flags, 'reasons', arg.slice('--reason='.length));
+    else if (arg === '--guidance') pushFlagValue(parsed.flags, 'betterVersionGuidance', next());
+    else if (arg.startsWith('--guidance='))
+      pushFlagValue(parsed.flags, 'betterVersionGuidance', arg.slice('--guidance='.length));
+    else if (arg === '--delta') pushFlagValue(parsed.flags, 'suggestedRecipeDelta', next());
+    else if (arg.startsWith('--delta='))
+      pushFlagValue(parsed.flags, 'suggestedRecipeDelta', arg.slice('--delta='.length));
+    else if (arg === '--proof-mode')
+      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, proof_mode: next() };
+    else if (arg.startsWith('--proof-mode='))
+      parsed.flags.trainingFields = {
+        ...parsed.flags.trainingFields,
+        proof_mode: arg.slice('--proof-mode='.length),
+      };
+    else if (arg === '--project')
+      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, project: next() };
+    else if (arg.startsWith('--project='))
+      parsed.flags.trainingFields = {
+        ...parsed.flags.trainingFields,
+        project: arg.slice('--project='.length),
+      };
+    else if (arg === '--flow-type')
+      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, flow_type: next() };
+    else if (arg.startsWith('--flow-type='))
+      parsed.flags.trainingFields = {
+        ...parsed.flags.trainingFields,
+        flow_type: arg.slice('--flow-type='.length),
+      };
+    else if (arg === '--claim-is-visual')
+      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, claim_is_visual: true };
+    else if (arg === '--producer') parsed.flags.producer = next();
+    else if (arg.startsWith('--producer=')) parsed.flags.producer = arg.slice('--producer='.length);
+    else if (arg === '--artifact-required')
+      parsed.flags.artifactRequired = parseBooleanFlag(arg, next());
+    else if (arg.startsWith('--artifact-required='))
+      parsed.flags.artifactRequired = parseBooleanFlag(
+        arg,
+        arg.slice('--artifact-required='.length),
+      );
+    else if (arg === '--legacy-task') parsed.flags.legacyTask = true;
+    else if (arg === '--source-signal') pushFlagValue(parsed.flags, 'sourceSignals', next());
+    else if (arg.startsWith('--source-signal='))
+      pushFlagValue(parsed.flags, 'sourceSignals', arg.slice('--source-signal='.length));
+    else usage(2);
+  }
+  return parsed;
+}
+
+function normalizeRecipeQualityInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('recipe-quality input must be a JSON object');
+  }
+  return {
+    verdict: input.verdict,
+    reasons: input.reasons ?? input.compact?.reasons,
+    betterVersionGuidance:
+      input.betterVersionGuidance ??
+      input.better_version_guidance ??
+      input.compact?.better_version_guidance,
+    dimensions: input.dimensions,
+    structuralFindings: input.structuralFindings ?? input.structural_findings,
+    contextualFindings: input.contextualFindings ?? input.contextual_findings,
+    suggestedRecipeDelta: input.suggestedRecipeDelta ?? input.suggested_recipe_delta,
+    trainingFields: input.trainingFields ?? input.training_fields,
+    producer: input.producer ?? input.meta?.producer,
+    fallbackUsed: input.fallbackUsed ?? input.fallback_used ?? input.meta?.fallback_used,
+    fallbackSource: input.fallbackSource ?? input.fallback_source ?? input.meta?.fallback_source,
+    legacyTask: input.legacyTask ?? input.legacy_task ?? input.meta?.legacy_task,
+    artifactRequired:
+      input.artifactRequired ?? input.artifact_required ?? input.meta?.artifact_required,
+    sourceSignals: input.sourceSignals ?? input.source_signals ?? input.meta?.source_signals,
+    extra: input.extra,
+  };
+}
+
+async function buildRecipeQuality(args) {
+  const parsed = parseRecipeQualityBuildArgs(args);
+  const fileInput = parsed.input ? normalizeRecipeQualityInput(readJsonInput(parsed.input)) : {};
+  const input = { ...fileInput, ...parsed.flags };
+  const { buildRecipeQualityArtifact } = await import('../dist/index.js');
+  const artifact = buildRecipeQualityArtifact(input);
+  const text = `${JSON.stringify(artifact, null, 2)}\n`;
+  if (parsed.output) {
+    const outputPath = path.resolve(parsed.output);
+    mkdirSync(path.dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, text);
+    console.log(`wrote ${outputPath}`);
+  } else {
+    process.stdout.write(text);
+  }
 }
 
 function parseInstallMarkArgs(args) {
@@ -96,23 +229,32 @@ function resolveContract(args) {
   console.log(JSON.stringify(contract, null, 2));
 }
 
-const [command, subcommand, ...rest] = process.argv.slice(2);
-if (!command || command === '--help' || command === '-h') usage(0);
+async function main() {
+  const [command, subcommand, ...rest] = process.argv.slice(2);
+  if (!command || command === '--help' || command === '-h') usage(0);
 
-if (command === 'mark') {
-  runNode(
-    path.join(packageRoot, 'scripts', 'mark-checklist-step.cjs'),
-    [subcommand, ...rest].filter((arg) => arg !== undefined),
-  );
-} else if (command === 'artifact-check') {
-  runNode(
-    path.join(packageRoot, 'scripts', 'check-task-artifact-contract.mjs'),
-    [subcommand, ...rest].filter((arg) => arg !== undefined),
-  );
-} else if (command === 'install-mark') {
-  installMark([subcommand, ...rest].filter((arg) => arg !== undefined));
-} else if (command === 'contract' && subcommand === 'resolve') {
-  resolveContract(rest);
-} else {
-  usage(2);
+  if (command === 'mark') {
+    runNode(
+      path.join(packageRoot, 'scripts', 'mark-checklist-step.cjs'),
+      [subcommand, ...rest].filter((arg) => arg !== undefined),
+    );
+  } else if (command === 'artifact-check') {
+    runNode(
+      path.join(packageRoot, 'scripts', 'check-task-artifact-contract.mjs'),
+      [subcommand, ...rest].filter((arg) => arg !== undefined),
+    );
+  } else if (command === 'install-mark') {
+    installMark([subcommand, ...rest].filter((arg) => arg !== undefined));
+  } else if (command === 'contract' && subcommand === 'resolve') {
+    resolveContract(rest);
+  } else if (command === 'recipe-quality' && subcommand === 'build') {
+    await buildRecipeQuality(rest);
+  } else {
+    usage(2);
+  }
 }
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

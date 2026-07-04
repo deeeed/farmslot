@@ -19,7 +19,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
-    "test": "node test/mark-checklist-step.test.cjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs",
+    "test": "node test/mark-checklist-step.test.cjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\"",

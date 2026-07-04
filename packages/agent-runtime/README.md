@@ -9,7 +9,8 @@ This package owns the reusable task-dir runtime surface:
 - `mark` and checklist timing updates;
 - worker-owned `SIGNAL.json` writes;
 - worker terminal contract resolution and linting;
-- closeout artifact checks.
+- closeout artifact checks;
+- `recipe-quality.json` builder/generator for worker-authored quality artifacts.
 
 It does not execute recipes. Recipe graph execution belongs in
 `@farmslot/recipe-harness`, and schemas/validators belong in `@farmslot/protocol`.
@@ -20,6 +21,7 @@ It does not execute recipes. Recipe graph execution belongs in
 farmslot-agent install-mark <task-dir> --task TASK.md --signal SIGNAL.json
 farmslot-agent mark <task-md> <signal-json> complete --mark-last
 farmslot-agent artifact-check <task-dir> --require-recipe-quality-if-recipe
+farmslot-agent recipe-quality build --input recipe-quality-input.json --output artifacts/recipe-quality.json
 farmslot-agent contract resolve --flow fix-bug
 ```
 
@@ -33,7 +35,7 @@ a task-local `./mark` shim, or import the explicit script subpaths.
 
 - `bin/`: CLI entry point for task-local helper installation, marking, artifact checks, and terminal contract resolution.
 - `scripts/`: Runtime scripts that can be called directly by task files and compatibility shims.
-- `src/`: Public package constants and future typed runtime helpers.
+- `src/`: Public package constants and typed runtime helpers such as `buildRecipeQualityArtifact()`.
 - `test/`: Node TAP-style behavior tests for package exports, checklist marking, and artifact contract checks.
 
 ## Maintenance rules
