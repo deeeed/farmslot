@@ -2,28 +2,58 @@ import { spawnSync } from 'node:child_process';
 import { accessSync, constants, existsSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+/** Where a resolved capture-helper binary came from, for provenance reporting. */
+export type CaptureHelperSource =
+  | 'env:CAPTURE_HELPER_PATH'
+  | 'env:SITEED_CAPTURE_HELPER_BIN'
+  | 'npm-global'
+  | 'npm-root'
+  | 'PATH'
+  | 'fallback';
+
+export interface CaptureHelperPathInfo {
+  path: string;
+  source: CaptureHelperSource;
+}
+
 export function captureHelperPath(): string {
-  return resolveNativeCaptureHelperPath() ?? commandPath('capture-helper') ?? 'capture-helper';
+  return captureHelperPathInfo().path;
+}
+
+export function captureHelperPathInfo(): CaptureHelperPathInfo {
+  const native = resolveNativeCaptureHelperPathInfo();
+  if (native) return native;
+  const onPath = commandPath('capture-helper');
+  if (onPath) return { path: onPath, source: 'PATH' };
+  return { path: 'capture-helper', source: 'fallback' };
 }
 
 export function resolveNativeCaptureHelperPath(): string | null {
-  const candidates = [
-    process.env.CAPTURE_HELPER_PATH,
-    process.env.SITEED_CAPTURE_HELPER_BIN,
-    process.env.HOME
-      ? join(
-          process.env.HOME,
-          '.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper',
-        )
-      : undefined,
-    npmGlobalNativePath(),
-    commandPath('capture-helper'),
-  ].filter((candidate): candidate is string => Boolean(candidate));
+  return resolveNativeCaptureHelperPathInfo()?.path ?? null;
+}
 
-  for (const candidate of candidates) {
-    const native = nativePathForWrapper(candidate);
-    if (native && isExecutable(native)) return native;
-    if (!isWrapperShim(candidate) && isExecutable(candidate)) return candidate;
+function resolveNativeCaptureHelperPathInfo(): CaptureHelperPathInfo | null {
+  const candidates: { path: string | null | undefined; source: CaptureHelperSource }[] = [
+    { path: process.env.CAPTURE_HELPER_PATH, source: 'env:CAPTURE_HELPER_PATH' },
+    { path: process.env.SITEED_CAPTURE_HELPER_BIN, source: 'env:SITEED_CAPTURE_HELPER_BIN' },
+    {
+      path: process.env.HOME
+        ? join(
+            process.env.HOME,
+            '.npm-global/lib/node_modules/@siteed/capture-helper/native/capture-helper',
+          )
+        : undefined,
+      source: 'npm-global',
+    },
+    { path: npmGlobalNativePath(), source: 'npm-root' },
+    { path: commandPath('capture-helper'), source: 'PATH' },
+  ];
+
+  for (const { path, source } of candidates) {
+    if (!path) continue;
+    const native = nativePathForWrapper(path);
+    if (native && isExecutable(native)) return { path: native, source };
+    if (!isWrapperShim(path) && isExecutable(path)) return { path, source };
   }
   return null;
 }
