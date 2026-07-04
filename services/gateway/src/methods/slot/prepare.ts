@@ -57,8 +57,10 @@ import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
   clearStalePrepareProcess,
+  ensureSlotReachable,
   PREPARE_DEPS_TIMEOUT_MS,
   PREPARE_PREFLIGHT_TIMEOUT_MS,
+  prepareSilenceNotice,
   runPrepareCommand,
 } from './prepare-command.js';
 import {
@@ -411,8 +413,8 @@ async function slotPrepareInner(
       .replaceAll('~/farmslot-node/scripts/', `${hookSupportDir}/scripts/`);
   };
 
-  // Selected prepare profile (ADR-037). Assigned right after the SSH check;
-  // undefined only for steps that run before selection, none of which are
+  // Selected prepare profile (ADR-037). Assigned right after the connection
+  // check; undefined only for steps that run before selection, none of which are
   // phase-gated or hook-expanding.
   let prepareProfile: ResolvedPrepareProfile | undefined;
   const profileName = (): string => prepareProfile?.name ?? 'full';
@@ -448,13 +450,8 @@ async function slotPrepareInner(
     step('app', `Selected app ${selectedApp}`);
   }
 
-  // 1. SSH check
-  step('ssh', `Checking ${vars.sshTarget}...`);
-  if (!isLocal(vars.host, vars.machine)) {
-    const r = await execOnSlot(vars, 'echo ok');
-    if (r.exitCode !== 0) throw new Error(`Cannot reach ${vars.sshTarget}`);
-  }
-  step('ssh', `Connected to ${vars.sshTarget}`);
+  // 1. Connection check — local slots skip SSH entirely
+  await ensureSlotReachable(vars, step);
   await materializeHookSupport();
 
   // 1b. Resolve prepare profile (ADR-037): explicit request → prepare.default →
@@ -1035,18 +1032,32 @@ async function slotPrepareInner(
     checkAborted();
     step('deps', `Installing deps: ${installCmd}`);
     const depsLogPath = phaseLog('deps');
-    const installR = await runPrepareCommand(
-      vars,
-      depsLogPath,
-      withProfileEnv(`cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`),
-      {
-        cwd: vars.remoteRepo,
-        timeout: depsTimeoutMs,
-        signal,
-        windowLabel,
-        phase: 'deps',
-      },
-    );
+    let depsLastOutputAt = Date.now();
+    const depsHeartbeat = setInterval(() => {
+      const notice = prepareSilenceNotice(Date.now() - depsLastOutputAt);
+      if (notice) step('deps', notice);
+    }, 30_000);
+    let installR;
+    try {
+      installR = await runPrepareCommand(
+        vars,
+        depsLogPath,
+        withProfileEnv(`cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`),
+        {
+          cwd: vars.remoteRepo,
+          timeout: depsTimeoutMs,
+          signal,
+          windowLabel,
+          phase: 'deps',
+          onOutput: (outputStream, data) => {
+            depsLastOutputAt = Date.now();
+            stream.output(outputStream === 'stderr' ? 'stderr' : 'stdout', data);
+          },
+        },
+      );
+    } finally {
+      clearInterval(depsHeartbeat);
+    }
     if (installR.exitCode !== 0) {
       const err: PrepareCommandError = new Error(
         `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,

@@ -51,7 +51,13 @@ interface ActionListOptions {
   placement?: string;
 }
 
-function handleStreamEvents(event: EventFrame): void {
+/**
+ * Returns script.output data and ignores structured slot.prepare.output
+ * metadata, which prepare emits with the same payload. Every other event type
+ * yields null.
+ */
+export function pickStreamOutput(event: EventFrame): string | null {
+  if (event.event !== 'script.output') return null;
   const payload = event.payload;
   if (
     payload &&
@@ -59,8 +65,14 @@ function handleStreamEvents(event: EventFrame): void {
     'data' in payload &&
     typeof payload.data === 'string'
   ) {
-    process.stderr.write(payload.data);
+    return payload.data;
   }
+  return null;
+}
+
+function handleStreamEvents(event: EventFrame): void {
+  const data = pickStreamOutput(event);
+  if (data !== null) process.stderr.write(data);
 }
 
 function actionParams(id: string, opts: Record<string, unknown>): Record<string, unknown> {
