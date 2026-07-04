@@ -167,7 +167,12 @@ export async function ensureSlotReachable(
   }
   step('ssh', `Checking ${vars.sshTarget}...`);
   const r = await probe(vars, 'echo ok');
-  if (r.exitCode !== 0) throw new Error(`Cannot reach ${vars.sshTarget}`);
+  if (r.exitCode !== 0) {
+    throw new Error(
+      `Cannot reach ${vars.sshTarget}. Next: confirm the slot host is online and SSH is configured ` +
+        `(ssh ${vars.sshTarget} echo ok), or point the slot at a local/reachable host and rerun prepare.`,
+    );
+  }
   step('ssh', `Connected to ${vars.sshTarget}`);
 }
 

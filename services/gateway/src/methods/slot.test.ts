@@ -168,7 +168,7 @@ test('ensureSlotReachable throws with the ssh target when a remote slot is unrea
       (name, detail) => steps.push([name, detail]),
       async () => ({ exitCode: 255 }),
     ),
-    /Cannot reach deeeed@gohan/,
+    /Cannot reach deeeed@gohan\. Next: .*rerun prepare/,
   );
 
   assert.deepEqual(steps, [['ssh', 'Checking deeeed@gohan...']]);
