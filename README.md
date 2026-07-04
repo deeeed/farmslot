@@ -189,22 +189,25 @@ Key decisions:
 
 Farmslot separates product surfaces, runtime services, and reusable toolkit packages. The high-level rule is: protocols define contracts, harnesses execute recipes, runtime packages operate task directories, skills teach agents, and apps/services render or orchestrate the product.
 
-- `apps/*` contains user-facing product surfaces:
-  - `apps/command-center` — web control surface plus repo-level quality scripts.
-  - `apps/companion` — mobile companion app.
-  - `apps/docs` — Docusaurus reader-facing documentation site.
-- `services/gateway` and `services/node` are long-running runtime services: Gateway owns control-plane orchestration, run state, task rendering, and policy; Node owns machine-local capabilities and remote execution plumbing.
-- `packages/protocol` owns stable data/RPC/recipe contracts and pure validators. It should not execute recipes, read task directories, or encode project behavior.
-- `packages/capabilities` owns machine-local capability primitives shared by Node and Gateway fallback paths, such as file watching and screen/frame utilities. Node is still the primary owner for machine-local execution.
-- `packages/recipe-harness` owns reusable recipe execution mechanics. It runs recipe graphs but does not own task closeout, agent instructions, or Gateway orchestration.
-- `packages/agent-runtime` owns task-local runtime helpers: `mark`, `SIGNAL.json`, worker terminal contract resolution, and artifact contract checks. It is the shared minimum runtime for Farmslot tasks and skills-only workflows.
-- `packages/skills` owns agent instructions and installers. It may install or delegate to runtime helpers, but reusable scripts belong in `packages/agent-runtime`.
-- `packages/cli` owns the `farmslot` command-line surface. It talks to Gateway and packages operator workflows; long-running orchestration stays in Gateway.
-- `packages/handoff` owns portable handoff/report helpers for packaging run context and evidence without depending on app UI code.
-- `packages/run-bundle` owns durable run bundle contracts and scrub/export helpers for moving run evidence between machines or repositories.
-- `packages/expo-recipe` owns Expo/React Native recipe adapter helpers. App/domain semantics still belong in project packs and project runners.
-- `packages/theme` owns shared visual tokens/components for Farmslot-owned surfaces.
-- Other `packages/*` entries are shared libraries or CLIs with similarly narrow ownership; add a package only when the boundary is reusable outside one app/service.
+| Area                      | Owns                                                                                         | Does not own                                                                               |
+| ------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `apps/command-center`     | Web control surface and repo-level quality scripts.                                          | Protocol contracts, machine-local execution, reusable package APIs.                        |
+| `apps/companion`          | Mobile companion app.                                                                        | Gateway orchestration or project/domain runtime behavior.                                  |
+| `apps/docs`               | Docusaurus reader-facing documentation site.                                                 | Source-of-truth contracts unless the referenced spec says so.                              |
+| `services/gateway`        | Control-plane orchestration, run state, task rendering, policy, and publication gates.       | Machine-local primitive implementations when Node/capability packages can own them.        |
+| `services/node`           | Machine-local capabilities, remote execution plumbing, tmux/screen/file/process integration. | Cross-machine scheduling policy or product UI.                                             |
+| `packages/protocol`       | Stable data/RPC/recipe contracts and pure validators.                                        | Recipe execution, task-directory reads, project behavior, or UI rendering.                 |
+| `packages/capabilities`   | Shared machine-local primitives used by Node and Gateway fallback paths.                     | Ownership of orchestration policy; Node remains the primary machine-local runtime owner.   |
+| `packages/recipe-harness` | Reusable recipe graph execution mechanics and generic adapter helpers.                       | Task closeout, agent instructions, Gateway dispatch, or project-domain semantics.          |
+| `packages/agent-runtime`  | Task-local runtime helpers: `mark`, `SIGNAL.json`, terminal contracts, artifact checks.      | Recipe graph execution, protocol schema ownership, or agent skill prose.                   |
+| `packages/skills`         | Agent instructions, skill packaging, and installers.                                         | Reusable runtime scripts or protocol validators; delegate those to agent-runtime/protocol. |
+| `packages/cli`            | The `farmslot` command-line surface and operator workflows over Gateway APIs.                | Long-running orchestration or machine-local execution.                                     |
+| `packages/handoff`        | Portable handoff/report helpers for run context and evidence packaging.                      | App UI rendering or Gateway run-state mutation.                                            |
+| `packages/run-bundle`     | Durable run bundle contracts and scrub/export helpers for moving run evidence.               | Live run orchestration, task execution, or UI presentation.                                |
+| `packages/expo-recipe`    | Expo/React Native recipe adapter helpers.                                                    | App/domain semantics; those belong in project packs and project runners.                   |
+| `packages/theme`          | Shared visual tokens/components for Farmslot-owned surfaces.                                 | Product state, protocol contracts, or runtime behavior.                                    |
+| Other `packages/*`        | Narrow reusable libraries with an explicit owner and public surface.                         | One-off app/service code that is not reusable outside its owner.                           |
+
 - Keep code with its owner. UI-only code belongs under the app that renders it; reusable protocol/toolkit code belongs under a package; service/runtime policy belongs in Gateway; machine-local execution belongs in Node.
 - Keep package names stable when moving implementation roots. Workspace location communicates repository ownership; the `@farmslot/*` package name communicates import/runtime identity.
 
