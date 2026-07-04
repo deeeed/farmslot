@@ -14,6 +14,7 @@ import {
   type RecipeRunArtifactGroup,
   type RecipeRunArtifactGroupStatus,
   type Run,
+  validateArtifactManifestDocument,
 } from '@farmslot/protocol';
 
 import {
@@ -410,12 +411,21 @@ function parseTypedArtifactManifestRefs(raw: string | null, manifestPath: string
     console.warn(`[live-recipe-context] invalid artifact-manifest.json at ${manifestPath}`);
     return [];
   }
-  if (parsed.version !== 1 || !Array.isArray(parsed.artifacts)) {
-    console.warn(`[live-recipe-context] unsupported artifact-manifest.json at ${manifestPath}`);
+  const validation = validateArtifactManifestDocument(parsed);
+  if (validation.status !== 'valid') {
+    const findings = validation.findings
+      .filter((finding) => finding.severity === 'error')
+      .slice(0, 5)
+      .map((finding) => `${finding.code}@${finding.path}`)
+      .join('; ');
+    console.warn(
+      `[live-recipe-context] invalid artifact-manifest.json at ${manifestPath}${findings ? `: ${findings}` : ''}`,
+    );
     return [];
   }
+  const manifest = parsed as { artifacts: unknown[] };
   const refs: ArtifactRef[] = [];
-  parsed.artifacts.forEach((entry, index) => {
+  manifest.artifacts.forEach((entry, index) => {
     if (!isRecord(entry)) {
       console.warn(
         `[live-recipe-context] ignored invalid artifact-manifest entry ${index} at ${manifestPath}`,
@@ -459,7 +469,7 @@ function mergeTypedArtifactManifestRefs(
   if (typedRefs.length === 0) return scannedRefs;
   const merged = new Map<string, ArtifactRef>();
   for (const ref of scannedRefs) merged.set(ref.path, ref);
-  for (const typedRef of typedRefs) {
+  return typedRefs.map((typedRef) => {
     const scanned = merged.get(typedRef.path);
     // Keep manifest-declared refs even before the scanner can see the bytes:
     // live/remote runs may publish the typed index first and materialize large
@@ -468,14 +478,13 @@ function mergeTypedArtifactManifestRefs(
     // bytes do exist, the scanner remains the source of truth for hash/size;
     // if artifact-manifest.json later grows hash/size fields, do not let
     // manifest-declared values override scanner-verified filesystem facts.
-    merged.set(typedRef.path, {
+    return {
       ...scanned,
       ...typedRef,
       ...(scanned?.sha256 ? { sha256: scanned.sha256 } : {}),
       ...(typeof scanned?.sizeBytes === 'number' ? { sizeBytes: scanned.sizeBytes } : {}),
-    });
-  }
-  return [...merged.values()];
+    };
+  });
 }
 
 async function scanLocalArtifactRoot(
