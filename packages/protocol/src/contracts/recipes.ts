@@ -64,6 +64,8 @@ export type RecipeQualityArtifactSource =
 
 export const RECIPE_QUALITY_ARTIFACT_VERSION = 1;
 
+// Runtime enum tuples are the source of truth for JSON validation and derived
+// TypeScript unions; type-only unions disappear after compile.
 export const RECIPE_QUALITY_VERDICTS = ['pass', 'warn', 'fail'] as const;
 export const RECIPE_QUALITY_DIMENSION_STATUSES = [
   'pass',
