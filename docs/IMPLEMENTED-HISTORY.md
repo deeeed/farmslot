@@ -171,7 +171,7 @@ After the initial command-center platform landed, Farmslot shipped persistent au
     - Phase 2 empirical exit passed (`nudgeTimeoutCount=0` over 7d on Claude slots; frozen in `docs/operations/evidence/adr032/phase2-exit-window.json`).
     - Committed closeout evidence is trimmed to four macwork snapshots (two install probes + two hook-smoke harness JSONs); optional scenario/agreement/grok/cursor artifacts stay local-only. One-shot ADR closeout verifiers were retired from `scripts/`; reusable ops gates remain (`e2e-tmux-runner-validate.sh`, `run-runner-observability-gate.sh`, `capture-nudge-timeout-window.mjs`).
     - Phase 3 retirement of Claude-only pane-regex branches is scheduled once operator capacity allows; no further Phase 1/2 implementation work remains.
-  - Recipe Protocol v1 core (ADR-034) — `@farmslot/protocol` validators (`validateRecipeDocument`, `validateRecipeWithManifest`, `validateRecipeArtifactPackage`), `@farmslot/recipe-harness` graph runtime, `farmslot recipe validate`, and `docs/examples/recipes/farmslot/` self-validation fixtures. Rollout gaps (all-project typed manifest emission, manifest-first UI, live self-validation) remain open; see [reference/adr-implementation-status.md](reference/adr-implementation-status.md).
+  - Recipe Protocol v1 (ADR-034) — `@farmslot/protocol` validators (`validateRecipeDocument`, `validateRecipeWithManifest`, `validateRecipeArtifactPackage`), `@farmslot/recipe-harness` graph runtime, `farmslot recipe validate`, and `docs/examples/recipes/farmslot/` self-validation fixtures established the core contract; the 2026-07-04 closeout completed typed manifest enforcement, manifest-first rendering, recipe-quality producer tooling, first-party `hooks.recipe_run` alignment, local `e2e:recipe-protocol` execution, and live `@deeeed/metamask-harness` package conformance. See [reference/adr-implementation-status.md](reference/adr-implementation-status.md).
   - PRs #150, #155, #157, #160, and #163 (2026-06-28 to 2026-06-29) — roadmap-backed WorkGraph orchestration moved from ADR intent into shipped operator tooling: backlog dependency orchestration, cross-project dependency visualization, roadmap item refinement/promotion into backlog specs, WorkGraph composition from promoted specs, execution overlays/dispatch config, and a roadmap guide/demo capture mode.
   - PRs #151, #152, #153, #154, #156, #158, and #159 (2026-06-29) — proof/gate hardening: Command Center recipe-v1 proof HUD wiring, unified gate-summary projection across live gate and historical retrospective surfaces, pr-complete contribution-base/diff fixes, test-runner git-env isolation, manual-only loc-history CI, per-model token/worker stats on gate/analytics surfaces, historical-run gate-summary rendering, and a faster pre-push hook.
   - PR #161 (`4c4aeffb`, 2026-06-29) — activate-on-slot UI re-dispatch buttons were removed after proving they were a gate-held-run footgun; the `run.activateOnSlot` RPC remains available as an explicit operator escape hatch while the UI keeps only bind/load-slot affordances.
@@ -216,7 +216,7 @@ Farmslot has the tmux-based, operator-attachable execution style, the unified la
 
 ## Current Historical Interpretation
 
-As of 2026-06-30 (through PR #190; see [reference/adr-implementation-status.md](reference/adr-implementation-status.md) for ADR-level shipped-vs-open detail):
+As of 2026-07-04 (through the ADR-034 closeout; see [reference/adr-implementation-status.md](reference/adr-implementation-status.md) for ADR-level shipped-vs-open detail):
 
 1. Farmslot shipped the core platform first.
 2. The desktop command center and persistent automation/orchestration stack are already real product surfaces.
@@ -227,10 +227,9 @@ As of 2026-06-30 (through PR #190; see [reference/adr-implementation-status.md](
 
 ## Explicit Not-Yet-Shipped Boundaries
 
-The following are planned roadmap items, not implemented history as of 2026-06-30:
+The following are planned roadmap items, not implemented history as of 2026-07-04:
 
 - remaining UI/UX stabilization fixes discovered by real testing of recently changed operator surfaces; ALPHA maturity labels, version diagnostics, progressive Doctor refresh, terminal resize/pinning polish, and interactive handoff gate UX are already shipped;
-- Recipe Protocol v1 **rollout** (core validators/harness/fixtures are shipped): all-project typed manifest emission, manifest-first UI, live self-validation execution, and project hook alignment;
 - replay closure for a durable regression program: complete real-run manifests, consistent baseline/head/diff identity, richer missing-data semantics, and enough live replay evidence beyond dev-harness fixtures;
 - gateway-owned suite history, corpus dashboards, aggregate reports, and scorer execution beyond the shipped shared queue/cap execution path;
 - backlog-intelligence, Jira/GitHub write-back, or auto-dispatch policy expansion beyond PR #95's shipped guarded intake/queue handoff;
