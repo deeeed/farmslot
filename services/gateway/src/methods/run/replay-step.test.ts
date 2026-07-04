@@ -190,6 +190,25 @@ test('runReplayStep allows prepare replay for backlog-dispatched MANUAL-* runs',
   assert.equal(getRun(run.id)?.status, 'preparing');
 });
 
+test('runReplayStep still rejects MANUAL-* replay without backlogItemId', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000001',
+  });
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.rejects(
+    () => runReplayStep({ runId: run.id, stepName: 'prepare', triggeredBy: 'operator' }, () => {}),
+    /Cannot replay run:/,
+  );
+});
+
 test('runReplayStep still rejects PR-bound replays without a linked prNumber', async (t) => {
   const run = createRun({
     flowType: 'merge-main',
