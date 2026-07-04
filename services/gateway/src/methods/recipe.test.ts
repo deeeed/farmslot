@@ -291,6 +291,20 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     'pass',
   );
 
+  const malformedManifest = validateRecipeRunArtifactPackageOutput({
+    artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
+    recipe,
+    summary,
+    manifest: undefined,
+    readErrors: { 'artifact-manifest.json': 'Unexpected token' },
+  });
+  assert.equal(malformedManifest.status, 'fail');
+  assert.equal(
+    malformedManifest.checks.find((check) => check.id === 'recipe_run.artifact_manifest.validation')
+      ?.status,
+    'pass',
+  );
+
   const badRecipe = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe: undefined,

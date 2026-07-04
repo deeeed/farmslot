@@ -201,6 +201,9 @@ export function buildRecipeQualityArtifact(
   if (producer.startsWith('fallback:') && fallbackUsed === false) {
     throw new TypeError('fallbackUsed cannot be false for fallback producers.');
   }
+  if (!producer.startsWith('fallback:') && fallbackUsed === true) {
+    throw new TypeError('fallbackUsed cannot be true for non-fallback producers.');
+  }
   const artifact: BuiltRecipeQualityArtifact = {
     ...(input.extra ?? {}),
     version: RECIPE_QUALITY_ARTIFACT_VERSION,

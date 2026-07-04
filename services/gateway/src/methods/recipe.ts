@@ -188,13 +188,14 @@ function readTerminalStatus(document: unknown): string | undefined {
 
 function isSuppressedRecipeProtocolFinding(
   finding: RecipeValidationResult['findings'][number],
+  artifactReadErrorPaths: ReadonlySet<string>,
   missingArtifactPaths: ReadonlySet<string>,
 ): boolean {
   return (
     (finding.code === 'artifact_package.missing_required_file' &&
       missingArtifactPaths.has(finding.path)) ||
     (finding.code === 'artifact_package.missing_manifest' &&
-      missingArtifactPaths.has('artifact-manifest.json'))
+      artifactReadErrorPaths.has('artifact-manifest.json'))
   );
 }
 
@@ -217,6 +218,7 @@ export function validateRecipeRunArtifactPackageOutput(
   const checks: RecipeProjectHookValidationCheck[] = [];
   const artifactPathSet = new Set(input.artifactPaths);
   const readErrors = input.readErrors ?? {};
+  const artifactReadErrorPaths = new Set(Object.keys(readErrors));
   const missingArtifactPaths = new Set(
     Object.entries(readErrors)
       .filter(([, error]) => error === RECIPE_ARTIFACT_MISSING_ERROR)
@@ -279,7 +281,7 @@ export function validateRecipeRunArtifactPackageOutput(
   const hasUnsuppressedRecipeErrors = recipe.findings.some(
     (finding) =>
       finding.severity === 'error' &&
-      !isSuppressedRecipeProtocolFinding(finding, missingArtifactPaths),
+      !isSuppressedRecipeProtocolFinding(finding, artifactReadErrorPaths, missingArtifactPaths),
   );
   addHookValidationCheck(
     checks,
@@ -287,7 +289,8 @@ export function validateRecipeRunArtifactPackageOutput(
     recipe.status === 'valid' || !hasUnsuppressedRecipeErrors ? 'pass' : 'fail',
     `artifact-manifest.json must satisfy Recipe Protocol v1 and reference existing artifacts.${formatRecipeValidationFindings(
       recipe,
-      (finding) => isSuppressedRecipeProtocolFinding(finding, missingArtifactPaths),
+      (finding) =>
+        isSuppressedRecipeProtocolFinding(finding, artifactReadErrorPaths, missingArtifactPaths),
     )}`,
   );
 
@@ -327,7 +330,7 @@ async function listSlotRecipeArtifactFiles(
   const script = `root=${shellExpressionForRemotePath(artifactRoot)}; if [ ! -d "$root" ]; then exit 0; fi; cd "$root" && find . -type f -print0`;
   let result: Awaited<ReturnType<typeof execOnSlot>>;
   try {
-    result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 256 * 1024 });
+    result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 1024 * 1024 });
   } catch (error) {
     return { paths: [], error: error instanceof Error ? error.message : String(error) };
   }
@@ -340,7 +343,7 @@ async function listSlotRecipeArtifactFiles(
   return {
     paths: result.stdout
       .split('\0')
-      .map((line) => line.trim().replace(/^\.\//u, ''))
+      .map((line) => line.replace(/^\.\//u, ''))
       .filter(Boolean)
       .sort(),
   };

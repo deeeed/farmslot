@@ -192,6 +192,16 @@ async function main() {
     () =>
       buildRecipeQualityArtifact({
         verdict: 'pass',
+        reasons: ['Fallback used must match a fallback producer.'],
+        fallbackUsed: true,
+      }),
+    /fallbackUsed cannot be true for non-fallback producers/,
+  );
+
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
         reasons: ['Dimension errors are field-specific.'],
         dimensions: { graph: { status: 'bogus', reason: 'x', evidence: [] } },
       }),
