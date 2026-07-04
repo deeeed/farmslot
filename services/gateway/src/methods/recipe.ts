@@ -181,6 +181,7 @@ interface RecipeRunArtifactPackageOutputInput {
 
 const RECIPE_ARTIFACT_MISSING_SENTINEL = '__FARMSLOT_MISSING__';
 const RECIPE_ARTIFACT_MISSING_ERROR = 'file missing';
+const RECIPE_ARTIFACT_LIST_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 function readTerminalStatus(document: unknown): string | undefined {
   return isRecord(document) && typeof document.status === 'string' ? document.status : undefined;
@@ -330,7 +331,10 @@ async function listSlotRecipeArtifactFiles(
   const script = `root=${shellExpressionForRemotePath(artifactRoot)}; if [ ! -d "$root" ]; then exit 0; fi; cd "$root" && find . -type f -print0`;
   let result: Awaited<ReturnType<typeof execOnSlot>>;
   try {
-    result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 1024 * 1024 });
+    result = await execOnSlot(slotVars, script, {
+      timeout: 10_000,
+      maxBuffer: RECIPE_ARTIFACT_LIST_MAX_BUFFER_BYTES,
+    });
   } catch (error) {
     return { paths: [], error: error instanceof Error ? error.message : String(error) };
   }
