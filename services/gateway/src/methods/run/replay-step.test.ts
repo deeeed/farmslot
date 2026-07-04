@@ -157,6 +157,39 @@ test('runReplayStep does not open a recovery attempt before replay validation pa
   assert.equal(getRun(badTicketRun.id)?.recoveryAttempts?.length ?? 0, 0);
 });
 
+test('runReplayStep allows prepare replay for backlog-dispatched MANUAL-* runs', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: 'MANUAL-000001',
+    backlogItemId: 'backlog-item-1',
+  });
+  updateRun(run.id, {
+    status: 'failed',
+    slotId: 'macwork-ff-1',
+    taskFile: '/tmp/farmslot-task/TASK.md',
+    steps: run.steps.map((step) =>
+      step.name === 'find-slot' || step.name === 'write-task'
+        ? { ...step, status: 'done', completedAt: new Date().toISOString() }
+        : step.name === 'prepare'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await assert.doesNotReject(() =>
+    runReplayStep({ runId: run.id, stepName: 'prepare', triggeredBy: 'operator' }, () => {}),
+  );
+  assert.equal(getRun(run.id)?.status, 'preparing');
+});
+
 test('runReplayStep still rejects PR-bound replays without a linked prNumber', async (t) => {
   const run = createRun({
     flowType: 'merge-main',

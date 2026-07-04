@@ -27,7 +27,11 @@ import {
 import { getRun, updateRun, updateRunStep } from '../../runs/store.js';
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 
-import { isInternalArtifactOnlyEvalTicket, isLocalDevRef } from './ticket-policy.js';
+import {
+  isInternalArtifactOnlyEvalTicket,
+  isLocalDevRef,
+  isStoredManualBacklogRun,
+} from './ticket-policy.js';
 
 type Emit = (event: string, payload: unknown) => void;
 
@@ -232,7 +236,8 @@ export async function runReplayStep(
   if (
     !isInternalArtifactOnlyEvalTicket(existing) &&
     !(isInteractiveDevRun(existing) && isLocalDevRef(existing.ticketOrPr)) &&
-    !chainedPrReplay
+    !chainedPrReplay &&
+    !isStoredManualBacklogRun(existing)
   ) {
     try {
       validateTicketRef(existing.ticketOrPr, existing.flowType);
