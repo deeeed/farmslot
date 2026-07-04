@@ -21,8 +21,9 @@ export function expandTemplate(
   template: string,
   slotVars: SlotVars,
   projectVars?: ProjectVars,
+  extraVars?: Record<string, string>,
 ): string {
-  return expandTemplateInternal(template, slotVars, projectVars, true);
+  return expandTemplateInternal(template, slotVars, projectVars, true, extraVars);
 }
 
 function expandTemplateInternal(
@@ -30,6 +31,7 @@ function expandTemplateInternal(
   slotVars: SlotVars,
   projectVars: ProjectVars | undefined,
   includeProjectTemplateVars: boolean,
+  extraVars?: Record<string, string>,
 ): string {
   let result = template;
   // Dynamic resource vars
@@ -108,6 +110,15 @@ function expandTemplateInternal(
       result = result.replaceAll(`{{${key.toUpperCase()}}}`, value);
     }
   }
+  // Per-call variables supplied by the caller (e.g. the prepare-requirement
+  // check threading the run's target ref). Applied last so callers can inject
+  // runtime values that are neither slot resources nor static project vars.
+  if (extraVars) {
+    for (const [key, value] of Object.entries(extraVars)) {
+      result = result.replaceAll(`{{${key}}}`, value);
+      result = result.replaceAll(`{{${key.toUpperCase()}}}`, value);
+    }
+  }
   return result;
 }
 
@@ -120,10 +131,11 @@ export function expandHook(
   projectJson: RawProjectJson,
   slotVars: SlotVars,
   projectVars?: ProjectVars,
+  extraVars?: Record<string, string>,
 ): string {
   const cmd = projectJson.hooks?.[hookName];
   if (!cmd || typeof cmd !== 'string') return '';
-  return expandTemplate(cmd, slotVars, projectVars);
+  return expandTemplate(cmd, slotVars, projectVars, extraVars);
 }
 
 // ─── expandPlatformField ───

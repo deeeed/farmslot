@@ -458,7 +458,10 @@ async function slotPrepareInner(
   // implicit full. Precondition failures walk the project's declared fallback
   // chain; every check and transition is logged as a prepare sub-step.
   const profileSelection = await selectPrepareProfile(
-    { vars, projectJson, projectVars, runtimeDir },
+    // prepareRef is the ref the run will run (work branch, else default branch),
+    // resolved above before the git phase; requirement checks that probe a
+    // target artifact (artifact_available) need it, not the slot's current HEAD.
+    { vars, projectJson, projectVars, runtimeDir, prepareRef: branch || defaultBranch },
     params.prepareProfile,
     (candidate, result) =>
       step(

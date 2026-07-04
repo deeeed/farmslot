@@ -92,6 +92,13 @@ export interface RequirementCheckContext {
   projectJson: RawProjectJson;
   projectVars?: ProjectVars;
   runtimeDir: string;
+  /**
+   * The run's intended target ref (work branch, else project default branch),
+   * resolved before the git phase runs. Exposed to the artifact_check hook as
+   * {{prepare_ref}} so an artifact probe checks the ref the run will actually
+   * run — not the slot's pre-checkout HEAD, which selection precedes.
+   */
+  prepareRef?: string;
 }
 
 // Deps inputs hashed for the deps_current sentinel. Keep in sync with
@@ -179,7 +186,7 @@ export async function checkPrepareRequirement(
   requirement: PrepareRequirement,
   ctx: RequirementCheckContext,
 ): Promise<RequirementCheckResult> {
-  const { vars, projectJson, projectVars, runtimeDir } = ctx;
+  const { vars, projectJson, projectVars, runtimeDir, prepareRef } = ctx;
   switch (requirement) {
     case 'deps_current': {
       const sentinel = depsSentinelPath(runtimeDir);
@@ -218,10 +225,20 @@ export async function checkPrepareRequirement(
       // Selection-time gate for artifact-based profiles (e.g. install a prebuilt
       // dev client instead of building natively). The artifact_check hook must be
       // a fast probe (seconds) that only resolves whether an artifact exists for
-      // this checkout — never a download or device install. Exit 0 = available;
-      // any non-zero exit walks the profile's fallback. A hook that prints a
-      // one-line reason surfaces it to the operator via detail.
-      const hook = expandHook('artifact_check', projectJson, vars, projectVars);
+      // the run's target ref — never a download or device install. Exit 0 =
+      // available; any non-zero exit walks the profile's fallback. A hook that
+      // prints a one-line reason surfaces it to the operator via detail.
+      //
+      // {{prepare_ref}} is threaded so the probe checks the ref the run will run
+      // (work branch, else default branch), not the slot's pre-checkout HEAD —
+      // selection runs before the git phase, so the local checkout is unreliable.
+      const hook = expandHook(
+        'artifact_check',
+        projectJson,
+        vars,
+        projectVars,
+        prepareRef ? { prepare_ref: prepareRef } : undefined,
+      );
       if (!hook) {
         return { requirement, ok: false, detail: 'project has no artifact_check hook' };
       }
