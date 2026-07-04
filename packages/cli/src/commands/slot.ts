@@ -52,9 +52,11 @@ interface ActionListOptions {
 }
 
 /**
- * Returns the output string from a script.output event, or null for all other
- * event types. Callers emit only script.output so prepare's slot.prepare.output
- * events (which carry identical data) are not printed a second time.
+ * Extracts terminal output from the canonical script.output stream, returning
+ * null for every other event type. Prepare also emits structured
+ * slot.prepare.output events for phase consumers; those carry the raw
+ * (non-newline-normalized) payload and are not terminal output, so the terminal
+ * renderer draws from script.output alone.
  */
 export function pickStreamOutput(event: EventFrame): string | null {
   if (event.event !== 'script.output') return null;

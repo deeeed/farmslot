@@ -1047,23 +1047,27 @@ async function slotPrepareInner(
         step('deps', `Still running… (${elapsed} since last output)`);
       }
     }, 30_000);
-    const installR = await runPrepareCommand(
-      vars,
-      depsLogPath,
-      withProfileEnv(`cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`),
-      {
-        cwd: vars.remoteRepo,
-        timeout: depsTimeoutMs,
-        signal,
-        windowLabel,
-        phase: 'deps',
-        onOutput: (outputStream, data) => {
-          depsLastOutputAt = Date.now();
-          stream.output(outputStream === 'stderr' ? 'stderr' : 'stdout', data);
+    let installR;
+    try {
+      installR = await runPrepareCommand(
+        vars,
+        depsLogPath,
+        withProfileEnv(`cd ${shellQuote(vars.remoteRepo)} && ${applyCommandEnv(installCmd)}`),
+        {
+          cwd: vars.remoteRepo,
+          timeout: depsTimeoutMs,
+          signal,
+          windowLabel,
+          phase: 'deps',
+          onOutput: (outputStream, data) => {
+            depsLastOutputAt = Date.now();
+            stream.output(outputStream === 'stderr' ? 'stderr' : 'stdout', data);
+          },
         },
-      },
-    );
-    clearInterval(depsHeartbeat);
+      );
+    } finally {
+      clearInterval(depsHeartbeat);
+    }
     if (installR.exitCode !== 0) {
       const err: PrepareCommandError = new Error(
         `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
