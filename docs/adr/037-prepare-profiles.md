@@ -78,7 +78,10 @@ be valid.
    vocabulary:
    - `deps_current` — lockfile-hash sentinel matches the installed tree,
    - `dev_server_up` — existing `dev_server_check` hook exits 0,
-   - `health_ok` — existing `health_check` + `ready_indicator` pipeline passes.
+   - `health_ok` — existing `health_check` + `ready_indicator` pipeline passes,
+   - `artifact_available` — project `artifact_check` hook exits 0 (a fast,
+     seconds-scale probe that only reports whether the profile's prebuilt
+     artifact could be resolved — never a download or install).
      Checks are framework-owned names bound to project hooks, mirroring how
      `health` already works. The vocabulary can grow; projects never define new
      check semantics inline.

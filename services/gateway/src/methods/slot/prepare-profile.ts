@@ -1,10 +1,6 @@
 // methods/slot/prepare-profile.ts — prepare profile resolution + precondition checks (ADR-037)
 
-import {
-  PREPARE_PHASES,
-  type PreparePhase,
-  type PrepareRequirement,
-} from '@farmslot/protocol';
+import { PREPARE_PHASES, type PreparePhase, type PrepareRequirement } from '@farmslot/protocol';
 
 import {
   execOnSlot,
@@ -71,9 +67,7 @@ export function resolvePrepareProfile(
   const profiles = projectJson.prepare?.profiles;
   if (!profiles) {
     if (requested && requested !== IMPLICIT_FULL) {
-      throw new Error(
-        `Project defines no prepare profiles; cannot select profile '${requested}'`,
-      );
+      throw new Error(`Project defines no prepare profiles; cannot select profile '${requested}'`);
     }
     return implicitFullProfile();
   }
@@ -123,11 +117,11 @@ const DEPS_FINGERPRINT_NODE = [
   "const fs=require('fs'),crypto=require('crypto'),path=require('path');",
   `const inputs=${JSON.stringify(DEPS_FINGERPRINT_INPUTS)};`,
   "const h=crypto.createHash('sha256');",
-  "for (const rel of inputs) {",
-  "  const abs=path.join(process.cwd(),rel);",
-  "  if (!fs.existsSync(abs)) continue;",
+  'for (const rel of inputs) {',
+  '  const abs=path.join(process.cwd(),rel);',
+  '  if (!fs.existsSync(abs)) continue;',
   "  h.update(rel); h.update('\\0'); h.update(fs.readFileSync(abs)); h.update('\\0');",
-  "}",
+  '}',
   "process.stdout.write(h.digest('hex'));",
 ].join('');
 
@@ -203,7 +197,11 @@ export async function checkPrepareRequirement(
         return { requirement, ok: false, detail: 'no deps inputs found to fingerprint' };
       }
       return current === recorded
-        ? { requirement, ok: true, detail: `deps fingerprint ${current.slice(0, 12)} matches sentinel` }
+        ? {
+            requirement,
+            ok: true,
+            detail: `deps fingerprint ${current.slice(0, 12)} matches sentinel`,
+          }
         : { requirement, ok: false, detail: 'deps fingerprint differs from deps sentinel' };
     }
     case 'dev_server_up': {
@@ -215,6 +213,30 @@ export async function checkPrepareRequirement(
       return r.exitCode === 0
         ? { requirement, ok: true, detail: 'dev_server_check passed' }
         : { requirement, ok: false, detail: `dev_server_check exited ${r.exitCode}` };
+    }
+    case 'artifact_available': {
+      // Selection-time gate for artifact-based profiles (e.g. install a prebuilt
+      // dev client instead of building natively). The artifact_check hook must be
+      // a fast probe (seconds) that only resolves whether an artifact exists for
+      // this checkout — never a download or device install. Exit 0 = available;
+      // any non-zero exit walks the profile's fallback. A hook that prints a
+      // one-line reason surfaces it to the operator via detail.
+      const hook = expandHook('artifact_check', projectJson, vars, projectVars);
+      if (!hook) {
+        return { requirement, ok: false, detail: 'project has no artifact_check hook' };
+      }
+      const r = await execOnSlot(vars, `cd ${shellQuote(vars.remoteRepo)} && ${hook}`);
+      if (r.exitCode === 0) {
+        return { requirement, ok: true, detail: 'artifact_check passed' };
+      }
+      const reason = r.stdout.trim().split('\n').pop()?.trim();
+      return {
+        requirement,
+        ok: false,
+        detail: reason
+          ? `artifact_check exited ${r.exitCode}: ${reason}`
+          : `artifact_check exited ${r.exitCode}`,
+      };
     }
     case 'health_ok': {
       const healthHook = expandHook('health_check', projectJson, vars, projectVars);

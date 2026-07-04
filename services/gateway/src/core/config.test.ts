@@ -320,6 +320,25 @@ test('validatePrepareConfig rejects bad requires and missing fallback', () => {
   );
 });
 
+test('validatePrepareConfig accepts the artifact_available requirement with a fallback', () => {
+  assert.doesNotThrow(() =>
+    validatePrepareConfig(
+      prepareJson({
+        default: 'runway',
+        profiles: {
+          'ensure-js-runtime': { phases: ['git', 'deps'] },
+          runway: {
+            phases: ['git', 'preflight'],
+            requires: ['artifact_available'],
+            fallback: 'ensure-js-runtime',
+          },
+        },
+      }),
+      PREPARE_CONFIG_PATH,
+    ),
+  );
+});
+
 test('validatePrepareConfig rejects bad fallback references and cycles', () => {
   assert.throws(
     () =>

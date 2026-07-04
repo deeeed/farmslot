@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { PREPARE_PHASES } from '@farmslot/protocol';
+import { PREPARE_PHASES, type PrepareRequirement } from '@farmslot/protocol';
 
 import type { RawProjectJson } from '../../core/index.js';
 
 import {
   buildDepsFingerprintCommand,
   buildDepsSentinelWriteCommand,
+  checkPrepareRequirement,
   depsSentinelPath,
   resolvePrepareProfile,
   selectPrepareProfile,
@@ -106,7 +107,7 @@ test('selectPrepareProfile walks multi-hop fallback chain on failing checks', as
     runtimeDir: '.agent',
   };
   const checked: string[] = [];
-  const failingCheck = async (requirement: 'deps_current' | 'dev_server_up' | 'health_ok') => {
+  const failingCheck = async (requirement: PrepareRequirement) => {
     checked.push(requirement);
     return { requirement, ok: false, detail: 'forced failure' };
   };
@@ -118,7 +119,7 @@ test('selectPrepareProfile walks multi-hop fallback chain on failing checks', as
   );
   assert.deepEqual(checked, ['health_ok', 'dev_server_up']);
 
-  const passingCheck = async (requirement: 'deps_current' | 'dev_server_up' | 'health_ok') => ({
+  const passingCheck = async (requirement: PrepareRequirement) => ({
     requirement,
     ok: true,
     detail: 'forced pass',
@@ -142,7 +143,7 @@ test('selectPrepareProfile strict mode fails fast without walking fallback chain
     projectJson,
     runtimeDir: '.agent',
   };
-  const failingCheck = async (requirement: 'deps_current' | 'dev_server_up' | 'health_ok') => ({
+  const failingCheck = async (requirement: PrepareRequirement) => ({
     requirement,
     ok: false,
     detail: 'health value=none expected=WalletView',
@@ -151,4 +152,59 @@ test('selectPrepareProfile strict mode fails fast without walking fallback chain
     () => selectPrepareProfile(ctx, 'attach', undefined, failingCheck, { strict: true }),
     /preconditions failed.*health_ok/,
   );
+});
+
+test('selectPrepareProfile walks an artifact_available profile to its declared fallback', async () => {
+  // Mirrors the mobile farm's runway → ensure-js-runtime wiring: the default
+  // profile gates on artifact_available and falls back when no artifact resolves.
+  const projectJson: RawProjectJson = {
+    prepare: {
+      default: 'runway',
+      profiles: {
+        'ensure-js-runtime': { phases: ['git', 'deps', 'preflight', 'health'] },
+        runway: {
+          phases: ['git', 'preflight', 'health'],
+          requires: ['artifact_available'],
+          fallback: 'ensure-js-runtime',
+        },
+      },
+    },
+  };
+  const ctx = { vars: {} as never, projectJson, runtimeDir: '.agent' };
+
+  const unavailable = await selectPrepareProfile(
+    ctx,
+    undefined,
+    undefined,
+    async (requirement) => ({
+      requirement,
+      ok: false,
+      detail: 'no Runway artifact resolvable',
+    }),
+  );
+  assert.equal(unavailable.profile.name, 'ensure-js-runtime');
+  assert.deepEqual(
+    unavailable.fallbacks.map((f) => `${f.from}->${f.to}`),
+    ['runway->ensure-js-runtime'],
+  );
+
+  const available = await selectPrepareProfile(ctx, undefined, undefined, async (requirement) => ({
+    requirement,
+    ok: true,
+    detail: 'artifact_check passed',
+  }));
+  assert.equal(available.profile.name, 'runway');
+  assert.deepEqual(available.fallbacks, []);
+});
+
+test('checkPrepareRequirement artifact_available fails when no artifact_check hook is declared', async () => {
+  // Missing-hook path needs no slot exec: expandHook returns '' and the check
+  // fails with a teaching detail before any remote command runs.
+  const result = await checkPrepareRequirement('artifact_available', {
+    vars: { remoteRepo: '/repo' } as never,
+    projectJson: { hooks: {} },
+    runtimeDir: '.agent',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.detail, 'project has no artifact_check hook');
 });

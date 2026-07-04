@@ -71,7 +71,7 @@
                 "uniqueItems": true,
                 "items": {
                   "type": "string",
-                  "enum": ["deps_current", "dev_server_up", "health_ok"]
+                  "enum": ["deps_current", "dev_server_up", "health_ok", "artifact_available"]
                 },
                 "description": "Framework precondition checks that must pass before this profile runs. Any failure falls back to the profile named in 'fallback'."
               },

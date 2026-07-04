@@ -4,6 +4,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
+- feat: add `artifact_available` to `PREPARE_REQUIREMENTS` (bound to the project `artifact_check` hook) so prepare profiles can gate their cheap path on a fast artifact-resolution probe before selection.
 - Active-development baseline; add user-facing changes here before release or package publication.
 - Export the shared `RecipeQualityArtifact` validator from protocol for gateway and agent-runtime use.
 - Add `captureHelperPathInfo()` returning the resolved capture-helper path plus its resolution source (`env:CAPTURE_HELPER_PATH`, `env:SITEED_CAPTURE_HELPER_BIN`, `npm-global`, `npm-root`, `PATH`, `fallback`); `captureHelperPath()` is unchanged and delegates to it.
