@@ -172,7 +172,6 @@ function validateRecipeDoctorJson(document: unknown): RecipeProjectHookValidatio
 interface RecipeRunArtifactPackageOutputInput {
   artifactPaths: string[];
   summary?: unknown;
-  trace?: unknown;
   manifest?: unknown;
   recipe?: unknown;
   readErrors?: Record<string, string>;
@@ -219,7 +218,7 @@ export function validateRecipeRunArtifactPackageOutput(
     checks,
     'recipe_run.manifest.status_matches_summary',
     typeof summaryStatus === 'string' && manifestStatus === summaryStatus ? 'pass' : 'fail',
-    'artifact-manifest.json runStatus must match summary.json status.',
+    `artifact-manifest.json runStatus must match summary.json status (summary=${summaryStatus ?? 'missing'}, manifest=${typeof manifestStatus === 'string' ? manifestStatus : 'missing'}).`,
   );
 
   const recipe = validateRecipeArtifactPackage({
@@ -235,10 +234,7 @@ export function validateRecipeRunArtifactPackageOutput(
   );
 
   return {
-    status:
-      checks.some((check) => check.status === 'fail') || recipe.status === 'invalid'
-        ? 'fail'
-        : 'pass',
+    status: checks.some((check) => check.status === 'fail') ? 'fail' : 'pass',
     checks,
     recipe,
   };
@@ -279,12 +275,16 @@ async function listSlotRecipeArtifactFiles(
     .sort();
 }
 
+const DEFAULT_RECIPE_JSON_MAX_BUFFER_BYTES = 1024 * 1024;
+const TRACE_JSON_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+
 async function readSlotJsonIfPresent(
   slotVars: SlotVars,
   filePath: string,
+  maxBuffer = DEFAULT_RECIPE_JSON_MAX_BUFFER_BYTES,
 ): Promise<{ value?: unknown; error?: string }> {
   const script = `file=${shellExpressionForRemotePath(filePath)}; if [ ! -f "$file" ]; then echo __FARMSLOT_MISSING__; exit 0; fi; cat "$file"`;
-  const result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 1024 * 1024 });
+  const result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer });
   const text = result.stdout;
   if (text.trim() === '__FARMSLOT_MISSING__') return { error: 'file missing' };
   try {
@@ -302,7 +302,11 @@ async function validateRecipeRunArtifactsOnSlot(
   const artifactPaths = await listSlotRecipeArtifactFiles(slotVars, artifactRoot);
   const [summary, trace, manifest, recipe] = await Promise.all([
     readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'summary.json')),
-    readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'trace.json')),
+    readSlotJsonIfPresent(
+      slotVars,
+      joinRemoteArtifactPath(artifactRoot, 'trace.json'),
+      TRACE_JSON_MAX_BUFFER_BYTES,
+    ),
     readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'artifact-manifest.json')),
     recipePath
       ? readSlotJsonIfPresent(slotVars, recipePath)
@@ -311,7 +315,6 @@ async function validateRecipeRunArtifactsOnSlot(
   return validateRecipeRunArtifactPackageOutput({
     artifactPaths,
     summary: summary.value,
-    trace: trace.value,
     manifest: manifest.value,
     recipe: recipe.value,
     readErrors: {
@@ -912,9 +915,11 @@ export async function recipeProjectHookRun(
   }
   let validation = validateRecipeProjectHookOutput(params.hook, result.stdout);
   if (params.hook === 'recipe_run') {
+    const artifactsDir = params.artifactsDir;
+    if (!artifactsDir) throw new Error('hooks.recipe_run execution requires artifactsDir.');
     validation = mergeHookValidationResults(
       validation,
-      await validateRecipeRunArtifactsOnSlot(slotVars, params.artifactsDir!, params.recipePath),
+      await validateRecipeRunArtifactsOnSlot(slotVars, artifactsDir, params.recipePath),
     );
   }
   if (validation.status !== 'pass') {
@@ -1087,8 +1092,11 @@ async function executeRecipeRerunJob(args: {
       slotRecipePath,
     );
     if (artifactValidation.status !== 'pass') {
+      const invalidArtifacts = formatFailedHookValidation(artifactValidation);
       throw new Error(
-        `Recipe runner produced invalid Recipe v1 artifacts: ${formatFailedHookValidation(artifactValidation)}`,
+        result.exitCode === 0
+          ? `Recipe runner produced invalid Recipe v1 artifacts: ${invalidArtifacts}`
+          : `Recipe runner exited with code ${result.exitCode} and produced invalid Recipe v1 artifacts: ${invalidArtifacts}`,
       );
     }
 

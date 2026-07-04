@@ -217,7 +217,6 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     },
   };
   const summary = { status: 'pass', passed: 1, failed: 0, total: 1 };
-  const trace = [{ nodeId: 'done', action: 'end', ok: true, status: 'pass' }];
   const manifest = {
     version: 1,
     runStatus: 'pass',
@@ -232,17 +231,28 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe,
     summary,
-    trace,
     manifest,
   });
   assert.equal(valid.status, 'pass', JSON.stringify(valid.checks));
   assert.equal(valid.recipe?.status, 'valid');
 
+  const statusMismatch = validateRecipeRunArtifactPackageOutput({
+    artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
+    recipe,
+    summary: { ...summary, status: 'fail' },
+    manifest,
+  });
+  assert.equal(statusMismatch.status, 'fail');
+  assert.match(
+    statusMismatch.checks.find((check) => check.id === 'recipe_run.manifest.status_matches_summary')
+      ?.message ?? '',
+    /summary=fail, manifest=pass/,
+  );
+
   const missingManifest = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['recipe.json', 'summary.json', 'trace.json'],
     recipe,
     summary,
-    trace,
     manifest: undefined,
     readErrors: { 'artifact-manifest.json': 'file missing' },
   });
@@ -257,7 +267,6 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe: undefined,
     summary,
-    trace,
     manifest,
     readErrors: { 'recipe.json': 'Unexpected token' },
   });
@@ -268,7 +277,6 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
     recipe,
     summary,
-    trace,
     manifest: { ...manifest, artifacts: [{ path: 'missing.png', type: 'screenshot' }] },
   });
   assert.equal(staleManifest.status, 'fail');

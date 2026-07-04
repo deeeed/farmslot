@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -335,13 +335,17 @@ async function buildRecipeQuality(args) {
   const fileInput = parsed.input ? normalizeRecipeQualityInput(readJsonInput(parsed.input)) : {};
   const input = mergeRecipeQualityInputs(fileInput, parsed.flags);
   let runtime;
+  const distEntry = path.join(packageRoot, 'dist', 'index.js');
   try {
-    runtime = await import('../dist/index.js');
+    runtime = await import(pathToFileURL(distEntry).href);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes('/dist/index.js') || message.includes('Cannot find module')) {
+    const missingDistEntry =
+      message.includes(`Cannot find module '${distEntry}'`) ||
+      message.includes(`Cannot find module ${pathToFileURL(distEntry).href}`);
+    if (missingDistEntry) {
       throw new Error(
-        'farmslot-agent recipe-quality build requires the compiled package. Run yarn workspace @farmslot/agent-runtime build in source checkouts.',
+        `farmslot-agent recipe-quality build requires the compiled package at ${distEntry}. Run yarn workspace @farmslot/agent-runtime build in source checkouts. Original error: ${message}`,
       );
     }
     throw error;
@@ -409,7 +413,7 @@ function parseContractResolveArgs(args) {
     else if (arg === '--project-config') parsed.projectConfig = args[++i] || null;
     else if (arg.startsWith('--project-config='))
       parsed.projectConfig = arg.slice('--project-config='.length);
-    else throw new Error(`unknown option ${arg}`);
+    else usage(2);
   }
   if (!parsed.flow) usage(2);
   return parsed;
