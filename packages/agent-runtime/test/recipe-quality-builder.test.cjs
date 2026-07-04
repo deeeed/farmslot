@@ -327,6 +327,14 @@ async function main() {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /unknown option --bogus/);
 
+  result = spawnSync(
+    process.execPath,
+    [cli, 'recipe-quality', 'build', '--artifact-required=bogus'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--artifact-required must be true or false/);
+
   process.stdout.write('agent-runtime recipe-quality builder tests: ok\n');
 }
 

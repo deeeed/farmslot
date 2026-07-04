@@ -17,6 +17,7 @@ function usage(exitCode = 0) {
     '  artifact-check <task-dir> [args...]',
     '  install-mark <task-dir> [--task TASK.md] [--signal SIGNAL.json]',
     '  recipe-quality build [--input input.json] [--output artifacts/recipe-quality.json]',
+    '    (flags override top-level input fields; training fields are merged)',
     '  contract resolve --flow <flow> [--project-config path] [--mode mode]',
   ].join('\n');
   (exitCode === 0 ? console.log : console.error)(text);
@@ -287,7 +288,7 @@ function parseRecipeQualityBuildArgs(args) {
       parsed.flags.artifactRequired = parseBooleanFlag(arg, next(arg));
     else if (arg.startsWith('--artifact-required='))
       parsed.flags.artifactRequired = parseBooleanFlag(
-        arg,
+        '--artifact-required',
         arg.slice('--artifact-required='.length),
       );
     else if (arg === '--legacy-task') parsed.flags.legacyTask = true;

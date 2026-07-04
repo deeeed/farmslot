@@ -248,6 +248,12 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     listFailure.checks.find((check) => check.id === 'recipe_run.artifact_list')?.message,
     'Could not list recipe artifact package files: find maxBuffer exceeded',
   );
+  assert.ok(
+    listFailure.checks
+      .filter((check) => check.id.startsWith('recipe_run.artifact.'))
+      .every((check) => check.status === 'pass'),
+  );
+  assert.equal(listFailure.recipe?.status, 'valid');
 
   const statusMismatch = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
@@ -274,6 +280,11 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     (check) => check.id === 'recipe_run.artifact.artifact-manifest.json',
   );
   assert.equal(missingManifestCheck?.message, 'artifact-manifest.json is missing.');
+  assert.doesNotMatch(
+    missingManifest.checks.find((check) => check.id === 'recipe_run.artifact_manifest.validation')
+      ?.message ?? '',
+    /artifact_package\.missing_manifest/,
+  );
 
   const badRecipe = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],

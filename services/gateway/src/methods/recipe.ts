@@ -183,10 +183,16 @@ function readTerminalStatus(document: unknown): string | undefined {
   return isRecord(document) && typeof document.status === 'string' ? document.status : undefined;
 }
 
-function formatRecipeValidationFindings(result: RecipeValidationResult): string {
-  const findings = result.findings.filter((finding) => finding.severity === 'error').slice(0, 5);
+function formatRecipeValidationFindings(
+  result: RecipeValidationResult,
+  suppressFinding?: (finding: RecipeValidationResult['findings'][number]) => boolean,
+): string {
+  const errorFindings = result.findings.filter(
+    (finding) => finding.severity === 'error' && !suppressFinding?.(finding),
+  );
+  const findings = errorFindings.slice(0, 5);
   if (findings.length === 0) return '';
-  const suffix = result.findings.length > findings.length ? '; …' : '';
+  const suffix = errorFindings.length > findings.length ? '; …' : '';
   return ` Findings: ${findings.map((finding) => `${finding.code}@${finding.path}`).join('; ')}${suffix}`;
 }
 
@@ -196,6 +202,11 @@ export function validateRecipeRunArtifactPackageOutput(
   const checks: RecipeProjectHookValidationCheck[] = [];
   const artifactPathSet = new Set(input.artifactPaths);
   const readErrors = input.readErrors ?? {};
+  const missingArtifactPaths = new Set(
+    Object.entries(readErrors)
+      .filter(([, error]) => error === 'file missing')
+      .map(([filePath]) => filePath),
+  );
 
   if (input.artifactListError) {
     addHookValidationCheck(
@@ -208,10 +219,12 @@ export function validateRecipeRunArtifactPackageOutput(
 
   for (const requiredPath of ['summary.json', 'trace.json', 'artifact-manifest.json'] as const) {
     const error = readErrors[requiredPath];
+    const passed =
+      !error && (artifactPathSet.has(requiredPath) || input.artifactListError !== undefined);
     addHookValidationCheck(
       checks,
       `recipe_run.artifact.${requiredPath}`,
-      artifactPathSet.has(requiredPath) && !error ? 'pass' : 'fail',
+      passed ? 'pass' : 'fail',
       error
         ? error === 'file missing'
           ? `${requiredPath} is missing.`
@@ -246,13 +259,20 @@ export function validateRecipeRunArtifactPackageOutput(
   const recipe = validateRecipeArtifactPackage({
     recipe: input.recipe,
     manifest: input.manifest,
-    artifactPaths: input.artifactPaths,
+    artifactPaths: input.artifactListError ? undefined : input.artifactPaths,
   });
   addHookValidationCheck(
     checks,
     'recipe_run.artifact_manifest.validation',
     recipe.status === 'valid' ? 'pass' : 'fail',
-    `artifact-manifest.json must satisfy Recipe Protocol v1 and reference existing artifacts.${formatRecipeValidationFindings(recipe)}`,
+    `artifact-manifest.json must satisfy Recipe Protocol v1 and reference existing artifacts.${formatRecipeValidationFindings(
+      recipe,
+      (finding) =>
+        (finding.code === 'artifact_package.missing_required_file' &&
+          missingArtifactPaths.has(finding.path)) ||
+        (finding.code === 'artifact_package.missing_manifest' &&
+          missingArtifactPaths.has('artifact-manifest.json')),
+    )}`,
   );
 
   return {
@@ -289,7 +309,12 @@ async function listSlotRecipeArtifactFiles(
   artifactRoot: string,
 ): Promise<{ paths: string[]; error?: string }> {
   const script = `root=${shellExpressionForRemotePath(artifactRoot)}; if [ ! -d "$root" ]; then exit 0; fi; cd "$root" && find . -type f -print`;
-  const result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 256 * 1024 });
+  let result: Awaited<ReturnType<typeof execOnSlot>>;
+  try {
+    result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 256 * 1024 });
+  } catch (error) {
+    return { paths: [], error: error instanceof Error ? error.message : String(error) };
+  }
   if (result.exitCode !== 0) {
     return {
       paths: [],
