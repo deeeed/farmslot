@@ -81,6 +81,50 @@ const RECIPE_QUALITY_INPUT_KEYS = new Set([
   'extra',
 ]);
 
+const RECIPE_QUALITY_COMPACT_KEYS = new Set(['verdict', 'reasons', 'better_version_guidance']);
+
+const RECIPE_QUALITY_META_KEYS = new Set([
+  'producer',
+  'fallback_used',
+  'fallback_source',
+  'legacy_task',
+  'artifact_required',
+  'source_signals',
+]);
+
+function unknownKeys(value, allowed) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  return Object.keys(value).filter((key) => !allowed.has(key));
+}
+
+function validateRecipeQualityCompact(input) {
+  const compact = input.compact;
+  if (compact == null) return;
+  if (typeof compact !== 'object' || Array.isArray(compact)) {
+    throw new Error('recipe-quality input compact must be a JSON object when provided');
+  }
+  const unknown = unknownKeys(compact, RECIPE_QUALITY_COMPACT_KEYS);
+  if (unknown.length > 0) {
+    throw new Error(`recipe-quality input compact contains unknown key(s): ${unknown.join(', ')}`);
+  }
+  const expected = { pass: 'PASS', warn: 'WARN', fail: 'FAIL' }[input.verdict];
+  if (compact.verdict != null && expected && compact.verdict !== expected) {
+    throw new Error(`recipe-quality input compact.verdict must match verdict ${input.verdict}`);
+  }
+}
+
+function validateRecipeQualityMeta(input) {
+  const meta = input.meta;
+  if (meta == null) return;
+  if (typeof meta !== 'object' || Array.isArray(meta)) {
+    throw new Error('recipe-quality input meta must be a JSON object when provided');
+  }
+  const unknown = unknownKeys(meta, RECIPE_QUALITY_META_KEYS);
+  if (unknown.length > 0) {
+    throw new Error(`recipe-quality input meta contains unknown key(s): ${unknown.join(', ')}`);
+  }
+}
+
 function validateRecipeQualityInputKeys(input) {
   const unknown = Object.keys(input).filter((key) => !RECIPE_QUALITY_INPUT_KEYS.has(key));
   if (unknown.length > 0) {
@@ -175,6 +219,8 @@ function normalizeRecipeQualityInput(input) {
     throw new Error('recipe-quality input must be a JSON object');
   }
   validateRecipeQualityInputKeys(input);
+  validateRecipeQualityCompact(input);
+  validateRecipeQualityMeta(input);
   return {
     verdict: input.verdict,
     reasons: input.reasons ?? input.compact?.reasons,
@@ -202,8 +248,19 @@ async function buildRecipeQuality(args) {
   const parsed = parseRecipeQualityBuildArgs(args);
   const fileInput = parsed.input ? normalizeRecipeQualityInput(readJsonInput(parsed.input)) : {};
   const input = mergeRecipeQualityInputs(fileInput, parsed.flags);
-  const { buildRecipeQualityArtifact } = await import('../dist/index.js');
-  const artifact = buildRecipeQualityArtifact(input);
+  let runtime;
+  try {
+    runtime = await import('../dist/index.js');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('/dist/index.js') || message.includes('Cannot find module')) {
+      throw new Error(
+        'farmslot-agent recipe-quality build requires the compiled package. Run yarn workspace @farmslot/agent-runtime build in source checkouts.',
+      );
+    }
+    throw error;
+  }
+  const artifact = runtime.buildRecipeQualityArtifact(input);
   const text = `${JSON.stringify(artifact, null, 2)}\n`;
   if (parsed.output) {
     const outputPath = path.resolve(parsed.output);

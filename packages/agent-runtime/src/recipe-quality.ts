@@ -85,6 +85,12 @@ function assertOptionalPlainRecord(name: string, value: unknown): void {
   }
 }
 
+function assertOptionalArray(name: string, value: unknown): void {
+  if (value != null && !Array.isArray(value)) {
+    throw new TypeError(`${name} must be an array when provided.`);
+  }
+}
+
 function validateTrainingFields(value: RecipeQualityArtifact['training_fields'] | undefined): void {
   assertOptionalPlainRecord('trainingFields', value);
   const proofMode = value?.proof_mode;
@@ -121,12 +127,21 @@ export function buildRecipeQualityArtifact(
   assertStringArray('suggestedRecipeDelta', input.suggestedRecipeDelta ?? []);
   assertStringArray('sourceSignals', input.sourceSignals ?? ['recipe-quality.json']);
   assertOptionalPlainRecord('dimensions', input.dimensions);
+  assertOptionalArray('structuralFindings', input.structuralFindings);
+  assertOptionalArray('contextualFindings', input.contextualFindings);
   validateTrainingFields(input.trainingFields);
   validateExtraKeys(input.extra);
 
   const producer = input.producer ?? 'worker';
   assertRecipeQualityProducer(producer);
   const fallbackSource = input.fallbackSource;
+  const fallbackUsed = input.fallbackUsed ?? defaultFallbackUsed(producer, fallbackSource);
+  if (fallbackSource != null && fallbackUsed === false) {
+    throw new TypeError('fallbackUsed cannot be false when fallbackSource is set.');
+  }
+  if (producer.startsWith('fallback:') && fallbackUsed === false) {
+    throw new TypeError('fallbackUsed cannot be false for fallback producers.');
+  }
   const artifact: BuiltRecipeQualityArtifact = {
     ...(input.extra ?? {}),
     version: RECIPE_QUALITY_ARTIFACT_VERSION,
@@ -146,7 +161,7 @@ export function buildRecipeQualityArtifact(
     },
     meta: {
       producer,
-      fallback_used: input.fallbackUsed ?? defaultFallbackUsed(producer, fallbackSource),
+      fallback_used: fallbackUsed,
       fallback_source: fallbackSource,
       legacy_task: input.legacyTask ?? false,
       artifact_required: input.artifactRequired ?? true,

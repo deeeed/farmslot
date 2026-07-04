@@ -152,6 +152,17 @@ async function main() {
     /extra must be a JSON object/,
   );
 
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
+        reasons: ['Fallback metadata must be coherent.'],
+        fallbackUsed: false,
+        fallbackSource: 'fallback:recipe-json',
+      }),
+    /fallbackUsed cannot be false/,
+  );
+
   result = spawnSync(
     process.execPath,
     [cli, 'recipe-quality', 'build', '--verdict', 'nope', '--reason', 'Invalid verdict.'],
@@ -199,6 +210,35 @@ async function main() {
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /unknown key\(s\): sugested_recipe_delta/);
+
+  const compactConflictInputPath = path.join(dir, 'compact-conflict-input.json');
+  writeFileSync(
+    compactConflictInputPath,
+    JSON.stringify({
+      verdict: 'pass',
+      compact: { verdict: 'FAIL', reasons: ['conflict'], better_version_guidance: [] },
+    }),
+  );
+  result = spawnSync(
+    process.execPath,
+    [cli, 'recipe-quality', 'build', '--input', compactConflictInputPath],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /compact\.verdict must match verdict pass/);
+
+  const metaTypoInputPath = path.join(dir, 'meta-typo-input.json');
+  writeFileSync(
+    metaTypoInputPath,
+    JSON.stringify({ verdict: 'pass', reasons: ['meta typo'], meta: { produtser: 'worker' } }),
+  );
+  result = spawnSync(
+    process.execPath,
+    [cli, 'recipe-quality', 'build', '--input', metaTypoInputPath],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /meta contains unknown key\(s\): produtser/);
 
   const badProducerInputPath = path.join(dir, 'bad-producer-input.json');
   writeFileSync(
