@@ -59,7 +59,7 @@ Template / skill checklist
         ↓
 Worker writes artifacts/
         ↓
-./mark complete --mark-last   ← canonical script: @farmslot/skills
+./mark complete --mark-last   ← canonical script: @farmslot/agent-runtime
         ↓
 SIGNAL.json (terminal)
         ↓

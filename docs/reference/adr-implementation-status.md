@@ -25,7 +25,7 @@ This matrix answers: **for each current ADR, what is shipped, what is partial, a
 | [031](../adr/031-deterministic-first-auto-recovery.md)     | Deterministic-first auto-recovery | Accepted   | Shipped        | Policy tuning from audit evidence                                    |
 | [032](../adr/032-runner-observability-via-hooks.md)        | Runner observability via hooks    | Accepted   | Partial        | Phase 2 exit passed; Phase 3 pane-regex retirement                   |
 | [033](../adr/033-mobile-tmux-worker-control.md)            | Mobile tmux worker control        | Accepted   | Shipped        | Deferred: background wake-word, auto-send, remote provisioning       |
-| [034](../adr/034-recipe-protocol-v1.md)                    | Recipe Protocol v1                | Accepted   | Partial        | Project migration + manifest-first UI + live self-validation         |
+| [034](../adr/034-recipe-protocol-v1.md)                    | Recipe Protocol v1                | Accepted   | Partial        | Producer tooling + manifest-first UI + live self-validation          |
 | [035](../adr/035-node-support-bundles.md)                  | Node support bundles              | Accepted   | Partial        | Gateway prepare sync; not all projects declare bundles               |
 | [036](../adr/036-cli-gateway-profiles.md)                  | CLI gateway profiles              | Accepted   | Partial        | Core shipped; demo/onboarding rehearsal follow-ups                   |
 | [037](../adr/037-prepare-profiles.md)                      | Prepare profiles                  | Accepted   | Shipped        | Automatic profile selection deferred by ADR                          |
@@ -123,18 +123,20 @@ Older ADRs **001–025** are foundation/shipped for their core scope. This file 
 
 The protocol is **not** a future proposal. Validators, harness runtime, CLI, and self-validation **fixtures** exist. Remaining work is **rollout and dependency**, not greenfield protocol design.
 
-| ADR / PRD requirement                                                                     | Status      | Evidence / gap                                                                |
-| ----------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------- |
-| Canonical spec `recipe-protocol-v1.md`                                                    | Shipped     | `docs/reference/recipe-protocol-v1.md`                                        |
-| `validateRecipeDocument` / `validateRecipeWithManifest` / `validateRecipeArtifactPackage` | Shipped     | `@farmslot/protocol`                                                          |
-| Graph envelope + composition (`call`, `startState`, `proofTargets`, `phase`, `record`)    | Shipped     | Protocol tests + `@farmslot/recipe-harness`                                   |
-| `farmslot recipe validate`                                                                | Shipped     | `packages/cli/src/commands/recipe.ts`                                         |
-| Farmslot self-validation recipe **fixtures**                                              | Shipped     | `docs/examples/recipes/farmslot/*.recipe.json`                                |
-| Typed `artifact-manifest.json` on all project runs                                        | Partial     | Harness writes manifests; legacy runners still emit summary/trace only        |
-| UI manifest-first rendering (no filename inference fallback)                              | Partial     | Gateway reads manifests when present; `inferArtifactPurpose` fallback remains |
-| Mobile/Audiolab `hooks.recipe_run` alignment                                              | Partial     | Still often worker-template invoked validators                                |
-| Live self-validation suite on real slots                                                  | Not started | Fixtures validate offline; live execution is operator harness work            |
-| Onboarding doc consolidation                                                              | Partial     | Spec exists; `projects/README.md` not fully unified                           |
+| ADR / PRD requirement                                                                     | Status      | Evidence / gap                                                                                      |
+| ----------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------- |
+| Canonical spec `recipe-protocol-v1.md`                                                    | Shipped     | `docs/reference/recipe-protocol-v1.md`                                                              |
+| `validateRecipeDocument` / `validateRecipeWithManifest` / `validateRecipeArtifactPackage` | Shipped     | `@farmslot/protocol`                                                                                |
+| Graph envelope + composition (`call`, `startState`, `proofTargets`, `phase`, `record`)    | Shipped     | Protocol tests + `@farmslot/recipe-harness`                                                         |
+| Recipe-quality runtime contract owner                                                     | Shipped     | `RecipeQualityArtifact` validator in `@farmslot/protocol`; task checks in `@farmslot/agent-runtime` |
+| `farmslot recipe validate`                                                                | Shipped     | `packages/cli/src/commands/recipe.ts`                                                               |
+| Farmslot self-validation recipe **fixtures**                                              | Shipped     | `docs/examples/recipes/farmslot/*.recipe.json`                                                      |
+| Typed `artifact-manifest.json` on all project runs                                        | Partial     | Harness writes manifests; legacy runners still emit summary/trace only                              |
+| UI manifest-first rendering (no filename inference fallback)                              | Partial     | Gateway reads manifests when present; `inferArtifactPurpose` fallback remains                       |
+| Mobile/Audiolab `hooks.recipe_run` alignment                                              | Partial     | Still often worker-template invoked validators                                                      |
+| `recipe-quality.json` producer tooling                                                    | Not started | Agents still need a builder/generator instead of hand-authoring the full artifact                   |
+| Live self-validation suite on real slots                                                  | Not started | Fixtures validate offline; live execution is operator harness work                                  |
+| Onboarding doc consolidation                                                              | Partial     | Spec exists; `projects/README.md` not fully unified                                                 |
 
 **Validate locally:**
 
