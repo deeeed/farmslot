@@ -50,6 +50,7 @@ export function buildFixtureSyncTimeoutMessage(opts: {
   elapsedMs: number;
   timeoutMs: number;
   logPath: string;
+  envFilePath: string;
   prepareProfile?: string;
 }): string {
   const profileFlag = ` --prepare-profile ${opts.prepareProfile ?? '<profile>'}`;
@@ -58,7 +59,10 @@ export function buildFixtureSyncTimeoutMessage(opts: {
     `Fixture sync timed out after ${opts.elapsedMs}ms (backstop ${opts.timeoutMs}ms) for slot ${opts.slotId} — log: ${opts.logPath}`,
     `The ${opts.timeoutMs}ms limit is a hung-process backstop, not a failure: check the log — files are often already [OK].`,
     `Next: re-run prepare for this slot: ${rerun}`,
-    `If this machine is consistently slow, raise the backstop: ${FIXTURE_SYNC_TIMEOUT_ENV_VAR}=<ms> ${rerun}`,
+    // The backstop resolves inside the already-running gateway, which loads this
+    // var from .env at startup (see gateway index.ts). A CLI-side env prefix
+    // never reaches it, so the escape must edit the gateway's .env and restart.
+    `If this machine is consistently slow, raise the backstop in the gateway env (a CLI-side ${FIXTURE_SYNC_TIMEOUT_ENV_VAR}=... is ignored — the running gateway reads it from .env at startup): add ${FIXTURE_SYNC_TIMEOUT_ENV_VAR}=<ms> to ${opts.envFilePath}, then restart the gateway: farmslot down && farmslot up`,
   ].join('\n');
 }
 
@@ -155,6 +159,7 @@ export async function runFixtureSync(
           elapsedMs: Date.now() - startedAt,
           timeoutMs: timeout,
           logPath: opts.logPath,
+          envFilePath: path.join(farmslotRoot, '.env'),
           prepareProfile: opts.prepareProfile,
         })
       : `Fixture sync failed (exit ${syncResult.exitCode}) — log: ${opts.logPath}`;

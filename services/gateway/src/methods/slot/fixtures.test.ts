@@ -45,20 +45,43 @@ test('resolveFixtureSyncTimeoutMs selects the per-host backstop', () => {
   );
 });
 
-test('buildFixtureSyncTimeoutMessage teaches elapsed vs limit, log, re-run, and override var', () => {
+test('buildFixtureSyncTimeoutMessage teaches elapsed vs limit, log, re-run, and the override that works', () => {
   const msg = buildFixtureSyncTimeoutMessage({
     slotId: 'macwork-mm2-1',
     elapsedMs: 60_117,
     timeoutMs: 300_000,
     logPath: '/tmp/fixture-refresh/macwork-mm2-1.log',
-    prepareProfile: 'perps',
+    envFilePath: '/repo/.env',
+    prepareProfile: 'runway',
   });
   assert.match(msg, /60117ms/);
   assert.match(msg, /300000ms/);
   assert.match(msg, /macwork-mm2-1/);
   assert.match(msg, /\/tmp\/fixture-refresh\/macwork-mm2-1\.log/);
-  assert.match(msg, /farmslot slot prepare macwork-mm2-1 --prepare-profile perps/);
+  assert.match(msg, /farmslot slot prepare macwork-mm2-1 --prepare-profile runway/);
+  // The override must teach the mechanism that actually works: the running
+  // gateway reads the var from .env at startup, so the escape is edit-.env +
+  // restart — never a CLI-side env prefix (which the daemon never sees).
   assert.ok(msg.includes(FIXTURE_SYNC_TIMEOUT_ENV_VAR));
+  assert.match(msg, /\/repo\/\.env/);
+  assert.match(msg, /farmslot down && farmslot up/);
+  assert.doesNotMatch(msg, /FARMSLOT_FIXTURE_SYNC_TIMEOUT_MS=<ms> farmslot slot prepare/);
+});
+
+test('buildFixtureSyncTimeoutMessage emits the prepare profile, not the slot domain', () => {
+  // Regression guard: on a slot whose domain is 'perps' but whose selected
+  // prepare profile is 'runway', the re-run hint must carry the profile
+  // ('runway') — the domain ('perps') must never leak into --prepare-profile.
+  const msg = buildFixtureSyncTimeoutMessage({
+    slotId: 'macwork-mm2-1',
+    elapsedMs: 60_117,
+    timeoutMs: 300_000,
+    logPath: '/tmp/x.log',
+    envFilePath: '/repo/.env',
+    prepareProfile: 'runway',
+  });
+  assert.match(msg, /--prepare-profile runway/);
+  assert.doesNotMatch(msg, /perps/);
 });
 
 test('buildFixtureSyncTimeoutMessage falls back to a <profile> placeholder', () => {
@@ -67,6 +90,7 @@ test('buildFixtureSyncTimeoutMessage falls back to a <profile> placeholder', () 
     elapsedMs: 61_000,
     timeoutMs: 300_000,
     logPath: '/tmp/x.log',
+    envFilePath: '/repo/.env',
   });
   assert.match(msg, /farmslot slot prepare macwork-mm2-1 --prepare-profile <profile>/);
 });
