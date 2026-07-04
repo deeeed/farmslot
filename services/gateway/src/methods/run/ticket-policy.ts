@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { RunCreateParams } from '@farmslot/protocol';
+import { type FlowType, PR_BOUND_FLOW_TYPES, type RunCreateParams } from '@farmslot/protocol';
 
 import { validateTicketRef } from '../dispatch/ticket-ref.js';
 
@@ -25,6 +25,20 @@ export function isLocalDevRef(ticketOrPr: string): boolean {
 
 export function isManualBacklogRef(ticketOrPr: string): boolean {
   return /^MANUAL-\d+$/.test(ticketOrPr);
+}
+
+/** Runs dispatched from Backlog keep MANUAL-* refs; replay must not re-validate them as direct dispatch. */
+export function isStoredManualBacklogRun(
+  run: Pick<RunCreateParams, 'flowType'> & {
+    backlogItemId?: string | null;
+    ticketOrPr: string;
+  },
+): boolean {
+  return (
+    Boolean(run.backlogItemId) &&
+    isManualBacklogRef(run.ticketOrPr) &&
+    !PR_BOUND_FLOW_TYPES.has(run.flowType as FlowType)
+  );
 }
 
 export function isValidTicketForFlow(
