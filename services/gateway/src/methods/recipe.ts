@@ -22,6 +22,7 @@ import {
   type RecipeRerunParams,
   type ScriptActionResult,
   validateRecipeActionManifestDocument,
+  validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 
 import {
@@ -168,6 +169,160 @@ function validateRecipeDoctorJson(document: unknown): RecipeProjectHookValidatio
   };
 }
 
+interface RecipeRunArtifactPackageOutputInput {
+  artifactPaths: string[];
+  summary?: unknown;
+  trace?: unknown;
+  manifest?: unknown;
+  recipe?: unknown;
+  readErrors?: Record<string, string>;
+}
+
+function readTerminalStatus(document: unknown): string | undefined {
+  return isRecord(document) && typeof document.status === 'string' ? document.status : undefined;
+}
+
+export function validateRecipeRunArtifactPackageOutput(
+  input: RecipeRunArtifactPackageOutputInput,
+): RecipeProjectHookValidationResult {
+  const checks: RecipeProjectHookValidationCheck[] = [];
+  const artifactPathSet = new Set(input.artifactPaths);
+  const readErrors = input.readErrors ?? {};
+
+  for (const requiredPath of ['summary.json', 'trace.json', 'artifact-manifest.json'] as const) {
+    const error = readErrors[requiredPath];
+    addHookValidationCheck(
+      checks,
+      `recipe_run.artifact.${requiredPath}`,
+      artifactPathSet.has(requiredPath) && !error ? 'pass' : 'fail',
+      error
+        ? `${requiredPath} could not be read as JSON: ${error}`
+        : artifactPathSet.has(requiredPath)
+          ? `${requiredPath} exists.`
+          : `hooks.recipe_run must emit ${requiredPath}.`,
+    );
+  }
+
+  const recipeReadError = readErrors['recipe.json'];
+  if (recipeReadError) {
+    addHookValidationCheck(
+      checks,
+      'recipe_run.artifact.recipe.json',
+      'fail',
+      `recipe.json could not be read as JSON: ${recipeReadError}`,
+    );
+  }
+
+  const summaryStatus = readTerminalStatus(input.summary);
+  const manifestStatus = isRecord(input.manifest) ? input.manifest.runStatus : undefined;
+  addHookValidationCheck(
+    checks,
+    'recipe_run.manifest.status_matches_summary',
+    typeof summaryStatus === 'string' && manifestStatus === summaryStatus ? 'pass' : 'fail',
+    'artifact-manifest.json runStatus must match summary.json status.',
+  );
+
+  const recipe = validateRecipeArtifactPackage({
+    recipe: input.recipe,
+    manifest: input.manifest,
+    artifactPaths: input.artifactPaths,
+  });
+  addHookValidationCheck(
+    checks,
+    'recipe_run.artifact_manifest.validation',
+    recipe.status === 'valid' ? 'pass' : 'fail',
+    'artifact-manifest.json must satisfy Recipe Protocol v1 and reference existing artifacts.',
+  );
+
+  return {
+    status:
+      checks.some((check) => check.status === 'fail') || recipe.status === 'invalid'
+        ? 'fail'
+        : 'pass',
+    checks,
+    recipe,
+  };
+}
+
+function mergeHookValidationResults(
+  left: RecipeProjectHookValidationResult,
+  right: RecipeProjectHookValidationResult,
+): RecipeProjectHookValidationResult {
+  return {
+    status: left.status === 'pass' && right.status === 'pass' ? 'pass' : 'fail',
+    checks: [...left.checks, ...right.checks],
+    recipe: right.recipe ?? left.recipe,
+  };
+}
+
+function formatFailedHookValidation(validation: RecipeProjectHookValidationResult): string {
+  return validation.checks
+    .filter((check) => check.status === 'fail')
+    .map((check) => `${check.id}: ${check.message}`)
+    .join('; ');
+}
+
+function joinRemoteArtifactPath(root: string, relativePath: string): string {
+  return normalizeRemotePath(`${normalizeRemotePath(root).replace(/\/+$/u, '')}/${relativePath}`);
+}
+
+async function listSlotRecipeArtifactFiles(
+  slotVars: SlotVars,
+  artifactRoot: string,
+): Promise<string[]> {
+  const script = `root=${shellExpressionForRemotePath(artifactRoot)}; if [ ! -d "$root" ]; then exit 0; fi; cd "$root" && find . -type f -print`;
+  const result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 256 * 1024 });
+  return result.stdout
+    .split('\n')
+    .map((line) => line.trim().replace(/^\.\//u, ''))
+    .filter(Boolean)
+    .sort();
+}
+
+async function readSlotJsonIfPresent(
+  slotVars: SlotVars,
+  filePath: string,
+): Promise<{ value?: unknown; error?: string }> {
+  const script = `file=${shellExpressionForRemotePath(filePath)}; if [ ! -f "$file" ]; then echo __FARMSLOT_MISSING__; exit 0; fi; cat "$file"`;
+  const result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer: 1024 * 1024 });
+  const text = result.stdout;
+  if (text.trim() === '__FARMSLOT_MISSING__') return { error: 'file missing' };
+  try {
+    return { value: JSON.parse(text) };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function validateRecipeRunArtifactsOnSlot(
+  slotVars: SlotVars,
+  artifactRoot: string,
+  recipePath?: string,
+): Promise<RecipeProjectHookValidationResult> {
+  const artifactPaths = await listSlotRecipeArtifactFiles(slotVars, artifactRoot);
+  const [summary, trace, manifest, recipe] = await Promise.all([
+    readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'summary.json')),
+    readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'trace.json')),
+    readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'artifact-manifest.json')),
+    recipePath
+      ? readSlotJsonIfPresent(slotVars, recipePath)
+      : Promise.resolve({ value: undefined } as { value?: unknown; error?: string }),
+  ]);
+  return validateRecipeRunArtifactPackageOutput({
+    artifactPaths,
+    summary: summary.value,
+    trace: trace.value,
+    manifest: manifest.value,
+    recipe: recipe.value,
+    readErrors: {
+      ...(summary.error ? { 'summary.json': summary.error } : {}),
+      ...(trace.error ? { 'trace.json': trace.error } : {}),
+      ...(manifest.error ? { 'artifact-manifest.json': manifest.error } : {}),
+      ...(recipe.error ? { 'recipe.json': recipe.error } : {}),
+    },
+  });
+}
+
 export function validateRecipeProjectHookOutput(
   hook: RecipeProjectHookName,
   stdout: string,
@@ -179,8 +334,7 @@ export function validateRecipeProjectHookOutput(
         {
           id: 'recipe_run.process_exit',
           status: 'pass',
-          message:
-            'hooks.recipe_run process exited successfully. Validate summary, trace, and artifacts separately with recipe artifacts validate.',
+          message: 'hooks.recipe_run process exited successfully.',
         },
       ],
     };
@@ -415,28 +569,16 @@ export async function assertSlotHealthForRecipeRerun(
 
   const readyIndicator = getProjectField(projectJson, 'health.ready_indicator');
   const parseCmd = getProjectField(projectJson, 'health.parse_health') ?? '';
-  let healthValue = await waitForRecipeReplayHealth(
-    slotVars,
-    healthHook,
-    parseCmd,
-    readyIndicator,
-  );
+  let healthValue = await waitForRecipeReplayHealth(slotVars, healthHook, parseCmd, readyIndicator);
 
   if (recipeReplayHealthReady(healthValue, readyIndicator)) return;
 
   const unlockHook = expandHook('unlock', projectJson, slotVars, projectVars);
   if (unlockHook?.trim()) {
-    await execOnSlot(
-      slotVars,
-      `cd ${shellQuote(slotVars.remoteRepo)} && ${unlockHook} 2>&1`,
-      { timeout: 60_000 },
-    );
-    healthValue = await waitForRecipeReplayHealth(
-      slotVars,
-      healthHook,
-      parseCmd,
-      readyIndicator,
-    );
+    await execOnSlot(slotVars, `cd ${shellQuote(slotVars.remoteRepo)} && ${unlockHook} 2>&1`, {
+      timeout: 60_000,
+    });
+    healthValue = await waitForRecipeReplayHealth(slotVars, healthHook, parseCmd, readyIndicator);
   }
 
   if (!recipeReplayHealthReady(healthValue, readyIndicator)) {
@@ -460,8 +602,7 @@ function resolveWorkerTaskDir(
   const orchRoot = getOrchestratorTaskRoot(run.project, projectJson);
   const relPath = resolveTaskRelDir(run.taskFile, orchRoot);
   if (relPath === null) return null;
-  const taskDirName =
-    resolveProjectTaskDirName(projectJson);
+  const taskDirName = resolveProjectTaskDirName(projectJson);
   return path.join(slotVars.remoteRepo, taskDirName, relPath);
 }
 
@@ -769,13 +910,16 @@ export async function recipeProjectHookRun(
       `hooks.${params.hook} failed with exit code ${result.exitCode}: ${result.stderr || result.stdout}`,
     );
   }
-  const validation = validateRecipeProjectHookOutput(params.hook, result.stdout);
+  let validation = validateRecipeProjectHookOutput(params.hook, result.stdout);
+  if (params.hook === 'recipe_run') {
+    validation = mergeHookValidationResults(
+      validation,
+      await validateRecipeRunArtifactsOnSlot(slotVars, params.artifactsDir!, params.recipePath),
+    );
+  }
   if (validation.status !== 'pass') {
     throw new Error(
-      `hooks.${params.hook} produced invalid Recipe v1 output: ${validation.checks
-        .filter((check) => check.status === 'fail')
-        .map((check) => `${check.id}: ${check.message}`)
-        .join('; ')}`,
+      `hooks.${params.hook} produced invalid Recipe v1 output: ${formatFailedHookValidation(validation)}`,
     );
   }
   return {
@@ -823,11 +967,7 @@ async function executeRecipeRerunJob(args: {
   const startTime = Date.now();
   let slotRecipeRunArtifactsDir = '';
 
-  const complete = (detail: {
-    exitCode: number;
-    error?: string;
-    artifactRoot?: string;
-  }): void => {
+  const complete = (detail: { exitCode: number; error?: string; artifactRoot?: string }): void => {
     emit(Events.SCRIPT_COMPLETE, {
       requestId,
       exitCode: detail.exitCode,
@@ -884,11 +1024,7 @@ async function executeRecipeRerunJob(args: {
         `[recipe] warmth warnings for ${slotId}: ${warmth.warnings.map((w) => w.message).join('; ')}`,
       );
       for (const w of warmth.warnings) {
-        emitRecipeRerunStream(
-          emit,
-          requestId,
-          `⚠ warmth [${w.check}]: ${w.message}\n`,
-        );
+        emitRecipeRerunStream(emit, requestId, `⚠ warmth [${w.check}]: ${w.message}\n`);
       }
     }
 
@@ -944,6 +1080,17 @@ async function executeRecipeRerunJob(args: {
       },
     });
     publishLiveRecipeContext();
+
+    const artifactValidation = await validateRecipeRunArtifactsOnSlot(
+      slotVars,
+      slotRecipeRunArtifactsDir,
+      slotRecipePath,
+    );
+    if (artifactValidation.status !== 'pass') {
+      throw new Error(
+        `Recipe runner produced invalid Recipe v1 artifacts: ${formatFailedHookValidation(artifactValidation)}`,
+      );
+    }
 
     const gatedRecordVideo = recipeRunOptionsForProject(projectJson, {
       playbackSlowMs,

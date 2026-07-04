@@ -18,6 +18,7 @@ import {
   resolveSlotRecipePathCandidates,
   selectExistingRecipePathCandidate,
   validateRecipeProjectHookOutput,
+  validateRecipeRunArtifactPackageOutput,
   validateRecipeRunHookTemplate,
 } from './recipe.js';
 
@@ -203,6 +204,79 @@ test('validateRecipeProjectHookOutput validates action manifest and doctor JSON 
     'fail',
   );
   assert.equal(validateRecipeProjectHookOutput('recipe_run', '').status, 'pass');
+});
+
+test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest package', () => {
+  const recipe = {
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'done',
+        nodes: { done: { action: 'end', status: 'pass' } },
+      },
+    },
+  };
+  const summary = { status: 'pass', passed: 1, failed: 0, total: 1 };
+  const trace = [{ nodeId: 'done', action: 'end', ok: true, status: 'pass' }];
+  const manifest = {
+    version: 1,
+    runStatus: 'pass',
+    artifacts: [
+      { path: 'recipe.json', type: 'recipe' },
+      { path: 'summary.json', type: 'summary' },
+      { path: 'trace.json', type: 'trace' },
+    ],
+  };
+
+  const valid = validateRecipeRunArtifactPackageOutput({
+    artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
+    recipe,
+    summary,
+    trace,
+    manifest,
+  });
+  assert.equal(valid.status, 'pass', JSON.stringify(valid.checks));
+  assert.equal(valid.recipe?.status, 'valid');
+
+  const missingManifest = validateRecipeRunArtifactPackageOutput({
+    artifactPaths: ['recipe.json', 'summary.json', 'trace.json'],
+    recipe,
+    summary,
+    trace,
+    manifest: undefined,
+    readErrors: { 'artifact-manifest.json': 'file missing' },
+  });
+  assert.equal(missingManifest.status, 'fail');
+  assert.ok(
+    missingManifest.checks.some(
+      (check) => check.id === 'recipe_run.artifact.artifact-manifest.json',
+    ),
+  );
+
+  const badRecipe = validateRecipeRunArtifactPackageOutput({
+    artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
+    recipe: undefined,
+    summary,
+    trace,
+    manifest,
+    readErrors: { 'recipe.json': 'Unexpected token' },
+  });
+  assert.equal(badRecipe.status, 'fail');
+  assert.ok(badRecipe.checks.some((check) => check.id === 'recipe_run.artifact.recipe.json'));
+
+  const staleManifest = validateRecipeRunArtifactPackageOutput({
+    artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],
+    recipe,
+    summary,
+    trace,
+    manifest: { ...manifest, artifacts: [{ path: 'missing.png', type: 'screenshot' }] },
+  });
+  assert.equal(staleManifest.status, 'fail');
+  assert.ok(
+    staleManifest.recipe?.findings.some(
+      (finding) => finding.code === 'artifact_manifest.missing_file',
+    ),
+  );
 });
 
 test('resolveSlotRecipePath keeps bundled recipe paths within the current task directory', () => {
@@ -416,10 +490,7 @@ test('canRecipeRerunOnSlot allows warm review-gate and held slots for the reques
     true,
   );
   // A freshly-prepared/idle slot bound to the run after a warm branch switch is accepted.
-  assert.equal(
-    canRecipeRerunOnSlot({ currentRunId: 'run-1', lifecycle: 'ready' }, 'run-1'),
-    true,
-  );
+  assert.equal(canRecipeRerunOnSlot({ currentRunId: 'run-1', lifecycle: 'ready' }, 'run-1'), true);
   // ...but a bound slot that is mid-worker is still rejected.
   assert.equal(
     canRecipeRerunOnSlot(
