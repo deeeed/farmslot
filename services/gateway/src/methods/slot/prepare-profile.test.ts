@@ -10,6 +10,7 @@ import {
   buildDepsSentinelWriteCommand,
   checkPrepareRequirement,
   depsSentinelPath,
+  probeFailureReason,
   resolvePrepareProfile,
   selectPrepareProfile,
 } from './prepare-profile.js';
@@ -195,6 +196,13 @@ test('selectPrepareProfile walks an artifact_available profile to its declared f
   }));
   assert.equal(available.profile.name, 'runway');
   assert.deepEqual(available.fallbacks, []);
+});
+
+test('probeFailureReason prefers stdout but falls back to stderr', () => {
+  assert.equal(probeFailureReason('resolving...\nno artifact for ios@main\n', ''), 'no artifact for ios@main');
+  assert.equal(probeFailureReason('', 'gh not authenticated — run gh auth login\n'), 'gh not authenticated — run gh auth login');
+  assert.equal(probeFailureReason('stdout wins\n', 'stderr ignored\n'), 'stdout wins');
+  assert.equal(probeFailureReason('', '  \n \n'), undefined);
 });
 
 test('checkPrepareRequirement artifact_available fails when no artifact_check hook is declared', async () => {

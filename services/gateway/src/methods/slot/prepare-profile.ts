@@ -190,6 +190,22 @@ export function buildDepsSentinelWriteCommand(repo: string, runtimeDir: string):
   ].join(' && ');
 }
 
+/**
+ * Last meaningful line a failing probe printed, preferring stdout and falling
+ * back to stderr, so requirement failure details carry the probe's own reason
+ * regardless of which stream it reported on.
+ */
+export function probeFailureReason(stdout: string, stderr: string): string | undefined {
+  const lastLine = (text: string) =>
+    text
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .pop()
+      ?.trim();
+  return lastLine(stdout) ?? lastLine(stderr);
+}
+
 export async function checkPrepareRequirement(
   requirement: PrepareRequirement,
   ctx: RequirementCheckContext,
@@ -254,7 +270,7 @@ export async function checkPrepareRequirement(
       if (r.exitCode === 0) {
         return { requirement, ok: true, detail: 'artifact_check passed' };
       }
-      const reason = r.stdout.trim().split('\n').pop()?.trim();
+      const reason = probeFailureReason(r.stdout, r.stderr);
       return {
         requirement,
         ok: false,
