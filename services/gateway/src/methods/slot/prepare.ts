@@ -448,13 +448,15 @@ async function slotPrepareInner(
     step('app', `Selected app ${selectedApp}`);
   }
 
-  // 1. SSH check
-  step('ssh', `Checking ${vars.sshTarget}...`);
-  if (!isLocal(vars.host, vars.machine)) {
+  // 1. Connection check — local slots skip SSH entirely
+  if (isLocal(vars.host, vars.machine)) {
+    step('connect', `Local slot on ${vars.machine}`);
+  } else {
+    step('ssh', `Checking ${vars.sshTarget}...`);
     const r = await execOnSlot(vars, 'echo ok');
     if (r.exitCode !== 0) throw new Error(`Cannot reach ${vars.sshTarget}`);
+    step('ssh', `Connected to ${vars.sshTarget}`);
   }
-  step('ssh', `Connected to ${vars.sshTarget}`);
   await materializeHookSupport();
 
   // 1b. Resolve prepare profile (ADR-037): explicit request → prepare.default →
@@ -1035,6 +1037,16 @@ async function slotPrepareInner(
     checkAborted();
     step('deps', `Installing deps: ${installCmd}`);
     const depsLogPath = phaseLog('deps');
+    let depsLastOutputAt = Date.now();
+    const depsHeartbeat = setInterval(() => {
+      const silenceMs = Date.now() - depsLastOutputAt;
+      if (silenceMs >= 30_000) {
+        const min = Math.floor(silenceMs / 60_000);
+        const sec = Math.floor((silenceMs % 60_000) / 1_000);
+        const elapsed = min > 0 ? `${min}m${sec}s` : `${sec}s`;
+        step('deps', `Still running… (${elapsed} since last output)`);
+      }
+    }, 30_000);
     const installR = await runPrepareCommand(
       vars,
       depsLogPath,
@@ -1045,8 +1057,13 @@ async function slotPrepareInner(
         signal,
         windowLabel,
         phase: 'deps',
+        onOutput: (outputStream, data) => {
+          depsLastOutputAt = Date.now();
+          stream.output(outputStream === 'stderr' ? 'stderr' : 'stdout', data);
+        },
       },
     );
+    clearInterval(depsHeartbeat);
     if (installR.exitCode !== 0) {
       const err: PrepareCommandError = new Error(
         `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,

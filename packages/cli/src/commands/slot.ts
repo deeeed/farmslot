@@ -51,7 +51,13 @@ interface ActionListOptions {
   placement?: string;
 }
 
-function handleStreamEvents(event: EventFrame): void {
+/**
+ * Returns the output string from a script.output event, or null for all other
+ * event types. Callers emit only script.output so prepare's slot.prepare.output
+ * events (which carry identical data) are not printed a second time.
+ */
+export function pickStreamOutput(event: EventFrame): string | null {
+  if (event.event !== 'script.output') return null;
   const payload = event.payload;
   if (
     payload &&
@@ -59,8 +65,14 @@ function handleStreamEvents(event: EventFrame): void {
     'data' in payload &&
     typeof payload.data === 'string'
   ) {
-    process.stderr.write(payload.data);
+    return payload.data;
   }
+  return null;
+}
+
+function handleStreamEvents(event: EventFrame): void {
+  const data = pickStreamOutput(event);
+  if (data !== null) process.stderr.write(data);
 }
 
 function actionParams(id: string, opts: Record<string, unknown>): Record<string, unknown> {
