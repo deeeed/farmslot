@@ -474,7 +474,7 @@ export function registerRecipeCommand(program: Command): void {
     .option('--recipe-path <path>', 'Recipe path on the slot filesystem for recipe_run hooks')
     .option(
       '--artifacts-dir <path>',
-      'Artifact output directory on the slot filesystem for recipe_run hooks',
+      'Artifact output directory on the slot filesystem; required for recipe_run hooks',
     )
     .action(async (hook: RecipeProjectHookName, opts: RecipeProjectHookOptions, cmd: Command) => {
       const globals = cmd.optsWithGlobals();
@@ -511,7 +511,7 @@ export function registerRecipeCommand(program: Command): void {
     .option('--recipe-path <path>', 'Recipe path on the slot filesystem for recipe_run hooks')
     .option(
       '--artifacts-dir <path>',
-      'Artifact output directory on the slot filesystem for recipe_run hooks',
+      'Artifact output directory on the slot filesystem; required for recipe_run hooks',
     )
     .option('--timeout-ms <ms>', 'Hook timeout in milliseconds; defaults to 60000')
     .action(async (hook: RecipeProjectHookName, opts: RecipeProjectHookOptions, cmd: Command) => {

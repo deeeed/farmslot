@@ -257,11 +257,10 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
     readErrors: { 'artifact-manifest.json': 'file missing' },
   });
   assert.equal(missingManifest.status, 'fail');
-  assert.ok(
-    missingManifest.checks.some(
-      (check) => check.id === 'recipe_run.artifact.artifact-manifest.json',
-    ),
+  const missingManifestCheck = missingManifest.checks.find(
+    (check) => check.id === 'recipe_run.artifact.artifact-manifest.json',
   );
+  assert.equal(missingManifestCheck?.message, 'artifact-manifest.json is missing.');
 
   const badRecipe = validateRecipeRunArtifactPackageOutput({
     artifactPaths: ['artifact-manifest.json', 'recipe.json', 'summary.json', 'trace.json'],

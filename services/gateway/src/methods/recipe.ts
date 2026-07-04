@@ -195,10 +195,12 @@ export function validateRecipeRunArtifactPackageOutput(
       `recipe_run.artifact.${requiredPath}`,
       artifactPathSet.has(requiredPath) && !error ? 'pass' : 'fail',
       error
-        ? `${requiredPath} could not be read as JSON: ${error}`
+        ? error === 'file missing'
+          ? `${requiredPath} is missing.`
+          : `${requiredPath} could not be read as JSON: ${error}`
         : artifactPathSet.has(requiredPath)
           ? `${requiredPath} exists.`
-          : `hooks.recipe_run must emit ${requiredPath}.`,
+          : `Recipe run artifact package must include ${requiredPath}.`,
     );
   }
 
@@ -284,8 +286,13 @@ async function readSlotJsonIfPresent(
   maxBuffer = DEFAULT_RECIPE_JSON_MAX_BUFFER_BYTES,
 ): Promise<{ value?: unknown; error?: string }> {
   const script = `file=${shellExpressionForRemotePath(filePath)}; if [ ! -f "$file" ]; then echo __FARMSLOT_MISSING__; exit 0; fi; cat "$file"`;
-  const result = await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer });
-  const text = result.stdout;
+  let text: string;
+  try {
+    text = (await execOnSlot(slotVars, script, { timeout: 10_000, maxBuffer })).stdout;
+  } catch (error) {
+    // A too-large or unreadable artifact is validation evidence, not a gateway crash.
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
   if (text.trim() === '__FARMSLOT_MISSING__') return { error: 'file missing' };
   try {
     return { value: JSON.parse(text) };
@@ -916,6 +923,7 @@ export async function recipeProjectHookRun(
   let validation = validateRecipeProjectHookOutput(params.hook, result.stdout);
   if (params.hook === 'recipe_run') {
     const artifactsDir = params.artifactsDir;
+    // buildRecipeProjectHookCommand enforces this before execution; keep a local guard for TS and tests.
     if (!artifactsDir) throw new Error('hooks.recipe_run execution requires artifactsDir.');
     validation = mergeHookValidationResults(
       validation,
