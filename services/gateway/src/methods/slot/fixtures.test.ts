@@ -3,6 +3,8 @@ import test from 'node:test';
 
 import {
   buildFixtureSyncCommand,
+  buildFixtureSyncTimeoutMessage,
+  FIXTURE_SYNC_TIMEOUT_ENV_VAR,
   LOCAL_FIXTURE_SYNC_TIMEOUT_MS,
   REMOTE_FIXTURE_SYNC_TIMEOUT_MS,
   resolveFixtureSyncTimeoutMs,
@@ -23,7 +25,16 @@ test('buildFixtureSyncCommand omits --domain when no domain is set', () => {
   assert.doesNotMatch(cmd, /--app/);
 });
 
-test('resolveFixtureSyncTimeoutMs uses shorter budget for local slots', () => {
+test('local fixture-sync backstop clears real ~60s single-domain runtime', () => {
+  // Regression: the old 60s local limit killed healthy syncs (exit 124) at their
+  // measured runtime. The backstop must sit well clear of normal completion.
+  assert.ok(
+    LOCAL_FIXTURE_SYNC_TIMEOUT_MS >= 300_000,
+    `expected >= 300000ms backstop, got ${LOCAL_FIXTURE_SYNC_TIMEOUT_MS}`,
+  );
+});
+
+test('resolveFixtureSyncTimeoutMs selects the per-host backstop', () => {
   assert.equal(
     resolveFixtureSyncTimeoutMs({ host: 'localhost', machine: 'macwork' } as never),
     LOCAL_FIXTURE_SYNC_TIMEOUT_MS,
@@ -32,6 +43,32 @@ test('resolveFixtureSyncTimeoutMs uses shorter budget for local slots', () => {
     resolveFixtureSyncTimeoutMs({ host: 'remote.example', machine: 'node-1' } as never),
     REMOTE_FIXTURE_SYNC_TIMEOUT_MS,
   );
+});
+
+test('buildFixtureSyncTimeoutMessage teaches elapsed vs limit, log, re-run, and override var', () => {
+  const msg = buildFixtureSyncTimeoutMessage({
+    slotId: 'macwork-mm2-1',
+    elapsedMs: 60_117,
+    timeoutMs: 300_000,
+    logPath: '/tmp/fixture-refresh/macwork-mm2-1.log',
+    prepareProfile: 'perps',
+  });
+  assert.match(msg, /60117ms/);
+  assert.match(msg, /300000ms/);
+  assert.match(msg, /macwork-mm2-1/);
+  assert.match(msg, /\/tmp\/fixture-refresh\/macwork-mm2-1\.log/);
+  assert.match(msg, /farmslot slot prepare macwork-mm2-1 --prepare-profile perps/);
+  assert.ok(msg.includes(FIXTURE_SYNC_TIMEOUT_ENV_VAR));
+});
+
+test('buildFixtureSyncTimeoutMessage falls back to a <profile> placeholder', () => {
+  const msg = buildFixtureSyncTimeoutMessage({
+    slotId: 'macwork-mm2-1',
+    elapsedMs: 61_000,
+    timeoutMs: 300_000,
+    logPath: '/tmp/x.log',
+  });
+  assert.match(msg, /farmslot slot prepare macwork-mm2-1 --prepare-profile <profile>/);
 });
 
 test('resolveFixtureSyncTimeoutMs honors FARMSLOT_FIXTURE_SYNC_TIMEOUT_MS', () => {

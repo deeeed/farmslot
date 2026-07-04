@@ -542,6 +542,7 @@ async function slotPrepareInner(
       signal,
       windowLabel,
       phase: 'fixtures',
+      prepareProfile: profileName(),
     });
     step('fixtures', `Fixtures synced (log: ${syncLogPath})`);
     fixturesSynced = true;

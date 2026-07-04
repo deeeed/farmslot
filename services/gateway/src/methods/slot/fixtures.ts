@@ -12,10 +12,20 @@ import { execLocal, farmslotRoot, isLocal, loadSlotVars, type SlotVars } from '.
 import { shellQuote } from '../../core/tmux.js';
 
 import { runPrepareCommand } from './prepare-command.js';
-import type { EventEmitter } from './shared.js';
+import type { EventEmitter, PrepareCommandError } from './shared.js';
 
-export const LOCAL_FIXTURE_SYNC_TIMEOUT_MS = 60_000;
+// Backstops against a hung sync-fixtures.sh — not a pacing budget. A real local
+// sync of one domain runs 55-60s on a fast dev machine, so the old 60s local
+// limit killed healthy runs (exit 124) with every file already [OK]. Keep the
+// limit well clear of normal runtime; slow machines override via the env var below.
+export const LOCAL_FIXTURE_SYNC_TIMEOUT_MS = 300_000;
 export const REMOTE_FIXTURE_SYNC_TIMEOUT_MS = 180_000;
+
+/** Override for {@link resolveFixtureSyncTimeoutMs}; surfaced in the timeout error. */
+export const FIXTURE_SYNC_TIMEOUT_ENV_VAR = 'FARMSLOT_FIXTURE_SYNC_TIMEOUT_MS';
+
+// execLocal reports a killed-by-timeout run as exit 124 (see core/exec.ts).
+const TIMEOUT_EXIT_CODE = 124;
 
 function parseFixtureSyncTimeoutMs(raw: string | undefined): number | null {
   const parsed = Number(raw);
@@ -23,11 +33,33 @@ function parseFixtureSyncTimeoutMs(raw: string | undefined): number | null {
 }
 
 export function resolveFixtureSyncTimeoutMs(vars: SlotVars): number {
-  const envOverride = parseFixtureSyncTimeoutMs(process.env.FARMSLOT_FIXTURE_SYNC_TIMEOUT_MS);
+  const envOverride = parseFixtureSyncTimeoutMs(process.env[FIXTURE_SYNC_TIMEOUT_ENV_VAR]);
   if (envOverride) return envOverride;
   return isLocal(vars.host, vars.machine)
     ? LOCAL_FIXTURE_SYNC_TIMEOUT_MS
     : REMOTE_FIXTURE_SYNC_TIMEOUT_MS;
+}
+
+/**
+ * Teach the escape when the sync-fixtures backstop fires (repo invariant: every
+ * error carries the caller's actual next step). The kill is a backstop, not a
+ * verdict — the log usually shows every file already [OK].
+ */
+export function buildFixtureSyncTimeoutMessage(opts: {
+  slotId: string;
+  elapsedMs: number;
+  timeoutMs: number;
+  logPath: string;
+  prepareProfile?: string;
+}): string {
+  const profileFlag = ` --prepare-profile ${opts.prepareProfile ?? '<profile>'}`;
+  const rerun = `farmslot slot prepare ${opts.slotId}${profileFlag}`;
+  return [
+    `Fixture sync timed out after ${opts.elapsedMs}ms (backstop ${opts.timeoutMs}ms) for slot ${opts.slotId} — log: ${opts.logPath}`,
+    `The ${opts.timeoutMs}ms limit is a hung-process backstop, not a failure: check the log — files are often already [OK].`,
+    `Next: re-run prepare for this slot: ${rerun}`,
+    `If this machine is consistently slow, raise the backstop: ${FIXTURE_SYNC_TIMEOUT_ENV_VAR}=<ms> ${rerun}`,
+  ].join('\n');
 }
 
 export function buildFixtureSyncCommand(
@@ -92,6 +124,7 @@ export async function runFixtureSync(
     flowType?: string;
     selectedApp?: string;
     domain?: string;
+    prepareProfile?: string;
   },
 ): Promise<void> {
   const syncCmd = buildFixtureSyncCommand(
@@ -102,6 +135,7 @@ export async function runFixtureSync(
   );
   const timeout = resolveFixtureSyncTimeoutMs(vars);
   const slotIsLocal = isLocal(vars.host, vars.machine);
+  const startedAt = Date.now();
   const syncResult = slotIsLocal
     ? await runFixtureSyncInline(syncCmd, opts.logPath, timeout, opts.signal)
     : await runPrepareCommand(vars, opts.logPath, syncCmd, {
@@ -114,9 +148,19 @@ export async function runFixtureSync(
       });
   if (syncResult.exitCode === 0) return;
 
-  const err = new Error(`Fixture sync failed (exit ${syncResult.exitCode}) — log: ${opts.logPath}`);
-  (err as Error & { failedCommand?: string; failedLogPath?: string }).failedCommand = syncCmd;
-  (err as Error & { failedCommand?: string; failedLogPath?: string }).failedLogPath = opts.logPath;
+  const message =
+    syncResult.exitCode === TIMEOUT_EXIT_CODE
+      ? buildFixtureSyncTimeoutMessage({
+          slotId: opts.slotId,
+          elapsedMs: Date.now() - startedAt,
+          timeoutMs: timeout,
+          logPath: opts.logPath,
+          prepareProfile: opts.prepareProfile,
+        })
+      : `Fixture sync failed (exit ${syncResult.exitCode}) — log: ${opts.logPath}`;
+  const err = new Error(message) as PrepareCommandError;
+  err.failedCommand = syncCmd;
+  err.failedLogPath = opts.logPath;
   throw err;
 }
 
