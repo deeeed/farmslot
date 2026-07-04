@@ -9,11 +9,13 @@ export {
   buildPrepareWindowName,
   buildPrepareWrappedCommand,
   clearStalePrepareProcess,
+  ensureSlotReachable,
   formatPrepareSilence,
   getPrepareDepsTimeoutMs,
   getPreparePreflightTimeoutMs,
   getPrepareSentinelPollTimeoutMs,
   prepareSessionTarget,
+  prepareSilenceNotice,
   shouldEmitPreparePollWarning,
   shouldPreservePrepareWindowOnSuccess,
 } from './prepare-command.js';

@@ -53,9 +53,9 @@ interface ActionListOptions {
 
 /**
  * Returns data only from script.output events; every other event type yields
- * null. slot.prepare.output carries the same bytes as structured prepare
- * metadata for phase consumers, so gating on script.output keeps each line to a
- * single emission.
+ * null. Prepare also emits the raw payload as structured slot.prepare.output
+ * metadata for phase consumers, so gating on script.output keeps each terminal
+ * line to a single emission.
  */
 export function pickStreamOutput(event: EventFrame): string | null {
   if (event.event !== 'script.output') return null;

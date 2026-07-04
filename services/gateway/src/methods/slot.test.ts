@@ -14,11 +14,13 @@ import {
   buildPreparePlaceholderCommand,
   buildPrepareWindowName,
   buildPrepareWrappedCommand,
+  ensureSlotReachable,
   formatPrepareSilence,
   getPrepareDepsTimeoutMs,
   getPreparePreflightTimeoutMs,
   getPrepareSentinelPollTimeoutMs,
   prepareSessionTarget,
+  prepareSilenceNotice,
   refreshStaleBranchDetail,
   refreshSyncUsesIdleReset,
   shouldEmitPreparePollWarning,
@@ -102,6 +104,74 @@ test('formatPrepareSilence omits minutes under 60s and includes them above', () 
   assert.equal(formatPrepareSilence(60_000), '1m0s');
   assert.equal(formatPrepareSilence(65_000), '1m5s');
   assert.equal(formatPrepareSilence(150_000), '2m30s');
+});
+
+test('prepareSilenceNotice stays quiet until the threshold then reports elapsed silence', () => {
+  assert.equal(prepareSilenceNotice(0), null);
+  assert.equal(prepareSilenceNotice(29_999), null);
+  assert.equal(prepareSilenceNotice(30_000), 'Still running… (30s since last output)');
+  assert.equal(prepareSilenceNotice(150_000), 'Still running… (2m30s since last output)');
+});
+
+test('ensureSlotReachable reports a local slot without opening SSH', async () => {
+  const steps: Array<[string, string]> = [];
+  let probed = 0;
+  await ensureSlotReachable(
+    makeSlotVars({ slotId: 'core-1', session: 'core-1', host: 'localhost', machine: 'macwork' }),
+    (name, detail) => steps.push([name, detail]),
+    async () => {
+      probed += 1;
+      return { exitCode: 0 };
+    },
+  );
+
+  assert.deepEqual(steps, [['connect', 'Local slot on macwork']]);
+  assert.equal(probed, 0);
+});
+
+test('ensureSlotReachable probes and reports a reachable remote slot', async () => {
+  const steps: Array<[string, string]> = [];
+  const probeCalls: string[] = [];
+  await ensureSlotReachable(
+    makeSlotVars({
+      slotId: 'core-2',
+      session: 'core-2',
+      host: '10.0.0.5',
+      machine: 'gohan',
+      sshTarget: 'deeeed@gohan',
+    }),
+    (name, detail) => steps.push([name, detail]),
+    async (_vars, cmd) => {
+      probeCalls.push(cmd);
+      return { exitCode: 0 };
+    },
+  );
+
+  assert.deepEqual(steps, [
+    ['ssh', 'Checking deeeed@gohan...'],
+    ['ssh', 'Connected to deeeed@gohan'],
+  ]);
+  assert.deepEqual(probeCalls, ['echo ok']);
+});
+
+test('ensureSlotReachable throws with the ssh target when a remote slot is unreachable', async () => {
+  const steps: Array<[string, string]> = [];
+  await assert.rejects(
+    ensureSlotReachable(
+      makeSlotVars({
+        slotId: 'core-3',
+        session: 'core-3',
+        host: '10.0.0.6',
+        machine: 'gohan',
+        sshTarget: 'deeeed@gohan',
+      }),
+      (name, detail) => steps.push([name, detail]),
+      async () => ({ exitCode: 255 }),
+    ),
+    /Cannot reach deeeed@gohan/,
+  );
+
+  assert.deepEqual(steps, [['ssh', 'Checking deeeed@gohan...']]);
 });
 
 test('buildPreparePlaceholderCommand avoids GNU-only sleep infinity', () => {

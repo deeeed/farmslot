@@ -57,9 +57,10 @@ import { bindRunToSlot } from './prepare-bind.js';
 import {
   buildDevServerPortCleanup,
   clearStalePrepareProcess,
-  formatPrepareSilence,
+  ensureSlotReachable,
   PREPARE_DEPS_TIMEOUT_MS,
   PREPARE_PREFLIGHT_TIMEOUT_MS,
+  prepareSilenceNotice,
   runPrepareCommand,
 } from './prepare-command.js';
 import {
@@ -450,14 +451,7 @@ async function slotPrepareInner(
   }
 
   // 1. Connection check — local slots skip SSH entirely
-  if (isLocal(vars.host, vars.machine)) {
-    step('connect', `Local slot on ${vars.machine}`);
-  } else {
-    step('ssh', `Checking ${vars.sshTarget}...`);
-    const r = await execOnSlot(vars, 'echo ok');
-    if (r.exitCode !== 0) throw new Error(`Cannot reach ${vars.sshTarget}`);
-    step('ssh', `Connected to ${vars.sshTarget}`);
-  }
+  await ensureSlotReachable(vars, step);
   await materializeHookSupport();
 
   // 1b. Resolve prepare profile (ADR-037): explicit request → prepare.default →
@@ -1040,10 +1034,8 @@ async function slotPrepareInner(
     const depsLogPath = phaseLog('deps');
     let depsLastOutputAt = Date.now();
     const depsHeartbeat = setInterval(() => {
-      const silenceMs = Date.now() - depsLastOutputAt;
-      if (silenceMs >= 30_000) {
-        step('deps', `Still running… (${formatPrepareSilence(silenceMs)} since last output)`);
-      }
+      const notice = prepareSilenceNotice(Date.now() - depsLastOutputAt);
+      if (notice) step('deps', notice);
     }, 30_000);
     let installR;
     try {
