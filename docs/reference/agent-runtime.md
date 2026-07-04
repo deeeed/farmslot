@@ -54,7 +54,7 @@ farmslot-agent recipe-quality build \
   --output artifacts/recipe-quality.json
 ```
 
-The builder preserves additive metadata under `extra` while protecting the required protocol fields from being overwritten.
+The builder preserves additive metadata under `extra` while protecting the required protocol fields from being overwritten. Use `--input -` to read compact JSON from stdin.
 
 ## Compatibility
 

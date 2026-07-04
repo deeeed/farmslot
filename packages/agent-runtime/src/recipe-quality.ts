@@ -1,6 +1,8 @@
 import {
   isRecipeQualityArtifact,
+  RECIPE_QUALITY_ARTIFACT_SOURCES,
   RECIPE_QUALITY_ARTIFACT_VERSION,
+  RECIPE_QUALITY_VERDICTS,
   type RecipeQualityArtifact,
   type RecipeQualityArtifactSource,
   type RecipeQualityEvidenceMode,
@@ -47,6 +49,18 @@ const CORE_ARTIFACT_KEYS = new Set([
   'meta',
 ]);
 
+function assertRecipeQualityVerdict(value: RecipeQualityVerdict): void {
+  if (!RECIPE_QUALITY_VERDICTS.includes(value)) {
+    throw new TypeError(`verdict must be one of: ${RECIPE_QUALITY_VERDICTS.join(', ')}.`);
+  }
+}
+
+function assertRecipeQualityProducer(value: RecipeQualityArtifactSource): void {
+  if (!RECIPE_QUALITY_ARTIFACT_SOURCES.includes(value)) {
+    throw new TypeError(`producer must be one of: ${RECIPE_QUALITY_ARTIFACT_SOURCES.join(', ')}.`);
+  }
+}
+
 function assertStringArray(name: string, value: string[]): void {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
     throw new TypeError(`${name} must be an array of strings.`);
@@ -76,6 +90,7 @@ function validateExtraKeys(extra: Record<string, unknown> | undefined): void {
 export function buildRecipeQualityArtifact(
   input: RecipeQualityArtifactBuilderInput,
 ): BuiltRecipeQualityArtifact {
+  assertRecipeQualityVerdict(input.verdict);
   assertStringArray('reasons', input.reasons);
   if (input.reasons.length === 0) {
     throw new TypeError('reasons must include at least one reason.');
@@ -86,6 +101,7 @@ export function buildRecipeQualityArtifact(
   validateExtraKeys(input.extra);
 
   const producer = input.producer ?? 'worker';
+  assertRecipeQualityProducer(producer);
   const fallbackSource = input.fallbackSource;
   const artifact: BuiltRecipeQualityArtifact = {
     ...(input.extra ?? {}),

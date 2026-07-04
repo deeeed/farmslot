@@ -92,6 +92,82 @@ async function main() {
   assert.equal(stdoutArtifact.training_fields.proof_mode, 'trace');
   assert.equal(isRecipeQualityArtifact(stdoutArtifact), true);
 
+  const mergeInputPath = path.join(dir, 'merge-input.json');
+  writeFileSync(
+    mergeInputPath,
+    JSON.stringify({
+      verdict: 'pass',
+      reasons: ['Merge keeps file-provided training metadata.'],
+      trainingFields: { project: 'farmslot-farm', flow_type: 'fix-bug', proof_mode: 'logs' },
+    }),
+  );
+  result = spawnSync(
+    process.execPath,
+    [cli, 'recipe-quality', 'build', '--input', mergeInputPath, '--proof-mode', 'trace'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const mergedArtifact = JSON.parse(result.stdout);
+  assert.equal(mergedArtifact.training_fields.project, 'farmslot-farm');
+  assert.equal(mergedArtifact.training_fields.flow_type, 'fix-bug');
+  assert.equal(mergedArtifact.training_fields.proof_mode, 'trace');
+  assert.equal(isRecipeQualityArtifact(mergedArtifact), true);
+
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'nope',
+        reasons: ['Invalid verdict is rejected.'],
+      }),
+    /verdict must be one of/,
+  );
+
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
+        reasons: ['Core keys must not be overridden.'],
+        extra: { version: 99 },
+      }),
+    /extra.version cannot override/,
+  );
+
+  result = spawnSync(
+    process.execPath,
+    [cli, 'recipe-quality', 'build', '--verdict', 'nope', '--reason', 'Invalid verdict.'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /verdict must be one of/);
+
+  const typoInputPath = path.join(dir, 'typo-input.json');
+  writeFileSync(
+    typoInputPath,
+    JSON.stringify({
+      verdict: 'pass',
+      reasons: ['Typos should fail loudly.'],
+      sugested_recipe_delta: ['typo'],
+    }),
+  );
+  result = spawnSync(process.execPath, [cli, 'recipe-quality', 'build', '--input', typoInputPath], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unknown key\(s\): sugested_recipe_delta/);
+
+  const badProducerInputPath = path.join(dir, 'bad-producer-input.json');
+  writeFileSync(
+    badProducerInputPath,
+    JSON.stringify({ verdict: 'pass', reasons: ['Bad producer.'], producer: 123 }),
+  );
+  result = spawnSync(
+    process.execPath,
+    [cli, 'recipe-quality', 'build', '--input', badProducerInputPath],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /producer must be one of/);
+
   process.stdout.write('agent-runtime recipe-quality builder tests: ok\n');
 }
 

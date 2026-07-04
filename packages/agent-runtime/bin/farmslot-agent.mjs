@@ -51,46 +51,94 @@ function pushFlagValue(target, key, value) {
   else current.push(value);
 }
 
+const RECIPE_QUALITY_INPUT_KEYS = new Set([
+  'verdict',
+  'reasons',
+  'compact',
+  'betterVersionGuidance',
+  'better_version_guidance',
+  'dimensions',
+  'structuralFindings',
+  'structural_findings',
+  'contextualFindings',
+  'contextual_findings',
+  'suggestedRecipeDelta',
+  'suggested_recipe_delta',
+  'trainingFields',
+  'training_fields',
+  'producer',
+  'fallbackUsed',
+  'fallback_used',
+  'fallbackSource',
+  'fallback_source',
+  'legacyTask',
+  'legacy_task',
+  'artifactRequired',
+  'artifact_required',
+  'sourceSignals',
+  'source_signals',
+  'meta',
+  'extra',
+]);
+
+function validateRecipeQualityInputKeys(input) {
+  const unknown = Object.keys(input).filter((key) => !RECIPE_QUALITY_INPUT_KEYS.has(key));
+  if (unknown.length > 0) {
+    throw new Error(`recipe-quality input contains unknown key(s): ${unknown.join(', ')}`);
+  }
+}
+
+function mergeRecipeQualityInputs(fileInput, flagInput) {
+  return {
+    ...fileInput,
+    ...flagInput,
+    trainingFields: {
+      ...(fileInput.trainingFields ?? {}),
+      ...(flagInput.trainingFields ?? {}),
+    },
+  };
+}
+
 function parseRecipeQualityBuildArgs(args) {
   const parsed = { input: null, output: null, flags: {} };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
-    const next = () => {
+    const next = (flag) => {
       const value = args[++i];
-      if (!value) usage(2);
+      if (value === undefined) throw new Error(`${flag} requires a value`);
       return value;
     };
-    if (arg === '--input') parsed.input = next();
+    if (arg === '--input') parsed.input = next(arg);
     else if (arg.startsWith('--input=')) parsed.input = arg.slice('--input='.length);
-    else if (arg === '--output') parsed.output = next();
+    else if (arg === '--output') parsed.output = next(arg);
     else if (arg.startsWith('--output=')) parsed.output = arg.slice('--output='.length);
-    else if (arg === '--verdict') parsed.flags.verdict = next();
+    else if (arg === '--verdict') parsed.flags.verdict = next(arg);
     else if (arg.startsWith('--verdict=')) parsed.flags.verdict = arg.slice('--verdict='.length);
-    else if (arg === '--reason') pushFlagValue(parsed.flags, 'reasons', next());
+    else if (arg === '--reason') pushFlagValue(parsed.flags, 'reasons', next(arg));
     else if (arg.startsWith('--reason='))
       pushFlagValue(parsed.flags, 'reasons', arg.slice('--reason='.length));
-    else if (arg === '--guidance') pushFlagValue(parsed.flags, 'betterVersionGuidance', next());
+    else if (arg === '--guidance') pushFlagValue(parsed.flags, 'betterVersionGuidance', next(arg));
     else if (arg.startsWith('--guidance='))
       pushFlagValue(parsed.flags, 'betterVersionGuidance', arg.slice('--guidance='.length));
-    else if (arg === '--delta') pushFlagValue(parsed.flags, 'suggestedRecipeDelta', next());
+    else if (arg === '--delta') pushFlagValue(parsed.flags, 'suggestedRecipeDelta', next(arg));
     else if (arg.startsWith('--delta='))
       pushFlagValue(parsed.flags, 'suggestedRecipeDelta', arg.slice('--delta='.length));
     else if (arg === '--proof-mode')
-      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, proof_mode: next() };
+      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, proof_mode: next(arg) };
     else if (arg.startsWith('--proof-mode='))
       parsed.flags.trainingFields = {
         ...parsed.flags.trainingFields,
         proof_mode: arg.slice('--proof-mode='.length),
       };
     else if (arg === '--project')
-      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, project: next() };
+      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, project: next(arg) };
     else if (arg.startsWith('--project='))
       parsed.flags.trainingFields = {
         ...parsed.flags.trainingFields,
         project: arg.slice('--project='.length),
       };
     else if (arg === '--flow-type')
-      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, flow_type: next() };
+      parsed.flags.trainingFields = { ...parsed.flags.trainingFields, flow_type: next(arg) };
     else if (arg.startsWith('--flow-type='))
       parsed.flags.trainingFields = {
         ...parsed.flags.trainingFields,
@@ -98,17 +146,17 @@ function parseRecipeQualityBuildArgs(args) {
       };
     else if (arg === '--claim-is-visual')
       parsed.flags.trainingFields = { ...parsed.flags.trainingFields, claim_is_visual: true };
-    else if (arg === '--producer') parsed.flags.producer = next();
+    else if (arg === '--producer') parsed.flags.producer = next(arg);
     else if (arg.startsWith('--producer=')) parsed.flags.producer = arg.slice('--producer='.length);
     else if (arg === '--artifact-required')
-      parsed.flags.artifactRequired = parseBooleanFlag(arg, next());
+      parsed.flags.artifactRequired = parseBooleanFlag(arg, next(arg));
     else if (arg.startsWith('--artifact-required='))
       parsed.flags.artifactRequired = parseBooleanFlag(
         arg,
         arg.slice('--artifact-required='.length),
       );
     else if (arg === '--legacy-task') parsed.flags.legacyTask = true;
-    else if (arg === '--source-signal') pushFlagValue(parsed.flags, 'sourceSignals', next());
+    else if (arg === '--source-signal') pushFlagValue(parsed.flags, 'sourceSignals', next(arg));
     else if (arg.startsWith('--source-signal='))
       pushFlagValue(parsed.flags, 'sourceSignals', arg.slice('--source-signal='.length));
     else usage(2);
@@ -120,6 +168,7 @@ function normalizeRecipeQualityInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('recipe-quality input must be a JSON object');
   }
+  validateRecipeQualityInputKeys(input);
   return {
     verdict: input.verdict,
     reasons: input.reasons ?? input.compact?.reasons,
@@ -146,7 +195,7 @@ function normalizeRecipeQualityInput(input) {
 async function buildRecipeQuality(args) {
   const parsed = parseRecipeQualityBuildArgs(args);
   const fileInput = parsed.input ? normalizeRecipeQualityInput(readJsonInput(parsed.input)) : {};
-  const input = { ...fileInput, ...parsed.flags };
+  const input = mergeRecipeQualityInputs(fileInput, parsed.flags);
   const { buildRecipeQualityArtifact } = await import('../dist/index.js');
   const artifact = buildRecipeQualityArtifact(input);
   const text = `${JSON.stringify(artifact, null, 2)}\n`;
