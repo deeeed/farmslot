@@ -59,14 +59,14 @@ Template / skill checklist
         ↓
 Worker writes artifacts/
         ↓
-./mark complete --mark-last   ← canonical script: @farmslot/skills
+./mark complete --mark-last   ← canonical script: @farmslot/agent-runtime
         ↓
 SIGNAL.json (terminal)
         ↓
 Farmslot: monitor + publication gate reads pr-description / review / …
 ```
 
-Built-in defaults live in [`worker-terminal-contract.cjs`](https://github.com/deeeed/farmslot/blob/main/packages/skills/scripts/worker-terminal-contract.cjs). Farmslot farms may override per flow in `project.json` → `worker_terminal`; dispatched runs also get `inputs/worker-terminal-contract.json`.
+Built-in defaults live in [`worker-terminal-contract.cjs`](https://github.com/deeeed/farmslot/blob/main/packages/agent-runtime/scripts/worker-terminal-contract.cjs). Farmslot farms may override per flow in `project.json` -> `worker_terminal`; dispatched runs also get `inputs/worker-terminal-contract.json`.
 
 ## Related
 

@@ -17,6 +17,8 @@ Projects need a **declarative, project-owned contract** for required terminal ou
 
 **User-facing source of truth:** [Finish a worker run](../../apps/docs/docs/reference/worker-run-finish.md) — a one-page checklist (artifacts + `./mark`) that applies **inside Farmslot and in standalone agentic skills** (consensys-skills / `@farmslot/skills`). The machinery below is for Farmslot farms that want overrides; most teams copy the template snippet from that page and do not touch `worker_terminal`.
 
+Implementation note: the reusable task-local runtime now lives in `@farmslot/agent-runtime`. `@farmslot/skills` installs/teaches the workflow and keeps temporary compatibility shims, but the canonical `mark`, `SIGNAL.json`, terminal-contract, and artifact-check scripts are runtime concerns.
+
 ## Decision
 
 ### Single source of truth: `project.json` → `worker_terminal`
@@ -37,7 +39,7 @@ At task write, the gateway resolves the contract for `run.flowType` + `run.mode`
 inputs/worker-terminal-contract.json
 ```
 
-`./mark`, `check-task-artifact-contract.mjs`, and the run monitor read this file for the run. Template provenance already captures which template rendered the task; the terminal contract captures what must exist before the run can close.
+`./mark`, `check-task-artifact-contract.mjs`, and the run monitor read this file for the run. Template provenance already captures which template rendered the task; the terminal contract captures what must exist before the run can close. Farmslot task templates should reference `packages/agent-runtime/scripts/*` or an installed `farmslot-agent` entry point for new runtime wiring.
 
 ### Three enforcement layers
 

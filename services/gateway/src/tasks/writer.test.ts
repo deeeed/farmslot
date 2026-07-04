@@ -407,7 +407,7 @@ test('writeTaskFile allows comparison siblings with different variants', async (
 test('checklistMarkerHelperPath keeps remote helper shell-expandable', () => {
   assert.equal(
     checklistMarkerHelperPath('~/farmslot-node'),
-    '$HOME/farmslot-node/packages/skills/scripts/mark-checklist-step.cjs',
+    '$HOME/farmslot-node/packages/agent-runtime/scripts/mark-checklist-step.cjs',
   );
 });
 

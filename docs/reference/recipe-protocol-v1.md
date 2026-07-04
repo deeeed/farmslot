@@ -414,6 +414,10 @@ Every v1 run writes `artifact-manifest.json`:
 
 `artifact-manifest.json` intentionally uses `version`, not `schema_version`, to match the shipped typed artifact-manifest validator. Top-level required fields: `version` (must equal `1`) and `artifacts`. Optional top-level fields: `runStatus` (`pass`, `fail`, or `unknown`) and `provenance.runner`; when `provenance.runner` is present, it requires `source` and `git_ref`, with optional `name` and `version`. Per-artifact required fields: `path`, `type`. Recommended fields: `category`, `label`, `nodeId`, `proofTarget`, `covers`, and `mimeType`. Use `proofTarget` for the primary single proof target; use `covers` when one artifact supports multiple targets.
 
+The v1 package contract has a strict required core and an open extension space. Required fields stay strict, unknown artifact `type` values produce warnings rather than hard failures, and extra additive metadata may be included on the manifest or artifact entries when consumers can ignore it safely. Runners must not replace required core fields with extension-only metadata.
+
+Task closeout quality is represented by `RecipeQualityArtifact` when a run emits `artifacts/recipe-quality.json`. The shared validator is exported from `@farmslot/protocol`; task-local enforcement lives in [`@farmslot/agent-runtime`](agent-runtime.md), not in `@farmslot/skills`.
+
 ## 14. Runner contract
 
 A v1 runner must:

@@ -5,6 +5,7 @@ All notable changes to `@farmslot/protocol` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Export the shared `RecipeQualityArtifact` validator from protocol for gateway and agent-runtime use.
 
 ## 0.7.3 - 2026-07-03
 

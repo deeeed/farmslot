@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Owner:** Arthur / Farmslot
-**Last updated:** 2026-05-30
+**Last updated:** 2026-07-04
 **Stale by:** 2026-08-30
 **Relates to:** [ADR-019](019-recipe-graph-visualization.md), [ADR-026](026-self-improvement-recursive-loop.md), [ADR-030](030-replay-provenance-and-reference-evals.md), [Recipe Protocol v1 Spec](../reference/recipe-protocol-v1.md), [Generic Recipe Protocol v1 PRD](../plans/generic-recipe-protocol.md)
 
@@ -82,9 +82,16 @@ A recipe may override `record` when setup itself is the claim.
 
 A v1 validator must reject or warn on unresolved flow refs, missing catalogs, invalid params, recursive/cyclic calls beyond the allowed depth, output namespace collisions, invalid phases/record values, missing proof-target mapping for proof/assert/evidence nodes, missing evidence for visible proof targets, unproven `ensure_*` postconditions, and malformed nested trace/artifact links.
 
+## D-034-06: Runtime helpers are not skills
+
+Protocol-owned quality contracts, including `RecipeQualityArtifact`, live in `@farmslot/protocol` so Gateway, runners, and task-local checks share the same validator. Runtime enforcement for task directories lives in `@farmslot/agent-runtime`: `mark`, `SIGNAL.json`, worker terminal contract resolution, and artifact contract checks.
+
+`@farmslot/skills` remains the instruction and installer package. It may ship compatibility shims for one migration window, but it is not the long-term owner for reusable runtime scripts.
+
 ## Consequences
 
 - `/recipe-cook` and `/recipe-quality` become authoring/review helpers over the protocol, not the protocol source of truth.
+- Task-local closeout helpers can be reused by skills-only projects through `@farmslot/agent-runtime` without installing Gateway or Command Center.
 - Example App and other project runners can migrate task-specific validation into reusable domain start-state flows and concise AC proof flows.
 - Command Center, eval packages, and replay tooling can reason about proof windows and setup trace consistently.
 - Implementation should update the canonical spec, schema/types, validator, harness behavior, and examples before adding large project-specific flow catalogs.

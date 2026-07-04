@@ -30,7 +30,13 @@ const packages = [
     name: '@farmslot/recipe-harness',
     dir: 'packages/recipe-harness',
     publicDoc: 'https://farmslot.io/docs/architecture/recipe-harness',
-    requiredFiles: ['README.md', 'LICENSE', 'bin/farmslot-recipe.mjs', 'src/index.ts', 'src/core/runner.ts'],
+    requiredFiles: [
+      'README.md',
+      'LICENSE',
+      'bin/farmslot-recipe.mjs',
+      'src/index.ts',
+      'src/core/runner.ts',
+    ],
     packRequiredFiles: [
       'README.md',
       'LICENSE',
@@ -41,6 +47,32 @@ const packages = [
     ],
     importCheck:
       "const m = await import('./packages/recipe-harness/dist/cli/index.js'); if (typeof m.runRecipeHarnessCli !== 'function') throw new Error('missing runRecipeHarnessCli export');",
+  },
+  {
+    name: '@farmslot/agent-runtime',
+    dir: 'packages/agent-runtime',
+    publicDoc: 'https://farmslot.io/docs/reference/agent-runtime',
+    requiredFiles: [
+      'README.md',
+      'LICENSE',
+      'bin/farmslot-agent.mjs',
+      'src/index.ts',
+      'scripts/mark-checklist-step.cjs',
+      'scripts/worker-terminal-contract.cjs',
+      'scripts/check-task-artifact-contract.mjs',
+    ],
+    packRequiredFiles: [
+      'README.md',
+      'LICENSE',
+      'bin/farmslot-agent.mjs',
+      'dist/index.js',
+      'dist/index.d.ts',
+      'scripts/mark-checklist-step.cjs',
+      'scripts/worker-terminal-contract.cjs',
+      'scripts/check-task-artifact-contract.mjs',
+    ],
+    importCheck:
+      "const m = await import('./packages/agent-runtime/dist/index.js'); if (m.AGENT_RUNTIME_PACKAGE !== '@farmslot/agent-runtime') throw new Error('missing agent-runtime root export');",
   },
   {
     name: '@farmslot/expo-recipe',

@@ -133,7 +133,7 @@ Farmslot-rendered tasks include a tiny `mark` helper beside `TASK.md`:
 Role-specific signal files use the same helper with an explicit task/signal path:
 
 ```bash
-node {{farmslot_dir}}/packages/skills/scripts/mark-checklist-step.cjs \
+node {{farmslot_dir}}/packages/agent-runtime/scripts/mark-checklist-step.cjs \
   {{TASK_DIR}}/SELF-REVIEW.md {{TASK_DIR}}/SELF-REVIEW-SIGNAL.json \
   complete --mark-last
 ```

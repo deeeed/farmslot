@@ -933,7 +933,7 @@ export async function writeTaskFile(
 }
 
 export function checklistMarkerHelperPath(farmslotDirForSlot: string): string {
-  return `${farmslotDirForSlot}/packages/skills/scripts/mark-checklist-step.cjs`.replace(
+  return `${farmslotDirForSlot}/packages/agent-runtime/scripts/mark-checklist-step.cjs`.replace(
     /^~(?=\/)/,
     '$HOME',
   );
