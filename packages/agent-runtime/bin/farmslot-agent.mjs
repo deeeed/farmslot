@@ -88,13 +88,19 @@ function validateRecipeQualityInputKeys(input) {
   }
 }
 
+function optionalObject(name, value) {
+  if (value == null) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  throw new Error(`${name} must be a JSON object when provided`);
+}
+
 function mergeRecipeQualityInputs(fileInput, flagInput) {
   return {
     ...fileInput,
     ...flagInput,
     trainingFields: {
-      ...(fileInput.trainingFields ?? {}),
-      ...(flagInput.trainingFields ?? {}),
+      ...optionalObject('trainingFields', fileInput.trainingFields),
+      ...optionalObject('trainingFields', flagInput.trainingFields),
     },
   };
 }

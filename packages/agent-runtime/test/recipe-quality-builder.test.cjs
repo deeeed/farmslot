@@ -132,6 +132,26 @@ async function main() {
     /extra.version cannot override/,
   );
 
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
+        reasons: ['Training fields must be an object.'],
+        trainingFields: 'oops',
+      }),
+    /trainingFields must be a JSON object/,
+  );
+
+  assert.throws(
+    () =>
+      buildRecipeQualityArtifact({
+        verdict: 'pass',
+        reasons: ['Extra must be an object.'],
+        extra: 'oops',
+      }),
+    /extra must be a JSON object/,
+  );
+
   result = spawnSync(
     process.execPath,
     [cli, 'recipe-quality', 'build', '--verdict', 'nope', '--reason', 'Invalid verdict.'],
@@ -139,6 +159,31 @@ async function main() {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /verdict must be one of/);
+
+  result = spawnSync(
+    process.execPath,
+    [
+      cli,
+      'recipe-quality',
+      'build',
+      '--verdict',
+      'pass',
+      '--reason',
+      'Bad proof.',
+      '--proof-mode',
+      'bogus',
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /trainingFields\.proof_mode must be one of/);
+
+  result = spawnSync(process.execPath, [cli, 'recipe-quality', 'build', '--input', '-'], {
+    encoding: 'utf8',
+    input: JSON.stringify({ verdict: 'pass', reasons: ['bad'], trainingFields: 'oops' }),
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /trainingFields must be a JSON object/);
 
   const typoInputPath = path.join(dir, 'typo-input.json');
   writeFileSync(

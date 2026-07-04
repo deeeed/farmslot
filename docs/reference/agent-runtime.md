@@ -54,7 +54,7 @@ farmslot-agent recipe-quality build \
   --output artifacts/recipe-quality.json
 ```
 
-The builder preserves additive metadata under `extra` while protecting the required protocol fields from being overwritten. Use `--input -` to read compact JSON from stdin.
+The builder preserves additive metadata under `extra` while protecting the required protocol fields from being overwritten. Use `--input -` to read compact JSON from stdin. CLI flags override file-provided scalar and array fields; `trainingFields` merge field-by-field so flags can refine proof metadata without dropping project or flow metadata.
 
 ## Compatibility
 

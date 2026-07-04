@@ -2,6 +2,7 @@ import {
   isRecipeQualityArtifact,
   RECIPE_QUALITY_ARTIFACT_SOURCES,
   RECIPE_QUALITY_ARTIFACT_VERSION,
+  RECIPE_QUALITY_PROOF_MODES,
   RECIPE_QUALITY_VERDICTS,
   type RecipeQualityArtifact,
   type RecipeQualityArtifactSource,
@@ -74,7 +75,28 @@ function defaultFallbackUsed(
   return fallbackSource != null || producer.startsWith('fallback:');
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function assertOptionalPlainRecord(name: string, value: unknown): void {
+  if (value != null && !isPlainRecord(value)) {
+    throw new TypeError(`${name} must be a JSON object when provided.`);
+  }
+}
+
+function validateTrainingFields(value: RecipeQualityArtifact['training_fields'] | undefined): void {
+  assertOptionalPlainRecord('trainingFields', value);
+  const proofMode = value?.proof_mode;
+  if (proofMode != null && !RECIPE_QUALITY_PROOF_MODES.includes(proofMode)) {
+    throw new TypeError(
+      `trainingFields.proof_mode must be one of: ${RECIPE_QUALITY_PROOF_MODES.join(', ')}.`,
+    );
+  }
+}
+
 function validateExtraKeys(extra: Record<string, unknown> | undefined): void {
+  assertOptionalPlainRecord('extra', extra);
   if (!extra) return;
   for (const key of Object.keys(extra)) {
     if (CORE_ARTIFACT_KEYS.has(key)) {
@@ -98,6 +120,8 @@ export function buildRecipeQualityArtifact(
   assertStringArray('betterVersionGuidance', input.betterVersionGuidance ?? []);
   assertStringArray('suggestedRecipeDelta', input.suggestedRecipeDelta ?? []);
   assertStringArray('sourceSignals', input.sourceSignals ?? ['recipe-quality.json']);
+  assertOptionalPlainRecord('dimensions', input.dimensions);
+  validateTrainingFields(input.trainingFields);
   validateExtraKeys(input.extra);
 
   const producer = input.producer ?? 'worker';
