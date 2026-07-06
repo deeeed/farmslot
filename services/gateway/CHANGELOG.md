@@ -12,6 +12,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 - fix: deps phase now streams install output to the CLI in real time; previously the tail-poll ran but output was silently dropped because no `onOutput` callback was wired.
 - feat: deps phase emits a `[deps] Still running… (Xm since last output)` heartbeat step every 30 s of silence so long yarn installs remain visible.
 - fix: raise the local fixture-sync backstop from 60 s to 5 min (it sat on top of the real 55–60 s single-domain runtime, killing healthy prepares at exit 124), and, on timeout, teach the escape — elapsed vs limit, log path, the exact `farmslot slot prepare` re-run, and the working override (add `FARMSLOT_FIXTURE_SYNC_TIMEOUT_MS` to the gateway `.env` and restart, since a CLI-side env prefix never reaches the running gateway).
+- fix: restart recovery only skips prepare when nothing was terminated and the recorded prepare sub-steps show it completed its phases (a terminal `health` sub-step). Termination of a live in-flight prepare process is now reported precisely by `clearStalePrepareProcess`, so a health probe against artifacts a just-killed preflight was still refreshing no longer marks a half-prepared slot healthy and advances it to dispatch — recovery resets prepare and re-runs it instead.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.2.1 - 2026-07-03

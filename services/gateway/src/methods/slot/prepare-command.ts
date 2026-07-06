@@ -48,12 +48,22 @@ function preparePollErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+// Emitted on stdout by the cleanup script when it terminates the tracked
+// in-flight preflight (the pid from PID_FILE, still alive and confirmed to be a
+// preflight process). Recovery reads this to decide whether a post-kill health
+// check can be trusted: a slot just stripped of its preflight cannot be declared
+// healthy from leftover artifacts. It is intentionally NOT emitted from the
+// fallback pgrep sweep — under `bash -c`, that sweep's own while-loop subshell
+// matches the pattern embedded in the script's argv, which would self-signal a
+// kill that never touched a real prepare process.
+const PREPARE_KILLED_MARKER = '__FARMSLOT_KILLED_PREPARE__';
+
 export async function clearStalePrepareProcess(
   vars: SlotVars,
   pidFile: string,
   label: string,
   cleanupPatterns?: string[],
-): Promise<void> {
+): Promise<boolean> {
   const projectPreflight = `${farmslotRoot}/projects/${vars.projectName}/setup/preflight.sh ${vars.slotId}`;
   const fallbackPatterns = [
     projectPreflight,
@@ -99,6 +109,7 @@ kill_matching_trees() {
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
   CMD=$(ps -p "$PID" -o command= 2>/dev/null || true)
   if echo "$CMD" | grep -q 'preflight.sh'; then
+    echo ${shellQuote(PREPARE_KILLED_MARKER)}
     kill_tree "$PID" TERM
     sleep 2
     kill_tree "$PID" KILL
@@ -108,10 +119,13 @@ ${fallbackKills}
 rm -f "$PID_FILE"
 `;
   const result = await execOnSlot(vars, cleanupCmd, { cwd: vars.remoteRepo, timeout: 30000 });
-  if (result.exitCode === 0) return;
-  console.warn(
-    `[prepare] stale ${label} cleanup exited ${result.exitCode}: ${result.stderr || result.stdout}`,
-  );
+  const killed = result.stdout.includes(PREPARE_KILLED_MARKER);
+  if (result.exitCode !== 0) {
+    console.warn(
+      `[prepare] stale ${label} cleanup exited ${result.exitCode}: ${result.stderr || result.stdout}`,
+    );
+  }
+  return killed;
 }
 
 export function buildPrepareWindowName(labelPart: string): string {
