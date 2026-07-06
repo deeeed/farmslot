@@ -884,52 +884,58 @@ async function sendFeedbackToWorker(
 
   // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: `${taskDir}/SELF-REVIEW-FIX.md` });
-  const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
-  const session = primaryTarget.session;
-  const roleWindowName =
-    getRun(runId)?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run?.flowType))
-      ?.target?.window ?? null;
-  const workerTarget = await ensureTmuxTargetReadyForRelaunch(
-    vars,
-    session,
-    primaryTarget.target,
-    roleWindowName,
-    run?.flowType,
-  );
-  // Derive the window name from the primary worker's target so resolveAgentTarget
-  // can route back to the correct pane if the stored context is used.
-  const workerWindowSep = workerTarget.indexOf(':');
-  const workerWindow =
-    workerWindowSep === -1
-      ? null
-      : workerTarget.slice(workerWindowSep + 1).split('.', 1)[0] || null;
-  const fixContext = await upsertAgentContext(runId, 'self-review-fix', {
-    status: 'working',
-    taskFile: `${taskDir}/SELF-REVIEW-FIX.md`,
-    signalFile: `${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`,
-    runner: run?.metrics.runner ?? null,
-    model: run?.metrics.model ?? null,
-    target: { session, window: workerWindow, pane: null, target: workerTarget },
-  });
-  if (fixContext) await watchContext(vars.slotId, fixContext);
+  try {
+    const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
+    const session = primaryTarget.session;
+    const roleWindowName =
+      getRun(runId)?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run?.flowType))
+        ?.target?.window ?? null;
+    const workerTarget = await ensureTmuxTargetReadyForRelaunch(
+      vars,
+      session,
+      primaryTarget.target,
+      roleWindowName,
+      run?.flowType,
+    );
+    // Derive the window name from the primary worker's target so resolveAgentTarget
+    // can route back to the correct pane if the stored context is used.
+    const workerWindowSep = workerTarget.indexOf(':');
+    const workerWindow =
+      workerWindowSep === -1
+        ? null
+        : workerTarget.slice(workerWindowSep + 1).split('.', 1)[0] || null;
+    const fixContext = await upsertAgentContext(runId, 'self-review-fix', {
+      status: 'working',
+      taskFile: `${taskDir}/SELF-REVIEW-FIX.md`,
+      signalFile: `${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`,
+      runner: run?.metrics.runner ?? null,
+      model: run?.metrics.model ?? null,
+      target: { session, window: workerWindow, pane: null, target: workerTarget },
+    });
+    if (fixContext) await watchContext(vars.slotId, fixContext);
 
-  // Send single-line command to the worker's original pane
-  const fixTaskFile = `${taskDir}/SELF-REVIEW-FIX.md`;
-  const cmd = await resolveWorkerDispatchPrompt(project, {
-    taskFile: fixTaskFile,
-    taskDir,
-  });
-  const sent = await sendRunnerInstructionSafely(
-    vars,
-    workerTarget,
-    normalizeRunner(run?.metrics.runner),
-    cmd,
-    'self-review',
-  );
-  debugSelfReviewLog(
-    `[self-review] fix task ${sent ? 'sent' : 'deferred'} to worker: ${taskDir}/SELF-REVIEW-FIX.md`,
-  );
-  return fixSignalBaseline;
+    // Send single-line command to the worker's original pane
+    const fixTaskFile = `${taskDir}/SELF-REVIEW-FIX.md`;
+    const cmd = await resolveWorkerDispatchPrompt(project, {
+      taskFile: fixTaskFile,
+      taskDir,
+    });
+    const sent = await sendRunnerInstructionSafely(
+      vars,
+      workerTarget,
+      normalizeRunner(run?.metrics.runner),
+      cmd,
+      'self-review',
+    );
+    debugSelfReviewLog(
+      `[self-review] fix task ${sent ? 'sent' : 'deferred'} to worker: ${taskDir}/SELF-REVIEW-FIX.md`,
+    );
+    return fixSignalBaseline;
+  } catch (err) {
+    await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
+    updateRun(runId, { activeTaskFile: undefined });
+    throw err;
+  }
 }
 
 // ─── Helpers ───
