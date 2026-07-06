@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.1.0 - 2026-07-06
+
 ### Added
 
 - Add `buildRecipeQualityArtifact()` and `farmslot-agent recipe-quality build` so agents can generate validator-compliant `recipe-quality.json` artifacts from compact verdict/reason/finding inputs.
