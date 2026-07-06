@@ -683,6 +683,68 @@ test('run observation can follow successor run by backlogItemId after parent can
   assert.equal(item?.runId, 'successor-run');
 });
 
+test('deleted run releases failed backlog item back to ready', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Retry after delete',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  created.item.status = 'failed';
+  created.item.runId = 'deleted-run';
+  created.item.lastObservedRunStatus = 'failed';
+
+  const graphIds = await backlog.markBacklogRunDeleted('deleted-run');
+  assert.deepEqual(graphIds, []);
+
+  const item = backlog.listBacklogItems().items[0];
+  assert.equal(item?.status, 'ready');
+  assert.equal(item?.runId, undefined);
+  assert.equal(item?.lastObservedRunStatus, undefined);
+});
+
+test('mark ready clears stale run linkage for failed backlog items', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Manual retry',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  created.item.status = 'failed';
+  created.item.runId = 'stale-run';
+  created.item.lastObservedRunStatus = 'failed';
+
+  const result = await backlog.markBacklogItemReady({ itemId: created.item.id });
+  assert.equal(result.item.status, 'ready');
+  assert.equal(result.item.runId, undefined);
+  assert.equal(result.item.lastObservedRunStatus, undefined);
+});
+
+test('backlog load releases failed items with missing linked runs', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Orphan failed link',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  created.item.status = 'failed';
+  created.item.runId = 'missing-run';
+  created.item.lastObservedRunStatus = 'failed';
+  await backlog.updateBacklogItem({ itemId: created.item.id, notes: 'persist failed link' });
+  await backlog.flushBacklogForTests();
+
+  await backlog.loadBacklog();
+  const item = backlog.listBacklogItems().items[0];
+  assert.equal(item?.status, 'ready');
+  assert.equal(item?.runId, undefined);
+});
+
 test('backlog broadcasts include archived items for client-side archived filter', async () => {
   const { backlog } = await freshStores();
   let payload: unknown;

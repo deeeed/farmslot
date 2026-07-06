@@ -61,7 +61,11 @@ import type { SlotChoiceChangeDetail } from '../shared/slot-choice-list.js';
 import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js';
 import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
-import { canDequeueBacklogItemForUi, syncedBacklogDraftProject } from './backlog-panel-model.js';
+import {
+  canDequeueBacklogItemForUi,
+  canMarkReadyBacklogItemForUi,
+  syncedBacklogDraftProject,
+} from './backlog-panel-model.js';
 
 const STATUSES: Array<BacklogStatus | 'all'> = ['all', ...BACKLOG_STATUSES];
 const FLOWS: FlowType[] = ['fix-bug', 'dev', 'review-pr', 'pr-complete', 'merge-main'];
@@ -1941,7 +1945,7 @@ export class BacklogPanel extends LitElement {
         : `${prefix}Graph needs attention before this item can be queued.`;
     }
     if (node.status === 'ready') {
-      return `${prefix}Ready, but not queued. Review auto start, slots, and dispatch config.`;
+      return `${prefix}Ready, but the graph scheduler did not enqueue yet. If this persists after dispatch, restart the gateway so stale graph scheduler state can reconcile.`;
     }
     return `${prefix}Checked: ${node.status}. Open the WorkGraph for details.`;
   }
@@ -2183,7 +2187,7 @@ export class BacklogPanel extends LitElement {
               Delete
             </button>`
         : nothing}
-      ${item.status === 'candidate'
+      ${canMarkReadyBacklogItemForUi(item)
         ? html`<button
             ?disabled=${this._busy.endsWith(item.id)}
             @click=${() => this._markReady(item)}
