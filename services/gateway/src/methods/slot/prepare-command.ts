@@ -48,11 +48,14 @@ function preparePollErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// Emitted on stdout by the cleanup script whenever it actually terminates a
-// live in-flight prepare process (the tracked preflight PID, or a process
-// matched by the prepare-scoped fallback patterns). Recovery reads this to
-// decide whether a post-kill health check can be trusted: a slot that was just
-// stripped of its preflight cannot be declared healthy from leftover artifacts.
+// Emitted on stdout by the cleanup script when it terminates the tracked
+// in-flight preflight (the pid from PID_FILE, still alive and confirmed to be a
+// preflight process). Recovery reads this to decide whether a post-kill health
+// check can be trusted: a slot just stripped of its preflight cannot be declared
+// healthy from leftover artifacts. It is intentionally NOT emitted from the
+// fallback pgrep sweep — under `bash -c`, that sweep's own while-loop subshell
+// matches the pattern embedded in the script's argv, which would self-signal a
+// kill that never touched a real prepare process.
 const PREPARE_KILLED_MARKER = '__FARMSLOT_KILLED_PREPARE__';
 
 export async function clearStalePrepareProcess(
@@ -98,7 +101,6 @@ kill_matching_trees() {
     [ -z "$pid" ] && continue
     [ "$pid" = "$$" ] && continue
     [ "$pid" = "$PPID" ] && continue
-    echo ${shellQuote(PREPARE_KILLED_MARKER)}
     kill_tree "$pid" TERM
     sleep 1
     kill_tree "$pid" KILL

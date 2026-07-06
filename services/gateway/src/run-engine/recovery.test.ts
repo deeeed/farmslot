@@ -178,7 +178,7 @@ function buildPrepareRecoveryDeps(
   return { deps, calls };
 }
 
-test('prepare recovery re-runs prepare when it killed an in-flight preflight (postmortem repro)', async () => {
+test('prepare recovery re-runs prepare when it killed an in-flight preflight even if health would pass', async () => {
   // Preflight running, then killed by recovery; a stale extension.id would pass
   // the weak health_check. Recovery must NOT trust that health signal.
   const run = preparingRun([
