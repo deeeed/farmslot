@@ -29,16 +29,15 @@ const FALLBACK_REPORT_ARTIFACTS = [
 ];
 
 const usageLine =
-  'usage: mark <task-dir> [--checklist FILE.md] [--signal FILE.json] <step> [options] OR mark <task-md> <signal-json> <step> [options]';
+  'usage: mark <task-dir> [--checklist FILE.md] [--signal FILE.json] <step> [options]';
 
 function printHelp() {
   console.log(
     [
       usageLine,
       '',
-      'Task-dir mode (preferred): farmslot-agent mark <task-dir> <step> — requires checklist-target.json written by the gateway at task creation or role switch.',
+      'Task-dir mode: farmslot-agent mark <task-dir> <step> — requires checklist-target.json written by the gateway at task creation or role switch.',
       'Override: farmslot-agent mark <task-dir> --checklist SELF-REVIEW.md <step> — optional --signal; signal defaults from checklist name.',
-      'Explicit mode: farmslot-agent mark <task-md> <signal-json> <step> — programmatic API with direct paths.',
       'Bootstrap: ./mark start — role-owned signal with status running (no checklist box).',
       'Progress: ./mark 1, ./mark 2, ... — checks the box and appends checklistTiming.',
       'Terminal:',
@@ -87,20 +86,6 @@ function resolveMarkInvocation(rawArgs) {
       process.exit(0);
     }
     return parsed;
-  }
-
-  if (rawArgs.length >= 3) {
-    const stepRaw = rawArgs[2];
-    if (stepRaw === '--help' || stepRaw === '-h') {
-      printHelp();
-      process.exit(0);
-    }
-    return {
-      taskPath: rawArgs[0],
-      signalPath: rawArgs[1],
-      stepRaw,
-      rest: rawArgs.slice(3),
-    };
   }
 
   usage();

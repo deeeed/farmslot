@@ -464,28 +464,84 @@ export async function runSelfReviewRetryLoop({
     // Watch the fix task for progress
     const fixTaskPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
     const fixWatcher = deps.startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
-
-    // Wait for worker to finish fixing
-    const fixSignal = await deps.waitForWorkerSignal(
-      vars,
-      taskDir,
-      FEEDBACK_TIMEOUT_MS,
-      fixSignalBaseline,
-    );
-    const fixCompletedAt = new Date().toISOString();
-    fixWatcher.stop();
-    if (!fixSignal) {
-      debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`);
-      await deps.markAgentContextStatus(runId, 'self-review-fix', 'failed');
-      await deps.unwatchContext(slotId, 'self-review-fix');
-      await deps.restoreWorkerChecklistTargetFromSlot(vars, taskDir);
-      if (retryCount >= maxRetries) {
+    let fixSignal;
+    let fixCompletedAt = fixStartedAt;
+    try {
+      fixSignal = await deps.waitForWorkerSignal(
+        vars,
+        taskDir,
+        FEEDBACK_TIMEOUT_MS,
+        fixSignalBaseline,
+      );
+      fixCompletedAt = new Date().toISOString();
+      if (!fixSignal) {
+        debugSelfReviewLog(
+          `[self-review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`,
+        );
+        await deps.markAgentContextStatus(runId, 'self-review-fix', 'failed');
+        await deps.unwatchContext(slotId, 'self-review-fix');
+        if (retryCount >= maxRetries) {
+          return {
+            verdict: 'issues',
+            issues: result.issues,
+            validationDepth,
+            usage: result.usage,
+            reviewSnapshot: result.reviewSnapshot,
+            attempts,
+            retryCount,
+            maxRetries,
+            feedbackSent,
+            durationMs: Date.now() - start,
+          };
+        }
+        continue;
+      }
+      if (fixSignal.status === 'blocked') {
+        const fixDelta = await deps.captureFixDelta(
+          vars,
+          taskDir,
+          nextLoopNumber,
+          fixBaseSha,
+          artifactScope,
+        );
+        const fixArtifacts = fixDelta.artifactPaths;
+        attempts.push({
+          loopNumber: nextLoopNumber,
+          verdict: 'failed',
+          unresolvedCount: result.issues.length,
+          fixDelta: fixDelta.snapshot,
+          artifactPaths: fixArtifacts,
+          timeline: [
+            {
+              kind: 'worker-fix',
+              loopNumber: nextLoopNumber,
+              runner: workerRunner,
+              model,
+              startedAt: fixStartedAt,
+              completedAt: fixCompletedAt,
+              durationMs: durationBetween(fixStartedAt, fixCompletedAt),
+              verdict: 'failed',
+              unresolvedCount: result.issues.length,
+              artifactPaths: fixArtifacts,
+            },
+          ],
+          completedAt: new Date().toISOString(),
+        });
+        debugSelfReviewLog(
+          `[self-review] run ${runId.slice(0, 8)} — worker blocked during self-review fix: ${fixSignal.reason ?? 'no reason provided'}`,
+        );
+        await deps.markAgentContextStatus(runId, 'self-review-fix', 'blocked', {
+          lastSignalAt: new Date().toISOString(),
+        });
+        await deps.unwatchContext(slotId, 'self-review-fix');
         return {
-          verdict: 'issues',
+          verdict: 'blocked',
+          reason: fixSignal.reason ?? 'worker blocked during self-review fix',
           issues: result.issues,
           validationDepth,
           usage: result.usage,
           reviewSnapshot: result.reviewSnapshot,
+          fixDelta: fixDelta.snapshot,
           attempts,
           retryCount,
           maxRetries,
@@ -493,9 +549,14 @@ export async function runSelfReviewRetryLoop({
           durationMs: Date.now() - start,
         };
       }
-      continue;
-    }
-    if (fixSignal.status === 'blocked') {
+
+      await deps.markAgentContextStatus(
+        runId,
+        'self-review-fix',
+        fixSignal.status === 'failed' ? 'failed' : 'complete',
+        { lastSignalAt: new Date().toISOString() },
+      );
+      await deps.unwatchContext(slotId, 'self-review-fix');
       const fixDelta = await deps.captureFixDelta(
         vars,
         taskDir,
@@ -503,99 +564,47 @@ export async function runSelfReviewRetryLoop({
         fixBaseSha,
         artifactScope,
       );
-      const fixArtifacts = fixDelta.artifactPaths;
-      attempts.push({
+      const fixSegment: ReviewLoopTimelineSegment = {
+        kind: 'worker-fix',
         loopNumber: nextLoopNumber,
-        verdict: 'failed',
-        unresolvedCount: result.issues.length,
-        fixDelta: fixDelta.snapshot,
-        artifactPaths: fixArtifacts,
-        timeline: [
-          {
-            kind: 'worker-fix',
-            loopNumber: nextLoopNumber,
-            runner: workerRunner,
-            model,
-            startedAt: fixStartedAt,
-            completedAt: fixCompletedAt,
-            durationMs: durationBetween(fixStartedAt, fixCompletedAt),
-            verdict: 'failed',
-            unresolvedCount: result.issues.length,
-            artifactPaths: fixArtifacts,
-          },
-        ],
-        completedAt: new Date().toISOString(),
+        runner: workerRunner,
+        model,
+        startedAt: fixStartedAt,
+        completedAt: fixCompletedAt,
+        durationMs: durationBetween(fixStartedAt, fixCompletedAt),
+        verdict: fixSignal.status === 'failed' ? 'failed' : 'pass',
+        unresolvedCount: 0,
+        artifactPaths: fixDelta.artifactPaths,
+      };
+      debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — re-reviewing after worker fix`);
+      result = await deps.runReviewAgent(
+        vars,
+        reviewRunner,
+        model,
+        taskDir,
+        slotId,
+        runId,
+        reviewTimeoutMs,
+        nextLoopNumber,
+        validationDepth,
+        artifactScope,
+      );
+      attempts.push({
+        ...reviewAttemptFromResult(
+          result,
+          nextLoopNumber,
+          fixDelta.snapshot,
+          fixDelta.artifactPaths,
+        ),
+        timeline: [fixSegment, ...(result.timeline ?? [])],
       });
       debugSelfReviewLog(
-        `[self-review] run ${runId.slice(0, 8)} — worker blocked during self-review fix: ${fixSignal.reason ?? 'no reason provided'}`,
+        `[self-review] run ${runId.slice(0, 8)} — retry verdict: ${result.verdict}`,
       );
-      await deps.markAgentContextStatus(runId, 'self-review-fix', 'blocked', {
-        lastSignalAt: new Date().toISOString(),
-      });
-      await deps.unwatchContext(slotId, 'self-review-fix');
+    } finally {
+      fixWatcher.stop();
       await deps.restoreWorkerChecklistTargetFromSlot(vars, taskDir);
-      return {
-        verdict: 'blocked',
-        reason: fixSignal.reason ?? 'worker blocked during self-review fix',
-        issues: result.issues,
-        validationDepth,
-        usage: result.usage,
-        reviewSnapshot: result.reviewSnapshot,
-        fixDelta: fixDelta.snapshot,
-        attempts,
-        retryCount,
-        maxRetries,
-        feedbackSent,
-        durationMs: Date.now() - start,
-      };
     }
-
-    // Re-review
-    await deps.markAgentContextStatus(
-      runId,
-      'self-review-fix',
-      fixSignal.status === 'failed' ? 'failed' : 'complete',
-      { lastSignalAt: new Date().toISOString() },
-    );
-    await deps.unwatchContext(slotId, 'self-review-fix');
-    await deps.restoreWorkerChecklistTargetFromSlot(vars, taskDir);
-    const fixDelta = await deps.captureFixDelta(
-      vars,
-      taskDir,
-      nextLoopNumber,
-      fixBaseSha,
-      artifactScope,
-    );
-    const fixSegment: ReviewLoopTimelineSegment = {
-      kind: 'worker-fix',
-      loopNumber: nextLoopNumber,
-      runner: workerRunner,
-      model,
-      startedAt: fixStartedAt,
-      completedAt: fixCompletedAt,
-      durationMs: durationBetween(fixStartedAt, fixCompletedAt),
-      verdict: fixSignal.status === 'failed' ? 'failed' : 'pass',
-      unresolvedCount: 0,
-      artifactPaths: fixDelta.artifactPaths,
-    };
-    debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — re-reviewing after worker fix`);
-    result = await deps.runReviewAgent(
-      vars,
-      reviewRunner,
-      model,
-      taskDir,
-      slotId,
-      runId,
-      reviewTimeoutMs,
-      nextLoopNumber,
-      validationDepth,
-      artifactScope,
-    );
-    attempts.push({
-      ...reviewAttemptFromResult(result, nextLoopNumber, fixDelta.snapshot, fixDelta.artifactPaths),
-      timeline: [fixSegment, ...(result.timeline ?? [])],
-    });
-    debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — retry verdict: ${result.verdict}`);
   }
 
   return {
@@ -673,62 +682,133 @@ async function recoverSelfReviewFixPass({
   // fix pass for a new external review and prevent feedback from reaching the worker.
   if (!fixContext) return null;
 
-  const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
-  const rawSignal = await readOptionalSlotFile(vars, fixSignalPath);
-  let fixSignal: WorkerSignal | undefined;
   try {
-    fixSignal = terminalWorkerSignalFromRaw(rawSignal);
-  } catch (err) {
-    // A corrupt/half-written signal blob is treated as "no signal yet" — recovering as if it
-    // never existed lets the watch path below wait for a fresh, parseable write. Treating it
-    // as 'failed' or 'blocked' would force a misleading run-level outcome from a parse glitch.
-    console.warn(
-      `[self-review] ignoring invalid recovered self-review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
-    );
-  }
-
-  if (fixSignal && !signalFreshSince(fixSignal, fixContext?.startedAt)) {
-    fixSignal = undefined;
-  }
-
-  const issues = await readSelfReviewFixIssues(vars, taskDir);
-  debugSelfReviewLog(
-    `[self-review] run ${runId.slice(0, 8)} — recovering self-review fix pass (${fixSignal ? 'signal-present' : 'waiting'})`,
-  );
-
-  if (!fixSignal) {
-    const fixTaskPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
-    const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
+    const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
+    const rawSignal = await readOptionalSlotFile(vars, fixSignalPath);
+    let fixSignal: WorkerSignal | undefined;
     try {
-      fixSignal = await waitForWorkerSignal(vars, taskDir, FEEDBACK_TIMEOUT_MS, rawSignal);
-    } finally {
-      fixWatcher.stop();
+      fixSignal = terminalWorkerSignalFromRaw(rawSignal);
+    } catch (err) {
+      console.warn(
+        `[self-review] ignoring invalid recovered self-review fix signal for ${runId.slice(0, 8)}: ${(err as Error).message}`,
+      );
     }
-  }
 
-  if (!fixSignal) {
+    if (fixSignal && !signalFreshSince(fixSignal, fixContext?.startedAt)) {
+      fixSignal = undefined;
+    }
+
+    const issues = await readSelfReviewFixIssues(vars, taskDir);
     debugSelfReviewLog(
-      `[self-review] run ${runId.slice(0, 8)} — timeout waiting for recovered worker fix`,
+      `[self-review] run ${runId.slice(0, 8)} — recovering self-review fix pass (${fixSignal ? 'signal-present' : 'waiting'})`,
     );
-    await markAgentContextStatus(runId, 'self-review-fix', 'failed');
-    await unwatchContext(slotId, 'self-review-fix');
-    await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
-    // feedbackSent: true is sound here — fixContext only exists if sendFeedbackToWorker
-    // ran past writeTextFileOnSlot (file write happens before upsertAgentContext, so a
-    // crash between them leaves no fixContext entry and we'd have already returned null).
-    if (maxRetries <= 1)
+
+    if (!fixSignal) {
+      const fixTaskPath = slotTaskRelPath(
+        vars,
+        taskDir,
+        SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist,
+      );
+      const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
+      try {
+        fixSignal = await waitForWorkerSignal(vars, taskDir, FEEDBACK_TIMEOUT_MS, rawSignal);
+      } finally {
+        fixWatcher.stop();
+      }
+    }
+
+    if (!fixSignal) {
+      debugSelfReviewLog(
+        `[self-review] run ${runId.slice(0, 8)} — timeout waiting for recovered worker fix`,
+      );
+      await markAgentContextStatus(runId, 'self-review-fix', 'failed');
+      await unwatchContext(slotId, 'self-review-fix');
+      if (maxRetries <= 1)
+        return {
+          verdict: 'issues',
+          issues,
+          validationDepth,
+          retryCount: 1,
+          maxRetries,
+          feedbackSent: true,
+          attempts: [
+            { loopNumber: 1, verdict: 'issues', unresolvedCount: issues.length, validationDepth },
+          ],
+          durationMs: Date.now() - start,
+        };
+      return await runSelfReviewRetryLoop({
+        vars,
+        taskDir,
+        slotId,
+        runId,
+        start,
+        workerRunner,
+        reviewRunner,
+        model,
+        maxRetries,
+        reviewTimeoutMs,
+        reviewResult: { verdict: 'issues', issues, validationDepth },
+        retryCount: 1,
+        validationDepth,
+        artifactScope,
+        feedbackAlreadySent: true,
+      });
+    }
+
+    if (fixSignal.status === 'blocked') {
+      const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
+      await markAgentContextStatus(runId, 'self-review-fix', 'blocked', {
+        lastSignalAt: new Date().toISOString(),
+      });
+      await unwatchContext(slotId, 'self-review-fix');
       return {
-        verdict: 'issues',
+        verdict: 'blocked',
+        reason: fixSignal.reason ?? 'worker blocked during self-review fix',
         issues,
         validationDepth,
         retryCount: 1,
-        maxRetries,
-        feedbackSent: true,
+        fixDelta: fixDelta.snapshot,
         attempts: [
           { loopNumber: 1, verdict: 'issues', unresolvedCount: issues.length, validationDepth },
+          {
+            loopNumber: 2,
+            verdict: 'failed',
+            unresolvedCount: issues.length,
+            validationDepth,
+            fixDelta: fixDelta.snapshot,
+            artifactPaths: fixDelta.artifactPaths,
+          },
         ],
+        feedbackSent: true,
         durationMs: Date.now() - start,
       };
+    }
+
+    await markAgentContextStatus(
+      runId,
+      'self-review-fix',
+      fixSignal.status === 'failed' ? 'failed' : 'complete',
+      { lastSignalAt: new Date().toISOString() },
+    );
+    await unwatchContext(slotId, 'self-review-fix');
+    const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
+    const retryResult = await runReviewAgent(
+      vars,
+      reviewRunner,
+      model,
+      taskDir,
+      slotId,
+      runId,
+      reviewTimeoutMs,
+      2,
+      validationDepth,
+      artifactScope,
+    );
+    const seededReviewResult = {
+      ...retryResult,
+      fixDelta: fixDelta.snapshot,
+      artifactPaths: [...(retryResult.artifactPaths ?? []), ...fixDelta.artifactPaths],
+    };
     return await runSelfReviewRetryLoop({
       vars,
       taskDir,
@@ -740,90 +820,15 @@ async function recoverSelfReviewFixPass({
       model,
       maxRetries,
       reviewTimeoutMs,
-      reviewResult: { verdict: 'issues', issues, validationDepth },
+      reviewResult: seededReviewResult,
       retryCount: 1,
       validationDepth,
       artifactScope,
       feedbackAlreadySent: true,
     });
-  }
-
-  if (fixSignal.status === 'blocked') {
-    const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
-    await markAgentContextStatus(runId, 'self-review-fix', 'blocked', {
-      lastSignalAt: new Date().toISOString(),
-    });
-    await unwatchContext(slotId, 'self-review-fix');
+  } finally {
     await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
-    return {
-      verdict: 'blocked',
-      reason: fixSignal.reason ?? 'worker blocked during self-review fix',
-      issues,
-      validationDepth,
-      retryCount: 1,
-      fixDelta: fixDelta.snapshot,
-      attempts: [
-        { loopNumber: 1, verdict: 'issues', unresolvedCount: issues.length, validationDepth },
-        {
-          loopNumber: 2,
-          verdict: 'failed',
-          unresolvedCount: issues.length,
-          validationDepth,
-          fixDelta: fixDelta.snapshot,
-          artifactPaths: fixDelta.artifactPaths,
-        },
-      ],
-      feedbackSent: true,
-      durationMs: Date.now() - start,
-    };
   }
-
-  await markAgentContextStatus(
-    runId,
-    'self-review-fix',
-    fixSignal.status === 'failed' ? 'failed' : 'complete',
-    { lastSignalAt: new Date().toISOString() },
-  );
-  await unwatchContext(slotId, 'self-review-fix');
-  await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
-  const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
-  const retryResult = await runReviewAgent(
-    vars,
-    reviewRunner,
-    model,
-    taskDir,
-    slotId,
-    runId,
-    reviewTimeoutMs,
-    2,
-    validationDepth,
-    artifactScope,
-  );
-  const seededReviewResult = {
-    ...retryResult,
-    fixDelta: fixDelta.snapshot,
-    artifactPaths: [...(retryResult.artifactPaths ?? []), ...fixDelta.artifactPaths],
-  };
-  // The recovered fix pass already consumed retry slot 1, so seed the loop with retryCount=1.
-  // If retryResult is `pass`, the loop's while-condition fails immediately and we return
-  // retryCount=1 (correct: one fix attempt was applied). Subsequent iterations bump from there.
-  return await runSelfReviewRetryLoop({
-    vars,
-    taskDir,
-    slotId,
-    runId,
-    start,
-    workerRunner,
-    reviewRunner,
-    model,
-    maxRetries,
-    reviewTimeoutMs,
-    reviewResult: seededReviewResult,
-    retryCount: 1,
-    validationDepth,
-    artifactScope,
-    feedbackAlreadySent: true,
-  });
 }
 
 // ─── Feedback to worker ───

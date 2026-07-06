@@ -497,7 +497,6 @@ async function attemptInlineCIFix(
       );
       await markAgentContextStatus(runId, 'ci-fix', 'failed');
       await unwatchContext(slotId, 'ci-fix');
-      await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
       clearInlineFixState(runId, { phase: 'polling' });
       return { attempted: true, success: false, attempts };
     }
@@ -562,7 +561,6 @@ async function attemptInlineCIFix(
               );
               await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
               await unwatchContext(slotId, 'ci-fix');
-              await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
               clearInlineFixState(runId, {
                 phase: 'blocked',
                 lastSignalAt,
@@ -593,7 +591,6 @@ async function attemptInlineCIFix(
               { lastSignalAt },
             );
             await unwatchContext(slotId, 'ci-fix');
-            await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
             clearInlineFixState(runId, {
               phase: 'polling',
               lastSignalAt,
@@ -626,7 +623,6 @@ async function attemptInlineCIFix(
           lastSignalAt: new Date().toISOString(),
         });
         await unwatchContext(slotId, 'ci-fix');
-        await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
         clearInlineFixState(runId, {
           phase: 'polling',
           lastFixCommitSha: currentSha,
@@ -649,7 +645,6 @@ async function attemptInlineCIFix(
         );
         await markAgentContextStatus(runId, 'ci-fix', 'failed');
         await unwatchContext(slotId, 'ci-fix');
-        await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
         clearInlineFixState(runId, {
           phase: 'polling',
           fixProgress,
@@ -663,7 +658,6 @@ async function attemptInlineCIFix(
     );
     await markAgentContextStatus(runId, 'ci-fix', 'failed');
     await unwatchContext(slotId, 'ci-fix');
-    await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
     clearInlineFixState(runId, { phase: 'polling' });
     return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
   } catch (err) {
@@ -674,10 +668,13 @@ async function attemptInlineCIFix(
       await markAgentContextStatus(runId, 'ci-fix', 'failed');
       await unwatchContext(slotId, 'ci-fix');
     }
-    const cleanupVars = vars ?? (await loadSlotVars(slotId));
-    await restoreWorkerChecklistTargetFromSlot(cleanupVars, writeResult.taskDir);
+    vars = vars ?? (await loadSlotVars(slotId));
     clearInlineFixState(runId, { phase: 'polling' });
     return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
+  } finally {
+    if (vars) {
+      await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
+    }
   }
 }
 

@@ -91,8 +91,7 @@ function manifestModeTeachingError(taskDir, reason) {
   return (
     `Missing or invalid ${CHECKLIST_TARGET_MANIFEST} at ${manifestPath} (${reason}). ` +
     'The gateway writes this file at task creation and on every role switch — re-run dispatch/prepare for this run, or write the manifest manually. ' +
-    'Escape hatch: farmslot-agent mark <task-dir> --checklist FILE.md <step> [--signal FILE.json], ' +
-    'or explicit paths: farmslot-agent mark <task.md> <signal.json> <step>.'
+    'Escape hatch: farmslot-agent mark <task-dir> --checklist FILE.md <step> [--signal FILE.json].'
   );
 }
 

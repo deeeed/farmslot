@@ -31,7 +31,7 @@
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/agent-runtime"
   },
   "dependencies": {
-    "@farmslot/protocol": "workspace:*"
+    "@farmslot/protocol": ">=0.7.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
