@@ -28,6 +28,27 @@ function pgrepAvailable(): boolean {
   return spawnSync('pgrep', ['-f', 'farmslot-uninstall-nonexistent-pattern']).error === undefined;
 }
 
+/** The process sweep is the only guard on the sweep code path, so it must actually run in CI.
+ *  Locally, skip when pgrep is missing; in CI (macOS, ships pgrep) a missing pgrep is a real
+ *  regression in the runner image — fail loudly rather than silently skip the coverage. */
+function requirePgrep(t: { skip: (reason: string) => void }): boolean {
+  if (pgrepAvailable()) return true;
+  if (process.env.CI) {
+    assert.fail('pgrep must be available in CI to exercise the workspace process sweep');
+  }
+  t.skip('pgrep is not available');
+  return false;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Real tmux is required for the teardown tests below — mirrors the skip pattern used by
  *  services/node/src/commands/tmux.test.ts for machines/CI without tmux installed. */
 async function tmuxAvailable(): Promise<boolean> {
@@ -332,10 +353,7 @@ test('executeUninstallPlan kills each slot session before repos are removed, and
 });
 
 test('purge sweeps a leaked writer and removes the whole workspace (incl unknown files) without crashing', async (t) => {
-  if (!pgrepAvailable()) {
-    t.skip('pgrep is not available');
-    return;
-  }
+  if (!requirePgrep(t)) return;
   const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-purge-'));
   const homeDir = join(tmpdir(), `fs-home-purge-${root.slice(-8)}`);
   mkdirSync(join(root, 'farmslot'), { recursive: true });
@@ -395,6 +413,62 @@ test('purge sweeps a leaked writer and removes the whole workspace (incl unknown
       /* already gone */
     }
     rmSync(root, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test('the sweep never kills a sibling install sharing a path prefix', async (t) => {
+  if (!requirePgrep(t)) return;
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-sib-'));
+  const homeDir = join(tmpdir(), `fs-home-sib-${root.slice(-8)}`);
+  // A sibling install whose path shares `root` as a raw prefix (root + "-2"). A substring
+  // match would sweep its processes; the path-boundary match must not.
+  const sibling = `${root}-2`;
+  mkdirSync(join(root, 'farmslot'), { recursive: true });
+  mkdirSync(join(root, 'repos', 'mm-1'), { recursive: true });
+  mkdirSync(join(sibling, 'repos', 'mm-1'), { recursive: true });
+  mkdirSync(homeDir, { recursive: true });
+  writeFileSync(join(root, 'state.json'), '{}');
+
+  const spawnWriter = (dir: string) =>
+    spawn('sh', ['-c', `while :; do : > '${join(dir, 'repos', 'mm-1', 'f')}'; sleep 0.05; done`], {
+      detached: true,
+      stdio: 'ignore',
+    });
+  const inside = spawnWriter(root);
+  const siblingWriter = spawnWriter(sibling);
+  await delay(300);
+
+  try {
+    const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
+      history: 'delete',
+      home: 'delete',
+      dryRun: false,
+      purge: true,
+    });
+    await executeUninstallPlan(plan, { step: () => {} });
+
+    // Give any (erroneous) signal time to land before asserting the sibling survived.
+    await delay(200);
+    assert.ok(siblingWriter.pid && isProcessAlive(siblingWriter.pid), 'sibling writer survives');
+    assert.ok(!(inside.pid && isProcessAlive(inside.pid)), 'in-workspace writer was swept');
+    assert.ok(!existsSync(root), 'the uninstalled workspace is gone');
+    assert.ok(existsSync(sibling), 'the sibling workspace is untouched');
+  } finally {
+    for (const w of [inside, siblingWriter]) {
+      try {
+        process.kill(-(w.pid ?? 0), 'SIGKILL');
+      } catch {
+        /* group gone */
+      }
+      try {
+        process.kill(w.pid ?? 0, 'SIGKILL');
+      } catch {
+        /* gone */
+      }
+    }
+    rmSync(root, { recursive: true, force: true });
+    rmSync(sibling, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
   }
 });

@@ -225,11 +225,17 @@ function isAlive(pid: number): boolean {
 }
 
 /** True when pid's command line runs out of `workspaceRoot` — so a stale pidfile whose pid
- *  the OS reused for an unrelated process can never be signalled by uninstall. */
+ *  the OS reused for an unrelated process can never be signalled by uninstall. Matching is
+ *  path-boundary-aware: a bare substring would treat a sibling install (`…/farmslot-2/…`) as
+ *  belonging to `…/farmslot` and SIGKILL its live processes. Require either a path INSIDE the
+ *  workspace (`workspaceRoot + sep`) or an exact argv token equal to the root — the same
+ *  exact-boundary discipline as the tmux `=<session>` teardown. */
 function pidBelongsToWorkspace(pid: number, workspaceRoot: string): boolean {
   const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
   if (res.status !== 0 || !res.stdout) return false;
-  return res.stdout.includes(workspaceRoot);
+  const command = res.stdout;
+  if (command.includes(workspaceRoot + sep)) return true;
+  return command.split(/\s+/).some((token) => token === workspaceRoot);
 }
 
 /** Stop a farmslot service (gateway/node) recorded in `pidFile` before its files are removed.
@@ -437,17 +443,32 @@ export async function executeUninstallPlan(
     }
   };
 
+  // Stop-phase steps are best-effort: an unexpected throw (a spawn failure, an unreadable
+  // pool) must warn and continue, never abort before a single removal has run — the same
+  // isolation the removal steps get.
+  const safeStop = async (label: string, fn: () => void | Promise<void>): Promise<void> => {
+    try {
+      await fn();
+    } catch (err) {
+      hooks.step(`${label} teardown warning: ${errMessage(err)}`);
+    }
+  };
+
   // 0. Stop running services first. Their pidfiles live in homeDir (removed in step 2), and a
   //    live gateway/node keeps writing into the workspace being deleted → ENOTEMPTY. Must run
   //    before homeDir is touched, regardless of the home keep/backup/delete decision.
-  await stopService(join(plan.homeDir, 'node.pid'), 'local node', plan.workspaceRoot, hooks);
-  await stopService(join(plan.homeDir, 'gateway.pid'), 'gateway', plan.workspaceRoot, hooks);
+  await safeStop('local node', () =>
+    stopService(join(plan.homeDir, 'node.pid'), 'local node', plan.workspaceRoot, hooks),
+  );
+  await safeStop('gateway', () =>
+    stopService(join(plan.homeDir, 'gateway.pid'), 'gateway', plan.workspaceRoot, hooks),
+  );
 
   // 0.5. Stop everything still writing into the tree before any removal: per-slot tmux
   //      sessions, workspace-scoped watchman watches, and leaked writer processes.
-  teardownSlots(plan.poolFile, hooks);
-  stopWatchmanForWorkspace(plan.workspaceRoot, hooks);
-  await sweepWorkspaceProcesses(plan.workspaceRoot, hooks);
+  await safeStop('slots', () => teardownSlots(plan.poolFile, hooks));
+  await safeStop('watchman', () => stopWatchmanForWorkspace(plan.workspaceRoot, hooks));
+  await safeStop('process sweep', () => sweepWorkspaceProcesses(plan.workspaceRoot, hooks));
 
   // 1. Remove the PATH symlink early — a later failure must never leave a dangling `farmslot`
   //    on PATH pointing into a half-removed workspace.
