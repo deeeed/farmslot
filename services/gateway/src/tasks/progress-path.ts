@@ -6,9 +6,9 @@ export const TASK_PROGRESS_MARKDOWN = 'TASK.md';
 export const INTERACTIVE_CHECKLIST_MARKDOWN = 'CHECKLIST.md';
 
 /**
- * Resolve which markdown file owns checklist progress for a task directory.
- * Mirrors the active checklist in `checklist-target.json` when present;
- * otherwise TASK.md with CHECKLIST.md override when that file exists.
+ * Resolve which markdown file owns checklist progress for a worker task directory.
+ * Uses TASK.md with CHECKLIST.md override when that file exists. Role-specific
+ * checklists (SELF-REVIEW.md, etc.) come from run.activeTaskFile, not this helper.
  */
 export function resolveTaskProgressMarkdownPath(candidatePath: string): string {
   const normalized = path.normalize(candidatePath);

@@ -502,7 +502,14 @@ async function waitForReviewCompletion(
         `cat '${vars.remoteRepo}/${taskDir}/SELF-REVIEW-SIGNAL.json' 2>/dev/null`,
       )
     ).stdout.trim();
-    const terminalSignal = parseTerminalSelfReviewSignal(signalRaw);
+    let terminalSignal: ReturnType<typeof parseTerminalSelfReviewSignal> | undefined;
+    try {
+      terminalSignal = parseTerminalSelfReviewSignal(signalRaw);
+    } catch (err) {
+      debugSelfReviewLog(
+        `[self-review] ignoring invalid SELF-REVIEW-SIGNAL.json during poll: ${(err as Error).message}`,
+      );
+    }
     if (terminalSignal) {
       const hasFeedback = (
         await execOnSlot(

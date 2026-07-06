@@ -44,7 +44,10 @@ import {
 } from '../runners/registry.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun } from '../runs/store.js';
-import { syncChecklistTargetOnSlot } from '../tasks/checklist-target.js';
+import {
+  restoreWorkerChecklistTargetFromSlot,
+  syncChecklistTargetOnSlot,
+} from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
@@ -467,6 +470,7 @@ export async function runSelfReviewRetryLoop({
       debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`);
       await deps.markAgentContextStatus(runId, 'self-review-fix', 'failed');
       await deps.unwatchContext(slotId, 'self-review-fix');
+      await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
       if (retryCount >= maxRetries) {
         return {
           verdict: 'issues',
@@ -521,6 +525,7 @@ export async function runSelfReviewRetryLoop({
         lastSignalAt: new Date().toISOString(),
       });
       await deps.unwatchContext(slotId, 'self-review-fix');
+      await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
       return {
         verdict: 'blocked',
         reason: fixSignal.reason ?? 'worker blocked during self-review fix',
@@ -545,6 +550,7 @@ export async function runSelfReviewRetryLoop({
       { lastSignalAt: new Date().toISOString() },
     );
     await deps.unwatchContext(slotId, 'self-review-fix');
+    await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
     const fixDelta = await deps.captureFixDelta(
       vars,
       taskDir,
@@ -698,6 +704,7 @@ async function recoverSelfReviewFixPass({
     );
     await markAgentContextStatus(runId, 'self-review-fix', 'failed');
     await unwatchContext(slotId, 'self-review-fix');
+    await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
     // feedbackSent: true is sound here — fixContext only exists if sendFeedbackToWorker
     // ran past writeTextFileOnSlot (file write happens before upsertAgentContext, so a
     // crash between them leaves no fixContext entry and we'd have already returned null).
@@ -739,6 +746,7 @@ async function recoverSelfReviewFixPass({
       lastSignalAt: new Date().toISOString(),
     });
     await unwatchContext(slotId, 'self-review-fix');
+    await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
     return {
       verdict: 'blocked',
       reason: fixSignal.reason ?? 'worker blocked during self-review fix',
@@ -769,6 +777,7 @@ async function recoverSelfReviewFixPass({
     { lastSignalAt: new Date().toISOString() },
   );
   await unwatchContext(slotId, 'self-review-fix');
+  await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
   const fixDelta = await captureFixDeltaSnapshot(vars, taskDir, 2, null, artifactScope);
   const retryResult = await runReviewAgent(
     vars,

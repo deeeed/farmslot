@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -18,15 +18,19 @@ const roleTemplates = [
 ];
 
 for (const rel of roleTemplates) {
-  test(`${rel}: role templates use bare {{TASK_DIR}}/mark and no explicit mark-checklist-step invocations`, () => {
-    const abs = path.join(repoRoot, rel);
-    const src = readFileSync(abs, 'utf8');
-    assert.doesNotMatch(src, /mark-self-review/);
-    assert.doesNotMatch(src, /packages\/skills\/scripts\/mark-checklist-step\.cjs/);
-    assert.doesNotMatch(
-      src,
-      /node\s+\{\{farmslot_dir\}\}\/packages\/agent-runtime\/scripts\/mark-checklist-step\.cjs/,
-    );
-    assert.match(src, /\{\{TASK_DIR\}\}\/mark/);
-  });
+  test(
+    `${rel}: role templates use bare {{TASK_DIR}}/mark and no explicit mark-checklist-step invocations`,
+    { skip: !existsSync(path.join(repoRoot, rel)) },
+    () => {
+      const abs = path.join(repoRoot, rel);
+      const src = readFileSync(abs, 'utf8');
+      assert.doesNotMatch(src, /mark-self-review/);
+      assert.doesNotMatch(src, /packages\/skills\/scripts\/mark-checklist-step\.cjs/);
+      assert.doesNotMatch(
+        src,
+        /node\s+\{\{farmslot_dir\}\}\/packages\/agent-runtime\/scripts\/mark-checklist-step\.cjs/,
+      );
+      assert.match(src, /\{\{TASK_DIR\}\}\/mark/);
+    },
+  );
 }

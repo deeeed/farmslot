@@ -485,6 +485,9 @@ async function attemptInlineCIFix(
     console.warn(
       `[ci-monitor] run ${runId.slice(0, 8)} — failed to send nudge: ${(err as Error).message}`,
     );
+    await markAgentContextStatus(runId, 'ci-fix', 'failed');
+    await unwatchContext(slotId, 'ci-fix');
+    await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
     clearInlineFixState(runId, { phase: 'polling' });
     return { attempted: true, success: false, attempts };
   }
@@ -611,6 +614,7 @@ async function attemptInlineCIFix(
         lastSignalAt: new Date().toISOString(),
       });
       await unwatchContext(slotId, 'ci-fix');
+      await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
       clearInlineFixState(runId, {
         phase: 'polling',
         lastFixCommitSha: currentSha,
@@ -633,6 +637,7 @@ async function attemptInlineCIFix(
       );
       await markAgentContextStatus(runId, 'ci-fix', 'failed');
       await unwatchContext(slotId, 'ci-fix');
+      await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
       clearInlineFixState(runId, {
         phase: 'polling',
         fixProgress,
@@ -644,7 +649,9 @@ async function attemptInlineCIFix(
   console.log(
     `[ci-monitor] run ${runId.slice(0, 8)} — inline fix timed out after ${Math.round((Date.now() - startedAt) / 1000)}s`,
   );
+  await markAgentContextStatus(runId, 'ci-fix', 'failed');
   await unwatchContext(slotId, 'ci-fix');
+  await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
   clearInlineFixState(runId, { phase: 'polling' });
   return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
 }
