@@ -49,8 +49,18 @@ function validateSubject(subject, label) {
 }
 
 function commitSubjectsForRange(range) {
-  const output = git(['log', '--format=%s', range]);
+  // Skip merge commits: GitHub's "Update branch" button and local `git merge`
+  // create commits like `Merge branch 'main' into <branch>` with >1 parent,
+  // whose subjects are not (and by convention need not be) Conventional
+  // Commits. Enforcing them would fail any PR that gets branch-updated.
+  const output = git(['log', '--no-merges', '--format=%s', range]);
   return output ? output.split('\n').filter(Boolean) : [];
+}
+
+function isMergeCommit(ref) {
+  // A merge commit has more than one parent (%P lists parent hashes).
+  const parents = git(['log', '-1', '--format=%P', ref]);
+  return parents.split(/\s+/).filter(Boolean).length > 1;
 }
 
 function validateRange(range) {
@@ -94,11 +104,17 @@ function validatePullRequestEvent(event) {
 
 function validatePushEvent(event) {
   const after = event.after || 'HEAD';
+  let ref = after;
   let subject = '';
   try {
     subject = git(['log', '-1', '--format=%s', after]);
   } catch {
+    ref = 'HEAD';
     subject = git(['log', '-1', '--format=%s', 'HEAD']);
+  }
+  if (isMergeCommit(ref)) {
+    console.log(`Skipping conventional commit check for merge commit ${ref}.`);
+    return;
   }
   validateSubject(subject, `pushed commit ${after}`);
 }

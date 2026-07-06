@@ -14,6 +14,10 @@ const STEPS = [
   ['recipe harness quality', ['yarn', 'workspace', '@farmslot/recipe-harness', 'quality']],
   ['protocol tests', ['yarn', 'test:protocol']],
   ['worker template contract', ['node', 'scripts/quality/worker-terminal-contract.test.cjs']],
+  [
+    'conventional commit guard tests',
+    ['node', '--test', 'scripts/quality/check-conventional-commits.test.mjs'],
+  ],
   ['worker template lint', ['node', 'scripts/quality/check-worker-template-contract.mjs']],
   ['template variable docs', ['node', 'scripts/quality/check-template-variables-docs.mjs']],
   ['shell script tests', ['bash', 'scripts/tests/run-shell-tests.sh']],
