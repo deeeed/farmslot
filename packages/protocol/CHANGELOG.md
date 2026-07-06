@@ -4,13 +4,13 @@ All notable changes to `@farmslot/protocol` are tracked here.
 
 ## Unreleased
 
-- feat: add `artifact_available` to `PREPARE_REQUIREMENTS` (bound to the project `artifact_check` hook) so prepare profiles can gate their cheap path on a fast artifact-resolution probe before selection.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.7.3 - 2026-07-06
+
+- feat: add `artifact_available` to `PREPARE_REQUIREMENTS` (bound to the project `artifact_check` hook) so prepare profiles can gate their cheap path on a fast artifact-resolution probe before selection.
 - Export the shared `RecipeQualityArtifact` validator from protocol for gateway and agent-runtime use.
 - Add `captureHelperPathInfo()` returning the resolved capture-helper path plus its resolution source (`env:CAPTURE_HELPER_PATH`, `env:SITEED_CAPTURE_HELPER_BIN`, `npm-global`, `npm-root`, `PATH`, `fallback`); `captureHelperPath()` is unchanged and delegates to it.
-
-## 0.7.3 - 2026-07-03
-
 - Add `GatewayListenInfo` on `gateway.status` for Companion LAN pairing diagnostics.
 - Add roadmap promotion draft contracts, backlog spec file reads, and graph dispatch configuration fields.
 - Add interactive operator packet contracts, artifact discovery, and action request helpers.
