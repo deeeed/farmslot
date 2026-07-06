@@ -1945,7 +1945,7 @@ export class BacklogPanel extends LitElement {
         : `${prefix}Graph needs attention before this item can be queued.`;
     }
     if (node.status === 'ready') {
-      return `${prefix}Ready, but not queued. Review auto start, slots, and dispatch config.`;
+      return `${prefix}Ready, but the graph scheduler did not enqueue yet. If this persists after dispatch, restart the gateway so stale graph scheduler state can reconcile.`;
     }
     return `${prefix}Checked: ${node.status}. Open the WorkGraph for details.`;
   }
