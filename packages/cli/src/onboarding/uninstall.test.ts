@@ -18,6 +18,7 @@ import {
   buildUninstallPlan,
   executeUninstallPlan,
   REMOVE_PATH_RETRY_OPTIONS,
+  shouldSweepCommand,
 } from './uninstall.js';
 import { workspaceAt, type WorkspaceState } from './workspace.js';
 
@@ -518,6 +519,29 @@ test('a failed removal records a leftover and never skips the symlink or aborts 
     rmSync(root, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
   }
+});
+
+test('shouldSweepCommand targets in-workspace writers but never tmux or sibling installs', () => {
+  const ws = '/tmp/fs-ws';
+  // A leaked writer inside the workspace — swept.
+  assert.equal(
+    shouldSweepCommand(`tail -F ${ws}/repos/mm-1/temp/recipe/runtime/metro.log`, ws),
+    true,
+  );
+  assert.equal(shouldSweepCommand(`node ${ws}/farmslot/services/gateway/index.js`, ws), true);
+  // An exact argv token equal to the root — swept.
+  assert.equal(shouldSweepCommand(`some-writer ${ws}`, ws), true);
+  // tmux server/client — left to the precise session teardown, even though a fresh-host server
+  // carries the session's `-c <workspace>` cwd in its argv (the CI kill-server regression).
+  assert.equal(shouldSweepCommand(`tmux new-session -d -s s -c ${ws} bash`, ws), false);
+  assert.equal(
+    shouldSweepCommand(`/opt/homebrew/bin/tmux new-session -c ${ws}/repos/x bash`, ws),
+    false,
+  );
+  assert.equal(shouldSweepCommand('tmux: server (/private/tmp/x) [80x24]', ws), false);
+  // A sibling install sharing the path prefix — never swept.
+  assert.equal(shouldSweepCommand(`node ${ws}-2/farmslot/services/gateway/index.js`, ws), false);
+  assert.equal(shouldSweepCommand(`node ${ws}-2`, ws), false);
 });
 
 test('removePath retries on ENOTEMPTY/EBUSY instead of failing on the first straggler write', () => {

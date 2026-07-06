@@ -224,18 +224,43 @@ function isAlive(pid: number): boolean {
   }
 }
 
-/** True when pid's command line runs out of `workspaceRoot` — so a stale pidfile whose pid
- *  the OS reused for an unrelated process can never be signalled by uninstall. Matching is
- *  path-boundary-aware: a bare substring would treat a sibling install (`…/farmslot-2/…`) as
- *  belonging to `…/farmslot` and SIGKILL its live processes. Require either a path INSIDE the
- *  workspace (`workspaceRoot + sep`) or an exact argv token equal to the root — the same
- *  exact-boundary discipline as the tmux `=<session>` teardown. */
-function pidBelongsToWorkspace(pid: number, workspaceRoot: string): boolean {
+/** The command line of `pid`, or '' when it can't be read. */
+function psCommand(pid: number): string {
   const res = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf-8' });
-  if (res.status !== 0 || !res.stdout) return false;
-  const command = res.stdout;
+  return res.status === 0 && res.stdout ? res.stdout : '';
+}
+
+/** Path-boundary match: a command belongs to the workspace only when it references a path
+ *  INSIDE it (`workspaceRoot + sep`) or an exact argv token equal to the root. A bare
+ *  substring would treat a sibling install (`…/farmslot-2/…`) as belonging to `…/farmslot` —
+ *  the same exact-boundary discipline as the tmux `=<session>` teardown. */
+function commandMatchesWorkspace(command: string, workspaceRoot: string): boolean {
   if (command.includes(workspaceRoot + sep)) return true;
   return command.split(/\s+/).some((token) => token === workspaceRoot);
+}
+
+/** tmux server/client processes are torn down precisely by killTmuxSession (`=<session>`), so
+ *  the broad process sweep must never touch them: on a fresh host with no running server, the
+ *  server the first `new-session -c <workspace>` starts inherits that cwd in its argv, so it
+ *  matches the workspace boundary — and SIGKILLing it kills every session on the shared server
+ *  (equivalent to kill-server, taking out other installs' sessions). */
+function isManagedTeardownProcess(command: string): boolean {
+  const argv0 = command.trim().split(/\s+/)[0] ?? '';
+  const base = (argv0.split('/').pop() ?? '').replace(/:$/, ''); // handle `tmux:` (server label)
+  return base === 'tmux';
+}
+
+/** Whether the workspace process sweep should signal a process with this command line —
+ *  exported for a deterministic unit test that does not depend on a host's tmux state. */
+export function shouldSweepCommand(command: string, workspaceRoot: string): boolean {
+  return commandMatchesWorkspace(command, workspaceRoot) && !isManagedTeardownProcess(command);
+}
+
+/** True when pid's command line runs out of `workspaceRoot` — so a stale pidfile whose pid
+ *  the OS reused for an unrelated process can never be signalled by uninstall. */
+function pidBelongsToWorkspace(pid: number, workspaceRoot: string): boolean {
+  const command = psCommand(pid);
+  return command ? commandMatchesWorkspace(command, workspaceRoot) : false;
 }
 
 /** Stop a farmslot service (gateway/node) recorded in `pidFile` before its files are removed.
@@ -376,10 +401,10 @@ function stopWatchmanForWorkspace(workspaceRoot: string, hooks: UninstallHooks):
 /** Kill processes still holding the workspace tree open before it is removed. The teardown
  *  stops gateway/node/tmux, but leaked writers (a `tail -F …/metro.log`, a stray dev server,
  *  a viewer) survive and keep writing while removePath deletes — the ENOTEMPTY race. pgrep -f
- *  the workspace path finds them; each match is confirmed against `ps -o command=` (literal
- *  containment) so a pgrep regex over-match can't target an unrelated pid, and the uninstall
- *  process and its parent shell are excluded. SIGTERM, then SIGKILL any survivor. Best-effort:
- *  silent when pgrep is unavailable. */
+ *  the workspace path finds them; each match is confirmed against `ps -o command=` via a path
+ *  boundary (no sibling-install over-match), tmux server/client processes are left to the
+ *  precise session teardown, and the uninstall process and its parent shell are excluded.
+ *  SIGTERM, then SIGKILL any survivor. Best-effort: silent when pgrep is unavailable. */
 async function sweepWorkspaceProcesses(
   workspaceRoot: string,
   hooks: UninstallHooks,
@@ -393,7 +418,9 @@ async function sweepWorkspaceProcesses(
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isInteger(n) && n > 0 && n !== self && n !== parent);
   for (const pid of pids) {
-    if (!isAlive(pid) || !pidBelongsToWorkspace(pid, workspaceRoot)) continue;
+    if (!isAlive(pid)) continue;
+    const command = psCommand(pid);
+    if (!command || !shouldSweepCommand(command, workspaceRoot)) continue;
     try {
       process.kill(pid, 'SIGTERM');
     } catch {
