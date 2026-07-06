@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +23,21 @@ function resolveTemplatePaths(rootDir, relPaths) {
   return relPaths
     .map((rel) => ({ rel, abs: path.join(rootDir, rel) }))
     .filter(({ abs }) => existsSync(abs));
+}
+
+/**
+ * Byte-compare a committed fixture against its live pack template. Returns null when in sync
+ * OR when the live template is absent (a bare clone without the gitignored packs), and a drift
+ * message otherwise. The guard checks committed fixture COPIES so it stays non-vacuous on bare
+ * clones; this closes the gap where those copies could silently drift from the real
+ * projects/ templates on any machine that has the packs (Arthur's dev, a populated CI).
+ */
+export function roleTemplateDrift(fixtureAbs, projectAbs) {
+  if (!existsSync(projectAbs)) return null; // packs not checked out — nothing to compare
+  const fixture = readFileSync(fixtureAbs, 'utf8');
+  const project = readFileSync(projectAbs, 'utf8');
+  if (fixture === project) return null;
+  return `fixture ${fixtureAbs} has drifted from the live pack template ${projectAbs}; re-copy the pack template into the fixture so the guard checks current content`;
 }
 
 const fixtureTemplates = resolveTemplatePaths(fixtureRoot, roleTemplateRelPaths);
@@ -60,3 +76,32 @@ for (const { rel, abs } of operatorTemplates) {
     assertRoleTemplateUsesTaskDirMark(rel, abs);
   });
 }
+
+// Fail loudly if a committed fixture no longer byte-matches its live pack template — only when
+// the packs are present (Arthur's dev, populated CI); a no-op on bare clones.
+for (const { rel, abs } of fixtureTemplates) {
+  test(`fixture ${rel}: byte-matches the live pack template when the packs are present`, () => {
+    const drift = roleTemplateDrift(abs, path.join(repoRoot, 'projects', rel));
+    assert.equal(drift, null, drift ?? undefined);
+  });
+}
+
+test('roleTemplateDrift flags a drifted fixture, passes a match, and no-ops without the pack', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'role-template-drift-'));
+  try {
+    const fixture = path.join(dir, 'fixture.md');
+    const project = path.join(dir, 'project.md');
+    writeFileSync(fixture, 'ROLE TEMPLATE\n{{TASK_DIR}}/mark 1\n');
+    // Matching → in sync.
+    writeFileSync(project, 'ROLE TEMPLATE\n{{TASK_DIR}}/mark 1\n');
+    assert.equal(roleTemplateDrift(fixture, project), null);
+    // Drifted → a message naming both paths.
+    writeFileSync(project, 'ROLE TEMPLATE\n{{TASK_DIR}}/mark 1\nEXTRA LINE\n');
+    const drift = roleTemplateDrift(fixture, project);
+    assert.match(drift ?? '', /drifted from the live pack template/);
+    // Pack absent → bare clone, nothing to compare.
+    assert.equal(roleTemplateDrift(fixture, path.join(dir, 'missing.md')), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
