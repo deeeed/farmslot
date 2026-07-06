@@ -12,6 +12,7 @@ import {
   type Run,
   type RunCreateParams,
   type RunStep,
+  type SubStepRecord,
 } from '@farmslot/protocol';
 
 import type { ProjectVars, RawProjectJson, SlotVars } from '../core/config.js';
@@ -94,7 +95,7 @@ export interface RunRecoveryCollaborators {
     pidPath: string,
     context: string,
     cleanupPatterns: string[],
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   expandHook: (
     hookName: string,
     projectJson: RawProjectJson,
@@ -140,6 +141,29 @@ export function recoveryHealthIsReady(
   const value = result.stdout.trim();
   if (!value) return false;
   return readyIndicator ? value === readyIndicator : true;
+}
+
+/**
+ * Whether a prepare step's recorded sub-steps show prepare ran to completion.
+ *
+ * Every prepare that finishes its configured phases ends with a terminal
+ * `health` sub-step — either a resolved value (`Health check — OK`) or a
+ * profile skip (`Health check skipped …`). A prepare interrupted mid-flight
+ * leaves the last sub-step as an earlier phase (`preflight`, `deps`, …) or an
+ * in-progress health detail (`Verifying health…`, `Trying unlock…`), none of
+ * which start with `Health check`.
+ *
+ * Recovery only trusts a post-restart health check when this returns true: a
+ * live artifact health probe on a slot whose preflight never completed is not
+ * evidence the slot was actually prepared (browser/webpack may be dead while a
+ * stale artifact still satisfies a weak health hook).
+ */
+export function prepareSubstepsShowCompletion(prepareStep: RunStep | undefined): boolean {
+  const outputs = prepareStep?.outputs as { subSteps?: SubStepRecord[] } | undefined;
+  const subSteps = outputs?.subSteps;
+  if (!Array.isArray(subSteps) || subSteps.length === 0) return false;
+  const last = subSteps[subSteps.length - 1];
+  return last.name === 'health' && (last.detail?.startsWith('Health check') ?? false);
 }
 
 export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise<void> {
@@ -427,16 +451,38 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                   .map((p) => deps.expandTemplate(String(p), vars, pv ?? undefined))
                   .filter(Boolean)
               : [];
+            // If cleanup terminates a live in-flight prepare process, the slot is
+            // no longer in a trustworthy state: the killed preflight was mid-way
+            // through refreshing exactly the artifacts a health check inspects.
+            let killedPrepareProcess = false;
             try {
-              await deps.clearStalePrepareProcess(vars, pidPath, 'recovery', cleanupPatterns);
+              killedPrepareProcess = await deps.clearStalePrepareProcess(
+                vars,
+                pidPath,
+                'recovery',
+                cleanupPatterns,
+              );
             } catch (cleanupErr) {
               console.warn(
                 `[run-engine] run ${run.id.slice(0, 8)} — stale process cleanup failed: ${(cleanupErr as Error).message}, orphaned processes may still be running`,
               );
             }
-            const healthHook = pv
-              ? deps.expandHook('health_check', pv.projectJson, vars, pv)
-              : null;
+            // The warm-recovery skip is only sound when nothing was killed AND
+            // the recorded sub-steps prove prepare finished its phases. Either a
+            // kill or incomplete sub-steps means a passing health probe can only
+            // reflect stale artifacts, not a genuinely prepared slot.
+            const substepsComplete = prepareSubstepsShowCompletion(prepareStep);
+            const canTrustHealth = !killedPrepareProcess && substepsComplete;
+            if (!canTrustHealth) {
+              console.log(
+                `[run-engine] run ${run.id.slice(0, 8)} — not trusting recovery health ` +
+                  `(killedPrepareProcess=${killedPrepareProcess}, substepsComplete=${substepsComplete}), re-running prepare (warm)`,
+              );
+            }
+            const healthHook =
+              canTrustHealth && pv
+                ? deps.expandHook('health_check', pv.projectJson, vars, pv)
+                : null;
             if (healthHook) {
               let healthTimer: ReturnType<typeof setTimeout> | undefined;
               const hr = await Promise.race([
@@ -460,6 +506,9 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
                 console.log(
                   `[run-engine] run ${run.id.slice(0, 8)} — slot healthy after recovery, advancing past prepare`,
                 );
+                // Sub-steps already showed a completed prepare (canTrustHealth
+                // gate), so leaving outputs intact keeps the record coherent with
+                // the done state — the existing subSteps still end at `health`.
                 deps.updateRunStep(run.id, 'prepare', {
                   status: 'done',
                   completedAt: new Date().toISOString(),
