@@ -44,6 +44,14 @@ import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { ensureTmuxTargetReadyForRelaunch } from '../self-review/worker-lifecycle.js';
+import {
+  CI_FIX_CHECKLIST,
+  CI_FIX_CHECKLIST_TARGET,
+  restoreWorkerChecklistTargetFromSlot,
+  slotTaskRelPath,
+  syncChecklistTargetForRole,
+  taskDirRelPath,
+} from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 
 import {
@@ -348,13 +356,16 @@ async function writeCIFixTask(
   expanded = expandTemplate(expanded, vars, pv);
 
   // Write CI-FIX.md to slot using the shared safe text writer
-  const taskPath = `${taskDir}/CI-FIX.md`;
+  const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
   await writeTextFileOnSlot(vars, taskPath, expanded);
+  await syncChecklistTargetForRole(vars, taskDir, 'ci-fix');
 
   // Mark CI-FIX.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: taskPath });
 
-  console.log(`[ci-monitor] run ${runId.slice(0, 8)} — wrote ${taskDir}/CI-FIX.md to slot`);
+  console.log(
+    `[ci-monitor] run ${runId.slice(0, 8)} — wrote ${taskDirRelPath(taskDir, CI_FIX_CHECKLIST)} to slot`,
+  );
   return { taskDir, taskPath, progress: parseCIFixProgress(expanded) };
 }
 
@@ -434,212 +445,237 @@ async function attemptInlineCIFix(
   });
 
   // Delete old CI-FIX-SIGNAL.json so we can detect fresh completion
-  const vars = await loadSlotVars(slotId);
-  const signalPath = `${vars.remoteRepo}/${writeResult.taskDir}/CI-FIX-SIGNAL.json`;
-  await execOnSlot(vars, `rm -f '${signalPath}'`);
-  const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
-  const roleWindowName =
-    run?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
-      ?.window ?? null;
-  const workerTarget = await ensureTmuxTargetReadyForRelaunch(
-    vars,
-    primaryTarget.session,
-    primaryTarget.target,
-    roleWindowName,
-    run?.flowType,
-  );
-  const session = primaryTarget.session;
-  const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
-    status: 'working',
-    taskFile: writeResult.taskPath,
-    signalFile: `${writeResult.taskDir}/CI-FIX-SIGNAL.json`,
-    runner,
-    model: run?.metrics.model ?? null,
-    target: { session, window: null, pane: null, target: workerTarget },
-  });
-  if (ciFixContext) await watchContext(slotId, ciFixContext);
-
-  // Send one-liner nudge to worker
-  const ciFixTaskFile = `${writeResult.taskDir}/CI-FIX.md`;
-  const nudgeCmd = await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
-    taskFile: ciFixTaskFile,
-    taskDir: writeResult.taskDir,
-  });
+  let ciFixContextStarted = false;
+  let vars: Awaited<ReturnType<typeof loadSlotVars>> | undefined;
   try {
-    const sent = await sendRunnerInstructionSafely(
+    vars = await loadSlotVars(slotId);
+    const signalPath = slotTaskRelPath(vars, writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal);
+    await execOnSlot(vars, `rm -f '${signalPath}'`);
+    const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
+    const roleWindowName =
+      run?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
+        ?.window ?? null;
+    const workerTarget = await ensureTmuxTargetReadyForRelaunch(
       vars,
-      workerTarget,
+      primaryTarget.session,
+      primaryTarget.target,
+      roleWindowName,
+      run?.flowType,
+    );
+    const session = primaryTarget.session;
+    const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
+      status: 'working',
+      taskFile: writeResult.taskPath,
+      signalFile: taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal),
       runner,
-      nudgeCmd,
-      'ci-monitor',
-    );
-    console.log(
-      `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'deferred'} to ${workerTarget}`,
-    );
-  } catch (err) {
-    console.warn(
-      `[ci-monitor] run ${runId.slice(0, 8)} — failed to send nudge: ${(err as Error).message}`,
-    );
-    clearInlineFixState(runId, { phase: 'polling' });
-    return { attempted: true, success: false, attempts };
-  }
-  mergeCIWatchOutputPatch(runId, {
-    phase: 'waiting_for_worker',
-    fixInProgress: true,
-    fixTrigger,
-    activeTaskFile: writeResult.taskPath,
-    fixProgress: writeResult.progress,
-  });
+      model: run?.metrics.model ?? null,
+      target: { session, window: null, pane: null, target: workerTarget },
+    });
+    if (ciFixContext) await watchContext(slotId, ciFixContext);
+    ciFixContextStarted = true;
 
-  let signalBaseline = '';
-  try {
-    signalBaseline = (
-      await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)
-    ).stdout.trim();
-  } catch (err) {
-    console.warn(
-      `[ci-monitor] run ${runId.slice(0, 8)} — failed to read CI fix signal baseline: ${(err as Error).message}`,
-    );
-    signalBaseline = '';
-  }
-
-  const deadline = Date.now() + INLINE_FIX_TIMEOUT_MS;
-  while (Date.now() < deadline && !signal.aborted) {
-    const timeout = Math.min(INLINE_FIX_FALLBACK_POLL_MS, deadline - Date.now());
+    // Send one-liner nudge to worker
+    const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
+    const nudgeCmd = await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
+      taskFile: ciFixTaskFile,
+      taskDir: writeResult.taskDir,
+    });
     try {
-      await sleep(timeout, signal);
+      const sent = await sendRunnerInstructionSafely(
+        vars,
+        workerTarget,
+        runner,
+        nudgeCmd,
+        'ci-monitor',
+      );
+      console.log(
+        `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'deferred'} to ${workerTarget}`,
+      );
     } catch (err) {
-      if (!signal.aborted) throw err;
+      console.warn(
+        `[ci-monitor] run ${runId.slice(0, 8)} — failed to send nudge: ${(err as Error).message}`,
+      );
+      await markAgentContextStatus(runId, 'ci-fix', 'failed');
+      await unwatchContext(slotId, 'ci-fix');
+      clearInlineFixState(runId, { phase: 'polling' });
+      return { attempted: true, success: false, attempts };
     }
-    if (signal.aborted) break;
+    mergeCIWatchOutputPatch(runId, {
+      phase: 'waiting_for_worker',
+      fixInProgress: true,
+      fixTrigger,
+      activeTaskFile: writeResult.taskPath,
+      fixProgress: writeResult.progress,
+    });
 
-    const fixProgress = await readRemoteCIFixProgress(vars, writeResult.taskPath);
-    if (fixProgress) {
-      mergeCIWatchOutputPatch(runId, {
-        phase: 'waiting_for_worker',
-        fixInProgress: true,
-        fixTrigger,
-        activeTaskFile: writeResult.taskPath,
-        fixProgress,
-      });
-    }
-
+    let signalBaseline = '';
     try {
-      const raw = (await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)).stdout.trim();
-      if (raw && raw !== signalBaseline) {
-        const ws = JSON.parse(raw) as WorkerSignal;
-        if (
-          ws.status === 'complete' ||
-          ws.status === 'done' ||
-          ws.status === 'failed' ||
-          ws.status === 'blocked'
-        ) {
-          const lastSignalAt = new Date().toISOString();
-          const currentSha = await getSlotHeadSha(slotId);
-          if (ws.status === 'blocked') {
+      signalBaseline = (
+        await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)
+      ).stdout.trim();
+    } catch (err) {
+      console.warn(
+        `[ci-monitor] run ${runId.slice(0, 8)} — failed to read CI fix signal baseline: ${(err as Error).message}`,
+      );
+      signalBaseline = '';
+    }
+
+    const deadline = Date.now() + INLINE_FIX_TIMEOUT_MS;
+    while (Date.now() < deadline && !signal.aborted) {
+      const timeout = Math.min(INLINE_FIX_FALLBACK_POLL_MS, deadline - Date.now());
+      try {
+        await sleep(timeout, signal);
+      } catch (err) {
+        if (!signal.aborted) throw err;
+      }
+      if (signal.aborted) break;
+
+      const fixProgress = await readRemoteCIFixProgress(vars, writeResult.taskPath);
+      if (fixProgress) {
+        mergeCIWatchOutputPatch(runId, {
+          phase: 'waiting_for_worker',
+          fixInProgress: true,
+          fixTrigger,
+          activeTaskFile: writeResult.taskPath,
+          fixProgress,
+        });
+      }
+
+      try {
+        const raw = (
+          await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)
+        ).stdout.trim();
+        if (raw && raw !== signalBaseline) {
+          const ws = JSON.parse(raw) as WorkerSignal;
+          if (
+            ws.status === 'complete' ||
+            ws.status === 'done' ||
+            ws.status === 'failed' ||
+            ws.status === 'blocked'
+          ) {
+            const lastSignalAt = new Date().toISOString();
+            const currentSha = await getSlotHeadSha(slotId);
+            if (ws.status === 'blocked') {
+              console.log(
+                `[ci-monitor] run ${runId.slice(0, 8)} — ${CI_FIX_CHECKLIST_TARGET.signal} blocked: ${ws.reason ?? 'no reason provided'}`,
+              );
+              await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
+              await unwatchContext(slotId, 'ci-fix');
+              clearInlineFixState(runId, {
+                phase: 'blocked',
+                lastSignalAt,
+                lastFixCommitSha: currentSha ?? null,
+                fixProgress,
+              });
+              return {
+                attempted: true,
+                success: false,
+                blocked: true,
+                blockedReason: ws.reason,
+                attempts,
+                commitSha: currentSha ?? undefined,
+                durationMs: Date.now() - startedAt,
+              };
+            }
+            mutateDedup(runId, (s) => {
+              s.consecutiveAttempts = 0;
+            });
+            const commitChanged = !!(currentSha && currentSha !== beforeSha);
             console.log(
-              `[ci-monitor] run ${runId.slice(0, 8)} — CI-FIX-SIGNAL blocked: ${ws.reason ?? 'no reason provided'}`,
+              `[ci-monitor] run ${runId.slice(0, 8)} — ${CI_FIX_CHECKLIST_TARGET.signal} detected, sha=${currentSha?.slice(0, 8)}${commitChanged ? '' : ' (no push)'}`,
             );
-            await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
+            await markAgentContextStatus(
+              runId,
+              'ci-fix',
+              ws.status === 'failed' ? 'failed' : 'complete',
+              { lastSignalAt },
+            );
             await unwatchContext(slotId, 'ci-fix');
             clearInlineFixState(runId, {
-              phase: 'blocked',
+              phase: 'polling',
               lastSignalAt,
               lastFixCommitSha: currentSha ?? null,
               fixProgress,
             });
             return {
               attempted: true,
-              success: false,
-              blocked: true,
-              blockedReason: ws.reason,
+              success: true,
               attempts,
               commitSha: currentSha ?? undefined,
+              commitChanged,
               durationMs: Date.now() - startedAt,
             };
           }
-          mutateDedup(runId, (s) => {
-            s.consecutiveAttempts = 0;
-          });
-          const commitChanged = !!(currentSha && currentSha !== beforeSha);
-          console.log(
-            `[ci-monitor] run ${runId.slice(0, 8)} — CI-FIX-SIGNAL detected, sha=${currentSha?.slice(0, 8)}${commitChanged ? '' : ' (no push)'}`,
-          );
-          await markAgentContextStatus(
-            runId,
-            'ci-fix',
-            ws.status === 'failed' ? 'failed' : 'complete',
-            { lastSignalAt },
-          );
-          await unwatchContext(slotId, 'ci-fix');
-          clearInlineFixState(runId, {
-            phase: 'polling',
-            lastSignalAt,
-            lastFixCommitSha: currentSha ?? null,
-            fixProgress,
-          });
-          return {
-            attempted: true,
-            success: true,
-            attempts,
-            commitSha: currentSha ?? undefined,
-            commitChanged,
-            durationMs: Date.now() - startedAt,
-          };
         }
+      } catch {
+        // keep polling
       }
-    } catch {
-      // keep polling
+
+      const currentSha = await getSlotHeadSha(slotId);
+      if (currentSha && currentSha !== beforeSha) {
+        mutateDedup(runId, (s) => {
+          s.consecutiveAttempts = 0;
+        });
+        console.log(
+          `[ci-monitor] run ${runId.slice(0, 8)} — new commit detected: ${currentSha.slice(0, 8)} (was ${beforeSha.slice(0, 8)})`,
+        );
+        await markAgentContextStatus(runId, 'ci-fix', 'complete', {
+          lastSignalAt: new Date().toISOString(),
+        });
+        await unwatchContext(slotId, 'ci-fix');
+        clearInlineFixState(runId, {
+          phase: 'polling',
+          lastFixCommitSha: currentSha,
+          fixProgress,
+        });
+        return {
+          attempted: true,
+          success: true,
+          attempts,
+          commitSha: currentSha,
+          commitChanged: true,
+          durationMs: Date.now() - startedAt,
+        };
+      }
+
+      const alive = await isWorkerSessionAlive(slotId, runner, runId);
+      if (!alive) {
+        console.log(
+          `[ci-monitor] run ${runId.slice(0, 8)} — worker session died during inline fix without success signal`,
+        );
+        await markAgentContextStatus(runId, 'ci-fix', 'failed');
+        await unwatchContext(slotId, 'ci-fix');
+        clearInlineFixState(runId, {
+          phase: 'polling',
+          fixProgress,
+        });
+        return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
+      }
     }
 
-    const currentSha = await getSlotHeadSha(slotId);
-    if (currentSha && currentSha !== beforeSha) {
-      mutateDedup(runId, (s) => {
-        s.consecutiveAttempts = 0;
-      });
-      console.log(
-        `[ci-monitor] run ${runId.slice(0, 8)} — new commit detected: ${currentSha.slice(0, 8)} (was ${beforeSha.slice(0, 8)})`,
-      );
-      await markAgentContextStatus(runId, 'ci-fix', 'complete', {
-        lastSignalAt: new Date().toISOString(),
-      });
-      await unwatchContext(slotId, 'ci-fix');
-      clearInlineFixState(runId, {
-        phase: 'polling',
-        lastFixCommitSha: currentSha,
-        fixProgress,
-      });
-      return {
-        attempted: true,
-        success: true,
-        attempts,
-        commitSha: currentSha,
-        commitChanged: true,
-        durationMs: Date.now() - startedAt,
-      };
-    }
-
-    const alive = await isWorkerSessionAlive(slotId, runner, runId);
-    if (!alive) {
-      console.log(
-        `[ci-monitor] run ${runId.slice(0, 8)} — worker session died during inline fix without success signal`,
-      );
+    console.log(
+      `[ci-monitor] run ${runId.slice(0, 8)} — inline fix timed out after ${Math.round((Date.now() - startedAt) / 1000)}s`,
+    );
+    await markAgentContextStatus(runId, 'ci-fix', 'failed');
+    await unwatchContext(slotId, 'ci-fix');
+    clearInlineFixState(runId, { phase: 'polling' });
+    return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
+  } catch (err) {
+    console.warn(
+      `[ci-monitor] run ${runId.slice(0, 8)} — inline CI fix setup failed: ${(err as Error).message}`,
+    );
+    if (ciFixContextStarted) {
       await markAgentContextStatus(runId, 'ci-fix', 'failed');
       await unwatchContext(slotId, 'ci-fix');
-      clearInlineFixState(runId, {
-        phase: 'polling',
-        fixProgress,
-      });
-      return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
+    }
+    vars = vars ?? (await loadSlotVars(slotId));
+    clearInlineFixState(runId, { phase: 'polling' });
+    return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
+  } finally {
+    if (vars) {
+      await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
     }
   }
-
-  console.log(
-    `[ci-monitor] run ${runId.slice(0, 8)} — inline fix timed out after ${Math.round((Date.now() - startedAt) / 1000)}s`,
-  );
-  await unwatchContext(slotId, 'ci-fix');
-  clearInlineFixState(runId, { phase: 'polling' });
-  return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
 }
 
 /** Try inline CI fix — returns result if attempted, null if not applicable */

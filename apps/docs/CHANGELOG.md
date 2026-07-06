@@ -4,6 +4,7 @@ All notable changes to `@farmslot/docs` are tracked here.
 
 ## Unreleased
 
+- Document `checklist-target.json` manifest routing for `./mark` and nested-loop signal derivation in the worker signal protocol reference.
 - Document Recipe Protocol v1 closeout: manifest-first artifacts, agent-runtime recipe-quality ownership, and worker artifact guidance.
 - Document the `artifact_available` prepare requirement and ref threading in the prepare-lifecycle reference.
 - Document `@farmslot/agent-runtime` as the canonical worker finish/runtime helper layer and update recipe-quality contract references.

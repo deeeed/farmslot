@@ -38,6 +38,7 @@ import {
   assertArtifactOnlyTaskGuard,
   evaluateArtifactOnlyTaskGuard,
 } from './artifact-only-guard.js';
+import { writeWorkerChecklistTargetLocal } from './checklist-target.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import { resolveWorkerTemplateSelectionForRun } from './worker-template-options.js';
 import {
@@ -869,6 +870,7 @@ export async function writeTaskFile(
   }
   await writeFile(taskFilePath, finalContent, 'utf-8');
   await writeChecklistMarker(taskAbsDir, farmslotDirForSlot);
+  await writeWorkerChecklistTargetLocal(taskAbsDir);
 
   // Write template provenance as inputs/template-provenance.json
   await writeFile(
@@ -955,18 +957,15 @@ export function buildChecklistMarkerScript(helperPath: string): string {
     '#!/usr/bin/env bash',
     'set -euo pipefail',
     'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-    'TASK="$DIR/TASK.md"',
-    '[ ! -f "$DIR/CHECKLIST.md" ] || TASK="$DIR/CHECKLIST.md"',
-    'SIGNAL="$DIR/SIGNAL.json"',
     'if [ -n "${FARMSLOT_AGENT_BIN:-}" ] && [ -x "${FARMSLOT_AGENT_BIN}" ]; then',
-    '  exec "$FARMSLOT_AGENT_BIN" mark "$TASK" "$SIGNAL" "$@"',
+    '  exec "$FARMSLOT_AGENT_BIN" mark "$DIR" "$@"',
     'fi',
     'if command -v farmslot-agent >/dev/null 2>&1; then',
-    '  exec farmslot-agent mark "$TASK" "$SIGNAL" "$@"',
+    '  exec farmslot-agent mark "$DIR" "$@"',
     'fi',
     `RECORDED=${JSON.stringify(helperPath)}`,
     'if [ -f "$RECORDED" ]; then',
-    '  exec node "$RECORDED" "$TASK" "$SIGNAL" "$@"',
+    '  exec node "$RECORDED" "$DIR" "$@"',
     'fi',
     'echo "mark: cannot resolve @farmslot/agent-runtime." >&2',
     'echo "Next: install it (npm i -g @farmslot/agent-runtime) so \'farmslot-agent\' is on PATH, or set FARMSLOT_AGENT_BIN=/path/to/farmslot-agent, then re-run: $0 $*" >&2',

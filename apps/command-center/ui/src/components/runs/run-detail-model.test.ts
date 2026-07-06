@@ -8,6 +8,12 @@ import type {
   Run,
   RunStep,
 } from '@farmslot/protocol';
+import {
+  CI_FIX_CHECKLIST,
+  SELF_REVIEW_CHECKLIST,
+  SELF_REVIEW_FIX_CHECKLIST,
+  TASK_PROGRESS_MARKDOWN,
+} from '@farmslot/protocol/checklist-target';
 
 import {
   buildRerunAlongsideHref,
@@ -359,7 +365,11 @@ test('run detail task-progress helpers preserve worker active and self-review fi
   );
   assert.equal(
     isTaskProgressRunActive(
-      makeRun({ status: 'done', taskFile: 'TASK.md', activeTaskFile: 'SELF-REVIEW.md' }),
+      makeRun({
+        status: 'done',
+        taskFile: TASK_PROGRESS_MARKDOWN,
+        activeTaskFile: SELF_REVIEW_CHECKLIST,
+      }),
     ),
     true,
   );
@@ -379,22 +389,48 @@ test('run detail task-progress helpers preserve worker active and self-review fi
   );
   assert.equal(
     shouldAcceptTaskProgressUpdate(
-      makeRun({ taskFile: 'TASK.md', activeTaskFile: 'SELF-REVIEW.md' }),
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: SELF_REVIEW_CHECKLIST }),
       { contextId: 'self-review' },
     ),
     true,
   );
   assert.equal(
     shouldAcceptTaskProgressUpdate(
-      makeRun({ taskFile: 'TASK.md', activeTaskFile: 'SELF-REVIEW.md' }),
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: SELF_REVIEW_CHECKLIST }),
       { contextId: 'worker' },
     ),
     false,
   );
   assert.equal(
-    shouldAcceptTaskProgressUpdate(makeRun({ taskFile: 'TASK.md', activeTaskFile: 'TASK.md' }), {
-      contextId: 'worker',
-    }),
+    shouldAcceptTaskProgressUpdate(
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: SELF_REVIEW_FIX_CHECKLIST }),
+      { contextId: 'self-review-fix' },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: SELF_REVIEW_FIX_CHECKLIST }),
+      { contextId: 'self-review' },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: CI_FIX_CHECKLIST }),
+      {
+        contextId: 'ci-fix',
+      },
+    ),
+    true,
+  );
+  assert.equal(
+    shouldAcceptTaskProgressUpdate(
+      makeRun({ taskFile: TASK_PROGRESS_MARKDOWN, activeTaskFile: TASK_PROGRESS_MARKDOWN }),
+      {
+        contextId: 'worker',
+      },
+    ),
     true,
   );
 });

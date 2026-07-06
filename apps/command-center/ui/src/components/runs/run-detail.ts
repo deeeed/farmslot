@@ -215,6 +215,11 @@ export class RunDetail extends RunDetailState {
       this._branchNudgeShowPicker = false;
       this._selectedSlotId = null;
     }
+    const activeTaskChanged =
+      prev?.id === this.run?.id && prev?.activeTaskFile !== this.run?.activeTaskFile;
+    if (activeTaskChanged) {
+      this.taskProgress = null;
+    }
     const runsForMeta = this.run && !sharedRun ? [this.run, ...s.runs] : s.runs;
     this.prStatus = this.run ? runFamilyPrStatus(this.run, runsForMeta, s.prs ?? []) : null;
     if (this.run) {
@@ -242,6 +247,7 @@ export class RunDetail extends RunDetailState {
     const inlineCIFixActive = this.run ? hasActiveInlineCiFix(this.run) : false;
     const shouldRefreshTaskProgress =
       !this.taskProgress ||
+      activeTaskChanged ||
       (inlineCIFixActive && Date.now() - this._lastTaskProgressFetchAt > 5_000);
     if (isWorkerActive && this.run?.slotId && shouldRefreshTaskProgress) {
       this.fetchTaskProgress(this.run!.slotId);

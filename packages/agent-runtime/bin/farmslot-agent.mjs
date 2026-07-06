@@ -413,7 +413,7 @@ function installMark(args) {
       '#!/usr/bin/env bash',
       'set -euo pipefail',
       'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-      `node ${JSON.stringify(binPath)} mark "$DIR/${parsed.task}" "$DIR/${parsed.signal}" "$@"`,
+      `node ${JSON.stringify(binPath)} mark "$DIR" "$@"`,
       '',
     ].join('\n'),
     { mode: 0o755 },

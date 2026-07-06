@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix: filter nested-loop task progress by active checklist basename so self-review panels do not accept stale events during fix or CI-fix phases; clear progress when `activeTaskFile` changes and label fix vs review progress from the protocol checklist registry.
 - fix: show Mark ready for failed and needs-attention backlog items so operators can clear stale run linkage without editing state files.
 - fix: reset failed graph-linked backlog items to `ready` when their run is deleted or missing, and retry graph enqueue when a prior completed scheduler ledger entry is stale.
 - Active-development baseline; add user-facing changes here before release or package publication.

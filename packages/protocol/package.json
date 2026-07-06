@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/protocol",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,6 +14,11 @@
       "types": "./dist/agents/roles.d.ts",
       "import": "./dist/agents/roles.js",
       "default": "./dist/agents/roles.js"
+    },
+    "./checklist-target": {
+      "types": "./dist/checklist-target.d.ts",
+      "import": "./dist/checklist-target.js",
+      "default": "./dist/checklist-target.js"
     },
     "./surfaces/command-center": {
       "types": "./dist/surfaces/command-center.d.ts",

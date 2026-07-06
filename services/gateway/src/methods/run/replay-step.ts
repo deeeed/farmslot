@@ -416,28 +416,42 @@ export async function runReplayStep(
       );
       if (taskRelDir !== null) {
         const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
-        const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
+        const taskDirRel = `${taskDirName}/${taskRelDir}`;
+        const workerTaskDir = `${vars.remoteRepo}/${taskDirRel}`;
         const preserveSelfReviewFix =
           existing.agentContexts?.some(
             (ctx) => ctx.role === 'self-review-fix' && ctx.status === 'working',
           ) ?? false;
+        const {
+          CHECKLIST_TARGET_BY_AGENT_ROLE,
+          restoreWorkerChecklistTargetFromSlot,
+          syncChecklistTargetForRole,
+        } = await import('../../tasks/checklist-target.js');
+        const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
+        const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
+        const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
         const nestedFiles = [
-          `${workerTaskDir}/SELF-REVIEW.md`,
-          `${workerTaskDir}/SELF-REVIEW-SIGNAL.json`,
+          `${workerTaskDir}/${selfReviewTarget.checklist}`,
+          `${workerTaskDir}/${selfReviewTarget.signal}`,
           ...(preserveSelfReviewFix
             ? []
             : [
-                `${workerTaskDir}/SELF-REVIEW-FIX.md`,
-                `${workerTaskDir}/SELF-REVIEW-FIX-SIGNAL.json`,
+                `${workerTaskDir}/${selfReviewFixTarget.checklist}`,
+                `${workerTaskDir}/${selfReviewFixTarget.signal}`,
               ]),
-          `${workerTaskDir}/CI-FIX.md`,
-          `${workerTaskDir}/CI-FIX-SIGNAL.json`,
+          `${workerTaskDir}/${ciFixTarget.checklist}`,
+          `${workerTaskDir}/${ciFixTarget.signal}`,
         ];
         await execOnSlot(
           vars,
           `rm -f ${nestedFiles.map(shellQuote).join(' ')} 2>/dev/null`,
           vars.remoteRepo,
         );
+        if (preserveSelfReviewFix) {
+          await syncChecklistTargetForRole(vars, taskDirRel, 'self-review-fix');
+        } else {
+          await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel);
+        }
         console.log(
           `[run] replay from ${replayStepName} — cleared nested-loop task artifacts in ${workerTaskDir}${preserveSelfReviewFix ? ' (preserved active self-review-fix)' : ''}`,
         );
@@ -472,12 +486,17 @@ export async function runReplayStep(
       if (taskRelDir !== null) {
         const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
         const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
+        const { CHECKLIST_TARGET_BY_AGENT_ROLE, WORKER_SIGNAL_FILE } =
+          await import('../../tasks/checklist-target.js');
+        const selfReviewTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review'];
+        const selfReviewFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['self-review-fix'];
+        const ciFixTarget = CHECKLIST_TARGET_BY_AGENT_ROLE['ci-fix'];
         await execOnSlot(
           vars,
-          `rm -f ${shellQuote(`${workerTaskDir}/SIGNAL.json`)} ` +
-            `${shellQuote(`${workerTaskDir}/SELF-REVIEW-SIGNAL.json`)} ` +
-            `${shellQuote(`${workerTaskDir}/SELF-REVIEW-FIX-SIGNAL.json`)} ` +
-            `${shellQuote(`${workerTaskDir}/CI-FIX-SIGNAL.json`)} 2>/dev/null`,
+          `rm -f ${shellQuote(`${workerTaskDir}/${WORKER_SIGNAL_FILE}`)} ` +
+            `${shellQuote(`${workerTaskDir}/${selfReviewTarget.signal}`)} ` +
+            `${shellQuote(`${workerTaskDir}/${selfReviewFixTarget.signal}`)} ` +
+            `${shellQuote(`${workerTaskDir}/${ciFixTarget.signal}`)} 2>/dev/null`,
           vars.remoteRepo,
         );
         console.log(

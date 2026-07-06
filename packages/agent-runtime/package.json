@@ -1,6 +1,6 @@
 {
   "name": "@farmslot/agent-runtime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,12 +14,13 @@
       "default": "./dist/index.js"
     },
     "./scripts/mark-checklist-step.cjs": "./scripts/mark-checklist-step.cjs",
+    "./scripts/checklist-target.cjs": "./scripts/checklist-target.cjs",
     "./scripts/worker-terminal-contract.cjs": "./scripts/worker-terminal-contract.cjs",
     "./scripts/check-task-artifact-contract.mjs": "./scripts/check-task-artifact-contract.mjs"
   },
   "scripts": {
     "typecheck": "yarn workspace @farmslot/protocol build && tsc --noEmit --project tsconfig.json",
-    "test": "node test/mark-checklist-step.test.cjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs",
+    "test": "node test/mark-checklist-step.test.cjs && node test/checklist-target-sync.test.mjs && node test/package-exports.test.cjs && node test/check-task-artifact-contract.test.cjs && node test/recipe-quality-builder.test.cjs",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\"",
@@ -30,7 +31,7 @@
     "prepublishOnly": "node ../../scripts/quality/check-farmslot-package-readiness.mjs --publish --packages @farmslot/agent-runtime"
   },
   "dependencies": {
-    "@farmslot/protocol": "workspace:*"
+    "@farmslot/protocol": ">=0.7.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
