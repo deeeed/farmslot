@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Add `@farmslot/protocol/checklist-target` export for nested-loop checklist filenames, signal derivation, and UI progress helpers.
 
 ## 0.7.4 - 2026-07-06
 

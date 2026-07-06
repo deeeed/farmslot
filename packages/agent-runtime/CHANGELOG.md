@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- Require `checklist-target.json` for task-dir `./mark`; remove the legacy explicit-args invocation surface.
 
 ## 0.1.1 - 2026-07-06
 
