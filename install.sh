@@ -32,7 +32,7 @@
 #   FARMSLOT_SKIP_CAPTURE_HELPER  set to 1 to skip external capture-helper install/check
 #   CAPTURE_HELPER_PATH / SITEED_CAPTURE_HELPER_BIN  explicit native helper binary override
 #   FARMSLOT_CAPTURE_HELPER_NPM_PACKAGE  npm package name (default: @siteed/capture-helper)
-#   FARMSLOT_CAPTURE_HELPER_BREW_FORMULA brew formula name (default: capture-helper)
+#   FARMSLOT_CAPTURE_HELPER_BREW_FORMULA brew formula name (default: deeeed/tap/capture-helper)
 set -euo pipefail
 
 WORKSPACE="${FARMSLOT_WORKSPACE:-${HOME}/farmslot}"
@@ -534,7 +534,10 @@ step_capture_helper() {
   echo "  Grant it to your terminal/IDE app: System Settings > Privacy & Security >"
   echo "  Screen & System Audio Recording. Deny is fine here; it only disables capture."
   local npm_pkg="${FARMSLOT_CAPTURE_HELPER_NPM_PACKAGE:-@siteed/capture-helper}"
-  local brew_formula="${FARMSLOT_CAPTURE_HELPER_BREW_FORMULA:-capture-helper}"
+  # Fully-qualified tap/formula: the formula lives in deeeed/homebrew-tap, and
+  # brew auto-taps on a qualified name — a bare `capture-helper` resolves to no
+  # formula on a fresh machine. Env override still honored.
+  local brew_formula="${FARMSLOT_CAPTURE_HELPER_BREW_FORMULA:-deeeed/tap/capture-helper}"
   local helper_bin=""
   helper_bin="$(capture_helper_bin || true)"
   if [ -z "$helper_bin" ]; then
@@ -563,7 +566,7 @@ step_capture_helper() {
     fi
   else
     yellow "  [WARN] capture-helper not installed — live screenshots/video will be unavailable"
-    echo "  fix: npm install -g ${npm_pkg}  # or install the Homebrew formula"
+    echo "  fix: brew install ${brew_formula}  # or: npm install -g ${npm_pkg}"
   fi
 }
 
