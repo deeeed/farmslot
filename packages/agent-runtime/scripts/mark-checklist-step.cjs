@@ -36,9 +36,9 @@ function printHelp() {
     [
       usageLine,
       '',
-      'Task-dir mode (preferred): farmslot-agent mark <task-dir> <step> — uses checklist-target.json when present, otherwise TASK.md/CHECKLIST.md + SIGNAL.json.',
+      'Task-dir mode (preferred): farmslot-agent mark <task-dir> <step> — requires checklist-target.json written by the gateway at task creation or role switch.',
       'Override: farmslot-agent mark <task-dir> --checklist SELF-REVIEW.md <step> — optional --signal; signal defaults from checklist name.',
-      'Explicit mode: farmslot-agent mark <task-md> <signal-json> <step> — legacy direct paths.',
+      'Explicit mode: farmslot-agent mark <task-md> <signal-json> <step> — programmatic API with direct paths.',
       'Bootstrap: ./mark start — role-owned signal with status running (no checklist box).',
       'Progress: ./mark 1, ./mark 2, ... — checks the box and appends checklistTiming.',
       'Terminal:',

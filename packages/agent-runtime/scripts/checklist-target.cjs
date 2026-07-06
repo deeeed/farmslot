@@ -84,6 +84,16 @@ function readManifest(taskDir) {
   return { checklist, signal };
 }
 
+function manifestModeTeachingError(taskDir, reason) {
+  const manifestPath = path.join(path.resolve(taskDir), CHECKLIST_TARGET_MANIFEST);
+  return (
+    `Missing or invalid ${CHECKLIST_TARGET_MANIFEST} at ${manifestPath} (${reason}). ` +
+    'The gateway writes this file at task creation and on every role switch — re-run dispatch/prepare for this run, or write the manifest manually. ' +
+    'Escape hatch: farmslot-agent mark <task-dir> --checklist FILE.md <step> [--signal FILE.json], ' +
+    'or explicit paths: farmslot-agent mark <task.md> <signal.json> <step>.'
+  );
+}
+
 function taskLocalBasenameOrThrow(value, label, expectedExt) {
   if (!value || typeof value !== 'string') {
     throw new Error(`${label} is required`);
@@ -151,9 +161,15 @@ function parseTaskDirMarkArgs(taskDir, rawArgs, { isMarkStepToken, usage }) {
 
 function resolveChecklistTarget(taskDir) {
   const normalizedDir = path.resolve(taskDir);
+  const manifestPath = path.join(normalizedDir, CHECKLIST_TARGET_MANIFEST);
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(manifestModeTeachingError(taskDir, 'file not found'));
+  }
   const fromManifest = readManifest(normalizedDir);
-  if (fromManifest) return fromManifest;
-  return defaultWorkerTarget(normalizedDir);
+  if (!fromManifest) {
+    throw new Error(manifestModeTeachingError(taskDir, 'invalid JSON or checklist basename'));
+  }
+  return fromManifest;
 }
 
 function resolveChecklistPaths(taskDir) {
@@ -185,6 +201,7 @@ module.exports = {
   signalFileForChecklist,
   targetForChecklistBasename,
   defaultWorkerTarget,
+  manifestModeTeachingError,
   readManifest,
   resolveChecklistTarget,
   resolveChecklistTargetWithOverrides,

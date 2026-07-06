@@ -242,3 +242,17 @@ assert.match(readFileSync(overrideTask, 'utf8'), /- \[x\]/);
 assert.doesNotMatch(readFileSync(path.join(overrideDir, 'TASK.md'), 'utf8'), /- \[x\]/);
 parsed = JSON.parse(readFileSync(overrideSignal, 'utf8'));
 assert.equal(parsed.status, 'running');
+
+const missingManifestDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-no-manifest-'));
+writeFileSync(path.join(missingManifestDir, 'TASK.md'), '- [ ] worker step');
+result = spawnSync(process.execPath, [helper, missingManifestDir, 'start'], { encoding: 'utf8' });
+assert.notEqual(result.status, 0, 'task-dir mark must fail without checklist-target.json');
+assert.match(result.stderr, /checklist-target\.json/);
+assert.match(result.stderr, /--checklist FILE\.md/);
+
+const invalidManifestDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-bad-manifest-'));
+writeFileSync(path.join(invalidManifestDir, 'TASK.md'), '- [ ] worker step');
+writeFileSync(path.join(invalidManifestDir, CHECKLIST_TARGET_MANIFEST), '{not json');
+result = spawnSync(process.execPath, [helper, invalidManifestDir, 'start'], { encoding: 'utf8' });
+assert.notEqual(result.status, 0, 'task-dir mark must fail with invalid checklist-target.json');
+assert.match(result.stderr, /invalid JSON or checklist basename/);
