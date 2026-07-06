@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { access, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -15,6 +17,7 @@ import { assertArtifactOnlyTaskGuard } from './artifact-only-guard.js';
 import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 import {
   applyArtifactOnlyTaskPolicy,
+  buildChecklistMarkerScript,
   buildTaskFolderPrefix,
   buildTemplateProvenance,
   checklistMarkerHelperPath,
@@ -420,6 +423,12 @@ test('mark wrapper resolves the published bin with a recorded-path fallback', as
   const marker = await readFile(path.join(path.dirname(taskFile), CHECKLIST_MARKER_INPUT), 'utf-8');
   // Ladder: env override → PATH → recorded install path → teach.
   assert.match(marker, /FARMSLOT_AGENT_BIN/);
+  // The env rung requires the override to be executable so a bad value falls
+  // through the ladder instead of hard-dying under `set -euo pipefail`.
+  assert.match(
+    marker,
+    /\[ -n "\$\{FARMSLOT_AGENT_BIN:-\}" \] && \[ -x "\$\{FARMSLOT_AGENT_BIN\}" \]/,
+  );
   assert.match(marker, /exec "\$FARMSLOT_AGENT_BIN" mark "\$TASK" "\$SIGNAL"/);
   assert.match(marker, /command -v farmslot-agent/);
   assert.match(marker, /exec farmslot-agent mark "\$TASK" "\$SIGNAL"/);
@@ -429,6 +438,90 @@ test('mark wrapper resolves the published bin with a recorded-path fallback', as
   // Unresolved bin teaches the escape and exits non-zero.
   assert.match(marker, /Next: install it .*farmslot-agent.* on PATH.*FARMSLOT_AGENT_BIN/s);
   assert.match(marker, /exit 127/);
+});
+
+test('generated mark wrapper executes the right ladder rung', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'markwrap-'));
+  t.after(async () => rm(dir, { recursive: true, force: true }));
+
+  const recordFile = path.join(dir, 'record.txt');
+  const readRecord = async () => {
+    try {
+      return await readFile(recordFile, 'utf-8');
+    } catch {
+      return '';
+    }
+  };
+  const writeStubBin = async (file: string, tag: string) => {
+    await writeFile(
+      file,
+      `#!/usr/bin/env bash\nprintf '${tag} %s\\n' "$*" >> ${JSON.stringify(recordFile)}\n`,
+      'utf-8',
+    );
+    await chmod(file, 0o755);
+  };
+
+  // env rung stub, and a PATH-only stub named `farmslot-agent` in its own dir so
+  // it is reachable only when that dir is on PATH.
+  const envStub = path.join(dir, 'env-agent');
+  await writeStubBin(envStub, 'ENV');
+  const pathbin = path.join(dir, 'bin');
+  await mkdir(pathbin, { recursive: true });
+  await writeStubBin(path.join(pathbin, 'farmslot-agent'), 'PATH');
+  // recorded-rung stub: a .cjs the wrapper runs via `node`.
+  const recordedCjs = path.join(dir, 'recorded.cjs');
+  await writeFile(
+    recordedCjs,
+    `require('node:fs').appendFileSync(${JSON.stringify(recordFile)}, 'CJS ' + process.argv.slice(2).join(' ') + '\\n');\n`,
+    'utf-8',
+  );
+
+  const markPath = path.join(dir, 'mark');
+  await writeFile(markPath, buildChecklistMarkerScript(recordedCjs), 'utf-8');
+  await chmod(markPath, 0o755);
+  await writeFile(path.join(dir, 'TASK.md'), '- [ ] step\n', 'utf-8');
+
+  const nodeDir = path.dirname(process.execPath);
+  const cleanPath = `${nodeDir}:/usr/bin:/bin`; // node available, no farmslot-agent
+  const withPathBin = `${pathbin}:${cleanPath}`; // farmslot-agent resolvable via PATH
+  const run = (env: Record<string, string>) =>
+    spawnSync('bash', [markPath, 'N'], {
+      cwd: dir,
+      encoding: 'utf-8',
+      env: { HOME: process.env.HOME ?? '', ...env },
+    });
+
+  // 1. env rung wins even when the PATH bin is present.
+  let r = run({ PATH: withPathBin, FARMSLOT_AGENT_BIN: envStub });
+  assert.equal(r.status, 0);
+  assert.match(await readRecord(), /^ENV mark .*TASK\.md .*SIGNAL\.json N$/m);
+  await rm(recordFile, { force: true });
+
+  // 2. a non-executable override falls through to the PATH rung.
+  const badBin = path.join(dir, 'not-exec');
+  await writeFile(badBin, 'nope', 'utf-8'); // deliberately not chmod +x
+  r = run({ PATH: withPathBin, FARMSLOT_AGENT_BIN: badBin });
+  assert.equal(r.status, 0);
+  assert.match(await readRecord(), /^PATH mark /m);
+  await rm(recordFile, { force: true });
+
+  // 3. PATH rung wins when no env override is set.
+  r = run({ PATH: withPathBin });
+  assert.equal(r.status, 0);
+  assert.match(await readRecord(), /^PATH mark /m);
+  await rm(recordFile, { force: true });
+
+  // 4. recorded rung wins when the bin is not on PATH.
+  r = run({ PATH: cleanPath });
+  assert.equal(r.status, 0);
+  assert.match(await readRecord(), /^CJS .*TASK\.md .*SIGNAL\.json N$/m);
+  await rm(recordFile, { force: true });
+
+  // 5. nothing resolves → teach + exit 127.
+  await rm(recordedCjs, { force: true });
+  r = run({ PATH: cleanPath });
+  assert.equal(r.status, 127);
+  assert.match(r.stderr, /Next: install it/);
 });
 
 test('renderCommentSummary returns placeholder when no rows — worker still re-fetches', () => {

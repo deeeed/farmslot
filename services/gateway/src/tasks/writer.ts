@@ -939,40 +939,46 @@ export function checklistMarkerHelperPath(farmslotDirForSlot: string): string {
   );
 }
 
+/**
+ * Build the task-local `mark` wrapper script.
+ *
+ * Resolves the published @farmslot/agent-runtime bin at run time, mirroring the
+ * harness runner shim ladder (env override → PATH → recorded install path →
+ * teach). The published `farmslot-agent mark` runs the same mark-checklist-step
+ * it always has; the recorded-path rung keeps dev/farmslot-checkout installs
+ * (where the bin is not on PATH) behaving exactly as before. The env rung
+ * requires the override to be executable so a bad operator value falls through
+ * the ladder to the teach instead of hard-dying under `set -euo pipefail`.
+ */
+export function buildChecklistMarkerScript(helperPath: string): string {
+  return [
+    '#!/usr/bin/env bash',
+    'set -euo pipefail',
+    'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+    'TASK="$DIR/TASK.md"',
+    '[ ! -f "$DIR/CHECKLIST.md" ] || TASK="$DIR/CHECKLIST.md"',
+    'SIGNAL="$DIR/SIGNAL.json"',
+    'if [ -n "${FARMSLOT_AGENT_BIN:-}" ] && [ -x "${FARMSLOT_AGENT_BIN}" ]; then',
+    '  exec "$FARMSLOT_AGENT_BIN" mark "$TASK" "$SIGNAL" "$@"',
+    'fi',
+    'if command -v farmslot-agent >/dev/null 2>&1; then',
+    '  exec farmslot-agent mark "$TASK" "$SIGNAL" "$@"',
+    'fi',
+    `RECORDED=${JSON.stringify(helperPath)}`,
+    'if [ -f "$RECORDED" ]; then',
+    '  exec node "$RECORDED" "$TASK" "$SIGNAL" "$@"',
+    'fi',
+    'echo "mark: cannot resolve @farmslot/agent-runtime." >&2',
+    'echo "Next: install it (npm i -g @farmslot/agent-runtime) so \'farmslot-agent\' is on PATH, or set FARMSLOT_AGENT_BIN=/path/to/farmslot-agent, then re-run: $0 $*" >&2',
+    'exit 127',
+    '',
+  ].join('\n');
+}
+
 async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: string): Promise<void> {
   const markerPath = path.join(taskAbsDir, CHECKLIST_MARKER_INPUT);
   const helperPath = checklistMarkerHelperPath(farmslotDirForSlot);
-  // Resolve the published @farmslot/agent-runtime bin at run time, mirroring the
-  // harness runner shim ladder (env override → PATH → recorded install path →
-  // teach). The published `farmslot-agent mark` runs the same mark-checklist-step
-  // it always has; the recorded-path rung keeps dev/farmslot-checkout installs
-  // (where the bin is not on PATH) behaving exactly as before.
-  await writeFile(
-    markerPath,
-    [
-      '#!/usr/bin/env bash',
-      'set -euo pipefail',
-      'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
-      'TASK="$DIR/TASK.md"',
-      '[ ! -f "$DIR/CHECKLIST.md" ] || TASK="$DIR/CHECKLIST.md"',
-      'SIGNAL="$DIR/SIGNAL.json"',
-      'if [ -n "${FARMSLOT_AGENT_BIN:-}" ]; then',
-      '  exec "$FARMSLOT_AGENT_BIN" mark "$TASK" "$SIGNAL" "$@"',
-      'fi',
-      'if command -v farmslot-agent >/dev/null 2>&1; then',
-      '  exec farmslot-agent mark "$TASK" "$SIGNAL" "$@"',
-      'fi',
-      `RECORDED=${JSON.stringify(helperPath)}`,
-      'if [ -f "$RECORDED" ]; then',
-      '  exec node "$RECORDED" "$TASK" "$SIGNAL" "$@"',
-      'fi',
-      'echo "mark: cannot resolve @farmslot/agent-runtime." >&2',
-      'echo "Next: install it (npm i -g @farmslot/agent-runtime) so \'farmslot-agent\' is on PATH, or set FARMSLOT_AGENT_BIN=/path/to/farmslot-agent, then re-run: $0 $*" >&2',
-      'exit 127',
-      '',
-    ].join('\n'),
-    'utf-8',
-  );
+  await writeFile(markerPath, buildChecklistMarkerScript(helperPath), 'utf-8');
   await chmod(markerPath, 0o755);
 }
 
