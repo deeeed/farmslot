@@ -105,14 +105,12 @@ HARNESS_CMD="$({{recipe_harness_resolve_cmd}})"
 ### Update artifacts (steps 7-9)
 
 - [ ] **7. Append to report.md** — add a "Self-Review Fixes" section to `{{TASK_DIR}}/artifacts/report.md`:
-
   ```markdown
   ## Self-Review Fixes
 
   - <file:line> — <what you fixed>
   - <file:line> — <what you fixed>
   ```
-
 - [ ] **8. Keep PR description local-only** if the fixes changed behavior or test coverage:
   ```bash
   # Only if substantive changes (new test assertions, logic changes). Skip for trivial cleanups.
