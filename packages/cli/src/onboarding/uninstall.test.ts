@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
-import { execFile, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFile, spawn, spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -14,6 +22,11 @@ import {
 import { workspaceAt, type WorkspaceState } from './workspace.js';
 
 const execFileAsync = promisify(execFile);
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function pgrepAvailable(): boolean {
+  return spawnSync('pgrep', ['-f', 'farmslot-uninstall-nonexistent-pattern']).error === undefined;
+}
 
 /** Real tmux is required for the teardown tests below — mirrors the skip pattern used by
  *  services/node/src/commands/tmux.test.ts for machines/CI without tmux installed. */
@@ -313,6 +326,121 @@ test('executeUninstallPlan kills each slot session before repos are removed, and
   } finally {
     spawnSync('tmux', ['kill-session', '-t', `=${otherSession}`]);
     spawnSync('tmux', ['kill-session', '-t', `=${collisionSession}`]);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test('purge sweeps a leaked writer and removes the whole workspace (incl unknown files) without crashing', async (t) => {
+  if (!pgrepAvailable()) {
+    t.skip('pgrep is not available');
+    return;
+  }
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-purge-'));
+  const homeDir = join(tmpdir(), `fs-home-purge-${root.slice(-8)}`);
+  mkdirSync(join(root, 'farmslot'), { recursive: true });
+  mkdirSync(join(root, 'repos', 'mm-1', 'node_modules', 'deep'), { recursive: true });
+  mkdirSync(join(root, 'runs'), { recursive: true });
+  mkdirSync(homeDir, { recursive: true });
+  writeFileSync(join(root, 'state.json'), '{}');
+  // Non-farmslot markers the farm pack installer leaves in the workspace root — purge must
+  // remove them too (the scope gap that left a half-purged tree behind).
+  writeFileSync(join(root, '.metamask-farm-namespace'), 'mm');
+  mkdirSync(join(root, '.install-logs'), { recursive: true });
+
+  // A leaked writer holding the tree: its command line carries the workspace root so the
+  // sweep's `pgrep -f` finds it, and it churns files under node_modules to drive the
+  // ENOTEMPTY race the raw rmdir crashed on.
+  const churn = join(root, 'repos', 'mm-1', 'node_modules', 'deep');
+  const writer = spawn('sh', ['-c', `while :; do : > '${churn}/f'; done`], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  await delay(300); // let it register with pgrep and start writing
+
+  try {
+    const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
+      history: 'delete',
+      home: 'delete',
+      dryRun: false,
+      purge: true,
+    });
+    const steps: string[] = [];
+    // Must never throw a raw ENOTEMPTY — the whole point of the fix.
+    const result = await executeUninstallPlan(plan, { step: (label) => steps.push(label) });
+
+    assert.ok(
+      steps.some((s) => s.startsWith('stopped process holding workspace')),
+      'the sweep reported killing the leaked writer',
+    );
+    assert.equal(
+      result.leftovers.length,
+      0,
+      `nothing left behind (leftovers: ${JSON.stringify(result.leftovers)})`,
+    );
+    assert.ok(!existsSync(root), 'the entire workspace (including unknown files) was removed');
+
+    // Idempotent: a second run over the now-absent workspace completes cleanly.
+    const rerun = await executeUninstallPlan(plan, { step: () => {} });
+    assert.equal(rerun.leftovers.length, 0);
+  } finally {
+    try {
+      process.kill(-(writer.pid ?? 0), 'SIGKILL');
+    } catch {
+      /* group already gone */
+    }
+    try {
+      process.kill(writer.pid ?? 0, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+    rmSync(root, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test('a failed removal records a leftover and never skips the symlink or aborts the run', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-leftover-'));
+  const homeDir = join(tmpdir(), `fs-home-leftover-${root.slice(-8)}`);
+  const binDir = join(root, 'bin');
+  const cliTarget = join(root, 'farmslot', 'packages', 'cli', 'bin', 'farmslot.mjs');
+  mkdirSync(join(root, 'farmslot', 'packages', 'cli', 'bin'), { recursive: true });
+  writeFileSync(cliTarget, '#!/usr/bin/env node\n');
+  mkdirSync(binDir, { recursive: true });
+  const symlink = join(binDir, 'farmslot');
+  symlinkSync(cliTarget, symlink);
+  mkdirSync(homeDir, { recursive: true });
+  writeFileSync(join(root, 'state.json'), '{}');
+  // A directory removal that fails deterministically (no timing race): a locked parent
+  // (no write bit) makes rmSync throw EACCES on its child — a permission error stands in for
+  // the live-writer ENOTEMPTY the operator hit.
+  const locked = join(root, 'repos', 'locked');
+  mkdirSync(locked, { recursive: true });
+  writeFileSync(join(locked, 'child'), 'x');
+  chmodSync(locked, 0o500);
+
+  try {
+    const plan = buildUninstallPlan(
+      workspaceAt(root),
+      baseState({ bin_dir: binDir, home_dir: homeDir }),
+      {
+        history: 'keep',
+        home: 'delete',
+        dryRun: false,
+      },
+    );
+    const steps: string[] = [];
+    const result = await executeUninstallPlan(plan, { step: (label) => steps.push(label) });
+
+    // The repos removal failed, but the run continued: symlink and home were still removed.
+    assert.ok(
+      result.leftovers.some((l) => l.path === join(root, 'repos') && l.error.length > 0),
+      `repos recorded as a leftover with an error (got ${JSON.stringify(result.leftovers)})`,
+    );
+    assert.ok(!existsSync(symlink), 'symlink removed despite the repos failure (the reported bug)');
+    assert.ok(!existsSync(homeDir), 'home removed despite the repos failure');
+  } finally {
+    chmodSync(locked, 0o700); // restore write so cleanup can delete it
     rmSync(root, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
   }

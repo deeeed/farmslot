@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- fix: `farmslot uninstall` no longer crashes with a raw `ENOTEMPTY` and half-purged state when a writer is active in the workspace. Each removal step is isolated — a failure records the path and the run continues (so the PATH symlink is always removed, never left dangling) — and before deleting, uninstall stops workspace-scoped watchman watches and sweeps leaked processes still holding the tree (e.g. a `tail -F …/metro.log`). `--purge` now removes the entire workspace dir including files farmslot did not create (pack installer markers), and re-running over a half-removed workspace completes cleanly. Anything that still cannot be removed is listed with a teaching escape and a non-zero exit instead of a stack trace.
 - feat: add Recipe Protocol artifact-package validation helpers for `farmslot recipe artifacts validate`.
 - feat: `farmslot doctor` shows where the resolved `capture-helper` binary came from — env overrides (`CAPTURE_HELPER_PATH` / `SITEED_CAPTURE_HELPER_BIN`) are surfaced as `(via <VAR>)` on both the passing and failing capture check, so "why is it using that binary?" self-answers.
 - fix: `slot prepare` output no longer prints each line twice — CLI handler now filters to `script.output` events, ignoring the duplicate `slot.prepare.output` events emitted by the prepare stream.
