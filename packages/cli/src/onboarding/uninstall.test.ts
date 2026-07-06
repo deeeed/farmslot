@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
-import { execFile, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFile, spawn, spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -10,10 +18,37 @@ import {
   buildUninstallPlan,
   executeUninstallPlan,
   REMOVE_PATH_RETRY_OPTIONS,
+  shouldSweepCommand,
 } from './uninstall.js';
 import { workspaceAt, type WorkspaceState } from './workspace.js';
 
 const execFileAsync = promisify(execFile);
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+function pgrepAvailable(): boolean {
+  return spawnSync('pgrep', ['-f', 'farmslot-uninstall-nonexistent-pattern']).error === undefined;
+}
+
+/** The process sweep is the only guard on the sweep code path, so it must actually run in CI.
+ *  Locally, skip when pgrep is missing; in CI (macOS, ships pgrep) a missing pgrep is a real
+ *  regression in the runner image — fail loudly rather than silently skip the coverage. */
+function requirePgrep(t: { skip: (reason: string) => void }): boolean {
+  if (pgrepAvailable()) return true;
+  if (process.env.CI) {
+    assert.fail('pgrep must be available in CI to exercise the workspace process sweep');
+  }
+  t.skip('pgrep is not available');
+  return false;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Real tmux is required for the teardown tests below — mirrors the skip pattern used by
  *  services/node/src/commands/tmux.test.ts for machines/CI without tmux installed. */
@@ -316,6 +351,197 @@ test('executeUninstallPlan kills each slot session before repos are removed, and
     rmSync(root, { recursive: true, force: true });
     rmSync(homeDir, { recursive: true, force: true });
   }
+});
+
+test('purge sweeps a leaked writer and removes the whole workspace (incl unknown files) without crashing', async (t) => {
+  if (!requirePgrep(t)) return;
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-purge-'));
+  const homeDir = join(tmpdir(), `fs-home-purge-${root.slice(-8)}`);
+  mkdirSync(join(root, 'farmslot'), { recursive: true });
+  mkdirSync(join(root, 'repos', 'mm-1', 'node_modules', 'deep'), { recursive: true });
+  mkdirSync(join(root, 'runs'), { recursive: true });
+  mkdirSync(homeDir, { recursive: true });
+  writeFileSync(join(root, 'state.json'), '{}');
+  // Non-farmslot markers the farm pack installer leaves in the workspace root — purge must
+  // remove them too (the scope gap that left a half-purged tree behind).
+  writeFileSync(join(root, '.metamask-farm-namespace'), 'mm');
+  mkdirSync(join(root, '.install-logs'), { recursive: true });
+
+  // A leaked writer holding the tree: its command line carries the workspace root so the
+  // sweep's `pgrep -f` finds it, and it churns files under node_modules to drive the
+  // ENOTEMPTY race the raw rmdir crashed on.
+  const churn = join(root, 'repos', 'mm-1', 'node_modules', 'deep');
+  const writer = spawn('sh', ['-c', `while :; do : > '${churn}/f'; done`], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  await delay(300); // let it register with pgrep and start writing
+
+  try {
+    const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
+      history: 'delete',
+      home: 'delete',
+      dryRun: false,
+      purge: true,
+    });
+    const steps: string[] = [];
+    // Must never throw a raw ENOTEMPTY — the whole point of the fix.
+    const result = await executeUninstallPlan(plan, { step: (label) => steps.push(label) });
+
+    assert.ok(
+      steps.some((s) => s.startsWith('stopped process holding workspace')),
+      'the sweep reported killing the leaked writer',
+    );
+    assert.equal(
+      result.leftovers.length,
+      0,
+      `nothing left behind (leftovers: ${JSON.stringify(result.leftovers)})`,
+    );
+    assert.ok(!existsSync(root), 'the entire workspace (including unknown files) was removed');
+
+    // Idempotent: a second run over the now-absent workspace completes cleanly.
+    const rerun = await executeUninstallPlan(plan, { step: () => {} });
+    assert.equal(rerun.leftovers.length, 0);
+  } finally {
+    try {
+      process.kill(-(writer.pid ?? 0), 'SIGKILL');
+    } catch {
+      /* group already gone */
+    }
+    try {
+      process.kill(writer.pid ?? 0, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+    rmSync(root, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test('the sweep never kills a sibling install sharing a path prefix', async (t) => {
+  if (!requirePgrep(t)) return;
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-sib-'));
+  const homeDir = join(tmpdir(), `fs-home-sib-${root.slice(-8)}`);
+  // A sibling install whose path shares `root` as a raw prefix (root + "-2"). A substring
+  // match would sweep its processes; the path-boundary match must not.
+  const sibling = `${root}-2`;
+  mkdirSync(join(root, 'farmslot'), { recursive: true });
+  mkdirSync(join(root, 'repos', 'mm-1'), { recursive: true });
+  mkdirSync(join(sibling, 'repos', 'mm-1'), { recursive: true });
+  mkdirSync(homeDir, { recursive: true });
+  writeFileSync(join(root, 'state.json'), '{}');
+
+  const spawnWriter = (dir: string) =>
+    spawn('sh', ['-c', `while :; do : > '${join(dir, 'repos', 'mm-1', 'f')}'; sleep 0.05; done`], {
+      detached: true,
+      stdio: 'ignore',
+    });
+  const inside = spawnWriter(root);
+  const siblingWriter = spawnWriter(sibling);
+  await delay(300);
+
+  try {
+    const plan = buildUninstallPlan(workspaceAt(root), baseState({ home_dir: homeDir }), {
+      history: 'delete',
+      home: 'delete',
+      dryRun: false,
+      purge: true,
+    });
+    await executeUninstallPlan(plan, { step: () => {} });
+
+    // Give any (erroneous) signal time to land before asserting the sibling survived.
+    await delay(200);
+    assert.ok(siblingWriter.pid && isProcessAlive(siblingWriter.pid), 'sibling writer survives');
+    assert.ok(!(inside.pid && isProcessAlive(inside.pid)), 'in-workspace writer was swept');
+    assert.ok(!existsSync(root), 'the uninstalled workspace is gone');
+    assert.ok(existsSync(sibling), 'the sibling workspace is untouched');
+  } finally {
+    for (const w of [inside, siblingWriter]) {
+      try {
+        process.kill(-(w.pid ?? 0), 'SIGKILL');
+      } catch {
+        /* group gone */
+      }
+      try {
+        process.kill(w.pid ?? 0, 'SIGKILL');
+      } catch {
+        /* gone */
+      }
+    }
+    rmSync(root, { recursive: true, force: true });
+    rmSync(sibling, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test('a failed removal records a leftover and never skips the symlink or aborts the run', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'fs-uninstall-leftover-'));
+  const homeDir = join(tmpdir(), `fs-home-leftover-${root.slice(-8)}`);
+  const binDir = join(root, 'bin');
+  const cliTarget = join(root, 'farmslot', 'packages', 'cli', 'bin', 'farmslot.mjs');
+  mkdirSync(join(root, 'farmslot', 'packages', 'cli', 'bin'), { recursive: true });
+  writeFileSync(cliTarget, '#!/usr/bin/env node\n');
+  mkdirSync(binDir, { recursive: true });
+  const symlink = join(binDir, 'farmslot');
+  symlinkSync(cliTarget, symlink);
+  mkdirSync(homeDir, { recursive: true });
+  writeFileSync(join(root, 'state.json'), '{}');
+  // A directory removal that fails deterministically (no timing race): a locked parent
+  // (no write bit) makes rmSync throw EACCES on its child — a permission error stands in for
+  // the live-writer ENOTEMPTY the operator hit.
+  const locked = join(root, 'repos', 'locked');
+  mkdirSync(locked, { recursive: true });
+  writeFileSync(join(locked, 'child'), 'x');
+  chmodSync(locked, 0o500);
+
+  try {
+    const plan = buildUninstallPlan(
+      workspaceAt(root),
+      baseState({ bin_dir: binDir, home_dir: homeDir }),
+      {
+        history: 'keep',
+        home: 'delete',
+        dryRun: false,
+      },
+    );
+    const steps: string[] = [];
+    const result = await executeUninstallPlan(plan, { step: (label) => steps.push(label) });
+
+    // The repos removal failed, but the run continued: symlink and home were still removed.
+    assert.ok(
+      result.leftovers.some((l) => l.path === join(root, 'repos') && l.error.length > 0),
+      `repos recorded as a leftover with an error (got ${JSON.stringify(result.leftovers)})`,
+    );
+    assert.ok(!existsSync(symlink), 'symlink removed despite the repos failure (the reported bug)');
+    assert.ok(!existsSync(homeDir), 'home removed despite the repos failure');
+  } finally {
+    chmodSync(locked, 0o700); // restore write so cleanup can delete it
+    rmSync(root, { recursive: true, force: true });
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test('shouldSweepCommand targets in-workspace writers but never tmux or sibling installs', () => {
+  const ws = '/tmp/fs-ws';
+  // A leaked writer inside the workspace — swept.
+  assert.equal(
+    shouldSweepCommand(`tail -F ${ws}/repos/mm-1/temp/recipe/runtime/metro.log`, ws),
+    true,
+  );
+  assert.equal(shouldSweepCommand(`node ${ws}/farmslot/services/gateway/index.js`, ws), true);
+  // An exact argv token equal to the root — swept.
+  assert.equal(shouldSweepCommand(`some-writer ${ws}`, ws), true);
+  // tmux server/client — left to the precise session teardown, even though a fresh-host server
+  // carries the session's `-c <workspace>` cwd in its argv (the CI kill-server regression).
+  assert.equal(shouldSweepCommand(`tmux new-session -d -s s -c ${ws} bash`, ws), false);
+  assert.equal(
+    shouldSweepCommand(`/opt/homebrew/bin/tmux new-session -c ${ws}/repos/x bash`, ws),
+    false,
+  );
+  assert.equal(shouldSweepCommand('tmux: server (/private/tmp/x) [80x24]', ws), false);
+  // A sibling install sharing the path prefix — never swept.
+  assert.equal(shouldSweepCommand(`node ${ws}-2/farmslot/services/gateway/index.js`, ws), false);
+  assert.equal(shouldSweepCommand(`node ${ws}-2`, ws), false);
 });
 
 test('removePath retries on ENOTEMPTY/EBUSY instead of failing on the first straggler write', () => {

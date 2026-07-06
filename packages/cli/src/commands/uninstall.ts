@@ -94,6 +94,9 @@ function printPlan(output: OutputContext, plan: UninstallPlan): void {
         : `${cyan('backup')} ${dim(`-> ${backup}`)}`;
   output.write(`\n${bold('farmslot uninstall plan')}${plan.dryRun ? dim('  (dry run)') : ''}\n`);
   output.write(`  workspace   ${dim(plan.workspaceRoot)}\n`);
+  if (plan.purge) {
+    output.write(`  ${red('remove')}      ${plan.workspaceRoot} ${dim('(everything)')}\n`);
+  }
   for (const dir of plan.installDirs) output.write(`  ${red('remove')}      ${dir}\n`);
   output.write(`  ${red('remove')}      ${plan.installFiles.join(', ')}\n`);
   output.write(
@@ -203,6 +206,7 @@ export function registerUninstallCommand(program: Command): void {
           historyBackupPath: history.backupPath,
           homeBackupPath: home.backupPath,
           dryRun: Boolean(flags.dryRun),
+          purge,
         });
       } catch (err) {
         output.error(err instanceof Error ? err.message : String(err));
@@ -241,12 +245,32 @@ export function registerUninstallCommand(program: Command): void {
       }
 
       const steps: string[] = [];
-      await executeUninstallPlan(plan, {
+      const result = await executeUninstallPlan(plan, {
         step: (label) => {
           steps.push(label);
           if (!output.json) output.write(`${green('[OK]')} ${label}\n`);
         },
       });
+
+      // Anything a step could not remove is reported with a teaching escape, and the command
+      // exits non-zero — gracefully, never a raw stack trace — so a half-purged state is
+      // visible and re-runnable.
+      if (result.leftovers.length > 0) {
+        if (output.json) {
+          output.writeJson({ plan, status: 'incomplete', steps, leftovers: result.leftovers });
+        } else {
+          output.write(`\n${red('farmslot uninstall incomplete')} — could not remove:\n`);
+          for (const { path, error } of result.leftovers) {
+            output.write(`  ${red('leftover')}    ${path} ${dim(`(${error})`)}\n`);
+          }
+          output.write(
+            `\n  Next: re-run ${cyan('farmslot uninstall --purge')}, or remove each path manually: ${cyan('trash <path>')}\n`,
+          );
+        }
+        process.exitCode = 1;
+        return;
+      }
+
       if (output.json) output.writeJson({ plan, status: 'removed', steps });
       else output.write(`\n${green('farmslot uninstalled')}\n`);
     });
