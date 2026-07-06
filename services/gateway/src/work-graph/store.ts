@@ -686,6 +686,16 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): voi
   if (queued) {
     node.status = 'queued';
     node.updatedAt = new Date().toISOString();
+    return;
+  }
+  const backlog = node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId) : null;
+  if (
+    backlog?.status === 'ready' &&
+    (node.status === 'failed' || node.status === 'needs-attention')
+  ) {
+    node.status = 'ready';
+    delete node.latestRunId;
+    node.updatedAt = new Date().toISOString();
   }
 }
 

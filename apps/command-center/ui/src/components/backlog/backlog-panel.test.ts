@@ -3,7 +3,11 @@ import { test } from 'node:test';
 
 import type { BacklogStatus } from '@farmslot/protocol';
 
-import { canDequeueBacklogItemForUi, syncedBacklogDraftProject } from './backlog-panel-model.js';
+import {
+  canDequeueBacklogItemForUi,
+  canMarkReadyBacklogItemForUi,
+  syncedBacklogDraftProject,
+} from './backlog-panel-model.js';
 
 test('backlog panel dequeue action is only enabled for queued dispatch lifecycle statuses', () => {
   const enabled: BacklogStatus[] = ['queued', 'dispatching'];
@@ -20,6 +24,23 @@ test('backlog panel dequeue action is only enabled for queued dispatch lifecycle
   for (const status of enabled) assert.equal(canDequeueBacklogItemForUi({ status }), true, status);
   for (const status of disabled)
     assert.equal(canDequeueBacklogItemForUi({ status }), false, status);
+});
+
+test('backlog panel mark-ready action is enabled for candidate, failed, and needs-attention', () => {
+  const enabled: BacklogStatus[] = ['candidate', 'failed', 'needs-attention'];
+  const disabled: BacklogStatus[] = [
+    'ready',
+    'queued',
+    'dispatching',
+    'running',
+    'done',
+    'archived',
+  ];
+
+  for (const status of enabled)
+    assert.equal(canMarkReadyBacklogItemForUi({ status }), true, status);
+  for (const status of disabled)
+    assert.equal(canMarkReadyBacklogItemForUi({ status }), false, status);
 });
 
 test('backlog draft project follows a single global project filter', () => {

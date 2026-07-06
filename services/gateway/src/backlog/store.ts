@@ -85,6 +85,13 @@ const VALID_STATUSES = new Set<BacklogStatus>([
 const VALID_SOURCE_KINDS = new Set<BacklogSourceKind>(['jira', 'github', 'manual']);
 const MANUAL_REF_RE = /^MANUAL-\d+$/;
 const TERMINAL_STATUSES = new Set<BacklogStatus>(['done', 'failed', 'needs-attention', 'archived']);
+const REDISPATCH_AFTER_RUN_RELEASE = new Set<BacklogStatus>([
+  'failed',
+  'needs-attention',
+  'running',
+  'queued',
+  'dispatching',
+]);
 const HANDOFF_ACTIVE_STATUSES = new Set<BacklogStatus>(['queued', 'dispatching', 'running']);
 const GRAPH_ENQUEUE_ERROR =
   'Backlog item is linked to a work graph; use workGraph.schedulerTick or detach it first';
@@ -637,6 +644,42 @@ function applyLaunchPlanRunObservation(item: BacklogItem, run: Run): boolean {
   return changed;
 }
 
+function releaseBacklogRunLink(item: BacklogItem, runId: string): boolean {
+  let touched = false;
+  if (item.launchPlanState) {
+    if (item.launchPlanState.baselineRunId === runId) {
+      delete item.launchPlanState.baselineRunId;
+      touched = true;
+    }
+    for (const projection of item.launchPlanState.candidates) {
+      if (projection.runId !== runId) continue;
+      delete projection.runId;
+      if (projection.status !== 'planned') {
+        projection.status = 'planned';
+      }
+      touched = true;
+    }
+  }
+  if (item.runId !== runId) {
+    if (touched) {
+      rollUpLaunchPlanStatus(item);
+      item.updatedAt = new Date().toISOString();
+    }
+    return touched;
+  }
+
+  delete item.runId;
+  delete item.lastObservedRunStatus;
+  delete item.lastDispatchError;
+  touched = true;
+  if (REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) {
+    item.status = 'ready';
+  }
+  if (item.launchPlanState) rollUpLaunchPlanStatus(item);
+  item.updatedAt = new Date().toISOString();
+  return touched;
+}
+
 function applyRunObservation(item: BacklogItem, run: Run): boolean {
   if (item.launchPlan && run.launchCandidateId) return applyLaunchPlanRunObservation(item, run);
   const previousStatus = item.status;
@@ -703,6 +746,10 @@ async function reconcileBacklogLinks(): Promise<boolean> {
           if (applyLaunchPlanRunObservation(item, run)) changed = true;
           continue;
         }
+        if (projection?.runId && !runsById.has(projection.runId)) {
+          if (releaseBacklogRunLink(item, projection.runId)) changed = true;
+          continue;
+        }
         const queued = queueByCandidate.get(key);
         if (queued && projection && projection.queueItemId !== queued.id) {
           projection.status = 'queued';
@@ -724,6 +771,8 @@ async function reconcileBacklogLinks(): Promise<boolean> {
       const run = runsById.get(item.runId);
       if (run) {
         if (!TERMINAL_STATUSES.has(item.status) && applyRunObservation(item, run)) changed = true;
+      } else if (REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) {
+        if (releaseBacklogRunLink(item, item.runId)) changed = true;
       } else if (!TERMINAL_STATUSES.has(item.status)) {
         item.status = 'needs-attention';
         item.lastDispatchError = `Linked run ${item.runId} was not found after restart`;
@@ -1288,6 +1337,8 @@ export async function markBacklogItemReady(
     await assertBacklogSpecReady(item);
     item.status = 'ready';
     item.updatedAt = new Date().toISOString();
+    delete item.runId;
+    delete item.lastObservedRunStatus;
     delete item.lastDispatchError;
     schedulePersist('mark-ready');
     broadcastBacklog();
@@ -1782,5 +1833,22 @@ export function markBacklogRunObserved(run: Run): void {
     }
   }).catch((err) => {
     console.error(`[backlog] failed to observe run: ${(err as Error).message}`);
+  });
+}
+
+export async function markBacklogRunDeleted(runId: string): Promise<string[]> {
+  return withBacklogMutation(async () => {
+    let changed = false;
+    const graphIds = new Set<string>();
+    for (const item of items) {
+      if (!releaseBacklogRunLink(item, runId)) continue;
+      changed = true;
+      if (item.workGraphId) graphIds.add(item.workGraphId);
+    }
+    if (changed) {
+      schedulePersist('run-deleted');
+      broadcastBacklog();
+    }
+    return [...graphIds];
   });
 }
