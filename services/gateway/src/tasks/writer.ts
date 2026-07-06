@@ -942,6 +942,11 @@ export function checklistMarkerHelperPath(farmslotDirForSlot: string): string {
 async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: string): Promise<void> {
   const markerPath = path.join(taskAbsDir, CHECKLIST_MARKER_INPUT);
   const helperPath = checklistMarkerHelperPath(farmslotDirForSlot);
+  // Resolve the published @farmslot/agent-runtime bin at run time, mirroring the
+  // harness runner shim ladder (env override → PATH → recorded install path →
+  // teach). The published `farmslot-agent mark` runs the same mark-checklist-step
+  // it always has; the recorded-path rung keeps dev/farmslot-checkout installs
+  // (where the bin is not on PATH) behaving exactly as before.
   await writeFile(
     markerPath,
     [
@@ -950,7 +955,20 @@ async function writeChecklistMarker(taskAbsDir: string, farmslotDirForSlot: stri
       'DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
       'TASK="$DIR/TASK.md"',
       '[ ! -f "$DIR/CHECKLIST.md" ] || TASK="$DIR/CHECKLIST.md"',
-      `node ${JSON.stringify(helperPath)} "$TASK" "$DIR/SIGNAL.json" "$@"`,
+      'SIGNAL="$DIR/SIGNAL.json"',
+      'if [ -n "${FARMSLOT_AGENT_BIN:-}" ]; then',
+      '  exec "$FARMSLOT_AGENT_BIN" mark "$TASK" "$SIGNAL" "$@"',
+      'fi',
+      'if command -v farmslot-agent >/dev/null 2>&1; then',
+      '  exec farmslot-agent mark "$TASK" "$SIGNAL" "$@"',
+      'fi',
+      `RECORDED=${JSON.stringify(helperPath)}`,
+      'if [ -f "$RECORDED" ]; then',
+      '  exec node "$RECORDED" "$TASK" "$SIGNAL" "$@"',
+      'fi',
+      'echo "mark: cannot resolve @farmslot/agent-runtime." >&2',
+      'echo "Next: install it (npm i -g @farmslot/agent-runtime) so \'farmslot-agent\' is on PATH, or set FARMSLOT_AGENT_BIN=/path/to/farmslot-agent, then re-run: $0 $*" >&2',
+      'exit 127',
       '',
     ].join('\n'),
     'utf-8',

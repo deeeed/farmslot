@@ -411,6 +411,26 @@ test('checklistMarkerHelperPath keeps remote helper shell-expandable', () => {
   );
 });
 
+test('mark wrapper resolves the published bin with a recorded-path fallback', async (t) => {
+  let taskFile = '';
+  t.after(async () => {
+    if (taskFile) await rm(path.dirname(taskFile), { recursive: true, force: true });
+  });
+  taskFile = await writeTaskFile(makeRun('MARK-1234', 'claude'));
+  const marker = await readFile(path.join(path.dirname(taskFile), CHECKLIST_MARKER_INPUT), 'utf-8');
+  // Ladder: env override → PATH → recorded install path → teach.
+  assert.match(marker, /FARMSLOT_AGENT_BIN/);
+  assert.match(marker, /exec "\$FARMSLOT_AGENT_BIN" mark "\$TASK" "\$SIGNAL"/);
+  assert.match(marker, /command -v farmslot-agent/);
+  assert.match(marker, /exec farmslot-agent mark "\$TASK" "\$SIGNAL"/);
+  // Recorded dev/checkout fallback keeps the pre-publish behaviour identical.
+  assert.match(marker, /exec node "\$RECORDED" "\$TASK" "\$SIGNAL"/);
+  assert.match(marker, /packages\/agent-runtime\/scripts\/mark-checklist-step\.cjs/);
+  // Unresolved bin teaches the escape and exits non-zero.
+  assert.match(marker, /Next: install it .*farmslot-agent.* on PATH.*FARMSLOT_AGENT_BIN/s);
+  assert.match(marker, /exit 127/);
+});
+
 test('renderCommentSummary returns placeholder when no rows — worker still re-fetches', () => {
   const out = renderCommentSummary([]);
   assert.match(out, /No human or unresolved bot comments/);
