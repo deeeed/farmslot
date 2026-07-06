@@ -113,7 +113,6 @@ Execute top-to-bottom. Every step is mandatory.
   - Assertions are specific (not just `toBeTruthy()`/`toBeDefined()`)
   - Tests do not duplicate i18n/user-facing copy as raw hardcoded strings when the component already uses a message key/helper
     Before flagging this, quote the exact assertion line and confirm it uses a real string literal (for example `'Add funds'`) rather than an existing message/helper reference such as `messages.addFunds.message`, `t('addFunds')`, or a shared constant. If the assertion already uses the message source, do NOT flag it.
-    Before flagging this, quote the exact assertion line and confirm it uses a real string literal (for example `'Add funds'`) rather than an existing message/helper reference such as `messages.addFunds.message`, `t('addFunds')`, or a shared constant. If the assertion already uses the message source, do NOT flag it.
     Flag every violation with file:line.
 - [ ] **7. Review against extension domain anti-patterns:**
       Read `{{RUNTIME_DIR}}/extension-review-antipatterns.md` (synced from project fixtures). Check the diff against every category:
