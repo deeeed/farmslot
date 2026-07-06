@@ -14,6 +14,7 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.j
 assert.equal(packageJson.name, '@farmslot/agent-runtime');
 assert.ok(packageJson.bin['farmslot-agent']);
 assert.ok(packageJson.exports['./scripts/mark-checklist-step.cjs']);
+assert.ok(packageJson.exports['./scripts/checklist-target.cjs']);
 assert.ok(packageJson.exports['./scripts/worker-terminal-contract.cjs']);
 assert.ok(packageJson.exports['./scripts/check-task-artifact-contract.mjs']);
 

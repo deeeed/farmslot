@@ -39,7 +39,12 @@ import {
   extractRunnerSessionUsage,
   unavailableRunnerSessionUsage,
 } from '../runtime/session-usage.js';
+import {
+  restoreWorkerChecklistTargetFromSlot,
+  syncChecklistTargetOnSlot,
+} from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
+import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
 import { readReviewFeedback } from './feedback.js';
 import { startProgressWatcher } from './progress.js';
@@ -58,6 +63,21 @@ import {
 import { expandSelfReviewTemplate } from './templates.js';
 
 const REVIEW_WINDOW = agentRoleWindow('self-review') ?? 'self-review';
+
+/** Progress mark writes status "running"; only terminal worker signals count as done. */
+export function parseTerminalSelfReviewSignal(raw: string) {
+  return terminalWorkerSignalFromRaw(raw);
+}
+
+function selfReviewChecklistMarkPrompt(taskDir: string, taskMdPath: string): string {
+  const mark = `${taskDir}/mark`;
+  return (
+    `Follow ${taskMdPath} top-to-bottom. After EVERY checklist step run ${mark} N ` +
+    `(bootstrap with ${mark} start — same path as the checklist header). ` +
+    `Skipping ${mark} leaves the run at 0/N in the UI. ` +
+    `Write ${taskDir}/artifacts/review-feedback.md, then ${mark} complete.`
+  );
+}
 
 // Exported for self-review.test.ts to seed runSelfReviewRetryLoop fixtures. Not part of the
 // gateway's public surface — keep internal to this module's tests.
@@ -161,6 +181,7 @@ export async function runReviewAgent(
     const taskMdPath = `${taskDir}/SELF-REVIEW.md`;
     const expandedTemplate = await expandSelfReviewTemplate(vars, taskDir, _runId, validationDepth);
     await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
+    await syncChecklistTargetOnSlot(vars, taskDir, 'SELF-REVIEW.md');
 
     // Mark SELF-REVIEW.md as the active task file for progress tracking
     updateRun(_runId, { activeTaskFile: taskMdPath });
@@ -171,12 +192,13 @@ export async function runReviewAgent(
     // detailed instructions live in SELF-REVIEW.md. Exec runners bake a
     // self-contained prompt into their launch command.
     const parentRun = getRun(_runId);
+    const markPrompt = selfReviewChecklistMarkPrompt(taskDir, taskMdPath);
     const taskPrompt = runnerNeedsPostLaunchPrompt(runner)
-      ? await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
+      ? `${await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
           taskFile: taskMdPath,
           taskDir,
-        })
-      : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. You must write ${taskDir}/artifacts/review-feedback.md and ${taskDir}/SELF-REVIEW-SIGNAL.json before exiting.`;
+        })}\n\n${markPrompt}`
+      : `Read ${taskMdPath} and execute all steps exactly as written. Do NOT run /review. ${markPrompt}`;
 
     // 4. Launch review agent in the review window. Inherit the run's safety
     // tier (ADR-023) so the review agent runs with the same posture as the worker.
@@ -282,6 +304,16 @@ export async function runReviewAgent(
 
     // 7. Read review-feedback.md
     const feedback = await readReviewFeedback(vars, taskDir);
+    if (feedback.incomplete) {
+      return {
+        ...feedback,
+        validationDepth,
+        usage,
+        reviewSnapshot: reviewSnapshot.snapshot,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
     completedSuccessfully = true;
     const persistedArtifacts: string[] = [];
     const taskProgressRel = `${artifactDir}/self-review.md`;
@@ -366,7 +398,10 @@ export async function runReviewAgent(
     } catch (cleanupErr) {
       console.warn(`[self-review] cleanup unwatchContext failed: ${(cleanupErr as Error).message}`);
     }
-    if (activeTaskSet) updateRun(_runId, { activeTaskFile: undefined });
+    if (activeTaskSet) {
+      updateRun(_runId, { activeTaskFile: undefined });
+      await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
+    }
     if (completedSuccessfully) {
       try {
         await killSelfReviewWindow(vars, session, 'post-run cleanup');
@@ -460,19 +495,33 @@ async function waitForReviewCompletion(
       }
     }
 
-    // Check if SELF-REVIEW-SIGNAL.json was written (review-specific signal, avoids stale worker SIGNAL.json)
-    const signalCheck = (
+    // Terminal SELF-REVIEW-SIGNAL.json (complete/blocked/failed) plus feedback artifact.
+    const signalRaw = (
       await execOnSlot(
         vars,
         `cat '${vars.remoteRepo}/${taskDir}/SELF-REVIEW-SIGNAL.json' 2>/dev/null`,
       )
     ).stdout.trim();
-    if (signalCheck && signalCheck.includes('"status"')) {
-      debugSelfReviewLog(`[self-review] SELF-REVIEW-SIGNAL.json detected — agent completed`);
-      await markAgentContextStatus(runId, 'self-review', 'complete', {
-        lastSignalAt: new Date().toISOString(),
-      });
-      return true;
+    const terminalSignal = parseTerminalSelfReviewSignal(signalRaw);
+    if (terminalSignal) {
+      const hasFeedback = (
+        await execOnSlot(
+          vars,
+          `test -f '${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md' && echo yes`,
+        )
+      ).stdout.trim();
+      if (hasFeedback === 'yes') {
+        debugSelfReviewLog(
+          `[self-review] terminal SELF-REVIEW-SIGNAL.json (status=${terminalSignal.status}) + feedback — agent completed`,
+        );
+        await markAgentContextStatus(runId, 'self-review', 'complete', {
+          lastSignalAt: new Date().toISOString(),
+        });
+        return true;
+      }
+      debugSelfReviewLog(
+        `[self-review] terminal SELF-REVIEW-SIGNAL.json (status=${terminalSignal.status}) but review-feedback.md missing — continuing poll`,
+      );
     }
 
     // Check pane output for signs of completion

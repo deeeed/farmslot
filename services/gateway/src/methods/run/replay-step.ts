@@ -416,7 +416,8 @@ export async function runReplayStep(
       );
       if (taskRelDir !== null) {
         const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
-        const workerTaskDir = `${vars.remoteRepo}/${taskDirName}/${taskRelDir}`;
+        const taskDirRel = `${taskDirName}/${taskRelDir}`;
+        const workerTaskDir = `${vars.remoteRepo}/${taskDirRel}`;
         const preserveSelfReviewFix =
           existing.agentContexts?.some(
             (ctx) => ctx.role === 'self-review-fix' && ctx.status === 'working',
@@ -438,6 +439,13 @@ export async function runReplayStep(
           `rm -f ${nestedFiles.map(shellQuote).join(' ')} 2>/dev/null`,
           vars.remoteRepo,
         );
+        const { restoreWorkerChecklistTargetFromSlot, syncChecklistTargetOnSlot } =
+          await import('../../tasks/checklist-target.js');
+        if (preserveSelfReviewFix) {
+          await syncChecklistTargetOnSlot(vars, taskDirRel, 'SELF-REVIEW-FIX.md');
+        } else {
+          await restoreWorkerChecklistTargetFromSlot(vars, taskDirRel);
+        }
         console.log(
           `[run] replay from ${replayStepName} — cleared nested-loop task artifacts in ${workerTaskDir}${preserveSelfReviewFix ? ' (preserved active self-review-fix)' : ''}`,
         );

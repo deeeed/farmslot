@@ -130,7 +130,28 @@ Farmslot-rendered tasks include a tiny `mark` helper beside `TASK.md`:
 {{TASK_DIR}}/mark complete --mark-last
 ```
 
-Role-specific signal files use the same helper with an explicit task/signal path:
+The gateway writes `checklist-target.json` beside `mark` when a nested-loop role
+activates (self-review, self-review-fix, CI-fix). The manifest holds the active
+checklist basename; the signal file is derived by convention (`SELF-REVIEW.md` →
+`SELF-REVIEW-SIGNAL.json`, worker `TASK.md` → `SIGNAL.json`). The same `./mark`
+command retargets automatically; templates never need role-specific wrapper scripts.
+
+Override without editing the manifest:
+
+```bash
+{{TASK_DIR}}/mark --checklist SELF-REVIEW.md 1
+{{TASK_DIR}}/mark --checklist SELF-REVIEW.md complete --mark-last
+```
+
+Example manifest during self-review:
+
+```json
+{
+  "checklist": "SELF-REVIEW.md"
+}
+```
+
+Legacy explicit paths remain supported for tooling:
 
 ```bash
 node {{farmslot_dir}}/packages/agent-runtime/scripts/mark-checklist-step.cjs \

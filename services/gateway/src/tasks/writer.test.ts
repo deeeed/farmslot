@@ -405,6 +405,10 @@ test('writeTaskFile allows comparison siblings with different variants', async (
   assert.equal(provenance.templateName, 'dev-interactive.md');
   assert.equal(typeof provenance.contentHash, 'string');
   await access(path.join(path.dirname(taskA), CHECKLIST_MARKER_INPUT));
+  const manifest = JSON.parse(
+    await readFile(path.join(path.dirname(taskA), 'checklist-target.json'), 'utf-8'),
+  );
+  assert.deepEqual(manifest, { checklist: 'TASK.md' });
 });
 
 test('checklistMarkerHelperPath keeps remote helper shell-expandable', () => {
@@ -429,11 +433,11 @@ test('mark wrapper resolves the published bin with a recorded-path fallback', as
     marker,
     /\[ -n "\$\{FARMSLOT_AGENT_BIN:-\}" \] && \[ -x "\$\{FARMSLOT_AGENT_BIN\}" \]/,
   );
-  assert.match(marker, /exec "\$FARMSLOT_AGENT_BIN" mark "\$TASK" "\$SIGNAL"/);
+  assert.match(marker, /exec "\$FARMSLOT_AGENT_BIN" mark "\$DIR"/);
   assert.match(marker, /command -v farmslot-agent/);
-  assert.match(marker, /exec farmslot-agent mark "\$TASK" "\$SIGNAL"/);
+  assert.match(marker, /exec farmslot-agent mark "\$DIR"/);
   // Recorded dev/checkout fallback keeps the pre-publish behaviour identical.
-  assert.match(marker, /exec node "\$RECORDED" "\$TASK" "\$SIGNAL"/);
+  assert.match(marker, /exec node "\$RECORDED" "\$DIR"/);
   assert.match(marker, /packages\/agent-runtime\/scripts\/mark-checklist-step\.cjs/);
   // Unresolved bin teaches the escape and exits non-zero.
   assert.match(marker, /Next: install it .*farmslot-agent.* on PATH.*FARMSLOT_AGENT_BIN/s);
@@ -494,7 +498,7 @@ test('generated mark wrapper executes the right ladder rung', async (t) => {
   // 1. env rung wins even when the PATH bin is present.
   let r = run({ PATH: withPathBin, FARMSLOT_AGENT_BIN: envStub });
   assert.equal(r.status, 0);
-  assert.match(await readRecord(), /^ENV mark .*TASK\.md .*SIGNAL\.json N$/m);
+  assert.match(await readRecord(), /^ENV mark .* N$/m);
   await rm(recordFile, { force: true });
 
   // 2. a non-executable override falls through to the PATH rung.
@@ -514,7 +518,7 @@ test('generated mark wrapper executes the right ladder rung', async (t) => {
   // 4. recorded rung wins when the bin is not on PATH.
   r = run({ PATH: cleanPath });
   assert.equal(r.status, 0);
-  assert.match(await readRecord(), /^CJS .*TASK\.md .*SIGNAL\.json N$/m);
+  assert.match(await readRecord(), /^CJS .* N$/m);
   await rm(recordFile, { force: true });
 
   // 5. nothing resolves → teach + exit 127.

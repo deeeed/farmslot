@@ -44,6 +44,7 @@ import {
 } from '../runners/registry.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun } from '../runs/store.js';
+import { syncChecklistTargetOnSlot } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
 
@@ -870,6 +871,7 @@ async function sendFeedbackToWorker(
 
   // Write the fix task to a file on the slot
   await writeTextFileOnSlot(vars, `${taskDir}/SELF-REVIEW-FIX.md`, expanded);
+  await syncChecklistTargetOnSlot(vars, taskDir, 'SELF-REVIEW-FIX.md');
 
   // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: `${taskDir}/SELF-REVIEW-FIX.md` });

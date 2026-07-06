@@ -204,3 +204,33 @@ result = spawnSync(process.execPath, [helper, task, signal, '--help'], { encodin
 assert.equal(result.status, 0);
 assert.match(result.stdout, /mark no-change/);
 assert.match(result.stdout, /mark blocked/);
+
+const manifestDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-manifest-'));
+const reviewTask = path.join(manifestDir, 'SELF-REVIEW.md');
+const reviewSignal = path.join(manifestDir, 'SELF-REVIEW-SIGNAL.json');
+writeFileSync(reviewTask, '- [ ] **1. Review step** — inspect diff');
+writeFileSync(
+  path.join(manifestDir, 'checklist-target.json'),
+  JSON.stringify({ checklist: 'SELF-REVIEW.md', signal: 'SELF-REVIEW-SIGNAL.json' }, null, 2),
+);
+result = spawnSync(process.execPath, [helper, manifestDir, 'start'], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+parsed = JSON.parse(readFileSync(reviewSignal, 'utf8'));
+assert.equal(parsed.status, 'running');
+result = spawnSync(process.execPath, [helper, manifestDir, '1'], { encoding: 'utf8' });
+assert.equal(result.status, 0, result.stderr);
+assert.match(readFileSync(reviewTask, 'utf8'), /- \[x\] \*\*1\. Review step\*\*/);
+
+const overrideDir = mkdtempSync(path.join(tmpdir(), 'farmslot-mark-override-'));
+const overrideTask = path.join(overrideDir, 'SELF-REVIEW.md');
+const overrideSignal = path.join(overrideDir, 'SELF-REVIEW-SIGNAL.json');
+writeFileSync(overrideTask, '- [ ] **1. Override step** — review');
+writeFileSync(path.join(overrideDir, 'TASK.md'), '- [ ] worker step');
+result = spawnSync(process.execPath, [helper, overrideDir, '--checklist', 'SELF-REVIEW.md', '1'], {
+  encoding: 'utf8',
+});
+assert.equal(result.status, 0, result.stderr);
+assert.match(readFileSync(overrideTask, 'utf8'), /- \[x\]/);
+assert.doesNotMatch(readFileSync(path.join(overrideDir, 'TASK.md'), 'utf8'), /- \[x\]/);
+parsed = JSON.parse(readFileSync(overrideSignal, 'utf8'));
+assert.equal(parsed.status, 'running');

@@ -44,6 +44,10 @@ import { isRunnerAliveUnderPane } from '../runners/session-process.js';
 import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { ensureTmuxTargetReadyForRelaunch } from '../self-review/worker-lifecycle.js';
+import {
+  restoreWorkerChecklistTargetFromSlot,
+  syncChecklistTargetOnSlot,
+} from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 
 import {
@@ -350,6 +354,7 @@ async function writeCIFixTask(
   // Write CI-FIX.md to slot using the shared safe text writer
   const taskPath = `${taskDir}/CI-FIX.md`;
   await writeTextFileOnSlot(vars, taskPath, expanded);
+  await syncChecklistTargetOnSlot(vars, taskDir, 'CI-FIX.md');
 
   // Mark CI-FIX.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: taskPath });
@@ -542,6 +547,7 @@ async function attemptInlineCIFix(
             );
             await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
             await unwatchContext(slotId, 'ci-fix');
+            await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
             clearInlineFixState(runId, {
               phase: 'blocked',
               lastSignalAt,
@@ -572,6 +578,7 @@ async function attemptInlineCIFix(
             { lastSignalAt },
           );
           await unwatchContext(slotId, 'ci-fix');
+          await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
           clearInlineFixState(runId, {
             phase: 'polling',
             lastSignalAt,

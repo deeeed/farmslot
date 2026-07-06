@@ -22,6 +22,10 @@ const STEPS = [
     'single-canonical worker scripts',
     ['node', '--test', 'scripts/quality/single-canonical-worker-scripts.test.mjs'],
   ],
+  [
+    'role template mark guard',
+    ['node', '--test', 'scripts/quality/role-template-mark-guard.test.mjs'],
+  ],
   ['worker template lint', ['node', 'scripts/quality/check-worker-template-contract.mjs']],
   ['template variable docs', ['node', 'scripts/quality/check-template-variables-docs.mjs']],
   ['shell script tests', ['bash', 'scripts/tests/run-shell-tests.sh']],

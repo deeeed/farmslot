@@ -6,6 +6,7 @@ const {
   expandedArtifactsForCommand,
   resolveWorkerTerminalContract,
 } = require('./worker-terminal-contract.cjs');
+const { parseTaskDirMarkArgs } = require('./checklist-target.cjs');
 
 const START_COMMANDS = new Set(['start']);
 const TERMINAL_COMMANDS = new Set(['complete', 'no-change', 'blocked']);
@@ -28,14 +29,17 @@ const FALLBACK_REPORT_ARTIFACTS = [
 ];
 
 const usageLine =
-  'usage: mark <step-number|start|complete|no-change|blocked> [--reason text] [--already-fixed] [--mark-last] [--no-self-review] [--skip-learnings] [--skip-checklist]';
+  'usage: mark <task-dir> [--checklist FILE.md] [--signal FILE.json] <step> [options] OR mark <task-md> <signal-json> <step> [options]';
 
 function printHelp() {
   console.log(
     [
       usageLine,
       '',
-      'Bootstrap: ./mark start — worker-owned SIGNAL.json with status running (no checklist box).',
+      'Task-dir mode (preferred): farmslot-agent mark <task-dir> <step> — uses checklist-target.json when present, otherwise TASK.md/CHECKLIST.md + SIGNAL.json.',
+      'Override: farmslot-agent mark <task-dir> --checklist SELF-REVIEW.md <step> — optional --signal; signal defaults from checklist name.',
+      'Explicit mode: farmslot-agent mark <task-md> <signal-json> <step> — legacy direct paths.',
+      'Bootstrap: ./mark start — role-owned signal with status running (no checklist box).',
       'Progress: ./mark 1, ./mark 2, ... — checks the box and appends checklistTiming.',
       'Terminal:',
       '  ./mark complete [--mark-last] [--no-self-review] [--skip-learnings] [--skip-checklist]',
@@ -55,18 +59,55 @@ function usage() {
   process.exit(2);
 }
 
-const args = process.argv.slice(2);
-if (args.length === 1 && (args[0] === '--help' || args[0] === '-h')) {
-  printHelp();
-  process.exit(0);
+function isMarkStepToken(token) {
+  if (token === '--help' || token === '-h') return true;
+  const lower = String(token).toLowerCase();
+  if (START_COMMANDS.has(lower) || TERMINAL_COMMANDS.has(lower)) return true;
+  const stepNumber = Number(token);
+  return Number.isInteger(stepNumber) && stepNumber >= 1;
 }
 
-const [taskPath, signalPath, stepRaw, ...rest] = args;
-if (stepRaw === '--help' || stepRaw === '-h') {
-  printHelp();
-  process.exit(0);
+function resolveMarkInvocation(rawArgs) {
+  if (rawArgs.length === 0) usage();
+  const first = rawArgs[0];
+  if (first === '--help' || first === '-h') {
+    printHelp();
+    process.exit(0);
+  }
+
+  const firstPath = path.resolve(first);
+  const firstIsDir = fs.existsSync(firstPath) && fs.statSync(firstPath).isDirectory();
+  if (firstIsDir) {
+    const parsed = parseTaskDirMarkArgs(firstPath, rawArgs.slice(1), {
+      isMarkStepToken,
+      usage,
+    });
+    if (parsed.help) {
+      printHelp();
+      process.exit(0);
+    }
+    return parsed;
+  }
+
+  if (rawArgs.length >= 3) {
+    const stepRaw = rawArgs[2];
+    if (stepRaw === '--help' || stepRaw === '-h') {
+      printHelp();
+      process.exit(0);
+    }
+    return {
+      taskPath: rawArgs[0],
+      signalPath: rawArgs[1],
+      stepRaw,
+      rest: rawArgs.slice(3),
+    };
+  }
+
+  usage();
 }
-if (!taskPath || !signalPath || !stepRaw) usage();
+
+const args = process.argv.slice(2);
+const { taskPath, signalPath, stepRaw, rest } = resolveMarkInvocation(args);
 
 const opts = {};
 for (let i = 0; i < rest.length; i += 1) {

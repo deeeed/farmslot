@@ -4,6 +4,13 @@
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.1.1 - 2026-07-06
+
+### Added
+
+- Add `checklist-target.json` resolution to `mark-checklist-step.cjs` task-dir mode so `./mark` retargets to nested-loop checklists without per-role wrapper scripts.
+- Add `--checklist` / `--signal` overrides on task-dir invocations; signal defaults from checklist basename when omitted.
+
 ## 0.1.0 - 2026-07-06
 
 ### Added
