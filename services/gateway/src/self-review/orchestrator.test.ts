@@ -79,24 +79,14 @@ test('canRecoverSelfReviewFixPass requires a working context for the current fix
 
 test('resolveSelfReviewRunnerModel keeps self-review on the worker runner by default', () => {
   assert.deepEqual(
-    resolveSelfReviewRunnerModel(
-      'cursor',
-      'composer-2.5',
-      { runner: 'same', model: 'opus' },
-      {},
-    ),
+    resolveSelfReviewRunnerModel('cursor', 'composer-2.5', { runner: 'same', model: 'opus' }, {}),
     { reviewRunner: 'cursor', model: 'composer-2.5', crossRunner: false },
   );
 });
 
 test('resolveSelfReviewRunnerModel uses project review model only for configured review runner', () => {
   assert.deepEqual(
-    resolveSelfReviewRunnerModel(
-      'cursor',
-      'composer-2.5',
-      { runner: 'claude', model: 'opus' },
-      {},
-    ),
+    resolveSelfReviewRunnerModel('cursor', 'composer-2.5', { runner: 'claude', model: 'opus' }, {}),
     { reviewRunner: 'claude', model: 'opus', crossRunner: true },
   );
 });
@@ -193,6 +183,7 @@ function buildDeps(opts: ScriptedDepsOptions): { deps: SelfReviewRetryDeps; call
       };
     },
     captureHeadSha: async () => 'base-head',
+    restoreWorkerChecklistTargetFromSlot: async () => {},
     runReviewAgent: async (
       _vars,
       runner,

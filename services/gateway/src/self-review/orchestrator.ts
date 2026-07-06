@@ -342,6 +342,10 @@ export interface SelfReviewRetryDeps {
     artifactScope?: string | null,
   ) => Promise<{ snapshot: ReviewFixDeltaSnapshot; artifactPaths: string[] }>;
   captureHeadSha: (vars: Awaited<ReturnType<typeof loadSlotVars>>) => Promise<string | null>;
+  restoreWorkerChecklistTargetFromSlot: (
+    vars: Awaited<ReturnType<typeof loadSlotVars>>,
+    taskDir: string,
+  ) => Promise<void>;
   getRun: typeof getRun;
 }
 
@@ -360,6 +364,7 @@ const PRODUCTION_DEPS: SelfReviewRetryDeps = {
   runReviewAgent,
   captureFixDelta: captureFixDeltaSnapshot,
   captureHeadSha: captureCurrentHeadSha,
+  restoreWorkerChecklistTargetFromSlot,
   getRun,
 };
 
@@ -473,7 +478,7 @@ export async function runSelfReviewRetryLoop({
       debugSelfReviewLog(`[self-review] run ${runId.slice(0, 8)} — timeout waiting for worker fix`);
       await deps.markAgentContextStatus(runId, 'self-review-fix', 'failed');
       await deps.unwatchContext(slotId, 'self-review-fix');
-      await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
+      await deps.restoreWorkerChecklistTargetFromSlot(vars, taskDir);
       if (retryCount >= maxRetries) {
         return {
           verdict: 'issues',
@@ -528,7 +533,7 @@ export async function runSelfReviewRetryLoop({
         lastSignalAt: new Date().toISOString(),
       });
       await deps.unwatchContext(slotId, 'self-review-fix');
-      await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
+      await deps.restoreWorkerChecklistTargetFromSlot(vars, taskDir);
       return {
         verdict: 'blocked',
         reason: fixSignal.reason ?? 'worker blocked during self-review fix',
@@ -553,7 +558,7 @@ export async function runSelfReviewRetryLoop({
       { lastSignalAt: new Date().toISOString() },
     );
     await deps.unwatchContext(slotId, 'self-review-fix');
-    await restoreWorkerChecklistTargetFromSlot(vars, taskDir);
+    await deps.restoreWorkerChecklistTargetFromSlot(vars, taskDir);
     const fixDelta = await deps.captureFixDelta(
       vars,
       taskDir,
