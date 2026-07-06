@@ -882,9 +882,9 @@ async function sendFeedbackToWorker(
   await writeTextFileOnSlot(vars, `${taskDir}/SELF-REVIEW-FIX.md`, expanded);
   await syncChecklistTargetOnSlot(vars, taskDir, 'SELF-REVIEW-FIX.md');
 
-  // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
-  updateRun(runId, { activeTaskFile: `${taskDir}/SELF-REVIEW-FIX.md` });
   try {
+    // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
+    updateRun(runId, { activeTaskFile: `${taskDir}/SELF-REVIEW-FIX.md` });
     const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
     const session = primaryTarget.session;
     const roleWindowName =

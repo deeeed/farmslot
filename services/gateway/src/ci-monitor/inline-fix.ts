@@ -439,10 +439,11 @@ async function attemptInlineCIFix(
   });
 
   // Delete old CI-FIX-SIGNAL.json so we can detect fresh completion
-  const vars = await loadSlotVars(slotId);
-  const signalPath = `${vars.remoteRepo}/${writeResult.taskDir}/CI-FIX-SIGNAL.json`;
   let ciFixContextStarted = false;
+  let vars: Awaited<ReturnType<typeof loadSlotVars>>;
   try {
+    vars = await loadSlotVars(slotId);
+    const signalPath = `${vars.remoteRepo}/${writeResult.taskDir}/CI-FIX-SIGNAL.json`;
     await execOnSlot(vars, `rm -f '${signalPath}'`);
     const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
     const roleWindowName =
