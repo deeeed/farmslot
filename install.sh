@@ -22,8 +22,9 @@
 #   FARMSLOT_REPO_REF   branch/ref for fresh mode  (default: the remote default branch)
 #   FARMSLOT_BIN_DIR    dir for the PATH symlink   (default: ~/.local/bin)
 #   FARMSLOT_HOME       machine state/home dir     (default: ~/.farmslot)
-# Interactive installs (a real terminal) are prompted to confirm/customize the three
-# locations above; values pinned via env, and non-interactive (CI/piped) installs, stay silent.
+# Interactive installs (a real terminal) list the three default locations and ask
+# [Y/n] once to accept them; declining opens per-path prompts for any location not
+# pinned via env. Fully-pinned and non-interactive (CI/piped) installs stay silent.
 #   FARMSLOT_MINIMAL    set to skip the dashboard build + pair-your-phone step
 #   FARMSLOT_PAIR       set to 1 to pair non-interactively (no prompt)
 #   FARMSLOT_NO_STAR_PROMPT  set to 1 to skip the GitHub star prompt
@@ -195,26 +196,31 @@ offer_path_update() {
   fi
 }
 
-# step_configure — choose install locations interactively (tty only). Each path the user
-# did NOT pin via env is prompted with its default; a fully-pinned or non-interactive
-# (CI / piped) install stays silent and reproducible. Always finalizes (tilde-expand +
-# export FARMSLOT_HOME) so every child process resolves the same home.
+# step_configure — choose install locations interactively (tty only). Lists defaults
+# and accepts them with one [Y/n] (Enter); declining prompts only paths not pinned via
+# env. Fully-pinned or non-interactive (CI / piped) installs stay silent. Always
+# finalizes (tilde-expand + export FARMSLOT_HOME) so every child process resolves the
+# same home.
 step_configure() {
-  local prompted=
-  if tty_available; then
+  local needs_prompt=
+  [ -z "$WORKSPACE_FROM_ENV" ] && needs_prompt=1
+  [ -z "$BIN_DIR_FROM_ENV" ] && needs_prompt=1
+  [ -z "$HOME_FROM_ENV" ] && needs_prompt=1
+
+  if tty_available && [ -n "$needs_prompt" ]; then
     bold "── Install locations ──"
-    [ -z "$WORKSPACE_FROM_ENV" ] && { ask_value WORKSPACE "Install location (workspace)" "$WORKSPACE"; prompted=1; }
-    [ -z "$BIN_DIR_FROM_ENV" ] && { ask_value BIN_DIR "CLI symlink dir" "$BIN_DIR"; prompted=1; }
-    [ -z "$HOME_FROM_ENV" ] && { ask_value HOME_DIR "State/home dir" "$HOME_DIR"; prompted=1; }
+    printf '  workspace: %s\n  bin dir:   %s\n  home dir:  %s\n' "$WORKSPACE" "$BIN_DIR" "$HOME_DIR" >/dev/tty
+    if ask_yes_no "Use these locations?" yes; then
+      :
+    else
+      [ -z "$WORKSPACE_FROM_ENV" ] && ask_value WORKSPACE "Install location (workspace)" "$WORKSPACE"
+      [ -z "$BIN_DIR_FROM_ENV" ] && ask_value BIN_DIR "CLI symlink dir" "$BIN_DIR"
+      [ -z "$HOME_FROM_ENV" ] && ask_value HOME_DIR "State/home dir" "$HOME_DIR"
+    fi
   fi
   WORKSPACE="$(expand_tilde "$WORKSPACE")"
   BIN_DIR="$(expand_tilde "$BIN_DIR")"
   HOME_DIR="$(expand_tilde "$HOME_DIR")"
-  if [ -n "$prompted" ]; then
-    printf '\n  workspace: %s\n  bin dir:   %s\n  home dir:  %s\n' "$WORKSPACE" "$BIN_DIR" "$HOME_DIR" >/dev/tty
-    ask_yes_no "Proceed with these locations?" yes \
-      || fail "install cancelled" "re-run, or set FARMSLOT_WORKSPACE / FARMSLOT_BIN_DIR / FARMSLOT_HOME to choose non-interactively"
-  fi
   export FARMSLOT_HOME="$HOME_DIR"
 }
 
