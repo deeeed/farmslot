@@ -742,6 +742,48 @@ test('scheduler isolates an unenqueueable node and continues scheduling siblings
   );
 });
 
+test('scheduler retries enqueue when completed ledger is stale after backlog reset', async () => {
+  const { backlog, queue, runs, workGraph } = await freshStores();
+  const created = await createReadyBacklogItem(backlog, 'Retry stale ledger');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Retry stale ledger graph',
+  });
+  const graphId = graph.graph.graph.id;
+  const nodeId = 'wn_retry';
+  await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
+  assert.ok(queued);
+
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+  runs.updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+  backlog.markBacklogRunObserved({ ...run, status: 'failed' } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  await runs.deleteRun(run.id);
+  await backlog.markBacklogRunDeleted(run.id);
+
+  const retick = await workGraph.schedulerTick({ graphId });
+  const node = retick.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
+  assert.equal(node?.status, 'queued');
+  assert.equal(
+    backlog.listBacklogItems().items.find((item) => item.id === created.item.id)?.status,
+    'queued',
+  );
+});
+
 test('manual gate resolution rejects ambiguous gate ids and can disambiguate by graph and edge', async () => {
   const { backlog, workGraph } = await freshStores();
   const firstUpstream = await createReadyBacklogItem(backlog, 'First upstream');

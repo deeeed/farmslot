@@ -27,6 +27,7 @@ import {
   cancelGraphQueuedItem,
   getQueueSnapshot,
   persistQueueNow,
+  removeQueueItemInternal,
 } from '../backlog/dispatch-queue.js';
 import {
   assertBacklogItemAttachedToWorkNode,
@@ -684,7 +685,24 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): voi
     return;
   }
   if (queued) {
-    node.status = 'queued';
+    const backlog = node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId) : null;
+    if (backlog?.status === 'ready') {
+      removeQueueItemInternal(queued.id, 'graph-sync-purge-stale-queue');
+    } else {
+      node.status = 'queued';
+      node.updatedAt = new Date().toISOString();
+      return;
+    }
+  }
+  const backlog = node.backlogItemId ? getBacklogItemSnapshot(node.backlogItemId) : null;
+  if (
+    backlog?.status === 'ready' &&
+    !latestRun &&
+    !queued &&
+    (node.status === 'failed' || node.status === 'needs-attention' || node.status === 'queued')
+  ) {
+    node.status = 'ready';
+    delete node.latestRunId;
     node.updatedAt = new Date().toISOString();
   }
 }
@@ -912,9 +930,35 @@ async function executeNodeUnlock(
   const version = readinessVersion(snapshot, node, actions);
   const actionKind = unlockActionKind(inbound);
   const actionKey = `${snapshot.graph.id}:${node.id}:${actionKind}:${version}`;
-  if (snapshot.ledger.some((entry) => entry.key === actionKey && entry.status === 'completed'))
-    return;
   const backlogItem = getBacklogItemSnapshot(node.backlogItemId);
+  let existingQueue = getQueueSnapshot().find(
+    (item) => item.workGraphId === snapshot.graph.id && item.workNodeId === node.id,
+  );
+  const existingRun = getAllRuns().find(
+    (run) => run.workGraphId === snapshot.graph.id && run.workNodeId === node.id,
+  );
+  if (
+    existingQueue?.status === 'queued' &&
+    !existingRun &&
+    backlogItem?.status === 'ready' &&
+    node.status === 'ready'
+  ) {
+    removeQueueItemInternal(existingQueue.id, 'graph-retry-purge-stale-queue');
+    existingQueue = undefined;
+  }
+  const completedEntry = snapshot.ledger.find(
+    (entry) => entry.key === actionKey && entry.status === 'completed',
+  );
+  if (completedEntry) {
+    const retryableStaleEnqueue =
+      actionKind === 'enqueue' &&
+      !existingQueue &&
+      !existingRun &&
+      backlogItem?.status === 'ready' &&
+      node.status === 'ready';
+    if (!retryableStaleEnqueue) return;
+    snapshot.ledger = snapshot.ledger.filter((entry) => entry.key !== actionKey);
+  }
   if (actionKind === 'enqueue' && backlogItem?.autoDispatch === false) {
     node.status = 'ready';
     node.waitingOn = [];
@@ -950,12 +994,6 @@ async function executeNodeUnlock(
     }
     return;
   }
-  const existingQueue = getQueueSnapshot().find(
-    (item) => item.workGraphId === snapshot.graph.id && item.workNodeId === node.id,
-  );
-  const existingRun = getAllRuns().find(
-    (run) => run.workGraphId === snapshot.graph.id && run.workNodeId === node.id,
-  );
   if (existingQueue || existingRun) {
     snapshot.ledger.push({
       key: actionKey,

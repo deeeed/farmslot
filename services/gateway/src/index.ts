@@ -28,6 +28,7 @@ import { initDispatchQueue, loadQueue } from './backlog/dispatch-queue.js';
 import {
   initBacklogStore,
   loadBacklog,
+  markBacklogRunDeleted,
   markBacklogRunObserved,
   markBacklogRunStarted,
 } from './backlog/store.js';
@@ -221,6 +222,26 @@ async function main(): Promise<void> {
             );
           });
         }
+      }
+    }
+    if (event === Events.RUN_DELETED) {
+      const runId = (payload as { runId?: string }).runId;
+      if (runId) {
+        markBacklogRunDeleted(runId)
+          .then((graphIds) => {
+            for (const graphId of graphIds) {
+              schedulerTick({ graphId }).catch((err) => {
+                console.error(
+                  `[work-graph] run delete reconciliation failed for ${graphId}: ${(err as Error).message}`,
+                );
+              });
+            }
+          })
+          .catch((err) => {
+            console.error(
+              `[backlog] failed to release deleted run ${runId}: ${(err as Error).message}`,
+            );
+          });
       }
     }
   };

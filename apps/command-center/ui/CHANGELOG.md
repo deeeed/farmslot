@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix: show Mark ready for failed and needs-attention backlog items so operators can clear stale run linkage without editing state files.
+- fix: reset failed graph-linked backlog items to `ready` when their run is deleted or missing, and retry graph enqueue when a prior completed scheduler ledger entry is stale.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.2.1 - 2026-07-03
