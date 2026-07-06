@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit';
 
 import type { Run, TaskProgressStructured } from '@farmslot/protocol';
+import { nestedLoopProgressLabel } from '@farmslot/protocol/checklist-target';
 
 import { colors } from '../../styles/theme-tokens.js';
 
@@ -83,13 +84,9 @@ export function renderPipelineProgressPanel(
   progress: TaskProgressStructured,
   activeStep: 'monitor' | 'self-review' | 'ci-watch' | null,
   close: () => void,
+  activeTaskBasename?: string | null,
 ) {
-  const label =
-    activeStep === 'self-review'
-      ? 'Self-review Progress'
-      : activeStep === 'ci-watch'
-        ? 'CI Fix Progress'
-        : 'Worker Progress';
+  const label = nestedLoopProgressLabel(activeStep, activeTaskBasename);
   return html`
     <div class="monitor-detail">
       <div class="monitor-detail-header">

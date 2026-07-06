@@ -1,4 +1,5 @@
 export * from './agents/roles.js';
+export * from './checklist-target.js';
 export * from './contracts/index.js';
 export * from './integrations/github-ref.js';
 export * from './pairing/index.js';

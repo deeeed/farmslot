@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+// Canonical filename registry lives in @farmslot/protocol/checklist-target — keep in sync (see test/checklist-target-sync.test.mjs).
+
 const CHECKLIST_TARGET_MANIFEST = 'checklist-target.json';
 const TASK_PROGRESS_MARKDOWN = 'TASK.md';
 const INTERACTIVE_CHECKLIST_MARKDOWN = 'CHECKLIST.md';

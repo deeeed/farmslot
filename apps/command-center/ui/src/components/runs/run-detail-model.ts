@@ -12,7 +12,12 @@ import type {
   RunStep,
   TaskProgressUpdatedPayload,
 } from '@farmslot/protocol';
-import { buildComparisonVariant, isTerminalRunStatus, resolveRunSlotId } from '@farmslot/protocol';
+import {
+  buildComparisonVariant,
+  isTerminalRunStatus,
+  resolveRunSlotId,
+  shouldAcceptTaskProgressUpdate as shouldAcceptTaskProgressForActiveChecklist,
+} from '@farmslot/protocol';
 
 import { desiredRecipeRunId } from '../shared/recipe-run-selection-model.js';
 
@@ -102,13 +107,7 @@ export function shouldAcceptTaskProgressUpdate(
   run: Pick<Run, 'activeTaskFile' | 'taskFile'> | null,
   update: Pick<TaskProgressUpdatedPayload, 'contextId' | 'role'>,
 ): boolean {
-  const activeTaskFile = run?.activeTaskFile;
-  if (!activeTaskFile || activeTaskFile === run?.taskFile) return true;
-  const activeName = activeTaskFile.split('/').pop();
-  if (activeName === 'SELF-REVIEW.md') {
-    return update.contextId === 'self-review' || update.role === 'self-review';
-  }
-  return true;
+  return shouldAcceptTaskProgressForActiveChecklist(run, update);
 }
 
 export interface RunEvidenceLightboxItem {

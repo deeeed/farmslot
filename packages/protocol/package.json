@@ -15,6 +15,11 @@
       "import": "./dist/agents/roles.js",
       "default": "./dist/agents/roles.js"
     },
+    "./checklist-target": {
+      "types": "./dist/checklist-target.d.ts",
+      "import": "./dist/checklist-target.js",
+      "default": "./dist/checklist-target.js"
+    },
     "./surfaces/command-center": {
       "types": "./dist/surfaces/command-center.d.ts",
       "import": "./dist/surfaces/command-center.js",

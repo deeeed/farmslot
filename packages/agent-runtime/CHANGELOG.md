@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Add `checklist-target.json` resolution for task-dir `./mark` with strict manifest validation and nested-loop checklist/signal registry.
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add sync test ensuring `checklist-target.cjs` constants stay aligned with `@farmslot/protocol/checklist-target`.
 
 ## 0.1.1 - 2026-07-06
 

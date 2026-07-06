@@ -179,9 +179,14 @@ export class RunPipeline extends LitElement {
   private renderProgressPanel() {
     const progress = this._activeTaskProgress();
     if (!progress) return nothing;
-    return renderPipelineProgressPanel(progress, this._activeTaskProgressStepId(), () => {
-      this.monitorExpanded = false;
-    });
+    return renderPipelineProgressPanel(
+      progress,
+      this._activeTaskProgressStepId(),
+      () => {
+        this.monitorExpanded = false;
+      },
+      this.run.activeTaskFile?.split('/').pop(),
+    );
   }
 
   private _isInlineCIFixActive(): boolean {

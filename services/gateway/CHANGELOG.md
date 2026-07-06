@@ -6,6 +6,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 - refactor(gateway): centralize nested-loop checklist/signal filenames in `checklist-target` registry with injectable `ChecklistTargetRegistry` and role-scoped sync helpers.
 - fix(gateway): retarget task-local `./mark` via `checklist-target.json` when nested-loop roles activate, so self-review and CI-fix progress marks the active checklist instead of worker `TASK.md`; restore worker target on replay and role completion.
+- fix(gateway): rewrite the task-local `./mark` wrapper on every checklist-target sync so replayed or legacy task dirs pick up task-dir mode instead of stale explicit `TASK.md`/`SIGNAL.json` shims.
 - fix(gateway): treat self-review progress `SELF-REVIEW-SIGNAL.json` (`status: running`) as non-terminal and require `review-feedback.md` before declaring review complete.
 - fix: reset failed graph-linked backlog items to `ready` when their run is deleted or missing, clear stale run linkage on Mark ready, and retry graph enqueue when a prior completed scheduler ledger entry is stale.
 - feat: validate `hooks.recipe_run` and live-rerun artifact packages against Recipe Protocol v1, and prefer typed `artifact-manifest.json` metadata for live recipe artifact rendering with legacy scanning only as fallback.

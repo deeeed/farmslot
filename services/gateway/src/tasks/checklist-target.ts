@@ -1,102 +1,72 @@
+import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import type { AgentRole } from '@farmslot/protocol';
+import {
+  CHECKLIST_TARGET_MANIFEST,
+  type ChecklistTarget,
+  checklistTargetForAgentRole as resolveChecklistTargetForRole,
+  type ChecklistTargetRegistry,
+  DEFAULT_CHECKLIST_TARGET_REGISTRY,
+  INTERACTIVE_CHECKLIST_MARKDOWN,
+  type NestedLoopAgentRole,
+  targetForChecklistBasename,
+  TASK_PROGRESS_MARKDOWN,
+  taskDirRelPath,
+} from '@farmslot/protocol/checklist-target';
 
-import type { loadSlotVars } from '../core/config.js';
+export type { ChecklistTarget, ChecklistTargetRegistry, NestedLoopAgentRole };
+
+export {
+  agentRoleForChecklistBasename,
+  CHECKLIST_TARGET_BY_AGENT_ROLE,
+  CHECKLIST_TARGET_MANIFEST,
+  checklistBasenameFromTaskPath,
+  CI_FIX_CHECKLIST,
+  CI_FIX_CHECKLIST_TARGET,
+  DEFAULT_CHECKLIST_TARGET_REGISTRY,
+  INTERACTIVE_CHECKLIST_MARKDOWN,
+  nestedLoopProgressLabel,
+  ROLE_SIGNAL_SUFFIX,
+  SELF_REVIEW_CHECKLIST,
+  SELF_REVIEW_CHECKLIST_TARGET,
+  SELF_REVIEW_FIX_CHECKLIST,
+  SELF_REVIEW_FIX_CHECKLIST_TARGET,
+  shouldAcceptTaskProgressUpdate,
+  signalFileForChecklist,
+  targetForChecklistBasename,
+  TASK_PROGRESS_MARKDOWN,
+  taskDirRelPath,
+  WORKER_SIGNAL_FILE,
+} from '@farmslot/protocol/checklist-target';
+
+import { farmslotRoot, type loadSlotVars } from '../core/config.js';
 import { execOnSlot } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 import { writeTextFileOnSlot } from '../methods/dispatch/slot-file-write.js';
 
-const require = createRequire(import.meta.url);
-const checklistTargetLib = require(
-  path.resolve(
-    fileURLToPath(import.meta.url),
-    '../../../../../packages/agent-runtime/scripts/checklist-target.cjs',
-  ),
-) as {
-  CHECKLIST_TARGET_MANIFEST: string;
-  TASK_PROGRESS_MARKDOWN: string;
-  INTERACTIVE_CHECKLIST_MARKDOWN: string;
-  WORKER_SIGNAL_FILE: string;
-  ROLE_SIGNAL_SUFFIX: string;
-  SELF_REVIEW_CHECKLIST: string;
-  SELF_REVIEW_FIX_CHECKLIST: string;
-  CI_FIX_CHECKLIST: string;
-  SELF_REVIEW_CHECKLIST_TARGET: ChecklistTarget;
-  SELF_REVIEW_FIX_CHECKLIST_TARGET: ChecklistTarget;
-  CI_FIX_CHECKLIST_TARGET: ChecklistTarget;
-  CHECKLIST_TARGET_BY_AGENT_ROLE: Record<NestedLoopAgentRole, ChecklistTarget>;
-  DEFAULT_CHECKLIST_TARGET_REGISTRY: ChecklistTargetRegistry;
-  checklistTargetForAgentRole: (
-    role: NestedLoopAgentRole,
-    registry?: ChecklistTargetRegistry,
-  ) => ChecklistTarget | null;
-  taskDirRelPath: (taskDir: string, basename: string) => string;
-  targetForChecklistBasename: (checklistBasename: string) => ChecklistTarget;
-  defaultWorkerTarget: (taskDir: string) => ChecklistTarget;
-};
+import { CHECKLIST_MARKER_INPUT } from './sidecars.js';
 
-export interface ChecklistTarget {
-  checklist: string;
-  signal: string;
-}
-
-export type NestedLoopAgentRole = Extract<AgentRole, 'self-review' | 'self-review-fix' | 'ci-fix'>;
-
-export interface ChecklistTargetRegistry {
-  manifest: string;
-  workerTask: string;
-  interactiveChecklist: string;
-  workerSignal: string;
-  roleSignalSuffix: string;
-  roles: Record<NestedLoopAgentRole, ChecklistTarget>;
-}
-
-export const CHECKLIST_TARGET_MANIFEST = checklistTargetLib.CHECKLIST_TARGET_MANIFEST;
-export const TASK_PROGRESS_MARKDOWN = checklistTargetLib.TASK_PROGRESS_MARKDOWN;
-export const INTERACTIVE_CHECKLIST_MARKDOWN = checklistTargetLib.INTERACTIVE_CHECKLIST_MARKDOWN;
-export const WORKER_SIGNAL_FILE = checklistTargetLib.WORKER_SIGNAL_FILE;
-export const ROLE_SIGNAL_SUFFIX = checklistTargetLib.ROLE_SIGNAL_SUFFIX;
-
-export const SELF_REVIEW_CHECKLIST = checklistTargetLib.SELF_REVIEW_CHECKLIST;
-export const SELF_REVIEW_FIX_CHECKLIST = checklistTargetLib.SELF_REVIEW_FIX_CHECKLIST;
-export const CI_FIX_CHECKLIST = checklistTargetLib.CI_FIX_CHECKLIST;
-
-export const SELF_REVIEW_CHECKLIST_TARGET = checklistTargetLib.SELF_REVIEW_CHECKLIST_TARGET;
-export const SELF_REVIEW_FIX_CHECKLIST_TARGET = checklistTargetLib.SELF_REVIEW_FIX_CHECKLIST_TARGET;
-export const CI_FIX_CHECKLIST_TARGET = checklistTargetLib.CI_FIX_CHECKLIST_TARGET;
-export const CHECKLIST_TARGET_BY_AGENT_ROLE = checklistTargetLib.CHECKLIST_TARGET_BY_AGENT_ROLE;
-export const DEFAULT_CHECKLIST_TARGET_REGISTRY =
-  checklistTargetLib.DEFAULT_CHECKLIST_TARGET_REGISTRY;
-
-export function targetForChecklistBasename(checklistBasename: string): ChecklistTarget {
-  return checklistTargetLib.targetForChecklistBasename(checklistBasename);
-}
-
-export function defaultWorkerChecklistTarget(taskAbsDir: string): ChecklistTarget {
-  return checklistTargetLib.defaultWorkerTarget(taskAbsDir);
-}
+const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
+const localHostname = os.hostname().replace(/\.local$/, '');
 
 export function checklistTargetForAgentRole(
   role: NestedLoopAgentRole,
   registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
 ): ChecklistTarget {
-  const target = checklistTargetLib.checklistTargetForAgentRole(role, registry);
+  const target = resolveChecklistTargetForRole(role, registry);
   if (!target) {
     throw new Error(`No checklist target registered for agent role '${role}'`);
   }
   return target;
 }
 
-export function taskDirRelPath(
-  taskDir: string,
-  basename: string,
-  _registry: ChecklistTargetRegistry = DEFAULT_CHECKLIST_TARGET_REGISTRY,
-): string {
-  return checklistTargetLib.taskDirRelPath(taskDir, basename);
+export function defaultWorkerChecklistTarget(taskAbsDir: string): ChecklistTarget {
+  const checklist = existsSync(path.join(taskAbsDir, INTERACTIVE_CHECKLIST_MARKDOWN))
+    ? INTERACTIVE_CHECKLIST_MARKDOWN
+    : TASK_PROGRESS_MARKDOWN;
+  return targetForChecklistBasename(checklist);
 }
 
 export function slotTaskRelPath(
@@ -143,12 +113,35 @@ export async function syncChecklistTargetForRole(
   await syncChecklistTarget(vars, taskDir, checklistTargetForAgentRole(role, registry));
 }
 
+function farmslotDirForSlot(vars: Pick<Awaited<ReturnType<typeof loadSlotVars>>, 'host'>): string {
+  const slotHost = vars.host.replace(/\.local$/, '');
+  const onOperator =
+    slotHost === 'localhost' || slotHost === '127.0.0.1' || slotHost === localHostname;
+  return onOperator ? farmslotRoot : REMOTE_FARMSLOT_DIR;
+}
+
+export async function syncChecklistMarkerOnSlot(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  taskDir: string,
+): Promise<void> {
+  const { buildChecklistMarkerScript, checklistMarkerHelperPath } = await import('./writer.js');
+  const markRel = taskDirRelPath(taskDir, CHECKLIST_MARKER_INPUT);
+  const content = buildChecklistMarkerScript(checklistMarkerHelperPath(farmslotDirForSlot(vars)));
+  await writeTextFileOnSlot(vars, markRel, content);
+  await execOnSlot(
+    vars,
+    `chmod +x ${shellQuote(`${vars.remoteRepo}/${markRel}`)}`,
+    vars.remoteRepo,
+  );
+}
+
 export async function syncChecklistTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
   target: ChecklistTarget,
 ): Promise<void> {
   await writeTextFileOnSlot(vars, manifestRelPath(taskDir), serializeManifest(target));
+  await syncChecklistMarkerOnSlot(vars, taskDir);
 }
 
 export async function restoreWorkerChecklistTargetOnSlot(
