@@ -228,7 +228,11 @@ export class BacklogPanel extends LitElement {
     planningChoiceStyles,
     css`
       :host {
+        box-sizing: border-box;
         display: block;
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
         color: ${unsafeCSS(colors.textPrimary)};
         font-family: ${unsafeCSS(fonts.mono)};
         padding: ${unsafeCSS(spacing.lg)};
@@ -236,6 +240,17 @@ export class BacklogPanel extends LitElement {
       .shell {
         display: grid;
         gap: ${unsafeCSS(spacing.md)};
+        max-height: 100%;
+        min-height: 0;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      .shell::-webkit-scrollbar {
+        width: 6px;
+      }
+      .shell::-webkit-scrollbar-thumb {
+        background: ${unsafeCSS(colors.textMuted)}66;
+        border-radius: 3px;
       }
       .header,
       .card,
