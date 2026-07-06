@@ -18,6 +18,10 @@ const STEPS = [
     'conventional commit guard tests',
     ['node', '--test', 'scripts/quality/check-conventional-commits.test.mjs'],
   ],
+  [
+    'single-canonical worker scripts',
+    ['node', '--test', 'scripts/quality/single-canonical-worker-scripts.test.mjs'],
+  ],
   ['worker template lint', ['node', 'scripts/quality/check-worker-template-contract.mjs']],
   ['template variable docs', ['node', 'scripts/quality/check-template-variables-docs.mjs']],
   ['shell script tests', ['bash', 'scripts/tests/run-shell-tests.sh']],
