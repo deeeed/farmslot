@@ -5,6 +5,11 @@ const CHECKLIST_TARGET_MANIFEST = 'checklist-target.json';
 const TASK_PROGRESS_MARKDOWN = 'TASK.md';
 const INTERACTIVE_CHECKLIST_MARKDOWN = 'CHECKLIST.md';
 const WORKER_SIGNAL_FILE = 'SIGNAL.json';
+const ROLE_SIGNAL_SUFFIX = '-SIGNAL.json';
+
+const SELF_REVIEW_CHECKLIST = 'SELF-REVIEW.md';
+const SELF_REVIEW_FIX_CHECKLIST = 'SELF-REVIEW-FIX.md';
+const CI_FIX_CHECKLIST = 'CI-FIX.md';
 
 function signalFileForChecklist(checklistBasename) {
   if (
@@ -14,7 +19,12 @@ function signalFileForChecklist(checklistBasename) {
     return WORKER_SIGNAL_FILE;
   }
   const base = checklistBasename.replace(/\.md$/i, '');
-  return `${base}-SIGNAL.json`;
+  return `${base}${ROLE_SIGNAL_SUFFIX}`;
+}
+
+function taskDirRelPath(taskDir, basename) {
+  const normalized = String(taskDir).replace(/\/+$/, '');
+  return `${normalized}/${basename}`;
 }
 
 function targetForChecklistBasename(checklistBasename) {
@@ -29,6 +39,29 @@ function defaultWorkerTarget(taskDir) {
     ? INTERACTIVE_CHECKLIST_MARKDOWN
     : TASK_PROGRESS_MARKDOWN;
   return targetForChecklistBasename(checklist);
+}
+
+const SELF_REVIEW_CHECKLIST_TARGET = targetForChecklistBasename(SELF_REVIEW_CHECKLIST);
+const SELF_REVIEW_FIX_CHECKLIST_TARGET = targetForChecklistBasename(SELF_REVIEW_FIX_CHECKLIST);
+const CI_FIX_CHECKLIST_TARGET = targetForChecklistBasename(CI_FIX_CHECKLIST);
+
+const CHECKLIST_TARGET_BY_AGENT_ROLE = {
+  'self-review': SELF_REVIEW_CHECKLIST_TARGET,
+  'self-review-fix': SELF_REVIEW_FIX_CHECKLIST_TARGET,
+  'ci-fix': CI_FIX_CHECKLIST_TARGET,
+};
+
+const DEFAULT_CHECKLIST_TARGET_REGISTRY = {
+  manifest: CHECKLIST_TARGET_MANIFEST,
+  workerTask: TASK_PROGRESS_MARKDOWN,
+  interactiveChecklist: INTERACTIVE_CHECKLIST_MARKDOWN,
+  workerSignal: WORKER_SIGNAL_FILE,
+  roleSignalSuffix: ROLE_SIGNAL_SUFFIX,
+  roles: CHECKLIST_TARGET_BY_AGENT_ROLE,
+};
+
+function checklistTargetForAgentRole(role, registry = DEFAULT_CHECKLIST_TARGET_REGISTRY) {
+  return registry.roles[role] ?? null;
 }
 
 function readManifest(taskDir) {
@@ -138,6 +171,17 @@ module.exports = {
   TASK_PROGRESS_MARKDOWN,
   INTERACTIVE_CHECKLIST_MARKDOWN,
   WORKER_SIGNAL_FILE,
+  ROLE_SIGNAL_SUFFIX,
+  SELF_REVIEW_CHECKLIST,
+  SELF_REVIEW_FIX_CHECKLIST,
+  CI_FIX_CHECKLIST,
+  SELF_REVIEW_CHECKLIST_TARGET,
+  SELF_REVIEW_FIX_CHECKLIST_TARGET,
+  CI_FIX_CHECKLIST_TARGET,
+  CHECKLIST_TARGET_BY_AGENT_ROLE,
+  DEFAULT_CHECKLIST_TARGET_REGISTRY,
+  checklistTargetForAgentRole,
+  taskDirRelPath,
   signalFileForChecklist,
   targetForChecklistBasename,
   defaultWorkerTarget,

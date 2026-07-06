@@ -46,7 +46,10 @@ import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun } from '../runs/store.js';
 import {
   restoreWorkerChecklistTargetFromSlot,
-  syncChecklistTargetOnSlot,
+  SELF_REVIEW_FIX_CHECKLIST_TARGET,
+  slotTaskRelPath,
+  syncChecklistTargetForRole,
+  taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 import { signalFreshSince, terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
@@ -454,7 +457,7 @@ export async function runSelfReviewRetryLoop({
     );
 
     // Watch the fix task for progress
-    const fixTaskPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX.md`;
+    const fixTaskPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
     const fixWatcher = deps.startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
 
     // Wait for worker to finish fixing
@@ -614,7 +617,7 @@ async function readSelfReviewFixIssues(
 ): Promise<SelfReviewIssue[]> {
   const content = await readOptionalSlotFile(
     vars,
-    `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX.md`,
+    slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
   );
   return parseSelfReviewIssueBullets(content);
 }
@@ -626,8 +629,8 @@ export function canRecoverSelfReviewFixPass(
   return (
     fixContext?.role === 'self-review-fix' &&
     fixContext.status === 'working' &&
-    fixContext.taskFile === `${taskDir}/SELF-REVIEW-FIX.md` &&
-    fixContext.signalFile === `${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`
+    fixContext.taskFile === taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist) &&
+    fixContext.signalFile === taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal)
   );
 }
 
@@ -665,7 +668,7 @@ async function recoverSelfReviewFixPass({
   // fix pass for a new external review and prevent feedback from reaching the worker.
   if (!fixContext) return null;
 
-  const fixSignalPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`;
+  const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
   const rawSignal = await readOptionalSlotFile(vars, fixSignalPath);
   let fixSignal: WorkerSignal | undefined;
   try {
@@ -689,7 +692,7 @@ async function recoverSelfReviewFixPass({
   );
 
   if (!fixSignal) {
-    const fixTaskPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX.md`;
+    const fixTaskPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
     const fixWatcher = startProgressWatcher(vars, fixTaskPath, runId, 'Fix');
     try {
       fixSignal = await waitForWorkerSignal(vars, taskDir, FEEDBACK_TIMEOUT_MS, rawSignal);
@@ -874,17 +877,22 @@ async function sendFeedbackToWorker(
   }
 
   // Clear any stale fix-pass signal before sending new feedback.
-  const fixSignalPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`;
+  const fixSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
   await removeSlotFiles(vars, [fixSignalPath]);
   const fixSignalBaseline = await readOptionalSlotFile(vars, fixSignalPath);
 
   // Write the fix task to a file on the slot
-  await writeTextFileOnSlot(vars, `${taskDir}/SELF-REVIEW-FIX.md`, expanded);
-  await syncChecklistTargetOnSlot(vars, taskDir, 'SELF-REVIEW-FIX.md');
+  await writeTextFileOnSlot(
+    vars,
+    taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
+    expanded,
+  );
+  await syncChecklistTargetForRole(vars, taskDir, 'self-review-fix');
 
   try {
+    const fixTaskRel = taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
     // Mark SELF-REVIEW-FIX.md as the active task file for progress tracking
-    updateRun(runId, { activeTaskFile: `${taskDir}/SELF-REVIEW-FIX.md` });
+    updateRun(runId, { activeTaskFile: fixTaskRel });
     const primaryTarget = await resolveAgentTarget(vars.slotId, { runId, role: 'primary' });
     const session = primaryTarget.session;
     const roleWindowName =
@@ -906,8 +914,8 @@ async function sendFeedbackToWorker(
         : workerTarget.slice(workerWindowSep + 1).split('.', 1)[0] || null;
     const fixContext = await upsertAgentContext(runId, 'self-review-fix', {
       status: 'working',
-      taskFile: `${taskDir}/SELF-REVIEW-FIX.md`,
-      signalFile: `${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`,
+      taskFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist),
+      signalFile: taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal),
       runner: run?.metrics.runner ?? null,
       model: run?.metrics.model ?? null,
       target: { session, window: workerWindow, pane: null, target: workerTarget },
@@ -915,7 +923,7 @@ async function sendFeedbackToWorker(
     if (fixContext) await watchContext(vars.slotId, fixContext);
 
     // Send single-line command to the worker's original pane
-    const fixTaskFile = `${taskDir}/SELF-REVIEW-FIX.md`;
+    const fixTaskFile = taskDirRelPath(taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.checklist);
     const cmd = await resolveWorkerDispatchPrompt(project, {
       taskFile: fixTaskFile,
       taskDir,
@@ -928,7 +936,7 @@ async function sendFeedbackToWorker(
       'self-review',
     );
     debugSelfReviewLog(
-      `[self-review] fix task ${sent ? 'sent' : 'deferred'} to worker: ${taskDir}/SELF-REVIEW-FIX.md`,
+      `[self-review] fix task ${sent ? 'sent' : 'deferred'} to worker: ${fixTaskFile}`,
     );
     return fixSignalBaseline;
   } catch (err) {
@@ -1032,7 +1040,7 @@ async function waitForWorkerSignal(
   timeoutMs: number,
   baseline: string,
 ): Promise<WorkerSignal | undefined> {
-  const signalPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-FIX-SIGNAL.json`;
+  const signalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_FIX_CHECKLIST_TARGET.signal);
 
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {

@@ -2,8 +2,9 @@ import path from 'node:path';
 
 import { slotFileExists, type SlotLocality } from '../core/slot-io.js';
 
-export const TASK_PROGRESS_MARKDOWN = 'TASK.md';
-export const INTERACTIVE_CHECKLIST_MARKDOWN = 'CHECKLIST.md';
+import { INTERACTIVE_CHECKLIST_MARKDOWN, TASK_PROGRESS_MARKDOWN } from './checklist-target.js';
+
+export { INTERACTIVE_CHECKLIST_MARKDOWN, TASK_PROGRESS_MARKDOWN };
 
 /**
  * Resolve which markdown file owns checklist progress for a worker task directory.

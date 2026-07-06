@@ -45,8 +45,12 @@ import { resolveWorkerDispatchPrompt } from '../runners/worker-prompt.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
 import { ensureTmuxTargetReadyForRelaunch } from '../self-review/worker-lifecycle.js';
 import {
+  CI_FIX_CHECKLIST,
+  CI_FIX_CHECKLIST_TARGET,
   restoreWorkerChecklistTargetFromSlot,
-  syncChecklistTargetOnSlot,
+  slotTaskRelPath,
+  syncChecklistTargetForRole,
+  taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 
@@ -352,14 +356,16 @@ async function writeCIFixTask(
   expanded = expandTemplate(expanded, vars, pv);
 
   // Write CI-FIX.md to slot using the shared safe text writer
-  const taskPath = `${taskDir}/CI-FIX.md`;
+  const taskPath = taskDirRelPath(taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
   await writeTextFileOnSlot(vars, taskPath, expanded);
-  await syncChecklistTargetOnSlot(vars, taskDir, 'CI-FIX.md');
+  await syncChecklistTargetForRole(vars, taskDir, 'ci-fix');
 
   // Mark CI-FIX.md as the active task file for progress tracking
   updateRun(runId, { activeTaskFile: taskPath });
 
-  console.log(`[ci-monitor] run ${runId.slice(0, 8)} — wrote ${taskDir}/CI-FIX.md to slot`);
+  console.log(
+    `[ci-monitor] run ${runId.slice(0, 8)} — wrote ${taskDirRelPath(taskDir, CI_FIX_CHECKLIST)} to slot`,
+  );
   return { taskDir, taskPath, progress: parseCIFixProgress(expanded) };
 }
 
@@ -440,10 +446,10 @@ async function attemptInlineCIFix(
 
   // Delete old CI-FIX-SIGNAL.json so we can detect fresh completion
   let ciFixContextStarted = false;
-  let vars: Awaited<ReturnType<typeof loadSlotVars>>;
+  let vars: Awaited<ReturnType<typeof loadSlotVars>> | undefined;
   try {
     vars = await loadSlotVars(slotId);
-    const signalPath = `${vars.remoteRepo}/${writeResult.taskDir}/CI-FIX-SIGNAL.json`;
+    const signalPath = slotTaskRelPath(vars, writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal);
     await execOnSlot(vars, `rm -f '${signalPath}'`);
     const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
     const roleWindowName =
@@ -460,7 +466,7 @@ async function attemptInlineCIFix(
     const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
       status: 'working',
       taskFile: writeResult.taskPath,
-      signalFile: `${writeResult.taskDir}/CI-FIX-SIGNAL.json`,
+      signalFile: taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal),
       runner,
       model: run?.metrics.model ?? null,
       target: { session, window: null, pane: null, target: workerTarget },
@@ -469,7 +475,7 @@ async function attemptInlineCIFix(
     ciFixContextStarted = true;
 
     // Send one-liner nudge to worker
-    const ciFixTaskFile = `${writeResult.taskDir}/CI-FIX.md`;
+    const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
     const nudgeCmd = await resolveWorkerDispatchPrompt(run?.project ?? vars.projectName, {
       taskFile: ciFixTaskFile,
       taskDir: writeResult.taskDir,
@@ -552,7 +558,7 @@ async function attemptInlineCIFix(
             const currentSha = await getSlotHeadSha(slotId);
             if (ws.status === 'blocked') {
               console.log(
-                `[ci-monitor] run ${runId.slice(0, 8)} — CI-FIX-SIGNAL blocked: ${ws.reason ?? 'no reason provided'}`,
+                `[ci-monitor] run ${runId.slice(0, 8)} — ${CI_FIX_CHECKLIST_TARGET.signal} blocked: ${ws.reason ?? 'no reason provided'}`,
               );
               await markAgentContextStatus(runId, 'ci-fix', 'blocked', { lastSignalAt });
               await unwatchContext(slotId, 'ci-fix');
@@ -578,7 +584,7 @@ async function attemptInlineCIFix(
             });
             const commitChanged = !!(currentSha && currentSha !== beforeSha);
             console.log(
-              `[ci-monitor] run ${runId.slice(0, 8)} — CI-FIX-SIGNAL detected, sha=${currentSha?.slice(0, 8)}${commitChanged ? '' : ' (no push)'}`,
+              `[ci-monitor] run ${runId.slice(0, 8)} — ${CI_FIX_CHECKLIST_TARGET.signal} detected, sha=${currentSha?.slice(0, 8)}${commitChanged ? '' : ' (no push)'}`,
             );
             await markAgentContextStatus(
               runId,
@@ -668,7 +674,8 @@ async function attemptInlineCIFix(
       await markAgentContextStatus(runId, 'ci-fix', 'failed');
       await unwatchContext(slotId, 'ci-fix');
     }
-    await restoreWorkerChecklistTargetFromSlot(vars, writeResult.taskDir);
+    const cleanupVars = vars ?? (await loadSlotVars(slotId));
+    await restoreWorkerChecklistTargetFromSlot(cleanupVars, writeResult.taskDir);
     clearInlineFixState(runId, { phase: 'polling' });
     return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
   }

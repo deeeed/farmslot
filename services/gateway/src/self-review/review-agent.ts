@@ -41,7 +41,10 @@ import {
 } from '../runtime/session-usage.js';
 import {
   restoreWorkerChecklistTargetFromSlot,
-  syncChecklistTargetOnSlot,
+  SELF_REVIEW_CHECKLIST_TARGET,
+  slotTaskRelPath,
+  syncChecklistTargetForRole,
+  taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
 import { terminalWorkerSignalFromRaw } from '../tasks/worker-signals.js';
@@ -123,8 +126,8 @@ export async function runReviewAgent(
   };
   let reviewContext = await upsertAgentContext(_runId, 'self-review', {
     status: 'launching',
-    taskFile: `${taskDir}/SELF-REVIEW.md`,
-    signalFile: `${taskDir}/SELF-REVIEW-SIGNAL.json`,
+    taskFile: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.checklist),
+    signalFile: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
     runner,
     model,
     target: null,
@@ -138,7 +141,7 @@ export async function runReviewAgent(
     // can't short-circuit on stale files (caused retry verdict to mirror pass 1).
     await removeSlotFiles(vars, [
       `${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md`,
-      `${vars.remoteRepo}/${taskDir}/SELF-REVIEW-SIGNAL.json`,
+      slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
     ]);
 
     // 2. Create new window in same session
@@ -178,10 +181,10 @@ export async function runReviewAgent(
     // non-interactive runners (e.g. Codex) can read it immediately.
     // The template is in projects/<project>/templates/worker/self-review.md with {{VAR}} placeholders.
     // Long multiline prompts get bracketed-pasted by tmux — so we write to a file.
-    const taskMdPath = `${taskDir}/SELF-REVIEW.md`;
+    const taskMdPath = taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.checklist);
     const expandedTemplate = await expandSelfReviewTemplate(vars, taskDir, _runId, validationDepth);
     await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
-    await syncChecklistTargetOnSlot(vars, taskDir, 'SELF-REVIEW.md');
+    await syncChecklistTargetForRole(vars, taskDir, 'self-review');
 
     // Mark SELF-REVIEW.md as the active task file for progress tracking
     updateRun(_runId, { activeTaskFile: taskMdPath });
@@ -246,8 +249,8 @@ export async function runReviewAgent(
             readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
             maxAttempts: 5,
             blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
-            signalPath: `${taskDir}/SELF-REVIEW-SIGNAL.json`,
-            launchAckSignalPath: `${taskDir}/SELF-REVIEW-SIGNAL.json`,
+            signalPath: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
+            launchAckSignalPath: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
             handoffAckSinceMs,
             softAcceptOnHandoffAck: true,
           },
@@ -259,7 +262,7 @@ export async function runReviewAgent(
           taskPrompt,
           handoffAckSinceMs,
           {
-            launchAckSignalPath: `${taskDir}/SELF-REVIEW-SIGNAL.json`,
+            launchAckSignalPath: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
             preferHooks: true,
           },
         );
@@ -271,7 +274,7 @@ export async function runReviewAgent(
     }
 
     // 6. Watch SELF-REVIEW.md for progress + wait for completion
-    const selfReviewPath = `${vars.remoteRepo}/${taskDir}/SELF-REVIEW.md`;
+    const selfReviewPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.checklist);
     progressWatcher = startProgressWatcher(vars, selfReviewPath, _runId);
     const completed = await waitForReviewCompletion(
       vars,
@@ -330,9 +333,10 @@ export async function runReviewAgent(
     persistedArtifacts.push(taskProgressRel);
 
     const signalRel = `${artifactDir}/self-review-signal.json`;
+    const liveSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal);
     const signalCopy = await execOnSlot(
       vars,
-      `if [ -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/SELF-REVIEW-SIGNAL.json`)} ]; then cp ${shellQuote(`${vars.remoteRepo}/${taskDir}/SELF-REVIEW-SIGNAL.json`)} ${shellQuote(`${vars.remoteRepo}/${taskDir}/${signalRel}`)} && echo copied; fi`,
+      `if [ -f ${shellQuote(liveSignalPath)} ]; then cp ${shellQuote(liveSignalPath)} ${shellQuote(`${vars.remoteRepo}/${taskDir}/${signalRel}`)} && echo copied; fi`,
       { timeout: 10_000 },
     );
     if (signalCopy.exitCode !== 0) {
@@ -499,7 +503,7 @@ async function waitForReviewCompletion(
     const signalRaw = (
       await execOnSlot(
         vars,
-        `cat '${vars.remoteRepo}/${taskDir}/SELF-REVIEW-SIGNAL.json' 2>/dev/null`,
+        `cat '${slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal)}' 2>/dev/null`,
       )
     ).stdout.trim();
     let terminalSignal: ReturnType<typeof parseTerminalSelfReviewSignal> | undefined;
@@ -507,7 +511,7 @@ async function waitForReviewCompletion(
       terminalSignal = parseTerminalSelfReviewSignal(signalRaw);
     } catch (err) {
       debugSelfReviewLog(
-        `[self-review] ignoring invalid SELF-REVIEW-SIGNAL.json during poll: ${(err as Error).message}`,
+        `[self-review] ignoring invalid ${SELF_REVIEW_CHECKLIST_TARGET.signal} during poll: ${(err as Error).message}`,
       );
     }
     if (terminalSignal) {
@@ -519,7 +523,7 @@ async function waitForReviewCompletion(
       ).stdout.trim();
       if (hasFeedback === 'yes') {
         debugSelfReviewLog(
-          `[self-review] terminal SELF-REVIEW-SIGNAL.json (status=${terminalSignal.status}) + feedback — agent completed`,
+          `[self-review] terminal ${SELF_REVIEW_CHECKLIST_TARGET.signal} (status=${terminalSignal.status}) + feedback — agent completed`,
         );
         await markAgentContextStatus(runId, 'self-review', 'complete', {
           lastSignalAt: new Date().toISOString(),
@@ -527,7 +531,7 @@ async function waitForReviewCompletion(
         return true;
       }
       debugSelfReviewLog(
-        `[self-review] terminal SELF-REVIEW-SIGNAL.json (status=${terminalSignal.status}) but review-feedback.md missing — continuing poll`,
+        `[self-review] terminal ${SELF_REVIEW_CHECKLIST_TARGET.signal} (status=${terminalSignal.status}) but review-feedback.md missing — continuing poll`,
       );
     }
 

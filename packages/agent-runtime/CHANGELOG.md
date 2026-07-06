@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Active-development baseline; add user-facing changes here before release or package publication.
+- Add centralized nested-loop checklist/signal registry (`DEFAULT_CHECKLIST_TARGET_REGISTRY`, `CHECKLIST_TARGET_BY_AGENT_ROLE`) and path helpers in `checklist-target.cjs`.
 
 ## 0.1.1 - 2026-07-06
 
