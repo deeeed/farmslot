@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(gateway): the runner observability install now adds its repo-root artifacts (`.codex/`, `.claude/`, the runtime dir, and the `.observability` compat symlink) to the slot repo's `.git/info/exclude` when git does not already ignore them. Codex slots previously surfaced `.codex/config.toml` and `.codex/hooks.json` as untracked changes in the worker's diff, risking PR pollution and accidental commits into upstream checkouts. The exclusion is idempotent and skips entries already covered by `.gitignore` or `info/exclude`.
 - refactor(gateway): centralize nested-loop checklist/signal filenames in `checklist-target` registry with injectable `ChecklistTargetRegistry` and role-scoped sync helpers.
 - fix(gateway): retarget task-local `./mark` via `checklist-target.json` when nested-loop roles activate, so self-review and CI-fix progress marks the active checklist instead of worker `TASK.md`; restore worker target on replay and role completion.
 - fix(gateway): rewrite the task-local `./mark` wrapper on every checklist-target sync so replayed or legacy task dirs pick up task-dir mode instead of stale explicit `TASK.md`/`SIGNAL.json` shims.

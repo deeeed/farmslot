@@ -159,6 +159,105 @@ test('codex install merges farmslot hook alongside existing codex hooks', () => 
   assert.equal(row.runner, 'codex');
 });
 
+function initGitRepo(prefix) {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'pipe' });
+  execFileSync('git', ['-C', repo, 'config', 'user.email', 'test@farmslot.local'], {
+    stdio: 'pipe',
+  });
+  execFileSync('git', ['-C', repo, 'config', 'user.name', 'farmslot-test'], { stdio: 'pipe' });
+  return repo;
+}
+
+function installCodexTo(repo) {
+  execFileSync(
+    process.execPath,
+    [
+      INSTALLER,
+      '--runner',
+      'codex',
+      '--repo',
+      repo,
+      '--runtime-dir',
+      '.agent',
+      '--slot-id',
+      'exclude-test',
+    ],
+    { stdio: 'pipe' },
+  );
+}
+
+function porcelain(repo) {
+  return execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8' });
+}
+
+function excludeLines(repo) {
+  const excludePath = path.join(repo, '.git', 'info', 'exclude');
+  const raw = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf8') : '';
+  return raw.split('\n').map((line) => line.trim());
+}
+
+test('codex install excludes its repo-root artifacts so git status stays clean', () => {
+  const repo = initGitRepo('obs-install-codex-exclude-');
+  installCodexTo(repo);
+
+  assert.ok(fs.existsSync(path.join(repo, '.codex', 'config.toml')), '.codex must be materialized');
+  assert.ok(
+    fs.existsSync(path.join(repo, '.codex', 'hooks.json')),
+    '.codex hooks must be materialized',
+  );
+
+  const lines = excludeLines(repo);
+  for (const entry of ['.codex/', '.agent/', '.observability']) {
+    assert.ok(
+      lines.includes(entry),
+      `info/exclude must contain '${entry}' (got ${JSON.stringify(lines)})`,
+    );
+  }
+
+  const status = porcelain(repo);
+  assert.doesNotMatch(
+    status,
+    /\.codex/,
+    `git status must not surface .codex (got ${JSON.stringify(status)})`,
+  );
+  assert.doesNotMatch(
+    status,
+    /\.agent/,
+    `git status must not surface .agent (got ${JSON.stringify(status)})`,
+  );
+  assert.doesNotMatch(
+    status,
+    /\.observability/,
+    `git status must not surface .observability (got ${JSON.stringify(status)})`,
+  );
+  assert.equal(status.trim(), '', `working tree must be clean (got ${JSON.stringify(status)})`);
+});
+
+test('codex install exclude wiring is idempotent — no duplicate lines on rerun', () => {
+  const repo = initGitRepo('obs-install-codex-exclude-idem-');
+  installCodexTo(repo);
+  const first = excludeLines(repo).filter(Boolean);
+  installCodexTo(repo);
+  const second = excludeLines(repo).filter(Boolean);
+  assert.deepEqual(second, first, 'rerun must not append duplicate exclude lines');
+  const codexCount = second.filter((line) => line === '.codex/').length;
+  assert.equal(codexCount, 1, `.codex/ must appear exactly once (got ${codexCount})`);
+});
+
+test('codex install does not re-add entries already covered by .gitignore', () => {
+  const repo = initGitRepo('obs-install-codex-exclude-gitignore-');
+  // Project already ignores the runtime dir via a checked-in .gitignore.
+  fs.writeFileSync(path.join(repo, '.gitignore'), '.agent/\n');
+  installCodexTo(repo);
+  const lines = excludeLines(repo);
+  assert.ok(
+    !lines.includes('.agent/'),
+    'must not duplicate a .gitignore-covered entry into info/exclude',
+  );
+  assert.ok(lines.includes('.codex/'), '.codex/ (not gitignored) must still be excluded');
+});
+
 test('codex install never writes through a stale codex-home config.toml symlink to the global config', () => {
   // Regression: a codex-home/config.toml symlinked to the operator's global ~/.codex/config.toml
   // (left by an older launch path) made the installer read the global config, append its hook-trust

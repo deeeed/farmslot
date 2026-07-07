@@ -354,6 +354,46 @@ function bootstrapCodexHome({ repoPath, runtimeDir, hooksPath }) {
   return codexHomeDir;
 }
 
+function ensureGitExclude(repoPath, entries) {
+  // Slot repos are upstream checkouts we must never commit to, so farmslot's
+  // per-slot artifacts are hidden via .git/info/exclude (local-only) rather than
+  // the shared .gitignore. Resolve through git so a linked worktree lands on the
+  // shared common-dir exclude file. Entries already covered by .gitignore or
+  // info/exclude are skipped, so this only writes the genuinely-missing lines and
+  // never duplicates on reruns.
+  let excludePath;
+  try {
+    excludePath = execFileSync(
+      'git',
+      ['-C', repoPath, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+  } catch {
+    return; // not a git repo (or git unavailable) — nothing to exclude
+  }
+  if (!excludePath) return;
+  const alreadyIgnored = (entry) => {
+    try {
+      execFileSync('git', ['-C', repoPath, 'check-ignore', '-q', '--', entry], { stdio: 'ignore' });
+      return true; // exit 0 → git already ignores it
+    } catch {
+      return false; // exit 1 → not ignored
+    }
+  };
+  let content = '';
+  try {
+    content = fs.readFileSync(excludePath, 'utf8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  const present = new Set(content.split('\n').map((line) => line.trim()));
+  const missing = entries.filter((entry) => !present.has(entry) && !alreadyIgnored(entry));
+  if (missing.length === 0) return;
+  fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+  const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+  fs.appendFileSync(excludePath, `${separator}${missing.join('\n')}\n`);
+}
+
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -536,6 +576,9 @@ function installObservabilityBinaries({ repo, runtimeDir, slotId, runner }) {
   execFileSync(process.execPath, ['--check', hookPath], { stdio: 'pipe' });
   const compatObsDir = path.join(repoPath, '.observability');
   if (!fs.existsSync(compatObsDir)) fs.symlinkSync(obsDir, compatObsDir, 'dir');
+  // Both repo-root artifacts this install materializes: the runtime dir (holds the
+  // .observability payload + codex-home) and the compat .observability symlink.
+  ensureGitExclude(repoPath, [`${runtimeDir}/`, '.observability']);
   const hookCommand = [
     `FARMSLOT_OBS_DIR=${shQuote(obsDir)}`,
     `FARMSLOT_SLOT_ID=${shQuote(slotId)}`,
@@ -571,6 +614,8 @@ function installClaude({ repo, runtimeDir = '.agent', slotId }) {
     hookCommand,
     statusCommand,
   );
+  // .claude/ holds the farmslot-written settings.local.json (+ its backup).
+  ensureGitExclude(repoPath, ['.claude/']);
   fs.writeFileSync(markerPath, 'farmslot\n');
   writeObservabilityInstallManifest(obsDir, {
     runner: 'claude',
@@ -595,6 +640,8 @@ function installCodex({ repo, runtimeDir = '.agent', slotId }) {
   const projectConfigPath = path.join(repoPath, '.codex', 'config.toml');
   mergeCodexHooks(hooksPath, markerPath, hookCommand);
   ensureCodexHooksFeature(projectConfigPath, markerPath);
+  // .codex/ holds the farmslot-written hooks.json + config.toml (+ their backups).
+  ensureGitExclude(repoPath, ['.codex/']);
   const codexHomeDir = bootstrapCodexHome({ repoPath, runtimeDir, hooksPath });
   fs.writeFileSync(markerPath, 'farmslot\n');
   writeObservabilityInstallManifest(obsDir, {
