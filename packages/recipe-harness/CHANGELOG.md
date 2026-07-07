@@ -5,7 +5,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- Add a standard outer `app.lifecycle` adapter for Android and iOS simulator launch/foreground/terminate/restart lifecycle control, with Android background support for performance recipes.
+
+## 0.4.0 - 2026-07-07
+
+- Add a standard outer `app.lifecycle` adapter for Android and iOS simulator launch/foreground/terminate/restart lifecycle control, with Android background support for performance recipes. Exported as `@farmslot/recipe-harness/adapters/app-lifecycle`.
 
 ## 0.3.3 - 2026-07-03
 
