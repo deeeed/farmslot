@@ -43,6 +43,11 @@
       "import": "./dist/adapters/core.js",
       "default": "./dist/adapters/core.js"
     },
+    "./adapters/app-lifecycle": {
+      "types": "./dist/adapters/app-lifecycle.d.ts",
+      "import": "./dist/adapters/app-lifecycle.js",
+      "default": "./dist/adapters/app-lifecycle.js"
+    },
     "./adapters/ui": {
       "types": "./dist/adapters/ui.d.ts",
       "import": "./dist/adapters/ui.js",
