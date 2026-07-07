@@ -10,13 +10,16 @@ test('package exports expose stable public harness subpaths', async () => {
   const root = await dynamicImport('@farmslot/recipe-harness');
   const runner = await dynamicImport('@farmslot/recipe-harness/runner');
   const adapters = await dynamicImport('@farmslot/recipe-harness/adapters/core');
+  const appLifecycle = await dynamicImport('@farmslot/recipe-harness/adapters/app-lifecycle');
   const cdp = await dynamicImport('@farmslot/recipe-harness/runtime/cdp');
   const cli = await dynamicImport('@farmslot/recipe-harness/cli');
   const cliSupport = await dynamicImport('@farmslot/recipe-harness/cli/support');
 
   assert.equal(typeof root.createRecipeRunner, 'function');
+  assert.equal(typeof root.createAppLifecycleAdapters, 'function');
   assert.equal(typeof runner.createRecipeRunner, 'function');
   assert.equal(typeof adapters.createStandardCoreAdapters, 'function');
+  assert.equal(typeof appLifecycle.createAppLifecycleAdapter, 'function');
   assert.equal(typeof cdp.createCdpWebUiTransport, 'function');
   assert.equal(typeof cli.runRecipeHarnessCli, 'function');
   assert.equal(typeof cliSupport.validateRecipeCliInput, 'function');

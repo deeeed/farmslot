@@ -1,3 +1,12 @@
+export type {
+  AppLifecycleCommand,
+  AppLifecycleCommandRunner,
+  AppLifecyclePlatform,
+  AppLifecycleTarget,
+  AppLifecycleTargetProvider,
+  CreateAppLifecycleAdapterOptions,
+} from './adapters/app-lifecycle.js';
+export { createAppLifecycleAdapter, createAppLifecycleAdapters } from './adapters/app-lifecycle.js';
 export { createStandardCoreAdapters } from './adapters/core.js';
 export type {
   StandardUiAction,
