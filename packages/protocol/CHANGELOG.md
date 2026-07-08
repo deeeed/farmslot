@@ -2,8 +2,11 @@
 
 ## Unreleased
 
-- feat: export `DEFAULT_GATEWAY_TLS_PORT` (7778) — the shared default port the gateway serves `wss://` on when TLS is configured, so the gateway daemon and CLI reference one source of truth instead of duplicating the literal.
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.7.5 - 2026-07-08
+
+- feat: export `DEFAULT_GATEWAY_TLS_PORT` (7778) — the shared default port the gateway serves `wss://` on when TLS is configured, so the gateway daemon and CLI reference one source of truth instead of duplicating the literal
 
 ## 0.7.4 - 2026-07-06
 
