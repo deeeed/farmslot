@@ -267,6 +267,18 @@ export function validateRecipeRunArtifactPackageOutput(
     );
   }
 
+  // resolved-recipe.json is optional; a present-but-unreadable one must fail rather
+  // than silently skip the full-composition validation below.
+  const resolvedRecipeReadError = readErrors['resolved-recipe.json'];
+  if (resolvedRecipeReadError && resolvedRecipeReadError !== RECIPE_ARTIFACT_MISSING_ERROR) {
+    addHookValidationCheck(
+      checks,
+      'recipe_run.artifact.resolved-recipe.json',
+      'fail',
+      `resolved-recipe.json could not be read as JSON: ${resolvedRecipeReadError}`,
+    );
+  }
+
   const summaryStatus = readTerminalStatus(input.summary);
   const manifestStatus = isRecord(input.manifest) ? input.manifest.runStatus : undefined;
   addHookValidationCheck(

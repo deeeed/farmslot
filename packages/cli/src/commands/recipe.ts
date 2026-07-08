@@ -301,6 +301,17 @@ export async function validateRecipeArtifactDirectory(
     );
   }
 
+  // resolved-recipe.json is optional, but a present-but-unreadable one must fail —
+  // never silently skip the composition proof.
+  if (artifactPathSet.has('resolved-recipe.json')) {
+    addArtifactCheck(
+      checks,
+      'file.resolved-recipe.json',
+      reads.resolvedRecipe.error ? 'fail' : 'pass',
+      reads.resolvedRecipe.error ?? 'resolved-recipe.json is readable.',
+    );
+  }
+
   const summary = reads.summary.value;
   const trace = reads.trace.value;
   const manifest = reads.manifest.value;

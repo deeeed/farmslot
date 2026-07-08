@@ -240,6 +240,68 @@ test('composeRecipe inlines library flows into a self-contained recipe', async (
   }
 });
 
+test('composeRecipe follows transitive calls and drops unreachable inline flows', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const callFlow = (ref: string): Record<string, unknown> => ({
+      workflow: {
+        entry: 'call',
+        nodes: {
+          call: { action: 'call', intent: `Call ${ref}`, ref, next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+    const libRoot = path.join(tempRoot, 'lib');
+    await createLibrary(libRoot, {
+      flows: {
+        'lib.a': callFlow('lib.b'), // reachable via the recipe, and calls lib.b
+        'lib.b': writeTextFlow('b.txt', 'b'), // reachable transitively through lib.a
+        'lib.unused': writeTextFlow('u.txt', 'u'), // never called — must be excluded
+      },
+    });
+
+    const recipe = {
+      schema_version: 1,
+      title: 'Transitive composition',
+      description: 'Reaches lib.a -> lib.b; an unreachable inline flow has an unresolved call.',
+      flows: {
+        // Never called by the workflow; it references a missing flow, so keeping it
+        // would fail full validation once `uses` is dropped. It must be excluded.
+        'inline.dead': {
+          entry: 'x',
+          nodes: {
+            x: { action: 'call', intent: 'Dead call', ref: 'missing.ref', next: 'done' },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      validate: {
+        workflow: {
+          entry: 'go',
+          nodes: {
+            go: { action: 'call', intent: 'Run lib.a', ref: 'lib.a', next: 'done' },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+
+    const { resolved, flowCount } = await composeRecipe(recipe, {
+      projectRoot: tempRoot,
+      recipeDir: tempRoot,
+      librarySources: [{ root: libRoot }],
+    });
+    const resolvedRecipe = resolved as { flows: Record<string, unknown> };
+    assert.equal(flowCount, 2);
+    assert.deepEqual(Object.keys(resolvedRecipe.flows).sort(), ['lib.a', 'lib.b']);
+    // Unreachable inline flow with an unresolved call was dropped, so it validates.
+    assert.equal(validateRecipeDocument(resolved).status, 'valid');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('loadRecipeLibraries rejects non-libraries and duplicate refs within one source', async () => {
   const tempRoot = await createTempRoot();
   try {

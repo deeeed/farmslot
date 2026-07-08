@@ -230,6 +230,12 @@ validated in full, including `call.ref` resolution. The runner emits it in the e
 path; `farmslot recipe validate --emit-resolved` produces the same document in the
 static path (see §18).
 
+`resolved-recipe.json` inlines only the flows the recipe transitively reaches (never
+the whole library) and drops `uses`, so it is self-contained for validation. Because it
+drops `uses`, it is not the source of catalog/library provenance — `resolved-flows.json`
+(emitted alongside it) records which source each resolved flow came from, plus overrides
+and shadowing, for audit.
+
 ### 7.2 Multiple recipes per change
 
 A change that needs several recipes ships them as separate `*.recipe.json` files (by
