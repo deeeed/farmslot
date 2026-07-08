@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+- `watch_logs` now defaults to run-scoped matching using file offsets captured at recipe start, so markers written before the run cannot satisfy log assertions. Use `scope: "file"` to explicitly scan the whole file.
 
 ## 0.4.0 - 2026-07-07
 

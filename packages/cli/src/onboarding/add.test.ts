@@ -231,6 +231,24 @@ test('projectAdd --no-setup --project registers selected slots without setup/pre
     '#!/usr/bin/env bash\ntouch "$PWD/synced-$2"\n',
   );
   writeFileSync(
+    join(scriptsDir, 'write-runtime-context.sh'),
+    `#!/usr/bin/env bash
+repo=""
+runtime_dir="temp/runtime"
+args="$*"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --repo) repo="$2"; shift 2 ;;
+    --runtime-dir) runtime_dir="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$repo/$runtime_dir"
+printf '%s\\n' "$args" > "$repo/$runtime_dir/context.args"
+printf '{}\\n' > "$repo/$runtime_dir/agentic-runtime.json"
+`,
+  );
+  writeFileSync(
     join(scriptsDir, 'setup-slot.sh'),
     '#!/usr/bin/env bash\necho setup should not run >&2\nexit 42\n',
   );
@@ -239,6 +257,7 @@ test('projectAdd --no-setup --project registers selected slots without setup/pre
     '#!/usr/bin/env bash\necho preflight should not run >&2\nexit 43\n',
   );
   chmodSync(join(scriptsDir, 'sync-fixtures.sh'), 0o755);
+  chmodSync(join(scriptsDir, 'write-runtime-context.sh'), 0o755);
   chmodSync(join(scriptsDir, 'setup-slot.sh'), 0o755);
   chmodSync(join(scriptsDir, 'preflight-slot.sh'), 0o755);
 
@@ -259,7 +278,16 @@ test('projectAdd --no-setup --project registers selected slots without setup/pre
     mkdirSync(join(projectDir, 'setup'), { recursive: true });
     writeFileSync(
       join(projectDir, 'project.json'),
-      JSON.stringify({ name, repo_url: repo, default_branch: 'master' }, null, 2),
+      JSON.stringify(
+        {
+          name,
+          repo_url: repo,
+          default_branch: 'master',
+          paths: { runtime_dir: 'temp/recipe/runtime' },
+        },
+        null,
+        2,
+      ),
     );
     writeFileSync(join(projectDir, 'setup', 'cli.sh'), '#!/usr/bin/env bash\n');
   }
@@ -289,6 +317,21 @@ test('projectAdd --no-setup --project registers selected slots without setup/pre
   assert.equal(existsSync(join(ws.reposDir, 'app-1', '.git')), true);
   assert.equal(existsSync(join(ws.reposDir, 'other-1', '.git')), false);
   assert.equal(existsSync(join(ws.farmslotDir, 'synced-m-app-1')), true);
+  assert.equal(
+    existsSync(join(ws.reposDir, 'app-1', 'temp/recipe/runtime/agentic-runtime.json')),
+    true,
+  );
+  const contextArgs = readFileSync(
+    join(ws.reposDir, 'app-1', 'temp/recipe/runtime/context.args'),
+    'utf-8',
+  );
+  assert.match(contextArgs, /--slot-id m-app-1/);
+  assert.match(contextArgs, /--machine m/);
+  assert.match(contextArgs, /--project app-farm/);
+  assert.match(contextArgs, /--watcher-port 9300/);
+  assert.match(contextArgs, /--runtime-dir temp\/recipe\/runtime/);
+  assert.doesNotMatch(contextArgs, /--simulator/);
+  assert.doesNotMatch(contextArgs, /--adb-serial/);
 
   let state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
   assert.deepEqual(state.packs['team-pack'].projects, ['app-farm']);

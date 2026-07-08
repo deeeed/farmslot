@@ -119,6 +119,32 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
   );
 }
 
+async function collectRunFileOffsets(
+  graph: WorkflowGraph,
+  projectRoot: string,
+): Promise<Map<string, number>> {
+  const offsets = new Map<string, number>();
+  const paths = new Set<string>();
+  for (const node of Object.values(graph.nodes)) {
+    if (!isRecord(node) || node.action !== 'watch_logs' || typeof node.path !== 'string') continue;
+    paths.add(normalizeRelativePath(node.path).split(path.sep).join('/'));
+  }
+  for (const relativePath of paths) {
+    try {
+      const info = await stat(path.join(projectRoot, relativePath));
+      offsets.set(relativePath, info.size);
+    } catch (error) {
+      if (!isNodeFileMissingError(error)) throw error;
+      offsets.set(relativePath, 0);
+    }
+  }
+  return offsets;
+}
+
+function isNodeFileMissingError(error: unknown): boolean {
+  return isRecord(error) && error.code === 'ENOENT';
+}
+
 class DefaultRecipeRunner implements RecipeRunner {
   readonly #actionManifest: RecipeActionManifestDocument;
   readonly #adapters: ReadonlyMap<string, ActionAdapter>;
@@ -167,6 +193,7 @@ class DefaultRecipeRunner implements RecipeRunner {
       libraryResolution ? { externalFlowIds: new Set(libraryResolution.flows.keys()) } : undefined,
     );
     const graph = extractWorkflowGraph(recipe);
+    const runFileOffsets = await collectRunFileOffsets(graph, projectRoot);
     const recipeLocalFlows = await collectFlows(recipe, {
       projectRoot,
       recipeDir: sourceRecipePath ? path.dirname(sourceRecipePath) : projectRoot,
@@ -276,6 +303,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           env: request.env ?? {},
           outputs,
           artifactWriter,
+          runFileOffsets,
         });
         try {
           const gate = evaluateNodeGate(node, context.outputs);
@@ -608,6 +636,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         env: request.env ?? {},
         outputs,
         artifactWriter,
+        runFileOffsets: new Map(),
       });
       try {
         const rawResult = await checker.execute(gate, context);
@@ -650,6 +679,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     env,
     outputs,
     artifactWriter,
+    runFileOffsets,
   }: {
     nodeId: string;
     recipe: unknown;
@@ -658,6 +688,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     env: Record<string, string | undefined>;
     outputs: Map<string, unknown>;
     artifactWriter: JsonArtifactWriter;
+    runFileOffsets: ReadonlyMap<string, number>;
   }): Parameters<ActionAdapter['execute']>[1] {
     return {
       nodeId,
@@ -675,6 +706,9 @@ class DefaultRecipeRunner implements RecipeRunner {
       },
       resolveArtifactPath(relativePath: string) {
         return path.join(artifactsDir, normalizeRelativePath(relativePath));
+      },
+      getRunFileOffset(relativePath: string) {
+        return runFileOffsets.get(normalizeRelativePath(relativePath).split(path.sep).join('/'));
       },
       registerArtifact(entry: RecipeArtifactManifestEntry) {
         artifactWriter.register(entry);
@@ -875,6 +909,9 @@ class DefaultRecipeRunner implements RecipeRunner {
       },
       resolveArtifactPath(relativePath: string) {
         return path.join(request.artifactsDir, normalizeRelativePath(relativePath));
+      },
+      getRunFileOffset() {
+        return undefined;
       },
       registerArtifact() {},
       logger: this.#logger,

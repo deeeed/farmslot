@@ -198,6 +198,7 @@ export interface ActionExecutionContext {
   getOutput(nodeId: string): unknown;
   resolveProjectPath(relativePath: string): string;
   resolveArtifactPath(relativePath: string): string;
+  getRunFileOffset(relativePath: string): number | undefined;
   registerArtifact(entry: RecipeArtifactManifestEntry): void;
   logger: RecipeLogger;
 }
