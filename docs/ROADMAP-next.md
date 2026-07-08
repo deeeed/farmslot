@@ -119,6 +119,7 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 - manifest-first artifact rendering with filename inference limited to invalid/missing-manifest fallback;
 - conformance-checked `farmslot-farm` CLI/web + Companion mobile recipe hook routes;
 - `yarn e2e:recipe-protocol` local harness execution and live `@deeeed/metamask-harness` core-slot package validation.
+- published canonical `recipe-v1.schema.json` with an enforced `recipe.$schema` URL contract, and the self-contained `resolved-recipe.json` composition artifact (runner-emitted + `recipe validate --emit-resolved`) validated in full at ingestion and in CI, with multi-recipe (`recipes/*.recipe.json`) static resolve-check.
 
 **Remaining work:** external project-pack adoption, richer domain flow catalogs, and replay/corpus use of the stable v1 evidence contract. These are downstream consumers, not ADR-034 rollout blockers.
 

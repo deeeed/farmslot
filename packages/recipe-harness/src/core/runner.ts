@@ -15,6 +15,7 @@ import {
   manifestTarget,
 } from '../recording/capture-helper.js';
 
+import { buildResolvedRecipe } from './compose.js';
 import { collectFlows, executeInlineFlowCall, type InlineFlow } from './flows.js';
 import {
   extractWorkflowGraph,
@@ -229,11 +230,8 @@ class DefaultRecipeRunner implements RecipeRunner {
     // `uses`, or library). flowCatalog is the transitively-closed set of every
     // reachable flow, so inlining it under `flows` yields a self-contained recipe
     // whose call.refs resolve without the library at ingestion/CI validation.
-    if (flowCatalog.size > 0 && isRecord(recipe)) {
-      await artifactWriter.writeResolvedRecipe({
-        ...recipe,
-        flows: Object.fromEntries(flowCatalog),
-      });
+    if (flowCatalog.size > 0) {
+      await artifactWriter.writeResolvedRecipe(buildResolvedRecipe(recipe, flowCatalog));
     }
     let status: RecipeRunStatus = 'unknown';
     let currentNodeId: string | undefined = graph.entry;

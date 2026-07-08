@@ -213,6 +213,32 @@ Execution semantics:
 
 Parameter names are domain-owned, but shared domains should keep them consistent. For Example App perps, `start_state` may accept a broad desired baseline such as `positions: { state: "none" }`, while focused `ensure_positions` and `assert_positions` should use `state: "open" | "none"` plus optional details such as `side` and `notional`.
 
+### 7.1 Resolved recipe artifact
+
+A recipe's `call.ref`s resolve at authoring/run time against inline `flows`, `uses`
+catalogs, or configured library sources — context that is gone once a run's artifacts
+are inspected in isolation. So a run that composes any flows also emits
+`resolved-recipe.json`: the authored recipe with every reachable flow (inline, `uses`,
+and library, transitively) inlined under `flows`. This artifact is **self-contained** —
+its `call.ref`s resolve without the library — so it validates as a complete recipe at
+ingestion and in CI, and gives reviewers the full composition (recipe + sub-recipes) in
+one document.
+
+The authored `recipe.json` stays verbatim and is validated envelope-only (schema,
+`schema_version`, workflow structure); `resolved-recipe.json`, when present, is
+validated in full, including `call.ref` resolution. The runner emits it in the executed
+path; `farmslot recipe validate --emit-resolved` produces the same document in the
+static path (see §18).
+
+### 7.2 Multiple recipes per change
+
+A change that needs several recipes ships them as separate `*.recipe.json` files (by
+convention under a `recipes/` directory; an optional `recipes/index.json` list aids
+discovery). There is no suite document type — each recipe is validated and run
+independently, and each emits its own `resolved-recipe.json`. Validate a set with
+`farmslot recipe validate recipes/*.recipe.json`; the command exits non-zero if any
+recipe is invalid, so it works as a PR gate.
+
 ## 8. Flow catalog schema
 
 Flow catalog document:
@@ -519,6 +545,16 @@ A v1 validator should report errors for:
 - artifact manifest paths that do not exist.
 
 Warnings may cover unreachable nodes, weak descriptions, missing optional schemas, missing proof targets in non-production smoke recipes, or duplicate domain flows where one parameterized flow should cover the same concept. A duplicate-flow warning becomes an error only when a project defines a mechanical lint rule, such as same verb/object with only polarity, route, boolean, provider, market, or assertion-direction differences.
+
+### 18.1 Static resolve-check (CI gate)
+
+`farmslot recipe validate <recipes...>` validates one or more recipes without
+executing them. It accepts `--library-source <name=path|path>` (repeatable,
+colon-separated) so `call.ref`s resolvable from a configured recipe library are not
+reported as unresolved, mirroring run-time resolution. With `--emit-resolved` it writes
+each recipe's `resolved-recipe.json` (§7.1) alongside it. The command exits non-zero if
+any recipe fails to compose (unresolved `call.ref`, cycle, or an invalid inline/library
+flow), making it a fast pre-merge gate that complements executed farm runs.
 
 ## 19. Extension model
 

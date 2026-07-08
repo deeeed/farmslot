@@ -4,11 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { type RecipeActionManifestDocument } from '@farmslot/protocol';
+import { type RecipeActionManifestDocument, validateRecipeDocument } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { validateRecipeCliInput } from '../src/cli/support.js';
+import { composeRecipe } from '../src/core/compose.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
 import {
   defaultRecipeLibrarySources,
@@ -181,6 +182,50 @@ test('loadRecipeLibraries merges ordered sources and records shadowing loudly', 
         line.includes('warn Flow lib.write-text resolves from personal and shadows team-named'),
       ),
     );
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('composeRecipe inlines library flows into a self-contained recipe', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libRoot = path.join(tempRoot, 'lib');
+    await createLibrary(libRoot, { flows: { 'lib.write-text': writeTextFlow('out.txt', 'hi') } });
+
+    const recipe = {
+      schema_version: 1,
+      title: 'Library composed',
+      description: 'Calls a flow resolved from a library source.',
+      validate: {
+        workflow: {
+          entry: 'call-lib',
+          nodes: {
+            'call-lib': {
+              action: 'call',
+              intent: 'Run a library flow',
+              ref: 'lib.write-text',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+
+    const { resolved, flowCount } = await composeRecipe(recipe, {
+      projectRoot: tempRoot,
+      recipeDir: tempRoot,
+      librarySources: [{ root: libRoot }],
+    });
+    assert.equal(flowCount, 1);
+    assert.deepEqual(Object.keys((resolved as { flows: Record<string, unknown> }).flows), [
+      'lib.write-text',
+    ]);
+
+    // The composed recipe is self-contained: full validation resolves the call.ref
+    // without any library context.
+    assert.equal(validateRecipeDocument(resolved).status, 'valid');
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

@@ -19,6 +19,12 @@ export {
   normalizeUiTransportResult,
   STANDARD_UI_ACTIONS,
 } from './adapters/ui.js';
+export {
+  buildResolvedRecipe,
+  composeRecipe,
+  type ComposeRecipeOptions,
+  type ComposeRecipeResult,
+} from './core/compose.js';
 export type { RecipeLibraryResolution, ResolvedLibraryFlow } from './core/library.js';
 export {
   defaultRecipeLibrarySources,

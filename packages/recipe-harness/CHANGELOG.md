@@ -5,6 +5,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 ## Unreleased
 
 - feat: a run that composes flows now emits `resolved-recipe.json` — the authored recipe with every reachable flow (inline, `uses`, or library, transitively) inlined under `flows`. This artifact is self-contained and validates as a complete recipe without the library.
+- feat: export `composeRecipe` / `buildResolvedRecipe` — the shared composition step used by the runner (executed path) and the CLI static resolve-check to derive the same `resolved-recipe.json`.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.4.1 - 2026-07-08
