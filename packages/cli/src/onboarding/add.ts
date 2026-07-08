@@ -400,6 +400,11 @@ function writeBaselineRuntimeContext(
 ): void {
   const writer = join(ws.farmslotDir, 'scripts', 'write-runtime-context.sh');
   if (!existsSync(writer)) return;
+  const runtimeContextPath = join(repoPath, registered.runtimeDir, 'agentic-runtime.json');
+  if (existsSync(runtimeContextPath)) {
+    progress.info(`slot ${slotId} runtime context preserved`);
+    return;
+  }
   const args = [
     writer,
     '--repo',

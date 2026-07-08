@@ -332,6 +332,12 @@ printf '{}\\n' > "$repo/$runtime_dir/agentic-runtime.json"
   assert.match(contextArgs, /--runtime-dir temp\/recipe\/runtime/);
   assert.doesNotMatch(contextArgs, /--simulator/);
   assert.doesNotMatch(contextArgs, /--adb-serial/);
+  const runtimeDir = join(ws.reposDir, 'app-1', 'temp/recipe/runtime');
+  writeFileSync(
+    join(runtimeDir, 'agentic-runtime.json'),
+    JSON.stringify({ simulator: 'prepared-sim', adb_serial: 'prepared-adb' }, null, 2),
+  );
+  writeFileSync(join(runtimeDir, 'context.args'), 'prepared context\n');
 
   let state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
   assert.deepEqual(state.packs['team-pack'].projects, ['app-farm']);
@@ -355,6 +361,11 @@ printf '{}\\n' > "$repo/$runtime_dir/agentic-runtime.json"
   assert.equal(fullSubset.deferredSetup, false);
   assert.equal(existsSync(join(ws.farmslotDir, 'setup-m-app-1')), true);
   assert.equal(existsSync(join(ws.farmslotDir, 'preflight-m-app-1')), true);
+  assert.deepEqual(JSON.parse(readFileSync(join(runtimeDir, 'agentic-runtime.json'), 'utf-8')), {
+    simulator: 'prepared-sim',
+    adb_serial: 'prepared-adb',
+  });
+  assert.equal(readFileSync(join(runtimeDir, 'context.args'), 'utf-8'), 'prepared context\n');
   state = JSON.parse(readFileSync(ws.statePath, 'utf-8')) as WorkspaceState;
   assert.equal(state.packs['team-pack'].hash, '');
 

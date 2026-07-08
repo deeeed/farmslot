@@ -302,6 +302,53 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
       projectRoot: tempRoot,
     });
     assert.equal(fileScopeResult.status, 'pass');
+
+    const flowRecipe = {
+      schema_version: 1,
+      title: 'flow scoped watch_logs proof',
+      description: 'Run-scoped watch_logs also applies inside called flows.',
+      flows: {
+        'local.watch-stale': {
+          entry: 'watch',
+          nodes: {
+            watch: {
+              action: 'watch_logs',
+              intent: 'Check stale markers do not satisfy run-scoped log matching in flows.',
+              path: 'logs/app.log',
+              contains: 'STALE_MARKER',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      validate: {
+        workflow: {
+          entry: 'append',
+          nodes: {
+            append: {
+              action: 'command',
+              intent: 'Append a fresh marker before calling the flow.',
+              cmd: "node -e \"require('fs').appendFileSync('logs/app.log','FLOW_FRESH_MARKER\\n')\"",
+              next: 'call-flow',
+            },
+            'call-flow': {
+              action: 'call',
+              intent: 'Run a flow whose watch_logs node must use the run baseline.',
+              ref: 'local.watch-stale',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+    const flowResult = await runner.run({
+      recipeDocument: flowRecipe,
+      artifactsDir: path.join(tempRoot, 'artifacts-flow'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(flowResult.status, 'fail');
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

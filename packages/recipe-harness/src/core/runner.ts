@@ -15,7 +15,7 @@ import {
   manifestTarget,
 } from '../recording/capture-helper.js';
 
-import { collectFlows, executeInlineFlowCall } from './flows.js';
+import { collectFlows, executeInlineFlowCall, type InlineFlow } from './flows.js';
 import {
   extractWorkflowGraph,
   normalizePreconditionResult,
@@ -119,16 +119,26 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
   );
 }
 
-async function collectRunFileOffsets(
-  graph: WorkflowGraph,
-  projectRoot: string,
-): Promise<Map<string, number>> {
-  const offsets = new Map<string, number>();
-  const paths = new Set<string>();
-  for (const node of Object.values(graph.nodes)) {
+function collectWatchLogPaths(paths: Set<string>, nodes: Record<string, unknown>): void {
+  for (const node of Object.values(nodes)) {
     if (!isRecord(node) || node.action !== 'watch_logs' || typeof node.path !== 'string') continue;
     paths.add(normalizeRelativePath(node.path).split(path.sep).join('/'));
   }
+}
+
+async function collectRunFileOffsets({
+  graph,
+  flows,
+  projectRoot,
+}: {
+  graph: WorkflowGraph;
+  flows: ReadonlyMap<string, InlineFlow>;
+  projectRoot: string;
+}): Promise<Map<string, number>> {
+  const offsets = new Map<string, number>();
+  const paths = new Set<string>();
+  collectWatchLogPaths(paths, graph.nodes);
+  for (const flow of flows.values()) collectWatchLogPaths(paths, flow.nodes);
   for (const relativePath of paths) {
     try {
       const info = await stat(path.join(projectRoot, relativePath));
@@ -193,7 +203,6 @@ class DefaultRecipeRunner implements RecipeRunner {
       libraryResolution ? { externalFlowIds: new Set(libraryResolution.flows.keys()) } : undefined,
     );
     const graph = extractWorkflowGraph(recipe);
-    const runFileOffsets = await collectRunFileOffsets(graph, projectRoot);
     const recipeLocalFlows = await collectFlows(recipe, {
       projectRoot,
       recipeDir: sourceRecipePath ? path.dirname(sourceRecipePath) : projectRoot,
@@ -205,6 +214,11 @@ class DefaultRecipeRunner implements RecipeRunner {
       usedLibraryFlows,
       this.#logger,
     );
+    const runFileOffsets = await collectRunFileOffsets({
+      graph,
+      flows: flowCatalog,
+      projectRoot,
+    });
 
     const artifactWriter = new JsonArtifactWriter(artifactsDir);
     const traceWriter = new JsonTraceWriter(artifactsDir, this.#runnerProvenance);
@@ -261,6 +275,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           outputs,
           artifactWriter,
           traceWriter,
+          runFileOffsets,
         });
         if (preconditionStatus === 'fail') {
           status = 'fail';
@@ -603,6 +618,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     outputs,
     artifactWriter,
     traceWriter,
+    runFileOffsets,
   }: {
     graph: WorkflowGraph;
     recipe: unknown;
@@ -612,6 +628,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     outputs: Map<string, unknown>;
     artifactWriter: JsonArtifactWriter;
     traceWriter: JsonTraceWriter;
+    runFileOffsets: ReadonlyMap<string, number>;
   }): Promise<'pass' | 'fail'> {
     for (const gate of graph.preconditions) {
       const nodeId = `pre_conditions:${gate.id}`;
@@ -636,7 +653,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         env: request.env ?? {},
         outputs,
         artifactWriter,
-        runFileOffsets: new Map(),
+        runFileOffsets,
       });
       try {
         const rawResult = await checker.execute(gate, context);
