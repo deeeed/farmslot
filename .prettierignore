@@ -17,6 +17,7 @@ apps/companion/ios/
 .runs/
 .sandbox/
 **/.sandbox/
+.worktrees/
 projects/
 
 .githooks/*
