@@ -60,6 +60,17 @@ bash scripts/dev.sh
 
 Open [http://localhost:7777](http://localhost:7777) to use Command Center with the local scripted-runner demo path. For CLI and agent access, see [Local demo and CLI access](https://farmslot.io/docs/guides/local-demo-and-cli).
 
+### Hosted Command Center → local gateway (wss)
+
+The hosted Command Center at [https://farmslot.io/cc](https://farmslot.io/cc) is served over HTTPS. Since Chrome 150, an HTTPS page cannot open a plaintext `ws://` websocket to a local gateway — it is blocked as mixed content, and the per-site "Insecure content" toggle does not override it. `wss://` is not blocked, so the gateway can serve a locally-trusted TLS websocket instead:
+
+```bash
+farmslot certs setup   # one-time: mkcert issues a trusted cert into ~/.farmslot/certs
+farmslot up            # detects the cert, serves wss:// on :7778, and hands the hosted CC a wss:// URL
+```
+
+`certs setup` requires [mkcert](https://github.com/FiloSottile/mkcert) (`brew install mkcert` on macOS); it installs the local CA so the browser already trusts the cert. After it runs, the hosted Command Center connects to the local gateway again. Without a cert, the gateway stays `ws://`-only and nothing changes (the hosted CC then needs the printed `http://localhost:7777` local UI fallback).
+
 ## Learn more
 
 - [Documentation website](https://farmslot.io)

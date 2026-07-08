@@ -182,6 +182,14 @@ export function onPtyExit(handler: PtyExitHandler): () => void {
   };
 }
 
+/** Test-only: how many PTY-exit handlers are registered (guards against duplicate init). */
+export function ptyExitHandlerCountForTests(): number {
+  if (process.env.NODE_TEST_CONTEXT !== '1') {
+    throw new Error('ptyExitHandlerCountForTests is only available during tests');
+  }
+  return exitHandlers.size;
+}
+
 export interface PtyAttachOptions {
   sshTarget?: string; // e.g. "deeeed@mini.local" — if set, PTY goes through SSH
   selectTarget?: string; // optional window/pane target to activate after attaching to the session
