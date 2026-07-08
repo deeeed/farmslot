@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat: publish the canonical Recipe Protocol v1 JSON Schema (`schemas/recipe-v1.schema.json`, exported via `./schemas/*`) and enforce a `recipe.$schema` URL contract in `validateRecipeDocument` (`RECIPE_PROTOCOL_SCHEMA_URL`, `recipeProtocolSchemaUrlForVersion`, opt-in `requireSchemaRef`); artifact-package validation accepts `externalFlowIds`.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.5 - 2026-07-08

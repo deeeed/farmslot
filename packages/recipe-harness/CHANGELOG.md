@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- feat: thread resolved library `externalFlowIds` into recipe artifact-package validation so library-composed recipes validate cleanly at run time.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.4.1 - 2026-07-08

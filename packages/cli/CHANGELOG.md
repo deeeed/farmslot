@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat: `farmslot recipe artifacts validate` enforces the Recipe Protocol v1 `$schema` URL contract and no longer double-counts recipe-document findings.
 - fix: `farmslot project add` now seeds each slot repo with a baseline `agentic-runtime.json` during registration and preserves an existing prepared runtime context on re-add/repair, so slot metadata exists before preflight without clobbering selected simulator/device fields.
 - feat: add `farmslot certs setup` — provisions a locally-trusted TLS cert (via mkcert) under `~/.farmslot/certs/` covering localhost and this machine's LAN address, so the gateway can serve `wss://` for the hosted HTTPS Command Center (teaching error if mkcert is missing).
 - feat: `farmslot up` picks up the `certs setup` cert automatically — it starts the gateway with TLS and leads the hosted Command Center connect payload with the `wss://` candidate (keeping `ws://` as a fallback for http-origin use), restoring the hosted-CC → local-gateway path that Chrome 150 broke.
