@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- feat: validate `artifacts/recipe.json` against the shared Recipe Protocol v1 document validator in the task-artifact contract check, with a local minimum-envelope fallback when `@farmslot/protocol` dist is not yet built.
+- feat: the task-artifact contract check validates `artifacts/recipe.json` (envelope-only) and, when present, `artifacts/resolved-recipe.json` (in full, including flow-call resolution) against the shared Recipe Protocol v1 validator, with a local minimum-envelope fallback when `@farmslot/protocol` dist is not yet built.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.1.1 - 2026-07-06

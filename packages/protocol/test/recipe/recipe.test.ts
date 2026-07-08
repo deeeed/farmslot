@@ -755,6 +755,56 @@ test('accepts call refs resolvable from declared external flow ids', () => {
   assert.equal(withExternal.status, 'valid');
 });
 
+test('artifact package validates recipe envelope-only and resolved recipe in full', () => {
+  const authored = {
+    schema_version: 1,
+    title: 'Composed recipe',
+    description: 'Authored recipe whose call.ref resolves from a library at run time.',
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': {
+            action: 'call',
+            intent: 'Run a library-resolved flow',
+            ref: 'library.flow',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+
+  // recipe.json is the authored recipe: flow-call resolution is skipped, so the
+  // library-resolved ref is NOT reported as unresolved at artifact-package time.
+  const authoredOnly = validateRecipeArtifactPackage({ recipe: authored });
+  assert.ok(
+    !authoredOnly.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+  );
+
+  // The same document supplied as resolved-recipe.json is validated in full, so an
+  // unresolved ref (no inline flow) is flagged — the composition is incomplete.
+  const incomplete = validateRecipeArtifactPackage({ resolvedRecipe: authored });
+  assert.ok(incomplete.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
+
+  // A self-contained resolved recipe (flow inlined) has every call.ref resolvable.
+  const composed = {
+    ...authored,
+    flows: {
+      'library.flow': {
+        entry: 'go',
+        nodes: {
+          go: { action: 'wait', ms: 1, next: 'inner-done' },
+          'inner-done': { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const complete = validateRecipeArtifactPackage({ resolvedRecipe: composed });
+  assert.ok(!complete.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
+});
+
 test('validates inline flow actions, transitions, and cycles', () => {
   const recipe = {
     schema_version: 1,

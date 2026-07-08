@@ -246,47 +246,57 @@ function validateRecipeQualityArtifact() {
 }
 
 function validateRecipeDocumentArtifact() {
-  const text = readText('artifacts/recipe.json');
+  // recipe.json is the authored recipe; its call.refs resolve against the recipe
+  // library at run time, not here — validate the envelope only. resolved-recipe.json
+  // is the self-contained composition — validate it in full, including call.refs.
+  validateRecipeDocumentArtifactAt('artifacts/recipe.json', 'recipe.json', {
+    skipFlowCallResolution: true,
+  });
+  validateRecipeDocumentArtifactAt('artifacts/resolved-recipe.json', 'resolved-recipe.json', {});
+}
+
+function validateRecipeDocumentArtifactAt(relPath, label, options) {
+  const text = readText(relPath);
   if (!text) return;
   let recipe;
   try {
     recipe = JSON.parse(text);
   } catch (error) {
-    issues.push(`recipe.json: invalid JSON: ${error.message}`);
+    issues.push(`${label}: invalid JSON: ${error.message}`);
     return;
   }
   if (sharedRecipeDocumentValidator) {
-    const result = sharedRecipeDocumentValidator(recipe);
+    const result = sharedRecipeDocumentValidator(recipe, options);
     for (const finding of result.findings) {
       if (finding.severity === 'error') {
-        issues.push(`recipe.json: ${finding.code} ${finding.path}: ${finding.message}`);
+        issues.push(`${label}: ${finding.code} ${finding.path}: ${finding.message}`);
       }
     }
     return;
   }
   if (!isRecord(recipe)) {
-    issues.push('recipe.json: expected object');
+    issues.push(`${label}: expected object`);
     return;
   }
   if (recipe.schema_version !== 1) {
-    issues.push('recipe.json: schema_version must equal 1');
+    issues.push(`${label}: schema_version must equal 1`);
   }
   const expectedSchemaUrl = sharedRecipeSchemaUrlForVersion(recipe.schema_version);
   if (recipe.$schema != null && recipe.$schema !== expectedSchemaUrl) {
     issues.push(
-      `recipe.json: $schema must match schema_version (${expectedSchemaUrl ?? 'unknown schema_version'})`,
+      `${label}: $schema must match schema_version (${expectedSchemaUrl ?? 'unknown schema_version'})`,
     );
   }
   if (!isRecord(recipe.validate) || !isRecord(recipe.validate.workflow)) {
-    issues.push('recipe.json: validate.workflow is required');
+    issues.push(`${label}: validate.workflow is required`);
     return;
   }
   const workflow = recipe.validate.workflow;
   if (typeof workflow.entry !== 'string' || !workflow.entry.trim()) {
-    issues.push('recipe.json: validate.workflow.entry must be a non-empty string');
+    issues.push(`${label}: validate.workflow.entry must be a non-empty string`);
   }
   if (!isRecord(workflow.nodes) || Object.keys(workflow.nodes).length === 0) {
-    issues.push('recipe.json: validate.workflow.nodes must be a non-empty object');
+    issues.push(`${label}: validate.workflow.nodes must be a non-empty object`);
   }
 }
 

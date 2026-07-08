@@ -225,6 +225,16 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     const outputs = new Map<string, unknown>();
     const recipePath = await artifactWriter.copyRecipe(recipe);
+    // Emit the fully-composed recipe when the recipe pulls in any flows (inline,
+    // `uses`, or library). flowCatalog is the transitively-closed set of every
+    // reachable flow, so inlining it under `flows` yields a self-contained recipe
+    // whose call.refs resolve without the library at ingestion/CI validation.
+    if (flowCatalog.size > 0 && isRecord(recipe)) {
+      await artifactWriter.writeResolvedRecipe({
+        ...recipe,
+        flows: Object.fromEntries(flowCatalog),
+      });
+    }
     let status: RecipeRunStatus = 'unknown';
     let currentNodeId: string | undefined = graph.entry;
     let mainStatus: RecipeRunStatus = 'unknown';

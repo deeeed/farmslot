@@ -350,6 +350,15 @@ export function validateRecipeArtifactPackage(
     ctx.findings.push(...recipeResult.findings);
   }
 
+  if (input.resolvedRecipe != null) {
+    // The composed recipe is self-contained: validate it in full, including
+    // call.ref resolution, so the artifact proves the whole composition resolves.
+    const resolvedResult = validateRecipeDocument(input.resolvedRecipe, {
+      requireSchemaRef: input.requireSchemaRef === true,
+    });
+    ctx.findings.push(...resolvedResult.findings);
+  }
+
   return finishResult(ctx);
 }
 

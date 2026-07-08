@@ -3,6 +3,7 @@
 ## Unreleased
 
 - feat: publish the canonical Recipe Protocol v1 JSON Schema (`schemas/recipe-v1.schema.json`, exported via `./schemas/*`) and enforce a `recipe.$schema` URL contract in `validateRecipeDocument` (`RECIPE_PROTOCOL_SCHEMA_URL`, `recipeProtocolSchemaUrlForVersion`, opt-in `requireSchemaRef`). The published schema matches the validator (`schema_version`/`validate` required, `flows` allowed, `additionalProperties`); artifact-package validation is envelope-only (`skipFlowCallResolution`) so library-composed recipes are not rejected at ingestion.
+- feat: `validateRecipeArtifactPackage` accepts an optional `resolvedRecipe` (the fully-composed `resolved-recipe.json`) and validates it in full — including `call.ref` resolution — proving the composition is complete and self-contained, while the authored `recipe` stays envelope-only.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.5 - 2026-07-08

@@ -139,6 +139,13 @@ export interface RecipeArtifactPackageInput {
   manifest?: unknown;
   artifactPaths?: readonly string[];
   recipe?: unknown;
+  /**
+   * The fully-composed recipe (`resolved-recipe.json`): the authored recipe with
+   * every reachable flow inlined under `flows`. When present it is validated in
+   * full — including `call.ref` resolution — proving the composition is complete
+   * and self-contained, which the envelope-only `recipe` check cannot.
+   */
+  resolvedRecipe?: unknown;
   requireSchemaRef?: boolean;
 }
 

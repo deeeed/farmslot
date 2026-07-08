@@ -177,6 +177,7 @@ interface RecipeRunArtifactPackageOutputInput {
   manifest?: unknown;
   recipe?: unknown;
   recipeArtifactPresent?: boolean;
+  resolvedRecipe?: unknown;
   readErrors?: Record<string, string>;
 }
 
@@ -277,6 +278,7 @@ export function validateRecipeRunArtifactPackageOutput(
 
   const recipe = validateRecipeArtifactPackage({
     recipe: input.recipeArtifactPresent ? input.recipe : undefined,
+    resolvedRecipe: input.resolvedRecipe,
     manifest: input.manifest,
     artifactPaths: input.artifactListError ? undefined : input.artifactPaths,
   });
@@ -389,12 +391,20 @@ async function validateRecipeRunArtifactsOnSlot(
 ): Promise<RecipeProjectHookValidationResult> {
   const artifactList = await listSlotRecipeArtifactFiles(slotVars, artifactRoot);
   const recipeArtifactPresent = artifactList.paths.includes('recipe.json');
-  const [summary, manifest, recipe] = await Promise.all([
+  const resolvedRecipePresent = artifactList.paths.includes('resolved-recipe.json');
+  const emptyRead = Promise.resolve({ value: undefined } as { value?: unknown; error?: string });
+  const [summary, manifest, recipe, resolvedRecipe] = await Promise.all([
     readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'summary.json')),
     readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'artifact-manifest.json')),
     recipeArtifactPresent
       ? readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'recipe.json'))
-      : Promise.resolve({ value: undefined } as { value?: unknown; error?: string }),
+      : emptyRead,
+    resolvedRecipePresent
+      ? readSlotJsonIfPresent(
+          slotVars,
+          joinRemoteArtifactPath(artifactRoot, 'resolved-recipe.json'),
+        )
+      : emptyRead,
   ]);
   return validateRecipeRunArtifactPackageOutput({
     artifactPaths: artifactList.paths,
@@ -403,10 +413,12 @@ async function validateRecipeRunArtifactsOnSlot(
     manifest: manifest.value,
     recipe: recipe.value,
     recipeArtifactPresent,
+    resolvedRecipe: resolvedRecipe.value,
     readErrors: {
       ...(summary.error ? { 'summary.json': summary.error } : {}),
       ...(manifest.error ? { 'artifact-manifest.json': manifest.error } : {}),
       ...(recipe.error ? { 'recipe.json': recipe.error } : {}),
+      ...(resolvedRecipe.error ? { 'resolved-recipe.json': resolvedRecipe.error } : {}),
     },
   });
 }
