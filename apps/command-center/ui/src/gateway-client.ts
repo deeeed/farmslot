@@ -71,16 +71,14 @@ export function gatewayWaitingMessage(gatewayUrl: string): string {
 
 /**
  * Copy shown when the browser itself is blocking the local gateway as mixed content (an
- * insecure ws:// endpoint reached from an https origin). Explains the block and offers both
- * escapes: the quick per-site unblock and the durable "open from a local origin" path.
+ * insecure ws:// endpoint reached from an https origin). Chrome 150's per-site "Insecure
+ * content = Allow" setting does NOT unblock this (verified: ws:// still closes 1006), so the
+ * only real escapes are a local http origin or a wss:// gateway.
  */
-export function gatewayInsecureBlockedMessage(
-  pageOrigin: string = typeof location !== 'undefined' ? location.origin : '',
-): string {
+export function gatewayInsecureBlockedMessage(): string {
   return [
-    'This browser is blocking the local gateway: Chrome 150+ refuses insecure ws:// connections from HTTPS pages, including localhost.',
-    `Quick fix: open chrome://settings/content/siteDetails?site=${pageOrigin}, set "Insecure content" to Allow, then reload.`,
-    'Durable fix: open the Command Center from a local origin (http://) instead of https.',
+    'Chrome no longer allows this page (https) to reach a local ws:// gateway, and the per-site "Insecure content" setting does not override it.',
+    'Open the Command Center from a local origin instead — e.g. the locally served UI (build the ui, serve dist over http) with the same #connect payload — or use a wss:// gateway URL.',
   ].join('\n');
 }
 
