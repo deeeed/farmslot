@@ -8,8 +8,10 @@ const { expandedArtifactsForCommand } = require('./worker-terminal-contract.cjs'
 
 let sharedRecipeQualityValidator = null;
 let sharedRecipeDocumentValidator = null;
+// Mirror @farmslot/protocol recipeProtocolSchemaUrlForVersion: only v1 is a
+// supported schema_version, so do not synthesize URLs for other versions.
 let sharedRecipeSchemaUrlForVersion = (version) =>
-  typeof version === 'number' ? `https://farmslot.io/schemas/recipe-v${version}.schema.json` : null;
+  version === 1 ? 'https://farmslot.io/schemas/recipe-v1.schema.json' : null;
 try {
   ({ isRecipeQualityArtifact: sharedRecipeQualityValidator } =
     await import('@farmslot/protocol/contracts/recipes'));

@@ -6,7 +6,6 @@ import type { Command } from 'commander';
 import {
   getRecipeActionManifestActionNames,
   isRecord,
-  mergeRecipeValidationResults,
   Methods,
   type RecipeActionManifestDocument,
   type RecipeProjectHookCommandResult,
@@ -15,7 +14,6 @@ import {
   type RecipeValidationFinding,
   type RecipeValidationResult,
   validateRecipeArtifactPackage,
-  validateRecipeDocument,
 } from '@farmslot/protocol';
 import { createRecipeRunner, createStandardCoreAdapters } from '@farmslot/recipe-harness';
 import {
@@ -275,10 +273,10 @@ export async function validateRecipeArtifactDirectory(
   const manifest = reads.manifest.value;
   const recipe = opts.recipe ? await readRecipeCliJsonFile(opts.recipe) : undefined;
 
-  const recipeValidation = mergeRecipeValidationResults([
-    ...(recipe ? [validateRecipeDocument(recipe)] : []),
-    validateRecipeArtifactPackage({ recipe, manifest, artifactPaths }),
-  ]);
+  // validateRecipeArtifactPackage validates the recipe document internally
+  // (protocol/recipe/artifact.ts) whenever `recipe` is present, so calling
+  // validateRecipeDocument separately here would double-count every finding.
+  const recipeValidation = validateRecipeArtifactPackage({ recipe, manifest, artifactPaths });
 
   const summaryStatus = isRecord(summary) ? summary.status : undefined;
   addArtifactCheck(

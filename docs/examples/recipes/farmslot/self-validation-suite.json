@@ -1,5 +1,4 @@
 {
-  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Farmslot self-validation recipe suite",
   "description": "Repo-local self-validation recipes for Command Center, Gateway, Mobile Companion, live replay, artifact viewing, and onboarding surfaces using the Generic Recipe Protocol v1 package shape.",

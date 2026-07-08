@@ -99,7 +99,7 @@ export function validateRecipeDocument(
   const expectedSchemaRef =
     recipeProtocolSchemaUrlForVersion(schemaVersion) ?? RECIPE_PROTOCOL_SCHEMA_URL;
   const schemaRef = recipe.$schema;
-  if (options?.requireSchemaRef === true && !hasOwn(recipe, '$schema')) {
+  if (options?.requireSchemaRef === true && schemaRef == null) {
     addFinding(
       ctx,
       'error',
