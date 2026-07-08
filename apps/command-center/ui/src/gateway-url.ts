@@ -108,6 +108,46 @@ export function normalizeGatewayWebSocketUrl(url: string): string {
   return parsed.toString();
 }
 
+/**
+ * From an HTTPS page the browser blocks every insecure ws:// connection as mixed content.
+ * Chrome 150 removed the previous localhost/127.0.0.1 exemption, so a ws:// candidate can
+ * never connect from an https origin regardless of host — attempting it only produces a
+ * Mixed Content error and a dead retry. (wss:// is always fine; from an http origin nothing
+ * is blocked.)
+ */
+export function isInsecureWebSocketBlocked(
+  wsUrl: string,
+  currentLocation: BrowserLocationLike,
+): boolean {
+  if (currentLocation.protocol !== 'https:') return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(wsUrl);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === 'ws:';
+}
+
+/**
+ * Split gateway candidates into those the browser can actually reach from the current page
+ * and those it will refuse as mixed content. When every candidate is blocked (the common
+ * "hosted https CC → local ws:// gateway" case), the caller surfaces a first-class
+ * explanation rather than spinning through a doomed reconnect loop.
+ */
+export function filterConnectableGatewayUrls(
+  urls: string[],
+  currentLocation: BrowserLocationLike,
+): { connectable: string[]; blocked: string[] } {
+  const connectable: string[] = [];
+  const blocked: string[] = [];
+  for (const url of urls) {
+    if (isInsecureWebSocketBlocked(url, currentLocation)) blocked.push(url);
+    else connectable.push(url);
+  }
+  return { connectable, blocked };
+}
+
 export function gatewayWebSocketToHttpOrigin(wsUrl: string): string {
   const parsed = new URL(wsUrl);
   if (parsed.protocol === 'ws:') parsed.protocol = 'http:';

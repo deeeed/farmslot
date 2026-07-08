@@ -10,6 +10,7 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import {
+  filterConnectableGatewayUrls,
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_PASSWORD_STORAGE_KEY,
   GATEWAY_SOURCE_STORAGE_KEY,
@@ -57,6 +58,42 @@ export class GatewayRequestError extends Error {
     super(message);
     this.name = 'GatewayRequestError';
   }
+}
+
+/**
+ * Copy shown while the UI is waiting to reach a genuinely-down gateway (http origin, or a
+ * reachable wss endpoint). Names the endpoint and teaches the escape so an install-time
+ * connection race is not mistaken for a failure.
+ */
+export function gatewayWaitingMessage(gatewayUrl: string): string {
+  return `Waiting for gateway on ${gatewayUrl} — if this persists: run \`farmslot up\`, then check ~/.farmslot/gateway.log`;
+}
+
+/**
+ * Copy shown when the browser itself is blocking the local gateway as mixed content (an
+ * insecure ws:// endpoint reached from an https origin). Chrome 150's per-site "Insecure
+ * content = Allow" setting does NOT unblock this (verified: ws:// still closes 1006), so the
+ * only real escapes are a local http origin or a wss:// gateway.
+ */
+export function gatewayInsecureBlockedMessage(): string {
+  return [
+    'Chrome no longer allows this page (https) to reach a local ws:// gateway, and the per-site "Insecure content" setting does not override it.',
+    'Open the Command Center from a local origin instead — e.g. the locally served UI (build the ui, serve dist over http) with the same #connect payload — or use a wss:// gateway URL.',
+  ].join('\n');
+}
+
+/**
+ * Pick the disconnected-state copy: the mixed-content explanation when the browser is blocking
+ * every candidate, otherwise the "gateway is genuinely down" teaching. These are different
+ * states with different fixes.
+ */
+export function gatewayStatusMessage(client: {
+  gatewayUrl: string;
+  insecureContentBlocked: boolean;
+}): string {
+  return client.insecureContentBlocked
+    ? gatewayInsecureBlockedMessage()
+    : gatewayWaitingMessage(client.gatewayUrl);
 }
 
 const DEFAULT_TIMEOUT = 15_000;
@@ -129,6 +166,7 @@ function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: str
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
+  private wsAbort: AbortController | null = null;
   private state: ConnectionState = 'disconnected';
   private epoch = 0;
   private reqId = 0;
@@ -145,11 +183,23 @@ export class GatewayClient {
   private source: BrowserGatewayConnection['source'];
   private disposed = false;
   private authBlocked = false;
+  private insecureBlocked = false;
   private lastAuthError: GatewayRequestError | null = null;
 
   constructor(url?: string, auth?: GatewayAuthCredentials) {
     const resolved = resolveBrowserGatewayConnection();
-    this.urls = url ? [url] : resolved.urls;
+    const candidates = url ? [url] : resolved.urls;
+    const { connectable, blocked } = filterConnectableGatewayUrls(candidates, location);
+    for (const blockedUrl of blocked) {
+      console.info(
+        `[gateway] skipping ${blockedUrl}: insecure WebSocket blocked from HTTPS origin`,
+      );
+    }
+    // Every candidate is an insecure ws:// the browser refuses from this https origin: there
+    // is nothing to reach until the user unblocks the site or opens the CC from a local origin.
+    this.insecureBlocked = connectable.length === 0 && blocked.length > 0;
+    // Keep the original candidates for display (gatewayUrl) even when all are blocked.
+    this.urls = connectable.length > 0 ? connectable : candidates;
     this.url = this.urls[0];
     this.auth = auth ?? resolved.auth;
     this.source = url ? 'configured' : resolved.source;
@@ -174,6 +224,15 @@ export class GatewayClient {
     return this.url;
   }
 
+  /**
+   * True when the only gateway candidates are insecure ws:// endpoints the browser refuses
+   * from this https origin (mixed content). This is a dead end until the user unblocks the
+   * site or opens the CC from a local origin — not a transient "gateway is down" state.
+   */
+  get insecureContentBlocked(): boolean {
+    return this.insecureBlocked;
+  }
+
   get authCredentialKind(): 'token' | 'password' | 'none' {
     if (this.auth.token) return 'token';
     if (this.auth.password) return 'password';
@@ -186,76 +245,119 @@ export class GatewayClient {
     this.authBlocked = false;
     this.lastAuthError = null;
     replaceStoredGatewayAuthForHttp(auth);
-    this.ws?.close();
-    this.ws = null;
+    this.teardownSocket();
     this.setState('disconnected');
   }
 
   connect(): void {
     if (this.disposed || this.authBlocked) return;
+    // No reachable candidate from this https origin — don't open a doomed socket or spin a
+    // retry loop; stay disconnected so the UI can surface the mixed-content explanation.
+    if (this.insecureBlocked) {
+      this.setState('disconnected');
+      return;
+    }
     if (
       this.ws &&
       (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)
     )
       return;
 
+    // Drop any stale socket and its listeners before opening a new one, so reconnect
+    // attempts never accumulate handlers or fire callbacks from an already-dead socket.
+    this.teardownSocket();
+
     this.authBlocked = false;
     this.setState('connecting');
-    this.ws = new WebSocket(this.url);
 
-    this.ws.onopen = () => {
-      this.authenticate().catch((err: Error) => {
-        const authError =
-          err instanceof GatewayRequestError
-            ? err
-            : new GatewayRequestError(err.message, 'AUTH_FAILED');
-        this.authBlocked = true;
-        this.lastAuthError = authError;
-        this.rejectAllPending(`Authentication failed: ${authError.message}`);
-        this.setState('auth_required');
-        this.ws?.close();
-      });
-    };
+    const ws = new WebSocket(this.url);
+    const abort = new AbortController();
+    const listenerOptions = { signal: abort.signal };
+    this.ws = ws;
+    this.wsAbort = abort;
+    ws.binaryType = 'arraybuffer';
 
-    this.ws.onclose = () => {
-      this.rejectAllPending('Connection closed');
-      if (this.authBlocked) {
-        this.setState('auth_required');
-        return;
-      }
-      this.setState('disconnected');
-      this.advanceGatewayCandidate();
-      this.scheduleReconnect();
-    };
+    ws.addEventListener(
+      'open',
+      () => {
+        this.authenticate().catch((err: Error) => {
+          const authError =
+            err instanceof GatewayRequestError
+              ? err
+              : new GatewayRequestError(err.message, 'AUTH_FAILED');
+          this.authBlocked = true;
+          this.lastAuthError = authError;
+          this.rejectAllPending(`Authentication failed: ${authError.message}`);
+          this.setState('auth_required');
+          this.ws?.close();
+        });
+      },
+      listenerOptions,
+    );
 
-    this.ws.onerror = () => {
-      // onclose will fire after onerror
-    };
+    ws.addEventListener(
+      'close',
+      () => {
+        // Ignore a late close from a socket we have already replaced.
+        if (this.ws !== ws) return;
+        this.rejectAllPending('Connection closed');
+        if (this.authBlocked) {
+          this.setState('auth_required');
+          return;
+        }
+        this.setState('disconnected');
+        this.advanceGatewayCandidate();
+        this.scheduleReconnect();
+      },
+      listenerOptions,
+    );
 
-    this.ws.binaryType = 'arraybuffer';
-    this.ws.onmessage = (ev) => {
-      // Binary frames (stream feed)
-      if (ev.data instanceof ArrayBuffer) {
-        for (const cb of this.binarySubs) {
-          try {
-            cb(ev.data);
-          } catch {
-            /* subscriber error */
+    // onclose fires after onerror; the error listener only exists to keep the socket quiet.
+    ws.addEventListener('error', () => {}, listenerOptions);
+
+    ws.addEventListener(
+      'message',
+      (ev) => {
+        // Binary frames (stream feed)
+        if (ev.data instanceof ArrayBuffer) {
+          for (const cb of this.binarySubs) {
+            try {
+              cb(ev.data);
+            } catch {
+              /* subscriber error */
+            }
           }
+          return;
         }
-        return;
-      }
+        try {
+          const frame: Frame = JSON.parse(ev.data as string);
+          if (frame.type === 'res') {
+            this.handleResponse(frame as ResponseFrame);
+          } else if (frame.type === 'event') {
+            this.handleEvent(frame as EventFrame);
+          }
+        } catch {
+          // Ignore malformed frames
+        }
+      },
+      listenerOptions,
+    );
+  }
+
+  private teardownSocket(): void {
+    if (this.wsAbort) {
+      this.wsAbort.abort();
+      this.wsAbort = null;
+    }
+    if (this.ws) {
+      const stale = this.ws;
+      this.ws = null;
       try {
-        const frame: Frame = JSON.parse(ev.data as string);
-        if (frame.type === 'res') {
-          this.handleResponse(frame as ResponseFrame);
-        } else if (frame.type === 'event') {
-          this.handleEvent(frame as EventFrame);
-        }
+        stale.close();
       } catch {
-        // Ignore malformed frames
+        /* already closing or closed */
       }
-    };
+    }
   }
 
   private async authenticate(): Promise<void> {
@@ -275,8 +377,7 @@ export class GatewayClient {
     this.disposed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.rejectAllPending('Client disconnected');
-    this.ws?.close();
-    this.ws = null;
+    this.teardownSocket();
     this.setState('disconnected');
   }
 

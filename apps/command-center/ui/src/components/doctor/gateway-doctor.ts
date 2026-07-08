@@ -9,7 +9,7 @@ import type {
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
-import { gateway } from '../../gateway-client.js';
+import { gateway, gatewayStatusMessage } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 @customElement('gateway-doctor')
@@ -156,6 +156,8 @@ export class GatewayDoctor extends LitElement {
       padding: ${unsafeCSS(spacing.md)};
       margin-bottom: ${unsafeCSS(spacing.md)};
       overflow-wrap: anywhere;
+      white-space: pre-line;
+      line-height: 1.5;
     }
     .section-placeholder {
       padding: ${unsafeCSS(spacing.md)};
@@ -171,7 +173,7 @@ export class GatewayDoctor extends LitElement {
         void this.loadCatalogAndRefreshAll();
     });
     if (gateway.connectionState === 'connected') void this.loadCatalogAndRefreshAll();
-    else this.error = 'Waiting for gateway connection…';
+    else this.error = gatewayStatusMessage(gateway);
   }
 
   disconnectedCallback(): void {
@@ -195,7 +197,7 @@ export class GatewayDoctor extends LitElement {
 
   private async loadCatalog(): Promise<GatewayDoctorSectionReport[]> {
     if (gateway.connectionState !== 'connected') {
-      this.error = 'Waiting for gateway connection…';
+      this.error = gatewayStatusMessage(gateway);
       return [];
     }
     const result = await gateway.request<GatewayDoctorResult>(
@@ -211,7 +213,7 @@ export class GatewayDoctor extends LitElement {
 
   private async refreshAll(): Promise<void> {
     if (gateway.connectionState !== 'connected') {
-      this.error = 'Waiting for gateway connection…';
+      this.error = gatewayStatusMessage(gateway);
       return;
     }
     this.loading = true;
@@ -237,7 +239,7 @@ export class GatewayDoctor extends LitElement {
 
   private async refreshSection(id: GatewayDoctorSectionId): Promise<void> {
     if (gateway.connectionState !== 'connected') {
-      this.error = 'Waiting for gateway connection…';
+      this.error = gatewayStatusMessage(gateway);
       return;
     }
     this.updateSection(id, { status: 'running', error: '' });
