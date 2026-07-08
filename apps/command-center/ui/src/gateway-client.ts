@@ -72,13 +72,14 @@ export function gatewayWaitingMessage(gatewayUrl: string): string {
 /**
  * Copy shown when the browser itself is blocking the local gateway as mixed content (an
  * insecure ws:// endpoint reached from an https origin). Chrome 150's per-site "Insecure
- * content = Allow" setting does NOT unblock this (verified: ws:// still closes 1006), so the
- * only real escapes are a local http origin or a wss:// gateway.
+ * content = Allow" setting does NOT unblock this (verified: ws:// still closes 1006). The
+ * easy escape is now a locally-trusted TLS cert so the gateway serves wss:// (`farmslot certs
+ * setup`); serving the UI from a local http origin remains a fallback.
  */
 export function gatewayInsecureBlockedMessage(): string {
   return [
-    'Chrome no longer allows this page (https) to reach a local ws:// gateway, and the per-site "Insecure content" setting does not override it.',
-    'Open the Command Center from a local origin instead — e.g. the locally served UI (build the ui, serve dist over http) with the same #connect payload — or use a wss:// gateway URL.',
+    "This page can't reach a local ws:// gateway (browser policy). One-time fix: run `farmslot certs setup` (installs a local TLS cert), then `farmslot up`, then reload this page — the gateway will be reachable over wss://. (mkcert required: `brew install mkcert`.)",
+    'Fallback: serve the UI from a local http origin instead (build the ui, serve dist over http) with the same #connect payload.',
   ].join('\n');
 }
 
