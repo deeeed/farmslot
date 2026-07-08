@@ -279,6 +279,9 @@ export async function validateRecipeArtifactDirectory(
     summary: await readArtifactJsonIfPresent(artifactDir, 'summary.json'),
     trace: await readArtifactJsonIfPresent(artifactDir, 'trace.json'),
     manifest: await readArtifactJsonIfPresent(artifactDir, 'artifact-manifest.json'),
+    resolvedRecipe: artifactPathSet.has('resolved-recipe.json')
+      ? await readArtifactJsonIfPresent(artifactDir, 'resolved-recipe.json')
+      : { value: undefined },
   };
 
   for (const [requiredPath, read] of [
@@ -306,7 +309,15 @@ export async function validateRecipeArtifactDirectory(
   // validateRecipeArtifactPackage validates the recipe document internally
   // (protocol/recipe/artifact.ts) whenever `recipe` is present, so calling
   // validateRecipeDocument separately here would double-count every finding.
-  const recipeValidation = validateRecipeArtifactPackage({ recipe, manifest, artifactPaths });
+  // resolved-recipe.json (the self-contained composition) is validated in full,
+  // matching gateway ingestion so the CLI cannot pass a package the gateway rejects.
+  const resolvedRecipe = reads.resolvedRecipe.value;
+  const recipeValidation = validateRecipeArtifactPackage({
+    recipe,
+    manifest,
+    artifactPaths,
+    ...(resolvedRecipe !== undefined ? { resolvedRecipe } : {}),
+  });
 
   const summaryStatus = isRecord(summary) ? summary.status : undefined;
   addArtifactCheck(

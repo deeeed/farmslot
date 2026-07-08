@@ -191,12 +191,19 @@ test('composeRecipe inlines library flows into a self-contained recipe', async (
   const tempRoot = await createTempRoot();
   try {
     const libRoot = path.join(tempRoot, 'lib');
-    await createLibrary(libRoot, { flows: { 'lib.write-text': writeTextFlow('out.txt', 'hi') } });
+    await createLibrary(libRoot, {
+      flows: {
+        'lib.write-text': writeTextFlow('out.txt', 'hi'),
+        // An unrelated library flow the recipe never calls; it must NOT be inlined.
+        'lib.unused': writeTextFlow('unused.txt', 'nope'),
+      },
+    });
 
     const recipe = {
       schema_version: 1,
       title: 'Library composed',
       description: 'Calls a flow resolved from a library source.',
+      uses: [],
       validate: {
         workflow: {
           entry: 'call-lib',
@@ -219,9 +226,11 @@ test('composeRecipe inlines library flows into a self-contained recipe', async (
       librarySources: [{ root: libRoot }],
     });
     assert.equal(flowCount, 1);
-    assert.deepEqual(Object.keys((resolved as { flows: Record<string, unknown> }).flows), [
-      'lib.write-text',
-    ]);
+    const resolvedRecipe = resolved as { flows: Record<string, unknown>; uses?: unknown };
+    // Only the reachable flow is inlined — never the whole library.
+    assert.deepEqual(Object.keys(resolvedRecipe.flows), ['lib.write-text']);
+    // `uses` is dropped so the recipe resolves purely from inline `flows`.
+    assert.ok(!('uses' in resolvedRecipe));
 
     // The composed recipe is self-contained: full validation resolves the call.ref
     // without any library context.

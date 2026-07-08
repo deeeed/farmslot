@@ -355,12 +355,15 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
     });
     assert.equal(flowResult.status, 'fail');
 
-    // A recipe that composes flows emits a self-contained resolved-recipe.json with
-    // every reachable flow inlined under `flows`.
-    const resolvedRecipe = (await readJsonFile(
-      path.join(tempRoot, 'artifacts-flow', 'resolved-recipe.json'),
-    )) as { flows: Record<string, unknown> };
-    assert.deepEqual(Object.keys(resolvedRecipe.flows).sort(), ['local.watch-stale']);
+    // An inline-only recipe is already self-contained (its flows live in recipe.json
+    // and are validated by validateInlineFlows), so no separate resolved-recipe.json
+    // is emitted — that artifact is reserved for `uses`/library composition.
+    assert.ok(
+      !(await listRelativeFiles(path.join(tempRoot, 'artifacts-flow'))).includes(
+        'resolved-recipe.json',
+      ),
+      'inline-only recipe should not emit resolved-recipe.json',
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

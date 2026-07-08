@@ -149,9 +149,22 @@ export async function validateRecipeCliInput({
   }
 
   if (artifactDir) {
-    // Flow-call resolution already ran above via validateRecipeWithManifest with
-    // the configured library; the artifact-package check is envelope-only.
-    results.push(validateRecipeArtifactPackage({ recipe, manifest, artifactPaths }));
+    // Flow-call resolution already ran above via validateRecipeWithManifest with the
+    // configured library; the artifact-package check is envelope-only for recipe.json.
+    // resolved-recipe.json, when present, is the self-contained composition and is
+    // validated in full, mirroring gateway ingestion.
+    const resolvedRecipe = await readOptionalRecipeCliJsonFile(
+      path.join(artifactDir, 'resolved-recipe.json'),
+      baseDir,
+    );
+    results.push(
+      validateRecipeArtifactPackage({
+        recipe,
+        manifest,
+        artifactPaths,
+        ...(resolvedRecipe !== undefined ? { resolvedRecipe } : {}),
+      }),
+    );
   }
 
   return mergeRecipeValidationResults(results);

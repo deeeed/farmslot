@@ -226,12 +226,13 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     const outputs = new Map<string, unknown>();
     const recipePath = await artifactWriter.copyRecipe(recipe);
-    // Emit the fully-composed recipe when the recipe pulls in any flows (inline,
-    // `uses`, or library). flowCatalog is the transitively-closed set of every
-    // reachable flow, so inlining it under `flows` yields a self-contained recipe
-    // whose call.refs resolve without the library at ingestion/CI validation.
-    if (flowCatalog.size > 0) {
-      await artifactWriter.writeResolvedRecipe(buildResolvedRecipe(recipe, flowCatalog));
+    // Emit the fully-composed recipe when `uses`/library composition adds flows the
+    // authored recipe.json does not already inline. buildResolvedRecipe inlines only
+    // the reachable flows (never the whole library) and drops `uses`, so the result
+    // is self-contained; it returns the same reference when there is nothing to add.
+    const resolvedRecipe = buildResolvedRecipe(recipe, flowCatalog);
+    if (resolvedRecipe !== recipe) {
+      await artifactWriter.writeResolvedRecipe(resolvedRecipe);
     }
     let status: RecipeRunStatus = 'unknown';
     let currentNodeId: string | undefined = graph.entry;
@@ -592,6 +593,12 @@ class DefaultRecipeRunner implements RecipeRunner {
 
     const packageValidation = validateRecipeArtifactPackage({
       recipe,
+      // Validate the composed recipe in full only for passing runs — a pass means
+      // every reachable flow resolved and ran, so an invalid resolved recipe is a
+      // real artifact-generation defect worth failing fast on (parity with gateway
+      // ingestion). A failed run already surfaced the cause (e.g. a flow cycle) in
+      // the trace; re-validating its composition here must not raise a second error.
+      ...(status === 'pass' && resolvedRecipe !== recipe ? { resolvedRecipe } : {}),
       manifest: {
         version: 1,
         runStatus: status,
