@@ -4,9 +4,13 @@ All notable changes to `@farmslot/skills` are tracked here.
 
 ## Unreleased
 
-- Update recipe-quality skill guidance to delegate runtime artifact generation to `@farmslot/agent-runtime`.
-- Add `packet`, a skill for packet-shaped operator communication aligned with ADR-048.
-- Convert task lifecycle scripts to compatibility shims over `@farmslot/agent-runtime`.
+- Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.1.3 - 2026-07-08
+
+- Update recipe-quality skill guidance to delegate runtime artifact generation to `@farmslot/agent-runtime`
+- `packet`, a skill for packet-shaped operator communication aligned with ADR-048
+- Convert task lifecycle scripts to compatibility shims over `@farmslot/agent-runtime`
 
 ## 0.1.2 - 2026-07-03
 
