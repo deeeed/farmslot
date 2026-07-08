@@ -26,6 +26,7 @@ export default [
   {
     ignores: [
       '**/.git/**',
+      '.worktrees/**',
       '.agent/**',
       '.artifact-cache/**',
       '**/.yarn/**',
