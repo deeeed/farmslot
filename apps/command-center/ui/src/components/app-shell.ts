@@ -57,7 +57,7 @@ import {
   isVersionNewer,
 } from '../build-info.js';
 import type { ConnectionState } from '../gateway-client.js';
-import { gateway } from '../gateway-client.js';
+import { gateway, gatewayWaitingMessage } from '../gateway-client.js';
 import {
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_SOURCE_STORAGE_KEY,
@@ -432,7 +432,7 @@ export class FarmApp extends LitElement {
 
   private async refreshVersionDetails(): Promise<void> {
     if (gateway.connectionState !== 'connected') {
-      this.versionDetailsError = 'Waiting for gateway connection…';
+      this.versionDetailsError = gatewayWaitingMessage(gateway.gatewayUrl);
       return;
     }
     this.versionDetailsLoading = true;

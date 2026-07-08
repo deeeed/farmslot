@@ -108,6 +108,58 @@ export function normalizeGatewayWebSocketUrl(url: string): string {
   return parsed.toString();
 }
 
+function isLoopbackWebSocketHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
+  );
+}
+
+/**
+ * From an HTTPS page the browser blocks insecure ws:// connections as mixed content,
+ * except to loopback hosts (localhost/127.0.0.1), which are treated as potentially
+ * trustworthy. A blocked candidate can never connect, so attempting it is dead noise
+ * that only inflates the reconnect backoff.
+ */
+export function isInsecureWebSocketBlocked(
+  wsUrl: string,
+  currentLocation: BrowserLocationLike,
+): boolean {
+  if (currentLocation.protocol !== 'https:') return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(wsUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'ws:') return false;
+  return !isLoopbackWebSocketHost(parsed.hostname);
+}
+
+/**
+ * Drop gateway candidates the browser would refuse to connect to from the current page.
+ * Returns the surviving candidates plus the ones skipped (for one-time logging). If every
+ * candidate is blocked, the originals are kept so the UI still surfaces a real attempt
+ * (and the doctor's guidance) instead of silently doing nothing.
+ */
+export function filterConnectableGatewayUrls(
+  urls: string[],
+  currentLocation: BrowserLocationLike,
+): { urls: string[]; skipped: string[] } {
+  const skipped: string[] = [];
+  const connectable = urls.filter((url) => {
+    if (isInsecureWebSocketBlocked(url, currentLocation)) {
+      skipped.push(url);
+      return false;
+    }
+    return true;
+  });
+  if (connectable.length === 0) return { urls, skipped: [] };
+  return { urls: connectable, skipped };
+}
+
 export function gatewayWebSocketToHttpOrigin(wsUrl: string): string {
   const parsed = new URL(wsUrl);
   if (parsed.protocol === 'ws:') parsed.protocol = 'http:';

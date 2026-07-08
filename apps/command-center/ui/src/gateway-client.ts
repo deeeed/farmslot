@@ -10,6 +10,7 @@ import type {
 import { Methods } from '@farmslot/protocol';
 
 import {
+  filterConnectableGatewayUrls,
   GATEWAY_CANDIDATES_STORAGE_KEY,
   GATEWAY_PASSWORD_STORAGE_KEY,
   GATEWAY_SOURCE_STORAGE_KEY,
@@ -57,6 +58,14 @@ export class GatewayRequestError extends Error {
     super(message);
     this.name = 'GatewayRequestError';
   }
+}
+
+/**
+ * Copy shown while the UI is waiting to reach the gateway. Names the endpoint being tried
+ * and teaches the escape so an install-time connection race is not mistaken for a failure.
+ */
+export function gatewayWaitingMessage(gatewayUrl: string): string {
+  return `Waiting for gateway on ${gatewayUrl} — if this persists: run \`farmslot up\`, then check ~/.farmslot/gateway.log`;
 }
 
 const DEFAULT_TIMEOUT = 15_000;
@@ -129,6 +138,7 @@ function syncBrowserHttpAuthCookie(auth: GatewayAuthCredentials, gatewayUrl: str
 
 export class GatewayClient {
   private ws: WebSocket | null = null;
+  private wsAbort: AbortController | null = null;
   private state: ConnectionState = 'disconnected';
   private epoch = 0;
   private reqId = 0;
@@ -149,7 +159,12 @@ export class GatewayClient {
 
   constructor(url?: string, auth?: GatewayAuthCredentials) {
     const resolved = resolveBrowserGatewayConnection();
-    this.urls = url ? [url] : resolved.urls;
+    const candidates = url ? [url] : resolved.urls;
+    const { urls, skipped } = filterConnectableGatewayUrls(candidates, location);
+    for (const blocked of skipped) {
+      console.info(`[gateway] skipping ${blocked}: insecure WebSocket blocked from HTTPS origin`);
+    }
+    this.urls = urls;
     this.url = this.urls[0];
     this.auth = auth ?? resolved.auth;
     this.source = url ? 'configured' : resolved.source;
@@ -186,8 +201,7 @@ export class GatewayClient {
     this.authBlocked = false;
     this.lastAuthError = null;
     replaceStoredGatewayAuthForHttp(auth);
-    this.ws?.close();
-    this.ws = null;
+    this.teardownSocket();
     this.setState('disconnected');
   }
 
@@ -199,63 +213,101 @@ export class GatewayClient {
     )
       return;
 
+    // Drop any stale socket and its listeners before opening a new one, so reconnect
+    // attempts never accumulate handlers or fire callbacks from an already-dead socket.
+    this.teardownSocket();
+
     this.authBlocked = false;
     this.setState('connecting');
-    this.ws = new WebSocket(this.url);
 
-    this.ws.onopen = () => {
-      this.authenticate().catch((err: Error) => {
-        const authError =
-          err instanceof GatewayRequestError
-            ? err
-            : new GatewayRequestError(err.message, 'AUTH_FAILED');
-        this.authBlocked = true;
-        this.lastAuthError = authError;
-        this.rejectAllPending(`Authentication failed: ${authError.message}`);
-        this.setState('auth_required');
-        this.ws?.close();
-      });
-    };
+    const ws = new WebSocket(this.url);
+    const abort = new AbortController();
+    const listenerOptions = { signal: abort.signal };
+    this.ws = ws;
+    this.wsAbort = abort;
+    ws.binaryType = 'arraybuffer';
 
-    this.ws.onclose = () => {
-      this.rejectAllPending('Connection closed');
-      if (this.authBlocked) {
-        this.setState('auth_required');
-        return;
-      }
-      this.setState('disconnected');
-      this.advanceGatewayCandidate();
-      this.scheduleReconnect();
-    };
+    ws.addEventListener(
+      'open',
+      () => {
+        this.authenticate().catch((err: Error) => {
+          const authError =
+            err instanceof GatewayRequestError
+              ? err
+              : new GatewayRequestError(err.message, 'AUTH_FAILED');
+          this.authBlocked = true;
+          this.lastAuthError = authError;
+          this.rejectAllPending(`Authentication failed: ${authError.message}`);
+          this.setState('auth_required');
+          this.ws?.close();
+        });
+      },
+      listenerOptions,
+    );
 
-    this.ws.onerror = () => {
-      // onclose will fire after onerror
-    };
+    ws.addEventListener(
+      'close',
+      () => {
+        // Ignore a late close from a socket we have already replaced.
+        if (this.ws !== ws) return;
+        this.rejectAllPending('Connection closed');
+        if (this.authBlocked) {
+          this.setState('auth_required');
+          return;
+        }
+        this.setState('disconnected');
+        this.advanceGatewayCandidate();
+        this.scheduleReconnect();
+      },
+      listenerOptions,
+    );
 
-    this.ws.binaryType = 'arraybuffer';
-    this.ws.onmessage = (ev) => {
-      // Binary frames (stream feed)
-      if (ev.data instanceof ArrayBuffer) {
-        for (const cb of this.binarySubs) {
-          try {
-            cb(ev.data);
-          } catch {
-            /* subscriber error */
+    // onclose fires after onerror; the error listener only exists to keep the socket quiet.
+    ws.addEventListener('error', () => {}, listenerOptions);
+
+    ws.addEventListener(
+      'message',
+      (ev) => {
+        // Binary frames (stream feed)
+        if (ev.data instanceof ArrayBuffer) {
+          for (const cb of this.binarySubs) {
+            try {
+              cb(ev.data);
+            } catch {
+              /* subscriber error */
+            }
           }
+          return;
         }
-        return;
-      }
+        try {
+          const frame: Frame = JSON.parse(ev.data as string);
+          if (frame.type === 'res') {
+            this.handleResponse(frame as ResponseFrame);
+          } else if (frame.type === 'event') {
+            this.handleEvent(frame as EventFrame);
+          }
+        } catch {
+          // Ignore malformed frames
+        }
+      },
+      listenerOptions,
+    );
+  }
+
+  private teardownSocket(): void {
+    if (this.wsAbort) {
+      this.wsAbort.abort();
+      this.wsAbort = null;
+    }
+    if (this.ws) {
+      const stale = this.ws;
+      this.ws = null;
       try {
-        const frame: Frame = JSON.parse(ev.data as string);
-        if (frame.type === 'res') {
-          this.handleResponse(frame as ResponseFrame);
-        } else if (frame.type === 'event') {
-          this.handleEvent(frame as EventFrame);
-        }
+        stale.close();
       } catch {
-        // Ignore malformed frames
+        /* already closing or closed */
       }
-    };
+    }
   }
 
   private async authenticate(): Promise<void> {
@@ -275,8 +327,7 @@ export class GatewayClient {
     this.disposed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.rejectAllPending('Client disconnected');
-    this.ws?.close();
-    this.ws = null;
+    this.teardownSocket();
     this.setState('disconnected');
   }
 

@@ -9,7 +9,7 @@ import type {
 } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
-import { gateway } from '../../gateway-client.js';
+import { gateway, gatewayWaitingMessage } from '../../gateway-client.js';
 import { colors, fonts, radii, spacing } from '../../styles/theme-tokens.js';
 
 @customElement('gateway-doctor')
@@ -171,7 +171,7 @@ export class GatewayDoctor extends LitElement {
         void this.loadCatalogAndRefreshAll();
     });
     if (gateway.connectionState === 'connected') void this.loadCatalogAndRefreshAll();
-    else this.error = 'Waiting for gateway connection…';
+    else this.error = gatewayWaitingMessage(gateway.gatewayUrl);
   }
 
   disconnectedCallback(): void {
@@ -195,7 +195,7 @@ export class GatewayDoctor extends LitElement {
 
   private async loadCatalog(): Promise<GatewayDoctorSectionReport[]> {
     if (gateway.connectionState !== 'connected') {
-      this.error = 'Waiting for gateway connection…';
+      this.error = gatewayWaitingMessage(gateway.gatewayUrl);
       return [];
     }
     const result = await gateway.request<GatewayDoctorResult>(
@@ -211,7 +211,7 @@ export class GatewayDoctor extends LitElement {
 
   private async refreshAll(): Promise<void> {
     if (gateway.connectionState !== 'connected') {
-      this.error = 'Waiting for gateway connection…';
+      this.error = gatewayWaitingMessage(gateway.gatewayUrl);
       return;
     }
     this.loading = true;
@@ -237,7 +237,7 @@ export class GatewayDoctor extends LitElement {
 
   private async refreshSection(id: GatewayDoctorSectionId): Promise<void> {
     if (gateway.connectionState !== 'connected') {
-      this.error = 'Waiting for gateway connection…';
+      this.error = gatewayWaitingMessage(gateway.gatewayUrl);
       return;
     }
     this.updateSection(id, { status: 'running', error: '' });
