@@ -10,10 +10,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { DEFAULT_GATEWAY_TLS_PORT } from '@farmslot/protocol';
 import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
-
-/** Must match services/gateway DEFAULT_GATEWAY_TLS_PORT. */
-export const DEFAULT_GATEWAY_TLS_PORT = 7778;
 
 export function gatewayCertsDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(farmslotHome(env), 'certs');

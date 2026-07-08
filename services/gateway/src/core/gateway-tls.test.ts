@@ -6,11 +6,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import {
-  DEFAULT_GATEWAY_TLS_PORT,
-  loadGatewayTlsMaterial,
-  parseGatewayTlsConfig,
-} from './gateway-tls.js';
+import { DEFAULT_GATEWAY_TLS_PORT } from '@farmslot/protocol';
+
+import { loadGatewayTlsMaterial, parseGatewayTlsConfig } from './gateway-tls.js';
 
 const opensslAvailable = spawnSync('openssl', ['version'], { stdio: 'ignore' }).status === 0;
 

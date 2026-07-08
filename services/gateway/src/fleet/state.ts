@@ -604,6 +604,14 @@ export function onStateChange(handler: StateChangeHandler): void {
   changeHandlers.push(handler);
 }
 
+/** Test-only: how many state-change handlers are registered (guards against duplicate init). */
+export function stateChangeHandlerCountForTests(): number {
+  if (process.env.NODE_TEST_CONTEXT !== '1') {
+    throw new Error('stateChangeHandlerCountForTests is only available during tests');
+  }
+  return changeHandlers.length;
+}
+
 export function startFileWatcher(): void {
   const watcher = watch(statusFile, { persistent: true, ignoreInitial: true });
   watcher.on('change', async () => {

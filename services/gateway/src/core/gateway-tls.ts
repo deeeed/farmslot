@@ -11,10 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 
-/** Default TLS listen port. Separate from the plaintext port (7777) because a
- * single TCP port cannot serve both plaintext ws:// and TLS wss:// at once, and
- * the loopback ecosystem (local node, health probes, local UI) stays on ws://. */
-export const DEFAULT_GATEWAY_TLS_PORT = 7778;
+import { DEFAULT_GATEWAY_TLS_PORT } from '@farmslot/protocol';
 
 export interface GatewayTlsConfig {
   certPath: string;

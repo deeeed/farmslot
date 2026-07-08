@@ -404,6 +404,19 @@ async function up(
   // leads with the wss:// candidate. Absent, everything stays ws:// as before.
   const tls = resolveGatewayTls();
 
+  // Don't silently ignore a half-set env config: without both vars TLS stays off,
+  // and the spawned gateway never sees the half-config to teach it, so warn here.
+  const tlsCertEnv = process.env.FARMSLOT_GATEWAY_TLS_CERT?.trim();
+  const tlsKeyEnv = process.env.FARMSLOT_GATEWAY_TLS_KEY?.trim();
+  if (!tls && Boolean(tlsCertEnv) !== Boolean(tlsKeyEnv)) {
+    const missing = tlsCertEnv ? 'FARMSLOT_GATEWAY_TLS_KEY' : 'FARMSLOT_GATEWAY_TLS_CERT';
+    output.write(
+      `${yellow('  gateway TLS half-configured')} ${dim(
+        `— ${missing} is not set; serving ws:// only. Set both (or run \`farmslot certs setup\`).`,
+      )}\n`,
+    );
+  }
+
   const existingPid = readPid();
   if (existingPid && isAlive(existingPid)) {
     if (await waitForHealth(port, 2000)) {

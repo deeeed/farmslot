@@ -19,7 +19,10 @@ function mkcertAvailable(): boolean {
 }
 
 /** localhost + loopback + this machine's LAN hostname/IPs — the names a hosted
- * CC page (or a phone on the LAN) uses to reach `wss://…:<tlsPort>/ws`. */
+ * CC page (or a phone on the LAN) uses to reach `wss://…:<tlsPort>/ws`. Only IPv4
+ * LAN addresses are enrolled: the gateway advertises IPv4 wss:// candidates (see
+ * up.ts / pairing.ts), and ::1 already covers IPv6 loopback. A machine reachable
+ * only over a routable IPv6 LAN address would need that address added here. */
 function certSans(): string[] {
   const sans = new Set<string>(['localhost', '127.0.0.1', '::1']);
   const host = hostname().replace(/\.local$/, '');

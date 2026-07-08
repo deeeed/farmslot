@@ -82,7 +82,7 @@ import { initSelfReview } from './self-review/orchestrator.js';
 import { onTaskProgress, onWorkerSignal, startWatchingActiveSlots } from './tasks/watcher.js';
 import { applyRunningWorkerSignalToContext } from './tasks/worker-signal-context.js';
 import { initWorkGraphStore, loadWorkGraphs, schedulerTick } from './work-graph/store.js';
-import { broadcast, broadcastEvent, createWebSocketServer } from './server.js';
+import { broadcast, broadcastEvent, createWebSocketServer, initServerGlobals } from './server.js';
 import { handleGitHubWebhook, handleJiraWebhook } from './webhook.js';
 
 const PORT = Number(process.env.GATEWAY_PORT) || 7777;
@@ -449,6 +449,11 @@ async function main(): Promise<void> {
   // Create HTTP server (health check endpoint) + attach WebSocket server.
   const httpServer = createServer(requestHandler);
   createWebSocketServer(httpServer, gatewayAuthRuntime);
+
+  // Register process-global side effects ONCE — not per server. The optional TLS
+  // listener below calls createWebSocketServer a second time, so any duplicate
+  // registration there would double every fleet/PTY broadcast and auto-dispatch tick.
+  initServerGlobals();
 
   // Start watching .farm-status.json for changes
   startFileWatcher();

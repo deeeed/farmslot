@@ -63,6 +63,8 @@ import { handleAgentFsChanged } from './tasks/watcher.js';
 
 let eventSeq = 0;
 let backlogAutoDispatchTimer: NodeJS.Timeout | null = null;
+let backlogAutoDispatchInterval: NodeJS.Timeout | null = null;
+let serverGlobalsInitialized = false;
 const ENABLE_RESOURCE_POLL_ALL =
   process.env.FARMSLOT_RESOURCE_POLL_ALL === '1' ||
   process.env.FARMSLOT_RESOURCE_POLL_ALL === 'true';
@@ -343,6 +345,22 @@ export function createWebSocketServer(
     });
   });
 
+  return wss;
+}
+
+/**
+ * Register the process-global side effects the gateway needs exactly once:
+ * event bridges (PTY exit, fleet state change), the backlog auto-dispatch
+ * interval, and the demand-driven pollers/reapers. These are NOT per-connection
+ * and MUST NOT live in createWebSocketServer — that runs once per listening
+ * server (plaintext ws + TLS wss), and a second registration would duplicate
+ * TERMINAL_EXITED/FLEET_UPDATED broadcasts, double-run auto-dispatch, and leak a
+ * resource-poll interval. Idempotent so a stray second call is a no-op.
+ */
+export function initServerGlobals(): void {
+  if (serverGlobalsInitialized) return;
+  serverGlobalsInitialized = true;
+
   // Broadcast PTY exit events to all clients
   onPtyExit((slotId, exitCode) => {
     const terminal = parseTerminalKey(slotId);
@@ -398,7 +416,7 @@ export function createWebSocketServer(
     });
     scheduleBacklogAutoDispatchTick();
   });
-  const backlogAutoDispatchInterval = setInterval(scheduleBacklogAutoDispatchTick, 60_000);
+  backlogAutoDispatchInterval = setInterval(scheduleBacklogAutoDispatchTick, 60_000);
   backlogAutoDispatchInterval.unref();
 
   // Hook: broadcast fleet update whenever updateSlotStatus writes to disk.
@@ -417,8 +435,18 @@ export function createWebSocketServer(
         console.warn(`[server] slot update hook fleet refresh failed: ${(err as Error).message}`);
       });
   });
+}
 
-  return wss;
+/** Test-only: reset the once-guard so a suite can re-exercise initServerGlobals. */
+export function resetServerGlobalsForTests(): void {
+  if (process.env.NODE_TEST_CONTEXT !== '1') {
+    throw new Error('resetServerGlobalsForTests is only available during tests');
+  }
+  serverGlobalsInitialized = false;
+  if (backlogAutoDispatchInterval) {
+    clearInterval(backlogAutoDispatchInterval);
+    backlogAutoDispatchInterval = null;
+  }
 }
 
 function handleNodeBinaryFrame(raw: Buffer): void {
