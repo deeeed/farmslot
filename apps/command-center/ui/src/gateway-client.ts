@@ -61,11 +61,41 @@ export class GatewayRequestError extends Error {
 }
 
 /**
- * Copy shown while the UI is waiting to reach the gateway. Names the endpoint being tried
- * and teaches the escape so an install-time connection race is not mistaken for a failure.
+ * Copy shown while the UI is waiting to reach a genuinely-down gateway (http origin, or a
+ * reachable wss endpoint). Names the endpoint and teaches the escape so an install-time
+ * connection race is not mistaken for a failure.
  */
 export function gatewayWaitingMessage(gatewayUrl: string): string {
   return `Waiting for gateway on ${gatewayUrl} — if this persists: run \`farmslot up\`, then check ~/.farmslot/gateway.log`;
+}
+
+/**
+ * Copy shown when the browser itself is blocking the local gateway as mixed content (an
+ * insecure ws:// endpoint reached from an https origin). Explains the block and offers both
+ * escapes: the quick per-site unblock and the durable "open from a local origin" path.
+ */
+export function gatewayInsecureBlockedMessage(
+  pageOrigin: string = typeof location !== 'undefined' ? location.origin : '',
+): string {
+  return [
+    'This browser is blocking the local gateway: Chrome 150+ refuses insecure ws:// connections from HTTPS pages, including localhost.',
+    `Quick fix: open chrome://settings/content/siteDetails?site=${pageOrigin}, set "Insecure content" to Allow, then reload.`,
+    'Durable fix: open the Command Center from a local origin (http://) instead of https.',
+  ].join('\n');
+}
+
+/**
+ * Pick the disconnected-state copy: the mixed-content explanation when the browser is blocking
+ * every candidate, otherwise the "gateway is genuinely down" teaching. These are different
+ * states with different fixes.
+ */
+export function gatewayStatusMessage(client: {
+  gatewayUrl: string;
+  insecureContentBlocked: boolean;
+}): string {
+  return client.insecureContentBlocked
+    ? gatewayInsecureBlockedMessage()
+    : gatewayWaitingMessage(client.gatewayUrl);
 }
 
 const DEFAULT_TIMEOUT = 15_000;
@@ -155,16 +185,23 @@ export class GatewayClient {
   private source: BrowserGatewayConnection['source'];
   private disposed = false;
   private authBlocked = false;
+  private insecureBlocked = false;
   private lastAuthError: GatewayRequestError | null = null;
 
   constructor(url?: string, auth?: GatewayAuthCredentials) {
     const resolved = resolveBrowserGatewayConnection();
     const candidates = url ? [url] : resolved.urls;
-    const { urls, skipped } = filterConnectableGatewayUrls(candidates, location);
-    for (const blocked of skipped) {
-      console.info(`[gateway] skipping ${blocked}: insecure WebSocket blocked from HTTPS origin`);
+    const { connectable, blocked } = filterConnectableGatewayUrls(candidates, location);
+    for (const blockedUrl of blocked) {
+      console.info(
+        `[gateway] skipping ${blockedUrl}: insecure WebSocket blocked from HTTPS origin`,
+      );
     }
-    this.urls = urls;
+    // Every candidate is an insecure ws:// the browser refuses from this https origin: there
+    // is nothing to reach until the user unblocks the site or opens the CC from a local origin.
+    this.insecureBlocked = connectable.length === 0 && blocked.length > 0;
+    // Keep the original candidates for display (gatewayUrl) even when all are blocked.
+    this.urls = connectable.length > 0 ? connectable : candidates;
     this.url = this.urls[0];
     this.auth = auth ?? resolved.auth;
     this.source = url ? 'configured' : resolved.source;
@@ -189,6 +226,15 @@ export class GatewayClient {
     return this.url;
   }
 
+  /**
+   * True when the only gateway candidates are insecure ws:// endpoints the browser refuses
+   * from this https origin (mixed content). This is a dead end until the user unblocks the
+   * site or opens the CC from a local origin — not a transient "gateway is down" state.
+   */
+  get insecureContentBlocked(): boolean {
+    return this.insecureBlocked;
+  }
+
   get authCredentialKind(): 'token' | 'password' | 'none' {
     if (this.auth.token) return 'token';
     if (this.auth.password) return 'password';
@@ -207,6 +253,12 @@ export class GatewayClient {
 
   connect(): void {
     if (this.disposed || this.authBlocked) return;
+    // No reachable candidate from this https origin — don't open a doomed socket or spin a
+    // retry loop; stay disconnected so the UI can surface the mixed-content explanation.
+    if (this.insecureBlocked) {
+      this.setState('disconnected');
+      return;
+    }
     if (
       this.ws &&
       (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)

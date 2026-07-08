@@ -6,13 +6,12 @@ import { filterConnectableGatewayUrls, isInsecureWebSocketBlocked } from './gate
 const httpsPage = { protocol: 'https:', host: 'farmslot.io' };
 const httpPage = { protocol: 'http:', host: 'localhost:5174' };
 
-test('insecure ws:// to a non-loopback host is blocked from an HTTPS page', () => {
+// Chrome 150+ blocks every insecure ws:// from an https origin — including localhost, which
+// used to be exempt. So from an https page NO ws:// candidate can connect.
+test('any ws:// candidate is blocked from an HTTPS page, including localhost', () => {
   assert.equal(isInsecureWebSocketBlocked('ws://192.168.4.150:7777/ws', httpsPage), true);
-});
-
-test('ws:// to loopback hosts is allowed from an HTTPS page', () => {
-  assert.equal(isInsecureWebSocketBlocked('ws://localhost:7777/ws', httpsPage), false);
-  assert.equal(isInsecureWebSocketBlocked('ws://127.0.0.1:7777/ws', httpsPage), false);
+  assert.equal(isInsecureWebSocketBlocked('ws://localhost:7777/ws', httpsPage), true);
+  assert.equal(isInsecureWebSocketBlocked('ws://127.0.0.1:7777/ws', httpsPage), true);
 });
 
 test('wss:// is allowed from an HTTPS page regardless of host', () => {
@@ -21,27 +20,28 @@ test('wss:// is allowed from an HTTPS page regardless of host', () => {
 
 test('nothing is blocked when the page itself is served over http', () => {
   assert.equal(isInsecureWebSocketBlocked('ws://192.168.4.150:7777/ws', httpPage), false);
+  assert.equal(isInsecureWebSocketBlocked('ws://localhost:7777/ws', httpPage), false);
 });
 
-test('filter drops mixed-content-blocked LAN candidates on HTTPS and reports them', () => {
-  const { urls, skipped } = filterConnectableGatewayUrls(
-    ['ws://localhost:7777/ws', 'ws://192.168.4.150:7777/ws'],
+test('filter separates blocked ws:// from reachable wss:// on an HTTPS page', () => {
+  const { connectable, blocked } = filterConnectableGatewayUrls(
+    ['wss://gateway.example/ws', 'ws://localhost:7777/ws'],
     httpsPage,
   );
-  assert.deepEqual(urls, ['ws://localhost:7777/ws']);
-  assert.deepEqual(skipped, ['ws://192.168.4.150:7777/ws']);
+  assert.deepEqual(connectable, ['wss://gateway.example/ws']);
+  assert.deepEqual(blocked, ['ws://localhost:7777/ws']);
 });
 
-test('filter keeps originals when every candidate would be blocked', () => {
-  const candidates = ['ws://192.168.4.150:7777/ws', 'ws://10.0.0.2:7777/ws'];
-  const { urls, skipped } = filterConnectableGatewayUrls(candidates, httpsPage);
-  assert.deepEqual(urls, candidates);
-  assert.deepEqual(skipped, []);
+test('filter reports every candidate blocked when only ws:// is offered on HTTPS', () => {
+  const candidates = ['ws://localhost:7777/ws', 'ws://192.168.4.150:7777/ws'];
+  const { connectable, blocked } = filterConnectableGatewayUrls(candidates, httpsPage);
+  assert.deepEqual(connectable, []);
+  assert.deepEqual(blocked, candidates);
 });
 
-test('filter leaves candidates untouched on an http page', () => {
+test('filter leaves ws:// candidates connectable on an http page', () => {
   const candidates = ['ws://localhost:5174/ws', 'ws://192.168.4.150:7777/ws'];
-  const { urls, skipped } = filterConnectableGatewayUrls(candidates, httpPage);
-  assert.deepEqual(urls, candidates);
-  assert.deepEqual(skipped, []);
+  const { connectable, blocked } = filterConnectableGatewayUrls(candidates, httpPage);
+  assert.deepEqual(connectable, candidates);
+  assert.deepEqual(blocked, []);
 });

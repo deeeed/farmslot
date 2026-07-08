@@ -108,20 +108,12 @@ export function normalizeGatewayWebSocketUrl(url: string): string {
   return parsed.toString();
 }
 
-function isLoopbackWebSocketHost(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname === '::1' ||
-    hostname === '[::1]'
-  );
-}
-
 /**
- * From an HTTPS page the browser blocks insecure ws:// connections as mixed content,
- * except to loopback hosts (localhost/127.0.0.1), which are treated as potentially
- * trustworthy. A blocked candidate can never connect, so attempting it is dead noise
- * that only inflates the reconnect backoff.
+ * From an HTTPS page the browser blocks every insecure ws:// connection as mixed content.
+ * Chrome 150 removed the previous localhost/127.0.0.1 exemption, so a ws:// candidate can
+ * never connect from an https origin regardless of host — attempting it only produces a
+ * Mixed Content error and a dead retry. (wss:// is always fine; from an http origin nothing
+ * is blocked.)
  */
 export function isInsecureWebSocketBlocked(
   wsUrl: string,
@@ -134,30 +126,26 @@ export function isInsecureWebSocketBlocked(
   } catch {
     return false;
   }
-  if (parsed.protocol !== 'ws:') return false;
-  return !isLoopbackWebSocketHost(parsed.hostname);
+  return parsed.protocol === 'ws:';
 }
 
 /**
- * Drop gateway candidates the browser would refuse to connect to from the current page.
- * Returns the surviving candidates plus the ones skipped (for one-time logging). If every
- * candidate is blocked, the originals are kept so the UI still surfaces a real attempt
- * (and the doctor's guidance) instead of silently doing nothing.
+ * Split gateway candidates into those the browser can actually reach from the current page
+ * and those it will refuse as mixed content. When every candidate is blocked (the common
+ * "hosted https CC → local ws:// gateway" case), the caller surfaces a first-class
+ * explanation rather than spinning through a doomed reconnect loop.
  */
 export function filterConnectableGatewayUrls(
   urls: string[],
   currentLocation: BrowserLocationLike,
-): { urls: string[]; skipped: string[] } {
-  const skipped: string[] = [];
-  const connectable = urls.filter((url) => {
-    if (isInsecureWebSocketBlocked(url, currentLocation)) {
-      skipped.push(url);
-      return false;
-    }
-    return true;
-  });
-  if (connectable.length === 0) return { urls, skipped: [] };
-  return { urls: connectable, skipped };
+): { connectable: string[]; blocked: string[] } {
+  const connectable: string[] = [];
+  const blocked: string[] = [];
+  for (const url of urls) {
+    if (isInsecureWebSocketBlocked(url, currentLocation)) blocked.push(url);
+    else connectable.push(url);
+  }
+  return { connectable, blocked };
 }
 
 export function gatewayWebSocketToHttpOrigin(wsUrl: string): string {
