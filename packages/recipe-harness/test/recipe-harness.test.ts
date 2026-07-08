@@ -199,6 +199,161 @@ test('runs a backend/headless recipe and writes a v1 artifact package', async ()
   }
 });
 
+test('watch_logs defaults to run-scoped matching so stale pre-run lines do not pass', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    await mkdir(path.join(tempRoot, 'logs'), { recursive: true });
+    await writeFile(path.join(tempRoot, 'logs/app.log'), 'STALE_MARKER\n');
+    const runner = createRecipeRunner({
+      actionManifest: coreActionManifest,
+      adapters: createStandardCoreAdapters(),
+    });
+
+    const failRecipe = {
+      schema_version: 1,
+      title: 'stale watch_logs proof',
+      description: 'Pre-run stale markers must not satisfy watch_logs.',
+      validate: {
+        workflow: {
+          entry: 'append',
+          nodes: {
+            append: {
+              action: 'command',
+              intent: 'Append a fresh marker without rewriting the old log.',
+              cmd: "node -e \"require('fs').appendFileSync('logs/app.log','FRESH_MARKER\\n')\"",
+              next: 'watch',
+            },
+            watch: {
+              action: 'watch_logs',
+              intent: 'Check stale markers do not satisfy run-scoped log matching.',
+              path: 'logs/app.log',
+              contains: 'STALE_MARKER',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+    const failResult = await runner.run({
+      recipeDocument: failRecipe,
+      artifactsDir: path.join(tempRoot, 'artifacts-fail'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(failResult.status, 'fail');
+
+    const passRecipe = {
+      schema_version: 1,
+      title: 'fresh watch_logs proof',
+      description: 'Run-scoped watch_logs sees lines emitted during this run.',
+      validate: {
+        workflow: {
+          entry: 'append',
+          nodes: {
+            append: {
+              action: 'command',
+              intent: 'Append a run-scoped marker to the log.',
+              cmd: "node -e \"require('fs').appendFileSync('logs/app.log','RUN_SCOPED_MARKER\\n')\"",
+              next: 'watch',
+            },
+            watch: {
+              action: 'watch_logs',
+              intent: 'Check the marker emitted during this run.',
+              path: 'logs/app.log',
+              contains: 'RUN_SCOPED_MARKER',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+    const passResult = await runner.run({
+      recipeDocument: passRecipe,
+      artifactsDir: path.join(tempRoot, 'artifacts-pass'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(passResult.status, 'pass');
+
+    const fileScopeRecipe = {
+      schema_version: 1,
+      title: 'file scoped watch_logs proof',
+      description: 'Recipes can explicitly scan the whole file when needed.',
+      validate: {
+        workflow: {
+          entry: 'watch',
+          nodes: {
+            watch: {
+              action: 'watch_logs',
+              intent: 'Check whole-file matching remains opt-in.',
+              path: 'logs/app.log',
+              contains: 'STALE_MARKER',
+              scope: 'file',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+    const fileScopeResult = await runner.run({
+      recipeDocument: fileScopeRecipe,
+      artifactsDir: path.join(tempRoot, 'artifacts-file-scope'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(fileScopeResult.status, 'pass');
+
+    const flowRecipe = {
+      schema_version: 1,
+      title: 'flow scoped watch_logs proof',
+      description: 'Run-scoped watch_logs also applies inside called flows.',
+      flows: {
+        'local.watch-stale': {
+          entry: 'watch',
+          nodes: {
+            watch: {
+              action: 'watch_logs',
+              intent: 'Check stale markers do not satisfy run-scoped log matching in flows.',
+              path: 'logs/app.log',
+              contains: 'STALE_MARKER',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      validate: {
+        workflow: {
+          entry: 'append',
+          nodes: {
+            append: {
+              action: 'command',
+              intent: 'Append a fresh marker before calling the flow.',
+              cmd: "node -e \"require('fs').appendFileSync('logs/app.log','FLOW_FRESH_MARKER\\n')\"",
+              next: 'call-flow',
+            },
+            'call-flow': {
+              action: 'call',
+              intent: 'Run a flow whose watch_logs node must use the run baseline.',
+              ref: 'local.watch-stale',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+    const flowResult = await runner.run({
+      recipeDocument: flowRecipe,
+      artifactsDir: path.join(tempRoot, 'artifacts-flow'),
+      projectRoot: tempRoot,
+    });
+    assert.equal(flowResult.status, 'fail');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('records one opt-in whole-recipe video and registers it in the artifact manifest', async () => {
   const tempRoot = await createTempRoot();
   try {

@@ -15,7 +15,7 @@ import {
   manifestTarget,
 } from '../recording/capture-helper.js';
 
-import { collectFlows, executeInlineFlowCall } from './flows.js';
+import { collectFlows, executeInlineFlowCall, type InlineFlow } from './flows.js';
 import {
   extractWorkflowGraph,
   normalizePreconditionResult,
@@ -119,6 +119,42 @@ export function createRecipeRunner(options: CreateRecipeRunnerOptions): RecipeRu
   );
 }
 
+function collectWatchLogPaths(paths: Set<string>, nodes: Record<string, unknown>): void {
+  for (const node of Object.values(nodes)) {
+    if (!isRecord(node) || node.action !== 'watch_logs' || typeof node.path !== 'string') continue;
+    paths.add(normalizeRelativePath(node.path).split(path.sep).join('/'));
+  }
+}
+
+async function collectRunFileOffsets({
+  graph,
+  flows,
+  projectRoot,
+}: {
+  graph: WorkflowGraph;
+  flows: ReadonlyMap<string, InlineFlow>;
+  projectRoot: string;
+}): Promise<Map<string, number>> {
+  const offsets = new Map<string, number>();
+  const paths = new Set<string>();
+  collectWatchLogPaths(paths, graph.nodes);
+  for (const flow of flows.values()) collectWatchLogPaths(paths, flow.nodes);
+  for (const relativePath of paths) {
+    try {
+      const info = await stat(path.join(projectRoot, relativePath));
+      offsets.set(relativePath, info.size);
+    } catch (error) {
+      if (!isNodeFileMissingError(error)) throw error;
+      offsets.set(relativePath, 0);
+    }
+  }
+  return offsets;
+}
+
+function isNodeFileMissingError(error: unknown): boolean {
+  return isRecord(error) && error.code === 'ENOENT';
+}
+
 class DefaultRecipeRunner implements RecipeRunner {
   readonly #actionManifest: RecipeActionManifestDocument;
   readonly #adapters: ReadonlyMap<string, ActionAdapter>;
@@ -178,6 +214,11 @@ class DefaultRecipeRunner implements RecipeRunner {
       usedLibraryFlows,
       this.#logger,
     );
+    const runFileOffsets = await collectRunFileOffsets({
+      graph,
+      flows: flowCatalog,
+      projectRoot,
+    });
 
     const artifactWriter = new JsonArtifactWriter(artifactsDir);
     const traceWriter = new JsonTraceWriter(artifactsDir, this.#runnerProvenance);
@@ -234,6 +275,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           outputs,
           artifactWriter,
           traceWriter,
+          runFileOffsets,
         });
         if (preconditionStatus === 'fail') {
           status = 'fail';
@@ -276,6 +318,7 @@ class DefaultRecipeRunner implements RecipeRunner {
           env: request.env ?? {},
           outputs,
           artifactWriter,
+          runFileOffsets,
         });
         try {
           const gate = evaluateNodeGate(node, context.outputs);
@@ -575,6 +618,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     outputs,
     artifactWriter,
     traceWriter,
+    runFileOffsets,
   }: {
     graph: WorkflowGraph;
     recipe: unknown;
@@ -584,6 +628,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     outputs: Map<string, unknown>;
     artifactWriter: JsonArtifactWriter;
     traceWriter: JsonTraceWriter;
+    runFileOffsets: ReadonlyMap<string, number>;
   }): Promise<'pass' | 'fail'> {
     for (const gate of graph.preconditions) {
       const nodeId = `pre_conditions:${gate.id}`;
@@ -608,6 +653,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         env: request.env ?? {},
         outputs,
         artifactWriter,
+        runFileOffsets,
       });
       try {
         const rawResult = await checker.execute(gate, context);
@@ -650,6 +696,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     env,
     outputs,
     artifactWriter,
+    runFileOffsets,
   }: {
     nodeId: string;
     recipe: unknown;
@@ -658,6 +705,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     env: Record<string, string | undefined>;
     outputs: Map<string, unknown>;
     artifactWriter: JsonArtifactWriter;
+    runFileOffsets: ReadonlyMap<string, number>;
   }): Parameters<ActionAdapter['execute']>[1] {
     return {
       nodeId,
@@ -675,6 +723,9 @@ class DefaultRecipeRunner implements RecipeRunner {
       },
       resolveArtifactPath(relativePath: string) {
         return path.join(artifactsDir, normalizeRelativePath(relativePath));
+      },
+      getRunFileOffset(relativePath: string) {
+        return runFileOffsets.get(normalizeRelativePath(relativePath).split(path.sep).join('/'));
       },
       registerArtifact(entry: RecipeArtifactManifestEntry) {
         artifactWriter.register(entry);
@@ -875,6 +926,9 @@ class DefaultRecipeRunner implements RecipeRunner {
       },
       resolveArtifactPath(relativePath: string) {
         return path.join(request.artifactsDir, normalizeRelativePath(relativePath));
+      },
+      getRunFileOffset() {
+        return undefined;
       },
       registerArtifact() {},
       logger: this.#logger,

@@ -229,11 +229,28 @@ function defineWatchLogsAdapter(): ActionAdapter {
     async execute(node, context) {
       const filePath = asString(node.path, 'watch_logs.path');
       const contains = asOptionalString(node.contains, 'watch_logs.contains');
-      const content = await readFile(context.resolveProjectPath(filePath), 'utf-8');
-      if (contains && !content.includes(contains)) {
-        throw new Error(`Log ${filePath} does not contain ${JSON.stringify(contains)}.`);
+      const rawScope = asOptionalString(node.scope, 'watch_logs.scope') ?? 'run';
+      if (rawScope !== 'run' && rawScope !== 'file') {
+        throw new Error('watch_logs.scope must be "run" or "file".');
       }
-      return { output: { path: filePath, matched: contains ?? null } };
+      const contentBuffer = await readFile(context.resolveProjectPath(filePath));
+      const baseline = rawScope === 'file' ? 0 : (context.getRunFileOffset(filePath) ?? 0);
+      const start = baseline > contentBuffer.length ? 0 : baseline;
+      const content = contentBuffer.subarray(start).toString('utf-8');
+      if (contains && !content.includes(contains)) {
+        throw new Error(
+          `Log ${filePath} does not contain ${JSON.stringify(contains)} in ${rawScope} scope.`,
+        );
+      }
+      return {
+        output: {
+          path: filePath,
+          matched: contains ?? null,
+          scope: rawScope,
+          offset: start,
+          bytesScanned: contentBuffer.length - start,
+        },
+      };
     },
   };
 }

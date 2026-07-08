@@ -381,6 +381,57 @@ function cloneSlotRepo(repoUrl: string, repoPath: string, progress: AddProgress)
   progress.step({ label: `repo cloned (blobless)`, detail: repoPath });
 }
 
+function numericResourcePort(
+  slot: { resources?: Record<string, Record<string, unknown>> } | undefined,
+  resource: string,
+): number | null {
+  const port = slot?.resources?.[resource]?.port;
+  return typeof port === 'number' ? port : null;
+}
+
+function writeBaselineRuntimeContext(
+  ws: Workspace,
+  registered: RegisteredProject,
+  slotId: string,
+  machine: string,
+  repoPath: string,
+  port: number | null,
+  progress: AddProgress,
+): void {
+  const writer = join(ws.farmslotDir, 'scripts', 'write-runtime-context.sh');
+  if (!existsSync(writer)) return;
+  const runtimeContextPath = join(repoPath, registered.runtimeDir, 'agentic-runtime.json');
+  if (existsSync(runtimeContextPath)) {
+    progress.info(`slot ${slotId} runtime context preserved`);
+    return;
+  }
+  const args = [
+    writer,
+    '--repo',
+    repoPath,
+    '--project',
+    registered.name,
+    '--slot-id',
+    slotId,
+    '--machine',
+    machine,
+    '--runtime-owner',
+    'farmslot',
+    '--platform',
+    registered.platform,
+    '--runtime-dir',
+    registered.runtimeDir,
+    '--strict',
+    'true',
+  ];
+  if (port !== null) {
+    const value = String(port);
+    args.push('--watcher-port', value, '--metro-port', value, '--dev-server-port', value);
+  }
+  run('bash', args, { cwd: ws.farmslotDir, stdio: childStdio(progress) });
+  progress.step({ label: `slot ${slotId} runtime context wrote`, detail: registered.runtimeDir });
+}
+
 export interface AddResult {
   pack: PackJson;
   action: 'add' | 'noop' | 'repair';
@@ -658,6 +709,16 @@ export function projectAdd(
             stdio: childStdio(progress),
           });
           progress.step({ label: `slot ${slotId} fixtures synced` });
+          const slot = pool.slots.find((s) => s.id === slotId);
+          writeBaselineRuntimeContext(
+            ws,
+            registered,
+            slotId,
+            pool.machine,
+            repoPath,
+            numericResourcePort(slot, 'dev-server'),
+            progress,
+          );
           if (options.noSetup) {
             progress.info(`slot ${slotId} setup/preflight deferred (--no-setup)`);
           } else {
