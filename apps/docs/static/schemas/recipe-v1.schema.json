@@ -3,7 +3,7 @@
   "$id": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "title": "Farmslot Recipe Protocol v1",
   "type": "object",
-  "required": ["$schema", "schema_version", "validate"],
+  "required": ["schema_version", "validate"],
   "properties": {
     "$schema": {
       "const": "https://farmslot.io/schemas/recipe-v1.schema.json"
@@ -26,6 +26,10 @@
         "type": "string",
         "minLength": 1
       }
+    },
+    "flows": {
+      "type": "object",
+      "description": "Inline flow definitions keyed by flow id, resolvable by call.ref."
     },
     "proofTargets": {
       "type": "array",
@@ -62,7 +66,7 @@
       "additionalProperties": true
     }
   },
-  "additionalProperties": false,
+  "additionalProperties": true,
   "$defs": {
     "workflow": {
       "type": "object",

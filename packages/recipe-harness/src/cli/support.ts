@@ -149,16 +149,9 @@ export async function validateRecipeCliInput({
   }
 
   if (artifactDir) {
-    results.push(
-      validateRecipeArtifactPackage({
-        recipe,
-        manifest,
-        artifactPaths,
-        ...(validationOptions?.externalFlowIds
-          ? { externalFlowIds: validationOptions.externalFlowIds }
-          : {}),
-      }),
-    );
+    // Flow-call resolution already ran above via validateRecipeWithManifest with
+    // the configured library; the artifact-package check is envelope-only.
+    results.push(validateRecipeArtifactPackage({ recipe, manifest, artifactPaths }));
   }
 
   return mergeRecipeValidationResults(results);

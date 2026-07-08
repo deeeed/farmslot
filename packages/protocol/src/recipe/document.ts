@@ -34,6 +34,13 @@ export interface RecipeDocumentValidationOptions {
   externalFlowIds?: ReadonlySet<string>;
   /** Require the canonical published JSON Schema URL at recipe.$schema. */
   requireSchemaRef?: boolean;
+  /**
+   * Skip `call.ref` resolution against inline flows / uses catalogs / external
+   * library flows. Set when validating a produced artifact package, where the
+   * recipe library that resolved those refs at run time is no longer available —
+   * flow-call resolution is an authoring/run-time concern, not an artifact one.
+   */
+  skipFlowCallResolution?: boolean;
 }
 
 export function validateRecipeWithManifest(
@@ -144,7 +151,9 @@ export function validateRecipeDocument(
   if (workflow && rawWorkflow) {
     validateWorkflowPreconditions(ctx, rawWorkflow);
     validateWorkflowGraph(ctx, workflow, rawWorkflow);
-    validateFlowCalls(ctx, recipe, workflow, options);
+    if (options?.skipFlowCallResolution !== true) {
+      validateFlowCalls(ctx, recipe, workflow, options);
+    }
   }
   validateInlineFlows(ctx, recipe);
 

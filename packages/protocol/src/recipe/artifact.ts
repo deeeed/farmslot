@@ -339,9 +339,13 @@ export function validateRecipeArtifactPackage(
   }
 
   if (input.recipe != null) {
+    // An artifact package is validated after a run, where the recipe library
+    // that resolved `call.ref` values is gone. Skip flow-call resolution here —
+    // it is enforced at authoring/run time (validateRecipeWithManifest) with the
+    // library in scope — and only check the envelope + workflow structure.
     const recipeResult = validateRecipeDocument(input.recipe, {
       requireSchemaRef: input.requireSchemaRef === true,
-      ...(input.externalFlowIds ? { externalFlowIds: input.externalFlowIds } : {}),
+      skipFlowCallResolution: true,
     });
     ctx.findings.push(...recipeResult.findings);
   }

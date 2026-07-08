@@ -140,7 +140,6 @@ export interface RecipeArtifactPackageInput {
   artifactPaths?: readonly string[];
   recipe?: unknown;
   requireSchemaRef?: boolean;
-  externalFlowIds?: ReadonlySet<string>;
 }
 
 export interface MutableValidationContext {
