@@ -1,4 +1,5 @@
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Farmslot Gateway recipe RPC and artifact package smoke",
   "description": "Validates recipe-run RPCs, artifact index ingestion, run/family projection, and manifest contract without requiring visual replay.",

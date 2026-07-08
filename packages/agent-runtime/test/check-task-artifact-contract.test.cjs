@@ -13,7 +13,18 @@ const checker = path.join(packageRoot, 'scripts', 'check-task-artifact-contract.
 function makeTaskDir(name) {
   const taskDir = mkdtempSync(path.join(tmpdir(), name));
   mkdirSync(path.join(taskDir, 'artifacts'), { recursive: true });
-  writeFileSync(path.join(taskDir, 'artifacts', 'recipe.json'), '{"schema_version":1}\n');
+  writeFileSync(
+    path.join(taskDir, 'artifacts', 'recipe.json'),
+    `${JSON.stringify({
+      schema_version: 1,
+      validate: {
+        workflow: {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+      },
+    })}\n`,
+  );
   writeFileSync(path.join(taskDir, 'artifacts', 'recipe-coverage.md'), '1/1 passed\n');
   return taskDir;
 }

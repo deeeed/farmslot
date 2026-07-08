@@ -66,6 +66,7 @@ Illustrative flow declaration; the canonical schema is in `reference/recipe-prot
 
 ```json
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "kind": "recipe-flow-catalog",
   "owner": "example.trade",

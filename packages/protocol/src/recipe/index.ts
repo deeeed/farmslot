@@ -9,6 +9,8 @@ export {
   type OfficialActionName,
   RECIPE_PLAYBACK_SLOW_MS_MAX,
   RECIPE_PLAYBACK_SLOW_MS_MIN,
+  RECIPE_PROTOCOL_SCHEMA_URL,
+  RECIPE_PROTOCOL_SCHEMA_URLS,
   RECIPE_PROTOCOL_SCHEMA_VERSION,
   type RecipeActionCatalogEntry,
   type RecipeActionCatalogExample,
@@ -26,6 +28,7 @@ export {
   type RecipeValidationSeverity,
   type RecipeValidationStatus,
 } from './common.js';
+export { recipeProtocolSchemaUrlForVersion } from './common.js';
 export {
   type RecipeDocumentValidationOptions,
   validateRecipeDocument,

@@ -1,4 +1,5 @@
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Farmslot Mobile Companion recipe evidence review smoke",
   "description": "Validates the Mobile Companion run detail, decision/evidence review, recipe-run selector, artifact cards, and media viewer surfaces.",

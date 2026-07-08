@@ -149,7 +149,16 @@ export async function validateRecipeCliInput({
   }
 
   if (artifactDir) {
-    results.push(validateRecipeArtifactPackage({ recipe, manifest, artifactPaths }));
+    results.push(
+      validateRecipeArtifactPackage({
+        recipe,
+        manifest,
+        artifactPaths,
+        ...(validationOptions?.externalFlowIds
+          ? { externalFlowIds: validationOptions.externalFlowIds }
+          : {}),
+      }),
+    );
   }
 
   return mergeRecipeValidationResults(results);

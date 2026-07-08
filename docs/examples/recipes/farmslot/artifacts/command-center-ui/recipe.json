@@ -1,4 +1,5 @@
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Farmslot Command Center recipe workspace smoke",
   "description": "Validates the Command Center recipe tab, artifact viewer, replay controls, and ready/review workspace basics with reviewer-visible evidence.",

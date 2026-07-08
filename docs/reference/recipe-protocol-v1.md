@@ -50,6 +50,7 @@ Minimum valid flat recipe:
 
 ```json
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "validate": {
     "workflow": {
@@ -73,6 +74,7 @@ Top-level fields:
 
 | Field               | Required | Description                                                                                                                                                                                                                                                |
 | ------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$schema`           | no       | Recommended canonical JSON Schema URL for Recipe Protocol v1: `https://farmslot.io/schemas/recipe-v1.schema.json`. When present, it must match `schema_version`; runners infer the expected schema URL from `schema_version` for compatibility validation. |
 | `schema_version`    | yes      | Numeric protocol version. v1 uses `1`.                                                                                                                                                                                                                     |
 | `title`             | no       | Optional recipe-level metadata. It is not the step/HUD explanation.                                                                                                                                                                                        |
 | `description`       | no       | Optional recipe-level metadata describing the overall proof. It is not the step/HUD explanation.                                                                                                                                                           |
@@ -217,6 +219,7 @@ Flow catalog document:
 
 ```json
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "kind": "recipe-flow-catalog",
   "owner": "example.trade",
@@ -590,7 +593,7 @@ The minimum flat recipe in section 4 is sufficient. No flow catalog or visual pr
 
 ## 21. Compatibility and versioning
 
-- `schema_version: 1` remains the v1 compatibility marker.
+- `schema_version: 1` remains the v1 compatibility marker at execution/artifact-validation boundaries. `$schema` is recommended and must match the version when present.
 - Composition fields are additive in v1.
 - Existing flat v1 recipes remain valid when every non-terminal executable node declares `intent`.
 - Future incompatible envelope changes require a new schema version.

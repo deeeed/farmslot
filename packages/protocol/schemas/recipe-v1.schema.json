@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "title": "Farmslot Recipe Protocol v1",
+  "type": "object",
+  "required": ["$schema", "schema_version", "validate"],
+  "properties": {
+    "$schema": {
+      "const": "https://farmslot.io/schemas/recipe-v1.schema.json"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "uses": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "proofTargets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "claim"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claim": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "startState": {
+      "$ref": "#/$defs/actionNode"
+    },
+    "fail_on_unexpected": {
+      "type": "object"
+    },
+    "validate": {
+      "type": "object",
+      "required": ["workflow"],
+      "properties": {
+        "workflow": {
+          "$ref": "#/$defs/workflow"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "workflow": {
+      "type": "object",
+      "required": ["entry", "nodes"],
+      "properties": {
+        "pre_conditions": {
+          "type": "array"
+        },
+        "setup": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionNode"
+          }
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nodes": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/workflowNode"
+          }
+        },
+        "teardown": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/actionNode"
+          }
+        },
+        "playback": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "enum": ["off", "auto", "step"]
+            },
+            "slow_ms": {
+              "type": "number",
+              "minimum": 100,
+              "maximum": 60000
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "workflowNode": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "intent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "next": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cases": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "next": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ]
+        },
+        "status": {
+          "enum": ["pass", "fail", "unknown"]
+        },
+        "phase": {
+          "enum": ["setup", "start_state", "proof", "assert", "teardown"]
+        },
+        "proofTarget": {
+          "type": "string",
+          "minLength": 1
+        },
+        "record": {
+          "enum": ["none", "trace_only", "proof_window", "failure_only"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "const": "end"
+              }
+            },
+            "required": ["action"]
+          },
+          "then": {
+            "required": ["status"]
+          },
+          "else": {
+            "required": ["intent"]
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "actionNode": {
+      "type": "object",
+      "required": ["action", "intent"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "intent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "enum": ["setup", "start_state", "proof", "assert", "teardown"]
+        },
+        "proofTarget": {
+          "type": "string",
+          "minLength": 1
+        },
+        "record": {
+          "enum": ["none", "trace_only", "proof_window", "failure_only"]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

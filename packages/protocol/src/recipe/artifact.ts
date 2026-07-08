@@ -10,6 +10,7 @@ import {
   type RecipeValidationResult,
   TERMINAL_STATUSES,
 } from './common.js';
+import { validateRecipeDocument } from './document.js';
 import { getRecipeWorkflowNodeIds } from './workflow.js';
 
 export function validateArtifactManifestDocument(
@@ -335,6 +336,14 @@ export function validateRecipeArtifactPackage(
       artifactPaths: input.artifactPaths,
     });
     ctx.findings.push(...manifestResult.findings);
+  }
+
+  if (input.recipe != null) {
+    const recipeResult = validateRecipeDocument(input.recipe, {
+      requireSchemaRef: input.requireSchemaRef === true,
+      ...(input.externalFlowIds ? { externalFlowIds: input.externalFlowIds } : {}),
+    });
+    ctx.findings.push(...recipeResult.findings);
   }
 
   return finishResult(ctx);

@@ -1,4 +1,5 @@
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Backend API smoke contract",
   "description": "Runs a project-native backend API smoke test and indexes the machine-readable report.",

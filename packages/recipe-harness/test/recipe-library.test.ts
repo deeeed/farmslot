@@ -54,10 +54,12 @@ async function createLibrary(
   await mkdir(path.join(root, 'flows'), { recursive: true });
   await writeJsonFile(path.join(root, 'library.json'), {
     kind: 'recipe-library',
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     schema_version: 1,
     ...(options.name ? { name: options.name } : {}),
   });
   await writeJsonFile(path.join(root, 'flows', options.catalogFile ?? 'main.flows.json'), {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     schema_version: 1,
     kind: 'recipe-flow-catalog',
     flows: options.flows,
@@ -198,6 +200,7 @@ test('loadRecipeLibraries rejects non-libraries and duplicate refs within one so
       flows: { 'lib.write-text': writeTextFlow('a.txt', 'a') },
     });
     await writeJsonFile(path.join(duplicated, 'flows', 'other.flows.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       kind: 'recipe-flow-catalog',
       flows: { 'lib.write-text': writeTextFlow('b.txt', 'b') },
@@ -231,6 +234,7 @@ test('runs a recipe composed from a library flow and reports the resolution in e
       flows: { 'lib.write-text': writeTextFlow('from-team.txt', 'team') },
     });
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Library call recipe',
       description: 'Calls a flow resolved from a configured recipe library.',
@@ -329,6 +333,7 @@ test('recipe-local flows win over library flows and the override is logged', asy
       flows: { 'lib.write-text': writeTextFlow('from-library.txt', 'library') },
     });
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Recipe-local override recipe',
       description: 'Declares a flow inline that also exists in a library source.',
@@ -410,6 +415,7 @@ test('validate accepts library-resolved call refs only when sources are configur
     });
     const recipePath = path.join(tempRoot, 'recipe.json');
     await writeJsonFile(recipePath, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Library call recipe',
       description: 'Calls a flow resolved from a configured recipe library.',
@@ -447,6 +453,7 @@ test('loads flow catalogs referenced through symlinks', async () => {
   try {
     const sharedCatalog = path.join(tempRoot, 'shared-catalog.flows.json');
     await writeJsonFile(sharedCatalog, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       kind: 'recipe-flow-catalog',
       flows: { 'lib.linked': writeTextFlow('linked.txt', 'linked') },

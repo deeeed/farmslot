@@ -4,7 +4,9 @@ import {
   finishResult,
   hasOwn,
   isRecord,
+  RECIPE_PROTOCOL_SCHEMA_URL,
   RECIPE_PROTOCOL_SCHEMA_VERSION,
+  recipeProtocolSchemaUrlForVersion,
   type RecipeValidationResult,
   validateOptionalStringField,
 } from './common.js';
@@ -30,6 +32,8 @@ export interface RecipeDocumentValidationOptions {
    * unresolved even when the recipe has no `uses` catalogs or inline flows.
    */
   externalFlowIds?: ReadonlySet<string>;
+  /** Require the canonical published JSON Schema URL at recipe.$schema. */
+  requireSchemaRef?: boolean;
 }
 
 export function validateRecipeWithManifest(
@@ -92,6 +96,27 @@ export function validateRecipeDocument(
 
   const schemaVersion = recipe.schema_version;
   const schemaVersionIsV1 = schemaVersion === RECIPE_PROTOCOL_SCHEMA_VERSION;
+  const expectedSchemaRef =
+    recipeProtocolSchemaUrlForVersion(schemaVersion) ?? RECIPE_PROTOCOL_SCHEMA_URL;
+  const schemaRef = recipe.$schema;
+  if (options?.requireSchemaRef === true && !hasOwn(recipe, '$schema')) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.missing_schema_ref',
+      '$schema',
+      `Recipe must set $schema to ${expectedSchemaRef}.`,
+    );
+  } else if (schemaRef != null && schemaRef !== expectedSchemaRef) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.unsupported_schema_ref',
+      '$schema',
+      `Unsupported $schema ${JSON.stringify(schemaRef)} for schema_version ${JSON.stringify(schemaVersion)}; expected ${expectedSchemaRef}.`,
+    );
+  }
+
   if (!hasOwn(recipe, 'schema_version')) {
     addFinding(
       ctx,

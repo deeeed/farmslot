@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   mergeRecipeValidationResults,
+  RECIPE_PROTOCOL_SCHEMA_URL,
   type RecipeArtifactManifestDocument,
+  recipeProtocolSchemaUrlForVersion,
   validateArtifactManifestDocument,
   validateRecipeActionManifestDocument,
   validateRecipeArtifactPackage,
@@ -18,6 +20,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 
 async function readJson(relativePath: string): Promise<unknown> {
   return JSON.parse(await readFile(path.join(repoRoot, relativePath), 'utf-8')) as unknown;
+}
+
+async function readUtf8(relativePath: string): Promise<string> {
+  return readFile(path.join(repoRoot, relativePath), 'utf-8');
 }
 
 async function listRelativeFiles(root: string): Promise<string[]> {
@@ -138,6 +144,14 @@ test('validates portable backend and UI v1 example recipes', async () => {
     assert.equal(result.status, 'valid', recipePath);
     assert.deepEqual(result.findings, []);
   }
+});
+
+test('publishes the same Recipe v1 JSON Schema in protocol package and docs static', async () => {
+  assert.equal(recipeProtocolSchemaUrlForVersion(1), RECIPE_PROTOCOL_SCHEMA_URL);
+  assert.equal(
+    await readUtf8('packages/protocol/schemas/recipe-v1.schema.json'),
+    await readUtf8('apps/docs/static/schemas/recipe-v1.schema.json'),
+  );
 });
 
 test('validates runner action manifests and rejects undeclared recipe actions', async () => {
@@ -554,7 +568,8 @@ test('rejects recipe documents without the v1 schema marker', () => {
 });
 
 test('accepts v1 recipes without top-level title or description when nodes declare intent', () => {
-  const result = validateRecipeDocument({
+  const recipe = {
+    $schema: RECIPE_PROTOCOL_SCHEMA_URL,
     schema_version: 1,
     validate: {
       workflow: {
@@ -569,10 +584,44 @@ test('accepts v1 recipes without top-level title or description when nodes decla
         },
       },
     },
-  });
+  };
+  const result = validateRecipeDocument(recipe, { requireSchemaRef: true });
 
   assert.equal(result.status, 'valid');
   assert.deepEqual(result.findings, []);
+});
+
+test('strict recipe validation requires schema ref to match schema_version', () => {
+  const withoutRef = validateRecipeDocument(
+    {
+      schema_version: 1,
+      validate: {
+        workflow: {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+      },
+    },
+    { requireSchemaRef: true },
+  );
+  assert.equal(withoutRef.status, 'invalid');
+  assert.ok(withoutRef.findings.some((finding) => finding.code === 'recipe.missing_schema_ref'));
+
+  const mismatch = validateRecipeDocument(
+    {
+      $schema: 'https://farmslot.io/schemas/recipe-v2.schema.json',
+      schema_version: 1,
+      validate: {
+        workflow: {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+      },
+    },
+    { requireSchemaRef: true },
+  );
+  assert.equal(mismatch.status, 'invalid');
+  assert.ok(mismatch.findings.some((finding) => finding.code === 'recipe.unsupported_schema_ref'));
 });
 
 test('rejects missing and generic non-terminal node intent', () => {

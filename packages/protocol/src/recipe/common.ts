@@ -1,6 +1,10 @@
 import { RECIPE_ARTIFACT_TYPES } from '../recipes/step-io.js';
 
 export const RECIPE_PROTOCOL_SCHEMA_VERSION = 1;
+export const RECIPE_PROTOCOL_SCHEMA_URL = 'https://farmslot.io/schemas/recipe-v1.schema.json';
+export const RECIPE_PROTOCOL_SCHEMA_URLS = {
+  [RECIPE_PROTOCOL_SCHEMA_VERSION]: RECIPE_PROTOCOL_SCHEMA_URL,
+} as const;
 export const RECIPE_PLAYBACK_SLOW_MS_MIN = 100;
 export const RECIPE_PLAYBACK_SLOW_MS_MAX = 60_000;
 
@@ -135,6 +139,8 @@ export interface RecipeArtifactPackageInput {
   manifest?: unknown;
   artifactPaths?: readonly string[];
   recipe?: unknown;
+  requireSchemaRef?: boolean;
+  externalFlowIds?: ReadonlySet<string>;
 }
 
 export interface MutableValidationContext {
@@ -161,6 +167,11 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function hasOwn(value: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+export function recipeProtocolSchemaUrlForVersion(version: unknown): string | undefined {
+  if (typeof version !== 'number') return undefined;
+  return RECIPE_PROTOCOL_SCHEMA_URLS[version as keyof typeof RECIPE_PROTOCOL_SCHEMA_URLS];
 }
 
 export function isNonEmptyString(value: unknown): value is string {

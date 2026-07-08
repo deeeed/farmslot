@@ -7,6 +7,9 @@ const require = createRequire(import.meta.url);
 const { expandedArtifactsForCommand } = require('./worker-terminal-contract.cjs');
 
 let sharedRecipeQualityValidator = null;
+let sharedRecipeDocumentValidator = null;
+let sharedRecipeSchemaUrlForVersion = (version) =>
+  typeof version === 'number' ? `https://farmslot.io/schemas/recipe-v${version}.schema.json` : null;
 try {
   ({ isRecipeQualityArtifact: sharedRecipeQualityValidator } =
     await import('@farmslot/protocol/contracts/recipes'));
@@ -15,6 +18,20 @@ try {
   // Keep strict local validation instead of downgrading to the historical loose gate.
   if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME) {
     console.warn(`[agent-runtime] using local RecipeQualityArtifact fallback: ${error.message}`);
+  }
+}
+try {
+  const recipeProtocol = await import('@farmslot/protocol/recipe');
+  sharedRecipeDocumentValidator = recipeProtocol.validateRecipeDocument;
+  if (typeof recipeProtocol.recipeProtocolSchemaUrlForVersion === 'function') {
+    sharedRecipeSchemaUrlForVersion = recipeProtocol.recipeProtocolSchemaUrlForVersion;
+  }
+} catch (error) {
+  // Compatibility fail-safe: source checkouts can run before @farmslot/protocol
+  // has emitted dist/. In that degraded state, do not bypass recipe checks;
+  // enforce the minimum executable envelope locally until the shared validator loads.
+  if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME) {
+    console.warn(`[agent-runtime] using local Recipe v1 fallback: ${error.message}`);
   }
 }
 
@@ -226,6 +243,51 @@ function validateRecipeQualityArtifact() {
   }
 }
 
+function validateRecipeDocumentArtifact() {
+  const text = readText('artifacts/recipe.json');
+  if (!text) return;
+  let recipe;
+  try {
+    recipe = JSON.parse(text);
+  } catch (error) {
+    issues.push(`recipe.json: invalid JSON: ${error.message}`);
+    return;
+  }
+  if (sharedRecipeDocumentValidator) {
+    const result = sharedRecipeDocumentValidator(recipe);
+    for (const finding of result.findings) {
+      if (finding.severity === 'error') {
+        issues.push(`recipe.json: ${finding.code} ${finding.path}: ${finding.message}`);
+      }
+    }
+    return;
+  }
+  if (!isRecord(recipe)) {
+    issues.push('recipe.json: expected object');
+    return;
+  }
+  if (recipe.schema_version !== 1) {
+    issues.push('recipe.json: schema_version must equal 1');
+  }
+  const expectedSchemaUrl = sharedRecipeSchemaUrlForVersion(recipe.schema_version);
+  if (recipe.$schema != null && recipe.$schema !== expectedSchemaUrl) {
+    issues.push(
+      `recipe.json: $schema must match schema_version (${expectedSchemaUrl ?? 'unknown schema_version'})`,
+    );
+  }
+  if (!isRecord(recipe.validate) || !isRecord(recipe.validate.workflow)) {
+    issues.push('recipe.json: validate.workflow is required');
+    return;
+  }
+  const workflow = recipe.validate.workflow;
+  if (typeof workflow.entry !== 'string' || !workflow.entry.trim()) {
+    issues.push('recipe.json: validate.workflow.entry must be a non-empty string');
+  }
+  if (!isRecord(workflow.nodes) || Object.keys(workflow.nodes).length === 0) {
+    issues.push('recipe.json: validate.workflow.nodes must be a non-empty object');
+  }
+}
+
 function parseManifest() {
   const text = readText('artifacts/evidence-manifest.json');
   if (!text) return null;
@@ -339,6 +401,7 @@ function parseManifest() {
 }
 
 const hasRecipe = fileExists('artifacts/recipe.json');
+validateRecipeDocumentArtifact();
 if (
   hasRecipe &&
   flags.has('--require-recipe-quality-if-recipe') &&

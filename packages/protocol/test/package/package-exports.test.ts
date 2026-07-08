@@ -14,7 +14,7 @@ assert.equal(
   false,
 );
 assert.equal(
-  exportSubpaths.some((subpath) => subpath.includes('*')),
+  exportSubpaths.some((subpath) => subpath.includes('*') && subpath !== './schemas/*'),
   false,
 );
 assert.equal(exportSubpaths.includes('./types'), false);
@@ -22,6 +22,7 @@ assert.equal(exportSubpaths.includes('./methods'), false);
 assert.equal(exportSubpaths.includes('./recipe-compat'), false);
 
 for (const subpath of exportSubpaths) {
+  if (subpath === './schemas/*') continue;
   const specifier =
     subpath === '.' ? '@farmslot/protocol' : `@farmslot/protocol/${subpath.slice(2)}`;
   const moduleExports = (await import(specifier)) as Record<string, unknown>;
@@ -35,6 +36,7 @@ for (const required of [
   './rpc',
   './rpc/run',
   './recipe',
+  './schemas/*',
   './surfaces/command-center',
   './transport/events',
 ]) {

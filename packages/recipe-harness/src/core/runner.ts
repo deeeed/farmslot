@@ -597,6 +597,7 @@ class DefaultRecipeRunner implements RecipeRunner {
         'artifact-manifest.json',
         ...artifactWriter.list().map((entry) => entry.path),
       ],
+      ...(libraryResolution ? { externalFlowIds: new Set(libraryResolution.flows.keys()) } : {}),
     });
     if (packageValidation.status === 'invalid') {
       throw new Error(
