@@ -4,7 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- refactor(gateway): centralize nested-loop checklist/signal filenames in `checklist-target` registry with injectable `ChecklistTargetRegistry` and role-scoped sync helpers.
+- feat(gateway): optional TLS listener. When `FARMSLOT_GATEWAY_TLS_CERT` + `FARMSLOT_GATEWAY_TLS_KEY` are set, the gateway also serves `wss://` and https `/health` on a second port (`FARMSLOT_GATEWAY_TLS_PORT`, default 7778) alongside the existing plaintext `ws://` port, so a hosted HTTPS Command Center can reach a local gateway again (Chrome 150 blocks `ws://` from https origins as mixed content). No cert configured leaves behaviour unchanged; a bad TLS config degrades to `ws://` with a teaching log instead of crashing the control plane.
 - fix(gateway): retarget task-local `./mark` via `checklist-target.json` when nested-loop roles activate, so self-review and CI-fix progress marks the active checklist instead of worker `TASK.md`; restore worker target on replay and role completion.
 - fix(gateway): rewrite the task-local `./mark` wrapper on every checklist-target sync so replayed or legacy task dirs pick up task-dir mode instead of stale explicit `TASK.md`/`SIGNAL.json` shims.
 - fix(gateway): use structural try/finally restore for self-review-fix and CI-fix role bodies so new exit paths cannot skip worker checklist-target reset.

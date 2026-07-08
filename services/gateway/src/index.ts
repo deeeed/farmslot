@@ -10,7 +10,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import os from 'node:os';
 import { dirname, resolve } from 'node:path';
 
@@ -36,6 +37,7 @@ import { checkDailyAutosave, ensureCopilotDirs } from './chat/chat-memory.js';
 import { getAllSessions, initChatStore } from './chat/chat-store.js';
 import { initCopilotObserver, routeEventToObserver } from './chat/copilot-observer.js';
 import { initCIMonitor } from './ci-monitor/service.js';
+import { loadGatewayTlsMaterial } from './core/gateway-tls.js';
 import { getGatewayListenSnapshot, setGatewayListenAddress } from './core/listen-address.js';
 import { loadEvalSuiteCaps } from './evals/suite-cap-store.js';
 import { getMachineHealth, startLocalCollection } from './fleet/node-health.js';
@@ -383,8 +385,10 @@ async function main(): Promise<void> {
     }
   });
 
-  // Create HTTP server (health check endpoint)
-  const httpServer = createServer((req, res) => {
+  // Shared request handler for the plaintext HTTP server and (when TLS is
+  // configured) the HTTPS server — identical health/file/artifact/webhook/
+  // static-UI routing regardless of transport.
+  const requestHandler = (req: IncomingMessage, res: ServerResponse): void => {
     if (!applyGatewayCors(req, res)) {
       res.writeHead(403);
       res.end('Forbidden origin');
@@ -440,9 +444,10 @@ async function main(): Promise<void> {
     if (req.method === 'GET' && serveStaticUi(req, res)) return;
     res.writeHead(404);
     res.end();
-  });
+  };
 
-  // Attach WebSocket server
+  // Create HTTP server (health check endpoint) + attach WebSocket server.
+  const httpServer = createServer(requestHandler);
   createWebSocketServer(httpServer, gatewayAuthRuntime);
 
   // Start watching .farm-status.json for changes
@@ -535,6 +540,38 @@ async function main(): Promise<void> {
   });
   console.log(`Gateway daemon listening on ws://${host ?? '0.0.0.0'}:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+
+  // Optional TLS listener: when a cert+key are configured, serve wss:// (and
+  // https health) on a second port so a hosted HTTPS Command Center can reach
+  // this local gateway (Chrome 150 blocks ws:// from https origins as mixed
+  // content; wss:// is not blocked). No cert configured → ws:// only, unchanged.
+  // Best-effort: a TLS misconfiguration must not take down the control plane, so
+  // it degrades to ws:// with a teaching log rather than crashing the gateway.
+  try {
+    const tls = loadGatewayTlsMaterial();
+    if (tls) {
+      const httpsServer = createHttpsServer({ cert: tls.cert, key: tls.key }, requestHandler);
+      createWebSocketServer(httpsServer, gatewayAuthRuntime);
+      await new Promise<void>((resolveTls, reject) => {
+        httpsServer.once('error', reject);
+        httpsServer.listen(tls.port, host, () => {
+          httpsServer.off('error', reject);
+          resolveTls();
+        });
+      });
+      console.log(`Gateway TLS listening on wss://${host ?? '0.0.0.0'}:${tls.port}`);
+      console.log(`Health check (TLS): https://localhost:${tls.port}/health`);
+    } else {
+      console.log(
+        '[tls] disabled (set FARMSLOT_GATEWAY_TLS_CERT/KEY or run `farmslot certs setup`)',
+      );
+    }
+  } catch (err) {
+    console.error(
+      `[tls] not started — serving ws:// only. ${(err as Error).message} ` +
+        'Fix the TLS config (or run `farmslot certs setup`) and restart the gateway.',
+    );
+  }
 
   // Recover active runs after the port is open so slow recovery cannot make the
   // UI's Vite proxy see ECONNREFUSED while the gateway is still booting.

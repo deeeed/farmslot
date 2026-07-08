@@ -27,6 +27,7 @@ import { farmslotHome } from '@farmslot/protocol/node/farmslot-home';
 import { bold, cyan, dim, green, red, yellow } from '../colors.js';
 import { probeGatewayAuth } from '../gateway-auth.js';
 import { DEFAULT_GATEWAY_URL, loadProfiles, saveProfiles } from '../gateway-profiles.js';
+import { resolveGatewayTls } from '../gateway-tls.js';
 import { repoRoot } from '../onboarding/workspace.js';
 import { OutputContext } from '../output.js';
 
@@ -56,18 +57,42 @@ function lanIPv4s(): string[] {
   return [...new Set(privateIps.length > 0 ? privateIps : all)];
 }
 
-function hostedGatewayCandidates(port: number): HostedGatewayCandidate[] {
-  const host = hostname().replace(/\.local$/, '');
+// When TLS is active, the wss:// candidates come FIRST: a hosted HTTPS Command
+// Center refuses ws:// as mixed content (Chrome 150) and will pick the first
+// reachable wss:// candidate, while the ws:// entries remain for an http-origin
+// CC or the local UI fallback. Pure (host + IPs injected) so the ordering is unit-testable.
+export function buildHostedGatewayCandidates(
+  port: number,
+  tlsPort: number | null,
+  host: string,
+  lanIps: string[],
+): HostedGatewayCandidate[] {
+  const secure: HostedGatewayCandidate[] = tlsPort
+    ? [
+        { url: `wss://localhost:${tlsPort}/ws`, label: 'Local gateway (TLS)' },
+        ...lanIps.map((ip) => ({ url: `wss://${ip}:${tlsPort}/ws`, label: `${host} LAN (TLS)` })),
+      ]
+    : [];
   return [
+    ...secure,
     { url: `ws://localhost:${port}/ws`, label: 'Local gateway' },
-    ...lanIPv4s().map((ip) => ({ url: `ws://${ip}:${port}/ws`, label: `${host} LAN` })),
+    ...lanIps.map((ip) => ({ url: `ws://${ip}:${port}/ws`, label: `${host} LAN` })),
   ];
 }
 
-function hostedCommandCenterUrl(port: number, token: string): string {
+function hostedGatewayCandidates(port: number, tlsPort: number | null): HostedGatewayCandidate[] {
+  return buildHostedGatewayCandidates(
+    port,
+    tlsPort,
+    hostname().replace(/\.local$/, ''),
+    lanIPv4s(),
+  );
+}
+
+function hostedCommandCenterUrl(port: number, token: string, tlsPort: number | null): string {
   const payload = {
     v: 1,
-    gateways: hostedGatewayCandidates(port),
+    gateways: hostedGatewayCandidates(port, tlsPort),
     token,
   };
   return `${HOSTED_COMMAND_CENTER_BASE}#doctor?connect=${encodeBase64UrlJson(payload)}`;
@@ -268,8 +293,9 @@ function writeUpResult(params: {
   localActive: boolean;
   dashboardBuilt: boolean;
   openBrowser: boolean;
+  tlsPort: number | null;
 }): void {
-  const hostedDashboard = hostedCommandCenterUrl(params.port, params.token);
+  const hostedDashboard = hostedCommandCenterUrl(params.port, params.token, params.tlsPort);
   const fallbackDashboard = `http://localhost:${params.port}`;
   if (params.output.json) {
     params.output.writeJson({
@@ -282,6 +308,7 @@ function writeUpResult(params: {
       dashboard: params.dashboardBuilt ? fallbackDashboard : null,
       hostedDashboard,
       fallbackDashboard,
+      tlsUrl: params.tlsPort ? `wss://localhost:${params.tlsPort}/ws` : null,
     });
     return;
   }
@@ -303,6 +330,11 @@ function writeUpResult(params: {
     )}\n`,
   );
   params.output.write(`  ${dim('gateway')}        ${cyan(`ws://localhost:${params.port}/ws`)}\n`);
+  if (params.tlsPort) {
+    params.output.write(
+      `  ${dim('gateway (TLS)')}  ${cyan(`wss://localhost:${params.tlsPort}/ws`)} ${dim('(hosted HTTPS Command Center)')}\n`,
+    );
+  }
   params.output.write(
     `  ${dim('next')}           ${bold(pairHint(params.localActive))} ${dim('(pair your phone)')}\n`,
   );
@@ -367,6 +399,11 @@ async function up(
   openBrowser: boolean,
   startNode: boolean,
 ): Promise<void> {
+  // TLS is opt-in: present only after `farmslot certs setup`. When it resolves,
+  // the gateway also serves wss:// (on tls.port) and the hosted-CC connect payload
+  // leads with the wss:// candidate. Absent, everything stays ws:// as before.
+  const tls = resolveGatewayTls();
+
   const existingPid = readPid();
   if (existingPid && isAlive(existingPid)) {
     if (await waitForHealth(port, 2000)) {
@@ -383,6 +420,7 @@ async function up(
         localActive,
         dashboardBuilt: existsSync(UI_DIST_INDEX),
         openBrowser,
+        tlsPort: tls?.port ?? null,
       });
       return;
     }
@@ -427,6 +465,14 @@ async function up(
       GATEWAY_HOST: '0.0.0.0',
       FARMSLOT_GATEWAY_TOKEN: token,
       FARMSLOT_GATEWAY_AUTH_MODE: 'token',
+      // Hand the gateway the resolved cert so it serves wss:// on tls.port too.
+      ...(tls
+        ? {
+            FARMSLOT_GATEWAY_TLS_CERT: tls.certPath,
+            FARMSLOT_GATEWAY_TLS_KEY: tls.keyPath,
+            FARMSLOT_GATEWAY_TLS_PORT: String(tls.port),
+          }
+        : {}),
     },
   });
   if (child.pid === undefined) {
@@ -462,6 +508,7 @@ async function up(
     localActive,
     dashboardBuilt: existsSync(UI_DIST_INDEX),
     openBrowser,
+    tlsPort: tls?.port ?? null,
   });
 }
 
