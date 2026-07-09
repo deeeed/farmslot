@@ -79,7 +79,7 @@ export interface SlotStatus {
   dispatchedAt: string | null;
   completedAt: string | null;
   runner: string | null; // claude | codex | cursor | grok | opencode | custom
-  model: string | null; // sonnet | opus | haiku | gpt-5.5 | composer-2.5 | grok-build | custom
+  model: string | null; // sonnet | opus | haiku | gpt-5.5 | composer-2.5 | grok-4.5-fast-xhigh | grok-build | custom
   resources?: Record<string, Record<string, string | number | boolean>>;
   deviceName: string | null;
   taskPhase: string | null; // e.g. "Validate 5/7"
