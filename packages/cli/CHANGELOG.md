@@ -4,6 +4,8 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat: `farmslot recipe validate` accepts multiple recipe files (`recipes/*.recipe.json`) and exits non-zero if any is invalid, so it works as a PR gate. Adds `--library-source <name=path|path>` (repeatable) for a static resolve-check of library-composed recipes, and `--emit-resolved` to write each recipe's self-contained `resolved-recipe.json` (the full composition).
+- feat: `farmslot recipe artifacts validate` checks the recipe document against Recipe Protocol v1 (validating `$schema` matches `schema_version` when present) and no longer double-counts recipe-document findings.
 - fix: `farmslot project add` now seeds each slot repo with a baseline `agentic-runtime.json` during registration and preserves an existing prepared runtime context on re-add/repair, so slot metadata exists before preflight without clobbering selected simulator/device fields.
 - feat: add `farmslot certs setup` — provisions a locally-trusted TLS cert (via mkcert) under `~/.farmslot/certs/` covering localhost and this machine's LAN address, so the gateway can serve `wss://` for the hosted HTTPS Command Center (teaching error if mkcert is missing).
 - feat: `farmslot up` picks up the `certs setup` cert automatically — it starts the gateway with TLS and leads the hosted Command Center connect payload with the `wss://` candidate (keeping `ws://` as a fallback for http-origin use), restoring the hosted-CC → local-gateway path that Chrome 150 broke.

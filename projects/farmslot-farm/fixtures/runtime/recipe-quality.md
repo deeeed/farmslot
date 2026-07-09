@@ -4,7 +4,7 @@ Read this before authoring `{{TASK_DIR}}/artifacts/recipe.json`.
 
 ## Contract
 
-- Graph envelope: `schema_version: 1`, `validate.workflow.entry`, `validate.workflow.nodes`, `intent` on every executable node.
+- Graph envelope: `schema_version: 1`, `validate.workflow.entry`, `validate.workflow.nodes`, `intent` on every executable node. Include `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"` for editor/tooling support; when present it must match `schema_version`.
 - Runner: `{{recipe_validate_wrapper}}` with `{{recipe_manifest_path}}`.
 - Doctor: `cd {{REPO}} && node apps/command-center/scripts/agentic/recipe-doctor.mjs --cdp-port {{CDP_PORT}} --gateway-port {{WATCHER_PORT}} --json`
 - Fast validation run (no video):

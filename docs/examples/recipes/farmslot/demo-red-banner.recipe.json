@@ -1,4 +1,5 @@
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Command Center demo red monitoring banner",
   "description": "Proves the demo-gated Farmslot monitoring banner is absent by default and present when the demo env flag is enabled on the slot sandbox. Use the slot sandbox Vite port (from pool .env.ports, typically 5876 on macwork-ff-*) — not the operator UI on 5174.",

@@ -1,4 +1,5 @@
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Expo configuration smoke",
   "description": "Verifies the Expo project can run a Farmslot Recipe Protocol v1 artifact-producing configuration check.",

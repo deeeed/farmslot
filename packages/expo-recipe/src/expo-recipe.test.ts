@@ -122,6 +122,7 @@ test('redacts sensitive command output before writing trace artifacts', async ()
     await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
     await installExpoRecipeScaffold({ projectRoot: root });
     await writeJson(path.join(root, DEFAULT_EXPO_RECIPE_PATH), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Redaction smoke',
       description: 'Verifies sensitive command output does not land in trace artifacts.',

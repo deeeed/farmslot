@@ -50,6 +50,7 @@ Minimum valid flat recipe:
 
 ```json
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "validate": {
     "workflow": {
@@ -73,6 +74,7 @@ Top-level fields:
 
 | Field               | Required | Description                                                                                                                                                                                                                                                |
 | ------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$schema`           | no       | Recommended canonical JSON Schema URL for Recipe Protocol v1: `https://farmslot.io/schemas/recipe-v1.schema.json`. When present, it must match `schema_version`; runners infer the expected schema URL from `schema_version` for compatibility validation. |
 | `schema_version`    | yes      | Numeric protocol version. v1 uses `1`.                                                                                                                                                                                                                     |
 | `title`             | no       | Optional recipe-level metadata. It is not the step/HUD explanation.                                                                                                                                                                                        |
 | `description`       | no       | Optional recipe-level metadata describing the overall proof. It is not the step/HUD explanation.                                                                                                                                                           |
@@ -210,6 +212,38 @@ Execution semantics:
 - Recursive calls are rejected when they create cycles or exceed the configured depth. The v1 default maximum call depth is 8.
 
 Parameter names are domain-owned, but shared domains should keep them consistent. For Example App perps, `start_state` may accept a broad desired baseline such as `positions: { state: "none" }`, while focused `ensure_positions` and `assert_positions` should use `state: "open" | "none"` plus optional details such as `side` and `notional`.
+
+### 7.1 Resolved recipe artifact
+
+A recipe's `call.ref`s resolve at authoring/run time against inline `flows`, `uses`
+catalogs, or configured library sources — context that is gone once a run's artifacts
+are inspected in isolation. So a run that composes any flows also emits
+`resolved-recipe.json`: the authored recipe with every reachable flow (inline, `uses`,
+and library, transitively) inlined under `flows`. This artifact is **self-contained** —
+its `call.ref`s resolve without the library — so it validates as a complete recipe at
+ingestion and in CI, and gives reviewers the full composition (recipe + sub-recipes) in
+one document.
+
+The authored `recipe.json` stays verbatim and is validated envelope-only (schema,
+`schema_version`, workflow structure); `resolved-recipe.json`, when present, is
+validated in full, including `call.ref` resolution. The runner emits it in the executed
+path; `farmslot recipe validate --emit-resolved` produces the same document in the
+static path (see §18).
+
+`resolved-recipe.json` inlines only the flows the recipe transitively reaches (never
+the whole library) and drops `uses`, so it is self-contained for validation. Because it
+drops `uses`, it is not the source of catalog/library provenance — `resolved-flows.json`
+(emitted alongside it) records which source each resolved flow came from, plus overrides
+and shadowing, for audit.
+
+### 7.2 Multiple recipes per change
+
+A change that needs several recipes ships them as separate `*.recipe.json` files (by
+convention under a `recipes/` directory; an optional `recipes/index.json` list aids
+discovery). There is no suite document type — each recipe is validated and run
+independently, and each emits its own `resolved-recipe.json`. Validate a set with
+`farmslot recipe validate recipes/*.recipe.json`; the command exits non-zero if any
+recipe is invalid, so it works as a PR gate.
 
 ## 8. Flow catalog schema
 
@@ -518,6 +552,16 @@ A v1 validator should report errors for:
 
 Warnings may cover unreachable nodes, weak descriptions, missing optional schemas, missing proof targets in non-production smoke recipes, or duplicate domain flows where one parameterized flow should cover the same concept. A duplicate-flow warning becomes an error only when a project defines a mechanical lint rule, such as same verb/object with only polarity, route, boolean, provider, market, or assertion-direction differences.
 
+### 18.1 Static resolve-check (CI gate)
+
+`farmslot recipe validate <recipes...>` validates one or more recipes without
+executing them. It accepts `--library-source <name=path|path>` (repeatable,
+colon-separated) so `call.ref`s resolvable from a configured recipe library are not
+reported as unresolved, mirroring run-time resolution. With `--emit-resolved` it writes
+each recipe's `resolved-recipe.json` (§7.1) alongside it. The command exits non-zero if
+any recipe fails to compose (unresolved `call.ref`, cycle, or an invalid inline/library
+flow), making it a fast pre-merge gate that complements executed farm runs.
+
 ## 19. Extension model
 
 Projects extend Recipe v1 through:
@@ -590,7 +634,7 @@ The minimum flat recipe in section 4 is sufficient. No flow catalog or visual pr
 
 ## 21. Compatibility and versioning
 
-- `schema_version: 1` remains the v1 compatibility marker.
+- `schema_version: 1` remains the v1 compatibility marker at execution/artifact-validation boundaries. `$schema` is recommended and must match the version when present.
 - Composition fields are additive in v1.
 - Existing flat v1 recipes remain valid when every non-terminal executable node declares `intent`.
 - Future incompatible envelope changes require a new schema version.

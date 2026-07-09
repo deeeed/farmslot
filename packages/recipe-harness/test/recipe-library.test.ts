@@ -4,11 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { type RecipeActionManifestDocument } from '@farmslot/protocol';
+import { type RecipeActionManifestDocument, validateRecipeDocument } from '@farmslot/protocol';
 
 import { createStandardCoreAdapters } from '../src/adapters/core.js';
 import { runRecipeHarnessCli } from '../src/cli/index.js';
 import { validateRecipeCliInput } from '../src/cli/support.js';
+import { composeRecipe } from '../src/core/compose.js';
 import { readJsonFile, writeJsonFile } from '../src/core/json.js';
 import {
   defaultRecipeLibrarySources,
@@ -54,10 +55,12 @@ async function createLibrary(
   await mkdir(path.join(root, 'flows'), { recursive: true });
   await writeJsonFile(path.join(root, 'library.json'), {
     kind: 'recipe-library',
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     schema_version: 1,
     ...(options.name ? { name: options.name } : {}),
   });
   await writeJsonFile(path.join(root, 'flows', options.catalogFile ?? 'main.flows.json'), {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     schema_version: 1,
     kind: 'recipe-flow-catalog',
     flows: options.flows,
@@ -184,6 +187,121 @@ test('loadRecipeLibraries merges ordered sources and records shadowing loudly', 
   }
 });
 
+test('composeRecipe inlines library flows into a self-contained recipe', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const libRoot = path.join(tempRoot, 'lib');
+    await createLibrary(libRoot, {
+      flows: {
+        'lib.write-text': writeTextFlow('out.txt', 'hi'),
+        // An unrelated library flow the recipe never calls; it must NOT be inlined.
+        'lib.unused': writeTextFlow('unused.txt', 'nope'),
+      },
+    });
+
+    const recipe = {
+      schema_version: 1,
+      title: 'Library composed',
+      description: 'Calls a flow resolved from a library source.',
+      uses: [],
+      validate: {
+        workflow: {
+          entry: 'call-lib',
+          nodes: {
+            'call-lib': {
+              action: 'call',
+              intent: 'Run a library flow',
+              ref: 'lib.write-text',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+
+    const { resolved, flowCount } = await composeRecipe(recipe, {
+      projectRoot: tempRoot,
+      recipeDir: tempRoot,
+      librarySources: [{ root: libRoot }],
+    });
+    assert.equal(flowCount, 1);
+    const resolvedRecipe = resolved as { flows: Record<string, unknown>; uses?: unknown };
+    // Only the reachable flow is inlined — never the whole library.
+    assert.deepEqual(Object.keys(resolvedRecipe.flows), ['lib.write-text']);
+    // `uses` is dropped so the recipe resolves purely from inline `flows`.
+    assert.ok(!('uses' in resolvedRecipe));
+
+    // The composed recipe is self-contained: full validation resolves the call.ref
+    // without any library context.
+    assert.equal(validateRecipeDocument(resolved).status, 'valid');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('composeRecipe follows transitive calls and drops unreachable inline flows', async () => {
+  const tempRoot = await createTempRoot();
+  try {
+    const callFlow = (ref: string): Record<string, unknown> => ({
+      workflow: {
+        entry: 'call',
+        nodes: {
+          call: { action: 'call', intent: `Call ${ref}`, ref, next: 'done' },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    });
+    const libRoot = path.join(tempRoot, 'lib');
+    await createLibrary(libRoot, {
+      flows: {
+        'lib.a': callFlow('lib.b'), // reachable via the recipe, and calls lib.b
+        'lib.b': writeTextFlow('b.txt', 'b'), // reachable transitively through lib.a
+        'lib.unused': writeTextFlow('u.txt', 'u'), // never called — must be excluded
+      },
+    });
+
+    const recipe = {
+      schema_version: 1,
+      title: 'Transitive composition',
+      description: 'Reaches lib.a -> lib.b; an unreachable inline flow has an unresolved call.',
+      flows: {
+        // Never called by the workflow; it references a missing flow, so keeping it
+        // would fail full validation once `uses` is dropped. It must be excluded.
+        'inline.dead': {
+          entry: 'x',
+          nodes: {
+            x: { action: 'call', intent: 'Dead call', ref: 'missing.ref', next: 'done' },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      validate: {
+        workflow: {
+          entry: 'go',
+          nodes: {
+            go: { action: 'call', intent: 'Run lib.a', ref: 'lib.a', next: 'done' },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    };
+
+    const { resolved, flowCount } = await composeRecipe(recipe, {
+      projectRoot: tempRoot,
+      recipeDir: tempRoot,
+      librarySources: [{ root: libRoot }],
+    });
+    const resolvedRecipe = resolved as { flows: Record<string, unknown> };
+    assert.equal(flowCount, 2);
+    assert.deepEqual(Object.keys(resolvedRecipe.flows).sort(), ['lib.a', 'lib.b']);
+    // Unreachable inline flow with an unresolved call was dropped, so it validates.
+    assert.equal(validateRecipeDocument(resolved).status, 'valid');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('loadRecipeLibraries rejects non-libraries and duplicate refs within one source', async () => {
   const tempRoot = await createTempRoot();
   try {
@@ -198,6 +316,7 @@ test('loadRecipeLibraries rejects non-libraries and duplicate refs within one so
       flows: { 'lib.write-text': writeTextFlow('a.txt', 'a') },
     });
     await writeJsonFile(path.join(duplicated, 'flows', 'other.flows.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       kind: 'recipe-flow-catalog',
       flows: { 'lib.write-text': writeTextFlow('b.txt', 'b') },
@@ -231,6 +350,7 @@ test('runs a recipe composed from a library flow and reports the resolution in e
       flows: { 'lib.write-text': writeTextFlow('from-team.txt', 'team') },
     });
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Library call recipe',
       description: 'Calls a flow resolved from a configured recipe library.',
@@ -329,6 +449,7 @@ test('recipe-local flows win over library flows and the override is logged', asy
       flows: { 'lib.write-text': writeTextFlow('from-library.txt', 'library') },
     });
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Recipe-local override recipe',
       description: 'Declares a flow inline that also exists in a library source.',
@@ -410,6 +531,7 @@ test('validate accepts library-resolved call refs only when sources are configur
     });
     const recipePath = path.join(tempRoot, 'recipe.json');
     await writeJsonFile(recipePath, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Library call recipe',
       description: 'Calls a flow resolved from a configured recipe library.',
@@ -447,6 +569,7 @@ test('loads flow catalogs referenced through symlinks', async () => {
   try {
     const sharedCatalog = path.join(tempRoot, 'shared-catalog.flows.json');
     await writeJsonFile(sharedCatalog, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       kind: 'recipe-flow-catalog',
       flows: { 'lib.linked': writeTextFlow('linked.txt', 'linked') },

@@ -7,6 +7,11 @@ const require = createRequire(import.meta.url);
 const { expandedArtifactsForCommand } = require('./worker-terminal-contract.cjs');
 
 let sharedRecipeQualityValidator = null;
+let sharedRecipeDocumentValidator = null;
+// Mirror @farmslot/protocol recipeProtocolSchemaUrlForVersion: only v1 is a
+// supported schema_version, so do not synthesize URLs for other versions.
+let sharedRecipeSchemaUrlForVersion = (version) =>
+  version === 1 ? 'https://farmslot.io/schemas/recipe-v1.schema.json' : null;
 try {
   ({ isRecipeQualityArtifact: sharedRecipeQualityValidator } =
     await import('@farmslot/protocol/contracts/recipes'));
@@ -15,6 +20,20 @@ try {
   // Keep strict local validation instead of downgrading to the historical loose gate.
   if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME) {
     console.warn(`[agent-runtime] using local RecipeQualityArtifact fallback: ${error.message}`);
+  }
+}
+try {
+  const recipeProtocol = await import('@farmslot/protocol/recipe');
+  sharedRecipeDocumentValidator = recipeProtocol.validateRecipeDocument;
+  if (typeof recipeProtocol.recipeProtocolSchemaUrlForVersion === 'function') {
+    sharedRecipeSchemaUrlForVersion = recipeProtocol.recipeProtocolSchemaUrlForVersion;
+  }
+} catch (error) {
+  // Compatibility fail-safe: source checkouts can run before @farmslot/protocol
+  // has emitted dist/. In that degraded state, do not bypass recipe checks;
+  // enforce the minimum executable envelope locally until the shared validator loads.
+  if (process.env.FARMSLOT_DEBUG_AGENT_RUNTIME) {
+    console.warn(`[agent-runtime] using local Recipe v1 fallback: ${error.message}`);
   }
 }
 
@@ -226,6 +245,83 @@ function validateRecipeQualityArtifact() {
   }
 }
 
+function validateRecipeDocumentArtifact() {
+  // Mirror the artifact-package contract (protocol/recipe/artifact.ts): a failed run
+  // keeps recipe.json envelope-only and does not re-validate the composition, so a
+  // graceful failure (e.g. a flow cycle) is not rejected here.
+  const summaryText = readText('artifacts/summary.json');
+  let runFailed = false;
+  if (summaryText) {
+    try {
+      runFailed = JSON.parse(summaryText)?.status === 'fail';
+    } catch {
+      // A malformed summary is another check's concern; without a confirmed failure
+      // status, enforce the stricter (passing-run) validation as the safe default.
+      runFailed = false;
+    }
+  }
+  if (runFailed) {
+    validateRecipeDocumentArtifactAt('artifacts/recipe.json', 'recipe.json', {
+      skipFlowCallResolution: true,
+    });
+    return;
+  }
+  // Passing/unknown run: the composition must be proven — recipe.json's call.refs are
+  // proven either by resolved-recipe.json (validated in full, so recipe.json is
+  // envelope-only) or by recipe.json being self-contained (validated in full).
+  const hasResolvedRecipe = fileExists('artifacts/resolved-recipe.json');
+  validateRecipeDocumentArtifactAt('artifacts/recipe.json', 'recipe.json', {
+    skipFlowCallResolution: hasResolvedRecipe,
+    externalCatalogsResolvable: false,
+  });
+  validateRecipeDocumentArtifactAt('artifacts/resolved-recipe.json', 'resolved-recipe.json', {});
+}
+
+function validateRecipeDocumentArtifactAt(relPath, label, options) {
+  const text = readText(relPath);
+  if (!text) return;
+  let recipe;
+  try {
+    recipe = JSON.parse(text);
+  } catch (error) {
+    issues.push(`${label}: invalid JSON: ${error.message}`);
+    return;
+  }
+  if (sharedRecipeDocumentValidator) {
+    const result = sharedRecipeDocumentValidator(recipe, options);
+    for (const finding of result.findings) {
+      if (finding.severity === 'error') {
+        issues.push(`${label}: ${finding.code} ${finding.path}: ${finding.message}`);
+      }
+    }
+    return;
+  }
+  if (!isRecord(recipe)) {
+    issues.push(`${label}: expected object`);
+    return;
+  }
+  if (recipe.schema_version !== 1) {
+    issues.push(`${label}: schema_version must equal 1`);
+  }
+  const expectedSchemaUrl = sharedRecipeSchemaUrlForVersion(recipe.schema_version);
+  if (recipe.$schema != null && recipe.$schema !== expectedSchemaUrl) {
+    issues.push(
+      `${label}: $schema must match schema_version (${expectedSchemaUrl ?? 'unknown schema_version'})`,
+    );
+  }
+  if (!isRecord(recipe.validate) || !isRecord(recipe.validate.workflow)) {
+    issues.push(`${label}: validate.workflow is required`);
+    return;
+  }
+  const workflow = recipe.validate.workflow;
+  if (typeof workflow.entry !== 'string' || !workflow.entry.trim()) {
+    issues.push(`${label}: validate.workflow.entry must be a non-empty string`);
+  }
+  if (!isRecord(workflow.nodes) || Object.keys(workflow.nodes).length === 0) {
+    issues.push(`${label}: validate.workflow.nodes must be a non-empty object`);
+  }
+}
+
 function parseManifest() {
   const text = readText('artifacts/evidence-manifest.json');
   if (!text) return null;
@@ -339,6 +435,7 @@ function parseManifest() {
 }
 
 const hasRecipe = fileExists('artifacts/recipe.json');
+validateRecipeDocumentArtifact();
 if (
   hasRecipe &&
   flags.has('--require-recipe-quality-if-recipe') &&

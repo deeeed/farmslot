@@ -95,6 +95,7 @@ async function captureConsoleLog(callback: () => Promise<void>): Promise<string>
 
 function createSmokeRecipe(): unknown {
   return {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     schema_version: 1,
     title: 'Recipe harness smoke',
     description: 'Runs a command, asserts outputs, and publishes artifacts.',
@@ -210,6 +211,7 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
     });
 
     const failRecipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'stale watch_logs proof',
       description: 'Pre-run stale markers must not satisfy watch_logs.',
@@ -243,6 +245,7 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
     assert.equal(failResult.status, 'fail');
 
     const passRecipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'fresh watch_logs proof',
       description: 'Run-scoped watch_logs sees lines emitted during this run.',
@@ -276,6 +279,7 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
     assert.equal(passResult.status, 'pass');
 
     const fileScopeRecipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'file scoped watch_logs proof',
       description: 'Recipes can explicitly scan the whole file when needed.',
@@ -304,6 +308,7 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
     assert.equal(fileScopeResult.status, 'pass');
 
     const flowRecipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'flow scoped watch_logs proof',
       description: 'Run-scoped watch_logs also applies inside called flows.',
@@ -349,6 +354,16 @@ test('watch_logs defaults to run-scoped matching so stale pre-run lines do not p
       projectRoot: tempRoot,
     });
     assert.equal(flowResult.status, 'fail');
+
+    // An inline-only recipe is already self-contained (its flows live in recipe.json
+    // and are validated by validateInlineFlows), so no separate resolved-recipe.json
+    // is emitted — that artifact is reserved for `uses`/library composition.
+    assert.ok(
+      !(await listRelativeFiles(path.join(tempRoot, 'artifacts-flow'))).includes(
+        'resolved-recipe.json',
+      ),
+      'inline-only recipe should not emit resolved-recipe.json',
+    );
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -822,6 +837,7 @@ test('executes setup startState teardown lifecycle nodes and validates their act
   const tempRoot = await createTempRoot();
   try {
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Lifecycle recipe',
       description: 'Exercises v1 lifecycle execution.',
@@ -896,6 +912,7 @@ test('executes manifest-declared preconditions before lifecycle nodes', async ()
       ],
     };
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Precondition recipe',
       description: 'Checks preconditions before setup.',
@@ -962,6 +979,7 @@ test('fails preconditions with no registered checker instead of silently skippin
     });
     const result = await runner.run({
       recipeDocument: {
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
         schema_version: 1,
         title: 'Missing precondition checker',
         description: 'Preconditions must fail closed.',
@@ -997,6 +1015,7 @@ test('runs inline flow composition through call nodes', async () => {
   const tempRoot = await createTempRoot();
   try {
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Inline call recipe',
       description: 'Executes a reusable inline flow.',
@@ -1088,6 +1107,7 @@ test('keeps child flow intent as the only default HUD line', async () => {
 
     const result = await runner.run({
       recipeDocument: {
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
         schema_version: 1,
         flows: {
           'example.child-hud': {
@@ -1141,6 +1161,7 @@ test('runs catalog flow calls with params and postconditions', async () => {
   const tempRoot = await createTempRoot();
   try {
     await writeJsonFile(path.join(tempRoot, 'flows.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       kind: 'recipe-flow-catalog',
       flows: {
@@ -1174,6 +1195,7 @@ test('runs catalog flow calls with params and postconditions', async () => {
       },
     });
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Catalog call recipe',
       description: 'Executes a reusable catalog flow.',
@@ -1224,6 +1246,7 @@ test('runs nested catalog flow calls and rejects flow call cycles', async () => 
   const tempRoot = await createTempRoot();
   try {
     await writeJsonFile(path.join(tempRoot, 'flows.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       kind: 'recipe-flow-catalog',
       flows: {
@@ -1297,6 +1320,7 @@ test('runs nested catalog flow calls and rejects flow call cycles', async () => 
     });
     const passResult = await runner.run({
       recipeDocument: {
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
         schema_version: 1,
         title: 'Nested catalog call recipe',
         description: 'Executes flow calls inside flow catalogs.',
@@ -1330,6 +1354,7 @@ test('runs nested catalog flow calls and rejects flow call cycles', async () => 
 
     const failResult = await runner.run({
       recipeDocument: {
+        $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
         schema_version: 1,
         title: 'Cycle catalog call recipe',
         description: 'Fails recursive flow calls.',
@@ -1368,6 +1393,7 @@ test('fails catalog flow calls with invalid params or postconditions', async () 
   const tempRoot = await createTempRoot();
   try {
     await writeJsonFile(path.join(tempRoot, 'flows.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       kind: 'recipe-flow-catalog',
       flows: {
@@ -1392,6 +1418,7 @@ test('fails catalog flow calls with invalid params or postconditions', async () 
       adapters: createStandardCoreAdapters(),
     });
     const baseRecipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Catalog call failure',
       description: 'Fails invalid catalog calls.',
@@ -1456,6 +1483,7 @@ test('rejects lifecycle nodes that declare graph transitions', async () => {
     await assert.rejects(
       runner.run({
         recipeDocument: {
+          $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
           schema_version: 1,
           title: 'Invalid lifecycle',
           description: 'Lifecycle arrays are ordered and cannot declare next.',
@@ -1494,6 +1522,7 @@ test('supports the documented v1 assertion operators', async () => {
       nested: { ok: true },
     });
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Assertion operators',
       description: 'Exercises v1 assertion operators.',
@@ -1579,6 +1608,7 @@ test('writes failure trace and summary with a non-pass result', async () => {
   const tempRoot = await createTempRoot();
   try {
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Failing recipe',
       description: 'Demonstrates failure artifacts.',
@@ -1706,6 +1736,7 @@ test('reports missing artifact manifests as validation findings instead of file 
   const tempRoot = await createTempRoot();
   try {
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Missing manifest validation smoke',
       description: 'Exercises optional artifact-manifest validation.',
@@ -1755,6 +1786,7 @@ test('runs official UI adapters through a runner-provided transport', async () =
       },
     };
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'UI adapter smoke',
       description: 'Exercises official ui/app adapters through a project transport.',
@@ -1831,6 +1863,7 @@ test('maps React Native bridge transport commands without project-specific ui re
       },
     });
     const recipe = {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'React Native bridge smoke',
       description: 'Exercises official ui/app actions through the RN bridge contract.',

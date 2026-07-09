@@ -177,6 +177,7 @@ interface RecipeRunArtifactPackageOutputInput {
   manifest?: unknown;
   recipe?: unknown;
   recipeArtifactPresent?: boolean;
+  resolvedRecipe?: unknown;
   readErrors?: Record<string, string>;
 }
 
@@ -266,6 +267,18 @@ export function validateRecipeRunArtifactPackageOutput(
     );
   }
 
+  // resolved-recipe.json is optional; a present-but-unreadable one must fail rather
+  // than silently skip the full-composition validation below.
+  const resolvedRecipeReadError = readErrors['resolved-recipe.json'];
+  if (resolvedRecipeReadError && resolvedRecipeReadError !== RECIPE_ARTIFACT_MISSING_ERROR) {
+    addHookValidationCheck(
+      checks,
+      'recipe_run.artifact.resolved-recipe.json',
+      'fail',
+      `resolved-recipe.json could not be read as JSON: ${resolvedRecipeReadError}`,
+    );
+  }
+
   const summaryStatus = readTerminalStatus(input.summary);
   const manifestStatus = isRecord(input.manifest) ? input.manifest.runStatus : undefined;
   addHookValidationCheck(
@@ -275,8 +288,15 @@ export function validateRecipeRunArtifactPackageOutput(
     `artifact-manifest.json runStatus must match summary.json status (summary=${summaryStatus ?? 'missing'}, manifest=${typeof manifestStatus === 'string' ? manifestStatus : 'missing'}).`,
   );
 
+  // For a passing run the composition must be proven — recipe.json is validated in
+  // full unless resolved-recipe.json proves it; a failed run stays envelope-only so a
+  // graceful failure (e.g. a flow cycle) is not turned into an ingestion rejection.
   const recipe = validateRecipeArtifactPackage({
     recipe: input.recipeArtifactPresent ? input.recipe : undefined,
+    ...(input.resolvedRecipe != null ? { resolvedRecipe: input.resolvedRecipe } : {}),
+    // Only a confirmed failure relaxes composition enforcement; unknown/missing status
+    // still requires the composition to be proven, so it cannot slip through.
+    runPassed: summaryStatus !== 'fail',
     manifest: input.manifest,
     artifactPaths: input.artifactListError ? undefined : input.artifactPaths,
   });
@@ -389,12 +409,20 @@ async function validateRecipeRunArtifactsOnSlot(
 ): Promise<RecipeProjectHookValidationResult> {
   const artifactList = await listSlotRecipeArtifactFiles(slotVars, artifactRoot);
   const recipeArtifactPresent = artifactList.paths.includes('recipe.json');
-  const [summary, manifest, recipe] = await Promise.all([
+  const resolvedRecipePresent = artifactList.paths.includes('resolved-recipe.json');
+  const emptyRead = Promise.resolve({ value: undefined } as { value?: unknown; error?: string });
+  const [summary, manifest, recipe, resolvedRecipe] = await Promise.all([
     readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'summary.json')),
     readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'artifact-manifest.json')),
     recipeArtifactPresent
       ? readSlotJsonIfPresent(slotVars, joinRemoteArtifactPath(artifactRoot, 'recipe.json'))
-      : Promise.resolve({ value: undefined } as { value?: unknown; error?: string }),
+      : emptyRead,
+    resolvedRecipePresent
+      ? readSlotJsonIfPresent(
+          slotVars,
+          joinRemoteArtifactPath(artifactRoot, 'resolved-recipe.json'),
+        )
+      : emptyRead,
   ]);
   return validateRecipeRunArtifactPackageOutput({
     artifactPaths: artifactList.paths,
@@ -403,10 +431,12 @@ async function validateRecipeRunArtifactsOnSlot(
     manifest: manifest.value,
     recipe: recipe.value,
     recipeArtifactPresent,
+    resolvedRecipe: resolvedRecipe.value,
     readErrors: {
       ...(summary.error ? { 'summary.json': summary.error } : {}),
       ...(manifest.error ? { 'artifact-manifest.json': manifest.error } : {}),
       ...(recipe.error ? { 'recipe.json': recipe.error } : {}),
+      ...(resolvedRecipe.error ? { 'resolved-recipe.json': resolvedRecipe.error } : {}),
     },
   });
 }

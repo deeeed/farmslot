@@ -113,6 +113,9 @@ projects/farmslot-farm/.task/
 # Central sandbox root for fake/demo runner isolation
 .sandbox/
 .observability
+
+# Git worktrees checked out inside the repo (never repo source)
+.worktrees/
 .omx/
 **/.omx/
 **/.omc/

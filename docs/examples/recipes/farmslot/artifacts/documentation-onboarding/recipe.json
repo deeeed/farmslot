@@ -1,4 +1,5 @@
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Farmslot recipe protocol documentation and onboarding smoke",
   "description": "Validates protocol examples, self-validation fixtures, and onboarding commands with the shared v1 contract validator.",

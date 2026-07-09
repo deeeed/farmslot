@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   mergeRecipeValidationResults,
+  RECIPE_PROTOCOL_SCHEMA_URL,
   type RecipeArtifactManifestDocument,
+  recipeProtocolSchemaUrlForVersion,
   validateArtifactManifestDocument,
   validateRecipeActionManifestDocument,
   validateRecipeArtifactPackage,
@@ -18,6 +20,10 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 
 async function readJson(relativePath: string): Promise<unknown> {
   return JSON.parse(await readFile(path.join(repoRoot, relativePath), 'utf-8')) as unknown;
+}
+
+async function readUtf8(relativePath: string): Promise<string> {
+  return readFile(path.join(repoRoot, relativePath), 'utf-8');
 }
 
 async function listRelativeFiles(root: string): Promise<string[]> {
@@ -138,6 +144,14 @@ test('validates portable backend and UI v1 example recipes', async () => {
     assert.equal(result.status, 'valid', recipePath);
     assert.deepEqual(result.findings, []);
   }
+});
+
+test('publishes the same Recipe v1 JSON Schema in protocol package and docs static', async () => {
+  assert.equal(recipeProtocolSchemaUrlForVersion(1), RECIPE_PROTOCOL_SCHEMA_URL);
+  assert.equal(
+    await readUtf8('packages/protocol/schemas/recipe-v1.schema.json'),
+    await readUtf8('apps/docs/static/schemas/recipe-v1.schema.json'),
+  );
 });
 
 test('validates runner action manifests and rejects undeclared recipe actions', async () => {
@@ -554,7 +568,8 @@ test('rejects recipe documents without the v1 schema marker', () => {
 });
 
 test('accepts v1 recipes without top-level title or description when nodes declare intent', () => {
-  const result = validateRecipeDocument({
+  const recipe = {
+    $schema: RECIPE_PROTOCOL_SCHEMA_URL,
     schema_version: 1,
     validate: {
       workflow: {
@@ -569,10 +584,44 @@ test('accepts v1 recipes without top-level title or description when nodes decla
         },
       },
     },
-  });
+  };
+  const result = validateRecipeDocument(recipe, { requireSchemaRef: true });
 
   assert.equal(result.status, 'valid');
   assert.deepEqual(result.findings, []);
+});
+
+test('strict recipe validation requires schema ref to match schema_version', () => {
+  const withoutRef = validateRecipeDocument(
+    {
+      schema_version: 1,
+      validate: {
+        workflow: {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+      },
+    },
+    { requireSchemaRef: true },
+  );
+  assert.equal(withoutRef.status, 'invalid');
+  assert.ok(withoutRef.findings.some((finding) => finding.code === 'recipe.missing_schema_ref'));
+
+  const mismatch = validateRecipeDocument(
+    {
+      $schema: 'https://farmslot.io/schemas/recipe-v2.schema.json',
+      schema_version: 1,
+      validate: {
+        workflow: {
+          entry: 'done',
+          nodes: { done: { action: 'end', status: 'pass' } },
+        },
+      },
+    },
+    { requireSchemaRef: true },
+  );
+  assert.equal(mismatch.status, 'invalid');
+  assert.ok(mismatch.findings.some((finding) => finding.code === 'recipe.unsupported_schema_ref'));
 });
 
 test('rejects missing and generic non-terminal node intent', () => {
@@ -704,6 +753,137 @@ test('accepts call refs resolvable from declared external flow ids', () => {
     externalFlowIds: new Set(['library.flow']),
   });
   assert.equal(withExternal.status, 'valid');
+});
+
+test('artifact package validates recipe envelope-only and resolved recipe in full', () => {
+  const authored = {
+    schema_version: 1,
+    title: 'Composed recipe',
+    description: 'Authored recipe whose call.ref resolves from a library at run time.',
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': {
+            action: 'call',
+            intent: 'Run a library-resolved flow',
+            ref: 'library.flow',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+
+  const composed = {
+    ...authored,
+    flows: {
+      'library.flow': {
+        entry: 'go',
+        nodes: {
+          go: { action: 'wait', ms: 1, next: 'inner-done' },
+          'inner-done': { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+
+  // Passing run, no resolved-recipe.json: the composition is unproven, so recipe.json
+  // is validated in full and its unresolved library ref is flagged.
+  const unproven = validateRecipeArtifactPackage({ recipe: authored });
+  assert.ok(unproven.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
+
+  // Passing run WITH a self-contained resolved-recipe.json: it proves the composition,
+  // so recipe.json is envelope-only (no unresolved finding) and the resolved recipe
+  // validates clean.
+  const proven = validateRecipeArtifactPackage({ recipe: authored, resolvedRecipe: composed });
+  assert.ok(!proven.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
+
+  // A resolved-recipe.json that is itself not self-contained is flagged in full.
+  const badComposition = validateRecipeArtifactPackage({
+    recipe: authored,
+    resolvedRecipe: authored,
+  });
+  assert.ok(
+    badComposition.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+  );
+
+  // Failed run: recipe.json stays envelope-only, so a gracefully-failed run with an
+  // unresolved library ref is not turned into a rejection.
+  const failed = validateRecipeArtifactPackage({ recipe: authored, runPassed: false });
+  assert.ok(!failed.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
+});
+
+test('artifact package treats uses catalogs as unproven and still checks call shape', () => {
+  // A `uses` catalog is not part of the artifact package, so it does not prove the
+  // composition: a passing run with `uses` and no resolved-recipe.json is rejected.
+  const usesRecipe = {
+    schema_version: 1,
+    title: 'Uses without resolved',
+    description: 'Declares a catalog but ships no resolved-recipe.json.',
+    uses: ['flows.json'],
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': {
+            action: 'call',
+            intent: 'Call a catalog flow',
+            ref: 'trade.seed',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const usesUnproven = validateRecipeArtifactPackage({ recipe: usesRecipe });
+  assert.ok(
+    usesUnproven.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+  );
+
+  // Envelope-only (resolved present) skips resolution but still checks call shape:
+  // a non-object `call.params` is flagged even when resolution is skipped.
+  const badShape = {
+    schema_version: 1,
+    title: 'Bad call params',
+    description: 'call.params must be an object.',
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': {
+            action: 'call',
+            intent: 'Call with malformed params',
+            ref: 'library.flow',
+            params: 'not-an-object',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const composedForBadShape = {
+    ...badShape,
+    flows: {
+      'library.flow': {
+        entry: 'go',
+        nodes: {
+          go: { action: 'wait', ms: 1, next: 'inner-done' },
+          'inner-done': { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const shapeChecked = validateRecipeArtifactPackage({
+    recipe: badShape,
+    resolvedRecipe: composedForBadShape,
+  });
+  assert.ok(
+    shapeChecked.findings.some((finding) => finding.code === 'workflow.invalid_call_params'),
+  );
 });
 
 test('validates inline flow actions, transitions, and cycles', () => {

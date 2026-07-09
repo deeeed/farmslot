@@ -20,6 +20,7 @@ const IGNORED_PATH_PARTS = new Set([
   '.git',
   '.omc',
   '.omx',
+  '.worktrees',
   '.yarn',
   'build',
   'coverage',

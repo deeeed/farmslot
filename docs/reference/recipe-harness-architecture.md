@@ -233,6 +233,7 @@ files are runtime state, not source changes.
 
 ```json
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Human-readable validation title",
   "description": "What this recipe proves",

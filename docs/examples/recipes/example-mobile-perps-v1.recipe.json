@@ -1,4 +1,5 @@
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Example Mobile App Perps market proof",
   "description": "Example v1 Mobile recipe using official ui/app actions plus Example App custom wallet actions.",

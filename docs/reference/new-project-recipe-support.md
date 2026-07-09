@@ -41,6 +41,7 @@ validation to native tools:
 
 ```json
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "inputs": {},
   "validate": {
@@ -76,6 +77,7 @@ A UI project can expose adapter actions and slow playback:
 
 ```json
 {
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
   "schema_version": 1,
   "title": "Settings page renders account controls",
   "description": "Navigates to settings, verifies controls, and captures evidence.",

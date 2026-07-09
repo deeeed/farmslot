@@ -10,6 +10,7 @@ import {
   type RecipeValidationResult,
   TERMINAL_STATUSES,
 } from './common.js';
+import { validateRecipeDocument } from './document.js';
 import { getRecipeWorkflowNodeIds } from './workflow.js';
 
 export function validateArtifactManifestDocument(
@@ -335,6 +336,34 @@ export function validateRecipeArtifactPackage(
       artifactPaths: input.artifactPaths,
     });
     ctx.findings.push(...manifestResult.findings);
+  }
+
+  // A passing run must prove its composition resolves. Either recipe.json is
+  // self-contained (validated in full below), or resolved-recipe.json — the
+  // composed, `uses`-inlined recipe — proves it (validated in full instead, with
+  // recipe.json checked envelope-only since its `call.ref`s are proven there).
+  // A failed run (`runPassed === false`) is not held to this: it already surfaced
+  // its cause (e.g. a flow cycle) in the trace, so recipe.json stays envelope-only
+  // and the composition is not re-validated.
+  const enforceComposition = input.runPassed !== false;
+  const compositionProvenByResolved = enforceComposition && input.resolvedRecipe != null;
+
+  if (input.recipe != null) {
+    const recipeResult = validateRecipeDocument(input.recipe, {
+      requireSchemaRef: input.requireSchemaRef === true,
+      skipFlowCallResolution: !enforceComposition || compositionProvenByResolved,
+      // The `uses` catalogs are not part of the artifact package, so they do not
+      // prove resolution here — only inline `flows` (or resolved-recipe.json) do.
+      externalCatalogsResolvable: false,
+    });
+    ctx.findings.push(...recipeResult.findings);
+  }
+
+  if (compositionProvenByResolved) {
+    const resolvedResult = validateRecipeDocument(input.resolvedRecipe, {
+      requireSchemaRef: input.requireSchemaRef === true,
+    });
+    ctx.findings.push(...resolvedResult.findings);
   }
 
   return finishResult(ctx);

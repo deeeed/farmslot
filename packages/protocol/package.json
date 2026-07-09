@@ -100,6 +100,7 @@
       "import": "./dist/contracts/agents.js",
       "default": "./dist/contracts/agents.js"
     },
+    "./schemas/*": "./schemas/*",
     "./contracts/backlog": {
       "types": "./dist/contracts/backlog.d.ts",
       "import": "./dist/contracts/backlog.js",
@@ -375,6 +376,7 @@
   "files": [
     "README.md",
     "LICENSE",
+    "schemas/**/*.json",
     "dist/**/*.js",
     "dist/**/*.d.ts",
     "dist/**/*.d.ts.map",

@@ -34,6 +34,24 @@ export class JsonArtifactWriter implements ArtifactWriter {
     return recipePath;
   }
 
+  /**
+   * Writes the fully-composed recipe: the authored recipe with every reachable
+   * flow (inline + `uses` catalogs + resolved library flows, transitively)
+   * inlined under `flows`. This artifact is self-contained, so its `call.ref`s
+   * resolve without the recipe library and it validates as a complete recipe.
+   */
+  async writeResolvedRecipe(recipe: unknown): Promise<string> {
+    const resolvedPath = path.join(this.#artifactsDir, 'resolved-recipe.json');
+    await writeJsonFile(resolvedPath, recipe);
+    this.register({
+      path: 'resolved-recipe.json',
+      type: 'recipe',
+      label: 'Resolved recipe (full composition)',
+      category: 'system',
+    });
+    return resolvedPath;
+  }
+
   register(entry: RecipeArtifactManifestEntry): void {
     if (!this.#entries.some((existing) => existing.path === entry.path)) {
       this.#entries.push(entry);

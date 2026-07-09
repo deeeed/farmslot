@@ -4,6 +4,7 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+- chore: stamp the generated Expo config recipe with the canonical Recipe Protocol v1 `$schema` URL.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.1.1

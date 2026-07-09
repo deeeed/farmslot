@@ -72,7 +72,7 @@ Execute top-to-bottom. After each step, run `{{TASK_DIR}}/mark N`. STOP at failu
 
 Skip Phase 2 only when every AC is backend-only with zero Command Center surface. State the reason in this TASK file.
 
-- [ ] **6. Write `{{TASK_DIR}}/artifacts/recipe.json`** — cover all acceptance criteria using manifest actions from `{{recipe_manifest_path}}`. For modifications, the recipe should fail on current code before your fix.
+- [ ] **6. Write `{{TASK_DIR}}/artifacts/recipe.json`** — cover all acceptance criteria using manifest actions from `{{recipe_manifest_path}}`. The document must include `schema_version: 1`; include `$schema: "https://farmslot.io/schemas/recipe-v1.schema.json"` when authoring new recipes. For modifications, the recipe should fail on current code before your fix.
 - [ ] **7. Baseline recipe run** — must exit non-zero on unfixed code (or document `Baseline: N/A — purely additive` with rationale):
   ```bash
   cd {{REPO}}

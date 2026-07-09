@@ -4,7 +4,9 @@ import {
   finishResult,
   hasOwn,
   isRecord,
+  RECIPE_PROTOCOL_SCHEMA_URL,
   RECIPE_PROTOCOL_SCHEMA_VERSION,
+  recipeProtocolSchemaUrlForVersion,
   type RecipeValidationResult,
   validateOptionalStringField,
 } from './common.js';
@@ -30,6 +32,21 @@ export interface RecipeDocumentValidationOptions {
    * unresolved even when the recipe has no `uses` catalogs or inline flows.
    */
   externalFlowIds?: ReadonlySet<string>;
+  /** Require the canonical published JSON Schema URL at recipe.$schema. */
+  requireSchemaRef?: boolean;
+  /**
+   * Skip `call.ref` resolution (unresolved_call_ref) against inline flows / uses
+   * catalogs / external library flows. Call-shape checks (invalid ref/params) still
+   * run. Set when a produced resolved-recipe.json already proves resolution.
+   */
+  skipFlowCallResolution?: boolean;
+  /**
+   * Whether a declared `uses` catalog counts as resolving `call.ref`s. Defaults to
+   * true (authoring/run time, where catalogs are loaded). Set false at
+   * artifact-package validation, where the catalogs are not in the package, so a
+   * `uses`-only recipe is not self-contained.
+   */
+  externalCatalogsResolvable?: boolean;
 }
 
 export function validateRecipeWithManifest(
@@ -92,6 +109,27 @@ export function validateRecipeDocument(
 
   const schemaVersion = recipe.schema_version;
   const schemaVersionIsV1 = schemaVersion === RECIPE_PROTOCOL_SCHEMA_VERSION;
+  const expectedSchemaRef =
+    recipeProtocolSchemaUrlForVersion(schemaVersion) ?? RECIPE_PROTOCOL_SCHEMA_URL;
+  const schemaRef = recipe.$schema;
+  if (options?.requireSchemaRef === true && schemaRef == null) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.missing_schema_ref',
+      '$schema',
+      `Recipe must set $schema to ${expectedSchemaRef}.`,
+    );
+  } else if (schemaRef != null && schemaRef !== expectedSchemaRef) {
+    addFinding(
+      ctx,
+      'error',
+      'recipe.unsupported_schema_ref',
+      '$schema',
+      `Unsupported $schema ${JSON.stringify(schemaRef)} for schema_version ${JSON.stringify(schemaVersion)}; expected ${expectedSchemaRef}.`,
+    );
+  }
+
   if (!hasOwn(recipe, 'schema_version')) {
     addFinding(
       ctx,
@@ -119,7 +157,14 @@ export function validateRecipeDocument(
   if (workflow && rawWorkflow) {
     validateWorkflowPreconditions(ctx, rawWorkflow);
     validateWorkflowGraph(ctx, workflow, rawWorkflow);
-    validateFlowCalls(ctx, recipe, workflow, options);
+    // Always run flow-call validation for call-shape checks; skipResolution gates
+    // only unresolved_call_ref (proven elsewhere), and externalCatalogsResolvable
+    // controls whether a declared `uses` catalog counts as resolving refs.
+    validateFlowCalls(ctx, recipe, workflow, {
+      ...(options?.externalFlowIds ? { externalFlowIds: options.externalFlowIds } : {}),
+      skipResolution: options?.skipFlowCallResolution === true,
+      externalCatalogsResolvable: options?.externalCatalogsResolvable !== false,
+    });
   }
   validateInlineFlows(ctx, recipe);
 

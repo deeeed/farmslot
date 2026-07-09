@@ -68,6 +68,7 @@ async function writePerChangeRecipe(
   flows: Record<string, unknown>,
 ): Promise<void> {
   await writeJsonFile(recipePath, {
+    $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
     schema_version: 1,
     title: 'Per-change proof recipe',
     description: 'Throwaway proof recipe carrying a reusable inline flow.',
@@ -200,6 +201,7 @@ test('stamps lastVerified only from a passing run that exercised the flow', asyn
     // recipe files match.
     const uncalledRecipePath = path.join(tempRoot, 'uncalled.json');
     await writeJsonFile(uncalledRecipePath, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Uncalled flow recipe',
       description: 'Declares the flow inline but never calls it.',
@@ -278,6 +280,7 @@ test('re-verifies a library-resolved flow from the run resolution report', async
     // Composed run resolving the flow from the library.
     const composedPath = path.join(tempRoot, 'composed.json');
     await writeJsonFile(composedPath, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Composed re-verify recipe',
       description: 'Calls the promoted flow from the library.',
@@ -437,6 +440,7 @@ test('a promoted flow is immediately composable from the library by a new recipe
 
     const composedRecipePath = path.join(tempRoot, 'composed.json');
     await writeJsonFile(composedRecipePath, {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       title: 'Composed from library',
       description: 'Calls the promoted flow without declaring it.',
@@ -544,6 +548,7 @@ test('refuses to promote into a library already corrupted by a duplicate ref', a
     // Pre-existing corruption (from before promote scanned the whole library):
     // the same ref declared in a second catalog file.
     await writeJsonFile(path.join(targetRoot, 'flows', 'custom.flows.json'), {
+      $schema: 'https://farmslot.io/schemas/recipe-v1.schema.json',
       schema_version: 1,
       kind: 'recipe-flow-catalog',
       flows: { 'demo.write-marker': markerFlow() },

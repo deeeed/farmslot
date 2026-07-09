@@ -15,6 +15,7 @@ import {
   manifestTarget,
 } from '../recording/capture-helper.js';
 
+import { buildResolvedRecipe } from './compose.js';
 import { collectFlows, executeInlineFlowCall, type InlineFlow } from './flows.js';
 import {
   extractWorkflowGraph,
@@ -225,6 +226,14 @@ class DefaultRecipeRunner implements RecipeRunner {
     const summaryWriter = new JsonSummaryWriter(artifactsDir);
     const outputs = new Map<string, unknown>();
     const recipePath = await artifactWriter.copyRecipe(recipe);
+    // Emit the fully-composed recipe when `uses`/library composition adds flows the
+    // authored recipe.json does not already inline. buildResolvedRecipe inlines only
+    // the reachable flows (never the whole library) and drops `uses`, so the result
+    // is self-contained; it returns the same reference when there is nothing to add.
+    const resolvedRecipe = buildResolvedRecipe(recipe, flowCatalog);
+    if (resolvedRecipe !== recipe) {
+      await artifactWriter.writeResolvedRecipe(resolvedRecipe);
+    }
     let status: RecipeRunStatus = 'unknown';
     let currentNodeId: string | undefined = graph.entry;
     let mainStatus: RecipeRunStatus = 'unknown';
@@ -584,6 +593,13 @@ class DefaultRecipeRunner implements RecipeRunner {
 
     const packageValidation = validateRecipeArtifactPackage({
       recipe,
+      // Hand the composed recipe and the run outcome to the validator: it validates
+      // the composition in full only for a passing run (parity with gateway/CLI), and
+      // leaves a gracefully-failed run's composition unchecked.
+      ...(resolvedRecipe !== recipe ? { resolvedRecipe } : {}),
+      // Only a confirmed failure relaxes composition enforcement; an unknown/incomplete
+      // status still requires the composition to be proven.
+      runPassed: status !== 'fail',
       manifest: {
         version: 1,
         runStatus: status,
