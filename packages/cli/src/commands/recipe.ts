@@ -340,7 +340,9 @@ export async function validateRecipeArtifactDirectory(
     manifest,
     artifactPaths,
     ...(resolvedRecipe !== undefined ? { resolvedRecipe } : {}),
-    runPassed: isRecord(summary) && summary.status === 'pass',
+    // Only a confirmed failure relaxes composition enforcement; unknown/missing status
+    // still requires the composition to be proven.
+    runPassed: !(isRecord(summary) && summary.status === 'fail'),
   });
 
   const summaryStatus = isRecord(summary) ? summary.status : undefined;

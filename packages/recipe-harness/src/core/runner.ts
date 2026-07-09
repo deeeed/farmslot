@@ -597,7 +597,9 @@ class DefaultRecipeRunner implements RecipeRunner {
       // the composition in full only for a passing run (parity with gateway/CLI), and
       // leaves a gracefully-failed run's composition unchecked.
       ...(resolvedRecipe !== recipe ? { resolvedRecipe } : {}),
-      runPassed: status === 'pass',
+      // Only a confirmed failure relaxes composition enforcement; an unknown/incomplete
+      // status still requires the composition to be proven.
+      runPassed: status !== 'fail',
       manifest: {
         version: 1,
         runStatus: status,

@@ -164,7 +164,9 @@ export async function validateRecipeCliInput({
         manifest,
         artifactPaths,
         ...(resolvedRecipe !== undefined ? { resolvedRecipe } : {}),
-        runPassed: isRecord(manifest) && manifest.runStatus === 'pass',
+        // Only a confirmed failure relaxes composition enforcement; unknown/missing
+        // status still requires the composition to be proven.
+        runPassed: !(isRecord(manifest) && manifest.runStatus === 'fail'),
       }),
     );
   }

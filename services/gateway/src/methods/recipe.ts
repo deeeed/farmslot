@@ -294,7 +294,9 @@ export function validateRecipeRunArtifactPackageOutput(
   const recipe = validateRecipeArtifactPackage({
     recipe: input.recipeArtifactPresent ? input.recipe : undefined,
     ...(input.resolvedRecipe != null ? { resolvedRecipe: input.resolvedRecipe } : {}),
-    runPassed: summaryStatus === 'pass',
+    // Only a confirmed failure relaxes composition enforcement; unknown/missing status
+    // still requires the composition to be proven, so it cannot slip through.
+    runPassed: summaryStatus !== 'fail',
     manifest: input.manifest,
     artifactPaths: input.artifactListError ? undefined : input.artifactPaths,
   });
