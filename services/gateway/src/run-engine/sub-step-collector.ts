@@ -14,11 +14,15 @@ export function createSubStepCollector(): SubStepCollector {
   const MAX_OUTPUT_LINES = 30;
 
   return {
-    emit: (_event: string, payload: unknown) => {
+    emit: (event: string, payload: unknown) => {
       const p = payload as
         | { name?: string; detail?: string; stream?: string; data?: string }
         | undefined;
-      if (p?.stream && p?.data) {
+      // Only the raw output channel (`script.output`) feeds the ring buffer.
+      // Key on the event NAME, not payload shape, so a sibling event that
+      // happens to carry a `{stream, data}` payload is never recorded as an
+      // output line: one emitted line = one record.
+      if (event === 'script.output' && p?.stream && p?.data) {
         // Output stream event — capture lines into ring buffer
         const lines = p.data.split('\n');
         for (const line of lines) {

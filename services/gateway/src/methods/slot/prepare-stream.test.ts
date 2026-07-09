@@ -16,19 +16,17 @@ function collect(): { emit: (event: string, payload: unknown) => void; frames: F
   };
 }
 
-test('output() streams raw bytes so mid-line chunks are not fragmented', () => {
+test('output() streams raw bytes on a single channel so mid-line chunks are not fragmented', () => {
   const { emit, frames } = collect();
   const stream = createPrepareStream(emit, { slotId: 'core-1', requestId: 'req-1', startTime: 0 });
 
   stream.output('stdout', 'Fetching packages... ');
   stream.complete(0);
 
-  const scriptOut = frames.filter((f) => f.event === 'script.output');
-  const prepareOut = frames.filter((f) => f.event === 'slot.prepare.output');
-  assert.equal(scriptOut.length, 1);
-  assert.equal(scriptOut[0].payload.data, 'Fetching packages... ');
-  assert.equal(prepareOut.length, 1);
-  assert.equal(prepareOut[0].payload.data, 'Fetching packages... ');
+  // Output rides `script.output` only; no other frame mirrors the same bytes.
+  const outputFrames = frames.filter((f) => f.payload.data === 'Fetching packages... ');
+  assert.equal(outputFrames.length, 1);
+  assert.equal(outputFrames[0].event, 'script.output');
 });
 
 test('step() emits a newline-terminated line on script.output plus structured metadata', () => {

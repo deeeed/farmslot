@@ -19,8 +19,11 @@ export function createPrepareStream(
     // Stream raw bytes: prepare output arrives as arbitrary tail chunks that may
     // split mid-line, so forcing a trailing newline would fragment lines. Step
     // messages supply their own newline. Mirrors the recipe output stream.
+    //
+    // Raw output rides `script.output` — the channel the UI live view and CLI
+    // consume. Structured phase/profile provenance rides the `slot.prepare.step`
+    // / `slot.prepare.done` channels below.
     emit('script.output', { requestId, stream, data, timestamp: Date.now() });
-    emit('slot.prepare.output', { requestId, slotId, stream, data });
   };
   return {
     requestId,

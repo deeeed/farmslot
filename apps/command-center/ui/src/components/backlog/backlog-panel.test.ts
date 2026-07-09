@@ -4,8 +4,12 @@ import { test } from 'node:test';
 import type { BacklogStatus } from '@farmslot/protocol';
 
 import {
+  canArchiveBacklogItemForUi,
+  canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
+  canRestoreBacklogItemForUi,
+  showsBacklogCleanupActionsForUi,
   syncedBacklogDraftProject,
 } from './backlog-panel-model.js';
 
@@ -41,6 +45,15 @@ test('backlog panel mark-ready action is enabled for candidate, failed, and need
     assert.equal(canMarkReadyBacklogItemForUi({ status }), true, status);
   for (const status of disabled)
     assert.equal(canMarkReadyBacklogItemForUi({ status }), false, status);
+});
+
+test('backlog cleanup actions are shown for finished backlog items', () => {
+  assert.equal(showsBacklogCleanupActionsForUi({ status: 'done' }), true);
+  assert.equal(canArchiveBacklogItemForUi({ status: 'done' }), true);
+  assert.equal(canDeleteBacklogItemForUi({ status: 'done' }), true);
+  assert.equal(canRestoreBacklogItemForUi({ status: 'archived' }), true);
+  assert.equal(canArchiveBacklogItemForUi({ status: 'archived' }), false);
+  assert.equal(showsBacklogCleanupActionsForUi({ status: 'ready' }), false);
 });
 
 test('backlog draft project follows a single global project filter', () => {

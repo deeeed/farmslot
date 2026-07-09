@@ -564,6 +564,22 @@ test('backlog.update rejects public lifecycle and run linkage mutation', async (
   );
 });
 
+test('backlog.archive moves finished backlog items to archived', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Archive completed backlog item',
+    sourceKind: 'manual',
+    flowType: 'dev',
+  });
+  created.item.status = 'done';
+
+  const archived = await backlog.archiveBacklogItem({ itemId: created.item.id });
+  assert.equal(archived.item.status, 'archived');
+  assert.equal(backlog.listBacklogItems().items.length, 0);
+  assert.equal(backlog.listBacklogItems({ status: 'archived' }).items.length, 1);
+});
+
 test('explicit archived filter includes archived backlog items', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
@@ -628,6 +644,31 @@ test('manual backlog run handoff normalizes manual refs', async () => {
     backlog.isValidManualBacklogRunHandoff(created.item.id, 'manual-000001', 'other-project'),
     false,
   );
+});
+
+test('run observation heals needs-attention when linked run completes', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Blocked then done',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  created.item.status = 'needs-attention';
+  created.item.runId = 'blocked-then-done';
+  created.item.lastObservedRunStatus = 'blocked';
+
+  backlog.markBacklogRunObserved({
+    id: 'blocked-then-done',
+    status: 'done',
+    backlogItemId: created.item.id,
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'done');
+  assert.equal(item?.lastObservedRunStatus, 'done');
 });
 
 test('run observation does not overwrite terminal backlog status', async () => {
