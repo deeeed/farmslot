@@ -242,6 +242,9 @@ export function buildPrepareNewWindowCommand(
  *
  * Kill highest index first so earlier indices in the snapshot stay valid as
  * tmux renumbers after each kill-window.
+ *
+ * Farmslot prepare window names are generated as `prepare-<runId>-<phase>` and
+ * must not contain `:`; the command uses `index:name` as an internal delimiter.
  */
 export function buildPrepareKillWindowsByNameCommand(
   sessionName: string,
@@ -262,9 +265,12 @@ export function buildPreparePreLaunchSweepCommand(sessionName: string, labelPart
   // phases (`prepare-<labelPart>-*`) alive — a later phase must not SIGHUP an
   // in-flight fixtures/deps/preflight window owned by the same prepare.
   return tmuxShellSnippet(
-    `list-windows -t ${shellQuote(sessionName)} -F '#{window_name}' 2>/dev/null | ` +
-      `grep '^prepare-' | grep -v ${shellQuote(`^prepare-${labelPart}-`)} | ` +
-      `while IFS= read -r w; do echo "$w"; "$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$w" 2>/dev/null; done`,
+    `list-windows -t ${shellQuote(sessionName)} -F '#{window_index}:#{window_name}' 2>/dev/null | ` +
+      `awk -F: -v keep=${shellQuote(`^prepare-${labelPart}-`)} '$2 ~ /^prepare-/ && $2 !~ keep { print $1 ":" $2 }' | sort -t: -nr -k1,1 | ` +
+      `while IFS=: read -r idx name; do ` +
+      `echo "$idx:$name"; ` +
+      `"$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$idx" 2>/dev/null || true; ` +
+      `done`,
   );
 }
 

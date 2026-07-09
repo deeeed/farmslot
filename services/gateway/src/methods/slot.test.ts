@@ -205,8 +205,10 @@ test('buildPrepareKillWindowsByNameCommand targets windows by index, not name', 
 test('buildPreparePreLaunchSweepCommand preserves same-run prepare windows', () => {
   const command = buildPreparePreLaunchSweepCommand('ff-3', '6fb60a78');
 
-  assert.match(command, /grep '\^prepare-'/);
-  assert.match(command, /grep -v '\^prepare-6fb60a78-'/);
+  assert.match(command, /list-windows -t 'ff-3' -F '#\{window_index\}:#\{window_name\}'/);
+  assert.match(command, /keep='\^prepare-6fb60a78-'/);
+  assert.match(command, /sort -t: -nr -k1,1/);
+  assert.match(command, /kill-window -t 'ff-3':"\$idx"/);
 });
 
 test('buildPrepareKillWindowsByNameCommand reaps duplicate same-named prepare windows', async (t) => {

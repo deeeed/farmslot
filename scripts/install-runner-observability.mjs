@@ -294,7 +294,6 @@ function stripCodexHomeInstallerSections(content, repoPath) {
   const canonicalRepoPath = canonicalCodexPath(repoPath);
   const projectSection = `projects."${escapeTomlBasicString(canonicalRepoPath)}"`;
   return stripTomlSections(content, (section) => {
-    if (section === 'features') return true;
     if (section === projectSection) return true;
     if (section.startsWith('hooks.state.')) return true;
     return false;
@@ -306,7 +305,7 @@ function upsertCodexHooksFeature(content) {
   const existingFeatureIdx = lines.findIndex((line) => line.trim() === '[features]');
   if (existingFeatureIdx < 0) {
     const block = '[features]\nhooks = true\n';
-    return content.trimEnd() ? `${content.trimEnd()}\n\n${block}` : block.trimEnd();
+    return content.trimEnd() ? `${content.trimEnd()}\n\n${block.trimEnd()}` : block.trimEnd();
   }
 
   let sectionEnd = lines.length;
@@ -370,12 +369,10 @@ function bootstrapCodexHome({ repoPath, runtimeDir, hooksPath }) {
   } else if (existingStat) {
     content = fs.readFileSync(configPath, 'utf8');
   }
-  content = stripCodexHomeInstallerSections(content, repoPath);
-  const featureBlock = '[features]\nhooks = true\n';
+  content = upsertCodexHooksFeature(stripCodexHomeInstallerSections(content, repoPath));
   const canonicalRepoPath = canonicalCodexPath(repoPath);
   const projectBlock = `[projects."${escapeTomlBasicString(canonicalRepoPath)}"]\ntrust_level = "trusted"\n`;
-  const merged =
-    [content, featureBlock, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
+  const merged = [content, trustToml, projectBlock].filter(Boolean).join('\n').trimEnd() + '\n';
   fs.writeFileSync(configPath, merged);
   const userAuth = path.join(os.homedir(), '.codex', 'auth.json');
   const destAuth = path.join(codexHomeDir, 'auth.json');

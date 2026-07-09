@@ -54,6 +54,7 @@ import {
   type RunnerLaunchBlocker,
   runnerNeedsPostLaunchPrompt,
   runnerPaneHasDeferredLaunchBlocker,
+  runnerResolvesPreTaskLaunchBlockers,
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../../runners/registry.js';
@@ -411,17 +412,19 @@ async function resolveRunnerLaunchBlockers(
     lastBlockerSummary = blocker.summary;
 
     const key = keyForRunnerLaunchBlockerAutoAction(blocker.autoAction);
-    if (key && !answered.has(blocker.kind)) {
-      const result = await execOnSlot(
-        vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${key} 2>/dev/null`),
-      );
-      if (result.exitCode !== 0) {
-        throw new Error(
-          `Failed to resolve ${runner} launch blocker ${blocker.kind} in ${target}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+    if (key) {
+      if (!answered.has(blocker.kind)) {
+        const result = await execOnSlot(
+          vars,
+          tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${key} 2>/dev/null`),
         );
+        if (result.exitCode !== 0) {
+          throw new Error(
+            `Failed to resolve ${runner} launch blocker ${blocker.kind} in ${target}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+          );
+        }
+        answered.add(blocker.kind);
       }
-      answered.add(blocker.kind);
     } else if (!runnerPaneHasDeferredLaunchBlocker(pane, runner, blocker)) {
       throw new Error(
         `${blocker.summary} Launch blocker has no safe automatic action; dispatch cannot continue.`,
@@ -1103,10 +1106,10 @@ export async function dispatchExecute(
     // instead of 'failed' — the false-success path that left review-pr runs
     // sitting at human-gate waiting for artifacts that were never produced.
     await assertRunnerProcessStarted(vars, workerTarget, runner);
-    if (!runnerNeedsPostLaunchPrompt(runner)) {
+    runnerProcessStarted = true;
+    if (runnerResolvesPreTaskLaunchBlockers(runner)) {
       await resolveRunnerLaunchBlockers(vars, workerTarget, runner);
     }
-    runnerProcessStarted = true;
     step('launch', `${runner} launched in tmux target ${workerTarget}`);
     primaryTarget = await captureAgentPaneTarget(vars, session, workerTarget);
     const workerPaneId = await resolveTmuxPaneId(vars, primaryTarget.target ?? workerTarget);

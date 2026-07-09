@@ -67,6 +67,7 @@ export interface RunnerDefinition {
   processMatchers: string[];
   supportsInteractivePrompt: boolean;
   needsPostLaunchPrompt: boolean;
+  resolvesPreTaskLaunchBlockers: boolean;
   supportsTmuxNudges: boolean;
   continueCommand: string | null;
   /** Runner writes session files on disk (e.g. resumable session state). */
@@ -147,6 +148,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['claude'],
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     continueCommand: '/continue',
     persistsSessionFiles: true,
@@ -173,6 +175,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['codex'],
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     // This string is sent into an already-running Codex TUI when resuming a paused
     // monitor. It must be natural language, not the shell-only `codex --continue`
@@ -209,6 +212,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // steerable TUI turn without the fragile post-launch key path.
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: true,
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -233,6 +237,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // ~/.grok/sessions so usage extraction can join summary.json to Grok logs.
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: true,
@@ -253,6 +258,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['opencode'],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -269,6 +275,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: [],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -285,6 +292,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['farmslot scripted-runner', 'scripted-runner'],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -442,6 +450,11 @@ export function runnerTmuxNudgeUnsupportedDescription(
 export function runnerNeedsPostLaunchPrompt(runnerId?: string | null): boolean {
   if (!isKnownRunner(runnerId)) return false;
   return getRunnerDefinition(runnerId).needsPostLaunchPrompt;
+}
+
+export function runnerResolvesPreTaskLaunchBlockers(runnerId?: string | null): boolean {
+  if (!isKnownRunner(runnerId)) return false;
+  return getRunnerDefinition(runnerId).resolvesPreTaskLaunchBlockers;
 }
 
 export function runnerContinueCommand(runnerId?: string | null): string | null {

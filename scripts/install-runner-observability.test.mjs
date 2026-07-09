@@ -211,7 +211,7 @@ test('codex install is idempotent for isolated codex-home config.toml', () => {
   fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
   fs.writeFileSync(
     path.join(repo, '.agent', 'codex-home', 'config.toml'),
-    '[features]\nhooks = true\n\n[tui.model_availability_nux]\n"gpt-5.5" = 1\n',
+    '[features]\nhooks = false\ncustom_flag = true\n\n[tui.model_availability_nux]\n"gpt-5.5" = 1\n',
   );
 
   for (let i = 0; i < 2; i += 1) {
@@ -237,6 +237,8 @@ test('codex install is idempotent for isolated codex-home config.toml', () => {
     'utf8',
   );
   assert.equal((homeContent.match(/^\[features\]/gm) || []).length, 1);
+  assert.match(homeContent, /hooks = true/);
+  assert.match(homeContent, /custom_flag = true/);
   assert.equal((homeContent.match(/^\[projects\./gm) || []).length, 1);
   assert.match(homeContent, /\[tui\.model_availability_nux\]/);
 });
