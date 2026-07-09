@@ -685,7 +685,11 @@ function shouldApplyLinkedRunObservation(item: BacklogItem, run: Run): boolean {
   if (!TERMINAL_STATUSES.has(item.status)) return true;
   if (item.status === 'done' || item.status === 'archived') return false;
   if (item.status === 'needs-attention' || item.status === 'failed') {
-    return isTerminalRunStatus(run.status);
+    // Apply when the run reaches a terminal state, or when the item's OWN linked
+    // run has been re-activated to a non-terminal status — a replay. Without the
+    // latter, replaying a failed run leaves the backlog item stuck at failed
+    // while the run is actually running again (UI discrepancy).
+    return isTerminalRunStatus(run.status) || item.runId === run.id;
   }
   return false;
 }
