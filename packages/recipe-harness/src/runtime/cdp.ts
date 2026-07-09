@@ -3,9 +3,11 @@ import path from 'node:path';
 
 import WebSocket from 'ws';
 
+import type { UiObserverRef } from '@farmslot/protocol';
+
 import type { StandardUiAction, UiActionTransport, UiTransportResult } from '../adapters/ui.js';
 import { asNumber, asOptionalString, asString, isRecord } from '../core/json.js';
-import type { ActionExecutionContext } from '../core/types.js';
+import type { ActionExecutionContext, RecipeObservationResult } from '../core/types.js';
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -390,6 +392,33 @@ export class CdpWebPage {
     };
   }
 
+  async observe(refs: readonly UiObserverRef[]): Promise<RecipeObservationResult> {
+    const observations: Record<string, unknown> = {};
+    const warnings: RecipeObservationResult['warnings'] = [];
+    for (const ref of refs) {
+      try {
+        if (ref === 'ui.screen') {
+          observations[ref] = await this.evaluate(
+            `(() => ({ provider: 'cdp-web', name: document.title || location.pathname || location.hash || 'Browser', title: document.title || undefined, route: location.hash || location.pathname || undefined, url: location.href }))()`,
+          );
+        } else if (ref === 'ui.visible') {
+          observations[ref] = await this.evaluate(visibleTargetsExpression());
+        } else {
+          warnings.push({ ref, message: `Unsupported UI observer: ${ref}.` });
+        }
+      } catch (error) {
+        warnings.push({
+          ref,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return {
+      ...(Object.keys(observations).length ? { observations } : {}),
+      ...(warnings.length ? { warnings } : {}),
+    };
+  }
+
   close(): void {
     this.session.close();
   }
@@ -479,7 +508,80 @@ export function createCdpWebUiTransport(
         }
       });
     },
+    async observe(refs, node, context) {
+      const input = { action: 'app.status' as StandardUiAction, node, context };
+      return withCdpWebPage(options, input, async (page) => page.observe(refs));
+    },
   };
+}
+
+function visibleTargetsExpression(): string {
+  return `(() => {
+    const visibleLimit = 20;
+    const hiddenLimit = 10;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const selector = [
+      'button',
+      'a[href]',
+      'input',
+      'textarea',
+      'select',
+      '[role="button"]',
+      '[role="link"]',
+      '[role="menuitem"]',
+      '[role="tab"]',
+      '[data-testid]',
+      '[data-test-id]',
+      '[data-test]'
+    ].join(',');
+    const nodes = Array.from(document.querySelectorAll(selector));
+    const textFor = (el) => {
+      const raw = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('value') || el.innerText || el.textContent || '';
+      return String(raw).replace(/\\s+/g, ' ').trim().slice(0, 120) || undefined;
+    };
+    const cssPath = (el) => {
+      if (el.id) return '#' + CSS.escape(el.id);
+      const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test');
+      if (testId) return '[data-testid="' + String(testId).replace(/"/g, '\\\\"') + '"]';
+      const tag = el.tagName.toLowerCase();
+      const parent = el.parentElement;
+      if (!parent) return tag;
+      const index = Array.from(parent.children).filter((child) => child.tagName === el.tagName).indexOf(el) + 1;
+      return tag + ':nth-of-type(' + index + ')';
+    };
+    const itemFor = (el, rect) => ({
+      role: el.getAttribute('role') || (el.tagName.toLowerCase() === 'a' ? 'link' : el.tagName.toLowerCase() === 'button' ? 'button' : undefined),
+      label: textFor(el),
+      test_id: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || undefined,
+      selector: cssPath(el),
+      enabled: !(el.disabled || el.getAttribute('aria-disabled') === 'true'),
+      selected: el.getAttribute('aria-selected') === 'true' || undefined,
+      focused: document.activeElement === el || undefined,
+      bounds: rect ? { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : undefined
+    });
+    const items = [];
+    const hidden_or_offscreen = [];
+    for (const el of nodes) {
+      const rect = el.getBoundingClientRect();
+      const hasBox = rect.width > 0 && rect.height > 0;
+      const onScreen = hasBox && rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;
+      const style = getComputedStyle(el);
+      const visible = onScreen && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || 1) > 0;
+      if (visible && items.length < visibleLimit) {
+        items.push(itemFor(el, rect));
+      } else if (!visible && hidden_or_offscreen.length < hiddenLimit) {
+        hidden_or_offscreen.push({ ...itemFor(el, hasBox ? rect : undefined), reason: hasBox ? 'offscreen_or_hidden' : 'no_box' });
+      }
+    }
+    return {
+      provider: 'cdp-web',
+      items,
+      hidden_or_offscreen,
+      truncated: nodes.length > items.length + hidden_or_offscreen.length,
+      limits: { items: visibleLimit, hidden_or_offscreen: hiddenLimit }
+    };
+  })()`;
 }
 
 async function withCdpWebPage<T>(

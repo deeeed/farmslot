@@ -105,6 +105,22 @@
       "description": "Reload or navigate back in the Command Center browser session during recipe proof."
     }
   },
+  "observers": [
+    {
+      "ref": "ui.screen",
+      "description": "Current screen, route, title, or URL digest recorded after supported UI actions.",
+      "default_for": ["ui.navigate", "ui.press", "ui.set_input", "ui.wait_for"],
+      "cost": "cheap",
+      "redaction": "none"
+    },
+    {
+      "ref": "ui.visible",
+      "description": "Bounded list of visible actionable UI targets for authoring the next recipe node.",
+      "default_for": ["ui.navigate", "ui.press", "ui.set_input", "ui.wait_for"],
+      "cost": "cheap",
+      "redaction": "labels-only"
+    }
+  ],
   "pre_conditions": [
     {
       "id": "service.listening",

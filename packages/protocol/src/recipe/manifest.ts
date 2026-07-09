@@ -1,5 +1,6 @@
 import {
   addFinding,
+  BUILT_IN_UI_OBSERVER_SET,
   createContext,
   finishResult,
   isNonEmptyString,
@@ -498,6 +499,106 @@ export function validateRecipeActionManifestDocument(manifest: unknown): RecipeV
               'action_manifest.invalid_capability_field',
               `${path}.${arrayField}`,
               `${path}.${arrayField} must be an array of non-empty strings when present.`,
+            );
+          }
+        }
+      });
+    }
+  }
+
+  const observers = manifest.observers;
+  if (observers != null) {
+    if (!Array.isArray(observers)) {
+      addFinding(
+        ctx,
+        'error',
+        'action_manifest.invalid_observers',
+        'observers',
+        'observers must be an array when present.',
+      );
+    } else {
+      const declaredObservers = new Set<string>();
+      observers.forEach((observer, index) => {
+        const path = `observers[${index}]`;
+        if (!isRecord(observer)) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.invalid_observer',
+            path,
+            `${path} must be an object.`,
+          );
+          return;
+        }
+        if (!isNonEmptyString(observer.ref)) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.invalid_observer_ref',
+            `${path}.ref`,
+            `${path}.ref must be a non-empty string.`,
+          );
+        } else {
+          if (!BUILT_IN_UI_OBSERVER_SET.has(observer.ref) && !observer.ref.includes('.')) {
+            addFinding(
+              ctx,
+              'error',
+              'action_manifest.invalid_observer_ref',
+              `${path}.ref`,
+              `${observer.ref} must be a built-in UI observer ref or a namespaced custom ref.`,
+            );
+          }
+          if (declaredObservers.has(observer.ref)) {
+            addFinding(
+              ctx,
+              'error',
+              'action_manifest.duplicate_observer',
+              `${path}.ref`,
+              `${observer.ref} is declared more than once.`,
+            );
+          }
+          declaredObservers.add(observer.ref);
+        }
+        if (!isNonEmptyString(observer.description)) {
+          addFinding(
+            ctx,
+            'error',
+            'action_manifest.invalid_observer_description',
+            `${path}.description`,
+            `${path}.description must be a non-empty string.`,
+          );
+        }
+        if (observer.default_for != null) {
+          if (!Array.isArray(observer.default_for)) {
+            addFinding(
+              ctx,
+              'error',
+              'action_manifest.invalid_observer_default_for',
+              `${path}.default_for`,
+              `${path}.default_for must be an array when present.`,
+            );
+          } else {
+            observer.default_for.forEach((action, actionIndex) => {
+              if (!isNonEmptyString(action) || !declaredActions.has(action)) {
+                addFinding(
+                  ctx,
+                  'error',
+                  'action_manifest.invalid_observer_default_for',
+                  `${path}.default_for[${actionIndex}]`,
+                  `${path}.default_for[${actionIndex}] must reference a declared action.`,
+                );
+              }
+            });
+          }
+        }
+        for (const field of ['cost', 'redaction']) {
+          if (observer[field] != null && typeof observer[field] !== 'string') {
+            addFinding(
+              ctx,
+              'error',
+              'action_manifest.invalid_observer_field',
+              `${path}.${field}`,
+              `${path}.${field} must be a string when present.`,
             );
           }
         }

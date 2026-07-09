@@ -1,5 +1,7 @@
+import type { UiObserverRef } from '@farmslot/protocol';
+
 import type { StandardUiAction, UiActionTransport } from '../adapters/ui.js';
-import type { ActionExecutionContext } from '../core/types.js';
+import type { ActionExecutionContext, RecipeObservationResult } from '../core/types.js';
 
 export type ReactNativeBridgeCommandName =
   | 'navigate'
@@ -13,7 +15,8 @@ export type ReactNativeBridgeCommandName =
   | 'status'
   | 'lifecycle'
   | 'hud'
-  | 'trace';
+  | 'trace'
+  | 'observeUi';
 
 export interface ReactNativeBridgeCommand {
   command: ReactNativeBridgeCommandName;
@@ -55,7 +58,44 @@ export function createReactNativeBridgeUiTransport(
         context,
       );
     },
+    async observe(refs: readonly UiObserverRef[], node, context): Promise<RecipeObservationResult> {
+      const result = await options.bridge.send(
+        {
+          command: 'observeUi',
+          nodeId: context.nodeId,
+          payload: { refs, node },
+        },
+        context,
+      );
+      return normalizeBridgeObservationResult(result, refs);
+    },
   };
 }
 
 export const createReactNativeCdpBridgeUiTransport = createReactNativeBridgeUiTransport;
+
+function normalizeBridgeObservationResult(
+  result: unknown,
+  refs: readonly UiObserverRef[],
+): RecipeObservationResult {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return {
+      warnings: refs.map((ref) => ({ ref, message: 'Bridge observeUi returned no object.' })),
+    };
+  }
+  const record = result as Record<string, unknown>;
+  if (record.ok === false) {
+    const message = typeof record.error === 'string' ? record.error : 'Bridge observeUi failed.';
+    return { warnings: refs.map((ref) => ({ ref, message })) };
+  }
+  const observations = record.observations;
+  const warnings = record.warnings;
+  return {
+    ...(observations && typeof observations === 'object' && !Array.isArray(observations)
+      ? { observations: observations as RecipeObservationResult['observations'] }
+      : {}),
+    ...(Array.isArray(warnings)
+      ? { warnings: warnings as RecipeObservationResult['warnings'] }
+      : {}),
+  };
+}

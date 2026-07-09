@@ -171,6 +171,9 @@
         },
         "record": {
           "enum": ["none", "trace_only", "proof_window", "failure_only"]
+        },
+        "observe": {
+          "$ref": "#/$defs/observePolicy"
         }
       },
       "allOf": [
@@ -214,9 +217,26 @@
         },
         "record": {
           "enum": ["none", "trace_only", "proof_window", "failure_only"]
+        },
+        "observe": {
+          "$ref": "#/$defs/observePolicy"
         }
       },
       "additionalProperties": true
+    },
+    "observePolicy": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      ]
     }
   }
 }

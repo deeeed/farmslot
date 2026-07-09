@@ -44,6 +44,9 @@ export const OFFICIAL_RECIPE_ACTIONS = [
 
 export type OfficialActionName = (typeof OFFICIAL_RECIPE_ACTIONS)[number];
 export type RecipeActionName = OfficialActionName | (string & {});
+export const BUILT_IN_UI_OBSERVERS = ['ui.screen', 'ui.visible'] as const;
+export type BuiltInUiObserverRef = (typeof BUILT_IN_UI_OBSERVERS)[number];
+export type UiObserverRef = BuiltInUiObserverRef | (string & {});
 
 export interface RecipeActionCatalogExample {
   description?: string;
@@ -98,6 +101,14 @@ export interface RecipeRuntimeCapabilityDeclaration {
   artifactTypes?: string[];
 }
 
+export interface RecipeObserverDeclaration {
+  ref: UiObserverRef;
+  description: string;
+  default_for?: RecipeActionName[];
+  cost?: 'cheap' | 'moderate' | 'expensive' | string;
+  redaction?: string;
+}
+
 export interface RecipeActionManifestDocument {
   runner_protocol_version: 1;
   action_registry_version: 1;
@@ -109,12 +120,14 @@ export interface RecipeActionManifestDocument {
   pre_conditions?: RecipePreconditionDeclaration[];
   native_bindings?: RecipeNativeBindingDeclaration[];
   capabilities?: RecipeRuntimeCapabilityDeclaration[];
+  observers?: RecipeObserverDeclaration[];
 }
 
 export const PLAYBACK_MODES = new Set(['off', 'auto', 'step']);
 export const TERMINAL_STATUSES = new Set(['pass', 'fail', 'unknown']);
 export const ARTIFACT_TYPES = new Set<string>(RECIPE_ARTIFACT_TYPES);
 export const OFFICIAL_ACTION_SET = new Set<string>(OFFICIAL_RECIPE_ACTIONS);
+export const BUILT_IN_UI_OBSERVER_SET = new Set<string>(BUILT_IN_UI_OBSERVERS);
 
 export type RecipeValidationSeverity = 'error' | 'warning';
 export type RecipeValidationStatus = 'valid' | 'invalid';

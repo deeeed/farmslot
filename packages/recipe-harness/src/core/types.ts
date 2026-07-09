@@ -1,4 +1,8 @@
-import type { RecipeActionManifestDocument, RecipeArtifactManifestEntry } from '@farmslot/protocol';
+import type {
+  RecipeActionManifestDocument,
+  RecipeArtifactManifestEntry,
+  UiObserverRef,
+} from '@farmslot/protocol';
 
 export type RecipeRunStatus = 'pass' | 'fail' | 'unknown';
 export type RecipeVideoRecordingMode = 'off' | 'full-run';
@@ -186,6 +190,8 @@ export interface ActionResult {
   case?: string;
   output?: unknown;
   artifacts?: RecipeArtifactManifestEntry[];
+  observations?: RecipeObservations;
+  observationWarnings?: RecipeObservationWarning[];
 }
 
 export interface ActionExecutionContext {
@@ -207,6 +213,23 @@ export interface ActionAdapter {
   action: string;
   testOnly?: boolean;
   execute(node: Record<string, unknown>, context: ActionExecutionContext): Promise<ActionResult>;
+  observe?(
+    refs: readonly UiObserverRef[],
+    node: Record<string, unknown>,
+    context: ActionExecutionContext,
+  ): Promise<RecipeObservationResult>;
+}
+
+export type RecipeObservations = Partial<Record<UiObserverRef, unknown>>;
+
+export interface RecipeObservationWarning {
+  ref: UiObserverRef;
+  message: string;
+}
+
+export interface RecipeObservationResult {
+  observations?: RecipeObservations;
+  warnings?: RecipeObservationWarning[];
 }
 
 export interface RecipePreconditionGate {
@@ -250,7 +273,10 @@ export interface TraceEntry {
   ok: boolean;
   next?: string;
   status?: RecipeRunStatus;
+  case?: string;
   output?: unknown;
+  observations?: RecipeObservations;
+  observationWarnings?: RecipeObservationWarning[];
   artifacts?: RecipeArtifactManifestEntry[];
   error?: string;
 }

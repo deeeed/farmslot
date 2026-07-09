@@ -1,4 +1,11 @@
-import type { ActionAdapter, ActionExecutionContext, ActionResult } from '../core/types.js';
+import type { UiObserverRef } from '@farmslot/protocol';
+
+import type {
+  ActionAdapter,
+  ActionExecutionContext,
+  ActionResult,
+  RecipeObservationResult,
+} from '../core/types.js';
 
 export const STANDARD_UI_ACTIONS = [
   'ui.navigate',
@@ -35,6 +42,11 @@ export interface UiActionTransport {
     node: Record<string, unknown>,
     context: ActionExecutionContext,
   ): Promise<unknown | UiTransportResult>;
+  observe?(
+    refs: readonly UiObserverRef[],
+    node: Record<string, unknown>,
+    context: ActionExecutionContext,
+  ): Promise<RecipeObservationResult>;
 }
 
 export interface CreateStandardUiAdaptersOptions {
@@ -52,6 +64,17 @@ export function createStandardUiAdapters(
     action,
     async execute(node, context) {
       return normalizeUiTransportResult(await options.transport.execute(action, node, context));
+    },
+    async observe(refs, node, context) {
+      if (!options.transport.observe) {
+        return {
+          warnings: refs.map((ref) => ({
+            ref,
+            message: `UI transport does not implement passive observer ${ref}.`,
+          })),
+        };
+      }
+      return options.transport.observe(refs, node, context);
     },
   }));
 }

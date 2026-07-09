@@ -226,6 +226,73 @@ test('validates runtime capability declarations in runner action manifests', () 
   );
 });
 
+test('validates observer declarations in runner action manifests', () => {
+  const result = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['ui.press', 'end'],
+    observers: [
+      {
+        ref: 'ui.screen',
+        description: 'Current screen digest.',
+        default_for: ['ui.press'],
+        cost: 'cheap',
+        redaction: 'none',
+      },
+      {
+        ref: 'ui.visible',
+        description: 'Visible authoring targets.',
+        default_for: ['ui.press'],
+        cost: 'cheap',
+        redaction: 'labels-only',
+      },
+    ],
+  });
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+
+  const invalid = validateRecipeActionManifestDocument({
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['end'],
+    observers: [{ ref: '', description: '', default_for: ['ui.press'], cost: 42 }],
+  });
+  assert.equal(invalid.status, 'invalid');
+  assert.ok(
+    invalid.findings.some((finding) => finding.code === 'action_manifest.invalid_observer_ref'),
+  );
+  assert.ok(
+    invalid.findings.some(
+      (finding) => finding.code === 'action_manifest.invalid_observer_default_for',
+    ),
+  );
+});
+
+test('permits node-level observe policy in recipe documents', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    title: 'Observe policy',
+    description: 'Node-level observe is runner-owned passive context.',
+    validate: {
+      workflow: {
+        entry: 'press',
+        nodes: {
+          press: {
+            action: 'ui.press',
+            intent: 'Open the visible target for the next authoring step.',
+            text: 'Open',
+            observe: ['ui.visible'],
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+});
+
 test('validates lifecycle actions against the runner manifest', () => {
   const recipe = {
     schema_version: 1,

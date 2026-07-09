@@ -184,6 +184,14 @@ cdp.target, cdp.storage, cdp.network, cdp.emulation, cdp.metrics, cdp.trace
 set `scroll_into_view: true` with a selector/test id when the proof requires a
 specific validated element to be visible before `ui.screenshot`.
 
+UI nodes may include `observe`. `observe: false` disables passive post-action
+observations for that node. `observe: ["ui.visible"]` records only the named
+observer. When omitted, cheap passive observations default on for
+`ui.navigate`, `ui.press`, `ui.key_press`, `ui.set_input`, `ui.scroll`,
+`ui.gesture`, and successful `ui.wait_for`; `ui.screenshot` defaults off.
+Observations are authoring/debug context only. They do not choose `next`, set
+`status`, set `case`, select branches, or replace proof nodes.
+
 Project custom actions must be namespaced, for example `example.trade.place_order` or `checkout.ensure_cart`. This document owns the action vocabulary and cross-cutting recipe semantics. [Recipe Runner Protocol](recipe-runner-protocol.md#action-manifest) provides runner-facing action guidance, and its [artifact package section](recipe-runner-protocol.md#artifact-package) provides runner output examples; when documents differ, this spec wins.
 
 ## 7. Flow composition
@@ -364,6 +372,17 @@ Overlay injection belongs to the runner/harness boundary. It may be installed at
 
 ## 12. Trace schema
 
+Trace entries may include `observations` and `observationWarnings`.
+Observations are stored separately from action `output` so graph control flow
+cannot implicitly depend on them. Observation failures should be warning-only
+for otherwise successful actions.
+
+Built-in UI observers:
+
+- `ui.screen`: current screen, route, title, or URL digest.
+- `ui.visible`: bounded visible actionable targets with stable handles such as
+  `test_id`, selector, label, and role where available.
+
 `trace.json` is the ordered execution record. It may be either a plain array of
 trace entries or an object with optional `metadata` and an `entries` array. The
 plain array form is valid for simple runners; the envelope form is used when a
@@ -449,6 +468,15 @@ An action manifest declares runner capabilities:
   "action_registry_version": 1,
   "supported_official_actions": ["command", "call", "ui.press"],
   "action_metadata": {},
+  "observers": [
+    {
+      "ref": "ui.screen",
+      "description": "Current screen/route digest after UI actions.",
+      "default_for": ["ui.press"],
+      "cost": "cheap",
+      "redaction": "none"
+    }
+  ],
   "custom_actions": [{ "name": "example.trade.place_order", "owner": "example.trade" }],
   "custom_assertion_operators": [],
   "state_refs": [],
@@ -457,7 +485,7 @@ An action manifest declares runner capabilities:
 }
 ```
 
-Required fields: `runner_protocol_version`, `action_registry_version`, and `supported_official_actions`. Optional fields: `action_metadata`, `custom_actions`, `custom_assertion_operators`, `state_refs`, `pre_conditions`, and `native_bindings`. Action manifests describe primitive operations. Flow catalogs describe reusable subgraphs built from those operations.
+Required fields: `runner_protocol_version`, `action_registry_version`, and `supported_official_actions`. Optional fields: `action_metadata`, `observers`, `custom_actions`, `custom_assertion_operators`, `state_refs`, `pre_conditions`, and `native_bindings`. Action manifests describe primitive operations. Flow catalogs describe reusable subgraphs built from those operations.
 
 Action discovery is part of the protocol contract. Runners SHOULD expose the
 active action manifest through a CLI or project hook so recipe-authoring agents
