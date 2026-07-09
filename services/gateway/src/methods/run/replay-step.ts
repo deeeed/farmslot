@@ -193,6 +193,20 @@ export function replaySlotReclaimCheck(
   return { ok: false, reason: 'not-reclaimable', lifecycle };
 }
 
+// Index of the pipeline step that produces a given decision, using the
+// DecisionType prefix convention (monitor_* → MONITOR, ci_* → CI_WATCH). Returns
+// -1 for types whose ownership is not step-scoped by prefix; the completion/gate
+// clearing branches handle those. A replay re-runs every step from its target
+// onward, so a still-open decision owned by one of those re-run steps is stale
+// and must be dropped — otherwise a monitor handoff from a prior generation
+// lingers after a replay from prepare and re-blocks the reset run.
+function decisionOwningStepIndex(type: string, flowSteps: readonly string[] | undefined): number {
+  if (!flowSteps) return -1;
+  if (type.startsWith('monitor_')) return flowSteps.indexOf(PS.MONITOR);
+  if (type.startsWith('ci_')) return flowSteps.indexOf(PS.CI_WATCH);
+  return -1;
+}
+
 export async function runReplayStep(
   params: RunReplayStepParams,
   emit: Emit,
@@ -542,7 +556,15 @@ export async function runReplayStep(
       ? []
       : replaysPostGate
         ? existing.decisions
-        : existing.decisions.filter((d) => !d.resolvedAt);
+        : existing.decisions.filter((d) => {
+            if (d.resolvedAt) return false;
+            // Drop an unresolved decision whose owning step is being replayed
+            // (targetIdx onward re-runs and regenerates it). Preserve ones owned
+            // by steps before the target — still actionable — or of unknown
+            // ownership (prior default behavior).
+            const ownerIdx = decisionOwningStepIndex(d.type, flowSteps);
+            return ownerIdx < 0 || ownerIdx < targetIdx;
+          });
 
   // Reset run status, clear error and stale outcome
   const {
