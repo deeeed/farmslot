@@ -776,19 +776,6 @@ test('artifact package validates recipe envelope-only and resolved recipe in ful
     },
   };
 
-  // recipe.json is the authored recipe: flow-call resolution is skipped, so the
-  // library-resolved ref is NOT reported as unresolved at artifact-package time.
-  const authoredOnly = validateRecipeArtifactPackage({ recipe: authored });
-  assert.ok(
-    !authoredOnly.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
-  );
-
-  // The same document supplied as resolved-recipe.json is validated in full, so an
-  // unresolved ref (no inline flow) is flagged — the composition is incomplete.
-  const incomplete = validateRecipeArtifactPackage({ resolvedRecipe: authored });
-  assert.ok(incomplete.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
-
-  // A self-contained resolved recipe (flow inlined) has every call.ref resolvable.
   const composed = {
     ...authored,
     flows: {
@@ -801,8 +788,31 @@ test('artifact package validates recipe envelope-only and resolved recipe in ful
       },
     },
   };
-  const complete = validateRecipeArtifactPackage({ resolvedRecipe: composed });
-  assert.ok(!complete.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
+
+  // Passing run, no resolved-recipe.json: the composition is unproven, so recipe.json
+  // is validated in full and its unresolved library ref is flagged.
+  const unproven = validateRecipeArtifactPackage({ recipe: authored });
+  assert.ok(unproven.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
+
+  // Passing run WITH a self-contained resolved-recipe.json: it proves the composition,
+  // so recipe.json is envelope-only (no unresolved finding) and the resolved recipe
+  // validates clean.
+  const proven = validateRecipeArtifactPackage({ recipe: authored, resolvedRecipe: composed });
+  assert.ok(!proven.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
+
+  // A resolved-recipe.json that is itself not self-contained is flagged in full.
+  const badComposition = validateRecipeArtifactPackage({
+    recipe: authored,
+    resolvedRecipe: authored,
+  });
+  assert.ok(
+    badComposition.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+  );
+
+  // Failed run: recipe.json stays envelope-only, so a gracefully-failed run with an
+  // unresolved library ref is not turned into a rejection.
+  const failed = validateRecipeArtifactPackage({ recipe: authored, runPassed: false });
+  assert.ok(!failed.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
 });
 
 test('validates inline flow actions, transitions, and cycles', () => {

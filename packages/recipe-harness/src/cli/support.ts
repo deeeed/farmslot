@@ -151,21 +151,20 @@ export async function validateRecipeCliInput({
 
   if (artifactDir) {
     // Flow-call resolution already ran above via validateRecipeWithManifest with the
-    // configured library; the artifact-package check is envelope-only for recipe.json.
-    // resolved-recipe.json, when present, is the self-contained composition and is
-    // validated in full only for passing runs — matching the runner/gateway so a
-    // gracefully-failed run is not rejected here. A malformed present file still
-    // throws via readOptionalRecipeCliJsonFile.
-    const runPassed = isRecord(manifest) && manifest.runStatus === 'pass';
-    const resolvedRecipe = runPassed
-      ? await readOptionalRecipeCliJsonFile(path.join(artifactDir, 'resolved-recipe.json'), baseDir)
-      : undefined;
+    // configured library. Always read resolved-recipe.json so a present-but-malformed
+    // file throws (never silently skipped); the validator then checks the composition
+    // in full only for a passing run (runPassed) — matching the runner/gateway.
+    const resolvedRecipe = await readOptionalRecipeCliJsonFile(
+      path.join(artifactDir, 'resolved-recipe.json'),
+      baseDir,
+    );
     results.push(
       validateRecipeArtifactPackage({
         recipe,
         manifest,
         artifactPaths,
         ...(resolvedRecipe !== undefined ? { resolvedRecipe } : {}),
+        runPassed: isRecord(manifest) && manifest.runStatus === 'pass',
       }),
     );
   }

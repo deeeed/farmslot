@@ -593,12 +593,11 @@ class DefaultRecipeRunner implements RecipeRunner {
 
     const packageValidation = validateRecipeArtifactPackage({
       recipe,
-      // Validate the composed recipe in full only for passing runs — a pass means
-      // every reachable flow resolved and ran, so an invalid resolved recipe is a
-      // real artifact-generation defect worth failing fast on (parity with gateway
-      // ingestion). A failed run already surfaced the cause (e.g. a flow cycle) in
-      // the trace; re-validating its composition here must not raise a second error.
-      ...(status === 'pass' && resolvedRecipe !== recipe ? { resolvedRecipe } : {}),
+      // Hand the composed recipe and the run outcome to the validator: it validates
+      // the composition in full only for a passing run (parity with gateway/CLI), and
+      // leaves a gracefully-failed run's composition unchecked.
+      ...(resolvedRecipe !== recipe ? { resolvedRecipe } : {}),
+      runPassed: status === 'pass',
       manifest: {
         version: 1,
         runStatus: status,

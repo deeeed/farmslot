@@ -6,6 +6,7 @@ import type { Command } from 'commander';
 import {
   getRecipeActionManifestActionNames,
   isRecord,
+  mergeRecipeValidationResults,
   Methods,
   type RecipeActionManifestDocument,
   type RecipeProjectHookCommandResult,
@@ -14,6 +15,7 @@ import {
   type RecipeValidationFinding,
   type RecipeValidationResult,
   validateRecipeArtifactPackage,
+  validateRecipeDocument,
 } from '@farmslot/protocol';
 import {
   composeRecipe,
@@ -78,7 +80,7 @@ function collectLibrarySource(value: string, previous: string[]): string[] {
 async function emitResolvedRecipeArtifact(
   recipePath: string,
   librarySources: RecipeLibrarySource[],
-): Promise<void> {
+): Promise<RecipeValidationResult | undefined> {
   const resolvedRecipePath = resolveRecipeCliPath(recipePath);
   const recipe = await readRecipeCliJsonFile(recipePath);
   const { resolved, flowCount } = await composeRecipe(recipe, {
@@ -87,10 +89,13 @@ async function emitResolvedRecipeArtifact(
     librarySources: librarySources.length > 0 ? librarySources : undefined,
   });
   // A recipe that composes no flows is already self-contained; recipe.json is the
-  // full composition, so there is nothing extra to emit.
-  if (flowCount === 0) return;
+  // full composition, so there is nothing extra to emit or validate.
+  if (flowCount === 0) return undefined;
   const outputPath = path.join(path.dirname(resolvedRecipePath), 'resolved-recipe.json');
   await writeFile(outputPath, `${JSON.stringify(resolved, null, 2)}\n`);
+  // Validate the emitted composition in full so the static resolve-check fails when
+  // the composed artifact is not self-contained.
+  return validateRecipeDocument(resolved);
 }
 
 function findingLabel(finding: RecipeValidationFinding): string {
@@ -319,17 +324,16 @@ export async function validateRecipeArtifactDirectory(
 
   // validateRecipeArtifactPackage validates the recipe document internally
   // (protocol/recipe/artifact.ts) whenever `recipe` is present, so calling
-  // validateRecipeDocument separately here would double-count every finding.
-  // resolved-recipe.json (the self-contained composition) is validated in full only
-  // for passing runs — matching the runner/gateway, so a gracefully-failed run (e.g. a
-  // flow cycle) is not rejected here — and this keeps CLI/gateway verdicts in sync.
-  const resolvedRecipe =
-    isRecord(summary) && summary.status === 'pass' ? reads.resolvedRecipe.value : undefined;
+  // validateRecipeDocument separately here would double-count every finding. Passing
+  // runPassed lets it validate the composition in full only for a passing run —
+  // matching the runner/gateway — so CLI and gateway verdicts stay in sync.
+  const resolvedRecipe = reads.resolvedRecipe.value;
   const recipeValidation = validateRecipeArtifactPackage({
     recipe,
     manifest,
     artifactPaths,
     ...(resolvedRecipe !== undefined ? { resolvedRecipe } : {}),
+    runPassed: isRecord(summary) && summary.status === 'pass',
   });
 
   const summaryStatus = isRecord(summary) ? summary.status : undefined;
@@ -487,17 +491,18 @@ export function registerRecipeCommand(program: Command): void {
 
         const results: Array<{ recipePath: string; result: RecipeValidationResult }> = [];
         for (const recipePath of recipePaths) {
-          const result = await validateRecipeCliInput({
+          let result = await validateRecipeCliInput({
             recipePath,
             actionManifestPath: opts.actionManifest,
             artifactManifestPath: opts.artifactManifest,
             artifactDir: opts.artifactDir,
             librarySources: librarySources.length > 0 ? librarySources : undefined,
           });
-          results.push({ recipePath, result });
           if (opts.emitResolved) {
-            await emitResolvedRecipeArtifact(recipePath, librarySources);
+            const composed = await emitResolvedRecipeArtifact(recipePath, librarySources);
+            if (composed) result = mergeRecipeValidationResults([result, composed]);
           }
+          results.push({ recipePath, result });
         }
 
         if (output.json) {

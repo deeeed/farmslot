@@ -141,11 +141,19 @@ export interface RecipeArtifactPackageInput {
   recipe?: unknown;
   /**
    * The fully-composed recipe (`resolved-recipe.json`): the authored recipe with
-   * every reachable flow inlined under `flows`. When present it is validated in
-   * full — including `call.ref` resolution — proving the composition is complete
-   * and self-contained, which the envelope-only `recipe` check cannot.
+   * every referenced flow inlined under `flows`. For a passing run it is validated
+   * in full — including `call.ref` resolution — proving the composition is complete
+   * and self-contained, and `recipe` is then checked envelope-only.
    */
   resolvedRecipe?: unknown;
+  /**
+   * Whether the run passed. Defaults to `true` (enforce composition). When `true`,
+   * the composition must be proven: either `recipe` is self-contained (validated in
+   * full) or `resolvedRecipe` proves it. When `false`, the run already failed and
+   * surfaced its cause, so `recipe` is envelope-only and `resolvedRecipe` is not
+   * re-validated — a graceful failure is not turned into a rejection.
+   */
+  runPassed?: boolean;
   requireSchemaRef?: boolean;
 }
 

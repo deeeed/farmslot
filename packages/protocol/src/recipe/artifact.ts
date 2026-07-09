@@ -338,21 +338,25 @@ export function validateRecipeArtifactPackage(
     ctx.findings.push(...manifestResult.findings);
   }
 
+  // A passing run must prove its composition resolves. Either recipe.json is
+  // self-contained (validated in full below), or resolved-recipe.json — the
+  // composed, `uses`-inlined recipe — proves it (validated in full instead, with
+  // recipe.json checked envelope-only since its `call.ref`s are proven there).
+  // A failed run (`runPassed === false`) is not held to this: it already surfaced
+  // its cause (e.g. a flow cycle) in the trace, so recipe.json stays envelope-only
+  // and the composition is not re-validated.
+  const enforceComposition = input.runPassed !== false;
+  const compositionProvenByResolved = enforceComposition && input.resolvedRecipe != null;
+
   if (input.recipe != null) {
-    // An artifact package is validated after a run, where the recipe library
-    // that resolved `call.ref` values is gone. Skip flow-call resolution here —
-    // it is enforced at authoring/run time (validateRecipeWithManifest) with the
-    // library in scope — and only check the envelope + workflow structure.
     const recipeResult = validateRecipeDocument(input.recipe, {
       requireSchemaRef: input.requireSchemaRef === true,
-      skipFlowCallResolution: true,
+      skipFlowCallResolution: !enforceComposition || compositionProvenByResolved,
     });
     ctx.findings.push(...recipeResult.findings);
   }
 
-  if (input.resolvedRecipe != null) {
-    // The composed recipe is self-contained: validate it in full, including
-    // call.ref resolution, so the artifact proves the whole composition resolves.
+  if (compositionProvenByResolved) {
     const resolvedResult = validateRecipeDocument(input.resolvedRecipe, {
       requireSchemaRef: input.requireSchemaRef === true,
     });

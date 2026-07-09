@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- feat: publish the canonical Recipe Protocol v1 JSON Schema (`schemas/recipe-v1.schema.json`, exported via `./schemas/*`) and enforce a `recipe.$schema` URL contract in `validateRecipeDocument` (`RECIPE_PROTOCOL_SCHEMA_URL`, `recipeProtocolSchemaUrlForVersion`, opt-in `requireSchemaRef`). The published schema matches the validator (`schema_version`/`validate` required, `flows` allowed, `additionalProperties`); artifact-package validation is envelope-only (`skipFlowCallResolution`) so library-composed recipes are not rejected at ingestion.
-- feat: `validateRecipeArtifactPackage` accepts an optional `resolvedRecipe` (the fully-composed `resolved-recipe.json`) and validates it in full — including `call.ref` resolution — proving the composition is complete and self-contained, while the authored `recipe` stays envelope-only.
+- feat: publish the canonical Recipe Protocol v1 JSON Schema (`schemas/recipe-v1.schema.json`, exported via `./schemas/*`) and validate a `recipe.$schema` URL contract in `validateRecipeDocument` (`RECIPE_PROTOCOL_SCHEMA_URL`, `recipeProtocolSchemaUrlForVersion`; `$schema` must match `schema_version` when present, or is required under opt-in `requireSchemaRef`). The published schema matches the validator (`schema_version`/`validate` required, `flows` allowed, `additionalProperties`).
+- feat: `validateRecipeArtifactPackage` takes `resolvedRecipe` (the fully-composed `resolved-recipe.json`) and `runPassed`. For a passing run the composition must be proven: `resolvedRecipe`, when present, is validated in full and `recipe` is then checked envelope-only; otherwise `recipe` is validated in full so an unproven library composition is rejected. A failed run keeps `recipe` envelope-only and skips `resolvedRecipe`, so a graceful failure is not turned into a rejection.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.7.5 - 2026-07-08

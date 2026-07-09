@@ -288,15 +288,13 @@ export function validateRecipeRunArtifactPackageOutput(
     `artifact-manifest.json runStatus must match summary.json status (summary=${summaryStatus ?? 'missing'}, manifest=${typeof manifestStatus === 'string' ? manifestStatus : 'missing'}).`,
   );
 
-  // Validate the composed recipe in full only for passing runs, matching the runner's
-  // closeout: a failed run (e.g. a flow cycle) already surfaced its cause in the trace,
-  // so re-validating its composition here must not reject an otherwise-graceful failure.
-  const validateResolvedRecipe = summaryStatus === 'pass';
+  // For a passing run the composition must be proven — recipe.json is validated in
+  // full unless resolved-recipe.json proves it; a failed run stays envelope-only so a
+  // graceful failure (e.g. a flow cycle) is not turned into an ingestion rejection.
   const recipe = validateRecipeArtifactPackage({
     recipe: input.recipeArtifactPresent ? input.recipe : undefined,
-    ...(validateResolvedRecipe && input.resolvedRecipe != null
-      ? { resolvedRecipe: input.resolvedRecipe }
-      : {}),
+    ...(input.resolvedRecipe != null ? { resolvedRecipe: input.resolvedRecipe } : {}),
+    runPassed: summaryStatus === 'pass',
     manifest: input.manifest,
     artifactPaths: input.artifactListError ? undefined : input.artifactPaths,
   });

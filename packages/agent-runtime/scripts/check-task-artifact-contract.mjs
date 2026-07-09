@@ -246,11 +246,13 @@ function validateRecipeQualityArtifact() {
 }
 
 function validateRecipeDocumentArtifact() {
-  // recipe.json is the authored recipe; its call.refs resolve against the recipe
-  // library at run time, not here — validate the envelope only. resolved-recipe.json
-  // is the self-contained composition — validate it in full, including call.refs.
+  // The composition must be proven: recipe.json's call.refs are proven either by
+  // resolved-recipe.json (the self-contained composition, validated in full) — in
+  // which case recipe.json is checked envelope-only — or by recipe.json being
+  // self-contained itself, in which case it is validated in full.
+  const hasResolvedRecipe = fileExists('artifacts/resolved-recipe.json');
   validateRecipeDocumentArtifactAt('artifacts/recipe.json', 'recipe.json', {
-    skipFlowCallResolution: true,
+    skipFlowCallResolution: hasResolvedRecipe,
   });
   validateRecipeDocumentArtifactAt('artifacts/resolved-recipe.json', 'resolved-recipe.json', {});
 }
