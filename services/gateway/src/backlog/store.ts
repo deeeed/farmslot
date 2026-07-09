@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  ARCHIVABLE_BACKLOG_STATUSES,
   assertBacklogLaunchPlan,
   type BacklogAutoDispatchTickParams,
   type BacklogAutoDispatchTickResult,
@@ -680,6 +681,15 @@ function releaseBacklogRunLink(item: BacklogItem, runId: string): boolean {
   return touched;
 }
 
+function shouldApplyLinkedRunObservation(item: BacklogItem, run: Run): boolean {
+  if (!TERMINAL_STATUSES.has(item.status)) return true;
+  if (item.status === 'done' || item.status === 'archived') return false;
+  if (item.status === 'needs-attention' || item.status === 'failed') {
+    return isTerminalRunStatus(run.status);
+  }
+  return false;
+}
+
 function applyRunObservation(item: BacklogItem, run: Run): boolean {
   if (item.launchPlan && run.launchCandidateId) return applyLaunchPlanRunObservation(item, run);
   const previousStatus = item.status;
@@ -770,7 +780,8 @@ async function reconcileBacklogLinks(): Promise<boolean> {
     if (item.runId) {
       const run = runsById.get(item.runId);
       if (run) {
-        if (!TERMINAL_STATUSES.has(item.status) && applyRunObservation(item, run)) changed = true;
+        if (shouldApplyLinkedRunObservation(item, run) && applyRunObservation(item, run))
+          changed = true;
       } else if (REDISPATCH_AFTER_RUN_RELEASE.has(item.status)) {
         if (releaseBacklogRunLink(item, item.runId)) changed = true;
       } else if (!TERMINAL_STATUSES.has(item.status)) {
@@ -1346,6 +1357,23 @@ export async function markBacklogItemReady(
   });
 }
 
+export async function archiveBacklogItem(params: {
+  itemId: string;
+}): Promise<{ item: BacklogItem }> {
+  return withBacklogMutation(async () => {
+    const item = getItem(params.itemId);
+    if (!ARCHIVABLE_BACKLOG_STATUSES.has(item.status)) {
+      throw new Error(`Cannot archive backlog item in status ${item.status}`);
+    }
+    item.status = 'archived';
+    delete item.queuedQueueItemId;
+    item.updatedAt = new Date().toISOString();
+    schedulePersist('archive');
+    broadcastBacklog();
+    return { item };
+  });
+}
+
 export async function getBacklogSpec(params: BacklogSpecGetParams): Promise<BacklogSpecGetResult> {
   const item = getItem(params.itemId);
   if (!item.specPath) throw new Error(`Backlog item has no attached spec: ${params.itemId}`);
@@ -1826,7 +1854,7 @@ export function markBacklogRunObserved(run: Run): void {
         ? items.find((candidate) => candidate.id === run.backlogItemId)
         : undefined);
     if (!item) return;
-    if (TERMINAL_STATUSES.has(item.status) && item.runId === run.id) return;
+    if (!shouldApplyLinkedRunObservation(item, run)) return;
     if (applyRunObservation(item, run)) {
       schedulePersist('run-observed');
       broadcastBacklog();

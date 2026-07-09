@@ -469,6 +469,52 @@ test('runReplayStep clears stale decisions when replaying task generation', asyn
   assert.deepEqual(replayed.decisions, []);
 });
 
+test('runReplayStep drops a stale monitor decision when replaying from prepare', async (t) => {
+  const taskFile = '/tmp/farmslot-monitor-replay/TASK.md';
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  // A monitor-owned handoff decision left unresolved from a prior generation.
+  const staleHandoff: RunDecision = {
+    id: 'stale-monitor-handoff',
+    type: 'monitor_interactive_handoff',
+    title: 'Interactive handoff',
+    description: 'Prior monitor run left this open',
+    actions: [
+      { id: 'signal-written', label: 'Check SIGNAL.json & resume', style: 'primary' as const },
+    ],
+    createdAt: '2026-04-15T00:00:00.000Z',
+  };
+  updateRun(run.id, {
+    status: 'blocked',
+    taskFile,
+    decisions: [staleHandoff],
+    steps: run.steps.map((step) =>
+      step.name === 'write-task' ? { ...step, status: 'done', outputs: { taskFile } } : step,
+    ),
+  });
+
+  t.after(async () => {
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await runReplayStep({ runId: run.id, stepName: 'prepare', triggeredBy: 'operator' }, () => {});
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  // Monitor re-runs from a prepare replay, so its stale handoff must be cleared
+  // instead of re-blocking the reset run.
+  assert.equal(
+    replayed.decisions.some((d) => d.id === 'stale-monitor-handoff'),
+    false,
+  );
+});
+
 test('runReplayStep forces eval worker replays through prepare to reinstall harness', async (t) => {
   const taskFile = '/tmp/farmslot-eval-task/TASK.md';
   const run = createRun({

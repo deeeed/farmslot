@@ -22,6 +22,15 @@ export const BACKLOG_STATUSES = [
 ] as const;
 
 export type BacklogStatus = (typeof BACKLOG_STATUSES)[number];
+
+// Terminal statuses a backlog item can be archived from. Shared so the UI and
+// gateway agree on one definition (no client/server drift).
+export const ARCHIVABLE_BACKLOG_STATUSES: ReadonlySet<BacklogStatus> = new Set([
+  'done',
+  'failed',
+  'needs-attention',
+]);
+
 export const BACKLOG_SOURCE_KINDS = ['jira', 'github', 'manual'] as const;
 export type BacklogSourceKind = (typeof BACKLOG_SOURCE_KINDS)[number];
 

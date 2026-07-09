@@ -46,6 +46,7 @@ export const Methods = {
   BACKLOG_UPDATE: 'backlog.update',
   BACKLOG_DELETE: 'backlog.delete',
   BACKLOG_MARK_READY: 'backlog.markReady',
+  BACKLOG_ARCHIVE: 'backlog.archive',
   BACKLOG_ENQUEUE: 'backlog.enqueue',
   BACKLOG_DEQUEUE: 'backlog.dequeue',
   BACKLOG_AUTO_DISPATCH_TICK: 'backlog.autoDispatchTick',

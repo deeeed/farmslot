@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 
 import type {
+  BacklogArchiveResult,
   BacklogAutoDispatchTickResult,
   BacklogCreateResult,
   BacklogDeleteResult,
@@ -44,6 +45,7 @@ import { DEFAULT_MODEL, MODELS_BY_RUNNER, RUNNER_OPTIONS } from '../../utils/run
 import { buildHash, parseHashRoute } from '../../utils/url-state.js';
 import { projectPrepareProfiles } from '../dispatch/dispatch-wizard-draft.js';
 import { templateOptionsRequestKey } from '../dispatch/dispatch-wizard-template-options.js';
+import { ConfirmActionTimer } from '../shared/confirm-action-model.js';
 import type {
   DispatchConfigChangeDetail,
   DispatchConfigEditorControls,
@@ -62,8 +64,13 @@ import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js'
 import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
 import {
+  backlogItemMatchesStatusFilter,
+  canArchiveBacklogItemForUi,
+  canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
   canMarkReadyBacklogItemForUi,
+  canRestoreBacklogItemForUi,
+  showsBacklogCleanupActionsForUi,
   syncedBacklogDraftProject,
 } from './backlog-panel-model.js';
 
@@ -199,8 +206,15 @@ export class BacklogPanel extends LitElement {
   @state() private _launchDrafts: Record<string, DraftLaunchPlan> = {
     [NEW_PLAN_KEY]: defaultLaunchPlanDraft(),
   };
+  @state() private _pendingConfirm: string | null = null;
 
   private _unsub?: () => void;
+  private readonly _confirmTimer = new ConfirmActionTimer({
+    pendingConfirm: () => this._pendingConfirm,
+    setPendingConfirm: (pending) => {
+      this._pendingConfirm = pending;
+    },
+  });
   private _onHashChange = () => this._applyUrlStateFromHash();
   private _onKeydown = (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return;
@@ -239,20 +253,25 @@ export class BacklogPanel extends LitElement {
         overflow: hidden;
         color: ${unsafeCSS(colors.textPrimary)};
         font-family: ${unsafeCSS(fonts.mono)};
-        padding: ${unsafeCSS(spacing.lg)};
+        padding: ${unsafeCSS(spacing.md)};
       }
       .shell {
-        display: grid;
-        gap: ${unsafeCSS(spacing.md)};
-        max-height: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: ${unsafeCSS(spacing.sm)};
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
+      }
+      .scroll-column {
         min-height: 0;
         overflow-y: auto;
         padding-right: 4px;
       }
-      .shell::-webkit-scrollbar {
+      .scroll-column::-webkit-scrollbar {
         width: 6px;
       }
-      .shell::-webkit-scrollbar-thumb {
+      .scroll-column::-webkit-scrollbar-thumb {
         background: ${unsafeCSS(colors.textMuted)}66;
         border-radius: 3px;
       }
@@ -270,6 +289,20 @@ export class BacklogPanel extends LitElement {
         justify-content: space-between;
         gap: ${unsafeCSS(spacing.sm)};
         align-items: center;
+        padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+      }
+      .header-compact {
+        align-items: baseline;
+        display: flex;
+        flex-shrink: 0;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.sm)};
+      }
+      .header-compact h1 {
+        font-size: ${unsafeCSS(fonts.sizeMd)};
+      }
+      .header-compact .muted {
+        font-size: ${unsafeCSS(fonts.sizeXs)};
       }
       h1,
       h2,
@@ -290,34 +323,54 @@ export class BacklogPanel extends LitElement {
         color: ${unsafeCSS(colors.textMuted)};
         font-size: ${unsafeCSS(fonts.sizeXs)};
       }
-      .workspace {
-        display: grid;
-        grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-        gap: ${unsafeCSS(spacing.md)};
-        align-items: start;
-      }
-      .sidebar {
+      .filter-toolbar {
+        background: ${unsafeCSS(colors.bgCard)};
         border: 1px solid ${unsafeCSS(colors.textMuted)}22;
         border-radius: ${unsafeCSS(radii.md)};
-        background: ${unsafeCSS(colors.bgCard)};
-        padding: ${unsafeCSS(spacing.md)};
         display: grid;
-        gap: ${unsafeCSS(spacing.md)};
+        flex-shrink: 0;
+        gap: ${unsafeCSS(spacing.sm)};
+        padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
         position: sticky;
-        top: ${unsafeCSS(spacing.md)};
+        top: 0;
+        z-index: 2;
       }
-      .sidebar-section,
-      .sidebar-actions {
-        display: grid;
+      .filter-toolbar-top {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.sm)};
+        justify-content: space-between;
+      }
+      .filter-toolbar-actions {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
         gap: ${unsafeCSS(spacing.sm)};
       }
-      .scope-note {
-        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
-        border-radius: ${unsafeCSS(radii.sm)};
-        background: ${unsafeCSS(colors.bgSurface)};
-        padding: ${unsafeCSS(spacing.sm)};
-        display: grid;
-        gap: ${unsafeCSS(spacing.sm)};
+      .filter-groups {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.lg)};
+        min-width: 0;
+      }
+      .filter-group {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        min-width: 0;
+      }
+      .filter-group .field-label {
+        flex-shrink: 0;
+      }
+      .filter-count {
+        color: ${unsafeCSS(colors.textMuted)};
+        flex-shrink: 0;
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        margin-left: auto;
+        white-space: nowrap;
       }
       label {
         display: grid;
@@ -388,7 +441,8 @@ export class BacklogPanel extends LitElement {
       }
       .rows {
         display: grid;
-        gap: ${unsafeCSS(spacing.sm)};
+        gap: 2px;
+        padding: 4px;
       }
       .launch-plan {
         border: 1px solid ${unsafeCSS(colors.accent)}33;
@@ -397,7 +451,7 @@ export class BacklogPanel extends LitElement {
         padding: ${unsafeCSS(spacing.sm)};
         display: grid;
         gap: ${unsafeCSS(spacing.sm)};
-        margin-top: ${unsafeCSS(spacing.sm)};
+        margin-top: 0;
       }
       .dispatch-config-summary {
         border: 1px solid ${unsafeCSS(colors.textMuted)}22;
@@ -405,7 +459,7 @@ export class BacklogPanel extends LitElement {
         background: ${unsafeCSS(colors.bgSurface)};
         display: grid;
         gap: ${unsafeCSS(spacing.sm)};
-        margin-top: ${unsafeCSS(spacing.sm)};
+        margin-top: 0;
         padding: ${unsafeCSS(spacing.sm)};
       }
       .dispatch-config-head {
@@ -637,24 +691,37 @@ export class BacklogPanel extends LitElement {
       .launch-row .wide {
         grid-column: span 2;
       }
-      .row {
-        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
-        border-radius: ${unsafeCSS(radii.md)};
+      .compact-row {
+        align-items: center;
         background: ${unsafeCSS(colors.bgSurface)};
-        padding: ${unsafeCSS(spacing.md)};
-        display: grid;
-        gap: ${unsafeCSS(spacing.sm)};
+        border: 1px solid transparent;
+        border-radius: ${unsafeCSS(radii.sm)};
         cursor: pointer;
+        display: grid;
+        gap: 8px;
+        grid-template-columns: auto minmax(0, 1fr);
+        min-height: 28px;
+        padding: 4px 8px;
       }
-      .row.selected {
-        border-color: ${unsafeCSS(colors.accent)}99;
+      .compact-row:hover {
+        background: ${unsafeCSS(colors.bgCard)};
+        border-color: ${unsafeCSS(colors.textMuted)}33;
+      }
+      .compact-row.selected {
         background: ${unsafeCSS(colors.accent)}11;
+        border-color: ${unsafeCSS(colors.accent)}77;
       }
-      .row-head {
-        display: flex;
-        justify-content: space-between;
-        gap: ${unsafeCSS(spacing.sm)};
-        align-items: flex-start;
+      .compact-row.has-error {
+        border-left: 2px solid ${unsafeCSS(colors.statusFail)};
+        padding-left: 6px;
+      }
+      .compact-row .title {
+        font-size: ${unsafeCSS(fonts.sizeSm)};
+        font-weight: 500;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .title {
         font-weight: 700;
@@ -703,37 +770,137 @@ export class BacklogPanel extends LitElement {
         color: ${unsafeCSS(colors.textMuted)};
         padding: ${unsafeCSS(spacing.md)};
       }
-      .content {
+      .main-area {
         display: grid;
-        gap: ${unsafeCSS(spacing.md)};
+        flex: 1 1 auto;
+        gap: ${unsafeCSS(spacing.sm)};
+        grid-template-columns: minmax(0, 1fr);
+        min-height: 0;
+      }
+      .main-area.has-detail {
+        grid-template-columns: minmax(0, 1.55fr) minmax(280px, 1fr);
+      }
+      .list-panel {
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.md)};
+        background: ${unsafeCSS(colors.bgCard)};
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        min-width: 0;
       }
       .backlog-browser {
-        display: grid;
-        gap: ${unsafeCSS(spacing.md)};
-        grid-template-columns: minmax(320px, 0.95fr) minmax(360px, 1.05fr);
-        align-items: start;
+        display: contents;
       }
       .detail-panel {
         border: 1px solid ${unsafeCSS(colors.accent)}55;
         border-radius: ${unsafeCSS(radii.md)};
         background: ${unsafeCSS(colors.bgCard)};
-        display: grid;
-        gap: ${unsafeCSS(spacing.md)};
-        max-height: calc(100vh - 120px);
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+        min-height: 0;
+        min-width: 0;
         overflow: auto;
-        padding: ${unsafeCSS(spacing.md)};
-        position: sticky;
-        top: ${unsafeCSS(spacing.md)};
+        padding: ${unsafeCSS(spacing.sm)} ${unsafeCSS(spacing.md)};
+      }
+      .detail-panel > * {
+        flex: 0 0 auto;
+        min-height: 0;
       }
       .detail-panel.empty-detail {
         border-color: ${unsafeCSS(colors.textMuted)}22;
         color: ${unsafeCSS(colors.textMuted)};
       }
+      .detail-top {
+        display: block;
+      }
+      .detail-title-row {
+        align-items: flex-start;
+        display: flex;
+        gap: 8px;
+        justify-content: space-between;
+      }
+      .detail-top h2 {
+        flex: 1 1 auto;
+        font-size: ${unsafeCSS(fonts.sizeSm)};
+        line-height: 1.35;
+        margin: 0;
+        min-width: 0;
+      }
+      .detail-meta {
+        line-height: 1.35;
+        margin: 4px 0 0;
+      }
+      .detail-badges {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 6px;
+      }
+      .detail-badges .badge {
+        display: inline-flex;
+        align-items: center;
+        flex: 0 0 auto;
+        line-height: 1.2;
+        white-space: nowrap;
+      }
+      .detail-badges .badge-link {
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        padding: 2px 7px;
+      }
+      .detail-cleanup {
+        align-items: center;
+        background: ${unsafeCSS(colors.bgSurface)};
+        border: 1px solid ${unsafeCSS(colors.textMuted)}22;
+        border-radius: ${unsafeCSS(radii.sm)};
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: space-between;
+        padding: 6px 8px;
+      }
+      .detail-cleanup .actions {
+        margin-left: auto;
+      }
+      .detail-panel button {
+        font-size: ${unsafeCSS(fonts.sizeXs)};
+        padding: 4px 8px;
+      }
+      .detail-panel button.primary-action {
+        padding: 4px 10px;
+      }
+      .detail-panel button.confirming {
+        background: ${unsafeCSS(colors.statusWarn)}22;
+        border-color: ${unsafeCSS(colors.statusWarn)};
+        color: ${unsafeCSS(colors.statusWarn)};
+      }
+      .detail-panel button.danger.confirming {
+        background: ${unsafeCSS(colors.statusFail)}22;
+        border-color: ${unsafeCSS(colors.statusFail)};
+        color: ${unsafeCSS(colors.statusFail)};
+      }
+      .detail-panel .actions {
+        gap: 4px;
+      }
+      .detail-panel .spec-attachment {
+        padding: 6px 8px;
+      }
+      .detail-panel .dispatch-config-summary {
+        gap: 6px;
+        padding: 6px 8px;
+      }
+      .detail-panel .notes-view {
+        min-height: 48px;
+        padding: 8px;
+      }
       .detail-panel header,
       .detail-toolbar {
         display: flex;
         justify-content: space-between;
-        gap: ${unsafeCSS(spacing.md)};
+        gap: ${unsafeCSS(spacing.sm)};
         align-items: flex-start;
       }
       .notes-view {
@@ -781,17 +948,10 @@ export class BacklogPanel extends LitElement {
         min-height: 180px;
       }
       @media (max-width: 860px) {
-        .workspace {
+        .main-area.has-detail {
           grid-template-columns: 1fr;
         }
-        .backlog-browser {
-          grid-template-columns: 1fr;
-        }
-        .detail-panel {
-          max-height: none;
-          position: static;
-        }
-        .sidebar {
+        .filter-toolbar {
           position: static;
         }
         .create-grid {
@@ -815,6 +975,7 @@ export class BacklogPanel extends LitElement {
 
   disconnectedCallback() {
     this._unsub?.();
+    this._confirmTimer.clear();
     window.removeEventListener('hashchange', this._onHashChange);
     window.removeEventListener('keydown', this._onKeydown);
     super.disconnectedCallback();
@@ -1019,8 +1180,7 @@ export class BacklogPanel extends LitElement {
         return false;
       }
       if (this._project !== 'all' && item.project !== this._project) return false;
-      if (this._status !== 'all' && item.status !== this._status) return false;
-      return true;
+      return backlogItemMatchesStatusFilter(item.status, this._status);
     });
   }
 
@@ -1028,8 +1188,44 @@ export class BacklogPanel extends LitElement {
     return this._items.find((item) => item.id === this._selectedItemId) ?? null;
   }
 
+  private _cleanupConfirmId(kind: 'archive' | 'delete', itemId: string): string {
+    return `backlog-${kind}:${itemId}`;
+  }
+
+  private _isCleanupConfirming(kind: 'archive' | 'delete', itemId: string): boolean {
+    return this._pendingConfirm === this._cleanupConfirmId(kind, itemId);
+  }
+
+  private _confirmCleanupLabel(
+    kind: 'archive' | 'delete',
+    itemId: string,
+    normal: string,
+    pending: string,
+  ): string {
+    return this._isCleanupConfirming(kind, itemId) ? pending : normal;
+  }
+
+  private _confirmCleanupClass(kind: 'archive' | 'delete', itemId: string, base: string): string {
+    return `${base} ${this._isCleanupConfirming(kind, itemId) ? 'confirming' : ''}`.trim();
+  }
+
+  private _requestArchive(item: BacklogItem): void {
+    this._confirmTimer.confirm(
+      this._cleanupConfirmId('archive', item.id),
+      () => void this._archiveItem(item),
+    );
+  }
+
+  private _requestDelete(item: BacklogItem): void {
+    this._confirmTimer.confirm(
+      this._cleanupConfirmId('delete', item.id),
+      () => void this._deleteItem(item),
+    );
+  }
+
   private _selectItem(item: BacklogItem, mode: BacklogDetailMode = 'view') {
     if (this._selectedItemId !== item.id) {
+      this._confirmTimer.clear();
       this._dispatchConfigOpen = false;
       this._specViewerOpen = false;
     }
@@ -1823,12 +2019,18 @@ export class BacklogPanel extends LitElement {
     );
   }
 
+  private async _archiveItem(item: BacklogItem) {
+    await this._runItemAction(item.id, 'archive', () =>
+      gateway.request<BacklogArchiveResult>(Methods.BACKLOG_ARCHIVE, { itemId: item.id }),
+    );
+    this._confirmTimer.clear();
+  }
+
   private async _deleteItem(item: BacklogItem) {
-    const ok = window.confirm(`Delete backlog item "${item.title}"?`);
-    if (!ok) return;
     await this._runItemAction(item.id, 'delete', () =>
       gateway.request<BacklogDeleteResult>(Methods.BACKLOG_DELETE, { itemId: item.id }),
     );
+    this._confirmTimer.clear();
     if (this._selectedItemId === item.id) {
       this._selectedItemId = '';
       this._selectedItemMode = 'view';
@@ -2099,10 +2301,16 @@ export class BacklogPanel extends LitElement {
     </section>`;
   }
 
-  private _renderRow(item: BacklogItem) {
+  private _renderCompactRow(item: BacklogItem) {
     const selected = this._selectedItemId === item.id;
+    const statusTone =
+      item.status === 'ready'
+        ? 'positive'
+        : item.status === 'failed' || item.status === 'needs-attention'
+          ? 'danger'
+          : 'default';
     return html`<div
-      class="row ${selected ? 'selected' : ''}"
+      class="compact-row ${selected ? 'selected' : ''} ${item.lastDispatchError ? 'has-error' : ''}"
       role="button"
       tabindex="0"
       @click=${() => this._selectItem(item)}
@@ -2113,58 +2321,62 @@ export class BacklogPanel extends LitElement {
         }
       }}
     >
-      <div class="row-head">
-        <div>
-          <div class="title">${item.title}</div>
-          <div class="meta">
-            ${item.project} · ${item.flowType} · ${item.sourceKind}:${item.sourceRef}
-          </div>
-        </div>
-        <div class="badges">
-          ${renderPlanningBadge(
-            item.status,
-            item.status === 'ready'
-              ? 'positive'
-              : item.status === 'failed' || item.status === 'needs-attention'
-                ? 'danger'
-                : 'default',
-          )}
-          ${renderPlanningBadge(`p${item.priority}`)} ${renderPlanningBadge(slotsText(item))}
-          ${renderTagChips(item.tags)}
-          ${item.roadmapItemId
-            ? renderPlanningBadge(`roadmap ${item.roadmapItemId}`, 'positive')
-            : nothing}
-          ${item.workGraphId
-            ? html`<a
-                class="badge-link"
-                href=${this._workGraphHash(item)}
-                @click=${(event: Event) => event.stopPropagation()}
-                >graph ${item.workGraphId}</a
-              >`
-            : nothing}
-          ${item.specPath ? renderPlanningBadge(`spec ${item.specPath}`) : nothing}
-          ${item.autoDispatch ? renderPlanningBadge('auto', 'positive') : nothing}
-        </div>
-      </div>
-      ${item.lastDispatchError ? html`<div class="error">${item.lastDispatchError}</div>` : nothing}
-      ${this._renderLaunchPlanSummary(item)} ${this._renderDispatchConfigSummary(item, true)}
+      ${renderPlanningBadge(item.status, statusTone)}
+      <div class="title" title=${item.title}>${item.title}</div>
+    </div>`;
+  }
+
+  private _renderCleanupActions(item: BacklogItem) {
+    if (!showsBacklogCleanupActionsForUi(item)) return nothing;
+    const busy = this._busy.endsWith(item.id);
+    return html`<div class="detail-cleanup" data-testid="backlog-cleanup-actions">
+      <span class="field-label">Cleanup</span>
       <div class="actions">
-        <button
-          type="button"
-          @click=${(event: Event) => {
-            event.stopPropagation();
-            this._selectItem(item, 'edit');
-          }}
-        >
-          Edit
-        </button>
+        ${canArchiveBacklogItemForUi(item)
+          ? html`<button
+              class=${this._confirmCleanupClass('archive', item.id, 'secondary')}
+              type="button"
+              ?disabled=${busy}
+              title="Hide from the default backlog list without deleting history"
+              @click=${() => this._requestArchive(item)}
+            >
+              ${this._confirmCleanupLabel('archive', item.id, 'Archive', 'Archive?')}
+            </button>`
+          : nothing}
+        ${canRestoreBacklogItemForUi(item)
+          ? html`<button
+              class="secondary"
+              type="button"
+              ?disabled=${busy}
+              title="Return this item to ready for another dispatch"
+              @click=${() => this._markReady(item)}
+            >
+              Restore to ready
+            </button>`
+          : nothing}
+        ${canDeleteBacklogItemForUi(item)
+          ? html`<button
+              class=${this._confirmCleanupClass('delete', item.id, 'danger')}
+              type="button"
+              ?disabled=${busy}
+              title=${item.workGraphId
+                ? 'Detach from the work graph before deleting'
+                : 'Permanently remove this backlog item'}
+              @click=${() => this._requestDelete(item)}
+            >
+              ${this._confirmCleanupLabel('delete', item.id, 'Delete', 'Delete?')}
+            </button>`
+          : nothing}
       </div>
     </div>`;
   }
 
   private _renderItemActionButtons(item: BacklogItem, mode: BacklogDetailMode) {
-    return html`<div class="actions">
-      ${mode === 'edit'
+    const showEditDelete =
+      mode === 'edit' && !showsBacklogCleanupActionsForUi(item) && canDeleteBacklogItemForUi(item);
+    const hideDispatchActions = item.status === 'done' || item.status === 'archived';
+    const editActions =
+      mode === 'edit'
         ? html`<button
               class="secondary"
               ?disabled=${this._busy.endsWith(item.id) || !this._notesDirty(item)}
@@ -2179,14 +2391,21 @@ export class BacklogPanel extends LitElement {
             >
               Save launch plan
             </button>
-            <button
-              class="danger"
-              ?disabled=${this._busy.endsWith(item.id)}
-              @click=${() => this._deleteItem(item)}
-            >
-              Delete
-            </button>`
-        : nothing}
+            ${showEditDelete
+              ? html`<button
+                  class=${this._confirmCleanupClass('delete', item.id, 'danger')}
+                  ?disabled=${this._busy.endsWith(item.id)}
+                  @click=${() => this._requestDelete(item)}
+                >
+                  ${this._confirmCleanupLabel('delete', item.id, 'Delete', 'Delete?')}
+                </button>`
+              : nothing}`
+        : nothing;
+    if (hideDispatchActions) {
+      return editActions === nothing ? nothing : html`<div class="actions">${editActions}</div>`;
+    }
+    return html`<div class="actions">
+      ${editActions}
       ${canMarkReadyBacklogItemForUi(item)
         ? html`<button
             ?disabled=${this._busy.endsWith(item.id)}
@@ -2237,40 +2456,38 @@ export class BacklogPanel extends LitElement {
     const notesValue = this._notesDrafts[item.id] ?? item.notes ?? '';
     const mode = this._selectedItemMode;
     return html`<section class="detail-panel" aria-label="Selected backlog item">
-      <header>
-        <div>
+      <header class="detail-top">
+        <div class="detail-title-row">
           <h2>${item.title}</h2>
-          <p class="muted">
-            ${item.project} · ${item.flowType} · ${item.sourceKind}:${item.sourceRef}
-          </p>
-        </div>
-        <div class="actions">
           <button
-            class="secondary"
+            class="secondary detail-edit"
             type="button"
             @click=${() => this._setSelectedItemMode(mode === 'edit' ? 'view' : 'edit')}
           >
             ${mode === 'edit' ? 'Done' : 'Edit'}
           </button>
         </div>
+        <p class="muted detail-meta">
+          ${item.project} · ${item.flowType} · ${item.sourceKind}:${item.sourceRef}
+        </p>
+        <div class="detail-badges">
+          ${renderPlanningBadge(
+            item.status,
+            item.status === 'ready'
+              ? 'positive'
+              : item.status === 'failed' || item.status === 'needs-attention'
+                ? 'danger'
+                : 'default',
+          )}${renderPlanningBadge(`p${item.priority}`)}${renderPlanningBadge(
+            slotsText(item),
+          )}${renderTagChips(item.tags)}${item.workGraphId
+            ? html`<a class="badge-link" href=${this._workGraphHash(item)}
+                >graph ${item.workGraphId}</a
+              >`
+            : nothing}
+        </div>
       </header>
-      <div class="badges">
-        ${renderPlanningBadge(
-          item.status,
-          item.status === 'ready'
-            ? 'positive'
-            : item.status === 'failed' || item.status === 'needs-attention'
-              ? 'danger'
-              : 'default',
-        )}
-        ${renderPlanningBadge(`p${item.priority}`)} ${renderPlanningBadge(slotsText(item))}
-        ${renderTagChips(item.tags)}
-        ${item.workGraphId
-          ? html`<a class="badge-link" href=${this._workGraphHash(item)}
-              >graph ${item.workGraphId}</a
-            >`
-          : nothing}
-      </div>
+      ${this._renderCleanupActions(item)}
       ${item.lastDispatchError ? html`<div class="error">${item.lastDispatchError}</div>` : nothing}
       <linked-run-summary
         .run=${linkedRunForBacklogItem(this._runs, item)}
@@ -2301,86 +2518,78 @@ export class BacklogPanel extends LitElement {
     </section>`;
   }
 
-  private _renderSidebar() {
+  private _renderFilterToolbar() {
     const globalProjectScope =
       this._globalFilters.projects.length === 0
-        ? 'All global projects'
+        ? 'All projects'
         : this._globalFilters.projects.join(', ');
     const globalMachineScope =
       this._globalFilters.machines.length === 0
         ? 'All nodes'
         : this._globalFilters.machines.join(', ');
-    return html`<aside class="sidebar">
-      <div class="sidebar-actions">
-        <button type="button" @click=${() => this._setCreatePanelOpen(!this._createPanelOpen)}>
-          ${this._createPanelOpen ? 'Hide backlog form' : 'New backlog item'}
-        </button>
-        <button
-          class="secondary"
-          type="button"
-          title=${AUTO_DISPATCH_TOOLTIP}
-          ?disabled=${this._busy === 'auto'}
-          @click=${this._autoDispatch}
-        >
-          Auto-dispatch ready
-        </button>
+    return html`<div class="filter-toolbar" data-testid="backlog-filter-toolbar">
+      <div class="filter-toolbar-top">
+        <div class="filter-toolbar-actions">
+          <button type="button" @click=${() => this._setCreatePanelOpen(!this._createPanelOpen)}>
+            ${this._createPanelOpen ? 'Hide form' : 'New item'}
+          </button>
+          <button
+            class="secondary"
+            type="button"
+            title=${AUTO_DISPATCH_TOOLTIP}
+            ?disabled=${this._busy === 'auto'}
+            @click=${this._autoDispatch}
+          >
+            Auto-dispatch
+          </button>
+        </div>
+        <div class="filter-count" title=${`${globalProjectScope} · ${globalMachineScope}`}>
+          ${this._filtered.length} / ${this._items.length} items
+        </div>
       </div>
-      <div class="sidebar-section">
-        <h2>Filters</h2>
-        <label>
-          Project
+      <div class="filter-groups">
+        <div class="filter-group">
+          <span class="field-label">Project</span>
           ${renderChoiceButtons({
             options: ['all', ...this._projects],
             value: this._project,
             onSelect: (project) => this._setProjectFilter(project),
-            labels: { all: 'All visible' },
+            labels: { all: 'All' },
+            testId: 'backlog-project-filter',
           })}
-        </label>
-        <label>
-          Status
+        </div>
+        <div class="filter-group">
+          <span class="field-label">Status</span>
           ${renderChoiceButtons({
             options: STATUSES,
             value: this._status,
             onSelect: (status) => this._setStatusFilter(status),
+            testId: 'backlog-status-filter',
           })}
-        </label>
-      </div>
-      <div class="scope-note">
-        <div class="field-label">Global scope</div>
-        <div class="badges">
-          ${renderPlanningBadge(globalProjectScope)} ${renderPlanningBadge(globalMachineScope)}
         </div>
-        <div class="meta">${this._filtered.length} / ${this._items.length} backlog items</div>
       </div>
-    </aside>`;
+    </div>`;
   }
 
   render() {
+    const hasDetail = Boolean(this._selectedItem);
     return html`<section class="shell">
-      <div class="header">
-        <div>
-          <h1>Backlog</h1>
-          <p class="muted">Durable Jira/GitHub/manual work intake before the dispatch queue.</p>
-        </div>
+      <div class="header header-compact">
+        <h1>Backlog</h1>
+        <span class="muted">Jira/GitHub/manual intake before dispatch</span>
       </div>
       ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
       ${this._message ? html`<div class="message">${this._message}</div>` : nothing}
-      <div class="workspace">
-        ${this._renderSidebar()}
-        <div class="content">
-          ${this._renderCreatePanel()}
-          <div class="backlog-browser">
-            <div class="card">
-              <h2>Items</h2>
-              <div class="rows">
-                ${this._filtered.length === 0
-                  ? html`<div class="empty">No backlog items match this view.</div>`
-                  : this._filtered.map((item) => this._renderRow(item))}
-              </div>
-            </div>
-            ${this._renderSelectedItemPanel()}
+      ${this._renderFilterToolbar()} ${this._renderCreatePanel()}
+      <div class="main-area ${hasDetail ? 'has-detail' : ''}">
+        <section class="list-panel">
+          <div class="scroll-column rows">
+            ${this._filtered.length === 0
+              ? html`<div class="empty">No backlog items match this view.</div>`
+              : this._filtered.map((item) => this._renderCompactRow(item))}
           </div>
-        </div>
+        </section>
+        ${hasDetail ? this._renderSelectedItemPanel() : nothing}
       </div>
       ${this._renderLaunchSlotSelectorModal()}
     </section>`;

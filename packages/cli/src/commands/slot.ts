@@ -52,9 +52,9 @@ interface ActionListOptions {
 }
 
 /**
- * Returns script.output data and ignores structured slot.prepare.output
- * metadata, which prepare emits with the same payload. Every other event type
- * yields null.
+ * Returns the string payload of a `script.output` frame; every other event type
+ * (including the structured `slot.prepare.step` / `slot.prepare.done` metadata
+ * prepare emits) yields null.
  */
 export function pickStreamOutput(event: EventFrame): string | null {
   if (event.event !== 'script.output') return null;

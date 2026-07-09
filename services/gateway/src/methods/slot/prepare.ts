@@ -1237,8 +1237,12 @@ async function slotPrepareInner(
         `[prepare] preflight failed (exit ${preflightR.exitCode}) log=${preflightLogPath}`,
       );
       const phaseLabel = currentPreflightPhase ? ` during ${currentPreflightPhase}` : '';
+      // preflightR.stderr carries the "window killed (SIGHUP/SIGTERM)" hint when
+      // the tmux window was torn down externally, so an operator sees the real
+      // cause instead of an opaque preflight failure.
+      const killHint = preflightR.stderr ? ` — ${preflightR.stderr}` : '';
       const err: PrepareCommandError = new Error(
-        `Preflight failed${phaseLabel} (exit ${preflightR.exitCode}) — log: ${preflightLogPath}`,
+        `Preflight failed${phaseLabel} (exit ${preflightR.exitCode})${killHint} — log: ${preflightLogPath}`,
       );
       err.failedCommand = preflightHook;
       err.failedLogPath = preflightLogPath;

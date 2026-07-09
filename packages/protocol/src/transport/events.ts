@@ -35,9 +35,9 @@ export const Events = {
   SCRIPT_OUTPUT: 'script.output',
   SCRIPT_COMPLETE: 'script.complete',
 
-  // Slot prepare streaming (structured phase/profile provenance, ADR-037)
+  // Slot prepare streaming: structured phase/profile provenance (ADR-037).
+  // Raw prepare output rides SCRIPT_OUTPUT.
   SLOT_PREPARE_STEP: 'slot.prepare.step',
-  SLOT_PREPARE_OUTPUT: 'slot.prepare.output',
   SLOT_PREPARE_DONE: 'slot.prepare.done',
 
   // Fleet bulk refresh (FLEET_REFRESH_SLOTS)

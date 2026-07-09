@@ -10,7 +10,20 @@ import test from 'node:test';
 import type { SlotVars } from '../../core/index.js';
 import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
-import { buildPrepareWrappedCommand, clearStalePrepareProcess } from './prepare-command.js';
+import {
+  buildPrepareWrappedCommand,
+  clearStalePrepareProcess,
+  prepareSignalHint,
+} from './prepare-command.js';
+
+test('prepareSignalHint names external tmux kills and ignores ordinary exit codes', () => {
+  assert.match(prepareSignalHint(129) ?? '', /SIGHUP/);
+  assert.match(prepareSignalHint(129) ?? '', /killed externally/);
+  assert.match(prepareSignalHint(143) ?? '', /SIGTERM/);
+  assert.equal(prepareSignalHint(1), null);
+  assert.equal(prepareSignalHint(0), null);
+  assert.equal(prepareSignalHint(null), null);
+});
 
 // Local slot: execOnSlot runs the cleanup script via execLocal (bash -c) on this
 // host, so the kill-detection path exercises the real shell + PID-liveness marker

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- docs: `pickStreamOutput` describes prepare's single `script.output` channel; the slot stream filter already ignores every other event (comment/test only, no behavior change).
 - feat: `farmslot recipe validate` accepts multiple recipe files (`recipes/*.recipe.json`) and exits non-zero if any is invalid, so it works as a PR gate. Adds `--library-source <name=path|path>` (repeatable) for a static resolve-check of library-composed recipes, and `--emit-resolved` to write each recipe's self-contained `resolved-recipe.json` (the full composition).
 - feat: `farmslot recipe artifacts validate` checks the recipe document against Recipe Protocol v1 (validating `$schema` matches `schema_version` when present) and no longer double-counts recipe-document findings.
 - fix: `farmslot project add` now seeds each slot repo with a baseline `agentic-runtime.json` during registration and preserves an existing prepared runtime context on re-add/repair, so slot metadata exists before preflight without clobbering selected simulator/device fields.

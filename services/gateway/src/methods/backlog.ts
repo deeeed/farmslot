@@ -1,4 +1,5 @@
 import type {
+  BacklogArchiveParams,
   BacklogAutoDispatchTickParams,
   BacklogCreateParams,
   BacklogDeleteParams,
@@ -12,6 +13,7 @@ import type {
 } from '@farmslot/protocol';
 
 import {
+  archiveBacklogItem,
   autoDispatchBacklogReady,
   createBacklogItem,
   deleteBacklogItem,
@@ -29,6 +31,7 @@ export const backlogList = (params: BacklogListParams = {}) => listBacklogItems(
 export const backlogUpdate = (params: BacklogUpdateParams) => updateBacklogItem(params);
 export const backlogDelete = (params: BacklogDeleteParams) => deleteBacklogItem(params.itemId);
 export const backlogMarkReady = (params: BacklogMarkReadyParams) => markBacklogItemReady(params);
+export const backlogArchive = (params: BacklogArchiveParams) => archiveBacklogItem(params);
 export const backlogEnqueue = (params: BacklogEnqueueParams) => enqueueBacklogItem(params);
 export const backlogDequeue = (params: BacklogDequeueParams) => dequeueBacklogItem(params);
 export const backlogAutoDispatchTick = (params: BacklogAutoDispatchTickParams = {}) =>

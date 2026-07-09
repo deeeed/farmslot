@@ -4,6 +4,7 @@ import { WebSocket } from 'ws';
 
 import {
   type AnalyticsQueryParams,
+  type BacklogArchiveParams,
   type BacklogAutoDispatchTickParams,
   type BacklogCreateParams,
   type BacklogDeleteParams,
@@ -189,6 +190,7 @@ import { slotCleanup } from '../fleet/slot-cleanup.js';
 import { loadFleetStatus } from '../fleet/state.js';
 import { analyticsBackfill, analyticsQuery } from '../methods/analytics.js';
 import {
+  backlogArchive,
   backlogAutoDispatchTick,
   backlogCreate,
   backlogDelete,
@@ -528,6 +530,8 @@ export async function routeMethod(
       return backlogDelete(p as BacklogDeleteParams);
     case Methods.BACKLOG_MARK_READY:
       return backlogMarkReady(p as BacklogMarkReadyParams);
+    case Methods.BACKLOG_ARCHIVE:
+      return backlogArchive(p as BacklogArchiveParams);
     case Methods.BACKLOG_ENQUEUE:
       return backlogEnqueue(p as BacklogEnqueueParams);
     case Methods.BACKLOG_DEQUEUE:

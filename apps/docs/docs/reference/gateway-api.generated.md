@@ -7,7 +7,7 @@ unlisted: true
 
 This advanced reference is generated from `@farmslot/protocol` capability metadata plus TSDoc comments on protocol interfaces. Do not edit it by hand. For public onboarding, start with [Gateway API capability surface](./gateway-api.md). This raw table is intentionally unlisted because some low-level methods still have generated summaries while public-safe capability grouping and TSDoc coverage mature.
 
-Protocol version: `0.6.1`
+Protocol version: `0.7.5`
 
 ## WebSocket frame shape
 
@@ -52,6 +52,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `analytics.backfill`                 | analytics    | bounded-write | —      | —      | Analytics Backfill gateway method.                 |
 | `analytics.query`                    | analytics    | bounded-write | —      | —      | Analytics Query gateway method.                    |
 | `auth.connect`                       | auth         | bounded-write | —      | —      | Auth Connect gateway method.                       |
+| `backlog.archive`                    | backlog      | bounded-write | —      | —      | Backlog Archive gateway method.                    |
 | `backlog.autoDispatchTick`           | backlog      | bounded-write | —      | —      | Backlog AutoDispatchTick gateway method.           |
 | `backlog.create`                     | backlog      | bounded-write | —      | —      | Backlog Create gateway method.                     |
 | `backlog.delete`                     | backlog      | high-impact   | —      | —      | Backlog Delete gateway method.                     |
@@ -59,6 +60,7 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `backlog.enqueue`                    | backlog      | bounded-write | —      | —      | Backlog Enqueue gateway method.                    |
 | `backlog.list`                       | backlog      | read-only     | —      | —      | Backlog List gateway method.                       |
 | `backlog.markReady`                  | backlog      | bounded-write | —      | —      | Backlog MarkReady gateway method.                  |
+| `backlog.spec.get`                   | backlog      | read-only     | —      | —      | Backlog Spec Get gateway method.                   |
 | `backlog.upcoming`                   | backlog      | bounded-write | —      | —      | Backlog Upcoming gateway method.                   |
 | `backlog.update`                     | backlog      | bounded-write | —      | —      | Backlog Update gateway method.                     |
 | `chat.abort`                         | chat         | bounded-write | —      | —      | Chat Abort gateway method.                         |
@@ -182,7 +184,12 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `roadmap.get`                        | roadmap      | read-only     | —      | —      | Roadmap Get gateway method.                        |
 | `roadmap.list`                       | roadmap      | read-only     | —      | —      | Roadmap List gateway method.                       |
 | `roadmap.promote`                    | roadmap      | bounded-write | —      | —      | Roadmap Promote gateway method.                    |
+| `roadmap.promotionDraft.get`         | roadmap      | read-only     | —      | —      | Roadmap PromotionDraft Get gateway method.         |
+| `roadmap.promotionDraft.list`        | roadmap      | read-only     | —      | —      | Roadmap PromotionDraft List gateway method.        |
+| `roadmap.promotionDraft.save`        | roadmap      | bounded-write | —      | —      | Roadmap PromotionDraft Save gateway method.        |
+| `roadmap.prompt.get`                 | roadmap      | read-only     | —      | —      | Roadmap Prompt Get gateway method.                 |
 | `roadmap.refine`                     | roadmap      | bounded-write | —      | —      | Roadmap Refine gateway method.                     |
+| `roadmap.refinementSession.get`      | roadmap      | read-only     | —      | —      | Roadmap RefinementSession Get gateway method.      |
 | `roadmap.save`                       | roadmap      | bounded-write | —      | —      | Roadmap Save gateway method.                       |
 | `run.activateOnSlot`                 | run          | bounded-write | —      | —      | Run ActivateOnSlot gateway method.                 |
 | `run.archive`                        | run          | bounded-write | —      | —      | Run Archive gateway method.                        |
@@ -275,6 +282,9 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `workGraph.removeNode`               | workGraph    | bounded-write | —      | —      | WorkGraph RemoveNode gateway method.               |
 | `workGraph.schedulerTick`            | workGraph    | bounded-write | —      | —      | WorkGraph SchedulerTick gateway method.            |
 | `workGraph.updateNode`               | workGraph    | bounded-write | —      | —      | WorkGraph UpdateNode gateway method.               |
+| `worker.session.history.get`         | worker       | read-only     | —      | —      | Worker Session History Get gateway method.         |
+| `worker.session.history.subscribe`   | worker       | bounded-write | —      | —      | Worker Session History Subscribe gateway method.   |
+| `worker.session.history.unsubscribe` | worker       | bounded-write | —      | —      | Worker Session History Unsubscribe gateway method. |
 | `workspace.metro.subscribe`          | workspace    | bounded-write | —      | —      | Workspace Metro Subscribe gateway method.          |
 | `workspace.metro.unsubscribe`        | workspace    | bounded-write | —      | —      | Workspace Metro Unsubscribe gateway method.        |
 
@@ -322,7 +332,6 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `script.output`                 | script    | Script Output gateway event.                 |
 | `slot.changed`                  | slot      | Slot Changed gateway event.                  |
 | `slot.prepare.done`             | slot      | Slot Prepare Done gateway event.             |
-| `slot.prepare.output`           | slot      | Slot Prepare Output gateway event.           |
 | `slot.prepare.step`             | slot      | Slot Prepare Step gateway event.             |
 | `stream.frame`                  | stream    | Stream Frame gateway event.                  |
 | `stream.status`                 | stream    | Stream Status gateway event.                 |
@@ -332,5 +341,6 @@ Source: `packages/protocol/src/transport/frames.ts`
 | `terminal.mode`                 | terminal  | Terminal Mode gateway event.                 |
 | `tmux.worker.inventory.updated` | tmux      | Tmux Worker Inventory Updated gateway event. |
 | `workGraph.updated`             | workGraph | WorkGraph Updated gateway event.             |
+| `worker.session.history.delta`  | worker    | Worker Session History Delta gateway event.  |
 | `worker.signal`                 | worker    | Worker Signal gateway event.                 |
 | `workspace.metro.data`          | workspace | Workspace Metro Data gateway event.          |

@@ -49,6 +49,24 @@ function preparePollErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Human-readable cause for a prepare exit code that came from a killed tmux
+ * window. A 128+signal code means the wrapping bash caught a signal (its trap
+ * writes the sentinel), i.e. the window was torn down externally — a concurrent
+ * prepare/release/recycle or the pre-launch `prepare-*` sweep — rather than the
+ * command itself failing. Returns null for ordinary command exit codes.
+ */
+export function prepareSignalHint(exitCode: number | null): string | null {
+  switch (exitCode) {
+    case 129:
+      return 'prepare window received SIGHUP — the tmux window was killed externally (a concurrent prepare/release/recycle or the pre-launch prepare-* sweep tore it down), not a genuine command failure';
+    case 143:
+      return 'prepare window received SIGTERM — the tmux window was killed externally, not a genuine command failure';
+    default:
+      return null;
+  }
+}
+
 // Emitted on stdout by the cleanup script when it terminates the tracked
 // in-flight preflight (the pid from PID_FILE, still alive and confirmed to be a
 // preflight process). Recovery reads this to decide whether a post-kill health
@@ -447,17 +465,32 @@ export async function runPrepareCommand(
     return failSetup('tmux ensure-session', ensureR);
   }
   // Pre-launch cleanup: kill stale prepare-* windows from prior runs (gateway restart,
-  // aborted run, orphaned cleanup). Active prepare phases use phase-scoped windows
-  // such as `prepare-<runId8>-fixtures`; activePrepareSlots prevents concurrent
-  // prepares for the same slot.
-  await exec(
+  // aborted run, orphaned cleanup, warm keep-alive preflight panes). Active prepare
+  // phases use phase-scoped windows such as `prepare-<runId8>-fixtures`.
+  //
+  // Exclude THIS run's own windows (`prepare-<labelPart>-*`): a same-run retry or a
+  // later phase must never SIGHUP a sibling window an in-flight phase still owns.
+  // `activePrepareSlots` only guards within one gateway process, so we also echo
+  // every reaped window — if a sweep ever tears down another gateway's live prepare
+  // window, that shows up in the log as the culprit (pairs with the 129/143 signal
+  // hint recovered on the victim side).
+  const sweepR = await exec(
     tmuxShellSnippet(
       `list-windows -t ${shellQuote(sessionName)} -F '#{window_name}' 2>/dev/null | ` +
-        `grep '^prepare-' | ` +
-        `while IFS= read -r w; do "$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$w" 2>/dev/null; done`,
+        `grep '^prepare-' | grep -v ${shellQuote(`^prepare-${labelPart}-`)} | ` +
+        `while IFS= read -r w; do echo "$w"; "$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$w" 2>/dev/null; done`,
     ),
     { cwd: opts?.cwd, timeout: 15_000 },
   ).catch(() => undefined);
+  const reaped = sweepR?.stdout?.trim();
+  if (reaped) {
+    console.warn(
+      `[prepare] pre-launch sweep reaped stale prepare windows on ${sessionName}: ${reaped
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .join(', ')}`,
+    );
+  }
   // Pre-create the slot-host scratch dir + truncate any prior log so pipe-pane has a
   // clean target. We do this BEFORE launching the window so pipe-pane doesn't race the
   // mkdir inside the wrapped cmd. Also stage the wrapped script here so the respawn
@@ -587,6 +620,35 @@ export async function runPrepareCommand(
       timeout: 10_000,
     });
 
+  // When the tmux window disappears WITHOUT a sentinel yet, a `kill-window`
+  // SIGHUPs the wrapper, whose HUP trap runs __farmslot_cleanup_descendants
+  // (sleep 2) + sleep 1 BEFORE writing 129. So the sentinel lands ~3s after the
+  // window is already gone. Poll a few more seconds to recover the REAL signal
+  // code (129 SIGHUP / 143 SIGTERM) instead of masking every external kill as a
+  // generic "exit 1" preflight failure.
+  const SENTINEL_RECOVERY_TIMEOUT_MS = 6_000;
+  // Short per-read timeout so the recovery stays within its ~6s wall-clock
+  // bound: the sentinel is a tiny local file, so a read that hasn't returned in
+  // 2s is a stuck exec, not a slow one — let the loop retry instead of letting a
+  // single read consume the whole budget.
+  const SENTINEL_RECOVERY_POLL_TIMEOUT_MS = 2_000;
+  const recoverSentinelAfterWindowGone = async (): Promise<number> => {
+    const deadline = Date.now() + SENTINEL_RECOVERY_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const r = await pollExec(
+        'sentinel-recovery',
+        `test -f ${shellQuote(sentinelPath)} && cat ${shellQuote(sentinelPath)}`,
+        SENTINEL_RECOVERY_POLL_TIMEOUT_MS,
+      );
+      if (r && r.exitCode === 0 && r.stdout.trim()) {
+        const parsed = Number.parseInt(r.stdout.trim(), 10);
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      await new Promise((res) => setTimeout(res, 500));
+    }
+    return 1;
+  };
+
   // Poll for the sentinel file (cmd exit code). Honour timeout + abort signal.
   const startTime = Date.now();
   const pollInterval = 1500;
@@ -628,7 +690,7 @@ export async function runPrepareCommand(
     }
     const windowAlive = windowAliveR.exitCode === 0;
     if (!windowAlive) {
-      exitCode = 1;
+      exitCode = await recoverSentinelAfterWindowGone();
       break;
     }
     await new Promise((r) => setTimeout(r, pollInterval));
@@ -679,13 +741,16 @@ export async function runPrepareCommand(
     // Always kill failed/aborted/timeout prepare windows. On failure we keep the
     // slot-host log + sentinel on disk for later inspection.
     await killWindow();
+    const hint = prepareSignalHint(exitCode);
     await appendFile(
       logPath,
       `\n[tmux] cmd exit=${exitCode}; prepare window cleaned up.\n` +
+        (hint ? `      ${hint}\n` : '') +
         `      Slot-host scrollback log: ${slotHostLogPath}\n` +
         `      Sentinel: ${sentinelPath}\n`,
     );
+    if (hint) console.warn(`[prepare] ${target}: ${hint}`);
   }
 
-  return { stdout: '', stderr: '', exitCode: exitCode ?? 1 };
+  return { stdout: '', stderr: prepareSignalHint(exitCode) ?? '', exitCode: exitCode ?? 1 };
 }
