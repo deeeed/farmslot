@@ -405,9 +405,16 @@ export async function resolveRunnerLaunchBlockers(
   const loggedExhaustedAutoActions = new Set<string>();
   let lastBlockerSummary = '';
   while (now() < deadline) {
-    const pane = (
-      await exec(vars, tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`))
-    ).stdout;
+    const paneResult = await exec(
+      vars,
+      tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
+    );
+    if (paneResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to inspect ${runner} launch blocker state in ${target}: ${paneResult.stderr || paneResult.stdout || `exit ${paneResult.exitCode}`}`,
+      );
+    }
+    const pane = paneResult.stdout;
     const blocker = detectRunnerLaunchBlocker(pane, runner);
     if (!blocker) return;
     lastBlockerSummary = blocker.summary;
@@ -1126,6 +1133,9 @@ export async function dispatchExecute(
     runnerProcessStarted = true;
     if (runnerResolvesPreTaskLaunchBlockers(runner)) {
       await resolveRunnerLaunchBlockers(vars, workerTarget, runner);
+      // Cursor receives the task prompt on argv, so resolving a launch blocker
+      // is the last gate before monitor starts; verify the runner survived it.
+      await assertRunnerProcessStarted(vars, workerTarget, runner, 5_000);
     }
     step('launch', `${runner} launched in tmux target ${workerTarget}`);
     primaryTarget = await captureAgentPaneTarget(vars, session, workerTarget);

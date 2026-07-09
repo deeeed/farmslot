@@ -223,6 +223,19 @@ test('resolveRunnerLaunchBlockers fails unsafe blockers immediately', async () =
   );
 });
 
+test('resolveRunnerLaunchBlockers fails when the tmux target cannot be inspected', async () => {
+  await assert.rejects(
+    resolveRunnerLaunchBlockers(makeSlotVars(), 'mme-2:dev', 'cursor', 5_000, {
+      exec: async () => ({
+        exitCode: 1,
+        stdout: '',
+        stderr: "can't find window: dev",
+      }),
+    }),
+    /Failed to inspect cursor launch blocker state in mme-2:dev: can't find window: dev/,
+  );
+});
+
 test('resolveRunnerLaunchBlockers retries auto-action once before reporting timeout', async () => {
   const commands: string[] = [];
   let now = 0;
