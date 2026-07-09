@@ -2,10 +2,10 @@ import { existsSync } from 'node:fs';
 import { chmod, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { CHECKLIST_TARGET_MANIFEST } from '@farmslot/protocol/checklist-target';
+
 import { execLocal, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
-
-import { CHECKLIST_TARGET_MANIFEST } from './checklist-target.js';
 
 export const CHECKLIST_MARKER_INPUT = 'mark';
 export const TASK_ROOT_SIDECARS = [CHECKLIST_MARKER_INPUT, CHECKLIST_TARGET_MANIFEST] as const;
