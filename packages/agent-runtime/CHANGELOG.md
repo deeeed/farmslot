@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- fix: use workspace-linked `@farmslot/protocol` during local development so package builds cannot resolve a stale published sibling package.
 - feat: the task-artifact contract check validates `artifacts/recipe.json` (envelope-only) and, when present, `artifacts/resolved-recipe.json` (in full, including flow-call resolution) against the shared Recipe Protocol v1 validator, with a local minimum-envelope fallback when `@farmslot/protocol` dist is not yet built.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
