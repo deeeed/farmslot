@@ -764,7 +764,7 @@ test('deleted run releases failed backlog item back to ready', async () => {
   created.item.runId = 'deleted-run';
   created.item.lastObservedRunStatus = 'failed';
 
-  const graphIds = await backlog.markBacklogRunDeleted('deleted-run');
+  const graphIds = await backlog.markBacklogRunReleased('deleted-run');
   assert.deepEqual(graphIds, []);
 
   const item = backlog.listBacklogItems().items[0];

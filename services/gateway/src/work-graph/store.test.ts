@@ -804,7 +804,7 @@ test('scheduler retries enqueue when completed ledger is stale after backlog res
   backlog.markBacklogRunObserved({ ...run, status: 'failed' } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
   await runs.deleteRun(run.id);
-  await backlog.markBacklogRunDeleted(run.id);
+  await backlog.markBacklogRunReleased(run.id);
 
   const retick = await workGraph.schedulerTick({ graphId });
   const node = retick.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
@@ -849,7 +849,7 @@ test('scheduler resets an orphaned running node once its run is gone', async () 
 
   // The run is cancelled and the backlog item is released (mirrors runCancel).
   runs.updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
-  await backlog.markBacklogRunDeleted(run.id);
+  await backlog.markBacklogRunReleased(run.id);
 
   // The orphaned running node must not stay stuck — it reconciles to a
   // dispatchable state and drops the dead run reference.

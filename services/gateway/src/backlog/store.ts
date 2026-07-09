@@ -1868,7 +1868,7 @@ export function markBacklogRunObserved(run: Run): void {
   });
 }
 
-export async function markBacklogRunDeleted(runId: string): Promise<string[]> {
+export async function markBacklogRunReleased(runId: string): Promise<string[]> {
   return withBacklogMutation(async () => {
     let changed = false;
     const graphIds = new Set<string>();

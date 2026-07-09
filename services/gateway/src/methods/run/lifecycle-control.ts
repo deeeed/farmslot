@@ -82,9 +82,9 @@ export async function runCancel(params: RunCancelParams, emit: Emit): Promise<Ru
   // next scheduler tick (a cancelled run no longer drives node status), so a
   // transient failure here is recovered on the next tick, not lost.
   try {
-    const { markBacklogRunDeleted } = await import('../../backlog/store.js');
+    const { markBacklogRunReleased } = await import('../../backlog/store.js');
     const { schedulerTick } = await import('../../work-graph/store.js');
-    const graphIds = await markBacklogRunDeleted(params.runId);
+    const graphIds = await markBacklogRunReleased(params.runId);
     for (const graphId of graphIds) await schedulerTick({ graphId });
   } catch (err) {
     console.warn(

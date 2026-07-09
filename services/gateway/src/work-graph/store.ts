@@ -683,8 +683,7 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): voi
     if (latestRun.status === 'blocked' || latestRun.status === 'human-gating')
       node.status = 'gated';
     else if (latestRun.status === 'done') node.status = 'succeeded';
-    else if (latestRun.status === 'failed' || latestRun.status === 'cancelled')
-      node.status = 'failed';
+    else if (latestRun.status === 'failed') node.status = 'failed';
     else node.status = 'running';
     node.updatedAt = new Date().toISOString();
     return;
