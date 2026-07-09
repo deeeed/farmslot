@@ -95,6 +95,12 @@ export interface WorkGraphGateResolveResult {
 
 export interface WorkGraphSchedulerTickParams {
   graphId?: string;
+  /**
+   * Operator-initiated Dispatch: enqueue ready nodes even when the linked
+   * backlog item has autoDispatch disabled. Background/reconcile ticks omit
+   * this so auto-dispatch opt-out still holds.
+   */
+  forceEnqueue?: boolean;
 }
 export interface WorkGraphSchedulerTickResult extends OkResult {
   graphs: WorkGraphProjection[];

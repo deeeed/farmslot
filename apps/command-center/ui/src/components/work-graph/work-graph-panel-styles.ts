@@ -6,8 +6,14 @@ export const workGraphPanelStyles = css`
   :host {
     box-sizing: border-box;
     display: flex;
+    flex: 1 1 auto;
     flex-direction: column;
-    min-height: calc(100vh - 96px);
+    /* Fill the clipped app-shell screen body; do not grow past it or the
+       side panel cannot scroll and dispatch config is cut off. */
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    overflow: hidden;
     padding: ${unsafeCSS(spacing.xxl)};
     color: ${unsafeCSS(colors.textPrimary)};
     font-family: ${unsafeCSS(fonts.mono)};
@@ -19,6 +25,7 @@ export const workGraphPanelStyles = css`
     justify-content: space-between;
     gap: ${unsafeCSS(spacing.xl)};
     margin-bottom: ${unsafeCSS(spacing.xl)};
+    flex: 0 0 auto;
   }
 
   h1 {
@@ -53,6 +60,9 @@ export const workGraphPanelStyles = css`
   }
 
   .empty {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
     padding: ${unsafeCSS(spacing.xxl)};
     color: ${unsafeCSS(colors.textMuted)};
     line-height: 1.5;
@@ -61,8 +71,9 @@ export const workGraphPanelStyles = css`
   .graph {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    margin-bottom: ${unsafeCSS(spacing.xl)};
-    min-height: min(980px, calc(100vh - 150px));
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 0;
     overflow: hidden;
   }
 

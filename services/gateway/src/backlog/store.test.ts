@@ -694,6 +694,33 @@ test('run observation does not overwrite terminal backlog status', async () => {
   assert.equal(item?.lastObservedRunStatus, undefined);
 });
 
+test('run observation reactivates a failed item when its own run is replayed', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Replayed after fail',
+    sourceKind: 'manual',
+    flowType: 'dev',
+    status: 'ready',
+  });
+  created.item.status = 'failed';
+  created.item.runId = 'run-replayed';
+  created.item.lastObservedRunStatus = 'failed';
+
+  // Replaying the item's own run moves it back to a non-terminal status; the
+  // backlog item must follow instead of staying stuck at failed.
+  backlog.markBacklogRunObserved({
+    id: 'run-replayed',
+    status: 'preparing',
+    backlogItemId: created.item.id,
+  } as never);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const item = backlog.listBacklogItems({ includeArchived: true }).items[0];
+  assert.equal(item?.status, 'running');
+  assert.equal(item?.lastObservedRunStatus, 'preparing');
+});
+
 test('run observation can follow successor run by backlogItemId after parent cancellation', async () => {
   const { backlog } = await freshStores();
   const created = await backlog.createBacklogItem({
@@ -737,7 +764,7 @@ test('deleted run releases failed backlog item back to ready', async () => {
   created.item.runId = 'deleted-run';
   created.item.lastObservedRunStatus = 'failed';
 
-  const graphIds = await backlog.markBacklogRunDeleted('deleted-run');
+  const graphIds = await backlog.markBacklogRunReleased('deleted-run');
   assert.deepEqual(graphIds, []);
 
   const item = backlog.listBacklogItems().items[0];

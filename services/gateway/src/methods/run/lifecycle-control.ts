@@ -74,6 +74,24 @@ export async function runCancel(params: RunCancelParams, emit: Emit): Promise<Ru
       );
     }
   }
+
+  // A cancelled dispatch must not strand its work-graph node / backlog item in a
+  // running state. Release the backlog↔run link and re-project affected graphs so
+  // the node returns to a dispatchable state — the same reconciliation the
+  // RUN_DELETED handler runs. Best-effort: the projection also self-heals on the
+  // next scheduler tick (a cancelled run no longer drives node status), so a
+  // transient failure here is recovered on the next tick, not lost.
+  try {
+    const { markBacklogRunReleased } = await import('../../backlog/store.js');
+    const { schedulerTick } = await import('../../work-graph/store.js');
+    const graphIds = await markBacklogRunReleased(params.runId);
+    for (const graphId of graphIds) await schedulerTick({ graphId });
+  } catch (err) {
+    console.warn(
+      `[run] work-graph reconcile on cancel failed for ${params.runId}: ${(err as Error).message}`,
+    );
+  }
+
   return { run };
 }
 

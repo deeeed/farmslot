@@ -29,8 +29,8 @@ import { initDispatchQueue, loadQueue } from './backlog/dispatch-queue.js';
 import {
   initBacklogStore,
   loadBacklog,
-  markBacklogRunDeleted,
   markBacklogRunObserved,
+  markBacklogRunReleased,
   markBacklogRunStarted,
 } from './backlog/store.js';
 import { checkDailyAutosave, ensureCopilotDirs } from './chat/chat-memory.js';
@@ -229,7 +229,7 @@ async function main(): Promise<void> {
     if (event === Events.RUN_DELETED) {
       const runId = (payload as { runId?: string }).runId;
       if (runId) {
-        markBacklogRunDeleted(runId)
+        markBacklogRunReleased(runId)
           .then((graphIds) => {
             for (const graphId of graphIds) {
               schedulerTick({ graphId }).catch((err) => {

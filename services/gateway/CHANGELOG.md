@@ -4,6 +4,8 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(work-graph): reset an orphaned `running` node (its run cancelled/deleted/missing) back to a dispatchable state, and reconcile a run's work-graph node + backlog item on cancel — so a cancelled/replayed run no longer leaves a node stuck "running".
+- fix(backlog): reactivate a failed/needs-attention item when its own run is replayed, so the item (and the roadmap that derives its status transitively) returns to running instead of staying failed.
 - fix(gateway): retarget task-local `./mark` via `checklist-target.json` when nested-loop roles activate, so self-review and CI-fix progress marks the active checklist instead of worker `TASK.md`; restore worker target on replay and role completion.
 - fix(gateway): use structural try/finally restore for self-review-fix and CI-fix role bodies so new exit paths cannot skip worker checklist-target reset.
 

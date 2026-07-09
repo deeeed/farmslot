@@ -452,6 +452,8 @@ export function renderAppShellStyles(
         min-height: 0;
       }
       farm-app .fa-screen-body {
+        display: flex;
+        flex-direction: column;
         flex: 1;
         min-height: 0;
         overflow: hidden;

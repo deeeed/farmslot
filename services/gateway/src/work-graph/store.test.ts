@@ -637,6 +637,37 @@ test('scheduler respects graph node auto-dispatch opt-out until re-enabled', asy
   assert.equal(projection.nodes.find((node) => node.id === 'wn_staged')?.status, 'queued');
 });
 
+test('manual schedulerTick forceEnqueue bypasses auto-dispatch opt-out', async () => {
+  const { backlog, queue, workGraph } = await freshStores();
+  const item = await createReadyBacklogItem(backlog, 'Manual force enqueue graph task');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Manual force enqueue graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_force',
+    backlogItemId: item.item.id,
+  });
+  await backlog.updateBacklogItem({ itemId: item.item.id, autoDispatch: false });
+  await workGraph.activateWorkGraph({ graphId });
+
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.nodes.find((node) => node.id === 'wn_force')?.status,
+    'ready',
+  );
+  assert.equal(queue.getQueueSnapshot().length, 0);
+
+  await workGraph.schedulerTick({ graphId, forceEnqueue: true });
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.nodes.find((node) => node.id === 'wn_force')?.status,
+    'queued',
+  );
+  assert.equal(queue.getQueueSnapshot().length, 1);
+});
+
 test('scheduler reconciles restart/idempotency and does not duplicate graph enqueues', async () => {
   const { backlog, runs, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Upstream task');
@@ -773,7 +804,7 @@ test('scheduler retries enqueue when completed ledger is stale after backlog res
   backlog.markBacklogRunObserved({ ...run, status: 'failed' } as never);
   await new Promise((resolve) => setTimeout(resolve, 25));
   await runs.deleteRun(run.id);
-  await backlog.markBacklogRunDeleted(run.id);
+  await backlog.markBacklogRunReleased(run.id);
 
   const retick = await workGraph.schedulerTick({ graphId });
   const node = retick.graphs[0]?.nodes.find((candidate) => candidate.id === nodeId);
@@ -782,6 +813,51 @@ test('scheduler retries enqueue when completed ledger is stale after backlog res
     backlog.listBacklogItems().items.find((item) => item.id === created.item.id)?.status,
     'queued',
   );
+});
+
+test('scheduler resets an orphaned running node once its run is gone', async () => {
+  const { backlog, queue, runs, workGraph } = await freshStores();
+  const created = await createReadyBacklogItem(backlog, 'Orphaned running node');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Orphan running graph',
+  });
+  const graphId = graph.graph.graph.id;
+  const nodeId = 'wn_orphan_running';
+  await workGraph.addWorkGraphNode({ graphId, id: nodeId, backlogItemId: created.item.id });
+  await workGraph.activateWorkGraph({ graphId });
+
+  const queued = queue
+    .getQueueSnapshot()
+    .find((item) => item.workGraphId === graphId && item.workNodeId === nodeId);
+  assert.ok(queued);
+  const run = runs.createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: created.item.sourceRef,
+    backlogItemId: created.item.id,
+    workGraphId: graphId,
+    workNodeId: nodeId,
+  });
+  await backlog.markBacklogRunStarted(queued, run);
+  queue.removeQueueItemInternal(queued.id, 'test-dispatch-started');
+  runs.updateRun(run.id, { status: 'monitoring' });
+
+  // While the run is active the node reads running.
+  const started = await workGraph.schedulerTick({ graphId });
+  assert.equal(started.graphs[0]?.nodes.find((n) => n.id === nodeId)?.status, 'running');
+
+  // The run is cancelled and the backlog item is released (mirrors runCancel).
+  runs.updateRun(run.id, { status: 'cancelled', completedAt: new Date().toISOString() });
+  await backlog.markBacklogRunReleased(run.id);
+
+  // The orphaned running node must not stay stuck — it reconciles to a
+  // dispatchable state and drops the dead run reference.
+  const retick = await workGraph.schedulerTick({ graphId });
+  const node = retick.graphs[0]?.nodes.find((n) => n.id === nodeId);
+  assert.notEqual(node?.status, 'running');
+  assert.ok(node?.status === 'ready' || node?.status === 'queued');
+  assert.equal(node?.latestRunId, undefined);
 });
 
 test('manual gate resolution rejects ambiguous gate ids and can disambiguate by graph and edge', async () => {
