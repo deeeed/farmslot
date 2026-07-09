@@ -664,8 +664,13 @@ function mergedEvidenceFromRuns(
 
 function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): void {
   if (!isBacklogNode(node)) return;
+  // A cancelled run is an aborted dispatch, not the node's active work — ignore
+  // it so cancel returns the node to a dispatchable state instead of pinning it
+  // to the cancelled run's status (which would otherwise read as running/failed
+  // and block re-dispatch).
   const linkedRuns = runs.filter(
-    (run) => run.workGraphId === node.graphId && run.workNodeId === node.id,
+    (run) =>
+      run.workGraphId === node.graphId && run.workNodeId === node.id && run.status !== 'cancelled',
   );
   const latestRun = linkedRuns.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   const queued = getQueueSnapshot().find(
@@ -699,7 +704,15 @@ function syncNodeFromBacklogQueueRuns(node: WorkNode, runs: readonly Run[]): voi
     backlog?.status === 'ready' &&
     !latestRun &&
     !queued &&
-    (node.status === 'failed' || node.status === 'needs-attention' || node.status === 'queued')
+    // A node only legitimately reads `running` while it has an active linked run
+    // (handled above with an early return). Reaching here means the run is gone
+    // (deleted/cancelled/missing), so a lingering `running` is orphaned and must
+    // reset to `ready` alongside the other stuck states — otherwise the node
+    // stays permanently un-dispatchable.
+    (node.status === 'failed' ||
+      node.status === 'needs-attention' ||
+      node.status === 'queued' ||
+      node.status === 'running')
   ) {
     node.status = 'ready';
     delete node.latestRunId;
