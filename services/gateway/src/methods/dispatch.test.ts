@@ -188,6 +188,8 @@ test('resolveRunnerLaunchBlockers sends an auto-action once and waits for the bl
 });
 
 test('resolveRunnerLaunchBlockers waits for deferred blockers without sending input', async () => {
+  // The resolver is runner-agnostic; dispatch currently calls it before monitor
+  // only for argv-prompt runners such as Cursor.
   const commands: string[] = [];
   const panes = [grokMcpInitPane, 'Grok ready'];
   let now = 0;

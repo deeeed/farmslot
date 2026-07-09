@@ -270,9 +270,20 @@ export async function findRunnerDescendantPid(
   if (!panePid) return '';
   const pattern = runnerProcessPatternSource(runnerId);
   if (!pattern) return '';
+  const cmd = buildFindRunnerDescendantPidCommand(panePid, pattern);
+  const result = await execOnSlot(vars, cmd);
+  if (result.exitCode !== 0) return '';
+  return result.stdout.trim();
+}
+
+export function buildFindRunnerDescendantPidCommand(panePid: string, pattern: string): string {
   const cmd = [
     `root=${shellQuote(panePid)}`,
     `for pid in $(pgrep -f ${shellQuote(pattern)} 2>/dev/null); do`,
+    `  command=$(ps -o command= -p "$pid" 2>/dev/null || true)`,
+    `  case "$command" in`,
+    `    *'__farmslot_status'*|*'[farmslot] runner launch command exited'*) continue ;;`,
+    `  esac`,
     `  cur=$pid`,
     `  while [ -n "$cur" ] && [ "$cur" != "$root" ] && [ "$cur" != "0" ] && [ "$cur" != "1" ]; do`,
     `    cur=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d ' \\n\\r\\t')`,
@@ -281,9 +292,7 @@ export async function findRunnerDescendantPid(
     `done`,
     `exit 1`,
   ].join('\n');
-  const result = await execOnSlot(vars, cmd);
-  if (result.exitCode !== 0) return '';
-  return result.stdout.trim();
+  return cmd;
 }
 
 /**
