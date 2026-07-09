@@ -717,8 +717,9 @@ describe('cursor runner', () => {
     assert.equal(runnerProcessPattern('aider').test('agent'), false);
   });
 
-  it('accepts composer-2.5 and account-specific model names', () => {
+  it('accepts composer-2.5, grok-4.5-fast-xhigh, and account-specific model names', () => {
     assert.equal(runnerSupportsModel('cursor', DEFAULT_CURSOR_MODEL), true);
+    assert.equal(runnerSupportsModel('cursor', 'grok-4.5-fast-xhigh'), true);
     assert.equal(runnerSupportsModel('cursor', 'sonnet-4-thinking'), true);
     assert.equal(getRunnerDefinition('cursor').acceptsModel?.(null as any), false);
   });

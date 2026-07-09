@@ -12,7 +12,7 @@ export const RUNNER_OPTIONS: ReviewRunnerId[] = ['claude', 'codex', 'cursor', 'g
 export const MODELS_BY_RUNNER: Record<string, string[]> = {
   claude: ['sonnet', 'opus', 'haiku', 'fable'],
   codex: ['gpt-5.5', 'gpt-5.4'],
-  cursor: [DEFAULT_CURSOR_MODEL],
+  cursor: [DEFAULT_CURSOR_MODEL, 'grok-4.5-fast-xhigh'],
   grok: [DEFAULT_GROK_MODEL, 'grok-composer-2.5-fast'],
 };
 

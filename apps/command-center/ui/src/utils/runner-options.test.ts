@@ -15,9 +15,10 @@ test('eval candidates expose Cursor and Grok through the shared comparison runne
   assert.equal(COMPARISON_LANE_RUNNERS.has('grok'), true);
   assert.equal(EVAL_CANDIDATE_RUNNERS.includes('cursor'), true);
   assert.equal(EVAL_CANDIDATE_RUNNERS.includes('grok'), true);
-  assert.deepEqual(MODELS_BY_RUNNER.cursor, [DEFAULT_CURSOR_MODEL]);
+  assert.deepEqual(MODELS_BY_RUNNER.cursor, [DEFAULT_CURSOR_MODEL, 'grok-4.5-fast-xhigh']);
   assert.deepEqual(MODELS_BY_RUNNER.grok, [DEFAULT_GROK_MODEL, 'grok-composer-2.5-fast']);
   assert.equal(DEFAULT_MODEL.cursor, DEFAULT_CURSOR_MODEL);
+  assert.notEqual(DEFAULT_MODEL.cursor, 'grok-4.5-fast-xhigh');
   assert.equal(DEFAULT_MODEL.grok, DEFAULT_GROK_MODEL);
 });
 
