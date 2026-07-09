@@ -166,7 +166,7 @@ function makeSlotVars(overrides: Partial<SlotVars> = {}): SlotVars {
 
 test('resolveRunnerLaunchBlockers sends an auto-action once and waits for the blocker to clear', async () => {
   const commands: string[] = [];
-  const panes = [cursorWorkspaceTrustPane, cursorWorkspaceTrustPane, 'Cursor chat ready'];
+  const panes = [cursorWorkspaceTrustPane, 'Cursor chat ready'];
   let now = 0;
 
   await resolveRunnerLaunchBlockers(makeSlotVars(), 'mme-2:dev', 'cursor', 5_000, {
@@ -223,7 +223,7 @@ test('resolveRunnerLaunchBlockers fails unsafe blockers immediately', async () =
   );
 });
 
-test('resolveRunnerLaunchBlockers reports timeout after a repeated auto-action blocker', async () => {
+test('resolveRunnerLaunchBlockers retries auto-action once before reporting timeout', async () => {
   const commands: string[] = [];
   let now = 0;
 
@@ -238,10 +238,10 @@ test('resolveRunnerLaunchBlockers reports timeout after a repeated auto-action b
         return { exitCode: 0, stdout: cursorWorkspaceTrustPane, stderr: '' };
       },
     }),
-    /Auto-action was sent for: workspace-trust/,
+    /Auto-action was sent for: workspace-trust \(2 attempts\)/,
   );
 
-  assert.equal(commands.filter((command) => command.includes('send-keys')).length, 1);
+  assert.equal(commands.filter((command) => command.includes('send-keys')).length, 2);
 });
 
 test('dispatch failure cleanup kills launched role runner and verifies exit', async () => {

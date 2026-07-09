@@ -401,7 +401,7 @@ export async function resolveRunnerLaunchBlockers(
   const sleep =
     deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const deadline = now() + timeoutMs;
-  const answered = new Set<string>();
+  const autoActionAttempts = new Map<string, number>();
   let lastBlockerSummary = '';
   while (now() < deadline) {
     const pane = (
@@ -413,7 +413,8 @@ export async function resolveRunnerLaunchBlockers(
 
     const key = runnerLaunchBlockerAutoActionKey(blocker.autoAction);
     if (key) {
-      if (!answered.has(blocker.kind)) {
+      const attempts = autoActionAttempts.get(blocker.kind) ?? 0;
+      if (attempts < 2) {
         const result = await exec(
           vars,
           tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${key} 2>/dev/null`),
@@ -423,7 +424,7 @@ export async function resolveRunnerLaunchBlockers(
             `Failed to resolve ${runner} launch blocker ${blocker.kind} in ${target}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
           );
         }
-        answered.add(blocker.kind);
+        autoActionAttempts.set(blocker.kind, attempts + 1);
       }
     } else if (!runnerPaneHasDeferredLaunchBlocker(pane, runner, blocker)) {
       throw new Error(
@@ -432,9 +433,12 @@ export async function resolveRunnerLaunchBlockers(
     }
     await sleep(1500);
   }
+  const attemptedKinds = [...autoActionAttempts].map(
+    ([kind, attempts]) => `${kind}${attempts > 1 ? ` (${attempts} attempts)` : ''}`,
+  );
   throw new Error(
     `${runner} launch blocker did not clear in ${target} within ${Math.round(timeoutMs / 1000)}s. ${lastBlockerSummary}${
-      answered.size ? ` Auto-action was sent for: ${[...answered].join(', ')}.` : ''
+      attemptedKinds.length ? ` Auto-action was sent for: ${attemptedKinds.join(', ')}.` : ''
     }`,
   );
 }
