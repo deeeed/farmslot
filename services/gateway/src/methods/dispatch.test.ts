@@ -10,7 +10,11 @@ import {
 
 import type { SlotVars } from '../core/config.js';
 
-import { cleanupLaunchedWorkerAfterDispatchFailure } from './dispatch/execute.js';
+import {
+  buildRoleLaunchCommandWithDiagnosticHold,
+  cleanupLaunchedWorkerAfterDispatchFailure,
+  keyForRunnerLaunchBlockerAutoAction,
+} from './dispatch/execute.js';
 import {
   buildDispatchRoleShellCommand,
   canonicalAgentContextTarget,
@@ -99,6 +103,21 @@ test('dispatch role shell command starts a real repo shell, not the prepare plac
 
   assert.equal(command, "cd '/tmp/farm slot/repo' && exec ${SHELL:-bash}");
   assert.doesNotMatch(command, /while :; do sleep 86400; done/);
+});
+
+test('dispatch role launch wrapper holds failed runner output for diagnostics', () => {
+  const command = buildRoleLaunchCommandWithDiagnosticHold('codex --model gpt-5.5');
+
+  assert.match(command, /bash -lc/);
+  assert.match(command, /runner launch command exited/);
+  assert.match(command, /sleep 45/);
+  assert.doesNotMatch(command, /^exec bash -lc/);
+});
+
+test('dispatch maps runner launch blocker auto-actions to submit keys', () => {
+  assert.equal(keyForRunnerLaunchBlockerAutoAction('cursor-trust-workspace'), 'a');
+  assert.equal(keyForRunnerLaunchBlockerAutoAction('grok-select-current-project'), 'Enter');
+  assert.equal(keyForRunnerLaunchBlockerAutoAction(null), null);
 });
 
 test('dispatch failure cleanup kills launched role runner and verifies exit', async () => {

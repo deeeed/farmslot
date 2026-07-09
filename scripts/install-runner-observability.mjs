@@ -278,26 +278,57 @@ function buildCodexHookTrustToml(hooksPath, hooks) {
   return blocks.join('\n').trimEnd();
 }
 
-function stripCodexHookTrustSections(content) {
+function stripTomlSections(content, shouldStrip) {
   const lines = content.split('\n');
   const kept = [];
   let skipping = false;
   for (const line of lines) {
-    if (/^\[hooks\.state\./.test(line.trim())) {
-      skipping = true;
-      continue;
-    }
-    if (skipping) {
-      if (/^\s*trusted_hash\s*=/.test(line)) continue;
-      if (line.trim() === '') {
-        skipping = false;
-        continue;
-      }
-      skipping = false;
-    }
-    kept.push(line);
+    const section = line.trim().match(/^\[([^\]]+)\]\s*$/)?.[1] ?? null;
+    if (section) skipping = shouldStrip(section);
+    if (!skipping) kept.push(line);
   }
   return kept.join('\n').trimEnd();
+}
+
+function stripCodexHomeInstallerSections(content, repoPath) {
+  const canonicalRepoPath = canonicalCodexPath(repoPath);
+  const projectSection = `projects."${escapeTomlBasicString(canonicalRepoPath)}"`;
+  return stripTomlSections(content, (section) => {
+    if (section === 'features') return true;
+    if (section === projectSection) return true;
+    if (section.startsWith('hooks.state.')) return true;
+    return false;
+  });
+}
+
+function upsertCodexHooksFeature(content) {
+  const lines = content.split('\n');
+  const existingFeatureIdx = lines.findIndex((line) => line.trim() === '[features]');
+  if (existingFeatureIdx < 0) {
+    const block = '[features]\nhooks = true\n';
+    return content.trimEnd() ? `${content.trimEnd()}\n\n${block}` : block.trimEnd();
+  }
+
+  let sectionEnd = lines.length;
+  for (let i = existingFeatureIdx + 1; i < lines.length; i += 1) {
+    if (/^\s*\[/.test(lines[i])) {
+      sectionEnd = i;
+      break;
+    }
+  }
+
+  let sawHooks = false;
+  const sectionLines = lines.slice(existingFeatureIdx + 1, sectionEnd).map((line) => {
+    if (/^\s*hooks\s*=/.test(line)) {
+      sawHooks = true;
+      return 'hooks = true';
+    }
+    return line;
+  });
+  if (!sawHooks) sectionLines.push('hooks = true');
+  return [...lines.slice(0, existingFeatureIdx + 1), ...sectionLines, ...lines.slice(sectionEnd)]
+    .join('\n')
+    .trimEnd();
 }
 
 function canonicalCodexPath(filePath) {
@@ -339,7 +370,7 @@ function bootstrapCodexHome({ repoPath, runtimeDir, hooksPath }) {
   } else if (existingStat) {
     content = fs.readFileSync(configPath, 'utf8');
   }
-  content = stripCodexHookTrustSections(content);
+  content = stripCodexHomeInstallerSections(content, repoPath);
   const featureBlock = '[features]\nhooks = true\n';
   const canonicalRepoPath = canonicalCodexPath(repoPath);
   const projectBlock = `[projects."${escapeTomlBasicString(canonicalRepoPath)}"]\ntrust_level = "trusted"\n`;
@@ -506,9 +537,9 @@ function ensureCodexHooksFeature(configPath, markerPath) {
   backupOnce(configPath, markerPath);
   let content = '';
   if (fs.existsSync(configPath)) content = fs.readFileSync(configPath, 'utf8');
-  if (/\[features\][\s\S]*?\bhooks\s*=\s*true\b/m.test(content)) return;
-  const block = '\n[features]\nhooks = true\n';
-  fs.writeFileSync(configPath, content.trimEnd() ? content.trimEnd() + block : block.trimStart());
+  const next = upsertCodexHooksFeature(content);
+  if (next === content.trimEnd()) return;
+  fs.writeFileSync(configPath, `${next}\n`);
 }
 
 function writeObservabilityInstallManifest(obsDir, manifest) {

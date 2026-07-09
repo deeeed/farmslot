@@ -48,9 +48,12 @@ import {
 } from '../../runners/launch-command.js';
 import {
   assertSupportedRunnerSpelling,
+  detectRunnerLaunchBlocker,
   normalizeRunner,
   runnerDefaultModel,
+  type RunnerLaunchBlocker,
   runnerNeedsPostLaunchPrompt,
+  runnerPaneHasDeferredLaunchBlocker,
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../../runners/registry.js';
@@ -114,6 +117,7 @@ const LAUNCH_PRELUDE_SETTLE_MS = 50;
  * pane; with dispatch's pane-died hook that removes the whole role window.
  */
 const ROLE_WINDOW_STARTUP_SETTLE_MS = 500;
+const ROLE_LAUNCH_FAILURE_DIAGNOSTIC_HOLD_SECONDS = 45;
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
@@ -378,6 +382,58 @@ async function assertRunnerProcessStarted(
   );
 }
 
+export function keyForRunnerLaunchBlockerAutoAction(
+  autoAction: RunnerLaunchBlocker['autoAction'],
+): 'a' | 'Enter' | null {
+  if (autoAction === 'cursor-trust-workspace') return 'a';
+  if (autoAction === 'grok-select-current-project') return 'Enter';
+  return null;
+}
+
+async function resolveRunnerLaunchBlockers(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  timeoutMs = 60_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const answered = new Set<string>();
+  let lastBlockerSummary = '';
+  while (Date.now() < deadline) {
+    const pane = (
+      await execOnSlot(
+        vars,
+        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
+      )
+    ).stdout;
+    const blocker = detectRunnerLaunchBlocker(pane, runner);
+    if (!blocker) return;
+    lastBlockerSummary = blocker.summary;
+
+    const key = keyForRunnerLaunchBlockerAutoAction(blocker.autoAction);
+    if (key && !answered.has(blocker.kind)) {
+      const result = await execOnSlot(
+        vars,
+        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${key} 2>/dev/null`),
+      );
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `Failed to resolve ${runner} launch blocker ${blocker.kind} in ${target}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+        );
+      }
+      answered.add(blocker.kind);
+    } else if (!runnerPaneHasDeferredLaunchBlocker(pane, runner, blocker)) {
+      throw new Error(
+        `${blocker.summary} Launch blocker has no safe automatic action; dispatch cannot continue.`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  throw new Error(
+    `${runner} launch blocker did not clear in ${target} within ${Math.round(timeoutMs / 1000)}s. ${lastBlockerSummary}`,
+  );
+}
+
 export async function ensureWorkerRoleTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
@@ -535,7 +591,7 @@ async function respawnRoleWindowWithCommand(
   target: string,
   command: string,
 ): Promise<void> {
-  const launchCommand = `exec bash -lc ${shellQuote(command)}`;
+  const launchCommand = buildRoleLaunchCommandWithDiagnosticHold(command);
   const respawned = await execOnSlot(
     vars,
     tmuxShellSnippet(
@@ -558,6 +614,19 @@ async function respawnRoleWindowWithCommand(
     );
   }
   await applyRoleWindowOptions(vars, target);
+}
+
+export function buildRoleLaunchCommandWithDiagnosticHold(command: string): string {
+  const lines = [
+    `bash -lc ${shellQuote(command)}`,
+    '__farmslot_status=$?',
+    'if [ "$__farmslot_status" -ne 0 ]; then',
+    '  echo "[farmslot] runner launch command exited $__farmslot_status; preserving pane for diagnostics" >&2',
+    `  sleep ${ROLE_LAUNCH_FAILURE_DIAGNOSTIC_HOLD_SECONDS}`,
+    'fi',
+    'exit "$__farmslot_status"',
+  ];
+  return `bash -lc ${shellQuote(lines.join('\n'))}`;
 }
 
 async function tmuxSessionExists(
@@ -1034,6 +1103,9 @@ export async function dispatchExecute(
     // instead of 'failed' — the false-success path that left review-pr runs
     // sitting at human-gate waiting for artifacts that were never produced.
     await assertRunnerProcessStarted(vars, workerTarget, runner);
+    if (!runnerNeedsPostLaunchPrompt(runner)) {
+      await resolveRunnerLaunchBlockers(vars, workerTarget, runner);
+    }
     runnerProcessStarted = true;
     step('launch', `${runner} launched in tmux target ${workerTarget}`);
     primaryTarget = await captureAgentPaneTarget(vars, session, workerTarget);
