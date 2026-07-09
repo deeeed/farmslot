@@ -1,5 +1,11 @@
 import type { AgentContextSummary, AgentRole, Run, SlotStatus } from '@farmslot/protocol';
-import { agentRoleLabel, agentRoleRank, primaryRoleForFlow } from '@farmslot/protocol';
+import {
+  agentRoleLabel,
+  agentRoleRank,
+  isReviewerAgentContext,
+  primaryRoleForFlow,
+  selectLatestReviewerContext,
+} from '@farmslot/protocol';
 
 type SlotViewAgentContextLike = Pick<
   AgentContextSummary,
@@ -15,6 +21,7 @@ type SlotViewAgentContextLike = Pick<
   | 'target'
   | 'nudgeCount'
   | 'lastSignalAt'
+  | 'updatedAt'
 >;
 
 export interface SlotViewAgentContextRun {
@@ -74,6 +81,7 @@ function toAgentContextSummary(ctx: SlotViewAgentContextLike): AgentContextSumma
     target: ctx.target,
     nudgeCount: ctx.nudgeCount,
     lastSignalAt: ctx.lastSignalAt,
+    updatedAt: ctx.updatedAt,
   };
 }
 
@@ -116,7 +124,9 @@ export function deriveSlotViewAgentContexts({
     const rankA = agentRoleRank(a.role);
     const rankB = agentRoleRank(b.role);
     if (rankA !== rankB) return rankA - rankB;
-    return a.label.localeCompare(b.label);
+    const labelCmp = a.label.localeCompare(b.label);
+    if (labelCmp !== 0) return labelCmp;
+    return a.id.localeCompare(b.id);
   });
   if (contexts.length > 0) return contexts;
   if (!slot) return [];
@@ -145,10 +155,23 @@ export function selectSlotViewAgentContext(
   contexts: AgentContextSummary[],
   selectedAgentContextId: string,
 ): AgentContextSummary | null {
-  return (
-    contexts.find((ctx) => ctx.id === selectedAgentContextId) ??
-    contexts.find((ctx) => ctx.role === 'primary') ??
-    contexts[0] ??
-    null
-  );
+  if (selectedAgentContextId === 'latest-reviewer') {
+    return selectLatestReviewerContext(contexts) ?? null;
+  }
+  const exact = contexts.find((ctx) => ctx.id === selectedAgentContextId);
+  if (exact) return exact;
+  if (selectedAgentContextId === 'self-review') {
+    return selectLatestReviewerContext(contexts) ?? null;
+  }
+  return contexts.find((ctx) => ctx.role === 'primary') ?? contexts[0] ?? null;
+}
+
+/** Chip / breadcrumb label: prefer short reviewer tab id over generic Self-review. */
+export function slotViewAgentContextChipLabel(ctx: AgentContextSummary): string {
+  if (isReviewerAgentContext(ctx)) {
+    const window = ctx.target?.window?.trim();
+    if (window) return window;
+    if (ctx.id.startsWith('rev-') || /^rev\d+-/.test(ctx.id)) return ctx.id;
+  }
+  return ctx.label || ctx.role;
 }

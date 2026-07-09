@@ -6,6 +6,7 @@ import {
   type AgentRole,
   agentRoleWindow,
   DEFAULT_BRANCH,
+  isReviewerWindowName,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
 } from '@farmslot/protocol';
@@ -517,7 +518,11 @@ export async function killAllAgentWindows(
       .filter((name): name is string => Boolean(name))
       .filter((name) => !excluded.has(name)),
   );
-  const maxKillAttempts = AGENT_ROLES.length + 2;
+  const shouldKillWindow = (name: string | undefined): boolean =>
+    shouldKillAgentWindowName(name, { roleWindowNames, excluded });
+  // Reviewer tabs are unbounded per run (rev-codex, rev1-codex, …), so allow
+  // more kill attempts than the fixed AGENT_ROLES window set.
+  const maxKillAttempts = AGENT_ROLES.length + 16;
   for (let attempt = 1; attempt <= maxKillAttempts; attempt += 1) {
     const listed = await execOnSlot(
       vars,
@@ -537,7 +542,7 @@ export async function killAllAgentWindows(
         return { index, name };
       });
     const roleWindow = windows.find(
-      (window) => window.index && window.name && roleWindowNames.has(window.name),
+      (window) => window.index && window.name && shouldKillWindow(window.name),
     );
     if (!roleWindow) return;
 
@@ -553,6 +558,14 @@ export async function killAllAgentWindows(
   throw new Error(
     `Exceeded ${maxKillAttempts} attempts to kill tmux role windows for session ${session}; role windows may be respawning`,
   );
+}
+
+export function shouldKillAgentWindowName(
+  name: string | undefined,
+  opts: { roleWindowNames: ReadonlySet<string>; excluded?: ReadonlySet<string> },
+): boolean {
+  if (!name || opts.excluded?.has(name)) return false;
+  return opts.roleWindowNames.has(name) || isReviewerWindowName(name);
 }
 
 export function buildKillRoleWindowCommand(

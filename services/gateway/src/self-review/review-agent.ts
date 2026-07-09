@@ -3,7 +3,7 @@
 import path from 'node:path';
 
 import {
-  agentRoleWindow,
+  allocateReviewerContext,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
   type ReviewLoopTimelineSegment,
@@ -65,8 +65,6 @@ import {
 } from './snapshots.js';
 import { expandSelfReviewTemplate } from './templates.js';
 
-const REVIEW_WINDOW = agentRoleWindow('self-review') ?? 'self-review';
-
 /** Progress mark writes status "running"; only terminal worker signals count as done. */
 export function parseTerminalSelfReviewSignal(raw: string) {
   return terminalWorkerSignalFromRaw(raw);
@@ -124,7 +122,20 @@ export async function runReviewAgent(
     runnerSessionId: null,
     error: sessionFilesBefore.error,
   };
+  const parentRunForAlloc = getRun(_runId);
+  const allocated = allocateReviewerContext({
+    runId: _runId,
+    runner,
+    model,
+    existing: parentRunForAlloc?.agentContexts ?? [],
+    // Fresh numbered tabs when the same runner already has a tab on this run
+    // (warm reuse is a later session-mode slice; launch still needs a live pane).
+    mode: 'fresh',
+  });
+  const reviewWindow = allocated.windowName;
   let reviewContext = await upsertAgentContext(_runId, 'self-review', {
+    id: allocated.id,
+    label: allocated.label,
     status: 'launching',
     taskFile: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.checklist),
     signalFile: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
@@ -134,8 +145,8 @@ export async function runReviewAgent(
   });
 
   try {
-    // 1. Kill any existing review window
-    await killSelfReviewWindow(vars, session, 'pre-launch cleanup');
+    // 1. Kill only this reviewer tab before relaunch (other same-run reviewers stay).
+    await killSelfReviewWindow(vars, session, 'pre-launch cleanup', reviewWindow);
 
     // 1b. Clear prior-pass artifacts so waitForReviewCompletion / readReviewFeedback
     // can't short-circuit on stale files (caused retry verdict to mirror pass 1).
@@ -144,11 +155,11 @@ export async function runReviewAgent(
       slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
     ]);
 
-    // 2. Create new window in same session
+    // 2. Create new window in same session with a short operator-addressable name.
     const newWinResult = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `new-window -t ${shellQuote(session)} -n ${shellQuote(REVIEW_WINDOW)} -d 2>&1`,
+        `new-window -t ${shellQuote(session)} -n ${shellQuote(reviewWindow)} -d 2>&1`,
       ),
     );
     debugSelfReviewLog(
@@ -156,20 +167,24 @@ export async function runReviewAgent(
     );
     if (newWinResult.exitCode !== 0) {
       throw new Error(
-        `Failed to create self-review tmux window ${session}:${REVIEW_WINDOW}: ${newWinResult.stderr || newWinResult.stdout || `exit ${newWinResult.exitCode}`}`,
+        `Failed to create self-review tmux window ${session}:${reviewWindow}: ${newWinResult.stderr || newWinResult.stdout || `exit ${newWinResult.exitCode}`}`,
       );
     }
     reviewContext =
       (await upsertAgentContext(_runId, 'self-review', {
+        id: allocated.id,
+        label: allocated.label,
+        runner,
+        model,
         target: {
           session,
-          window: REVIEW_WINDOW,
+          window: reviewWindow,
           pane: null,
-          target: `${session}:${REVIEW_WINDOW}`,
+          target: `${session}:${reviewWindow}`,
         },
       })) ?? reviewContext;
     await new Promise((r) => setTimeout(r, 500));
-    await ensureTmuxWindowMinimumSize(vars, `${session}:${REVIEW_WINDOW}`);
+    await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
 
     // Log active windows so we can see what's in the session
     const winList = (
@@ -214,7 +229,7 @@ export async function runReviewAgent(
       runtimeDir,
     });
     launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
-    const reviewTarget = `${session}:${REVIEW_WINDOW}`;
+    const reviewTarget = `${session}:${reviewWindow}`;
     const handoffAckSinceMs = Date.now();
     debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
     await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd);
@@ -228,6 +243,8 @@ export async function runReviewAgent(
     );
     reviewContext =
       (await upsertAgentContext(_runId, 'self-review', {
+        id: allocated.id,
+        label: allocated.label,
         status: 'working',
         runnerSessionId: sessionMeta.runnerSessionId,
         runnerSessionPath: sessionMeta.runnerSessionPath,
@@ -283,6 +300,8 @@ export async function runReviewAgent(
       reviewTimeoutMs,
       _runId,
       runner,
+      reviewWindow,
+      allocated.id,
     );
     if (!completed) {
       throw new Error(
@@ -389,6 +408,7 @@ export async function runReviewAgent(
     };
   } catch (err) {
     await markAgentContextStatus(_runId, 'self-review', 'failed', {
+      id: allocated.id,
       lastSignalAt: new Date().toISOString(),
     });
     throw err;
@@ -398,7 +418,7 @@ export async function runReviewAgent(
     // propagates intact to the run-engine catch. Keep failed review panes alive for
     // forensics/manual recovery; only successful review agents are torn down.
     try {
-      await unwatchContext(vars.slotId, 'self-review');
+      await unwatchContext(vars.slotId, allocated.id);
     } catch (cleanupErr) {
       console.warn(`[self-review] cleanup unwatchContext failed: ${(cleanupErr as Error).message}`);
     }
@@ -408,7 +428,7 @@ export async function runReviewAgent(
     }
     if (completedSuccessfully) {
       try {
-        await killSelfReviewWindow(vars, session, 'post-run cleanup');
+        await killSelfReviewWindow(vars, session, 'post-run cleanup', reviewWindow);
       } catch (cleanupErr) {
         console.warn(`[self-review] cleanup killWindow failed: ${(cleanupErr as Error).message}`);
       }
@@ -423,6 +443,8 @@ async function waitForReviewCompletion(
   timeoutMs: number,
   runId: string,
   runner: string,
+  reviewWindow: string,
+  reviewContextId: string,
 ): Promise<boolean> {
   const start = Date.now();
   const pollInterval = 10_000; // 10s
@@ -436,7 +458,7 @@ async function waitForReviewCompletion(
         await execOnSlot(
           vars,
           tmuxShellSnippet(
-            `list-windows -t ${shellQuote(session)} -F '#{window_name}' 2>/dev/null | grep -q '${REVIEW_WINDOW}'`,
+            `list-windows -t ${shellQuote(session)} -F '#{window_name}' 2>/dev/null | grep -Fxq ${shellQuote(reviewWindow)}`,
           ),
         )
       ).exitCode === 0;
@@ -452,6 +474,7 @@ async function waitForReviewCompletion(
       if (hasFeedback === 'yes') {
         debugSelfReviewLog(`[self-review] review window gone + feedback written — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
+          id: reviewContextId,
           lastSignalAt: new Date().toISOString(),
         });
         return true;
@@ -467,7 +490,7 @@ async function waitForReviewCompletion(
       await execOnSlot(
         vars,
         tmuxShellSnippet(
-          `list-panes -t ${shellQuote(`${session}:${REVIEW_WINDOW}`)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+          `list-panes -t ${shellQuote(`${session}:${reviewWindow}`)} -F '#{pane_pid}' 2>/dev/null | head -1`,
         ),
       )
     ).stdout.trim();
@@ -489,6 +512,7 @@ async function waitForReviewCompletion(
             `[self-review] ${runner} process exited + feedback written — agent completed`,
           );
           await markAgentContextStatus(runId, 'self-review', 'complete', {
+            id: reviewContextId,
             lastSignalAt: new Date().toISOString(),
           });
           return true;
@@ -526,6 +550,7 @@ async function waitForReviewCompletion(
           `[self-review] terminal ${SELF_REVIEW_CHECKLIST_TARGET.signal} (status=${terminalSignal.status}) + feedback — agent completed`,
         );
         await markAgentContextStatus(runId, 'self-review', 'complete', {
+          id: reviewContextId,
           lastSignalAt: new Date().toISOString(),
         });
         return true;
@@ -540,7 +565,7 @@ async function waitForReviewCompletion(
       await execOnSlot(
         vars,
         tmuxShellSnippet(
-          `capture-pane -p -t ${shellQuote(`${session}:${REVIEW_WINDOW}`)} 2>/dev/null | tail -5`,
+          `capture-pane -p -t ${shellQuote(`${session}:${reviewWindow}`)} 2>/dev/null | tail -5`,
         ),
       )
     ).stdout;
@@ -563,6 +588,7 @@ async function waitForReviewCompletion(
       if (hasFeedback === 'yes') {
         debugSelfReviewLog(`[self-review] idle prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
+          id: reviewContextId,
           lastSignalAt: new Date().toISOString(),
         });
         return true;
@@ -580,6 +606,7 @@ async function waitForReviewCompletion(
       if (hasFeedback === 'yes') {
         debugSelfReviewLog(`[self-review] shell prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
+          id: reviewContextId,
           lastSignalAt: new Date().toISOString(),
         });
         return true;
