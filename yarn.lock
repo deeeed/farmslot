@@ -4311,7 +4311,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/agent-runtime@workspace:packages/agent-runtime"
   dependencies:
-    "@farmslot/protocol": "npm:>=0.7.4"
+    "@farmslot/protocol": "workspace:*"
     "@types/node": "npm:^22.0.0"
     eslint: "npm:^10.3.0"
     prettier: "npm:^3.8.3"
@@ -4533,7 +4533,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@farmslot/protocol@npm:>=0.7.4, @farmslot/protocol@npm:^0.7.0, @farmslot/protocol@workspace:*, @farmslot/protocol@workspace:packages/protocol":
+"@farmslot/protocol@workspace:*, @farmslot/protocol@workspace:packages/protocol":
   version: 0.0.0-use.local
   resolution: "@farmslot/protocol@workspace:packages/protocol"
   dependencies:
@@ -4549,7 +4549,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@farmslot/recipe-harness@workspace:packages/recipe-harness"
   dependencies:
-    "@farmslot/protocol": "npm:^0.7.0"
+    "@farmslot/protocol": "workspace:*"
     "@types/node": "npm:^22.0.0"
     "@types/ws": "npm:^8.5.12"
     commander: "npm:^12.0.0"
