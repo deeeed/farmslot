@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { execLocal, execOnSlot, farmslotRoot, isLocal, type SlotVars } from '../../core/index.js';
 import { resolveTmuxSession, shellQuote, tmuxShellSnippet } from '../../core/tmux.js';
+import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
 import { DEFAULT_GATEWAY_PORT, sanitizePhaseName } from './shared.js';
 
@@ -214,12 +215,24 @@ export function buildPrepareWrappedCommand(
   cmd: string,
   sentinelPath: string,
   scratchDir: string,
-  opts?: { keepAliveOnSuccess?: boolean },
+  opts?: { keepAliveOnSuccess?: boolean; workspaceRoot?: string | null },
 ): string {
   const quotedSentinelPath = shellQuote(sentinelPath);
   const keepAliveOnSuccess = opts?.keepAliveOnSuccess === true;
+  // Pack runway scripts default the workspace to $HOME/farmslot when
+  // FARMSLOT_WORKSPACE is unset. The prepare window inherits the gateway env,
+  // which may not carry that var, so a dev-farm slot would write .runway-resolved
+  // and provision artifacts into the base install's workspace. Export the resolved
+  // root here so those scripts land under this workspace. resolveWorkspaceRoot
+  // returns the inherited value when the env already sets it, keeping this a no-op
+  // for an explicitly-set workspace; when no workspace resolves it stays unset and
+  // the pack default applies.
+  const workspaceExports = opts?.workspaceRoot
+    ? [`export FARMSLOT_WORKSPACE=${shellQuote(opts.workspaceRoot)}`]
+    : [];
   return [
     'unset FORCE_COLOR',
+    ...workspaceExports,
     `mkdir -p ${shellQuote(scratchDir)} || { echo 1 > ${quotedSentinelPath}; exit 1; }`,
     '__farmslot_kill_tree() {',
     '  local parent="$1"',
@@ -381,6 +394,7 @@ export async function runPrepareCommand(
   // execLocal callers, not commands launched inside an existing tmux pane.
   const wrappedCmd = buildPrepareWrappedCommand(cmd, sentinelPath, slotHostScratchDir, {
     keepAliveOnSuccess: opts?.phase === 'preflight',
+    workspaceRoot: resolveWorkspaceRoot(),
   });
   // Stage the wrapped command in a temp script so tmux respawn-pane can exec
   // bash directly against the file. Necessary because tmux runs respawn-pane's
