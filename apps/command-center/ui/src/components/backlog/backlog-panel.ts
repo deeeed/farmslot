@@ -1989,13 +1989,15 @@ export class BacklogPanel extends LitElement {
           return 'Graph is paused. Resume it in WorkGraph before dispatching this item.';
         }
         if (linkedGraph?.graph.status === 'planning') {
-          const result = await gateway.request<WorkGraphActivateResult>(
-            Methods.WORK_GRAPH_ACTIVATE,
-            { graphId: item.workGraphId },
-          );
+          await gateway.request<WorkGraphActivateResult>(Methods.WORK_GRAPH_ACTIVATE, {
+            graphId: item.workGraphId,
+          });
           return this._graphSchedulerMessage(
             item,
-            { ok: true, graphs: [result.graph] },
+            await gateway.request<WorkGraphSchedulerTickResult>(Methods.WORK_GRAPH_SCHEDULER_TICK, {
+              graphId: item.workGraphId,
+              forceEnqueue: true,
+            }),
             'Graph activated. ',
           );
         }
@@ -2003,6 +2005,7 @@ export class BacklogPanel extends LitElement {
           item,
           await gateway.request<WorkGraphSchedulerTickResult>(Methods.WORK_GRAPH_SCHEDULER_TICK, {
             graphId: item.workGraphId,
+            forceEnqueue: true,
           }),
         );
       });
@@ -2147,7 +2150,13 @@ export class BacklogPanel extends LitElement {
         : `${prefix}Graph needs attention before this item can be queued.`;
     }
     if (node.status === 'ready') {
-      return `${prefix}Ready, but the graph scheduler did not enqueue yet. If this persists after dispatch, restart the gateway so stale graph scheduler state can reconcile.`;
+      if (item.lastDispatchError) {
+        return `${prefix}Ready, but enqueue failed: ${item.lastDispatchError}`;
+      }
+      if (item.autoDispatch === false) {
+        return `${prefix}Ready with auto start off. Manual Dispatch should still enqueue — if it did not, check allowed slots and retry.`;
+      }
+      return `${prefix}Ready, but not queued. Review slots and dispatch config.`;
     }
     return `${prefix}Checked: ${node.status}. Open the WorkGraph for details.`;
   }
@@ -2513,8 +2522,7 @@ export class BacklogPanel extends LitElement {
             <div class="field-label">Agent notes</div>
             <pre class="notes-view">${notesValue || 'No notes.'}</pre>
           </div>`}
-      ${this._renderItemActionButtons(item, mode)} ${this._renderDispatchConfigModal(item)}
-      ${this._renderSpecViewerModal(item)}
+      ${this._renderItemActionButtons(item, mode)} ${this._renderSpecViewerModal(item)}
     </section>`;
   }
 
@@ -2592,6 +2600,7 @@ export class BacklogPanel extends LitElement {
         ${hasDetail ? this._renderSelectedItemPanel() : nothing}
       </div>
       ${this._renderLaunchSlotSelectorModal()}
+      ${this._selectedItem ? this._renderDispatchConfigModal(this._selectedItem) : nothing}
     </section>`;
   }
 }

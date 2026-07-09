@@ -594,20 +594,19 @@ export class WorkGraphPanel extends LitElement {
         return;
       }
       if (graph.graph.status === 'planning') {
-        const result = await gateway.request<WorkGraphActivateResult>(Methods.WORK_GRAPH_ACTIVATE, {
+        await gateway.request<WorkGraphActivateResult>(Methods.WORK_GRAPH_ACTIVATE, {
           graphId: graph.graph.id,
         });
-        this.schedulerMessage = this.schedulerTickMessage(
-          graph,
-          node,
-          { ok: true, graphs: [result.graph] },
-          'Graph activated. ',
+        const result = await gateway.request<WorkGraphSchedulerTickResult>(
+          Methods.WORK_GRAPH_SCHEDULER_TICK,
+          { graphId: graph.graph.id, forceEnqueue: true },
         );
+        this.schedulerMessage = this.schedulerTickMessage(graph, node, result, 'Graph activated. ');
         return;
       }
       const result = await gateway.request<WorkGraphSchedulerTickResult>(
         Methods.WORK_GRAPH_SCHEDULER_TICK,
-        { graphId: graph.graph.id },
+        { graphId: graph.graph.id, forceEnqueue: true },
       );
       this.schedulerMessage = this.schedulerTickMessage(graph, node, result);
     } catch (error) {
@@ -657,7 +656,16 @@ export class WorkGraphPanel extends LitElement {
         : `${prefix}Needs attention before it can be queued.`;
     }
     if (nextNode.status === 'ready') {
-      return `${prefix}Ready, but not queued. Review auto start, slots, and dispatch config.`;
+      const item = nextNode.backlogItemId
+        ? this.backlogById().get(nextNode.backlogItemId)
+        : undefined;
+      if (item?.lastDispatchError) {
+        return `${prefix}Ready, but enqueue failed: ${item.lastDispatchError}`;
+      }
+      if (item?.autoDispatch === false) {
+        return `${prefix}Ready with auto start off. Manual Dispatch should still enqueue — if it did not, check allowed slots and retry.`;
+      }
+      return `${prefix}Ready, but not queued. Review slots and dispatch config.`;
     }
     return `${prefix}Checked: ${nextNode.status}.`;
   }
@@ -737,11 +745,30 @@ export class WorkGraphPanel extends LitElement {
         >
           Edit dispatch config
         </button>
-        ${this.configModalItemId === item.id
-          ? this.renderDispatchConfigModal(item, disabled)
-          : nothing}
       </div>
     `;
+  }
+
+  private renderOpenDispatchConfigModal() {
+    if (!this.configModalItemId) return nothing;
+    const item = this.backlogById().get(this.configModalItemId);
+    if (!item) return nothing;
+    const graph = item.workGraphId
+      ? this.activeGraphs().find((candidate) => candidate.graph.id === item.workGraphId)
+      : undefined;
+    const overlay = graph
+      ? buildWorkGraphExecutionOverlay({
+          graph,
+          backlogItems: this.activeBacklogItems(),
+          queueItems: this.queueItems,
+          runs: this.activeRuns(),
+          slots: this.slots,
+        })
+      : null;
+    const nodeView = item.workNodeId ? overlay?.byNodeId.get(item.workNodeId) : undefined;
+    const editableConfig = nodeView?.editableConfig ?? true;
+    const disabled = !editableConfig || this.configBusyItemId === item.id;
+    return this.renderDispatchConfigModal(item, disabled);
   }
 
   private renderDispatchConfigModal(item: BacklogItem, disabled: boolean) {
@@ -1099,6 +1126,7 @@ export class WorkGraphPanel extends LitElement {
         : html`<div class="empty">
             No work graphs found. Create a graph from backlog work to see the dependency map here.
           </div>`}
+      ${this.renderOpenDispatchConfigModal()}
     `;
   }
 }

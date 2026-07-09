@@ -919,6 +919,7 @@ async function executeNodeUnlock(
   node: WorkNode,
   inbound: readonly WorkEdge[],
   now: string,
+  options: { forceEnqueue?: boolean } = {},
 ): Promise<void> {
   if (!isBacklogNode(node) || !node.backlogItemId) {
     node.status = 'waiting';
@@ -959,7 +960,7 @@ async function executeNodeUnlock(
     if (!retryableStaleEnqueue) return;
     snapshot.ledger = snapshot.ledger.filter((entry) => entry.key !== actionKey);
   }
-  if (actionKind === 'enqueue' && backlogItem?.autoDispatch === false) {
+  if (actionKind === 'enqueue' && backlogItem?.autoDispatch === false && !options.forceEnqueue) {
     node.status = 'ready';
     node.waitingOn = [];
     node.updatedAt = now;
@@ -1064,12 +1065,13 @@ function acquireLease(snapshot: WorkGraphSnapshot, owner: string, nowMs: number)
 }
 
 export async function schedulerTick(
-  params: { graphId?: string } = {},
+  params: { graphId?: string; forceEnqueue?: boolean } = {},
 ): Promise<{ ok: true; graphs: WorkGraphProjection[] }> {
   return withMutation(async () => {
     const owner = `gateway-${process.pid}`;
     const nowMs = Date.now();
     const now = new Date(nowMs).toISOString();
+    const unlockOptions = { forceEnqueue: params.forceEnqueue === true };
     const targets = [...graphs.values()].filter((snapshot) => {
       if (params.graphId && snapshot.graph.id !== params.graphId) return false;
       return snapshot.graph.status === 'active' || snapshot.graph.status === 'waiting';
@@ -1100,7 +1102,7 @@ export async function schedulerTick(
         const completionRebaseInbound = satisfiedCompletionRebaseEdges(inbound);
         if (completionRebaseInbound.length > 0 && canRequireCompletionUnlock(node)) {
           try {
-            await executeNodeUnlock(snapshot, node, completionRebaseInbound, now);
+            await executeNodeUnlock(snapshot, node, completionRebaseInbound, now, unlockOptions);
           } catch (err) {
             recordNodeUnlockFailure(
               snapshot,
@@ -1164,7 +1166,7 @@ export async function schedulerTick(
         if (requiredInbound.length === satisfiedInbound.length) {
           runnable++;
           try {
-            await executeNodeUnlock(snapshot, node, startInbound, now);
+            await executeNodeUnlock(snapshot, node, startInbound, now, unlockOptions);
           } catch (err) {
             recordNodeUnlockFailure(snapshot, node, inbound, now, errorMessage(err));
           }

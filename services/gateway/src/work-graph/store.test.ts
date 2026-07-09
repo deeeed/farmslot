@@ -637,6 +637,37 @@ test('scheduler respects graph node auto-dispatch opt-out until re-enabled', asy
   assert.equal(projection.nodes.find((node) => node.id === 'wn_staged')?.status, 'queued');
 });
 
+test('manual schedulerTick forceEnqueue bypasses auto-dispatch opt-out', async () => {
+  const { backlog, queue, workGraph } = await freshStores();
+  const item = await createReadyBacklogItem(backlog, 'Manual force enqueue graph task');
+  const graph = await workGraph.createWorkGraph({
+    project: 'farmslot-farm',
+    title: 'Manual force enqueue graph',
+  });
+  const graphId = graph.graph.graph.id;
+  await workGraph.addWorkGraphNode({
+    graphId,
+    id: 'wn_force',
+    backlogItemId: item.item.id,
+  });
+  await backlog.updateBacklogItem({ itemId: item.item.id, autoDispatch: false });
+  await workGraph.activateWorkGraph({ graphId });
+
+  await workGraph.schedulerTick({ graphId });
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.nodes.find((node) => node.id === 'wn_force')?.status,
+    'ready',
+  );
+  assert.equal(queue.getQueueSnapshot().length, 0);
+
+  await workGraph.schedulerTick({ graphId, forceEnqueue: true });
+  assert.equal(
+    workGraph.getWorkGraph({ graphId }).graph.nodes.find((node) => node.id === 'wn_force')?.status,
+    'queued',
+  );
+  assert.equal(queue.getQueueSnapshot().length, 1);
+});
+
 test('scheduler reconciles restart/idempotency and does not duplicate graph enqueues', async () => {
   const { backlog, runs, workGraph } = await freshStores();
   const upstream = await createReadyBacklogItem(backlog, 'Upstream task');
