@@ -229,6 +229,45 @@ export function buildPrepareNewWindowCommand(
   );
 }
 
+/**
+ * Kill every window whose name exactly matches `windowName`, addressed by
+ * `window_index` rather than by name.
+ *
+ * tmux refuses name targets when two windows share the same name
+ * (`can't find window: prepare-...`). Same-phase prepare retries used to leave
+ * that poisoned state behind: the pre-launch sweep skips `prepare-<runId>-*`,
+ * a second `new-window -n prepare-<runId>-deps` creates a duplicate, and
+ * subsequent `pipe-pane` / `kill-window` by name both fail — surfacing as a
+ * fake "yarn install failed" before the real command ever starts.
+ *
+ * Kill highest index first so earlier indices in the snapshot stay valid as
+ * tmux renumbers after each kill-window.
+ */
+export function buildPrepareKillWindowsByNameCommand(
+  sessionName: string,
+  windowName: string,
+): string {
+  return tmuxShellSnippet(
+    `list-windows -t ${shellQuote(sessionName)} -F '#{window_index}:#{window_name}' 2>/dev/null | ` +
+      `awk -F: -v want=${shellQuote(windowName)} '$2 == want { print $1 ":" $2 }' | sort -t: -nr -k1,1 | ` +
+      `while IFS=: read -r idx name; do ` +
+      `echo "$idx:$name"; ` +
+      `"$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$idx" 2>/dev/null || true; ` +
+      `done`,
+  );
+}
+
+export function buildPreparePreLaunchSweepCommand(sessionName: string, labelPart: string): string {
+  // Reap stale prepare-* windows from other runs, but keep this run's sibling
+  // phases (`prepare-<labelPart>-*`) alive — a later phase must not SIGHUP an
+  // in-flight fixtures/deps/preflight window owned by the same prepare.
+  return tmuxShellSnippet(
+    `list-windows -t ${shellQuote(sessionName)} -F '#{window_name}' 2>/dev/null | ` +
+      `grep '^prepare-' | grep -v ${shellQuote(`^prepare-${labelPart}-`)} | ` +
+      `while IFS= read -r w; do echo "$w"; "$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$w" 2>/dev/null; done`,
+  );
+}
+
 export function buildPrepareWrappedCommand(
   cmd: string,
   sentinelPath: string,
@@ -474,18 +513,31 @@ export async function runPrepareCommand(
   // every reaped window — if a sweep ever tears down another gateway's live prepare
   // window, that shows up in the log as the culprit (pairs with the 129/143 signal
   // hint recovered on the victim side).
-  const sweepR = await exec(
-    tmuxShellSnippet(
-      `list-windows -t ${shellQuote(sessionName)} -F '#{window_name}' 2>/dev/null | ` +
-        `grep '^prepare-' | grep -v ${shellQuote(`^prepare-${labelPart}-`)} | ` +
-        `while IFS= read -r w; do echo "$w"; "$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$w" 2>/dev/null; done`,
-    ),
-    { cwd: opts?.cwd, timeout: 15_000 },
-  ).catch(() => undefined);
+  const sweepR = await exec(buildPreparePreLaunchSweepCommand(sessionName, labelPart), {
+    cwd: opts?.cwd,
+    timeout: 15_000,
+  }).catch(() => undefined);
   const reaped = sweepR?.stdout?.trim();
   if (reaped) {
     console.warn(
       `[prepare] pre-launch sweep reaped stale prepare windows on ${sessionName}: ${reaped
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .join(', ')}`,
+    );
+  }
+  // Same-phase retry orphans: the sweep above preserves `prepare-<labelPart>-*`, so a
+  // failed deps/preflight attempt can leave a placeholder window with THIS exact name.
+  // Reap that name by index before opening a new one — otherwise tmux creates a
+  // duplicate and every later name-targeted command (`pipe-pane`, `kill-window`) fails.
+  const samePhaseR = await exec(buildPrepareKillWindowsByNameCommand(sessionName, windowName), {
+    cwd: opts?.cwd,
+    timeout: 15_000,
+  }).catch(() => undefined);
+  const samePhaseReaped = samePhaseR?.stdout?.trim();
+  if (samePhaseReaped) {
+    console.warn(
+      `[prepare] pre-launch reaped same-phase prepare window(s) on ${sessionName}: ${samePhaseReaped
         .split(/\r?\n/)
         .filter(Boolean)
         .join(', ')}`,
@@ -514,17 +566,17 @@ export async function runPrepareCommand(
     tmuxShellSnippet(`set-window-option -t ${shellQuote(target)} remain-on-exit off`),
     { cwd: opts?.cwd, timeout: 10_000 },
   );
-  if (remainR.exitCode !== 0) {
-    await exec(tmuxShellSnippet(`kill-window -t ${shellQuote(target)} 2>/dev/null || true`), {
+  const killPrepareWindowsByName = () =>
+    exec(buildPrepareKillWindowsByNameCommand(sessionName, windowName), {
       timeout: 10_000,
     });
+  if (remainR.exitCode !== 0) {
+    await killPrepareWindowsByName();
     return failSetup('tmux remain-on-exit', remainR);
   }
   const pipeR = await exec(pipeCmd, { cwd: opts?.cwd, timeout: 10_000 });
   if (pipeR.exitCode !== 0) {
-    await exec(tmuxShellSnippet(`kill-window -t ${shellQuote(target)} 2>/dev/null || true`), {
-      timeout: 10_000,
-    });
+    await killPrepareWindowsByName();
     return failSetup('tmux pipe-pane', pipeR);
   }
   // Now that pipe-pane is attached, respawn the pane with the real wrapped
@@ -532,9 +584,7 @@ export async function runPrepareCommand(
   // subscription survives since it's bound to the pane, not the process.
   const respawnR = await exec(respawnCmd, { cwd: opts?.cwd, timeout: 15_000 });
   if (respawnR.exitCode !== 0) {
-    await exec(tmuxShellSnippet(`kill-window -t ${shellQuote(target)} 2>/dev/null || true`), {
-      timeout: 10_000,
-    });
+    await killPrepareWindowsByName();
     return failSetup('tmux respawn-pane', respawnR);
   }
 
@@ -615,10 +665,9 @@ export async function runPrepareCommand(
     }
   })();
 
-  const killWindow = () =>
-    exec(tmuxShellSnippet(`kill-window -t ${shellQuote(target)} 2>/dev/null || true`), {
-      timeout: 10_000,
-    });
+  // Kill by window_index, not by name: duplicate same-named prepare windows make
+  // `kill-window -t session:name` return "can't find window" and leave orphans.
+  const killWindow = () => killPrepareWindowsByName();
 
   // When the tmux window disappears WITHOUT a sentinel yet, a `kill-window`
   // SIGHUPs the wrapper, whose HUP trap runs __farmslot_cleanup_descendants
