@@ -1,4 +1,4 @@
-import type { BacklogItem } from '@farmslot/protocol';
+import type { BacklogItem, BacklogStatus } from '@farmslot/protocol';
 
 import { syncedDraftProject } from '../shared/planning-projects.js';
 
@@ -42,6 +42,17 @@ export function canDeleteBacklogItemForUi(
 ): boolean {
   if (item.workGraphId || item.workNodeId) return false;
   return showsBacklogCleanupActionsForUi(item) || item.status === 'candidate';
+}
+
+// Whether an item passes the status filter. Archived items are soft-hidden:
+// the store loads them (includeArchived) so the explicit `archived` filter can
+// show them, but the default `all` view must exclude them.
+export function backlogItemMatchesStatusFilter(
+  status: BacklogItem['status'],
+  filter: BacklogStatus | 'all',
+): boolean {
+  if (filter === 'all') return status !== 'archived';
+  return status === filter;
 }
 
 export const syncedBacklogDraftProject = syncedDraftProject;

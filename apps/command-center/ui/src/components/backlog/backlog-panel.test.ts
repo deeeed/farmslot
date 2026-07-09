@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import type { BacklogStatus } from '@farmslot/protocol';
 
 import {
+  backlogItemMatchesStatusFilter,
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
@@ -12,6 +13,17 @@ import {
   showsBacklogCleanupActionsForUi,
   syncedBacklogDraftProject,
 } from './backlog-panel-model.js';
+
+test('backlog default (all) filter hides archived items but the archived filter shows them', () => {
+  // Store loads archived items (includeArchived), so the filter must hide them
+  // from the default view while keeping them reachable under status=archived.
+  assert.equal(backlogItemMatchesStatusFilter('archived', 'all'), false);
+  assert.equal(backlogItemMatchesStatusFilter('ready', 'all'), true);
+  assert.equal(backlogItemMatchesStatusFilter('done', 'all'), true);
+  assert.equal(backlogItemMatchesStatusFilter('archived', 'archived'), true);
+  assert.equal(backlogItemMatchesStatusFilter('ready', 'archived'), false);
+  assert.equal(backlogItemMatchesStatusFilter('ready', 'ready'), true);
+});
 
 test('backlog panel dequeue action is only enabled for queued dispatch lifecycle statuses', () => {
   const enabled: BacklogStatus[] = ['queued', 'dispatching'];

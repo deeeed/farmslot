@@ -64,6 +64,7 @@ import type { SlotSelectorChangeDetail } from '../shared/slot-selector-modal.js'
 import { filterSlotsByGlobalFilters } from '../terminal/split-view-model.js';
 
 import {
+  backlogItemMatchesStatusFilter,
   canArchiveBacklogItemForUi,
   canDeleteBacklogItemForUi,
   canDequeueBacklogItemForUi,
@@ -1179,8 +1180,7 @@ export class BacklogPanel extends LitElement {
         return false;
       }
       if (this._project !== 'all' && item.project !== this._project) return false;
-      if (this._status !== 'all' && item.status !== this._status) return false;
-      return true;
+      return backlogItemMatchesStatusFilter(item.status, this._status);
     });
   }
 
