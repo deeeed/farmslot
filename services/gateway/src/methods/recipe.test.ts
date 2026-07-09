@@ -367,6 +367,105 @@ test('validateRecipeRunArtifactPackageOutput requires typed artifact manifest pa
   );
 });
 
+test('validateRecipeRunArtifactPackageOutput validates resolved-recipe.json only for passing runs', () => {
+  const recipe = {
+    schema_version: 1,
+    uses: ['flows.json'],
+    validate: {
+      workflow: {
+        entry: 'call-x',
+        nodes: {
+          'call-x': {
+            action: 'call',
+            intent: 'Call an external flow',
+            ref: 'missing.flow',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  // A resolved recipe that is NOT self-contained (unresolved call, no inline flows).
+  const resolvedRecipe = {
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'call-x',
+        nodes: {
+          'call-x': {
+            action: 'call',
+            intent: 'Call an external flow',
+            ref: 'missing.flow',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const manifest = {
+    version: 1,
+    runStatus: 'pass',
+    artifacts: [
+      { path: 'recipe.json', type: 'recipe' },
+      { path: 'resolved-recipe.json', type: 'recipe' },
+      { path: 'summary.json', type: 'summary' },
+      { path: 'trace.json', type: 'trace' },
+    ],
+  };
+  const artifactPaths = [
+    'artifact-manifest.json',
+    'recipe.json',
+    'resolved-recipe.json',
+    'summary.json',
+    'trace.json',
+  ];
+
+  // Passing run: resolved-recipe.json is validated in full, so its unresolved call fails.
+  const passing = validateRecipeRunArtifactPackageOutput({
+    artifactPaths,
+    recipe,
+    recipeArtifactPresent: true,
+    resolvedRecipe,
+    summary: { status: 'pass', passed: 1, failed: 0, total: 1 },
+    manifest,
+  });
+  assert.equal(passing.status, 'fail');
+  assert.ok(
+    passing.recipe?.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+  );
+
+  // Failed run: the resolved recipe is NOT re-validated, so its composition issue does
+  // not turn a gracefully-failed run into an ingestion rejection.
+  const failed = validateRecipeRunArtifactPackageOutput({
+    artifactPaths,
+    recipe,
+    recipeArtifactPresent: true,
+    resolvedRecipe,
+    summary: { status: 'fail', passed: 0, failed: 1, total: 1 },
+    manifest: { ...manifest, runStatus: 'fail' },
+  });
+  assert.ok(
+    !failed.recipe?.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+  );
+
+  // A present-but-unreadable resolved-recipe.json always fails, regardless of run status.
+  const unreadable = validateRecipeRunArtifactPackageOutput({
+    artifactPaths,
+    recipe,
+    recipeArtifactPresent: true,
+    resolvedRecipe: undefined,
+    summary: { status: 'pass', passed: 1, failed: 0, total: 1 },
+    manifest,
+    readErrors: { 'resolved-recipe.json': 'Unexpected token' },
+  });
+  assert.equal(unreadable.status, 'fail');
+  assert.ok(
+    unreadable.checks.some((check) => check.id === 'recipe_run.artifact.resolved-recipe.json'),
+  );
+});
+
 test('resolveSlotRecipePath keeps bundled recipe paths within the current task directory', () => {
   const recipeArtifactRoot = '/repo/tasks/current-task';
 

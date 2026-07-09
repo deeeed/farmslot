@@ -2,6 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  isRecord,
   mergeRecipeValidationResults,
   type RecipeValidationResult,
   validateArtifactManifestDocument,
@@ -152,11 +153,13 @@ export async function validateRecipeCliInput({
     // Flow-call resolution already ran above via validateRecipeWithManifest with the
     // configured library; the artifact-package check is envelope-only for recipe.json.
     // resolved-recipe.json, when present, is the self-contained composition and is
-    // validated in full, mirroring gateway ingestion.
-    const resolvedRecipe = await readOptionalRecipeCliJsonFile(
-      path.join(artifactDir, 'resolved-recipe.json'),
-      baseDir,
-    );
+    // validated in full only for passing runs — matching the runner/gateway so a
+    // gracefully-failed run is not rejected here. A malformed present file still
+    // throws via readOptionalRecipeCliJsonFile.
+    const runPassed = isRecord(manifest) && manifest.runStatus === 'pass';
+    const resolvedRecipe = runPassed
+      ? await readOptionalRecipeCliJsonFile(path.join(artifactDir, 'resolved-recipe.json'), baseDir)
+      : undefined;
     results.push(
       validateRecipeArtifactPackage({
         recipe,

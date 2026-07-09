@@ -8,55 +8,31 @@ import {
 import type { RecipeLibrarySource, RecipeLogger } from './types.js';
 
 /** Locate a flow definition's node map, tolerating both `{entry,nodes}` and `{workflow:{...}}`. */
-function flowGraph(flow: unknown): { entry?: string; nodes?: Record<string, unknown> } {
-  if (!isRecord(flow)) return {};
+function flowNodes(flow: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(flow)) return undefined;
   const workflow = isRecord(flow.workflow) ? flow.workflow : flow;
-  return {
-    entry: typeof workflow.entry === 'string' ? workflow.entry : undefined,
-    nodes: isRecord(workflow.nodes) ? (workflow.nodes as Record<string, unknown>) : undefined,
-  };
+  return isRecord(workflow.nodes) ? (workflow.nodes as Record<string, unknown>) : undefined;
 }
 
-/** Successor node ids of a graph node: `next` plus every `cases[].next`/`cases.<name>`. */
-function nodeSuccessors(node: Record<string, unknown>): string[] {
-  const targets: string[] = [];
-  if (typeof node.next === 'string' && node.next.trim()) targets.push(node.next);
-  const cases = node.cases;
-  if (Array.isArray(cases)) {
-    for (const entry of cases) {
-      if (isRecord(entry) && typeof entry.next === 'string' && entry.next.trim()) {
-        targets.push(entry.next);
-      }
-    }
-  } else if (isRecord(cases)) {
-    for (const target of Object.values(cases)) {
-      if (typeof target === 'string' && target.trim()) targets.push(target);
-    }
-  }
-  return targets;
-}
-
-/** Collect `call.ref`s on nodes reachable from `entry` (following next/cases), into `out`. */
-function collectCallRefsFrom(
-  entry: string | undefined,
-  nodes: Record<string, unknown> | undefined,
-  out: string[],
-): void {
-  if (!nodes || typeof entry !== 'string') return;
-  const visited = new Set<string>();
-  const queue = [entry];
-  while (queue.length > 0) {
-    const id = queue.shift() as string;
-    if (visited.has(id)) continue;
-    visited.add(id);
-    const node = nodes[id];
-    if (!isRecord(node)) continue;
-    if (node.action === 'call' && typeof node.ref === 'string' && node.ref.trim())
-      out.push(node.ref);
-    for (const successor of nodeSuccessors(node)) {
-      if (!visited.has(successor)) queue.push(successor);
+/**
+ * Every `call.ref` on any node in a node map. This mirrors `validateFlowCalls`,
+ * which checks all nodes of every inline flow (not just graph-reachable ones), so
+ * the resolved recipe must inline every referenced flow to be self-contained.
+ */
+function callRefsInNodes(nodes: Record<string, unknown> | undefined): string[] {
+  if (!nodes) return [];
+  const refs: string[] = [];
+  for (const node of Object.values(nodes)) {
+    if (
+      isRecord(node) &&
+      node.action === 'call' &&
+      typeof node.ref === 'string' &&
+      node.ref.trim()
+    ) {
+      refs.push(node.ref);
     }
   }
+  return refs;
 }
 
 /** Lifecycle arrays (setup/teardown) always execute, so every `call` in them counts. */
@@ -77,13 +53,14 @@ function callRefsInLifecycle(list: unknown): string[] {
 }
 
 /**
- * Follows `call.ref`s transitively from the recipe's executed graph — the nodes
- * reachable from `validate.workflow.entry`, the setup/teardown lifecycle, and
- * `startState` — through the flow catalog, returning only the flow ids the
- * recipe actually reaches. Never the whole library, and never flows pulled in by
- * unreachable workflow nodes or unreferenced inline flows.
+ * Computes the flow ids the resolved recipe must inline: every flow referenced by
+ * any node of the recipe's workflow, its setup/teardown lifecycle, or `startState`,
+ * then transitively every flow referenced by any node of those flows. Matches
+ * `validateFlowCalls`' all-nodes check, so the result is exactly the set required
+ * for the resolved recipe to be self-contained — never the whole library, and never
+ * an unreferenced authored inline flow.
  */
-function collectReachableFlowRefs(
+function collectRequiredFlowRefs(
   recipe: Record<string, unknown>,
   flowCatalog: ReadonlyMap<string, InlineFlow>,
 ): Set<string> {
@@ -91,11 +68,7 @@ function collectReachableFlowRefs(
   const validate = isRecord(recipe.validate) ? recipe.validate : undefined;
   const workflow = validate && isRecord(validate.workflow) ? validate.workflow : undefined;
   if (workflow) {
-    collectCallRefsFrom(
-      typeof workflow.entry === 'string' ? workflow.entry : undefined,
-      isRecord(workflow.nodes) ? workflow.nodes : undefined,
-      seeds,
-    );
+    seeds.push(...callRefsInNodes(isRecord(workflow.nodes) ? workflow.nodes : undefined));
     seeds.push(...callRefsInLifecycle(workflow.setup));
     seeds.push(...callRefsInLifecycle(workflow.teardown));
   }
@@ -107,35 +80,34 @@ function collectReachableFlowRefs(
     seeds.push(recipe.startState.ref);
   }
 
-  const reachable = new Set<string>();
+  const required = new Set<string>();
   const queue = [...seeds];
   while (queue.length > 0) {
     const ref = queue.shift() as string;
-    if (reachable.has(ref)) continue;
-    reachable.add(ref);
-    const { entry, nodes } = flowGraph(flowCatalog.get(ref));
-    const childRefs: string[] = [];
-    collectCallRefsFrom(entry, nodes, childRefs);
-    for (const child of childRefs) if (!reachable.has(child)) queue.push(child);
+    if (required.has(ref)) continue;
+    required.add(ref);
+    for (const child of callRefsInNodes(flowNodes(flowCatalog.get(ref)))) {
+      if (!required.has(child)) queue.push(child);
+    }
   }
-  return reachable;
+  return required;
 }
 
 /**
- * Inlines the flows the recipe transitively reaches into `flows`, yielding a
- * self-contained recipe whose `call.ref`s resolve without the recipe library.
- * Only reachable flows are inlined (not the whole catalog, and not unreachable
- * authored inline flows), and `uses` is dropped so `validateFlowCalls` verifies
- * every ref is present inline rather than short-circuiting on the external
- * catalog. Returns the recipe unchanged (same reference) when nothing external
- * was composed — recipe.json is already the full composition.
+ * Inlines the flows the recipe requires into `flows`, yielding a self-contained
+ * recipe whose `call.ref`s resolve without the recipe library. Only referenced
+ * flows are inlined (not the whole catalog, and not unreferenced authored inline
+ * flows), and `uses` is dropped so `validateFlowCalls` verifies every ref is
+ * present inline rather than short-circuiting on the external catalog. Returns the
+ * recipe unchanged (same reference) when nothing external was composed — recipe.json
+ * is already the full composition.
  */
 export function buildResolvedRecipe(
   recipe: unknown,
   flowCatalog: ReadonlyMap<string, InlineFlow>,
 ): unknown {
   if (!isRecord(recipe) || flowCatalog.size === 0) return recipe;
-  const refs = collectReachableFlowRefs(recipe, flowCatalog);
+  const refs = collectRequiredFlowRefs(recipe, flowCatalog);
 
   const flows: Record<string, unknown> = {};
   for (const ref of refs) {

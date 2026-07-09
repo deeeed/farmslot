@@ -320,9 +320,11 @@ export async function validateRecipeArtifactDirectory(
   // validateRecipeArtifactPackage validates the recipe document internally
   // (protocol/recipe/artifact.ts) whenever `recipe` is present, so calling
   // validateRecipeDocument separately here would double-count every finding.
-  // resolved-recipe.json (the self-contained composition) is validated in full,
-  // matching gateway ingestion so the CLI cannot pass a package the gateway rejects.
-  const resolvedRecipe = reads.resolvedRecipe.value;
+  // resolved-recipe.json (the self-contained composition) is validated in full only
+  // for passing runs — matching the runner/gateway, so a gracefully-failed run (e.g. a
+  // flow cycle) is not rejected here — and this keeps CLI/gateway verdicts in sync.
+  const resolvedRecipe =
+    isRecord(summary) && summary.status === 'pass' ? reads.resolvedRecipe.value : undefined;
   const recipeValidation = validateRecipeArtifactPackage({
     recipe,
     manifest,
