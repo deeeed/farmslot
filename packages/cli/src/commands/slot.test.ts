@@ -16,9 +16,11 @@ test('pickStreamOutput returns data for script.output events', () => {
   assert.equal(result, '[ssh] Connected\n');
 });
 
-test('pickStreamOutput ignores slot.prepare.output so each line prints once', () => {
+test('pickStreamOutput filters by event name, not payload shape, so output prints once', () => {
+  // A non-script.output frame that happens to carry a stream+data payload must
+  // still yield null — otherwise a sibling channel would double-print output.
   const result = pickStreamOutput(
-    frame('slot.prepare.output', { stream: 'stdout', data: '[ssh] Connected\n' }),
+    frame('other.output', { stream: 'stdout', data: '[ssh] Connected\n' }),
   );
   assert.equal(result, null);
 });

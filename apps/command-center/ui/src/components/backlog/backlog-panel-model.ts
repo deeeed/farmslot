@@ -1,18 +1,15 @@
-import type { BacklogItem, BacklogStatus } from '@farmslot/protocol';
+import {
+  ARCHIVABLE_BACKLOG_STATUSES,
+  type BacklogItem,
+  type BacklogStatus,
+} from '@farmslot/protocol';
 
 import { syncedDraftProject } from '../shared/planning-projects.js';
 
-const ARCHIVABLE_BACKLOG_STATUSES = new Set<BacklogItem['status']>([
-  'done',
-  'failed',
-  'needs-attention',
-]);
-
-const TERMINAL_CLEANUP_BACKLOG_STATUSES = new Set<BacklogItem['status']>([
-  'done',
-  'failed',
-  'needs-attention',
-  'archived',
+// An archived item plus everything archivable is what the cleanup actions act on.
+const TERMINAL_CLEANUP_BACKLOG_STATUSES: ReadonlySet<BacklogItem['status']> = new Set([
+  ...ARCHIVABLE_BACKLOG_STATUSES,
+  'archived' as const,
 ]);
 
 export function canDequeueBacklogItemForUi(item: Pick<BacklogItem, 'status'>): boolean {

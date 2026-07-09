@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  ARCHIVABLE_BACKLOG_STATUSES,
   assertBacklogLaunchPlan,
   type BacklogAutoDispatchTickParams,
   type BacklogAutoDispatchTickResult,
@@ -1355,8 +1356,6 @@ export async function markBacklogItemReady(
     return { item };
   });
 }
-
-const ARCHIVABLE_BACKLOG_STATUSES = new Set<BacklogStatus>(['done', 'failed', 'needs-attention']);
 
 export async function archiveBacklogItem(params: {
   itemId: string;
