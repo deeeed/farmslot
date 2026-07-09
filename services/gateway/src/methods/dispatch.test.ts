@@ -184,7 +184,7 @@ test('resolveRunnerLaunchBlockers sends an auto-action once and waits for the bl
   });
 
   assert.equal(commands.filter((command) => command.includes('send-keys')).length, 1);
-  assert.match(commands.find((command) => command.includes('send-keys')) ?? '', /send-keys .* a/);
+  assert.match(commands.find((command) => command.includes('send-keys')) ?? '', /send-keys .* 'a'/);
 });
 
 test('resolveRunnerLaunchBlockers waits for deferred blockers without sending input', async () => {

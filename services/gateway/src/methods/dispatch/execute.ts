@@ -402,6 +402,7 @@ export async function resolveRunnerLaunchBlockers(
     deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const deadline = now() + timeoutMs;
   const autoActionAttempts = new Map<string, number>();
+  const loggedExhaustedAutoActions = new Set<string>();
   let lastBlockerSummary = '';
   while (now() < deadline) {
     const pane = (
@@ -417,7 +418,7 @@ export async function resolveRunnerLaunchBlockers(
       if (attempts < 2) {
         const result = await exec(
           vars,
-          tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${key} 2>/dev/null`),
+          tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${shellQuote(key)} 2>/dev/null`),
         );
         if (result.exitCode !== 0) {
           throw new Error(
@@ -425,6 +426,11 @@ export async function resolveRunnerLaunchBlockers(
           );
         }
         autoActionAttempts.set(blocker.kind, attempts + 1);
+      } else if (!loggedExhaustedAutoActions.has(blocker.kind)) {
+        console.log(
+          `[dispatch] launch blocker ${blocker.kind} in ${target} still visible after ${attempts} ${key} auto-action attempts; waiting for it to clear`,
+        );
+        loggedExhaustedAutoActions.add(blocker.kind);
       }
     } else if (!runnerPaneHasDeferredLaunchBlocker(pane, runner, blocker)) {
       throw new Error(
@@ -628,8 +634,9 @@ async function respawnRoleWindowWithCommand(
 export function buildRoleLaunchCommandWithDiagnosticHold(command: string): string {
   // Keep the wrapper as the tmux pane process so launch failures can preserve
   // stderr briefly for diagnostics. If dispatch cleanup kills the child runner,
-  // this outer shell can remain until the diagnostic hold elapses, but the runner
-  // process itself is already gone.
+  // or a runner exits non-zero during launch/user quit, this outer shell can
+  // remain until the diagnostic hold elapses, but the runner process itself is
+  // already gone.
   const lines = [
     `bash -lc ${shellQuote(command)}`,
     '__farmslot_status=$?',
