@@ -85,6 +85,32 @@ export interface TmuxWorkerListResult {
   hiddenWorkers?: number;
 }
 
+export type TmuxWorkerRestoreMode = 'reconcile' | 'restore-window' | 'reload-session';
+
+export interface TmuxWorkerRestoreParams {
+  slotId: string;
+  runId?: string;
+  contextId?: string;
+  mode?: TmuxWorkerRestoreMode;
+}
+
+export interface TmuxWorkerRestoreContextResult {
+  contextId: string;
+  role: string;
+  status: 'live' | 'restored-window' | 'reloaded-session' | 'missing' | 'dead' | 'skipped';
+  target?: TmuxWorkerRef;
+  runnerSessionId?: string | null;
+  runnerSessionPath?: string | null;
+  detail?: string;
+}
+
+export interface TmuxWorkerRestoreResult {
+  slotId: string;
+  runId?: string;
+  restored: boolean;
+  contexts: TmuxWorkerRestoreContextResult[];
+}
+
 // Gateway↔node private tmux pane inventory payload. Public because the gateway
 // and node packages share protocol types, but not exposed as a JSON-RPC method.
 export interface NodeTmuxPaneSignals {

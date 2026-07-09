@@ -82,6 +82,7 @@ export async function expandSelfReviewTemplate(
   }
 
   // Expand {{VAR}} placeholders
+  const { farmslotRoot } = await import('../fleet/state.js');
   const replacements: Record<string, string> = {
     TASK_DIR: taskDir,
     REPO: vars.remoteRepo,
@@ -93,6 +94,8 @@ export async function expandSelfReviewTemplate(
     SESSION: vars.session,
     MOBILE_REPO: mobileRepo,
     VALIDATION_DEPTH: validationDepth,
+    FARMSLOT_DIR: farmslotRoot,
+    farmslot_dir: farmslotRoot,
   };
 
   let expanded = template;
@@ -133,9 +136,7 @@ export async function resolveWorkerTaskDir(
 ): Promise<string | null> {
   if (!taskFile) return null;
   const pv = await loadProjectVars(project).catch(() => null);
-  const taskDirName = pv
-    ? resolveProjectTaskDirName(pv.projectJson)
-    : DEFAULT_TASK_DIR;
+  const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
 
   const orchRoot = pv ? getOrchestratorTaskRoot(project, pv.projectJson) : null;
   const taskRelDir = orchRoot ? resolveTaskRelDir(taskFile, orchRoot) : null;

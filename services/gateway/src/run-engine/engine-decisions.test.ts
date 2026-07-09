@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import type { Run } from '@farmslot/protocol';
 
-import { collisionAutoResolveAction, collisionDecisionActions } from './engine-decisions.js';
+import {
+  autoResolveEngineDecision,
+  collisionAutoResolveAction,
+  collisionDecisionActions,
+} from './engine-decisions.js';
 
 function makeRun(overrides: Partial<Run> = {}): Run {
   return {
@@ -81,6 +85,31 @@ test('collisionAutoResolveAction auto-resolves autonomous runs', () => {
 test('collisionAutoResolveAction leaves interactive production collisions unresolved', () => {
   assert.equal(
     collisionAutoResolveAction(makeRun({ lane: 'production', mode: 'interactive' })),
+    null,
+  );
+});
+
+test('autoResolveEngineDecision never auto-resolves human gates', () => {
+  const actions = [
+    { id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const },
+    { id: 'ready', label: 'Mark Ready', style: 'primary' as const },
+    { id: 'hold', label: 'Hold', style: 'secondary' as const },
+  ];
+
+  assert.equal(
+    autoResolveEngineDecision(
+      makeRun({ mode: 'autonomous', flowType: 'dev' }),
+      'human_gate',
+      actions,
+    ),
+    null,
+  );
+  assert.equal(
+    autoResolveEngineDecision(
+      makeRun({ mode: 'validation', flowType: 'fix-bug' }),
+      'human_gate',
+      actions,
+    ),
     null,
   );
 });

@@ -5,6 +5,7 @@ import type { ReadyGatePayload, RunDecision } from '@farmslot/protocol';
 
 import {
   isReadyPublicationApproval,
+  readyActionRequiresConfirmation,
   readyDecisionActionStateKey,
   readyDecisionSubmittingMessage,
   readyDecisionSuccessMessage,
@@ -29,6 +30,9 @@ test('ready workspace action model derives decision state keys and messages', ()
   assert.equal(isReadyPublicationApproval('approve-publish', false), true);
   assert.equal(isReadyPublicationApproval('ready', true), true);
   assert.equal(isReadyPublicationApproval('ready', false), false);
+  assert.equal(readyActionRequiresConfirmation('approve-publish', true), true);
+  assert.equal(readyActionRequiresConfirmation('ready', true), true);
+  assert.equal(readyActionRequiresConfirmation('request-extra-review', true), false);
   assert.equal(readyDecisionSubmittingMessage(true), 'Submitting publication decision…');
   assert.equal(
     readyDecisionSuccessMessage(false),

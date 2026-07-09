@@ -606,6 +606,28 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                           >
                             Retrospective / evidence
                           </a>
+                          ${!isTerminalRunStatus(view._linkedRun.status)
+                            ? html`
+                                <button
+                                  class="sv-run-action muted"
+                                  ?disabled=${view._tmuxRestoreRunning || view._isRecoveryBlocked}
+                                  @click=${() => view._restoreTmuxWorker()}
+                                >
+                                  ${view._tmuxRestoreRunning
+                                    ? 'Restoring worker...'
+                                    : 'Restore worker tmux'}
+                                </button>
+                                <button
+                                  class="sv-run-action muted"
+                                  ?disabled=${view._tmuxRestoreRunning || view._isRecoveryBlocked}
+                                  @click=${() => view._reloadWorkerSession()}
+                                >
+                                  ${view._tmuxRestoreRunning
+                                    ? 'Reloading worker...'
+                                    : 'Reload worker session'}
+                                </button>
+                              `
+                            : nothing}
                           ${isTerminalRunStatus(view._linkedRun.status)
                             ? html`
                                 <a
@@ -618,6 +640,12 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                               `
                             : nothing}
                         </div>
+                        ${view._tmuxRestoreFeedback
+                          ? html`<div class="sv-run-action-note">${view._tmuxRestoreFeedback}</div>`
+                          : nothing}
+                        ${view._tmuxRestoreError
+                          ? html`<div class="sv-run-action-error">${view._tmuxRestoreError}</div>`
+                          : nothing}
                         <run-pipeline
                           .run=${view._linkedRun}
                           @step-select=${(e: CustomEvent) => {

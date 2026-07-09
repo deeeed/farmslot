@@ -131,6 +131,7 @@ export const Methods = {
   TMUX_SELECT_WINDOW: 'tmux.selectWindow',
   TMUX_LIST: 'tmux.list',
   TMUX_WORKER_LIST: 'tmux.worker.list',
+  TMUX_WORKER_RESTORE: 'tmux.worker.restore',
   TMUX_RENAME_WINDOW: 'tmux.renameWindow',
   TMUX_SEND_KEYS: 'tmux.sendKeys',
   TMUX_SYNCHRONIZE_PANES: 'tmux.synchronizePanes',
