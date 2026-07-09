@@ -627,13 +627,18 @@ export async function runPrepareCommand(
   // code (129 SIGHUP / 143 SIGTERM) instead of masking every external kill as a
   // generic "exit 1" preflight failure.
   const SENTINEL_RECOVERY_TIMEOUT_MS = 6_000;
+  // Short per-read timeout so the recovery stays within its ~6s wall-clock
+  // bound: the sentinel is a tiny local file, so a read that hasn't returned in
+  // 2s is a stuck exec, not a slow one — let the loop retry instead of letting a
+  // single read consume the whole budget.
+  const SENTINEL_RECOVERY_POLL_TIMEOUT_MS = 2_000;
   const recoverSentinelAfterWindowGone = async (): Promise<number> => {
     const deadline = Date.now() + SENTINEL_RECOVERY_TIMEOUT_MS;
     while (Date.now() < deadline) {
       const r = await pollExec(
         'sentinel-recovery',
         `test -f ${shellQuote(sentinelPath)} && cat ${shellQuote(sentinelPath)}`,
-        PREPARE_SENTINEL_POLL_TIMEOUT_MS,
+        SENTINEL_RECOVERY_POLL_TIMEOUT_MS,
       );
       if (r && r.exitCode === 0 && r.stdout.trim()) {
         const parsed = Number.parseInt(r.stdout.trim(), 10);
