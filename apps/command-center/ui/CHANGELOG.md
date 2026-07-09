@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- feat: backlog archive/delete/restore actions with a confirm guard; archived items are hidden from the default backlog list but stay reachable via the explicit `archived` status filter.
 - feat: add `grok-4.5-fast-xhigh` to the Cursor Agent model picker alongside default `composer-2.5`.
 - fix: lead the browser-blocked (https origin, insecure `ws://` gateway) disconnected message with the one-time `farmslot certs setup` + `farmslot up` fix that makes the gateway reachable over `wss://`, keeping the local-http-origin workaround as a secondary fallback.
 - fix: filter nested-loop task progress by active checklist basename so self-review panels do not accept stale events during fix or CI-fix phases; clear progress when `activeTaskFile` changes and label fix vs review progress from the protocol checklist registry.
