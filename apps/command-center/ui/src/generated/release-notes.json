@@ -1,10 +1,11 @@
 {
-  "version": "0.2.1",
-  "date": "2026-07-03",
+  "version": "0.2.2",
+  "date": "2026-07-09",
   "items": [
-    "Planning views now surface linked run summaries in roadmap, backlog, and work-graph details, with selected pinned slots highlighted.",
-    "Roadmap, backlog, and work-graph dispatch configuration now share more controls and clearer spec review modals.",
-    "Run detail now renders interactive operator packets with artifact anchors and confirmed actions.",
-    "Companion pairing now warns before generating LAN QR codes when the gateway is loopback-only."
+    "feat: backlog archive/delete/restore actions with a confirm guard; archived items are hidden from the default backlog list but stay reachable via the explicit `archived` status filter",
+    "feat: add `grok-4.5-fast-xhigh` to the Cursor Agent model picker alongside default `composer-2.5`",
+    "fix: lead the browser-blocked (https origin, insecure `ws://` gateway) disconnected message with the one-time `farmslot certs setup` + `farmslot up` fix that makes the gateway reachable over `wss://`, keeping the local-http-origin workaround as a secondary fallback",
+    "fix: show Mark ready for failed and needs-attention backlog items so operators can clear stale run linkage without editing state files",
+    "fix: reset failed graph-linked backlog items to `ready` when their run is deleted or missing, and retry graph enqueue when a prior completed scheduler ledger entry is stale"
   ]
 }

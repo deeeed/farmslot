@@ -4,14 +4,18 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
-- feat: backlog archive/delete/restore actions with a confirm guard; archived items are hidden from the default backlog list but stay reachable via the explicit `archived` status filter.
-- feat: add `grok-4.5-fast-xhigh` to the Cursor Agent model picker alongside default `composer-2.5`.
-- fix: lead the browser-blocked (https origin, insecure `ws://` gateway) disconnected message with the one-time `farmslot certs setup` + `farmslot up` fix that makes the gateway reachable over `wss://`, keeping the local-http-origin workaround as a secondary fallback.
 - fix: filter nested-loop task progress by active checklist basename so self-review panels do not accept stale events during fix or CI-fix phases; clear progress when `activeTaskFile` changes and label fix vs review progress from the protocol checklist registry.
-- fix: show Mark ready for failed and needs-attention backlog items so operators can clear stale run linkage without editing state files.
-- fix: reset failed graph-linked backlog items to `ready` when their run is deleted or missing, and retry graph enqueue when a prior completed scheduler ledger entry is stale.
-- fix: stop the gateway connection from spinning a doomed reconnect loop when the only candidate is an insecure `ws://` endpoint reached from an https origin (Chrome 150 blocks these as mixed content, including localhost); detect that state up front, tear down WebSocket listeners between retries so they no longer accumulate, and show a state-aware disconnected message that distinguishes a browser-blocked origin (open the Command Center from a local origin, or use a `wss://` gateway) from a gateway that is simply down (`farmslot up`, check `~/.farmslot/gateway.log`).
+
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.2.2 - 2026-07-09
+
+- feat: backlog archive/delete/restore actions with a confirm guard; archived items are hidden from the default backlog list but stay reachable via the explicit `archived` status filter
+- feat: add `grok-4.5-fast-xhigh` to the Cursor Agent model picker alongside default `composer-2.5`
+- fix: lead the browser-blocked (https origin, insecure `ws://` gateway) disconnected message with the one-time `farmslot certs setup` + `farmslot up` fix that makes the gateway reachable over `wss://`, keeping the local-http-origin workaround as a secondary fallback
+- fix: show Mark ready for failed and needs-attention backlog items so operators can clear stale run linkage without editing state files
+- fix: reset failed graph-linked backlog items to `ready` when their run is deleted or missing, and retry graph enqueue when a prior completed scheduler ledger entry is stale
+- fix: stop the gateway connection from spinning a doomed reconnect loop when the only candidate is an insecure `ws://` endpoint reached from an https origin (Chrome 150 blocks these as mixed content, including localhost); detect that state up front, tear down WebSocket listeners between retries so they no longer accumulate, and show a state-aware disconnected message that distinguishes a browser-blocked origin (open the Command Center from a local origin, or use a `wss://` gateway) from a gateway that is simply down (`farmslot up`, check `~/.farmslot/gateway.log`)
 
 ## 0.2.1 - 2026-07-03
 
