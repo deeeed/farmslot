@@ -139,6 +139,7 @@ The dev-flow publication decision is no longer open: PR #96 shipped the local-fi
 - keep the first-run flow recipe-only and project-local;
 - document the adoption ladder: skills only → generic `recipe` front-controller → project runner → project recipe layer → Farmslot project integration → full framework;
 - plan a thin generic `recipe` CLI front-controller that discovers project recipe config, renders actions/flows/artifacts, and delegates `doctor`, `status`, `launch`, `refresh`, `record`, and `run` to platform/project adapters;
+- plan and validate the dynamic agent execution template selector from [ADR-049](adr/049-agent-execution-template-selection.md): Markdown templates with optional frontmatter, `list`/`lint`/`new` tools, a default template plus domain overlays, and a shared resolver so MetaMask Farmslot dispatch and Consensys skills can select the same template ids/versions without hardcoding modes; implementation should run from a backlog spec handoff and fully implement the ADR in a later agent-owned slice;
 - avoid private/project-specific assumptions so domain packs such as domain-specific skills can layer on top instead of forking the generic recipe concepts.
 
 ### 4. Active Follow-Up — Replay Closure and Evidence Use
