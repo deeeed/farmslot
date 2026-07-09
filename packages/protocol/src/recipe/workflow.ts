@@ -944,10 +944,23 @@ export function validateFlowCalls(
   ctx: MutableValidationContext,
   recipe: Record<string, unknown>,
   workflow: WorkflowGraph,
-  options?: { externalFlowIds?: ReadonlySet<string> },
+  options?: {
+    externalFlowIds?: ReadonlySet<string>;
+    /** Skip `call.ref` resolution (unresolved_call_ref) only; shape checks still run. */
+    skipResolution?: boolean;
+    /**
+     * Whether a declared `uses` catalog counts as resolving `call.ref`s. True at
+     * authoring/run time (catalogs are loaded). False at artifact-package validation,
+     * where the catalogs are not in the package, so only inline `flows` (or a proven
+     * resolved-recipe.json) count.
+     */
+    externalCatalogsResolvable?: boolean;
+  },
 ): void {
   const inlineFlows = isRecord(recipe.flows) ? new Set(Object.keys(recipe.flows)) : new Set();
-  const hasExternalCatalogs = Array.isArray(recipe.uses) && recipe.uses.length > 0;
+  const externalCatalogsResolvable = options?.externalCatalogsResolvable !== false;
+  const hasExternalCatalogs =
+    externalCatalogsResolvable && Array.isArray(recipe.uses) && recipe.uses.length > 0;
   const externalFlowIds = options?.externalFlowIds;
   const entries = [
     ...Object.entries(workflow.nodes).map(
@@ -970,7 +983,12 @@ export function validateFlowCalls(
       );
       continue;
     }
-    if (!hasExternalCatalogs && !inlineFlows.has(node.ref) && !externalFlowIds?.has(node.ref)) {
+    if (
+      options?.skipResolution !== true &&
+      !hasExternalCatalogs &&
+      !inlineFlows.has(node.ref) &&
+      !externalFlowIds?.has(node.ref)
+    ) {
       addFinding(
         ctx,
         'error',

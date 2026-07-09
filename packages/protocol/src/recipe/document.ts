@@ -35,12 +35,18 @@ export interface RecipeDocumentValidationOptions {
   /** Require the canonical published JSON Schema URL at recipe.$schema. */
   requireSchemaRef?: boolean;
   /**
-   * Skip `call.ref` resolution against inline flows / uses catalogs / external
-   * library flows. Set when validating a produced artifact package, where the
-   * recipe library that resolved those refs at run time is no longer available —
-   * flow-call resolution is an authoring/run-time concern, not an artifact one.
+   * Skip `call.ref` resolution (unresolved_call_ref) against inline flows / uses
+   * catalogs / external library flows. Call-shape checks (invalid ref/params) still
+   * run. Set when a produced resolved-recipe.json already proves resolution.
    */
   skipFlowCallResolution?: boolean;
+  /**
+   * Whether a declared `uses` catalog counts as resolving `call.ref`s. Defaults to
+   * true (authoring/run time, where catalogs are loaded). Set false at
+   * artifact-package validation, where the catalogs are not in the package, so a
+   * `uses`-only recipe is not self-contained.
+   */
+  externalCatalogsResolvable?: boolean;
 }
 
 export function validateRecipeWithManifest(
@@ -151,9 +157,14 @@ export function validateRecipeDocument(
   if (workflow && rawWorkflow) {
     validateWorkflowPreconditions(ctx, rawWorkflow);
     validateWorkflowGraph(ctx, workflow, rawWorkflow);
-    if (options?.skipFlowCallResolution !== true) {
-      validateFlowCalls(ctx, recipe, workflow, options);
-    }
+    // Always run flow-call validation for call-shape checks; skipResolution gates
+    // only unresolved_call_ref (proven elsewhere), and externalCatalogsResolvable
+    // controls whether a declared `uses` catalog counts as resolving refs.
+    validateFlowCalls(ctx, recipe, workflow, {
+      ...(options?.externalFlowIds ? { externalFlowIds: options.externalFlowIds } : {}),
+      skipResolution: options?.skipFlowCallResolution === true,
+      externalCatalogsResolvable: options?.externalCatalogsResolvable !== false,
+    });
   }
   validateInlineFlows(ctx, recipe);
 

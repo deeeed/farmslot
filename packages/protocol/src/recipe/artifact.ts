@@ -352,6 +352,9 @@ export function validateRecipeArtifactPackage(
     const recipeResult = validateRecipeDocument(input.recipe, {
       requireSchemaRef: input.requireSchemaRef === true,
       skipFlowCallResolution: !enforceComposition || compositionProvenByResolved,
+      // The `uses` catalogs are not part of the artifact package, so they do not
+      // prove resolution here — only inline `flows` (or resolved-recipe.json) do.
+      externalCatalogsResolvable: false,
     });
     ctx.findings.push(...recipeResult.findings);
   }

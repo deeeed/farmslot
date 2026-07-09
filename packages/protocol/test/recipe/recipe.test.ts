@@ -815,6 +815,77 @@ test('artifact package validates recipe envelope-only and resolved recipe in ful
   assert.ok(!failed.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'));
 });
 
+test('artifact package treats uses catalogs as unproven and still checks call shape', () => {
+  // A `uses` catalog is not part of the artifact package, so it does not prove the
+  // composition: a passing run with `uses` and no resolved-recipe.json is rejected.
+  const usesRecipe = {
+    schema_version: 1,
+    title: 'Uses without resolved',
+    description: 'Declares a catalog but ships no resolved-recipe.json.',
+    uses: ['flows.json'],
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': {
+            action: 'call',
+            intent: 'Call a catalog flow',
+            ref: 'trade.seed',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const usesUnproven = validateRecipeArtifactPackage({ recipe: usesRecipe });
+  assert.ok(
+    usesUnproven.findings.some((finding) => finding.code === 'workflow.unresolved_call_ref'),
+  );
+
+  // Envelope-only (resolved present) skips resolution but still checks call shape:
+  // a non-object `call.params` is flagged even when resolution is skipped.
+  const badShape = {
+    schema_version: 1,
+    title: 'Bad call params',
+    description: 'call.params must be an object.',
+    validate: {
+      workflow: {
+        entry: 'call-flow',
+        nodes: {
+          'call-flow': {
+            action: 'call',
+            intent: 'Call with malformed params',
+            ref: 'library.flow',
+            params: 'not-an-object',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const composedForBadShape = {
+    ...badShape,
+    flows: {
+      'library.flow': {
+        entry: 'go',
+        nodes: {
+          go: { action: 'wait', ms: 1, next: 'inner-done' },
+          'inner-done': { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const shapeChecked = validateRecipeArtifactPackage({
+    recipe: badShape,
+    resolvedRecipe: composedForBadShape,
+  });
+  assert.ok(
+    shapeChecked.findings.some((finding) => finding.code === 'workflow.invalid_call_params'),
+  );
+});
+
 test('validates inline flow actions, transitions, and cycles', () => {
   const recipe = {
     schema_version: 1,

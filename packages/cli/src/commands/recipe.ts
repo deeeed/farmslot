@@ -284,6 +284,9 @@ export async function validateRecipeArtifactDirectory(
     summary: await readArtifactJsonIfPresent(artifactDir, 'summary.json'),
     trace: await readArtifactJsonIfPresent(artifactDir, 'trace.json'),
     manifest: await readArtifactJsonIfPresent(artifactDir, 'artifact-manifest.json'),
+    recipe: artifactPathSet.has('recipe.json')
+      ? await readArtifactJsonIfPresent(artifactDir, 'recipe.json')
+      : { value: undefined },
     resolvedRecipe: artifactPathSet.has('resolved-recipe.json')
       ? await readArtifactJsonIfPresent(artifactDir, 'resolved-recipe.json')
       : { value: undefined },
@@ -306,21 +309,25 @@ export async function validateRecipeArtifactDirectory(
     );
   }
 
-  // resolved-recipe.json is optional, but a present-but-unreadable one must fail —
-  // never silently skip the composition proof.
-  if (artifactPathSet.has('resolved-recipe.json')) {
+  // recipe.json and resolved-recipe.json are optional, but a present-but-unreadable
+  // one must fail — never silently skip the recipe/composition validation.
+  for (const optionalPath of ['recipe.json', 'resolved-recipe.json'] as const) {
+    if (!artifactPathSet.has(optionalPath)) continue;
+    const read = optionalPath === 'recipe.json' ? reads.recipe : reads.resolvedRecipe;
     addArtifactCheck(
       checks,
-      'file.resolved-recipe.json',
-      reads.resolvedRecipe.error ? 'fail' : 'pass',
-      reads.resolvedRecipe.error ?? 'resolved-recipe.json is readable.',
+      `file.${optionalPath}`,
+      read.error ? 'fail' : 'pass',
+      read.error ?? `${optionalPath} is readable.`,
     );
   }
 
   const summary = reads.summary.value;
   const trace = reads.trace.value;
   const manifest = reads.manifest.value;
-  const recipe = opts.recipe ? await readRecipeCliJsonFile(opts.recipe) : undefined;
+  // Default to the package's own recipe.json so composition is proven without an
+  // explicit --recipe; --recipe overrides it for cross-checking a resolved recipe.
+  const recipe = opts.recipe ? await readRecipeCliJsonFile(opts.recipe) : reads.recipe.value;
 
   // validateRecipeArtifactPackage validates the recipe document internally
   // (protocol/recipe/artifact.ts) whenever `recipe` is present, so calling

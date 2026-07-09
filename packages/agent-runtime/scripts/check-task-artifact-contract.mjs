@@ -246,13 +246,33 @@ function validateRecipeQualityArtifact() {
 }
 
 function validateRecipeDocumentArtifact() {
-  // The composition must be proven: recipe.json's call.refs are proven either by
-  // resolved-recipe.json (the self-contained composition, validated in full) — in
-  // which case recipe.json is checked envelope-only — or by recipe.json being
-  // self-contained itself, in which case it is validated in full.
+  // Mirror the artifact-package contract (protocol/recipe/artifact.ts): a failed run
+  // keeps recipe.json envelope-only and does not re-validate the composition, so a
+  // graceful failure (e.g. a flow cycle) is not rejected here.
+  const summaryText = readText('artifacts/summary.json');
+  let runFailed = false;
+  if (summaryText) {
+    try {
+      runFailed = JSON.parse(summaryText)?.status === 'fail';
+    } catch {
+      // A malformed summary is another check's concern; without a confirmed failure
+      // status, enforce the stricter (passing-run) validation as the safe default.
+      runFailed = false;
+    }
+  }
+  if (runFailed) {
+    validateRecipeDocumentArtifactAt('artifacts/recipe.json', 'recipe.json', {
+      skipFlowCallResolution: true,
+    });
+    return;
+  }
+  // Passing/unknown run: the composition must be proven — recipe.json's call.refs are
+  // proven either by resolved-recipe.json (validated in full, so recipe.json is
+  // envelope-only) or by recipe.json being self-contained (validated in full).
   const hasResolvedRecipe = fileExists('artifacts/resolved-recipe.json');
   validateRecipeDocumentArtifactAt('artifacts/recipe.json', 'recipe.json', {
     skipFlowCallResolution: hasResolvedRecipe,
+    externalCatalogsResolvable: false,
   });
   validateRecipeDocumentArtifactAt('artifacts/resolved-recipe.json', 'resolved-recipe.json', {});
 }
