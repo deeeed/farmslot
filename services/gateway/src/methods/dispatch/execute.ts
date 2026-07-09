@@ -383,21 +383,29 @@ async function assertRunnerProcessStarted(
   );
 }
 
-async function resolveRunnerLaunchBlockers(
+type RunnerLaunchBlockerResolverDeps = {
+  exec?: typeof execOnSlot;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+export async function resolveRunnerLaunchBlockers(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
   runner: string,
   timeoutMs = 60_000,
+  deps: RunnerLaunchBlockerResolverDeps = {},
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const exec = deps.exec ?? execOnSlot;
+  const now = deps.now ?? Date.now;
+  const sleep =
+    deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + timeoutMs;
   const answered = new Set<string>();
   let lastBlockerSummary = '';
-  while (Date.now() < deadline) {
+  while (now() < deadline) {
     const pane = (
-      await execOnSlot(
-        vars,
-        tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
-      )
+      await exec(vars, tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`))
     ).stdout;
     const blocker = detectRunnerLaunchBlocker(pane, runner);
     if (!blocker) return;
@@ -406,7 +414,7 @@ async function resolveRunnerLaunchBlockers(
     const key = runnerLaunchBlockerAutoActionKey(blocker.autoAction);
     if (key) {
       if (!answered.has(blocker.kind)) {
-        const result = await execOnSlot(
+        const result = await exec(
           vars,
           tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${key} 2>/dev/null`),
         );
@@ -422,7 +430,7 @@ async function resolveRunnerLaunchBlockers(
         `${blocker.summary} Launch blocker has no safe automatic action; dispatch cannot continue.`,
       );
     }
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await sleep(1500);
   }
   throw new Error(
     `${runner} launch blocker did not clear in ${target} within ${Math.round(timeoutMs / 1000)}s. ${lastBlockerSummary}${

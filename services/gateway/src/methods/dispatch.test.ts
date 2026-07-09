@@ -14,6 +14,7 @@ import { runnerLaunchBlockerAutoActionKey } from '../runners/registry.js';
 import {
   buildRoleLaunchCommandWithDiagnosticHold,
   cleanupLaunchedWorkerAfterDispatchFailure,
+  resolveRunnerLaunchBlockers,
 } from './dispatch/execute.js';
 import {
   buildDispatchRoleShellCommand,
@@ -120,9 +121,24 @@ test('dispatch maps runner launch blocker auto-actions to submit keys', () => {
   assert.equal(runnerLaunchBlockerAutoActionKey(null), null);
 });
 
-test('dispatch failure cleanup kills launched role runner and verifies exit', async () => {
-  const calls: string[] = [];
-  const vars: SlotVars = {
+const cursorWorkspaceTrustPane = `
+  │  ▶ [a] Trust this workspace                                              │
+  │    [q] Quit                                                              │
+  │                                                                          │
+  │  Use arrow keys to navigate, Enter to select, or press the key shown     │
+`;
+
+const grokMcpInitPane = `
+    mcp (14/15)
+    ⠋ Starting session... 5.0s
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ❯                                                                        │
+  ╰───────────────────────────────────────────────────────────── Grok Build ─╯
+`;
+
+function makeSlotVars(overrides: Partial<SlotVars> = {}): SlotVars {
+  return {
     slotId: 'macwork-mme-2',
     machine: 'macwork',
     platform: 'macos',
@@ -144,7 +160,93 @@ test('dispatch failure cleanup kills launched role runner and verifies exit', as
     remoteRepo: '/repo',
     projectName: 'metamask-extension-farm',
     resourceVars: {},
+    ...overrides,
   };
+}
+
+test('resolveRunnerLaunchBlockers sends an auto-action once and waits for the blocker to clear', async () => {
+  const commands: string[] = [];
+  const panes = [cursorWorkspaceTrustPane, cursorWorkspaceTrustPane, 'Cursor chat ready'];
+  let now = 0;
+
+  await resolveRunnerLaunchBlockers(makeSlotVars(), 'mme-2:dev', 'cursor', 5_000, {
+    now: () => now,
+    sleep: async (ms) => {
+      now += ms;
+    },
+    exec: async (_vars, command) => {
+      commands.push(command);
+      if (command.includes('send-keys')) {
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
+      return { exitCode: 0, stdout: panes.shift() ?? 'Cursor chat ready', stderr: '' };
+    },
+  });
+
+  assert.equal(commands.filter((command) => command.includes('send-keys')).length, 1);
+  assert.match(commands.find((command) => command.includes('send-keys')) ?? '', /send-keys .* a/);
+});
+
+test('resolveRunnerLaunchBlockers waits for deferred blockers without sending input', async () => {
+  const commands: string[] = [];
+  const panes = [grokMcpInitPane, 'Grok ready'];
+  let now = 0;
+
+  await resolveRunnerLaunchBlockers(makeSlotVars(), 'ff-3:dev', 'grok', 5_000, {
+    now: () => now,
+    sleep: async (ms) => {
+      now += ms;
+    },
+    exec: async (_vars, command) => {
+      commands.push(command);
+      return { exitCode: 0, stdout: panes.shift() ?? 'Grok ready', stderr: '' };
+    },
+  });
+
+  assert.equal(
+    commands.some((command) => command.includes('send-keys')),
+    false,
+  );
+  assert.equal(commands.filter((command) => command.includes('capture-pane')).length, 2);
+});
+
+test('resolveRunnerLaunchBlockers fails unsafe blockers immediately', async () => {
+  await assert.rejects(
+    resolveRunnerLaunchBlockers(makeSlotVars(), 'mme-2:dev', 'cursor', 5_000, {
+      exec: async () => ({
+        exitCode: 0,
+        stdout: 'Authentication expired. Please run cursor-agent login to continue.',
+        stderr: '',
+      }),
+    }),
+    /Launch blocker has no safe automatic action/,
+  );
+});
+
+test('resolveRunnerLaunchBlockers reports timeout after a repeated auto-action blocker', async () => {
+  const commands: string[] = [];
+  let now = 0;
+
+  await assert.rejects(
+    resolveRunnerLaunchBlockers(makeSlotVars(), 'mme-2:dev', 'cursor', 3_000, {
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      exec: async (_vars, command) => {
+        commands.push(command);
+        return { exitCode: 0, stdout: cursorWorkspaceTrustPane, stderr: '' };
+      },
+    }),
+    /Auto-action was sent for: workspace-trust/,
+  );
+
+  assert.equal(commands.filter((command) => command.includes('send-keys')).length, 1);
+});
+
+test('dispatch failure cleanup kills launched role runner and verifies exit', async () => {
+  const calls: string[] = [];
+  const vars = makeSlotVars();
 
   await cleanupLaunchedWorkerAfterDispatchFailure(vars, 'mme-2:dev', 'cursor', 'primary', {
     killAgentInSession: async (_vars, runner, role) => {
