@@ -6,6 +6,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
 
+## 0.4.3 - 2026-07-09
+
+- fix: dependency readiness no longer treats an old recorded baseline as stale when install markers are newer than `package.json`/`yarn.lock`, avoiding repeated unnecessary reinstall prompts in managed slots
+
 ## 0.4.2 - 2026-07-09
 
 - feat: a run that composes flows now emits `resolved-recipe.json` — the authored recipe with every reachable flow (inline, `uses`, or library, transitively) inlined under `flows`. This artifact is self-contained and validates as a complete recipe without the library

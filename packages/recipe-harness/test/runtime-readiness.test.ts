@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -36,6 +36,29 @@ test('depsCheck records and compares baseline fingerprint', async () => {
     assert.equal(depsCheck(root).status, 'current');
     await writeFile(path.join(root, 'yarn.lock'), '# lock\n# bump\n');
     assert.equal(depsCheck(root).status, 'stale');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('depsCheck trusts install markers newer than a stale baseline', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rh-deps-'));
+  try {
+    const packageJson = path.join(root, 'package.json');
+    const lockfile = path.join(root, 'yarn.lock');
+    const installState = path.join(root, 'node_modules/.yarn-state.yml');
+    await writeFile(packageJson, '{"name":"stub"}\n');
+    await writeFile(lockfile, '# lock\n');
+    await mkdir(path.dirname(installState), { recursive: true });
+    await writeFile(installState, 'install\n');
+    recordDepsBaseline(root);
+
+    await writeFile(lockfile, '# lock\n# bump\n');
+    assert.equal(depsCheck(root).status, 'stale');
+
+    const installedAt = new Date(Date.now() + 5_000);
+    await utimes(installState, installedAt, installedAt);
+    assert.equal(depsCheck(root).status, 'current');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

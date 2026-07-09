@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -140,6 +140,7 @@ const packages = [
 ];
 
 const failures = [];
+const localPackageNames = new Set(packages.map((pkgSpec) => pkgSpec.name));
 
 function parsePackageFilter(argv) {
   const packageArg = argv.find((arg) => arg.startsWith('--packages='));
@@ -213,6 +214,7 @@ function checkPackage(pkgSpec) {
     fail(`${pkg.name} must declare package files.`);
   if (!pkg.exports) fail(`${pkg.name} must declare exports.`);
   if (pkg.license !== 'MIT') fail(`${pkg.name} license metadata must be MIT.`);
+  checkWorkspaceDependencyLinks(pkg);
   const packageLicensePath = path.join(pkgSpec.dir, 'LICENSE');
   if (!existsSync(packageLicensePath)) {
     fail(`${pkg.name} must include a package LICENSE file.`);
@@ -238,6 +240,21 @@ function checkPackage(pkgSpec) {
     }
   }
   if (requireChangelog) checkPublishChangelog(pkg, changelogPath);
+}
+
+function checkWorkspaceDependencyLinks(pkg) {
+  const sections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
+  for (const section of sections) {
+    const dependencies = pkg[section];
+    if (!dependencies || typeof dependencies !== 'object') continue;
+    for (const [dependencyName, dependencyRange] of Object.entries(dependencies)) {
+      if (!localPackageNames.has(dependencyName)) continue;
+      if (typeof dependencyRange === 'string' && dependencyRange.startsWith('workspace:')) continue;
+      fail(
+        `${pkg.name} ${section}.${dependencyName} must use workspace:* so local builds cannot resolve a stale published sibling package.`,
+      );
+    }
+  }
 }
 
 function checkPublishChangelog(pkg, changelogPath) {
@@ -315,6 +332,23 @@ function buildPackage(pkgSpec) {
   return true;
 }
 
+function checkWorkspaceInstallShadows(pkgSpec) {
+  const scopeDir = path.join(pkgSpec.dir, 'node_modules', '@farmslot');
+  if (!existsSync(scopeDir)) return;
+  for (const localPkgSpec of packages) {
+    const installedPath = path.join(scopeDir, localPkgSpec.name.slice('@farmslot/'.length));
+    if (!existsSync(installedPath)) continue;
+    const expectedPath = path.join(repoRoot, localPkgSpec.dir);
+    const installedRealPath = realpathSync(installedPath);
+    const expectedRealPath = realpathSync(expectedPath);
+    if (installedRealPath === expectedRealPath) continue;
+    const kind = lstatSync(installedPath).isSymbolicLink() ? 'symlink' : 'copy';
+    fail(
+      `${pkgSpec.name} has a stale local ${kind} at ${installedPath}; remove it so builds resolve ${localPkgSpec.name} from the workspace.`,
+    );
+  }
+}
+
 function checkPack(pkgSpec) {
   const result = spawnSync('yarn', ['workspace', pkgSpec.name, 'pack', '--dry-run', '--json'], {
     cwd: process.cwd(),
@@ -376,6 +410,7 @@ function checkTempConsumerSmoke() {
 
 checkNpmScopeConfig();
 const selectedPackages = packageSpecsToCheck();
+for (const pkgSpec of selectedPackages) checkWorkspaceInstallShadows(pkgSpec);
 if (runPack) for (const pkgSpec of selectedPackages) buildPackage(pkgSpec);
 for (const pkgSpec of selectedPackages) checkPackage(pkgSpec);
 if (runPack) for (const pkgSpec of selectedPackages) checkBuiltPackageImports(pkgSpec);

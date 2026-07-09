@@ -110,6 +110,8 @@ export function depsCheck(target: string, options: { productMarkers?: string[] }
     const drift = newestMtime(target, inputs) > newestMtime(target, INSTALL_MARKERS);
     return { installed: true, status: drift ? 'stale' : 'current', hasBaseline: false };
   }
-  const status = baseline.fingerprint === depsFingerprint(target) ? 'current' : 'stale';
+  const fingerprintMatches = baseline.fingerprint === depsFingerprint(target);
+  const installedAfterInputs = newestMtime(target, INSTALL_MARKERS) >= newestMtime(target, inputs);
+  const status = fingerprintMatches || installedAfterInputs ? 'current' : 'stale';
   return { installed: true, status, hasBaseline: true };
 }
