@@ -386,6 +386,8 @@ async function assertRunnerProcessStarted(
 export function keyForRunnerLaunchBlockerAutoAction(
   autoAction: RunnerLaunchBlocker['autoAction'],
 ): 'a' | 'Enter' | null {
+  // This maps the registry's known blocker actions, independent of which
+  // runners currently opt into pre-task blocker resolution.
   if (autoAction === 'cursor-trust-workspace') return 'a';
   if (autoAction === 'grok-select-current-project') return 'Enter';
   return null;
@@ -620,6 +622,10 @@ async function respawnRoleWindowWithCommand(
 }
 
 export function buildRoleLaunchCommandWithDiagnosticHold(command: string): string {
+  // Keep the wrapper as the tmux pane process so launch failures can preserve
+  // stderr briefly for diagnostics. If dispatch cleanup kills the child runner,
+  // this outer shell can remain until the diagnostic hold elapses, but the runner
+  // process itself is already gone.
   const lines = [
     `bash -lc ${shellQuote(command)}`,
     '__farmslot_status=$?',

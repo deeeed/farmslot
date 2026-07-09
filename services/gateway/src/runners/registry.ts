@@ -67,6 +67,7 @@ export interface RunnerDefinition {
   processMatchers: string[];
   supportsInteractivePrompt: boolean;
   needsPostLaunchPrompt: boolean;
+  /** Runner starts with the task in argv and must clear safe launch blockers before dispatch can trust task execution. */
   resolvesPreTaskLaunchBlockers: boolean;
   supportsTmuxNudges: boolean;
   continueCommand: string | null;

@@ -283,6 +283,9 @@ function stripTomlSections(content, shouldStrip) {
   const kept = [];
   let skipping = false;
   for (const line of lines) {
+    // Codex config sections touched here are ordinary `[table]` headers. This
+    // intentionally does not parse TOML array-of-tables (`[[table]]`); do not
+    // reuse it for configs where generated sections may be arrays.
     const section = line.trim().match(/^\[([^\]]+)\]\s*$/)?.[1] ?? null;
     if (section) skipping = shouldStrip(section);
     if (!skipping) kept.push(line);

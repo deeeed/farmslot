@@ -539,8 +539,11 @@ export async function runPrepareCommand(
   const samePhaseR = await exec(buildPrepareKillWindowsByNameCommand(sessionName, windowName), {
     cwd: opts?.cwd,
     timeout: 15_000,
-  }).catch(() => undefined);
-  const samePhaseReaped = samePhaseR?.stdout?.trim();
+  });
+  if (samePhaseR.exitCode !== 0) {
+    return failSetup('tmux reap same-phase prepare windows', samePhaseR);
+  }
+  const samePhaseReaped = samePhaseR.stdout.trim();
   if (samePhaseReaped) {
     console.warn(
       `[prepare] pre-launch reaped same-phase prepare window(s) on ${sessionName}: ${samePhaseReaped
@@ -732,6 +735,9 @@ export async function runPrepareCommand(
       break;
     }
     // If the prepare window died without writing a sentinel, treat as failure rather than spin.
+    // This checks list-windows output instead of targeting `session:windowName`; duplicate
+    // prepare names are the failure mode this command path recovers from, and tmux name
+    // targets become ambiguous in that state.
     const windowAliveR = await pollExec(
       'window-alive',
       tmuxShellSnippet(
