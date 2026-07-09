@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import type { SlotVars } from '../../core/index.js';
+import { resolveWorkspaceRoot } from '../../projects/repo-root.js';
 
-import { clearStalePrepareProcess } from './prepare-command.js';
+import { buildPrepareWrappedCommand, clearStalePrepareProcess } from './prepare-command.js';
 
 // Local slot: execOnSlot runs the cleanup script via execLocal (bash -c) on this
 // host, so the kill-detection path exercises the real shell + PID-liveness marker
@@ -67,6 +69,61 @@ test('clearStalePrepareProcess returns true and kills the tracked in-flight pref
   assert.equal(killed, true);
   await delay(200);
   assert.equal(isAlive(child.pid), false, 'tracked preflight should be terminated');
+});
+
+test('resolveWorkspaceRoot returns the workspace root (parent holding state.json), not $HOME/farmslot', () => {
+  // Fake install layout: <ws>/farmslot (the clone) + <ws>/state.json. With no
+  // FARMSLOT_WORKSPACE in env, the resolver must climb to the parent that holds
+  // state.json — the same value the CLI's resolveWorkspace produces — so pack
+  // runway scripts write under this workspace instead of $HOME/farmslot.
+  const ws = mkdtempSync(path.join(os.tmpdir(), 'farmslot-ws-'));
+  const clone = path.join(ws, 'farmslot');
+  mkdirSync(clone, { recursive: true });
+  writeFileSync(path.join(ws, 'state.json'), '{"schema_version":1}\n');
+
+  const resolved = resolveWorkspaceRoot({} as NodeJS.ProcessEnv, clone);
+
+  assert.equal(resolved, ws);
+  assert.notEqual(resolved, path.join(os.homedir(), 'farmslot'));
+});
+
+test('resolveWorkspaceRoot honours an explicit FARMSLOT_WORKSPACE without overriding it', () => {
+  const explicit = mkdtempSync(path.join(os.tmpdir(), 'farmslot-explicit-'));
+  const resolved = resolveWorkspaceRoot(
+    { FARMSLOT_WORKSPACE: explicit } as NodeJS.ProcessEnv,
+    '/some/unrelated/clone',
+  );
+  assert.equal(resolved, explicit);
+});
+
+test('resolveWorkspaceRoot returns null for a plain dev checkout with no workspace', () => {
+  const bare = mkdtempSync(path.join(os.tmpdir(), 'farmslot-bare-'));
+  const clone = path.join(bare, 'farmslot');
+  mkdirSync(clone, { recursive: true });
+  // No state.json beside the clone → no surrounding workspace.
+  assert.equal(resolveWorkspaceRoot({} as NodeJS.ProcessEnv, clone), null);
+});
+
+test('buildPrepareWrappedCommand exports the resolved FARMSLOT_WORKSPACE, not $HOME/farmslot', () => {
+  const wsRoot = '/data/farms/dev-farm';
+  const wrapped = buildPrepareWrappedCommand('echo hi', '/tmp/scratch/s.exit', '/tmp/scratch', {
+    workspaceRoot: wsRoot,
+  });
+  assert.match(wrapped, /export FARMSLOT_WORKSPACE='\/data\/farms\/dev-farm'/);
+  assert.ok(
+    !wrapped.includes(path.join(os.homedir(), 'farmslot')),
+    'must not fall back to $HOME/farmslot when a workspace is resolvable',
+  );
+});
+
+test('buildPrepareWrappedCommand omits the export when no workspace resolves', () => {
+  const wrapped = buildPrepareWrappedCommand('echo hi', '/tmp/scratch/s.exit', '/tmp/scratch', {
+    workspaceRoot: null,
+  });
+  assert.ok(
+    !wrapped.includes('FARMSLOT_WORKSPACE'),
+    'a plain dev checkout must leave FARMSLOT_WORKSPACE unset for the pack default',
+  );
 });
 
 test('clearStalePrepareProcess returns false when there is no live tracked preflight', async () => {
