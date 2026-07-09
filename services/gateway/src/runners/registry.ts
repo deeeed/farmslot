@@ -595,6 +595,14 @@ export interface RunnerLaunchBlocker {
   defer?: boolean;
 }
 
+export function runnerLaunchBlockerAutoActionKey(
+  autoAction: RunnerLaunchBlocker['autoAction'],
+): 'a' | 'Enter' | null {
+  if (autoAction === 'cursor-trust-workspace') return 'a';
+  if (autoAction === 'grok-select-current-project') return 'Enter';
+  return null;
+}
+
 export function detectRunnerLaunchBlocker(
   pane: string,
   runnerId?: string | null,

@@ -51,7 +51,7 @@ import {
   detectRunnerLaunchBlocker,
   normalizeRunner,
   runnerDefaultModel,
-  type RunnerLaunchBlocker,
+  runnerLaunchBlockerAutoActionKey,
   runnerNeedsPostLaunchPrompt,
   runnerPaneHasDeferredLaunchBlocker,
   runnerResolvesPreTaskLaunchBlockers,
@@ -383,16 +383,6 @@ async function assertRunnerProcessStarted(
   );
 }
 
-export function keyForRunnerLaunchBlockerAutoAction(
-  autoAction: RunnerLaunchBlocker['autoAction'],
-): 'a' | 'Enter' | null {
-  // This maps the registry's known blocker actions, independent of which
-  // runners currently opt into pre-task blocker resolution.
-  if (autoAction === 'cursor-trust-workspace') return 'a';
-  if (autoAction === 'grok-select-current-project') return 'Enter';
-  return null;
-}
-
 async function resolveRunnerLaunchBlockers(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   target: string,
@@ -413,7 +403,7 @@ async function resolveRunnerLaunchBlockers(
     if (!blocker) return;
     lastBlockerSummary = blocker.summary;
 
-    const key = keyForRunnerLaunchBlockerAutoAction(blocker.autoAction);
+    const key = runnerLaunchBlockerAutoActionKey(blocker.autoAction);
     if (key) {
       if (!answered.has(blocker.kind)) {
         const result = await execOnSlot(
@@ -435,7 +425,9 @@ async function resolveRunnerLaunchBlockers(
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
   throw new Error(
-    `${runner} launch blocker did not clear in ${target} within ${Math.round(timeoutMs / 1000)}s. ${lastBlockerSummary}`,
+    `${runner} launch blocker did not clear in ${target} within ${Math.round(timeoutMs / 1000)}s. ${lastBlockerSummary}${
+      answered.size ? ` Auto-action was sent for: ${[...answered].join(', ')}.` : ''
+    }`,
   );
 }
 
@@ -635,7 +627,7 @@ export function buildRoleLaunchCommandWithDiagnosticHold(command: string): strin
     'fi',
     'exit "$__farmslot_status"',
   ];
-  return `bash -lc ${shellQuote(lines.join('\n'))}`;
+  return `bash -c ${shellQuote(lines.join('\n'))}`;
 }
 
 async function tmuxSessionExists(

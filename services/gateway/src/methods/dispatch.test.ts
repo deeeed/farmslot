@@ -9,11 +9,11 @@ import {
 } from '@farmslot/protocol';
 
 import type { SlotVars } from '../core/config.js';
+import { runnerLaunchBlockerAutoActionKey } from '../runners/registry.js';
 
 import {
   buildRoleLaunchCommandWithDiagnosticHold,
   cleanupLaunchedWorkerAfterDispatchFailure,
-  keyForRunnerLaunchBlockerAutoAction,
 } from './dispatch/execute.js';
 import {
   buildDispatchRoleShellCommand,
@@ -115,9 +115,9 @@ test('dispatch role launch wrapper holds failed runner output for diagnostics', 
 });
 
 test('dispatch maps runner launch blocker auto-actions to submit keys', () => {
-  assert.equal(keyForRunnerLaunchBlockerAutoAction('cursor-trust-workspace'), 'a');
-  assert.equal(keyForRunnerLaunchBlockerAutoAction('grok-select-current-project'), 'Enter');
-  assert.equal(keyForRunnerLaunchBlockerAutoAction(null), null);
+  assert.equal(runnerLaunchBlockerAutoActionKey('cursor-trust-workspace'), 'a');
+  assert.equal(runnerLaunchBlockerAutoActionKey('grok-select-current-project'), 'Enter');
+  assert.equal(runnerLaunchBlockerAutoActionKey(null), null);
 });
 
 test('dispatch failure cleanup kills launched role runner and verifies exit', async () => {
