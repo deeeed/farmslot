@@ -54,6 +54,10 @@ test('depsCheck trusts install markers newer than a stale baseline', async () =>
     recordDepsBaseline(root);
 
     await writeFile(lockfile, '# lock\n# bump\n');
+    const staleInstallAt = new Date(Date.now() - 10_000);
+    const changedInputAt = new Date(Date.now());
+    await utimes(installState, staleInstallAt, staleInstallAt);
+    await utimes(lockfile, changedInputAt, changedInputAt);
     assert.equal(depsCheck(root).status, 'stale');
 
     const installedAt = new Date(Date.now() + 5_000);
