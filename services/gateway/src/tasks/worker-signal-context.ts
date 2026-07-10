@@ -27,6 +27,7 @@ export async function applyRunningWorkerSignalToContext(
   if (!match) return;
 
   await upsertAgentContext(runId, match.role, {
+    id: match.id,
     lastSignalAt: signal.timestamp ?? new Date().toISOString(),
   });
 }
