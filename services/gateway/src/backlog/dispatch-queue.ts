@@ -11,6 +11,7 @@ import {
   isTerminalRunStatus,
   normalizeRunTags,
   type QueueItem,
+  type Run,
   type SlotStatus,
 } from '@farmslot/protocol';
 
@@ -19,6 +20,8 @@ import { evalSuiteCapUsage } from '../evals/suite-cap-store.js';
 import { farmslotRoot, loadFleetStatus } from '../fleet/state.js';
 import { resolveDispatchPreviewFromFleet } from '../methods/dispatch.js';
 import { isStartRefPolicyError, normalizeStartRefRequest } from '../projects/start-ref-policy.js';
+import { detectProfileFit } from '../run-engine/profile-fit-gate.js';
+import { fetchTicketData } from '../run-engine/ticket-data.js';
 import { getAllRuns } from '../runs/store.js';
 
 function shouldUseIsolatedQueueFile(env: NodeJS.ProcessEnv, argv: readonly string[]): boolean {
@@ -381,7 +384,46 @@ export function buildQueuePreviewParams(item: QueueItem) {
   };
 }
 
-export function selectQueueDispatchSlot(slots: SlotStatus[], item: QueueItem): string | null {
+async function requiredPrepareProfileForQueueItem(item: QueueItem): Promise<string | null> {
+  if (item.prepareProfile) return item.prepareProfile;
+  const previewRun = {
+    id: item.runId ?? item.id,
+    familyId: item.familyId ?? item.id,
+    lane: item.lane ?? 'production',
+    flowType: item.flowType,
+    status: 'created',
+    project: item.project,
+    ticketOrPr: item.ticketOrPr,
+    slotId: item.slotId ?? null,
+    branch: item.branch ?? null,
+    taskFile: null,
+    steps: [],
+    decisions: [],
+    metrics: { nudgeCount: 0, model: item.model ?? null, runner: item.runner ?? null },
+    createdAt: item.createdAt,
+    updatedAt: item.createdAt,
+    prepareProfile: item.prepareProfile,
+    app: item.app,
+  } as Run;
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
+  try {
+    ticketData = await fetchTicketData(previewRun);
+  } catch {
+    // Queue metadata can outlive network/GitHub availability; explicit app/profile still gate.
+  }
+  const profileFit = detectProfileFit(previewRun, ticketData, {
+    prepareProfile: item.prepareProfile,
+    app: item.app,
+    slotPlatform: null,
+  });
+  return profileFit?.suggestedPrepareProfile ?? null;
+}
+
+export async function selectQueueDispatchSlot(
+  slots: SlotStatus[],
+  item: QueueItem,
+): Promise<string | null> {
+  const requiredPrepareProfile = await requiredPrepareProfileForQueueItem(item);
   if (item.launchSlotPolicy === 'spread' && item.launchGroupId) {
     const activeSiblingSlots = new Set(
       getAllRuns()
@@ -402,12 +444,16 @@ export function selectQueueDispatchSlot(slots: SlotStatus[], item: QueueItem): s
         const preview = resolveDispatchPreviewFromFleet(
           { ...buildQueuePreviewParams(item), allowedSlots: allowed },
           slots,
+          undefined,
+          { requiredPrepareProfile },
         );
         return preview.preview.slotId;
       }
     }
   }
-  const preview = resolveDispatchPreviewFromFleet(buildQueuePreviewParams(item), slots);
+  const preview = resolveDispatchPreviewFromFleet(buildQueuePreviewParams(item), slots, undefined, {
+    requiredPrepareProfile,
+  });
   return preview.preview.slotId;
 }
 
@@ -460,7 +506,7 @@ async function tryDispatchNextOnce(): Promise<void> {
 
     let slot: SlotStatus | undefined;
     try {
-      const slotId = selectQueueDispatchSlot(fleet.slots, item);
+      const slotId = await selectQueueDispatchSlot(fleet.slots, item);
       slot = fleet.slots.find((s) => s.slot === slotId);
     } catch (error) {
       console.debug(

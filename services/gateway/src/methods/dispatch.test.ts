@@ -1505,6 +1505,7 @@ test('branch-affinity nudge resource filter keeps working simulator slots', () =
   });
   const eligible = selectBranchAffinityEligibleSlots([slot], PROJECT, PR_TICKET, {
     targetBranch: PR_BRANCH,
+    requiredPrepareProfile: 'sandbox-companion',
   });
 
   assert.equal(eligible.length, 1);
@@ -1516,6 +1517,16 @@ test('branch-affinity nudge resource filter keeps working simulator slots', () =
     }),
     'Agent is working',
   );
+});
+
+test('branch-affinity nudge resource filter excludes working non-simulator slots', () => {
+  const slot = makeBusyClaudeSlot({ resources: {} });
+  const eligible = selectBranchAffinityEligibleSlots([slot], PROJECT, PR_TICKET, {
+    targetBranch: PR_BRANCH,
+    requiredPrepareProfile: 'sandbox-companion',
+  });
+
+  assert.equal(eligible.length, 0);
 });
 
 test('selectBranchAffinityEligibleSlots returns empty for comparison lane (defends ADR-024 §7 scrub-between-siblings)', () => {

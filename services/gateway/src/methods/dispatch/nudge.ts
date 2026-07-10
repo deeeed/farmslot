@@ -30,6 +30,8 @@ import {
   tmuxShellSnippet,
 } from '../../core/tmux.js';
 import { loadFleetStatus } from '../../fleet/state.js';
+import { detectProfileFit } from '../../run-engine/profile-fit-gate.js';
+import { fetchTicketData } from '../../run-engine/ticket-data.js';
 import {
   normalizeRunner,
   resolveSafeSendTimeoutMs,
@@ -211,6 +213,19 @@ export async function nudgeDispatch(
   const { getRun: getRunForVerify } = await import('../../runs/store.js');
   const requestingRun = getRunForVerify(params.runId);
   if (!requestingRun) throw new Error(`Run ${params.runId} not found in store`);
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
+  try {
+    ticketData = await fetchTicketData(requestingRun);
+  } catch {
+    // Ticket metadata is optional here; explicit app/profile fields still gate resources.
+  }
+  const profileFit = detectProfileFit(requestingRun, ticketData, {
+    prepareProfile: requestingRun.prepareProfile,
+    app: requestingRun.app,
+    slotPlatform: null,
+  });
+  const requiredPrepareProfile =
+    requestingRun.prepareProfile || profileFit?.suggestedPrepareProfile || null;
   const eligibilityFail = await verifyBranchAffinityNudgeStillEligible(
     liveSlot,
     requestingRun.project,
@@ -226,6 +241,7 @@ export async function nudgeDispatch(
       // the last fallback is tautological but preserves behavior for legacy call sites that
       // didn't thread params.targetBranch through.
       targetBranch: params.targetBranch ?? requestingRun.branch ?? liveSlot?.branch ?? null,
+      requiredPrepareProfile,
     },
   );
   if (eligibilityFail) throw new Error(`Branch-affinity nudge no longer valid: ${eligibilityFail}`);

@@ -54,13 +54,16 @@ export function lineHasAuthBlockerPhrase(line: string): boolean {
     /\bauthentication\s+(expired|required|failed|needed)\b/.test(line) ||
     /\bauth\s+(is\s+)?(required|needed|failed)\b/.test(line) ||
     /\b(login|log in)\s+(required|needed|failed|to continue)\b/.test(line) ||
-    /\b(oauth|api key|token|session|login|auth(?:entication)?)\s+(has\s+)?expired\b/.test(line) ||
+    /\b(oauth|api key|token|login|auth(?:entication)?)\s+(has\s+)?expired\b/.test(line) ||
+    (/\bsession\s+(has\s+)?expired\b/.test(line) &&
+      /\b(login|log in|auth|authenticate|reauthenticate)\b/.test(line)) ||
     /\bplease\s+run\s+\/?login\b/.test(line) ||
     /\brun\s+(codex|claude|cursor-agent)?\s*login\b/.test(line) ||
     /\brequires?\s+(login|log in|authentication|authenticate)\b/.test(line) ||
     /\bplease\s+(log in|login|authenticate)\b/.test(line) ||
     /\bnot\s+(authenticated|logged in)\b/.test(line) ||
-    /\bunauthorized\b/.test(line)
+    (/\bunauthorized\b/.test(line) &&
+      /\b(login|log in|auth|authenticate|authentication|token|session)\b/.test(line))
   );
 }
 

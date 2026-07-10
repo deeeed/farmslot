@@ -6,6 +6,7 @@
 - feat: add tmux runtime recovery RPC contracts for reconciling and restoring worker sessions.
 - feat: add `WorkGraphSchedulerTickParams.forceEnqueue` for operator manual-enqueue of a work-graph node even when its backlog item has autoDispatch disabled.
 - feat: add `missing_required_resources` as a slot-picker reason when dispatch waits for a resource-capable slot.
+- feat: add optional app/prepare-profile hints to dispatch candidate requests so resource-gated nudge rows match dispatch preview.
 - refactor: remove the unused `slot.prepare.output` event (`SLOT_PREPARE_OUTPUT`) — raw prepare output rides `script.output`. Add `ARCHIVABLE_BACKLOG_STATUSES` as the shared source of truth for backlog archive gating, and backlog archive/delete/restore RPC types.
 - docs: note `grok-4.5-fast-xhigh` as a Cursor Agent model example on `SlotStatus.model`.
 

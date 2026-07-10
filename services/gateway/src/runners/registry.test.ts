@@ -322,6 +322,16 @@ describe('cursor runner', () => {
     assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
   });
 
+  it('does not classify generic unauthorized app output as runner auth blockers', () => {
+    const pane = [
+      'gh api returned HTTP 401: Unauthorized',
+      'app log: session expired for test fixture',
+      '❯ ',
+    ].join('\n');
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
+  });
+
   it('does not combine auth words across unrelated lines of leftover pane prose', () => {
     // Prior worker's recap left on screen: "auth" and "needed" live on separate
     // lines and neither line is itself an auth blocker. Flattening the whole pane
