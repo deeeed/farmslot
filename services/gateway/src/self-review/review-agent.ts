@@ -71,7 +71,8 @@ export function parseTerminalSelfReviewSignal(raw: string) {
 }
 
 export const LEGACY_REVIEW_FEEDBACK_REL_PATH = 'artifacts/review-feedback.md';
-const LEGACY_REVIEW_FEEDBACK_PATH_PATTERN = /\b(?:artifacts\/)?review-feedback\.md\b/g;
+const LEGACY_REVIEW_FEEDBACK_PATH_PATTERN =
+  /(^|[^\w./-])((?:artifacts\/)?review-feedback\.md)(?![\w./-])/g;
 
 export function selfReviewChecklistMarkPrompt(
   taskDir: string,
@@ -98,7 +99,10 @@ export function reviewerFeedbackRelPath(contextId: string): string {
 }
 
 export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
-  const scoped = template.replace(LEGACY_REVIEW_FEEDBACK_PATH_PATTERN, feedbackRelPath);
+  const scoped = template.replace(
+    LEGACY_REVIEW_FEEDBACK_PATH_PATTERN,
+    (_match, prefix: string) => `${prefix}${feedbackRelPath}`,
+  );
   if (scoped !== template) return scoped;
   return `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
 }
@@ -301,6 +305,7 @@ export async function runReviewAgent(
             blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
             signalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
             launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+            requirePromptDigest: true,
             handoffAckSinceMs,
             softAcceptOnHandoffAck: true,
           },

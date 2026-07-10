@@ -1571,6 +1571,7 @@ export async function sendRunnerPostLaunchPrompt(
     blockerSnapshotPath?: string;
     signalPath?: string;
     launchAckSignalPath?: string;
+    requirePromptDigest?: boolean;
     softAcceptOnHandoffAck?: boolean;
     handoffAckSinceMs?: number;
   } = {},
@@ -1583,6 +1584,7 @@ export async function sendRunnerPostLaunchPrompt(
   const maxAttempts = opts.maxAttempts ?? 3;
   const softAcceptOnHandoffAck = opts.softAcceptOnHandoffAck !== false;
   const handoffAckSinceMs = opts.handoffAckSinceMs ?? Date.now();
+  const requirePromptDigest = opts.requirePromptDigest === true;
 
   const readyStart = Date.now();
   let lastPane = '';
@@ -1839,7 +1841,7 @@ export async function sendRunnerPostLaunchPrompt(
     const immediateHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
-      requirePromptDigest: true,
+      requirePromptDigest,
     });
     if (immediateHandoff.accepted) {
       console.log(
@@ -1866,7 +1868,7 @@ export async function sendRunnerPostLaunchPrompt(
     const preSendHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
-      requirePromptDigest: true,
+      requirePromptDigest,
     });
     if (preSendHandoff.accepted) {
       console.log(
@@ -1935,7 +1937,7 @@ export async function sendRunnerPostLaunchPrompt(
         postPane,
         lastPane,
         marker,
-        { launchAckSignalPath: opts.launchAckSignalPath, requirePromptDigest: true },
+        { launchAckSignalPath: opts.launchAckSignalPath, requirePromptDigest },
       )
     ) {
       console.log(
@@ -1989,7 +1991,7 @@ export async function sendRunnerPostLaunchPrompt(
     const handoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
-      requirePromptDigest: true,
+      requirePromptDigest,
     });
     if (handoff.accepted) {
       console.warn(
@@ -2047,7 +2049,6 @@ export function runnerSignalShowsCompletion(signalText: string): boolean {
 
 export async function resolvePrimaryWorkerTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  reviewWindow = 'self-review',
 ): Promise<string> {
   try {
     const session = await resolveTmuxSession(vars.slotId, vars);
@@ -2066,7 +2067,7 @@ export async function resolvePrimaryWorkerTarget(
     for (const line of lines) {
       const [index, ...rest] = line.split(/\s+/);
       const name = rest.join(' ');
-      if (index && name !== reviewWindow && !isReviewerWindowName(name)) {
+      if (index && !isReviewerWindowName(name)) {
         return `${session}:${index}`;
       }
     }
