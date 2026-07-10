@@ -10,7 +10,7 @@ test('expandSelfReviewTemplate resolves farmslot_dir placeholders', async (t) =>
   const run = createRun({
     flowType: 'dev',
     mode: 'autonomous',
-    project: 'metamask-mobile-farm',
+    project: 'farmslot-farm',
     ticketOrPr: 'TEST-FARMSLOT-DIR',
     runner: 'claude',
   });
@@ -22,8 +22,8 @@ test('expandSelfReviewTemplate resolves farmslot_dir placeholders', async (t) =>
   const rendered = await expandSelfReviewTemplate(
     {
       slotId: 'slot-1',
-      projectName: 'metamask-mobile-farm',
-      remoteRepo: '/tmp/metamask-mobile',
+      projectName: 'farmslot-farm',
+      remoteRepo: '/tmp/farmslot',
       platform: 'ios',
       session: 'slot-1',
       resourceVars: { port: '8061', cdpPort: '9222' },
