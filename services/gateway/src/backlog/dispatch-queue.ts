@@ -372,6 +372,8 @@ export function buildQueuePreviewParams(item: QueueItem) {
     familyId: item.familyId,
     lane: item.lane,
     variant: item.variant ?? null,
+    app: item.app,
+    prepareProfile: item.prepareProfile,
     // Forward the UI-resolved allow list so the dispatcher refuses to land the
     // queued run on a machine the operator explicitly filtered out.
     allowedSlots: item.allowedSlots ?? undefined,

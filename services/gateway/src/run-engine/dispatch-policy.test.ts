@@ -29,6 +29,19 @@ test('buildDispatchPreviewParamsForRun sets targetBranch only for PR-bound flows
   assert.equal(buildDispatchPreviewParamsForRun(reviewNoBranch).targetBranch, undefined);
 });
 
+test('buildDispatchPreviewParamsForRun forwards explicit profile and app', () => {
+  const run = makeRun({
+    flowType: 'pr-complete',
+    app: 'companion',
+    prepareProfile: 'sandbox',
+  });
+
+  const params = buildDispatchPreviewParamsForRun(run);
+
+  assert.equal(params.app, 'companion');
+  assert.equal(params.prepareProfile, 'sandbox');
+});
+
 test('resolveCIWatchTerminalPatch maps blocked to blocked/partial', () => {
   const patch = resolveCIWatchTerminalPatch({ result: 'blocked' });
   assert.deepEqual(patch, {
