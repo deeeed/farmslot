@@ -8,9 +8,7 @@ import {
   agentRoleForWindowName,
   agentRoleLabel,
   agentRoleWindow,
-  allocateReviewerContext,
   contextIdFor,
-  isReviewerAgentContext,
   isReviewerAgentRole,
   isReviewerWindowName,
   primaryRoleForFlow,
@@ -359,52 +357,6 @@ export async function markAgentContextStatus(
     ...(completedAt ? { completedAt } : {}),
     ...patch,
   });
-}
-
-/**
- * Register or refresh a same-run reviewer context with a short tmux tab name.
- * Multiple reviewers can coexist; warm mode reuses the same-runner tab.
- */
-export async function upsertReviewerAgentContext(
-  runId: string,
-  opts: {
-    runner: string;
-    model?: string | null;
-    mode?: 'warm' | 'fresh';
-    patch?: Partial<AgentContext>;
-  },
-): Promise<AgentContext | null> {
-  const run = getRun(runId);
-  if (!run) return null;
-  const allocated = allocateReviewerContext({
-    runId,
-    runner: opts.runner,
-    model: opts.model ?? null,
-    existing: run.agentContexts ?? [],
-    mode: opts.mode ?? 'warm',
-  });
-  const patch = opts.patch ?? {};
-  const existingTarget = patch.target;
-  const session = existingTarget?.session?.trim() || '';
-  const windowName = existingTarget?.window?.trim() || allocated.windowName;
-  const target = existingTarget ?? {
-    session,
-    window: windowName,
-    pane: null,
-    target: session ? `${session}:${windowName}` : windowName,
-  };
-  return upsertAgentContext(runId, 'self-review', {
-    ...patch,
-    id: allocated.id,
-    label: allocated.label,
-    runner: allocated.runner,
-    model: allocated.model,
-    target,
-  });
-}
-
-export function listReviewerContextsForRun(run: Run): AgentContext[] {
-  return getAgentContexts(run).filter((ctx) => isReviewerAgentContext(ctx));
 }
 
 function statusFromRun(status: Run['status']): AgentContextStatus {
