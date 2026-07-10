@@ -62,6 +62,8 @@ export interface AgentContextSummary {
   target?: AgentContextTarget | null;
   nudgeCount?: number;
   lastSignalAt?: string;
+  /** When present, used to pick the latest reviewer among multiple same-run tabs. */
+  updatedAt?: string;
   /** Runner context-window usage percentage (0-100). Runner-agnostic — each runner's node-side
    * adapter is responsible for parsing its own status surface (Claude's `ctx:N%` status line,
    * codex's session metadata, etc.). Null when the runner has not exposed a value or the parse

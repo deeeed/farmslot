@@ -5,6 +5,7 @@ import type { SlotPrepareParams } from '@farmslot/protocol';
 import {
   execOnSlot,
   isLocal,
+  isMissingProjectConfigError,
   loadProjectVars,
   loadSlotVars,
   type SlotVars,
@@ -48,8 +49,7 @@ async function resolvePrepareRuntimeDir(projectName: string): Promise<string> {
     const projectVars = await loadProjectVars(projectName);
     return projectVars.runtimeDir || '.agent';
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.startsWith('Project config not found:')) return '.agent';
+    if (isMissingProjectConfigError(error)) return '.agent';
     throw error;
   }
 }

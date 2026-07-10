@@ -114,6 +114,7 @@ test('fleet refresh reconciliation preserves active run ownership when status pr
       nudgeCount: undefined,
       ctxPct: undefined,
       lastSignalAt: undefined,
+      updatedAt: undefined,
     },
   ]);
   assert.equal(reconciled.task_file, 'feat/tat-3215-0622-110508/TASK.md');

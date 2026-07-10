@@ -20,6 +20,11 @@ import { farmslotRoot } from '../projects/repo-root.js';
 
 const poolDir = path.join(farmslotRoot, 'pool');
 const projectsDir = path.join(farmslotRoot, 'projects');
+const PROJECT_CONFIG_NOT_FOUND_PREFIX = 'Project config not found:';
+
+export function isMissingProjectConfigError(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith(PROJECT_CONFIG_NOT_FOUND_PREFIX);
+}
 
 /**
  * Pool files every loader skips: non-JSON, the committed template, and the

@@ -26,6 +26,7 @@ export {
   getProjectField,
   getProjectFieldRaw,
   isIgnoredPoolFile,
+  isMissingProjectConfigError,
   isMockModeProject,
   loadProjectVars,
   loadSlotVars,

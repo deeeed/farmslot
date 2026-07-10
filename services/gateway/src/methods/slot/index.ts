@@ -35,5 +35,6 @@ export {
   killAgentInSession,
   killAllAgentWindows,
   killSlotAgents,
+  shouldKillAgentWindowName,
   slotRelease,
 } from './release.js';
