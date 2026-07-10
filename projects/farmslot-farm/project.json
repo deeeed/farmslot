@@ -6,6 +6,7 @@
   "default_safety_tier": "dangerous",
   "primary_repo": "/Users/deeeed/dev/farmslot",
   "artifacts_repo": "deeeed/farmslot-artifacts",
+  "ci": { "repo": "deeeed/farmslot" },
   "worktree_base": "/Users/deeeed/dev/farmslot-wt",
   "slot_tracking_branch": "wt/{{session}}",
   "apps": ["command-center", "companion"],
