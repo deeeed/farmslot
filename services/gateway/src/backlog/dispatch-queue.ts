@@ -40,6 +40,7 @@ function resolveQueueFile(): string {
 const QUEUE_FILE = resolveQueueFile();
 const queue: QueueItem[] = [];
 let queuePersistChain: Promise<void> = Promise.resolve();
+const queueProfileFitCache = new Map<string, string | null>();
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 let _broadcast: BroadcastFn | null = null;
@@ -386,6 +387,16 @@ export function buildQueuePreviewParams(item: QueueItem) {
 
 async function requiredPrepareProfileForQueueItem(item: QueueItem): Promise<string | null> {
   if (item.prepareProfile) return item.prepareProfile;
+  const cacheKey = [
+    item.id,
+    item.ticketOrPr,
+    item.app ?? '',
+    item.prepareProfile ?? '',
+    item.createdAt,
+  ].join('\0');
+  if (queueProfileFitCache.has(cacheKey)) {
+    return queueProfileFitCache.get(cacheKey) ?? null;
+  }
   const previewRun = {
     id: item.runId ?? item.id,
     familyId: item.familyId ?? item.id,
@@ -411,12 +422,30 @@ async function requiredPrepareProfileForQueueItem(item: QueueItem): Promise<stri
   } catch {
     // Queue metadata can outlive network/GitHub availability; explicit app/profile still gate.
   }
+  const bareGitHubRef = /^(?:[^#]+#)?\d+$/.test(item.ticketOrPr) || item.ticketOrPr.includes('#');
+  const onlyFallbackTicketData =
+    ticketData?.source === 'manual' &&
+    ticketData.title === item.ticketOrPr &&
+    !ticketData.description &&
+    (ticketData.acceptanceCriteria?.length ?? 0) === 0 &&
+    (ticketData.labels?.length ?? 0) === 0;
+  if (bareGitHubRef && onlyFallbackTicketData) {
+    throw new Error(
+      `Ticket metadata unavailable for ${item.ticketOrPr}; deferring queued dispatch so implicit profile fit cannot bind the wrong slot`,
+    );
+  }
   const profileFit = detectProfileFit(previewRun, ticketData, {
     prepareProfile: item.prepareProfile,
     app: item.app,
     slotPlatform: null,
   });
-  return profileFit?.suggestedPrepareProfile ?? null;
+  const requiredPrepareProfile = profileFit?.suggestedPrepareProfile ?? null;
+  queueProfileFitCache.set(cacheKey, requiredPrepareProfile);
+  if (requiredPrepareProfile) {
+    item.prepareProfile = requiredPrepareProfile;
+    schedulePersist('profile-fit');
+  }
+  return requiredPrepareProfile;
 }
 
 export async function selectQueueDispatchSlot(

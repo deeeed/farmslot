@@ -451,7 +451,6 @@ async function attemptInlineCIFix(
     vars = await loadSlotVars(slotId);
     const signalPath = slotTaskRelPath(vars, writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal);
     await execOnSlot(vars, `rm -f '${signalPath}'`);
-    const signalBaseline = '';
     const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
     const roleWindowName =
       run?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
@@ -483,7 +482,11 @@ async function attemptInlineCIFix(
         `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'deferred'} to ${workerTarget}`,
       );
       if (!sent) {
-        clearInlineFixState(runId, { phase: 'polling' });
+        const retryAt = new Date(Date.now() + INLINE_FIX_FALLBACK_POLL_MS).toISOString();
+        mutateDedup(runId, (s) => {
+          s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
+        });
+        clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
         return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
       }
     } catch (err) {
@@ -536,7 +539,7 @@ async function attemptInlineCIFix(
         const raw = (
           await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)
         ).stdout.trim();
-        if (raw && raw !== signalBaseline) {
+        if (raw) {
           const ws = JSON.parse(raw) as WorkerSignal;
           if (
             ws.status === 'complete' ||

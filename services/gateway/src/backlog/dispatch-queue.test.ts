@@ -645,6 +645,55 @@ test('selectQueueDispatchSlot blocks implicit companion profile on plain CLI slo
   );
 });
 
+test('selectQueueDispatchSlot defers bare GitHub refs when ticket metadata is unavailable', async () => {
+  const item: QueueItem = {
+    id: 'queue-metadata-miss',
+    flowType: 'pr-complete',
+    project: 'farmslot-farm',
+    ticketOrPr: 'example-org/example-mobile#424242',
+    priority: 1,
+    createdAt: '2026-04-15T00:00:00.000Z',
+    status: 'queued',
+  };
+  const slots: SlotStatus[] = [
+    {
+      slot: 'plain-cli',
+      machine: 'demo',
+      platform: 'cli',
+      project: 'farmslot-farm',
+      health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+      branch: 'main',
+      agent: 'idle',
+      enabled: true,
+      dispatchable: true,
+      lifecycle: 'ready',
+      phase: null,
+      warm: false,
+      taskId: null,
+      taskFile: null,
+      currentRunId: null,
+      currentFlowType: null,
+      currentTicketOrPr: null,
+      currentMode: null,
+      currentFamilyId: null,
+      currentLane: null,
+      currentVariant: null,
+      dispatchedAt: null,
+      completedAt: null,
+      runner: 'claude',
+      model: 'sonnet',
+      deviceName: null,
+      taskPhase: null,
+      taskStepProgress: null,
+    },
+  ];
+
+  await assert.rejects(
+    () => selectQueueDispatchSlot(slots, item),
+    /Ticket metadata unavailable for example-org\/example-mobile#424242/,
+  );
+});
+
 test('selectQueueDispatchSlot spreads launch candidates away from active siblings when possible', async () => {
   const activeSibling = createRun({
     flowType: 'dev',
