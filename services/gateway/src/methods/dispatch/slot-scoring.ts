@@ -220,8 +220,7 @@ export function slotBranchCheckoutBlocker(
         other.slot !== slot.slot &&
         other.project === slot.project &&
         other.linkedWorktree &&
-        other.branch === targetBranch &&
-        other.lifecycle !== 'disabled',
+        other.branch === targetBranch,
     ) ?? null
   );
 }

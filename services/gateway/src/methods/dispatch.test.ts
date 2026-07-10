@@ -810,6 +810,31 @@ test('validateSlotForTargetBranch rejects linked worktree branch already checked
   );
 });
 
+test('validateSlotForTargetBranch rejects disabled linked worktree branch owners', () => {
+  const targetBranch = 'feat/manual-000011-recipe-ui-passive-observations';
+  const branchOwner = makeSlot({
+    slot: 'macwork-ff-3',
+    project: 'farmslot-farm',
+    branch: targetBranch,
+    linkedWorktree: true,
+    lifecycle: 'disabled',
+    agent: 'idle',
+  });
+  const requested = makeSlot({
+    slot: 'macwork-ff-4',
+    project: 'farmslot-farm',
+    branch: 'wt/ff-4',
+    linkedWorktree: true,
+    lifecycle: 'ready',
+    agent: 'idle',
+  });
+
+  assert.equal(
+    validateSlotForTargetBranch(requested, [requested, branchOwner], targetBranch),
+    `Branch ${targetBranch} is already checked out by linked worktree slot macwork-ff-3`,
+  );
+});
+
 test('resolveDispatchPreviewFromFleet skips free linked worktree slots blocked by target branch owner', () => {
   const targetBranch = 'feat/manual-000011-recipe-ui-passive-observations';
   const branchOwner = makeSlot({
