@@ -42,16 +42,23 @@ function detectAuthRequired(pane: string): boolean {
   for (const line of pane.split('\n')) {
     const normalized = line.trim().toLowerCase();
     if (!normalized || /\bmcp\b/.test(normalized)) continue;
-    if (
-      /\b(login|log in|authenticate|authentication|auth)\b/.test(normalized) &&
-      /\b(expired|required|failed|please|needed|unauthorized|not authenticated|not logged in)\b/.test(
-        normalized,
-      )
-    ) {
+    if (lineHasAuthBlockerPhrase(normalized)) {
       return true;
     }
   }
   return false;
+}
+
+function lineHasAuthBlockerPhrase(line: string): boolean {
+  return (
+    /\bauthentication\s+(expired|required|failed|needed)\b/.test(line) ||
+    /\bauth\s+(is\s+)?(required|needed|failed)\b/.test(line) ||
+    /\b(login|log in)\s+(required|needed|failed|to continue)\b/.test(line) ||
+    /\brequires?\s+(login|log in|authentication|authenticate)\b/.test(line) ||
+    /\bplease\s+(log in|login|authenticate)\b/.test(line) ||
+    /\bnot\s+(authenticated|logged in)\b/.test(line) ||
+    /\bunauthorized\b/.test(line)
+  );
 }
 
 function detectLaunchBlocker(

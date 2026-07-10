@@ -13,6 +13,7 @@ import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
 async function dispatchPrompt(taskFile: string): Promise<string> {
   return resolveWorkerDispatchPrompt('farmslot-farm', { taskFile });
 }
+import { readPaneStateFromCapture } from './pane-state-script.js';
 import {
   assertSupportedRunnerSpelling,
   detectRunnerLaunchBlocker,
@@ -315,6 +316,21 @@ describe('cursor runner', () => {
     ].join('\n');
 
     assert.equal(detectRunnerLaunchBlocker(pane, 'claude'), null);
+  });
+
+  it('does not classify shell launch command text with auth.json paths as runner auth blockers', () => {
+    const pane = [
+      'export DISABLE_OMC=1 DISABLE_OMX=1; ASDF_SHIMS="${ASDF_DATA_DIR:-$HOME/.asdf}/shims"; if [ -d "$ASDF_SHIMS" ]; then export PATH="$ASDF_SHIMS:$PATH"; fi &&',
+      "(node '/Users/deeeed/dev/farmslot/scripts/install-runner-observability.mjs' --runner 'codex' --repo '/Users/deeeed/dev/farmslot-wt/farmslot-3' --runtime-dir '.sandbox/farmslot-farm/agent' --slot-id 'macwork-ff-3' || echo '[farmslot-observability] install failed; continuing without hooks' >&2) && unset CLAUDECODE && cd '/Users/deeeed/dev/farmslot-wt/farmslot-3' && if [ -e '/Users/deeeed/dev/farmslot-wt/farmslot-3/.sandbox/farmslot-farm/agent/codex-home/auth.json' ]; then export CODEX_HOME='/Users/deeeed/dev/farmslot-wt/farmslot-3/.sandbox/farmslot-farm/agent/codex-home'; fi && /Users/deeeed/.npm-global/bin/codex --model gpt-5.5",
+      '╭───────────────────────────────────────────╮',
+      '│ >_ OpenAI Codex (v0.144.0)                │',
+      '╰───────────────────────────────────────────╯',
+      '• You have 3 usage limit resets available. Run /usage to use one.',
+      '› Find and fix a bug in @filename',
+    ].join('\n');
+
+    assert.equal(detectRunnerLaunchBlocker(pane, 'codex'), null);
+    assert.equal(readPaneStateFromCapture(pane, 'codex').launchBlocker, null);
   });
 
   it('detects Codex instructions buffered at the live composer without progress', async () => {
