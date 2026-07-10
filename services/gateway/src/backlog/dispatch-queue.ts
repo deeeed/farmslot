@@ -596,6 +596,7 @@ async function tryDispatchNextOnce(): Promise<void> {
         // Cancel non-retryable items loudly instead of head-of-line retry loops.
         item.status = 'cancelled';
         item.runId = undefined;
+        clearQueueProfileFitCache(item);
         schedulePersist(
           isStartRefPolicyError(err)
             ? 'auto-dispatch-start-ref-policy-failure'
