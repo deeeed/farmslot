@@ -13,7 +13,6 @@ import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
 async function dispatchPrompt(taskFile: string): Promise<string> {
   return resolveWorkerDispatchPrompt('farmslot-farm', { taskFile });
 }
-import { readPaneStateFromCapture } from './pane-state-script.js';
 import {
   assertSupportedRunnerSpelling,
   detectRunnerLaunchBlocker,
@@ -49,6 +48,7 @@ import {
   runnerSupportsModel,
   runnerSupportsTmuxNudges,
 } from './registry.js';
+import { readPaneStateFromCapture } from './pane-state-script.js';
 import { assertCodexWorkerDoesNotInjectMcpOverrides, makeVars } from './test-fixtures.js';
 
 describe('scripted runner', () => {
