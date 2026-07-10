@@ -158,6 +158,7 @@ import {
   type TmuxSplitParams,
   type TmuxSynchronizePanesParams,
   type TmuxWorkerListParams,
+  type TmuxWorkerRestoreParams,
   type TmuxZoomPaneParams,
   type WorkerSessionHistoryGetParams,
   type WorkerSessionHistorySubscribeParams,
@@ -178,6 +179,7 @@ import {
   type WorkspaceMetroUnsubscribeParams,
 } from '@farmslot/protocol';
 
+import { restoreTmuxWorker } from '../agents/runtime-recovery.js';
 import { restartBranchWatchesForMachine } from '../automation/branch-watcher.js';
 import { getAllNodes, registerNode } from '../fleet/machine-registry.js';
 import { getAllMachineHealth, getMachineHealth, markMachineOnline } from '../fleet/node-health.js';
@@ -995,6 +997,8 @@ export async function routeMethod(
       return tmuxList(p as TmuxListParams);
     case Methods.TMUX_WORKER_LIST:
       return tmuxWorkerList((p ?? {}) as TmuxWorkerListParams);
+    case Methods.TMUX_WORKER_RESTORE:
+      return restoreTmuxWorker(p as TmuxWorkerRestoreParams);
     case Methods.TMUX_SEND_KEYS:
       return tmuxSendKeys(p as TmuxSendKeysParams);
     case Methods.TMUX_SYNCHRONIZE_PANES:

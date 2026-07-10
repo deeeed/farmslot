@@ -12,6 +12,7 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
+import { isLocal } from '../core/exec.js';
 import { getRun } from '../runs/store.js';
 
 interface SelfReviewConfig {
@@ -21,6 +22,8 @@ interface SelfReviewConfig {
   max_retries?: number;
   review_timeout_min?: number;
 }
+
+const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
 
 export async function expandSelfReviewTemplate(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -77,6 +80,8 @@ export async function expandSelfReviewTemplate(
   }
 
   // Expand {{VAR}} placeholders
+  const { farmslotRoot } = await import('../fleet/state.js');
+  const farmslotDir = isLocal(vars.host, vars.machine) ? farmslotRoot : REMOTE_FARMSLOT_DIR;
   const replacements: Record<string, string> = {
     TASK_DIR: taskDir,
     REPO: vars.remoteRepo,
@@ -88,6 +93,8 @@ export async function expandSelfReviewTemplate(
     SESSION: vars.session,
     MOBILE_REPO: mobileRepo,
     VALIDATION_DEPTH: validationDepth,
+    FARMSLOT_DIR: farmslotDir,
+    farmslot_dir: farmslotDir,
   };
 
   let expanded = template;

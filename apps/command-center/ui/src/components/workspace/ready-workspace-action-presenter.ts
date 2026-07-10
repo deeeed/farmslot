@@ -25,6 +25,7 @@ import { selectedRecipeRun } from '../shared/recipe-run-selection-model.js';
 
 import {
   isReadyPublicationApproval,
+  readyActionRequiresConfirmation,
   readyDecisionActionStateKey,
   readyDecisionSubmittingMessage,
   readyDecisionSuccessMessage,
@@ -609,11 +610,12 @@ export abstract class ReadyWorkspaceActionPresenter extends ReadyWorkspaceState 
 
   _confirmAction(actionId: string) {
     if (this._isRecovering) return;
-    if (actionId === 'ready' || actionId === 'approve-publish' || actionId.startsWith('request-')) {
-      void this._resolve(actionId);
+    const packageGate = Boolean(this._payload?.prPackage);
+    if (readyActionRequiresConfirmation(actionId, packageGate)) {
+      this._confirmTimer.confirm(actionId, () => this._resolve(actionId));
       return;
     }
-    this._confirmTimer.confirm(actionId, () => this._resolve(actionId));
+    void this._resolve(actionId);
   }
 
   _openReviewRequestModal() {

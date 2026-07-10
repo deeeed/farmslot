@@ -58,8 +58,10 @@ import {
   handleSlotViewBack,
   hasSlotViewModalOpen,
   pauseSlotViewRun,
+  reloadSlotViewWorkerSession,
   replaySlotViewRunStep,
   requestSlotViewSwitcherUpdate,
+  restoreSlotViewTmuxWorker,
   resumeSlotViewRun,
   setSlotViewActivity,
   slotViewSwitcherEntries,
@@ -661,6 +663,14 @@ export class SlotView extends SlotViewRecipePresenter {
 
   async _resumeRun() {
     return await resumeSlotViewRun(this);
+  }
+
+  async _restoreTmuxWorker() {
+    return await restoreSlotViewTmuxWorker(this);
+  }
+
+  async _reloadWorkerSession() {
+    return await reloadSlotViewWorkerSession(this);
   }
 
   _toggleSidebar() {

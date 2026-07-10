@@ -42,6 +42,8 @@ export function renderReadyTopBar(input: {
   const approveLabel = hasApprovePublish
     ? `Approve Publish (${input.publicationTarget === 'ready' ? 'ready' : 'draft'})`
     : 'Mark Ready';
+  const approveActionId = hasApprovePublish ? 'approve-publish' : 'ready';
+  const pendingApproveConfirm = input.pendingConfirm === approveActionId;
 
   return html`
     <div class="rdy-top-bar">
@@ -98,20 +100,20 @@ export function renderReadyTopBar(input: {
                 `
               : nothing}
             <button
-              class="rdy-btn ${input.pendingConfirm === 'approve-publish'
-                ? 'rdy-confirming'
-                : 'rdy-btn-primary'}"
+              class="rdy-btn ${pendingApproveConfirm ? 'rdy-confirming' : 'rdy-btn-primary'}"
               ?disabled=${input.acting || input.recovering || !canApprove}
               title=${canApprove
                 ? ''
                 : reviewBlockingReason || 'Required independent review policy is not satisfied yet'}
-              @click=${() => input.confirmAction(hasApprovePublish ? 'approve-publish' : 'ready')}
+              @click=${() => input.confirmAction(approveActionId)}
             >
               ${input.acting
                 ? 'Submitting…'
-                : canApprove
-                  ? approveLabel
-                  : reviewBlockingReason || 'Review Required'}
+                : pendingApproveConfirm
+                  ? 'Confirm Publish?'
+                  : canApprove
+                    ? approveLabel
+                    : reviewBlockingReason || 'Review Required'}
             </button>
           `}
     </div>

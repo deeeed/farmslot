@@ -20,7 +20,6 @@ import {
   latestResolvedHumanGateDecision,
 } from './decision-replay.js';
 import { hasValidPrNumber } from './gate-policy.js';
-import { requiresPublicationApproval } from './publication-policy.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 
@@ -101,7 +100,7 @@ export function collisionDecisionActions(current: Pick<Run, 'lane'>): DecisionAc
   return actions;
 }
 
-function autoResolveEngineDecision(
+export function autoResolveEngineDecision(
   run: Run,
   reason: string,
   actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }>,
@@ -113,15 +112,7 @@ function autoResolveEngineDecision(
   if (run.mode !== 'validation' && run.mode !== 'autonomous') return null;
   if (reason === 'review_posting' && ids.has('dismiss')) return 'dismiss';
   if (reason === 'human_gate') {
-    // Publication-approval runs must wait for a human decision — never auto-resolve.
-    // The evidence-refresh override is publication-only, so it is unreachable
-    // here by construction (the early return above fires first); it is still
-    // recognized as an approval everywhere a human resolves the gate.
-    if (requiresPublicationApproval(run)) return null;
-    if (ids.has('approve-publish')) return 'approve-publish';
-    if (ids.has('ready')) return 'ready';
-    if (ids.has('dismiss')) return 'dismiss';
-    if (ids.has('hold')) return 'hold';
+    return null;
   }
   if (reason === 'self_review_complete') {
     if (ids.has('skip')) return 'skip';

@@ -1,4 +1,4 @@
-import type { SlotStatus } from '@farmslot/protocol';
+import type { SlotStatus, TmuxWorkerRestoreResult } from '@farmslot/protocol';
 import { Methods } from '@farmslot/protocol';
 
 import { gateway } from '../../gateway-client.js';
@@ -80,6 +80,63 @@ export async function resumeSlotViewRun(view: SlotView) {
     await gateway.request(Methods.RUN_RESUME, { runId: view._linkedRun.id });
   } catch (err) {
     console.error('[slot-view] resume failed:', err);
+  }
+}
+
+export async function restoreSlotViewTmuxWorker(view: SlotView) {
+  if (!view.slotId || !view._linkedRun || view._isRecoveryBlocked || view._tmuxRestoreRunning) {
+    return;
+  }
+  view._tmuxRestoreRunning = true;
+  view._tmuxRestoreFeedback = '';
+  view._tmuxRestoreError = '';
+  try {
+    const result = (await gateway.request(Methods.TMUX_WORKER_RESTORE, {
+      slotId: view.slotId,
+      runId: view._linkedRun.id,
+      mode: 'restore-window',
+    })) as TmuxWorkerRestoreResult;
+    const contexts = result.contexts;
+    const restored = contexts.find((ctx) => ctx.status === 'restored-window') ?? contexts[0];
+    view._tmuxRestoreFeedback =
+      restored?.detail ??
+      (result.restored ? 'Worker tmux window restored' : 'Worker tmux state reconciled');
+    await view._refreshLinkedRun(null);
+  } catch (err) {
+    view._tmuxRestoreError = err instanceof Error ? err.message : String(err);
+    console.error('[slot-view] tmux worker restore failed:', err);
+  } finally {
+    view._tmuxRestoreRunning = false;
+  }
+}
+
+export async function reloadSlotViewWorkerSession(view: SlotView) {
+  if (!view.slotId || !view._linkedRun || view._isRecoveryBlocked || view._tmuxRestoreRunning) {
+    return;
+  }
+  view._tmuxRestoreRunning = true;
+  view._tmuxRestoreFeedback = '';
+  view._tmuxRestoreError = '';
+  try {
+    const result = (await gateway.request(Methods.TMUX_WORKER_RESTORE, {
+      slotId: view.slotId,
+      runId: view._linkedRun.id,
+      mode: 'reload-session',
+    })) as TmuxWorkerRestoreResult;
+    const contexts = result.contexts;
+    const reloaded =
+      contexts.find((ctx) => ctx.status === 'reloaded-session') ??
+      contexts.find((ctx) => ctx.status === 'live') ??
+      contexts[0];
+    view._tmuxRestoreFeedback =
+      reloaded?.detail ??
+      (result.restored ? 'Worker session reloaded' : 'Worker session is already live');
+    await view._refreshLinkedRun(null);
+  } catch (err) {
+    view._tmuxRestoreError = err instanceof Error ? err.message : String(err);
+    console.error('[slot-view] worker session reload failed:', err);
+  } finally {
+    view._tmuxRestoreRunning = false;
   }
 }
 

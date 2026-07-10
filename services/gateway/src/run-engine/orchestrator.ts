@@ -13,6 +13,7 @@ import {
   type RunStatus,
 } from '@farmslot/protocol';
 
+import { reconcileRunAgentRuntime } from '../agents/runtime-recovery.js';
 import {
   getProjectField,
   getProjectFieldRaw,
@@ -662,6 +663,9 @@ function buildRecoveryDeps(): RunRecoveryCollaborators {
     setRunFlags,
     resetSlot,
     quarantineLeakedRun,
+    reconcileRunAgentRuntime: async (run) => {
+      await reconcileRunAgentRuntime(run);
+    },
   };
 }
 

@@ -187,13 +187,13 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     requiresBusyComposerPoll: true,
     // Codex tier mapping:
     //   sandboxed  — default; Codex CLI prompts for approvals on destructive ops.
-    //   full-auto  — `--full-auto`: auto-execute without prompts, sandbox boundary intact.
+    //   full-auto  — workspace-write sandbox with approval prompts disabled.
     //   dangerous  — `--dangerously-bypass-approvals-and-sandbox`: bypass sandbox + approvals.
-    // The full-auto flag is what keeps CI/self-review/relaunch flows from stalling
-    // on approval prompts when the project opts into tier='full-auto'.
+    // Keep this as explicit supported flags instead of the removed `--full-auto`
+    // shorthand so fresh launches and session resumes use the same safety tier.
     flagsByTier: {
       sandboxed: [],
-      'full-auto': ['--full-auto'],
+      'full-auto': ['--sandbox', 'workspace-write', '--ask-for-approval', 'never'],
       dangerous: ['--dangerously-bypass-approvals-and-sandbox'],
     },
     // ADR-023 §3: safety tier is a policy decision, not a runner capability.

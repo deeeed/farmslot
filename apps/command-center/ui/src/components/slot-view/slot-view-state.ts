@@ -137,6 +137,9 @@ export abstract class SlotViewState extends LitElement {
   @state() _revealLine = 0;
   @state() _showInlineComments = false;
   @state() _linkedRun: Run | null = null;
+  @state() _tmuxRestoreRunning = false;
+  @state() _tmuxRestoreFeedback = '';
+  @state() _tmuxRestoreError = '';
   @state() _recipeRunnerUiOptions: RecipeRunnerUiOptions = recipeRunnerUiOptions(null);
   @state() _historyOpen = false;
   @state() _historyRunId = '';

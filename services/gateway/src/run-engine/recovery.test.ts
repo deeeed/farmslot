@@ -62,6 +62,88 @@ test('recoverActiveRuns quarantines leaked gateway test runs before orchestratio
   assert.equal(quarantined, true);
 });
 
+test('recoverActiveRuns isolates tmux runtime reconciliation failures', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-1',
+    familyRootTicketOrPr: 'RECOVERY-1',
+    taskFile: '/tmp/farmslot-recovery-1/TASK.md',
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running' }],
+    decisions: [
+      {
+        id: 'decision-1',
+        type: 'engine_human_gate',
+        title: 'Review publish package',
+        description: 'Review publish package',
+        actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+        createdAt: '2026-06-30T14:20:00.000Z',
+      },
+    ],
+  });
+  let reconciled = false;
+  let broadcasted = false;
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
+    }),
+    reconcileRunAgentRuntime: async () => {
+      reconciled = true;
+      throw new Error('tmux probe failed');
+    },
+    updateRun: () => {},
+    broadcast: () => {
+      broadcasted = true;
+    },
+    updateRunStep: () => {},
+    setPrHealthOverlay: () => {},
+    quarantineLeakedRun: async () => {},
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.equal(reconciled, true);
+  assert.equal(broadcasted, true, 'pending decision should still be re-presented');
+});
+
+test('recoverActiveRuns clears stale human-gate running detail while re-presenting decision', async () => {
+  const run = minimalActiveRun({
+    ticketOrPr: 'RECOVERY-2',
+    familyRootTicketOrPr: 'RECOVERY-2',
+    taskFile: '/tmp/farmslot-recovery-2/TASK.md',
+    status: 'blocked',
+    steps: [{ name: 'human-gate', status: 'running', detail: 'Running dispatch cursor review' }],
+    decisions: [
+      {
+        id: 'decision-1',
+        type: 'engine_human_gate',
+        title: 'Review publish package',
+        description: 'Review publish package',
+        actions: [{ id: 'hold', label: 'Hold', style: 'secondary' }],
+        createdAt: '2026-06-30T14:20:00.000Z',
+      },
+    ],
+  });
+  const stepUpdates: Array<Partial<RunStep>> = [];
+  const deps = {
+    listRuns: () => ({ runs: [run] }),
+    loadFleetStatus: async () => ({
+      slots: [{ slot: run.slotId!, lifecycle: 'busy', agent: 'working' }],
+    }),
+    updateRun: () => {},
+    updateRunStep: (_id: string, stepName: string, fields: Partial<RunStep>) => {
+      if (stepName === 'human-gate') stepUpdates.push(fields);
+    },
+    broadcast: () => {},
+    setPrHealthOverlay: () => {},
+    quarantineLeakedRun: async () => {},
+  } as unknown as RunRecoveryCollaborators;
+
+  await recoverActiveRuns(deps);
+
+  assert.deepEqual(stepUpdates, [{ detail: 'Waiting for operator decision' }]);
+});
+
 test('prepareSubstepsShowCompletion recognises a terminal health sub-step', () => {
   const complete = (detail: string): RunStep => ({
     name: 'prepare',
