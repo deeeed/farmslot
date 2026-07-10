@@ -258,6 +258,7 @@ test('summarizeAgentContexts emits an explicit public field allowlist', () => {
       'status',
       'target',
       'taskFile',
+      'updatedAt',
     ].sort(),
   );
   assert.equal('slotId' in summary[0], false);
@@ -409,6 +410,23 @@ test('resolveAgentTarget rejects mismatched explicit target and role selectors',
     () => resolveAgentTarget('runner-browser-1', { target: 'mme-1:ci-fix', contextId: 'review' }),
     /target mme-1:ci-fix belongs to context ci-fix, not review/,
   );
+  await assert.rejects(
+    () =>
+      resolveAgentTarget('runner-browser-1', {
+        target: 'mme-1:bugfix',
+        contextId: 'bugfix',
+      }),
+    /target mme-1:bugfix belongs to context fix-bug, not bugfix/,
+  );
+  await assert.rejects(
+    () =>
+      resolveAgentTarget('runner-browser-1', {
+        target: 'mme-1:rev-claude',
+        contextId: 'rev-codex',
+        role: 'self-review',
+      }),
+    /target mme-1:rev-claude belongs to context rev-claude, not rev-codex/,
+  );
 });
 
 test('resolveAgentTarget refuses ambiguous active runs for explicit non-primary roles', async (t) => {
@@ -523,6 +541,57 @@ test('resolveAgentTarget falls back to bare session for persisted contexts witho
       session: 'mme-1',
       role: 'fix-bug',
       contextId: 'fix-bug',
+    },
+  );
+});
+
+test('upsertAgentContext keeps multiple reviewer contexts independently selectable', async (t) => {
+  const run = createRun({
+    flowType: 'fix-bug',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-reviewers`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+
+  await upsertAgentContext(run.id, 'self-review', {
+    id: 'rev-codex',
+    label: 'rev-codex (gpt-5)',
+    status: 'working',
+    runner: 'codex',
+    model: 'gpt-5',
+    target: { session: 'mme-1', window: 'rev-codex', target: 'mme-1:rev-codex' },
+  });
+  await upsertAgentContext(run.id, 'self-review', {
+    id: 'rev-claude',
+    label: 'rev-claude (opus)',
+    status: 'working',
+    runner: 'claude',
+    model: 'opus',
+    target: { session: 'mme-1', window: 'rev-claude', target: 'mme-1:rev-claude' },
+  });
+
+  const updated = updateRun(run.id, {});
+  const reviewerIds = updated.agentContexts
+    ?.filter((ctx) => ctx.role === 'self-review')
+    .map((ctx) => ctx.id)
+    .sort();
+  assert.deepEqual(reviewerIds, ['rev-claude', 'rev-codex']);
+  assert.equal(selectAgentContext(updated, { contextId: 'rev-codex' })?.runner, 'codex');
+  assert.equal(selectAgentContext(updated, { contextId: 'rev-claude' })?.runner, 'claude');
+  assert.equal(selectAgentContext(updated, { role: 'self-review' })?.id, 'rev-claude');
+
+  assert.deepEqual(
+    await resolveAgentTarget('runner-browser-1', {
+      runId: run.id,
+      contextId: 'rev-codex',
+      role: 'self-review',
+    }),
+    {
+      target: 'mme-1:rev-codex',
+      session: 'mme-1',
+      role: 'self-review',
+      contextId: 'rev-codex',
     },
   );
 });

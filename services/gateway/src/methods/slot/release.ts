@@ -6,6 +6,7 @@ import {
   type AgentRole,
   agentRoleWindow,
   DEFAULT_BRANCH,
+  isReviewerWindowName,
   SLOT_DESTRUCTIVE_OPS,
   type SlotReleaseParams,
 } from '@farmslot/protocol';
@@ -518,8 +519,12 @@ export async function killAllAgentWindows(
       .filter((name): name is string => Boolean(name))
       .filter((name) => !excluded.has(name)),
   );
-  const maxKillAttempts = AGENT_ROLES.length + 2;
-  for (let attempt = 1; attempt <= maxKillAttempts; attempt += 1) {
+  const shouldKillWindow = (name: string | undefined): boolean =>
+    shouldKillAgentWindowName(name, { roleWindowNames, excluded });
+  let previousMatchSignature: string | null = null;
+  let killAttempts = 0;
+  let maxObservedWindows = 0;
+  while (true) {
     const listed = await execOnSlot(
       vars,
       tmuxShellSnippet(
@@ -537,23 +542,47 @@ export async function killAllAgentWindows(
         const [index, name] = line.split('\t', 2);
         return { index, name };
       });
-    const roleWindow = windows.find(
-      (window) => window.index && window.name && roleWindowNames.has(window.name),
-    );
-    if (!roleWindow) return;
+    maxObservedWindows = Math.max(maxObservedWindows, windows.length);
+    const roleWindows = windows
+      .filter((window) => window.index && window.name && shouldKillWindow(window.name))
+      .sort((a, b) => Number(b.index) - Number(a.index));
+    if (roleWindows.length === 0) return;
 
-    const target = `${session}:${roleWindow.index}`;
-    const command = buildKillRoleWindowCommand(session, target, windows.length, vars.remoteRepo);
-    const killed = await execOnSlot(vars, tmuxShellSnippet(command), { timeout: TMUX_CMD_TIMEOUT });
-    if (killed.exitCode !== 0) {
+    const matchSignature = roleWindows.map((window) => `${window.index}:${window.name}`).join('|');
+    if (matchSignature === previousMatchSignature) {
       throw new Error(
-        `Failed to kill tmux role window ${target}: ${killed.stderr || killed.stdout || `exit ${killed.exitCode}`}`,
+        `Tmux role window cleanup is not converging for session ${session}; still matched ${matchSignature}`,
       );
     }
+    previousMatchSignature = matchSignature;
+
+    for (const roleWindow of roleWindows) {
+      killAttempts += 1;
+      if (killAttempts > Math.max(1, maxObservedWindows) * 2) {
+        throw new Error(
+          `Tmux role window cleanup exceeded ${killAttempts - 1} kill attempts for session ${session}; windows may be respawning`,
+        );
+      }
+      const target = `${session}:${roleWindow.index}`;
+      const command = buildKillRoleWindowCommand(session, target, windows.length, vars.remoteRepo);
+      const killed = await execOnSlot(vars, tmuxShellSnippet(command), {
+        timeout: TMUX_CMD_TIMEOUT,
+      });
+      if (killed.exitCode !== 0) {
+        throw new Error(
+          `Failed to kill tmux role window ${target}: ${killed.stderr || killed.stdout || `exit ${killed.exitCode}`}`,
+        );
+      }
+    }
   }
-  throw new Error(
-    `Exceeded ${maxKillAttempts} attempts to kill tmux role windows for session ${session}; role windows may be respawning`,
-  );
+}
+
+export function shouldKillAgentWindowName(
+  name: string | undefined,
+  opts: { roleWindowNames: ReadonlySet<string>; excluded?: ReadonlySet<string> },
+): boolean {
+  if (!name || opts.excluded?.has(name)) return false;
+  return opts.roleWindowNames.has(name) || isReviewerWindowName(name);
 }
 
 export function buildKillRoleWindowCommand(

@@ -3,7 +3,7 @@
 import path from 'node:path';
 
 import {
-  agentRoleWindow,
+  allocateReviewerContext,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
   type ReviewLoopTimelineSegment,
@@ -41,9 +41,9 @@ import {
 } from '../runtime/session-usage.js';
 import {
   restoreWorkerChecklistTargetFromSlot,
-  SELF_REVIEW_CHECKLIST_TARGET,
   slotTaskRelPath,
-  syncChecklistTargetForRole,
+  syncChecklistMarkerOnSlot,
+  targetForChecklistBasename,
   taskDirRelPath,
 } from '../tasks/checklist-target.js';
 import { unwatchContext, watchContext } from '../tasks/watcher.js';
@@ -65,21 +65,46 @@ import {
 } from './snapshots.js';
 import { expandSelfReviewTemplate } from './templates.js';
 
-const REVIEW_WINDOW = agentRoleWindow('self-review') ?? 'self-review';
-
 /** Progress mark writes status "running"; only terminal worker signals count as done. */
 export function parseTerminalSelfReviewSignal(raw: string) {
   return terminalWorkerSignalFromRaw(raw);
 }
 
-function selfReviewChecklistMarkPrompt(taskDir: string, taskMdPath: string): string {
+export const LEGACY_REVIEW_FEEDBACK_REL_PATH = 'artifacts/review-feedback.md';
+const LEGACY_REVIEW_FEEDBACK_PATH_PATTERN =
+  /(^|[^\w./-])((?:artifacts\/)?review-feedback\.md)(?![\w./-])/g;
+
+export function selfReviewChecklistMarkPrompt(
+  taskDir: string,
+  taskMdPath: string,
+  reviewTarget: { checklist: string; signal: string },
+  feedbackRelPath: string,
+): string {
   const mark = `${taskDir}/mark`;
+  const markWithTarget = `${mark} --checklist ${reviewTarget.checklist} --signal ${reviewTarget.signal}`;
   return (
-    `Follow ${taskMdPath} top-to-bottom. After EVERY checklist step run ${mark} N ` +
-    `(bootstrap with ${mark} start — same path as the checklist header). ` +
-    `Skipping ${mark} leaves the run at 0/N in the UI. ` +
-    `Write ${taskDir}/artifacts/review-feedback.md, then ${mark} complete.`
+    `Follow ${taskMdPath} top-to-bottom. After EVERY checklist step run ${markWithTarget} N ` +
+    `(bootstrap with ${markWithTarget} start — same path as the checklist header). ` +
+    `Skipping ${markWithTarget} leaves the run at 0/N in the UI. ` +
+    `Write ${taskDir}/${feedbackRelPath}, then ${markWithTarget} complete.`
   );
+}
+
+export function reviewerChecklistBasename(contextId: string): string {
+  return `SELF-REVIEW.${contextId}.md`;
+}
+
+export function reviewerFeedbackRelPath(contextId: string): string {
+  return `artifacts/review-feedback.${contextId}.md`;
+}
+
+export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
+  const scoped = template.replace(
+    LEGACY_REVIEW_FEEDBACK_PATH_PATTERN,
+    (_match, prefix: string) => `${prefix}${feedbackRelPath}`,
+  );
+  if (scoped !== template) return scoped;
+  return `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
 }
 
 // Exported for self-review.test.ts to seed runSelfReviewRetryLoop fixtures. Not part of the
@@ -124,31 +149,46 @@ export async function runReviewAgent(
     runnerSessionId: null,
     error: sessionFilesBefore.error,
   };
+  const parentRunForAlloc = getRun(_runId);
+  const allocated = allocateReviewerContext({
+    runId: _runId,
+    runner,
+    model,
+    existing: parentRunForAlloc?.agentContexts ?? [],
+    // Fresh numbered tabs when the same runner already has a tab on this run
+    // (warm reuse is a later session-mode slice; launch still needs a live pane).
+    mode: 'fresh',
+  });
+  const reviewWindow = allocated.windowName;
+  const reviewChecklistTarget = targetForChecklistBasename(reviewerChecklistBasename(allocated.id));
+  const feedbackRelPath = reviewerFeedbackRelPath(allocated.id);
   let reviewContext = await upsertAgentContext(_runId, 'self-review', {
+    id: allocated.id,
+    label: allocated.label,
     status: 'launching',
-    taskFile: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.checklist),
-    signalFile: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
+    taskFile: taskDirRelPath(taskDir, reviewChecklistTarget.checklist),
+    signalFile: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
     runner,
     model,
     target: null,
   });
 
   try {
-    // 1. Kill any existing review window
-    await killSelfReviewWindow(vars, session, 'pre-launch cleanup');
+    // 1. Kill only this reviewer tab before relaunch (other same-run reviewers stay).
+    await killSelfReviewWindow(vars, session, 'pre-launch cleanup', reviewWindow);
 
     // 1b. Clear prior-pass artifacts so waitForReviewCompletion / readReviewFeedback
     // can't short-circuit on stale files (caused retry verdict to mirror pass 1).
     await removeSlotFiles(vars, [
-      `${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md`,
-      slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
+      `${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`,
+      slotTaskRelPath(vars, taskDir, reviewChecklistTarget.signal),
     ]);
 
-    // 2. Create new window in same session
+    // 2. Create new window in same session with a short operator-addressable name.
     const newWinResult = await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `new-window -t ${shellQuote(session)} -n ${shellQuote(REVIEW_WINDOW)} -d 2>&1`,
+        `new-window -t ${shellQuote(session)} -n ${shellQuote(reviewWindow)} -d 2>&1`,
       ),
     );
     debugSelfReviewLog(
@@ -156,20 +196,24 @@ export async function runReviewAgent(
     );
     if (newWinResult.exitCode !== 0) {
       throw new Error(
-        `Failed to create self-review tmux window ${session}:${REVIEW_WINDOW}: ${newWinResult.stderr || newWinResult.stdout || `exit ${newWinResult.exitCode}`}`,
+        `Failed to create self-review tmux window ${session}:${reviewWindow}: ${newWinResult.stderr || newWinResult.stdout || `exit ${newWinResult.exitCode}`}`,
       );
     }
     reviewContext =
       (await upsertAgentContext(_runId, 'self-review', {
+        id: allocated.id,
+        label: allocated.label,
+        runner,
+        model,
         target: {
           session,
-          window: REVIEW_WINDOW,
+          window: reviewWindow,
           pane: null,
-          target: `${session}:${REVIEW_WINDOW}`,
+          target: `${session}:${reviewWindow}`,
         },
       })) ?? reviewContext;
     await new Promise((r) => setTimeout(r, 500));
-    await ensureTmuxWindowMinimumSize(vars, `${session}:${REVIEW_WINDOW}`);
+    await ensureTmuxWindowMinimumSize(vars, `${session}:${reviewWindow}`);
 
     // Log active windows so we can see what's in the session
     const winList = (
@@ -181,21 +225,29 @@ export async function runReviewAgent(
     // non-interactive runners (e.g. Codex) can read it immediately.
     // The template is in projects/<project>/templates/worker/self-review.md with {{VAR}} placeholders.
     // Long multiline prompts get bracketed-pasted by tmux — so we write to a file.
-    const taskMdPath = taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.checklist);
-    const expandedTemplate = await expandSelfReviewTemplate(vars, taskDir, _runId, validationDepth);
+    const taskMdPath = taskDirRelPath(taskDir, reviewChecklistTarget.checklist);
+    const expandedTemplate = scopeReviewFeedbackPath(
+      await expandSelfReviewTemplate(vars, taskDir, _runId, validationDepth),
+      feedbackRelPath,
+    );
     await writeTextFileOnSlot(vars, taskMdPath, expandedTemplate);
-    await syncChecklistTargetForRole(vars, taskDir, 'self-review');
+    await syncChecklistMarkerOnSlot(vars, taskDir);
 
-    // Mark SELF-REVIEW.md as the active task file for progress tracking
+    // Mark the reviewer-specific checklist as the active task file for progress tracking.
     updateRun(_runId, { activeTaskFile: taskMdPath });
     activeTaskSet = true;
     if (reviewContext) await watchContext(vars.slotId, reviewContext);
 
     // Interactive runners receive a short prompt after the TUI is ready; the
-    // detailed instructions live in SELF-REVIEW.md. Exec runners bake a
+    // detailed instructions live in the reviewer checklist. Exec runners bake a
     // self-contained prompt into their launch command.
     const parentRun = getRun(_runId);
-    const markPrompt = selfReviewChecklistMarkPrompt(taskDir, taskMdPath);
+    const markPrompt = selfReviewChecklistMarkPrompt(
+      taskDir,
+      taskMdPath,
+      reviewChecklistTarget,
+      feedbackRelPath,
+    );
     const taskPrompt = runnerNeedsPostLaunchPrompt(runner)
       ? `${await resolveWorkerDispatchPrompt(parentRun?.project ?? vars.projectName, {
           taskFile: taskMdPath,
@@ -214,7 +266,7 @@ export async function runReviewAgent(
       runtimeDir,
     });
     launchCmd = `${WORKER_ENV_PREFIX} && ${launchCmd}`;
-    const reviewTarget = `${session}:${REVIEW_WINDOW}`;
+    const reviewTarget = `${session}:${reviewWindow}`;
     const handoffAckSinceMs = Date.now();
     debugSelfReviewLog(`[self-review] launching (${runner}) via respawn-window: ${launchCmd}`);
     await respawnTmuxWindowWithCommand(vars, reviewTarget, launchCmd);
@@ -228,6 +280,8 @@ export async function runReviewAgent(
     );
     reviewContext =
       (await upsertAgentContext(_runId, 'self-review', {
+        id: allocated.id,
+        label: allocated.label,
         status: 'working',
         runnerSessionId: sessionMeta.runnerSessionId,
         runnerSessionPath: sessionMeta.runnerSessionPath,
@@ -243,14 +297,15 @@ export async function runReviewAgent(
           reviewTarget,
           runner,
           taskPrompt,
-          'SELF-REVIEW.md',
+          reviewChecklistTarget.checklist,
           'self-review',
           {
             readyTimeoutMs: RUNNER_LAUNCH_READY_TIMEOUT_MS,
             maxAttempts: 5,
             blockerSnapshotPath: `${taskDir}/artifacts/runner-blockers/self-review-launch.txt`,
-            signalPath: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
-            launchAckSignalPath: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
+            signalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+            launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
+            requirePromptDigest: true,
             handoffAckSinceMs,
             softAcceptOnHandoffAck: true,
           },
@@ -262,8 +317,9 @@ export async function runReviewAgent(
           taskPrompt,
           handoffAckSinceMs,
           {
-            launchAckSignalPath: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
+            launchAckSignalPath: taskDirRelPath(taskDir, reviewChecklistTarget.signal),
             preferHooks: true,
+            requirePromptDigest: true,
           },
         );
         if (!handoff.accepted) throw err;
@@ -273,9 +329,12 @@ export async function runReviewAgent(
       }
     }
 
-    // 6. Watch SELF-REVIEW.md for progress + wait for completion
-    const selfReviewPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.checklist);
-    progressWatcher = startProgressWatcher(vars, selfReviewPath, _runId);
+    // 6. Watch the reviewer-specific checklist for progress + wait for completion
+    const selfReviewPath = slotTaskRelPath(vars, taskDir, reviewChecklistTarget.checklist);
+    progressWatcher = startProgressWatcher(vars, selfReviewPath, _runId, 'Review', {
+      contextId: allocated.id,
+      role: 'self-review',
+    });
     const completed = await waitForReviewCompletion(
       vars,
       session,
@@ -283,6 +342,10 @@ export async function runReviewAgent(
       reviewTimeoutMs,
       _runId,
       runner,
+      reviewWindow,
+      allocated.id,
+      reviewChecklistTarget.signal,
+      feedbackRelPath,
     );
     if (!completed) {
       throw new Error(
@@ -305,8 +368,8 @@ export async function runReviewAgent(
           runnerSessionPath: sessionMeta.runnerSessionPath,
         });
 
-    // 7. Read review-feedback.md
-    const feedback = await readReviewFeedback(vars, taskDir);
+    // 7. Read reviewer-specific feedback.
+    const feedback = await readReviewFeedback(vars, taskDir, feedbackRelPath);
     if (feedback.incomplete) {
       return {
         ...feedback,
@@ -333,7 +396,7 @@ export async function runReviewAgent(
     persistedArtifacts.push(taskProgressRel);
 
     const signalRel = `${artifactDir}/self-review-signal.json`;
-    const liveSignalPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal);
+    const liveSignalPath = slotTaskRelPath(vars, taskDir, reviewChecklistTarget.signal);
     const signalCopy = await execOnSlot(
       vars,
       `if [ -f ${shellQuote(liveSignalPath)} ]; then cp ${shellQuote(liveSignalPath)} ${shellQuote(`${vars.remoteRepo}/${taskDir}/${signalRel}`)} && echo copied; fi`,
@@ -348,7 +411,7 @@ export async function runReviewAgent(
 
     if (!feedback.incomplete) {
       const feedbackRel = `${artifactDir}/review-feedback.md`;
-      const feedbackSrc = `${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md`;
+      const feedbackSrc = `${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`;
       const feedbackDest = `${vars.remoteRepo}/${taskDir}/${feedbackRel}`;
       const feedbackCopy = await execOnSlot(
         vars,
@@ -389,6 +452,7 @@ export async function runReviewAgent(
     };
   } catch (err) {
     await markAgentContextStatus(_runId, 'self-review', 'failed', {
+      id: allocated.id,
       lastSignalAt: new Date().toISOString(),
     });
     throw err;
@@ -398,7 +462,7 @@ export async function runReviewAgent(
     // propagates intact to the run-engine catch. Keep failed review panes alive for
     // forensics/manual recovery; only successful review agents are torn down.
     try {
-      await unwatchContext(vars.slotId, 'self-review');
+      await unwatchContext(vars.slotId, allocated.id);
     } catch (cleanupErr) {
       console.warn(`[self-review] cleanup unwatchContext failed: ${(cleanupErr as Error).message}`);
     }
@@ -408,7 +472,7 @@ export async function runReviewAgent(
     }
     if (completedSuccessfully) {
       try {
-        await killSelfReviewWindow(vars, session, 'post-run cleanup');
+        await killSelfReviewWindow(vars, session, 'post-run cleanup', reviewWindow);
       } catch (cleanupErr) {
         console.warn(`[self-review] cleanup killWindow failed: ${(cleanupErr as Error).message}`);
       }
@@ -423,6 +487,10 @@ async function waitForReviewCompletion(
   timeoutMs: number,
   runId: string,
   runner: string,
+  reviewWindow: string,
+  reviewContextId: string,
+  signalBasename: string,
+  feedbackRelPath: string,
 ): Promise<boolean> {
   const start = Date.now();
   const pollInterval = 10_000; // 10s
@@ -436,7 +504,7 @@ async function waitForReviewCompletion(
         await execOnSlot(
           vars,
           tmuxShellSnippet(
-            `list-windows -t ${shellQuote(session)} -F '#{window_name}' 2>/dev/null | grep -q '${REVIEW_WINDOW}'`,
+            `list-windows -t ${shellQuote(session)} -F '#{window_name}' 2>/dev/null | grep -Fxq ${shellQuote(reviewWindow)}`,
           ),
         )
       ).exitCode === 0;
@@ -446,12 +514,13 @@ async function waitForReviewCompletion(
       const hasFeedback = (
         await execOnSlot(
           vars,
-          `test -f '${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md' && echo yes`,
+          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
         )
       ).stdout.trim();
       if (hasFeedback === 'yes') {
         debugSelfReviewLog(`[self-review] review window gone + feedback written — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
+          id: reviewContextId,
           lastSignalAt: new Date().toISOString(),
         });
         return true;
@@ -467,7 +536,7 @@ async function waitForReviewCompletion(
       await execOnSlot(
         vars,
         tmuxShellSnippet(
-          `list-panes -t ${shellQuote(`${session}:${REVIEW_WINDOW}`)} -F '#{pane_pid}' 2>/dev/null | head -1`,
+          `list-panes -t ${shellQuote(`${session}:${reviewWindow}`)} -F '#{pane_pid}' 2>/dev/null | head -1`,
         ),
       )
     ).stdout.trim();
@@ -481,7 +550,7 @@ async function waitForReviewCompletion(
         const hasFeedback = (
           await execOnSlot(
             vars,
-            `test -f '${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md' && echo yes`,
+            `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
           )
         ).stdout.trim();
         if (hasFeedback === 'yes') {
@@ -489,6 +558,7 @@ async function waitForReviewCompletion(
             `[self-review] ${runner} process exited + feedback written — agent completed`,
           );
           await markAgentContextStatus(runId, 'self-review', 'complete', {
+            id: reviewContextId,
             lastSignalAt: new Date().toISOString(),
           });
           return true;
@@ -499,11 +569,11 @@ async function waitForReviewCompletion(
       }
     }
 
-    // Terminal SELF-REVIEW-SIGNAL.json (complete/blocked/failed) plus feedback artifact.
+    // Terminal reviewer signal (complete/blocked/failed) plus feedback artifact.
     const signalRaw = (
       await execOnSlot(
         vars,
-        `cat '${slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal)}' 2>/dev/null`,
+        `cat ${shellQuote(slotTaskRelPath(vars, taskDir, signalBasename))} 2>/dev/null`,
       )
     ).stdout.trim();
     let terminalSignal: ReturnType<typeof parseTerminalSelfReviewSignal> | undefined;
@@ -511,27 +581,28 @@ async function waitForReviewCompletion(
       terminalSignal = parseTerminalSelfReviewSignal(signalRaw);
     } catch (err) {
       debugSelfReviewLog(
-        `[self-review] ignoring invalid ${SELF_REVIEW_CHECKLIST_TARGET.signal} during poll: ${(err as Error).message}`,
+        `[self-review] ignoring invalid ${signalBasename} during poll: ${(err as Error).message}`,
       );
     }
     if (terminalSignal) {
       const hasFeedback = (
         await execOnSlot(
           vars,
-          `test -f '${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md' && echo yes`,
+          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
         )
       ).stdout.trim();
       if (hasFeedback === 'yes') {
         debugSelfReviewLog(
-          `[self-review] terminal ${SELF_REVIEW_CHECKLIST_TARGET.signal} (status=${terminalSignal.status}) + feedback — agent completed`,
+          `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) + feedback — agent completed`,
         );
         await markAgentContextStatus(runId, 'self-review', 'complete', {
+          id: reviewContextId,
           lastSignalAt: new Date().toISOString(),
         });
         return true;
       }
       debugSelfReviewLog(
-        `[self-review] terminal ${SELF_REVIEW_CHECKLIST_TARGET.signal} (status=${terminalSignal.status}) but review-feedback.md missing — continuing poll`,
+        `[self-review] terminal ${signalBasename} (status=${terminalSignal.status}) but ${feedbackRelPath} missing — continuing poll`,
       );
     }
 
@@ -540,7 +611,7 @@ async function waitForReviewCompletion(
       await execOnSlot(
         vars,
         tmuxShellSnippet(
-          `capture-pane -p -t ${shellQuote(`${session}:${REVIEW_WINDOW}`)} 2>/dev/null | tail -5`,
+          `capture-pane -p -t ${shellQuote(`${session}:${reviewWindow}`)} 2>/dev/null | tail -5`,
         ),
       )
     ).stdout;
@@ -553,16 +624,17 @@ async function waitForReviewCompletion(
       !pane.includes('Searching') &&
       !pane.includes('Reading')
     ) {
-      // Double-check: review-feedback.md exists = work is done
+      // Double-check: the reviewer-specific feedback file exists = work is done.
       const hasFeedback = (
         await execOnSlot(
           vars,
-          `test -f '${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md' && echo yes`,
+          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
         )
       ).stdout.trim();
       if (hasFeedback === 'yes') {
         debugSelfReviewLog(`[self-review] idle prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
+          id: reviewContextId,
           lastSignalAt: new Date().toISOString(),
         });
         return true;
@@ -574,12 +646,13 @@ async function waitForReviewCompletion(
       const hasFeedback = (
         await execOnSlot(
           vars,
-          `test -f '${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md' && echo yes`,
+          `test -f ${shellQuote(`${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`)} && echo yes`,
         )
       ).stdout.trim();
       if (hasFeedback === 'yes') {
         debugSelfReviewLog(`[self-review] shell prompt + feedback file — agent completed`);
         await markAgentContextStatus(runId, 'self-review', 'complete', {
+          id: reviewContextId,
           lastSignalAt: new Date().toISOString(),
         });
         return true;

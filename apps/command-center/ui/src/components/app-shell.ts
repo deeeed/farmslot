@@ -373,6 +373,8 @@ export class FarmApp extends LitElement {
   }
 
   private maybeOpenWhatsNew(force = false) {
+    // Dev harness routes must stay unobstructed for recipe/CDP proof screenshots.
+    if (!force && location.hash.startsWith('#dev/')) return;
     const notes = COMMAND_CENTER_RELEASE_NOTES;
     if (!notes.items.length) return;
     const seenVersion = localStorage.getItem(WHATS_NEW_SEEN_VERSION_KEY);

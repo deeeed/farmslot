@@ -26,6 +26,7 @@ let promptAcceptedReading: ObservabilityReading<boolean> | null = {
 const callOrder: string[] = [];
 let paneText = '❯\nctx:12%\n';
 let paneCaptureCount = 0;
+let handoffRequirePromptDigestValues: Array<boolean | undefined> = [];
 
 mock.module('./claude-observability.js', {
   namedExports: {
@@ -64,6 +65,9 @@ mock.module('../core/exec.js', {
         }
         return { exitCode: 0, stdout: paneText, stderr: '' };
       }
+      if (cmd.includes('list-windows')) {
+        return { exitCode: 0, stdout: '1 rev-codex\n2 self-review\n3 dev\n', stderr: '' };
+      }
       if (cmd.includes('send-keys') || cmd.includes('send-text')) {
         callOrder.push('tmux:send');
         return { exitCode: 0, stdout: '', stderr: '' };
@@ -80,7 +84,23 @@ mock.module('../core/exec.js', {
   },
 });
 
-const { sendRunnerInstructionSafely } = await import('./registry.js');
+mock.module('./prompt-delivery-evidence.js', {
+  namedExports: {
+    probeRunnerHandoffAck: async (
+      _slotVars: SlotVars,
+      _target: string,
+      _message: string,
+      _sinceMs: number,
+      opts: { requirePromptDigest?: boolean } = {},
+    ) => {
+      handoffRequirePromptDigestValues.push(opts.requirePromptDigest);
+      return { accepted: false, reason: 'mocked handoff miss' };
+    },
+  },
+});
+
+const { resolvePrimaryWorkerTarget, sendRunnerInstructionSafely, sendRunnerPostLaunchPrompt } =
+  await import('./registry.js');
 
 test('sendRunnerInstructionSafely consults observability before pane on hook-authoritative idle', async () => {
   callOrder.length = 0;
@@ -121,6 +141,53 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
   );
 });
 
+test('resolvePrimaryWorkerTarget skips reviewer windows when falling back to session scan', async () => {
+  const workerTarget = await resolvePrimaryWorkerTarget(vars);
+  assert.equal(workerTarget, 'test-1:3');
+});
+
+test('sendRunnerPostLaunchPrompt only requires prompt digest when caller opts in', async () => {
+  handoffRequirePromptDigestValues = [];
+  paneCaptureCount = 0;
+  paneText = '❯\nctx:12%\n';
+  promptAcceptedReading = {
+    value: true,
+    source: 'hook',
+    confidence: 'high',
+    observedAt: Date.now(),
+  };
+
+  await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'TASK.md', '[test]', {
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 0,
+    verifyWaitMs: 0,
+    maxAttempts: 1,
+  });
+
+  assert.ok(
+    handoffRequirePromptDigestValues.every((value) => value !== true),
+    `dispatch-style sends must not require digest by default: ${handoffRequirePromptDigestValues.join(',')}`,
+  );
+
+  handoffRequirePromptDigestValues = [];
+  paneCaptureCount = 0;
+
+  await sendRunnerPostLaunchPrompt(vars, target, 'claude', message, 'SELF-REVIEW.md', '[test]', {
+    readyTimeoutMs: 100,
+    stabilityPolls: 1,
+    pollIntervalMs: 0,
+    verifyWaitMs: 0,
+    maxAttempts: 1,
+    requirePromptDigest: true,
+  });
+
+  assert.ok(
+    handoffRequirePromptDigestValues.some((value) => value === true),
+    'self-review sends can require prompt digest explicitly',
+  );
+});
+
 test('sendRunnerInstructionSafely skips pane busy scrape when hook reports composing', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
@@ -137,15 +204,9 @@ test('sendRunnerInstructionSafely skips pane busy scrape when hook reports compo
     observedAt: Date.now(),
   };
 
-  const sent = await sendRunnerInstructionSafely(
-    vars,
-    target,
-    'codex',
-    message,
-    '[test]',
-    50,
-    { forceBusyPoll: true },
-  );
+  const sent = await sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 50, {
+    forceBusyPoll: true,
+  });
 
   assert.equal(sent, false);
   assert.ok(callOrder.includes('obs:promptAccepted'));

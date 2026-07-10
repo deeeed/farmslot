@@ -15,6 +15,11 @@
       "import": "./dist/agents/roles.js",
       "default": "./dist/agents/roles.js"
     },
+    "./agents/reviewer-context": {
+      "types": "./dist/agents/reviewer-context.d.ts",
+      "import": "./dist/agents/reviewer-context.js",
+      "default": "./dist/agents/reviewer-context.js"
+    },
     "./checklist-target": {
       "types": "./dist/checklist-target.d.ts",
       "import": "./dist/checklist-target.js",

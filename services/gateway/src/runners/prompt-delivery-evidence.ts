@@ -55,9 +55,10 @@ export async function probeRunnerHandoffAck(
     paneId?: string | null;
     launchAckSignalPath?: string | null;
     preferHooks?: boolean;
+    requirePromptDigest?: boolean;
   } = {},
 ): Promise<RunnerHandoffAckProbe> {
-  if (opts.launchAckSignalPath) {
+  if (opts.launchAckSignalPath && !opts.requirePromptDigest) {
     const launchAck = await readLaunchAckSignalSince(vars, opts.launchAckSignalPath, sinceMs);
     if (launchAck) {
       return {
@@ -86,6 +87,9 @@ export async function probeRunnerHandoffAck(
         : 'hook prompt digest matched',
       source: digestReading.confidence === 'high' ? 'hook-digest' : 'hook-turn',
     };
+  }
+  if (opts.requirePromptDigest) {
+    return { accepted: false, reason: 'prompt digest did not match handoff evidence' };
   }
 
   const turnReading = promptTurnStartedFromHooks(hooks, sinceMs, paneId);

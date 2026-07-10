@@ -1,16 +1,19 @@
 import {
-  AGENT_ROLES,
   type AgentContext,
   type AgentContextSelector,
   type AgentContextStatus,
   type AgentContextSummary,
   agentContextTaskFile,
   type AgentRole,
+  agentRoleForWindowName,
   agentRoleLabel,
   agentRoleWindow,
   contextIdFor,
+  isReviewerAgentRole,
+  isReviewerWindowName,
   primaryRoleForFlow,
   type Run,
+  selectLatestReviewerContext,
   signalFileForTask,
 } from '@farmslot/protocol';
 
@@ -47,6 +50,7 @@ export function summarizeAgentContexts(run: Pick<Run, 'agentContexts'>): AgentCo
       nudgeCount,
       ctxPct,
       lastSignalAt,
+      updatedAt,
     } = ctx;
     return {
       id,
@@ -62,6 +66,7 @@ export function summarizeAgentContexts(run: Pick<Run, 'agentContexts'>): AgentCo
       nudgeCount,
       ctxPct,
       lastSignalAt,
+      updatedAt,
     };
   });
 }
@@ -99,8 +104,16 @@ export function selectAgentContext(run: Run, selector?: AgentContextSelector): A
   if (selector?.contextId) {
     return contexts.find((ctx) => ctx.id === selector.contextId) ?? null;
   }
-  // Explicit non-primary role: exact match only
+  // Explicit non-primary role: exact match only. For self-review / reviewer tabs,
+  // prefer the latest reviewer when multiple coexist on the same run.
   if (selector?.role && selector.role !== 'primary') {
+    if (isReviewerAgentRole(selector.role)) {
+      return (
+        selectLatestReviewerContext(contexts) ??
+        contexts.find((ctx) => ctx.role === selector.role) ??
+        null
+      );
+    }
     return contexts.find((ctx) => ctx.role === selector.role) ?? null;
   }
   // No selector, or selector.role === 'primary': resolve the flow's primary role
@@ -120,11 +133,7 @@ function targetWindowName(target: string): string | null {
 }
 
 function roleForWindowName(windowName: string | null): AgentRole | null {
-  if (!windowName) return null;
-  for (const role of AGENT_ROLES.filter((candidate) => candidate !== 'primary')) {
-    if (agentRoleWindow(role) === windowName) return role;
-  }
-  return null;
+  return agentRoleForWindowName(windowName);
 }
 
 // Rate-limit per-slot warnings so an ambiguous slot stuck across many monitor
@@ -140,17 +149,34 @@ function rateLimitedWarn(slotId: string, message: string): void {
 }
 
 function assertSelectorTargetMatchesRole(selector: AgentContextSelector): void {
-  if (selector.contextId && selector.role && selector.contextId !== contextIdFor(selector.role)) {
-    throw new Error(
-      `Agent target selector mismatch: context ${selector.contextId} does not match role ${selector.role}`,
-    );
+  if (selector.contextId && selector.role) {
+    const roleMatchesCanonical = selector.contextId === contextIdFor(selector.role);
+    const reviewerOk =
+      isReviewerAgentRole(selector.role) &&
+      (selector.contextId.startsWith('rev-') ||
+        /^rev\d+-/.test(selector.contextId) ||
+        selector.contextId === contextIdFor('self-review'));
+    if (!roleMatchesCanonical && !reviewerOk) {
+      throw new Error(
+        `Agent target selector mismatch: context ${selector.contextId} does not match role ${selector.role}`,
+      );
+    }
   }
   if (!selector.target?.trim()) return;
-  const windowRole = roleForWindowName(targetWindowName(selector.target.trim()));
-  if (windowRole && selector.contextId && selector.contextId !== contextIdFor(windowRole)) {
-    throw new Error(
-      `Agent target selector mismatch: target ${selector.target.trim()} belongs to context ${contextIdFor(windowRole)}, not ${selector.contextId}`,
-    );
+  const windowName = targetWindowName(selector.target.trim());
+  const windowRole = roleForWindowName(windowName);
+  if (windowRole && selector.contextId) {
+    const contextMatchesWindow = isReviewerWindowName(windowName)
+      ? selector.contextId === windowName
+      : selector.contextId === contextIdFor(windowRole);
+    if (!contextMatchesWindow) {
+      const expectedContext = isReviewerWindowName(windowName)
+        ? windowName
+        : contextIdFor(windowRole);
+      throw new Error(
+        `Agent target selector mismatch: target ${selector.target.trim()} belongs to context ${expectedContext}, not ${selector.contextId}`,
+      );
+    }
   }
   if (!selector.role || selector.role === 'primary') return;
   if (windowRole && windowRole !== selector.role) {
@@ -254,8 +280,10 @@ export async function upsertAgentContext(
     const now = new Date().toISOString();
     let nextContext: AgentContext;
     const updated = updateRunAgentContexts(runId, (currentRun, currentContexts) => {
-      const contexts = currentContexts.filter((ctx) => ctx.id !== contextIdFor(role));
-      const existing = currentContexts.find((ctx) => ctx.id === contextIdFor(role));
+      const explicitId = typeof patch.id === 'string' && patch.id.trim() ? patch.id.trim() : null;
+      const identityId = explicitId ?? contextIdFor(role);
+      const contexts = currentContexts.filter((ctx) => ctx.id !== identityId);
+      const existing = currentContexts.find((ctx) => ctx.id === identityId);
       // A relaunch keeps identity/nudge history but clears stale terminal timestamps.
       // When transitioning FROM a terminal status, clear completedAt so the context
       // restarts cleanly. When transitioning TO a terminal status, preserve any fresh
@@ -271,16 +299,23 @@ export async function upsertAgentContext(
         (leavingTerminal || (patch.status && !enteringTerminal && patch.completedAt === undefined))
           ? { ...existing, completedAt: undefined, lastSignalAt: undefined }
           : existing;
+      const {
+        id: _ignoredId,
+        role: _ignoredRole,
+        runId: _ignoredRunId,
+        slotId: _ignoredSlotId,
+        ...safePatch
+      } = patch;
       const context: AgentContext = {
-        id: contextIdFor(role),
-        role,
         label: agentRoleLabel(role),
         status: 'working',
-        runId,
         runner: currentRun.metrics.runner,
         model: currentRun.metrics.model,
         ...existingForMerge,
-        ...patch,
+        ...safePatch,
+        id: identityId,
+        role,
+        runId,
         slotId: currentRun.slotId ?? slotId,
         updatedAt: now,
       };

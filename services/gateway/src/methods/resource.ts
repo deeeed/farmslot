@@ -16,6 +16,7 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 
+import { isMissingProjectConfigError } from '../core/config.js';
 import {
   executeResourceControl,
   getResourceWatchRuntimeState,
@@ -123,7 +124,16 @@ export async function resourceCleanup(
 
   const targets: ResourceCleanupResult['targets'] = [];
   for (const slot of slots) {
-    const resources = await resolveSlotResources(slot.slot);
+    let resources;
+    try {
+      resources = await resolveSlotResources(slot.slot);
+    } catch (err) {
+      if (!dryRun || !isMissingProjectConfigError(err)) throw err;
+      console.warn(
+        `[resource] skipping cleanup preview for ${slot.slot}: ${(err as Error).message}`,
+      );
+      continue;
+    }
     for (const resource of resources) {
       if (resourceFilter.size > 0 && !resourceFilter.has(resource.id)) continue;
       if (!statuses.has(resource.status)) continue;
@@ -189,7 +199,7 @@ export async function resourcePressureSnapshot(
     const machineSlots = slots.filter((slot) => slot.machine === machine);
     const byStatus = emptyStatusCounts();
     for (const slot of machineSlots) {
-      const resources = await resolveSlotResources(slot.slot);
+      const resources = await resolvePressureSlotResources(slot.slot);
       for (const resource of resources) byStatus[resource.status] += 1;
     }
     const cleanupCandidates = cleanupPreview.targets.filter(
@@ -245,6 +255,16 @@ export async function resourcePressureSnapshot(
     machines,
     cleanupCandidates: cleanupPreview.targets,
   };
+}
+
+async function resolvePressureSlotResources(slotId: string) {
+  try {
+    return await resolveSlotResources(slotId);
+  } catch (err) {
+    if (!isMissingProjectConfigError(err)) throw err;
+    console.warn(`[resource] skipping pressure resources for ${slotId}: ${(err as Error).message}`);
+    return [];
+  }
 }
 
 function matchesPressureFilters(slot: SlotStatus, params: ResourcePressureSnapshotParams): boolean {
