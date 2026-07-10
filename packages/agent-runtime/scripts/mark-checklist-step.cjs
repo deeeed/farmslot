@@ -239,9 +239,12 @@ function inferFlowType(taskPath) {
   } catch {
     return null;
   }
-  const workerMatch = head.match(/^#\s*Worker:\s*([^\n—-]+)/im);
+  const workerMatch = head.match(/^#\s*Worker:\s*([^\n]+)/im);
   if (workerMatch) {
-    const label = workerMatch[1].trim().toLowerCase();
+    const label = workerMatch[1]
+      .split(/\s+[—-]\s+/)[0]
+      .trim()
+      .toLowerCase();
     if (label.includes('fix-bug') || label.includes('fix bug')) return 'fix-bug';
     if (label.includes('review-pr') || label.includes('review pr')) return 'review-pr';
     if (label.includes('pr-complete') || label.includes('pr complete')) return 'pr-complete';
