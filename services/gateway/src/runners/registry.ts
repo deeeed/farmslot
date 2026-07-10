@@ -1196,6 +1196,7 @@ async function runnerShowsPromptDeliveryAccepted(
   marker: string,
   opts: {
     launchAckSignalPath?: string | null;
+    requirePromptDigest?: boolean;
   } = {},
 ): Promise<boolean> {
   const def = getRunnerDefinition(runner);
@@ -1204,6 +1205,7 @@ async function runnerShowsPromptDeliveryAccepted(
     const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
       paneId,
       launchAckSignalPath: opts.launchAckSignalPath,
+      requirePromptDigest: opts.requirePromptDigest,
       preferHooks: true,
     });
     if (handoff.accepted) {
@@ -1836,6 +1838,7 @@ export async function sendRunnerPostLaunchPrompt(
     const immediateHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+      requirePromptDigest: true,
     });
     if (immediateHandoff.accepted) {
       console.log(
@@ -1862,6 +1865,7 @@ export async function sendRunnerPostLaunchPrompt(
     const preSendHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+      requirePromptDigest: true,
     });
     if (preSendHandoff.accepted) {
       console.log(
@@ -1930,7 +1934,7 @@ export async function sendRunnerPostLaunchPrompt(
         postPane,
         lastPane,
         marker,
-        { launchAckSignalPath: opts.launchAckSignalPath },
+        { launchAckSignalPath: opts.launchAckSignalPath, requirePromptDigest: true },
       )
     ) {
       console.log(
@@ -1984,6 +1988,7 @@ export async function sendRunnerPostLaunchPrompt(
     const handoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+      requirePromptDigest: true,
     });
     if (handoff.accepted) {
       console.warn(

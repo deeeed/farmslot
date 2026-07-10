@@ -281,6 +281,7 @@ export async function runReviewAgent(
           {
             launchAckSignalPath: taskDirRelPath(taskDir, SELF_REVIEW_CHECKLIST_TARGET.signal),
             preferHooks: true,
+            requirePromptDigest: true,
           },
         );
         if (!handoff.accepted) throw err;
