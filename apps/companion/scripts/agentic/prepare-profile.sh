@@ -37,7 +37,8 @@ boot_ios_sim_if_needed() {
 }
 
 metro_listening() {
-  nc -G 1 -z 127.0.0.1 "${METRO_PORT}" >/dev/null 2>&1
+  curl -fsS "http://[::1]:${METRO_PORT}/status" >/dev/null 2>&1 ||
+    curl -fsS "http://127.0.0.1:${METRO_PORT}/status" >/dev/null 2>&1
 }
 
 start_metro_background() {
