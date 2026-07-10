@@ -16,6 +16,7 @@ import type {
   SlotStatus,
 } from '@farmslot/protocol';
 
+import { isMissingProjectConfigError } from '../core/config.js';
 import {
   executeResourceControl,
   getResourceWatchRuntimeState,
@@ -264,10 +265,6 @@ async function resolvePressureSlotResources(slotId: string) {
     console.warn(`[resource] skipping pressure resources for ${slotId}: ${(err as Error).message}`);
     return [];
   }
-}
-
-function isMissingProjectConfigError(err: unknown): boolean {
-  return err instanceof Error && err.message.startsWith('Project config not found: ');
 }
 
 function matchesPressureFilters(slot: SlotStatus, params: ResourcePressureSnapshotParams): boolean {

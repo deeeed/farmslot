@@ -520,10 +520,8 @@ export async function killAllAgentWindows(
   );
   const shouldKillWindow = (name: string | undefined): boolean =>
     shouldKillAgentWindowName(name, { roleWindowNames, excluded });
-  // Reviewer tabs are unbounded per run (rev-codex, rev1-codex, …), so allow
-  // more kill attempts than the fixed AGENT_ROLES window set.
-  const maxKillAttempts = AGENT_ROLES.length + 16;
-  for (let attempt = 1; attempt <= maxKillAttempts; attempt += 1) {
+  let previousMatchSignature: string | null = null;
+  while (true) {
     const listed = await execOnSlot(
       vars,
       tmuxShellSnippet(
@@ -541,23 +539,32 @@ export async function killAllAgentWindows(
         const [index, name] = line.split('\t', 2);
         return { index, name };
       });
-    const roleWindow = windows.find(
-      (window) => window.index && window.name && shouldKillWindow(window.name),
-    );
-    if (!roleWindow) return;
+    const roleWindows = windows
+      .filter((window) => window.index && window.name && shouldKillWindow(window.name))
+      .sort((a, b) => Number(b.index) - Number(a.index));
+    if (roleWindows.length === 0) return;
 
-    const target = `${session}:${roleWindow.index}`;
-    const command = buildKillRoleWindowCommand(session, target, windows.length, vars.remoteRepo);
-    const killed = await execOnSlot(vars, tmuxShellSnippet(command), { timeout: TMUX_CMD_TIMEOUT });
-    if (killed.exitCode !== 0) {
+    const matchSignature = roleWindows.map((window) => `${window.index}:${window.name}`).join('|');
+    if (matchSignature === previousMatchSignature) {
       throw new Error(
-        `Failed to kill tmux role window ${target}: ${killed.stderr || killed.stdout || `exit ${killed.exitCode}`}`,
+        `Tmux role window cleanup is not converging for session ${session}; still matched ${matchSignature}`,
       );
     }
+    previousMatchSignature = matchSignature;
+
+    for (const roleWindow of roleWindows) {
+      const target = `${session}:${roleWindow.index}`;
+      const command = buildKillRoleWindowCommand(session, target, windows.length, vars.remoteRepo);
+      const killed = await execOnSlot(vars, tmuxShellSnippet(command), {
+        timeout: TMUX_CMD_TIMEOUT,
+      });
+      if (killed.exitCode !== 0) {
+        throw new Error(
+          `Failed to kill tmux role window ${target}: ${killed.stderr || killed.stdout || `exit ${killed.exitCode}`}`,
+        );
+      }
+    }
   }
-  throw new Error(
-    `Exceeded ${maxKillAttempts} attempts to kill tmux role windows for session ${session}; role windows may be respawning`,
-  );
 }
 
 export function shouldKillAgentWindowName(

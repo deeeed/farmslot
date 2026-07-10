@@ -42,3 +42,12 @@ test('review agent scopes legacy template feedback paths to the reviewer context
     'Write artifacts/review-feedback.rev-claude.md, then include artifacts/review-feedback.rev-claude.md in evidence.',
   );
 });
+
+test('review agent appends scoped feedback path when template omits legacy path', () => {
+  const scoped = scopeReviewFeedbackPath('Review the diff.', reviewerFeedbackRelPath('rev-codex'));
+
+  assert.equal(
+    scoped,
+    'Review the diff.\n\nWrite reviewer feedback to artifacts/review-feedback.rev-codex.md.',
+  );
+});

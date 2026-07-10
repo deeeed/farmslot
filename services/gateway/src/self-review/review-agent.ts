@@ -70,6 +70,8 @@ export function parseTerminalSelfReviewSignal(raw: string) {
   return terminalWorkerSignalFromRaw(raw);
 }
 
+export const LEGACY_REVIEW_FEEDBACK_REL_PATH = 'artifacts/review-feedback.md';
+
 export function selfReviewChecklistMarkPrompt(
   taskDir: string,
   taskMdPath: string,
@@ -95,7 +97,9 @@ export function reviewerFeedbackRelPath(contextId: string): string {
 }
 
 export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
-  return template.replace(/artifacts\/review-feedback\.md/g, feedbackRelPath);
+  const scoped = template.replaceAll(LEGACY_REVIEW_FEEDBACK_REL_PATH, feedbackRelPath);
+  if (scoped !== template) return scoped;
+  return `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
 }
 
 // Exported for self-review.test.ts to seed runSelfReviewRetryLoop fixtures. Not part of the

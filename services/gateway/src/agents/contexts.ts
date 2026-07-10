@@ -168,10 +168,13 @@ function assertSelectorTargetMatchesRole(selector: AgentContextSelector): void {
   if (windowRole && selector.contextId) {
     const contextMatchesWindow = isReviewerWindowName(windowName)
       ? selector.contextId === windowName
-      : selector.contextId === contextIdFor(windowRole) || selector.contextId === windowName;
+      : selector.contextId === contextIdFor(windowRole);
     if (!contextMatchesWindow) {
+      const expectedContext = isReviewerWindowName(windowName)
+        ? windowName
+        : contextIdFor(windowRole);
       throw new Error(
-        `Agent target selector mismatch: target ${selector.target.trim()} belongs to context ${windowName ?? contextIdFor(windowRole)}, not ${selector.contextId}`,
+        `Agent target selector mismatch: target ${selector.target.trim()} belongs to context ${expectedContext}, not ${selector.contextId}`,
       );
     }
   }

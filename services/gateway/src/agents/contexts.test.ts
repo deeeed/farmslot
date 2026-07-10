@@ -413,6 +413,14 @@ test('resolveAgentTarget rejects mismatched explicit target and role selectors',
   await assert.rejects(
     () =>
       resolveAgentTarget('runner-browser-1', {
+        target: 'mme-1:bugfix',
+        contextId: 'bugfix',
+      }),
+    /target mme-1:bugfix belongs to context fix-bug, not bugfix/,
+  );
+  await assert.rejects(
+    () =>
+      resolveAgentTarget('runner-browser-1', {
         target: 'mme-1:rev-claude',
         contextId: 'rev-codex',
         role: 'self-review',
