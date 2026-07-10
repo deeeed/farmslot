@@ -699,7 +699,11 @@ async function writeFollowup(run: Run): Promise<void> {
     return;
 
   const outcome =
-    run.status === 'done' ? 'recovered' : run.status === 'cancelled' ? 'cancelled' : 'failed-again';
+    run.status === 'done' || recoveredToHumanGate
+      ? 'recovered'
+      : run.status === 'cancelled'
+        ? 'cancelled'
+        : 'failed-again';
   await writeAuditRecord(
     {
       id: randomUUID(),

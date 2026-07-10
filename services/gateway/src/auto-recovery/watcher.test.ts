@@ -927,6 +927,58 @@ test('watcher clears manual replay proposal state when replay reaches human gate
   );
 });
 
+test('watcher records human-gate auto-recovery follow-up as recovered', async (t) => {
+  withTempAuditDir(t);
+  const project = await makeProject(t, {
+    auto_recovery: {
+      enabled: true,
+      maxAttempts: 2,
+      allowedSteps: ['prepare'],
+      allowedCategories: ['infra'],
+    },
+  });
+  const failed = failRun(project, {
+    flowType: 'dev',
+    recoveryAttempts: [
+      {
+        id: 'auto-prepare',
+        attempt: 1,
+        stepName: 'prepare',
+        startedAt: '2026-05-12T09:00:00.000Z',
+        status: 'started',
+        triggeredBy: 'auto-recovery',
+        intelligenceActionId: 'action-1',
+      },
+    ],
+    recoveryProposal: { status: 'auto-in-progress', proposalId: 'action-1', generation: 0 },
+  });
+  const run = updateRun(failed.id, {
+    status: 'blocked',
+    completedAt: undefined,
+    steps: failed.steps.map((step) =>
+      step.name === PipelineSteps.HUMAN_GATE
+        ? { ...step, status: 'running' as const, startedAt: '2026-05-12T09:06:00.000Z' }
+        : { ...step, status: 'done' as const, completedAt: '2026-05-12T09:05:00.000Z' },
+    ),
+  });
+  __resetAutoRecoveryForTest();
+  initAutoRecovery(() => undefined);
+  t.after(async () => {
+    __resetAutoRecoveryForTest();
+    await cleanupRun(run.id);
+  });
+
+  routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
+  await __drainAutoRecoveryForTest();
+
+  const updated = getRun(run.id)!;
+  assert.equal(updated.recoveryProposal?.status, 'idle');
+  assert.equal(updated.recoveryAttempts?.[0]?.status, 'completed');
+  assert.equal(updated.recoveryAttempts?.[0]?.completedAt, '2026-05-12T09:06:00.000Z');
+  const audit = await readAuditLines();
+  assert.equal(audit.at(-1).followupOutcome, 'recovered');
+});
+
 test('watcher follows up successful auto-recovery replay from run.completed events', async (t) => {
   withTempAuditDir(t);
   const project = await makeProject(t, {
