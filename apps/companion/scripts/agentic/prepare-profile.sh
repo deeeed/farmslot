@@ -67,7 +67,7 @@ start_metro_background() {
       return 0
     fi
     sleep 1
-    ((i++))
+    i=$((i + 1))
   done
   echo "[prepare-profile] Metro did not start — tail ${log_file}" >&2
   tail -n 30 "${log_file}" >&2 || true

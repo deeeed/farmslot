@@ -206,7 +206,7 @@ wait_for_gateway() {
       return 0
     fi
     sleep 1
-    ((i++))
+    i=$((i + 1))
   done
   return 1
 }
@@ -219,7 +219,7 @@ wait_for_ui() {
       return 0
     fi
     sleep 1
-    ((i++))
+    i=$((i + 1))
   done
   return 1
 }
