@@ -107,7 +107,7 @@ export function startProgressWatcher(
   }
 
   // Remote slot — register callback for node.fs.changed dispatch + start node-side watch
-  const key = `${vars.machine}|${filePath}|${runId}|${label}`;
+  const key = `${vars.machine}|${filePath}|${runId}|${label}|${contextId}`;
   remoteProgressEntries.set(key, { machine: vars.machine, path: filePath, onContent: compute });
   const node = getNode(vars.machine);
   let watchRequestId: string | undefined;
