@@ -310,13 +310,7 @@ export async function executeFindSlotStep(
           // head branch, falsy on non-PR flows.
           targetBranch: targetBranch ?? null,
         })
-      ).filter(
-        (candidate) =>
-          !validateSlotForDispatch(candidate.slot, fleet.slots, {
-            targetBranch,
-            requiredPrepareProfile,
-          }),
-      );
+      ).filter((candidate) => !companionResourceBlocker(candidate.slot, requiredPrepareProfile));
       if (nudgeCandidates.length > 0) {
         const top = nudgeCandidates[0];
         const prMatch = run.ticketOrPr.match(/#(\d+)$/);

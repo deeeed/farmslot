@@ -1499,6 +1499,25 @@ test('selectBranchAffinityEligibleSlots surfaces a busy claude slot whose branch
   assert.equal(eligible[0].canNudge, true);
 });
 
+test('branch-affinity nudge resource filter keeps working simulator slots', () => {
+  const slot = makeBusyClaudeSlot({
+    resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },
+  });
+  const eligible = selectBranchAffinityEligibleSlots([slot], PROJECT, PR_TICKET, {
+    targetBranch: PR_BRANCH,
+  });
+
+  assert.equal(eligible.length, 1);
+  assert.equal(companionResourceBlocker(eligible[0].slot, 'sandbox-companion'), null);
+  assert.equal(
+    validateSlotForDispatch(eligible[0].slot, [slot], {
+      targetBranch: PR_BRANCH,
+      requiredPrepareProfile: 'sandbox-companion',
+    }),
+    'Agent is working',
+  );
+});
+
 test('selectBranchAffinityEligibleSlots returns empty for comparison lane (defends ADR-024 §7 scrub-between-siblings)', () => {
   const slot = makeBusyClaudeSlot();
   const eligible = selectBranchAffinityEligibleSlots([slot], PROJECT, PR_TICKET, {
