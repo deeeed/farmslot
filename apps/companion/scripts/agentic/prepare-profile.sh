@@ -37,7 +37,7 @@ boot_ios_sim_if_needed() {
 }
 
 metro_listening() {
-  lsof -nP -iTCP:"${METRO_PORT}" -sTCP:LISTEN -t >/dev/null 2>&1
+  nc -G 1 -z 127.0.0.1 "${METRO_PORT}" >/dev/null 2>&1
 }
 
 start_metro_background() {
