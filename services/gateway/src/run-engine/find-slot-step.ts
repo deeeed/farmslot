@@ -24,6 +24,7 @@ import {
   verifyBranchAffinityNudgeStillEligible,
 } from '../methods/dispatch.js';
 import {
+  companionResourceBlocker,
   isCdpLive,
   isFreeSlot,
   prepareProfileNeedsCompanionResource,
@@ -454,9 +455,15 @@ export async function executeFindSlotStep(
           const pickedSlotId =
             (resolvedDecision?.selectionData?.slotId as string | undefined) ?? null;
           if (pickedSlotId) {
-            const pickedSlot = projectSlots.find((s) => s.slot === pickedSlotId);
+            const freshFleet = await loadFleetStatus(true);
+            const pickedSlot = freshFleet.slots.find(
+              (s) =>
+                s.project === run.project &&
+                (!allowSet || allowSet.has(s.slot)) &&
+                s.slot === pickedSlotId,
+            );
             if (!pickedSlot) throw new Error(`Selected slot ${pickedSlotId} not found`);
-            const err = validateSlotForDispatch(pickedSlot, fleet.slots, {
+            const err = validateSlotForDispatch(pickedSlot, freshFleet.slots, {
               targetBranch,
               requiredPrepareProfile,
             });
@@ -501,7 +508,10 @@ export async function executeFindSlotStep(
       score:
         isFreeSlot(s) && isEligibleFreeSlot(s)
           ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
-          : -1,
+          : reason === 'missing_required_resources' &&
+              !companionResourceBlocker(s, requiredPrepareProfile)
+            ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+            : -1,
       branch: s.branch || '',
       lifecycle: s.lifecycle,
       health: s.health,
@@ -541,9 +551,13 @@ export async function executeFindSlotStep(
     );
     const pickedSlotId = (resolvedDecision?.selectionData?.slotId as string) || null;
     if (!pickedSlotId) throw new Error('No slot selected');
-    const pickedSlot = projectSlots.find((s) => s.slot === pickedSlotId);
+    const freshFleet = await loadFleetStatus(true);
+    const pickedSlot = freshFleet.slots.find(
+      (s) =>
+        s.project === run.project && (!allowSet || allowSet.has(s.slot)) && s.slot === pickedSlotId,
+    );
     if (!pickedSlot) throw new Error(`Selected slot ${pickedSlotId} not found`);
-    const pickedSlotError = validateSlotForDispatch(pickedSlot, fleet.slots, {
+    const pickedSlotError = validateSlotForDispatch(pickedSlot, freshFleet.slots, {
       targetBranch,
       requiredPrepareProfile,
     });

@@ -295,6 +295,24 @@ describe('cursor runner', () => {
     });
   });
 
+  it('classifies real Claude and Codex expired-auth prompts', () => {
+    const panes = [
+      { runner: 'claude', text: 'OAuth token has expired. Please run /login.' },
+      { runner: 'claude', text: 'Invalid API key · please run /login' },
+      { runner: 'claude', text: 'Login expired. Please re-authenticate.' },
+      { runner: 'codex', text: 'Session expired. Run codex login to reauthenticate.' },
+    ];
+
+    for (const { runner, text } of panes) {
+      assert.deepEqual(detectRunnerLaunchBlocker(text, runner), {
+        kind: 'auth-required',
+        summary: `${runner} requires login/authentication before Farmslot can deliver the task prompt.`,
+        autoAction: null,
+      });
+      assert.equal(readPaneStateFromCapture(text, runner).launchBlocker, 'auth-required');
+    }
+  });
+
   it('does not classify optional MCP login warnings as runner auth blockers', async () => {
     const pane = [
       'MCP startup failed: handshaking with MCP server failed',
