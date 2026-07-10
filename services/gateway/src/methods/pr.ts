@@ -564,6 +564,9 @@ function normalizeCheckStatus(status: string): 'pass' | 'fail' | 'pending' {
   switch (status) {
     case 'pass':
     case 'success':
+    case 'skip':
+    case 'skipped':
+    case 'skipping':
       return 'pass';
     case 'fail':
     case 'failure':
@@ -653,7 +656,7 @@ export function matchCheckGroups(
   if (checkGroups.length === 0) {
     return allChecks.map((check) => ({
       name: check.name,
-      status: check.status,
+      status: normalizeCheckStatus(check.status),
       watchName: check.name,
     }));
   }

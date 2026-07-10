@@ -429,6 +429,27 @@ test('matchCheckGroups aggregates sharded checks deterministically', () => {
   ]);
 });
 
+test('matchCheckGroups treats skipped watched checks as satisfied', () => {
+  const matched = matchCheckGroups(
+    [
+      { name: 'Required quality', status: 'pass', startedAt: '', completedAt: '', index: 0 },
+      {
+        name: 'Optional package quality',
+        status: 'skipping',
+        startedAt: '',
+        completedAt: '',
+        index: 1,
+      },
+    ],
+    [],
+  );
+
+  assert.deepEqual(matched, [
+    { name: 'Required quality', status: 'pass', watchName: 'Required quality' },
+    { name: 'Optional package quality', status: 'pass', watchName: 'Optional package quality' },
+  ]);
+});
+
 test('matchCheckGroups uses latest aggregate for legacy contains-style groups', () => {
   const groups: ProjectCICheckGroup[] = [
     { name: 'Unit tests', match: 'Unit tests', matchMode: 'includes', aggregate: 'latest' },
