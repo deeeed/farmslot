@@ -47,11 +47,6 @@ export async function expandSelfReviewTemplate(
       if (code !== 'ENOENT') {
         throw new Error(`Failed to read ${depthTemplatePath}: ${(err as Error).message}`);
       }
-      if (validationDepth === 'static-code') {
-        throw new Error(
-          `Static-code self-review template not found for project ${project}: ${depthTemplatePath}`,
-        );
-      }
       template = await readFile(fallbackTemplatePath, 'utf-8');
     }
   } catch (err) {
@@ -133,9 +128,7 @@ export async function resolveWorkerTaskDir(
 ): Promise<string | null> {
   if (!taskFile) return null;
   const pv = await loadProjectVars(project).catch(() => null);
-  const taskDirName = pv
-    ? resolveProjectTaskDirName(pv.projectJson)
-    : DEFAULT_TASK_DIR;
+  const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
 
   const orchRoot = pv ? getOrchestratorTaskRoot(project, pv.projectJson) : null;
   const taskRelDir = orchRoot ? resolveTaskRelDir(taskFile, orchRoot) : null;

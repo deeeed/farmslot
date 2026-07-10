@@ -606,11 +606,11 @@
     },
     "self_review": {
       "type": "object",
-      "description": "Automated self-review configuration. Spawns a review agent after worker completes to check code quality before human gate.",
+      "description": "Automated self-review configuration. Spawns a review agent after worker completes to check code quality before human gate. Operator-requested publication reviews are explicit gate work and do not use this enabled flag as a skip.",
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Whether self-review is active for this project.",
+          "description": "Whether automatic post-worker self-review is active for this project.",
           "default": false
         },
         "runner": {

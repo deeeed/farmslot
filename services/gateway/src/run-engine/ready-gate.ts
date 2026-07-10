@@ -45,7 +45,7 @@ import {
 import { readReadyGatePreparedPackage } from '../run-completion/ready-gate-package.js';
 import { defaultAlternateReviewRunner } from '../runners/registry.js';
 import { getRun, updateRun, updateRunStep } from '../runs/store.js';
-import { executeSelfReview } from '../self-review/orchestrator.js';
+import { executeSelfReview, type SelfReviewResult } from '../self-review/orchestrator.js';
 
 import {
   latestResolvedHumanGateDecision,
@@ -106,17 +106,43 @@ export async function executePublishGateReviewPlan(
         ? `Running ${source} ${requestedRunner} review (${planStep.order}/${boundedPlan.length})...`
         : `Running ${source} worker-runner review (${planStep.order}/${boundedPlan.length})...`,
     });
-    const reviewResult = await executeSelfReview(runId, slotId, {
-      reviewRunner: requestedRunner,
-      model: planStep.model ?? null,
-      validationDepth:
-        planStep.validationDepth ??
-        reviewValidationDepthForLoop(planStep.order - 1, boundedPlan.length),
-      artifactScope: reviewId,
-      // Configured review steps are true review loops: findings are fed back
-      // to the original worker, the worker fixes them, then the same reviewer
-      // re-reviews before the next configured reviewer starts.
-    });
+    const validationDepth =
+      planStep.validationDepth ??
+      reviewValidationDepthForLoop(planStep.order - 1, boundedPlan.length);
+    let reviewResult: SelfReviewResult;
+    try {
+      reviewResult = await executeSelfReview(runId, slotId, {
+        reviewRunner: requestedRunner,
+        model: planStep.model ?? null,
+        validationDepth,
+        artifactScope: reviewId,
+        publicationReview: true,
+        // Configured review steps are true review loops: findings are fed back
+        // to the original worker, the worker fixes them, then the same reviewer
+        // re-reviews before the next configured reviewer starts.
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[run-engine] run ${runId.slice(0, 8)} — ${source} review ${reviewId} unavailable: ${message}`,
+      );
+      reviewResult = {
+        verdict: 'blocked',
+        reason: `review-unavailable: ${message}`,
+        retryCount: 0,
+        validationDepth,
+        attempts: [
+          {
+            loopNumber: 1,
+            verdict: 'failed',
+            unresolvedCount: 0,
+            validationDepth,
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+          },
+        ],
+      };
+    }
     const latest = getRun(runId)!;
     const priorReviews = latest.engineState?.publishGate?.independentReviews ?? [];
     const reviewStatus = buildPublishGateReviewStatus({
