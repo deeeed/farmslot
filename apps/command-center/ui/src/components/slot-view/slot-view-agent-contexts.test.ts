@@ -8,6 +8,7 @@ import {
   deriveSlotViewAgentContexts,
   isAgentContextUnavailable,
   selectSlotViewAgentContext,
+  slotViewAgentContextChipLabel,
   type SlotViewAgentContextRun,
   type SlotViewAgentContextSlot,
 } from './slot-view-agent-contexts.js';
@@ -82,4 +83,72 @@ test('selectSlotViewAgentContext and unavailable checks are deterministic', () =
   assert.equal(selectSlotViewAgentContext(contexts, 'missing')?.id, 'primary');
   assert.equal(agentContextKey(contexts[0]), 'primary');
   assert.equal(isAgentContextUnavailable(contexts[0], new Set(['primary'])), true);
+});
+
+test('selectSlotViewAgentContext opens latest or specific reviewer tabs', () => {
+  const contexts = [
+    context({
+      id: 'fix-bug',
+      role: 'fix-bug',
+      label: 'Bugfix',
+      target: { session: 's', window: 'bugfix', target: 's:bugfix' },
+    }),
+    context({
+      id: 'rev-codex',
+      role: 'self-review',
+      label: 'Self-review',
+      updatedAt: '2026-07-09T12:01:00Z',
+      model: 'gpt-5',
+      target: { session: 's', window: 'rev-codex', target: 's:rev-codex' },
+    }),
+    context({
+      id: 'rev-claude',
+      role: 'self-review',
+      label: 'Self-review',
+      updatedAt: '2026-07-09T12:02:00Z',
+      model: 'opus',
+      target: { session: 's', window: 'rev-claude', target: 's:rev-claude' },
+    }),
+  ];
+
+  assert.equal(selectSlotViewAgentContext(contexts, 'rev-codex')?.id, 'rev-codex');
+  assert.equal(selectSlotViewAgentContext(contexts, 'latest-reviewer')?.id, 'rev-claude');
+  assert.equal(selectSlotViewAgentContext(contexts, 'self-review')?.id, 'rev-claude');
+  assert.equal(slotViewAgentContextChipLabel(contexts[1]), 'rev-codex');
+});
+
+test('deriveSlotViewAgentContexts keeps multiple reviewer tabs for one run', () => {
+  const contexts = deriveSlotViewAgentContexts({
+    linkedRun: run({
+      agentContexts: [
+        context({
+          id: 'fix-bug',
+          role: 'fix-bug',
+          label: 'Bugfix',
+          runId: 'run-1',
+          target: { session: 's', window: 'bugfix', target: 's:bugfix' },
+        }),
+        context({
+          id: 'rev-codex',
+          role: 'self-review',
+          label: 'Self-review',
+          runId: 'run-1',
+          target: { session: 's', window: 'rev-codex', target: 's:rev-codex' },
+        }),
+        context({
+          id: 'rev-claude',
+          role: 'self-review',
+          label: 'Self-review',
+          runId: 'run-1',
+          target: { session: 's', window: 'rev-claude', target: 's:rev-claude' },
+        }),
+      ],
+    }),
+    slot: slot(),
+  });
+
+  assert.deepEqual(
+    contexts.map((ctx) => ctx.id),
+    ['fix-bug', 'rev-claude', 'rev-codex'],
+  );
 });

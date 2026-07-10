@@ -12,14 +12,15 @@ import type { ReviewAgentResult } from './review-agent.js';
 export async function readReviewFeedback(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   taskDir: string,
+  feedbackRelPath = 'artifacts/review-feedback.md',
 ): Promise<ReviewAgentResult> {
-  const feedbackPath = `${vars.remoteRepo}/${taskDir}/artifacts/review-feedback.md`;
+  const feedbackPath = `${vars.remoteRepo}/${taskDir}/${feedbackRelPath}`;
   try {
     const content = (
       await execOnSlot(vars, `cat ${shellQuote(feedbackPath)} 2>/dev/null`)
     ).stdout.trim();
     if (!content) {
-      console.warn(`[self-review] review-feedback.md is empty or missing — agent did not complete`);
+      console.warn(`[self-review] ${feedbackRelPath} is empty or missing — agent did not complete`);
       return { verdict: 'pass', issues: [], incomplete: true };
     }
 
@@ -48,6 +49,6 @@ export async function readReviewFeedback(
   } catch (err) {
     // Re-throw parsing/code errors — only the empty-content check above should
     // produce an incomplete result. Swallowing here masks real failures.
-    throw new Error(`Failed to parse review-feedback.md: ${(err as Error).message}`);
+    throw new Error(`Failed to parse ${feedbackRelPath}: ${(err as Error).message}`);
   }
 }

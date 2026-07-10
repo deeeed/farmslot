@@ -97,12 +97,20 @@ export interface SelfReviewOptions {
   maxRetries?: number | null;
   validationDepth?: ReviewValidationDepth | null;
   artifactScope?: string | null;
+  publicationReview?: boolean | null;
 }
 
 const DEFAULT_REVIEW_TIMEOUT_MIN = 30;
 const FEEDBACK_TIMEOUT_MS = 30 * 60_000; // 30 min for worker to fix
 
 type BroadcastFn = (event: string, payload: unknown) => void;
+
+export function shouldSkipForDisabledSelfReviewConfig(
+  config: { enabled: boolean },
+  options: Pick<SelfReviewOptions, 'publicationReview'> = {},
+): boolean {
+  return !config.enabled && options.publicationReview !== true;
+}
 
 export function resolveSelfReviewRunnerModel(
   workerRunner: string,
@@ -157,7 +165,7 @@ export async function executeSelfReview(
   if (!run) throw new Error('Run not found');
 
   const config = await getSelfReviewConfig(run.project);
-  if (!config.enabled) {
+  if (shouldSkipForDisabledSelfReviewConfig(config, options)) {
     debugSelfReviewLog(
       `[self-review] run ${runId.slice(0, 8)} — disabled for project ${run.project}`,
     );

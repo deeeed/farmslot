@@ -23,7 +23,6 @@ import {
 import { computeReadyGateReviewSubjectHash } from '../run-completion/ready-gate-package.js';
 import { getRun, updateRun } from '../runs/store.js';
 
-import { latestResolvedHumanGateDecision } from './decision-replay.js';
 import {
   buildEvidenceRefreshAction,
   countStalePublicationReviews,
@@ -32,7 +31,6 @@ import {
 } from './gate-policy.js';
 import { readyGateReviewSubjectMatches } from './post-dispatch-steps.js';
 import { publicationReviewPolicyForRun } from './publication-policy.js';
-import { humanGateReviewDepth, humanGateReviewRequestFromDecision } from './review-plan.js';
 import { getDiffStat } from './task-artifacts.js';
 
 type BroadcastFn = (event: string, payload: unknown) => void;
@@ -81,6 +79,15 @@ export function summarizePublishPackageRefreshEvidence(
   }));
   const addedEvidenceKeys = newEvidence.map((a) => a.path).filter((key) => !pathInOldEvidence(key));
   return { preservedEvidenceKeys, droppedEvidence, droppedEvidenceKeys, addedEvidenceKeys };
+}
+
+export function reviewDepthForPublishPackageRefresh(
+  run: Run,
+  projectConfig: Parameters<typeof publicationReviewPolicyForRun>[1],
+  oldPayload: Pick<ReadyGatePayload, 'reviewDepth'>,
+): ReadyGatePayload['reviewDepth'] {
+  if (oldPayload.reviewDepth?.requestedBy !== 'human-gate') return oldPayload.reviewDepth;
+  return publicationReviewPolicyForRun(run, projectConfig);
 }
 
 function reviewWasStampedForPackage(
@@ -169,14 +176,10 @@ export async function refreshPublishPackage(params: {
   let reviewDepthForRefresh = oldPayload.reviewDepth;
   if (oldPayload.reviewDepth?.requestedBy === 'human-gate') {
     const projectVars = await loadProjectVars(run.project);
-    const latestReviewDecision = latestResolvedHumanGateDecision(run.decisions, true);
-    reviewDepthForRefresh = humanGateReviewDepth(
-      publicationReviewPolicyForRun(run, projectVars.projectJson),
-      humanGateReviewRequestFromDecision(latestReviewDecision),
-      {
-        actionId: latestReviewDecision?.resolvedAction,
-        fallbackLoopCount: 1,
-      },
+    reviewDepthForRefresh = reviewDepthForPublishPackageRefresh(
+      run,
+      projectVars.projectJson,
+      oldPayload,
     );
   }
 

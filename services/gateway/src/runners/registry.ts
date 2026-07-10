@@ -7,6 +7,7 @@ import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_MODEL,
+  isReviewerWindowName,
   type SafetyTier,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -67,6 +68,8 @@ export interface RunnerDefinition {
   processMatchers: string[];
   supportsInteractivePrompt: boolean;
   needsPostLaunchPrompt: boolean;
+  /** Runner starts with the task in argv and must clear safe launch blockers before dispatch can trust task execution. */
+  resolvesPreTaskLaunchBlockers: boolean;
   supportsTmuxNudges: boolean;
   continueCommand: string | null;
   /** Runner writes session files on disk (e.g. resumable session state). */
@@ -147,6 +150,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['claude'],
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     continueCommand: '/continue',
     persistsSessionFiles: true,
@@ -173,6 +177,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['codex'],
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     // This string is sent into an already-running Codex TUI when resuming a paused
     // monitor. It must be natural language, not the shell-only `codex --continue`
@@ -209,6 +214,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // steerable TUI turn without the fragile post-launch key path.
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: true,
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -233,6 +239,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // ~/.grok/sessions so usage extraction can join summary.json to Grok logs.
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: true,
@@ -253,6 +260,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['opencode'],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -269,6 +277,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: [],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -285,6 +294,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['farmslot scripted-runner', 'scripted-runner'],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -444,6 +454,11 @@ export function runnerNeedsPostLaunchPrompt(runnerId?: string | null): boolean {
   return getRunnerDefinition(runnerId).needsPostLaunchPrompt;
 }
 
+export function runnerResolvesPreTaskLaunchBlockers(runnerId?: string | null): boolean {
+  if (!isKnownRunner(runnerId)) return false;
+  return getRunnerDefinition(runnerId).resolvesPreTaskLaunchBlockers;
+}
+
 export function runnerContinueCommand(runnerId?: string | null): string | null {
   if (!isKnownRunner(runnerId)) return null;
   return getRunnerDefinition(runnerId).continueCommand;
@@ -579,6 +594,14 @@ export interface RunnerLaunchBlocker {
   autoAction: 'cursor-trust-workspace' | 'grok-select-current-project' | null;
   /** Wait for the blocker to clear instead of failing prompt delivery. */
   defer?: boolean;
+}
+
+export function runnerLaunchBlockerAutoActionKey(
+  autoAction: RunnerLaunchBlocker['autoAction'],
+): 'a' | 'Enter' | null {
+  if (autoAction === 'cursor-trust-workspace') return 'a';
+  if (autoAction === 'grok-select-current-project') return 'Enter';
+  return null;
 }
 
 export function detectRunnerLaunchBlocker(
@@ -1174,6 +1197,7 @@ async function runnerShowsPromptDeliveryAccepted(
   marker: string,
   opts: {
     launchAckSignalPath?: string | null;
+    requirePromptDigest?: boolean;
   } = {},
 ): Promise<boolean> {
   const def = getRunnerDefinition(runner);
@@ -1182,6 +1206,7 @@ async function runnerShowsPromptDeliveryAccepted(
     const handoff = await probeRunnerHandoffAck(vars, target, message, sinceMs, {
       paneId,
       launchAckSignalPath: opts.launchAckSignalPath,
+      requirePromptDigest: opts.requirePromptDigest,
       preferHooks: true,
     });
     if (handoff.accepted) {
@@ -1546,6 +1571,7 @@ export async function sendRunnerPostLaunchPrompt(
     blockerSnapshotPath?: string;
     signalPath?: string;
     launchAckSignalPath?: string;
+    requirePromptDigest?: boolean;
     softAcceptOnHandoffAck?: boolean;
     handoffAckSinceMs?: number;
   } = {},
@@ -1558,6 +1584,7 @@ export async function sendRunnerPostLaunchPrompt(
   const maxAttempts = opts.maxAttempts ?? 3;
   const softAcceptOnHandoffAck = opts.softAcceptOnHandoffAck !== false;
   const handoffAckSinceMs = opts.handoffAckSinceMs ?? Date.now();
+  const requirePromptDigest = opts.requirePromptDigest === true;
 
   const readyStart = Date.now();
   let lastPane = '';
@@ -1592,10 +1619,17 @@ export async function sendRunnerPostLaunchPrompt(
       );
       snapshottedBlockers.add(blocker.kind);
     }
-    if (blocker?.autoAction === 'cursor-trust-workspace' && !workspaceTrustAnswered) {
+    const autoActionKey = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null);
+    if (
+      blocker?.autoAction === 'cursor-trust-workspace' &&
+      autoActionKey &&
+      !workspaceTrustAnswered
+    ) {
       const trustResult = await execOnSlot(
         vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} a 2>/dev/null`),
+        tmuxShellSnippet(
+          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} 2>/dev/null`,
+        ),
       );
       if (trustResult.exitCode !== 0) {
         throw new Error(
@@ -1612,10 +1646,16 @@ export async function sendRunnerPostLaunchPrompt(
       lastPane = '';
       continue;
     }
-    if (blocker?.autoAction === 'grok-select-current-project' && !grokProjectSelected) {
+    if (
+      blocker?.autoAction === 'grok-select-current-project' &&
+      autoActionKey &&
+      !grokProjectSelected
+    ) {
       const selectResult = await execOnSlot(
         vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} Enter 2>/dev/null`),
+        tmuxShellSnippet(
+          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} 2>/dev/null`,
+        ),
       );
       if (selectResult.exitCode !== 0) {
         throw new Error(
@@ -1801,6 +1841,7 @@ export async function sendRunnerPostLaunchPrompt(
     const immediateHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+      requirePromptDigest,
     });
     if (immediateHandoff.accepted) {
       console.log(
@@ -1827,6 +1868,7 @@ export async function sendRunnerPostLaunchPrompt(
     const preSendHandoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+      requirePromptDigest,
     });
     if (preSendHandoff.accepted) {
       console.log(
@@ -1895,7 +1937,7 @@ export async function sendRunnerPostLaunchPrompt(
         postPane,
         lastPane,
         marker,
-        { launchAckSignalPath: opts.launchAckSignalPath },
+        { launchAckSignalPath: opts.launchAckSignalPath, requirePromptDigest },
       )
     ) {
       console.log(
@@ -1949,6 +1991,7 @@ export async function sendRunnerPostLaunchPrompt(
     const handoff = await probeRunnerHandoffAck(vars, target, message, handoffAckSinceMs, {
       launchAckSignalPath: opts.launchAckSignalPath,
       preferHooks: getRunnerDefinition(runner).observabilityScope === 'event-driven',
+      requirePromptDigest,
     });
     if (handoff.accepted) {
       console.warn(
@@ -2006,7 +2049,6 @@ export function runnerSignalShowsCompletion(signalText: string): boolean {
 
 export async function resolvePrimaryWorkerTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
-  reviewWindow = 'self-review',
 ): Promise<string> {
   try {
     const session = await resolveTmuxSession(vars.slotId, vars);
@@ -2025,7 +2067,7 @@ export async function resolvePrimaryWorkerTarget(
     for (const line of lines) {
       const [index, ...rest] = line.split(/\s+/);
       const name = rest.join(' ');
-      if (index && name !== reviewWindow) {
+      if (index && !isReviewerWindowName(name)) {
         return `${session}:${index}`;
       }
     }

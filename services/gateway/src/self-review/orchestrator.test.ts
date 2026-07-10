@@ -9,6 +9,7 @@ import {
   resolveSelfReviewRunnerModel,
   runSelfReviewRetryLoop,
   type SelfReviewRetryDeps,
+  shouldSkipForDisabledSelfReviewConfig,
 } from './orchestrator.js';
 import type { ReviewAgentResult } from './review-agent.js';
 
@@ -101,6 +102,15 @@ test('resolveSelfReviewRunnerModel ignores project self_review.model for plan-re
     ),
     { reviewRunner: 'codex', model: 'gpt-5.5', crossRunner: true },
   );
+});
+
+test('disabled project self-review does not skip explicit publication reviews', () => {
+  assert.equal(shouldSkipForDisabledSelfReviewConfig({ enabled: false }), true);
+  assert.equal(
+    shouldSkipForDisabledSelfReviewConfig({ enabled: false }, { publicationReview: true }),
+    false,
+  );
+  assert.equal(shouldSkipForDisabledSelfReviewConfig({ enabled: true }), false);
 });
 
 // ─── runSelfReviewRetryLoop ───

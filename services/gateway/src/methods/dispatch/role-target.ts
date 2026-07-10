@@ -33,5 +33,11 @@ export function canonicalAgentContextTarget(target: AgentContextTarget): string 
 }
 
 export function buildDispatchRoleShellCommand(remoteRepo: string): string {
-  return `cd ${shellQuote(remoteRepo)} && exec \${SHELL:-bash}`;
+  return [
+    `cd ${shellQuote(remoteRepo)}`,
+    'shell="${SHELL:-}"',
+    'if [ -z "$shell" ]; then shell="$(dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk \'{print $2}\')"; fi',
+    'if [ -z "$shell" ]; then shell="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)"; fi',
+    'exec "${shell:-/bin/sh}"',
+  ].join(' && ');
 }

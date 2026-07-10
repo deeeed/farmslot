@@ -18,10 +18,11 @@ import { createRun, getRun, updateRun } from '../runs/store.js';
 
 import {
   refreshPublishPackage,
+  reviewDepthForPublishPackageRefresh,
   summarizePublishPackageRefreshEvidence,
 } from './publish-package-refresh.js';
 import { refreshReviewGate } from './review-gate.js';
-import { deleteTestRunIfPresent, makeReadyGatePackage } from './test-fixtures.js';
+import { deleteTestRunIfPresent, makeReadyGatePackage, makeRun } from './test-fixtures.js';
 
 test('publish package refresh evidence summary preserves valid selection and reports drops', () => {
   const oldPackage = makeReadyGatePackage({
@@ -82,6 +83,39 @@ test('publish package refresh evidence summary uses shared path variants', () =>
   assert.deepEqual(summary.droppedEvidenceKeys, ['missing.png']);
   assert.deepEqual(summary.addedEvidenceKeys, ['artifacts/screenshots/new.png']);
 });
+
+test('reviewDepthForPublishPackageRefresh drops ad hoc human-gate review requirements', () => {
+  const run = makeRun({ flowType: 'dev', mode: 'autonomous' });
+  const humanGatePayload = {
+    reviewDepth: {
+      minimumIndependentReviews: 1,
+      requireCrossRunner: true,
+      extraLoopsRequested: 0,
+      requestedBy: 'human-gate' as const,
+    },
+  };
+
+  assert.deepEqual(reviewDepthForPublishPackageRefresh(run, undefined, humanGatePayload), {
+    minimumIndependentReviews: 0,
+    requireCrossRunner: false,
+    extraLoopsRequested: 0,
+    requestedBy: 'dispatch',
+  });
+
+  const dispatchPayload = {
+    reviewDepth: {
+      minimumIndependentReviews: 1,
+      requireCrossRunner: false,
+      extraLoopsRequested: 0,
+      requestedBy: 'dispatch' as const,
+    },
+  };
+  assert.deepEqual(
+    reviewDepthForPublishPackageRefresh(run, undefined, dispatchPayload),
+    dispatchPayload.reviewDepth,
+  );
+});
+
 test('refreshPublishPackage rebuilds the pending package and preserves safe operator choices', async (t) => {
   const testId = `refresh-package-${process.pid}-${Date.now()}`;
   const poolFile = path.join(farmslotRoot, 'pool', `${testId}.json`);
