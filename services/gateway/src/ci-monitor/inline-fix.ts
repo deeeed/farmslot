@@ -485,6 +485,7 @@ async function attemptInlineCIFix(
         const retryAt = new Date(Date.now() + INLINE_FIX_FALLBACK_POLL_MS).toISOString();
         mutateDedup(runId, (s) => {
           s.consecutiveAttempts = Math.max(0, s.consecutiveAttempts - 1);
+          s.totalAttempts = Math.max(0, s.totalAttempts - 1);
         });
         clearInlineFixState(runId, { phase: 'polling', nextPollAt: retryAt });
         return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };

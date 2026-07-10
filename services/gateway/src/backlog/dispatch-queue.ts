@@ -41,6 +41,7 @@ const QUEUE_FILE = resolveQueueFile();
 const queue: QueueItem[] = [];
 let queuePersistChain: Promise<void> = Promise.resolve();
 const queueProfileFitCache = new Map<string, string | null>();
+const queueProfileFitDeferUntil = new Map<string, number>();
 
 type BroadcastFn = (event: string, payload: unknown) => void;
 let _broadcast: BroadcastFn | null = null;
@@ -94,6 +95,22 @@ function enqueuePersist(reason: string): Promise<void> {
 
 function schedulePersist(reason: string): void {
   enqueuePersist(reason).catch(() => undefined);
+}
+
+function queueProfileFitCacheKey(item: QueueItem): string {
+  return [item.id, item.ticketOrPr, item.app ?? '', item.prepareProfile ?? '', item.createdAt].join(
+    '\0',
+  );
+}
+
+function clearQueueProfileFitCache(item: QueueItem): void {
+  const prefix = `${item.id}\0`;
+  for (const key of queueProfileFitCache.keys()) {
+    if (key.startsWith(prefix)) queueProfileFitCache.delete(key);
+  }
+  for (const key of queueProfileFitDeferUntil.keys()) {
+    if (key.startsWith(prefix)) queueProfileFitDeferUntil.delete(key);
+  }
 }
 
 export async function persistQueueNow(): Promise<void> {
@@ -259,6 +276,7 @@ export function addItem(params: InternalDispatchQueueAddParams): QueueItem {
 function removeItemAtIndex(idx: number, reason: string): void {
   const [removed] = queue.splice(idx, 1);
   if (!removed) return;
+  clearQueueProfileFitCache(removed);
   schedulePersist(reason);
   console.log(`[dispatch-queue] removed item ${removed.id.slice(0, 8)} (${reason})`);
   broadcastQueue();
@@ -294,6 +312,7 @@ export async function cancelGraphQueuedItem(params: {
   if (idx < 0) return false;
   const [item] = queue.splice(idx, 1);
   if (!item) return false;
+  clearQueueProfileFitCache(item);
   await enqueuePersist('graph-dependency-regressed');
   console.log(
     `[dispatch-queue] cancelled graph queue item ${item.id.slice(0, 8)}: ${params.reason}`,
@@ -387,15 +406,19 @@ export function buildQueuePreviewParams(item: QueueItem) {
 
 async function requiredPrepareProfileForQueueItem(item: QueueItem): Promise<string | null> {
   if (item.prepareProfile) return item.prepareProfile;
-  const cacheKey = [
-    item.id,
-    item.ticketOrPr,
-    item.app ?? '',
-    item.prepareProfile ?? '',
-    item.createdAt,
-  ].join('\0');
+  const cacheKey = queueProfileFitCacheKey(item);
   if (queueProfileFitCache.has(cacheKey)) {
     return queueProfileFitCache.get(cacheKey) ?? null;
+  }
+  const deferUntil = queueProfileFitDeferUntil.get(cacheKey);
+  if (deferUntil && deferUntil > Date.now()) {
+    throw new Error(
+      `Ticket metadata unavailable for ${item.ticketOrPr}; retrying profile fit after ${new Date(deferUntil).toISOString()}`,
+    );
+  }
+  if (item.project !== 'farmslot-farm') {
+    queueProfileFitCache.set(cacheKey, null);
+    return null;
   }
   const previewRun = {
     id: item.runId ?? item.id,
@@ -422,14 +445,15 @@ async function requiredPrepareProfileForQueueItem(item: QueueItem): Promise<stri
   } catch {
     // Queue metadata can outlive network/GitHub availability; explicit app/profile still gate.
   }
-  const bareGitHubRef = /^(?:[^#]+#)?\d+$/.test(item.ticketOrPr) || item.ticketOrPr.includes('#');
+  const githubRef = item.ticketOrPr.includes('#');
   const onlyFallbackTicketData =
     ticketData?.source === 'manual' &&
     ticketData.title === item.ticketOrPr &&
     !ticketData.description &&
     (ticketData.acceptanceCriteria?.length ?? 0) === 0 &&
     (ticketData.labels?.length ?? 0) === 0;
-  if (bareGitHubRef && onlyFallbackTicketData) {
+  if (githubRef && onlyFallbackTicketData) {
+    queueProfileFitDeferUntil.set(cacheKey, Date.now() + 60_000);
     throw new Error(
       `Ticket metadata unavailable for ${item.ticketOrPr}; deferring queued dispatch so implicit profile fit cannot bind the wrong slot`,
     );
@@ -556,7 +580,10 @@ async function tryDispatchNextOnce(): Promise<void> {
       await _createAndStartRun(item);
       // Remove from queue on success
       const idx = queue.findIndex((q) => q.id === item.id);
-      if (idx >= 0) queue.splice(idx, 1);
+      if (idx >= 0) {
+        clearQueueProfileFitCache(queue[idx]);
+        queue.splice(idx, 1);
+      }
       schedulePersist('auto-dispatch-success');
       _broadcast('queue.updated', { items: listItems() });
     } catch (err) {

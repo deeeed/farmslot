@@ -694,6 +694,52 @@ test('selectQueueDispatchSlot defers bare GitHub refs when ticket metadata is un
   );
 });
 
+test('selectQueueDispatchSlot does not defer non-farmslot queues on unavailable metadata', async () => {
+  const item: QueueItem = {
+    id: 'queue-other-project',
+    flowType: 'pr-complete',
+    project: 'metamask-mobile-farm',
+    ticketOrPr: 'example-org/example-mobile#424242',
+    priority: 1,
+    createdAt: '2026-04-15T00:00:00.000Z',
+    status: 'queued',
+  };
+  const slots: SlotStatus[] = [
+    {
+      slot: 'mm-cli',
+      machine: 'demo',
+      platform: 'cli',
+      project: 'metamask-mobile-farm',
+      health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: '-' },
+      branch: 'main',
+      agent: 'idle',
+      enabled: true,
+      dispatchable: true,
+      lifecycle: 'ready',
+      phase: null,
+      warm: false,
+      taskId: null,
+      taskFile: null,
+      currentRunId: null,
+      currentFlowType: null,
+      currentTicketOrPr: null,
+      currentMode: null,
+      currentFamilyId: null,
+      currentLane: null,
+      currentVariant: null,
+      dispatchedAt: null,
+      completedAt: null,
+      runner: 'claude',
+      model: 'sonnet',
+      deviceName: null,
+      taskPhase: null,
+      taskStepProgress: null,
+    },
+  ];
+
+  assert.equal(await selectQueueDispatchSlot(slots, item), 'mm-cli');
+});
+
 test('selectQueueDispatchSlot spreads launch candidates away from active siblings when possible', async () => {
   const activeSibling = createRun({
     flowType: 'dev',
