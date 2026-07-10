@@ -1614,10 +1614,17 @@ export async function sendRunnerPostLaunchPrompt(
       );
       snapshottedBlockers.add(blocker.kind);
     }
-    if (blocker?.autoAction === 'cursor-trust-workspace' && !workspaceTrustAnswered) {
+    const autoActionKey = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null);
+    if (
+      blocker?.autoAction === 'cursor-trust-workspace' &&
+      autoActionKey &&
+      !workspaceTrustAnswered
+    ) {
       const trustResult = await execOnSlot(
         vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} a 2>/dev/null`),
+        tmuxShellSnippet(
+          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} 2>/dev/null`,
+        ),
       );
       if (trustResult.exitCode !== 0) {
         throw new Error(
@@ -1634,10 +1641,16 @@ export async function sendRunnerPostLaunchPrompt(
       lastPane = '';
       continue;
     }
-    if (blocker?.autoAction === 'grok-select-current-project' && !grokProjectSelected) {
+    if (
+      blocker?.autoAction === 'grok-select-current-project' &&
+      autoActionKey &&
+      !grokProjectSelected
+    ) {
       const selectResult = await execOnSlot(
         vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} Enter 2>/dev/null`),
+        tmuxShellSnippet(
+          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} 2>/dev/null`,
+        ),
       );
       if (selectResult.exitCode !== 0) {
         throw new Error(
