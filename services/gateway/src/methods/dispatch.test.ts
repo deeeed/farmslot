@@ -28,8 +28,10 @@ import {
   isDispatchStaleBranch,
   isFreeSlot,
   resolveJiraTargetBranchFromFleet,
+  slotBranchCheckoutBlocker,
   slotScore,
   validateSlot,
+  validateSlotForTargetBranch,
 } from './dispatch/slot-scoring.js';
 import { flowTypeToKey } from './dispatch/task-flow-key.js';
 import { assertTicketRefMatchesProjectRepo, normalizeTicketRef } from './dispatch/ticket-ref.js';
@@ -777,6 +779,92 @@ test('slotScore treats configured tracking branches as idle', () => {
   assert.equal(isDispatchStaleBranch(featureSlot, projectConfigs), true);
   assert.equal(slotScore(trackingSlot, undefined, { projectConfigs }), 0);
   assert.equal(slotScore(featureSlot, undefined, { projectConfigs }), 50);
+});
+
+test('validateSlotForTargetBranch rejects linked worktree branch already checked out elsewhere', () => {
+  const targetBranch = 'feat/manual-000011-recipe-ui-passive-observations';
+  const branchOwner = makeSlot({
+    slot: 'macwork-ff-3',
+    project: 'farmslot-farm',
+    branch: targetBranch,
+    linkedWorktree: true,
+    lifecycle: 'busy',
+    agent: 'working',
+  });
+  const requested = makeSlot({
+    slot: 'macwork-ff-4',
+    project: 'farmslot-farm',
+    branch: 'wt/ff-4',
+    linkedWorktree: true,
+    lifecycle: 'ready',
+    agent: 'idle',
+  });
+
+  assert.equal(
+    slotBranchCheckoutBlocker(requested, [requested, branchOwner], targetBranch),
+    branchOwner,
+  );
+  assert.equal(
+    validateSlotForTargetBranch(requested, [requested, branchOwner], targetBranch),
+    `Branch ${targetBranch} is already checked out by linked worktree slot macwork-ff-3`,
+  );
+});
+
+test('resolveDispatchPreviewFromFleet skips free linked worktree slots blocked by target branch owner', () => {
+  const targetBranch = 'feat/manual-000011-recipe-ui-passive-observations';
+  const branchOwner = makeSlot({
+    slot: 'macwork-ff-3',
+    project: 'farmslot-farm',
+    branch: targetBranch,
+    linkedWorktree: true,
+    lifecycle: 'busy',
+    agent: 'working',
+  });
+  const blockedFree = makeSlot({
+    slot: 'macwork-ff-4',
+    project: 'farmslot-farm',
+    branch: 'wt/ff-4',
+    linkedWorktree: true,
+    lifecycle: 'ready',
+    agent: 'idle',
+    health: { ssh: 'LOCAL', device: 'ext:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const unlinkedFree = makeSlot({
+    slot: 'standalone-1',
+    project: 'farmslot-farm',
+    branch: 'main',
+    linkedWorktree: false,
+    lifecycle: 'ready',
+    agent: 'idle',
+    health: { ssh: 'LOCAL', device: 'ext:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  assert.equal(
+    resolveDispatchPreviewFromFleet(
+      {
+        project: 'farmslot-farm',
+        flowType: 'pr-complete',
+        ticketOrPr: 'deeeed/farmslot#304',
+        targetBranch,
+      },
+      [branchOwner, blockedFree, unlinkedFree],
+    ).preview.slotId,
+    'standalone-1',
+  );
+  assert.throws(
+    () =>
+      resolveDispatchPreviewFromFleet(
+        {
+          project: 'farmslot-farm',
+          flowType: 'pr-complete',
+          ticketOrPr: 'deeeed/farmslot#304',
+          targetBranch,
+          slotId: 'macwork-ff-4',
+        },
+        [branchOwner, blockedFree, unlinkedFree],
+      ),
+    /Slot macwork-ff-4: Branch feat\/manual-000011-recipe-ui-passive-observations is already checked out by linked worktree slot macwork-ff-3/,
+  );
 });
 
 test('slotScore prefers a same-family stale slot over unrelated main', () => {

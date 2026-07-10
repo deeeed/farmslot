@@ -400,16 +400,13 @@ export function assertSelectedEvidencePublished(
 
 const LOCAL_PR_BODY_PATH_PATTERNS: RegExp[] = [
   /file:\/\/\/[^\s)>'"]+/gi,
-  /(^|[\s(='"])(?:\/Users|\/home|\/tmp)\/[^\s)>'"]+/g,
-  /(^|[\s(='"])(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"]+/gi,
+  /(^|[\s(='"])`?(?:\/Users|\/home|\/tmp)\/[^\s)>'"`]+/g,
+  /(^|[\s(='"])`?(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`]+/gi,
   /(^|[\s(='"])(?:\.\/)?(?:before|after|evidence)[^/\s)>'"]*\.(?:png|jpe?g|gif|mp4|mov|webm)/gi,
 ];
 
 function stripCodeBlocks(body: string): string {
-  return body
-    .replace(/```[\s\S]*?```/g, '')
-    .replace(/~~~[\s\S]*?~~~/g, '')
-    .replace(/`[^`\n]*`/g, '');
+  return body.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
 }
 
 export function localPrBodyPathResidues(body: string): string[] {
@@ -418,7 +415,7 @@ export function localPrBodyPathResidues(body: string): string[] {
   for (const pattern of LOCAL_PR_BODY_PATH_PATTERNS) {
     pattern.lastIndex = 0;
     for (const match of scanned.matchAll(pattern)) {
-      const value = match[0].trim().replace(/^[('\"=]+/, '');
+      const value = match[0].trim().replace(/^[('\"=`]+/, '');
       if (value) residues.push(value);
     }
   }
@@ -446,7 +443,7 @@ function sanitizePRBody(body: string): string {
   // Strip generated artifact-reference lines. The final PR should contain
   // uploaded evidence URLs, not task-local artifact package paths.
   result = result.replace(
-    /^.*(^|[\s|<(='"])(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"|]+.*$/gim,
+    /^.*(^|[\s|<(='"]`?)(?:\.\/)?(?:\.task|temp|artifacts|screenshots|videos|recipe-runs)\/[^\s)>'"`|]+.*$/gim,
     '',
   );
   // Strip markdown image refs with just artifact filenames (before.mp4, after.mp4, evidence-*.png)

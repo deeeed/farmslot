@@ -35,7 +35,7 @@ import {
   isFreeSlot,
   projectConfigsFromProjects,
   slotScore,
-  validateSlot,
+  validateSlotForTargetBranch,
 } from './slot-scoring.js';
 import { resolveDispatchTargetBranch } from './target-branch.js';
 import { normalizeTicketRef } from './ticket-ref.js';
@@ -791,7 +791,7 @@ export function resolveDispatchPreviewFromFleet(
   if (params.slotId) {
     const found = slots.find((s) => s.slot === params.slotId);
     if (!found) throw new Error(`Slot ${params.slotId} not found`);
-    const err = validateSlot(found);
+    const err = validateSlotForTargetBranch(found, slots, params.targetBranch);
     if (err) throw new Error(`Slot ${params.slotId}: ${err}`);
     slotInfo = found;
   } else {

@@ -28,6 +28,7 @@ import {
   isFreeSlot,
   projectConfigsFromProjects,
   slotScore,
+  validateSlotForTargetBranch,
 } from '../methods/dispatch/slot-scoring.js';
 import {
   assertSlotNotOperatorRoot,
@@ -417,6 +418,10 @@ export async function executeFindSlotStep(
           const pickedSlotId =
             (resolvedDecision?.selectionData?.slotId as string | undefined) ?? null;
           if (pickedSlotId) {
+            const pickedSlot = projectSlots.find((s) => s.slot === pickedSlotId);
+            if (!pickedSlot) throw new Error(`Selected slot ${pickedSlotId} not found`);
+            const err = validateSlotForTargetBranch(pickedSlot, projectSlots, targetBranch);
+            if (err) throw new Error(`Selected slot ${pickedSlotId}: ${err}`);
             updateRun(runId, { slotId: pickedSlotId });
             await markSlotBusy(pickedSlotId, 'preparing');
             broadcastFn(Events.FLEET_UPDATED, { fleet: await loadFleetStatus() });
@@ -488,6 +493,10 @@ export async function executeFindSlotStep(
     );
     const pickedSlotId = (resolvedDecision?.selectionData?.slotId as string) || null;
     if (!pickedSlotId) throw new Error('No slot selected');
+    const pickedSlot = projectSlots.find((s) => s.slot === pickedSlotId);
+    if (!pickedSlot) throw new Error(`Selected slot ${pickedSlotId} not found`);
+    const pickedSlotError = validateSlotForTargetBranch(pickedSlot, projectSlots, targetBranch);
+    if (pickedSlotError) throw new Error(`Selected slot ${pickedSlotId}: ${pickedSlotError}`);
 
     // If user requested reset, do it before proceeding
     if (resolvedDecision?.selectionData?.resetBranch) {

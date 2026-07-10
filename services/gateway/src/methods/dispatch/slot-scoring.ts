@@ -66,11 +66,15 @@ export function isDispatchStaleBranch(
   slot: SlotStatus,
   projectConfigs?: Readonly<Record<string, SlotScoringProjectConfig>>,
 ): boolean {
-  return isSlotRefreshStaleBranch(slot.branch ?? '', slotTrackingConfigForSlot(slot, projectConfigs), {
-    session: slot.session,
-    slotId: slot.slot,
-    linkedWorktree: slot.linkedWorktree,
-  });
+  return isSlotRefreshStaleBranch(
+    slot.branch ?? '',
+    slotTrackingConfigForSlot(slot, projectConfigs),
+    {
+      session: slot.session,
+      slotId: slot.slot,
+      linkedWorktree: slot.linkedWorktree,
+    },
+  );
 }
 
 export function slotScore(
@@ -161,6 +165,7 @@ export function findBestSlot(
   const candidates = slots
     .filter((s) => {
       if (s.project !== project || !isFreeSlot(s) || (allow && !allow.has(s.slot))) return false;
+      if (slotBranchCheckoutBlocker(s, slots, options?.targetBranch)) return false;
       if (
         !s.currentRunId &&
         !s.currentFamilyId &&
@@ -201,6 +206,36 @@ export function findBestSlot(
   if (candidates.length === 0) return null;
   const cdpCandidates = candidates.filter((s) => isCdpLive(s.health.cdp));
   return cdpCandidates.length > 0 ? cdpCandidates[0] : candidates[0];
+}
+
+export function slotBranchCheckoutBlocker(
+  slot: SlotStatus,
+  slots: readonly SlotStatus[],
+  targetBranch?: string | null,
+): SlotStatus | null {
+  if (!targetBranch || !slot.linkedWorktree || slot.branch === targetBranch) return null;
+  return (
+    slots.find(
+      (other) =>
+        other.slot !== slot.slot &&
+        other.project === slot.project &&
+        other.linkedWorktree &&
+        other.branch === targetBranch &&
+        other.lifecycle !== 'disabled',
+    ) ?? null
+  );
+}
+
+export function validateSlotForTargetBranch(
+  slot: SlotStatus,
+  slots: readonly SlotStatus[],
+  targetBranch?: string | null,
+): string | null {
+  const baseError = validateSlot(slot);
+  if (baseError) return baseError;
+  const blocker = slotBranchCheckoutBlocker(slot, slots, targetBranch);
+  if (!blocker) return null;
+  return `Branch ${targetBranch} is already checked out by linked worktree slot ${blocker.slot}`;
 }
 
 export function validateSlot(slot: SlotStatus): string | null {
