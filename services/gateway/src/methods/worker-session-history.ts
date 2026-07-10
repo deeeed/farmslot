@@ -45,7 +45,7 @@ interface SessionFileRead {
 export type WorkerSessionHistoryUnsubscribe = () => void;
 
 export function workerSessionHistoryEnabled(): boolean {
-  return process.env.FARMSLOT_EXPERIMENTAL_WORKER_HISTORY === '1';
+  return process.env.FARMSLOT_EXPERIMENTAL_WORKER_HISTORY !== '0';
 }
 
 function normalizeLimit(limit: number | undefined): number {

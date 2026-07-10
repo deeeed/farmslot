@@ -38,6 +38,7 @@ import {
   runnerPersistsSessionFiles,
   runnerProcessPattern,
   runnerProcessPatternSource,
+  runnerResolvesPreTaskLaunchBlockers,
   runnerSignalShowsCompletion,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
@@ -60,6 +61,10 @@ describe('scripted runner', () => {
 
   it('does not need post-launch prompt', () => {
     assert.equal(runnerNeedsPostLaunchPrompt('scripted'), false);
+  });
+
+  it('does not resolve pre-task launch blockers', () => {
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('scripted'), false);
   });
 
   it('has null continue command', () => {
@@ -182,6 +187,7 @@ describe('cursor runner', () => {
 
   it('treats the normal Cursor Agent TUI as steerable through tmux', () => {
     assert.equal(runnerNeedsPostLaunchPrompt('cursor'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('cursor'), true);
     assert.equal(runnerSupportsInteractivePrompt('cursor'), true);
     assert.equal(runnerSupportsTmuxNudges('cursor'), true);
     assert.equal(runnerContinueCommand('cursor'), null);
@@ -722,6 +728,17 @@ describe('cursor runner', () => {
     assert.equal(runnerSupportsModel('cursor', 'grok-4.5-fast-xhigh'), true);
     assert.equal(runnerSupportsModel('cursor', 'sonnet-4-thinking'), true);
     assert.equal(getRunnerDefinition('cursor').acceptsModel?.(null as any), false);
+  });
+});
+
+describe('pre-task launch blocker resolution', () => {
+  it('is only enabled for runners that need argv-prompt blockers cleared before task start', () => {
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('cursor'), true);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('codex'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('claude'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('grok'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('opencode'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('none'), false);
   });
 });
 

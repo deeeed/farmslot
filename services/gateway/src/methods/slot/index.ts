@@ -4,8 +4,10 @@ export { slotFixtureRefresh } from './fixtures.js';
 export { slotPrepare } from './prepare.js';
 export {
   buildDevServerPortCleanup,
+  buildPrepareKillWindowsByNameCommand,
   buildPrepareNewWindowCommand,
   buildPreparePlaceholderCommand,
+  buildPreparePreLaunchSweepCommand,
   buildPrepareWindowName,
   buildPrepareWrappedCommand,
   clearStalePrepareProcess,

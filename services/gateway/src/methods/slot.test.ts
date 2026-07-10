@@ -10,8 +10,10 @@ import type { SlotVars } from '../core/config.js';
 import {
   buildDevServerPortCleanup,
   buildKillRoleWindowCommand,
+  buildPrepareKillWindowsByNameCommand,
   buildPrepareNewWindowCommand,
   buildPreparePlaceholderCommand,
+  buildPreparePreLaunchSweepCommand,
   buildPrepareWindowName,
   buildPrepareWrappedCommand,
   ensureSlotReachable,
@@ -188,6 +190,114 @@ test('buildPrepareNewWindowCommand uses an explicit session target', () => {
   assert.match(command, /new-session -d -s 'core-5' -c '\/tmp\/repo'/);
   assert.match(command, /new-window -d -t 'core-5:'/);
   assert.equal(prepareSessionTarget('core-5'), 'core-5:');
+});
+
+test('buildPrepareKillWindowsByNameCommand targets windows by index, not name', () => {
+  const command = buildPrepareKillWindowsByNameCommand('ff-3', 'prepare-6fb60a78-deps');
+
+  assert.match(command, /TMUX_BIN="\$\(command -v tmux 2>\/dev\/null \|\| true\)"/);
+  assert.match(command, /\[ -n "\$TMUX_BIN" \] \|\| \{ echo "tmux not found" >&2; exit 127; \}/);
+  assert.match(command, /list-windows -t 'ff-3' -F '#\{window_index\}:#\{window_name\}'/);
+  assert.match(
+    command,
+    /awk -F: -v want='prepare-6fb60a78-deps' '\$2 == want \{ print \$1 ":" \$2 \}'/,
+  );
+  assert.match(command, /sort -t: -nr -k1,1/);
+  assert.match(command, /kill-window -t 'ff-3':"\$idx"/);
+  assert.doesNotMatch(command, /kill-window -t 'ff-3':prepare-6fb60a78-deps/);
+});
+
+test('buildPreparePreLaunchSweepCommand preserves same-run prepare windows', () => {
+  const command = buildPreparePreLaunchSweepCommand('ff-3', '6fb60a78');
+
+  assert.match(command, /TMUX_BIN="\$\(command -v tmux 2>\/dev\/null \|\| true\)"/);
+  assert.match(command, /\[ -n "\$TMUX_BIN" \] \|\| \{ echo "tmux not found" >&2; exit 127; \}/);
+  assert.match(command, /list-windows -t 'ff-3' -F '#\{window_index\}:#\{window_name\}'/);
+  assert.match(
+    command,
+    /awk -F: -v keep='\^prepare-6fb60a78\(\$\|-\)' '\$2 ~ \/\^prepare-\/ && \$2 !~ keep \{ print \$1 ":" \$2 \}'/,
+  );
+  assert.match(command, /sort -t: -nr -k1,1/);
+  assert.match(command, /kill-window -t 'ff-3':"\$idx"/);
+  assert.doesNotMatch(command, /kill-window -t 'ff-3':prepare-/);
+});
+
+test('buildPrepareKillWindowsByNameCommand reaps duplicate same-named prepare windows', async (t) => {
+  try {
+    await execFileAsync('tmux', ['-V'], { timeout: 2000 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      t.skip('tmux is not installed');
+      return;
+    }
+    throw error;
+  }
+
+  const session = `farmslot_prepare_dup_${process.pid}_${Date.now()}`;
+  const windowName = 'prepare-6fb60a78-deps';
+  await execFileAsync('tmux', ['kill-session', '-t', session], { timeout: 2000 }).catch(
+    () => undefined,
+  );
+  try {
+    await execFileAsync(
+      'tmux',
+      ['new-session', '-d', '-s', session, '-n', 'zsh', '--', 'sleep', '60'],
+      { timeout: 2000 },
+    );
+    for (let i = 0; i < 3; i += 1) {
+      await execFileAsync(
+        'tmux',
+        [
+          'new-window',
+          '-d',
+          '-t',
+          `${session}:`,
+          '-n',
+          windowName,
+          '--',
+          'bash',
+          '-lc',
+          'while :; do sleep 86400; done',
+        ],
+        { timeout: 2000 },
+      );
+    }
+
+    const before = await execFileAsync(
+      'tmux',
+      ['list-windows', '-t', session, '-F', '#{window_name}'],
+      { timeout: 2000 },
+    );
+    assert.equal(before.stdout.split('\n').filter((name) => name === windowName).length, 3);
+
+    // Name targeting is poisoned once duplicates exist.
+    await assert.rejects(
+      execFileAsync('tmux', ['pipe-pane', '-t', `${session}:${windowName}`, '-O', 'cat'], {
+        timeout: 2000,
+      }),
+      /can't find window/,
+    );
+
+    await execFileAsync(
+      '/bin/bash',
+      ['-lc', buildPrepareKillWindowsByNameCommand(session, windowName)],
+      {
+        timeout: 5000,
+      },
+    );
+
+    const after = await execFileAsync(
+      'tmux',
+      ['list-windows', '-t', session, '-F', '#{window_name}'],
+      { timeout: 2000 },
+    );
+    assert.equal(after.stdout.split('\n').filter((name) => name === windowName).length, 0);
+    assert(after.stdout.split('\n').includes('zsh'));
+  } finally {
+    await execFileAsync('tmux', ['kill-session', '-t', session], { timeout: 2000 }).catch(
+      () => undefined,
+    );
+  }
 });
 
 test('buildPrepareNewWindowCommand recreates a missing tmux session before opening window', async (t) => {

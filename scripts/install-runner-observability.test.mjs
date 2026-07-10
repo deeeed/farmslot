@@ -205,3 +205,40 @@ test('codex install never writes through a stale codex-home config.toml symlink 
     'home config must have a single [features] section (no duplicate-key corruption)',
   );
 });
+
+test('codex install is idempotent for isolated codex-home config.toml', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'obs-install-codex-idempotent-'));
+  fs.mkdirSync(path.join(repo, '.agent', 'codex-home'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repo, '.agent', 'codex-home', 'config.toml'),
+    '[features]\nhooks = false\ncustom_flag = true\n\n[tui.model_availability_nux]\n"gpt-5.5" = 1\n',
+  );
+
+  for (let i = 0; i < 2; i += 1) {
+    execFileSync(
+      process.execPath,
+      [
+        INSTALLER,
+        '--runner',
+        'codex',
+        '--repo',
+        repo,
+        '--runtime-dir',
+        '.agent',
+        '--slot-id',
+        'install-test-codex-idempotent',
+      ],
+      { stdio: 'pipe' },
+    );
+  }
+
+  const homeContent = fs.readFileSync(
+    path.join(repo, '.agent', 'codex-home', 'config.toml'),
+    'utf8',
+  );
+  assert.equal((homeContent.match(/^\[features\]/gm) || []).length, 1);
+  assert.match(homeContent, /hooks = true/);
+  assert.match(homeContent, /custom_flag = true/);
+  assert.equal((homeContent.match(/^\[projects\./gm) || []).length, 1);
+  assert.match(homeContent, /\[tui\.model_availability_nux\]/);
+});

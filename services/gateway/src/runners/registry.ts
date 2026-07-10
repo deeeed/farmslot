@@ -67,6 +67,8 @@ export interface RunnerDefinition {
   processMatchers: string[];
   supportsInteractivePrompt: boolean;
   needsPostLaunchPrompt: boolean;
+  /** Runner starts with the task in argv and must clear safe launch blockers before dispatch can trust task execution. */
+  resolvesPreTaskLaunchBlockers: boolean;
   supportsTmuxNudges: boolean;
   continueCommand: string | null;
   /** Runner writes session files on disk (e.g. resumable session state). */
@@ -147,6 +149,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['claude'],
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     continueCommand: '/continue',
     persistsSessionFiles: true,
@@ -173,6 +176,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['codex'],
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     // This string is sent into an already-running Codex TUI when resuming a paused
     // monitor. It must be natural language, not the shell-only `codex --continue`
@@ -209,6 +213,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // steerable TUI turn without the fragile post-launch key path.
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: true,
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -233,6 +238,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     // ~/.grok/sessions so usage extraction can join summary.json to Grok logs.
     supportsInteractivePrompt: true,
     needsPostLaunchPrompt: true,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: true,
     continueCommand: null,
     persistsSessionFiles: true,
@@ -253,6 +259,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['opencode'],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -269,6 +276,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: [],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -285,6 +293,7 @@ export const KNOWN_RUNNERS: Record<string, RunnerDefinition> = {
     processMatchers: ['farmslot scripted-runner', 'scripted-runner'],
     supportsInteractivePrompt: false,
     needsPostLaunchPrompt: false,
+    resolvesPreTaskLaunchBlockers: false,
     supportsTmuxNudges: false,
     continueCommand: null,
     persistsSessionFiles: false,
@@ -444,6 +453,11 @@ export function runnerNeedsPostLaunchPrompt(runnerId?: string | null): boolean {
   return getRunnerDefinition(runnerId).needsPostLaunchPrompt;
 }
 
+export function runnerResolvesPreTaskLaunchBlockers(runnerId?: string | null): boolean {
+  if (!isKnownRunner(runnerId)) return false;
+  return getRunnerDefinition(runnerId).resolvesPreTaskLaunchBlockers;
+}
+
 export function runnerContinueCommand(runnerId?: string | null): string | null {
   if (!isKnownRunner(runnerId)) return null;
   return getRunnerDefinition(runnerId).continueCommand;
@@ -579,6 +593,14 @@ export interface RunnerLaunchBlocker {
   autoAction: 'cursor-trust-workspace' | 'grok-select-current-project' | null;
   /** Wait for the blocker to clear instead of failing prompt delivery. */
   defer?: boolean;
+}
+
+export function runnerLaunchBlockerAutoActionKey(
+  autoAction: RunnerLaunchBlocker['autoAction'],
+): 'a' | 'Enter' | null {
+  if (autoAction === 'cursor-trust-workspace') return 'a';
+  if (autoAction === 'grok-select-current-project') return 'Enter';
+  return null;
 }
 
 export function detectRunnerLaunchBlocker(
@@ -1592,10 +1614,17 @@ export async function sendRunnerPostLaunchPrompt(
       );
       snapshottedBlockers.add(blocker.kind);
     }
-    if (blocker?.autoAction === 'cursor-trust-workspace' && !workspaceTrustAnswered) {
+    const autoActionKey = runnerLaunchBlockerAutoActionKey(blocker?.autoAction ?? null);
+    if (
+      blocker?.autoAction === 'cursor-trust-workspace' &&
+      autoActionKey &&
+      !workspaceTrustAnswered
+    ) {
       const trustResult = await execOnSlot(
         vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} a 2>/dev/null`),
+        tmuxShellSnippet(
+          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} 2>/dev/null`,
+        ),
       );
       if (trustResult.exitCode !== 0) {
         throw new Error(
@@ -1612,10 +1641,16 @@ export async function sendRunnerPostLaunchPrompt(
       lastPane = '';
       continue;
     }
-    if (blocker?.autoAction === 'grok-select-current-project' && !grokProjectSelected) {
+    if (
+      blocker?.autoAction === 'grok-select-current-project' &&
+      autoActionKey &&
+      !grokProjectSelected
+    ) {
       const selectResult = await execOnSlot(
         vars,
-        tmuxShellSnippet(`send-keys -t ${shellQuote(target)} Enter 2>/dev/null`),
+        tmuxShellSnippet(
+          `send-keys -t ${shellQuote(target)} ${shellQuote(autoActionKey)} 2>/dev/null`,
+        ),
       );
       if (selectResult.exitCode !== 0) {
         throw new Error(
