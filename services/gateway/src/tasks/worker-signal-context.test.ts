@@ -61,3 +61,56 @@ test('applyRunningWorkerSignalToContext updates the matched reviewer context id'
     false,
   );
 });
+
+test('applyRunningWorkerSignalToContext prefers signal context id before role fallback', async (t) => {
+  const run = createRun({
+    flowType: 'dev',
+    project: 'example-browser-farm',
+    ticketOrPr: `PROJ-${Date.now()}-reviewer-signal-role`,
+    slotId: 'runner-browser-1',
+  });
+  t.after(() => cleanupRun(run.id));
+
+  updateRun(run.id, {
+    agentContexts: [
+      {
+        id: 'rev-claude',
+        slotId: 'runner-browser-1',
+        runId: run.id,
+        role: 'self-review',
+        label: 'rev-claude',
+        status: 'working',
+        target: { session: 'mme-1', window: 'rev-claude', target: 'mme-1:rev-claude' },
+        updatedAt: '2026-07-10T08:00:00.000Z',
+      },
+      {
+        id: 'rev-codex',
+        slotId: 'runner-browser-1',
+        runId: run.id,
+        role: 'self-review',
+        label: 'rev-codex',
+        status: 'working',
+        target: { session: 'mme-1', window: 'rev-codex', target: 'mme-1:rev-codex' },
+        updatedAt: '2026-07-10T08:00:00.000Z',
+      },
+    ],
+  });
+
+  await applyRunningWorkerSignalToContext(
+    'runner-browser-1',
+    run.id,
+    {
+      status: 'running',
+      timestamp: '2026-07-10T08:20:00.000Z',
+      contextId: 'rev-codex',
+    },
+    'self-review',
+  );
+
+  const contexts = getRun(run.id)?.agentContexts ?? [];
+  assert.equal(
+    contexts.find((ctx) => ctx.id === 'rev-codex')?.lastSignalAt,
+    '2026-07-10T08:20:00.000Z',
+  );
+  assert.equal(contexts.find((ctx) => ctx.id === 'rev-claude')?.lastSignalAt, undefined);
+});

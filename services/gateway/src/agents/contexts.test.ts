@@ -410,6 +410,15 @@ test('resolveAgentTarget rejects mismatched explicit target and role selectors',
     () => resolveAgentTarget('runner-browser-1', { target: 'mme-1:ci-fix', contextId: 'review' }),
     /target mme-1:ci-fix belongs to context ci-fix, not review/,
   );
+  await assert.rejects(
+    () =>
+      resolveAgentTarget('runner-browser-1', {
+        target: 'mme-1:rev-claude',
+        contextId: 'rev-codex',
+        role: 'self-review',
+      }),
+    /target mme-1:rev-claude belongs to context rev-claude, not rev-codex/,
+  );
 });
 
 test('resolveAgentTarget refuses ambiguous active runs for explicit non-primary roles', async (t) => {

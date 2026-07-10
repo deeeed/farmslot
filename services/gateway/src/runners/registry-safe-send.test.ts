@@ -64,6 +64,9 @@ mock.module('../core/exec.js', {
         }
         return { exitCode: 0, stdout: paneText, stderr: '' };
       }
+      if (cmd.includes('list-windows')) {
+        return { exitCode: 0, stdout: '1 rev-codex\n2 self-review\n3 dev\n', stderr: '' };
+      }
       if (cmd.includes('send-keys') || cmd.includes('send-text')) {
         callOrder.push('tmux:send');
         return { exitCode: 0, stdout: '', stderr: '' };
@@ -80,7 +83,7 @@ mock.module('../core/exec.js', {
   },
 });
 
-const { sendRunnerInstructionSafely } = await import('./registry.js');
+const { resolvePrimaryWorkerTarget, sendRunnerInstructionSafely } = await import('./registry.js');
 
 test('sendRunnerInstructionSafely consults observability before pane on hook-authoritative idle', async () => {
   callOrder.length = 0;
@@ -121,6 +124,11 @@ test('sendRunnerInstructionSafely consults observability before pane on hook-aut
   );
 });
 
+test('resolvePrimaryWorkerTarget skips reviewer windows when falling back to session scan', async () => {
+  const workerTarget = await resolvePrimaryWorkerTarget(vars, 'self-review');
+  assert.equal(workerTarget, 'test-1:3');
+});
+
 test('sendRunnerInstructionSafely skips pane busy scrape when hook reports composing', async () => {
   callOrder.length = 0;
   paneCaptureCount = 0;
@@ -137,15 +145,9 @@ test('sendRunnerInstructionSafely skips pane busy scrape when hook reports compo
     observedAt: Date.now(),
   };
 
-  const sent = await sendRunnerInstructionSafely(
-    vars,
-    target,
-    'codex',
-    message,
-    '[test]',
-    50,
-    { forceBusyPoll: true },
-  );
+  const sent = await sendRunnerInstructionSafely(vars, target, 'codex', message, '[test]', 50, {
+    forceBusyPoll: true,
+  });
 
   assert.equal(sent, false);
   assert.ok(callOrder.includes('obs:promptAccepted'));

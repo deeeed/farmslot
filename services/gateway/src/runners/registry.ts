@@ -7,6 +7,7 @@ import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_MODEL,
+  isReviewerWindowName,
   type SafetyTier,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -2065,7 +2066,7 @@ export async function resolvePrimaryWorkerTarget(
     for (const line of lines) {
       const [index, ...rest] = line.split(/\s+/);
       const name = rest.join(' ');
-      if (index && name !== reviewWindow) {
+      if (index && name !== reviewWindow && !isReviewerWindowName(name)) {
         return `${session}:${index}`;
       }
     }

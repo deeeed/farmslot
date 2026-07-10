@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 import { watch } from 'chokidar';
 
-import { Events } from '@farmslot/protocol';
+import { type AgentRole, Events } from '@farmslot/protocol';
 
 import { loadSlotVars } from '../core/config.js';
 import { isLocal } from '../core/exec.js';
@@ -54,8 +54,12 @@ export function startProgressWatcher(
   filePath: string,
   runId: string,
   label = 'Review',
+  options: { contextId?: string; role?: AgentRole } = {},
 ): { stop: () => void } {
   let lastProgress = '';
+  const fallbackContextId = label === 'Fix' ? 'self-review-fix' : 'self-review';
+  const contextId = options.contextId ?? fallbackContextId;
+  const role = options.role ?? (fallbackContextId as AgentRole);
 
   const compute = (content: string) => {
     const total = (content.match(/- \[[ x]\]/g) || []).length;
@@ -65,13 +69,12 @@ export function startProgressWatcher(
     lastProgress = progress;
     updateRunStep(runId, 'self-review', { detail: `${label}: ${progress} steps` });
     broadcastFn(Events.RUN_UPDATED, { run: getRun(runId) });
-    const contextId = label === 'Fix' ? 'self-review-fix' : 'self-review';
-    void taskProgress({ slotId: vars.slotId, runId, contextId, role: contextId })
+    void taskProgress({ slotId: vars.slotId, runId, contextId, role })
       .then((structuredProgress) => {
         broadcastFn(Events.TASK_PROGRESS_UPDATED, {
           slotId: vars.slotId,
           runId,
-          role: contextId,
+          role,
           contextId,
           progress: structuredProgress,
         });

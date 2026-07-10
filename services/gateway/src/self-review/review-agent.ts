@@ -293,7 +293,10 @@ export async function runReviewAgent(
 
     // 6. Watch SELF-REVIEW.md for progress + wait for completion
     const selfReviewPath = slotTaskRelPath(vars, taskDir, SELF_REVIEW_CHECKLIST_TARGET.checklist);
-    progressWatcher = startProgressWatcher(vars, selfReviewPath, _runId);
+    progressWatcher = startProgressWatcher(vars, selfReviewPath, _runId, 'Review', {
+      contextId: allocated.id,
+      role: 'self-review',
+    });
     const completed = await waitForReviewCompletion(
       vars,
       session,

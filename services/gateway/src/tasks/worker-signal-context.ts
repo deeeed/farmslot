@@ -19,8 +19,8 @@ export async function applyRunningWorkerSignalToContext(
   const contexts = run.agentContexts ?? [];
   const match = contexts.find((ctx) => {
     if (contextId) return ctx.id === contextId;
-    if (role) return ctx.role === role;
     if (signal.contextId) return ctx.id === signal.contextId;
+    if (role) return ctx.role === role;
     if (signal.role) return ctx.role === signal.role;
     return ctx.role === 'primary';
   });

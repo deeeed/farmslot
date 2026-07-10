@@ -12,6 +12,7 @@ import {
   contextIdFor,
   isReviewerAgentContext,
   isReviewerAgentRole,
+  isReviewerWindowName,
   primaryRoleForFlow,
   type Run,
   selectLatestReviewerContext,
@@ -167,11 +168,9 @@ function assertSelectorTargetMatchesRole(selector: AgentContextSelector): void {
   const windowName = targetWindowName(selector.target.trim());
   const windowRole = roleForWindowName(windowName);
   if (windowRole && selector.contextId) {
-    const contextMatchesWindow =
-      selector.contextId === contextIdFor(windowRole) ||
-      selector.contextId === windowName ||
-      (isReviewerAgentRole(windowRole) &&
-        (selector.contextId.startsWith('rev-') || /^rev\d+-/.test(selector.contextId)));
+    const contextMatchesWindow = isReviewerWindowName(windowName)
+      ? selector.contextId === windowName
+      : selector.contextId === contextIdFor(windowRole) || selector.contextId === windowName;
     if (!contextMatchesWindow) {
       throw new Error(
         `Agent target selector mismatch: target ${selector.target.trim()} belongs to context ${windowName ?? contextIdFor(windowRole)}, not ${selector.contextId}`,
