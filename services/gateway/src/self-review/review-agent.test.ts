@@ -33,7 +33,7 @@ test('review agent instructions use context-scoped checklist, signal, and feedba
 
 test('review agent scopes legacy template feedback paths to the reviewer context', () => {
   const scoped = scopeReviewFeedbackPath(
-    'Write artifacts/review-feedback.md, then include artifacts/review-feedback.md in evidence.',
+    'Write artifacts/review-feedback.md, then include review-feedback.md in evidence.',
     reviewerFeedbackRelPath('rev-claude'),
   );
 

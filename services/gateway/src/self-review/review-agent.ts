@@ -71,6 +71,7 @@ export function parseTerminalSelfReviewSignal(raw: string) {
 }
 
 export const LEGACY_REVIEW_FEEDBACK_REL_PATH = 'artifacts/review-feedback.md';
+const LEGACY_REVIEW_FEEDBACK_PATH_PATTERN = /\b(?:artifacts\/)?review-feedback\.md\b/g;
 
 export function selfReviewChecklistMarkPrompt(
   taskDir: string,
@@ -97,7 +98,7 @@ export function reviewerFeedbackRelPath(contextId: string): string {
 }
 
 export function scopeReviewFeedbackPath(template: string, feedbackRelPath: string): string {
-  const scoped = template.replaceAll(LEGACY_REVIEW_FEEDBACK_REL_PATH, feedbackRelPath);
+  const scoped = template.replace(LEGACY_REVIEW_FEEDBACK_PATH_PATTERN, feedbackRelPath);
   if (scoped !== template) return scoped;
   return `${template.trimEnd()}\n\nWrite reviewer feedback to ${feedbackRelPath}.`;
 }

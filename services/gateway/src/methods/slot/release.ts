@@ -521,6 +521,8 @@ export async function killAllAgentWindows(
   const shouldKillWindow = (name: string | undefined): boolean =>
     shouldKillAgentWindowName(name, { roleWindowNames, excluded });
   let previousMatchSignature: string | null = null;
+  let killAttempts = 0;
+  let maxObservedWindows = 0;
   while (true) {
     const listed = await execOnSlot(
       vars,
@@ -539,6 +541,7 @@ export async function killAllAgentWindows(
         const [index, name] = line.split('\t', 2);
         return { index, name };
       });
+    maxObservedWindows = Math.max(maxObservedWindows, windows.length);
     const roleWindows = windows
       .filter((window) => window.index && window.name && shouldKillWindow(window.name))
       .sort((a, b) => Number(b.index) - Number(a.index));
@@ -553,6 +556,12 @@ export async function killAllAgentWindows(
     previousMatchSignature = matchSignature;
 
     for (const roleWindow of roleWindows) {
+      killAttempts += 1;
+      if (killAttempts > Math.max(1, maxObservedWindows) * 2) {
+        throw new Error(
+          `Tmux role window cleanup exceeded ${killAttempts - 1} kill attempts for session ${session}; windows may be respawning`,
+        );
+      }
       const target = `${session}:${roleWindow.index}`;
       const command = buildKillRoleWindowCommand(session, target, windows.length, vars.remoteRepo);
       const killed = await execOnSlot(vars, tmuxShellSnippet(command), {
