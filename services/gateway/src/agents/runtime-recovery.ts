@@ -109,6 +109,36 @@ function workerRefFromPane(
   };
 }
 
+function agentTargetFromWorkerRef(ref: TmuxWorkerRef): AgentContextTarget {
+  return {
+    session: ref.session,
+    window: ref.windowName ?? ref.window ?? null,
+    pane: ref.pane ?? null,
+    target: ref.windowName ? `${ref.session}:${ref.windowName}` : ref.target,
+  };
+}
+
+function persistRestoredContext(
+  runId: string,
+  contextId: string,
+  patch: Partial<AgentContext>,
+): void {
+  const now = new Date().toISOString();
+  updateRunAgentContexts(runId, (_currentRun, currentContexts) =>
+    currentContexts.map((ctx) =>
+      ctx.id === contextId
+        ? {
+            ...ctx,
+            ...patch,
+            completedAt: undefined,
+            lastSignalAt: now,
+            updatedAt: now,
+          }
+        : ctx,
+    ),
+  );
+}
+
 async function tmuxSessionExists(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
@@ -409,18 +439,20 @@ export async function restoreTmuxWorker(
   }
 
   const ref = await ensureRestoredWindow(run, selected);
-  const nextTarget: AgentContextTarget = {
-    session: ref.session,
-    window: ref.windowName ?? ref.window ?? null,
-    pane: ref.pane ?? null,
-    target: ref.windowName ? `${ref.session}:${ref.windowName}` : ref.target,
-  };
+  const nextTarget = agentTargetFromWorkerRef(ref);
   const vars = await loadSlotVars(params.slotId);
   const binding = await sessionBindingForContext(vars, run, selected, ref.paneId);
   const runner = normalizeRunner(selected.runner ?? run.metrics.runner);
   if (params.mode === 'reload-session') {
     const existing = await inspectContextRuntime(run, selected);
     if (existing.runnerAlive) {
+      const liveTarget = existing.target ?? ref;
+      persistRestoredContext(run.id, selected.id, {
+        status: 'working',
+        target: agentTargetFromWorkerRef(liveTarget),
+        runnerSessionId: existing.runnerSessionId ?? binding?.runnerSessionId ?? null,
+        runnerSessionPath: existing.runnerSessionPath ?? binding?.runnerSessionPath ?? null,
+      });
       return {
         slotId: params.slotId,
         runId: run.id,
@@ -430,7 +462,7 @@ export async function restoreTmuxWorker(
             contextId: selected.id,
             role: selected.role,
             status: 'live',
-            ...(existing.target ? { target: existing.target } : { target: ref }),
+            target: liveTarget,
             runnerSessionId: existing.runnerSessionId ?? binding?.runnerSessionId ?? null,
             runnerSessionPath: existing.runnerSessionPath ?? binding?.runnerSessionPath ?? null,
             detail: `Worker ${runner} is already running; no session reload was needed.`,
@@ -473,30 +505,12 @@ export async function restoreTmuxWorker(
       );
     }
     const liveRef = workerRefFromPane(vars, livePane);
-    const now = new Date().toISOString();
-    updateRunAgentContexts(run.id, (_currentRun, currentContexts) =>
-      currentContexts.map((ctx) =>
-        ctx.id === selected.id
-          ? {
-              ...ctx,
-              status: 'working',
-              target: {
-                session: liveRef.session,
-                window: liveRef.windowName ?? liveRef.window ?? null,
-                pane: liveRef.pane ?? null,
-                target: liveRef.windowName
-                  ? `${liveRef.session}:${liveRef.windowName}`
-                  : liveRef.target,
-              },
-              runnerSessionId: sessionBinding.runnerSessionId,
-              runnerSessionPath: sessionBinding.runnerSessionPath,
-              completedAt: undefined,
-              lastSignalAt: now,
-              updatedAt: now,
-            }
-          : ctx,
-      ),
-    );
+    persistRestoredContext(run.id, selected.id, {
+      status: 'working',
+      target: agentTargetFromWorkerRef(liveRef),
+      runnerSessionId: sessionBinding.runnerSessionId,
+      runnerSessionPath: sessionBinding.runnerSessionPath,
+    });
     return {
       slotId: params.slotId,
       runId: run.id,
@@ -514,23 +528,21 @@ export async function restoreTmuxWorker(
       ],
     };
   }
-  const now = new Date().toISOString();
-  updateRunAgentContexts(run.id, (_currentRun, currentContexts) =>
-    currentContexts.map((ctx) =>
-      ctx.id === selected.id
-        ? {
-            ...ctx,
-            status: 'waiting',
-            target: nextTarget,
-            runnerSessionId: binding?.runnerSessionId ?? ctx.runnerSessionId ?? null,
-            runnerSessionPath: binding?.runnerSessionPath ?? ctx.runnerSessionPath ?? null,
-            completedAt: undefined,
-            lastSignalAt: now,
-            updatedAt: now,
-          }
-        : ctx,
-    ),
-  );
+  const restoredInspection = await inspectContextRuntime(run, { ...selected, target: nextTarget });
+  persistRestoredContext(run.id, selected.id, {
+    status: restoredInspection.runnerAlive ? 'working' : 'waiting',
+    target: nextTarget,
+    runnerSessionId:
+      restoredInspection.runnerSessionId ??
+      binding?.runnerSessionId ??
+      selected.runnerSessionId ??
+      null,
+    runnerSessionPath:
+      restoredInspection.runnerSessionPath ??
+      binding?.runnerSessionPath ??
+      selected.runnerSessionPath ??
+      null,
+  });
   return {
     slotId: params.slotId,
     runId: run.id,
