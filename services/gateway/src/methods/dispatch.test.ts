@@ -24,13 +24,17 @@ import {
 import { resolveDispatchSafetyTier } from './dispatch/safety-tier.js';
 import {
   branchContainsJiraKey,
+  companionResourceBlocker,
   evaluateSlotIdentityPolicy,
   isDispatchStaleBranch,
   isFreeSlot,
+  prepareProfileNeedsCompanionResource,
   resolveJiraTargetBranchFromFleet,
   slotBranchCheckoutBlocker,
+  slotHasCompanionResource,
   slotScore,
   validateSlot,
+  validateSlotForDispatch,
   validateSlotForTargetBranch,
 } from './dispatch/slot-scoring.js';
 import { flowTypeToKey } from './dispatch/task-flow-key.js';
@@ -349,6 +353,109 @@ test('dispatch preview echoes the domain overlay and omits it when unset', () =>
     slots,
   );
   assert.equal('domain' in withoutDomain.preview, false);
+});
+
+test('companion prepare profiles require a slot-owned simulator resource', () => {
+  const plainCli = makeSlot({ slot: 'macwork-ff-3', resources: undefined });
+  const companionCli = makeSlot({
+    slot: 'macwork-ff-2',
+    resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },
+  });
+
+  assert.equal(prepareProfileNeedsCompanionResource('sandbox-companion'), true);
+  assert.equal(prepareProfileNeedsCompanionResource('sandbox'), false);
+  assert.equal(slotHasCompanionResource(plainCli), false);
+  assert.equal(slotHasCompanionResource(companionCli), true);
+  assert.match(
+    companionResourceBlocker(plainCli, 'sandbox-companion') ?? '',
+    /requires one of: ios-sim, android-emu, android-device/,
+  );
+  assert.equal(
+    validateSlotForDispatch(companionCli, [plainCli, companionCli], {
+      requiredPrepareProfile: 'sandbox-companion',
+    }),
+    null,
+  );
+});
+
+test('dispatch preview skips plain CLI slots when sandbox-companion requires an isolated simulator', () => {
+  const plainCli = makeSlot({
+    slot: 'macwork-ff-3',
+    branch: 'main',
+    lifecycle: 'ready',
+    phase: null,
+    health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const simulatorSlot = makeSlot({
+    slot: 'macwork-ff-2',
+    branch: 'feat/manual-000011-recipe-ui-passive-observations',
+    lifecycle: 'ready',
+    phase: null,
+    resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },
+    health: { ssh: 'LOCAL', device: 'fs-2:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  const result = resolveDispatchPreviewFromFleet(
+    {
+      project: 'farmslot-farm',
+      flowType: 'pr-complete',
+      ticketOrPr: 'deeeed/farmslot#304',
+    },
+    [plainCli, simulatorSlot],
+    undefined,
+    { requiredPrepareProfile: 'sandbox-companion' },
+  );
+
+  assert.equal(result.preview.slotId, 'macwork-ff-2');
+  assert.throws(
+    () =>
+      resolveDispatchPreviewFromFleet(
+        {
+          project: 'farmslot-farm',
+          flowType: 'pr-complete',
+          ticketOrPr: 'deeeed/farmslot#304',
+          slotId: 'macwork-ff-3',
+        },
+        [plainCli, simulatorSlot],
+        undefined,
+        { requiredPrepareProfile: 'sandbox-companion' },
+      ),
+    /Slot macwork-ff-3: Prepare profile sandbox-companion requires one of: ios-sim, android-emu, android-device/,
+  );
+});
+
+test('dispatch preview blocks instead of selecting a plain CLI slot when simulator slots are busy', () => {
+  const plainCli = makeSlot({
+    slot: 'macwork-ff-3',
+    branch: 'main',
+    lifecycle: 'ready',
+    phase: null,
+    health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+  const busySimulatorSlot = makeSlot({
+    slot: 'macwork-ff-2',
+    branch: 'main',
+    lifecycle: 'busy',
+    phase: 'review-gate',
+    agent: 'working',
+    resources: { 'ios-sim': { simulator: 'fs-2', headless: true } },
+    health: { ssh: 'LOCAL', device: 'fs-2:OK', devserver: 'OK', cdp: 'OK', fixtures: 'OK' },
+  });
+
+  assert.throws(
+    () =>
+      resolveDispatchPreviewFromFleet(
+        {
+          project: 'farmslot-farm',
+          flowType: 'pr-complete',
+          ticketOrPr: 'deeeed/farmslot#304',
+        },
+        [plainCli, busySimulatorSlot],
+        undefined,
+        { requiredPrepareProfile: 'sandbox-companion' },
+      ),
+    /No free slots for project farmslot-farm have resources required by prepare profile sandbox-companion/,
+  );
 });
 
 test('flowTypeToKey ignores eval wrapper flow names', () => {

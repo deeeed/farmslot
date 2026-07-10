@@ -33,9 +33,10 @@ import {
   isCdpLive,
   isDispatchStaleBranch,
   isFreeSlot,
+  prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
   slotScore,
-  validateSlotForTargetBranch,
+  validateSlotForDispatch,
 } from './slot-scoring.js';
 import { resolveDispatchTargetBranch } from './target-branch.js';
 import { normalizeTicketRef } from './ticket-ref.js';
@@ -744,12 +745,6 @@ export async function dispatchPreview(
   const enriched = { ...params, targetBranch: resolvedTargetBranch };
   const projectConfigList = await loadProjectConfigs();
   const projectConfigs = projectConfigsFromProjects(projectConfigList);
-  const result = resolveDispatchPreviewFromFleet(
-    { ...enriched, ...resolveDispatchFamilyContext(enriched) },
-    fleet.slots,
-    projectConfigs,
-  );
-  const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
   const previewRun = {
     id: 'dispatch-preview',
     familyId: 'dispatch-preview',
@@ -758,7 +753,7 @@ export async function dispatchPreview(
     status: 'created',
     project: params.project,
     ticketOrPr: params.ticketOrPr,
-    slotId: result.preview.slotId,
+    slotId: params.slotId ?? null,
     branch: null,
     taskFile: null,
     steps: [],
@@ -769,7 +764,27 @@ export async function dispatchPreview(
     prepareProfile: params.prepareProfile,
     app: params.app,
   } as Run;
-  const ticketData = await fetchTicketData(previewRun).catch(() => null);
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
+  try {
+    ticketData = await fetchTicketData(previewRun);
+  } catch {
+    // Ticket metadata is optional for preview. Without it, explicit app/profile inputs
+    // still drive resource filtering and profile-fit suggestions are simply omitted.
+  }
+  const initialProfileFit = detectProfileFit(previewRun, ticketData, {
+    prepareProfile: params.prepareProfile,
+    app: params.app,
+    slotPlatform: null,
+  });
+  const requiredPrepareProfile =
+    params.prepareProfile || initialProfileFit?.suggestedPrepareProfile || null;
+  const result = resolveDispatchPreviewFromFleet(
+    { ...enriched, ...resolveDispatchFamilyContext(enriched) },
+    fleet.slots,
+    projectConfigs,
+    { requiredPrepareProfile },
+  );
+  const slotInfo = fleet.slots.find((s) => s.slot === result.preview.slotId);
   const profileFit = detectProfileFit(previewRun, ticketData, {
     prepareProfile: params.prepareProfile,
     app: params.app,
@@ -785,13 +800,18 @@ export function resolveDispatchPreviewFromFleet(
   params: DispatchPreviewParams,
   slots: SlotStatus[],
   projectConfigs?: ReturnType<typeof projectConfigsFromProjects>,
+  options?: { requiredPrepareProfile?: string | null },
 ): DispatchPreviewResult {
   let slotInfo: SlotStatus;
+  const requiredPrepareProfile = options?.requiredPrepareProfile ?? params.prepareProfile ?? null;
 
   if (params.slotId) {
     const found = slots.find((s) => s.slot === params.slotId);
     if (!found) throw new Error(`Slot ${params.slotId} not found`);
-    const err = validateSlotForTargetBranch(found, slots, params.targetBranch);
+    const err = validateSlotForDispatch(found, slots, {
+      targetBranch: params.targetBranch,
+      requiredPrepareProfile,
+    });
     if (err) throw new Error(`Slot ${params.slotId}: ${err}`);
     slotInfo = found;
   } else {
@@ -803,7 +823,13 @@ export function resolveDispatchPreviewFromFleet(
         variant: params.variant ?? null,
         allowedSlots: params.allowedSlots ?? null,
       });
-      if (affinitySlot) {
+      if (
+        affinitySlot &&
+        !validateSlotForDispatch(affinitySlot, slots, {
+          targetBranch: params.targetBranch,
+          requiredPrepareProfile,
+        })
+      ) {
         console.log(
           `[dispatch] ${params.flowType} affinity: reusing slot ${affinitySlot.slot} (lifecycle=${affinitySlot.lifecycle}, branch=${affinitySlot.branch})`,
         );
@@ -829,6 +855,7 @@ export function resolveDispatchPreviewFromFleet(
       familyId: params.familyId,
       lane: params.lane,
       variant: params.variant,
+      requiredPrepareProfile,
       projectConfigs,
     });
     if (!best) {
@@ -840,6 +867,21 @@ export function resolveDispatchPreviewFromFleet(
       if (projectSlots.length === 0) {
         const filterHint = allow ? ` within allowed slots (${[...allow].join(',')})` : '';
         throw new Error(`No slots found for project ${params.project}${filterHint}`);
+      }
+      if (prepareProfileNeedsCompanionResource(requiredPrepareProfile)) {
+        const freeSlots = projectSlots.filter(isFreeSlot);
+        const eligibleFreeSlots = freeSlots.filter(
+          (s) =>
+            !validateSlotForDispatch(s, slots, {
+              targetBranch: params.targetBranch,
+              requiredPrepareProfile,
+            }),
+        );
+        if (freeSlots.length > 0 && eligibleFreeSlots.length === 0) {
+          throw new Error(
+            `No free slots for project ${params.project} have resources required by prepare profile ${requiredPrepareProfile}`,
+          );
+        }
       }
       const reasons = projectSlots.map(
         (s) => `${s.slot}: lifecycle=${s.lifecycle}, phase=${s.phase}, agent=${s.agent}`,

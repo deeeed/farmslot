@@ -26,9 +26,10 @@ import {
 import {
   isCdpLive,
   isFreeSlot,
+  prepareProfileNeedsCompanionResource,
   projectConfigsFromProjects,
   slotScore,
-  validateSlotForTargetBranch,
+  validateSlotForDispatch,
 } from '../methods/dispatch/slot-scoring.js';
 import {
   assertSlotNotOperatorRoot,
@@ -38,6 +39,9 @@ import {
 import { runnerDefaultSafetyTier } from '../runners/registry.js';
 import { getRun, updateRun } from '../runs/store.js';
 import { precheckTaskDirCollision } from '../tasks/writer.js';
+
+import { detectProfileFit } from './profile-fit-gate.js';
+import { fetchTicketData } from './ticket-data.js';
 
 interface StepIO {
   inputs?: Record<string, unknown>;
@@ -225,9 +229,30 @@ export async function executeFindSlotStep(
     (run.flowType === 'review-pr' || run.flowType === 'pr-complete') && run.branch
       ? run.branch
       : undefined;
+  let ticketData: Awaited<ReturnType<typeof fetchTicketData>> | null = null;
+  try {
+    ticketData = await fetchTicketData(run);
+  } catch {
+    // Ticket metadata is optional for slot allocation. Without it we fall back to the
+    // explicit run prepareProfile/app fields and skip profile-fit resource narrowing.
+  }
+  const profileFit = detectProfileFit(run, ticketData, {
+    prepareProfile: run.prepareProfile,
+    app: run.app,
+    slotPlatform: null,
+  });
+  const requiredPrepareProfile = run.prepareProfile || profileFit?.suggestedPrepareProfile || null;
+  const isEligibleFreeSlot = (slot: (typeof freeSlots)[number]) =>
+    !validateSlotForDispatch(slot, fleet.slots, {
+      targetBranch,
+      requiredPrepareProfile,
+    });
+  const eligibleFreeSlots = freeSlots.filter(isEligibleFreeSlot);
   const candidates = freeSlots.slice(0, 10).map((s) => ({
     slotId: s.slot,
-    score: slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
+    score: isEligibleFreeSlot(s)
+      ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+      : -1,
     cdpLive: isCdpLive(s.health.cdp),
   }));
 
@@ -239,7 +264,13 @@ export async function executeFindSlotStep(
       variant: run.variant ?? null,
       allowedSlots: run.allowedSlots ?? null,
     });
-    if (affinitySlot) {
+    if (
+      affinitySlot &&
+      !validateSlotForDispatch(affinitySlot, fleet.slots, {
+        targetBranch,
+        requiredPrepareProfile,
+      })
+    ) {
       console.log(
         `[run-engine] ${run.flowType} affinity: reusing slot ${affinitySlot.slot} (branch=${affinitySlot.branch})`,
       );
@@ -268,11 +299,8 @@ export async function executeFindSlotStep(
     if (run.lane !== 'comparison') {
       const busyMatching = selectBranchAffinityRefreshSlots(projectSlots);
       if (busyMatching.length > 0) await refreshBranches(busyMatching);
-      const nudgeCandidates = await collectBranchAffinityNudgeCandidates(
-        fleet.slots,
-        run.project,
-        run.ticketOrPr,
-        {
+      const nudgeCandidates = (
+        await collectBranchAffinityNudgeCandidates(fleet.slots, run.project, run.ticketOrPr, {
           familyId: run.familyId ?? null,
           lane: run.lane ?? null,
           variant: run.variant ?? null,
@@ -280,7 +308,13 @@ export async function executeFindSlotStep(
           // Same targetBranch the slotScore step uses — set when run.branch is the PR's
           // head branch, falsy on non-PR flows.
           targetBranch: targetBranch ?? null,
-        },
+        })
+      ).filter(
+        (candidate) =>
+          !validateSlotForDispatch(candidate.slot, fleet.slots, {
+            targetBranch,
+            requiredPrepareProfile,
+          }),
       );
       if (nudgeCandidates.length > 0) {
         const top = nudgeCandidates[0];
@@ -321,7 +355,9 @@ export async function executeFindSlotStep(
           },
           freeSlotCandidates: projectSlots.filter(isFreeSlot).map((s) => ({
             slotId: s.slot,
-            score: slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
+            score: isEligibleFreeSlot(s)
+              ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+              : -1,
             branch: s.branch || '',
             lifecycle: s.lifecycle,
             health: s.health,
@@ -420,7 +456,10 @@ export async function executeFindSlotStep(
           if (pickedSlotId) {
             const pickedSlot = projectSlots.find((s) => s.slot === pickedSlotId);
             if (!pickedSlot) throw new Error(`Selected slot ${pickedSlotId} not found`);
-            const err = validateSlotForTargetBranch(pickedSlot, projectSlots, targetBranch);
+            const err = validateSlotForDispatch(pickedSlot, fleet.slots, {
+              targetBranch,
+              requiredPrepareProfile,
+            });
             if (err) throw new Error(`Selected slot ${pickedSlotId}: ${err}`);
             updateRun(runId, { slotId: pickedSlotId });
             await markSlotBusy(pickedSlotId, 'preparing');
@@ -443,19 +482,26 @@ export async function executeFindSlotStep(
   // Human intervention when no good candidates exist
   if (
     !run.slotId &&
-    (freeSlots.length === 0 ||
-      freeSlots.every((s) =>
+    (eligibleFreeSlots.length === 0 ||
+      eligibleFreeSlots.every((s) =>
         isDispatchScoreStale(
           slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs }),
         ),
       ))
   ) {
-    const reason = freeSlots.length === 0 ? 'no_free_slots' : 'all_stale';
+    const reason =
+      freeSlots.length === 0
+        ? 'no_free_slots'
+        : eligibleFreeSlots.length === 0 &&
+            prepareProfileNeedsCompanionResource(requiredPrepareProfile)
+          ? 'missing_required_resources'
+          : 'all_stale';
     const allProjectSlots = projectSlots.map((s) => ({
       slotId: s.slot,
-      score: isFreeSlot(s)
-        ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
-        : -1,
+      score:
+        isFreeSlot(s) && isEligibleFreeSlot(s)
+          ? slotScore(s, targetBranch, { familyId: run.familyId, projectConfigs })
+          : -1,
       branch: s.branch || '',
       lifecycle: s.lifecycle,
       health: s.health,
@@ -465,7 +511,9 @@ export async function executeFindSlotStep(
     const desc =
       reason === 'no_free_slots'
         ? `No free slots for **${run.project}**. ${projectSlots.length} slots exist but all are busy or disabled.`
-        : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
+        : reason === 'missing_required_resources'
+          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Wait for a slot with an iOS or Android resource, or pick a slot with the right resource.`
+          : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
 
     const slotPickerPayload: import('@farmslot/protocol').SlotPickerPayload = {
       kind: 'slot_picker',
@@ -495,7 +543,10 @@ export async function executeFindSlotStep(
     if (!pickedSlotId) throw new Error('No slot selected');
     const pickedSlot = projectSlots.find((s) => s.slot === pickedSlotId);
     if (!pickedSlot) throw new Error(`Selected slot ${pickedSlotId} not found`);
-    const pickedSlotError = validateSlotForTargetBranch(pickedSlot, projectSlots, targetBranch);
+    const pickedSlotError = validateSlotForDispatch(pickedSlot, fleet.slots, {
+      targetBranch,
+      requiredPrepareProfile,
+    });
     if (pickedSlotError) throw new Error(`Selected slot ${pickedSlotId}: ${pickedSlotError}`);
 
     // If user requested reset, do it before proceeding
