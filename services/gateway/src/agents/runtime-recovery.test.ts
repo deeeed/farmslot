@@ -48,6 +48,31 @@ function launchLiveCodexPane(): void {
     ],
     { stdio: 'ignore' },
   );
+  waitForLiveCodexPane();
+}
+
+function waitForLiveCodexPane(): void {
+  const target = `=${sessionName}:dev`;
+  const script = `
+pane_pid=$(tmux list-panes -t ${JSON.stringify(target)} -F '#{pane_pid}' 2>/dev/null | head -1)
+[ -n "$pane_pid" ] || exit 1
+for _ in $(seq 1 20); do
+  for pid in $(pgrep -f codex 2>/dev/null); do
+    command=$(ps -o command= -p "$pid" 2>/dev/null || true)
+    case "$command" in
+      *'__farmslot_status'*) continue ;;
+    esac
+    cur=$pid
+    while [ -n "$cur" ] && [ "$cur" != "$pane_pid" ] && [ "$cur" != "0" ] && [ "$cur" != "1" ]; do
+      cur=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d ' \\n\\r\\t')
+    done
+    if [ "$cur" = "$pane_pid" ]; then exit 0; fi
+  done
+  sleep 0.1
+done
+exit 1
+`;
+  execFileSync('bash', ['-lc', script], { stdio: 'ignore' });
 }
 
 async function cleanupRun(runId: string): Promise<void> {

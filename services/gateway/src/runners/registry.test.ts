@@ -1430,7 +1430,7 @@ describe('buildRunnerSessionReloadCommand', () => {
     assert.match(cmd, /export CODEX_HOME='\/tmp\/repo\/runtime\/codex-home'/);
     assert.match(
       cmd,
-      /\/opt\/bin\/codex resume --disable plugin_hooks --ask-for-approval never --config 'model_reasoning_effort="high"' --model gpt-5 'codex-session'$/,
+      /\/opt\/bin\/codex resume --disable plugin_hooks --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --model gpt-5 'codex-session'$/,
     );
   });
 

@@ -117,7 +117,8 @@ export function buildRunnerSessionReloadCommand(
     const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
     const effortFlag = codexReasoningEffortFlag(opts.effort);
     const workerConfigFlags = codexWorkerConfigFlags();
-    const flags = codexResumeSafetyFlags(tier);
+    const flagList = runnerFlagsForTier(runner, tier);
+    const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
     const codexHomeSetup = buildCodexHomeSetup(repo, opts.runtimeDir ?? '.agent');
     return withRunnerObservabilityInstall(
       `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
@@ -138,12 +139,6 @@ export function buildRunnerSessionReloadCommand(
   }
 
   throw new Error(`Runner '${runner}' does not support persisted session reload`);
-}
-
-function codexResumeSafetyFlags(tier: SafetyTier): string {
-  if (tier === 'dangerous') return ' --dangerously-bypass-approvals-and-sandbox';
-  if (tier === 'full-auto') return ' --ask-for-approval never';
-  return '';
 }
 
 export function assertRunnerLaunchPrerequisites(
