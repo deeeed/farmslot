@@ -84,10 +84,11 @@ STATUS: pending
 - [ ] **9. Write packaged evidence:**
   ```bash
   mkdir -p {{TASK_DIR}}/artifacts
-  printf '%s\n' '# CI fix report' '' '- Fixed:' '- Validation:' '- Commit:' > {{TASK_DIR}}/artifacts/report.md
-  # If no code change is needed, write no-change-report.md instead of report.md and run the no-change terminal marker.
-  printf '%s\n' '# No-change report' '' '- Reason:' '- Validation:' > {{TASK_DIR}}/artifacts/no-change-report.md
-  printf '%s\n' '- Nothing relevant — straightforward CI fix.' > {{TASK_DIR}}/artifacts/learnings.md
+  # Write exactly one outcome report with real, reviewable content:
+  # - report.md when you changed code
+  # - no-change-report.md when no code change was needed
+  # Include the issue, what changed or why no change was needed, validation commands + results, and commit SHA if any.
+  # Also write learnings.md with any reusable lesson, or a one-line "No reusable lesson" note.
   {{TASK_DIR}}/mark --checklist CI-FIX.md 9
   ```
 - [ ] **10. Write CI-FIX-SIGNAL.json:**

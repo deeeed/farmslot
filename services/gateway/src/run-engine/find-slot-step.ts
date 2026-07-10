@@ -496,11 +496,14 @@ export async function executeFindSlotStep(
         ),
       ))
   ) {
+    const freeSlotsMissingCompanionResource =
+      freeSlots.length > 0 &&
+      prepareProfileNeedsCompanionResource(requiredPrepareProfile) &&
+      freeSlots.every((s) => companionResourceBlocker(s, requiredPrepareProfile));
     const reason =
       freeSlots.length === 0
         ? 'no_free_slots'
-        : eligibleFreeSlots.length === 0 &&
-            prepareProfileNeedsCompanionResource(requiredPrepareProfile)
+        : eligibleFreeSlots.length === 0 && freeSlotsMissingCompanionResource
           ? 'missing_required_resources'
           : 'all_stale';
     const allProjectSlots = projectSlots.map((s) => ({
@@ -522,7 +525,7 @@ export async function executeFindSlotStep(
       reason === 'no_free_slots'
         ? `No free slots for **${run.project}**. ${projectSlots.length} slots exist but all are busy or disabled.`
         : reason === 'missing_required_resources'
-          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Wait for a slot with an iOS or Android resource, or pick a slot with the right resource.`
+          ? `No free slots for **${run.project}** have the isolated simulator resources required by **${requiredPrepareProfile}**. Wait until a listed iOS or Android resource slot is ready, then pick it.`
           : `All ${freeSlots.length} free slot(s) have stale branches (score >= ${SLOT_STALE_BRANCH_SCORE_PENALTY}). Pick one to reset or use as-is.`;
 
     const slotPickerPayload: import('@farmslot/protocol').SlotPickerPayload = {

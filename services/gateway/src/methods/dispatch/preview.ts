@@ -29,6 +29,7 @@ import { getRunnerStatusProvider } from '../../runners/status-provider.js';
 import { getAllRuns } from '../../runs/store.js';
 
 import {
+  companionResourceBlocker,
   findBestSlot,
   isCdpLive,
   isDispatchStaleBranch,
@@ -870,6 +871,9 @@ export function resolveDispatchPreviewFromFleet(
       }
       if (prepareProfileNeedsCompanionResource(requiredPrepareProfile)) {
         const freeSlots = projectSlots.filter(isFreeSlot);
+        const freeSlotsMissingCompanionResource = freeSlots.every((s) =>
+          companionResourceBlocker(s, requiredPrepareProfile),
+        );
         const eligibleFreeSlots = freeSlots.filter(
           (s) =>
             !validateSlotForDispatch(s, slots, {
@@ -877,7 +881,11 @@ export function resolveDispatchPreviewFromFleet(
               requiredPrepareProfile,
             }),
         );
-        if (freeSlots.length > 0 && eligibleFreeSlots.length === 0) {
+        if (
+          freeSlots.length > 0 &&
+          eligibleFreeSlots.length === 0 &&
+          freeSlotsMissingCompanionResource
+        ) {
           throw new Error(
             `No free slots for project ${params.project} have resources required by prepare profile ${requiredPrepareProfile}`,
           );
