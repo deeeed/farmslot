@@ -435,7 +435,7 @@ export async function resolveRunnerLaunchBlockers(
         autoActionAttempts.set(blocker.kind, attempts + 1);
       } else if (!loggedExhaustedAutoActions.has(blocker.kind)) {
         console.log(
-          `[dispatch] launch blocker ${blocker.kind} in ${target} still visible after ${attempts} ${key} auto-action attempts; waiting for it to clear`,
+          `[dispatch] launch blocker ${blocker.kind} in ${target} still visible after at least ${attempts} ${key} auto-action attempts; waiting for it to clear`,
         );
         loggedExhaustedAutoActions.add(blocker.kind);
       }

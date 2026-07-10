@@ -282,7 +282,7 @@ export function buildFindRunnerDescendantPidCommand(panePid: string, pattern: st
     `for pid in $(pgrep -f ${shellQuote(pattern)} 2>/dev/null); do`,
     `  command=$(ps -o command= -p "$pid" 2>/dev/null || true)`,
     `  case "$command" in`,
-    `    *'__farmslot_status'*|*'[farmslot] runner launch command exited'*) continue ;;`,
+    `    *'__farmslot_status'*) continue ;;`,
     `  esac`,
     `  cur=$pid`,
     `  while [ -n "$cur" ] && [ "$cur" != "$root" ] && [ "$cur" != "0" ] && [ "$cur" != "1" ]; do`,

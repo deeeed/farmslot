@@ -215,7 +215,7 @@ test('buildPreparePreLaunchSweepCommand preserves same-run prepare windows', () 
   assert.match(command, /list-windows -t 'ff-3' -F '#\{window_index\}:#\{window_name\}'/);
   assert.match(
     command,
-    /awk -F: -v keep='\^prepare-6fb60a78-' '\$2 ~ \/\^prepare-\/ && \$2 !~ keep \{ print \$1 ":" \$2 \}'/,
+    /awk -F: -v keep='\^prepare-6fb60a78\(\$\|-\)' '\$2 ~ \/\^prepare-\/ && \$2 !~ keep \{ print \$1 ":" \$2 \}'/,
   );
   assert.match(command, /sort -t: -nr -k1,1/);
   assert.match(command, /kill-window -t 'ff-3':"\$idx"/);

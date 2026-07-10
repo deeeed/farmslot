@@ -262,14 +262,14 @@ export function buildPrepareKillWindowsByNameCommand(
 
 export function buildPreparePreLaunchSweepCommand(sessionName: string, labelPart: string): string {
   // Reap stale prepare-* windows from other runs, but keep this run's sibling
-  // phases (`prepare-<labelPart>-*`) alive — a later phase must not SIGHUP an
+  // phases (`prepare-<labelPart>` / `prepare-<labelPart>-*`) alive — a later phase must not SIGHUP an
   // in-flight fixtures/deps/preflight window owned by the same prepare.
   // The `index:name` delimiter is safe here because only Farmslot-generated
   // `prepare-*` names are eligible for killing, and prepare names never contain
   // `:`.
   return tmuxShellSnippet(
     `list-windows -t ${shellQuote(sessionName)} -F '#{window_index}:#{window_name}' 2>/dev/null | ` +
-      `awk -F: -v keep=${shellQuote(`^prepare-${labelPart}-`)} '$2 ~ /^prepare-/ && $2 !~ keep { print $1 ":" $2 }' | sort -t: -nr -k1,1 | ` +
+      `awk -F: -v keep=${shellQuote(`^prepare-${labelPart}($|-)`)} '$2 ~ /^prepare-/ && $2 !~ keep { print $1 ":" $2 }' | sort -t: -nr -k1,1 | ` +
       `while IFS=: read -r idx name; do ` +
       `echo "$idx:$name"; ` +
       `"$TMUX_BIN" kill-window -t ${shellQuote(sessionName)}:"$idx" 2>/dev/null || true; ` +
