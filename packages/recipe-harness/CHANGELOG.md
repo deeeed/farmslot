@@ -4,6 +4,7 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 
 ## Unreleased
 
+- feat: record passive UI observations for default and node-level observe policies in recipe traces.
 - fix: dependency readiness trusts install markers newer than dependency inputs even when an older recorded baseline exists, preventing unnecessary reinstall prompts in managed slots.
 - fix: use workspace-linked `@farmslot/protocol` during local development so package builds cannot resolve a stale published sibling package.
 - Active-development baseline; add user-facing changes here before release or package publication.

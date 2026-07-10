@@ -1907,15 +1907,16 @@ test('maps React Native bridge transport commands without project-specific ui re
     assert.equal(result.status, 'pass');
     assert.deepEqual(
       commands.map((command) => command.command),
-      ['hud', 'scroll', 'hud', 'hud', 'hud', 'hud', 'hud'],
+      ['hud', 'scroll', 'observeUi', 'hud', 'hud', 'hud', 'hud', 'hud'],
     );
     assert.equal(commands[1]?.payload.test_id, 'AssetList');
+    assert.deepEqual(commands[2]?.payload.refs, ['ui.screen', 'ui.visible']);
     assert.equal(
-      commands[2]?.payload.text,
+      commands[3]?.payload.text,
       'Scroll the asset list until the target rows are visible',
     );
-    assert.equal(commands[2]?.payload.detail, 'Using the React Native bridge scroll primitive');
-    assert.equal(commands[3]?.payload.text, 'Scrolled assets');
+    assert.equal(commands[3]?.payload.detail, 'Using the React Native bridge scroll primitive');
+    assert.equal(commands[4]?.payload.text, 'Scrolled assets');
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

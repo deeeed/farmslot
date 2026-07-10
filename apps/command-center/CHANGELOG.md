@@ -4,6 +4,7 @@ All notable changes to `@farmslot/command-center` are tracked here.
 
 ## Unreleased
 
+- Add passive UI observation support to the Command Center recipe runner.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.2.1 - 2026-07-03

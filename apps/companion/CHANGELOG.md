@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Add passive UI observation handling to the Companion recipe bridge.
 - Add Enter to Companion tmux shortcuts and a native terminal history view toggle.
 - Enable pinch zoom, pan, and double-tap reset in Companion fullscreen image viewers.
 - fix: pairing WebSocket failures on LAN gateway URLs explain when the gateway must listen on all interfaces.
