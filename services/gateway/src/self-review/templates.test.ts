@@ -23,6 +23,8 @@ test('expandSelfReviewTemplate resolves farmslot_dir placeholders', async (t) =>
     {
       slotId: 'slot-1',
       projectName: 'farmslot-farm',
+      host: 'localhost',
+      machine: 'test-machine',
       remoteRepo: '/tmp/farmslot',
       platform: 'ios',
       session: 'slot-1',
@@ -40,5 +42,26 @@ test('expandSelfReviewTemplate resolves farmslot_dir placeholders', async (t) =>
     new RegExp(
       `${farmslotRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/scripts/quality/check-task-artifact-contract\\.mjs`,
     ),
+  );
+
+  const remoteRendered = await expandSelfReviewTemplate(
+    {
+      slotId: 'slot-remote',
+      projectName: 'farmslot-farm',
+      host: 'remote-node.local',
+      machine: 'remote-node',
+      remoteRepo: '/tmp/farmslot',
+      platform: 'ios',
+      session: 'slot-remote',
+      resourceVars: { port: '8061', cdpPort: '9222' },
+    } as never,
+    'temp/tasks/test/self-review',
+    run.id,
+    'full-live',
+  );
+
+  assert.match(
+    remoteRendered,
+    /~\/farmslot-node\/scripts\/quality\/check-task-artifact-contract\.mjs/,
   );
 });
