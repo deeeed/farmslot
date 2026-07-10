@@ -36,7 +36,11 @@
  * @property {'builtin' | 'project'} source
  */
 
-const TERMINAL_MARK_RE = /(?:\.\/|\{\{TASK_DIR\}\}\/)mark\s+(complete|no-change|blocked)\b/;
+const TERMINAL_MARK_PATTERN =
+  String.raw`(?:\.\/|\{\{TASK_DIR\}\}\/)mark\b(?:\s+--(?:checklist|signal)\s+\S+)*\s+` +
+  String.raw`(complete|no-change|blocked)\b`;
+const TERMINAL_MARK_RE = new RegExp(TERMINAL_MARK_PATTERN);
+const TERMINAL_MARK_GLOBAL_RE = new RegExp(TERMINAL_MARK_PATTERN, 'g');
 const TERMINAL_COMMANDS = /** @type {const} */ (['complete', 'no-change', 'blocked']);
 
 const LEARNINGS = 'artifacts/learnings.md';
@@ -248,9 +252,7 @@ function templateTerminalCommands(content) {
     }
   }
   const commands = new Set();
-  for (const match of scope.matchAll(
-    /(?:\.\/|\{\{TASK_DIR\}\}\/)mark\s+(complete|no-change|blocked)\b/g,
-  )) {
+  for (const match of scope.matchAll(TERMINAL_MARK_GLOBAL_RE)) {
     commands.add(match[1]);
   }
   if (commands.size === 0 && /mark-checklist-step\.cjs[\s\S]{0,400}?\bcomplete\b/.test(scope)) {

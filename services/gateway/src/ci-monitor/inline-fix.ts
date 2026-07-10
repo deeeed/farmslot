@@ -451,6 +451,17 @@ async function attemptInlineCIFix(
     vars = await loadSlotVars(slotId);
     const signalPath = slotTaskRelPath(vars, writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal);
     await execOnSlot(vars, `rm -f '${signalPath}'`);
+    let signalBaseline = '';
+    try {
+      signalBaseline = (
+        await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)
+      ).stdout.trim();
+    } catch (err) {
+      console.warn(
+        `[ci-monitor] run ${runId.slice(0, 8)} — failed to read CI fix signal baseline: ${(err as Error).message}`,
+      );
+      signalBaseline = '';
+    }
     const primaryTarget = await resolveAgentTarget(slotId, { runId, role: 'primary' });
     const roleWindowName =
       run?.agentContexts?.find((ctx) => ctx.role === primaryRoleForFlow(run.flowType))?.target
@@ -509,18 +520,6 @@ async function attemptInlineCIFix(
       activeTaskFile: writeResult.taskPath,
       fixProgress: writeResult.progress,
     });
-
-    let signalBaseline = '';
-    try {
-      signalBaseline = (
-        await execOnSlot(vars, `cat '${signalPath}' 2>/dev/null || true`)
-      ).stdout.trim();
-    } catch (err) {
-      console.warn(
-        `[ci-monitor] run ${runId.slice(0, 8)} — failed to read CI fix signal baseline: ${(err as Error).message}`,
-      );
-      signalBaseline = '';
-    }
 
     const deadline = Date.now() + INLINE_FIX_TIMEOUT_MS;
     while (Date.now() < deadline && !signal.aborted) {

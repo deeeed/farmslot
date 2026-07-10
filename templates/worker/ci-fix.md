@@ -3,7 +3,7 @@
 > CI-watch detected issues on your PR. Fix them, verify, commit and push.
 > **Signal file:** `{{TASK_DIR}}/mark --checklist CI-FIX.md N` for progress; `CI-FIX-SIGNAL.json` when done. TASK `STATUS` ≠ SIGNAL `status`.
 > **Checklist marker:** Run `{{TASK_DIR}}/mark --checklist CI-FIX.md start` once when work begins (before the first progress mark). After each checklist item, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark --checklist CI-FIX.md complete | {{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "…" | {{TASK_DIR}}/mark --checklist CI-FIX.md blocked --reason "…"` (never hand-write signal JSON).
-> **Required completion artifacts:** Before `complete`, write non-empty `{{TASK_DIR}}/artifacts/report.md` and `{{TASK_DIR}}/artifacts/learnings.md`.
+> **Required completion artifacts:** Before `complete`, write non-empty `{{TASK_DIR}}/artifacts/report.md` and `{{TASK_DIR}}/artifacts/learnings.md`. Before `no-change`, write non-empty `{{TASK_DIR}}/artifacts/no-change-report.md` and `{{TASK_DIR}}/artifacts/learnings.md`.
 
 **CRITICAL: Never pause or wait for user input. Complete ALL steps. After each step, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (or mark `[x]` manually).**
 
@@ -85,11 +85,15 @@ STATUS: pending
   ```bash
   mkdir -p {{TASK_DIR}}/artifacts
   printf '%s\n' '# CI fix report' '' '- Fixed:' '- Validation:' '- Commit:' > {{TASK_DIR}}/artifacts/report.md
+  # If no code change is needed, write no-change-report.md instead of report.md and run the no-change terminal marker.
+  printf '%s\n' '# No-change report' '' '- Reason:' '- Validation:' > {{TASK_DIR}}/artifacts/no-change-report.md
   printf '%s\n' '- Nothing relevant — straightforward CI fix.' > {{TASK_DIR}}/artifacts/learnings.md
   {{TASK_DIR}}/mark --checklist CI-FIX.md 9
   ```
 - [ ] **10. Write CI-FIX-SIGNAL.json:**
   ```bash
   {{TASK_DIR}}/mark --checklist CI-FIX.md complete --mark-last
+  # If no code change was needed:
+  {{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "already fixed or not reproducible" --mark-last
   ```
   **Do NOT `/exit`. Stay alive — CI-watch may nudge you again if new issues appear.**

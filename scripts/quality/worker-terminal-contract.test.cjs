@@ -4,6 +4,8 @@ const {
   lintWorkerTemplateAgainstContract,
   lintWorkerTemplateStructure,
   expandedArtifactsForCommand,
+  templateTerminalCommands,
+  templateUsesTerminalMark,
 } = require('./worker-terminal-contract.cjs');
 
 const devContract = resolveWorkerTerminalContract(null, 'dev');
@@ -41,6 +43,24 @@ const templateOk = [
   '- [ ] Run `./mark complete --mark-last`',
 ].join('\n');
 assert.deepEqual(lintWorkerTemplateAgainstContract(templateOk, devContract), []);
+
+const checklistOverrideTemplate = [
+  '# Worker: CI Fix Pass',
+  '- [ ] Write `artifacts/learnings.md`',
+  '- [ ] Write `artifacts/report.md`',
+  '- [ ] Write `artifacts/no-change-report.md` when no change is needed',
+  '- [ ] Run `{{TASK_DIR}}/mark --checklist CI-FIX.md complete --mark-last`',
+  '- [ ] Or run `{{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "already fixed"`',
+].join('\n');
+assert.equal(templateUsesTerminalMark(checklistOverrideTemplate), true);
+assert.deepEqual(templateTerminalCommands(checklistOverrideTemplate), ['complete', 'no-change']);
+assert.deepEqual(
+  lintWorkerTemplateAgainstContract(
+    checklistOverrideTemplate,
+    resolveWorkerTerminalContract(null, 'ci-fix'),
+  ),
+  [],
+);
 
 const templateBad = ['# Worker', '- [ ] Done'].join('\n');
 assert.match(lintWorkerTemplateAgainstContract(templateBad, devContract)[0], /must instruct.*mark/);

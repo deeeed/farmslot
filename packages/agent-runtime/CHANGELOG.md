@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- fix: recognize CI-fix worker headings as the `ci-fix` flow when completing task-dir markers, so `CI-FIX-SIGNAL.json` uses the intended report contract.
+- fix: recognize CI-fix worker headings as the `ci-fix` flow and lint task-dir `mark --checklist ...` terminal commands, so `CI-FIX-SIGNAL.json` uses the intended report contract.
 - fix: use workspace-linked `@farmslot/protocol` during local development so package builds cannot resolve a stale published sibling package.
 - feat: the task-artifact contract check validates `artifacts/recipe.json` (envelope-only) and, when present, `artifacts/resolved-recipe.json` (in full, including flow-call resolution) against the shared Recipe Protocol v1 validator, with a local minimum-envelope fallback when `@farmslot/protocol` dist is not yet built.
 - Active-development baseline; add user-facing changes here before release or package publication.
