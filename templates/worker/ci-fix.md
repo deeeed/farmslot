@@ -1,10 +1,10 @@
 # Worker: CI Fix Pass
 
 > CI-watch detected issues on your PR. Fix them, verify, commit and push.
-> **Signal file:** `./mark N` for progress; `CI-FIX-SIGNAL.json` when done. TASK `STATUS` ≠ SIGNAL `status`.
-> **Checklist marker:** Run `{{TASK_DIR}}/mark start` once when work begins (before the first `./mark N`). After each checklist item, run `{{TASK_DIR}}/mark N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark complete | {{TASK_DIR}}/mark no-change --reason "…" | {{TASK_DIR}}/mark blocked --reason "…"` (never hand-write `SIGNAL.json`).
+> **Signal file:** `{{TASK_DIR}}/mark --checklist CI-FIX.md N` for progress; `CI-FIX-SIGNAL.json` when done. TASK `STATUS` ≠ SIGNAL `status`.
+> **Checklist marker:** Run `{{TASK_DIR}}/mark --checklist CI-FIX.md start` once when work begins (before the first progress mark). After each checklist item, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark --checklist CI-FIX.md complete | {{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "…" | {{TASK_DIR}}/mark --checklist CI-FIX.md blocked --reason "…"` (never hand-write signal JSON).
 
-**CRITICAL: Never pause or wait for user input. Complete ALL steps. After each step, run `{{TASK_DIR}}/mark N` (or mark `[x]` manually).**
+**CRITICAL: Never pause or wait for user input. Complete ALL steps. After each step, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (or mark `[x]` manually).**
 
 This is the **Farmslot default** `ci-fix.md` template. Projects should override it under `projects/<name>/templates/worker/ci-fix.md` with repo-specific validation commands. The gateway uses this file only when the project does not supply its own.
 
@@ -31,7 +31,7 @@ STATUS: pending
 
 ### Triage (steps 1-2)
 
-- [ ] **1. Update Status** — `STATUS: working` in Task block, then `{{TASK_DIR}}/mark start`, then `{{TASK_DIR}}/mark 1`.
+- [ ] **1. Update Status** — `STATUS: working` in Task block, then `{{TASK_DIR}}/mark --checklist CI-FIX.md start`, then `{{TASK_DIR}}/mark --checklist CI-FIX.md 1`.
 - [ ] **2. Fetch full context:**
   - If review comments: `unset GH_TOKEN && gh api "repos/{{GH_REPO}}/pulls/{{PR_NUMBER}}/comments" --jq '.[] | select(.in_reply_to_id == null) | {id: .id, author: .user.login, body: .body, path: .path, line: .line}'`
   - If CI failures: `unset GH_TOKEN && gh pr checks {{PR_NUMBER}} --repo {{GH_REPO}} 2>&1 | grep -iE 'fail|error'`
@@ -82,6 +82,6 @@ STATUS: pending
 
 - [ ] **9. Write CI-FIX-SIGNAL.json:**
   ```bash
-  node {{farmslot_dir}}/packages/agent-runtime/scripts/mark-checklist-step.cjs {{TASK_DIR}}/CI-FIX.md {{TASK_DIR}}/CI-FIX-SIGNAL.json complete --outcome success --mark-last
+  {{TASK_DIR}}/mark --checklist CI-FIX.md complete --mark-last
   ```
   **Do NOT `/exit`. Stay alive — CI-watch may nudge you again if new issues appear.**

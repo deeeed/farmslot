@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -24,4 +24,18 @@ test('resolveCiFixTemplatePath prefers project-owned ci-fix.md', async () => {
 test('resolveCiFixTemplatePath falls back to Farmslot default template', async () => {
   const resolved = await resolveCiFixTemplatePath('__missing-project-for-ci-fix-test__');
   assert.equal(resolved, path.join(farmslotRoot, 'templates', 'worker', 'ci-fix.md'));
+});
+
+test('default CI fix template uses explicit CI-FIX marker targeting', async () => {
+  const template = await readFile(
+    path.join(farmslotRoot, 'templates', 'worker', 'ci-fix.md'),
+    'utf-8',
+  );
+
+  assert.match(template, /mark --checklist CI-FIX\.md start/);
+  assert.match(template, /mark --checklist CI-FIX\.md 1/);
+  assert.match(template, /mark --checklist CI-FIX\.md complete --mark-last/);
+  assert.doesNotMatch(template, /mark start/);
+  assert.doesNotMatch(template, /mark complete \|/);
+  assert.doesNotMatch(template, /mark-checklist-step\.cjs .*CI-FIX\.md .*CI-FIX-SIGNAL\.json/);
 });

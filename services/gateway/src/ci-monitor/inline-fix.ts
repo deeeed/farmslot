@@ -463,16 +463,6 @@ async function attemptInlineCIFix(
       run?.flowType,
     );
     const session = primaryTarget.session;
-    const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
-      status: 'working',
-      taskFile: writeResult.taskPath,
-      signalFile: taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal),
-      runner,
-      model: run?.metrics.model ?? null,
-      target: { session, window: null, pane: null, target: workerTarget },
-    });
-    if (ciFixContext) await watchContext(slotId, ciFixContext);
-    ciFixContextStarted = true;
 
     // Send one-liner nudge to worker
     const ciFixTaskFile = taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.checklist);
@@ -491,15 +481,27 @@ async function attemptInlineCIFix(
       console.log(
         `[ci-monitor] run ${runId.slice(0, 8)} — CI fix nudge ${sent ? 'sent' : 'deferred'} to ${workerTarget}`,
       );
+      if (!sent) {
+        clearInlineFixState(runId, { phase: 'polling' });
+        return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
+      }
     } catch (err) {
       console.warn(
         `[ci-monitor] run ${runId.slice(0, 8)} — failed to send nudge: ${(err as Error).message}`,
       );
-      await markAgentContextStatus(runId, 'ci-fix', 'failed');
-      await unwatchContext(slotId, 'ci-fix');
       clearInlineFixState(runId, { phase: 'polling' });
       return { attempted: true, success: false, attempts };
     }
+    const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
+      status: 'working',
+      taskFile: writeResult.taskPath,
+      signalFile: taskDirRelPath(writeResult.taskDir, CI_FIX_CHECKLIST_TARGET.signal),
+      runner,
+      model: run?.metrics.model ?? null,
+      target: { session, window: null, pane: null, target: workerTarget },
+    });
+    if (ciFixContext) await watchContext(slotId, ciFixContext);
+    ciFixContextStarted = true;
     mergeCIWatchOutputPatch(runId, {
       phase: 'waiting_for_worker',
       fixInProgress: true,
