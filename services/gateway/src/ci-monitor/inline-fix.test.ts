@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -38,4 +40,54 @@ test('default CI fix template uses explicit CI-FIX marker targeting', async () =
   assert.doesNotMatch(template, /mark start/);
   assert.doesNotMatch(template, /mark complete \|/);
   assert.doesNotMatch(template, /mark-checklist-step\.cjs .*CI-FIX\.md .*CI-FIX-SIGNAL\.json/);
+});
+
+test('default CI fix template completion marker writes CI-FIX signal', async () => {
+  const templatePath = path.join(farmslotRoot, 'templates', 'worker', 'ci-fix.md');
+  const template = await readFile(templatePath, 'utf-8');
+  const taskDir = await mkdtemp(path.join(tmpdir(), 'farmslot-ci-fix-mark-'));
+  const marker = path.join(
+    farmslotRoot,
+    'packages',
+    'agent-runtime',
+    'scripts',
+    'mark-checklist-step.cjs',
+  );
+
+  try {
+    await writeFile(path.join(taskDir, 'CI-FIX.md'), template, 'utf-8');
+    await mkdir(path.join(taskDir, 'artifacts'), { recursive: true });
+    await writeFile(path.join(taskDir, 'artifacts', 'report.md'), '# CI fix report\n', 'utf-8');
+    await writeFile(
+      path.join(taskDir, 'artifacts', 'learnings.md'),
+      '- Regression covered.\n',
+      'utf-8',
+    );
+
+    const runMarker = (...args: string[]) => {
+      const result = spawnSync(
+        process.execPath,
+        [marker, taskDir, '--checklist', 'CI-FIX.md', ...args],
+        {
+          encoding: 'utf-8',
+        },
+      );
+      assert.equal(result.status, 0, result.stderr);
+    };
+
+    runMarker('start');
+    const checklistItemCount = template.match(/^\s*-\s+\[ \]/gm)?.length ?? 0;
+    assert.ok(checklistItemCount > 0, 'expected CI-FIX.md checklist items');
+    for (let step = 1; step <= checklistItemCount; step += 1) {
+      runMarker(String(step));
+    }
+    runMarker('complete', '--mark-last');
+
+    const signal = JSON.parse(await readFile(path.join(taskDir, 'CI-FIX-SIGNAL.json'), 'utf-8'));
+    assert.equal(signal.status, 'complete');
+    assert.equal(signal.outcome, 'success');
+    assert.equal(signal.checklistTiming.source, 'CI-FIX.md');
+  } finally {
+    await rm(taskDir, { recursive: true, force: true });
+  }
 });

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(gateway): harden inline CI-fix dispatch so deferred runner nudges do not create phantom CI-fix contexts, and make generated CI-fix marker completion write the role signal reliably.
 - feat(gateway): add runtime recovery helpers that can reconcile stale slot state and restore tmux worker sessions from runner session history.
 - fix(gateway): make publication-gate review requests non-destructive: explicit review failures are recorded instead of failing/tearing down gate-held slots, human-requested reviews no longer become permanent publish policy, package refresh restores configured review depth, and recovered role shells use the account default shell instead of hardcoded bash.
 - fix(gateway): enable worker session history by default so slot-view exposes the History tab unless `FARMSLOT_EXPERIMENTAL_WORKER_HISTORY=0` explicitly disables transcript recovery.

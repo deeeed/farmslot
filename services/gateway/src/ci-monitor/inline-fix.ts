@@ -490,7 +490,7 @@ async function attemptInlineCIFix(
         `[ci-monitor] run ${runId.slice(0, 8)} — failed to send nudge: ${(err as Error).message}`,
       );
       clearInlineFixState(runId, { phase: 'polling' });
-      return { attempted: true, success: false, attempts };
+      return { attempted: true, success: false, attempts, durationMs: Date.now() - startedAt };
     }
     const ciFixContext = await upsertAgentContext(runId, 'ci-fix', {
       status: 'working',

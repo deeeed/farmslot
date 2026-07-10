@@ -20,6 +20,7 @@ const FLOW_REPORT_ARTIFACTS = {
   dev: ['pr-description.md', 'report.md'],
   'pr-complete': ['comments-report.md', 'report.md'],
   'merge-main': ['report.md', 'merge-report.md'],
+  'ci-fix': ['report.md'],
 };
 const FALLBACK_REPORT_ARTIFACTS = [
   'report.md',
@@ -245,6 +246,7 @@ function inferFlowType(taskPath) {
     if (label.includes('review-pr') || label.includes('review pr')) return 'review-pr';
     if (label.includes('pr-complete') || label.includes('pr complete')) return 'pr-complete';
     if (label.includes('merge-main') || label.includes('merge main')) return 'merge-main';
+    if (label.includes('ci-fix') || label.includes('ci fix')) return 'ci-fix';
     if (label.includes('interactive dev')) return 'dev';
     if (/\bdev\b/.test(label) && !label.includes('review')) return 'dev';
   }

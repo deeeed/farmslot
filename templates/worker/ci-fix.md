@@ -3,6 +3,7 @@
 > CI-watch detected issues on your PR. Fix them, verify, commit and push.
 > **Signal file:** `{{TASK_DIR}}/mark --checklist CI-FIX.md N` for progress; `CI-FIX-SIGNAL.json` when done. TASK `STATUS` ≠ SIGNAL `status`.
 > **Checklist marker:** Run `{{TASK_DIR}}/mark --checklist CI-FIX.md start` once when work begins (before the first progress mark). After each checklist item, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (use the visible 1-based step number). If unsure, run `{{TASK_DIR}}/mark --help`. Terminal: `{{TASK_DIR}}/mark --checklist CI-FIX.md complete | {{TASK_DIR}}/mark --checklist CI-FIX.md no-change --reason "…" | {{TASK_DIR}}/mark --checklist CI-FIX.md blocked --reason "…"` (never hand-write signal JSON).
+> **Required completion artifacts:** Before `complete`, write non-empty `{{TASK_DIR}}/artifacts/report.md` and `{{TASK_DIR}}/artifacts/learnings.md`.
 
 **CRITICAL: Never pause or wait for user input. Complete ALL steps. After each step, run `{{TASK_DIR}}/mark --checklist CI-FIX.md N` (or mark `[x]` manually).**
 
@@ -78,9 +79,16 @@ STATUS: pending
   unset GH_TOKEN && gh api "repos/{{GH_REPO}}/pulls/{{PR_NUMBER}}/comments/{COMMENT_ID}/replies" -X POST -f body="Fixed in $(git rev-parse --short HEAD)"
   ```
 
-### Signal (step 9)
+### Package & Signal (steps 9-10)
 
-- [ ] **9. Write CI-FIX-SIGNAL.json:**
+- [ ] **9. Write packaged evidence:**
+  ```bash
+  mkdir -p {{TASK_DIR}}/artifacts
+  printf '%s\n' '# CI fix report' '' '- Fixed:' '- Validation:' '- Commit:' > {{TASK_DIR}}/artifacts/report.md
+  printf '%s\n' '- Nothing relevant — straightforward CI fix.' > {{TASK_DIR}}/artifacts/learnings.md
+  {{TASK_DIR}}/mark --checklist CI-FIX.md 9
+  ```
+- [ ] **10. Write CI-FIX-SIGNAL.json:**
   ```bash
   {{TASK_DIR}}/mark --checklist CI-FIX.md complete --mark-last
   ```
