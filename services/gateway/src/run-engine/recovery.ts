@@ -110,6 +110,7 @@ export interface RunRecoveryCollaborators {
   setRunFlags: (runId: string, flags: { warmRecovery?: true }) => void;
   resetSlot: (slotId: string) => Promise<void>;
   quarantineLeakedRun: (run: Run) => Promise<void>;
+  reconcileRunAgentRuntime?: (run: Run) => Promise<void>;
 }
 
 const STEP_TO_STATUS: Record<string, Run['status']> = {
@@ -201,6 +202,16 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
       continue;
     }
 
+    if (deps.reconcileRunAgentRuntime && run.slotId) {
+      try {
+        await deps.reconcileRunAgentRuntime(run);
+      } catch (err) {
+        console.warn(
+          `[run-engine] tmux runtime reconciliation failed for ${run.id.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+        );
+      }
+    }
+
     if (run.status === 'blocked') {
       const unresolved = run.decisions.filter((d) => !d.resolvedAt);
       if (unresolved.length > 0) {
@@ -249,6 +260,12 @@ export async function recoverActiveRuns(deps: RunRecoveryCollaborators): Promise
         console.log(
           `[run-engine] run ${run.id.slice(0, 8)} — blocked with ${unresolved.length} unresolved decision(s), re-presenting`,
         );
+        const runningStep = run.steps.find((s) => s.status === 'running');
+        if (runningStep?.detail && runningStep.name === S.HUMAN_GATE) {
+          deps.updateRunStep(run.id, runningStep.name, {
+            detail: 'Waiting for operator decision',
+          });
+        }
         for (const d of unresolved) {
           deps.broadcast(Events.RUN_DECISION_NEW, {
             runId: run.id,

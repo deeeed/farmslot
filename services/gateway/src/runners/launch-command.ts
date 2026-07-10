@@ -73,6 +73,74 @@ export function resolveGrokBinary(preferred?: string | null): string {
   return 'grok';
 }
 
+export function buildRunnerSessionReloadCommand(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  runnerId: string,
+  model: string | null | undefined,
+  sessionId: string,
+  opts: {
+    repo?: string;
+    effort?: string | null;
+    safetyTier?: SafetyTier;
+    runtimeDir?: string;
+  } = {},
+): string {
+  const runner = normalizeRunner(runnerId);
+  const repo = opts.repo ?? vars.remoteRepo;
+  const tier = opts.safetyTier ?? runnerDefaultSafetyTier(runner);
+  const quotedSessionId = shellQuote(sessionId);
+
+  if (runner === 'claude') {
+    const installCommand = buildRunnerObservabilityInstallCommand(
+      vars,
+      runner,
+      repo,
+      opts.runtimeDir,
+    );
+    const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+    const flagList = runnerFlagsForTier(runner, tier);
+    const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
+    const claudePath = vars.claudePath || 'claude';
+    return withRunnerObservabilityInstall(
+      `cd ${shellExpressionForRemotePath(repo)} && unset CLAUDECODE && ${claudePath}${flags}${modelFlag} --resume ${quotedSessionId}`,
+      installCommand,
+    );
+  }
+
+  if (runner === 'codex') {
+    const installCommand = buildRunnerObservabilityInstallCommand(
+      vars,
+      runner,
+      repo,
+      opts.runtimeDir,
+    );
+    const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+    const effortFlag = codexReasoningEffortFlag(opts.effort);
+    const workerConfigFlags = codexWorkerConfigFlags();
+    const flagList = runnerFlagsForTier(runner, tier);
+    const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
+    const codexHomeSetup = buildCodexHomeSetup(repo, opts.runtimeDir ?? '.agent');
+    return withRunnerObservabilityInstall(
+      `unset CLAUDECODE && cd ${shellQuote(repo)} && ${codexHomeSetup} && ${resolveCodexBinary(
+        vars.codexPath,
+      )} resume --disable plugin_hooks${flags}${effortFlag}${workerConfigFlags}${modelFlag} ${quotedSessionId}`,
+      installCommand,
+    );
+  }
+
+  if (runner === 'grok') {
+    const modelFlag = model && model !== 'unknown' ? ` --model ${model}` : '';
+    const effortFlag = opts.effort?.trim() ? ` --effort ${opts.effort.trim()}` : '';
+    const flagList = runnerFlagsForTier(runner, tier);
+    const flags = flagList.length ? ` ${flagList.join(' ')}` : '';
+    return `cd ${shellQuote(repo)} && ${resolveGrokBinary(
+      vars.grokPath,
+    )}${flags}${effortFlag}${modelFlag} --resume ${quotedSessionId}`;
+  }
+
+  throw new Error(`Runner '${runner}' does not support persisted session reload`);
+}
+
 export function assertRunnerLaunchPrerequisites(
   _vars: Awaited<ReturnType<typeof loadSlotVars>>,
   _runnerId?: string | null,

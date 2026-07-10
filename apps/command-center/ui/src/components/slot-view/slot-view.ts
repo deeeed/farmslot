@@ -58,8 +58,10 @@ import {
   handleSlotViewBack,
   hasSlotViewModalOpen,
   pauseSlotViewRun,
+  reloadSlotViewWorkerSession,
   replaySlotViewRunStep,
   requestSlotViewSwitcherUpdate,
+  restoreSlotViewTmuxWorker,
   resumeSlotViewRun,
   setSlotViewActivity,
   slotViewSwitcherEntries,
@@ -415,7 +417,8 @@ export class SlotView extends SlotViewRecipePresenter {
   }
 
   _selectAgentContext(ctx: AgentContextSummary): void {
-    if (this._isContextUnavailable(ctx)) return;
+    // Unavailable means the live tmux pane is not attachable — operators can still
+    // select the context to open history / inspect metadata for that reviewer tab.
     this._selectedAgentContextId = ctx.id;
     if (this.slotId) {
       this._selectedAgentContextIds = { ...this._selectedAgentContextIds, [this.slotId]: ctx.id };
@@ -660,6 +663,14 @@ export class SlotView extends SlotViewRecipePresenter {
 
   async _resumeRun() {
     return await resumeSlotViewRun(this);
+  }
+
+  async _restoreTmuxWorker() {
+    return await restoreSlotViewTmuxWorker(this);
+  }
+
+  async _reloadWorkerSession() {
+    return await reloadSlotViewWorkerSession(this);
   }
 
   _toggleSidebar() {

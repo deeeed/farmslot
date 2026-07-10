@@ -132,7 +132,11 @@ function isAutoRecoveryCandidateRun(run: Run): boolean {
 }
 
 function isTerminalRunForAutoRecovery(run: Run): boolean {
-  return isTerminalRunStatus(run.status) || isMonitorBlockedRecoveryCandidate(run);
+  return (
+    isTerminalRunStatus(run.status) ||
+    isMonitorBlockedRecoveryCandidate(run) ||
+    isRecoveredToHumanGate(run)
+  );
 }
 
 function failureText(run: Run): string {
@@ -159,6 +163,27 @@ function attemptsForStep(run: Run, stepName: string): number {
   return (run.recoveryAttempts ?? []).filter(
     (a) => a.triggeredBy === 'auto-recovery' && a.stepName === stepName,
   ).length;
+}
+
+function isRecoveredToHumanGate(run: Run): boolean {
+  if (run.status !== 'blocked') return false;
+  if (!run.recoveryAttempts?.some((attempt) => !attempt.completedAt)) return false;
+
+  const flowSteps = FLOW_STEPS[run.flowType] ?? [];
+  const humanGateIdx = flowSteps.indexOf(PipelineSteps.HUMAN_GATE);
+  if (humanGateIdx < 0) return false;
+
+  const humanGate = run.steps.find((step) => step.name === PipelineSteps.HUMAN_GATE);
+  if (humanGate?.status !== 'running') return false;
+
+  return run.recoveryAttempts.some((attempt) => {
+    if (attempt.completedAt) return false;
+    const attemptIdx = flowSteps.indexOf(attempt.stepName as (typeof flowSteps)[number]);
+    if (attemptIdx < 0 || attemptIdx >= humanGateIdx) return false;
+    return flowSteps
+      .slice(attemptIdx, humanGateIdx)
+      .every((stepName) => run.steps.find((step) => step.name === stepName)?.status === 'done');
+  });
 }
 
 function hasInlineCiFix(run: Run): boolean {
@@ -639,17 +664,25 @@ function enqueueRun(run: Run, timestamp?: string): Promise<void> {
 }
 
 async function writeFollowup(run: Run): Promise<void> {
-  const latest = [...(run.recoveryAttempts ?? [])].reverse().find((a) => !a.completedAt);
+  const openAttempts = (run.recoveryAttempts ?? []).filter((a) => !a.completedAt);
+  const latest = openAttempts.at(-1);
   if (!latest) return;
 
-  const completedAt = run.completedAt ?? new Date().toISOString();
+  const recoveredToHumanGate = isRecoveredToHumanGate(run);
+  const humanGateStartedAt = run.steps.find(
+    (step) => step.name === PipelineSteps.HUMAN_GATE,
+  )?.startedAt;
+  const completedAt = run.completedAt ?? humanGateStartedAt ?? new Date().toISOString();
+  const completedOpenAttemptIds = new Set(
+    recoveredToHumanGate ? openAttempts.map((attempt) => attempt.id) : [latest.id],
+  );
   const attempts = (run.recoveryAttempts ?? []).map((a) =>
-    a.id === latest.id
+    completedOpenAttemptIds.has(a.id)
       ? {
           ...a,
           completedAt,
           status:
-            run.status === 'done'
+            run.status === 'done' || recoveredToHumanGate
               ? ('completed' as const)
               : run.status === 'cancelled'
                 ? ('cancelled' as const)
@@ -666,7 +699,11 @@ async function writeFollowup(run: Run): Promise<void> {
     return;
 
   const outcome =
-    run.status === 'done' ? 'recovered' : run.status === 'cancelled' ? 'cancelled' : 'failed-again';
+    run.status === 'done' || recoveredToHumanGate
+      ? 'recovered'
+      : run.status === 'cancelled'
+        ? 'cancelled'
+        : 'failed-again';
   await writeAuditRecord(
     {
       id: randomUUID(),

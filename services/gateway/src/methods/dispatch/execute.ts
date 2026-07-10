@@ -48,9 +48,13 @@ import {
 } from '../../runners/launch-command.js';
 import {
   assertSupportedRunnerSpelling,
+  detectRunnerLaunchBlocker,
   normalizeRunner,
   runnerDefaultModel,
+  runnerLaunchBlockerAutoActionKey,
   runnerNeedsPostLaunchPrompt,
+  runnerPaneHasDeferredLaunchBlocker,
+  runnerResolvesPreTaskLaunchBlockers,
   sendRunnerPostLaunchPrompt,
   WORKER_ENV_PREFIX,
 } from '../../runners/registry.js';
@@ -114,6 +118,7 @@ const LAUNCH_PRELUDE_SETTLE_MS = 50;
  * pane; with dispatch's pane-died hook that removes the whole role window.
  */
 const ROLE_WINDOW_STARTUP_SETTLE_MS = 500;
+const ROLE_LAUNCH_FAILURE_DIAGNOSTIC_HOLD_SECONDS = 45;
 
 type EventEmitter = (event: string, payload: unknown) => void;
 
@@ -378,6 +383,79 @@ async function assertRunnerProcessStarted(
   );
 }
 
+type RunnerLaunchBlockerResolverDeps = {
+  exec?: typeof execOnSlot;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+export async function resolveRunnerLaunchBlockers(
+  vars: Awaited<ReturnType<typeof loadSlotVars>>,
+  target: string,
+  runner: string,
+  timeoutMs = 60_000,
+  deps: RunnerLaunchBlockerResolverDeps = {},
+): Promise<void> {
+  const exec = deps.exec ?? execOnSlot;
+  const now = deps.now ?? Date.now;
+  const sleep =
+    deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + timeoutMs;
+  const autoActionAttempts = new Map<string, number>();
+  const loggedExhaustedAutoActions = new Set<string>();
+  let lastBlockerSummary = '';
+  while (now() < deadline) {
+    const paneResult = await exec(
+      vars,
+      tmuxShellSnippet(`capture-pane -p -t ${shellQuote(target)} 2>/dev/null`),
+    );
+    if (paneResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to inspect ${runner} launch blocker state in ${target}: ${paneResult.stderr || paneResult.stdout || `exit ${paneResult.exitCode}`}`,
+      );
+    }
+    const pane = paneResult.stdout;
+    const blocker = detectRunnerLaunchBlocker(pane, runner);
+    if (!blocker) return;
+    lastBlockerSummary = blocker.summary;
+
+    const key = runnerLaunchBlockerAutoActionKey(blocker.autoAction);
+    if (key) {
+      const attempts = autoActionAttempts.get(blocker.kind) ?? 0;
+      if (attempts < 2) {
+        const result = await exec(
+          vars,
+          tmuxShellSnippet(`send-keys -t ${shellQuote(target)} ${shellQuote(key)} 2>/dev/null`),
+        );
+        if (result.exitCode !== 0) {
+          throw new Error(
+            `Failed to resolve ${runner} launch blocker ${blocker.kind} in ${target}: ${result.stderr || result.stdout || `exit ${result.exitCode}`}`,
+          );
+        }
+        autoActionAttempts.set(blocker.kind, attempts + 1);
+      } else if (!loggedExhaustedAutoActions.has(blocker.kind)) {
+        console.log(
+          `[dispatch] launch blocker ${blocker.kind} in ${target} still visible after repeated ${key} auto-action attempts; waiting for it to clear`,
+        );
+        loggedExhaustedAutoActions.add(blocker.kind);
+      }
+    } else if (!runnerPaneHasDeferredLaunchBlocker(pane, runner, blocker)) {
+      throw new Error(
+        `${blocker.summary} Launch blocker has no safe automatic action; dispatch cannot continue.`,
+      );
+    }
+    await sleep(1500);
+  }
+  const attemptedKinds = [...autoActionAttempts].map(
+    ([kind, attempts]) => `${kind}${attempts > 1 ? ` (${attempts} attempts)` : ''}`,
+  );
+  throw new Error(
+    `${runner} launch blocker did not clear in ${target} within ${Math.round(timeoutMs / 1000)}s. ${lastBlockerSummary}${
+      attemptedKinds.length ? ` Auto-action was sent for: ${attemptedKinds.join(', ')}.` : ''
+    }`,
+  );
+}
+
 export async function ensureWorkerRoleTarget(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
@@ -535,7 +613,7 @@ async function respawnRoleWindowWithCommand(
   target: string,
   command: string,
 ): Promise<void> {
-  const launchCommand = `exec bash -lc ${shellQuote(command)}`;
+  const launchCommand = buildRoleLaunchCommandWithDiagnosticHold(command);
   const respawned = await execOnSlot(
     vars,
     tmuxShellSnippet(
@@ -558,6 +636,24 @@ async function respawnRoleWindowWithCommand(
     );
   }
   await applyRoleWindowOptions(vars, target);
+}
+
+export function buildRoleLaunchCommandWithDiagnosticHold(command: string): string {
+  // Keep the wrapper as the tmux pane process so launch failures can preserve
+  // stderr briefly for diagnostics. If dispatch cleanup kills the child runner,
+  // or a runner exits non-zero during launch/user quit, this outer shell can
+  // remain until the diagnostic hold elapses, but the runner process itself is
+  // already gone.
+  const lines = [
+    `bash -lc ${shellQuote(command)}`,
+    '__farmslot_status=$?',
+    'if [ "$__farmslot_status" -ne 0 ]; then',
+    '  echo "[farmslot] runner launch command exited $__farmslot_status; preserving pane for diagnostics" >&2',
+    `  sleep ${ROLE_LAUNCH_FAILURE_DIAGNOSTIC_HOLD_SECONDS}`,
+    'fi',
+    'exit "$__farmslot_status"',
+  ];
+  return `bash -c ${shellQuote(lines.join('\n'))}`;
 }
 
 async function tmuxSessionExists(
@@ -1035,6 +1131,12 @@ export async function dispatchExecute(
     // sitting at human-gate waiting for artifacts that were never produced.
     await assertRunnerProcessStarted(vars, workerTarget, runner);
     runnerProcessStarted = true;
+    if (runnerResolvesPreTaskLaunchBlockers(runner)) {
+      await resolveRunnerLaunchBlockers(vars, workerTarget, runner);
+      // Cursor receives the task prompt on argv, so resolving a launch blocker
+      // is the last gate before monitor starts; verify the runner survived it.
+      await assertRunnerProcessStarted(vars, workerTarget, runner, 5_000);
+    }
     step('launch', `${runner} launched in tmux target ${workerTarget}`);
     primaryTarget = await captureAgentPaneTarget(vars, session, workerTarget);
     const workerPaneId = await resolveTmuxPaneId(vars, primaryTarget.target ?? workerTarget);

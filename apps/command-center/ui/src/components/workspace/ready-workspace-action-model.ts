@@ -16,6 +16,10 @@ export function isReadyPublicationApproval(actionId: string, packageGate: boolea
   return actionId === 'approve-publish' || (packageGate && actionId === 'ready');
 }
 
+export function readyActionRequiresConfirmation(actionId: string, packageGate: boolean): boolean {
+  return isReadyPublicationApproval(actionId, packageGate);
+}
+
 export function readyDecisionSubmittingMessage(approving: boolean): string {
   return approving ? 'Submitting publication decision…' : 'Submitting decision…';
 }

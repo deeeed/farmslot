@@ -1071,8 +1071,12 @@ async function slotPrepareInner(
       clearInterval(depsHeartbeat);
     }
     if (installR.exitCode !== 0) {
+      const setupDetail = installR.stderr.trim();
+      const setupFailed = /^(tmux |stage prepare)/.test(setupDetail);
       const err: PrepareCommandError = new Error(
-        `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
+        setupFailed
+          ? `prepare deps setup failed: ${setupDetail} — log: ${depsLogPath}`
+          : `${installCmd} failed (exit ${installR.exitCode}) — log: ${depsLogPath}`,
       );
       err.failedCommand = installCmd;
       err.failedLogPath = depsLogPath;
@@ -1240,9 +1244,13 @@ async function slotPrepareInner(
       // preflightR.stderr carries the "window killed (SIGHUP/SIGTERM)" hint when
       // the tmux window was torn down externally, so an operator sees the real
       // cause instead of an opaque preflight failure.
-      const killHint = preflightR.stderr ? ` — ${preflightR.stderr}` : '';
+      const setupDetail = preflightR.stderr.trim();
+      const setupFailed = /^(tmux |stage prepare)/.test(setupDetail);
+      const killHint = setupDetail ? ` — ${setupDetail}` : '';
       const err: PrepareCommandError = new Error(
-        `Preflight failed${phaseLabel} (exit ${preflightR.exitCode})${killHint} — log: ${preflightLogPath}`,
+        setupFailed
+          ? `prepare preflight setup failed: ${setupDetail} — log: ${preflightLogPath}`
+          : `Preflight failed${phaseLabel} (exit ${preflightR.exitCode})${killHint} — log: ${preflightLogPath}`,
       );
       err.failedCommand = preflightHook;
       err.failedLogPath = preflightLogPath;

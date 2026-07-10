@@ -9,6 +9,7 @@ import {
   PipelineSteps as PS,
   PR_BOUND_FLOW_TYPES,
   resolveRunSlotId,
+  type RunEngineState,
   type RunReplayStepParams,
   type RunReplayStepResult,
   type RunStatus,
@@ -51,6 +52,24 @@ const REPLAY_STEP_TO_ACTIVE_STATUS: Partial<Record<string, RunStatus>> = {
 
 function activeStatusForReplayStep(stepName: string): RunStatus {
   return REPLAY_STEP_TO_ACTIVE_STATUS[stepName] ?? 'created';
+}
+
+function resetPublishGateApprovalForReplay(
+  engineState: RunEngineState | undefined,
+): RunEngineState | undefined {
+  if (!engineState?.publishGate) return engineState;
+  const {
+    approvedAt: _approvedAt,
+    approvedPackageHash: _approvedPackageHash,
+    ...publishGateWithoutApproval
+  } = engineState.publishGate;
+  return {
+    ...engineState,
+    publishGate: {
+      ...publishGateWithoutApproval,
+      publicationStatus: 'not_published',
+    },
+  };
 }
 
 function isQueuedPromptDispatchFalseNegative(
@@ -609,12 +628,17 @@ export async function runReplayStep(
       : ('manual-in-progress' as const);
   const replayGeneration =
     getRun(params.runId)?.engineState?.generation ?? existing.engineState?.generation ?? 0;
+  const currentBeforeReplayUpdate = getRun(params.runId) ?? existing;
+  const engineStateForReplay = replaysCompletionOrGate
+    ? resetPublishGateApprovalForReplay(currentBeforeReplayUpdate.engineState)
+    : currentBeforeReplayUpdate.engineState;
   updateRun(params.runId, {
     status: activeStatusForReplayStep(replayStepName),
     error: undefined,
     completedAt: undefined,
     taskFile: replayTaskFile,
     decisions: clearedDecisions,
+    engineState: engineStateForReplay,
     metrics: resetMetrics,
     monitorState: undefined,
     activeTaskFile: undefined,

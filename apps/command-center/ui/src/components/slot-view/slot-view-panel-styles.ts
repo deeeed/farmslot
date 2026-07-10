@@ -194,6 +194,12 @@ export function renderSlotViewPanelStyles(recoveryPhase: RecoveryPhase): string 
         padding: 3px 8px;
         text-decoration: none;
         background: ${colors.accent}11;
+        font: inherit;
+        cursor: pointer;
+      }
+      slot-view .sv-run-action:disabled {
+        cursor: default;
+        opacity: 0.55;
       }
       slot-view .sv-run-action.muted {
         border-color: ${colors.bgCardHover};
@@ -202,6 +208,17 @@ export function renderSlotViewPanelStyles(recoveryPhase: RecoveryPhase): string 
       }
       slot-view .sv-run-action.accent {
         border-color: ${colors.accent};
+      }
+      slot-view .sv-run-action-note,
+      slot-view .sv-run-action-error {
+        margin: -2px 0 8px;
+        font-size: 11px;
+      }
+      slot-view .sv-run-action-note {
+        color: ${colors.textSecondary};
+      }
+      slot-view .sv-run-action-error {
+        color: ${colors.statusFail};
       }
       slot-view .sv-task-panel-col {
         display: flex;

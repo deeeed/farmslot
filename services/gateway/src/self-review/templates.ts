@@ -12,6 +12,7 @@ import {
   resolveProjectTaskDirName,
   resolveTaskRelDir,
 } from '../core/config.js';
+import { isLocal } from '../core/exec.js';
 import { getRun } from '../runs/store.js';
 
 interface SelfReviewConfig {
@@ -21,6 +22,8 @@ interface SelfReviewConfig {
   max_retries?: number;
   review_timeout_min?: number;
 }
+
+const REMOTE_FARMSLOT_DIR = '~/farmslot-node';
 
 export async function expandSelfReviewTemplate(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
@@ -46,11 +49,6 @@ export async function expandSelfReviewTemplate(
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT') {
         throw new Error(`Failed to read ${depthTemplatePath}: ${(err as Error).message}`);
-      }
-      if (validationDepth === 'static-code') {
-        throw new Error(
-          `Static-code self-review template not found for project ${project}: ${depthTemplatePath}`,
-        );
       }
       template = await readFile(fallbackTemplatePath, 'utf-8');
     }
@@ -82,6 +80,8 @@ export async function expandSelfReviewTemplate(
   }
 
   // Expand {{VAR}} placeholders
+  const { farmslotRoot } = await import('../fleet/state.js');
+  const farmslotDir = isLocal(vars.host, vars.machine) ? farmslotRoot : REMOTE_FARMSLOT_DIR;
   const replacements: Record<string, string> = {
     TASK_DIR: taskDir,
     REPO: vars.remoteRepo,
@@ -93,6 +93,8 @@ export async function expandSelfReviewTemplate(
     SESSION: vars.session,
     MOBILE_REPO: mobileRepo,
     VALIDATION_DEPTH: validationDepth,
+    FARMSLOT_DIR: farmslotDir,
+    farmslot_dir: farmslotDir,
   };
 
   let expanded = template;
@@ -133,9 +135,7 @@ export async function resolveWorkerTaskDir(
 ): Promise<string | null> {
   if (!taskFile) return null;
   const pv = await loadProjectVars(project).catch(() => null);
-  const taskDirName = pv
-    ? resolveProjectTaskDirName(pv.projectJson)
-    : DEFAULT_TASK_DIR;
+  const taskDirName = pv ? resolveProjectTaskDirName(pv.projectJson) : DEFAULT_TASK_DIR;
 
   const orchRoot = pv ? getOrchestratorTaskRoot(project, pv.projectJson) : null;
   const taskRelDir = orchRoot ? resolveTaskRelDir(taskFile, orchRoot) : null;

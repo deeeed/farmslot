@@ -20,6 +20,8 @@ import type {
 import { farmslotRoot } from '../core/index.js';
 import { getGatewayListenSnapshot } from '../core/listen-address.js';
 
+import { workerSessionHistoryEnabled } from './worker-session-history.js';
+
 const execFile = promisify(execFileCb);
 
 const UPDATE_COMMAND = 'farmslot update';
@@ -223,7 +225,7 @@ export async function gatewayStatus(params?: GatewayStatusParams): Promise<Gatew
         }
       : {}),
     capabilities: {
-      experimentalWorkerHistory: process.env.FARMSLOT_EXPERIMENTAL_WORKER_HISTORY === '1',
+      experimentalWorkerHistory: workerSessionHistoryEnabled(),
     },
   };
 }

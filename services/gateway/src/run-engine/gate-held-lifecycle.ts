@@ -39,7 +39,15 @@ export function isGateHeldPublicationRun(run: Run): boolean {
   return false;
 }
 
+export function shouldTeardownGateHeldAgents(run: Run): boolean {
+  if (!run.slotId || completeStepDisposition(run) !== 'gate-held') return false;
+  const finalizeStep = run.steps?.find((entry) => entry.name === PipelineSteps.FINALIZE);
+  return finalizeStep?.status === 'done';
+}
+
 export async function teardownGateHeldAgentsIfNeeded(run: Run): Promise<void> {
-  if (!run.slotId || completeStepDisposition(run) !== 'gate-held') return;
-  await killSlotAgents(run.slotId);
+  if (!shouldTeardownGateHeldAgents(run)) return;
+  const slotId = run.slotId;
+  if (!slotId) return;
+  await killSlotAgents(slotId);
 }

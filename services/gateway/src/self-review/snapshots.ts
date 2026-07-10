@@ -4,6 +4,7 @@ import {
   agentRoleWindow,
   type DiffStat,
   type IndependentReviewAttempt,
+  isReviewerWindowName,
   type ReviewDiffSnapshot,
   type ReviewFixDeltaSnapshot,
 } from '@farmslot/protocol';
@@ -329,22 +330,36 @@ export function debugSelfReviewLog(message?: unknown, ...optionalParams: unknown
   if (isDebugSelfReview()) console.log(message, ...optionalParams);
 }
 
-export function tmuxListSelfReviewWindowIdsSnippet(session: string): string {
-  return `list-windows -t ${shellQuote(session)} -F '#{?#{==:#{window_name},${REVIEW_WINDOW}},#{window_id},}' 2>/dev/null | grep -E '^@' || true`;
+/** List tmux window ids for a specific reviewer tab, or all reviewer tabs when omitted. */
+export function tmuxListSelfReviewWindowIdsSnippet(
+  session: string,
+  windowName?: string | null,
+): string {
+  if (windowName?.trim()) {
+    const name = windowName.trim();
+    return `list-windows -t ${shellQuote(session)} -F '#{?#{==:#{window_name},${name}},#{window_id},}' 2>/dev/null | grep -E '^@' || true`;
+  }
+  // Match legacy self-review plus short rev-* / revN-* reviewer tabs.
+  return `list-windows -t ${shellQuote(session)} -F '#{window_id}\t#{window_name}' 2>/dev/null | awk -F'\\t' '$2=="${REVIEW_WINDOW}" || $2 ~ /^rev[0-9]*-/ { print $1 }' || true`;
 }
 
 export async function killSelfReviewWindow(
   vars: Awaited<ReturnType<typeof loadSlotVars>>,
   session: string,
   reason: string,
+  windowName?: string | null,
 ): Promise<void> {
-  const ids = await execOnSlot(vars, tmuxShellSnippet(tmuxListSelfReviewWindowIdsSnippet(session)));
+  const ids = await execOnSlot(
+    vars,
+    tmuxShellSnippet(tmuxListSelfReviewWindowIdsSnippet(session, windowName)),
+  );
   const windowIds = ids.stdout
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
+  const label = windowName?.trim() || 'reviewer';
   if (ids.exitCode !== 0 || windowIds.length === 0) {
-    debugSelfReviewLog(`[self-review] ${reason}: no existing ${session}:${REVIEW_WINDOW} window`);
+    debugSelfReviewLog(`[self-review] ${reason}: no existing ${session}:${label} window`);
     return;
   }
   for (const windowId of windowIds) {
@@ -366,8 +381,13 @@ export async function killSelfReviewWindow(
     }
   }
   debugSelfReviewLog(
-    `[self-review] ${reason}: killed ${windowIds.length} ${session}:${REVIEW_WINDOW} window(s)`,
+    `[self-review] ${reason}: killed ${windowIds.length} ${session}:${label} window(s)`,
   );
+}
+
+/** True when a tmux window name is a reviewer tab (short rev-* or legacy self-review). */
+export function isReviewerTmuxWindow(windowName: string | null | undefined): boolean {
+  return isReviewerWindowName(windowName);
 }
 
 export async function removeSlotFiles(

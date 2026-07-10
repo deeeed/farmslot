@@ -3,7 +3,11 @@ import { describe, it } from 'node:test';
 
 import { DEFAULT_CURSOR_MODEL, DEFAULT_GROK_MODEL } from '@farmslot/protocol';
 
-import { buildCodexExecLaunch, buildLaunchCommand } from './launch-command.js';
+import {
+  buildCodexExecLaunch,
+  buildLaunchCommand,
+  buildRunnerSessionReloadCommand,
+} from './launch-command.js';
 import { resolveWorkerDispatchPrompt } from './worker-prompt.js';
 
 async function dispatchPrompt(taskFile: string): Promise<string> {
@@ -38,6 +42,7 @@ import {
   runnerPersistsSessionFiles,
   runnerProcessPattern,
   runnerProcessPatternSource,
+  runnerResolvesPreTaskLaunchBlockers,
   runnerSignalShowsCompletion,
   runnerSupportsInteractivePrompt,
   runnerSupportsModel,
@@ -60,6 +65,10 @@ describe('scripted runner', () => {
 
   it('does not need post-launch prompt', () => {
     assert.equal(runnerNeedsPostLaunchPrompt('scripted'), false);
+  });
+
+  it('does not resolve pre-task launch blockers', () => {
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('scripted'), false);
   });
 
   it('has null continue command', () => {
@@ -182,6 +191,7 @@ describe('cursor runner', () => {
 
   it('treats the normal Cursor Agent TUI as steerable through tmux', () => {
     assert.equal(runnerNeedsPostLaunchPrompt('cursor'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('cursor'), true);
     assert.equal(runnerSupportsInteractivePrompt('cursor'), true);
     assert.equal(runnerSupportsTmuxNudges('cursor'), true);
     assert.equal(runnerContinueCommand('cursor'), null);
@@ -722,6 +732,17 @@ describe('cursor runner', () => {
     assert.equal(runnerSupportsModel('cursor', 'grok-4.5-fast-xhigh'), true);
     assert.equal(runnerSupportsModel('cursor', 'sonnet-4-thinking'), true);
     assert.equal(getRunnerDefinition('cursor').acceptsModel?.(null as any), false);
+  });
+});
+
+describe('pre-task launch blocker resolution', () => {
+  it('is only enabled for runners that need argv-prompt blockers cleared before task start', () => {
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('cursor'), true);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('codex'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('claude'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('grok'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('opencode'), false);
+    assert.equal(runnerResolvesPreTaskLaunchBlockers('none'), false);
   });
 });
 
@@ -1381,5 +1402,55 @@ describe('buildLaunchCommand', () => {
       const cmd = buildLaunchCommand(vars, 'codex', null, PROMPT, { safetyTier: 'dangerous' });
       assert.match(cmd, /--dangerously-bypass-approvals-and-sandbox/);
     });
+  });
+});
+
+describe('buildRunnerSessionReloadCommand', () => {
+  it('builds a Claude resume command with observability and safety flags', () => {
+    const vars = makeVars({ dispatchCmd: '', claudePath: '/opt/bin/claude' });
+    const cmd = buildRunnerSessionReloadCommand(vars, 'claude', 'sonnet', 'session-123', {
+      safetyTier: 'dangerous',
+      runtimeDir: '.agent',
+    });
+    assert.match(cmd, /install-runner-observability\.mjs/);
+    assert.match(
+      cmd,
+      /cd '\/tmp\/repo' && unset CLAUDECODE && \/opt\/bin\/claude --dangerously-skip-permissions --model sonnet --resume 'session-123'$/,
+    );
+  });
+
+  it('builds a Codex resume command inside the isolated CODEX_HOME', () => {
+    const vars = makeVars({ dispatchCmd: '', codexPath: '/opt/bin/codex' });
+    const cmd = buildRunnerSessionReloadCommand(vars, 'codex', 'gpt-5', 'codex-session', {
+      effort: 'high',
+      safetyTier: 'full-auto',
+      runtimeDir: 'runtime',
+    });
+    assert.match(cmd, /install-runner-observability\.mjs/);
+    assert.match(cmd, /export CODEX_HOME='\/tmp\/repo\/runtime\/codex-home'/);
+    assert.match(
+      cmd,
+      /\/opt\/bin\/codex resume --disable plugin_hooks --sandbox workspace-write --ask-for-approval never --config 'model_reasoning_effort="high"' --model gpt-5 'codex-session'$/,
+    );
+  });
+
+  it('builds a Grok resume command with permission-mode and effort flags', () => {
+    const vars = makeVars({ dispatchCmd: '', grokPath: '/opt/bin/grok' });
+    const cmd = buildRunnerSessionReloadCommand(vars, 'grok', 'grok-code-fast-1', 'grok-session', {
+      effort: 'xhigh',
+      safetyTier: 'dangerous',
+    });
+    assert.equal(
+      cmd,
+      "cd '/tmp/repo' && /opt/bin/grok --permission-mode bypassPermissions --effort xhigh --model grok-code-fast-1 --resume 'grok-session'",
+    );
+  });
+
+  it('rejects runners without persisted-session reload support', () => {
+    const vars = makeVars({ dispatchCmd: '' });
+    assert.throws(
+      () => buildRunnerSessionReloadCommand(vars, 'cursor', 'auto', 'session-123'),
+      /does not support persisted session reload/,
+    );
   });
 });

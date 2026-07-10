@@ -8,6 +8,7 @@ import { buildRerunAlongsideHref, canReplayRunSteps } from '../runs/run-detail-m
 import { isTerminalRunStatus, routeForRun, runStatusColor } from '../runs/run-utils.js';
 
 import type { SlotView } from './slot-view.js';
+import { slotViewAgentContextChipLabel } from './slot-view-agent-contexts.js';
 import { realPath, slotBoundRunIdForSlot, slotViewTerminalRunId } from './slot-view-model.js';
 import { slotViewEffectiveTerminalHeight } from './slot-view-resize-effects.js';
 import { requestedRunFromHash } from './slot-view-url-state.js';
@@ -32,11 +33,14 @@ export function renderSlotViewTaskBreadcrumb(view: SlotView) {
           ${i > 0 ? html`<span class="sv-task-crumb-sep">›</span>` : nothing}
           <button
             class="${cls.join(' ')}"
-            ?disabled=${isActive || dead}
+            ?disabled=${isActive}
             title="${ctx.label || ctx.role}${dead ? ' — tmux unavailable' : ''}"
             @click=${() => view._selectAgentContext(ctx)}
           >
             ${agentRoleShortLabel(ctx.role)}
+            ${ctx.target?.window && ctx.target.window !== ctx.role
+              ? html` · ${ctx.target.window}`
+              : nothing}
           </button>
         `;
       })}
@@ -66,13 +70,17 @@ export function renderSlotViewAgentContexts(view: SlotView) {
         return html`
           <button
             class="${cls.join(' ')}"
+            data-testid=${`agent-context-${ctx.id}`}
             title="${tooltip}"
-            ?disabled=${dead}
+            ?disabled=${isActive}
             aria-disabled=${dead}
             @click=${() => view._selectAgentContext(ctx)}
           >
-            <span class="sv-agent-role">${ctx.label || ctx.role}</span>
+            <span class="sv-agent-role">${slotViewAgentContextChipLabel(ctx)}</span>
             <span class="sv-agent-status">${dead ? 'unavailable' : ctx.status}</span>
+            ${ctx.model && slotViewAgentContextChipLabel(ctx) !== ctx.model
+              ? html`<span class="sv-agent-task">${ctx.model}</span>`
+              : nothing}
             ${showCount
               ? html`<span class="sv-agent-count">${doneSteps}/${totalSteps}</span>`
               : nothing}
@@ -606,6 +614,28 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                           >
                             Retrospective / evidence
                           </a>
+                          ${!isTerminalRunStatus(view._linkedRun.status)
+                            ? html`
+                                <button
+                                  class="sv-run-action muted"
+                                  ?disabled=${view._tmuxRestoreRunning || view._isRecoveryBlocked}
+                                  @click=${() => view._restoreTmuxWorker()}
+                                >
+                                  ${view._tmuxRestoreRunning
+                                    ? 'Restoring worker...'
+                                    : 'Restore worker tmux'}
+                                </button>
+                                <button
+                                  class="sv-run-action muted"
+                                  ?disabled=${view._tmuxRestoreRunning || view._isRecoveryBlocked}
+                                  @click=${() => view._reloadWorkerSession()}
+                                >
+                                  ${view._tmuxRestoreRunning
+                                    ? 'Reloading worker...'
+                                    : 'Reload worker session'}
+                                </button>
+                              `
+                            : nothing}
                           ${isTerminalRunStatus(view._linkedRun.status)
                             ? html`
                                 <a
@@ -618,6 +648,12 @@ export function renderSlotViewBody(view: SlotView, { hasResources }: SlotViewBod
                               `
                             : nothing}
                         </div>
+                        ${view._tmuxRestoreFeedback
+                          ? html`<div class="sv-run-action-note">${view._tmuxRestoreFeedback}</div>`
+                          : nothing}
+                        ${view._tmuxRestoreError
+                          ? html`<div class="sv-run-action-error">${view._tmuxRestoreError}</div>`
+                          : nothing}
                         <run-pipeline
                           .run=${view._linkedRun}
                           @step-select=${(e: CustomEvent) => {

@@ -2,11 +2,13 @@ import { existsSync } from 'node:fs';
 import { chmod, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { CHECKLIST_TARGET_MANIFEST } from '@farmslot/protocol/checklist-target';
+
 import { execLocal, isLocal } from '../core/exec.js';
 import { shellQuote } from '../core/tmux.js';
 
 export const CHECKLIST_MARKER_INPUT = 'mark';
-export const TASK_ROOT_SIDECARS = [CHECKLIST_MARKER_INPUT] as const;
+export const TASK_ROOT_SIDECARS = [CHECKLIST_MARKER_INPUT, CHECKLIST_TARGET_MANIFEST] as const;
 
 export interface CopyPreparedTaskRootSidecarsParams {
   taskDir: string;
@@ -29,7 +31,9 @@ export async function copyPreparedTaskRootSidecars(
     const dest = path.join(params.workerTaskAbs, sidecar);
     if (local) {
       await copyFile(source, dest);
-      await chmod(dest, 0o755);
+      if (sidecar === CHECKLIST_MARKER_INPUT) {
+        await chmod(dest, 0o755);
+      }
     } else {
       if (!params.sshTarget) throw new Error(`missing ssh target for ${sidecar} sidecar copy`);
       const scpRes = await execLocal(
@@ -40,13 +44,15 @@ export async function copyPreparedTaskRootSidecars(
           `scp ${sidecar} to ${params.sshTarget}:${dest} failed: ${scpRes.stderr.trim() || scpRes.stdout.trim() || `exit ${scpRes.exitCode}`}`,
         );
       }
-      const chmodRes = await execLocal(
-        `ssh ${shellQuote(params.sshTarget)} ${shellQuote(`chmod 755 ${shellQuote(dest)}`)}`,
-      );
-      if (chmodRes.exitCode !== 0) {
-        throw new Error(
-          `chmod ${sidecar} on ${params.sshTarget}:${dest} failed: ${chmodRes.stderr.trim() || chmodRes.stdout.trim() || `exit ${chmodRes.exitCode}`}`,
+      if (sidecar === CHECKLIST_MARKER_INPUT) {
+        const chmodRes = await execLocal(
+          `ssh ${shellQuote(params.sshTarget)} ${shellQuote(`chmod 755 ${shellQuote(dest)}`)}`,
         );
+        if (chmodRes.exitCode !== 0) {
+          throw new Error(
+            `chmod ${sidecar} on ${params.sshTarget}:${dest} failed: ${chmodRes.stderr.trim() || chmodRes.stdout.trim() || `exit ${chmodRes.exitCode}`}`,
+          );
+        }
       }
     }
 

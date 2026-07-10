@@ -469,6 +469,74 @@ test('runReplayStep clears stale decisions when replaying task generation', asyn
   assert.deepEqual(replayed.decisions, []);
 });
 
+test('runReplayStep clears stale publish approval when replaying human gate', async (t) => {
+  const taskFile = '/tmp/farmslot-human-gate-task/TASK.md';
+  const run = createRun({
+    flowType: 'dev',
+    project: 'farmslot-farm',
+    ticketOrPr: `PROJ-${Date.now()}`,
+  });
+  const staleApproval: RunDecision = {
+    id: 'stale-approve-publish',
+    type: 'engine_human_gate',
+    title: 'Ready to publish?',
+    description: 'Old approval from a prior gate generation',
+    actions: [{ id: 'approve-publish', label: 'Approve publish', style: 'primary' as const }],
+    createdAt: '2026-04-15T00:00:00.000Z',
+    resolvedAt: '2026-04-15T00:10:00.000Z',
+    resolvedAction: 'approve-publish',
+    payload: { kind: 'ready' } as any,
+  };
+  const doneThroughComplete = new Set([
+    'write-task',
+    'find-slot',
+    'prepare',
+    'dispatch',
+    'monitor',
+    'self-review',
+    'complete',
+  ]);
+  updateRun(run.id, {
+    status: 'failed',
+    taskFile,
+    decisions: [staleApproval],
+    engineState: {
+      publishGate: {
+        packageId: 'pkg-stale',
+        packageHash: 'package-hash-stale',
+        approvedPackageHash: 'package-hash-stale',
+        approvedAt: '2026-04-15T00:10:00.000Z',
+        publicationStatus: 'publish_failed',
+        independentReviews: [],
+      },
+    },
+    steps: run.steps.map((step) =>
+      doneThroughComplete.has(step.name)
+        ? { ...step, status: 'done', outputs: step.name === 'write-task' ? { taskFile } : {} }
+        : step.name === 'human-gate' || step.name === 'finalize'
+          ? { ...step, status: 'failed' }
+          : step,
+    ),
+  });
+
+  t.after(async () => {
+    cancelRunEngine(run.id);
+    if (getRun(run.id)) {
+      updateRun(run.id, { status: 'failed', completedAt: new Date().toISOString() });
+      await deleteRun(run.id);
+    }
+  });
+
+  await runReplayStep({ runId: run.id, stepName: 'human-gate', triggeredBy: 'operator' }, () => {});
+
+  const replayed = getRun(run.id);
+  assert.ok(replayed);
+  assert.deepEqual(replayed.decisions, []);
+  assert.equal(replayed.engineState?.publishGate?.publicationStatus, 'not_published');
+  assert.equal(replayed.engineState?.publishGate?.approvedAt, undefined);
+  assert.equal(replayed.engineState?.publishGate?.approvedPackageHash, undefined);
+});
+
 test('runReplayStep drops a stale monitor decision when replaying from prepare', async (t) => {
   const taskFile = '/tmp/farmslot-monitor-replay/TASK.md';
   const run = createRun({

@@ -77,9 +77,14 @@ describe('runnerFlagsForTier', () => {
     assert.deepEqual(runnerFlagsForTier('claude', 'dangerous'), ['--dangerously-skip-permissions']);
   });
 
-  it('codex: sandboxed→none, full-auto→--full-auto, dangerous→--dangerously-bypass-approvals-and-sandbox', () => {
+  it('codex: sandboxed→none, full-auto→workspace-write without approvals, dangerous→bypass', () => {
     assert.deepEqual(runnerFlagsForTier('codex', 'sandboxed'), []);
-    assert.deepEqual(runnerFlagsForTier('codex', 'full-auto'), ['--full-auto']);
+    assert.deepEqual(runnerFlagsForTier('codex', 'full-auto'), [
+      '--sandbox',
+      'workspace-write',
+      '--ask-for-approval',
+      'never',
+    ]);
     assert.deepEqual(runnerFlagsForTier('codex', 'dangerous'), [
       '--dangerously-bypass-approvals-and-sandbox',
     ]);
@@ -138,12 +143,15 @@ describe('buildLaunchCommand — safetyTier selection', () => {
     assert.doesNotMatch(cmd, /model_reasoning_effort/);
   });
 
-  it('codex inline fallback: full-auto tier emits --full-auto (no bypass flag)', () => {
+  it('codex inline fallback: full-auto tier keeps sandbox with approvals disabled', () => {
     const vars = makeVars({ dispatchCmd: '' });
     const cmd = buildLaunchCommand(vars, 'codex', 'gpt-5', 'p', { safetyTier: 'full-auto' });
     assert.doesNotMatch(cmd, /--dangerously-bypass-approvals-and-sandbox/);
     assert.match(cmd, /CODEX_HOME='\/tmp\/repo\/\.agent\/codex-home'/);
-    assert.match(cmd, /codex --disable plugin_hooks --full-auto .*--model gpt-5/);
+    assert.match(
+      cmd,
+      /codex --disable plugin_hooks --sandbox workspace-write --ask-for-approval never .*--model gpt-5/,
+    );
     assertCodexWorkerDoesNotInjectMcpOverrides(cmd);
     assert.doesNotMatch(cmd, /model_reasoning_effort/);
   });
