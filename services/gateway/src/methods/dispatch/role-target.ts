@@ -33,5 +33,5 @@ export function canonicalAgentContextTarget(target: AgentContextTarget): string 
 }
 
 export function buildDispatchRoleShellCommand(remoteRepo: string): string {
-  return `cd ${shellQuote(remoteRepo)} && exec \${SHELL:-bash}`;
+  return `cd ${shellQuote(remoteRepo)} && exec \${SHELL:-zsh}`;
 }

@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- fix(gateway): make publication-gate review requests non-destructive: explicit review failures are recorded instead of failing/tearing down gate-held slots, human-requested reviews no longer become permanent publish policy, package refresh restores configured review depth, and recovered role shells fall back to zsh instead of bash.
 - fix(gateway): enable worker session history by default so slot-view exposes the History tab unless `FARMSLOT_EXPERIMENTAL_WORKER_HISTORY=0` explicitly disables transcript recovery.
 - fix(gateway): recover same-phase prepare retries and runner launch blockers: duplicate prepare windows are reaped by tmux index, failed runner launches keep diagnostics visible, safe Cursor/Grok launch prompts are auto-cleared, Codex observability config stays idempotent, and worker task sync includes `checklist-target.json`.
 - fix(work-graph): reset an orphaned `running` node (its run cancelled/deleted/missing) back to a dispatchable state, and reconcile a run's work-graph node + backlog item on cancel — so a cancelled/replayed run no longer leaves a node stuck "running".

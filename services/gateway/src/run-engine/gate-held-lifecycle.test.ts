@@ -10,6 +10,7 @@ import {
   completeStepDisposition,
   findActiveGateHeldRunForSlot,
   isGateHeldPublicationRun,
+  shouldTeardownGateHeldAgents,
 } from './gate-held-lifecycle.js';
 import { makeRun } from './test-fixtures.js';
 
@@ -183,6 +184,37 @@ test('blocksGateHeldSlotRelease is false after FINALIZE completes', () => {
     { name: PipelineSteps.FINALIZE, status: 'done' },
   ];
   assert.equal(blocksGateHeldSlotRelease(run), false);
+});
+
+test('shouldTeardownGateHeldAgents stays false for failed human-gate runs', () => {
+  const run = makeRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    slotId: 'macwork-ff-2',
+    status: 'failed',
+  });
+  run.steps = [
+    {
+      name: PipelineSteps.COMPLETE,
+      status: 'done',
+      outputs: { slotDisposition: 'gate-held' },
+    },
+    { name: PipelineSteps.HUMAN_GATE, status: 'failed' },
+  ];
+  assert.equal(shouldTeardownGateHeldAgents(run), false);
+});
+
+test('shouldTeardownGateHeldAgents is true after FINALIZE completes', () => {
+  const run = makeRun({ flowType: 'fix-bug', slotId: 'macwork-ff-2', status: 'done' });
+  run.steps = [
+    {
+      name: PipelineSteps.COMPLETE,
+      status: 'done',
+      outputs: { slotDisposition: 'gate-held' },
+    },
+    { name: PipelineSteps.FINALIZE, status: 'done' },
+  ];
+  assert.equal(shouldTeardownGateHeldAgents(run), true);
 });
 
 test('findActiveGateHeldRunForSlot ignores resolved gate-held runs', async (t) => {

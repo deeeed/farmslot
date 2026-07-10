@@ -16,15 +16,29 @@ mock.module('../methods/slot/release.js', {
 const { teardownGateHeldAgentsIfNeeded } = await import('./gate-held-lifecycle.js');
 const { makeRun } = await import('./test-fixtures.js');
 
-test('teardownGateHeldAgentsIfNeeded kills agents only for gate-held runs with a slot', async () => {
+test('teardownGateHeldAgentsIfNeeded kills agents only after gate-held FINALIZE completes', async () => {
   const run = makeRun({ flowType: 'dev', mode: 'autonomous', slotId: 'macwork-mm-4' });
   run.steps = [
     { name: PipelineSteps.COMPLETE, status: 'done', outputs: { slotDisposition: 'gate-held' } },
+    { name: PipelineSteps.FINALIZE, status: 'done' },
   ];
   await teardownGateHeldAgentsIfNeeded(run);
   assert.deepEqual(killed, ['macwork-mm-4']);
 
   killed.length = 0;
+  const failedAtGate = makeRun({
+    flowType: 'dev',
+    mode: 'autonomous',
+    slotId: 'macwork-mm-4',
+    status: 'failed',
+  });
+  failedAtGate.steps = [
+    { name: PipelineSteps.COMPLETE, status: 'done', outputs: { slotDisposition: 'gate-held' } },
+    { name: PipelineSteps.HUMAN_GATE, status: 'failed' },
+  ];
+  await teardownGateHeldAgentsIfNeeded(failedAtGate);
+  assert.deepEqual(killed, []);
+
   await teardownGateHeldAgentsIfNeeded(makeRun({ flowType: 'dev', mode: 'autonomous' }));
   assert.deepEqual(killed, []);
 });

@@ -43,6 +43,7 @@ import { cleanupSlotStorage } from '../../fleet/slot-storage-cleanup.js';
 import { findActiveGateHeldRunForSlot } from '../../run-engine/gate-held-lifecycle.js';
 import { findRunnerDescendantPid } from '../../runners/session-process.js';
 import { killSlotScreenSessions } from '../../runtime/screen-session.js';
+import { buildDispatchRoleShellCommand } from '../dispatch/role-target.js';
 
 import { slotPrepare } from './prepare.js';
 import { detachRunsForReleasedSlot } from './release-run-ownership.js';
@@ -482,7 +483,7 @@ export async function killAgentInSession(
     await execOnSlot(
       vars,
       tmuxShellSnippet(
-        `respawn-pane -k -t ${shellQuote(target)} ${shellQuote(`cd ${vars.remoteRepo} && exec \${SHELL:-bash}`)} 2>/dev/null`,
+        `respawn-pane -k -t ${shellQuote(target)} ${shellQuote(buildDispatchRoleShellCommand(vars.remoteRepo))} 2>/dev/null`,
       ),
       { timeout: TMUX_CMD_TIMEOUT },
     );

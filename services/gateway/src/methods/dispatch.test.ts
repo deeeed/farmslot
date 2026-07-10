@@ -102,7 +102,7 @@ test('parseCapturedAgentPaneTarget prefers tmux window name over numeric index',
 test('dispatch role shell command starts a real repo shell, not the prepare placeholder', () => {
   const command = buildDispatchRoleShellCommand('/tmp/farm slot/repo');
 
-  assert.equal(command, "cd '/tmp/farm slot/repo' && exec ${SHELL:-bash}");
+  assert.equal(command, "cd '/tmp/farm slot/repo' && exec ${SHELL:-zsh}");
   assert.doesNotMatch(command, /while :; do sleep 86400; done/);
 });
 
