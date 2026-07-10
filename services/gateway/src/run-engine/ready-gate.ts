@@ -73,7 +73,9 @@ import {
 } from './publication-policy.js';
 import {
   effectiveReviewRunner,
+  humanGateReviewDepth,
   MAX_PUBLISH_GATE_REVIEW_LOOPS,
+  requestedReviewLoopCount,
   reviewPlanFromSelection,
 } from './review-plan.js';
 import { getDiffStat, readTaskArtifactText, readWorkerReport } from './task-artifacts.js';
@@ -651,7 +653,12 @@ export async function executeReadyGate(runId: string): Promise<string> {
         : selectionData?.publicationTarget === 'draft'
           ? 'draft'
           : (approvedPackage?.publicationTarget ?? 'ready');
+    const reviewRequest =
+      selectionData?.reviewRequest && typeof selectionData.reviewRequest === 'object'
+        ? (selectionData.reviewRequest as Record<string, unknown>)
+        : {};
     const selectedPlan = reviewPlanFromSelection(selectionData);
+    const requestRequiresCrossRunner = reviewRequest.requireCrossRunner === true;
     const requestedPlan: ReviewLoopRequest[] =
       actionId === 'request-cross-runner-review' &&
       !selectedPlan.some((loop) => effectiveReviewRunner(loop))
@@ -665,10 +672,20 @@ export async function executeReadyGate(runId: string): Promise<string> {
             },
           ]
         : selectedPlan;
+    const loopsToAdd =
+      actionId === 'request-cross-runner-review'
+        ? Math.max(1, requestedPlan.length)
+        : requestedReviewLoopCount(reviewRequest, requestedPlan.length);
     const reviewRequestConsumed = markResolvedHumanGateReviewRequestConsumed(decision);
+    const baseReviewDepth = publicationReviewPolicyForRun(current, pv?.projectJson);
     const patch =
       actionId === 'request-extra-review' || actionId === 'request-cross-runner-review'
         ? {
+            reviewDepth: humanGateReviewDepth(
+              baseReviewDepth,
+              { ...reviewRequest, requireCrossRunner: requestRequiresCrossRunner },
+              { actionId, fallbackLoopCount: loopsToAdd },
+            ),
             pendingReviewPlan: requestedPlan,
           }
         : {};
