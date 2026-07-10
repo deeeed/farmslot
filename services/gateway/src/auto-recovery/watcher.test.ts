@@ -862,6 +862,71 @@ test('watcher clears manual replay proposal state when terminal run completes', 
   );
 });
 
+test('watcher clears manual replay proposal state when replay reaches human gate', async (t) => {
+  withTempAuditDir(t);
+  const project = await makeProject(t, {
+    auto_recovery: {
+      enabled: true,
+      maxAttempts: 2,
+      allowedSteps: ['prepare'],
+      allowedCategories: ['infra'],
+    },
+  });
+  const failed = failRun(project, {
+    flowType: 'dev',
+    recoveryAttempts: [
+      {
+        id: 'manual-prepare',
+        attempt: 1,
+        stepName: 'prepare',
+        startedAt: '2026-05-12T09:00:00.000Z',
+        status: 'started',
+        triggeredBy: 'operator',
+      },
+      {
+        id: 'manual-dispatch',
+        attempt: 1,
+        stepName: 'dispatch',
+        startedAt: '2026-05-12T09:02:00.000Z',
+        status: 'started',
+        triggeredBy: 'operator',
+      },
+    ],
+    recoveryProposal: { status: 'manual-in-progress', generation: 0 },
+  });
+  const run = updateRun(failed.id, {
+    status: 'blocked',
+    completedAt: undefined,
+    steps: failed.steps.map((step) =>
+      step.name === PipelineSteps.HUMAN_GATE
+        ? { ...step, status: 'running' as const, startedAt: '2026-05-12T09:05:00.000Z' }
+        : { ...step, status: 'done' as const, completedAt: '2026-05-12T09:04:00.000Z' },
+    ),
+  });
+  const events: Array<{ event: string; payload: any }> = [];
+  __resetAutoRecoveryForTest();
+  initAutoRecovery((event, payload) => events.push({ event, payload }));
+  t.after(async () => {
+    __resetAutoRecoveryForTest();
+    await cleanupRun(run.id);
+  });
+
+  routeEventToAutoRecovery(Events.RUN_UPDATED, { run });
+  await __drainAutoRecoveryForTest();
+
+  const updated = getRun(run.id)!;
+  assert.equal(updated.recoveryProposal?.status, 'idle');
+  assert.equal(updated.recoveryAttempts?.[0]?.status, 'completed');
+  assert.equal(updated.recoveryAttempts?.[1]?.status, 'completed');
+  assert.equal(updated.recoveryAttempts?.[0]?.completedAt, '2026-05-12T09:05:00.000Z');
+  assert.equal(updated.recoveryAttempts?.[1]?.completedAt, '2026-05-12T09:05:00.000Z');
+  assert.ok(
+    events.some(
+      (e) => e.event === Events.RUN_UPDATED && e.payload.run.recoveryProposal?.status === 'idle',
+    ),
+  );
+});
+
 test('watcher follows up successful auto-recovery replay from run.completed events', async (t) => {
   withTempAuditDir(t);
   const project = await makeProject(t, {
