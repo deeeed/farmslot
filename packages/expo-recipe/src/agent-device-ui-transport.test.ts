@@ -29,7 +29,15 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
       },
       async fill(options: Record<string, unknown>) {
         calls.push({ method: 'fill', options });
-        return { filled: true, settle: { settled: true } };
+        return {
+          text: options.text,
+          message: `Filled ${String(options.text)}`,
+          backendResult: { value: options.text },
+          settle: {
+            settled: true,
+            diff: { summary: { additions: 1 }, lines: [{ text: options.text }] },
+          },
+        };
       },
       async scroll(options: Record<string, unknown>) {
         calls.push({ method: 'scroll', options });
@@ -91,6 +99,11 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
   });
 
   await transport.execute('ui.press', { test_id: 'settings-tab', timeout_ms: 2_000 }, context);
+  const fillResult = await transport.execute(
+    'ui.set_input',
+    { test_id: 'secret-field', value: 'seed phrase secret' },
+    context,
+  );
   await transport.execute('ui.scroll', { direction: 'down', timeout_ms: 2_000 }, context);
   await transport.execute(
     'ui.wait_for',
@@ -135,6 +148,8 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     'id="settings-tab"',
   );
   assert.equal(calls.find((call) => call.method === 'wait-stable')?.options.stable, true);
+  assert.equal(JSON.stringify(fillResult).includes('seed phrase secret'), false);
+  assert.equal((fillResult as { redacted?: boolean }).redacted, true);
   assert.deepEqual(observed?.observations?.['ui.screen'], {
     provider: 'agent-device',
     name: 'Farmslot Dev',

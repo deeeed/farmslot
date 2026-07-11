@@ -89,18 +89,20 @@ export function createAgentDeviceUiTransport(
             }),
           );
         case 'ui.set_input':
-          return requireSettledInteraction(
-            'ui.set_input',
-            await client.interactions.fill({
-              ...selection,
-              session: options.session,
-              selector: selectorFromNode(node, 'ui.set_input'),
-              text: requiredString(node.value ?? node.text, 'ui.set_input.value'),
-              settle: true,
-              verify: true,
-              responseLevel: 'digest',
-              timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
-            }),
+          return sanitizeFillResult(
+            requireSettledInteraction(
+              'ui.set_input',
+              await client.interactions.fill({
+                ...selection,
+                session: options.session,
+                selector: selectorFromNode(node, 'ui.set_input'),
+                text: requiredString(node.value ?? node.text, 'ui.set_input.value'),
+                settle: true,
+                verify: true,
+                responseLevel: 'digest',
+                timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+              }),
+            ),
           );
         case 'ui.scroll': {
           const result = await client.interactions.scroll({
@@ -173,6 +175,48 @@ function requireSettledInteraction(action: string, result: unknown): unknown {
     };
   }
   return result;
+}
+
+function sanitizeFillResult(result: unknown): Record<string, unknown> {
+  const record = result as {
+    targetKind?: unknown;
+    selector?: unknown;
+    targetHittable?: unknown;
+    evidence?: unknown;
+    settle?: {
+      settled?: unknown;
+      waitedMs?: unknown;
+      captures?: unknown;
+      quietMs?: unknown;
+      timeoutMs?: unknown;
+      diff?: { summary?: unknown; truncated?: unknown };
+    };
+    warning?: unknown;
+  };
+  return {
+    redacted: true,
+    message: 'Filled input',
+    targetKind: record.targetKind,
+    selector: record.selector,
+    targetHittable: record.targetHittable,
+    evidence: record.evidence,
+    settle: record.settle
+      ? {
+          settled: record.settle.settled,
+          waitedMs: record.settle.waitedMs,
+          captures: record.settle.captures,
+          quietMs: record.settle.quietMs,
+          timeoutMs: record.settle.timeoutMs,
+          diff: record.settle.diff
+            ? {
+                summary: record.settle.diff.summary,
+                truncated: record.settle.diff.truncated,
+              }
+            : undefined,
+        }
+      : undefined,
+    warning: record.warning,
+  };
 }
 
 async function waitForNode(
