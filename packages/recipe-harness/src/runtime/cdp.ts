@@ -227,7 +227,7 @@ export class CdpWebPage {
       selector: string;
       tagName: string;
     }>(
-      `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Selector has no clickable box: ${escapeForJsMessage(selector)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, selector: ${JSON.stringify(selector)}, tagName: el.tagName }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Selector has no clickable box: ${escapeForJsMessage(selector)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, selector: ${JSON.stringify(selector)}, tagName: el.tagName }; })()`,
     );
     await this.clickPoint(target.x, target.y);
     return { clicked: true, selector: target.selector, tagName: target.tagName };
@@ -240,7 +240,7 @@ export class CdpWebPage {
       text: string;
       tagName: string;
     }>(
-      `(() => { const expected = ${JSON.stringify(text)}; const candidates = Array.from(document.querySelectorAll('button, [role=button], a, label, input, textarea, [tabindex]')); const el = candidates.find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || candidate.getAttribute('value') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Text target has no clickable box: ${escapeForJsMessage(text)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: expected, tagName: el.tagName }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const expected = ${JSON.stringify(text)}; const candidates = querySelectorAllDeep('button, [role=button], a, label, input, textarea, [tabindex]'); const el = candidates.find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || candidate.getAttribute('value') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Text target has no clickable box: ${escapeForJsMessage(text)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: expected, tagName: el.tagName }; })()`,
     );
     await this.clickPoint(target.x, target.y);
     return { clicked: true, text: target.text, tagName: target.tagName };
@@ -252,13 +252,13 @@ export class CdpWebPage {
       tagName: string;
       previousValue: string;
     }>(
-      `(() => { const root = document.querySelector(${JSON.stringify(selector)}); if (!root) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); const el = root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : root.querySelector('input, textarea, [contenteditable="true"], [contenteditable=""]'); if (!el) throw new Error('Input target not found inside selector: ${escapeForJsMessage(selector)}'); if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Input target is disabled: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); if (typeof el.select === 'function') { el.select(); } else { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } return { selector: ${JSON.stringify(selector)}, tagName: el.tagName, previousValue: el.value ?? el.textContent ?? '' }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); if (!root) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); const el = root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root); if (!el) throw new Error('Input target not found inside selector: ${escapeForJsMessage(selector)}'); if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Input target is disabled: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); if (typeof el.select === 'function') { el.select(); } else { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } return { selector: ${JSON.stringify(selector)}, tagName: el.tagName, previousValue: el.value ?? el.textContent ?? '' }; })()`,
     );
     await this.session.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace' });
     await this.session.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace' });
     if (value) await this.session.call('Input.insertText', { text: value });
     const after = await this.evaluate<{ value: string }>(
-      `(() => { const root = document.querySelector(${JSON.stringify(selector)}); const el = root && (root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : root.querySelector('input, textarea, [contenteditable="true"], [contenteditable=""]')); if (!el) throw new Error('Input target disappeared after typing: ${escapeForJsMessage(selector)}'); el.dispatchEvent(new Event('change', { bubbles: true })); return { value: el.value ?? el.textContent ?? '' }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); const el = root && (root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root)); if (!el) throw new Error('Input target disappeared after typing: ${escapeForJsMessage(selector)}'); el.dispatchEvent(new Event('change', { bubbles: true })); return { value: el.value ?? el.textContent ?? '' }; })()`,
     );
     if (after.value !== value) {
       throw new Error(
@@ -315,11 +315,11 @@ export class CdpWebPage {
     if (options.selector) {
       if (options.intoView) {
         return this.evaluate(
-          `(() => { const el = document.querySelector(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); return { scrolled: true, selector: ${JSON.stringify(options.selector)}, intoView: true }; })()`,
+          `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); return { scrolled: true, selector: ${JSON.stringify(options.selector)}, intoView: true }; })()`,
         );
       }
       return this.evaluate(
-        `(() => { const el = document.querySelector(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
+        `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
       );
     }
     return this.evaluate(
@@ -335,7 +335,7 @@ export class CdpWebPage {
   }): Promise<unknown> {
     const timeoutMs = options.timeoutMs ?? 5_000;
     return this.evaluate(
-      `(async () => { const deadline = Date.now() + ${JSON.stringify(timeoutMs)}; while (Date.now() <= deadline) { const ok = ${waitForPredicateExpression(options)}; if (ok) return { matched: true }; await new Promise((resolve) => setTimeout(resolve, 100)); } throw new Error('ui.wait_for timed out'); })()`,
+      `(async () => { ${deepQueryHelpersExpression()} const deadline = Date.now() + ${JSON.stringify(timeoutMs)}; while (Date.now() <= deadline) { const ok = ${waitForPredicateExpression(options)}; if (ok) return { matched: true }; await new Promise((resolve) => setTimeout(resolve, 100)); } throw new Error('ui.wait_for timed out'); })()`,
     );
   }
 
@@ -535,15 +535,20 @@ function visibleTargetsExpression(): string {
       '[data-test-id]',
       '[data-test]'
     ].join(',');
-    const nodes = Array.from(document.querySelectorAll(selector));
+    ${deepQueryHelpersExpression()}
+    const nodes = querySelectorAllDeep(selector);
     const textFor = (el) => {
-      const raw = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('value') || el.innerText || el.textContent || '';
+      const raw = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.innerText || el.textContent || '';
       return String(raw).replace(/\\s+/g, ' ').trim().slice(0, 120) || undefined;
     };
     const cssPath = (el) => {
       if (el.id) return '#' + CSS.escape(el.id);
-      const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test');
-      if (testId) return '[data-testid="' + String(testId).replace(/"/g, '\\\\"') + '"]';
+      const testAttribute = ['data-testid', 'data-test-id', 'data-test'].find((attribute) => el.hasAttribute(attribute));
+      if (testAttribute) {
+        const testId = CSS.escape(String(el.getAttribute(testAttribute)));
+        return '[' + testAttribute + '="' + testId + '"]';
+      }
+      if (el.getRootNode() instanceof ShadowRoot) return undefined;
       const tag = el.tagName.toLowerCase();
       const parent = el.parentElement;
       if (!parent) return tag;
@@ -829,13 +834,13 @@ function waitForPredicateExpression(options: {
   if (options.selector && options.text) {
     const selector = JSON.stringify(options.selector);
     const text = JSON.stringify(options.text);
-    presentExpression = `Boolean(document.querySelector(${selector})) && document.body.innerText.includes(${text})`;
-    visibleExpression = `${visibleSelectorExpression(options.selector)} && document.body.innerText.includes(${text})`;
+    presentExpression = `Boolean(querySelectorDeep(${selector})) && textIncludesDeep(${text})`;
+    visibleExpression = `${visibleSelectorExpression(options.selector)} && textIncludesDeep(${text})`;
   } else if (options.selector) {
-    presentExpression = `Boolean(document.querySelector(${JSON.stringify(options.selector)}))`;
+    presentExpression = `Boolean(querySelectorDeep(${JSON.stringify(options.selector)}))`;
     visibleExpression = visibleSelectorExpression(options.selector);
   } else if (options.text) {
-    presentExpression = `document.body.innerText.includes(${JSON.stringify(options.text)})`;
+    presentExpression = `textIncludesDeep(${JSON.stringify(options.text)})`;
   } else {
     throw new Error('ui.wait_for requires selector or text.');
   }
@@ -856,7 +861,23 @@ function waitForPredicateExpression(options: {
 }
 
 function visibleSelectorExpression(selector: string): string {
-  return `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; const rect = el.getBoundingClientRect(); const style = window.getComputedStyle(el); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; })()`;
+  return `(() => { const el = querySelectorDeep(${JSON.stringify(selector)}); if (!el) return false; const rect = el.getBoundingClientRect(); const style = window.getComputedStyle(el); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; })()`;
+}
+
+function deepQueryHelpersExpression(): string {
+  return `
+    const querySelectorAllDeep = (selector, root = document) => {
+      const matches = Array.from(root.querySelectorAll(selector));
+      for (const element of root.querySelectorAll('*')) {
+        if (element.shadowRoot) matches.push(...querySelectorAllDeep(selector, element.shadowRoot));
+      }
+      return matches;
+    };
+    const querySelectorDeep = (selector, root = document) => querySelectorAllDeep(selector, root)[0] ?? null;
+    const textIncludesDeep = (text) => querySelectorAllDeep('*').some((element) =>
+      String(element.innerText || element.textContent || '').includes(text)
+    );
+  `;
 }
 
 function escapeForJsMessage(value: string): string {

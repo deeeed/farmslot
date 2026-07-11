@@ -6,18 +6,24 @@
   "validate": {
     "workflow": {
       "setup": [],
-      "entry": "open-review",
+      "entry": "establish-settings",
       "nodes": {
+        "establish-settings": {
+          "action": "ui.press",
+          "test_id": "companion-tab-settings",
+          "intent": "Establish Companion settings as the starting screen.",
+          "next": "open-review"
+        },
         "open-review": {
           "action": "ui.press",
-          "text": "Review, tab, 1 of 8",
+          "test_id": "companion-tab-review",
           "observe": false,
           "intent": "Open Companion review on the assigned simulator.",
           "next": "open-settings"
         },
         "open-settings": {
           "action": "ui.press",
-          "text": "Settings, tab, 8 of 8",
+          "test_id": "companion-tab-settings",
           "intent": "Open Companion settings on the assigned simulator.",
           "next": "confirm-settings"
         },

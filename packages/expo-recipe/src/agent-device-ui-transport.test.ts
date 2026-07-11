@@ -85,7 +85,15 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     { text_contains: ['Settings', 'Gateway Connection'] },
     context,
   );
-  const observed = await transport.observe?.(['ui.screen', 'ui.visible'], {}, context);
+  await assert.rejects(
+    () => transport.execute('ui.wait_for', { text: 'button', timeout_ms: 1 }, context),
+    /ui\.wait_for timed out/u,
+  );
+  const observed = await transport.observe?.(
+    ['ui.screen', 'ui.visible', 'companion.custom'],
+    {},
+    context,
+  );
   const screenshot = await transport.execute(
     'ui.screenshot',
     { path: 'screenshots/settings.png' },
@@ -104,6 +112,12 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     app_id: 'net.siteed.farmslot.development',
   });
   assert.equal((observed?.observations?.['ui.visible'] as { items: unknown[] }).items.length, 1);
+  assert.deepEqual(observed?.warnings, [
+    {
+      ref: 'companion.custom',
+      message: 'Agent Device does not support UI observer companion.custom.',
+    },
+  ]);
   assert.equal(artifacts.length, 1);
   assert.equal(
     (screenshot as { control?: { artifacts?: Array<{ path: string }> } }).control?.artifacts?.[0]

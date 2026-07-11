@@ -42,14 +42,25 @@ metro_listening() {
 }
 
 start_metro_background() {
+  local log_file="${APP_DIR}/.agent/metro.log"
+  local config_file="${APP_DIR}/.agent/metro-${METRO_PORT}.env"
+  local expected_config
+  printf -v expected_config 'APP_VARIANT=%s\nGATEWAY_PORT=%s\nGATEWAY_URL=%s\nPACKAGER_HOST=%s' \
+    "${APP_VARIANT}" \
+    "${GATEWAY_PORT}" \
+    "${COMPANION_GATEWAY_URL}" \
+    "${COMPANION_PACKAGER_HOSTNAME}"
+  mkdir -p "$(dirname "$log_file")"
   if metro_listening; then
-    echo "[prepare-profile] Metro already listening on :${METRO_PORT}"
-    return 0
+    if [[ -f "${config_file}" && "$(<"${config_file}")" == "${expected_config}" ]]; then
+      echo "[prepare-profile] matching Metro already listening on :${METRO_PORT}"
+      return 0
+    fi
+    echo "[prepare-profile] Metro on :${METRO_PORT} was started with unknown or different slot configuration" >&2
+    return 1
   fi
   echo "[prepare-profile] starting Metro on :${METRO_PORT}"
-  local log_file="${APP_DIR}/.agent/metro.log"
   local metro_session="farmslot-companion-metro-${METRO_PORT}"
-  mkdir -p "$(dirname "$log_file")"
   : >"${log_file}"
   if tmux has-session -t "=${metro_session}" 2>/dev/null; then
     tmux kill-session -t "=${metro_session}"
@@ -66,10 +77,11 @@ start_metro_background() {
     REACT_NATIVE_PACKAGER_HOSTNAME="${COMPANION_PACKAGER_HOSTNAME}" \
     yarn expo start --dev-client --port "${METRO_PORT}" --lan
   printf -v metro_command '%s >>%q 2>&1' "${metro_command}" "${log_file}"
-  tmux new-session -d -s "${metro_session}" -c "${APP_DIR}" "${metro_command}"
+  tmux new-session -d -s "${metro_session}" -c "${APP_DIR}" bash -c "${metro_command}"
   local i=0
   while (( i < 45 )); do
     if metro_listening; then
+      printf '%s\n' "${expected_config}" >"${config_file}"
       echo "[prepare-profile] Metro ready on :${METRO_PORT}"
       return 0
     fi

@@ -170,6 +170,7 @@ function observationsFromSnapshot(
   snapshot: Awaited<ReturnType<AgentDeviceClient['capture']['snapshot']>>,
 ): RecipeObservationResult {
   const observations: RecipeObservationResult['observations'] = {};
+  const warnings: RecipeObservationResult['warnings'] = [];
   for (const ref of refs) {
     if (ref === 'ui.screen') {
       observations[ref] = {
@@ -189,9 +190,14 @@ function observationsFromSnapshot(
         hidden_or_offscreen: [],
         truncated: snapshot.truncated || actionable.length > 20,
       };
+    } else {
+      warnings.push({ ref, message: `Agent Device does not support UI observer ${ref}.` });
     }
   }
-  return { observations };
+  return {
+    ...(Object.keys(observations).length ? { observations } : {}),
+    ...(warnings.length ? { warnings } : {}),
+  };
 }
 
 function isActionableNode(node: { type?: string; hittable?: boolean }): boolean {
@@ -216,10 +222,12 @@ function snapshotMatches(
   }
   const matchesIdentity = nodes.some((candidate) => {
     if (testId && candidate.identifier !== testId) return false;
-    const searchable = [candidate.label, candidate.value, candidate.identifier, candidate.type]
-      .filter((value): value is string => typeof value === 'string')
-      .join(' ');
-    if (exactText && !searchable.includes(exactText)) return false;
+    if (
+      exactText &&
+      ![candidate.label, candidate.value, candidate.identifier].some((value) => value === exactText)
+    ) {
+      return false;
+    }
     return true;
   });
   if ((testId || exactText) && !matchesIdentity) return false;

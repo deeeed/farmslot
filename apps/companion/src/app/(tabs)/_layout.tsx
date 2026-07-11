@@ -43,6 +43,7 @@ export default function TabLayout() {
           name="runs"
           options={{
             title: 'Review',
+            tabBarButtonTestID: 'companion-tab-review',
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="play-circle-outline" size={size} color={color} />
             ),
@@ -117,6 +118,7 @@ export default function TabLayout() {
           name="settings"
           options={{
             title: 'Settings',
+            tabBarButtonTestID: 'companion-tab-settings',
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="settings-outline" size={size} color={color} />
             ),

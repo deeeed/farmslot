@@ -19,7 +19,7 @@ import { createRecipeRunner, defineActionAdapter } from '../src/core/runner.js';
 import type { VideoRecorder, VideoRecorderStartRequest } from '../src/core/types.js';
 import { createCaptureHelperVideoRecorder } from '../src/recording/capture-helper.js';
 import { extensionIdFromTarget } from '../src/runtime/browser-extension.js';
-import { createCdpWebUiTransport } from '../src/runtime/cdp.js';
+import { CdpWebPage, createCdpWebUiTransport } from '../src/runtime/cdp.js';
 import {
   createReactNativeBridgeUiTransport,
   type ReactNativeBridgeCommand,
@@ -1966,6 +1966,41 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
       deltaY: undefined,
     },
   ]);
+});
+
+test('CDP observations and selectors traverse open shadow roots', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Runtime.evaluate') {
+        expressions.push(String(params.expression));
+        return {
+          result: {
+            value: {
+              x: 10,
+              y: 20,
+              selector: '[data-test-id="inside-shadow"]',
+              tagName: 'BUTTON',
+            },
+          },
+        };
+      }
+      return {};
+    },
+  } as never);
+
+  await page.click('[data-test-id="inside-shadow"]');
+  await page.observe(['ui.visible']);
+
+  assert.match(expressions[0] ?? '', /querySelectorDeep/u);
+  assert.match(expressions[0] ?? '', /shadowRoot/u);
+  const observationExpression = expressions[1] ?? '';
+  assert.match(observationExpression, /querySelectorAllDeep/u);
+  assert.match(observationExpression, /shadowRoot/u);
+  assert.match(observationExpression, /testAttribute/u);
+  assert.match(observationExpression, /'data-test-id'/u);
+  assert.match(observationExpression, /instanceof ShadowRoot/u);
+  assert.doesNotMatch(observationExpression, /getAttribute\('value'\)/u);
 });
 
 test('extracts browser extension ids from CDP targets', () => {

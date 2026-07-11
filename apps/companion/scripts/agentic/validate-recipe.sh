@@ -83,6 +83,42 @@ if [[ -z "${ARTIFACTS_DIR}" ]]; then
   exit 1
 fi
 
+if [[ "${RECIPE_PATH}" == /* ]]; then
+  RECIPE_ABSOLUTE_PATH="${RECIPE_PATH}"
+else
+  RECIPE_ABSOLUTE_PATH="${APP_DIR}/${RECIPE_PATH}"
+fi
+if [[ "${DRY_RUN}" -eq 0 ]] && node -e '
+  const recipe = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+  const nativeActions = new Set(["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for", "ui.screenshot"]);
+  const containsNativeAction = (value) => {
+    if (Array.isArray(value)) return value.some(containsNativeAction);
+    if (!value || typeof value !== "object") return false;
+    if (nativeActions.has(value.action)) return true;
+    return Object.values(value).some(containsNativeAction);
+  };
+  process.exit(containsNativeAction(recipe) ? 0 : 1);
+' "${RECIPE_ABSOLUTE_PATH}"; then
+  case "${PLATFORM_VALUE}" in
+    ios*)
+      [[ -n "${SIMULATOR_VALUE}" ]] || {
+        echo "ERROR: native iOS recipe actions require --simulator from the assigned Farmslot slot." >&2
+        exit 1
+      }
+      ;;
+    android*)
+      [[ -n "${ADB_SERIAL_VALUE}" ]] || {
+        echo "ERROR: native Android recipe actions require --adb-serial from the assigned Farmslot slot." >&2
+        exit 1
+      }
+      ;;
+    *)
+      echo "ERROR: native recipe actions require --platform ios or android from the assigned Farmslot slot." >&2
+      exit 1
+      ;;
+  esac
+fi
+
 ARGS=(farmslot-expo-recipe run "${RECIPE_PATH}" --artifacts-dir "${ARTIFACTS_DIR}")
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   ARGS+=(--dry-run)

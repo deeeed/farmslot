@@ -313,17 +313,9 @@ function wrapTransportWithSlow(transport, slowMs) {
       await new Promise((resolve) => setTimeout(resolve, slowMs));
       return result;
     },
-    async observe(refs, node, context) {
-      if (!transport.observe) {
-        return {
-          warnings: refs.map((ref) => ({
-            ref,
-            message: `UI transport does not implement passive observer ${ref}.`,
-          })),
-        };
-      }
-      return transport.observe(refs, node, context);
-    },
+    ...(transport.observe
+      ? { observe: (refs, node, context) => transport.observe(refs, node, context) }
+      : {}),
   };
 }
 
@@ -340,17 +332,9 @@ function wrapTransportNavigate(transport, uiBaseUrl) {
       }
       return transport.execute(action, node, context);
     },
-    async observe(refs, node, context) {
-      if (!transport.observe) {
-        return {
-          warnings: refs.map((ref) => ({
-            ref,
-            message: `UI transport does not implement passive observer ${ref}.`,
-          })),
-        };
-      }
-      return transport.observe(refs, node, context);
-    },
+    ...(transport.observe
+      ? { observe: (refs, node, context) => transport.observe(refs, node, context) }
+      : {}),
   };
 }
 

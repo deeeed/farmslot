@@ -1,4 +1,4 @@
-import React, { createContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Dimensions, Platform, View } from 'react-native';
 
 import { useRecipeBridgeRelay } from './recipe-bridge-relay';
@@ -52,6 +52,8 @@ export function RecipeBridgeProvider({
 }: Readonly<RecipeBridgeProviderProps>): React.ReactElement {
   const enabled = isEnabled();
   const [hud, setHud] = useState<FarmslotRecipeHudState | null>(null);
+  const hudRef = useRef(hud);
+  hudRef.current = hud;
 
   const bridge = useMemo<FarmslotRecipeBridgeApi>(
     () => ({
@@ -76,13 +78,13 @@ export function RecipeBridgeProvider({
           const observer = observeUi ?? globalThis.__FARMSLOT_RECIPE_OBSERVER__;
           const observed = observer
             ? await observer(refs)
-            : defaultObserveUi(refs, { bridgeName, hud });
+            : defaultObserveUi(refs, { bridgeName, hud: hudRef.current });
           return { ok: true, ...observed };
         }
         return { ok: false, error: `Unsupported Farmslot bridge command: ${command.command}` };
       },
     }),
-    [bridgeName, enabled, hud, observeUi],
+    [bridgeName, enabled, observeUi],
   );
 
   useRecipeBridgeRelay(bridge, enabled);

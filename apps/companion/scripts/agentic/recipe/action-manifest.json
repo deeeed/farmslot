@@ -30,13 +30,13 @@
       "description": "Emit a lightweight bridge trace event for recipe timeline observability."
     },
     "ui.press": {
-      "description": "Press a native app control through the simulator or device assigned to this Farmslot slot."
+      "description": "Press a native app control through the simulator or device assigned to this Farmslot slot; live runs require slot device context."
     },
     "ui.wait_for": {
-      "description": "Wait for native accessibility content on the simulator or device assigned to this Farmslot slot."
+      "description": "Wait for native accessibility content on the simulator or device assigned to this Farmslot slot; live runs require slot device context."
     },
     "ui.screenshot": {
-      "description": "Capture the assigned simulator or device into the recipe artifact package."
+      "description": "Capture the assigned simulator or device into the recipe artifact package; live runs require slot device context."
     },
     "index_artifacts": {
       "description": "Copy generated screenshot artifacts into the recipe artifact package for review."

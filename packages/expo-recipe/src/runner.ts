@@ -228,6 +228,9 @@ function dryRunUiTransport(isDryRun: boolean): UiActionTransport {
         },
       };
     },
+    async observe() {
+      return {};
+    },
   };
 }
 
