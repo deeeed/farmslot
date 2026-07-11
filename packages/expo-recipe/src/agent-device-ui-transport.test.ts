@@ -153,6 +153,11 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     'id="settings-tab"',
   );
   assert.equal(calls.find((call) => call.method === 'wait-stable')?.options.stable, true);
+  assert.ok(
+    calls
+      .filter((call) => call.method === 'snapshot')
+      .every((call) => call.options.forceFull === true),
+  );
   assert.equal(JSON.stringify(fillResult).includes('seed phrase secret'), false);
   assert.equal((fillResult as { redacted?: boolean }).redacted, true);
   assert.deepEqual(observed?.observations?.['ui.screen'], {
@@ -200,6 +205,35 @@ test('observe false remains a harness concern and does not alter provider select
     {} as ActionExecutionContext,
   );
   assert.equal((result as { selector: string }).selector, 'label="Settings"');
+});
+
+test('settle false skips native stability enforcement', async () => {
+  const calls: Array<{ method: string; options: Record<string, unknown> }> = [];
+  const client = {
+    apps: { open: async () => ({ session: 's', identifiers: {} }) },
+    interactions: {
+      press: async (options: Record<string, unknown>) => {
+        calls.push({ method: 'press', options });
+        return { pressed: true };
+      },
+    },
+    sessions: { close: async () => ({ session: 's', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'ios',
+    device: 'fs-3',
+    app: 'net.siteed.farmslot.development',
+    session: 's',
+    client,
+  });
+
+  await transport.execute(
+    'ui.press',
+    { text: 'Live status', settle: false },
+    {} as ActionExecutionContext,
+  );
+
+  assert.equal(calls[0]?.options.settle, false);
 });
 
 test('rejects unsettled native actions and warns for idempotent non-hittable actions', async () => {

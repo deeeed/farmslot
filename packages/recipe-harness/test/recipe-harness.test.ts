@@ -2129,6 +2129,8 @@ test('CDP navigation waits for a quiet render frame after route readiness', asyn
   assert.match(settleExpression ?? '', /requestAnimationFrame/u);
   assert.match(settleExpression ?? '', /element\.shadowRoot/u);
   assert.match(settleExpression ?? '', /setInterval\(discoverRoots/u);
+  assert.match(settleExpression ?? '', /document\.getAnimations/u);
+  assert.match(settleExpression ?? '', /animation\.playState === 'running'/u);
   assert.match(settleExpression ?? '', /reject\(new Error\('DOM remained active/u);
 });
 
@@ -2166,6 +2168,8 @@ test('CDP visible observations omit labels for non-rendered targets', async () =
   assert.match(expression, /itemFor\(el, rendered \? rect : undefined, rendered\)/u);
   assert.match(expression, /root instanceof ShadowRoot \? root\.host/u);
   assert.match(expression, /Number\(style\.opacity \|\| 1\) <= 0/u);
+  assert.doesNotMatch(expression, /'\[data-testid\]'/u);
+  assert.match(expression, /parts\.join\(' > '\)/u);
   assert.doesNotMatch(expression, /el\.textContent/u);
 });
 
@@ -2182,8 +2186,31 @@ test('CDP screen observations omit query parameters and sensitive fragments', as
 
   const expression = expressions[0] ?? '';
   assert.match(expression, /location\.origin \+ location\.pathname/u);
-  assert.match(expression, /!location\.hash\.includes\('='\)/u);
+  assert.match(expression, /const hashPath = location\.hash\.split\('\?'\)\[0\]/u);
+  assert.match(expression, /!hashPath\.includes\('='\)/u);
   assert.doesNotMatch(expression, /url: location\.href/u);
+});
+
+test('CDP visible waits use viewport visibility and presses validate hit targets', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Runtime.evaluate') {
+        expressions.push(String(params.expression));
+        return { result: { value: { x: 10, y: 20, selector: '#submit', tagName: 'BUTTON' } } };
+      }
+      return {};
+    },
+  } as never);
+
+  await page.waitFor({ selector: '#submit', expected: 'visible', timeoutMs: 100 });
+  await page.click('#submit');
+
+  assert.match(expressions[0] ?? '', /isVisibleDeep\(el\)/u);
+  assert.match(expressions[1] ?? '', /clickablePointDeep\(el\)/u);
+  assert.match(expressions[1] ?? '', /elementFromPoint/u);
+  assert.match(expressions[1] ?? '', /Target is disabled/u);
+  assert.match(expressions[1] ?? '', /Target is obscured/u);
 });
 
 test('extracts browser extension ids from CDP targets', () => {

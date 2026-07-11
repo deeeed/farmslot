@@ -7,7 +7,6 @@ import {
   type RecipeActionManifestDocument,
   type RecipeValidationFinding,
 } from '@farmslot/protocol';
-import { STANDARD_UI_ACTIONS } from '@farmslot/recipe-harness';
 import { validateRecipeCliInput } from '@farmslot/recipe-harness/cli/support';
 
 import {
@@ -123,7 +122,7 @@ async function checkBridgeContract(
   providerAbsolutePath: string,
 ): Promise<ExpoRecipeDoctorFinding[]> {
   const actions = getRecipeActionManifestActionNames(manifest);
-  const bridgeActions = new Set<string>(STANDARD_UI_ACTIONS);
+  const bridgeActions = new Set(['app.status', 'app.hud', 'app.trace']);
   const declaresBridge = actions.some((action) => bridgeActions.has(action));
   const providerExists = existsSync(providerAbsolutePath);
   if (declaresBridge && !providerExists) {

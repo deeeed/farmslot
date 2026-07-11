@@ -5,6 +5,11 @@
     "command",
     "assert_output",
     "wait",
+    "ui.press",
+    "ui.set_input",
+    "ui.scroll",
+    "ui.wait_for",
+    "ui.screenshot",
     "end",
     "app.status",
     "app.hud",
@@ -22,6 +27,19 @@
     },
     "app.trace": {
       "description": "Emit a lightweight bridge trace event for recipe timeline observability."
+    },
+    "ui.press": {
+      "description": "Press a native accessibility target on the assigned simulator or device."
+    },
+    "ui.set_input": {
+      "description": "Set native input text without retaining plaintext in recipe artifacts."
+    },
+    "ui.scroll": {
+      "description": "Scroll the assigned native simulator or device and wait for stability."
+    },
+    "ui.wait_for": { "description": "Wait for native accessibility content and UI stability." },
+    "ui.screenshot": {
+      "description": "Capture the assigned native simulator or device into the artifact package."
     }
   },
   "capabilities": [
@@ -33,6 +51,22 @@
       "platforms": ["macos"],
       "modes": ["full_run"],
       "artifactTypes": ["video/mp4"]
+    }
+  ],
+  "observers": [
+    {
+      "ref": "ui.screen",
+      "description": "Current native app identity after supported UI actions.",
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
+      "cost": "cheap",
+      "redaction": "none"
+    },
+    {
+      "ref": "ui.visible",
+      "description": "Bounded visible native accessibility targets after supported UI actions.",
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
+      "cost": "cheap",
+      "redaction": "labels-only"
     }
   ],
   "custom_actions": []

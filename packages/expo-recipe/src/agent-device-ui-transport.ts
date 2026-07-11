@@ -82,11 +82,12 @@ export function createAgentDeviceUiTransport(
               ...selection,
               session: options.session,
               selector: selectorFromNode(node, 'ui.press'),
-              settle: true,
+              settle: node.settle !== false,
               verify: true,
               responseLevel: 'digest',
               timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
             }),
+            node.settle !== false,
           );
         case 'ui.set_input':
           return sanitizeFillResult(
@@ -97,11 +98,12 @@ export function createAgentDeviceUiTransport(
                 session: options.session,
                 selector: selectorFromNode(node, 'ui.set_input'),
                 text: requiredString(node.value ?? node.text, 'ui.set_input.value'),
-                settle: true,
+                settle: node.settle !== false,
                 verify: true,
                 responseLevel: 'digest',
                 timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
               }),
+              node.settle !== false,
             ),
           );
         case 'ui.scroll': {
@@ -114,6 +116,7 @@ export function createAgentDeviceUiTransport(
             durationMs: positiveNumber(node.duration_ms),
             responseLevel: 'digest',
           });
+          if (node.settle === false) return result;
           const stability = await client.command.wait({
             ...selection,
             session: options.session,
@@ -125,6 +128,7 @@ export function createAgentDeviceUiTransport(
         }
         case 'ui.wait_for': {
           const result = await waitForNode(client, options.session, selection, node);
+          if (node.settle === false) return result;
           const stability = await client.command.wait({
             ...selection,
             session: options.session,
@@ -146,6 +150,7 @@ export function createAgentDeviceUiTransport(
         ...selection,
         session: options.session,
         interactiveOnly: true,
+        forceFull: true,
       });
       return observationsFromSnapshot(refs, snapshot);
     },
@@ -166,13 +171,17 @@ export function assertAgentDeviceNodeVersion(version: string): void {
   );
 }
 
-function requireSettledInteraction(action: string, result: unknown): unknown {
+function requireSettledInteraction(
+  action: string,
+  result: unknown,
+  settleRequired: boolean,
+): unknown {
   const record = result as {
     settle?: { settled?: boolean; hint?: string };
     evidence?: { changedFromBefore?: boolean };
     targetHittable?: boolean;
   };
-  if (record.settle?.settled !== true) {
+  if (settleRequired && record.settle?.settled !== true) {
     throw new Error(
       `${action} did not reach a settled native UI state${record.settle?.hint ? `: ${record.settle.hint}` : '.'}`,
     );
@@ -247,6 +256,7 @@ async function waitForNode(
       ...selection,
       session,
       interactiveOnly: false,
+      forceFull: true,
     });
     nodeCount = snapshot.nodes.length;
     const matched = snapshotMatches(snapshot.nodes, node);

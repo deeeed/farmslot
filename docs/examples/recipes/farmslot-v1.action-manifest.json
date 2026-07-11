@@ -11,6 +11,7 @@
     "ui.navigate",
     "ui.press",
     "ui.set_input",
+    "ui.scroll",
     "ui.wait_for",
     "ui.screenshot",
     "app.status",
@@ -84,6 +85,9 @@
           }
         }
       ]
+    },
+    "ui.scroll": {
+      "description": "Scroll the assigned browser, simulator, or device and wait for UI stability."
     },
     "app.hud": {
       "description": "Reviewer proof HUD injected into the Command Center browser session during recipe playback and video capture. Automatic running/pass/fail updates come from the harness lifecycle; use explicit app.hud nodes only for extra annotations.",

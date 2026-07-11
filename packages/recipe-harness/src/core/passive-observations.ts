@@ -24,7 +24,7 @@ export function declaredObserverRefsFromManifest(
   return (manifest.observers ?? []).map((observer) => observer.ref);
 }
 
-function resolveObserveRefs(
+export function resolveObserveRefs(
   action: string,
   node: Record<string, unknown>,
   defaultObserverRefs: DefaultObserverRefs,
@@ -39,6 +39,18 @@ function resolveObserveRefs(
   }
   if (policy === true) return [...declaredObserverRefs];
   return [...(defaultObserverRefs.get(action) ?? [])];
+}
+
+export function filterObservations(
+  observations: RecipeObservationResult['observations'],
+  refs: readonly UiObserverRef[],
+): RecipeObservationResult['observations'] | undefined {
+  if (!observations) return undefined;
+  const allowed = new Set<string>(refs);
+  const filtered = Object.fromEntries(
+    Object.entries(observations).filter(([ref]) => allowed.has(ref)),
+  );
+  return Object.keys(filtered).length ? filtered : undefined;
 }
 
 export function mergeObservations(

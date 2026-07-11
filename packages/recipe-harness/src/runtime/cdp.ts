@@ -256,10 +256,10 @@ export class CdpWebPage {
   }
 
   async waitForDomSettled(timeoutMs = 10_000): Promise<void> {
-    const quietMs = Math.min(100, Math.max(1, Math.floor(timeoutMs / 2)));
+    const quietMs = Math.min(300, Math.max(1, Math.floor(timeoutMs / 2)));
     await withTimeout(
       this.evaluate(
-        `new Promise((resolve, reject) => { const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let finished = false; const cleanup = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); }; const finish = () => { if (finished) return; finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); const observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${timeoutMs}ms')); }, ${timeoutMs}); })`,
+        `new Promise((resolve, reject) => { const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let finished = false; const cleanup = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); }; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; if (animations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); const observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${timeoutMs}ms')); }, ${timeoutMs}); })`,
       ),
       timeoutMs + 50,
       `CDP document did not settle within ${timeoutMs}ms`,
@@ -288,7 +288,7 @@ export class CdpWebPage {
       selector: string;
       tagName: string;
     }>(
-      `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Selector has no clickable box: ${escapeForJsMessage(selector)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, selector: ${JSON.stringify(selector)}, tagName: el.tagName }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const point = clickablePointDeep(el); return { ...point, selector: ${JSON.stringify(selector)}, tagName: el.tagName }; })()`,
     );
     await this.clickPoint(target.x, target.y);
     return { clicked: true, selector: target.selector, tagName: target.tagName };
@@ -301,7 +301,7 @@ export class CdpWebPage {
       text: string;
       tagName: string;
     }>(
-      `(() => { ${deepQueryHelpersExpression()} const expected = ${JSON.stringify(text)}; const candidates = querySelectorAllDeep('button, [role=button], a, label, input, textarea, [tabindex]'); const el = candidates.find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || candidate.getAttribute('value') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Text target has no clickable box: ${escapeForJsMessage(text)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: expected, tagName: el.tagName }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const expected = ${JSON.stringify(text)}; const candidates = querySelectorAllDeep('button, [role=button], a, label, input, textarea, [tabindex]'); const el = candidates.find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || candidate.getAttribute('value') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const point = clickablePointDeep(el); return { ...point, text: expected, tagName: el.tagName }; })()`,
     );
     await this.clickPoint(target.x, target.y);
     return { clicked: true, text: target.text, tagName: target.tagName };
@@ -460,7 +460,7 @@ export class CdpWebPage {
       try {
         if (ref === 'ui.screen') {
           observations[ref] = await this.evaluate(
-            `(() => { const hashRoute = location.hash && !location.hash.includes('=') ? location.hash.split('?')[0] : undefined; return { provider: 'cdp-web', name: document.title || location.pathname || hashRoute || 'Browser', title: document.title || undefined, route: hashRoute || location.pathname || undefined, url: location.origin + location.pathname }; })()`,
+            `(() => { const hashPath = location.hash.split('?')[0]; const hashRoute = hashPath && !hashPath.includes('=') ? hashPath : undefined; return { provider: 'cdp-web', name: document.title || location.pathname || hashRoute || 'Browser', title: document.title || undefined, route: hashRoute || location.pathname || undefined, url: location.origin + location.pathname }; })()`,
           );
         } else if (ref === 'ui.visible') {
           observations[ref] = await this.evaluate(visibleTargetsExpression());
@@ -608,6 +608,7 @@ async function executeSettledCdpAction<T>(
   node: Record<string, unknown>,
 ): Promise<T> {
   const result = await operation;
+  if (node.settle === false) return result;
   await page.waitForDomSettled(
     node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, 'ui action timeout_ms'),
   );
@@ -627,10 +628,7 @@ function visibleTargetsExpression(): string {
       '[role="button"]',
       '[role="link"]',
       '[role="menuitem"]',
-      '[role="tab"]',
-      '[data-testid]',
-      '[data-test-id]',
-      '[data-test]'
+      '[role="tab"]'
     ].join(',');
     ${deepQueryHelpersExpression()}
     const nodes = querySelectorAllDeep(selector);
@@ -646,11 +644,24 @@ function visibleTargetsExpression(): string {
         return '[' + testAttribute + '="' + testId + '"]';
       }
       if (el.getRootNode() instanceof ShadowRoot) return undefined;
-      const tag = el.tagName.toLowerCase();
-      const parent = el.parentElement;
-      if (!parent) return tag;
-      const index = Array.from(parent.children).filter((child) => child.tagName === el.tagName).indexOf(el) + 1;
-      return tag + ':nth-of-type(' + index + ')';
+      const parts = [];
+      let current = el;
+      while (current && current.nodeType === Node.ELEMENT_NODE) {
+        if (current.id) {
+          parts.unshift('#' + CSS.escape(current.id));
+          break;
+        }
+        const tag = current.tagName.toLowerCase();
+        const parent = current.parentElement;
+        if (!parent) {
+          parts.unshift(tag);
+          break;
+        }
+        const siblings = Array.from(parent.children).filter((child) => child.tagName === current.tagName);
+        parts.unshift(siblings.length > 1 ? tag + ':nth-of-type(' + (siblings.indexOf(current) + 1) + ')' : tag);
+        current = parent;
+      }
+      return parts.join(' > ');
     };
     const itemFor = (el, rect, includeLabel) => ({
       role: el.getAttribute('role') || (el.tagName.toLowerCase() === 'a' ? 'link' : el.tagName.toLowerCase() === 'button' ? 'button' : undefined),
@@ -957,7 +968,7 @@ function waitForPredicateExpression(options: {
 }
 
 function visibleSelectorExpression(selector: string): string {
-  return `(() => { const el = querySelectorDeep(${JSON.stringify(selector)}); return Boolean(el && isRenderedDeep(el)); })()`;
+  return `(() => { const el = querySelectorDeep(${JSON.stringify(selector)}); return Boolean(el && isVisibleDeep(el)); })()`;
 }
 
 function deepQueryHelpersExpression(): string {
@@ -998,6 +1009,21 @@ function deepQueryHelpersExpression(): string {
         current = parent;
       }
       return rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
+    };
+    const clickablePointDeep = (element) => {
+      if (!isVisibleDeep(element)) throw new Error('Target is not visible');
+      if (element.disabled || element.getAttribute('aria-disabled') === 'true') throw new Error('Target is disabled');
+      const rect = element.getBoundingClientRect();
+      const x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+      const y = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+      let hit = document.elementFromPoint(x, y);
+      while (hit && hit.shadowRoot) {
+        const deeper = hit.shadowRoot.elementFromPoint(x, y);
+        if (!deeper || deeper === hit) break;
+        hit = deeper;
+      }
+      if (!hit || (hit !== element && !element.contains(hit))) throw new Error('Target is obscured');
+      return { x, y };
     };
     const renderedTextDeep = (root = document) => {
       const chunks = [];

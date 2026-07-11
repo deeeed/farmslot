@@ -186,11 +186,15 @@ specific validated element to be visible before `ui.screenshot`.
 
 UI nodes may include `observe`. `observe: false` disables passive post-action
 observations for that node. `observe: ["ui.visible"]` records only the named
-observer. When omitted, cheap passive observations default on for
-`ui.navigate`, `ui.press`, `ui.key_press`, `ui.set_input`, `ui.scroll`,
-`ui.gesture`, and successful `ui.wait_for`; `ui.screenshot` defaults off.
+observer. When omitted, each runner's action manifest controls defaults through
+`observers[].default_for`; `ui.screenshot` should normally default off.
 Observations are authoring/debug context only. They do not choose `next`, set
 `status`, set `case`, select branches, or replace proof nodes.
+
+State-changing UI actions settle before observation by default. Set
+`settle: false` only for intentionally live surfaces that cannot become quiet;
+the resulting observation is best-effort authoring context rather than settled
+post-action state.
 
 Project custom actions must be namespaced, for example `example.trade.place_order` or `checkout.ensure_cart`. This document owns the action vocabulary and cross-cutting recipe semantics. [Recipe Runner Protocol](recipe-runner-protocol.md#action-manifest) provides runner-facing action guidance, and its [artifact package section](recipe-runner-protocol.md#artifact-package) provides runner output examples; when documents differ, this spec wins.
 

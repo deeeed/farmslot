@@ -9,7 +9,9 @@ import { resolveNextNode } from './graph.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import {
   type DefaultObserverRefs,
+  filterObservations,
   mergeObservations,
+  resolveObserveRefs,
   runPassiveObservers,
 } from './passive-observations.js';
 import { evaluateNodeGate, evaluatePredicate, getPathValue } from './predicates.js';
@@ -299,7 +301,7 @@ async function executeInlineFlow({
             })
           : await adapter!.execute(flowNode, childContext);
       const observationResult =
-        action !== 'call' && result.status !== 'fail'
+        action !== 'call' && (result.status == null || result.status === 'pass')
           ? await runPassiveObservers({
               action,
               node: flowNode,
@@ -315,14 +317,16 @@ async function executeInlineFlow({
         flowOutputMap.set(localNodeId, result.output);
         flowOutputMap.set(namespacedNodeId, result.output);
       }
-      const observations =
-        result.status === 'fail'
-          ? undefined
-          : mergeObservations(result.observations, observationResult.observations);
-      const observationWarnings =
-        result.status === 'fail'
-          ? []
-          : [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])];
+      const observationSucceeded = result.status == null || result.status === 'pass';
+      const observations = !observationSucceeded
+        ? undefined
+        : filterObservations(
+            mergeObservations(result.observations, observationResult.observations),
+            resolveObserveRefs(action, flowNode, defaultObserverRefs, declaredObserverRefs),
+          );
+      const observationWarnings = !observationSucceeded
+        ? []
+        : [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])];
       traceWriter.record({
         nodeId: namespacedNodeId,
         action,

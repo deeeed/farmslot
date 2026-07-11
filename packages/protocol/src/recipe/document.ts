@@ -208,6 +208,21 @@ export function validateRecipeDocument(
     });
   }
   validateInlineFlows(ctx, recipe);
+  for (const entry of collectObservePolicies(recipe)) {
+    const valid =
+      typeof entry.policy === 'boolean' ||
+      (Array.isArray(entry.policy) &&
+        entry.policy.every((ref) => typeof ref === 'string' && ref.trim() !== ''));
+    if (!valid) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.invalid_observe_policy',
+        entry.path,
+        'observe must be a boolean or an array of non-empty observer refs.',
+      );
+    }
+  }
 
   return finishResult(ctx);
 }

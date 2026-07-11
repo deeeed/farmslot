@@ -111,16 +111,57 @@ test('records default ui.screen and ui.visible observations after successful UI 
 });
 
 test('observe false disables passive observations', async () => {
-  const { trace } = await runRecipe({ observe: false }, observingAdapter());
+  const { trace } = await runRecipe(
+    { observe: false },
+    observingAdapter({
+      async execute() {
+        return { observations: { 'ui.screen': { provider: 'adapter' } } };
+      },
+    }),
+  );
   const press = trace.find((entry) => entry.nodeId === 'press');
   assert.equal(press?.observations, undefined);
   assert.equal(press?.observationWarnings, undefined);
 });
 
 test('selected observe refs record only requested observers', async () => {
-  const { trace } = await runRecipe({ observe: ['ui.visible'] }, observingAdapter());
+  const { trace } = await runRecipe(
+    { observe: ['ui.visible'] },
+    observingAdapter({
+      async execute() {
+        return {
+          observations: {
+            'ui.screen': { provider: 'adapter' },
+            'ui.visible': { provider: 'adapter' },
+          },
+        };
+      },
+    }),
+  );
   const press = trace.find((entry) => entry.nodeId === 'press');
   assert.deepEqual(Object.keys(press?.observations ?? {}), ['ui.visible']);
+});
+
+test('does not observe UI actions with unknown terminal status', async () => {
+  let observeCalls = 0;
+  const { trace } = await runRecipe(
+    {},
+    observingAdapter({
+      async execute() {
+        return {
+          status: 'unknown',
+          observations: { 'ui.screen': { provider: 'adapter' } },
+        };
+      },
+      async observe() {
+        observeCalls += 1;
+        return {};
+      },
+    }),
+  );
+  const press = trace.find((entry) => entry.nodeId === 'press');
+  assert.equal(observeCalls, 0);
+  assert.equal(press?.observations, undefined);
 });
 
 test('observe true enables only observers declared by the manifest', async () => {

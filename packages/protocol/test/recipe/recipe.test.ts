@@ -332,6 +332,29 @@ test('rejects recipe observers not declared by the runner manifest', () => {
   );
 });
 
+test('rejects malformed recipe observation policies', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'press',
+        nodes: {
+          press: {
+            action: 'ui.press',
+            intent: 'Open the target.',
+            observe: 'ui.visible',
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(result.findings.some((finding) => finding.code === 'recipe.invalid_observe_policy'));
+});
+
 test('validates lifecycle actions against the runner manifest', () => {
   const recipe = {
     schema_version: 1,

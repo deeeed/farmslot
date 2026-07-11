@@ -34,7 +34,9 @@ import {
 import {
   declaredObserverRefsFromManifest,
   defaultObserverRefsFromManifest,
+  filterObservations,
   mergeObservations,
+  resolveObserveRefs,
   runPassiveObservers,
 } from './passive-observations.js';
 import { evaluateNodeGate } from './predicates.js';
@@ -391,7 +393,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                 })
               : await adapter!.execute(node, context);
           const observationResult =
-            action !== 'call' && result.status !== 'fail'
+            action !== 'call' && (result.status == null || result.status === 'pass')
               ? await runPassiveObservers({
                   action,
                   node,
@@ -405,14 +407,21 @@ class DefaultRecipeRunner implements RecipeRunner {
           if (result.output !== undefined) outputs.set(activeNodeId, result.output);
           for (const artifact of result.artifacts ?? []) artifactWriter.register(artifact);
           const next = resolveNextNode(node, result);
-          const observations =
-            result.status === 'fail'
-              ? undefined
-              : mergeObservations(result.observations, observationResult.observations);
-          const observationWarnings =
-            result.status === 'fail'
-              ? []
-              : [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])];
+          const observationSucceeded = result.status == null || result.status === 'pass';
+          const observations = !observationSucceeded
+            ? undefined
+            : filterObservations(
+                mergeObservations(result.observations, observationResult.observations),
+                resolveObserveRefs(
+                  action,
+                  node,
+                  this.#defaultObserverRefs,
+                  this.#declaredObserverRefs,
+                ),
+              );
+          const observationWarnings = !observationSucceeded
+            ? []
+            : [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])];
           traceWriter.record({
             nodeId: activeNodeId,
             action,
