@@ -113,6 +113,7 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
   assert.deepEqual(await transport.execute('ui.wait_for', { text: 'Settings' }, context), {
     matched: true,
     expected: 'present',
+    stability: { stable: true },
   });
   for (const expected of ['hidden', 'not_present']) {
     const result = await transport.execute(
@@ -120,7 +121,11 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
       { text: 'Missing element', expected },
       context,
     );
-    assert.deepEqual(result, { matched: true, expected: 'absent' });
+    assert.deepEqual(result, {
+      matched: true,
+      expected: 'absent',
+      stability: { stable: true },
+    });
   }
   await assert.rejects(
     () => transport.execute('ui.wait_for', { text: 'button', timeout_ms: 1 }, context),

@@ -565,15 +565,19 @@ export function createCdpWebUiTransport(
               node,
             );
           case 'ui.wait_for':
-            return page.waitFor({
-              selector: asOptionalString(selectorForUiInput(node), 'ui.wait_for.selector'),
-              text: asOptionalString(node.text, 'ui.wait_for.text'),
-              expected: asOptionalString(node.expected, 'ui.wait_for.expected'),
-              timeoutMs:
-                node.timeout_ms == null
-                  ? undefined
-                  : asNumber(node.timeout_ms, 'ui.wait_for.timeout_ms'),
-            });
+            return executeSettledCdpAction(
+              page,
+              page.waitFor({
+                selector: asOptionalString(selectorForUiInput(node), 'ui.wait_for.selector'),
+                text: asOptionalString(node.text, 'ui.wait_for.text'),
+                expected: asOptionalString(node.expected, 'ui.wait_for.expected'),
+                timeoutMs:
+                  node.timeout_ms == null
+                    ? undefined
+                    : asNumber(node.timeout_ms, 'ui.wait_for.timeout_ms'),
+              }),
+              node,
+            );
           case 'ui.screenshot':
             return captureCdpScreenshot(page, node, context);
           case 'app.status':
@@ -614,8 +618,6 @@ function visibleTargetsExpression(): string {
   return `(() => {
     const visibleLimit = 20;
     const hiddenLimit = 10;
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
     const selector = [
       'button',
       'a[href]',
@@ -665,9 +667,8 @@ function visibleTargetsExpression(): string {
     for (const el of nodes) {
       const rect = el.getBoundingClientRect();
       const hasBox = rect.width > 0 && rect.height > 0;
-      const onScreen = hasBox && rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;
       const rendered = hasBox && isRenderedDeep(el);
-      const visible = onScreen && rendered;
+      const visible = rendered && isVisibleDeep(el);
       if (visible && items.length < visibleLimit) {
         items.push(itemFor(el, rect, true));
       } else if (!visible && hidden_or_offscreen.length < hiddenLimit) {
@@ -979,6 +980,24 @@ function deepQueryHelpersExpression(): string {
         current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
       }
       return true;
+    };
+    const isVisibleDeep = (element) => {
+      if (!isRenderedDeep(element)) return false;
+      let rect = element.getBoundingClientRect();
+      let current = element;
+      while (current) {
+        const root = current.getRootNode();
+        const parent = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        if (!parent) break;
+        const style = getComputedStyle(parent);
+        if (/(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
+          const parentRect = parent.getBoundingClientRect();
+          rect = { left: Math.max(rect.left, parentRect.left), top: Math.max(rect.top, parentRect.top), right: Math.min(rect.right, parentRect.right), bottom: Math.min(rect.bottom, parentRect.bottom) };
+          if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
+        }
+        current = parent;
+      }
+      return rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
     };
     const renderedTextDeep = (root = document) => {
       const chunks = [];

@@ -1,8 +1,4 @@
-import {
-  BUILT_IN_UI_OBSERVERS,
-  type RecipeActionManifestDocument,
-  type UiObserverRef,
-} from '@farmslot/protocol';
+import type { RecipeActionManifestDocument, UiObserverRef } from '@farmslot/protocol';
 
 import type { ActionAdapter, RecipeLogger, RecipeObservationResult } from './types.js';
 
@@ -22,10 +18,17 @@ export function defaultObserverRefsFromManifest(
   return refsByAction;
 }
 
+export function declaredObserverRefsFromManifest(
+  manifest: RecipeActionManifestDocument,
+): readonly UiObserverRef[] {
+  return (manifest.observers ?? []).map((observer) => observer.ref);
+}
+
 function resolveObserveRefs(
   action: string,
   node: Record<string, unknown>,
   defaultObserverRefs: DefaultObserverRefs,
+  declaredObserverRefs: readonly UiObserverRef[],
 ): UiObserverRef[] {
   const policy = node.observe;
   if (policy === false) return [];
@@ -34,7 +37,7 @@ function resolveObserveRefs(
       (ref): ref is UiObserverRef => typeof ref === 'string' && ref.trim() !== '',
     );
   }
-  if (policy === true) return [...BUILT_IN_UI_OBSERVERS];
+  if (policy === true) return [...declaredObserverRefs];
   return [...(defaultObserverRefs.get(action) ?? [])];
 }
 
@@ -53,6 +56,7 @@ export async function runPassiveObservers({
   context,
   logger,
   defaultObserverRefs,
+  declaredObserverRefs,
 }: {
   action: string;
   node: Record<string, unknown>;
@@ -60,8 +64,9 @@ export async function runPassiveObservers({
   context: Parameters<ActionAdapter['execute']>[1];
   logger: RecipeLogger;
   defaultObserverRefs: DefaultObserverRefs;
+  declaredObserverRefs: readonly UiObserverRef[];
 }): Promise<RecipeObservationResult> {
-  const refs = resolveObserveRefs(action, node, defaultObserverRefs);
+  const refs = resolveObserveRefs(action, node, defaultObserverRefs, declaredObserverRefs);
   if (refs.length === 0) return {};
   if (!adapter.observe) {
     return {

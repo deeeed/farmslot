@@ -32,6 +32,7 @@ import {
   type ResolvedLibraryFlow,
 } from './library.js';
 import {
+  declaredObserverRefsFromManifest,
   defaultObserverRefsFromManifest,
   mergeObservations,
   runPassiveObservers,
@@ -166,6 +167,7 @@ class DefaultRecipeRunner implements RecipeRunner {
   readonly #preconditions: ReadonlyMap<string, PreconditionChecker>;
   readonly #logger: RecipeLogger;
   readonly #defaultObserverRefs;
+  readonly #declaredObserverRefs;
   readonly #hud: RecipeHudOptions | false | undefined;
   readonly #runnerProvenance: CreateRecipeRunnerOptions['runner'];
   readonly #recording: RecipeRecordingOptions | undefined;
@@ -184,6 +186,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     this.#preconditions = preconditions;
     this.#logger = logger;
     this.#defaultObserverRefs = defaultObserverRefsFromManifest(actionManifest);
+    this.#declaredObserverRefs = declaredObserverRefsFromManifest(actionManifest);
     this.#hud = hud;
     this.#runnerProvenance = runnerProvenance;
     this.#recording = recording;
@@ -379,6 +382,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                   maxCallDepth: DEFAULT_MAX_FLOW_CALL_DEPTH,
                   logger: this.#logger,
                   defaultObserverRefs: this.#defaultObserverRefs,
+                  declaredObserverRefs: this.#declaredObserverRefs,
                   publishHudProgress: (hudStatus, flowEvent) =>
                     this.#publishHudProgressOrRecord(traceWriter, hudStatus, {
                       ...flowEvent,
@@ -395,19 +399,20 @@ class DefaultRecipeRunner implements RecipeRunner {
                   context,
                   logger: this.#logger,
                   defaultObserverRefs: this.#defaultObserverRefs,
+                  declaredObserverRefs: this.#declaredObserverRefs,
                 })
               : {};
           if (result.output !== undefined) outputs.set(activeNodeId, result.output);
           for (const artifact of result.artifacts ?? []) artifactWriter.register(artifact);
           const next = resolveNextNode(node, result);
-          const observations = mergeObservations(
-            result.observations,
-            observationResult.observations,
-          );
-          const observationWarnings = [
-            ...(result.observationWarnings ?? []),
-            ...(observationResult.warnings ?? []),
-          ];
+          const observations =
+            result.status === 'fail'
+              ? undefined
+              : mergeObservations(result.observations, observationResult.observations);
+          const observationWarnings =
+            result.status === 'fail'
+              ? []
+              : [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])];
           traceWriter.record({
             nodeId: activeNodeId,
             action,

@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
+import type { RecipeActionManifestDocument } from '@farmslot/protocol';
+
 import { createRecipeRunner } from './runner.js';
 import type { ActionAdapter, RecipeRunResult, TraceEntry } from './types.js';
 
@@ -32,10 +34,11 @@ const manifest = {
 async function runRecipe(
   pressNode: Record<string, unknown>,
   adapter: ActionAdapter,
+  actionManifest: RecipeActionManifestDocument = manifest,
 ): Promise<{ result: RecipeRunResult; trace: TraceEntry[] }> {
   const artifactsDir = await mkdtemp(path.join(os.tmpdir(), 'recipe-observe-'));
   const runner = createRecipeRunner({
-    actionManifest: manifest,
+    actionManifest,
     adapters: [
       adapter,
       {
@@ -120,6 +123,16 @@ test('selected observe refs record only requested observers', async () => {
   assert.deepEqual(Object.keys(press?.observations ?? {}), ['ui.visible']);
 });
 
+test('observe true enables only observers declared by the manifest', async () => {
+  const visibleOnlyManifest: RecipeActionManifestDocument = {
+    ...manifest,
+    observers: manifest.observers.filter((observer) => observer.ref === 'ui.visible'),
+  };
+  const { trace } = await runRecipe({ observe: true }, observingAdapter(), visibleOnlyManifest);
+  const press = trace.find((entry) => entry.nodeId === 'press');
+  assert.deepEqual(Object.keys(press?.observations ?? {}), ['ui.visible']);
+});
+
 test('observation failures are warnings and do not fail a successful action', async () => {
   const { result, trace } = await runRecipe(
     {},
@@ -142,7 +155,11 @@ test('does not observe failed UI actions', async () => {
     {},
     observingAdapter({
       async execute() {
-        return { status: 'fail' };
+        return {
+          status: 'fail',
+          observations: { 'ui.screen': { provider: 'adapter' } },
+          observationWarnings: [{ ref: 'ui.screen', message: 'adapter warning' }],
+        };
       },
       async observe() {
         observeCalls += 1;
@@ -154,6 +171,7 @@ test('does not observe failed UI actions', async () => {
   assert.equal(result.status, 'fail');
   assert.equal(observeCalls, 0);
   assert.equal(trace.find((entry) => entry.nodeId === 'press')?.observations, undefined);
+  assert.equal(trace.find((entry) => entry.nodeId === 'press')?.observationWarnings, undefined);
 });
 
 test('observations do not alter action control flow fields', async () => {
@@ -260,7 +278,11 @@ test('does not observe failed UI actions inside called flows', async () => {
     adapters: [
       observingAdapter({
         async execute() {
-          return { status: 'fail' };
+          return {
+            status: 'fail',
+            observations: { 'ui.screen': { provider: 'adapter' } },
+            observationWarnings: [{ ref: 'ui.screen', message: 'adapter warning' }],
+          };
         },
         async observe() {
           observeCalls += 1;
@@ -313,4 +335,8 @@ test('does not observe failed UI actions inside called flows', async () => {
   assert.equal(result.status, 'fail');
   assert.equal(observeCalls, 0);
   assert.equal(trace.find((entry) => entry.nodeId === 'flow/failed')?.observations, undefined);
+  assert.equal(
+    trace.find((entry) => entry.nodeId === 'flow/failed')?.observationWarnings,
+    undefined,
+  );
 });

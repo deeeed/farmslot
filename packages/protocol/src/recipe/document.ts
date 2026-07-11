@@ -75,6 +75,29 @@ export function validateRecipeWithManifest(
     });
   }
 
+  const declaredObservers = new Set<string>();
+  if (isRecord(manifest) && Array.isArray(manifest.observers)) {
+    for (const observer of manifest.observers) {
+      if (isRecord(observer) && typeof observer.ref === 'string') {
+        declaredObservers.add(observer.ref);
+      }
+    }
+  }
+  for (const entry of collectObservePolicies(recipe)) {
+    if (!Array.isArray(entry.policy)) continue;
+    entry.policy.forEach((ref, index) => {
+      if (typeof ref === 'string' && !declaredObservers.has(ref)) {
+        addFinding(
+          ctx,
+          'error',
+          'recipe.observer_not_declared_by_manifest',
+          `${entry.path}[${index}]`,
+          `Recipe observer ${ref} is not declared by the runner action manifest.`,
+        );
+      }
+    });
+  }
+
   const declaredPreconditions = new Set(getRecipeActionManifestPreconditionIds(manifest));
   for (const gate of getRecipeWorkflowPreconditionEntries(recipe)) {
     if (!declaredPreconditions.has(gate.id)) {
@@ -89,6 +112,24 @@ export function validateRecipeWithManifest(
   }
 
   return finishResult(ctx);
+}
+
+function collectObservePolicies(
+  value: unknown,
+  path = '$',
+): Array<{ path: string; policy: unknown }> {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => collectObservePolicies(entry, `${path}[${index}]`));
+  }
+  if (!isRecord(value)) return [];
+  const entries =
+    typeof value.action === 'string' && hasOwn(value, 'observe')
+      ? [{ path: `${path}.observe`, policy: value.observe }]
+      : [];
+  for (const [key, entry] of Object.entries(value)) {
+    entries.push(...collectObservePolicies(entry, `${path}.${key}`));
+  }
+  return entries;
 }
 
 export function validateRecipeDocument(

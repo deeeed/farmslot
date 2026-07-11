@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import type { UiObserverRef } from '@farmslot/protocol';
+
 import { JsonTraceWriter } from '../node/writers.js';
 
 import { resolveNextNode } from './graph.js';
@@ -134,6 +136,7 @@ export async function executeInlineFlowCall({
   maxCallDepth,
   logger,
   defaultObserverRefs,
+  declaredObserverRefs,
   publishHudProgress,
 }: {
   callNodeId: string;
@@ -146,6 +149,7 @@ export async function executeInlineFlowCall({
   maxCallDepth: number;
   logger: RecipeLogger;
   defaultObserverRefs: DefaultObserverRefs;
+  declaredObserverRefs: readonly UiObserverRef[];
   publishHudProgress?: FlowHudPublisher;
 }): Promise<ActionResult> {
   const ref = typeof node.ref === 'string' && node.ref.trim() ? node.ref.trim() : '';
@@ -174,6 +178,7 @@ export async function executeInlineFlowCall({
     maxCallDepth,
     logger,
     defaultObserverRefs,
+    declaredObserverRefs,
     publishHudProgress,
   });
   if (flow.postcondition != null && !evaluatePredicate(output, flow.postcondition)) {
@@ -195,6 +200,7 @@ async function executeInlineFlow({
   maxCallDepth,
   logger,
   defaultObserverRefs,
+  declaredObserverRefs,
   publishHudProgress,
 }: {
   callNodeId: string;
@@ -209,6 +215,7 @@ async function executeInlineFlow({
   maxCallDepth: number;
   logger: RecipeLogger;
   defaultObserverRefs: DefaultObserverRefs;
+  declaredObserverRefs: readonly UiObserverRef[];
   publishHudProgress?: FlowHudPublisher;
 }): Promise<Record<string, unknown>> {
   let currentNodeId: string | undefined = flow.entry;
@@ -287,6 +294,7 @@ async function executeInlineFlow({
               maxCallDepth,
               logger,
               defaultObserverRefs,
+              declaredObserverRefs,
               publishHudProgress,
             })
           : await adapter!.execute(flowNode, childContext);
@@ -299,6 +307,7 @@ async function executeInlineFlow({
               context: childContext,
               logger,
               defaultObserverRefs,
+              declaredObserverRefs,
             })
           : {};
       if (result.output !== undefined) {
@@ -306,11 +315,14 @@ async function executeInlineFlow({
         flowOutputMap.set(localNodeId, result.output);
         flowOutputMap.set(namespacedNodeId, result.output);
       }
-      const observations = mergeObservations(result.observations, observationResult.observations);
-      const observationWarnings = [
-        ...(result.observationWarnings ?? []),
-        ...(observationResult.warnings ?? []),
-      ];
+      const observations =
+        result.status === 'fail'
+          ? undefined
+          : mergeObservations(result.observations, observationResult.observations);
+      const observationWarnings =
+        result.status === 'fail'
+          ? []
+          : [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])];
       traceWriter.record({
         nodeId: namespacedNodeId,
         action,

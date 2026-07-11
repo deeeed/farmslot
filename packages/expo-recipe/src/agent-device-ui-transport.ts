@@ -123,8 +123,17 @@ export function createAgentDeviceUiTransport(
           });
           return { ...result, stability };
         }
-        case 'ui.wait_for':
-          return waitForNode(client, options.session, selection, node);
+        case 'ui.wait_for': {
+          const result = await waitForNode(client, options.session, selection, node);
+          const stability = await client.command.wait({
+            ...selection,
+            session: options.session,
+            stable: true,
+            quietMs: 300,
+            timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+          });
+          return { ...(result as Record<string, unknown>), stability };
+        }
         case 'ui.screenshot':
           return captureScreenshot(client, options.session, node, context);
         default:

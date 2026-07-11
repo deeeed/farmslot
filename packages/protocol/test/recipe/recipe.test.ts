@@ -293,6 +293,45 @@ test('permits node-level observe policy in recipe documents', () => {
   assert.deepEqual(result.findings, []);
 });
 
+test('rejects recipe observers not declared by the runner manifest', () => {
+  const recipe = {
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'press',
+        nodes: {
+          press: {
+            action: 'ui.press',
+            intent: 'Open the target.',
+            observe: ['ui.visible', 'custom.missing'],
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const result = validateRecipeWithManifest(recipe, {
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['ui.press', 'end'],
+    observers: [
+      {
+        ref: 'ui.visible',
+        description: 'Visible controls.',
+        default_for: ['ui.press'],
+        cost: 'cheap',
+        redaction: 'labels-only',
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(
+    result.findings.some((finding) => finding.code === 'recipe.observer_not_declared_by_manifest'),
+  );
+});
+
 test('validates lifecycle actions against the runner manifest', () => {
   const recipe = {
     schema_version: 1,
