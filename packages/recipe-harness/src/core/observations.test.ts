@@ -136,6 +136,26 @@ test('observation failures are warnings and do not fail a successful action', as
   assert.match(press?.observationWarnings?.[0]?.message ?? '', /observer offline/u);
 });
 
+test('does not observe failed UI actions', async () => {
+  let observeCalls = 0;
+  const { result, trace } = await runRecipe(
+    {},
+    observingAdapter({
+      async execute() {
+        return { status: 'fail' };
+      },
+      async observe() {
+        observeCalls += 1;
+        return {};
+      },
+    }),
+  );
+
+  assert.equal(result.status, 'fail');
+  assert.equal(observeCalls, 0);
+  assert.equal(trace.find((entry) => entry.nodeId === 'press')?.observations, undefined);
+});
+
 test('observations do not alter action control flow fields', async () => {
   const { trace } = await runRecipe({}, observingAdapter());
   const press = trace.find((entry) => entry.nodeId === 'press');
@@ -230,4 +250,67 @@ test('records node observation policies inside called flows', async () => {
     ['ui.visible'],
   );
   assert.equal(trace.find((entry) => entry.nodeId === 'flow/disabled')?.observations, undefined);
+});
+
+test('does not observe failed UI actions inside called flows', async () => {
+  const artifactsDir = await mkdtemp(path.join(os.tmpdir(), 'recipe-observe-failed-flow-'));
+  let observeCalls = 0;
+  const runner = createRecipeRunner({
+    actionManifest: manifest,
+    adapters: [
+      observingAdapter({
+        async execute() {
+          return { status: 'fail' };
+        },
+        async observe() {
+          observeCalls += 1;
+          return {};
+        },
+      }),
+      {
+        action: 'end',
+        async execute() {
+          return { status: 'pass' };
+        },
+      },
+    ],
+  });
+  const result = await runner.run({
+    artifactsDir,
+    recipeDocument: {
+      schema_version: 1,
+      flows: {
+        'example.fail': {
+          entry: 'failed',
+          nodes: {
+            failed: {
+              action: 'ui.press',
+              intent: 'Exercise a failed flow action',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      validate: {
+        workflow: {
+          entry: 'flow',
+          nodes: {
+            flow: {
+              action: 'call',
+              intent: 'Run the failing observation flow',
+              ref: 'example.fail',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    },
+  });
+  const trace = JSON.parse(await readFile(result.tracePath, 'utf-8')) as TraceEntry[];
+
+  assert.equal(result.status, 'fail');
+  assert.equal(observeCalls, 0);
+  assert.equal(trace.find((entry) => entry.nodeId === 'flow/failed')?.observations, undefined);
 });

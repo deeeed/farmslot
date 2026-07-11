@@ -2038,6 +2038,7 @@ test('CDP navigation waits for the loaded document before returning', async () =
         if (expression.startsWith('new URL(')) {
           return { result: { value: 'https://example.test/next' } };
         }
+        if (expression.startsWith('new Promise(')) return { result: { value: true } };
         return {
           result: {
             value: { ready, url: 'https://example.test/next' },
@@ -2057,7 +2058,12 @@ test('CDP navigation waits for the loaded document before returning', async () =
 
   await page.navigate('https://example.test/next', 1_000);
 
-  assert.deepEqual(calls, ['Runtime.evaluate', 'Page.navigate', 'Runtime.evaluate']);
+  assert.deepEqual(calls, [
+    'Runtime.evaluate',
+    'Page.navigate',
+    'Runtime.evaluate',
+    'Runtime.evaluate',
+  ]);
   assert.equal(loadHandler, undefined);
 });
 
@@ -2073,6 +2079,7 @@ test('CDP same-document navigation waits for the requested location', async () =
       if (expression.startsWith('new URL(')) {
         return { result: { value: 'https://example.test/#ready' } };
       }
+      if (expression.startsWith('new Promise(')) return { result: { value: true } };
       pollCount += 1;
       return {
         result: {
@@ -2088,6 +2095,33 @@ test('CDP same-document navigation waits for the requested location', async () =
   await page.navigate('#ready', 1_000);
 
   assert.equal(pollCount, 2);
+});
+
+test('CDP navigation waits for a quiet render frame after route readiness', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    on() {
+      return () => {};
+    },
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.navigate') return {};
+      const expression = String(params.expression);
+      expressions.push(expression);
+      if (expression.startsWith('new URL(')) {
+        return { result: { value: 'https://example.test/#ready' } };
+      }
+      if (expression.startsWith('new Promise(')) return { result: { value: true } };
+      return {
+        result: { value: { ready: true, url: 'https://example.test/#ready' } },
+      };
+    },
+  } as never);
+
+  await page.navigate('#ready', 1_000);
+
+  const settleExpression = expressions.find((expression) => expression.startsWith('new Promise('));
+  assert.match(settleExpression ?? '', /MutationObserver/u);
+  assert.match(settleExpression ?? '', /requestAnimationFrame/u);
 });
 
 test('CDP deep text matching uses rendered text without scanning textContent', async () => {

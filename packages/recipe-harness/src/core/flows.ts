@@ -291,7 +291,7 @@ async function executeInlineFlow({
             })
           : await adapter!.execute(flowNode, childContext);
       const observationResult =
-        action !== 'call'
+        action !== 'call' && result.status !== 'fail'
           ? await runPassiveObservers({
               action,
               node: flowNode,

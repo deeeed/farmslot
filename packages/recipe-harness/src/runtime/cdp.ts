@@ -228,6 +228,7 @@ export class CdpWebPage {
         expectedUrl: result.loaderId ? undefined : expectedUrl,
         timeoutMs: Math.max(1, deadline - Date.now()),
       });
+      await this.waitForDomSettled(Math.max(1, deadline - Date.now()));
       return result;
     } finally {
       unsubscribe();
@@ -252,6 +253,17 @@ export class CdpWebPage {
     }
     const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
     throw new Error(`CDP document was not ready within ${timeoutMs}ms${detail}`);
+  }
+
+  async waitForDomSettled(timeoutMs = 10_000): Promise<void> {
+    const quietMs = Math.min(100, Math.max(1, Math.floor(timeoutMs / 2)));
+    await withTimeout(
+      this.evaluate(
+        `new Promise((resolve) => { const quietMs = ${quietMs}; let quietTimer; let finished = false; const finish = () => { if (finished) return; finished = true; observer.disconnect(); clearTimeout(quietTimer); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observer = new MutationObserver(schedule); observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true }); requestAnimationFrame(() => requestAnimationFrame(schedule)); setTimeout(finish, ${timeoutMs}); })`,
+      ),
+      timeoutMs + 50,
+      `CDP document did not settle within ${timeoutMs}ms`,
+    );
   }
 
   async evaluate<T = unknown>(expression: string): Promise<T> {

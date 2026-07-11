@@ -97,6 +97,10 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     () => transport.execute('ui.wait_for', { text: 'button', timeout_ms: 1 }, context),
     /ui\.wait_for timed out/u,
   );
+  await assert.rejects(
+    () => transport.execute('ui.wait_for', { text_contains: ['button'], timeout_ms: 1 }, context),
+    /ui\.wait_for timed out/u,
+  );
   const observed = await transport.observe?.(
     ['ui.screen', 'ui.visible', 'companion.custom'],
     {},

@@ -387,7 +387,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                 })
               : await adapter!.execute(node, context);
           const observationResult =
-            action !== 'call'
+            action !== 'call' && result.status !== 'fail'
               ? await runPassiveObservers({
                   action,
                   node,

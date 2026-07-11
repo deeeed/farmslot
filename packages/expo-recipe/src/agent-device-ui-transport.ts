@@ -251,7 +251,7 @@ function snapshotMatches(
   if ((testId || exactText) && !matchesIdentity) return false;
   return contains.every((text) =>
     nodes.some((candidate) =>
-      [candidate.label, candidate.value, candidate.identifier, candidate.type]
+      [candidate.label, candidate.value, candidate.identifier]
         .filter((value): value is string => typeof value === 'string')
         .some((value) => value.includes(text)),
     ),
