@@ -27,11 +27,19 @@
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*",
-    "@farmslot/recipe-harness": "workspace:*",
-    "agent-device": "0.19.3"
+    "@farmslot/recipe-harness": "workspace:*"
+  },
+  "peerDependencies": {
+    "agent-device": ">=0.19.3"
+  },
+  "peerDependenciesMeta": {
+    "agent-device": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "agent-device": "0.19.3",
     "eslint": "^10.3.0",
     "prettier": "^3.8.3",
     "tsx": "^4.19.0",

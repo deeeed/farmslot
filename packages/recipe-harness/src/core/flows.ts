@@ -5,9 +5,10 @@ import { JsonTraceWriter } from '../node/writers.js';
 
 import { resolveNextNode } from './graph.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
+import { mergeObservations, runPassiveObservers } from './passive-observations.js';
 import { evaluateNodeGate, evaluatePredicate, getPathValue } from './predicates.js';
 import { traceNodeMetadata } from './trace.js';
-import type { ActionAdapter, ActionResult } from './types.js';
+import type { ActionAdapter, ActionResult, RecipeLogger } from './types.js';
 
 type FlowHudPublisher = (
   status: 'running' | 'pass' | 'fail',
@@ -127,6 +128,7 @@ export async function executeInlineFlowCall({
   traceWriter,
   callStack,
   maxCallDepth,
+  logger,
   publishHudProgress,
 }: {
   callNodeId: string;
@@ -137,6 +139,7 @@ export async function executeInlineFlowCall({
   traceWriter: JsonTraceWriter;
   callStack: readonly string[];
   maxCallDepth: number;
+  logger: RecipeLogger;
   publishHudProgress?: FlowHudPublisher;
 }): Promise<ActionResult> {
   const ref = typeof node.ref === 'string' && node.ref.trim() ? node.ref.trim() : '';
@@ -163,6 +166,7 @@ export async function executeInlineFlowCall({
     traceWriter,
     callStack: nextCallStack,
     maxCallDepth,
+    logger,
     publishHudProgress,
   });
   if (flow.postcondition != null && !evaluatePredicate(output, flow.postcondition)) {
@@ -182,6 +186,7 @@ async function executeInlineFlow({
   traceWriter,
   callStack,
   maxCallDepth,
+  logger,
   publishHudProgress,
 }: {
   callNodeId: string;
@@ -194,6 +199,7 @@ async function executeInlineFlow({
   traceWriter: JsonTraceWriter;
   callStack: readonly string[];
   maxCallDepth: number;
+  logger: RecipeLogger;
   publishHudProgress?: FlowHudPublisher;
 }): Promise<Record<string, unknown>> {
   let currentNodeId: string | undefined = flow.entry;
@@ -270,14 +276,30 @@ async function executeInlineFlow({
               traceWriter,
               callStack,
               maxCallDepth,
+              logger,
               publishHudProgress,
             })
           : await adapter!.execute(flowNode, childContext);
+      const observationResult =
+        action !== 'call'
+          ? await runPassiveObservers({
+              action,
+              node: flowNode,
+              adapter: adapter!,
+              context: childContext,
+              logger,
+            })
+          : {};
       if (result.output !== undefined) {
         flowOutputs[localNodeId] = result.output as Record<string, unknown>;
         flowOutputMap.set(localNodeId, result.output);
         flowOutputMap.set(namespacedNodeId, result.output);
       }
+      const observations = mergeObservations(result.observations, observationResult.observations);
+      const observationWarnings = [
+        ...(result.observationWarnings ?? []),
+        ...(observationResult.warnings ?? []),
+      ];
       traceWriter.record({
         nodeId: namespacedNodeId,
         action,
@@ -289,6 +311,8 @@ async function executeInlineFlow({
         next: resolveNextNode(flowNode, result),
         status: result.status,
         output: result.output,
+        ...(observations ? { observations } : {}),
+        ...(observationWarnings.length ? { observationWarnings } : {}),
       });
       if (publishHudProgress) {
         const hudCompleted = await publishHudProgress(result.status === 'fail' ? 'fail' : 'pass', {

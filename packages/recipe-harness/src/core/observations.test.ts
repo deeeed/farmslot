@@ -10,7 +10,7 @@ import type { ActionAdapter, RecipeRunResult, TraceEntry } from './types.js';
 const manifest = {
   runner_protocol_version: 1,
   action_registry_version: 1,
-  supported_official_actions: ['ui.press', 'end'],
+  supported_official_actions: ['ui.press', 'end', 'call'],
 } as const;
 
 async function runRecipe(
@@ -127,4 +127,91 @@ test('observations do not alter action control flow fields', async () => {
   assert.equal(press?.status, undefined);
   assert.equal(press?.case, undefined);
   assert.equal(press?.artifacts, undefined);
+});
+
+test('records node observation policies inside called flows', async () => {
+  const artifactsDir = await mkdtemp(path.join(os.tmpdir(), 'recipe-observe-flow-'));
+  const observedRefs: string[][] = [];
+  const runner = createRecipeRunner({
+    actionManifest: manifest,
+    adapters: [
+      observingAdapter({
+        async execute() {
+          return { output: { pressed: true } };
+        },
+        async observe(refs) {
+          observedRefs.push([...refs]);
+          return {
+            observations: Object.fromEntries(
+              refs.map((ref) => [ref, { provider: 'test', name: ref }]),
+            ),
+          };
+        },
+      }),
+      {
+        action: 'end',
+        async execute() {
+          return { status: 'pass' };
+        },
+      },
+    ],
+  });
+  const result = await runner.run({
+    artifactsDir,
+    recipeDocument: {
+      schema_version: 1,
+      flows: {
+        'example.observe': {
+          entry: 'default',
+          nodes: {
+            default: {
+              action: 'ui.press',
+              intent: 'Exercise the default observation policy',
+              next: 'selected',
+            },
+            selected: {
+              action: 'ui.press',
+              intent: 'Exercise a selected observation policy',
+              observe: ['ui.visible'],
+              next: 'disabled',
+            },
+            disabled: {
+              action: 'ui.press',
+              intent: 'Exercise the disabled observation policy',
+              observe: false,
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+      validate: {
+        workflow: {
+          entry: 'flow',
+          nodes: {
+            flow: {
+              action: 'call',
+              intent: 'Run the observation policy flow',
+              ref: 'example.observe',
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    },
+  });
+  const trace = JSON.parse(await readFile(result.tracePath, 'utf-8')) as TraceEntry[];
+
+  assert.equal(result.status, 'pass');
+  assert.deepEqual(observedRefs, [['ui.screen', 'ui.visible'], ['ui.visible']]);
+  assert.deepEqual(
+    Object.keys(trace.find((entry) => entry.nodeId === 'flow/default')?.observations ?? {}),
+    ['ui.screen', 'ui.visible'],
+  );
+  assert.deepEqual(
+    Object.keys(trace.find((entry) => entry.nodeId === 'flow/selected')?.observations ?? {}),
+    ['ui.visible'],
+  );
+  assert.equal(trace.find((entry) => entry.nodeId === 'flow/disabled')?.observations, undefined);
 });

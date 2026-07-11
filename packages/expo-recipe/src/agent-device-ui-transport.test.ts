@@ -85,6 +85,14 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     { text_contains: ['Settings', 'Gateway Connection'] },
     context,
   );
+  for (const expected of ['hidden', 'not_present']) {
+    const result = await transport.execute(
+      'ui.wait_for',
+      { text: 'Missing element', expected },
+      context,
+    );
+    assert.deepEqual(result, { matched: true, expected: 'absent' });
+  }
   await assert.rejects(
     () => transport.execute('ui.wait_for', { text: 'button', timeout_ms: 1 }, context),
     /ui\.wait_for timed out/u,

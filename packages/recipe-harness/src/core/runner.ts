@@ -5,7 +5,6 @@ import {
   getRecipeActionManifestActionNames,
   type RecipeActionManifestDocument,
   type RecipeArtifactManifestEntry,
-  type UiObserverRef,
   validateRecipeArtifactPackage,
 } from '@farmslot/protocol';
 
@@ -32,6 +31,7 @@ import {
   type RecipeLibraryResolution,
   type ResolvedLibraryFlow,
 } from './library.js';
+import { mergeObservations, runPassiveObservers } from './passive-observations.js';
 import { evaluateNodeGate } from './predicates.js';
 import {
   cleanupAbortedRunVideoRecording,
@@ -46,7 +46,6 @@ import type {
   RecipeFlowResolutionSummary,
   RecipeHudOptions,
   RecipeLogger,
-  RecipeObservationResult,
   RecipeRecordingOptions,
   RecipeRunner,
   RecipeRunRequest,
@@ -61,77 +60,11 @@ import { assertManifestIsValid, assertRecipeMatchesManifest } from './validation
 const HARNESS_VERSION = '0.1.0';
 const RUNNER_BUILT_IN_ACTIONS = new Set(['call']);
 const DEFAULT_MAX_FLOW_CALL_DEPTH = 8;
-const DEFAULT_UI_OBSERVER_REFS = ['ui.screen', 'ui.visible'] as const;
-const DEFAULT_OBSERVED_UI_ACTIONS = new Set([
-  'ui.navigate',
-  'ui.press',
-  'ui.key_press',
-  'ui.set_input',
-  'ui.scroll',
-  'ui.gesture',
-  'ui.wait_for',
-]);
-
 const noopLogger: RecipeLogger = {
   info() {},
   warn() {},
   error() {},
 };
-
-function resolveObserveRefs(action: string, node: Record<string, unknown>): UiObserverRef[] {
-  const policy = node.observe;
-  if (policy === false) return [];
-  if (Array.isArray(policy)) {
-    return policy.filter(
-      (ref): ref is UiObserverRef => typeof ref === 'string' && ref.trim() !== '',
-    );
-  }
-  if (policy === true) return [...DEFAULT_UI_OBSERVER_REFS];
-  if (!DEFAULT_OBSERVED_UI_ACTIONS.has(action)) return [];
-  return [...DEFAULT_UI_OBSERVER_REFS];
-}
-
-function mergeObservations(
-  first: RecipeObservationResult['observations'],
-  second: RecipeObservationResult['observations'],
-): RecipeObservationResult['observations'] | undefined {
-  const merged = { ...(first ?? {}), ...(second ?? {}) };
-  return Object.keys(merged).length ? merged : undefined;
-}
-
-async function runPassiveObservers({
-  action,
-  node,
-  adapter,
-  context,
-  logger,
-}: {
-  action: string;
-  node: Record<string, unknown>;
-  adapter: ActionAdapter;
-  context: Parameters<ActionAdapter['execute']>[1];
-  logger: RecipeLogger;
-}): Promise<RecipeObservationResult> {
-  const refs = resolveObserveRefs(action, node);
-  if (refs.length === 0) return {};
-  if (!adapter.observe) {
-    return {
-      warnings: refs.map((ref) => ({
-        ref,
-        message: `No passive observer registered for ${action}.`,
-      })),
-    };
-  }
-  try {
-    return await adapter.observe(refs, node, context);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.warn(`passive observation failed for ${action}: ${message}`);
-    return {
-      warnings: refs.map((ref) => ({ ref, message })),
-    };
-  }
-}
 
 export function defineActionAdapter(adapter: ActionAdapter): ActionAdapter {
   if (!adapter.action.trim()) throw new Error('Action adapter action must be a non-empty string.');
@@ -438,6 +371,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                   traceWriter,
                   callStack: [],
                   maxCallDepth: DEFAULT_MAX_FLOW_CALL_DEPTH,
+                  logger: this.#logger,
                   publishHudProgress: (hudStatus, flowEvent) =>
                     this.#publishHudProgressOrRecord(traceWriter, hudStatus, {
                       ...flowEvent,

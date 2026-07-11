@@ -102,6 +102,7 @@
     "@types/node": "^25.9.1",
     "@types/react": "~19.2.10",
     "@types/react-dom": "^19",
+    "agent-device": "0.19.3",
     "dotenv-flow": "^4.1.0",
     "joi": "^17.13.3",
     "tsx": "^4.19.0",

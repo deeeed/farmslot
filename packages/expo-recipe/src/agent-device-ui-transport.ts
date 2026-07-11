@@ -1,7 +1,5 @@
 import path from 'node:path';
 
-import { createAgentDeviceClient } from 'agent-device';
-
 import type { UiObserverRef } from '@farmslot/protocol';
 import type {
   ActionExecutionContext,
@@ -10,7 +8,8 @@ import type {
   UiTransportResult,
 } from '@farmslot/recipe-harness';
 
-type AgentDeviceClient = ReturnType<typeof createAgentDeviceClient>;
+type AgentDeviceModule = typeof import('agent-device');
+type AgentDeviceClient = ReturnType<AgentDeviceModule['createAgentDeviceClient']>;
 
 export interface AgentDeviceUiTransportOptions {
   platform: 'ios' | 'android';
@@ -28,14 +27,7 @@ export interface AgentDeviceUiTransport extends UiActionTransport {
 export function createAgentDeviceUiTransport(
   options: AgentDeviceUiTransportOptions,
 ): AgentDeviceUiTransport {
-  const client =
-    options.client ??
-    createAgentDeviceClient({
-      session: options.session,
-      stateDir: options.stateDir,
-      lockPolicy: 'reject',
-      lockPlatform: options.platform,
-    });
+  let clientPromise = options.client ? Promise.resolve(options.client) : undefined;
   const selection = {
     platform: options.platform,
     target: 'mobile' as const,
@@ -43,8 +35,28 @@ export function createAgentDeviceUiTransport(
   };
   let opened = false;
 
-  async function ensureOpen(): Promise<void> {
-    if (opened) return;
+  async function resolveClient(): Promise<AgentDeviceClient> {
+    clientPromise ??= import('agent-device')
+      .then(({ createAgentDeviceClient }) =>
+        createAgentDeviceClient({
+          session: options.session,
+          stateDir: options.stateDir,
+          lockPolicy: 'reject',
+          lockPlatform: options.platform,
+        }),
+      )
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Native recipe actions require the optional agent-device provider: ${message}`,
+        );
+      });
+    return clientPromise;
+  }
+
+  async function ensureOpen(): Promise<AgentDeviceClient> {
+    const client = await resolveClient();
+    if (opened) return client;
     await client.apps.open({
       ...selection,
       app: options.app,
@@ -53,11 +65,12 @@ export function createAgentDeviceUiTransport(
       noRecord: true,
     });
     opened = true;
+    return client;
   }
 
   return {
     async execute(action, node, context) {
-      await ensureOpen();
+      const client = await ensureOpen();
       switch (action) {
         case 'ui.press':
           return client.interactions.press({
@@ -99,7 +112,7 @@ export function createAgentDeviceUiTransport(
       }
     },
     async observe(refs): Promise<RecipeObservationResult> {
-      await ensureOpen();
+      const client = await ensureOpen();
       const snapshot = await client.capture.snapshot({
         ...selection,
         session: options.session,
@@ -109,6 +122,7 @@ export function createAgentDeviceUiTransport(
     },
     async close() {
       if (!opened) return;
+      const client = await resolveClient();
       await client.sessions.close({ session: options.session, shutdown: false });
       opened = false;
     },
@@ -122,7 +136,11 @@ async function waitForNode(
   node: Record<string, unknown>,
 ): Promise<unknown> {
   const timeoutMs = positiveNumber(node.timeout_ms) ?? 10_000;
-  const expectedAbsent = node.expected === 'absent' || node.hidden === true;
+  const expectedAbsent =
+    node.expected === 'absent' ||
+    node.expected === 'hidden' ||
+    node.expected === 'not_present' ||
+    node.hidden === true;
   const deadline = Date.now() + timeoutMs;
   let nodeCount = 0;
   do {
