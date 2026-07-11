@@ -4420,6 +4420,7 @@ __metadata:
     "@farmslot/protocol": "workspace:*"
     "@farmslot/recipe-harness": "workspace:*"
     "@types/node": "npm:^22.0.0"
+    agent-device: "npm:0.19.3"
     eslint: "npm:^10.3.0"
     prettier: "npm:^3.8.3"
     tsx: "npm:^4.19.0"
@@ -7998,6 +7999,17 @@ __metadata:
   version: 7.1.4
   resolution: "agent-base@npm:7.1.4"
   checksum: 10c0/c2c9ab7599692d594b6a161559ada307b7a624fa4c7b03e3afdb5a5e31cd0e53269115b620fcab024c5ac6a6f37fa5eb2e004f076ad30f5f7e6b8b671f7b35fe
+  languageName: node
+  linkType: hard
+
+"agent-device@npm:0.19.3":
+  version: 0.19.3
+  resolution: "agent-device@npm:0.19.3"
+  dependencies:
+    yaml: "npm:^2.9.0"
+  bin:
+    agent-device: bin/agent-device.mjs
+  checksum: 10c0/41bde297489831bf24e214ecf44daa627421bb04d73c2a7e14d5aa80d810b15ac68fdd3ce8ed6ce31a1b068f09f4ee7147948f5d6d37114bfc46a08c3a96c276
   languageName: node
   linkType: hard
 
@@ -20933,7 +20945,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"yaml@npm:^2.6.1":
+"yaml@npm:^2.6.1, yaml@npm:^2.9.0":
   version: 2.9.0
   resolution: "yaml@npm:2.9.0"
   bin:

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "schema_version": 1,
+  "title": "Companion native settings proof",
+  "description": "Proves a recipe can drive and observe the Companion on the simulator assigned to its Farmslot slot.",
+  "validate": {
+    "workflow": {
+      "setup": [],
+      "entry": "open-review",
+      "nodes": {
+        "open-review": {
+          "action": "ui.press",
+          "text": "Review, tab, 1 of 8",
+          "observe": false,
+          "intent": "Open Companion review on the assigned simulator.",
+          "next": "open-settings"
+        },
+        "open-settings": {
+          "action": "ui.press",
+          "text": "Settings, tab, 8 of 8",
+          "intent": "Open Companion settings on the assigned simulator.",
+          "next": "confirm-settings"
+        },
+        "confirm-settings": {
+          "action": "ui.wait_for",
+          "text_contains": ["Gateway Connection"],
+          "timeout_ms": 20000,
+          "intent": "Confirm the native settings content is visible.",
+          "next": "capture-settings"
+        },
+        "capture-settings": {
+          "action": "ui.screenshot",
+          "path": "screenshots/companion-settings.png",
+          "label": "Companion settings on the assigned simulator",
+          "intent": "Capture the validated Companion settings screen.",
+          "next": "done"
+        },
+        "done": {
+          "action": "end",
+          "status": "pass"
+        }
+      },
+      "teardown": []
+    }
+  }
+}

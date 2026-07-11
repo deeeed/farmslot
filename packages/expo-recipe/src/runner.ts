@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -20,6 +21,10 @@ import {
   validateRecipeCliInput,
 } from '@farmslot/recipe-harness/cli/support';
 
+import {
+  type AgentDeviceUiTransport,
+  createAgentDeviceUiTransport,
+} from './agent-device-ui-transport.js';
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { readJsonFile } from './json.js';
 import {
@@ -70,11 +75,12 @@ export async function runExpoRecipeDocument(
 
   const manifest = (await readJsonFile(manifestPath)) as RecipeActionManifestDocument;
   const actions = getRecipeActionManifestActionNames(manifest);
+  const transport = createExpoUiTransport(options);
   const adapters = [
     ...createRedactingCoreAdapters(actions),
     ...createStandardUiAdapters({
       actions,
-      transport: createExpoUiTransport(options),
+      transport,
     }),
   ];
 
@@ -94,15 +100,19 @@ export async function runExpoRecipeDocument(
     },
   });
 
-  return runner.run({
-    recipePath: recipeAbsolutePath,
-    artifactsDir,
-    projectRoot,
-    env: {
-      FARMSLOT_RECIPE_ARTIFACTS_DIR: artifactsDir,
-    },
-    recordVideo: options.recordVideo,
-  });
+  try {
+    return await runner.run({
+      recipePath: recipeAbsolutePath,
+      artifactsDir,
+      projectRoot,
+      env: {
+        FARMSLOT_RECIPE_ARTIFACTS_DIR: artifactsDir,
+      },
+      recordVideo: options.recordVideo,
+    });
+  } finally {
+    await transport.close?.();
+  }
 }
 
 function createExpoRecordingTargetProvider(): RecordingTargetProvider {
@@ -142,14 +152,62 @@ export function resolveExpoVideoRecorder(env: Record<string, string | undefined>
   return createCaptureHelperVideoRecorder();
 }
 
-function createExpoUiTransport(options: ExpoRecipeRunOptions): UiActionTransport {
+type CloseableUiTransport = UiActionTransport & { close?(): Promise<void> };
+
+function createExpoUiTransport(options: ExpoRecipeRunOptions): CloseableUiTransport {
   if (options.dryRun === true) {
     return dryRunUiTransport(true);
   }
-  return createMetroRecipeBridgeUiTransport({
+  const metro = createMetroRecipeBridgeUiTransport({
     host: options.metroHost ?? process.env.FARMSLOT_RECIPE_METRO_HOST ?? '127.0.0.1',
     port: options.metroPort ?? resolveMetroRecipeBridgePort(),
   });
+  const native = resolveAgentDeviceTransport();
+  if (!native) return metro;
+  return {
+    execute(action, node, context) {
+      return isNativeUiAction(action)
+        ? native.execute(action, node, context)
+        : metro.execute(action, node, context);
+    },
+    observe(refs, node, context) {
+      return native.observe!(refs, node, context);
+    },
+    close() {
+      return native.close();
+    },
+  };
+}
+
+function resolveAgentDeviceTransport(): AgentDeviceUiTransport | undefined {
+  const platform = normalizeNativePlatform(process.env.PLATFORM);
+  const device =
+    platform === 'ios'
+      ? (process.env.IOS_SIMULATOR ?? process.env.SIMULATOR)
+      : (process.env.ADB_SERIAL ?? process.env.ANDROID_SERIAL ?? process.env.ANDROID_DEVICE);
+  const app = process.env.FARMSLOT_RECIPE_APP_ID;
+  if (!platform || !device || !app) return undefined;
+  const slot = process.env.FARMSLOT_SLOT_ID ?? path.basename(process.env.RUNTIME_DIR ?? 'local');
+  const deviceKey = device.replace(/[^a-zA-Z0-9._-]/gu, '-');
+  return createAgentDeviceUiTransport({
+    platform,
+    device,
+    app,
+    session: `farmslot-${slot}-${process.pid}`.replace(/[^a-zA-Z0-9._-]/gu, '-'),
+    stateDir:
+      process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR ??
+      path.join(os.tmpdir(), 'farmslot-agent-device', deviceKey),
+  });
+}
+
+function normalizeNativePlatform(value: string | undefined): 'ios' | 'android' | undefined {
+  if (value?.startsWith('ios')) return 'ios';
+  if (value?.startsWith('android')) return 'android';
+  return undefined;
+}
+
+function isNativeUiAction(action: string): boolean {
+  return ['ui.press', 'ui.set_input', 'ui.scroll', 'ui.wait_for', 'ui.screenshot'].includes(action);
 }
 
 function dryRunUiTransport(isDryRun: boolean): UiActionTransport {

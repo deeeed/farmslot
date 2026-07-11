@@ -4,6 +4,7 @@ All notable changes to `@farmslot/mobile` are tracked here.
 
 ## Unreleased
 
+- Add an executable native settings recipe using the slot-assigned simulator and keep warm Metro services alive after profile preparation.
 - Add passive UI observation handling to the Companion recipe bridge.
 - Add Enter to Companion tmux shortcuts and a native terminal history view toggle.
 - Enable pinch zoom, pan, and double-tap reset in Companion fullscreen image viewers.

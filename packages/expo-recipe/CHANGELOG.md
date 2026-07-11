@@ -4,6 +4,7 @@ All notable changes to `@farmslot/expo-recipe` are tracked here.
 
 ## Unreleased
 
+- Drive Expo and React Native recipe UI actions through Agent Device on the simulator or device assigned by Farmslot, including passive native UI observations and screenshot artifacts.
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.1.2 - 2026-07-09

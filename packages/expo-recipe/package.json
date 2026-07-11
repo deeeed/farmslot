@@ -17,7 +17,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
     "build": "yarn workspace @farmslot/protocol build && yarn workspace @farmslot/recipe-harness build && rm -rf dist && tsc --project tsconfig.build.json",
-    "test": "tsx --tsconfig tsconfig.json --test src/expo-recipe.test.ts src/metro-recipe-bridge-transport.test.ts",
+    "test": "tsx --tsconfig tsconfig.json --test src/agent-device-ui-transport.test.ts src/expo-recipe.test.ts src/metro-recipe-bridge-transport.test.ts",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\" \"templates/src/farmslot/**/*.{ts,tsx}\"",
@@ -27,7 +27,8 @@
   },
   "dependencies": {
     "@farmslot/protocol": "workspace:*",
-    "@farmslot/recipe-harness": "workspace:*"
+    "@farmslot/recipe-harness": "workspace:*",
+    "agent-device": "0.19.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
