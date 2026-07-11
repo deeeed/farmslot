@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { assertAgentDeviceNodeVersion } from './agent-device-ui-transport.js';
 import {
   DEFAULT_EXPO_RECIPE_MANIFEST_PATH,
   DEFAULT_EXPO_RECIPE_PATH,
@@ -13,7 +14,6 @@ import {
   runExpoRecipeDoctor,
   runExpoRecipeDocument,
 } from './index.js';
-import { assertAgentDeviceNodeVersion } from './runner.js';
 
 test('native Agent Device transport reports its Node runtime requirement', () => {
   assert.doesNotThrow(() => assertAgentDeviceNodeVersion('22.12.0'));

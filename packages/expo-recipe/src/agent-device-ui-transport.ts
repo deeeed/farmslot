@@ -36,21 +36,24 @@ export function createAgentDeviceUiTransport(
   let opened = false;
 
   async function resolveClient(): Promise<AgentDeviceClient> {
-    clientPromise ??= import('agent-device')
-      .then(({ createAgentDeviceClient }) =>
-        createAgentDeviceClient({
-          session: options.session,
-          stateDir: options.stateDir,
-          lockPolicy: 'reject',
-          lockPlatform: options.platform,
-        }),
-      )
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(
-          `Native recipe actions require the optional agent-device provider: ${message}`,
-        );
-      });
+    if (!clientPromise) {
+      assertAgentDeviceNodeVersion(process.versions.node);
+      clientPromise = import('agent-device')
+        .then(({ createAgentDeviceClient }) =>
+          createAgentDeviceClient({
+            session: options.session,
+            stateDir: options.stateDir,
+            lockPolicy: 'reject',
+            lockPlatform: options.platform,
+          }),
+        )
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Native recipe actions require the optional agent-device provider: ${message}`,
+          );
+        });
+    }
     return clientPromise;
   }
 
@@ -142,6 +145,14 @@ export function createAgentDeviceUiTransport(
       opened = false;
     },
   };
+}
+
+export function assertAgentDeviceNodeVersion(version: string): void {
+  const [major = 0, minor = 0] = version.split('.').map(Number);
+  if (major > 22 || (major === 22 && minor >= 12)) return;
+  throw new Error(
+    `Native Agent Device recipe actions require Node >=22.12; current runtime is ${version}. Non-native @farmslot/expo-recipe usage supports Node >=20.10.`,
+  );
 }
 
 function requireSettledInteraction(action: string, result: unknown): unknown {
@@ -277,7 +288,9 @@ function snapshotMatches(
     if (testId && candidate.identifier !== testId) return false;
     if (
       exactText &&
-      ![candidate.label, candidate.value, candidate.identifier].some((value) => value === exactText)
+      ![candidate.label, candidate.value, candidate.identifier].some(
+        (value) => typeof value === 'string' && value.includes(exactText),
+      )
     ) {
       return false;
     }

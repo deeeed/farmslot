@@ -2127,6 +2127,9 @@ test('CDP navigation waits for a quiet render frame after route readiness', asyn
   const settleExpression = expressions.find((expression) => expression.startsWith('new Promise('));
   assert.match(settleExpression ?? '', /MutationObserver/u);
   assert.match(settleExpression ?? '', /requestAnimationFrame/u);
+  assert.match(settleExpression ?? '', /element\.shadowRoot/u);
+  assert.match(settleExpression ?? '', /setInterval\(discoverRoots/u);
+  assert.match(settleExpression ?? '', /reject\(new Error\('DOM remained active/u);
 });
 
 test('CDP deep text matching uses rendered text without scanning textContent', async () => {
@@ -2144,6 +2147,23 @@ test('CDP deep text matching uses rendered text without scanning textContent', a
   assert.match(expressions[0] ?? '', /renderedTextDeep/u);
   assert.match(expressions[0] ?? '', /root\.body\.innerText/u);
   assert.doesNotMatch(expressions[0] ?? '', /textContent/u);
+});
+
+test('CDP visible observations omit labels for non-rendered targets', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(_method: string, params: Record<string, unknown>) {
+      expressions.push(String(params.expression));
+      return { result: { value: { items: [], hidden_or_offscreen: [] } } };
+    },
+  } as never);
+
+  await page.observe(['ui.visible']);
+
+  const expression = expressions[0] ?? '';
+  assert.match(expression, /label: includeLabel \? textFor\(el\) : undefined/u);
+  assert.match(expression, /itemFor\(el, rendered \? rect : undefined, rendered\)/u);
+  assert.doesNotMatch(expression, /el\.textContent/u);
 });
 
 test('extracts browser extension ids from CDP targets', () => {

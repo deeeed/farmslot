@@ -97,6 +97,10 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     { text_contains: ['Settings', 'Gateway Connection'] },
     context,
   );
+  assert.deepEqual(await transport.execute('ui.wait_for', { text: 'Settings' }, context), {
+    matched: true,
+    expected: 'present',
+  });
   for (const expected of ['hidden', 'not_present']) {
     const result = await transport.execute(
       'ui.wait_for',

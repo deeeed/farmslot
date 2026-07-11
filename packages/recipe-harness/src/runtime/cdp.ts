@@ -259,7 +259,7 @@ export class CdpWebPage {
     const quietMs = Math.min(100, Math.max(1, Math.floor(timeoutMs / 2)));
     await withTimeout(
       this.evaluate(
-        `new Promise((resolve) => { const quietMs = ${quietMs}; let quietTimer; let finished = false; const finish = () => { if (finished) return; finished = true; observer.disconnect(); clearTimeout(quietTimer); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observer = new MutationObserver(schedule); observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true }); requestAnimationFrame(() => requestAnimationFrame(schedule)); setTimeout(finish, ${timeoutMs}); })`,
+        `new Promise((resolve, reject) => { const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let finished = false; const cleanup = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); }; const finish = () => { if (finished) return; finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); const observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${timeoutMs}ms')); }, ${timeoutMs}); })`,
       ),
       timeoutMs + 50,
       `CDP document did not settle within ${timeoutMs}ms`,
@@ -650,9 +650,9 @@ function visibleTargetsExpression(): string {
       const index = Array.from(parent.children).filter((child) => child.tagName === el.tagName).indexOf(el) + 1;
       return tag + ':nth-of-type(' + index + ')';
     };
-    const itemFor = (el, rect) => ({
+    const itemFor = (el, rect, includeLabel) => ({
       role: el.getAttribute('role') || (el.tagName.toLowerCase() === 'a' ? 'link' : el.tagName.toLowerCase() === 'button' ? 'button' : undefined),
-      label: textFor(el),
+      label: includeLabel ? textFor(el) : undefined,
       test_id: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || undefined,
       selector: cssPath(el),
       enabled: !(el.disabled || el.getAttribute('aria-disabled') === 'true'),
@@ -667,11 +667,12 @@ function visibleTargetsExpression(): string {
       const hasBox = rect.width > 0 && rect.height > 0;
       const onScreen = hasBox && rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;
       const style = getComputedStyle(el);
-      const visible = onScreen && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || 1) > 0;
+      const rendered = hasBox && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || 1) > 0;
+      const visible = onScreen && rendered;
       if (visible && items.length < visibleLimit) {
-        items.push(itemFor(el, rect));
+        items.push(itemFor(el, rect, true));
       } else if (!visible && hidden_or_offscreen.length < hiddenLimit) {
-        hidden_or_offscreen.push({ ...itemFor(el, hasBox ? rect : undefined), reason: hasBox ? 'offscreen_or_hidden' : 'no_box' });
+        hidden_or_offscreen.push({ ...itemFor(el, rendered ? rect : undefined, rendered), reason: rendered ? 'offscreen' : 'hidden_or_no_box' });
       }
     }
     return {
