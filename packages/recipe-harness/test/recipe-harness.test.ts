@@ -1852,6 +1852,22 @@ test('maps React Native bridge transport commands without project-specific ui re
       runner_protocol_version: 1,
       action_registry_version: 1,
       supported_official_actions: ['ui.scroll', 'app.hud', 'end'],
+      observers: [
+        {
+          ref: 'ui.screen',
+          description: 'Current native screen.',
+          default_for: ['ui.scroll'],
+          cost: 'cheap',
+          redaction: 'none',
+        },
+        {
+          ref: 'ui.visible',
+          description: 'Current visible native controls.',
+          default_for: ['ui.scroll'],
+          cost: 'cheap',
+          redaction: 'labels-only',
+        },
+      ],
     };
     const commands: ReactNativeBridgeCommand[] = [];
     const transport = createReactNativeBridgeUiTransport({
@@ -2001,6 +2017,94 @@ test('CDP observations and selectors traverse open shadow roots', async () => {
   assert.match(observationExpression, /'data-test-id'/u);
   assert.match(observationExpression, /instanceof ShadowRoot/u);
   assert.doesNotMatch(observationExpression, /getAttribute\('value'\)/u);
+});
+
+test('CDP navigation waits for the loaded document before returning', async () => {
+  let loadHandler: (() => void) | undefined;
+  let ready = false;
+  const calls: string[] = [];
+  const page = new CdpWebPage({
+    on(method: string, handler: () => void) {
+      assert.equal(method, 'Page.loadEventFired');
+      loadHandler = handler;
+      return () => {
+        loadHandler = undefined;
+      };
+    },
+    async call(method: string, params: Record<string, unknown>) {
+      calls.push(method);
+      if (method === 'Runtime.evaluate') {
+        const expression = String(params.expression);
+        if (expression.startsWith('new URL(')) {
+          return { result: { value: 'https://example.test/next' } };
+        }
+        return {
+          result: {
+            value: { ready, url: 'https://example.test/next' },
+          },
+        };
+      }
+      if (method === 'Page.navigate') {
+        setTimeout(() => {
+          ready = true;
+          loadHandler?.();
+        }, 20);
+        return { loaderId: 'new-document' };
+      }
+      return {};
+    },
+  } as never);
+
+  await page.navigate('https://example.test/next', 1_000);
+
+  assert.deepEqual(calls, ['Runtime.evaluate', 'Page.navigate', 'Runtime.evaluate']);
+  assert.equal(loadHandler, undefined);
+});
+
+test('CDP same-document navigation waits for the requested location', async () => {
+  let pollCount = 0;
+  const page = new CdpWebPage({
+    on() {
+      return () => {};
+    },
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.navigate') return {};
+      const expression = String(params.expression);
+      if (expression.startsWith('new URL(')) {
+        return { result: { value: 'https://example.test/#ready' } };
+      }
+      pollCount += 1;
+      return {
+        result: {
+          value: {
+            ready: true,
+            url: pollCount > 1 ? 'https://example.test/#ready' : 'https://example.test/#old',
+          },
+        },
+      };
+    },
+  } as never);
+
+  await page.navigate('#ready', 1_000);
+
+  assert.equal(pollCount, 2);
+});
+
+test('CDP deep text matching uses rendered text without scanning textContent', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      assert.equal(method, 'Runtime.evaluate');
+      expressions.push(String(params.expression));
+      return { result: { value: true } };
+    },
+  } as never);
+
+  await page.waitFor({ text: 'Review Workspace', timeoutMs: 100 });
+
+  assert.match(expressions[0] ?? '', /renderedTextDeep/u);
+  assert.match(expressions[0] ?? '', /root\.body\.innerText/u);
+  assert.doesNotMatch(expressions[0] ?? '', /textContent/u);
 });
 
 test('extracts browser extension ids from CDP targets', () => {

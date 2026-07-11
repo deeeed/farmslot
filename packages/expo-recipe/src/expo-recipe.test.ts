@@ -13,6 +13,16 @@ import {
   runExpoRecipeDoctor,
   runExpoRecipeDocument,
 } from './index.js';
+import { assertAgentDeviceNodeVersion } from './runner.js';
+
+test('native Agent Device transport reports its Node runtime requirement', () => {
+  assert.doesNotThrow(() => assertAgentDeviceNodeVersion('22.12.0'));
+  assert.doesNotThrow(() => assertAgentDeviceNodeVersion('23.0.0'));
+  assert.throws(
+    () => assertAgentDeviceNodeVersion('20.10.0'),
+    /Native Agent Device recipe actions require Node >=22\.12/u,
+  );
+});
 
 test('installs the Expo recipe scaffold idempotently', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-'));

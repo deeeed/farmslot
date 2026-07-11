@@ -11,6 +11,22 @@ const manifest = {
   runner_protocol_version: 1,
   action_registry_version: 1,
   supported_official_actions: ['ui.press', 'end', 'call'],
+  observers: [
+    {
+      ref: 'ui.screen',
+      description: 'Current test screen.',
+      default_for: ['ui.press'],
+      cost: 'cheap',
+      redaction: 'none',
+    },
+    {
+      ref: 'ui.visible',
+      description: 'Current visible test controls.',
+      default_for: ['ui.press'],
+      cost: 'cheap',
+      redaction: 'labels-only',
+    },
+  ],
 } as const;
 
 async function runRecipe(

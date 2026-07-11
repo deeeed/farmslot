@@ -201,8 +201,57 @@ export class CdpWebPage {
     return new CdpWebPage(session);
   }
 
-  async navigate(url: string): Promise<unknown> {
-    return this.session.call('Page.navigate', { url });
+  async navigate(url: string, timeoutMs = 10_000): Promise<unknown> {
+    const deadline = Date.now() + timeoutMs;
+    const expectedUrl = await this.evaluate<string>(
+      `new URL(${JSON.stringify(url)}, location.href).href`,
+    );
+    let notifyLoaded: (() => void) | undefined;
+    const loaded = new Promise<void>((resolve) => {
+      notifyLoaded = resolve;
+    });
+    const unsubscribe = this.session.on('Page.loadEventFired', () => notifyLoaded?.());
+    try {
+      const result = await this.session.call<{ errorText?: string; loaderId?: string }>(
+        'Page.navigate',
+        { url },
+      );
+      if (result.errorText) throw new Error(`CDP navigation failed: ${result.errorText}`);
+      if (result.loaderId) {
+        await withTimeout(
+          loaded,
+          Math.max(1, deadline - Date.now()),
+          `CDP navigation timed out after ${timeoutMs}ms`,
+        );
+      }
+      await this.waitForDocumentReady({
+        expectedUrl: result.loaderId ? undefined : expectedUrl,
+        timeoutMs: Math.max(1, deadline - Date.now()),
+      });
+      return result;
+    } finally {
+      unsubscribe();
+    }
+  }
+
+  async waitForDocumentReady(options: { expectedUrl?: string; timeoutMs?: number }): Promise<void> {
+    const timeoutMs = options.timeoutMs ?? 10_000;
+    const deadline = Date.now() + timeoutMs;
+    let lastError: unknown;
+    while (Date.now() <= deadline) {
+      try {
+        const state = await this.evaluate<{ ready: boolean; url: string }>(
+          `(() => ({ ready: document.readyState === 'interactive' || document.readyState === 'complete', url: location.href }))()`,
+        );
+        if (state.ready && (!options.expectedUrl || state.url === options.expectedUrl)) return;
+      } catch (error) {
+        // Runtime contexts can disappear briefly while a document navigation commits.
+        lastError = error;
+      }
+      await sleep(50);
+    }
+    const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
+    throw new Error(`CDP document was not ready within ${timeoutMs}ms${detail}`);
   }
 
   async evaluate<T = unknown>(expression: string): Promise<T> {
@@ -458,7 +507,12 @@ export function createCdpWebUiTransport(
         switch (action) {
           case 'ui.navigate': {
             const url = asString(node.url ?? node.target, 'ui.navigate.url');
-            return page.navigate(url);
+            return page.navigate(
+              url,
+              node.timeout_ms == null
+                ? undefined
+                : asNumber(node.timeout_ms, 'ui.navigate.timeout_ms'),
+            );
           }
           case 'ui.press': {
             const selector = selectorForUiInput(node);
@@ -874,9 +928,23 @@ function deepQueryHelpersExpression(): string {
       return matches;
     };
     const querySelectorDeep = (selector, root = document) => querySelectorAllDeep(selector, root)[0] ?? null;
-    const textIncludesDeep = (text) => querySelectorAllDeep('*').some((element) =>
-      String(element.innerText || element.textContent || '').includes(text)
-    );
+    const renderedTextDeep = (root = document) => {
+      const chunks = [];
+      if (root instanceof Document) {
+        if (root.body) chunks.push(root.body.innerText);
+      } else {
+        for (const element of root.children) {
+          if (element.getClientRects().length > 0) chunks.push(element.innerText);
+        }
+      }
+      for (const element of root.querySelectorAll('*')) {
+        if (element.shadowRoot && element.getClientRects().length > 0) {
+          chunks.push(renderedTextDeep(element.shadowRoot));
+        }
+      }
+      return chunks.join('\\n');
+    };
+    const textIncludesDeep = (text) => renderedTextDeep().includes(text);
   `;
 }
 

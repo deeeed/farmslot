@@ -31,7 +31,11 @@ import {
   type RecipeLibraryResolution,
   type ResolvedLibraryFlow,
 } from './library.js';
-import { mergeObservations, runPassiveObservers } from './passive-observations.js';
+import {
+  defaultObserverRefsFromManifest,
+  mergeObservations,
+  runPassiveObservers,
+} from './passive-observations.js';
 import { evaluateNodeGate } from './predicates.js';
 import {
   cleanupAbortedRunVideoRecording,
@@ -161,6 +165,7 @@ class DefaultRecipeRunner implements RecipeRunner {
   readonly #adapters: ReadonlyMap<string, ActionAdapter>;
   readonly #preconditions: ReadonlyMap<string, PreconditionChecker>;
   readonly #logger: RecipeLogger;
+  readonly #defaultObserverRefs;
   readonly #hud: RecipeHudOptions | false | undefined;
   readonly #runnerProvenance: CreateRecipeRunnerOptions['runner'];
   readonly #recording: RecipeRecordingOptions | undefined;
@@ -178,6 +183,7 @@ class DefaultRecipeRunner implements RecipeRunner {
     this.#adapters = adapters;
     this.#preconditions = preconditions;
     this.#logger = logger;
+    this.#defaultObserverRefs = defaultObserverRefsFromManifest(actionManifest);
     this.#hud = hud;
     this.#runnerProvenance = runnerProvenance;
     this.#recording = recording;
@@ -372,6 +378,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                   callStack: [],
                   maxCallDepth: DEFAULT_MAX_FLOW_CALL_DEPTH,
                   logger: this.#logger,
+                  defaultObserverRefs: this.#defaultObserverRefs,
                   publishHudProgress: (hudStatus, flowEvent) =>
                     this.#publishHudProgressOrRecord(traceWriter, hudStatus, {
                       ...flowEvent,
@@ -387,6 +394,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                   adapter: adapter!,
                   context,
                   logger: this.#logger,
+                  defaultObserverRefs: this.#defaultObserverRefs,
                 })
               : {};
           if (result.output !== undefined) outputs.set(activeNodeId, result.output);

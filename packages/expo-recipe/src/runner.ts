@@ -187,6 +187,7 @@ function resolveAgentDeviceTransport(): AgentDeviceUiTransport | undefined {
       : (process.env.ADB_SERIAL ?? process.env.ANDROID_SERIAL ?? process.env.ANDROID_DEVICE);
   const app = process.env.FARMSLOT_RECIPE_APP_ID;
   if (!platform || !device || !app) return undefined;
+  assertAgentDeviceNodeVersion(process.versions.node);
   const slot = process.env.FARMSLOT_SLOT_ID ?? path.basename(process.env.RUNTIME_DIR ?? 'local');
   const deviceKey = device.replace(/[^a-zA-Z0-9._-]/gu, '-');
   return createAgentDeviceUiTransport({
@@ -198,6 +199,14 @@ function resolveAgentDeviceTransport(): AgentDeviceUiTransport | undefined {
       process.env.FARMSLOT_AGENT_DEVICE_STATE_DIR ??
       path.join(os.tmpdir(), 'farmslot-agent-device', deviceKey),
   });
+}
+
+export function assertAgentDeviceNodeVersion(version: string): void {
+  const [major = 0, minor = 0] = version.split('.').map(Number);
+  if (major > 22 || (major === 22 && minor >= 12)) return;
+  throw new Error(
+    `Native Agent Device recipe actions require Node >=22.12; current runtime is ${version}. Non-native @farmslot/expo-recipe usage supports Node >=20.10.`,
+  );
 }
 
 function normalizeNativePlatform(value: string | undefined): 'ios' | 'android' | undefined {

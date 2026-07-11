@@ -5,7 +5,11 @@ import { JsonTraceWriter } from '../node/writers.js';
 
 import { resolveNextNode } from './graph.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
-import { mergeObservations, runPassiveObservers } from './passive-observations.js';
+import {
+  type DefaultObserverRefs,
+  mergeObservations,
+  runPassiveObservers,
+} from './passive-observations.js';
 import { evaluateNodeGate, evaluatePredicate, getPathValue } from './predicates.js';
 import { traceNodeMetadata } from './trace.js';
 import type { ActionAdapter, ActionResult, RecipeLogger } from './types.js';
@@ -129,6 +133,7 @@ export async function executeInlineFlowCall({
   callStack,
   maxCallDepth,
   logger,
+  defaultObserverRefs,
   publishHudProgress,
 }: {
   callNodeId: string;
@@ -140,6 +145,7 @@ export async function executeInlineFlowCall({
   callStack: readonly string[];
   maxCallDepth: number;
   logger: RecipeLogger;
+  defaultObserverRefs: DefaultObserverRefs;
   publishHudProgress?: FlowHudPublisher;
 }): Promise<ActionResult> {
   const ref = typeof node.ref === 'string' && node.ref.trim() ? node.ref.trim() : '';
@@ -167,6 +173,7 @@ export async function executeInlineFlowCall({
     callStack: nextCallStack,
     maxCallDepth,
     logger,
+    defaultObserverRefs,
     publishHudProgress,
   });
   if (flow.postcondition != null && !evaluatePredicate(output, flow.postcondition)) {
@@ -187,6 +194,7 @@ async function executeInlineFlow({
   callStack,
   maxCallDepth,
   logger,
+  defaultObserverRefs,
   publishHudProgress,
 }: {
   callNodeId: string;
@@ -200,6 +208,7 @@ async function executeInlineFlow({
   callStack: readonly string[];
   maxCallDepth: number;
   logger: RecipeLogger;
+  defaultObserverRefs: DefaultObserverRefs;
   publishHudProgress?: FlowHudPublisher;
 }): Promise<Record<string, unknown>> {
   let currentNodeId: string | undefined = flow.entry;
@@ -277,6 +286,7 @@ async function executeInlineFlow({
               callStack,
               maxCallDepth,
               logger,
+              defaultObserverRefs,
               publishHudProgress,
             })
           : await adapter!.execute(flowNode, childContext);
@@ -288,6 +298,7 @@ async function executeInlineFlow({
               adapter: adapter!,
               context: childContext,
               logger,
+              defaultObserverRefs,
             })
           : {};
       if (result.output !== undefined) {
@@ -310,6 +321,7 @@ async function executeInlineFlow({
         ok: true,
         next: resolveNextNode(flowNode, result),
         status: result.status,
+        case: result.case,
         output: result.output,
         ...(observations ? { observations } : {}),
         ...(observationWarnings.length ? { observationWarnings } : {}),
