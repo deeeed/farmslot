@@ -1,0 +1,92 @@
+{
+  "$schema": "https://farmslot.io/schemas/recipe-v1.schema.json",
+  "schema_version": 1,
+  "title": "Command Center passive observations proof",
+  "description": "Proves default, selected, and disabled passive UI observation policies through the Command Center CDP transport.",
+  "validate": {
+    "workflow": {
+      "setup": [],
+      "entry": "open-dispatch",
+      "nodes": {
+        "open-dispatch": {
+          "action": "ui.navigate",
+          "target": "#dev/dispatch",
+          "intent": "Open the isolated dispatch fixture.",
+          "next": "confirm-dispatch"
+        },
+        "confirm-dispatch": {
+          "action": "ui.wait_for",
+          "text": "Dispatch Wizard",
+          "timeout_ms": 10000,
+          "intent": "Confirm the isolated dispatch fixture is ready.",
+          "next": "open-ready"
+        },
+        "open-ready": {
+          "action": "ui.press",
+          "text": "Ready Workspace",
+          "intent": "Open Ready Workspace with default observations.",
+          "next": "confirm-ready"
+        },
+        "confirm-ready": {
+          "action": "ui.wait_for",
+          "text": "Ready Workspace",
+          "timeout_ms": 10000,
+          "intent": "Confirm Ready Workspace is visible.",
+          "next": "reopen-dispatch"
+        },
+        "reopen-dispatch": {
+          "action": "ui.navigate",
+          "target": "#dev/dispatch",
+          "intent": "Return to the isolated dispatch fixture.",
+          "next": "open-review"
+        },
+        "open-review": {
+          "action": "ui.press",
+          "text": "Review Workspace",
+          "observe": ["ui.visible"],
+          "intent": "Open Review Workspace with visible-target observation only.",
+          "next": "confirm-review"
+        },
+        "confirm-review": {
+          "action": "ui.wait_for",
+          "text": "Review Workspace",
+          "timeout_ms": 10000,
+          "intent": "Confirm Review Workspace is visible.",
+          "next": "reopen-dispatch-final"
+        },
+        "reopen-dispatch-final": {
+          "action": "ui.navigate",
+          "target": "#dev/dispatch",
+          "intent": "Return to the fixture for the disabled-observation transition.",
+          "next": "open-runs"
+        },
+        "open-runs": {
+          "action": "ui.press",
+          "text": "Runs",
+          "observe": false,
+          "intent": "Open Runs without passive observations.",
+          "next": "confirm-runs"
+        },
+        "confirm-runs": {
+          "action": "ui.wait_for",
+          "text": "Runs",
+          "timeout_ms": 10000,
+          "intent": "Confirm Runs is visible after the disabled-observation action.",
+          "next": "capture-runs"
+        },
+        "capture-runs": {
+          "action": "ui.screenshot",
+          "path": "screenshots/command-center-passive-observations.png",
+          "label": "Command Center after passive observation policy transitions",
+          "intent": "Capture the final Command Center state.",
+          "next": "done"
+        },
+        "done": {
+          "action": "end",
+          "status": "pass"
+        }
+      },
+      "teardown": []
+    }
+  }
+}
