@@ -460,7 +460,7 @@ export class CdpWebPage {
       try {
         if (ref === 'ui.screen') {
           observations[ref] = await this.evaluate(
-            `(() => ({ provider: 'cdp-web', name: document.title || location.pathname || location.hash || 'Browser', title: document.title || undefined, route: location.hash || location.pathname || undefined, url: location.href }))()`,
+            `(() => { const hashRoute = location.hash && !location.hash.includes('=') ? location.hash.split('?')[0] : undefined; return { provider: 'cdp-web', name: document.title || location.pathname || hashRoute || 'Browser', title: document.title || undefined, route: hashRoute || location.pathname || undefined, url: location.origin + location.pathname }; })()`,
           );
         } else if (ref === 'ui.visible') {
           observations[ref] = await this.evaluate(visibleTargetsExpression());
@@ -666,8 +666,7 @@ function visibleTargetsExpression(): string {
       const rect = el.getBoundingClientRect();
       const hasBox = rect.width > 0 && rect.height > 0;
       const onScreen = hasBox && rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;
-      const style = getComputedStyle(el);
-      const rendered = hasBox && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || 1) > 0;
+      const rendered = hasBox && isRenderedDeep(el);
       const visible = onScreen && rendered;
       if (visible && items.length < visibleLimit) {
         items.push(itemFor(el, rect, true));
@@ -957,7 +956,7 @@ function waitForPredicateExpression(options: {
 }
 
 function visibleSelectorExpression(selector: string): string {
-  return `(() => { const el = querySelectorDeep(${JSON.stringify(selector)}); if (!el) return false; const rect = el.getBoundingClientRect(); const style = window.getComputedStyle(el); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; })()`;
+  return `(() => { const el = querySelectorDeep(${JSON.stringify(selector)}); return Boolean(el && isRenderedDeep(el)); })()`;
 }
 
 function deepQueryHelpersExpression(): string {
@@ -970,17 +969,27 @@ function deepQueryHelpersExpression(): string {
       return matches;
     };
     const querySelectorDeep = (selector, root = document) => querySelectorAllDeep(selector, root)[0] ?? null;
+    const isRenderedDeep = (element) => {
+      if (!element || element.getClientRects().length === 0) return false;
+      let current = element;
+      while (current) {
+        const style = getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) <= 0) return false;
+        const root = current.getRootNode();
+        current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+      }
+      return true;
+    };
     const renderedTextDeep = (root = document) => {
       const chunks = [];
-      if (root instanceof Document) {
-        if (root.body) chunks.push(root.body.innerText);
-      } else {
-        for (const element of root.children) {
-          if (element.getClientRects().length > 0) chunks.push(element.innerText);
-        }
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        if (node.parentElement && isRenderedDeep(node.parentElement)) chunks.push(node.nodeValue || '');
+        node = walker.nextNode();
       }
       for (const element of root.querySelectorAll('*')) {
-        if (element.shadowRoot && element.getClientRects().length > 0) {
+        if (element.shadowRoot && isRenderedDeep(element)) {
           chunks.push(renderedTextDeep(element.shadowRoot));
         }
       }

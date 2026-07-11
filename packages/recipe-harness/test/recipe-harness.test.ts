@@ -2145,7 +2145,8 @@ test('CDP deep text matching uses rendered text without scanning textContent', a
   await page.waitFor({ text: 'Review Workspace', timeoutMs: 100 });
 
   assert.match(expressions[0] ?? '', /renderedTextDeep/u);
-  assert.match(expressions[0] ?? '', /root\.body\.innerText/u);
+  assert.match(expressions[0] ?? '', /NodeFilter\.SHOW_TEXT/u);
+  assert.match(expressions[0] ?? '', /isRenderedDeep\(node\.parentElement\)/u);
   assert.doesNotMatch(expressions[0] ?? '', /textContent/u);
 });
 
@@ -2163,7 +2164,26 @@ test('CDP visible observations omit labels for non-rendered targets', async () =
   const expression = expressions[0] ?? '';
   assert.match(expression, /label: includeLabel \? textFor\(el\) : undefined/u);
   assert.match(expression, /itemFor\(el, rendered \? rect : undefined, rendered\)/u);
+  assert.match(expression, /root instanceof ShadowRoot \? root\.host/u);
+  assert.match(expression, /Number\(style\.opacity \|\| 1\) <= 0/u);
   assert.doesNotMatch(expression, /el\.textContent/u);
+});
+
+test('CDP screen observations omit query parameters and sensitive fragments', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(_method: string, params: Record<string, unknown>) {
+      expressions.push(String(params.expression));
+      return { result: { value: {} } };
+    },
+  } as never);
+
+  await page.observe(['ui.screen']);
+
+  const expression = expressions[0] ?? '';
+  assert.match(expression, /location\.origin \+ location\.pathname/u);
+  assert.match(expression, /!location\.hash\.includes\('='\)/u);
+  assert.doesNotMatch(expression, /url: location\.href/u);
 });
 
 test('extracts browser extension ids from CDP targets', () => {
