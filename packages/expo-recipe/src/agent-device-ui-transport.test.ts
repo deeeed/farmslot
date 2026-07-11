@@ -20,15 +20,26 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     interactions: {
       async press(options: Record<string, unknown>) {
         calls.push({ method: 'press', options });
-        return { pressed: true };
+        return {
+          pressed: true,
+          targetHittable: false,
+          evidence: { changedFromBefore: true },
+          settle: { settled: true },
+        };
       },
       async fill(options: Record<string, unknown>) {
         calls.push({ method: 'fill', options });
-        return { filled: true };
+        return { filled: true, settle: { settled: true } };
       },
       async scroll(options: Record<string, unknown>) {
         calls.push({ method: 'scroll', options });
         return { scrolled: true };
+      },
+    },
+    command: {
+      async wait(options: Record<string, unknown>) {
+        calls.push({ method: 'wait-stable', options });
+        return { stable: true };
       },
     },
     capture: {
@@ -80,6 +91,7 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
   });
 
   await transport.execute('ui.press', { test_id: 'settings-tab', timeout_ms: 2_000 }, context);
+  await transport.execute('ui.scroll', { direction: 'down', timeout_ms: 2_000 }, context);
   await transport.execute(
     'ui.wait_for',
     { text_contains: ['Settings', 'Gateway Connection'] },
@@ -118,6 +130,7 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     calls.find((call) => call.method === 'press')?.options.selector,
     'id="settings-tab"',
   );
+  assert.equal(calls.find((call) => call.method === 'wait-stable')?.options.stable, true);
   assert.deepEqual(observed?.observations?.['ui.screen'], {
     provider: 'agent-device',
     name: 'Farmslot Dev',
@@ -143,7 +156,10 @@ test('observe false remains a harness concern and does not alter provider select
   const client = {
     apps: { open: async () => ({ session: 's', identifiers: {} }) },
     interactions: {
-      press: async (options: Record<string, unknown>) => options,
+      press: async (options: Record<string, unknown>) => ({
+        ...options,
+        settle: { settled: true },
+      }),
     },
     sessions: { close: async () => ({ session: 's', identifiers: {} }) },
   } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
@@ -160,4 +176,41 @@ test('observe false remains a harness concern and does not alter provider select
     {} as ActionExecutionContext,
   );
   assert.equal((result as { selector: string }).selector, 'label="Settings"');
+});
+
+test('rejects unsettled native actions and warns for idempotent non-hittable actions', async () => {
+  const results = [
+    { settle: { settled: false, hint: 'UI kept changing' } },
+    {
+      settle: { settled: true },
+      targetHittable: false,
+      evidence: { changedFromBefore: false },
+    },
+  ];
+  const client = {
+    apps: { open: async () => ({ session: 's', identifiers: {} }) },
+    interactions: { press: async () => results.shift() },
+    sessions: { close: async () => ({ session: 's', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'ios',
+    device: 'fs-3',
+    app: 'net.siteed.farmslot.development',
+    session: 's',
+    client,
+  });
+
+  await assert.rejects(
+    () => transport.execute('ui.press', { text: 'Settings' }, {} as ActionExecutionContext),
+    /did not reach a settled native UI state: UI kept changing/u,
+  );
+  const result = await transport.execute(
+    'ui.press',
+    { text: 'Settings' },
+    {} as ActionExecutionContext,
+  );
+  assert.match(
+    (result as { warning?: string }).warning ?? '',
+    /non-hittable target with no accessibility-tree change/u,
+  );
 });

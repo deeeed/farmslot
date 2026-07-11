@@ -1940,12 +1940,16 @@ test('maps React Native bridge transport commands without project-specific ui re
 
 test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () => {
   const calls: Array<Record<string, unknown>> = [];
+  let settleCalls = 0;
   const transport = createCdpWebUiTransport({
     async withPage(_input, callback) {
       const page = {
         async scroll(options: Record<string, unknown>) {
           calls.push(options);
           return { scrolled: true };
+        },
+        async waitForDomSettled() {
+          settleCalls += 1;
         },
       };
       return callback(page as never);
@@ -1974,6 +1978,7 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
   );
 
   assert.deepEqual(result, { scrolled: true });
+  assert.equal(settleCalls, 1);
   assert.deepEqual(calls, [
     {
       selector: '[data-testid="target-row"], [data-test-id="target-row"], [data-test="target-row"]',

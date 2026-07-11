@@ -528,25 +528,42 @@ export function createCdpWebUiTransport(
           }
           case 'ui.press': {
             const selector = selectorForUiInput(node);
-            if (selector) return page.click(selector);
-            return page.clickText(asString(node.text ?? node.label, 'ui.press.text'));
+            return executeSettledCdpAction(
+              page,
+              selector
+                ? page.click(selector)
+                : page.clickText(asString(node.text ?? node.label, 'ui.press.text')),
+              node,
+            );
           }
           case 'ui.key_press':
-            return page.keyPress(asString(node.key, 'ui.key_press.key'));
+            return executeSettledCdpAction(
+              page,
+              page.keyPress(asString(node.key, 'ui.key_press.key')),
+              node,
+            );
           case 'ui.set_input':
-            return page.setInput(
-              asString(selectorForUiInput(node), 'ui.set_input.selector'),
-              asString(node.value ?? node.text, 'ui.set_input.value'),
+            return executeSettledCdpAction(
+              page,
+              page.setInput(
+                asString(selectorForUiInput(node), 'ui.set_input.selector'),
+                asString(node.value ?? node.text, 'ui.set_input.value'),
+              ),
+              node,
             );
           case 'ui.scroll':
-            return page.scroll({
-              selector: asOptionalString(selectorForUiInput(node), 'ui.scroll.selector'),
-              intoView: node.scroll_into_view === true || node.into_view === true,
-              deltaX:
-                node.delta_x == null ? undefined : asNumber(node.delta_x, 'ui.scroll.delta_x'),
-              deltaY:
-                node.delta_y == null ? undefined : asNumber(node.delta_y, 'ui.scroll.delta_y'),
-            });
+            return executeSettledCdpAction(
+              page,
+              page.scroll({
+                selector: asOptionalString(selectorForUiInput(node), 'ui.scroll.selector'),
+                intoView: node.scroll_into_view === true || node.into_view === true,
+                deltaX:
+                  node.delta_x == null ? undefined : asNumber(node.delta_x, 'ui.scroll.delta_x'),
+                deltaY:
+                  node.delta_y == null ? undefined : asNumber(node.delta_y, 'ui.scroll.delta_y'),
+              }),
+              node,
+            );
           case 'ui.wait_for':
             return page.waitFor({
               selector: asOptionalString(selectorForUiInput(node), 'ui.wait_for.selector'),
@@ -581,6 +598,18 @@ export function createCdpWebUiTransport(
   };
 }
 
+async function executeSettledCdpAction<T>(
+  page: CdpWebPage,
+  operation: Promise<T>,
+  node: Record<string, unknown>,
+): Promise<T> {
+  const result = await operation;
+  await page.waitForDomSettled(
+    node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, 'ui action timeout_ms'),
+  );
+  return result;
+}
+
 function visibleTargetsExpression(): string {
   return `(() => {
     const visibleLimit = 20;
@@ -604,7 +633,7 @@ function visibleTargetsExpression(): string {
     ${deepQueryHelpersExpression()}
     const nodes = querySelectorAllDeep(selector);
     const textFor = (el) => {
-      const raw = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.innerText || el.textContent || '';
+      const raw = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.innerText || '';
       return String(raw).replace(/\\s+/g, ' ').trim().slice(0, 120) || undefined;
     };
     const cssPath = (el) => {

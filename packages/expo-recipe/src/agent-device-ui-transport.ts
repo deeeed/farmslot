@@ -73,28 +73,34 @@ export function createAgentDeviceUiTransport(
       const client = await ensureOpen();
       switch (action) {
         case 'ui.press':
-          return client.interactions.press({
-            ...selection,
-            session: options.session,
-            selector: selectorFromNode(node, 'ui.press'),
-            settle: true,
-            verify: true,
-            responseLevel: 'digest',
-            timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
-          });
+          return requireSettledInteraction(
+            'ui.press',
+            await client.interactions.press({
+              ...selection,
+              session: options.session,
+              selector: selectorFromNode(node, 'ui.press'),
+              settle: true,
+              verify: true,
+              responseLevel: 'digest',
+              timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+            }),
+          );
         case 'ui.set_input':
-          return client.interactions.fill({
-            ...selection,
-            session: options.session,
-            selector: selectorFromNode(node, 'ui.set_input'),
-            text: requiredString(node.value ?? node.text, 'ui.set_input.value'),
-            settle: true,
-            verify: true,
-            responseLevel: 'digest',
-            timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
-          });
-        case 'ui.scroll':
-          return client.interactions.scroll({
+          return requireSettledInteraction(
+            'ui.set_input',
+            await client.interactions.fill({
+              ...selection,
+              session: options.session,
+              selector: selectorFromNode(node, 'ui.set_input'),
+              text: requiredString(node.value ?? node.text, 'ui.set_input.value'),
+              settle: true,
+              verify: true,
+              responseLevel: 'digest',
+              timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+            }),
+          );
+        case 'ui.scroll': {
+          const result = await client.interactions.scroll({
             ...selection,
             session: options.session,
             direction: scrollDirection(node),
@@ -103,6 +109,15 @@ export function createAgentDeviceUiTransport(
             durationMs: positiveNumber(node.duration_ms),
             responseLevel: 'digest',
           });
+          const stability = await client.command.wait({
+            ...selection,
+            session: options.session,
+            stable: true,
+            quietMs: 300,
+            timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+          });
+          return { ...result, stability };
+        }
         case 'ui.wait_for':
           return waitForNode(client, options.session, selection, node);
         case 'ui.screenshot':
@@ -127,6 +142,26 @@ export function createAgentDeviceUiTransport(
       opened = false;
     },
   };
+}
+
+function requireSettledInteraction(action: string, result: unknown): unknown {
+  const record = result as {
+    settle?: { settled?: boolean; hint?: string };
+    evidence?: { changedFromBefore?: boolean };
+    targetHittable?: boolean;
+  };
+  if (record.settle?.settled !== true) {
+    throw new Error(
+      `${action} did not reach a settled native UI state${record.settle?.hint ? `: ${record.settle.hint}` : '.'}`,
+    );
+  }
+  if (record.targetHittable === false && record.evidence?.changedFromBefore === false) {
+    return {
+      ...(result as Record<string, unknown>),
+      warning: `${action} settled after resolving a non-hittable target with no accessibility-tree change; verify the passive observation.`,
+    };
+  }
+  return result;
 }
 
 async function waitForNode(
