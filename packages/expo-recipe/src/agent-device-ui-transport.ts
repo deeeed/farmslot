@@ -8,8 +8,42 @@ import type {
   UiTransportResult,
 } from '@farmslot/recipe-harness';
 
-type AgentDeviceModule = typeof import('agent-device');
-type AgentDeviceClient = ReturnType<AgentDeviceModule['createAgentDeviceClient']>;
+// Structural view of the used agent-device client surface. Keeping this local
+// (instead of `typeof import('agent-device')`) keeps the optional peer out of
+// emitted declarations, so consumers without agent-device still typecheck.
+export interface AgentDeviceSnapshotNode {
+  identifier?: string;
+  label?: string;
+  value?: unknown;
+  type?: string;
+  hittable?: boolean;
+  visibleToUser?: boolean;
+  interactionBlocked?: 'covered';
+}
+
+export interface AgentDeviceSnapshot {
+  nodes: AgentDeviceSnapshotNode[];
+  truncated: boolean;
+  appName?: string;
+  appBundleId?: string;
+}
+
+export interface AgentDeviceClientLike {
+  apps: { open(options: Record<string, unknown>): Promise<unknown> };
+  interactions: {
+    press(options: Record<string, unknown>): Promise<unknown>;
+    fill(options: Record<string, unknown>): Promise<unknown>;
+    scroll(options: Record<string, unknown>): Promise<unknown>;
+  };
+  command: { wait(options: Record<string, unknown>): Promise<unknown> };
+  capture: {
+    snapshot(options: Record<string, unknown>): Promise<AgentDeviceSnapshot>;
+    screenshot(options: Record<string, unknown>): Promise<{ width?: number; height?: number }>;
+  };
+  sessions: { close(options: Record<string, unknown>): Promise<unknown> };
+}
+
+type AgentDeviceClient = AgentDeviceClientLike;
 
 export const NATIVE_UI_ACTIONS = [
   'ui.press',
@@ -127,20 +161,28 @@ export function createAgentDeviceUiTransport(
           if (node.settle === false) return result;
           return {
             ...(result as Record<string, unknown>),
-            ...(await awaitNativeStability(client, options.session, selection, node, 'ui.scroll')),
+            ...(await awaitNativeStability(
+              client,
+              options.session,
+              selection,
+              'ui.scroll',
+              positiveNumber(node.timeout_ms) ?? 10_000,
+            )),
           };
         }
         case 'ui.wait_for': {
+          const startedAt = Date.now();
           const result = await waitForNode(client, options.session, selection, node);
           if (node.settle === false) return result;
+          // timeout_ms budgets the whole node: stability only gets what the wait left over.
           return {
             ...(result as Record<string, unknown>),
             ...(await awaitNativeStability(
               client,
               options.session,
               selection,
-              node,
               'ui.wait_for',
+              Math.max(1, (positiveNumber(node.timeout_ms) ?? 10_000) - (Date.now() - startedAt)),
             )),
           };
         }
@@ -181,8 +223,8 @@ async function awaitNativeStability(
   client: AgentDeviceClient,
   session: string,
   selection: { platform: 'ios' | 'android'; target: 'mobile'; device: string },
-  node: Record<string, unknown>,
   action: string,
+  timeoutMs: number,
 ): Promise<Record<string, unknown>> {
   try {
     const stability = await client.command.wait({
@@ -190,7 +232,7 @@ async function awaitNativeStability(
       session,
       stable: true,
       quietMs: 300,
-      timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+      timeoutMs,
     });
     return { stability };
   } catch (error) {
