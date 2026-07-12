@@ -111,7 +111,20 @@ export async function runExpoRecipeDocument(
       recordVideo: options.recordVideo,
     });
   } finally {
+    await closeUiTransportQuietly(transport);
+  }
+}
+
+export async function closeUiTransportQuietly(transport: {
+  close?(): Promise<unknown> | void;
+}): Promise<void> {
+  try {
     await transport.close?.();
+  } catch (error) {
+    // Cleanup must never convert a passing run to failure or mask the original run error.
+    console.warn(
+      `Native recipe transport cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 

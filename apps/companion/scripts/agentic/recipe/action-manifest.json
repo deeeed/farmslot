@@ -32,6 +32,12 @@
     "ui.press": {
       "description": "Press a native app control through the simulator or device assigned to this Farmslot slot; live runs require slot device context."
     },
+    "ui.set_input": {
+      "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets."
+    },
+    "ui.scroll": {
+      "description": "Scroll the assigned native simulator or device and wait for stability."
+    },
     "ui.wait_for": {
       "description": "Wait for native accessibility content on the simulator or device assigned to this Farmslot slot; live runs require slot device context."
     },

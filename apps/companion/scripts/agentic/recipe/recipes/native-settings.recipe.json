@@ -11,6 +11,7 @@
         "establish-settings": {
           "action": "ui.press",
           "test_id": "companion-tab-settings",
+          "expect_observations": ["ui.screen", "ui.visible"],
           "intent": "Establish Companion settings as the starting screen.",
           "next": "open-review"
         },
@@ -18,12 +19,14 @@
           "action": "ui.press",
           "test_id": "companion-tab-review",
           "observe": false,
+          "expect_observations": [],
           "intent": "Open Companion review on the assigned simulator.",
           "next": "open-settings"
         },
         "open-settings": {
           "action": "ui.press",
           "test_id": "companion-tab-settings",
+          "expect_observations": ["ui.screen", "ui.visible"],
           "intent": "Open Companion settings on the assigned simulator.",
           "next": "confirm-settings"
         },
@@ -31,6 +34,7 @@
           "action": "ui.wait_for",
           "text_contains": ["Gateway Connection"],
           "timeout_ms": 20000,
+          "expect_observations": ["ui.screen", "ui.visible"],
           "intent": "Confirm the native settings content is visible.",
           "next": "capture-settings"
         },

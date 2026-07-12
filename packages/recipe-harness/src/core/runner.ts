@@ -34,9 +34,7 @@ import {
 import {
   declaredObserverRefsFromManifest,
   defaultObserverRefsFromManifest,
-  filterObservations,
-  mergeObservations,
-  resolveObserveRefs,
+  finalizeNodeObservations,
   runPassiveObservers,
 } from './passive-observations.js';
 import { evaluateNodeGate } from './predicates.js';
@@ -407,21 +405,15 @@ class DefaultRecipeRunner implements RecipeRunner {
           if (result.output !== undefined) outputs.set(activeNodeId, result.output);
           for (const artifact of result.artifacts ?? []) artifactWriter.register(artifact);
           const next = resolveNextNode(node, result);
-          const observationSucceeded = result.status == null || result.status === 'pass';
-          const observations = !observationSucceeded
-            ? undefined
-            : filterObservations(
-                mergeObservations(result.observations, observationResult.observations),
-                resolveObserveRefs(
-                  action,
-                  node,
-                  this.#defaultObserverRefs,
-                  this.#declaredObserverRefs,
-                ),
-              );
-          const observationWarnings = !observationSucceeded
-            ? []
-            : [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])];
+          const { observations, observationWarnings } = finalizeNodeObservations({
+            nodeId: activeNodeId,
+            action,
+            node,
+            result,
+            observationResult,
+            defaultObserverRefs: this.#defaultObserverRefs,
+            declaredObserverRefs: this.#declaredObserverRefs,
+          });
           traceWriter.record({
             nodeId: activeNodeId,
             action,

@@ -175,6 +175,9 @@
         "observe": {
           "$ref": "#/$defs/observePolicy"
         },
+        "expect_observations": {
+          "$ref": "#/$defs/observationExpectation"
+        },
         "settle": {
           "type": "boolean"
         }
@@ -224,6 +227,9 @@
         "observe": {
           "$ref": "#/$defs/observePolicy"
         },
+        "expect_observations": {
+          "$ref": "#/$defs/observationExpectation"
+        },
         "settle": {
           "type": "boolean"
         }
@@ -243,6 +249,14 @@
           }
         }
       ]
+    },
+    "observationExpectation": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
     }
   }
 }

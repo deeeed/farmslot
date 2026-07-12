@@ -355,6 +355,158 @@ test('rejects malformed recipe observation policies', () => {
   assert.ok(result.findings.some((finding) => finding.code === 'recipe.invalid_observe_policy'));
 });
 
+test('rejects duplicate refs in recipe observation policies', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'press',
+        nodes: {
+          press: {
+            action: 'ui.press',
+            intent: 'Open the target.',
+            observe: ['ui.visible', 'ui.visible'],
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(result.findings.some((finding) => finding.code === 'recipe.invalid_observe_policy'));
+});
+
+test('ignores action-shaped nested params when validating observation policies', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'orchestrate',
+        nodes: {
+          orchestrate: {
+            action: 'example.run_plan',
+            intent: 'Run a project action whose params embed action-shaped data.',
+            plan: {
+              steps: [{ action: 'ui.press', observe: 'not-a-policy' }],
+              fallback: { action: 'ui.press', expect_observations: 'not-an-array' },
+            },
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+});
+
+test('permits node-level observation expectations in recipe documents', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'press',
+        nodes: {
+          press: {
+            action: 'ui.press',
+            intent: 'Open the target.',
+            expect_observations: ['ui.screen', 'ui.visible'],
+            next: 'silent',
+          },
+          silent: {
+            action: 'ui.press',
+            intent: 'Open the target without observations.',
+            observe: false,
+            expect_observations: [],
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'valid');
+  assert.deepEqual(result.findings, []);
+});
+
+test('rejects malformed or duplicate observation expectations', () => {
+  const invalidNodes = [
+    { expect_observations: 'ui.visible' },
+    { expect_observations: ['ui.visible', 'ui.visible'] },
+    { expect_observations: ['ui.visible', 42] },
+    { expect_observations: [''] },
+  ];
+  for (const invalidNode of invalidNodes) {
+    const result = validateRecipeDocument({
+      schema_version: 1,
+      validate: {
+        workflow: {
+          entry: 'press',
+          nodes: {
+            press: {
+              action: 'ui.press',
+              intent: 'Open the target.',
+              ...invalidNode,
+              next: 'done',
+            },
+            done: { action: 'end', status: 'pass' },
+          },
+        },
+      },
+    });
+
+    assert.equal(result.status, 'invalid');
+    assert.ok(
+      result.findings.some((finding) => finding.code === 'recipe.invalid_observation_expectation'),
+      `expected invalid_observation_expectation for ${JSON.stringify(invalidNode)}`,
+    );
+  }
+});
+
+test('rejects observation expectations not declared by the runner manifest', () => {
+  const recipe = {
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'press',
+        nodes: {
+          press: {
+            action: 'ui.press',
+            intent: 'Open the target.',
+            expect_observations: ['ui.visible', 'custom.missing'],
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  };
+  const result = validateRecipeWithManifest(recipe, {
+    runner_protocol_version: 1,
+    action_registry_version: 1,
+    supported_official_actions: ['ui.press', 'end'],
+    observers: [
+      {
+        ref: 'ui.visible',
+        description: 'Visible controls.',
+        default_for: ['ui.press'],
+        cost: 'cheap',
+        redaction: 'labels-only',
+      },
+    ],
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(
+    result.findings.some((finding) => finding.code === 'recipe.observer_not_declared_by_manifest'),
+  );
+});
+
 test('validates lifecycle actions against the runner manifest', () => {
   const recipe = {
     schema_version: 1,

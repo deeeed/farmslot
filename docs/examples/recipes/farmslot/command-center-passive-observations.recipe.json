@@ -24,6 +24,7 @@
         "open-ready": {
           "action": "ui.press",
           "text": "Ready Workspace",
+          "expect_observations": ["ui.screen", "ui.visible"],
           "intent": "Open Ready Workspace with default observations.",
           "next": "confirm-ready"
         },
@@ -44,6 +45,7 @@
           "action": "ui.press",
           "text": "Review Workspace",
           "observe": ["ui.visible"],
+          "expect_observations": ["ui.visible"],
           "intent": "Open Review Workspace with visible-target observation only.",
           "next": "confirm-review"
         },
@@ -64,6 +66,7 @@
           "action": "ui.press",
           "text": "Runs",
           "observe": false,
+          "expect_observations": [],
           "intent": "Open Runs without passive observations.",
           "next": "confirm-runs"
         },

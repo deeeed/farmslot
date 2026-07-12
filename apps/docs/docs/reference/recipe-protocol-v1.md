@@ -191,10 +191,17 @@ observer. When omitted, each runner's action manifest controls defaults through
 Observations are authoring/debug context only. They do not choose `next`, set
 `status`, set `case`, select branches, or replace proof nodes.
 
+Set `expect_observations: ["ui.screen", "ui.visible"]` to fail the node unless
+exactly those observations are recorded without observer warnings. An empty
+array asserts that no observations or observer warnings were recorded.
+
 State-changing UI actions settle before observation by default. Set
 `settle: false` only for intentionally live surfaces that cannot become quiet;
 the resulting observation is best-effort authoring context rather than settled
-post-action state.
+post-action state. Infinite animations (looping spinners, pulses, shimmer) are
+ignored while waiting for settlement. When settlement cannot be confirmed after
+an otherwise successful action, the action still passes and the node output
+records a `settlementWarning` describing why.
 
 Project custom actions must be namespaced, for example `example.trade.place_order` or `checkout.ensure_cart`. This document owns the action vocabulary and cross-cutting recipe semantics. [Recipe Runner Protocol](recipe-runner-protocol.md#action-manifest) provides runner-facing action guidance, and its [artifact package section](recipe-runner-protocol.md#artifact-package) provides runner output examples; when documents differ, this spec wins.
 

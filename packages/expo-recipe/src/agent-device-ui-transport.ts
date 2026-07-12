@@ -244,11 +244,7 @@ async function waitForNode(
   node: Record<string, unknown>,
 ): Promise<unknown> {
   const timeoutMs = positiveNumber(node.timeout_ms) ?? 10_000;
-  const expectedAbsent =
-    node.expected === 'absent' ||
-    node.expected === 'hidden' ||
-    node.expected === 'not_present' ||
-    node.hidden === true;
+  const expected = node.hidden === true ? 'hidden' : (optionalString(node.expected) ?? 'present');
   const deadline = Date.now() + timeoutMs;
   let nodeCount = 0;
   do {
@@ -259,9 +255,18 @@ async function waitForNode(
       forceFull: true,
     });
     nodeCount = snapshot.nodes.length;
-    const matched = snapshotMatches(snapshot.nodes, node);
-    if (expectedAbsent ? !matched : matched) {
-      return { matched: true, expected: expectedAbsent ? 'absent' : 'present' };
+    const present = snapshotMatches(snapshot.nodes, node);
+    const visible = snapshotMatches(snapshot.nodes.filter(isVisibleNode), node);
+    const matched =
+      expected === 'absent' || expected === 'not_present'
+        ? !present
+        : expected === 'hidden'
+          ? !visible
+          : expected === 'visible'
+            ? visible
+            : present;
+    if (matched) {
+      return { matched: true, expected };
     }
     await new Promise((resolve) => setTimeout(resolve, 300));
   } while (Date.now() < deadline);
@@ -307,15 +312,21 @@ function observationsFromSnapshot(
       };
     } else if (ref === 'ui.visible') {
       const actionable = snapshot.nodes.filter(isActionableNode);
+      const visible = actionable.filter(isVisibleNode);
+      const hidden = actionable.filter((node) => !isVisibleNode(node));
       observations[ref] = {
         provider: 'agent-device',
-        items: actionable.slice(0, 20).map((node) => ({
+        items: visible.slice(0, 20).map((node) => ({
           test_id: node.identifier,
           label: node.label,
           role: node.type,
         })),
-        hidden_or_offscreen: [],
-        truncated: snapshot.truncated || actionable.length > 20,
+        hidden_or_offscreen: hidden.slice(0, 10).map((node) => ({
+          test_id: node.identifier,
+          role: node.type,
+          reason: node.interactionBlocked === 'covered' ? 'covered' : 'hidden_or_offscreen',
+        })),
+        truncated: snapshot.truncated || visible.length > 20 || hidden.length > 10,
       };
     } else {
       warnings.push({ ref, message: `Agent Device does not support UI observer ${ref}.` });
@@ -333,6 +344,10 @@ function isActionableNode(node: { type?: string; hittable?: boolean }): boolean 
   return ['button', 'cell', 'link', 'switch', 'textfield', 'text-field'].some((role) =>
     type.includes(role),
   );
+}
+
+function isVisibleNode(node: { visibleToUser?: boolean; interactionBlocked?: 'covered' }): boolean {
+  return node.visibleToUser !== false && node.interactionBlocked !== 'covered';
 }
 
 function snapshotMatches(

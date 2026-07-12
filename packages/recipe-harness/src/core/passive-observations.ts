@@ -1,6 +1,12 @@
 import type { RecipeActionManifestDocument, UiObserverRef } from '@farmslot/protocol';
 
-import type { ActionAdapter, RecipeLogger, RecipeObservationResult } from './types.js';
+import type {
+  ActionAdapter,
+  ActionResult,
+  RecipeLogger,
+  RecipeObservationResult,
+  RecipeObservationWarning,
+} from './types.js';
 
 export type DefaultObserverRefs = ReadonlyMap<string, readonly UiObserverRef[]>;
 
@@ -33,12 +39,84 @@ export function resolveObserveRefs(
   const policy = node.observe;
   if (policy === false) return [];
   if (Array.isArray(policy)) {
-    return policy.filter(
-      (ref): ref is UiObserverRef => typeof ref === 'string' && ref.trim() !== '',
-    );
+    return [
+      ...new Set(
+        policy.filter((ref): ref is UiObserverRef => typeof ref === 'string' && ref.trim() !== ''),
+      ),
+    ];
   }
   if (policy === true) return [...declaredObserverRefs];
   return [...(defaultObserverRefs.get(action) ?? [])];
+}
+
+export function filterObservationWarnings(
+  warnings: RecipeObservationResult['warnings'],
+  refs: readonly UiObserverRef[],
+): RecipeObservationResult['warnings'] | undefined {
+  if (!warnings) return undefined;
+  const allowed = new Set<string>(refs);
+  const filtered = warnings.filter((warning) => allowed.has(warning.ref));
+  return filtered.length ? filtered : undefined;
+}
+
+function assertExpectedObservations(
+  nodeId: string,
+  node: Record<string, unknown>,
+  observations: RecipeObservationResult['observations'],
+  warnings: RecipeObservationResult['warnings'],
+): void {
+  if (!Array.isArray(node.expect_observations)) return;
+  const expected = [...new Set(node.expect_observations.filter((ref) => typeof ref === 'string'))];
+  const actual = Object.keys(observations ?? {}).sort();
+  expected.sort();
+  if (warnings?.length) {
+    throw new Error(
+      `Node ${nodeId} expected clean observations but observers warned: ${warnings.map((warning) => `${warning.ref}: ${warning.message}`).join('; ')}.`,
+    );
+  }
+  if (expected.length !== actual.length || expected.some((ref, index) => ref !== actual[index])) {
+    throw new Error(
+      `Node ${nodeId} expected observations ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}.`,
+    );
+  }
+}
+
+export function finalizeNodeObservations({
+  nodeId,
+  action,
+  node,
+  result,
+  observationResult,
+  defaultObserverRefs,
+  declaredObserverRefs,
+}: {
+  nodeId: string;
+  action: string;
+  node: Record<string, unknown>;
+  result: ActionResult;
+  observationResult: RecipeObservationResult;
+  defaultObserverRefs: DefaultObserverRefs;
+  declaredObserverRefs: readonly UiObserverRef[];
+}): {
+  observations: RecipeObservationResult['observations'];
+  observationWarnings: RecipeObservationWarning[];
+} {
+  const observationSucceeded = result.status == null || result.status === 'pass';
+  const observeRefs = resolveObserveRefs(action, node, defaultObserverRefs, declaredObserverRefs);
+  const observations = !observationSucceeded
+    ? undefined
+    : filterObservations(
+        mergeObservations(result.observations, observationResult.observations),
+        observeRefs,
+      );
+  const observationWarnings = !observationSucceeded
+    ? []
+    : (filterObservationWarnings(
+        [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])],
+        observeRefs,
+      ) ?? []);
+  assertExpectedObservations(nodeId, node, observations, observationWarnings);
+  return { observations, observationWarnings };
 }
 
 export function filterObservations(

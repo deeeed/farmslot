@@ -59,10 +59,24 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
               identifier: 'settings-tab',
               label: 'Settings, tab, 8 of 8',
               type: 'button',
+              visibleToUser: true,
             },
             {
               label: 'Gateway Connection',
               type: 'StaticText',
+            },
+            {
+              identifier: 'covered-cta',
+              label: 'Covered CTA',
+              type: 'button',
+              visibleToUser: true,
+              interactionBlocked: 'covered',
+            },
+            {
+              identifier: 'ghost-cta',
+              label: 'Ghost CTA',
+              type: 'button',
+              visibleToUser: false,
             },
           ],
           truncated: false,
@@ -123,10 +137,49 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     );
     assert.deepEqual(result, {
       matched: true,
-      expected: 'absent',
+      expected,
       stability: { stable: true },
     });
   }
+  assert.deepEqual(
+    await transport.execute('ui.wait_for', { text: 'Missing element', hidden: true }, context),
+    { matched: true, expected: 'hidden', stability: { stable: true } },
+  );
+  assert.deepEqual(await transport.execute('ui.wait_for', { test_id: 'covered-cta' }, context), {
+    matched: true,
+    expected: 'present',
+    stability: { stable: true },
+  });
+  assert.deepEqual(
+    await transport.execute('ui.wait_for', { test_id: 'covered-cta', expected: 'hidden' }, context),
+    { matched: true, expected: 'hidden', stability: { stable: true } },
+  );
+  assert.deepEqual(
+    await transport.execute(
+      'ui.wait_for',
+      { test_id: 'settings-tab', expected: 'visible' },
+      context,
+    ),
+    { matched: true, expected: 'visible', stability: { stable: true } },
+  );
+  await assert.rejects(
+    () =>
+      transport.execute(
+        'ui.wait_for',
+        { test_id: 'covered-cta', expected: 'visible', timeout_ms: 1 },
+        context,
+      ),
+    /ui\.wait_for timed out/u,
+  );
+  await assert.rejects(
+    () =>
+      transport.execute(
+        'ui.wait_for',
+        { test_id: 'ghost-cta', expected: 'visible', timeout_ms: 1 },
+        context,
+      ),
+    /ui\.wait_for timed out/u,
+  );
   await assert.rejects(
     () => transport.execute('ui.wait_for', { text: 'button', timeout_ms: 1 }, context),
     /ui\.wait_for timed out/u,
@@ -166,6 +219,14 @@ test('drives native actions, observations, artifacts, and non-owning cleanup', a
     app_id: 'net.siteed.farmslot.development',
   });
   assert.equal((observed?.observations?.['ui.visible'] as { items: unknown[] }).items.length, 1);
+  assert.deepEqual(
+    (observed?.observations?.['ui.visible'] as { hidden_or_offscreen: unknown[] })
+      .hidden_or_offscreen,
+    [
+      { test_id: 'covered-cta', role: 'button', reason: 'covered' },
+      { test_id: 'ghost-cta', role: 'button', reason: 'hidden_or_offscreen' },
+    ],
+  );
   assert.deepEqual(observed?.warnings, [
     {
       ref: 'companion.custom',

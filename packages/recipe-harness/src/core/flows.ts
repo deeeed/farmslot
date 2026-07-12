@@ -9,9 +9,7 @@ import { resolveNextNode } from './graph.js';
 import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import {
   type DefaultObserverRefs,
-  filterObservations,
-  mergeObservations,
-  resolveObserveRefs,
+  finalizeNodeObservations,
   runPassiveObservers,
 } from './passive-observations.js';
 import { evaluateNodeGate, evaluatePredicate, getPathValue } from './predicates.js';
@@ -317,16 +315,15 @@ async function executeInlineFlow({
         flowOutputMap.set(localNodeId, result.output);
         flowOutputMap.set(namespacedNodeId, result.output);
       }
-      const observationSucceeded = result.status == null || result.status === 'pass';
-      const observations = !observationSucceeded
-        ? undefined
-        : filterObservations(
-            mergeObservations(result.observations, observationResult.observations),
-            resolveObserveRefs(action, flowNode, defaultObserverRefs, declaredObserverRefs),
-          );
-      const observationWarnings = !observationSucceeded
-        ? []
-        : [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])];
+      const { observations, observationWarnings } = finalizeNodeObservations({
+        nodeId: namespacedNodeId,
+        action,
+        node: flowNode,
+        result,
+        observationResult,
+        defaultObserverRefs,
+        declaredObserverRefs,
+      });
       traceWriter.record({
         nodeId: namespacedNodeId,
         action,

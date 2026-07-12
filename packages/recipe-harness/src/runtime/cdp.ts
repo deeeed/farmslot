@@ -259,7 +259,7 @@ export class CdpWebPage {
     const quietMs = Math.min(300, Math.max(1, Math.floor(timeoutMs / 2)));
     await withTimeout(
       this.evaluate(
-        `new Promise((resolve, reject) => { const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let finished = false; const cleanup = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); }; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; if (animations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); const observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${timeoutMs}ms')); }, ${timeoutMs}); })`,
+        `new Promise((resolve, reject) => { const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let finished = false; const cleanup = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); }; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; const finiteAnimations = animations.filter((animation) => animation.effect?.getTiming().iterations !== Infinity); if (finiteAnimations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); const observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${timeoutMs}ms')); }, ${timeoutMs}); })`,
       ),
       timeoutMs + 50,
       `CDP document did not settle within ${timeoutMs}ms`,
@@ -609,10 +609,18 @@ async function executeSettledCdpAction<T>(
 ): Promise<T> {
   const result = await operation;
   if (node.settle === false) return result;
-  await page.waitForDomSettled(
-    node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, 'ui action timeout_ms'),
-  );
-  return result;
+  const timeoutMs =
+    node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, 'ui action timeout_ms');
+  try {
+    await page.waitForDomSettled(timeoutMs);
+    return result;
+  } catch (error) {
+    const settlementWarning = error instanceof Error ? error.message : String(error);
+    if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
+      return { ...result, settlementWarning };
+    }
+    return { result, settlementWarning } as T;
+  }
 }
 
 function visibleTargetsExpression(): string {
@@ -1022,7 +1030,16 @@ function deepQueryHelpersExpression(): string {
         if (!deeper || deeper === hit) break;
         hit = deeper;
       }
-      if (!hit || (hit !== element && !element.contains(hit))) throw new Error('Target is obscured');
+      const composedContains = (ancestor, descendant) => {
+        let current = descendant;
+        while (current) {
+          if (current === ancestor) return true;
+          const root = current.getRootNode();
+          current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        }
+        return false;
+      };
+      if (!hit || !composedContains(element, hit)) throw new Error('Target is obscured');
       return { x, y };
     };
     const renderedTextDeep = (root = document) => {

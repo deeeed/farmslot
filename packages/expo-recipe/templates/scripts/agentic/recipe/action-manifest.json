@@ -26,7 +26,7 @@
       "description": "Press a native accessibility target on the assigned simulator or device."
     },
     "ui.set_input": {
-      "description": "Set native input text without retaining plaintext in recipe artifacts."
+      "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets."
     },
     "ui.scroll": {
       "description": "Scroll the assigned native simulator or device and wait for stability."

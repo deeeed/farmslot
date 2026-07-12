@@ -123,21 +123,47 @@ async function checkBridgeContract(
 ): Promise<ExpoRecipeDoctorFinding[]> {
   const actions = getRecipeActionManifestActionNames(manifest);
   const bridgeActions = new Set(['app.status', 'app.hud', 'app.trace']);
+  const nativeActions = new Set([
+    'ui.press',
+    'ui.set_input',
+    'ui.scroll',
+    'ui.wait_for',
+    'ui.screenshot',
+  ]);
   const declaresBridge = actions.some((action) => bridgeActions.has(action));
+  const declaresNative = actions.some((action) => nativeActions.has(action));
   const providerExists = existsSync(providerAbsolutePath);
+  const platform = process.env.PLATFORM;
+  const device =
+    process.env.IOS_SIMULATOR ??
+    process.env.SIMULATOR ??
+    process.env.ADB_SERIAL ??
+    process.env.ANDROID_SERIAL ??
+    process.env.ANDROID_DEVICE;
+  const app = process.env.FARMSLOT_RECIPE_APP_ID;
+  const nativeEnvironmentStarted = Boolean(platform || device || app);
+  const findings: ExpoRecipeDoctorFinding[] = [];
+  if (declaresNative && nativeEnvironmentStarted && !(platform && device && app)) {
+    findings.push({
+      severity: 'warning',
+      code: 'native_provider_incomplete',
+      message:
+        'Native UI actions require PLATFORM, an assigned simulator/device, and FARMSLOT_RECIPE_APP_ID; incomplete configuration falls back to the Metro bridge.',
+    });
+  }
   if (declaresBridge && !providerExists) {
-    return [
+    findings.push(
       errorFinding(
         'bridge_missing_provider',
         'Manifest declares app/UI bridge actions but src/farmslot/RecipeBridgeProvider.tsx is missing. Run farmslot-expo-recipe init --with-bridge --force or remove bridge actions.',
         BRIDGE_PROVIDER_PATH,
       ),
-    ];
+    );
+    return findings;
   }
-  if (!providerExists) return [];
+  if (!providerExists) return findings;
 
   const providerSource = await readFile(providerAbsolutePath, 'utf-8');
-  const findings: ExpoRecipeDoctorFinding[] = [];
   if (!declaresBridge) {
     findings.push({
       severity: 'warning',

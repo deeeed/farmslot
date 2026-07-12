@@ -2134,6 +2134,122 @@ test('CDP navigation waits for a quiet render frame after route readiness', asyn
   assert.match(settleExpression ?? '', /reject\(new Error\('DOM remained active/u);
 });
 
+test('CDP settlement ignores infinite animations while waiting for quiet DOM', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      assert.equal(method, 'Runtime.evaluate');
+      expressions.push(String(params.expression));
+      return { result: { value: true } };
+    },
+  } as never);
+
+  await page.waitForDomSettled(100);
+
+  const settleExpression = expressions[0] ?? '';
+  assert.match(settleExpression, /getTiming\(\)\.iterations !== Infinity/u);
+  assert.match(settleExpression, /finiteAnimations\.some/u);
+  assert.doesNotMatch(settleExpression, /animations\.some\(/u);
+});
+
+test('CDP settlement failure preserves the successful action result with a warning', async () => {
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      const page = {
+        async clickText() {
+          return { clicked: true, text: 'Ready Workspace' };
+        },
+        async waitForDomSettled() {
+          throw new Error('CDP document did not settle within 100ms');
+        },
+      };
+      return callback(page as never);
+    },
+  });
+
+  const result = await transport.execute(
+    'ui.press',
+    { text: 'Ready Workspace', timeout_ms: 100 },
+    {
+      nodeId: 'open-ready',
+      recipe: {},
+      projectRoot: '/tmp/project',
+      artifactsDir: '/tmp/artifacts',
+      env: {},
+      outputs: new Map(),
+      getOutput: () => undefined,
+      resolveProjectPath: (relativePath) => relativePath,
+      resolveArtifactPath: (relativePath) => relativePath,
+      registerArtifact() {},
+      logger: console,
+    },
+  );
+
+  assert.deepEqual(result, {
+    clicked: true,
+    text: 'Ready Workspace',
+    settlementWarning: 'CDP document did not settle within 100ms',
+  });
+});
+
+test('CDP settle false skips DOM settlement entirely', async () => {
+  let settleCalls = 0;
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      const page = {
+        async clickText() {
+          return { clicked: true };
+        },
+        async waitForDomSettled() {
+          settleCalls += 1;
+        },
+      };
+      return callback(page as never);
+    },
+  });
+
+  const result = await transport.execute(
+    'ui.press',
+    { text: 'Live status', settle: false },
+    {
+      nodeId: 'open-live',
+      recipe: {},
+      projectRoot: '/tmp/project',
+      artifactsDir: '/tmp/artifacts',
+      env: {},
+      outputs: new Map(),
+      getOutput: () => undefined,
+      resolveProjectPath: (relativePath) => relativePath,
+      resolveArtifactPath: (relativePath) => relativePath,
+      registerArtifact() {},
+      logger: console,
+    },
+  );
+
+  assert.deepEqual(result, { clicked: true });
+  assert.equal(settleCalls, 0);
+});
+
+test('CDP click hit-testing crosses shadow boundaries with composed ancestry', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Runtime.evaluate') {
+        expressions.push(String(params.expression));
+        return { result: { value: { x: 1, y: 2, selector: 's', tagName: 'BUTTON' } } };
+      }
+      return {};
+    },
+  } as never);
+
+  await page.click('[data-test-id="inside-shadow"]');
+
+  const clickExpression = expressions[0] ?? '';
+  assert.match(clickExpression, /composedContains/u);
+  assert.match(clickExpression, /root instanceof ShadowRoot \? root\.host : null/u);
+  assert.doesNotMatch(clickExpression, /element\.contains\(hit\)/u);
+});
+
 test('CDP deep text matching uses rendered text without scanning textContent', async () => {
   const expressions: string[] = [];
   const page = new CdpWebPage({
