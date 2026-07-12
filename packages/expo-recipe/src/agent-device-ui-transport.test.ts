@@ -297,7 +297,7 @@ test('settle false skips native stability enforcement', async () => {
   assert.equal(calls[0]?.options.settle, false);
 });
 
-test('rejects unsettled native actions and warns for idempotent non-hittable actions', async () => {
+test('warns on unsettled native actions and idempotent non-hittable actions', async () => {
   const results = [
     { settle: { settled: false, hint: 'UI kept changing' } },
     {
@@ -319,8 +319,13 @@ test('rejects unsettled native actions and warns for idempotent non-hittable act
     client,
   });
 
-  await assert.rejects(
-    () => transport.execute('ui.press', { text: 'Settings' }, {} as ActionExecutionContext),
+  const unsettled = await transport.execute(
+    'ui.press',
+    { text: 'Settings' },
+    {} as ActionExecutionContext,
+  );
+  assert.match(
+    (unsettled as { settlementWarning?: string }).settlementWarning ?? '',
     /did not reach a settled native UI state: UI kept changing/u,
   );
   const result = await transport.execute(

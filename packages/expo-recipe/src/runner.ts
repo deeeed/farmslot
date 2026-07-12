@@ -24,6 +24,7 @@ import {
 import {
   type AgentDeviceUiTransport,
   createAgentDeviceUiTransport,
+  NATIVE_UI_ACTIONS,
 } from './agent-device-ui-transport.js';
 import { DEFAULT_EXPO_RECIPE_MANIFEST_PATH, DEFAULT_EXPO_RECIPE_PATH } from './constants.js';
 import { readJsonFile } from './json.js';
@@ -220,7 +221,7 @@ function normalizeNativePlatform(value: string | undefined): 'ios' | 'android' |
 }
 
 function isNativeUiAction(action: string): boolean {
-  return ['ui.press', 'ui.set_input', 'ui.scroll', 'ui.wait_for', 'ui.screenshot'].includes(action);
+  return (NATIVE_UI_ACTIONS as readonly string[]).includes(action);
 }
 
 function dryRunUiTransport(isDryRun: boolean): UiActionTransport {

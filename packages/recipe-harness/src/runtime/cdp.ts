@@ -228,7 +228,6 @@ export class CdpWebPage {
         expectedUrl: result.loaderId ? undefined : expectedUrl,
         timeoutMs: Math.max(1, deadline - Date.now()),
       });
-      await this.waitForDomSettled(Math.max(1, deadline - Date.now()));
       return result;
     } finally {
       unsubscribe();
@@ -519,11 +518,15 @@ export function createCdpWebUiTransport(
         switch (action) {
           case 'ui.navigate': {
             const url = asString(node.url ?? node.target, 'ui.navigate.url');
-            return page.navigate(
-              url,
-              node.timeout_ms == null
-                ? undefined
-                : asNumber(node.timeout_ms, 'ui.navigate.timeout_ms'),
+            return executeSettledCdpAction(
+              page,
+              page.navigate(
+                url,
+                node.timeout_ms == null
+                  ? undefined
+                  : asNumber(node.timeout_ms, 'ui.navigate.timeout_ms'),
+              ),
+              node,
             );
           }
           case 'ui.press': {
@@ -681,6 +684,28 @@ function visibleTargetsExpression(): string {
       focused: document.activeElement === el || undefined,
       bounds: rect ? { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : undefined
     });
+    const composedContains = (ancestor, descendant) => {
+      let current = descendant;
+      while (current) {
+        if (current === ancestor) return true;
+        const root = current.getRootNode();
+        current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+      }
+      return false;
+    };
+    const isCoveredDeep = (el, rect) => {
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false;
+      let hit = document.elementFromPoint(x, y);
+      while (hit && hit.shadowRoot) {
+        const deeper = hit.shadowRoot.elementFromPoint(x, y);
+        if (!deeper || deeper === hit) break;
+        hit = deeper;
+      }
+      if (!hit) return false;
+      return !(composedContains(el, hit) || composedContains(hit, el));
+    };
     const items = [];
     const hidden_or_offscreen = [];
     for (const el of nodes) {
@@ -688,10 +713,11 @@ function visibleTargetsExpression(): string {
       const hasBox = rect.width > 0 && rect.height > 0;
       const rendered = hasBox && isRenderedDeep(el);
       const visible = rendered && isVisibleDeep(el);
-      if (visible && items.length < visibleLimit) {
+      const covered = visible && isCoveredDeep(el, rect);
+      if (visible && !covered && items.length < visibleLimit) {
         items.push(itemFor(el, rect, true));
-      } else if (!visible && hidden_or_offscreen.length < hiddenLimit) {
-        hidden_or_offscreen.push({ ...itemFor(el, rendered ? rect : undefined, rendered), reason: rendered ? 'offscreen' : 'hidden_or_no_box' });
+      } else if ((!visible || covered) && hidden_or_offscreen.length < hiddenLimit) {
+        hidden_or_offscreen.push({ ...itemFor(el, rendered ? rect : undefined, rendered), reason: covered ? 'covered' : rendered ? 'offscreen' : 'hidden_or_no_box' });
       }
     }
     return {

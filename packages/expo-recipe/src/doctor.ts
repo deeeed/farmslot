@@ -9,6 +9,7 @@ import {
 } from '@farmslot/protocol';
 import { validateRecipeCliInput } from '@farmslot/recipe-harness/cli/support';
 
+import { NATIVE_UI_ACTIONS } from './agent-device-ui-transport.js';
 import {
   BRIDGE_PROVIDER_PATH,
   DEFAULT_EXPO_RECIPE_MANIFEST_PATH,
@@ -123,13 +124,7 @@ async function checkBridgeContract(
 ): Promise<ExpoRecipeDoctorFinding[]> {
   const actions = getRecipeActionManifestActionNames(manifest);
   const bridgeActions = new Set(['app.status', 'app.hud', 'app.trace']);
-  const nativeActions = new Set([
-    'ui.press',
-    'ui.set_input',
-    'ui.scroll',
-    'ui.wait_for',
-    'ui.screenshot',
-  ]);
+  const nativeActions = new Set<string>(NATIVE_UI_ACTIONS);
   const declaresBridge = actions.some((action) => bridgeActions.has(action));
   const declaresNative = actions.some((action) => nativeActions.has(action));
   const providerExists = existsSync(providerAbsolutePath);

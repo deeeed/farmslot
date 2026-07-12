@@ -91,13 +91,26 @@ fi
 if [[ "${DRY_RUN}" -eq 0 ]] && node -e '
   const recipe = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
   const nativeActions = new Set(["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for", "ui.screenshot"]);
-  const containsNativeAction = (value) => {
-    if (Array.isArray(value)) return value.some(containsNativeAction);
-    if (!value || typeof value !== "object") return false;
-    if (nativeActions.has(value.action)) return true;
-    return Object.values(value).some(containsNativeAction);
+  const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  const isNativeNode = (node) => isRecord(node) && nativeActions.has(node.action);
+  // Scan only actual workflow/lifecycle/flow nodes so action-shaped params in
+  // custom actions do not force a native device requirement.
+  const workflowNodes = (workflow) => {
+    if (!isRecord(workflow)) return [];
+    return [
+      ...Object.values(isRecord(workflow.nodes) ? workflow.nodes : {}),
+      ...(Array.isArray(workflow.setup) ? workflow.setup : []),
+      ...(Array.isArray(workflow.teardown) ? workflow.teardown : []),
+    ];
   };
-  process.exit(containsNativeAction(recipe) ? 0 : 1);
+  const nodes = [
+    recipe.startState,
+    ...workflowNodes(isRecord(recipe.validate) ? recipe.validate.workflow : undefined),
+    ...Object.values(isRecord(recipe.flows) ? recipe.flows : {}).flatMap((flow) =>
+      workflowNodes(isRecord(flow) && isRecord(flow.workflow) ? flow.workflow : flow),
+    ),
+  ];
+  process.exit(nodes.some(isNativeNode) ? 0 : 1);
 ' "${RECIPE_ABSOLUTE_PATH}"; then
   case "${PLATFORM_VALUE}" in
     ios*)

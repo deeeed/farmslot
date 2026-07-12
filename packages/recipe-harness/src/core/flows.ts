@@ -10,6 +10,7 @@ import { isRecord, normalizeRelativePath, readJsonFile } from './json.js';
 import {
   type DefaultObserverRefs,
   finalizeNodeObservations,
+  resolveObserveRefs,
   runPassiveObservers,
 } from './passive-observations.js';
 import { evaluateNodeGate, evaluatePredicate, getPathValue } from './predicates.js';
@@ -298,6 +299,12 @@ async function executeInlineFlow({
               publishHudProgress,
             })
           : await adapter!.execute(flowNode, childContext);
+      const observeRefs = resolveObserveRefs(
+        action,
+        flowNode,
+        defaultObserverRefs,
+        declaredObserverRefs,
+      );
       const observationResult =
         action !== 'call' && (result.status == null || result.status === 'pass')
           ? await runPassiveObservers({
@@ -306,8 +313,7 @@ async function executeInlineFlow({
               adapter: adapter!,
               context: childContext,
               logger,
-              defaultObserverRefs,
-              declaredObserverRefs,
+              refs: observeRefs,
             })
           : {};
       if (result.output !== undefined) {
@@ -317,12 +323,10 @@ async function executeInlineFlow({
       }
       const { observations, observationWarnings } = finalizeNodeObservations({
         nodeId: namespacedNodeId,
-        action,
         node: flowNode,
         result,
         observationResult,
-        defaultObserverRefs,
-        declaredObserverRefs,
+        observeRefs,
       });
       traceWriter.record({
         nodeId: namespacedNodeId,

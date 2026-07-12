@@ -35,6 +35,7 @@ import {
   declaredObserverRefsFromManifest,
   defaultObserverRefsFromManifest,
   finalizeNodeObservations,
+  resolveObserveRefs,
   runPassiveObservers,
 } from './passive-observations.js';
 import { evaluateNodeGate } from './predicates.js';
@@ -390,6 +391,12 @@ class DefaultRecipeRunner implements RecipeRunner {
                     }),
                 })
               : await adapter!.execute(node, context);
+          const observeRefs = resolveObserveRefs(
+            action,
+            node,
+            this.#defaultObserverRefs,
+            this.#declaredObserverRefs,
+          );
           const observationResult =
             action !== 'call' && (result.status == null || result.status === 'pass')
               ? await runPassiveObservers({
@@ -398,8 +405,7 @@ class DefaultRecipeRunner implements RecipeRunner {
                   adapter: adapter!,
                   context,
                   logger: this.#logger,
-                  defaultObserverRefs: this.#defaultObserverRefs,
-                  declaredObserverRefs: this.#declaredObserverRefs,
+                  refs: observeRefs,
                 })
               : {};
           if (result.output !== undefined) outputs.set(activeNodeId, result.output);
@@ -407,12 +413,10 @@ class DefaultRecipeRunner implements RecipeRunner {
           const next = resolveNextNode(node, result);
           const { observations, observationWarnings } = finalizeNodeObservations({
             nodeId: activeNodeId,
-            action,
             node,
             result,
             observationResult,
-            defaultObserverRefs: this.#defaultObserverRefs,
-            declaredObserverRefs: this.#declaredObserverRefs,
+            observeRefs,
           });
           traceWriter.record({
             nodeId: activeNodeId,

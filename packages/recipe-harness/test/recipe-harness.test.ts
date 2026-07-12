@@ -2063,12 +2063,7 @@ test('CDP navigation waits for the loaded document before returning', async () =
 
   await page.navigate('https://example.test/next', 1_000);
 
-  assert.deepEqual(calls, [
-    'Runtime.evaluate',
-    'Page.navigate',
-    'Runtime.evaluate',
-    'Runtime.evaluate',
-  ]);
+  assert.deepEqual(calls, ['Runtime.evaluate', 'Page.navigate', 'Runtime.evaluate']);
   assert.equal(loadHandler, undefined);
 });
 
@@ -2102,7 +2097,7 @@ test('CDP same-document navigation waits for the requested location', async () =
   assert.equal(pollCount, 2);
 });
 
-test('CDP navigation waits for a quiet render frame after route readiness', async () => {
+test('CDP navigation defers DOM settlement to the shared settle wrapper', async () => {
   const expressions: string[] = [];
   const page = new CdpWebPage({
     on() {
@@ -2124,6 +2119,12 @@ test('CDP navigation waits for a quiet render frame after route readiness', asyn
 
   await page.navigate('#ready', 1_000);
 
+  assert.equal(
+    expressions.find((expression) => expression.startsWith('new Promise(')),
+    undefined,
+  );
+
+  await page.waitForDomSettled(100);
   const settleExpression = expressions.find((expression) => expression.startsWith('new Promise('));
   assert.match(settleExpression ?? '', /MutationObserver/u);
   assert.match(settleExpression ?? '', /requestAnimationFrame/u);
@@ -2132,6 +2133,53 @@ test('CDP navigation waits for a quiet render frame after route readiness', asyn
   assert.match(settleExpression ?? '', /document\.getAnimations/u);
   assert.match(settleExpression ?? '', /animation\.playState === 'running'/u);
   assert.match(settleExpression ?? '', /reject\(new Error\('DOM remained active/u);
+});
+
+test('CDP ui.navigate honors the settle contract through the shared wrapper', async () => {
+  const makeContext = () =>
+    ({
+      nodeId: 'navigate-node',
+      recipe: {},
+      projectRoot: '/tmp/project',
+      artifactsDir: '/tmp/artifacts',
+      env: {},
+      outputs: new Map(),
+      getOutput: () => undefined,
+      resolveProjectPath: (relativePath: string) => relativePath,
+      resolveArtifactPath: (relativePath: string) => relativePath,
+      registerArtifact() {},
+      logger: console,
+    }) as never;
+  let settleCalls = 0;
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      const page = {
+        async navigate() {
+          return { loaderId: 'doc' };
+        },
+        async waitForDomSettled() {
+          settleCalls += 1;
+          throw new Error('CDP document did not settle within 100ms');
+        },
+      };
+      return callback(page as never);
+    },
+  });
+
+  const skipped = await transport.execute(
+    'ui.navigate',
+    { target: '#live', settle: false },
+    makeContext(),
+  );
+  assert.deepEqual(skipped, { loaderId: 'doc' });
+  assert.equal(settleCalls, 0);
+
+  const warned = await transport.execute('ui.navigate', { target: '#next' }, makeContext());
+  assert.deepEqual(warned, {
+    loaderId: 'doc',
+    settlementWarning: 'CDP document did not settle within 100ms',
+  });
+  assert.equal(settleCalls, 1);
 });
 
 test('CDP settlement ignores infinite animations while waiting for quiet DOM', async () => {

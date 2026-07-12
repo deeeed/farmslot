@@ -11,6 +11,14 @@ import type {
 type AgentDeviceModule = typeof import('agent-device');
 type AgentDeviceClient = ReturnType<AgentDeviceModule['createAgentDeviceClient']>;
 
+export const NATIVE_UI_ACTIONS = [
+  'ui.press',
+  'ui.set_input',
+  'ui.scroll',
+  'ui.wait_for',
+  'ui.screenshot',
+] as const;
+
 export interface AgentDeviceUiTransportOptions {
   platform: 'ios' | 'android';
   device: string;
@@ -181,18 +189,22 @@ function requireSettledInteraction(
     evidence?: { changedFromBefore?: boolean };
     targetHittable?: boolean;
   };
+  let outcome = result as Record<string, unknown>;
   if (settleRequired && record.settle?.settled !== true) {
-    throw new Error(
-      `${action} did not reach a settled native UI state${record.settle?.hint ? `: ${record.settle.hint}` : '.'}`,
-    );
+    // Match the CDP transport contract: a successful action with unconfirmed
+    // settlement passes and surfaces a visible settlement warning instead of failing.
+    outcome = {
+      ...outcome,
+      settlementWarning: `${action} did not reach a settled native UI state${record.settle?.hint ? `: ${record.settle.hint}` : '.'}`,
+    };
   }
   if (record.targetHittable === false && record.evidence?.changedFromBefore === false) {
-    return {
-      ...(result as Record<string, unknown>),
+    outcome = {
+      ...outcome,
       warning: `${action} settled after resolving a non-hittable target with no accessibility-tree change; verify the passive observation.`,
     };
   }
-  return result;
+  return outcome;
 }
 
 function sanitizeFillResult(result: unknown): Record<string, unknown> {
@@ -210,6 +222,7 @@ function sanitizeFillResult(result: unknown): Record<string, unknown> {
       diff?: { summary?: unknown; truncated?: unknown };
     };
     warning?: unknown;
+    settlementWarning?: unknown;
   };
   return {
     redacted: true,

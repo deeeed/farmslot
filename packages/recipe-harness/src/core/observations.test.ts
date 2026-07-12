@@ -417,6 +417,23 @@ test('expect_observations fails when observer warnings are present', async () =>
   assert.match(trace.find((entry) => entry.nodeId === 'press')?.error ?? '', /observer offline/u);
 });
 
+test('failed actions keep their own failure signal instead of expectation errors', async () => {
+  const { result, trace } = await runRecipe(
+    { expect_observations: ['ui.screen', 'ui.visible'] },
+    observingAdapter({
+      async execute() {
+        return { status: 'fail', output: { pressed: false, reason: 'target missing' } };
+      },
+    }),
+  );
+  const press = trace.find((entry) => entry.nodeId === 'press');
+  assert.equal(result.status, 'fail');
+  assert.equal(press?.ok, true);
+  assert.equal(press?.status, 'fail');
+  assert.deepEqual(press?.output, { pressed: false, reason: 'target missing' });
+  assert.equal(press?.error, undefined);
+});
+
 test('enforces expect_observations inside called flows', async () => {
   const artifactsDir = await mkdtemp(path.join(os.tmpdir(), 'recipe-observe-expect-flow-'));
   const runner = createRecipeRunner({

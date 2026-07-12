@@ -83,26 +83,21 @@ function assertExpectedObservations(
 
 export function finalizeNodeObservations({
   nodeId,
-  action,
   node,
   result,
   observationResult,
-  defaultObserverRefs,
-  declaredObserverRefs,
+  observeRefs,
 }: {
   nodeId: string;
-  action: string;
   node: Record<string, unknown>;
   result: ActionResult;
   observationResult: RecipeObservationResult;
-  defaultObserverRefs: DefaultObserverRefs;
-  declaredObserverRefs: readonly UiObserverRef[];
+  observeRefs: readonly UiObserverRef[];
 }): {
   observations: RecipeObservationResult['observations'];
   observationWarnings: RecipeObservationWarning[];
 } {
   const observationSucceeded = result.status == null || result.status === 'pass';
-  const observeRefs = resolveObserveRefs(action, node, defaultObserverRefs, declaredObserverRefs);
   const observations = !observationSucceeded
     ? undefined
     : filterObservations(
@@ -115,7 +110,11 @@ export function finalizeNodeObservations({
         [...(result.observationWarnings ?? []), ...(observationResult.warnings ?? [])],
         observeRefs,
       ) ?? []);
-  assertExpectedObservations(nodeId, node, observations, observationWarnings);
+  // Failed actions already fail the run with their own status/output; enforcing
+  // observation expectations on them would replace that signal with a misleading error.
+  if (observationSucceeded) {
+    assertExpectedObservations(nodeId, node, observations, observationWarnings);
+  }
   return { observations, observationWarnings };
 }
 
@@ -145,18 +144,15 @@ export async function runPassiveObservers({
   adapter,
   context,
   logger,
-  defaultObserverRefs,
-  declaredObserverRefs,
+  refs,
 }: {
   action: string;
   node: Record<string, unknown>;
   adapter: ActionAdapter;
   context: Parameters<ActionAdapter['execute']>[1];
   logger: RecipeLogger;
-  defaultObserverRefs: DefaultObserverRefs;
-  declaredObserverRefs: readonly UiObserverRef[];
+  refs: readonly UiObserverRef[];
 }): Promise<RecipeObservationResult> {
-  const refs = resolveObserveRefs(action, node, defaultObserverRefs, declaredObserverRefs);
   if (refs.length === 0) return {};
   if (!adapter.observe) {
     return {
