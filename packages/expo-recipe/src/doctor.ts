@@ -10,6 +10,7 @@ import {
 import { STANDARD_UI_ACTIONS } from '@farmslot/recipe-harness';
 import { validateRecipeCliInput } from '@farmslot/recipe-harness/cli/support';
 
+import { NATIVE_UI_ACTIONS } from './agent-device-ui-transport.js';
 import {
   BRIDGE_PROVIDER_PATH,
   DEFAULT_EXPO_RECIPE_MANIFEST_PATH,
@@ -123,22 +124,46 @@ async function checkBridgeContract(
   providerAbsolutePath: string,
 ): Promise<ExpoRecipeDoctorFinding[]> {
   const actions = getRecipeActionManifestActionNames(manifest);
-  const bridgeActions = new Set<string>(STANDARD_UI_ACTIONS);
+  const nativeActions = new Set<string>(NATIVE_UI_ACTIONS);
+  // Bridge provider is required for every standard UI action the Metro bridge
+  // serves; only native-capable actions can run without it via Agent Device.
+  const bridgeActions = new Set<string>(
+    STANDARD_UI_ACTIONS.filter((action) => !nativeActions.has(action)),
+  );
   const declaresBridge = actions.some((action) => bridgeActions.has(action));
+  const declaresNative = actions.some((action) => nativeActions.has(action));
   const providerExists = existsSync(providerAbsolutePath);
+  const platform = process.env.PLATFORM;
+  const device =
+    process.env.IOS_SIMULATOR ??
+    process.env.SIMULATOR ??
+    process.env.ADB_SERIAL ??
+    process.env.ANDROID_SERIAL ??
+    process.env.ANDROID_DEVICE;
+  const app = process.env.FARMSLOT_RECIPE_APP_ID;
+  const nativeEnvironmentStarted = Boolean(platform || device || app);
+  const findings: ExpoRecipeDoctorFinding[] = [];
+  if (declaresNative && nativeEnvironmentStarted && !(platform && device && app)) {
+    findings.push({
+      severity: 'warning',
+      code: 'native_provider_incomplete',
+      message:
+        'Native UI actions require PLATFORM, an assigned simulator/device, and FARMSLOT_RECIPE_APP_ID; incomplete configuration falls back to the Metro bridge.',
+    });
+  }
   if (declaresBridge && !providerExists) {
-    return [
+    findings.push(
       errorFinding(
         'bridge_missing_provider',
         'Manifest declares app/UI bridge actions but src/farmslot/RecipeBridgeProvider.tsx is missing. Run farmslot-expo-recipe init --with-bridge --force or remove bridge actions.',
         BRIDGE_PROVIDER_PATH,
       ),
-    ];
+    );
+    return findings;
   }
-  if (!providerExists) return [];
+  if (!providerExists) return findings;
 
   const providerSource = await readFile(providerAbsolutePath, 'utf-8');
-  const findings: ExpoRecipeDoctorFinding[] = [];
   if (!declaresBridge) {
     findings.push({
       severity: 'warning',

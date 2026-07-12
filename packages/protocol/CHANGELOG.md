@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat: add Recipe Protocol v1 passive UI observation fields to manifests, recipes, and schemas.
 - feat: add reviewer context protocol types and exports for slot reviewer panes.
 - feat: add tmux runtime recovery RPC contracts for reconciling and restoring worker sessions.
 - feat: add `WorkGraphSchedulerTickParams.forceEnqueue` for operator manual-enqueue of a work-graph node even when its backlog item has autoDispatch disabled.

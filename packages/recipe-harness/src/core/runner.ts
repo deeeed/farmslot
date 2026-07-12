@@ -31,6 +31,13 @@ import {
   type RecipeLibraryResolution,
   type ResolvedLibraryFlow,
 } from './library.js';
+import {
+  declaredObserverRefsFromManifest,
+  defaultObserverRefsFromManifest,
+  finalizeNodeObservations,
+  resolveObserveRefs,
+  runPassiveObservers,
+} from './passive-observations.js';
 import { evaluateNodeGate } from './predicates.js';
 import {
   cleanupAbortedRunVideoRecording,
@@ -59,7 +66,6 @@ import { assertManifestIsValid, assertRecipeMatchesManifest } from './validation
 const HARNESS_VERSION = '0.1.0';
 const RUNNER_BUILT_IN_ACTIONS = new Set(['call']);
 const DEFAULT_MAX_FLOW_CALL_DEPTH = 8;
-
 const noopLogger: RecipeLogger = {
   info() {},
   warn() {},
@@ -161,6 +167,8 @@ class DefaultRecipeRunner implements RecipeRunner {
   readonly #adapters: ReadonlyMap<string, ActionAdapter>;
   readonly #preconditions: ReadonlyMap<string, PreconditionChecker>;
   readonly #logger: RecipeLogger;
+  readonly #defaultObserverRefs;
+  readonly #declaredObserverRefs;
   readonly #hud: RecipeHudOptions | false | undefined;
   readonly #runnerProvenance: CreateRecipeRunnerOptions['runner'];
   readonly #recording: RecipeRecordingOptions | undefined;
@@ -178,6 +186,8 @@ class DefaultRecipeRunner implements RecipeRunner {
     this.#adapters = adapters;
     this.#preconditions = preconditions;
     this.#logger = logger;
+    this.#defaultObserverRefs = defaultObserverRefsFromManifest(actionManifest);
+    this.#declaredObserverRefs = declaredObserverRefsFromManifest(actionManifest);
     this.#hud = hud;
     this.#runnerProvenance = runnerProvenance;
     this.#recording = recording;
@@ -371,6 +381,9 @@ class DefaultRecipeRunner implements RecipeRunner {
                   traceWriter,
                   callStack: [],
                   maxCallDepth: DEFAULT_MAX_FLOW_CALL_DEPTH,
+                  logger: this.#logger,
+                  defaultObserverRefs: this.#defaultObserverRefs,
+                  declaredObserverRefs: this.#declaredObserverRefs,
                   publishHudProgress: (hudStatus, flowEvent) =>
                     this.#publishHudProgressOrRecord(traceWriter, hudStatus, {
                       ...flowEvent,
@@ -378,9 +391,33 @@ class DefaultRecipeRunner implements RecipeRunner {
                     }),
                 })
               : await adapter!.execute(node, context);
+          const observeRefs = resolveObserveRefs(
+            action,
+            node,
+            this.#defaultObserverRefs,
+            this.#declaredObserverRefs,
+          );
+          const observationResult =
+            action !== 'call' && (result.status == null || result.status === 'pass')
+              ? await runPassiveObservers({
+                  action,
+                  node,
+                  adapter: adapter!,
+                  context,
+                  logger: this.#logger,
+                  refs: observeRefs,
+                })
+              : {};
           if (result.output !== undefined) outputs.set(activeNodeId, result.output);
           for (const artifact of result.artifacts ?? []) artifactWriter.register(artifact);
           const next = resolveNextNode(node, result);
+          const { observations, observationWarnings } = finalizeNodeObservations({
+            nodeId: activeNodeId,
+            node,
+            result,
+            observationResult,
+            observeRefs,
+          });
           traceWriter.record({
             nodeId: activeNodeId,
             action,
@@ -391,7 +428,10 @@ class DefaultRecipeRunner implements RecipeRunner {
             ok: true,
             next,
             status: result.status,
+            case: result.case,
             output: result.output,
+            ...(observations ? { observations } : {}),
+            ...(observationWarnings.length ? { observationWarnings } : {}),
           });
           const hudCompleted = await this.#publishHudProgressOrRecord(
             traceWriter,

@@ -7,6 +7,11 @@
     "wait",
     "end",
     "index_artifacts",
+    "ui.press",
+    "ui.set_input",
+    "ui.scroll",
+    "ui.wait_for",
+    "ui.screenshot",
     "app.status",
     "app.hud",
     "app.trace"
@@ -24,9 +29,40 @@
     "app.trace": {
       "description": "Emit a lightweight bridge trace event for recipe timeline observability."
     },
+    "ui.press": {
+      "description": "Press a native app control through the simulator or device assigned to this Farmslot slot; live runs require slot device context."
+    },
+    "ui.set_input": {
+      "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets."
+    },
+    "ui.scroll": {
+      "description": "Scroll the assigned native simulator or device and wait for stability."
+    },
+    "ui.wait_for": {
+      "description": "Wait for native accessibility content on the simulator or device assigned to this Farmslot slot; live runs require slot device context."
+    },
+    "ui.screenshot": {
+      "description": "Capture the assigned simulator or device into the recipe artifact package; live runs require slot device context."
+    },
     "index_artifacts": {
       "description": "Copy generated screenshot artifacts into the recipe artifact package for review."
     }
   },
+  "observers": [
+    {
+      "ref": "ui.screen",
+      "description": "Current native app identity recorded after supported UI actions.",
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
+      "cost": "cheap",
+      "redaction": "none"
+    },
+    {
+      "ref": "ui.visible",
+      "description": "Bounded native accessibility targets visible after supported UI actions.",
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
+      "cost": "cheap",
+      "redaction": "labels-only"
+    }
+  ],
   "custom_actions": []
 }

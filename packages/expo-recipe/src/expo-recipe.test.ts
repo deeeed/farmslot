@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { assertAgentDeviceNodeVersion } from './agent-device-ui-transport.js';
 import {
   DEFAULT_EXPO_RECIPE_MANIFEST_PATH,
   DEFAULT_EXPO_RECIPE_PATH,
@@ -13,6 +14,16 @@ import {
   runExpoRecipeDoctor,
   runExpoRecipeDocument,
 } from './index.js';
+import { closeUiTransportQuietly } from './runner.js';
+
+test('native Agent Device transport reports its Node runtime requirement', () => {
+  assert.doesNotThrow(() => assertAgentDeviceNodeVersion('22.12.0'));
+  assert.doesNotThrow(() => assertAgentDeviceNodeVersion('23.0.0'));
+  assert.throws(
+    () => assertAgentDeviceNodeVersion('20.10.0'),
+    /Native Agent Device recipe actions require Node >=22\.12/u,
+  );
+});
 
 test('installs the Expo recipe scaffold idempotently', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-'));
@@ -114,6 +125,65 @@ test('installs optional bridge files and validates the dev guard contract', asyn
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('doctor warns when the native provider environment is partially configured', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'farmslot-expo-recipe-native-env-'));
+  const nativeEnvKeys = [
+    'PLATFORM',
+    'IOS_SIMULATOR',
+    'SIMULATOR',
+    'ADB_SERIAL',
+    'ANDROID_SERIAL',
+    'ANDROID_DEVICE',
+    'FARMSLOT_RECIPE_APP_ID',
+  ] as const;
+  const savedEnv = Object.fromEntries(nativeEnvKeys.map((key) => [key, process.env[key]]));
+  const resetNativeEnv = () => {
+    for (const key of nativeEnvKeys) delete process.env[key];
+  };
+  try {
+    await writeJson(path.join(root, 'package.json'), { name: 'example-expo', scripts: {} });
+    await installExpoRecipeScaffold({ projectRoot: root });
+
+    resetNativeEnv();
+    const local = await runExpoRecipeDoctor({ projectRoot: root });
+    assert.equal(local.status, 'pass');
+    assert.deepEqual(local.findings, []);
+
+    process.env.PLATFORM = 'ios';
+    const partial = await runExpoRecipeDoctor({ projectRoot: root });
+    assert.equal(partial.status, 'pass');
+    assert.ok(
+      partial.findings.some(
+        (finding) =>
+          finding.code === 'native_provider_incomplete' && finding.severity === 'warning',
+      ),
+    );
+
+    process.env.IOS_SIMULATOR = 'fs-3';
+    process.env.FARMSLOT_RECIPE_APP_ID = 'net.siteed.example';
+    const complete = await runExpoRecipeDoctor({ projectRoot: root });
+    assert.equal(complete.status, 'pass');
+    assert.deepEqual(complete.findings, []);
+  } finally {
+    resetNativeEnv();
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value !== undefined) process.env[key] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('transport cleanup failures never mask the run result', async () => {
+  await assert.doesNotReject(() =>
+    closeUiTransportQuietly({
+      async close() {
+        throw new Error('sessions.close exploded');
+      },
+    }),
+  );
+  await assert.doesNotReject(() => closeUiTransportQuietly({}));
 });
 
 test('redacts sensitive command output before writing trace artifacts', async () => {

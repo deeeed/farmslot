@@ -96,7 +96,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit --project tsconfig.json",
-    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json test",
+    "test": "node ../../scripts/quality/run-tsx-tests.mjs --cwd . --tsconfig tsconfig.json test src/core/observations.test.ts",
     "format": "prettier --write --ignore-path ../../.prettierignore .",
     "format:check": "prettier --check --ignore-path ../../.prettierignore .",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",

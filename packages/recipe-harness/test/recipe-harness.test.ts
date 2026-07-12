@@ -19,7 +19,7 @@ import { createRecipeRunner, defineActionAdapter } from '../src/core/runner.js';
 import type { VideoRecorder, VideoRecorderStartRequest } from '../src/core/types.js';
 import { createCaptureHelperVideoRecorder } from '../src/recording/capture-helper.js';
 import { extensionIdFromTarget } from '../src/runtime/browser-extension.js';
-import { createCdpWebUiTransport } from '../src/runtime/cdp.js';
+import { CdpWebPage, createCdpWebUiTransport } from '../src/runtime/cdp.js';
 import {
   createReactNativeBridgeUiTransport,
   type ReactNativeBridgeCommand,
@@ -1852,6 +1852,22 @@ test('maps React Native bridge transport commands without project-specific ui re
       runner_protocol_version: 1,
       action_registry_version: 1,
       supported_official_actions: ['ui.scroll', 'app.hud', 'end'],
+      observers: [
+        {
+          ref: 'ui.screen',
+          description: 'Current native screen.',
+          default_for: ['ui.scroll'],
+          cost: 'cheap',
+          redaction: 'none',
+        },
+        {
+          ref: 'ui.visible',
+          description: 'Current visible native controls.',
+          default_for: ['ui.scroll'],
+          cost: 'cheap',
+          redaction: 'labels-only',
+        },
+      ],
     };
     const commands: ReactNativeBridgeCommand[] = [];
     const transport = createReactNativeBridgeUiTransport({
@@ -1907,15 +1923,16 @@ test('maps React Native bridge transport commands without project-specific ui re
     assert.equal(result.status, 'pass');
     assert.deepEqual(
       commands.map((command) => command.command),
-      ['hud', 'scroll', 'hud', 'hud', 'hud', 'hud', 'hud'],
+      ['hud', 'scroll', 'observeUi', 'hud', 'hud', 'hud', 'hud', 'hud'],
     );
     assert.equal(commands[1]?.payload.test_id, 'AssetList');
+    assert.deepEqual(commands[2]?.payload.refs, ['ui.screen', 'ui.visible']);
     assert.equal(
-      commands[2]?.payload.text,
+      commands[3]?.payload.text,
       'Scroll the asset list until the target rows are visible',
     );
-    assert.equal(commands[2]?.payload.detail, 'Using the React Native bridge scroll primitive');
-    assert.equal(commands[3]?.payload.text, 'Scrolled assets');
+    assert.equal(commands[3]?.payload.detail, 'Using the React Native bridge scroll primitive');
+    assert.equal(commands[4]?.payload.text, 'Scrolled assets');
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -1923,12 +1940,16 @@ test('maps React Native bridge transport commands without project-specific ui re
 
 test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () => {
   const calls: Array<Record<string, unknown>> = [];
+  let settleCalls = 0;
   const transport = createCdpWebUiTransport({
     async withPage(_input, callback) {
       const page = {
         async scroll(options: Record<string, unknown>) {
           calls.push(options);
           return { scrolled: true };
+        },
+        async waitForDomSettled() {
+          settleCalls += 1;
         },
       };
       return callback(page as never);
@@ -1957,6 +1978,7 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
   );
 
   assert.deepEqual(result, { scrolled: true });
+  assert.equal(settleCalls, 1);
   assert.deepEqual(calls, [
     {
       selector: '[data-testid="target-row"], [data-test-id="target-row"], [data-test="target-row"]',
@@ -1965,6 +1987,394 @@ test('maps CDP scroll into-view recipes to scrollIntoView semantics', async () =
       deltaY: undefined,
     },
   ]);
+});
+
+test('CDP observations and selectors traverse open shadow roots', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Runtime.evaluate') {
+        expressions.push(String(params.expression));
+        return {
+          result: {
+            value: {
+              x: 10,
+              y: 20,
+              selector: '[data-test-id="inside-shadow"]',
+              tagName: 'BUTTON',
+            },
+          },
+        };
+      }
+      return {};
+    },
+  } as never);
+
+  await page.click('[data-test-id="inside-shadow"]');
+  await page.observe(['ui.visible']);
+
+  assert.match(expressions[0] ?? '', /querySelectorDeep/u);
+  assert.match(expressions[0] ?? '', /shadowRoot/u);
+  const observationExpression = expressions[1] ?? '';
+  assert.match(observationExpression, /querySelectorAllDeep/u);
+  assert.match(observationExpression, /shadowRoot/u);
+  assert.match(observationExpression, /testAttribute/u);
+  assert.match(observationExpression, /'data-test-id'/u);
+  assert.match(observationExpression, /instanceof ShadowRoot/u);
+  assert.doesNotMatch(observationExpression, /getAttribute\('value'\)/u);
+});
+
+test('CDP navigation waits for the loaded document before returning', async () => {
+  let loadHandler: (() => void) | undefined;
+  let ready = false;
+  const calls: string[] = [];
+  const page = new CdpWebPage({
+    on(method: string, handler: () => void) {
+      assert.equal(method, 'Page.loadEventFired');
+      loadHandler = handler;
+      return () => {
+        loadHandler = undefined;
+      };
+    },
+    async call(method: string, params: Record<string, unknown>) {
+      calls.push(method);
+      if (method === 'Runtime.evaluate') {
+        const expression = String(params.expression);
+        if (expression.startsWith('new URL(')) {
+          return { result: { value: 'https://example.test/next' } };
+        }
+        if (expression.startsWith('new Promise(')) return { result: { value: true } };
+        return {
+          result: {
+            value: { ready, url: 'https://example.test/next' },
+          },
+        };
+      }
+      if (method === 'Page.navigate') {
+        setTimeout(() => {
+          ready = true;
+          loadHandler?.();
+        }, 20);
+        return { loaderId: 'new-document' };
+      }
+      return {};
+    },
+  } as never);
+
+  await page.navigate('https://example.test/next', 1_000);
+
+  assert.deepEqual(calls, ['Runtime.evaluate', 'Page.navigate', 'Runtime.evaluate']);
+  assert.equal(loadHandler, undefined);
+});
+
+test('CDP same-document navigation waits for the requested location', async () => {
+  let pollCount = 0;
+  const page = new CdpWebPage({
+    on() {
+      return () => {};
+    },
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.navigate') return {};
+      const expression = String(params.expression);
+      if (expression.startsWith('new URL(')) {
+        return { result: { value: 'https://example.test/#ready' } };
+      }
+      if (expression.startsWith('new Promise(')) return { result: { value: true } };
+      pollCount += 1;
+      return {
+        result: {
+          value: {
+            ready: true,
+            url: pollCount > 1 ? 'https://example.test/#ready' : 'https://example.test/#old',
+          },
+        },
+      };
+    },
+  } as never);
+
+  await page.navigate('#ready', 1_000);
+
+  assert.equal(pollCount, 2);
+});
+
+test('CDP navigation defers DOM settlement to the shared settle wrapper', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    on() {
+      return () => {};
+    },
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Page.navigate') return {};
+      const expression = String(params.expression);
+      expressions.push(expression);
+      if (expression.startsWith('new URL(')) {
+        return { result: { value: 'https://example.test/#ready' } };
+      }
+      if (expression.startsWith('new Promise(')) return { result: { value: true } };
+      return {
+        result: { value: { ready: true, url: 'https://example.test/#ready' } },
+      };
+    },
+  } as never);
+
+  await page.navigate('#ready', 1_000);
+
+  assert.equal(
+    expressions.find((expression) => expression.startsWith('new Promise(')),
+    undefined,
+  );
+
+  await page.waitForDomSettled(100);
+  const settleExpression = expressions.find((expression) => expression.startsWith('new Promise('));
+  assert.match(settleExpression ?? '', /MutationObserver/u);
+  assert.match(settleExpression ?? '', /requestAnimationFrame/u);
+  assert.match(settleExpression ?? '', /element\.shadowRoot/u);
+  assert.match(settleExpression ?? '', /setInterval\(discoverRoots/u);
+  assert.match(settleExpression ?? '', /document\.getAnimations/u);
+  assert.match(settleExpression ?? '', /animation\.playState === 'running'/u);
+  assert.match(settleExpression ?? '', /reject\(new Error\('DOM remained active/u);
+});
+
+test('CDP ui.navigate honors the settle contract through the shared wrapper', async () => {
+  const makeContext = () =>
+    ({
+      nodeId: 'navigate-node',
+      recipe: {},
+      projectRoot: '/tmp/project',
+      artifactsDir: '/tmp/artifacts',
+      env: {},
+      outputs: new Map(),
+      getOutput: () => undefined,
+      resolveProjectPath: (relativePath: string) => relativePath,
+      resolveArtifactPath: (relativePath: string) => relativePath,
+      registerArtifact() {},
+      logger: console,
+    }) as never;
+  let settleCalls = 0;
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      const page = {
+        async navigate() {
+          return { loaderId: 'doc' };
+        },
+        async waitForDomSettled() {
+          settleCalls += 1;
+          throw new Error('CDP document did not settle within 100ms');
+        },
+      };
+      return callback(page as never);
+    },
+  });
+
+  const skipped = await transport.execute(
+    'ui.navigate',
+    { target: '#live', settle: false },
+    makeContext(),
+  );
+  assert.deepEqual(skipped, { loaderId: 'doc' });
+  assert.equal(settleCalls, 0);
+
+  const warned = await transport.execute('ui.navigate', { target: '#next' }, makeContext());
+  assert.deepEqual(warned, {
+    loaderId: 'doc',
+    settlementWarning: 'CDP document did not settle within 100ms',
+  });
+  assert.equal(settleCalls, 1);
+});
+
+test('CDP settlement ignores infinite animations while waiting for quiet DOM', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      assert.equal(method, 'Runtime.evaluate');
+      expressions.push(String(params.expression));
+      return { result: { value: true } };
+    },
+  } as never);
+
+  await page.waitForDomSettled(100);
+
+  const settleExpression = expressions[0] ?? '';
+  assert.match(settleExpression, /getTiming\(\)\.iterations !== Infinity/u);
+  assert.match(settleExpression, /finiteAnimations\.some/u);
+  assert.doesNotMatch(settleExpression, /animations\.some\(/u);
+});
+
+test('CDP settlement failure preserves the successful action result with a warning', async () => {
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      const page = {
+        async clickText() {
+          return { clicked: true, text: 'Ready Workspace' };
+        },
+        async waitForDomSettled() {
+          throw new Error('CDP document did not settle within 100ms');
+        },
+      };
+      return callback(page as never);
+    },
+  });
+
+  const result = await transport.execute(
+    'ui.press',
+    { text: 'Ready Workspace', timeout_ms: 100 },
+    {
+      nodeId: 'open-ready',
+      recipe: {},
+      projectRoot: '/tmp/project',
+      artifactsDir: '/tmp/artifacts',
+      env: {},
+      outputs: new Map(),
+      getOutput: () => undefined,
+      resolveProjectPath: (relativePath) => relativePath,
+      resolveArtifactPath: (relativePath) => relativePath,
+      registerArtifact() {},
+      logger: console,
+    },
+  );
+
+  assert.deepEqual(result, {
+    clicked: true,
+    text: 'Ready Workspace',
+    settlementWarning: 'CDP document did not settle within 100ms',
+  });
+});
+
+test('CDP settle false skips DOM settlement entirely', async () => {
+  let settleCalls = 0;
+  const transport = createCdpWebUiTransport({
+    async withPage(_input, callback) {
+      const page = {
+        async clickText() {
+          return { clicked: true };
+        },
+        async waitForDomSettled() {
+          settleCalls += 1;
+        },
+      };
+      return callback(page as never);
+    },
+  });
+
+  const result = await transport.execute(
+    'ui.press',
+    { text: 'Live status', settle: false },
+    {
+      nodeId: 'open-live',
+      recipe: {},
+      projectRoot: '/tmp/project',
+      artifactsDir: '/tmp/artifacts',
+      env: {},
+      outputs: new Map(),
+      getOutput: () => undefined,
+      resolveProjectPath: (relativePath) => relativePath,
+      resolveArtifactPath: (relativePath) => relativePath,
+      registerArtifact() {},
+      logger: console,
+    },
+  );
+
+  assert.deepEqual(result, { clicked: true });
+  assert.equal(settleCalls, 0);
+});
+
+test('CDP click hit-testing crosses shadow boundaries with composed ancestry', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Runtime.evaluate') {
+        expressions.push(String(params.expression));
+        return { result: { value: { x: 1, y: 2, selector: 's', tagName: 'BUTTON' } } };
+      }
+      return {};
+    },
+  } as never);
+
+  await page.click('[data-test-id="inside-shadow"]');
+
+  const clickExpression = expressions[0] ?? '';
+  assert.match(clickExpression, /composedContains/u);
+  assert.match(clickExpression, /root instanceof ShadowRoot \? root\.host : null/u);
+  assert.doesNotMatch(clickExpression, /element\.contains\(hit\)/u);
+});
+
+test('CDP deep text matching uses rendered text without scanning textContent', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      assert.equal(method, 'Runtime.evaluate');
+      expressions.push(String(params.expression));
+      return { result: { value: true } };
+    },
+  } as never);
+
+  await page.waitFor({ text: 'Review Workspace', timeoutMs: 100 });
+
+  assert.match(expressions[0] ?? '', /renderedTextDeep/u);
+  assert.match(expressions[0] ?? '', /NodeFilter\.SHOW_TEXT/u);
+  assert.match(expressions[0] ?? '', /isRenderedDeep\(node\.parentElement\)/u);
+  assert.doesNotMatch(expressions[0] ?? '', /textContent/u);
+});
+
+test('CDP visible observations omit labels for non-rendered targets', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(_method: string, params: Record<string, unknown>) {
+      expressions.push(String(params.expression));
+      return { result: { value: { items: [], hidden_or_offscreen: [] } } };
+    },
+  } as never);
+
+  await page.observe(['ui.visible']);
+
+  const expression = expressions[0] ?? '';
+  assert.match(expression, /label: includeLabel \? textFor\(el\) : undefined/u);
+  assert.match(expression, /itemFor\(el, rendered \? rect : undefined, rendered\)/u);
+  assert.match(expression, /root instanceof ShadowRoot \? root\.host/u);
+  assert.match(expression, /Number\(style\.opacity \|\| 1\) <= 0/u);
+  assert.doesNotMatch(expression, /'\[data-testid\]'/u);
+  assert.match(expression, /parts\.join\(' > '\)/u);
+  assert.doesNotMatch(expression, /el\.textContent/u);
+});
+
+test('CDP screen observations omit query parameters and sensitive fragments', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(_method: string, params: Record<string, unknown>) {
+      expressions.push(String(params.expression));
+      return { result: { value: {} } };
+    },
+  } as never);
+
+  await page.observe(['ui.screen']);
+
+  const expression = expressions[0] ?? '';
+  assert.match(expression, /location\.origin \+ location\.pathname/u);
+  assert.match(expression, /const hashPath = location\.hash\.split\('\?'\)\[0\]/u);
+  assert.match(expression, /!hashPath\.includes\('='\)/u);
+  assert.doesNotMatch(expression, /url: location\.href/u);
+});
+
+test('CDP visible waits use viewport visibility and presses validate hit targets', async () => {
+  const expressions: string[] = [];
+  const page = new CdpWebPage({
+    async call(method: string, params: Record<string, unknown>) {
+      if (method === 'Runtime.evaluate') {
+        expressions.push(String(params.expression));
+        return { result: { value: { x: 10, y: 20, selector: '#submit', tagName: 'BUTTON' } } };
+      }
+      return {};
+    },
+  } as never);
+
+  await page.waitFor({ selector: '#submit', expected: 'visible', timeoutMs: 100 });
+  await page.click('#submit');
+
+  assert.match(expressions[0] ?? '', /isVisibleDeep\(el\)/u);
+  assert.match(expressions[1] ?? '', /clickablePointDeep\(el\)/u);
+  assert.match(expressions[1] ?? '', /elementFromPoint/u);
+  assert.match(expressions[1] ?? '', /Target is disabled/u);
+  assert.match(expressions[1] ?? '', /Target is obscured/u);
 });
 
 test('extracts browser extension ids from CDP targets', () => {

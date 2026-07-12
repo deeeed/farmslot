@@ -50,6 +50,13 @@ A good recipe should answer:
 
 Project adapters can add richer actions such as `ui.navigate`, `ui.screenshot`, `cdp.evaluate`, or product-specific namespaced actions.
 
+After supported UI actions, runners may record passive `observations` in
+`trace.json`, including `ui.screen` and bounded `ui.visible.items`. Use these
+items to author the next node from stable handles (`test_id`, selector, label,
+role). Observations are not proof and never control graph transitions; keep
+using `ui.wait_for`, assertions, screenshots, or explicit evidence nodes for
+claims that must pass or fail the recipe.
+
 ## Full v1 contract
 
 For composed recipes, reusable start-state flows, proof-target mapping, HUD/overlay visual proof, and artifact-package requirements, see [Recipe Protocol v1](../reference/recipe-protocol-v1.md).

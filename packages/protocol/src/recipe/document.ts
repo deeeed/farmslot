@@ -75,6 +75,29 @@ export function validateRecipeWithManifest(
     });
   }
 
+  const declaredObservers = new Set<string>();
+  if (isRecord(manifest) && Array.isArray(manifest.observers)) {
+    for (const observer of manifest.observers) {
+      if (isRecord(observer) && typeof observer.ref === 'string') {
+        declaredObservers.add(observer.ref);
+      }
+    }
+  }
+  for (const entry of collectObservationPolicies(recipe)) {
+    if (!Array.isArray(entry.policy)) continue;
+    entry.policy.forEach((ref, index) => {
+      if (typeof ref === 'string' && !declaredObservers.has(ref)) {
+        addFinding(
+          ctx,
+          'error',
+          'recipe.observer_not_declared_by_manifest',
+          `${entry.path}[${index}]`,
+          `Recipe observer ${ref} is not declared by the runner action manifest.`,
+        );
+      }
+    });
+  }
+
   const declaredPreconditions = new Set(getRecipeActionManifestPreconditionIds(manifest));
   for (const gate of getRecipeWorkflowPreconditionEntries(recipe)) {
     if (!declaredPreconditions.has(gate.id)) {
@@ -89,6 +112,62 @@ export function validateRecipeWithManifest(
   }
 
   return finishResult(ctx);
+}
+
+interface ObservationPolicyEntry {
+  path: string;
+  policy: unknown;
+  field: 'observe' | 'expect_observations';
+  node: Record<string, unknown>;
+}
+
+function collectObservationPolicies(recipe: unknown): ObservationPolicyEntry[] {
+  if (!isRecord(recipe)) return [];
+  const entries = collectNodeObservationPolicies(recipe.startState, 'startState');
+  const validate = isRecord(recipe.validate) ? recipe.validate : undefined;
+  entries.push(...collectWorkflowObservationPolicies(validate?.workflow, 'validate.workflow'));
+  if (isRecord(recipe.flows)) {
+    for (const [ref, flow] of Object.entries(recipe.flows)) {
+      if (!isRecord(flow)) continue;
+      entries.push(
+        ...collectWorkflowObservationPolicies(
+          isRecord(flow.workflow) ? flow.workflow : flow,
+          `flows.${ref}${isRecord(flow.workflow) ? '.workflow' : ''}`,
+        ),
+      );
+    }
+  }
+  return entries;
+}
+
+function collectWorkflowObservationPolicies(
+  value: unknown,
+  path: string,
+): ObservationPolicyEntry[] {
+  if (!isRecord(value)) return [];
+  const entries: ObservationPolicyEntry[] = [];
+  if (isRecord(value.nodes)) {
+    for (const [nodeId, node] of Object.entries(value.nodes)) {
+      entries.push(...collectNodeObservationPolicies(node, `${path}.nodes.${nodeId}`));
+    }
+  }
+  for (const lifecycle of ['setup', 'teardown'] as const) {
+    if (!Array.isArray(value[lifecycle])) continue;
+    value[lifecycle].forEach((node, index) => {
+      entries.push(...collectNodeObservationPolicies(node, `${path}.${lifecycle}[${index}]`));
+    });
+  }
+  return entries;
+}
+
+function collectNodeObservationPolicies(value: unknown, path: string): ObservationPolicyEntry[] {
+  if (!isRecord(value) || typeof value.action !== 'string') return [];
+  const entries: ObservationPolicyEntry[] = [];
+  for (const field of ['observe', 'expect_observations'] as const) {
+    if (hasOwn(value, field))
+      entries.push({ path: `${path}.${field}`, policy: value[field], field, node: value });
+  }
+  return entries;
 }
 
 export function validateRecipeDocument(
@@ -167,6 +246,47 @@ export function validateRecipeDocument(
     });
   }
   validateInlineFlows(ctx, recipe);
+  for (const entry of collectObservationPolicies(recipe)) {
+    const valid =
+      entry.field === 'observe'
+        ? typeof entry.policy === 'boolean' || validObserverRefArray(entry.policy)
+        : validObserverRefArray(entry.policy);
+    if (!valid) {
+      addFinding(
+        ctx,
+        'error',
+        entry.field === 'observe'
+          ? 'recipe.invalid_observe_policy'
+          : 'recipe.invalid_observation_expectation',
+        entry.path,
+        entry.field === 'observe'
+          ? 'observe must be a boolean or an array of unique non-empty observer refs.'
+          : 'expect_observations must be an array of unique non-empty observer refs.',
+      );
+    }
+    if (
+      entry.field === 'expect_observations' &&
+      Array.isArray(entry.policy) &&
+      entry.policy.length > 0 &&
+      entry.node.observe === false
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.contradictory_observation_expectation',
+        entry.path,
+        'expect_observations must be empty when observe is false; the node can never record observations.',
+      );
+    }
+  }
 
   return finishResult(ctx);
+}
+
+function validObserverRefArray(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every((ref) => typeof ref === 'string' && ref.trim() !== '') &&
+    new Set(value).size === value.length
+  );
 }

@@ -4,6 +4,8 @@ export {
   validateRecipeArtifactPackage,
 } from './artifact.js';
 export {
+  BUILT_IN_UI_OBSERVERS,
+  type BuiltInUiObserverRef,
   isRecord,
   OFFICIAL_RECIPE_ACTIONS,
   type OfficialActionName,
@@ -20,6 +22,7 @@ export {
   type RecipeCustomActionDeclaration,
   type RecipeNamedDeclaration,
   type RecipeNativeBindingDeclaration,
+  type RecipeObserverDeclaration,
   type RecipePreconditionDeclaration,
   type RecipeRuntimeCapabilityDeclaration,
   type RecipeStateRefDeclaration,
@@ -27,6 +30,7 @@ export {
   type RecipeValidationResult,
   type RecipeValidationSeverity,
   type RecipeValidationStatus,
+  type UiObserverRef,
 } from './common.js';
 export { recipeProtocolSchemaUrlForVersion } from './common.js';
 export {

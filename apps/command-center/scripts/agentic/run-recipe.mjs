@@ -313,6 +313,9 @@ function wrapTransportWithSlow(transport, slowMs) {
       await new Promise((resolve) => setTimeout(resolve, slowMs));
       return result;
     },
+    ...(transport.observe
+      ? { observe: (refs, node, context) => transport.observe(refs, node, context) }
+      : {}),
   };
 }
 
@@ -329,6 +332,9 @@ function wrapTransportNavigate(transport, uiBaseUrl) {
       }
       return transport.execute(action, node, context);
     },
+    ...(transport.observe
+      ? { observe: (refs, node, context) => transport.observe(refs, node, context) }
+      : {}),
   };
 }
 

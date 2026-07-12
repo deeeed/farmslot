@@ -1,3 +1,4 @@
+export { createAgentDeviceUiTransport } from './agent-device-ui-transport.js';
 export { runExpoRecipeCli } from './cli.js';
 export {
   BRIDGE_HUD_PATH,

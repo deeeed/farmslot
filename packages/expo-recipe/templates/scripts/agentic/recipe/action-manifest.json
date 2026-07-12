@@ -1,7 +1,17 @@
 {
   "runner_protocol_version": 1,
   "action_registry_version": 1,
-  "supported_official_actions": ["command", "assert_output", "wait", "end"],
+  "supported_official_actions": [
+    "command",
+    "assert_output",
+    "wait",
+    "ui.press",
+    "ui.set_input",
+    "ui.scroll",
+    "ui.wait_for",
+    "ui.screenshot",
+    "end"
+  ],
   "action_metadata": {
     "command": {
       "description": "Run a project-local command during setup, diagnostics, or headless proof. Prefer UI actions only when the recipe must prove visible interaction."
@@ -11,6 +21,19 @@
     },
     "wait": {
       "description": "Pause briefly for asynchronous setup work. Keep waits short and prefer deterministic assertions."
+    },
+    "ui.press": {
+      "description": "Press a native accessibility target on the assigned simulator or device."
+    },
+    "ui.set_input": {
+      "description": "Set text on a native input. Values remain part of retained recipe artifacts, so recipes must not contain secrets."
+    },
+    "ui.scroll": {
+      "description": "Scroll the assigned native simulator or device and wait for stability."
+    },
+    "ui.wait_for": { "description": "Wait for native accessibility content and UI stability." },
+    "ui.screenshot": {
+      "description": "Capture the assigned native simulator or device into the artifact package."
     },
     "end": {
       "description": "Terminate the recipe graph with pass, fail, or unknown."
@@ -25,6 +48,22 @@
       "platforms": ["macos"],
       "modes": ["full_run"],
       "artifactTypes": ["video/mp4"]
+    }
+  ],
+  "observers": [
+    {
+      "ref": "ui.screen",
+      "description": "Current native app identity after supported UI actions.",
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
+      "cost": "cheap",
+      "redaction": "none"
+    },
+    {
+      "ref": "ui.visible",
+      "description": "Bounded visible native accessibility targets after supported UI actions.",
+      "default_for": ["ui.press", "ui.set_input", "ui.scroll", "ui.wait_for"],
+      "cost": "cheap",
+      "redaction": "labels-only"
     }
   ],
   "custom_actions": []

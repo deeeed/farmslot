@@ -35,6 +35,8 @@ test('depsCheck records and compares baseline fingerprint', async () => {
     recordDepsBaseline(root);
     assert.equal(depsCheck(root).status, 'current');
     await writeFile(path.join(root, 'yarn.lock'), '# lock\n# bump\n');
+    const changedInputAt = new Date(Date.now() + 1_000);
+    await utimes(path.join(root, 'yarn.lock'), changedInputAt, changedInputAt);
     assert.equal(depsCheck(root).status, 'stale');
   } finally {
     await rm(root, { recursive: true, force: true });

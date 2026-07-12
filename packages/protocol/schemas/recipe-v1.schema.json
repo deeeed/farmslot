@@ -171,6 +171,15 @@
         },
         "record": {
           "enum": ["none", "trace_only", "proof_window", "failure_only"]
+        },
+        "observe": {
+          "$ref": "#/$defs/observePolicy"
+        },
+        "expect_observations": {
+          "$ref": "#/$defs/observationExpectation"
+        },
+        "settle": {
+          "type": "boolean"
         }
       },
       "allOf": [
@@ -214,9 +223,43 @@
         },
         "record": {
           "enum": ["none", "trace_only", "proof_window", "failure_only"]
+        },
+        "observe": {
+          "$ref": "#/$defs/observePolicy"
+        },
+        "expect_observations": {
+          "$ref": "#/$defs/observationExpectation"
+        },
+        "settle": {
+          "type": "boolean"
         }
       },
       "additionalProperties": true
+    },
+    "observePolicy": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "uniqueItems": true
+        }
+      ]
+    },
+    "observationExpectation": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "\\S"
+      },
+      "uniqueItems": true
     }
   }
 }

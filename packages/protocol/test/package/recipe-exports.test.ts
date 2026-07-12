@@ -8,6 +8,7 @@ const dynamicImport = new Function('specifier', 'return import(specifier)') as (
 test('recipe module exposes only the public recipe protocol surface', async () => {
   const facade = await import('../../src/recipe/index.js');
   assert.deepEqual(Object.keys(facade).sort(), [
+    'BUILT_IN_UI_OBSERVERS',
     'OFFICIAL_RECIPE_ACTIONS',
     'RECIPE_PLAYBACK_SLOW_MS_MAX',
     'RECIPE_PLAYBACK_SLOW_MS_MIN',

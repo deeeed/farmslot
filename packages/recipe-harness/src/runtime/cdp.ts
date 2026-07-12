@@ -3,9 +3,11 @@ import path from 'node:path';
 
 import WebSocket from 'ws';
 
+import type { UiObserverRef } from '@farmslot/protocol';
+
 import type { StandardUiAction, UiActionTransport, UiTransportResult } from '../adapters/ui.js';
 import { asNumber, asOptionalString, asString, isRecord } from '../core/json.js';
-import type { ActionExecutionContext } from '../core/types.js';
+import type { ActionExecutionContext, RecipeObservationResult } from '../core/types.js';
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -199,8 +201,68 @@ export class CdpWebPage {
     return new CdpWebPage(session);
   }
 
-  async navigate(url: string): Promise<unknown> {
-    return this.session.call('Page.navigate', { url });
+  async navigate(url: string, timeoutMs = 10_000): Promise<unknown> {
+    const deadline = Date.now() + timeoutMs;
+    const expectedUrl = await this.evaluate<string>(
+      `new URL(${JSON.stringify(url)}, location.href).href`,
+    );
+    let notifyLoaded: (() => void) | undefined;
+    const loaded = new Promise<void>((resolve) => {
+      notifyLoaded = resolve;
+    });
+    const unsubscribe = this.session.on('Page.loadEventFired', () => notifyLoaded?.());
+    try {
+      const result = await this.session.call<{ errorText?: string; loaderId?: string }>(
+        'Page.navigate',
+        { url },
+      );
+      if (result.errorText) throw new Error(`CDP navigation failed: ${result.errorText}`);
+      if (result.loaderId) {
+        await withTimeout(
+          loaded,
+          Math.max(1, deadline - Date.now()),
+          `CDP navigation timed out after ${timeoutMs}ms`,
+        );
+      }
+      await this.waitForDocumentReady({
+        expectedUrl: result.loaderId ? undefined : expectedUrl,
+        timeoutMs: Math.max(1, deadline - Date.now()),
+      });
+      return result;
+    } finally {
+      unsubscribe();
+    }
+  }
+
+  async waitForDocumentReady(options: { expectedUrl?: string; timeoutMs?: number }): Promise<void> {
+    const timeoutMs = options.timeoutMs ?? 10_000;
+    const deadline = Date.now() + timeoutMs;
+    let lastError: unknown;
+    while (Date.now() <= deadline) {
+      try {
+        const state = await this.evaluate<{ ready: boolean; url: string }>(
+          `(() => ({ ready: document.readyState === 'interactive' || document.readyState === 'complete', url: location.href }))()`,
+        );
+        if (state.ready && (!options.expectedUrl || state.url === options.expectedUrl)) return;
+      } catch (error) {
+        // Runtime contexts can disappear briefly while a document navigation commits.
+        lastError = error;
+      }
+      await sleep(50);
+    }
+    const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
+    throw new Error(`CDP document was not ready within ${timeoutMs}ms${detail}`);
+  }
+
+  async waitForDomSettled(timeoutMs = 10_000): Promise<void> {
+    const quietMs = Math.min(300, Math.max(1, Math.floor(timeoutMs / 2)));
+    await withTimeout(
+      this.evaluate(
+        `new Promise((resolve, reject) => { const quietMs = ${quietMs}; const observedRoots = new Set(); let quietTimer; let rootPoll; let timeout; let finished = false; const cleanup = () => { observer.disconnect(); clearTimeout(quietTimer); clearTimeout(timeout); clearInterval(rootPoll); }; const finish = () => { if (finished) return; const animations = typeof document.getAnimations === 'function' ? document.getAnimations({ subtree: true }) : []; const finiteAnimations = animations.filter((animation) => animation.effect?.getTiming().iterations !== Infinity); if (finiteAnimations.some((animation) => animation.playState === 'running' || animation.playState === 'pending')) { schedule(); return; } finished = true; cleanup(); resolve(true); }; const schedule = () => { clearTimeout(quietTimer); quietTimer = setTimeout(finish, quietMs); }; const observeRoot = (root) => { if (!observedRoots.has(root)) { observedRoots.add(root); observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true }); schedule(); } for (const element of root.querySelectorAll('*')) { if (element.shadowRoot) observeRoot(element.shadowRoot); } }; const discoverRoots = () => observeRoot(document); const observer = new MutationObserver(() => { discoverRoots(); schedule(); }); discoverRoots(); rootPoll = setInterval(discoverRoots, Math.min(25, quietMs)); requestAnimationFrame(() => requestAnimationFrame(schedule)); timeout = setTimeout(() => { if (finished) return; finished = true; cleanup(); reject(new Error('DOM remained active for ${timeoutMs}ms')); }, ${timeoutMs}); })`,
+      ),
+      timeoutMs + 50,
+      `CDP document did not settle within ${timeoutMs}ms`,
+    );
   }
 
   async evaluate<T = unknown>(expression: string): Promise<T> {
@@ -225,7 +287,7 @@ export class CdpWebPage {
       selector: string;
       tagName: string;
     }>(
-      `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Selector has no clickable box: ${escapeForJsMessage(selector)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, selector: ${JSON.stringify(selector)}, tagName: el.tagName }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const point = clickablePointDeep(el); return { ...point, selector: ${JSON.stringify(selector)}, tagName: el.tagName }; })()`,
     );
     await this.clickPoint(target.x, target.y);
     return { clicked: true, selector: target.selector, tagName: target.tagName };
@@ -238,7 +300,7 @@ export class CdpWebPage {
       text: string;
       tagName: string;
     }>(
-      `(() => { const expected = ${JSON.stringify(text)}; const candidates = Array.from(document.querySelectorAll('button, [role=button], a, label, input, textarea, [tabindex]')); const el = candidates.find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || candidate.getAttribute('value') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const rect = el.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) throw new Error('Text target has no clickable box: ${escapeForJsMessage(text)}'); return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, text: expected, tagName: el.tagName }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const expected = ${JSON.stringify(text)}; const candidates = querySelectorAllDeep('button, [role=button], a, label, input, textarea, [tabindex]'); const el = candidates.find((candidate) => (candidate.innerText || candidate.textContent || candidate.getAttribute('aria-label') || candidate.getAttribute('value') || '').trim().includes(expected)); if (!el) throw new Error('Text target not found: ${escapeForJsMessage(text)}'); el.scrollIntoView({ block: 'center', inline: 'center' }); const point = clickablePointDeep(el); return { ...point, text: expected, tagName: el.tagName }; })()`,
     );
     await this.clickPoint(target.x, target.y);
     return { clicked: true, text: target.text, tagName: target.tagName };
@@ -250,13 +312,13 @@ export class CdpWebPage {
       tagName: string;
       previousValue: string;
     }>(
-      `(() => { const root = document.querySelector(${JSON.stringify(selector)}); if (!root) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); const el = root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : root.querySelector('input, textarea, [contenteditable="true"], [contenteditable=""]'); if (!el) throw new Error('Input target not found inside selector: ${escapeForJsMessage(selector)}'); if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Input target is disabled: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); if (typeof el.select === 'function') { el.select(); } else { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } return { selector: ${JSON.stringify(selector)}, tagName: el.tagName, previousValue: el.value ?? el.textContent ?? '' }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); if (!root) throw new Error('Selector not found: ${escapeForJsMessage(selector)}'); const el = root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root); if (!el) throw new Error('Input target not found inside selector: ${escapeForJsMessage(selector)}'); if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Input target is disabled: ${escapeForJsMessage(selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); el.focus(); if (typeof el.select === 'function') { el.select(); } else { const range = document.createRange(); range.selectNodeContents(el); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); } return { selector: ${JSON.stringify(selector)}, tagName: el.tagName, previousValue: el.value ?? el.textContent ?? '' }; })()`,
     );
     await this.session.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace' });
     await this.session.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace' });
     if (value) await this.session.call('Input.insertText', { text: value });
     const after = await this.evaluate<{ value: string }>(
-      `(() => { const root = document.querySelector(${JSON.stringify(selector)}); const el = root && (root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : root.querySelector('input, textarea, [contenteditable="true"], [contenteditable=""]')); if (!el) throw new Error('Input target disappeared after typing: ${escapeForJsMessage(selector)}'); el.dispatchEvent(new Event('change', { bubbles: true })); return { value: el.value ?? el.textContent ?? '' }; })()`,
+      `(() => { ${deepQueryHelpersExpression()} const root = querySelectorDeep(${JSON.stringify(selector)}); const el = root && (root.matches('input, textarea, [contenteditable="true"], [contenteditable=""]') ? root : querySelectorDeep('input, textarea, [contenteditable="true"], [contenteditable=""]', root)); if (!el) throw new Error('Input target disappeared after typing: ${escapeForJsMessage(selector)}'); el.dispatchEvent(new Event('change', { bubbles: true })); return { value: el.value ?? el.textContent ?? '' }; })()`,
     );
     if (after.value !== value) {
       throw new Error(
@@ -313,11 +375,11 @@ export class CdpWebPage {
     if (options.selector) {
       if (options.intoView) {
         return this.evaluate(
-          `(() => { const el = document.querySelector(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); return { scrolled: true, selector: ${JSON.stringify(options.selector)}, intoView: true }; })()`,
+          `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollIntoView({ block: 'center', inline: 'nearest' }); return { scrolled: true, selector: ${JSON.stringify(options.selector)}, intoView: true }; })()`,
         );
       }
       return this.evaluate(
-        `(() => { const el = document.querySelector(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
+        `(() => { ${deepQueryHelpersExpression()} const el = querySelectorDeep(${JSON.stringify(options.selector)}); if (!el) throw new Error('Selector not found: ${escapeForJsMessage(options.selector)}'); el.scrollBy(${JSON.stringify(deltaX)}, ${JSON.stringify(deltaY)}); return { scrolled: true }; })()`,
       );
     }
     return this.evaluate(
@@ -333,7 +395,7 @@ export class CdpWebPage {
   }): Promise<unknown> {
     const timeoutMs = options.timeoutMs ?? 5_000;
     return this.evaluate(
-      `(async () => { const deadline = Date.now() + ${JSON.stringify(timeoutMs)}; while (Date.now() <= deadline) { const ok = ${waitForPredicateExpression(options)}; if (ok) return { matched: true }; await new Promise((resolve) => setTimeout(resolve, 100)); } throw new Error('ui.wait_for timed out'); })()`,
+      `(async () => { ${deepQueryHelpersExpression()} const deadline = Date.now() + ${JSON.stringify(timeoutMs)}; while (Date.now() <= deadline) { const ok = ${waitForPredicateExpression(options)}; if (ok) return { matched: true }; await new Promise((resolve) => setTimeout(resolve, 100)); } throw new Error('ui.wait_for timed out'); })()`,
     );
   }
 
@@ -390,6 +452,33 @@ export class CdpWebPage {
     };
   }
 
+  async observe(refs: readonly UiObserverRef[]): Promise<RecipeObservationResult> {
+    const observations: Record<string, unknown> = {};
+    const warnings: RecipeObservationResult['warnings'] = [];
+    for (const ref of refs) {
+      try {
+        if (ref === 'ui.screen') {
+          observations[ref] = await this.evaluate(
+            `(() => { const hashPath = location.hash.split('?')[0]; const hashRoute = hashPath && !hashPath.includes('=') ? hashPath : undefined; return { provider: 'cdp-web', name: document.title || location.pathname || hashRoute || 'Browser', title: document.title || undefined, route: hashRoute || location.pathname || undefined, url: location.origin + location.pathname }; })()`,
+          );
+        } else if (ref === 'ui.visible') {
+          observations[ref] = await this.evaluate(visibleTargetsExpression());
+        } else {
+          warnings.push({ ref, message: `Unsupported UI observer: ${ref}.` });
+        }
+      } catch (error) {
+        warnings.push({
+          ref,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return {
+      ...(Object.keys(observations).length ? { observations } : {}),
+      ...(warnings.length ? { warnings } : {}),
+    };
+  }
+
   close(): void {
     this.session.close();
   }
@@ -429,39 +518,69 @@ export function createCdpWebUiTransport(
         switch (action) {
           case 'ui.navigate': {
             const url = asString(node.url ?? node.target, 'ui.navigate.url');
-            return page.navigate(url);
+            return executeSettledCdpAction(
+              page,
+              page.navigate(
+                url,
+                node.timeout_ms == null
+                  ? undefined
+                  : asNumber(node.timeout_ms, 'ui.navigate.timeout_ms'),
+              ),
+              node,
+            );
           }
           case 'ui.press': {
             const selector = selectorForUiInput(node);
-            if (selector) return page.click(selector);
-            return page.clickText(asString(node.text ?? node.label, 'ui.press.text'));
+            return executeSettledCdpAction(
+              page,
+              selector
+                ? page.click(selector)
+                : page.clickText(asString(node.text ?? node.label, 'ui.press.text')),
+              node,
+            );
           }
           case 'ui.key_press':
-            return page.keyPress(asString(node.key, 'ui.key_press.key'));
+            return executeSettledCdpAction(
+              page,
+              page.keyPress(asString(node.key, 'ui.key_press.key')),
+              node,
+            );
           case 'ui.set_input':
-            return page.setInput(
-              asString(selectorForUiInput(node), 'ui.set_input.selector'),
-              asString(node.value ?? node.text, 'ui.set_input.value'),
+            return executeSettledCdpAction(
+              page,
+              page.setInput(
+                asString(selectorForUiInput(node), 'ui.set_input.selector'),
+                asString(node.value ?? node.text, 'ui.set_input.value'),
+              ),
+              node,
             );
           case 'ui.scroll':
-            return page.scroll({
-              selector: asOptionalString(selectorForUiInput(node), 'ui.scroll.selector'),
-              intoView: node.scroll_into_view === true || node.into_view === true,
-              deltaX:
-                node.delta_x == null ? undefined : asNumber(node.delta_x, 'ui.scroll.delta_x'),
-              deltaY:
-                node.delta_y == null ? undefined : asNumber(node.delta_y, 'ui.scroll.delta_y'),
-            });
+            return executeSettledCdpAction(
+              page,
+              page.scroll({
+                selector: asOptionalString(selectorForUiInput(node), 'ui.scroll.selector'),
+                intoView: node.scroll_into_view === true || node.into_view === true,
+                deltaX:
+                  node.delta_x == null ? undefined : asNumber(node.delta_x, 'ui.scroll.delta_x'),
+                deltaY:
+                  node.delta_y == null ? undefined : asNumber(node.delta_y, 'ui.scroll.delta_y'),
+              }),
+              node,
+            );
           case 'ui.wait_for':
-            return page.waitFor({
-              selector: asOptionalString(selectorForUiInput(node), 'ui.wait_for.selector'),
-              text: asOptionalString(node.text, 'ui.wait_for.text'),
-              expected: asOptionalString(node.expected, 'ui.wait_for.expected'),
-              timeoutMs:
-                node.timeout_ms == null
-                  ? undefined
-                  : asNumber(node.timeout_ms, 'ui.wait_for.timeout_ms'),
-            });
+            return executeSettledCdpAction(
+              page,
+              page.waitFor({
+                selector: asOptionalString(selectorForUiInput(node), 'ui.wait_for.selector'),
+                text: asOptionalString(node.text, 'ui.wait_for.text'),
+                expected: asOptionalString(node.expected, 'ui.wait_for.expected'),
+                timeoutMs:
+                  node.timeout_ms == null
+                    ? undefined
+                    : asNumber(node.timeout_ms, 'ui.wait_for.timeout_ms'),
+              }),
+              node,
+            );
           case 'ui.screenshot':
             return captureCdpScreenshot(page, node, context);
           case 'app.status':
@@ -479,7 +598,140 @@ export function createCdpWebUiTransport(
         }
       });
     },
+    async observe(refs, node, context) {
+      const input = { action: 'app.status' as StandardUiAction, node, context };
+      return withCdpWebPage(options, input, async (page) => page.observe(refs));
+    },
   };
+}
+
+async function executeSettledCdpAction<T>(
+  page: CdpWebPage,
+  operation: Promise<T>,
+  node: Record<string, unknown>,
+): Promise<T> {
+  const startedAt = Date.now();
+  const result = await operation;
+  if (node.settle === false) return result;
+  // timeout_ms budgets the whole node: settlement only gets what the action left over.
+  const timeoutMs =
+    node.timeout_ms == null
+      ? undefined
+      : Math.max(1, asNumber(node.timeout_ms, 'ui action timeout_ms') - (Date.now() - startedAt));
+  try {
+    await page.waitForDomSettled(timeoutMs);
+    return result;
+  } catch (error) {
+    const settlementWarning = error instanceof Error ? error.message : String(error);
+    if (typeof result === 'object' && result !== null && !Array.isArray(result)) {
+      return { ...result, settlementWarning };
+    }
+    return { result, settlementWarning } as T;
+  }
+}
+
+function visibleTargetsExpression(): string {
+  return `(() => {
+    const visibleLimit = 20;
+    const hiddenLimit = 10;
+    const selector = [
+      'button',
+      'a[href]',
+      'input',
+      'textarea',
+      'select',
+      '[role="button"]',
+      '[role="link"]',
+      '[role="menuitem"]',
+      '[role="tab"]'
+    ].join(',');
+    ${deepQueryHelpersExpression()}
+    const nodes = querySelectorAllDeep(selector);
+    const textFor = (el) => {
+      const raw = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.innerText || '';
+      return String(raw).replace(/\\s+/g, ' ').trim().slice(0, 120) || undefined;
+    };
+    const cssPath = (el) => {
+      if (el.id) return '#' + CSS.escape(el.id);
+      const testAttribute = ['data-testid', 'data-test-id', 'data-test'].find((attribute) => el.hasAttribute(attribute));
+      if (testAttribute) {
+        const testId = CSS.escape(String(el.getAttribute(testAttribute)));
+        return '[' + testAttribute + '="' + testId + '"]';
+      }
+      if (el.getRootNode() instanceof ShadowRoot) return undefined;
+      const parts = [];
+      let current = el;
+      while (current && current.nodeType === Node.ELEMENT_NODE) {
+        if (current.id) {
+          parts.unshift('#' + CSS.escape(current.id));
+          break;
+        }
+        const tag = current.tagName.toLowerCase();
+        const parent = current.parentElement;
+        if (!parent) {
+          parts.unshift(tag);
+          break;
+        }
+        const siblings = Array.from(parent.children).filter((child) => child.tagName === current.tagName);
+        parts.unshift(siblings.length > 1 ? tag + ':nth-of-type(' + (siblings.indexOf(current) + 1) + ')' : tag);
+        current = parent;
+      }
+      return parts.join(' > ');
+    };
+    const itemFor = (el, rect, includeLabel) => ({
+      role: el.getAttribute('role') || (el.tagName.toLowerCase() === 'a' ? 'link' : el.tagName.toLowerCase() === 'button' ? 'button' : undefined),
+      label: includeLabel ? textFor(el) : undefined,
+      test_id: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || undefined,
+      selector: cssPath(el),
+      enabled: !(el.disabled || el.getAttribute('aria-disabled') === 'true'),
+      selected: el.getAttribute('aria-selected') === 'true' || undefined,
+      focused: document.activeElement === el || undefined,
+      bounds: rect ? { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) } : undefined
+    });
+    const composedContains = (ancestor, descendant) => {
+      let current = descendant;
+      while (current) {
+        if (current === ancestor) return true;
+        const root = current.getRootNode();
+        current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+      }
+      return false;
+    };
+    const isCoveredDeep = (el, rect) => {
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false;
+      let hit = document.elementFromPoint(x, y);
+      while (hit && hit.shadowRoot) {
+        const deeper = hit.shadowRoot.elementFromPoint(x, y);
+        if (!deeper || deeper === hit) break;
+        hit = deeper;
+      }
+      if (!hit) return false;
+      return !composedContains(el, hit);
+    };
+    const items = [];
+    const hidden_or_offscreen = [];
+    for (const el of nodes) {
+      const rect = el.getBoundingClientRect();
+      const hasBox = rect.width > 0 && rect.height > 0;
+      const rendered = hasBox && isRenderedDeep(el);
+      const visible = rendered && isVisibleDeep(el);
+      const covered = visible && isCoveredDeep(el, rect);
+      if (visible && !covered && items.length < visibleLimit) {
+        items.push(itemFor(el, rect, true));
+      } else if ((!visible || covered) && hidden_or_offscreen.length < hiddenLimit) {
+        hidden_or_offscreen.push({ ...itemFor(el, rendered ? rect : undefined, rendered), reason: covered ? 'covered' : rendered ? 'offscreen' : 'hidden_or_no_box' });
+      }
+    }
+    return {
+      provider: 'cdp-web',
+      items,
+      hidden_or_offscreen,
+      truncated: nodes.length > items.length + hidden_or_offscreen.length,
+      limits: { items: visibleLimit, hidden_or_offscreen: hiddenLimit }
+    };
+  })()`;
 }
 
 async function withCdpWebPage<T>(
@@ -727,13 +979,13 @@ function waitForPredicateExpression(options: {
   if (options.selector && options.text) {
     const selector = JSON.stringify(options.selector);
     const text = JSON.stringify(options.text);
-    presentExpression = `Boolean(document.querySelector(${selector})) && document.body.innerText.includes(${text})`;
-    visibleExpression = `${visibleSelectorExpression(options.selector)} && document.body.innerText.includes(${text})`;
+    presentExpression = `Boolean(querySelectorDeep(${selector})) && textIncludesDeep(${text})`;
+    visibleExpression = `${visibleSelectorExpression(options.selector)} && textIncludesDeep(${text})`;
   } else if (options.selector) {
-    presentExpression = `Boolean(document.querySelector(${JSON.stringify(options.selector)}))`;
+    presentExpression = `Boolean(querySelectorDeep(${JSON.stringify(options.selector)}))`;
     visibleExpression = visibleSelectorExpression(options.selector);
   } else if (options.text) {
-    presentExpression = `document.body.innerText.includes(${JSON.stringify(options.text)})`;
+    presentExpression = `textIncludesDeep(${JSON.stringify(options.text)})`;
   } else {
     throw new Error('ui.wait_for requires selector or text.');
   }
@@ -754,7 +1006,89 @@ function waitForPredicateExpression(options: {
 }
 
 function visibleSelectorExpression(selector: string): string {
-  return `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; const rect = el.getBoundingClientRect(); const style = window.getComputedStyle(el); return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; })()`;
+  return `(() => { const el = querySelectorDeep(${JSON.stringify(selector)}); return Boolean(el && isVisibleDeep(el)); })()`;
+}
+
+function deepQueryHelpersExpression(): string {
+  return `
+    const querySelectorAllDeep = (selector, root = document) => {
+      const matches = Array.from(root.querySelectorAll(selector));
+      for (const element of root.querySelectorAll('*')) {
+        if (element.shadowRoot) matches.push(...querySelectorAllDeep(selector, element.shadowRoot));
+      }
+      return matches;
+    };
+    const querySelectorDeep = (selector, root = document) => querySelectorAllDeep(selector, root)[0] ?? null;
+    const isRenderedDeep = (element) => {
+      if (!element || element.getClientRects().length === 0) return false;
+      let current = element;
+      while (current) {
+        const style = getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) <= 0) return false;
+        const root = current.getRootNode();
+        current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+      }
+      return true;
+    };
+    const isVisibleDeep = (element) => {
+      if (!isRenderedDeep(element)) return false;
+      let rect = element.getBoundingClientRect();
+      let current = element;
+      while (current) {
+        const root = current.getRootNode();
+        const parent = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        if (!parent) break;
+        const style = getComputedStyle(parent);
+        if (/(hidden|clip|scroll|auto)/.test(style.overflow + style.overflowX + style.overflowY)) {
+          const parentRect = parent.getBoundingClientRect();
+          rect = { left: Math.max(rect.left, parentRect.left), top: Math.max(rect.top, parentRect.top), right: Math.min(rect.right, parentRect.right), bottom: Math.min(rect.bottom, parentRect.bottom) };
+          if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
+        }
+        current = parent;
+      }
+      return rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
+    };
+    const clickablePointDeep = (element) => {
+      if (!isVisibleDeep(element)) throw new Error('Target is not visible');
+      if (element.disabled || element.getAttribute('aria-disabled') === 'true') throw new Error('Target is disabled');
+      const rect = element.getBoundingClientRect();
+      const x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+      const y = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+      let hit = document.elementFromPoint(x, y);
+      while (hit && hit.shadowRoot) {
+        const deeper = hit.shadowRoot.elementFromPoint(x, y);
+        if (!deeper || deeper === hit) break;
+        hit = deeper;
+      }
+      const composedContains = (ancestor, descendant) => {
+        let current = descendant;
+        while (current) {
+          if (current === ancestor) return true;
+          const root = current.getRootNode();
+          current = current.parentElement || (root instanceof ShadowRoot ? root.host : null);
+        }
+        return false;
+      };
+      if (!hit || !composedContains(element, hit)) throw new Error('Target is obscured');
+      return { x, y };
+    };
+    const renderedTextDeep = (root = document) => {
+      const chunks = [];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        if (node.parentElement && isRenderedDeep(node.parentElement)) chunks.push(node.nodeValue || '');
+        node = walker.nextNode();
+      }
+      for (const element of root.querySelectorAll('*')) {
+        if (element.shadowRoot && isRenderedDeep(element)) {
+          chunks.push(renderedTextDeep(element.shadowRoot));
+        }
+      }
+      return chunks.join('\\n');
+    };
+    const textIncludesDeep = (text) => renderedTextDeep().includes(text);
+  `;
 }
 
 function escapeForJsMessage(value: string): string {
