@@ -338,3 +338,51 @@ test('warns on unsettled native actions and idempotent non-hittable actions', as
     /non-hittable target with no accessibility-tree change/u,
   );
 });
+
+test('stability-wait failures after scroll and unsettled fills surface as warnings', async () => {
+  const client = {
+    apps: { open: async () => ({ session: 's', identifiers: {} }) },
+    interactions: {
+      scroll: async () => ({ scrolled: true }),
+      fill: async (options: Record<string, unknown>) => ({
+        text: options.text,
+        settle: { settled: false, hint: 'keyboard animation' },
+      }),
+    },
+    command: {
+      wait: async () => {
+        throw new Error('UI never became stable');
+      },
+    },
+    sessions: { close: async () => ({ session: 's', identifiers: {} }) },
+  } as unknown as NonNullable<AgentDeviceUiTransportOptions['client']>;
+  const transport = createAgentDeviceUiTransport({
+    platform: 'ios',
+    device: 'fs-3',
+    app: 'net.siteed.farmslot.development',
+    session: 's',
+    client,
+  });
+
+  const scrolled = await transport.execute(
+    'ui.scroll',
+    { direction: 'down' },
+    {} as ActionExecutionContext,
+  );
+  assert.equal((scrolled as { scrolled?: boolean }).scrolled, true);
+  assert.match(
+    (scrolled as { settlementWarning?: string }).settlementWarning ?? '',
+    /ui\.scroll did not reach a settled native UI state: UI never became stable/u,
+  );
+
+  const filled = await transport.execute(
+    'ui.set_input',
+    { test_id: 'field', value: 'secret text' },
+    {} as ActionExecutionContext,
+  );
+  assert.equal(JSON.stringify(filled).includes('secret text'), false);
+  assert.match(
+    (filled as { settlementWarning?: string }).settlementWarning ?? '',
+    /ui\.set_input did not reach a settled native UI state: keyboard animation/u,
+  );
+});

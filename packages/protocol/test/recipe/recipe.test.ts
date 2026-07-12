@@ -468,6 +468,34 @@ test('rejects malformed or duplicate observation expectations', () => {
   }
 });
 
+test('rejects non-empty observation expectations on observe:false nodes', () => {
+  const result = validateRecipeDocument({
+    schema_version: 1,
+    validate: {
+      workflow: {
+        entry: 'press',
+        nodes: {
+          press: {
+            action: 'ui.press',
+            intent: 'Open the target silently.',
+            observe: false,
+            expect_observations: ['ui.screen'],
+            next: 'done',
+          },
+          done: { action: 'end', status: 'pass' },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 'invalid');
+  assert.ok(
+    result.findings.some(
+      (finding) => finding.code === 'recipe.contradictory_observation_expectation',
+    ),
+  );
+});
+
 test('rejects observation expectations not declared by the runner manifest', () => {
   const recipe = {
     schema_version: 1,

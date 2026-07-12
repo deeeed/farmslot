@@ -125,26 +125,24 @@ export function createAgentDeviceUiTransport(
             responseLevel: 'digest',
           });
           if (node.settle === false) return result;
-          const stability = await client.command.wait({
-            ...selection,
-            session: options.session,
-            stable: true,
-            quietMs: 300,
-            timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
-          });
-          return { ...result, stability };
+          return {
+            ...(result as Record<string, unknown>),
+            ...(await awaitNativeStability(client, options.session, selection, node, 'ui.scroll')),
+          };
         }
         case 'ui.wait_for': {
           const result = await waitForNode(client, options.session, selection, node);
           if (node.settle === false) return result;
-          const stability = await client.command.wait({
-            ...selection,
-            session: options.session,
-            stable: true,
-            quietMs: 300,
-            timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
-          });
-          return { ...(result as Record<string, unknown>), stability };
+          return {
+            ...(result as Record<string, unknown>),
+            ...(await awaitNativeStability(
+              client,
+              options.session,
+              selection,
+              node,
+              'ui.wait_for',
+            )),
+          };
         }
         case 'ui.screenshot':
           return captureScreenshot(client, options.session, node, context);
@@ -177,6 +175,31 @@ export function assertAgentDeviceNodeVersion(version: string): void {
   throw new Error(
     `Native Agent Device recipe actions require Node >=22.12; current runtime is ${version}. Non-native @farmslot/expo-recipe usage supports Node >=20.10.`,
   );
+}
+
+async function awaitNativeStability(
+  client: AgentDeviceClient,
+  session: string,
+  selection: { platform: 'ios' | 'android'; target: 'mobile'; device: string },
+  node: Record<string, unknown>,
+  action: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const stability = await client.command.wait({
+      ...selection,
+      session,
+      stable: true,
+      quietMs: 300,
+      timeoutMs: positiveNumber(node.timeout_ms) ?? 10_000,
+    });
+    return { stability };
+  } catch (error) {
+    // The action itself already succeeded; unconfirmed settlement surfaces as a
+    // visible warning instead of failing the node, matching the CDP transport.
+    return {
+      settlementWarning: `${action} did not reach a settled native UI state: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 function requireSettledInteraction(
@@ -247,6 +270,7 @@ function sanitizeFillResult(result: unknown): Record<string, unknown> {
         }
       : undefined,
     warning: record.warning,
+    settlementWarning: record.settlementWarning,
   };
 }
 

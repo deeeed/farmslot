@@ -610,10 +610,14 @@ async function executeSettledCdpAction<T>(
   operation: Promise<T>,
   node: Record<string, unknown>,
 ): Promise<T> {
+  const startedAt = Date.now();
   const result = await operation;
   if (node.settle === false) return result;
+  // timeout_ms budgets the whole node: settlement only gets what the action left over.
   const timeoutMs =
-    node.timeout_ms == null ? undefined : asNumber(node.timeout_ms, 'ui action timeout_ms');
+    node.timeout_ms == null
+      ? undefined
+      : Math.max(1, asNumber(node.timeout_ms, 'ui action timeout_ms') - (Date.now() - startedAt));
   try {
     await page.waitForDomSettled(timeoutMs);
     return result;
@@ -704,7 +708,7 @@ function visibleTargetsExpression(): string {
         hit = deeper;
       }
       if (!hit) return false;
-      return !(composedContains(el, hit) || composedContains(hit, el));
+      return !composedContains(el, hit);
     };
     const items = [];
     const hidden_or_offscreen = [];

@@ -114,9 +114,14 @@ export function validateRecipeWithManifest(
   return finishResult(ctx);
 }
 
-function collectObservationPolicies(
-  recipe: unknown,
-): Array<{ path: string; policy: unknown; field: 'observe' | 'expect_observations' }> {
+interface ObservationPolicyEntry {
+  path: string;
+  policy: unknown;
+  field: 'observe' | 'expect_observations';
+  node: Record<string, unknown>;
+}
+
+function collectObservationPolicies(recipe: unknown): ObservationPolicyEntry[] {
   if (!isRecord(recipe)) return [];
   const entries = collectNodeObservationPolicies(recipe.startState, 'startState');
   const validate = isRecord(recipe.validate) ? recipe.validate : undefined;
@@ -138,13 +143,9 @@ function collectObservationPolicies(
 function collectWorkflowObservationPolicies(
   value: unknown,
   path: string,
-): Array<{ path: string; policy: unknown; field: 'observe' | 'expect_observations' }> {
+): ObservationPolicyEntry[] {
   if (!isRecord(value)) return [];
-  const entries: Array<{
-    path: string;
-    policy: unknown;
-    field: 'observe' | 'expect_observations';
-  }> = [];
+  const entries: ObservationPolicyEntry[] = [];
   if (isRecord(value.nodes)) {
     for (const [nodeId, node] of Object.entries(value.nodes)) {
       entries.push(...collectNodeObservationPolicies(node, `${path}.nodes.${nodeId}`));
@@ -159,19 +160,12 @@ function collectWorkflowObservationPolicies(
   return entries;
 }
 
-function collectNodeObservationPolicies(
-  value: unknown,
-  path: string,
-): Array<{ path: string; policy: unknown; field: 'observe' | 'expect_observations' }> {
+function collectNodeObservationPolicies(value: unknown, path: string): ObservationPolicyEntry[] {
   if (!isRecord(value) || typeof value.action !== 'string') return [];
-  const entries: Array<{
-    path: string;
-    policy: unknown;
-    field: 'observe' | 'expect_observations';
-  }> = [];
+  const entries: ObservationPolicyEntry[] = [];
   for (const field of ['observe', 'expect_observations'] as const) {
     if (hasOwn(value, field))
-      entries.push({ path: `${path}.${field}`, policy: value[field], field });
+      entries.push({ path: `${path}.${field}`, policy: value[field], field, node: value });
   }
   return entries;
 }
@@ -268,6 +262,20 @@ export function validateRecipeDocument(
         entry.field === 'observe'
           ? 'observe must be a boolean or an array of unique non-empty observer refs.'
           : 'expect_observations must be an array of unique non-empty observer refs.',
+      );
+    }
+    if (
+      entry.field === 'expect_observations' &&
+      Array.isArray(entry.policy) &&
+      entry.policy.length > 0 &&
+      entry.node.observe === false
+    ) {
+      addFinding(
+        ctx,
+        'error',
+        'recipe.contradictory_observation_expectation',
+        entry.path,
+        'expect_observations must be empty when observe is false; the node can never record observations.',
       );
     }
   }
