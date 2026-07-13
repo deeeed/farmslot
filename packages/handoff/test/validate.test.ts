@@ -48,6 +48,7 @@ function buildValidPackage(
   writeJson(dir, 'manifest.json', {
     schemaVersion: 1,
     packageId,
+    taskKey: 'proj-1',
     surface: 'fleet',
     project: 'demo-farm',
     domain: '',
@@ -63,6 +64,18 @@ function buildValidPackage(
 test('a hand-built conformant package validates', () => {
   const dir = buildValidPackage();
   try {
+    assert.deepEqual(validateLearningPackage(dir).errors, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('unknown files and directories are ignored without error (forward-compat)', () => {
+  const dir = buildValidPackage();
+  try {
+    writeFileSync(path.join(dir, 'retrospective.md'), '# Retro\n');
+    mkdirSync(path.join(dir, 'future-section'), { recursive: true });
+    writeFileSync(path.join(dir, 'future-section/data.json'), '{"v":2}\n');
     assert.deepEqual(validateLearningPackage(dir).errors, []);
   } finally {
     rmSync(dir, { recursive: true, force: true });

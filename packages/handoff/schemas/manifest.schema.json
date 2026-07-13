@@ -7,6 +7,7 @@
   "required": [
     "schemaVersion",
     "packageId",
+    "taskKey",
     "surface",
     "project",
     "domain",
@@ -26,6 +27,10 @@
       "type": "string",
       "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-z][a-z0-9]*-[a-z0-9]+-(?:[a-z][a-z0-9-]*-)?[a-f0-9]{8}$",
       "description": "Equals the run-slug (spec section 1). Pattern enforces the section 1 grammar. Stable, sortable, non-secret."
+    },
+    "taskKey": {
+      "type": "string",
+      "description": "Cross-attempt family key (spec section 1). Normalized ticket when present (e.g. proj-1), else a hash of the normalized task (title+description+AC). Derived, never coordinator-assigned; keys indexes/by-task/. Non-secret."
     },
     "surface": {
       "type": "string",

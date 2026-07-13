@@ -42,8 +42,9 @@ export interface RunMeta {
   engineer: string;
   run: ManifestRun;
   task: ManifestTask;
-  /** Normalized source fields for source.json (work-only, per spec section 3.2). */
-  source?: Omit<SourceDocument, 'schemaVersion'>;
+  /** Normalized source fields for source.json (work-only, per spec section 3.2).
+   * `sourceKind` comes from `task.sourceKind`; the assembler stamps both. */
+  source?: Partial<Omit<SourceDocument, 'schemaVersion' | 'sourceKind'>>;
   /** Open manifest extensions. */
   extensions?: Record<string, unknown>;
 }

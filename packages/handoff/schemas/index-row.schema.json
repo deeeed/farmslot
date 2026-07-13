@@ -8,6 +8,7 @@
   "required": [
     "schemaVersion",
     "packageId",
+    "taskKey",
     "packagePath",
     "surface",
     "project",
@@ -22,6 +23,10 @@
     "packageId": {
       "type": "string",
       "description": "Matches manifest.json:packageId."
+    },
+    "taskKey": {
+      "type": "string",
+      "description": "Matches manifest.json:taskKey. Keys indexes/by-task/<taskKey>.jsonl - the cross-attempt family."
     },
     "packagePath": {
       "type": "string",

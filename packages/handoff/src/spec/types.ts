@@ -48,6 +48,8 @@ export interface ManifestScrubbing {
 export interface Manifest {
   schemaVersion: 1;
   packageId: string;
+  /** Cross-attempt task-family key (spec section 1): derived, never assigned. */
+  taskKey: string;
   surface: string;
   project: string;
   repo?: string;
@@ -180,6 +182,8 @@ export interface PrPublication {
 export interface IndexRow {
   schemaVersion: 1;
   packageId: string;
+  /** Matches manifest.taskKey; keys indexes/by-task/<taskKey>.jsonl. */
+  taskKey: string;
   packagePath: string;
   surface: string;
   project: string;

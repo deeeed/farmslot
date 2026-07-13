@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { scrubFiles, type ScrubInputFile } from '../scrub/scrubber.js';
+import { deriveTaskKey } from '../spec/task-key.js';
 import type {
   ArtifactKind,
   ArtifactRecord,
@@ -96,6 +97,17 @@ function buildSourceDocument(input: LearningPackageInput): SourceDocument {
   return { schemaVersion: SCHEMA_VERSION, sourceKind: input.runRecord.task.sourceKind, ...source };
 }
 
+/** Derive the cross-attempt family key from the run's task/source fields. */
+function taskKeyFor(input: LearningPackageInput): string {
+  const source = input.runRecord.source;
+  return deriveTaskKey({
+    ticket: input.runRecord.task.ticket ?? source?.ticket,
+    title: source?.title ?? input.runRecord.task.title,
+    description: source?.description,
+    acceptanceCriteria: source?.acceptanceCriteria,
+  });
+}
+
 function writeQuarantine(
   ctx: HandoffContext,
   input: LearningPackageInput,
@@ -106,6 +118,7 @@ function writeQuarantine(
   const manifest: Manifest = {
     schemaVersion: SCHEMA_VERSION,
     packageId: input.runRecord.packageId,
+    taskKey: taskKeyFor(input),
     surface: input.surface,
     project: input.runRecord.project,
     ...(input.runRecord.repo ? { repo: input.runRecord.repo } : {}),
@@ -250,6 +263,7 @@ export function assembleLearningPackage(
   const manifest: Manifest = {
     schemaVersion: SCHEMA_VERSION,
     packageId: input.runRecord.packageId,
+    taskKey: taskKeyFor(input),
     surface: input.surface,
     project: input.runRecord.project,
     ...(input.runRecord.repo ? { repo: input.runRecord.repo } : {}),
