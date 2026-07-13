@@ -1,5 +1,6 @@
 import {
   DEFAULT_BRANCH,
+  isCdpLiveValue,
   isDispatchScoreStale,
   isSlotRefreshStaleBranch,
   SLOT_STALE_BRANCH_SCORE_PENALTY,
@@ -31,7 +32,7 @@ export function isFreeSlot(slot: SlotStatus): boolean {
 }
 
 export function isCdpLive(cdp: string): boolean {
-  return cdp !== 'OFF' && cdp !== '-' && cdp !== 'FAIL' && cdp !== 'Other';
+  return isCdpLiveValue(cdp);
 }
 
 export type SlotScoringProjectConfig = SlotTrackingProjectConfig;

@@ -14,6 +14,7 @@ export * from './reviews.js';
 export * from './roadmap.js';
 export * from './run-bundles.js';
 export * from './runs.js';
+export * from './slot-selection.js';
 export * from './slots.js';
 export * from './task.js';
 export * from './terminal.js';

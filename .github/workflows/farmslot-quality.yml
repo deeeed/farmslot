@@ -173,6 +173,9 @@ jobs:
       - name: Workspace changelog guard
         run: yarn quality:changelogs
 
+      - name: Protocol method matrix guard
+        run: yarn quality:method-matrix
+
       - name: Import boundary guard
         run: yarn quality:imports
 

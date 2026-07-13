@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- feat: `contracts/slot-selection.ts` — operator slot availability + selection core (`selectSlot` over the fleet snapshot — stale-refusing, with discriminated failure codes —, `slotUnavailableReason`, `explicitSlotBlocker`, `slotSelectionScore`, `cdpLive`/`isCdpLiveValue`), the TypeScript port of the `scripts/find-slot.sh` decision logic; `isCdpLiveValue` is shared with the gateway dispatch scorer.
 - feat: `backlog.closeShipped` method + `BacklogItem.shipped` provenance field.
 - feat: RPC response errors may carry `userAction` and `details`; `SlotStatus.missingFromPool` and `FleetStatus.stale` flag ghost slots and stale fleet snapshots.
 
