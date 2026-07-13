@@ -356,3 +356,34 @@ test('the lock is released after a failed (rolled back) write too', () => {
   assert.equal(family.length, 2, 'both writers rows must be intact');
   assert.equal(existsSync(path.join(destination, '.git/farmslot-handoff.lock')), false);
 });
+
+test('a linked git worktree is a valid destination (.git is a file, not a dir)', () => {
+  const { result } = assembled();
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+
+  const mainRepo = initDestinationRepo();
+  const worktree = path.join(path.dirname(mainRepo), `wt-${Date.now().toString(36)}`);
+  git(mainRepo, ['worktree', 'add', '-b', 'lane', worktree]);
+  try {
+    // Sanity: in a linked worktree, .git is a FILE with a gitdir pointer.
+    assert.ok(readFileSync(path.join(worktree, '.git'), 'utf8').startsWith('gitdir:'));
+
+    const write = writeLearningPackage({
+      packageDir: result.packageDir,
+      destination: worktree,
+      consent: CONSENT,
+    });
+    assert.equal(write.status, 'written');
+    if (write.status !== 'written') return;
+    assert.ok(existsSync(path.join(write.destinationPath, 'manifest.json')));
+    assert.equal(git(worktree, ['status', '--porcelain']), '');
+    // The lock lived in the resolved git dir and is gone after the write.
+    const gitDir = readFileSync(path.join(worktree, '.git'), 'utf8')
+      .replace(/^gitdir:\s*/, '')
+      .trim();
+    assert.equal(existsSync(path.join(gitDir, 'farmslot-handoff.lock')), false);
+  } finally {
+    git(mainRepo, ['worktree', 'remove', '--force', worktree]);
+  }
+});

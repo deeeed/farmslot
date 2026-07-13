@@ -4,6 +4,8 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Resolution candidate discovery is lstat-aware: a DANGLING symlink override is classified as a broken override (warned, skipped, recorded in shadows) instead of silently vanishing behind existsSync's link-following.
+- Linked git worktrees are valid write destinations: the destination lock now lives in the RESOLVED git dir (`.git` may be a file carrying a `gitdir:` pointer), with a teaching error for unrecognized `.git` entries.
 - Resolution candidates must be regular, readable FILES (lstat - symlinks excluded consistently with the rest of the gate): a directory, symlink, special, or unreadable candidate is a BROKEN override - warned with escape guidance and skipped, continuing the tier walk to the next candidate and ultimately the shipped default. A broken shipped default remains a packaging-bug throw. (Parse-broken content of a selected file still degrades straight to the shipped default per the documented unhappy-path choice.)
 - Detect column-aligned and multiline labeled assignments: the labeled-value separator is now an actual assignment operator with UNBOUNDED quote/backslash/whitespace decoration on both sides (private_key/authorization-bearer/access-refresh/session-token patterns), so aligned config/env dumps match while prose stays clean (the operator requirement tightened the false-positive guard).
 - Rescan the quarantine wholesale fallback's preserved fixed fields: schema-valid segments can still compose a phrase across values (hyphenated wordlist segments in taskKey/surface/project/domain/engineer), so a residual hit now degrades the audit manifest to fully generic placeholders - only timestamps and closed enums remain.

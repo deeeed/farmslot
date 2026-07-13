@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, lstatSync, readFileSync } from 'node:fs';
+import { accessSync, constants, lstatSync, readFileSync } from 'node:fs';
 
 import type { ResolutionSource, ResolutionTier } from '../spec/types.js';
 
@@ -74,7 +74,17 @@ function selectWinner(
   winner: { tier: ResolutionTier; path: string };
   existing: { tier: ResolutionTier; path: string }[];
 } {
-  const existing = candidatesByTier(request).filter((c) => existsSync(c.path));
+  // Discovery is lstat-aware: existsSync FOLLOWS symlinks, so a dangling
+  // symlink override would silently vanish instead of being classified as the
+  // broken override it is (warned, skipped, recorded in shadows).
+  const existing = candidatesByTier(request).filter((c) => {
+    try {
+      lstatSync(c.path);
+      return true;
+    } catch {
+      return false;
+    }
+  });
   for (const candidate of existing) {
     const broken = brokenCandidateReason(candidate.path);
     if (broken === undefined) return { winner: candidate, existing };

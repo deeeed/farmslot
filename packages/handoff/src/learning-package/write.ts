@@ -66,6 +66,24 @@ export type WriteResult =
     }
   | { status: 'dry-run'; wouldWritePath: string; indexRows: IndexRow[]; pushed: false };
 
+/**
+ * The real git dir of a destination: `.git` is a directory in a normal clone
+ * but a FILE with a `gitdir:` pointer in a linked worktree - both are valid
+ * git repos and valid destinations.
+ */
+function resolveGitDir(destination: string): string {
+  const dotGit = path.join(destination, '.git');
+  if (statSync(dotGit).isDirectory()) return dotGit;
+  const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, 'utf8'));
+  if (!pointer) {
+    throw new Error(
+      `writeLearningPackage: ${dotGit} is neither a git dir nor a worktree pointer. ` +
+        'Next: pass the root of a real git clone or linked worktree as destination.',
+    );
+  }
+  return path.resolve(destination, pointer[1]);
+}
+
 function git(repo: string, args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
 }
@@ -314,7 +332,9 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
   }
 
   // Exclusive destination lock for the whole check->copy->append->commit span.
-  const lockPath = path.join(options.destination, '.git', 'farmslot-handoff.lock');
+  // The lock lives in the RESOLVED git dir: in a linked worktree, .git is a
+  // FILE carrying a `gitdir:` pointer, and worktrees are valid destinations.
+  const lockPath = path.join(resolveGitDir(options.destination), 'farmslot-handoff.lock');
   const lockFd = acquireWriteLock(lockPath, options.destination);
   try {
     // A clean tree means a failed write can be rolled back precisely and the

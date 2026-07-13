@@ -166,3 +166,25 @@ test('a valid override wins with zero warnings', () => {
   assert.equal(result.tier, 'personal');
   assert.deepEqual(warnings, []);
 });
+
+test('a DANGLING symlink override is a broken override, not a silent absence', () => {
+  const { root } = tierDirs();
+  const req = request(root, 'default-content');
+  mkdirSync(path.join(root, 'personal'), { recursive: true });
+  // Symlink to a target that does not exist: existsSync would follow and hide it.
+  symlinkSync(path.join(root, 'nowhere/gone.md'), path.join(root, 'personal/template.md'));
+
+  const warnings: string[] = [];
+  const result = resolveFile(req, { warn: (m) => warnings.push(m) });
+  assert.equal(result.tier, 'default');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /symlink/);
+  assert.match(warnings[0], /Next:/);
+  // The broken candidate is recorded in shadows for provenance.
+  assert.ok(result.shadows.some((s) => s.tier === 'personal'));
+
+  const contentWarnings: string[] = [];
+  const resolved = resolveContent(req, (raw) => raw, { warn: (m) => contentWarnings.push(m) });
+  assert.equal(resolved.value, 'default-content');
+  assert.equal(contentWarnings.length, 1);
+});
