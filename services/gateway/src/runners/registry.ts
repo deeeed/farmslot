@@ -7,7 +7,10 @@ import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_CURSOR_MODEL,
   DEFAULT_GROK_MODEL,
+  DEFAULT_RUNNER,
   isReviewerWindowName,
+  normalizeRunner,
+  RUNNER_ALIASES,
   type SafetyTier,
   type WorkerSignal,
 } from '@farmslot/protocol';
@@ -126,10 +129,9 @@ async function classifyRunnerPaneStateBestEffortLazy(opts: {
   return classifyRunnerPaneStateBestEffort(opts);
 }
 
-const DEFAULT_RUNNER = 'claude';
-const RUNNER_ALIASES: Record<string, string> = {
-  'claude-code': 'claude',
-};
+// Canonical id vocabulary lives in @farmslot/protocol (shared with slot-config
+// template expansion); re-exported so existing imports keep working.
+export { DEFAULT_RUNNER, normalizeRunner, RUNNER_ALIASES };
 
 export function assertSupportedRunnerSpelling(runnerId?: string | null): void {
   if ((runnerId ?? '').trim().toLowerCase() === 'fake') {
@@ -377,11 +379,6 @@ export function runnerSupportsModel(
 function isKnownRunner(runnerId?: string | null): boolean {
   if (!runnerId) return false;
   return Object.prototype.hasOwnProperty.call(KNOWN_RUNNERS, normalizeRunner(runnerId));
-}
-
-export function normalizeRunner(runnerId?: string | null): string {
-  const normalized = (runnerId ?? DEFAULT_RUNNER).trim().toLowerCase();
-  return (RUNNER_ALIASES[normalized] ?? normalized) || DEFAULT_RUNNER;
 }
 
 export function defaultAlternateReviewRunner(runnerId?: string | null): string {

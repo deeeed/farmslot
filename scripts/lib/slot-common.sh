@@ -13,6 +13,8 @@ if [[ -n "${POOL_DIR:-}" && ! -d "${POOL_DIR}" && -d "${HOME}/farmslot-node/pool
   POOL_DIR="${HOME}/farmslot-node/pool"
 fi
 
+FARMSLOT_CLI="${FARMSLOT_CLI:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../packages/cli" && pwd)/bin/farmslot.mjs}"
+
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BOLD='\033[1m'; DIM='\033[2m'; NC='\033[0m'
 pass() { echo -e "  ${GREEN}[OK]${NC} $1"; }
@@ -23,82 +25,38 @@ header() { echo -e "${BOLD}── $1 ──${NC}"; }
 banner() { echo -e "${BOLD}$1${NC}"; }
 
 # ── resolve_slot <slot-id> ──────────────────────────────────────────
-# Parses pool JSONs to find the slot. Sets global variables:
-#   SLOT_RESULT  — full JSON blob (machine-level + slot fields)
+# Locates slot via CLI. Sets global variables:
+#   SLOT_RESULT  — full JSON blob (machine-level + slot fields, including poolFile)
 #   POOL_FILE    — path to the pool JSON that matched
 resolve_slot() {
   local slot_id="$1"
   SLOT_RESULT=""
   POOL_FILE=""
 
-  for f in "${POOL_DIR}"/*.json; do
-    SLOT_RESULT=$(python3 -c "
-import json, sys
-with open('${f}') as fh:
-    pool = json.load(fh)
-for s in pool['slots']:
-    if str(s['id']) == '${slot_id}':
-        out = {k: v for k, v in pool.items() if k != 'slots'}
-        out['slot'] = s
-        json.dump(out, sys.stdout)
-        sys.exit(0)
-sys.exit(1)
-" 2>/dev/null) && { POOL_FILE="$f"; break; } || true
-  done
-
-  if [ -z "$SLOT_RESULT" ]; then
+  if ! SLOT_RESULT=$("$FARMSLOT_CLI" internal resolve-slot "$slot_id" --raw); then
     echo -e "${RED}FAIL: slot '${slot_id}' not found in any pool JSON under ${POOL_DIR}/${NC}" >&2
+    SLOT_RESULT=""
     return 1
   fi
+  POOL_FILE=$(parse_slot "d['poolFile']")
 }
 
 # ── resolve_slot_by_repo [dir] ─────────────────────────────────────
 # Reverse-lookups slot from a directory path. Sets SLOT_RESULT + POOL_FILE.
-# Defaults to $(pwd). Prefers local machine when multiple matches.
+# Defaults to $(pwd). Prefers local machine when multiple matches (CLI handles
+# the prefer-local logic).
 resolve_slot_by_repo() {
   local target_dir
   target_dir="$(cd "${1:-$(pwd)}" && pwd -P)"
   SLOT_RESULT=""
   POOL_FILE=""
 
-  local best_result="" best_file=""
-  local result machine host
-
-  for f in "${POOL_DIR}"/*.json; do
-    result=$(python3 -c "
-import json, sys, os
-with open('${f}') as fh:
-    pool = json.load(fh)
-for s in pool['slots']:
-    repo = s.get('repo', '')
-    expanded = os.path.expanduser(repo)
-    if not os.path.isabs(expanded):
-        continue
-    if os.path.realpath(expanded) == '${target_dir}':
-        out = {k: v for k, v in pool.items() if k != 'slots'}
-        out['slot'] = s
-        json.dump(out, sys.stdout)
-        sys.exit(0)
-sys.exit(1)
-" 2>/dev/null) || continue
-
-    machine=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin)['machine'])")
-    host=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin)['host'])")
-
-    if is_local "$host" "$machine"; then
-      SLOT_RESULT="$result"; POOL_FILE="$f"; return 0
-    fi
-    if [ -z "$best_result" ]; then
-      best_result="$result"; best_file="$f"
-    fi
-  done
-
-  if [ -n "$best_result" ]; then
-    SLOT_RESULT="$best_result"; POOL_FILE="$best_file"; return 0
+  if ! SLOT_RESULT=$("$FARMSLOT_CLI" internal resolve-slot --by-repo "$target_dir" --raw); then
+    echo -e "${RED}FAIL: no slot found with repo '${target_dir}' in ${POOL_DIR}/${NC}" >&2
+    SLOT_RESULT=""
+    return 1
   fi
-
-  echo -e "${RED}FAIL: no slot found with repo '${target_dir}' in ${POOL_DIR}/${NC}" >&2
-  return 1
+  POOL_FILE=$(parse_slot "d['poolFile']")
 }
 
 # ── parse_slot <python-expr> ───────────────────────────────────────
@@ -111,61 +69,17 @@ parse_slot() {
 # ── load_slot_vars <slot-id> ───────────────────────────────────────
 # Resolves slot and populates standard shell variables from resources.
 # Sets: MACHINE, PLATFORM, HOST, SSH_USER, OS_TYPE, CLAUDE_PATH,
-#       CODEX_PATH, OPENCODE_PATH,
-#       REPO, SESSION, PORT, SIMULATOR, AVD, ADB_SERIAL, CDP_PORT,
+#       CODEX_PATH, OPENCODE_PATH, CURSOR_PATH, GROK_PATH,
+#       REPO, SESSION, APP, PORT, SIMULATOR, AVD, ADB_SERIAL, CDP_PORT,
 #       HEADLESS, SNAPSHOT, + backward-compat aliases,
-#       DISPATCH_CMD, RECYCLE_CMD, SSH_TARGET, REMOTE_REPO
+#       DISPATCH_CMD, RECYCLE_CMD, SSH_TARGET, REMOTE_REPO,
+#       SLOT_ID, SLOT_MODE, SLOT_ENABLED
 load_slot_vars() {
   local slot_id="$1"
+  # resolve_slot is kept so SLOT_RESULT/POOL_FILE globals remain populated for
+  # parse_slot consumers (e.g. load_project_config reads PROJECT_NAME from them).
   resolve_slot "$slot_id" || return 1
-
-  MACHINE=$(parse_slot "d['machine']")
-  PLATFORM=$(parse_slot "d['slot'].get('platform') or d.get('platform', '')")
-  HOST=$(parse_slot "d['host']")
-  SSH_USER=$(parse_slot "d['ssh_user']")
-  OS_TYPE=$(parse_slot "d.get('os','linux')")
-  CLAUDE_PATH=$(parse_slot "d.get('claude_path') or ''")
-  CODEX_PATH=$(parse_slot "d.get('codex_path') or ''")
-  OPENCODE_PATH=$(parse_slot "d.get('opencode_path') or ''")
-  DISPATCH_CMD=$(parse_slot "d.get('dispatch_cmd') or ''" 2>/dev/null || true)
-  RECYCLE_CMD=$(parse_slot "d.get('recycle_cmd') or ''" 2>/dev/null || true)
-
-  REPO=$(parse_slot "d['slot']['repo']")
-  SESSION=$(parse_slot "d['slot']['session']")
-  APP=$(parse_slot "d['slot'].get('app') or ''" 2>/dev/null || true)
-
-  # Read resource fields as flat uppercase vars
-  eval "$(echo "${SLOT_RESULT}" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-res = d['slot'].get('resources', {})
-for rkey, rval in res.items():
-    for field, val in rval.items():
-        print(f'{field.upper()}={val}')
-")"
-
-  # Alias common vars for backward compat in this script
-  WATCHER_PORT="${PORT:-}"
-  METRO_PORT="${PORT:-}"
-  IOS_SIMULATOR="${SIMULATOR:-}"
-  ANDROID_AVD="${AVD:-}"
-  CDP_PORT="${CDP_PORT:-}"
-  ADB_SERIAL="${ADB_SERIAL:-}"
-  AVD_NAME="${AVD:-}"
-  SNAPSHOT="${SNAPSHOT:-}"
-  SLOT_ID="$slot_id"
-
-  SLOT_MODE=$(echo "${SLOT_RESULT}" | python3 -c "
-import json,sys; d=json.load(sys.stdin)
-m=d['slot'].get('mode','')
-if not m:
-    m='disabled' if str(d['slot'].get('enabled',True)).lower()=='false' else 'dispatch'
-print(m)
-")
-  SLOT_ENABLED=$( [ "$SLOT_MODE" = "disabled" ] && echo "False" || echo "True" )
-
-  SSH_TARGET="${SSH_USER}@${HOST}"
-  REMOTE_REPO=$(resolve_remote_repo "$REPO" "$OS_TYPE" "$SSH_USER")
+  eval "$("$FARMSLOT_CLI" internal slot-vars "$slot_id" --shell)" || return 1
 }
 
 # ── check_slot_enabled ───────────────────────────────────────────
@@ -486,37 +400,20 @@ teardown_slot_infra() {
 }
 
 # ── expand_dispatch_cmd ────────────────────────────────────────────
-# Expands {repo}, {runner}, {runner_path}, {claude_path}, {codex_path},
-# {opencode_path}, {model}, {task_file}, {task_prompt}, {effort},
-# and {adb_serial} placeholders in DISPATCH_CMD
+# Expands dispatch_cmd placeholders for the current slot and runner.
+# Reads RUNNER, MODEL, TASK_FILE, TASK_PROMPT, EFFORT from env.
 expand_dispatch_cmd() {
-  local cmd="$DISPATCH_CMD"
-  local runner="${RUNNER:-claude}"
-  local runner_path="$CLAUDE_PATH"
-  case "$runner" in
-    codex) runner_path="${CODEX_PATH:-$CLAUDE_PATH}" ;;
-    opencode) runner_path="${OPENCODE_PATH:-${CODEX_PATH:-$CLAUDE_PATH}}" ;;
-  esac
-  cmd="${cmd//\{repo\}/$REMOTE_REPO}"
-  cmd="${cmd//\{runner\}/$runner}"
-  cmd="${cmd//\{runner_path\}/$runner_path}"
-  cmd="${cmd//\{claude_path\}/$CLAUDE_PATH}"
-  cmd="${cmd//\{codex_path\}/$CODEX_PATH}"
-  cmd="${cmd//\{opencode_path\}/$OPENCODE_PATH}"
-  cmd="${cmd//\{model\}/${MODEL:-}}"
-  cmd="${cmd//\{task_file\}/${TASK_FILE:-}}"
-  cmd="${cmd//\{task_prompt\}/${TASK_PROMPT:-}}"
-  cmd="${cmd//\{effort\}/${EFFORT:-}}"
-  cmd="${cmd//\{adb_serial\}/$ADB_SERIAL}"
-  echo "$cmd"
+  "$FARMSLOT_CLI" internal expand-dispatch-cmd "$SLOT_ID" --raw \
+    ${RUNNER:+--runner "$RUNNER"} \
+    ${MODEL:+--model "$MODEL"} \
+    ${TASK_FILE:+--task-file "$TASK_FILE"} \
+    ${TASK_PROMPT:+--task-prompt "$TASK_PROMPT"} \
+    ${EFFORT:+--effort "$EFFORT"}
 }
 
 # ── expand_recycle_cmd ─────────────────────────────────────────────
 expand_recycle_cmd() {
-  local cmd="$RECYCLE_CMD"
-  cmd="${cmd//\{repo\}/$REMOTE_REPO}"
-  cmd="${cmd//\{adb_serial\}/$ADB_SERIAL}"
-  echo "$cmd"
+  "$FARMSLOT_CLI" internal expand-recycle-cmd "$SLOT_ID" --raw
 }
 
 # ══════════════════════════════════════════════════════════════════════
@@ -535,61 +432,36 @@ PROJECTS_DIR="${PROJECTS_DIR:-${FARMSLOT_ROOT}/projects}"
 # Requires "project" field in pool JSON.
 load_project_config() {
   PROJECT_NAME=$(parse_slot "d['slot'].get('project') or d.get('project', '')")
+  # Derive PROJECT_CONFIG to check existence before delegating to CLI.
   PROJECT_CONFIG="${PROJECTS_DIR}/${PROJECT_NAME}/project.json"
-  PROJECT_FIXTURES_DIR="${PROJECTS_DIR}/${PROJECT_NAME}/fixtures"
-  PROJECT_TEMPLATES_DIR="${PROJECTS_DIR}/${PROJECT_NAME}/templates"
 
   if [ ! -f "$PROJECT_CONFIG" ]; then
     echo "WARN: project config not found: ${PROJECT_CONFIG}" >&2
     PROJECT_JSON=""
     return 1
   fi
+  # PROJECT_JSON is kept for consumers that read it directly (e.g. sync-fixtures.sh,
+  # project_command_env_shell_prefix, expand_slot_template project-vars pass).
   PROJECT_JSON=$(cat "$PROJECT_CONFIG")
 
-  # Read path config with defaults
-  RUNTIME_DIR=$(get_project_field "paths.runtime_dir")
-  RUNTIME_DIR="${RUNTIME_DIR:-.agent}"
-  ARTIFACT_DIR=$(get_project_field "paths.artifact_dir")
-  ARTIFACT_DIR="${ARTIFACT_DIR:-.task}"
-  RECIPE_DIR=$(get_project_field "paths.recipe_dir")
-  RECIPE_DIR="${RECIPE_DIR:-${RUNTIME_DIR}/recipes}"
+  # Delegate path vars to CLI (sets PROJECT_CONFIG, PROJECT_FIXTURES_DIR,
+  # PROJECT_TEMPLATES_DIR, RUNTIME_DIR, ARTIFACT_DIR, RECIPE_DIR, WORKER_TASK_DIR_NAME).
+  eval "$("$FARMSLOT_CLI" internal project-vars "$PROJECT_NAME" --shell)" || return 1
 
-  # Worker task root: task_dir overrides paths.artifact_dir (matches gateway resolveProjectTaskDirName).
-  WORKER_TASK_DIR_NAME=$(get_project_field "task_dir")
-  WORKER_TASK_DIR_NAME="${WORKER_TASK_DIR_NAME:-${ARTIFACT_DIR}}"
-
-  # Resolve reference repos from project.json
+  # Resolve reference repos using the updated get_project_field (now CLI-backed).
   MOBILE_REPO=""
-  if [ -n "$PROJECT_JSON" ]; then
-    local _ref_local_name
-    _ref_local_name=$(echo "$PROJECT_JSON" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-ref = d.get('reference_repos', {}).get('mobile', {})
-print(ref.get('local_name', ''))
-" 2>/dev/null)
-    if [ -n "$_ref_local_name" ]; then
-      MOBILE_REPO="$(dirname "$REPO")/$_ref_local_name"
-    fi
+  local _ref_local_name
+  _ref_local_name=$(get_project_field "reference_repos.mobile.local_name")
+  if [ -n "$_ref_local_name" ]; then
+    MOBILE_REPO="$(dirname "$REPO")/$_ref_local_name"
   fi
 }
 
 # ── get_project_field <dotpath> ──────────────────────────────────────
 # Reads a dotted path from project.json (e.g. "health.ready_indicator")
 get_project_field() {
-  [ -z "$PROJECT_JSON" ] && return 0
-  echo "$PROJECT_JSON" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-keys = '${1}'.split('.')
-for k in keys:
-    if isinstance(d, dict):
-        d = d.get(k, '')
-    else:
-        d = ''
-        break
-print(d if d else '')
-"
+  [ -z "${PROJECT_NAME:-}" ] && return 0
+  "$FARMSLOT_CLI" internal project-field "$PROJECT_NAME" "$1" --raw
 }
 
 # ── project_command_env_shell_prefix ────────────────────────────────
@@ -597,6 +469,7 @@ print(d if d else '')
 # own child shells/tmux sessions should prepend this to the child command: the
 # gateway applies command_env at the hook boundary, but long-lived process
 # managers such as tmux can have their own server environment.
+# Gateway twin: core/project-env.ts applies command_env at the hook boundary.
 project_command_env_shell_prefix() {
   [ -z "$PROJECT_JSON" ] && return 0
   printf '%s' "$PROJECT_JSON" | python3 -c '
@@ -632,124 +505,31 @@ apply_project_command_env_current_shell() {
 }
 
 # ── expand_slot_template <text> ─────────────────────────────────────
-# Substitutes slot resource placeholders in hook strings and fixture paths.
+# Substitutes slot resource + project template placeholders. Delegates to the
+# slot-config core (single {{var}} implementation, shared with the gateway).
+# Requires load_slot_vars to have set SLOT_ID.
 expand_slot_template() {
   local text="${1:-}"
-  local restore_patsub_replacement=0
-  if shopt -q patsub_replacement 2>/dev/null; then
-    restore_patsub_replacement=1
-    shopt -u patsub_replacement
-  fi
-  text="${text//\{\{port\}\}/${PORT:-}}"
-  text="${text//\{\{PORT\}\}/${PORT:-}}"
-  text="${text//\{\{simulator\}\}/${SIMULATOR:-}}"
-  text="${text//\{\{SIMULATOR\}\}/${SIMULATOR:-}}"
-  text="${text//\{\{avd\}\}/${AVD:-}}"
-  text="${text//\{\{AVD\}\}/${AVD:-}}"
-  text="${text//\{\{adb_serial\}\}/${ADB_SERIAL:-}}"
-  text="${text//\{\{ADB_SERIAL\}\}/${ADB_SERIAL:-}}"
-  text="${text//\{\{cdp_port\}\}/${CDP_PORT:-}}"
-  text="${text//\{\{CDP_PORT\}\}/${CDP_PORT:-}}"
-  text="${text//\{\{headless\}\}/${HEADLESS:-}}"
-  text="${text//\{\{HEADLESS\}\}/${HEADLESS:-}}"
-  text="${text//\{\{snapshot\}\}/${SNAPSHOT:-}}"
-  text="${text//\{\{SNAPSHOT\}\}/${SNAPSHOT:-}}"
-  text="${text//\{\{app\}\}/${APP:-}}"
-  text="${text//\{\{APP\}\}/${APP:-}}"
-  text="${text//\{\{domain\}\}/${DOMAIN:-}}"
-  text="${text//\{\{DOMAIN\}\}/${DOMAIN:-}}"
-  text="${text//\{\{platform\}\}/${PLATFORM:-}}"
-  text="${text//\{\{PLATFORM\}\}/${PLATFORM:-}}"
-  text="${text//\{\{slot_id\}\}/${SLOT_ID:-}}"
-  text="${text//\{\{SLOT_ID\}\}/${SLOT_ID:-}}"
-  text="${text//\{\{runtime_dir\}\}/${RUNTIME_DIR:-.agent}}"
-  text="${text//\{\{RUNTIME_DIR\}\}/${RUNTIME_DIR:-.agent}}"
-  text="${text//\{\{artifact_dir\}\}/${ARTIFACT_DIR:-.task}}"
-  text="${text//\{\{ARTIFACT_DIR\}\}/${ARTIFACT_DIR:-.task}}"
-  text="${text//\{\{recipe_dir\}\}/${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}}"
-  text="${text//\{\{RECIPE_DIR\}\}/${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}}"
-  text="${text//\{\{farmslot_dir\}\}/${FARMSLOT_DIR:-}}"
-  text="${text//\{\{FARMSLOT_DIR\}\}/${FARMSLOT_DIR:-}}"
-  text="${text//\{\{repo\}\}/${REMOTE_REPO:-${REPO:-}}}"
-  text="${text//\{\{REPO\}\}/${REMOTE_REPO:-${REPO:-}}}"
-  local primary_repo="${REMOTE_REPO:-${REPO:-}}"
-  if [ -n "${PROJECT_JSON:-}" ]; then
-    primary_repo="$(printf '%s' "$PROJECT_JSON" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-print((d.get("primary_repo") or "").strip())
-' 2>/dev/null || true)"
-    [ -z "$primary_repo" ] && primary_repo="${REMOTE_REPO:-${REPO:-}}"
-  fi
-  text="${text//\{\{primary_repo\}\}/${primary_repo}}"
-  text="${text//\{\{PRIMARY_REPO\}\}/${primary_repo}}"
-  text="${text//\{\{mobile_repo\}\}/${MOBILE_REPO:-}}"
-  text="${text//\{\{MOBILE_REPO\}\}/${MOBILE_REPO:-}}"
-  if [ "${EXPAND_PROJECT_TEMPLATE_VARS:-1}" != "0" ] && [ -n "${PROJECT_JSON:-}" ]; then
-    local key value expanded upper project_vars_tsv
-    # Capture (don't process-substitute) so a missing python3 or malformed
-    # project.json fails hard here instead of silently leaving {{vars}}
-    # unexpanded in the hook command.
-    if ! project_vars_tsv="$(printf '%s' "$PROJECT_JSON" | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-for k, v in (d.get("vars") or {}).items():
-    print(f"{k}\t{v}")
-')"; then
-      [ "$restore_patsub_replacement" = "1" ] && shopt -s patsub_replacement
-      echo "FAIL: expand_slot_template could not read project vars (python3 missing or project.json invalid)" >&2
-      return 1
-    fi
-    # Here-string runs the loop in the current shell, so text mutations persist.
-    while IFS=$'\t' read -r key value; do
-      [ -z "$key" ] && continue
-      # EXPAND_PROJECT_TEMPLATE_VARS=0 guards against recursion, so a var's value
-      # expands resource placeholders only — vars are single-level and cannot
-      # reference other {{vars}}.
-      expanded="$(EXPAND_PROJECT_TEMPLATE_VARS=0 expand_slot_template "$value")"
-      text="${text//\{\{${key}\}\}/$expanded}"
-      upper="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
-      text="${text//\{\{${upper}\}\}/$expanded}"
-    done <<< "$project_vars_tsv"
-  fi
-  [ "$restore_patsub_replacement" = "1" ] && shopt -s patsub_replacement
-  printf '%s\n' "$text"
+  [ -z "$text" ] && { printf '\n'; return 0; }
+  "$FARMSLOT_CLI" internal expand-template "${SLOT_ID:?expand_slot_template requires load_slot_vars}" "$text"
 }
 
 # ── expand_hook <hook-name> ──────────────────────────────────────────
 # Reads hooks.<name> from project.json, substitutes slot variables.
 # Returns empty string if hook not defined.
 expand_hook() {
-  [ -z "$PROJECT_JSON" ] && return 0
+  [ -z "${PROJECT_NAME:-}" ] && return 0
   local hook_name="$1"
-  local cmd
-  cmd=$(echo "$PROJECT_JSON" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-print(d.get('hooks', {}).get('${hook_name}', ''))
-")
-  [ -z "$cmd" ] && return 0
-
-  cmd=$(expand_slot_template "$cmd")
-  echo "$cmd"
+  "$FARMSLOT_CLI" internal expand-hook "$SLOT_ID" "$hook_name" --raw
 }
 
 # ── expand_platform_field <field> ────────────────────────────────────
 # Reads platforms.<PLATFORM>.<field> from project.json, substitutes vars.
+# No CLI verb available for platforms.<platform>.<field> yet; this function
+# stays bash until a dedicated verb is added to internal.ts.
 expand_platform_field() {
-  [ -z "$PROJECT_JSON" ] && return 0
-  local field="$1"
-  local cmd
-  cmd=$(echo "$PROJECT_JSON" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-v = d.get('platforms', {}).get('${PLATFORM}', {}).get('${field}', '')
-print(v if v else '')
-")
-  [ -z "$cmd" ] && return 0
-
-  cmd=$(expand_slot_template "$cmd")
-  echo "$cmd"
+  [ -z "${PROJECT_NAME:-}" ] && return 0
+  "$FARMSLOT_CLI" internal expand-platform-field "${SLOT_ID:?expand_platform_field requires load_slot_vars}" "$1"
 }
 
 # ── render_template <src> <dst-path> ────────────────────────────────
@@ -761,57 +541,9 @@ render_fixture_template() {
   [ ! -f "$src_file" ] && return 1
   local rendered
   rendered=$(mktemp)
-  cp "$src_file" "$rendered"
-
-  # Substitute all known resource + auto-injected vars (lowercase + UPPERCASE)
-  sed -i.bak \
-    -e "s|{{port}}|${PORT:-}|g" \
-    -e "s|{{PORT}}|${PORT:-}|g" \
-    -e "s|{{simulator}}|${SIMULATOR:-}|g" \
-    -e "s|{{SIMULATOR}}|${SIMULATOR:-}|g" \
-    -e "s|{{avd}}|${AVD:-}|g" \
-    -e "s|{{AVD}}|${AVD:-}|g" \
-    -e "s|{{adb_serial}}|${ADB_SERIAL:-}|g" \
-    -e "s|{{ADB_SERIAL}}|${ADB_SERIAL:-}|g" \
-    -e "s|{{cdp_port}}|${CDP_PORT:-}|g" \
-    -e "s|{{CDP_PORT}}|${CDP_PORT:-}|g" \
-    -e "s|{{headless}}|${HEADLESS:-}|g" \
-    -e "s|{{HEADLESS}}|${HEADLESS:-}|g" \
-    -e "s|{{snapshot}}|${SNAPSHOT:-}|g" \
-    -e "s|{{SNAPSHOT}}|${SNAPSHOT:-}|g" \
-    -e "s|{{app}}|${APP:-}|g" \
-    -e "s|{{APP}}|${APP:-}|g" \
-    -e "s|{{domain}}|${DOMAIN:-}|g" \
-    -e "s|{{DOMAIN}}|${DOMAIN:-}|g" \
-    -e "s|{{platform}}|${PLATFORM}|g" \
-    -e "s|{{PLATFORM}}|${PLATFORM}|g" \
-    -e "s|{{slot_id}}|${SLOT_ID:-}|g" \
-    -e "s|{{SLOT_ID}}|${SLOT_ID:-}|g" \
-    -e "s|{{runtime_dir}}|${RUNTIME_DIR:-.agent}|g" \
-    -e "s|{{RUNTIME_DIR}}|${RUNTIME_DIR:-.agent}|g" \
-    -e "s|{{artifact_dir}}|${ARTIFACT_DIR:-.task}|g" \
-    -e "s|{{ARTIFACT_DIR}}|${ARTIFACT_DIR:-.task}|g" \
-    -e "s|{{recipe_dir}}|${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}|g" \
-    -e "s|{{RECIPE_DIR}}|${RECIPE_DIR:-${RUNTIME_DIR:-.agent}/recipes}|g" \
-    -e "s|{{farmslot_dir}}|${FARMSLOT_DIR:-}|g" \
-    -e "s|{{FARMSLOT_DIR}}|${FARMSLOT_DIR:-}|g" \
-    -e "s|{{repo}}|${REMOTE_REPO:-${REPO:-}}|g" \
-    -e "s|{{mobile_repo}}|${MOBILE_REPO:-}|g" \
-    -e "s|{{MOBILE_REPO}}|${MOBILE_REPO:-}|g" \
-    -e "s|{{WATCHER_PORT}}|${PORT:-}|g" \
-    -e "s|{{SESSION}}|${SESSION:-}|g" \
-    -e "s|{{REPO}}|${REMOTE_REPO:-}|g" \
-    "$rendered"
-  rm -f "${rendered}.bak"
-  # Only run the project-var expansion pass when {{placeholders}} actually remain
-  # after the resource-var sed pass above. This keeps fixtures with no remaining
-  # placeholders (the common case, including all var-less projects) byte-identical
-  # instead of round-tripping through command substitution, which would normalize
-  # trailing newlines.
-  if [ -n "${PROJECT_JSON:-}" ] && grep -q '{{[A-Za-z_][A-Za-z0-9_]*}}' "$rendered"; then
-    local rendered_text
-    rendered_text="$(cat "$rendered")"
-    expand_slot_template "$rendered_text" > "$rendered"
-  fi
+  "$FARMSLOT_CLI" internal render-fixture-template "$SLOT_ID" "$src_file" > "$rendered" || {
+    rm -f "$rendered"
+    return 1
+  }
   echo "$rendered"
 }

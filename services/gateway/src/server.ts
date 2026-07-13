@@ -16,6 +16,7 @@ import {
   type RequestFrame,
   type ResponseFrame,
 } from '@farmslot/protocol';
+import { SlotConfigError } from '@farmslot/slot-config';
 
 import { handleBranchFsChanged } from './automation/branch-watcher.js';
 import { tryDispatchNext } from './backlog/dispatch-queue.js';
@@ -575,7 +576,7 @@ async function handleMessage(
       code = 'METHOD_NOT_FOUND';
     } else if (err instanceof GatewayAuthError) {
       code = err.code;
-    } else if (err instanceof GatewayMethodError) {
+    } else if (err instanceof GatewayMethodError || err instanceof SlotConfigError) {
       code = err.code;
       userAction = err.userAction;
       details = err.details;

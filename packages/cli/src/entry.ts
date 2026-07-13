@@ -11,6 +11,7 @@ import { registerDoctorCommand } from './commands/doctor.js';
 import { registerDomainCommand } from './commands/domain.js';
 import { registerFleetCommand } from './commands/fleet.js';
 import { registerGatewayCommand } from './commands/gateway.js';
+import { registerInternalCommand } from './commands/internal.js';
 import { registerNodeCommand } from './commands/node.js';
 import { registerPairCommand } from './commands/pair.js';
 import { registerPRCommand } from './commands/pr.js';
@@ -52,6 +53,7 @@ program
 program.exitOverride();
 
 registerFleetCommand(program);
+registerInternalCommand(program);
 registerBacklogCommand(program);
 registerUpCommand(program);
 registerGatewayCommand(program);

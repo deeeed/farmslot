@@ -17,6 +17,7 @@
     "@farmslot/capabilities": "workspace:*",
     "@farmslot/protocol": "workspace:*",
     "@farmslot/run-bundle": "workspace:*",
+    "@farmslot/slot-config": "workspace:*",
     "@sinclair/typebox": "^0.34.49",
     "chokidar": "^4.0.0",
     "node-pty": "^1.0.0",
