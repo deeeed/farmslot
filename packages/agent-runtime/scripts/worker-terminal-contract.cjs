@@ -83,7 +83,7 @@ const BUILTIN_FLOW_COMMANDS = {
     },
     blocked: { artifacts: [] },
   },
-  'merge-main': {
+  'update-branch': {
     complete: {
       report: 'artifacts/report.md',
       artifacts: [LEARNINGS, 'artifacts/report.md'],

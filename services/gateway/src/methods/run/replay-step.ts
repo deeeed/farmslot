@@ -258,7 +258,7 @@ export async function runReplayStep(
   // shape, retrying will hit the same error every time. Fail loudly at the entry so
   // the user understands the run is unrecoverable and needs to be recreated with a
   // correct reference (rather than seeing the same deep "write-task" error repeatedly).
-  // Chained follow-ups (merge-main, pr-complete) keep the Jira key in ticketOrPr
+  // Chained follow-ups (update-branch, pr-complete) keep the Jira key in ticketOrPr
   // while prNumber holds the linked PR — same split fetchPRData uses at runtime.
   // Only skip validation for post-write-task replays: write-task still derives PR vars
   // from ticketOrPr and would mis-hydrate tasks if we bypassed on earlier steps.
@@ -395,7 +395,7 @@ export async function runReplayStep(
   // Regression introduced by PR #41 (d2442088, 2026-05-01); replays of pre-PR runs always
   // worked because every DISPATCH was fresh.
   //
-  // CI-watch chained follow-ups (parentRunId + pr-complete/review-pr/merge-main) set
+  // CI-watch chained follow-ups (parentRunId + pr-complete/review-pr/update-branch) set
   // skipPrepare because the parent just finished on a keep-warm slot. Clearing that flag
   // on write-task replay forces a full PREPARE and tears down the hot workspace the chain
   // was meant to reuse — preserve it; only nudgeReuse is always stale after replay.

@@ -29,7 +29,7 @@ Each project declares defaults and per-flow overrides:
 - **Per terminal command** (`complete`, `no-change`, `blocked`) — required artifact paths and optional `report` path for `evidence.reportPath`
 - **`whenPresent`** — conditional requirements (e.g. when `artifacts/recipe.json` exists)
 
-Framework ships **built-in defaults** for canonical flows (`dev`, `fix-bug`, `review-pr`, `pr-complete`, `merge-main`) when a project omits `worker_terminal`.
+Framework ships **built-in defaults** for canonical flows (`dev`, `fix-bug`, `review-pr`, `pr-complete`, `update-branch`) when a project omits `worker_terminal`.
 
 ### Frozen run contract
 

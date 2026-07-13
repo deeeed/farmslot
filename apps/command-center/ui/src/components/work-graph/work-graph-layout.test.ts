@@ -143,7 +143,7 @@ test('completion edges do not determine start-layout depth', () => {
           blocks: 'completion',
           required: true,
           status: 'pending',
-          unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+          unlock: { kind: 'rebase-onto', flow: 'update-branch' },
         },
       ],
     }),

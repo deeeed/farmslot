@@ -336,7 +336,7 @@ const STEP_META: Record<string, StepMeta> = {
   [S.CI_WATCH]: {
     lane: 'post',
     label: 'CI Watch',
-    description: 'Monitor CI checks. On conflict: chain merge-main flow. On pass: done.',
+    description: 'Monitor CI checks. On conflict: chain update-branch flow. On pass: done.',
     executor: 'gateway',
     after: (_mode, stepId, _nextId) => ({
       nodes: [
@@ -359,10 +359,10 @@ const STEP_META: Record<string, StepMeta> = {
         {
           id: 'chain-merge',
           kind: 'chain',
-          label: 'merge-main',
+          label: 'update-branch',
           lane: 'post',
           executor: 'gateway',
-          description: 'Follow-up merge-main flow to resolve conflicts and re-run CI.',
+          description: 'Follow-up update-branch flow to resolve conflicts and re-run CI.',
         },
         {
           id: 'done',
@@ -503,6 +503,6 @@ export const ALL_FLOW_TYPES: FlowType[] = [
   'dev',
   'review-pr',
   'pr-complete',
-  'merge-main',
+  'update-branch',
 ];
 export const ALL_MODES: FlowMode[] = ['interactive', 'autonomous'];

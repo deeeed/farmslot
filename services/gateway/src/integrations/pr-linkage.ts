@@ -31,7 +31,7 @@ export async function findPRNumber(
   options?: { noRetry?: boolean },
 ): Promise<number | null> {
   // 1. ticketOrPr may encode the PR number. For follow-up flows
-  //    (review-pr / pr-complete / merge-main) the dispatch validator guarantees
+  //    (review-pr / pr-complete / update-branch) the dispatch validator guarantees
   //    it's a PR ref — trust it directly. For fix-bug / new-feature / dev the
   //    same `owner/repo#N` shape can come from a GitHub issue URL (see
   //    normalizeTicketRef), so we verify via `gh api /repos/.../pulls/N`

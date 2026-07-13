@@ -397,7 +397,7 @@ test('completion edges do not block downstream start enqueue', async () => {
     toNodeId: 'wn_client',
     condition: { kind: 'merged', targetRef: 'main' },
     blocks: 'completion',
-    unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+    unlock: { kind: 'rebase-onto', flow: 'update-branch' },
   });
   await workGraph.gateResolve({
     graphId,
@@ -437,7 +437,7 @@ test('satisfied completion rebase edges surface operator attention', async () =>
     toNodeId: 'wn_client',
     condition: { kind: 'manual', gateId: 'gateway-merged' },
     blocks: 'completion',
-    unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+    unlock: { kind: 'rebase-onto', flow: 'update-branch' },
   });
   await workGraph.updateWorkGraphNode({ graphId, nodeId: 'wn_client', status: 'succeeded' });
   await workGraph.gateResolve({
@@ -497,7 +497,7 @@ test('failed completion edges move dependents to needs-attention', async () => {
     toNodeId: 'wn_client',
     condition: { kind: 'manual', gateId: 'completion-rejected' },
     blocks: 'completion',
-    unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+    unlock: { kind: 'rebase-onto', flow: 'update-branch' },
   });
   await workGraph.updateWorkGraphNode({ graphId, nodeId: 'wn_client', status: 'succeeded' });
   await workGraph.gateResolve({

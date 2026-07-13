@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 
-export type FlowFilter = '' | 'fix-bug' | 'review-pr' | 'dev' | 'pr-complete' | 'merge-main';
+export type FlowFilter = '' | 'fix-bug' | 'review-pr' | 'dev' | 'pr-complete' | 'update-branch';
 export type LaneFilter = '' | 'production' | 'validation' | 'comparison';
 export type SortOption = 'newest' | 'oldest' | 'duration';
 

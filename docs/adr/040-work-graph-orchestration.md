@@ -19,7 +19,7 @@
 
 Farmslot orchestrates **one objective** end-to-end today. A family (`familyId` +
 `parentRunId`, ADR-024) carries a single ticket/PR from `fix-bug` → `review-pr` →
-`pr-complete` → `merge-main`, with ci-watch auto-chaining the mechanical follow-ups.
+`pr-complete` → `update-branch`, with ci-watch auto-chaining the mechanical follow-ups.
 Backlog (PR #95) is flat intake with a 1:1 item→run handoff and no edges. `run.blocked`
 means a _live run_ is stopped at a human/engine decision inside its own pipeline.
 
@@ -61,8 +61,8 @@ none reusing another's key**:
   │   familyId=fa                            familyId=fc            ← VERTICAL: lineage of one objective
   │   ├ fix-bug (root run)                   ├ fix-bug (root run)
   │   ├ review-pr (parentRunId→root)         ├ review-pr (parentRunId→root)
-  │   ├ pr-complete (parentRunId→root)       └ merge-main (parentRunId→root)
-  │   └ merge-main (parentRunId→root)
+  │   ├ pr-complete (parentRunId→root)       └ update-branch (parentRunId→root)
+  │   └ update-branch (parentRunId→root)
   │
   Experiment (ADR-030)        ← ORTHOGONAL: eval comparison; cuts across, owns neither
 ```
@@ -258,7 +258,7 @@ export interface EdgeEvidence {
 export type UnlockAction =
   | { kind: 'enqueue' } // default: enqueue to's backlog item
   | { kind: 'mark-ready' } // mark eligible without enqueuing (operator/gate sequencing)
-  | { kind: 'rebase-onto'; flow: 'merge-main' | 'pr-complete' }; // completion blocker: rebase downstream onto upstream result (§6)
+  | { kind: 'rebase-onto'; flow: 'update-branch' | 'pr-complete' }; // completion blocker: rebase downstream onto upstream result (§6)
 
 export type NodeFailurePolicy =
   | 'halt' // graph → needs-attention; no new enqueues (default)
@@ -444,7 +444,7 @@ Conditions are idempotent for _reading_; the ledger covers the _write_ side.
 | **External blockers**          | `WorkNode.kind='reference'` records typed refs/status/evidence; never dispatches                                                 | `reference-status` edges block/unblock downstream work                                   |
 | **Dispatch queue**             | unchanged — graph enqueues, queue dispatches/throttles                                                                           | `workGraphId`+`workNodeId` on `QueueItem` for reconcile                                  |
 | **Family (ADR-024)**           | graph reads current family terminal state; never writes family fields or `parentRunId`                                           | resolve `currentFamilyId`+`currentRootRunId` onto node once first run dispatches         |
-| **ci-watch chain**             | intra-family auto `pr-complete`/`merge-main` stays exactly as-is                                                                 | ci-watch _also_ emits `pr.merged`(+SHA)/`family.terminal` graph events                   |
+| **ci-watch chain**             | intra-family auto `pr-complete`/`update-branch` stays exactly as-is                                                              | ci-watch _also_ emits `pr.merged`(+SHA)/`family.terminal` graph events                   |
 | **Publication gate (ADR-038)** | `gated` node status mirrors the gate-held run                                                                                    | `gate.resolved` emits a graph event; downstream `merged` edges wait for the actual merge |
 | **Bundles (ADR-039)**          | `artifact` edge condition resolves against a run bundle path                                                                     | bundle path lookup in the edge evaluator; bundles are evidence, never the graph store    |
 | **Webhooks (v2)**              | low-latency `pr.merged`/gate facts                                                                                               | GitHub webhook receiver; reconciliation stays authoritative                              |

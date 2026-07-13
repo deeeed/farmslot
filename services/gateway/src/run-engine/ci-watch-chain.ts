@@ -59,12 +59,12 @@ export function buildCIWatchChainedRunParams(
       // Chained runs inherit the parent's runner+model unchanged. The parent
       // already validated that combo at runCreate, so propagating it can't
       // produce an impossible runner+model wedge. Flow-specific model
-      // preferences (e.g. "merge-main wants the strongest model") belong in
+      // preferences (e.g. "update-branch wants the strongest model") belong in
       // project config, not hard-coded constants — see project.json.
       model: current.metrics.model ?? undefined,
       runner: current.metrics.runner ?? undefined,
       effort: current.effort,
-      // Headless CI-watch follow-ups (pr-complete / merge-main) always use the
+      // Headless CI-watch follow-ups (pr-complete / update-branch) always use the
       // flow baseline mode. Interactive belongs on the operator's initial worker
       // (e.g. dev), not on chained fix loops inherited via current.mode.
       mode: modeForFlow(flowType),
@@ -73,6 +73,9 @@ export function buildCIWatchChainedRunParams(
       // doesn't leak onto a machine the user filtered out.
       safetyTier: current.safetyTier,
       backlogItemId: current.backlogItemId,
+      // update-branch prefers rebase for agent-owned PR branches (ADR-042); the
+      // worker downgrades to merge when project policy disallows force-push.
+      ...(flowType === 'update-branch' ? { branchUpdateStrategy: 'rebase' as const } : {}),
       allowedSlots:
         current.allowedSlots && current.allowedSlots.length > 0
           ? [...current.allowedSlots]

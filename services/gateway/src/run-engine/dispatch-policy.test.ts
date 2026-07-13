@@ -85,7 +85,7 @@ test('resolveRunDispatchRunnerModel treats unknown Cursor model as unset', () =>
 });
 
 test('resolveCIWatchChainFlowType maps dispatch actions to follow-up flows', () => {
-  assert.equal(resolveCIWatchChainFlowType('dispatch-merge-main'), 'merge-main');
+  assert.equal(resolveCIWatchChainFlowType('dispatch-update-branch'), 'update-branch');
   assert.equal(resolveCIWatchChainFlowType('dispatch-pr-complete'), 'pr-complete');
   assert.equal(resolveCIWatchChainFlowType('skip'), null);
   assert.equal(resolveCIWatchChainFlowType(undefined), null);

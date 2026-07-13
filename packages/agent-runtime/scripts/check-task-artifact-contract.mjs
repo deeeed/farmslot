@@ -135,7 +135,7 @@ function isRecipeQualityArtifactFallback(value) {
   if (fields.project != null && typeof fields.project !== 'string') return false;
   if (
     fields.flow_type != null &&
-    !['fix-bug', 'review-pr', 'dev', 'pr-complete', 'merge-main'].includes(fields.flow_type)
+    !['fix-bug', 'review-pr', 'dev', 'pr-complete', 'update-branch'].includes(fields.flow_type)
   )
     return false;
   if (fields.task_type != null && typeof fields.task_type !== 'string') return false;

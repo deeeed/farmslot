@@ -65,7 +65,7 @@ export function resolveRunDispatchRunnerModel(
   return { runner, model };
 }
 export function resolveCIWatchChainFlowType(dispatchAction?: string | null): FlowType | null {
-  if (dispatchAction === 'dispatch-merge-main') return 'merge-main';
+  if (dispatchAction === 'dispatch-update-branch') return 'update-branch';
   if (dispatchAction === 'dispatch-pr-complete') return 'pr-complete';
   return null;
 }

@@ -20,7 +20,7 @@ At the GRADE step (fix-bug flows) or WRITE_TASK step (feature/PR flows), generat
 - **fix-bug**: Haiku generates summary + slug from ticket title, description, affectedArea, and labels
 - **feature**: Same as fix-bug (ticket data available after fetch)
 - **review-pr / pr-complete**: Use PR title directly as summary — no LLM call needed
-- **merge-main**: Inherit summary from parent run or skip
+- **update-branch**: Inherit summary from parent run or skip
 
 ### Branch naming
 

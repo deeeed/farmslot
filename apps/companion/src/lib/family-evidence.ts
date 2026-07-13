@@ -108,7 +108,7 @@ export function familyRunBadgeLabel(run: FamilyRunEvidenceSummary): string {
   if (run.flowType === 'fix-bug') return 'FIX';
   if (run.flowType === 'review-pr') return 'REVIEW';
   if (run.flowType === 'pr-complete') return 'PR COMPLETE';
-  if (run.flowType === 'merge-main') return 'MERGE';
+  if (run.flowType === 'update-branch') return 'UPD';
   return run.flowType.toUpperCase();
 }
 

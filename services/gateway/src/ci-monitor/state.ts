@@ -80,7 +80,7 @@ export interface CIOutcome {
   inlineFixAttempts?: number;
   inlineFixTotalAttempts?: number;
   inlineFixDedupedSkips?: number;
-  /** Which follow-up flow was requested (e.g. 'dispatch-merge-main', 'dispatch-pr-complete') */
+  /** Which follow-up flow was requested (e.g. 'dispatch-update-branch', 'dispatch-pr-complete') */
   dispatchAction?: string;
   /** Inline CI fix tracking (when worker session was nudged instead of full pr-complete) */
   inlineFix?: InlineCIFix;

@@ -16,7 +16,7 @@ export const FLOW_TO_TEMPLATE: Record<string, string> = {
   'review-pr': 'review-pr.md',
   dev: 'dev.md',
   'pr-complete': 'pr-complete.md',
-  'merge-main': 'merge-main.md',
+  'update-branch': 'update-branch.md',
 };
 
 const INTERACTIVE_TEMPLATE_BY_FLOW: Partial<Record<FlowType, string>> = {

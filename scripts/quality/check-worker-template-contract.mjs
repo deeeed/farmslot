@@ -139,14 +139,14 @@ function inferFlowTypeFromTemplate(fileName, content) {
     return { flowType: 'review-pr', mode };
   if (head.includes('pr-complete') || head.includes('pr complete'))
     return { flowType: 'pr-complete', mode };
-  if (head.includes('merge-main') || head.includes('merge main'))
-    return { flowType: 'merge-main', mode };
+  if (head.includes('update-branch') || head.includes('update branch'))
+    return { flowType: 'update-branch', mode };
   if (head.includes('interactive dev') || head.includes('feature') || head.includes('dev'))
     return { flowType: 'dev', mode };
   if (base.startsWith('fix-bug')) return { flowType: 'fix-bug', mode };
   if (base.startsWith('review-pr')) return { flowType: 'review-pr', mode };
   if (base.startsWith('pr-complete')) return { flowType: 'pr-complete', mode };
-  if (base.startsWith('merge-main')) return { flowType: 'merge-main', mode };
+  if (base.startsWith('update-branch')) return { flowType: 'update-branch', mode };
   if (base.startsWith('dev')) return { flowType: 'dev', mode };
   if (base.startsWith('self-review-fix')) return { flowType: 'self-review-fix', mode };
   if (base.startsWith('self-review')) return { flowType: 'self-review', mode };

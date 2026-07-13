@@ -222,7 +222,7 @@ test('runReplayStep still rejects MANUAL-* replay without backlogItemId', async 
 
 test('runReplayStep still rejects PR-bound replays without a linked prNumber', async (t) => {
   const run = createRun({
-    flowType: 'merge-main',
+    flowType: 'update-branch',
     project: 'farmslot-farm',
     ticketOrPr: 'PROJ-3398',
   });
@@ -241,7 +241,7 @@ test('runReplayStep still rejects PR-bound replays without a linked prNumber', a
 
 test('runReplayStep still rejects write-task replay for chained PR-bound runs with Jira ticketOrPr', async (t) => {
   const run = createRun({
-    flowType: 'merge-main',
+    flowType: 'update-branch',
     project: 'farmslot-farm',
     ticketOrPr: 'PROJ-3398',
     prNumber: 3398,
@@ -262,7 +262,7 @@ test('runReplayStep still rejects write-task replay for chained PR-bound runs wi
 
 test('runReplayStep allows chained PR-bound replays when prNumber is already linked', async (t) => {
   const run = createRun({
-    flowType: 'merge-main',
+    flowType: 'update-branch',
     project: 'farmslot-farm',
     ticketOrPr: 'PROJ-3398',
     prNumber: 3398,

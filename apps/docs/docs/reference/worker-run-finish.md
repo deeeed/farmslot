@@ -60,7 +60,7 @@ cd temp/tasks/recipe-dev/...
 | **fix-bug**                            | `artifacts/pr-description.md`                                             | same                                                            |
 | **review-pr**                          | `artifacts/review.md`, `artifacts/line-comments.json` (may be `[]`)       | same                                                            |
 | **pr-complete**                        | `artifacts/comments-report.md`                                            | same                                                            |
-| **merge-main**                         | `artifacts/report.md` or `merge-report.md`                                | same                                                            |
+| **update-branch**                      | `artifacts/report.md` or `merge-report.md`                                | same                                                            |
 | **Standalone recipe-dev / fix-ticket** | `artifacts/report.md` (no auto-PR)                                        | same                                                            |
 
 Do **not** write both `report.md` and `pr-description.md` on dev/fix-bug — `pr-description.md` is the single outcome file.
@@ -83,7 +83,7 @@ Add this block near the end of every terminal worker template (adjust outcome pa
 
 ```markdown
 - [ ] **Write `{{TASK_DIR}}/artifacts/learnings.md`** — 3–5 bullets on key learnings or struggles; if nothing relevant, one bullet.
-- [ ] **Write the flow outcome artifact** — e.g. `pr-description.md` (dev/fix-bug), `review.md` (review-pr), `report.md` (merge-main).
+- [ ] **Write the flow outcome artifact** — e.g. `pr-description.md` (dev/fix-bug), `review.md` (review-pr), `report.md` (update-branch).
 - [ ] **Finish** — `{{TASK_DIR}}/mark complete --mark-last` (never hand-write `SIGNAL.json`).
 ```
 

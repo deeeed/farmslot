@@ -275,7 +275,7 @@ async function copyIfExists(sourceRoot: string, destRoot: string, relativePath: 
 }
 
 export function isFollowUpFlow(flowType: FlowType): boolean {
-  return flowType === 'review-pr' || flowType === 'pr-complete' || flowType === 'merge-main';
+  return flowType === 'review-pr' || flowType === 'pr-complete' || flowType === 'update-branch';
 }
 
 export function resolveFamilyIdentity(

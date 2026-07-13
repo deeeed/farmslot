@@ -193,7 +193,7 @@ export const FLEET_TOOLS: Tool[] = [
         Type.String({ description: 'Ticket/PR ref or keyword (e.g. PROJ-2483)' }),
       ),
       flow_type: Type.Optional(
-        Type.String({ description: 'fix-bug | review-pr | merge-main | etc.' }),
+        Type.String({ description: 'fix-bug | review-pr | update-branch | etc.' }),
       ),
       outcome: Type.Optional(Type.String({ description: 'merged | approved | failed | etc.' })),
       limit: Type.Optional(Type.Number({ description: 'Max results, default 20' })),
@@ -474,12 +474,14 @@ export const FLEET_TOOLS: Tool[] = [
       'Add a task to the dispatch queue. It will be dispatched when a matching slot becomes free.',
     parameters: Type.Object({
       flow_type: Type.String({
-        description: 'fix-bug | review-pr | dev | pr-complete | merge-main',
+        description: 'fix-bug | review-pr | dev | pr-complete | update-branch',
       }),
       project: Type.String({ description: 'Project name e.g. example-mobile' }),
       ticket_or_pr: Type.String({ description: 'Jira ticket URL/key or PR URL/number' }),
       slot_id: Type.Optional(
-        Type.String({ description: 'Target slot (required for merge-main, optional otherwise)' }),
+        Type.String({
+          description: 'Target slot (required for update-branch, optional otherwise)',
+        }),
       ),
       model: Type.Optional(Type.String({ description: 'LLM model: sonnet | opus | haiku' })),
       runner: Type.Optional(Type.String({ description: 'Runner: claude | codex' })),

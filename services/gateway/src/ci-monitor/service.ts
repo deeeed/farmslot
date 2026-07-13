@@ -454,7 +454,7 @@ export async function monitorCI(
       return buildOutcome('passed');
     }
 
-    // Merge conflict — prefer merge-main (lighter), fallback to pr-complete
+    // Merge conflict — prefer update-branch (lighter), fallback to pr-complete
     if (mergeConflict) {
       console.log(`[ci-monitor] run ${runId.slice(0, 8)} — merge conflict detected`);
       const autoAction = pickCIAutoDispatchAction('merge_conflict', [], config);
@@ -469,12 +469,12 @@ export async function monitorCI(
         'merge_conflict',
         `PR #${prNumber} has merge conflicts`,
         [
-          { id: 'dispatch-merge-main', label: 'Dispatch merge-main', style: 'primary' },
+          { id: 'dispatch-update-branch', label: 'Dispatch update-branch', style: 'primary' },
           { id: 'dispatch-pr-complete', label: 'Dispatch pr-complete', style: 'secondary' },
           { id: 'skip', label: 'Skip (manual)', style: 'secondary' },
         ],
       );
-      if (actionId === 'dispatch-merge-main' || actionId === 'dispatch-pr-complete')
+      if (actionId === 'dispatch-update-branch' || actionId === 'dispatch-pr-complete')
         return buildOutcome('failed', ['MERGE_CONFLICT'], actionId);
       return buildOutcome('passed');
     }
@@ -871,7 +871,8 @@ async function createCIDecision(
   const autoAction = (() => {
     if (run.mode !== 'validation') return null;
     const ids = new Set(actions.map((a) => a.id));
-    if (reason === 'merge_conflict' && ids.has('dispatch-merge-main')) return 'dispatch-merge-main';
+    if (reason === 'merge_conflict' && ids.has('dispatch-update-branch'))
+      return 'dispatch-update-branch';
     if (
       (reason === 'review_comments' ||
         reason === 'review_comments_early' ||
@@ -937,10 +938,10 @@ export function pickCIAutoDispatchAction(
   reason: 'merge_conflict' | 'bot_comments' | 'bot_comments_early' | 'ci_failed',
   failedChecks: string[],
   config: Pick<CIMonitorConfig, 'autoDispatch'>,
-): 'dispatch-merge-main' | 'dispatch-pr-complete' | null {
+): 'dispatch-update-branch' | 'dispatch-pr-complete' | null {
   switch (reason) {
     case 'merge_conflict':
-      return config.autoDispatch.mergeConflicts ? 'dispatch-merge-main' : null;
+      return config.autoDispatch.mergeConflicts ? 'dispatch-update-branch' : null;
     case 'bot_comments':
     case 'bot_comments_early':
       return config.autoDispatch.botComments ? 'dispatch-pr-complete' : null;

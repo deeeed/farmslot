@@ -213,7 +213,7 @@ export async function runCreate(params: RunCreateParams, emit: Emit): Promise<Ru
   if (devInteractiveProfile) params.devInteractiveProfile = devInteractiveProfile;
 
   // For PR flows, resolve bare numbers and branch names to owner/repo#number
-  const PR_FLOWS = ['review-pr', 'pr-complete', 'merge-main'];
+  const PR_FLOWS = ['review-pr', 'pr-complete', 'update-branch'];
   if (PR_FLOWS.includes(params.flowType)) {
     if (projectConfig?.ci?.repo) {
       params.ticketOrPr = await resolvePrRef(params.ticketOrPr, projectConfig.ci.repo);
@@ -827,7 +827,7 @@ export async function runRehydratePrNumber(
   }
   // Reclaim: restore full slot identity so S.CI_WATCH's markSlotHeld writes a
   // coherent record AND any chained follow-up dispatch (pr-complete,
-  // merge-main) passes evaluateSlotIdentityPolicy. Completion's resetSlot
+  // update-branch) passes evaluateSlotIdentityPolicy. Completion's resetSlot
   // clears family_id/lane/variant alongside current_run_id, so replaying
   // without them would break same-family reuse checks in dispatch.ts:480-483.
   if (slotStatus.currentRunId !== params.runId) {
@@ -978,7 +978,7 @@ export async function runResolveDecision(
         const runningStep = afterResolve.steps.find((s) => s.status === 'running');
         if (
           runningStep?.name === 'ci-watch' &&
-          (params.actionId === 'dispatch-merge-main' ||
+          (params.actionId === 'dispatch-update-branch' ||
             params.actionId === 'dispatch-pr-complete') &&
           afterResolve.slotId
         ) {

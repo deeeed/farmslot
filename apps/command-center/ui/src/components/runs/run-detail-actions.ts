@@ -288,7 +288,7 @@ export function resolveSlotPick(
 /**
  * Warm-switch a slot onto this run's branch and bind the run to it, then open
  * slot-view. Uses strict slot.prepare (default attach profile; bind-only when
- * slotBranch already matches — no merge-main, no silent profile escalation).
+ * slotBranch already matches — no update-branch, no silent profile escalation).
  *
  * This is the only run→slot binding the UI exposes ("Load slot with run"): it
  * does NOT re-drive the run pipeline, so the run record is left intact and the

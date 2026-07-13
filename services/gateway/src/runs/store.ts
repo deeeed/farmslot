@@ -18,6 +18,8 @@ import {
   type FlowType,
   isTerminalRunStatus,
   isValidDomainName,
+  normalizeCiActionId,
+  normalizeFlowType,
   normalizeRunTags,
   primaryRoleForFlow,
   prNumberFromRunInput,
@@ -346,10 +348,35 @@ export async function loadAllRuns(): Promise<void> {
         skippedSynthetic++;
       }
       let changed = false;
-      // Migrate legacy 'feature' flowType to 'dev'
-      if ((run as any).flowType === 'feature') {
-        run.flowType = 'dev' as any;
+      // Normalize legacy flow-type names at load so the UI never surfaces a
+      // pre-rename value ('feature' → 'dev', 'merge-main' → 'update-branch').
+      const normalizedFlow = normalizeFlowType((run as { flowType?: string }).flowType);
+      if (run.flowType !== normalizedFlow) {
+        run.flowType = normalizedFlow;
         changed = true;
+      }
+      // Normalize pre-rename CI-watch decision action ids (resolved + pending
+      // buttons) so downstream replay/recovery consumers and the UI only ever
+      // see the current id/label.
+      for (const decision of run.decisions ?? []) {
+        if (decision.resolvedAction) {
+          const normalizedAction = normalizeCiActionId(decision.resolvedAction);
+          if (decision.resolvedAction !== normalizedAction) {
+            decision.resolvedAction = normalizedAction;
+            changed = true;
+          }
+        }
+        for (const action of decision.actions ?? []) {
+          const normalizedId = normalizeCiActionId(action.id);
+          if (action.id !== normalizedId) {
+            action.id = normalizedId;
+            changed = true;
+          }
+          if (action.label.includes('merge-main')) {
+            action.label = action.label.replace(/merge-main/g, 'update-branch');
+            changed = true;
+          }
+        }
       }
       if (run.project === 'farmslot') {
         run.project = 'farmslot-farm';
@@ -527,6 +554,7 @@ export function createRun(params: RunCreateParams): Run {
     app: params.app,
     ...(domain ? { domain } : {}),
     ...(params.prepareProfile ? { prepareProfile: params.prepareProfile } : {}),
+    ...(params.branchUpdateStrategy ? { branchUpdateStrategy: params.branchUpdateStrategy } : {}),
     effort: params.effort,
     scripted: params.scripted,
     slotId: params.slotId ?? null,

@@ -28,7 +28,7 @@ export function githubPullUrl(ref: Pick<GitHubRef, 'repo' | 'number'>): string {
 export const PR_BOUND_FLOW_TYPES: ReadonlySet<FlowType> = new Set([
   'review-pr',
   'pr-complete',
-  'merge-main',
+  'update-branch',
 ]);
 
 export function prNumberFromRunInput(

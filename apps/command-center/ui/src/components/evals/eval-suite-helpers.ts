@@ -88,7 +88,7 @@ const RUN_FLOW_LABELS: Record<string, string> = {
   dev: 'DEV',
   'review-pr': 'REV',
   'pr-complete': 'PRC',
-  'merge-main': 'MERGE',
+  'update-branch': 'UPD',
 };
 
 function normalizedText(value: string | null | undefined): string {

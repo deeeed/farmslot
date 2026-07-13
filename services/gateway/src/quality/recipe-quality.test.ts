@@ -236,7 +236,7 @@ test('loadRecipeQualityEvaluation warns when legacy recipe coverage exists witho
   await writeFile(path.join(taskDir, 'artifacts', 'recipe-coverage.md'), '24/25 passed\n', 'utf-8');
 
   const evaluation = await loadRecipeQualityEvaluation({
-    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'merge-main' }),
+    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'update-branch' }),
     recipeCoverage: '24/25 passed\n',
   });
 
@@ -332,7 +332,7 @@ test('loadRecipeQualityEvaluation derives pass from a structurally valid recipe 
   });
 
   const evaluation = await loadRecipeQualityEvaluation({
-    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'merge-main' }),
+    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'update-branch' }),
     recipeJson,
   });
 
@@ -348,7 +348,7 @@ test('loadRecipeQualityEvaluation fails invalid recipe json via shared structura
   const taskFile = await writeTaskFile(taskDir, '# Legacy task\n');
 
   const evaluation = await loadRecipeQualityEvaluation({
-    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'merge-main' }),
+    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'update-branch' }),
     recipeJson: '{"entry":',
   });
 
@@ -369,7 +369,7 @@ test('loadRecipeQualityEvaluation does not persist fallback artifact on read', a
   );
 
   const evaluation = await loadRecipeQualityEvaluation({
-    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'merge-main' }),
+    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'update-branch' }),
     workerReport: 'Legacy prose-only report.\n',
   });
 
@@ -440,7 +440,7 @@ test('loadRecipeQualityEvaluation accepts direct-format entry/nodes recipes', as
   const taskFile = await writeTaskFile(taskDir, '# Legacy task\n');
 
   const evaluation = await loadRecipeQualityEvaluation({
-    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'merge-main' }),
+    run: makeRun({ taskFile, project: 'example-browser-farm', flowType: 'update-branch' }),
     recipeJson: JSON.stringify({
       entry: 'start',
       nodes: {

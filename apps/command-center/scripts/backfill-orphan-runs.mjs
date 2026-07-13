@@ -66,7 +66,7 @@ const FLOW_STEPS = {
     'finalize',
     'ci-watch',
   ],
-  'merge-main': [
+  'update-branch': [
     'write-task',
     'dispatch',
     'monitor',

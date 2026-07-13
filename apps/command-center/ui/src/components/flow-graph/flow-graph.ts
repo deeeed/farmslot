@@ -35,7 +35,7 @@ const FLOW_TYPE_LABELS: Record<string, string> = {
   dev: 'Dev',
   'review-pr': 'Review PR',
   'pr-complete': 'PR Complete',
-  'merge-main': 'Merge Main',
+  'update-branch': 'Update Branch',
 };
 
 // ─── Component ───
@@ -782,7 +782,7 @@ export class FlowGraphComponent extends LitElement {
   private handleChainClick(node: FlowGraphNode) {
     // Switch view to the chained flow type
     const chainFlows: Record<string, FlowType> = {
-      'merge-main': 'merge-main',
+      'update-branch': 'update-branch',
       'pr-complete': 'pr-complete',
     };
     const target = chainFlows[node.label];

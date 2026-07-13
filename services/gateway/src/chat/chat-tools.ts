@@ -24,7 +24,7 @@ const FLOW_TYPES = [
   'review-pr',
   'dev',
   'pr-complete',
-  'merge-main',
+  'update-branch',
 ] as const satisfies readonly FlowType[];
 const INVESTIGATOR_MAX_QUESTION_CHARS = 4_000;
 export const INVESTIGATOR_MAX_TOOL_ROUNDS = 6;

@@ -47,7 +47,7 @@ test('snapshot backfills retrospective payload for unresolved legacy decisions',
           id: 'retro-decision',
           type: 'retrospective',
           title: 'Review retrospective',
-          description: 'merge-main run completed (success)',
+          description: 'update-branch run completed (success)',
           actions: [
             { id: 'accept', label: 'Accept for Learning', style: 'primary' },
             { id: 'rework', label: 'Reject Learning', style: 'secondary' },
@@ -169,12 +169,12 @@ test('createRetrospective broadcasts root supersession before follow-up new (ato
   );
 });
 
-test('createRetrospective emits terminal merge-main family retro with review-comment triage', async (t) => {
+test('createRetrospective emits terminal update-branch family retro with review-comment triage', async (t) => {
   t.after(() => initRunCompletion(() => {}));
   const base = await mkdtemp(path.join(os.tmpdir(), 'family-retro-merge-terminal-'));
   const rootDir = path.join(base, 'root');
   const prCompleteDir = path.join(base, 'pr-complete');
-  const mergeDir = path.join(base, 'merge-main');
+  const mergeDir = path.join(base, 'update-branch');
   await writeArtifact(rootDir, 'TASK.md', '# root');
   await writeArtifact(rootDir, 'artifacts/learnings.md', 'Root missed value parity.');
   await writeArtifact(prCompleteDir, 'TASK.md', '# follow');
@@ -237,7 +237,7 @@ test('createRetrospective emits terminal merge-main family retro with review-com
   });
 
   const mergeMain = createRun({
-    flowType: 'merge-main',
+    flowType: 'update-branch',
     mode: 'autonomous',
     project: 'example-browser-farm',
     ticketOrPr: 'owner/repo#1',

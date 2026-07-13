@@ -379,7 +379,7 @@ export const mockWorkGraphs: WorkGraphProjection[] = [
         blocks: 'completion',
         required: true,
         status: 'pending',
-        unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+        unlock: { kind: 'rebase-onto', flow: 'update-branch' },
         lastEvaluatedAt: NOW,
       },
       {
@@ -391,7 +391,7 @@ export const mockWorkGraphs: WorkGraphProjection[] = [
         blocks: 'completion',
         required: true,
         status: 'pending',
-        unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+        unlock: { kind: 'rebase-onto', flow: 'update-branch' },
         lastEvaluatedAt: NOW,
       },
       {
@@ -414,7 +414,7 @@ export const mockWorkGraphs: WorkGraphProjection[] = [
         blocks: 'completion',
         required: true,
         status: 'pending',
-        unlock: { kind: 'rebase-onto', flow: 'merge-main' },
+        unlock: { kind: 'rebase-onto', flow: 'update-branch' },
         lastEvaluatedAt: NOW,
       },
       {

@@ -87,7 +87,7 @@ test('detectCIWatchProgress resets on PR head or watched check changes', () => {
 test('pickCIAutoDispatchAction respects addendum category defaults', () => {
   const config = resolveCIMonitorConfig({});
 
-  assert.equal(pickCIAutoDispatchAction('merge_conflict', [], config), 'dispatch-merge-main');
+  assert.equal(pickCIAutoDispatchAction('merge_conflict', [], config), 'dispatch-update-branch');
   assert.equal(pickCIAutoDispatchAction('bot_comments', [], config), 'dispatch-pr-complete');
   assert.equal(pickCIAutoDispatchAction('bot_comments_early', [], config), 'dispatch-pr-complete');
   assert.equal(
@@ -115,7 +115,7 @@ test('pickCIAutoDispatchAction honors per-project overrides', () => {
 
 test('shouldReuseResolvedCIDecisionAction treats transient wait controls as one-shot', () => {
   assert.equal(shouldReuseResolvedCIDecisionAction('dispatch-pr-complete'), true);
-  assert.equal(shouldReuseResolvedCIDecisionAction('dispatch-merge-main'), true);
+  assert.equal(shouldReuseResolvedCIDecisionAction('dispatch-update-branch'), true);
   assert.equal(shouldReuseResolvedCIDecisionAction('skip'), true);
   assert.equal(shouldReuseResolvedCIDecisionAction('abort'), true);
   assert.equal(shouldReuseResolvedCIDecisionAction('retry'), false);

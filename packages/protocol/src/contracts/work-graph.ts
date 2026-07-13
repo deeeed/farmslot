@@ -113,7 +113,7 @@ export type EdgeCondition =
 export type UnlockAction =
   | { kind: 'enqueue' }
   | { kind: 'mark-ready' }
-  | { kind: 'rebase-onto'; flow: 'merge-main' | 'pr-complete' };
+  | { kind: 'rebase-onto'; flow: 'update-branch' | 'pr-complete' };
 
 export interface GraphGateResolution {
   graphId?: string;

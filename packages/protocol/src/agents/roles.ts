@@ -49,9 +49,9 @@ export function primaryRoleForFlow(flowType?: FlowType | string | null): AgentRo
   if (flowType === 'dev') return 'dev';
   if (flowType === 'fix-bug') return 'fix-bug';
   if (flowType === 'review-pr') return 'review';
-  // Non-worker orchestration flows (pr-complete, merge-main) and null/undefined
+  // Non-worker orchestration flows (pr-complete, update-branch) and null/undefined
   // reuse the default session window instead of claiming a role-scoped worker window.
-  if (!flowType || flowType === 'pr-complete' || flowType === 'merge-main') return 'primary';
+  if (!flowType || flowType === 'pr-complete' || flowType === 'update-branch') return 'primary';
   throw new Error(`primaryRoleForFlow: unknown flow type '${flowType}'`);
 }
 

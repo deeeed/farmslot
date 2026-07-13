@@ -6,7 +6,7 @@ import {
   type Run,
 } from '@farmslot/protocol';
 
-const MILESTONE_FLOWS: ReadonlySet<FlowType> = new Set(['pr-complete', 'merge-main']);
+const MILESTONE_FLOWS: ReadonlySet<FlowType> = new Set(['pr-complete', 'update-branch']);
 
 function num(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
