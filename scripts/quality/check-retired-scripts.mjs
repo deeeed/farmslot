@@ -52,8 +52,10 @@ for (const name of RETIRED) {
     const [file, , ...rest] = line.split(':');
     if (HISTORICAL.some((pattern) => pattern.test(file))) continue;
     const text = rest.join(':').trim();
-    // Comment / prose mentions are historical narration.
-    if (/^(#|\/\/|\*|<!--|- )/.test(text)) continue;
+    // Code-comment mentions are historical narration. Markdown bullets are
+    // NOT tolerated — a doc line like `- bash release-slot.sh` is a live
+    // instruction operators copy-paste.
+    if (/^(#|\/\/|\*)/.test(text)) continue;
     problems.push(`live reference to retired ${name}: ${line}`);
   }
 }
