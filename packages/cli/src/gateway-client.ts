@@ -94,7 +94,15 @@ export class GatewayClient {
     const notifyClosed = () => {
       const handlers = [...closeHandlers];
       closeHandlers.clear();
-      for (const handler of handlers) handler();
+      for (const handler of handlers) {
+        try {
+          handler();
+        } catch {
+          // A close observer must not block socket teardown or the remaining
+          // observers — the connection is already gone; there is nothing the
+          // client can do about a failing callback here.
+        }
+      }
     };
 
     // Persistent handlers go on before the handshake so a close during auth

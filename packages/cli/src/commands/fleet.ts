@@ -31,20 +31,30 @@ async function watchFleet(
     stdin.pause();
     connection.close();
   };
+  let socketClosed = false;
   try {
     render(await connection.call<FleetStatusResult>('fleet.status', { forceRefresh }));
     await new Promise<void>((resolve, reject) => {
+      // Render inside handlers must settle the promise on failure — an
+      // exception that escapes a handler would strand raw mode forever.
+      const safeRender = (result: FleetStatusResult) => {
+        try {
+          render(result);
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
+      };
       connection.onClose(() => {
-        output.write('\nconnection closed — exiting watch\n');
+        socketClosed = true;
         resolve();
       });
       connection.onEvent((event) => {
         if (event.event === 'fleet.updated') {
           const payload = event.payload as { fleet?: FleetStatusResult['fleet'] };
-          if (payload?.fleet) render({ fleet: payload.fleet });
+          if (payload?.fleet) safeRender({ fleet: payload.fleet });
         } else if (event.event === 'run.updated') {
           // Run transitions change slot task columns without a fleet event.
-          connection.call<FleetStatusResult>('fleet.status').then(render, reject);
+          connection.call<FleetStatusResult>('fleet.status').then(safeRender, reject);
         }
       });
       stdin.setRawMode?.(true);
@@ -58,6 +68,7 @@ async function watchFleet(
   } finally {
     cleanup();
   }
+  if (socketClosed) output.write('\nconnection closed — exiting watch\n');
 }
 
 export function registerFleetCommand(program: Command): void {
