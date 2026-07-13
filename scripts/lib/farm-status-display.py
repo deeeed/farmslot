@@ -364,14 +364,14 @@ farm_status = f"{script_dir}/farm-status.sh"
 if hints_dispatch:
     print(f"\n{green('Ready to dispatch:')}  {dim(str(len(hints_dispatch)) + ' slot(s)')}")
     for sid in hints_dispatch:
-        print(f"  {script_dir}/dispatch.sh {sid} projects/<project>/tasks/TASK-<id>.md")
+        print(f"  farmslot run create --ticket <ref> --project <project> --slot {sid}")
 
 if hints_monitor:
     print(f"\n{yellow('Monitor (working):')}  {dim(str(len(hints_monitor)) + ' slot(s)')}")
     for sid in hints_monitor:
         print(f"  {script_dir}/monitor-slot.sh {sid}")
-        print(f"  {script_dir}/release-slot.sh {sid} --keep-warm  {dim('# reset + re-prepare for next task')}")
-        print(f"  {script_dir}/release-slot.sh {sid}  {dim('# full teardown (stop Metro + device)')}")
+        print(f"  farmslot slot release {sid} --keep-warm  {dim('# reset + re-prepare for next task')}")
+        print(f"  farmslot slot release {sid}  {dim('# full teardown (stop Metro + device)')}")
 
 if hints_recycle:
     print(f"\n{yellow('Recycle (done):')}  {dim(str(len(hints_recycle)) + ' slot(s)')}")
@@ -379,8 +379,8 @@ if hints_recycle:
         print(f"  {farm_status} --recycle-all")
     else:
         for sid in hints_recycle:
-            print(f"  {script_dir}/release-slot.sh {sid} --keep-warm  {dim('# reset + re-prepare')}")
-            print(f"  {script_dir}/release-slot.sh {sid}  {dim('# full teardown')}")
+            print(f"  farmslot slot release {sid} --keep-warm  {dim('# reset + re-prepare')}")
+            print(f"  farmslot slot release {sid}  {dim('# full teardown')}")
 
 if hints_prepare:
     print(f"\n{yellow('Prepare (not ready):')}  {dim(str(len(hints_prepare)) + ' slot(s)')}")
@@ -388,7 +388,7 @@ if hints_prepare:
         print(f"  {farm_status} --prepare-all")
     else:
         for sid in hints_prepare:
-            print(f"  {script_dir}/prepare-slot.sh {sid}")
+            print(f"  farmslot slot prepare {sid}")
 
 # Sync hint — separate from prepare, based on stale fixtures (includes personal slots)
 hints_sync = [s["slot"] for s in slots if s.get("mode", "dispatch") != "disabled"

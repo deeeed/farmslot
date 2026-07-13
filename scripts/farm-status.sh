@@ -10,9 +10,10 @@
 #   farm-status.sh --json         # Output raw JSON cache
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/resolve-farmslot-cli.sh"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 STATUS_FILE="${PROJECT_DIR}/.farm-status.json"
-FARMSLOT="$(cd "${SCRIPT_DIR}/../packages/cli" && pwd)/bin/farmslot.mjs"
 
 # -- Options ---------------------------------------------------------------
 MODE="collect"
@@ -38,7 +39,7 @@ done
 
 # -- Delegate modes --------------------------------------------------------
 if [ "$MODE" = "slot" ]; then
-  exec "$FARMSLOT" slot check "${SLOT_ARG}"
+  exec "$FARMSLOT_CLI" slot check "${SLOT_ARG}"
 fi
 if [ "$MODE" = "sync" ]; then
   exec bash "${SCRIPT_DIR}/sync-fixtures.sh" --slot "${SLOT_ARG}" "${SYNC_EXTRA[@]}"
@@ -47,11 +48,11 @@ if [ "$MODE" = "json" ]; then
   # The CLI --json output is now a machine envelope; keep this script's
   # long-standing raw fleet-status shape for existing consumers. Unwrap with
   # node (a hard CLI prerequisite) — jq is not guaranteed on installs.
-  "$FARMSLOT" --json fleet status | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d;}).on("end",()=>{const j=JSON.parse(s);process.stdout.write(JSON.stringify(j.data??j,null,2)+"\n");});'
+  "$FARMSLOT_CLI" --json fleet status | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d;}).on("end",()=>{const j=JSON.parse(s);process.stdout.write(JSON.stringify(j.data??j,null,2)+"\n");});'
   exit "${PIPESTATUS[0]}"
 fi
 if [ "$MODE" = "show" ]; then
-  exec "$FARMSLOT" fleet status
+  exec "$FARMSLOT_CLI" fleet status
 fi
 
 # -- Batch action modes (read from cached JSON) ----------------------------
@@ -93,9 +94,9 @@ for s in data.get('slots', []):
   while IFS= read -r sid; do
     [ -z "$sid" ] && continue
     case "$ACTION" in
-      prepare) bash "${SCRIPT_DIR}/prepare-slot.sh" "$sid" ;;
+      prepare) "$FARMSLOT_CLI" slot prepare "$sid" ;;
       sync)    bash "${SCRIPT_DIR}/sync-fixtures.sh" --slot "$sid" ;;
-      recycle) bash "${SCRIPT_DIR}/release-slot.sh" "$sid" --keep-warm --reset ;;
+      recycle) "$FARMSLOT_CLI" slot release "$sid" --keep-warm --reset ;;
     esac
     [ $? -ne 0 ] && { echo "WARN: ${ACTION} failed for ${sid}" >&2; FAILED=$((FAILED + 1)); }
   done <<< "$BATCH_SLOTS"
@@ -111,4 +112,4 @@ for s in data.get('slots', []):
 fi
 
 # -- Collect mode: refresh + display via farmslot CLI ---------------------
-exec "$FARMSLOT" fleet refresh
+exec "$FARMSLOT_CLI" fleet refresh

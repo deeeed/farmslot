@@ -5,7 +5,6 @@
 #   source ~/dev/farmslot/scripts/completions.sh
 #
 #   farm check-slot <tab>       → slot IDs
-#   farm dispatch <tab>         → slot IDs, then task files
 #   farm archive-run <tab>      → project names, then branch names
 #   farm <tab>                  → available commands
 
@@ -17,13 +16,9 @@ _farm_commands=(
   check-slot
   monitor-slot
   preflight-slot
-  prepare-slot
-  release-slot
   setup-slot
   show-slot
   sync-fixtures
-  dispatch
-  find-slot
   session-usage
   status
   pr-status
@@ -37,7 +32,25 @@ farm() {
 
   case "$cmd" in
     status)      bash "$FARMSLOT_DIR/scripts/farm-status.sh" "$@" ;;
-    pr-status)   bash "$FARMSLOT_DIR/scripts/pr-status.sh" "$@" ;;
+    pr-status)
+      # Legacy wrapper surface: --pr N → pr status N, else pr list; --json/--human
+      # map to the machine flag; auto-JSON when piped; --since ignored (compat).
+      local _pr="" _json=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --pr) _pr="$2"; shift 2 ;;
+          --json) _json="--json"; shift ;;
+          --human) _json=""; shift ;;
+          --since) shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      [ -z "$_json" ] && [ ! -t 1 ] && _json="--json"
+      if [ -n "$_pr" ]; then
+        "$FARMSLOT_DIR/packages/cli/bin/farmslot.mjs" $_json pr status "$_pr"
+      else
+        "$FARMSLOT_DIR/packages/cli/bin/farmslot.mjs" $_json pr list
+      fi ;;
     pr-monitor)  bash "$FARMSLOT_DIR/scripts/pr-monitor.sh" "$@" ;;
     ""|--help|-h)
       echo "Usage: farm <command> [args]"
@@ -92,7 +105,7 @@ _farm_task_files() {
 _farm_cmd_takes_slot() {
   case "$1" in
     check-slot|monitor-slot|preflight-slot|prepare-slot|\
-    release-slot|setup-slot|show-slot|dispatch|session-usage)
+    setup-slot|show-slot|session-usage)
       return 0 ;;
     *) return 1 ;;
   esac
@@ -118,8 +131,6 @@ if [ -n "${BASH_VERSION:-}" ]; then
     if [ "$cword" -eq 2 ]; then
       if _farm_cmd_takes_slot "$cmd"; then
         COMPREPLY=($(compgen -W "$(_farm_slot_ids)" -- "$cur"))
-      elif [ "$cmd" = "find-slot" ]; then
-        COMPREPLY=($(compgen -W "--project --slot --prefer-cdp" -- "$cur"))
       elif [ "$cmd" = "sync-fixtures" ]; then
         COMPREPLY=($(compgen -W "--slot" -- "$cur"))
       fi
@@ -128,8 +139,6 @@ if [ -n "${BASH_VERSION:-}" ]; then
 
     if [ "$cword" -ge 3 ]; then
       case "$cmd" in
-        release-slot)  COMPREPLY=($(compgen -W "--keep-warm --reset --skip-artifacts --keep-work --kill-tmux" -- "$cur")) ;;
-        dispatch)      [ "$cword" -eq 3 ] && COMPREPLY=($(compgen -W "$(_farm_task_files)" -- "$cur")) ;;
         session-usage) [ "$cword" -eq 3 ] && COMPREPLY=($(compgen -W "snapshot report total" -- "$cur")) ;;
         sync-fixtures)
           case "$prev" in
@@ -138,18 +147,7 @@ if [ -n "${BASH_VERSION:-}" ]; then
             *)           COMPREPLY=($(compgen -W "--slot --flow-type" -- "$cur")) ;;
           esac
           ;;
-        find-slot)
-          case "$prev" in
-            --project) COMPREPLY=($(compgen -W "$(_farm_project_names)" -- "$cur")) ;;
-            --slot)    COMPREPLY=($(compgen -W "$(_farm_slot_ids)" -- "$cur")) ;;
-          esac
-          ;;
       esac
-      return
-    fi
-
-    if [ "$cword" -eq 4 ] && [ "$cmd" = "dispatch" ]; then
-      COMPREPLY=($(compgen -W "--force" -- "$cur"))
       return
     fi
   }
@@ -173,8 +171,6 @@ if [ -n "${ZSH_VERSION:-}" ]; then
       if _farm_cmd_takes_slot "$cmd"; then
         completions=("${(@f)$(_farm_slot_ids)}")
         compadd -a completions
-      elif [ "$cmd" = "find-slot" ]; then
-        compadd -- "--project" "--slot" "--prefer-cdp"
       elif [ "$cmd" = "sync-fixtures" ]; then
         compadd -- "--slot"
       fi
@@ -184,12 +180,6 @@ if [ -n "${ZSH_VERSION:-}" ]; then
     if [ "$pos" -ge 3 ]; then
       local prev_word="${words[$((CURRENT - 1))]}"
       case "$cmd" in
-        release-slot)
-          compadd -- "--keep-warm" "--skip-artifacts" "--keep-work" "--kill-tmux"
-          ;;
-        dispatch)
-          [ "$pos" -eq 3 ] && { completions=("${(@f)$(_farm_task_files)}"); compadd -a completions; }
-          ;;
         session-usage)
           [ "$pos" -eq 3 ] && { completions=(snapshot report total); compadd -a completions; }
           ;;
@@ -200,25 +190,7 @@ if [ -n "${ZSH_VERSION:-}" ]; then
             *)           compadd -- "--slot" "--flow-type" ;;
           esac
           ;;
-        find-slot)
-          local prev_word="${words[$((CURRENT - 1))]}"
-          case "$prev_word" in
-            --project)
-              completions=("${(@f)$(_farm_project_names)}")
-              compadd -a completions
-              ;;
-            --slot)
-              completions=("${(@f)$(_farm_slot_ids)}")
-              compadd -a completions
-              ;;
-          esac
-          ;;
       esac
-      return
-    fi
-
-    if [ "$pos" -eq 4 ] && [ "$cmd" = "dispatch" ]; then
-      compadd -- "--force"
       return
     fi
   }

@@ -1,4 +1,5 @@
 #!/bin/bash
+# DEPRECATED shim: use `farmslot slot prepare` — kept only while project packs still reference it.
 # prepare-slot.sh <slot-id> [--branch <name>] [--merge-main] [--flow-type <type>] [--app <path>] [--var key=value ...]
 # Delegates to farmslot CLI.
 #
@@ -15,4 +16,5 @@
 SLOT_ID="${1:?Usage: prepare-slot.sh <slot-id> [--branch <name>] [--merge-main] [--flow-type <type>] [--app <path>] [--var key=value ...]}"
 shift
 FARMSLOT="$(cd "$(dirname "$0")/../packages/cli" && pwd)/bin/farmslot.mjs"
+echo "note: prepare-slot.sh is deprecated; use \`farmslot slot prepare\`" >&2
 exec "$FARMSLOT" slot prepare "$SLOT_ID" "$@"

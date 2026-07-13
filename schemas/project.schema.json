@@ -419,12 +419,12 @@
         },
         "recycle": {
           "type": "string",
-          "description": "Reset app state between tasks on the worker (e.g., clear app data). Run by release-slot.sh. Overridden by pool recycle_cmd.",
+          "description": "Reset app state between tasks on the worker (e.g., clear app data). Run by `farmslot slot release`. Overridden by pool recycle_cmd.",
           "examples": ["adb -s {{adb_serial}} shell pm clear io.example-app"]
         },
         "teardown": {
           "type": "string",
-          "description": "Stop all slot infrastructure on the worker (dev server, simulator/emulator). Run by release-slot.sh."
+          "description": "Stop all slot infrastructure on the worker (dev server, simulator/emulator). Run by `farmslot slot release` (and gateway-free by teardown-slot.sh)."
         },
         "diagnostics": {
           "oneOf": [

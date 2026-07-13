@@ -168,7 +168,7 @@ export function registerFleetCommand(program: Command): void {
           });
         }
         if (opts.raw) {
-          // Raw plumbing output — find-slot.sh captures the bare id.
+          // Raw plumbing output — retired find-slot.sh-style callers capture the bare id.
           process.stdout.write(`${result.slot.slot}\n`);
         } else if (emit.machine) {
           emit.ok({ slot: result.slot });

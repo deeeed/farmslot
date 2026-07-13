@@ -62,7 +62,8 @@
     "test:onboarding": "bash scripts/quality/test-onboarding.sh",
     "cc:build:pages": "node scripts/build-hosted-command-center.mjs",
     "e2e:scripted-runner": "tsx scripts/e2e-scripted-runner-dispatch.mts",
-    "e2e:recipe-protocol": "tsx scripts/e2e-recipe-protocol-self-validation.mts"
+    "e2e:recipe-protocol": "tsx scripts/e2e-recipe-protocol-self-validation.mts",
+    "quality:retired-scripts": "node scripts/quality/check-retired-scripts.mjs"
   },
   "license": "MIT",
   "resolutions": {

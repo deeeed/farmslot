@@ -176,6 +176,9 @@ jobs:
       - name: Protocol method matrix guard
         run: yarn quality:method-matrix
 
+      - name: Retired-scripts guard
+        run: yarn quality:retired-scripts
+
       - name: Import boundary guard
         run: yarn quality:imports
 

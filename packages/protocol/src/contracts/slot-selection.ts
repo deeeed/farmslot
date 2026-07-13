@@ -1,5 +1,5 @@
 // slot-selection.ts — operator-facing slot availability + selection core.
-// TypeScript port of the scripts/find-slot.sh decision logic (Phase 4 of the
+// TypeScript port of the retired find-slot.sh script's decision logic (Phase 4 of the
 // CLI overhaul): which slots can take a task right now, and which one to
 // prefer. Shared by the CLI (`farmslot fleet find-slot`) and any renderer.
 //

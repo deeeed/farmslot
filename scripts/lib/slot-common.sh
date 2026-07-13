@@ -286,7 +286,7 @@ kill_agent_in_session() {
 }
 
 # ── cleanup_slot ──────────────────────────────────────────────────
-# Shared cleanup steps used by release-slot.sh:
+# Shared cleanup steps used by `farmslot slot release` follow-ups:
 #   1. Kill running agent
 #   2. Collect artifacts
 #   3. Clean task files

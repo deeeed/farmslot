@@ -352,7 +352,7 @@ ws.on('open', async () => {
       `keys: ${Object.keys(r12.payload ?? {})}`,
     );
   } else {
-    // May fail if find-slot.sh isn't available — acceptable
+    // May fail when no slot is available — acceptable
     assert('errors gracefully', typeof r12.error?.message === 'string', 'no error message');
   }
 

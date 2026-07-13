@@ -173,3 +173,35 @@ function with a colocated unit test.**
 5. **Port bug-input parsing** (`triage-bug.sh`/`download-*-images.sh` share the same
    regex extraction) into one typed `parseBugInput` + `BugScore` schema; keep
    `gh`/`curl`/`claude` calls as edges.
+
+## Retirement (Phase 4, 2026-07-13)
+
+Port-then-retire executed per the caller audit. CI enforces the outcome:
+`yarn quality:retired-scripts` fails on any path-shaped reference to a retired
+script outside historical records (ADRs, archives, changelogs, this file).
+
+Retired (deleted, callers repointed to the CLI): `release-slot.sh`,
+`pr-status.sh`, `migrate-task-root.sh`, `validate-tmux-driver.sh`,
+`find-slot.sh`, `dispatch.sh`.
+
+Deprecated shims kept (project packs still print/document them):
+`check-slot.sh` → `farmslot slot check`, `prepare-slot.sh` →
+`farmslot slot prepare`. Retire once the pack READMEs/setup hints are
+repointed in their own repos.
+
+Kept (no CLI parity): `setup-slot.sh` — the onboarding bootstrap invoked by
+`farmslot project add` and every pack setup flow.
+
+### Audit summary
+
+| script                  | CLI replacement                       | live in-repo callers                        | external callers                           | verdict                                              |
+| ----------------------- | ------------------------------------- | ------------------------------------------- | ------------------------------------------ | ---------------------------------------------------- |
+| check-slot.sh           | `farmslot slot check`                 | none                                        | 3 READMEs (projects + pack)                | **DEPRECATION-SHIM**                                 |
+| release-slot.sh         | `farmslot slot release`               | farm-status.sh:98, pr-monitor.sh:93         | none                                       | **RETIRE** (repoint in-repo)                         |
+| prepare-slot.sh         | `farmslot slot prepare`               | farm-status.sh:96                           | pack/project setup `Next:` echoes + docs   | **DEPRECATION-SHIM**                                 |
+| pr-status.sh            | `farmslot pr list`/`pr status`        | completions.sh:40, pr-monitor.sh:47         | none                                       | **RETIRE** (repoint in-repo; keep --json shape)      |
+| migrate-task-root.sh    | `node scripts/migrate-task-root.mjs`  | none                                        | none                                       | **RETIRE**                                           |
+| validate-tmux-driver.sh | `scripts/e2e-tmux-runner-validate.sh` | none                                        | none                                       | **RETIRE**                                           |
+| find-slot.sh            | `farmslot fleet find-slot`            | none                                        | none                                       | **RETIRE**                                           |
+| dispatch.sh             | `farmslot run create`                 | none                                        | LEARNINGS docs only                        | **RETIRE** (repoint farm-status-display.py:367 hint) |
+| setup-slot.sh           | none (no `slot setup` verb)           | onboarding add.ts:725 (every `project add`) | pack/project `setup/*.sh` dispatch targets | **KEEP**                                             |

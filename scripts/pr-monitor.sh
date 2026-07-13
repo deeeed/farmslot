@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # pr-monitor.sh — PR status formatter with actionable recommendations.
 #
-# Fetches PR data from the gateway via pr-status.sh (which delegates to
-# `farmslot pr list/status --json`) and formats it as a human table or JSON.
+# Fetches PR data from the gateway via `farmslot pr list/status --json` and
+# formats it as a human table or JSON.
 # Recommendation logic lives in the gateway (computePRRecommendation in
 # @farmslot/protocol); this script is a pure formatter — no local rule engine.
 #
@@ -13,6 +13,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/resolve-farmslot-cli.sh"
 
 # -- Options ---------------------------------------------------------------
 PASS_THROUGH_ARGS=()
@@ -30,7 +32,7 @@ while [[ $# -gt 0 ]]; do
         shift
       done
       ;;
-    --since) PASS_THROUGH_ARGS+=("--since" "$2"); shift 2 ;;
+    --since) shift 2 ;; # accepted for backward compat; the CLI list has no since filter
     -h|--help)
       echo "Usage: pr-monitor.sh [--pr <N>...] [--since <ISO>] [--json|--human]"
       exit 0 ;;
@@ -43,11 +45,23 @@ if [ -z "$FORMAT" ]; then
   if [ -t 1 ]; then FORMAT="human"; else FORMAT="json"; fi
 fi
 
-# -- Fetch PR data via pr-status.sh (delegates to farmslot pr list/status) --
-PR_JSON=$(bash "${SCRIPT_DIR}/pr-status.sh" --json "${PASS_THROUGH_ARGS[@]+"${PASS_THROUGH_ARGS[@]}"}" 2>/dev/null)
+# -- Fetch PR data via the CLI (pr-status.sh retired) -----------------------
+EXPLICIT_PRS=()
+_collect=false
+for _arg in "${PASS_THROUGH_ARGS[@]+"${PASS_THROUGH_ARGS[@]}"}"; do
+  case "$_arg" in
+    --pr) _collect=true ;;
+    --*)  _collect=false ;;
+    *)    [ "$_collect" = true ] && EXPLICIT_PRS+=("$_arg") ;;
+  esac
+done
+# Always fetch the full list; requested PR numbers are filtered in python.
+# (`farmslot pr status <N>` needs --project, which this wrapper never had.)
+PR_JSON=$("$FARMSLOT_CLI" --json pr list 2>/dev/null)
+EXPLICIT_PR_FILTER="${EXPLICIT_PRS[*]+"${EXPLICIT_PRS[*]}"}"
 
 # -- Format output from gateway PRStatus JSON --------------------------------
-_PR_JSON="$PR_JSON" _FORMAT="$FORMAT" _SCRIPT_DIR="$SCRIPT_DIR" python3 << 'PYEOF'
+_PR_JSON="$PR_JSON" _FORMAT="$FORMAT" _SCRIPT_DIR="$SCRIPT_DIR" _PR_FILTER="${EXPLICIT_PR_FILTER:-}" python3 << 'PYEOF'
 import json, os, sys
 from datetime import datetime, timezone
 
@@ -56,10 +70,14 @@ fmt = os.environ['_FORMAT']
 script_dir = os.environ['_SCRIPT_DIR']
 
 data = json.loads(pr_json)
-
-# farmslot pr list → { "prs": [...] }
-# farmslot pr status N → { "pr": {...} }
+# Unwrap the CLI machine envelope ({schemaVersion, ..., data: {...}}) when present.
+data = data.get('data') or data
 prs_raw = data.get('prs') or ([data['pr']] if 'pr' in data else [])
+
+# --pr filtering happens here: keep only the requested PR numbers.
+pr_filter = {int(n) for n in os.environ.get('_PR_FILTER', '').split() if n.isdigit()}
+if pr_filter:
+    prs_raw = [p for p in prs_raw if p.get('pr') in pr_filter]
 
 if not prs_raw:
     if fmt == 'json':
@@ -90,7 +108,7 @@ for pr in sorted(prs_raw, key=lambda x: x.get('pr', 0)):
     actionable      = pr.get('actionableBotComments', [])
     actionable_count = len(actionable)
 
-    release_cmd = f'bash {script_dir}/release-slot.sh {slot} --keep-warm --reset' if slot != '-' else None
+    release_cmd = f'farmslot slot release {slot} --keep-warm --reset' if slot != '-' else None
 
     # First-match display rules (bash-compatible ordering, recommendation from gateway)
     if merged or pr_state == 'MERGED':
