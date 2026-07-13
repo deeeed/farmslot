@@ -5,14 +5,15 @@ import type { FleetStatus, Run, SlotStatus } from '@farmslot/protocol';
 
 import { resolveSlot } from '../core/config.js';
 import { GatewayMethodError } from '../core/method-error.js';
+import { markGhostSlots } from '../fleet/state.js';
 
+import { isFreeSlot } from './dispatch/slot-scoring.js';
 import { makeRun } from './run/test-fixtures.js';
 import {
   fleetStaleThresholdMs,
   fleetStatus,
   type FleetStatusDeps,
   isFleetCheckedAtStale,
-  markMissingFromPool,
   reconcileRefreshSlotRowWithActiveRun,
 } from './fleet.js';
 
@@ -326,9 +327,9 @@ function fleetFixture(checkedAt: string, slots: SlotStatus[]): FleetStatus {
   };
 }
 
-function fleetStatusDepsFixture(fleet: FleetStatus, liveIds: Iterable<string>) {
+function fleetStatusDepsFixture(fleet: FleetStatus, refreshedFleet?: FleetStatus) {
   const calls = { load: 0, refresh: 0 };
-  const refreshed = fleetFixture(new Date().toISOString(), fleet.slots);
+  const refreshed = refreshedFleet ?? fleetFixture(new Date().toISOString(), fleet.slots);
   const deps: FleetStatusDeps = {
     async load() {
       calls.load += 1;
@@ -337,9 +338,6 @@ function fleetStatusDepsFixture(fleet: FleetStatus, liveIds: Iterable<string>) {
     async refresh() {
       calls.refresh += 1;
       return { fleet: refreshed };
-    },
-    async liveSlotIds() {
-      return new Set(liveIds);
     },
   };
   return { deps, calls, refreshed };
@@ -367,7 +365,7 @@ test('fleet.status forceRefresh triggers a real re-probe, not a file re-read', a
   const stale = fleetFixture(new Date(0).toISOString(), [
     slotStatusFixture({ slot: 'macwork-ff-1' }),
   ]);
-  const { deps, calls, refreshed } = fleetStatusDepsFixture(stale, ['macwork-ff-1']);
+  const { deps, calls, refreshed } = fleetStatusDepsFixture(stale);
 
   const result = await fleetStatus({ forceRefresh: true }, deps);
 
@@ -380,7 +378,7 @@ test('fresh fleet.status passes through without stale flag or background refresh
   const fresh = fleetFixture(new Date().toISOString(), [
     slotStatusFixture({ slot: 'macwork-ff-1' }),
   ]);
-  const { deps, calls } = fleetStatusDepsFixture(fresh, ['macwork-ff-1']);
+  const { deps, calls } = fleetStatusDepsFixture(fresh);
 
   const result = await fleetStatus(undefined, deps);
 
@@ -394,7 +392,7 @@ test('stale fleet.status marks stale, disables dispatch, and kicks a background 
     slotStatusFixture({ slot: 'macwork-ff-1' }),
     slotStatusFixture({ slot: 'macwork-ff-2' }),
   ]);
-  const { deps, calls } = fleetStatusDepsFixture(stale, ['macwork-ff-1', 'macwork-ff-2']);
+  const { deps, calls } = fleetStatusDepsFixture(stale);
 
   const result = await fleetStatus(undefined, deps);
 
@@ -409,7 +407,7 @@ test('slots absent from live pools are marked missingFromPool and never dispatch
     slotStatusFixture({ slot: 'ghost-slot-9' }),
   ]);
 
-  const marked = markMissingFromPool(fleet, new Set(['macwork-ff-1']));
+  const marked = markGhostSlots(fleet, new Set(['macwork-ff-1']));
 
   const live = marked.slots.find((slot) => slot.slot === 'macwork-ff-1');
   const ghost = marked.slots.find((slot) => slot.slot === 'ghost-slot-9');
@@ -418,8 +416,44 @@ test('slots absent from live pools are marked missingFromPool and never dispatch
   assert.equal(ghost?.missingFromPool, true);
   assert.equal(ghost?.dispatchable, false);
   // No live pools at all (empty install) — nothing may be prepared/dispatched.
-  const emptied = markMissingFromPool(fleet, new Set());
+  const emptied = markGhostSlots(fleet, new Set());
   assert.ok(emptied.slots.every((slot) => slot.missingFromPool === true));
+});
+
+test('forceRefresh results that stay stale are still served honestly without re-kicking refresh', async () => {
+  // Empty-pool installs: fleetRefresh returns the old snapshot unchanged.
+  const oldSnapshot = markGhostSlots(
+    fleetFixture(new Date(0).toISOString(), [slotStatusFixture({ slot: 'ghost-slot-9' })]),
+    new Set(),
+  );
+  const { deps, calls } = fleetStatusDepsFixture(oldSnapshot, oldSnapshot);
+
+  const result = await fleetStatus({ forceRefresh: true }, deps);
+
+  assert.equal(calls.refresh, 1);
+  assert.equal(result.fleet.stale, true);
+  assert.ok(result.fleet.slots.every((slot) => slot.dispatchable === false));
+  assert.equal(result.fleet.slots[0].missingFromPool, true);
+});
+
+test('stale all-ghost fleets do not spin background no-op refreshes', async () => {
+  const allGhosts = markGhostSlots(
+    fleetFixture(new Date(0).toISOString(), [slotStatusFixture({ slot: 'ghost-slot-9' })]),
+    new Set(),
+  );
+  const { deps, calls } = fleetStatusDepsFixture(allGhosts, allGhosts);
+
+  const result = await fleetStatus(undefined, deps);
+
+  assert.equal(result.fleet.stale, true);
+  assert.equal(calls.refresh, 0);
+});
+
+test('dispatch slot selection never treats ghost slots as free', () => {
+  const ghost = slotStatusFixture({ slot: 'ghost-slot-9', missingFromPool: true });
+  const live = slotStatusFixture({ slot: 'macwork-ff-1' });
+  assert.equal(isFreeSlot(ghost), false);
+  assert.equal(isFreeSlot(live), true);
 });
 
 test('resolveSlot failures teach the escape with a structured userAction', async () => {

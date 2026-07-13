@@ -443,6 +443,13 @@ export class SlotActionsPanel extends LitElement {
     const held = lc === 'held';
     const hasWork = !!slot.currentRunId || busy || held;
     if (lc === 'disabled') return { available: false, reason: 'Slot is disabled' };
+    // Status-file ghost: the slot no longer resolves in live pool JSONs, so any
+    // lifecycle action would fail with SLOT_NOT_FOUND.
+    if (slot.missingFromPool)
+      return {
+        available: false,
+        reason: 'Slot is not in any live pool — refresh the fleet or re-add the project pack',
+      };
 
     switch (id) {
       case 'prepare':

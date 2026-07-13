@@ -1202,6 +1202,15 @@ export class DevHarness extends LitElement {
           branch: '',
         }),
       },
+      {
+        label: 'Ghost (missing from live pools)',
+        slot: buildSlot({
+          slot: 'demo-ghost',
+          lifecycle: 'ready',
+          dispatchable: false,
+          missingFromPool: true,
+        }),
+      },
     ];
 
     return html`
