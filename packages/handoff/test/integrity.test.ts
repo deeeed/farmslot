@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -430,4 +431,92 @@ test('a binary (NUL-containing) required document is a hard assembly failure, ne
     true,
     'staging leftovers are local-only and harmless; manifest exists but assemble threw',
   );
+});
+
+test('the validator never follows in-package symlinks; write refuses them before validating', () => {
+  const { ctx, input } = scenario();
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'ok');
+  if (result.status !== 'ok') return;
+
+  const outside = mkdtempSync(path.join(os.tmpdir(), 'handoff-sym-out-'));
+  const outsideFile = path.join(outside, 'outside.md');
+  writeFileSync(outsideFile, 'outside secret material\n');
+  // Replace an inventoried required file with a symlink to the outside file.
+  rmSync(path.join(result.packageDir, 'report.md'));
+  symlinkSync(outsideFile, path.join(result.packageDir, 'report.md'));
+
+  // Validator: collected error, no read/hash of the outside target.
+  const validation = validateLearningPackage(result.packageDir);
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.some((e) => e.includes('report.md') && e.includes('symlink')));
+  assert.equal(
+    validation.errors.some((e) => e.includes('outside secret material')),
+    false,
+  );
+  // The outside file's hash is never exposed via a mismatch message.
+  assert.equal(
+    validation.errors.some((e) => e.includes('sha256 mismatch')),
+    false,
+  );
+
+  // Write: irregular-entry refusal comes FIRST, before any validation read.
+  const destination = initDestinationRepo();
+  assert.throws(
+    () => writeLearningPackage({ packageDir: result.packageDir, destination, consent: CONSENT }),
+    /non-regular-file/,
+  );
+});
+
+test('quarantine audit never carries a mnemonic composed across separate metadata values', () => {
+  // The package blocks for an unrelated reason (SRP in learnings); the
+  // extensions carry a mnemonic split six+six across two values - each value
+  // alone is below the run threshold, so only the joined view shows it.
+  const { ctx, input } = scenario(
+    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+  );
+  input.runRecord.extensions = {
+    firstHalf: 'legal winner thank year wave sausage',
+    secondHalf: 'worth useful legal winner thank year',
+  };
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'blocked');
+  if (result.status !== 'blocked') return;
+  const quarantined = readFileSync(path.join(result.quarantineDir, 'manifest.json'), 'utf8');
+  const hits = quarantined.match(/legal|winner|sausage/g) ?? [];
+  assert.equal(hits.length, 0, 'cross-value mnemonic survived into the quarantine audit');
+});
+
+test('a token-shaped slug never becomes the quarantine directory name', () => {
+  const { ctx, input } = scenario(
+    '# Learnings\n\nabandon ability able about above absent absorb abstract absurd abuse access accident\n',
+  );
+  const token = `npm_${'a'.repeat(36)}`;
+  input.runRecord.packageId = `run-${token}`;
+  const result = assembleLearningPackage(input, ctx);
+  assert.equal(result.status, 'blocked');
+  if (result.status !== 'blocked') return;
+  assert.equal(path.basename(result.quarantineDir).includes(token), false);
+  assert.match(path.basename(result.quarantineDir), /^redacted-[a-f0-9]{8}$/);
+});
+
+test('a visual-pass attestation for a different file refuses assembly', () => {
+  const { ctx, input } = scenario();
+  const shot = path.join(ctx.workspace as string, 'shot.png');
+  writeFileSync(shot, 'png-bytes');
+  input.media = [
+    {
+      absolutePath: shot,
+      packagePath: 'harness/x/shot.png',
+      kind: 'screenshot',
+      evidenceManifestSelected: true,
+      visualPass: {
+        file: 'harness/x/OTHER.png',
+        passedAt: '2026-07-13T13:00:00Z',
+        attestedBy: 'agent-model',
+        finding: 'clear',
+      },
+    },
+  ];
+  assert.throws(() => assembleLearningPackage(input, ctx), /does not match its media packagePath/);
 });

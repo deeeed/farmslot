@@ -234,7 +234,7 @@ test('a directory or unreadable target behind an inventory key is a collected er
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     const result = validateLearningPackage(dir);
     assert.equal(result.valid, false);
-    assert.ok(result.errors.some((e) => e.includes('not a readable regular file')));
+    assert.ok(result.errors.some((e) => e.includes('is not a regular file')));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -291,6 +291,34 @@ test('the validator is total: an unreadable required markdown is a collected err
     assert.ok(result.errors.some((e) => e.includes('report.md') && e.includes('unreadable')));
   } finally {
     chmodSync(path.join(dir, 'report.md'), 0o644);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an included media file attested finding:"redacted" is invalid (spec 3.6)', () => {
+  const dir = buildValidPackage({
+    artifacts: [
+      {
+        path: 'harness/x/shot.png',
+        kind: 'screenshot',
+        evidenceManifestSelected: true,
+        visualPassCleared: true,
+      },
+    ],
+    visualPassAttestations: [
+      {
+        file: 'harness/x/shot.png',
+        passedAt: '2026-07-03T15:45:00Z',
+        attestedBy: 'agent-model',
+        finding: 'redacted',
+      },
+    ],
+  });
+  try {
+    const result = validateLearningPackage(dir);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((e) => e.includes("must be attested 'clear'")));
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });

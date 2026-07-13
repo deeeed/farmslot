@@ -172,25 +172,72 @@ function redactSecretStrings<T>(value: T, extraPatterns?: FloorPattern[]): T {
   return value;
 }
 
+/** All string values in a JSON-ish tree, in traversal order (keys excluded). */
+function collectStringValues(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const item of value) collectStringValues(item, out);
+  else if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value)) collectStringValues(child, out);
+  }
+  return out;
+}
+
 function writeQuarantine(
   ctx: HandoffContext,
   input: LearningPackageInput,
   base: Omit<Manifest, 'files' | 'scrubbing'>,
   scrubReport: ScrubReport,
 ): string {
+  // The dir NAME is filesystem metadata: a slug carrying secret material
+  // (e.g. a token-shaped ticket segment) must not land there either - fall
+  // back to a generic, deterministic, non-secret name on any floor hit.
+  const packageId = input.runRecord.packageId;
+  const dirName =
+    scanForFloorSecrets(packageId, input.scrub?.extraDenyPatterns).length > 0
+      ? `redacted-${createHash('sha256').update(packageId).digest('hex').slice(0, 8)}`
+      : packageId;
   const quarantineDir = assertContained(
     ctx.stagingRoot,
-    path.join(ctx.stagingRoot, 'quarantine', input.runRecord.packageId),
+    path.join(ctx.stagingRoot, 'quarantine', dirName),
     'quarantine dir',
   );
   // Fresh quarantine dir: it holds ONLY the block audit trail, so nothing from
   // an earlier attempt at the same id (least of all raw files) may survive here.
   rmSync(quarantineDir, { recursive: true, force: true });
   mkdirSync(quarantineDir, { recursive: true });
+
+  // The block may have been caused by the metadata itself - the audit copy
+  // must never carry the raw secret. Beyond the serialized scan, all string
+  // VALUES are joined (punctuation-insensitive, keys excluded) so a mnemonic
+  // split across separate fields cannot survive into the audit either.
+  let safeBase = redactSecretStrings(base, input.scrub?.extraDenyPatterns);
+  const joinedValues = collectStringValues(safeBase).join(' ');
+  if (
+    scanForFloorSecrets(stableJson(safeBase), input.scrub?.extraDenyPatterns).length > 0 ||
+    scanForFloorSecrets(joinedValues, input.scrub?.extraDenyPatterns).length > 0
+  ) {
+    // Cross-value composition backstop: a secret split across several string
+    // values only shows in the serialized view - drop the free-text carriers
+    // wholesale. What remains are single validated segments and timestamps,
+    // which cannot compose a 12-word run on their own.
+    safeBase = {
+      schemaVersion: safeBase.schemaVersion,
+      packageId: safeBase.packageId,
+      taskKey: safeBase.taskKey,
+      surface: safeBase.surface,
+      project: safeBase.project,
+      domain: safeBase.domain,
+      engineer: safeBase.engineer,
+      run: {
+        startedAt: safeBase.run.startedAt,
+        flow: safeBase.run.flow,
+        outcome: safeBase.run.outcome,
+      },
+      task: { title: '[REDACTED:residual-secret]', sourceKind: safeBase.task.sourceKind },
+    };
+  }
   const manifest: Manifest = {
-    // The block may have been caused by the metadata itself - the audit copy
-    // must never carry the raw secret.
-    ...redactSecretStrings(base, input.scrub?.extraDenyPatterns),
+    ...safeBase,
     files: {},
     scrubbing: {
       status: 'blocked',
@@ -303,13 +350,25 @@ export function assembleLearningPackage(
     textInputs.push({ packagePath: 'grade.json', absolutePath: gradeJson });
   }
 
-  const mediaInputs: ScrubInputFile[] = (input.media ?? []).map((m) => ({
-    packagePath: m.packagePath,
-    absolutePath: m.absolutePath,
-    isMedia: true,
-    evidenceManifestSelected: m.evidenceManifestSelected,
-    visualPass: m.visualPass,
-  }));
+  const mediaInputs: ScrubInputFile[] = (input.media ?? []).map((m) => {
+    // An attestation must attest THIS file: a mismatched visualPass.file would
+    // assemble ok but record the attestation under a different path, producing
+    // a package the validator rejects. Fail fast at the source instead.
+    if (m.visualPass && m.visualPass.file !== m.packagePath) {
+      throw new Error(
+        `assembleLearningPackage: visualPass.file '${m.visualPass.file}' does not match its ` +
+          `media packagePath '${m.packagePath}'. Next: attach the attestation produced for ` +
+          'this exact file - attestations are per-file, never shared.',
+      );
+    }
+    return {
+      packagePath: m.packagePath,
+      absolutePath: m.absolutePath,
+      isMedia: true,
+      evidenceManifestSelected: m.evidenceManifestSelected,
+      visualPass: m.visualPass,
+    };
+  });
 
   // One input per package-relative path: a duplicate would let a second,
   // unapproved input replace already-approved bytes at staging time.

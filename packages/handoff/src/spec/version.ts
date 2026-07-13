@@ -8,8 +8,11 @@ export const SCHEMA_VERSION = 1 as const;
 /**
  * Version of the crypto-secret floor deny-set applied by the scrubber. Increment
  * when the floor grows so packages record which floor screened them.
+ * v2: cookie headers/jars (multi-pair + structured objects), OAuth
+ * bearer/access/refresh tokens, session tokens, JSON-escape passes,
+ * metadata/caller-string gating.
  */
-export const SCRUB_FLOOR_VERSION = 1 as const;
+export const SCRUB_FLOOR_VERSION = 2 as const;
 
 /**
  * The eight files every valid package MUST contain (spec section 2). Paths are

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadSchema, type SchemaName } from '../spec/schemas.js';
@@ -33,6 +33,22 @@ function loadJson<T>(file: string): LoadedJson<T> {
   }
 }
 
+/**
+ * Reason `abs` must not be READ by the validator: anything that is not a plain
+ * regular file (symlinks above all - the validator must never follow one out
+ * of the package dir, nor hash what a link points at). lstat, never stat.
+ */
+function notRegularFileReason(abs: string): string | undefined {
+  try {
+    const stats = lstatSync(abs);
+    if (stats.isSymbolicLink()) return 'is a symlink';
+    if (!stats.isFile()) return 'is not a regular file';
+    return undefined;
+  } catch (error) {
+    return `cannot be inspected (${(error as Error).message})`;
+  }
+}
+
 function validateJsonFile(
   dir: string,
   relativePath: string,
@@ -40,6 +56,11 @@ function validateJsonFile(
   errors: string[],
 ): unknown {
   const abs = path.join(dir, relativePath);
+  const notRegular = notRegularFileReason(abs);
+  if (notRegular !== undefined) {
+    errors.push(`${relativePath}: ${notRegular} - never read`);
+    return undefined;
+  }
   const loaded = loadJson<unknown>(abs);
   if (loaded.value === undefined) {
     errors.push(`${relativePath}: invalid JSON (${loaded.parseError})`);
@@ -53,6 +74,11 @@ function validateJsonFile(
 
 function checkNonEmptyMarkdown(dir: string, relativePath: string, errors: string[]): void {
   const abs = path.join(dir, relativePath);
+  const notRegular = notRegularFileReason(abs);
+  if (notRegular !== undefined) {
+    errors.push(`${relativePath}: ${notRegular} - never read`);
+    return;
+  }
   // The validator is total: an unreadable-but-existing file is a collected
   // error, never a thrown one.
   let content: string;
@@ -165,6 +191,13 @@ export function validateLearningPackage(dir: string): ValidateResult {
       errors.push(`manifest.json/files/${rel}: listed in the inventory but missing on disk`);
       continue;
     }
+    // lstat gate before hashing: a symlink is never followed, so the validator
+    // neither reads nor exposes the hash of anything outside the package.
+    const notRegular = notRegularFileReason(abs);
+    if (notRegular !== undefined) {
+      errors.push(`manifest.json/files/${rel}: ${notRegular} - never read`);
+      continue;
+    }
     let sha256: string;
     try {
       sha256 = createHash('sha256').update(readFileSync(abs)).digest('hex');
@@ -228,18 +261,27 @@ export function validateLearningPackage(dir: string): ValidateResult {
     errors.push('manifest.json/scrubbing/status: must match scrub-report.json/status');
   }
 
-  // Every included media artifact needs a visual-pass attestation (section 3.6).
+  // Every included media artifact needs a CLEAR visual-pass attestation
+  // (section 3.6): finding "redacted" means the file was excluded or replaced,
+  // so a present media file attested "redacted" is a contract violation.
   if (artifactsIndex?.artifacts && scrubReport) {
-    const attested = new Set(
-      (scrubReport.visualPassAttestations ?? []).map((a: VisualPassAttestation) => a.file),
+    const findings = new Map(
+      (scrubReport.visualPassAttestations ?? []).map((a: VisualPassAttestation) => [
+        a.file,
+        a.finding,
+      ]),
     );
     for (const artifact of artifactsIndex.artifacts) {
-      if (
-        (artifact.kind === 'screenshot' || artifact.kind === 'video') &&
-        !attested.has(artifact.path)
-      ) {
+      if (artifact.kind !== 'screenshot' && artifact.kind !== 'video') continue;
+      const finding = findings.get(artifact.path);
+      if (finding === undefined) {
         errors.push(
           `artifacts/index.json: media artifact '${artifact.path}' has no visualPassAttestation in scrub-report.json`,
+        );
+      } else if (finding !== 'clear') {
+        errors.push(
+          `artifacts/index.json: media artifact '${artifact.path}' is present but its ` +
+            `visual pass finding is '${finding}' - an included media file must be attested 'clear'`,
         );
       }
     }

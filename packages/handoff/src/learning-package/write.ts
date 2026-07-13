@@ -208,6 +208,20 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
         'Next: pass the packageDir from a status:"ok" AssembleResult.',
     );
   }
+
+  // Irregular entries are refused FIRST, before any file in the package
+  // (including manifest.json itself) is read or validated: a symlink must
+  // never be followed - not even by the validation pass.
+  const entries = walkEntries(options.packageDir);
+  if (entries.irregular.length > 0) {
+    throw new Error(
+      `writeLearningPackage: package at ${options.packageDir} contains non-regular-file ` +
+        `entries: ${entries.irregular.join(', ')}. Symlinks and special files cannot be ` +
+        'inventory-verified and are never shared. Next: re-assemble with ' +
+        'assembleLearningPackage; never add entries to a staged package.',
+    );
+  }
+
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest;
 
   // Pre-write assertion (spec section 5.2): blocked content never reaches a shared
@@ -232,17 +246,7 @@ export function writeLearningPackage(options: WriteLearningPackageOptions): Writ
   // Inventory completeness (share gate, stricter than the consumer validator):
   // validation already proved every inventoried file matches its post-scrub
   // hash; additionally refuse any on-disk file the assembler did not inventory,
-  // and any non-regular entry (symlinks etc. are invisible to hash inventories
-  // yet carry content), so nothing that skipped the scrub gate reaches the repo.
-  const entries = walkEntries(options.packageDir);
-  if (entries.irregular.length > 0) {
-    throw new Error(
-      `writeLearningPackage: package ${manifest.packageId} contains non-regular-file ` +
-        `entries: ${entries.irregular.join(', ')}. Symlinks and special files cannot be ` +
-        'inventory-verified and are never shared. Next: re-assemble with ' +
-        'assembleLearningPackage; never add entries to a staged package.',
-    );
-  }
+  // so nothing that skipped the scrub gate reaches the repo.
   const unlisted = entries.files.filter(
     (rel) => rel !== 'manifest.json' && !(rel in manifest.files),
   );

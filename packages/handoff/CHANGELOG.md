@@ -4,6 +4,11 @@ All notable changes to `@farmslot/handoff` are tracked here.
 
 ## Unreleased
 
+- Never follow in-package symlinks: the validator lstat-gates every read (a symlink or non-regular file is a collected error, never read or hashed), and the writer refuses irregular entries BEFORE any file in the package - including manifest.json - is read or validated.
+- Enforce spec 3.6 in the validator: an included media file whose visual-pass finding is "redacted" is invalid (redacted means excluded/replaced; only "clear" permits inclusion).
+- Quarantine audit hardening: string VALUES are additionally joined (keys excluded) and floor-scanned, so a mnemonic split across separate metadata fields is wholesale-redacted from the audit trail; a slug carrying token-shaped material never becomes the quarantine DIRECTORY NAME (generic deterministic fallback). Cross-field DETECTION remains scope-capped per the cooperative model (documented in README known limits).
+- Fail fast on mismatched attestations: a media input whose visualPass.file differs from its packagePath refuses assembly instead of producing a package the validator would reject.
+- Bump SCRUB_FLOOR_VERSION to 2: the floor grew substantially since v1 (cookie headers/jars, OAuth bearer/access/refresh tokens, session tokens, JSON-escape passes, metadata/caller-string gating).
 - Make the validator itself traversal-safe and total: `manifest.files` inventory keys are untrusted JSON, so path-shaped keys are collected errors and never read (the validator cannot be pointed outside the package dir); directory/unreadable targets and unreadable required markdown are collected errors instead of throws.
 - Cross-check `artifacts/index.json` in the validator: every record needs a safe path, a matching `manifest.files` inventory entry, and hash agreement with both the inventory and the file on disk - fabricated artifact records no longer validate.
 - Post-assembly conformance check: an `ok` assembly proves all eight MUST files were staged; a required document the gate classified unscannable (e.g. binary/NUL content) is a hard teaching-error failure instead of a silent 7-file "pass".

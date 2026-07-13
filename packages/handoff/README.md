@@ -50,6 +50,10 @@ Deliberate detection choices and known limits:
 - JSON-escape handling covers up to double-stringified content; deeper nesting,
   non-JSON serializations, and homoglyph tricks are out of the cooperative
   model's scope.
+- DETECTION of secrets composed across separate object values/fields (e.g. six
+  mnemonic words in one field, six in another) is scope-capped; the QUARANTINE
+  audit trail, however, is serialization-scanned and wholesale-redacted so a
+  blocked package's audit files never carry such a composition raw.
 
 ## Install
 
