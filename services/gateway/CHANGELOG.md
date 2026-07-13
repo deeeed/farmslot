@@ -4,25 +4,27 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
-- fix: slot-prepare branch-mismatch errors teach `farmslot slot release` instead of the retired release-slot.sh.
 - refactor: `runtime/session-usage.ts` consumes the ported `@farmslot/slot-config` core directly instead of shelling out to `scripts/session-usage.sh`; `computePRRecommendation` moved to `@farmslot/protocol` (re-imported) with the bash pr-monitor rules folded in — `PRStatus` gains `workerActive` so formatters can derive the worker-active sub-labels.
 - refactor: `core/config.ts` and `core/hooks.ts` moved to the new `@farmslot/slot-config` package (gateway files remain as re-export shims; `SlotConfigError` serializes like `GatewayMethodError` in RPC responses). No behavior change.
 - refactor: dispatch `isCdpLive` now delegates to the shared protocol `isCdpLiveValue` (no behavior change).
-- feat: `backlog.closeShipped` RPC — operator terminal transition to `done` with merged-PR provenance (survives reconcile and persistence round-trips); publication gates detect out-of-band merged PRs and offer a `close-as-shipped` action that links the PR and skips re-publication; PR linkage falls back to `--state all` so merged PRs are discoverable.
-- feat: honest `fleet.status` — stale snapshots are flagged `stale: true` with dispatch suppressed and a background re-probe; `forceRefresh` runs a real machine probe; ghost slots absent from live pools are marked `missingFromPool` at load time and excluded from dispatch selection and auto-dispatch; `resolveSlot` failures carry `SLOT_NOT_FOUND` with a `userAction` teaching the exact next commands.
-
-- feat(gateway): add runtime recovery helpers that can reconcile stale slot state and restore tmux worker sessions from runner session history.
-- fix(gateway): make publication-gate review requests non-destructive: explicit review failures are recorded instead of failing/tearing down gate-held slots, human-requested reviews no longer become permanent publish policy, package refresh restores configured review depth, and recovered role shells use the account default shell instead of hardcoded bash.
-- fix(gateway): enable worker session history by default so slot-view exposes the History tab unless `FARMSLOT_EXPERIMENTAL_WORKER_HISTORY=0` explicitly disables transcript recovery.
-- fix(gateway): recover same-phase prepare retries and runner launch blockers: duplicate prepare windows are reaped by tmux index, failed runner launches keep diagnostics visible, safe Cursor/Grok launch prompts are auto-cleared, Codex observability config stays idempotent, and worker task sync includes `checklist-target.json`.
-- feat(gateway): expose reviewer context snapshots for Slot View and keep human-requested review prompts tied to real handoff evidence.
-- fix(work-graph): reset an orphaned `running` node (its run cancelled/deleted/missing) back to a dispatchable state, and reconcile a run's work-graph node + backlog item on cancel — so a cancelled/replayed run no longer leaves a node stuck "running".
-- fix(backlog): reactivate a failed/needs-attention item when its own run is replayed, so the item (and the roadmap that derives its status transitively) returns to running instead of staying failed.
-- fix(gateway): exclude run state, pool, project, repo, and temp directories from the dev watcher so runtime file churn does not restart the local gateway mid-run.
 - fix(gateway): retarget task-local `./mark` via `checklist-target.json` when nested-loop roles activate, so self-review and CI-fix progress marks the active checklist instead of worker `TASK.md`; restore worker target on replay and role completion.
 - fix(gateway): use structural try/finally restore for self-review-fix and CI-fix role bodies so new exit paths cannot skip worker checklist-target reset.
 
 - Active-development baseline; add user-facing changes here before release or package publication.
+
+## 0.3.0 - 2026-07-13
+
+- fix: slot-prepare branch-mismatch errors teach `farmslot slot release` instead of the retired release-slot.sh
+- feat: `backlog.closeShipped` RPC — operator terminal transition to `done` with merged-PR provenance (survives reconcile and persistence round-trips); publication gates detect out-of-band merged PRs and offer a `close-as-shipped` action that links the PR and skips re-publication; PR linkage falls back to `--state all` so merged PRs are discoverable
+- feat: honest `fleet.status` — stale snapshots are flagged `stale: true` with dispatch suppressed and a background re-probe; `forceRefresh` runs a real machine probe; ghost slots absent from live pools are marked `missingFromPool` at load time and excluded from dispatch selection and auto-dispatch; `resolveSlot` failures carry `SLOT_NOT_FOUND` with a `userAction` teaching the exact next commands
+- feat(gateway): add runtime recovery helpers that can reconcile stale slot state and restore tmux worker sessions from runner session history
+- fix(gateway): make publication-gate review requests non-destructive: explicit review failures are recorded instead of failing/tearing down gate-held slots, human-requested reviews no longer become permanent publish policy, package refresh restores configured review depth, and recovered role shells use the account default shell instead of hardcoded bash
+- fix(gateway): enable worker session history by default so slot-view exposes the History tab unless `FARMSLOT_EXPERIMENTAL_WORKER_HISTORY=0` explicitly disables transcript recovery
+- fix(gateway): recover same-phase prepare retries and runner launch blockers: duplicate prepare windows are reaped by tmux index, failed runner launches keep diagnostics visible, safe Cursor/Grok launch prompts are auto-cleared, Codex observability config stays idempotent, and worker task sync includes `checklist-target.json`
+- feat(gateway): expose reviewer context snapshots for Slot View and keep human-requested review prompts tied to real handoff evidence
+- fix(work-graph): reset an orphaned `running` node (its run cancelled/deleted/missing) back to a dispatchable state, and reconcile a run's work-graph node + backlog item on cancel — so a cancelled/replayed run no longer leaves a node stuck "running"
+- fix(backlog): reactivate a failed/needs-attention item when its own run is replayed, so the item (and the roadmap that derives its status transitively) returns to running instead of staying failed
+- fix(gateway): exclude run state, pool, project, repo, and temp directories from the dev watcher so runtime file churn does not restart the local gateway mid-run
 
 ## 0.2.2 - 2026-07-09
 

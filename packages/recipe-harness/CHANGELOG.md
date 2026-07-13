@@ -5,7 +5,10 @@ All notable changes to `@farmslot/recipe-harness` are tracked here.
 ## Unreleased
 
 - Active-development baseline; add user-facing changes here before release or package publication.
-- fix: require Yarn's `node_modules/.yarn-state.yml` install surface when `nodeLinker: node-modules`, so a leftover `.yarn/install-state.gz` cannot report removed dependencies as current.
+
+## 0.6.0 - 2026-07-13
+
+- fix: require Yarn's `node_modules/.yarn-state.yml` install surface when `nodeLinker: node-modules`, so a leftover `.yarn/install-state.gz` cannot report removed dependencies as current
 
 ## 0.5.0 - 2026-07-12
 
