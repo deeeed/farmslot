@@ -122,31 +122,9 @@ export class GatewayClient {
       failPending(new GatewayConnectionError('Connection closed unexpectedly'));
     });
 
+    // The auth response is a regular res frame, so the persistent message
+    // handler above settles the handshake through its pending-map entry.
     const authId = 'connect-auth';
-    const onAuth = (evt: unknown) => {
-      let frame: Frame;
-      try {
-        frame = JSON.parse(String((evt as MessageEvent).data)) as Frame;
-      } catch {
-        // Non-JSON frames (binary capture relay) are not for this handler.
-        return;
-      }
-      if (frame.type !== 'res' || frame.id !== authId) return;
-      const entry = pending.get(authId);
-      if (!entry) return;
-      pending.delete(authId);
-      if (frame.ok) entry.resolve(undefined);
-      else
-        entry.reject(
-          new GatewayRpcError(
-            frame.error?.message || 'Gateway authentication failed',
-            frame.error?.code || 'AUTH_ERROR',
-            frame.error?.userAction,
-            frame.error?.details,
-          ),
-        );
-    };
-
     try {
       await new Promise<void>((resolve, reject) => {
         const needsAuth = Boolean(this.credential?.token || this.credential?.password);
@@ -164,7 +142,6 @@ export class GatewayClient {
             reject(err);
           },
         });
-        ws.addEventListener('message', onAuth as never);
         ws.addEventListener('open', () => {
           if (!needsAuth) {
             pending.delete(authId);
@@ -198,7 +175,6 @@ export class GatewayClient {
       ws.close();
       throw err;
     } finally {
-      ws.removeEventListener('message', onAuth as never);
       pending.delete(authId);
     }
 

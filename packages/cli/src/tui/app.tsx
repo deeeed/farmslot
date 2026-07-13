@@ -35,20 +35,23 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     steps: Array<{ name: string; detail: string }>;
   } | null>(null);
 
-  // Guards against an older, slower refresh committing over newer data
-  // (a later refresh or a fleet.updated event bumps the generation).
+  // Guards against an older, slower refresh committing over newer data.
+  // Fleet has its own generation because fleet.updated events replace only
+  // the fleet slice — they must not discard in-flight backlog/runs results.
   const refreshGeneration = useRef(0);
+  const fleetGeneration = useRef(0);
 
   const refresh = useCallback(async () => {
     const generation = ++refreshGeneration.current;
+    const fleetGen = ++fleetGeneration.current;
     try {
       const [fleetResult, backlogResult, runsResult] = await Promise.all([
         connection.call<{ fleet: FleetStatus }>('fleet.status'),
         connection.call<{ items: BacklogItem[] }>('backlog.list'),
         connection.call<{ runs: Run[] }>('run.list', { limit: 15 }),
       ]);
+      if (fleetGen === fleetGeneration.current) setFleet(fleetResult.fleet);
       if (generation !== refreshGeneration.current) return;
-      setFleet(fleetResult.fleet);
       setItems(backlogResult.items);
       setRuns(runsResult.runs);
     } catch (err) {
@@ -79,8 +82,9 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
       if (event.event === 'fleet.updated') {
         const payload = event.payload as { fleet?: FleetStatus };
         if (payload?.fleet) {
-          // Invalidate any in-flight refresh so it cannot overwrite this.
-          refreshGeneration.current++;
+          // Invalidate only the fleet slice of any in-flight refresh; its
+          // backlog/runs results remain valid and may still commit.
+          fleetGeneration.current++;
           setFleet(payload.fleet);
         }
       } else if (event.event === 'backlog.updated' || event.event === 'run.updated') {
