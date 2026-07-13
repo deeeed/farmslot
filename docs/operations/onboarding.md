@@ -77,6 +77,74 @@ smoke check, prints the pack's action sheet, and finishes with doctor. See
 Re-running with the same source is a no-op (verify only); a changed source
 repairs in place. Slots are never duplicated.
 
+## First dispatch (guided)
+
+With a pack registered, dispatch without memorizing flags — bare `dispatch`
+opens a guided picker on a TTY:
+
+```bash
+farmslot dispatch
+```
+
+It walks project → work source (a dispatchable backlog item, or a ticket/PR
+ref + flow type) → slot (auto-picked by the shared selection core, overridable)
+→ confirm. The same picker opens from `farmslot run create` when `--ticket` /
+`--task` are omitted. Scripts keep the typed forms:
+
+```bash
+farmslot run create --project <p> --flow-type dev --ticket <ref> --json
+farmslot backlog dispatch <MANUAL-000123>
+```
+
+Watch it land either interactively:
+
+```bash
+farmslot tui                        # full operator dashboard (fleet/backlog/runs)
+farmslot fleet status --watch       # fleet table, live via fleet.updated events
+```
+
+## When something looks wrong (recovery)
+
+The CLI tells you the exact next command on every failure (`Next: …` lines);
+these are the common loops:
+
+- **Stale fleet banner** (`STALE STATUS`) — the snapshot is too old to act on
+  and dispatch/prepare suggestions are suppressed. Re-probe:
+
+  ```bash
+  farmslot fleet status --force-refresh
+  ```
+
+- **"Slot not found" / ghost slots** — a slot in the status file no longer
+  exists in live pools. `farmslot fleet status` marks these `GHOST`; refresh
+  reconciles them:
+
+  ```bash
+  farmslot fleet refresh
+  farmslot doctor
+  ```
+
+- **No free slot for a project** — ask for the per-slot blocker list instead of
+  guessing:
+
+  ```bash
+  farmslot fleet find-slot --project <name>
+  ```
+
+  Exit 1 prints why each slot is blocked (`agent working`, `manual mode`,
+  `lifecycle=held (pr-watch)`, …) and the command that resolves it.
+
+- **A run's PR merged out-of-band** (run stuck at its publication gate) — close
+  the loop honestly instead of cancelling and re-dispatching:
+
+  ```bash
+  farmslot backlog close-shipped <MANUAL-000123> --pr owner/repo#456
+  ```
+
+- **Anything else** — the recovery surface in `farmslot tui` (key `4`)
+  classifies the fleet (empty-pool / stale / ghosts / healthy) and prints the
+  exact commands; `farmslot doctor` covers the machine-level checks.
+
 ## Stay current
 
 ```bash

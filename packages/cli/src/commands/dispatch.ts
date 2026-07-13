@@ -7,8 +7,30 @@ import { resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
 import { withProgress } from '../progress.js';
 
+import { executeRunCreate, type RunCreateCliOptions, runWizardDispatch } from './run.js';
+
 export function registerDispatchCommand(program: Command): void {
-  const dispatch = program.command('dispatch').description('Dispatch planning');
+  const dispatch = program
+    .command('dispatch')
+    .description('Dispatch planning (bare `farmslot dispatch` opens the guided picker on a TTY)')
+    .action(async (_: unknown, cmd: Command) => {
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
+      try {
+        if (emit.machine || !process.stdin.isTTY) {
+          throw Object.assign(new Error('The guided dispatch picker requires a terminal.'), {
+            code: 'DISPATCH_WIZARD_REQUIRES_TTY',
+            userAction:
+              'Use the typed commands instead: `farmslot run create --project <p> --flow-type <f> --ticket <ref>` or `farmslot backlog dispatch <ref>`.',
+          });
+        }
+        const opts: RunCreateCliOptions = {};
+        const handled = await runWizardDispatch(ctx, opts);
+        if (!handled) await executeRunCreate(ctx, emit, opts);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
 
   dispatch
     .command('preview')

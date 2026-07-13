@@ -7,8 +7,71 @@ import type { Command } from 'commander';
 import type { EventFrame, Run } from '@farmslot/protocol';
 
 import { bold, green } from '../colors.js';
-import { resolveContext } from '../context.js';
+import { type CommandContext, resolveContext } from '../context.js';
 import { createEmitter } from '../envelope.js';
+import { collectRunCreatePlan } from '../wizard/run-create-wizard.js';
+
+import { dispatchBacklogItem, resolveItem } from './backlog.js';
+
+/** The run.create pipeline shared by the flag path and the wizard entry points. */
+export async function executeRunCreate(
+  ctx: CommandContext,
+  emit: ReturnType<typeof createEmitter>,
+  opts: RunCreateCliOptions,
+): Promise<void> {
+  const params = buildRunCreateParams(opts);
+  const result = await ctx.client.callWithEvents<{ run: Run }>(
+    'run.create',
+    params,
+    (event: EventFrame) => {
+      const payload = event.payload;
+      if (payload && typeof payload === 'object' && 'data' in payload) {
+        const data = payload.data;
+        if (typeof data === 'string') process.stderr.write(data);
+      }
+    },
+  );
+  if (emit.machine) {
+    emit.ok(result);
+  } else {
+    ctx.output.write(
+      `${green('Run created')} ${bold(result.run.id.slice(0, 8))} for ${bold(
+        result.run.slotId || '(slot pending)',
+      )} (${result.run.flowType})\n`,
+    );
+  }
+}
+
+/**
+ * Guided TTY path for a missing input source. Returns true when the wizard
+ * fully handled the invocation (backlog dispatch or operator cancel); false
+ * when it collected ticket-route options and the normal create path should
+ * continue with them.
+ */
+export async function runWizardDispatch(
+  ctx: CommandContext,
+  opts: RunCreateCliOptions,
+): Promise<boolean> {
+  const plan = await collectRunCreatePlan(ctx.client);
+  if (!plan) return true; // operator cancelled — exit 0, nothing dispatched
+  if (plan.kind === 'backlog') {
+    const item = await resolveItem(ctx, plan.backlogRef ?? plan.backlogItemId ?? '');
+    await dispatchBacklogItem(ctx, item, (promoted) => {
+      ctx.output.write(`Promoted ${promoted.sourceRef ?? promoted.id} to ready\n`);
+    });
+    ctx.output.write(
+      `${green('Dispatch requested')} for ${bold(item.sourceRef ?? item.id)} — watch with \`farmslot fleet status\` / \`farmslot run list\`\n`,
+    );
+    return true;
+  }
+  // Overwrite unconditionally: a stray pre-set flag (e.g. --slot without a
+  // source) must not survive a wizard choice that contradicts it.
+  opts.project = plan.project;
+  opts.flowType = plan.flowType;
+  opts.ticket = plan.ticket;
+  opts.slot = plan.slotId;
+  return false;
+}
 
 // Map task subdirectory names to FlowType values.
 const SUBDIR_TO_FLOW: Record<string, string> = {
@@ -379,30 +442,16 @@ export function registerRunCommand(program: Command): void {
     .option('--lane <lane>', 'Run lane (production, validation, comparison)')
     .option('--variant <name>', 'Run variant, required for comparison siblings')
     .action(async (opts: RunCreateCliOptions, cmd: Command) => {
-      const { client, output } = resolveContext(cmd);
-      const emit = createEmitter(output, cmd);
+      const ctx = resolveContext(cmd);
+      const emit = createEmitter(ctx.output, cmd);
       try {
-        const params = buildRunCreateParams(opts);
-        const result = await client.callWithEvents<{ run: Run }>(
-          'run.create',
-          params,
-          (event: EventFrame) => {
-            const payload = event.payload;
-            if (payload && typeof payload === 'object' && 'data' in payload) {
-              const data = payload.data;
-              if (typeof data === 'string') process.stderr.write(data);
-            }
-          },
-        );
-        if (emit.machine) {
-          emit.ok(result);
-        } else {
-          output.write(
-            `${green('Run created')} ${bold(result.run.id.slice(0, 8))} for ${bold(
-              result.run.slotId || '(slot pending)',
-            )} (${result.run.flowType})\n`,
-          );
+        if (!opts.ticket && !opts.task && !emit.machine && process.stdin.isTTY) {
+          // No input source on an interactive terminal: guided picker instead
+          // of the usage error. Machine mode keeps the envelope error below.
+          const done = await runWizardDispatch(ctx, opts);
+          if (done) return;
         }
+        await executeRunCreate(ctx, emit, opts);
       } catch (err) {
         emit.fail(err);
         return;

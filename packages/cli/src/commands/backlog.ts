@@ -45,6 +45,31 @@ export async function resolveItem(ctx: CommandContext, ref: string): Promise<Bac
   });
 }
 
+/**
+ * The dispatch pipeline for one backlog item: promote a candidate to ready,
+ * enqueue, and trigger an auto-dispatch tick. Shared by `backlog dispatch`
+ * and the run-create wizard.
+ */
+export async function dispatchBacklogItem(
+  ctx: CommandContext,
+  item: BacklogItem,
+  onPromoted?: (item: BacklogItem) => void,
+): Promise<{ enqueue: BacklogEnqueueResult; tick: unknown }> {
+  if (item.status === 'candidate') {
+    // Dispatch implies readiness — promote instead of failing enqueue.
+    const ready = await ctx.client.call<{ item: BacklogItem }>('backlog.markReady', {
+      itemId: item.id,
+    });
+    item = ready.item;
+    onPromoted?.(item);
+  }
+  const enqueue = await ctx.client.call<BacklogEnqueueResult>('backlog.enqueue', {
+    itemId: item.id,
+  });
+  const tick = await ctx.client.call('backlog.autoDispatchTick', {});
+  return { enqueue, tick };
+}
+
 function renderItems(items: BacklogItem[]): string {
   const table = new TableRenderer();
   table
@@ -241,19 +266,11 @@ export function registerBacklogCommand(program: Command): void {
       const ctx = resolveContext(cmd);
       const emit = createEmitter(ctx.output, cmd);
       try {
-        let item = await resolveItem(ctx, ref);
-        if (item.status === 'candidate') {
-          // Dispatch implies readiness — promote instead of failing enqueue.
-          const ready = await ctx.client.call<{ item: BacklogItem }>('backlog.markReady', {
-            itemId: item.id,
-          });
-          item = ready.item;
-          if (!emit.machine) ctx.output.write(`Promoted ${item.sourceRef ?? item.id} to ready\n`);
-        }
-        const enqueue = await ctx.client.call<BacklogEnqueueResult>('backlog.enqueue', {
-          itemId: item.id,
+        const item = await resolveItem(ctx, ref);
+        const { enqueue, tick } = await dispatchBacklogItem(ctx, item, (promoted) => {
+          if (!emit.machine)
+            ctx.output.write(`Promoted ${promoted.sourceRef ?? promoted.id} to ready\n`);
         });
-        const tick = await ctx.client.call('backlog.autoDispatchTick', {});
         if (emit.machine) emit.ok({ enqueue, tick });
         else
           ctx.output.write(

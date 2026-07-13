@@ -7,6 +7,70 @@ import { createEmitter } from '../envelope.js';
 import { formatFleetStatus } from '../formatters/fleet.js';
 import { withProgress } from '../progress.js';
 
+/**
+ * Event-driven watch: one persistent authenticated connection, re-render on
+ * fleet.updated broadcasts — no polling loop. q or Ctrl+C exits.
+ */
+async function watchFleet(
+  client: ReturnType<typeof resolveContext>['client'],
+  output: ReturnType<typeof resolveContext>['output'],
+  forceRefresh: boolean,
+): Promise<void> {
+  const connection = await client.connect();
+  const render = (result: FleetStatusResult) => {
+    output.write(`\x1b[2J\x1b[H${formatFleetStatus(result)}\nwatching — q to quit\n`);
+  };
+  const stdin = process.stdin;
+  let onKey: ((key: Buffer) => void) | undefined;
+  // Every exit path (q, socket close, render/call error) must restore the
+  // terminal — a raw-mode leak leaves the shell unusable.
+  const cleanup = () => {
+    if (onKey) stdin.off('data', onKey);
+    onKey = undefined;
+    stdin.setRawMode?.(false);
+    stdin.pause();
+    connection.close();
+  };
+  let socketClosed = false;
+  try {
+    render(await connection.call<FleetStatusResult>('fleet.status', { forceRefresh }));
+    await new Promise<void>((resolve, reject) => {
+      // Render inside handlers must settle the promise on failure — an
+      // exception that escapes a handler would strand raw mode forever.
+      const safeRender = (result: FleetStatusResult) => {
+        try {
+          render(result);
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
+      };
+      connection.onClose(() => {
+        socketClosed = true;
+        resolve();
+      });
+      connection.onEvent((event) => {
+        if (event.event === 'fleet.updated') {
+          const payload = event.payload as { fleet?: FleetStatusResult['fleet'] };
+          if (payload?.fleet) safeRender({ fleet: payload.fleet });
+        } else if (event.event === 'run.updated') {
+          // Run transitions change slot task columns without a fleet event.
+          connection.call<FleetStatusResult>('fleet.status').then(safeRender, reject);
+        }
+      });
+      stdin.setRawMode?.(true);
+      stdin.resume();
+      onKey = (key: Buffer) => {
+        const char = key.toString();
+        if (char === 'q' || char === '\u0003') resolve();
+      };
+      stdin.on('data', onKey);
+    });
+  } finally {
+    cleanup();
+  }
+  if (socketClosed) output.write('\nconnection closed — exiting watch\n');
+}
+
 export function registerFleetCommand(program: Command): void {
   const fleet = program.command('fleet').description('Fleet management');
 
@@ -14,10 +78,22 @@ export function registerFleetCommand(program: Command): void {
     .command('status')
     .description('Show fleet status')
     .option('--force-refresh', 'Force refresh from machines')
+    .option('--watch', 'Keep rendering as fleet.updated events arrive (TTY only)')
     .action(async (opts: any, cmd: Command) => {
       const { client, output } = resolveContext(cmd);
       const emit = createEmitter(output, cmd);
       try {
+        if (opts.watch) {
+          if (emit.machine || !process.stdin.isTTY) {
+            throw Object.assign(new Error('--watch requires an interactive terminal.'), {
+              code: 'WATCH_REQUIRES_TTY',
+              userAction:
+                'Drop --watch for one-shot output, or poll `farmslot fleet status --json` from scripts.',
+            });
+          }
+          await watchFleet(client, output, Boolean(opts.forceRefresh));
+          return;
+        }
         const result = await withProgress(
           'Fetching fleet status',
           () => client.call<FleetStatusResult>('fleet.status', { forceRefresh: opts.forceRefresh }),
