@@ -35,6 +35,9 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     steps: Array<{ name: string; detail: string }>;
   } | null>(null);
   const [runDetail, setRunDetail] = useState<Run | null>(null);
+  // Invalidates in-flight run.get fetches when the pane closes or the
+  // surface changes, so a late response cannot reopen a stale detail.
+  const runDetailRequest = useRef(0);
   const { stdout } = useStdout();
   // Rows available for list bodies: total minus header/banner/hints/notice.
   const listHeight = Math.max(5, (stdout?.rows ?? 40) - 8);
@@ -127,12 +130,25 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
   const switchTo = useCallback((next: Surface) => {
     setSurface(next);
     setCursor(0);
+    runDetailRequest.current++;
+    setRunDetail(null);
   }, []);
 
   useInput((input, key) => {
     if (input === 'q') {
       // The tui command owns the connection and closes it after unmount.
       exit();
+      return;
+    }
+    if (runDetail) {
+      // Modal detail pane: swallow everything except close/refresh so gate
+      // keys can never act on the hidden list cursor behind the pane.
+      if (key.escape) {
+        runDetailRequest.current++;
+        setRunDetail(null);
+      } else if (input === 'r') {
+        void refresh();
+      }
       return;
     }
     if (input === '1') switchTo('fleet');
@@ -206,19 +222,16 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
     if (surface === 'runs' && key.return) {
       const row = runsVm[cursor];
       if (row) {
+        const request = ++runDetailRequest.current;
         void (async () => {
           try {
             const result = await connection.call<{ run: Run }>('run.get', { runId: row.id });
-            setRunDetail(result.run);
+            if (request === runDetailRequest.current) setRunDetail(result.run);
           } catch (err) {
             setNotice(`run.get failed: ${err instanceof Error ? err.message : String(err)}`);
           }
         })();
       }
-      return;
-    }
-    if (key.escape && runDetail) {
-      setRunDetail(null);
       return;
     }
 
@@ -345,20 +358,31 @@ export function App({ connection, gatewayUrl }: AppProps): JSX.Element {
           <Text dimColor>
             enter:details · on a pending gate: a:approve-publish h:hold s:close-as-shipped
           </Text>
-          {runsVm.map((row, index) => (
-            <Box key={row.id} flexDirection="column">
-              <Text inverse={index === cursor}>
-                {row.shortId} {row.status.padEnd(14)} {row.flowType.padEnd(12)}{' '}
-                {row.ticket.padEnd(16)} {row.slot}
-              </Text>
-              {row.pendingDecisions.map((decision) => (
-                <Text key={decision.id} color="yellow">
-                  {'  gate: '}
-                  {decision.title} [{decision.actions.join(', ')}]
-                </Text>
-              ))}
-            </Box>
-          ))}
+          {(() => {
+            const { start, end } = windowFor(runsVm.length);
+            return runsVm.slice(start, end).map((row, sliceIndex) => {
+              const index = start + sliceIndex;
+              return (
+                <Box key={row.id} flexDirection="column">
+                  <Text inverse={index === cursor}>
+                    {row.shortId} {row.status.padEnd(14)} {row.flowType.padEnd(12)}{' '}
+                    {row.ticket.padEnd(16)} {row.slot}
+                  </Text>
+                  {row.pendingDecisions.map((decision) => (
+                    <Text key={decision.id} color="yellow">
+                      {'  gate: '}
+                      {decision.title} [{decision.actions.join(', ')}]
+                    </Text>
+                  ))}
+                </Box>
+              );
+            });
+          })()}
+          {runsVm.length > listHeight && (
+            <Text dimColor>
+              {cursor + 1}/{runsVm.length} — scroll with arrows
+            </Text>
+          )}
         </Box>
       )}
 

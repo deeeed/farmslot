@@ -17,21 +17,19 @@ function isCompletionShell(value: string): value is CompletionShell {
 interface CommandInfo {
   name: string;
   description: string;
-  subs: Array<{ name: string; description: string }>;
+  subs: CommandInfo[];
 }
 
 /** Derive the completion vocabulary from the live commander tree — the lists
- * can never go stale when commands are added. */
+ * can never go stale when commands are added. Recursive, so third-level
+ * commands (e.g. `recipe artifacts validate`) complete too. */
 export function commandTree(program: Command): CommandInfo[] {
-  return program.commands
-    .filter((command) => command.name() !== 'help')
-    .map((command) => ({
-      name: command.name(),
-      description: command.description().split('\n')[0] ?? '',
-      subs: command.commands
-        .filter((sub) => sub.name() !== 'help')
-        .map((sub) => ({ name: sub.name(), description: sub.description().split('\n')[0] ?? '' })),
-    }));
+  const walk = (command: Command): CommandInfo => ({
+    name: command.name(),
+    description: command.description().split('\n')[0] ?? '',
+    subs: command.commands.filter((sub) => sub.name() !== 'help').map(walk),
+  });
+  return program.commands.filter((command) => command.name() !== 'help').map(walk);
 }
 
 function completionForShell(shell: CompletionShell, program: Command): string {
@@ -180,55 +178,65 @@ function sanitizeDescription(value: string): string {
 }
 
 function zshCompletion(tree: CommandInfo[]): string {
+  const fnName = (parts: string[]) => `_farmslot_${parts.join('_').replaceAll('-', '_')}`;
+  const describeFns = (parts: string[], info: CommandInfo): string[] => {
+    const nested = info.subs.filter((sub) => sub.subs.length > 0);
+    const dispatch =
+      nested.length > 0
+        ? `\n  case \${words[2]} in\n${nested
+            .map((sub) => `    ${sub.name}) ${fnName([...parts, sub.name])}; return ;;`)
+            .join('\n')}\n  esac\n`
+        : '';
+    const own = `${fnName(parts)}() {${dispatch}
+  local -a commands
+  commands=(
+${info.subs.map((sub) => `    ${shellQuoteForZsh(`${sub.name}:${sanitizeDescription(sub.description)}`)}`).join('\n')}
+  )
+  _describe 'subcommand' commands
+}`;
+    return [own, ...nested.flatMap((sub) => describeFns([...parts, sub.name], sub))];
+  };
+  const withSubs = tree.filter((c) => c.subs.length > 0);
+  const subFns = withSubs.flatMap((c) => describeFns([c.name], c)).join('\n\n');
+  const arms = withSubs.map((c) => `        ${c.name}) ${fnName([c.name])} ;;`).join('\n');
   const top = tree
     .map((c) => `    ${shellQuoteForZsh(`${c.name}:${sanitizeDescription(c.description)}`)}`)
     .join('\n');
-  const subFns = tree
-    .filter((c) => c.subs.length > 0)
-    .map(
-      (c) => `_farmslot_${c.name.replaceAll('-', '_')}() {
-  local -a commands
-  commands=(
-${c.subs.map((sub) => `    ${shellQuoteForZsh(`${sub.name}:${sanitizeDescription(sub.description)}`)}`).join('\n')}
-  )
-  _describe 'subcommand' commands
-}`,
-    )
-    .join('\n\n');
-  const dispatchArms = tree
-    .filter((c) => c.subs.length > 0)
-    .map((c) => `        ${c.name}) _farmslot_${c.name.replaceAll('-', '_')} ;;`)
-    .join('\n');
-  return `#compdef farmslot
-
-_farmslot() {
-  local context state state_descr line
-  typeset -A opt_args
-
-  _arguments -C \\
-    '1: :->command' \\
-    '*:: :->args'
-
-  case $state in
-    command)
-      local -a commands
-      commands=(
-${top}
-      )
-      _describe 'command' commands
-      ;;
-    args)
-      case $words[1] in
-${dispatchArms}
-      esac
-      ;;
-  esac
-}
-
-${subFns}
-
-_farmslot "$@"
-`;
+  return [
+    '#compdef farmslot',
+    '',
+    '_farmslot_commands() {',
+    '  local -a commands',
+    '  commands=(',
+    top,
+    '  )',
+    "  _describe 'command' commands",
+    '}',
+    '',
+    '_farmslot() {',
+    '  local context state state_descr line',
+    '  typeset -A opt_args',
+    '',
+    '  _arguments -C \\',
+    "    '(--url)--url[Gateway WebSocket URL]:url:' \\",
+    "    '(--timeout)--timeout[Timeout in ms]:ms:' \\",
+    "    '(--json)--json[Output raw JSON]' \\",
+    "    '1: :_farmslot_commands' \\",
+    "    '*::arg:->args'",
+    '',
+    '  case $state in',
+    '    args)',
+    '      case ${words[1]} in',
+    arms,
+    '      esac ;;',
+    '  esac',
+    '}',
+    '',
+    subFns,
+    '',
+    '_farmslot "$@"',
+    '',
+  ].join('\n');
 }
 
 function bashCompletion(tree: CommandInfo[]): string {
@@ -240,23 +248,40 @@ function bashCompletion(tree: CommandInfo[]): string {
         `        ${c.name}) COMPREPLY=($(compgen -W "${c.subs.map((sub) => sub.name).join(' ')}" -- "$cur")) ;;`,
     )
     .join('\n');
-  return `_farmslot_completions() {
-  local cur prev
-  COMPREPLY=()
-  cur="\${COMP_WORDS[COMP_CWORD]}"
-  prev="\${COMP_WORDS[COMP_CWORD-1]}"
-
-  case \${COMP_CWORD} in
-    1) COMPREPLY=($(compgen -W "${top}" -- "$cur")) ;;
-    2)
-      case \${COMP_WORDS[1]} in
-${arms}
-      esac ;;
-  esac
-}
-
-complete -F _farmslot_completions farmslot
-`;
+  const thirdLevel = tree
+    .flatMap((c) =>
+      c.subs.filter((sub) => sub.subs.length > 0).map((sub) => ({ parent: c.name, sub })),
+    )
+    .map(
+      ({ parent, sub }) =>
+        `        "${parent} ${sub.name}") COMPREPLY=($(compgen -W "${sub.subs
+          .map((g) => g.name)
+          .join(' ')}" -- "$cur")) ;;`,
+    )
+    .join('\n');
+  return [
+    '_farmslot_completions() {',
+    '  local cur prev',
+    '  COMPREPLY=()',
+    '  cur="${COMP_WORDS[COMP_CWORD]}"',
+    '  prev="${COMP_WORDS[COMP_CWORD-1]}"',
+    '',
+    '  case ${COMP_CWORD} in',
+    `    1) COMPREPLY=($(compgen -W "${top}" -- "$cur")) ;;`,
+    '    2)',
+    '      case ${COMP_WORDS[1]} in',
+    arms,
+    '      esac ;;',
+    '    3)',
+    '      case "${COMP_WORDS[1]} ${COMP_WORDS[2]}" in',
+    thirdLevel,
+    '      esac ;;',
+    '  esac',
+    '}',
+    '',
+    'complete -F _farmslot_completions farmslot',
+    '',
+  ].join('\n');
 }
 
 function fishCompletion(tree: CommandInfo[]): string {
@@ -269,7 +294,9 @@ function fishCompletion(tree: CommandInfo[]): string {
   lines.push('');
   for (const c of tree.filter((cmd) => cmd.subs.length > 0)) {
     lines.push(
-      `complete -c farmslot -n '__fish_seen_subcommand_from ${c.name}' -a '${c.subs.map((sub) => sub.name).join(' ')}'`,
+      `complete -c farmslot -n '__fish_seen_subcommand_from ${c.name}' -a '${c.subs
+        .map((sub) => sub.name)
+        .join(' ')}'`,
     );
   }
   lines.push('');
