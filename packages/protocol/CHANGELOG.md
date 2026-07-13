@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: RPC response errors may carry `userAction` and `details`; `SlotStatus.missingFromPool` and `FleetStatus.stale` flag ghost slots and stale fleet snapshots.
+
 - Active-development baseline; add user-facing changes here before release or package publication.
 
 ## 0.8.0 - 2026-07-12

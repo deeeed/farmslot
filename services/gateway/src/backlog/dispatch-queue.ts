@@ -412,6 +412,8 @@ export function selectQueueDispatchSlot(slots: SlotStatus[], item: QueueItem): s
 // ─── Auto-dispatch ───
 
 export function canDispatchQueuedItemToSlot(slot: SlotStatus): boolean {
+  // Ghost slots (absent from live pools) fail run creation with SLOT_NOT_FOUND.
+  if (slot.missingFromPool) return false;
   return slot.agent !== 'working' && (slot.lifecycle === 'ready' || slot.lifecycle === 'held');
 }
 

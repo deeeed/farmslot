@@ -4,6 +4,8 @@ All notable changes to `@farmslot/command-center-ui` are tracked here.
 
 ## Unreleased
 
+- fix: slot lifecycle actions are unavailable for ghost slots missing from live pools (dev-harness gallery gained a ghost card).
+
 - feat: add a Slot View reviewer tab that surfaces worker/reviewer context and mock review context data.
 - feat: add Slot View controls to reconcile runtime state and restore worker tmux sessions after gateway crashes.
 - feat: operator manual Dispatch enqueues a work-graph node even when its backlog item has autoDispatch off; the work-graph side panel now scrolls with its content.

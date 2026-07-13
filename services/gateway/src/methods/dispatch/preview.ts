@@ -117,6 +117,7 @@ export function findAffinitySlot(
     slots.find(
       (s) =>
         s.project === project &&
+        !s.missingFromPool &&
         (!allow || allow.has(s.slot)) &&
         s.lifecycle === 'held' &&
         s.agent !== 'working' &&
