@@ -43,6 +43,8 @@ export interface GatewayConnection {
   call<T = unknown>(method: string, params?: unknown, options?: { timeoutMs?: number }): Promise<T>;
   /** Subscribe to broadcast events; returns an unsubscribe function. */
   onEvent(handler: (event: EventFrame) => void): () => void;
+  /** Fires once when the socket closes for any reason; returns an unsubscribe. */
+  onClose(handler: () => void): () => void;
   close(): void;
 }
 
@@ -79,6 +81,7 @@ export class GatewayClient {
       { resolve: (v: unknown) => void; reject: (e: Error) => void }
     >();
     const eventHandlers = new Set<(event: EventFrame) => void>();
+    const closeHandlers = new Set<() => void>();
     let closed = false;
     let seq = 0;
 
@@ -86,6 +89,12 @@ export class GatewayClient {
       const entries = [...pending.values()];
       pending.clear();
       for (const entry of entries) entry.reject(reason);
+    };
+
+    const notifyClosed = () => {
+      const handlers = [...closeHandlers];
+      closeHandlers.clear();
+      for (const handler of handlers) handler();
     };
 
     // Persistent handlers go on before the handshake so a close during auth
@@ -120,6 +129,7 @@ export class GatewayClient {
     ws.addEventListener('close', () => {
       closed = true;
       failPending(new GatewayConnectionError('Connection closed unexpectedly'));
+      notifyClosed();
     });
 
     // The auth response is a regular res frame, so the persistent message
@@ -213,12 +223,21 @@ export class GatewayClient {
         eventHandlers.add(handler);
         return () => eventHandlers.delete(handler);
       },
+      onClose(handler: () => void): () => void {
+        if (closed) {
+          handler();
+          return () => {};
+        }
+        closeHandlers.add(handler);
+        return () => closeHandlers.delete(handler);
+      },
       close(): void {
         if (closed) return;
         closed = true;
         eventHandlers.clear();
         // Reject in-flight calls now — the ws 'close' event arrives async.
         failPending(new GatewayConnectionError('Connection closed'));
+        notifyClosed();
         ws.close();
       },
     };

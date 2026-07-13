@@ -64,10 +64,12 @@ export async function runWizardDispatch(
     );
     return true;
   }
+  // Overwrite unconditionally: a stray pre-set flag (e.g. --slot without a
+  // source) must not survive a wizard choice that contradicts it.
   opts.project = plan.project;
   opts.flowType = plan.flowType;
   opts.ticket = plan.ticket;
-  if (plan.slotId) opts.slot = plan.slotId;
+  opts.slot = plan.slotId;
   return false;
 }
 

@@ -39,8 +39,11 @@ export async function collectRunCreatePlan(
   const projectsResult = await client.call<ConfigProjectsResult>('config.projects');
   const projectNames = projectsResult.projects.map((project) => project.name);
   if (projectNames.length === 0) {
-    prompts.cancel('No projects registered. Run `farmslot project add <pack>` first.');
-    return null;
+    // Not a cancellation: surface a real failure (non-zero exit) with the fix.
+    throw Object.assign(new Error('No projects registered.'), {
+      code: 'NO_PROJECTS_REGISTERED',
+      userAction: 'Register a pack first: `farmslot project add <path-or-git-url>`.',
+    });
   }
   const project = await prompts.select({
     message: 'Project',

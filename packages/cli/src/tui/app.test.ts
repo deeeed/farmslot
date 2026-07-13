@@ -54,6 +54,9 @@ function fakeConnection(): GatewayConnection & { closed: boolean } {
     onEvent(_handler: (event: EventFrame) => void): () => void {
       return () => {};
     },
+    onClose(_handler: () => void): () => void {
+      return () => {};
+    },
     close(): void {
       connection.closed = true;
     },

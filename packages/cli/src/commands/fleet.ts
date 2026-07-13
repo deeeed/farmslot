@@ -14,36 +14,49 @@ import { withProgress } from '../progress.js';
 async function watchFleet(
   client: ReturnType<typeof resolveContext>['client'],
   output: ReturnType<typeof resolveContext>['output'],
+  forceRefresh: boolean,
 ): Promise<void> {
   const connection = await client.connect();
   const render = (result: FleetStatusResult) => {
     output.write(`\x1b[2J\x1b[H${formatFleetStatus(result)}\nwatching — q to quit\n`);
   };
+  const stdin = process.stdin;
+  let onKey: ((key: Buffer) => void) | undefined;
+  // Every exit path (q, socket close, render/call error) must restore the
+  // terminal — a raw-mode leak leaves the shell unusable.
+  const cleanup = () => {
+    if (onKey) stdin.off('data', onKey);
+    onKey = undefined;
+    stdin.setRawMode?.(false);
+    stdin.pause();
+    connection.close();
+  };
   try {
-    render(await connection.call<FleetStatusResult>('fleet.status'));
-    await new Promise<void>((resolve) => {
-      const unsubscribe = connection.onEvent((event) => {
-        if (event.event !== 'fleet.updated') return;
-        const payload = event.payload as { fleet?: FleetStatusResult['fleet'] };
-        if (payload?.fleet) render({ fleet: payload.fleet });
+    render(await connection.call<FleetStatusResult>('fleet.status', { forceRefresh }));
+    await new Promise<void>((resolve, reject) => {
+      connection.onClose(() => {
+        output.write('\nconnection closed — exiting watch\n');
+        resolve();
       });
-      const stdin = process.stdin;
+      connection.onEvent((event) => {
+        if (event.event === 'fleet.updated') {
+          const payload = event.payload as { fleet?: FleetStatusResult['fleet'] };
+          if (payload?.fleet) render({ fleet: payload.fleet });
+        } else if (event.event === 'run.updated') {
+          // Run transitions change slot task columns without a fleet event.
+          connection.call<FleetStatusResult>('fleet.status').then(render, reject);
+        }
+      });
       stdin.setRawMode?.(true);
       stdin.resume();
-      const onKey = (key: Buffer) => {
+      onKey = (key: Buffer) => {
         const char = key.toString();
-        if (char === 'q' || char === '\u0003') {
-          unsubscribe();
-          stdin.setRawMode?.(false);
-          stdin.pause();
-          stdin.off('data', onKey);
-          resolve();
-        }
+        if (char === 'q' || char === '\u0003') resolve();
       };
       stdin.on('data', onKey);
     });
   } finally {
-    connection.close();
+    cleanup();
   }
 }
 
@@ -67,7 +80,7 @@ export function registerFleetCommand(program: Command): void {
                 'Drop --watch for one-shot output, or poll `farmslot fleet status --json` from scripts.',
             });
           }
-          await watchFleet(client, output);
+          await watchFleet(client, output, Boolean(opts.forceRefresh));
           return;
         }
         const result = await withProgress(
