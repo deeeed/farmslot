@@ -4,6 +4,7 @@ All notable changes to `@farmslot/cli` are tracked here.
 
 ## Unreleased
 
+- feat: backlog operator loop — `farmslot backlog list|get|create|update|enqueue|dispatch|close-shipped` and `farmslot run list|get|gate|cancel|archive`, all envelope-emitting and RPC-only.
 - feat: machine envelope — `fleet`, `slot`, `run`, `runs`, `dispatch`, and `doctor` emit `{schemaVersion, command, status, exitCode, data|error}` under `--json` or non-TTY stdout; error envelopes always carry `userAction`; documented at `docs/reference/cli-machine-envelope.md`.
 - feat: fleet status shows a loud stale banner and never suggests prepare/dispatch from stale or ghost slots; gateway errors surface their `userAction` as a `Next:` line; failed commands exit non-zero; `fleet refresh` no longer probes machines twice.
 

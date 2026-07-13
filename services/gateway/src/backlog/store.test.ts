@@ -1227,3 +1227,131 @@ test('dispatch.queue.removeOrphan refuses dispatching orphaned backlog-linked qu
     /Cannot remove queue item as orphan/,
   );
 });
+
+test('closeShipped transitions a non-terminal item to done with provenance', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Ship something out-of-band',
+    sourceKind: 'manual',
+    flowType: 'dev',
+  });
+
+  const closed = await backlog.closeShippedBacklogItem({
+    itemId: created.item.id,
+    prRef: 'deeeed/farmslot#307',
+    note: 'merged while the run sat at a gate',
+  });
+
+  assert.equal(closed.item.status, 'done');
+  assert.equal(closed.item.shipped?.prRef, 'deeeed/farmslot#307');
+  assert.equal(closed.item.shipped?.note, 'merged while the run sat at a gate');
+  assert.ok(closed.item.shipped?.closedAt);
+
+  // Already-terminal items refuse a second close with a teach-the-escape error.
+  await assert.rejects(
+    () => backlog.closeShippedBacklogItem({ itemId: created.item.id }),
+    (err: unknown) => {
+      const rich = err as { code?: string; userAction?: string };
+      assert.equal(rich.code, 'BACKLOG_ALREADY_TERMINAL');
+      assert.ok(rich.userAction && rich.userAction.length > 0);
+      return true;
+    },
+  );
+});
+
+test('closeShipped survives run-observation reconcile (no reset to ready)', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Shipped then reconciled',
+    sourceKind: 'manual',
+    flowType: 'dev',
+  });
+  await backlog.closeShippedBacklogItem({ itemId: created.item.id, prRef: 'deeeed/farmslot#308' });
+
+  // Reconcile passes must not resurrect the item: done is terminal. Flush the
+  // debounced persist first so the reload sees the closed state.
+  await backlog.flushBacklogForTests();
+  await backlog.loadBacklog();
+  const after = backlog.listBacklogItems({}).items.find((item) => item.id === created.item.id);
+  assert.equal(after?.status, 'done');
+  assert.equal(after?.shipped?.prRef, 'deeeed/farmslot#308');
+});
+
+test('closeShipped on a queued item removes the queue row and survives reconcile', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Queued then shipped out-of-band',
+    sourceKind: 'manual',
+    flowType: 'dev',
+  });
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  assert.equal(enqueued.item.status, 'queued');
+
+  const closed = await backlog.closeShippedBacklogItem({
+    itemId: created.item.id,
+    prRef: 'deeeed/farmslot#309',
+  });
+  assert.equal(closed.item.status, 'done');
+  assert.equal(closed.item.queuedQueueItemId, undefined);
+  assert.equal(
+    queue.getQueueSnapshot().some((row) => row.backlogItemId === created.item.id),
+    false,
+  );
+
+  // Reload + reconcile must not resurrect the queue linkage.
+  await backlog.flushBacklogForTests();
+  await backlog.loadBacklog();
+  const after = backlog.listBacklogItems({}).items.find((item) => item.id === created.item.id);
+  assert.equal(after?.status, 'done');
+});
+
+test('closeShipped refuses items with an active run', async () => {
+  const { backlog } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Actively running',
+    sourceKind: 'manual',
+    flowType: 'dev',
+  });
+  created.item.status = 'running';
+  created.item.runId = 'run-live-1';
+
+  await assert.rejects(
+    () => backlog.closeShippedBacklogItem({ itemId: created.item.id }),
+    (err: unknown) => {
+      const rich = err as { code?: string; userAction?: string };
+      assert.equal(rich.code, 'BACKLOG_ITEM_ACTIVE');
+      assert.match(rich.userAction ?? '', /farmslot run cancel run-live-1/u);
+      return true;
+    },
+  );
+});
+
+test('closeShipped refuses items whose queue row is mid-dispatch', async () => {
+  const { backlog, queue } = await freshStores();
+  const created = await backlog.createBacklogItem({
+    project: 'farmslot-farm',
+    title: 'Mid-dispatch handoff',
+    sourceKind: 'manual',
+    flowType: 'dev',
+  });
+  await backlog.markBacklogItemReady({ itemId: created.item.id });
+  const enqueued = await backlog.enqueueBacklogItem({ itemId: created.item.id });
+  const row = queue.getQueueSnapshot().find((candidate) => candidate.id === enqueued.queueItem.id);
+  assert.ok(row);
+  row.status = 'dispatching';
+
+  await assert.rejects(
+    () => backlog.closeShippedBacklogItem({ itemId: created.item.id }),
+    (err: unknown) => {
+      const rich = err as { code?: string; userAction?: string };
+      assert.equal(rich.code, 'BACKLOG_ITEM_ACTIVE');
+      assert.match(rich.userAction ?? '', /run cancel/u);
+      return true;
+    },
+  );
+});

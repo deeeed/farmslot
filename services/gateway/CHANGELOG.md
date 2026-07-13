@@ -4,6 +4,7 @@ All notable changes to `@farmslot/gateway` are tracked here.
 
 ## Unreleased
 
+- feat: `backlog.closeShipped` RPC — operator terminal transition to `done` with merged-PR provenance (survives reconcile and persistence round-trips); publication gates detect out-of-band merged PRs and offer a `close-as-shipped` action that links the PR and skips re-publication; PR linkage falls back to `--state all` so merged PRs are discoverable.
 - feat: honest `fleet.status` — stale snapshots are flagged `stale: true` with dispatch suppressed and a background re-probe; `forceRefresh` runs a real machine probe; ghost slots absent from live pools are marked `missingFromPool` at load time and excluded from dispatch selection and auto-dispatch; `resolveSlot` failures carry `SLOT_NOT_FOUND` with a `userAction` teaching the exact next commands.
 
 - feat(gateway): add runtime recovery helpers that can reconcile stale slot state and restore tmux worker sessions from runner session history.

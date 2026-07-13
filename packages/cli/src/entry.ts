@@ -2,6 +2,7 @@ import { Command } from 'commander';
 
 import { registerAnalyticsCommand } from './commands/analytics.js';
 import { registerAuthCommands } from './commands/auth.js';
+import { registerBacklogCommand } from './commands/backlog.js';
 import { registerCertsCommand } from './commands/certs.js';
 import { registerCompletionCommand } from './commands/completion.js';
 import { registerConfigCommand } from './commands/config.js';
@@ -50,6 +51,7 @@ program
 program.exitOverride();
 
 registerFleetCommand(program);
+registerBacklogCommand(program);
 registerUpCommand(program);
 registerGatewayCommand(program);
 registerPairCommand(program);

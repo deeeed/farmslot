@@ -33,6 +33,13 @@ import { publicationReviewPolicyForRun } from './publication-policy.js';
 export const APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION = 'approve-publish-evidence-refresh';
 
 /**
+ * Gate action offered when the run's branch already shipped out-of-band (merged
+ * PR, or zero commits ahead of the default branch). Resolving it links the
+ * merged PR when discoverable and completes the run without re-publishing.
+ */
+export const CLOSE_AS_SHIPPED_ACTION = 'close-as-shipped';
+
+/**
  * Action ids that approve a local-first publication at the human ready/publish
  * gate. Shared so the engine loop exit, finalize guard, decision replay, and the
  * resolve freshness check all recognize the same set rather than scattering

@@ -206,6 +206,137 @@ export function registerRunCommand(program: Command): void {
   const run = program.command('run').description('Run lifecycle operations');
 
   run
+    .command('list')
+    .description('List runs')
+    .option('--limit <n>', 'Max runs', '20')
+    .option('--active', 'Only active runs')
+    .option('--project <name>', 'Filter by project')
+    .action(async (opts: { limit: string; active?: boolean; project?: string }, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await client.call<{ runs: Array<Record<string, unknown>> }>('run.list', {
+          limit: Number(opts.limit),
+          ...(opts.active ? { active: true } : {}),
+          ...(opts.project ? { project: opts.project } : {}),
+        });
+        if (emit.machine) {
+          emit.ok(result);
+        } else {
+          for (const r of result.runs) {
+            output.write(
+              `${String(r.id).slice(0, 8)}  ${String(r.status).padEnd(14)} ${String(r.flowType ?? '-').padEnd(12)} ${String(r.ticketOrPr ?? '-')}\n`,
+            );
+          }
+        }
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('get <runId>')
+    .description('Show one run')
+    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await client.call<{ run: Record<string, unknown> }>('run.get', { runId });
+        if (emit.machine) emit.ok(result);
+        else output.write(`${JSON.stringify(result.run, null, 2)}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('gate <runId>')
+    .description('List or resolve pending human-gate decisions for a run')
+    .option('--action <id>', 'Action to resolve with (approve-publish|hold|close-as-shipped|…)')
+    .option('--decision <id>', 'Decision id when several are pending')
+    .action(async (runId: string, opts: { action?: string; decision?: string }, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const { run: current } = await client.call<{
+          run: {
+            decisions?: Array<{
+              id: string;
+              title?: string;
+              resolvedAt?: string;
+              actions?: Array<{ id: string; label: string }>;
+            }>;
+          };
+        }>('run.get', { runId });
+        const pending = (current.decisions ?? []).filter((d) => !d.resolvedAt);
+        if (!opts.action) {
+          if (emit.machine) {
+            emit.ok({ pending });
+          } else if (pending.length === 0) {
+            output.write('No pending decisions.\n');
+          } else {
+            for (const d of pending) {
+              output.write(`${d.id}  ${d.title ?? ''}\n`);
+              for (const a of d.actions ?? []) output.write(`  - ${a.id}  ${a.label}\n`);
+            }
+          }
+          return;
+        }
+        const decisionId = opts.decision ?? (pending.length === 1 ? pending[0].id : undefined);
+        if (!decisionId) {
+          throw Object.assign(new Error(`Run has ${pending.length} pending decisions.`), {
+            code: 'GATE_DECISION_AMBIGUOUS',
+            userAction:
+              'List them with `farmslot run gate <runId>` and pass --decision <id> with --action.',
+          });
+        }
+        const result = await client.call('run.resolveDecision', {
+          runId,
+          decisionId,
+          actionId: opts.action,
+        });
+        if (emit.machine) emit.ok(result);
+        else output.write(`Resolved ${decisionId} with ${opts.action}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('cancel <runId>')
+    .description('Cancel a run')
+    .option('--reason <reason>', 'Cancellation reason')
+    .action(async (runId: string, opts: { reason?: string }, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await client.call('run.cancel', {
+          runId,
+          ...(opts.reason ? { reason: opts.reason } : {}),
+        });
+        if (emit.machine) emit.ok(result);
+        else output.write(`Cancelled ${runId}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
+    .command('archive <runId>')
+    .description('Archive a terminal run out of default views')
+    .action(async (runId: string, _opts: unknown, cmd: Command) => {
+      const { client, output } = resolveContext(cmd);
+      const emit = createEmitter(output, cmd);
+      try {
+        const result = await client.call('run.archive', { runId });
+        if (emit.machine) emit.ok(result);
+        else output.write(`Archived ${runId}\n`);
+      } catch (err) {
+        emit.fail(err);
+      }
+    });
+
+  run
     .command('create')
     .description('Create a supervised run from a ticket/ref or an existing task file')
     .option('--project <name>', 'Project name; required with --ticket')

@@ -16,6 +16,7 @@ export const BacklogMethods = {
   update: Methods.BACKLOG_UPDATE,
   delete: Methods.BACKLOG_DELETE,
   markReady: Methods.BACKLOG_MARK_READY,
+  closeShipped: Methods.BACKLOG_CLOSE_SHIPPED,
   archive: Methods.BACKLOG_ARCHIVE,
   enqueue: Methods.BACKLOG_ENQUEUE,
   dequeue: Methods.BACKLOG_DEQUEUE,
@@ -43,6 +44,16 @@ export interface BacklogUpdateParams extends BacklogUpdateInput {
   itemId: string;
 }
 export interface BacklogUpdateResult {
+  item: BacklogItem;
+}
+
+export interface BacklogCloseShippedParams {
+  itemId: string;
+  /** Merged PR reference (e.g. owner/repo#123 or a PR URL) proving the work shipped. */
+  prRef?: string;
+  note?: string;
+}
+export interface BacklogCloseShippedResult {
   item: BacklogItem;
 }
 

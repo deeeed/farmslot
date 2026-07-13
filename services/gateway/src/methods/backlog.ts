@@ -1,6 +1,7 @@
 import type {
   BacklogArchiveParams,
   BacklogAutoDispatchTickParams,
+  BacklogCloseShippedParams,
   BacklogCreateParams,
   BacklogDeleteParams,
   BacklogDequeueParams,
@@ -15,6 +16,7 @@ import type {
 import {
   archiveBacklogItem,
   autoDispatchBacklogReady,
+  closeShippedBacklogItem,
   createBacklogItem,
   deleteBacklogItem,
   dequeueBacklogItem,
@@ -38,3 +40,5 @@ export const backlogAutoDispatchTick = (params: BacklogAutoDispatchTickParams = 
   autoDispatchBacklogReady(params);
 export const backlogUpcoming = (params: BacklogUpcomingParams = {}) => upcomingBacklogItems(params);
 export const backlogSpecGet = (params: BacklogSpecGetParams) => getBacklogSpec(params);
+export const backlogCloseShipped = (params: BacklogCloseShippedParams) =>
+  closeShippedBacklogItem(params);

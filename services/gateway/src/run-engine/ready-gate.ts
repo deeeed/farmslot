@@ -59,6 +59,7 @@ import {
   assertPublicationReviewPolicySatisfied,
   buildEvidenceRefreshAction,
   buildPublishGateReviewStatus,
+  CLOSE_AS_SHIPPED_ACTION,
   countStalePublicationReviews,
   hasValidPrNumber,
   isPublishApprovalAction,
@@ -392,6 +393,41 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const diffStat = await getDiffStat(current);
 
   const videoProofWarning = localVideoProofWarning(preparedPackage?.evidenceManifest);
+  // Out-of-band merge detection: if this branch already has a MERGED PR the
+  // package is shipped — offer close-as-shipped instead of inviting a
+  // pointless review/approve cycle (the MANUAL-000010 stranded-gate incident).
+  let mergedPrNumber: number | null = null;
+  let branchZeroAhead = false;
+  if (publicationApprovalGate && ciRepo) {
+    const { findMergedPRNumber, persistRunPrNumber } =
+      await import('../integrations/pr-linkage.js');
+    mergedPrNumber = await findMergedPRNumber(current, ciRepo);
+    if (mergedPrNumber && !current.prNumber) {
+      // Persist at probe time so finalize's close-as-shipped bypass never
+      // depends on a second probe succeeding.
+      await persistRunPrNumber(current.id, mergedPrNumber);
+    }
+  }
+  if (publicationApprovalGate && !mergedPrNumber && current.slotId) {
+    // Zero commits ahead of the default branch also means there is nothing to
+    // publish (spec Phase 2 AC) even when no merged PR is discoverable.
+    try {
+      const vars = await loadSlotVars(current.slotId);
+      const defaultBranch =
+        (pv?.projectJson ? getProjectField(pv.projectJson, 'default_branch') : null) || 'main';
+      const r = await execOnSlot(
+        vars,
+        `git -C '${vars.remoteRepo}' rev-list --count origin/${defaultBranch}..HEAD 2>/dev/null`,
+        { timeout: 15_000 },
+      );
+      branchZeroAhead = r.stdout.trim() === '0';
+    } catch (err) {
+      console.warn(
+        `[run-engine] ready-gate zero-ahead probe failed for ${runId.slice(0, 8)}: ${(err as Error).message.slice(0, 200)}`,
+      );
+    }
+  }
+
   const desc =
     publicationApprovalGate && preparedPackage
       ? [
@@ -399,6 +435,17 @@ export async function executeReadyGate(runId: string): Promise<string> {
           `**Target:** ${preparedPackage.publicationTarget}`,
           `**Branch:** ${preparedPackage.branch || current.branch || 'unknown'}`,
           `**Files:** ${preparedPackage.diffStat.files} (+${preparedPackage.diffStat.additions} -${preparedPackage.diffStat.deletions})`,
+          ...(mergedPrNumber
+            ? [
+                '',
+                `**Already merged:** PR #${mergedPrNumber} for this branch is merged — the work has shipped. Use Close as Shipped instead of re-reviewing.`,
+              ]
+            : branchZeroAhead
+              ? [
+                  '',
+                  '**Nothing to publish:** this branch has zero commits ahead of the default branch. Use Close as Shipped instead of re-reviewing.',
+                ]
+              : []),
           ...(videoProofWarning ? ['', videoProofWarning] : []),
           '',
           report?.slice(0, 300) ?? 'Review the local package before public PR publication.',
@@ -434,6 +481,17 @@ export async function executeReadyGate(runId: string): Promise<string> {
   const actions: Array<{ id: string; label: string; style: 'primary' | 'secondary' | 'danger' }> =
     publicationApprovalGate
       ? [
+          ...(mergedPrNumber || branchZeroAhead
+            ? [
+                {
+                  id: CLOSE_AS_SHIPPED_ACTION,
+                  label: mergedPrNumber
+                    ? `Close as Shipped (PR #${mergedPrNumber} merged)`
+                    : 'Close as Shipped (branch has no commits ahead)',
+                  style: 'primary' as const,
+                },
+              ]
+            : []),
           ...(reviewSatisfied
             ? [{ id: 'approve-publish', label: 'Approve Publish', style: 'primary' as const }]
             : []),

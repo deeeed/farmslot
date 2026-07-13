@@ -1,12 +1,15 @@
 import type { DecisionAction, FlowType, RunDecision } from '@farmslot/protocol';
 
-import { APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION } from './gate-policy.js';
+import { APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION, CLOSE_AS_SHIPPED_ACTION } from './gate-policy.js';
 
 const HUMAN_GATE_APPROVAL_ACTIONS = new Set([
   'approve-publish',
   APPROVE_PUBLISH_EVIDENCE_REFRESH_ACTION,
   'ready',
   'post',
+  // Close-as-shipped resolves the gate terminally (work already merged); finalize
+  // must see it via latestResolvedHumanGateDecision(_, true) to take its bypass.
+  CLOSE_AS_SHIPPED_ACTION,
 ]);
 const HUMAN_GATE_REVIEW_REQUEST_ACTIONS = new Set([
   'request-extra-review',

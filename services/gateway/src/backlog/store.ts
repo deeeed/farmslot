@@ -47,6 +47,7 @@ import {
 } from '@farmslot/protocol';
 
 import { loadProjectVars } from '../core/config.js';
+import { GatewayMethodError } from '../core/method-error.js';
 import type { InternalDispatchQueueAddParams } from '../core/queue-types.js';
 import { farmslotRoot, loadFleetStatus, loadProjectConfig } from '../fleet/state.js';
 import {
@@ -192,6 +193,18 @@ export async function removeOrphanBacklogQueueItem(params: { itemId: string }): 
   removeQueueItemInternal(queueItem.id, 'orphan-remove');
   await persistQueueNow();
   return { ok: true };
+}
+
+function isPersistedShipped(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sanitizeShipped(raw: Record<string, unknown>): NonNullable<BacklogItem['shipped']> {
+  return {
+    ...(typeof raw.prRef === 'string' && raw.prRef ? { prRef: raw.prRef } : {}),
+    ...(typeof raw.note === 'string' && raw.note ? { note: raw.note } : {}),
+    closedAt: typeof raw.closedAt === 'string' ? raw.closedAt : new Date(0).toISOString(),
+  };
 }
 
 async function persist(): Promise<void> {
@@ -546,6 +559,7 @@ function normalizeStoredItem(raw: unknown): BacklogItem | null {
     ...(typeof raw.lastObservedRunStatus === 'string'
       ? { lastObservedRunStatus: raw.lastObservedRunStatus as RunStatus }
       : {}),
+    ...(isPersistedShipped(raw.shipped) ? { shipped: sanitizeShipped(raw.shipped) } : {}),
     ...(typeof raw.lastDispatchAttempt === 'string'
       ? { lastDispatchAttempt: raw.lastDispatchAttempt }
       : {}),
@@ -1373,6 +1387,65 @@ export async function archiveBacklogItem(params: {
     delete item.queuedQueueItemId;
     item.updatedAt = new Date().toISOString();
     schedulePersist('archive');
+    broadcastBacklog();
+    return { item };
+  });
+}
+
+export async function closeShippedBacklogItem(params: {
+  itemId: string;
+  prRef?: string;
+  note?: string;
+}): Promise<{ item: BacklogItem }> {
+  return withBacklogMutation(async () => {
+    const item = getItem(params.itemId);
+    if (item.status === 'done' || item.status === 'archived') {
+      throw new GatewayMethodError(
+        'BACKLOG_ALREADY_TERMINAL',
+        `Backlog item ${item.sourceRef ?? item.id} is already ${item.status}.`,
+        { userAction: 'Nothing to close. Inspect items with `farmslot backlog list`.' },
+      );
+    }
+    if (item.status === 'running' || item.status === 'dispatching') {
+      throw new GatewayMethodError(
+        'BACKLOG_ITEM_ACTIVE',
+        `Backlog item ${item.sourceRef ?? item.id} has an active run (${item.runId ?? 'unknown'}).`,
+        {
+          userAction: `Cancel it first with \`farmslot run cancel ${item.runId ?? '<runId>'}\`, then re-run close-shipped.`,
+        },
+      );
+    }
+    // Remove any pending queue row — reconcile would otherwise force the item
+    // back to queued (and auto-dispatch could still pick it up) after close.
+    if (item.queuedQueueItemId) {
+      const queueRow = getQueueSnapshot().find(
+        (candidate) => candidate.id === item.queuedQueueItemId,
+      );
+      if (queueRow?.status === 'dispatching') {
+        // Queue→run handoff is in flight: the row is dispatching but the run
+        // does not exist yet. Removing it now would strand an untracked run.
+        throw new GatewayMethodError(
+          'BACKLOG_ITEM_ACTIVE',
+          `Backlog item ${item.sourceRef ?? item.id} is mid-dispatch.`,
+          {
+            userAction:
+              'Wait for the run to appear (`farmslot run list --active`), cancel it with `farmslot run cancel <runId>`, then re-run close-shipped.',
+          },
+        );
+      }
+      removeQueueItemInternal(item.queuedQueueItemId, 'close-shipped');
+      await persistQueueNow();
+      delete item.queuedQueueItemId;
+    }
+    item.status = 'done';
+    item.shipped = {
+      ...(params.prRef ? { prRef: params.prRef } : {}),
+      ...(params.note ? { note: params.note } : {}),
+      closedAt: new Date().toISOString(),
+    };
+    delete item.queuedQueueItemId;
+    item.updatedAt = new Date().toISOString();
+    schedulePersist('close-shipped');
     broadcastBacklog();
     return { item };
   });
