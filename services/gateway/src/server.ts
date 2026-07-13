@@ -21,6 +21,7 @@ import { handleBranchFsChanged } from './automation/branch-watcher.js';
 import { tryDispatchNext } from './backlog/dispatch-queue.js';
 import { autoDispatchBacklogReady, listBacklogItems } from './backlog/store.js';
 import { ChatActionRejectError } from './chat/chat-actions.js';
+import { GatewayMethodError } from './core/method-error.js';
 import { setSlotUpdateHook } from './core/state.js';
 import { unregisterByWs } from './fleet/machine-registry.js';
 import { getMachineHealth, markMachineOffline, updateMachineMetrics } from './fleet/node-health.js';
@@ -568,10 +569,16 @@ async function handleMessage(
   } catch (err) {
     const message = (err as Error).message;
     let code = 'METHOD_ERROR';
+    let userAction: string | undefined;
+    let details: unknown;
     if (message.startsWith('Unknown method:')) {
       code = 'METHOD_NOT_FOUND';
     } else if (err instanceof GatewayAuthError) {
       code = err.code;
+    } else if (err instanceof GatewayMethodError) {
+      code = err.code;
+      userAction = err.userAction;
+      details = err.details;
     } else if (err instanceof ChatActionRejectError) {
       // A specific err.code (e.g. 'RequiresExplicitMergeMain') wins over the
       // generic CHAT_ACTION_REJECT_<REASON> derivation so callers can
@@ -579,7 +586,12 @@ async function handleMessage(
       const specific = (err as Error & { code?: string }).code;
       code = specific ?? chatActionRejectCode(err.reason);
     }
-    sendResponse(state.ws, frame.id, false, undefined, { code, message });
+    sendResponse(state.ws, frame.id, false, undefined, {
+      code,
+      message,
+      ...(userAction ? { userAction } : {}),
+      ...(details !== undefined ? { details } : {}),
+    });
   }
 }
 
@@ -588,7 +600,7 @@ function sendResponse(
   id: string,
   ok: boolean,
   payload?: unknown,
-  error?: { code: string; message: string },
+  error?: NonNullable<ResponseFrame['error']>,
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   const frame: ResponseFrame = { type: 'res', id, ok };

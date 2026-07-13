@@ -18,6 +18,8 @@ import {
 
 import { farmslotRoot } from '../projects/repo-root.js';
 
+import { GatewayMethodError } from './method-error.js';
+
 const poolDir = path.join(farmslotRoot, 'pool');
 const projectsDir = path.join(farmslotRoot, 'projects');
 const PROJECT_CONFIG_NOT_FOUND_PREFIX = 'Project config not found:';
@@ -339,14 +341,20 @@ export interface ResolvedSlot {
   poolFile: string;
 }
 
+const MAX_AVAILABLE_SLOT_IDS = 20;
+
 export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
   let files: string[];
   try {
     files = await readdir(poolDir);
   } catch {
-    throw new Error(`Pool directory not found: ${poolDir}`);
+    throw new GatewayMethodError('POOL_DIR_NOT_FOUND', `Pool directory not found: ${poolDir}`, {
+      userAction:
+        'No pools are configured. Run `farmslot project add <pack>` to register one, then `farmslot fleet refresh`. Diagnose with `farmslot doctor`.',
+    });
   }
 
+  const availableSlotIds: string[] = [];
   for (const file of files) {
     if (isIgnoredPoolFile(file)) continue;
     try {
@@ -356,12 +364,23 @@ export async function resolveSlot(slotId: string): Promise<ResolvedSlot> {
       if (slot) {
         return { pool, slot, poolFile: path.join(poolDir, file) };
       }
+      for (const s of pool.slots) availableSlotIds.push(s.id);
     } catch {
       /* skip invalid files */
     }
   }
 
-  throw new Error(`Slot '${slotId}' not found in any pool JSON under ${poolDir}/`);
+  throw new GatewayMethodError(
+    'SLOT_NOT_FOUND',
+    `Slot '${slotId}' not found in any pool JSON under ${poolDir}/`,
+    {
+      userAction:
+        availableSlotIds.length > 0
+          ? 'The fleet status may be stale. Run `farmslot fleet refresh`, then `farmslot fleet status` to list live slots. Diagnose with `farmslot doctor`.'
+          : 'No slots are configured in any pool. Run `farmslot project add <pack>` to register a pool, then `farmslot fleet refresh`. Diagnose with `farmslot doctor`.',
+      details: { availableSlotIds: availableSlotIds.slice(0, MAX_AVAILABLE_SLOT_IDS) },
+    },
+  );
 }
 
 // ─── resolveRemoteRepo ───

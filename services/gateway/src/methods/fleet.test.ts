@@ -1,10 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { Run } from '@farmslot/protocol';
+import type { FleetStatus, Run, SlotStatus } from '@farmslot/protocol';
+
+import { resolveSlot } from '../core/config.js';
+import { GatewayMethodError } from '../core/method-error.js';
 
 import { makeRun } from './run/test-fixtures.js';
-import { reconcileRefreshSlotRowWithActiveRun } from './fleet.js';
+import {
+  fleetStaleThresholdMs,
+  fleetStatus,
+  type FleetStatusDeps,
+  isFleetCheckedAtStale,
+  markMissingFromPool,
+  reconcileRefreshSlotRowWithActiveRun,
+} from './fleet.js';
 
 function makeRefreshRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -268,5 +278,159 @@ test('fleet refresh reconciliation does not show blocked runs as working because
   assert.equal(
     (reconciled.agent_contexts as unknown as Array<{ status: string }>)[0]?.status,
     'blocked',
+  );
+});
+
+// ─── fleet.status honesty (staleness + ghost slots) ───
+
+function slotStatusFixture(overrides: Partial<SlotStatus> & { slot: string }): SlotStatus {
+  return {
+    machine: 'macwork',
+    platform: 'ios',
+    project: 'farmslot-farm',
+    health: { ssh: 'LOCAL', device: '-', devserver: 'OK', cdp: '-', fixtures: 'OK' },
+    branch: 'main',
+    agent: 'idle',
+    enabled: true,
+    dispatchable: true,
+    lifecycle: 'ready',
+    phase: null,
+    warm: true,
+    taskId: null,
+    taskFile: null,
+    dispatchedAt: null,
+    completedAt: null,
+    runner: null,
+    model: null,
+    deviceName: null,
+    taskPhase: null,
+    taskStepProgress: null,
+    ...overrides,
+  } as SlotStatus;
+}
+
+function fleetFixture(checkedAt: string, slots: SlotStatus[]): FleetStatus {
+  return {
+    checkedAt,
+    slots,
+    summary: {
+      total: slots.length,
+      ready: slots.length,
+      busy: 0,
+      held: 0,
+      manual: 0,
+      disabled: 0,
+      blocked: 0,
+      warmCount: 0,
+    },
+  };
+}
+
+function fleetStatusDepsFixture(fleet: FleetStatus, liveIds: Iterable<string>) {
+  const calls = { load: 0, refresh: 0 };
+  const refreshed = fleetFixture(new Date().toISOString(), fleet.slots);
+  const deps: FleetStatusDeps = {
+    async load() {
+      calls.load += 1;
+      return fleet;
+    },
+    async refresh() {
+      calls.refresh += 1;
+      return { fleet: refreshed };
+    },
+    async liveSlotIds() {
+      return new Set(liveIds);
+    },
+  };
+  return { deps, calls, refreshed };
+}
+
+test('fleet staleness helpers honor the env-configured threshold', () => {
+  const previous = process.env.FARMSLOT_FLEET_STALE_MS;
+  try {
+    delete process.env.FARMSLOT_FLEET_STALE_MS;
+    assert.equal(fleetStaleThresholdMs(), 5 * 60_000);
+    process.env.FARMSLOT_FLEET_STALE_MS = '1000';
+    assert.equal(fleetStaleThresholdMs(), 1000);
+
+    const now = Date.now();
+    assert.equal(isFleetCheckedAtStale(new Date(now - 500).toISOString(), now), false);
+    assert.equal(isFleetCheckedAtStale(new Date(now - 5_000).toISOString(), now), true);
+    assert.equal(isFleetCheckedAtStale('not-a-timestamp', now), true);
+  } finally {
+    if (previous === undefined) delete process.env.FARMSLOT_FLEET_STALE_MS;
+    else process.env.FARMSLOT_FLEET_STALE_MS = previous;
+  }
+});
+
+test('fleet.status forceRefresh triggers a real re-probe, not a file re-read', async () => {
+  const stale = fleetFixture(new Date(0).toISOString(), [
+    slotStatusFixture({ slot: 'macwork-ff-1' }),
+  ]);
+  const { deps, calls, refreshed } = fleetStatusDepsFixture(stale, ['macwork-ff-1']);
+
+  const result = await fleetStatus({ forceRefresh: true }, deps);
+
+  assert.equal(calls.refresh, 1);
+  assert.equal(calls.load, 0);
+  assert.equal(result.fleet.checkedAt, refreshed.checkedAt);
+});
+
+test('fresh fleet.status passes through without stale flag or background refresh', async () => {
+  const fresh = fleetFixture(new Date().toISOString(), [
+    slotStatusFixture({ slot: 'macwork-ff-1' }),
+  ]);
+  const { deps, calls } = fleetStatusDepsFixture(fresh, ['macwork-ff-1']);
+
+  const result = await fleetStatus(undefined, deps);
+
+  assert.equal(result.fleet.stale, undefined);
+  assert.equal(result.fleet.slots[0].dispatchable, true);
+  assert.equal(calls.refresh, 0);
+});
+
+test('stale fleet.status marks stale, disables dispatch, and kicks a background refresh', async () => {
+  const stale = fleetFixture(new Date(0).toISOString(), [
+    slotStatusFixture({ slot: 'macwork-ff-1' }),
+    slotStatusFixture({ slot: 'macwork-ff-2' }),
+  ]);
+  const { deps, calls } = fleetStatusDepsFixture(stale, ['macwork-ff-1', 'macwork-ff-2']);
+
+  const result = await fleetStatus(undefined, deps);
+
+  assert.equal(result.fleet.stale, true);
+  assert.ok(result.fleet.slots.every((slot) => slot.dispatchable === false));
+  assert.equal(calls.refresh, 1);
+});
+
+test('slots absent from live pools are marked missingFromPool and never dispatchable', () => {
+  const fleet = fleetFixture(new Date().toISOString(), [
+    slotStatusFixture({ slot: 'macwork-ff-1' }),
+    slotStatusFixture({ slot: 'ghost-slot-9' }),
+  ]);
+
+  const marked = markMissingFromPool(fleet, new Set(['macwork-ff-1']));
+
+  const live = marked.slots.find((slot) => slot.slot === 'macwork-ff-1');
+  const ghost = marked.slots.find((slot) => slot.slot === 'ghost-slot-9');
+  assert.equal(live?.missingFromPool, undefined);
+  assert.equal(live?.dispatchable, true);
+  assert.equal(ghost?.missingFromPool, true);
+  assert.equal(ghost?.dispatchable, false);
+  // No live pools at all (empty install) — nothing may be prepared/dispatched.
+  const emptied = markMissingFromPool(fleet, new Set());
+  assert.ok(emptied.slots.every((slot) => slot.missingFromPool === true));
+});
+
+test('resolveSlot failures teach the escape with a structured userAction', async () => {
+  await assert.rejects(
+    () => resolveSlot('definitely-not-a-real-slot-xyz'),
+    (err: unknown) => {
+      assert.ok(err instanceof GatewayMethodError);
+      assert.ok(['SLOT_NOT_FOUND', 'POOL_DIR_NOT_FOUND'].includes(err.code));
+      assert.ok(err.userAction && err.userAction.length > 0);
+      assert.match(err.userAction, /farmslot doctor|farmslot fleet refresh|farmslot project add/u);
+      return true;
+    },
   );
 });

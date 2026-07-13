@@ -62,6 +62,8 @@ export interface SlotStatus {
   agent: SlotAgent;
   enabled: boolean;
   dispatchable: boolean;
+  /** True when this slot id no longer resolves in live pool JSONs — a status-file ghost. Never prepare/dispatch it. */
+  missingFromPool?: boolean;
   lifecycle: SlotLifecycle;
   phase: SlotPhase;
   warm: boolean;
@@ -115,6 +117,11 @@ export interface FleetStatus {
   slots: SlotStatus[];
   summary: FleetSummary;
   machines?: MachineHealth[];
+  /**
+   * True when checkedAt is older than the gateway freshness threshold. Consumers
+   * must not surface prepare/dispatch suggestions from a stale fleet snapshot.
+   */
+  stale?: boolean;
 }
 
 // Slot contracts include resource/action shapes used by slot UI and gateway actions.

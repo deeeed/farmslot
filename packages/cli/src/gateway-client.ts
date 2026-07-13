@@ -24,6 +24,21 @@ export class GatewayConnectionError extends Error {
   }
 }
 
+/** Structured RPC failure from the gateway; userAction names the exact next command(s). */
+export class GatewayRpcError extends Error {
+  readonly code: string;
+  readonly userAction?: string;
+  readonly details?: unknown;
+
+  constructor(message: string, code: string, userAction?: string, details?: unknown) {
+    super(message);
+    this.name = 'GatewayRpcError';
+    this.code = code;
+    this.userAction = userAction;
+    this.details = details;
+  }
+}
+
 interface GatewayCredential {
   token?: string;
   password?: string;
@@ -139,7 +154,16 @@ export class GatewayClient {
         if (frame.ok) {
           finish(() => resolve(frame.payload as T));
         } else {
-          finish(() => reject(new Error(frame.error?.message || 'Unknown gateway error')));
+          finish(() =>
+            reject(
+              new GatewayRpcError(
+                frame.error?.message || 'Unknown gateway error',
+                frame.error?.code || 'METHOD_ERROR',
+                frame.error?.userAction,
+                frame.error?.details,
+              ),
+            ),
+          );
         }
       });
 
